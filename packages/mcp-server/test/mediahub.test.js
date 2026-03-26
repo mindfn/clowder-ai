@@ -167,6 +167,51 @@ describe('MediaStorage', () => {
       /protocol "ftp:" not allowed/,
     );
   });
+
+  it('blocks localhost (SSRF)', async () => {
+    const { MediaStorage } = await import('../dist/mediahub/media-storage.js');
+    const storage = new MediaStorage('/tmp/mediahub-test');
+    await assert.rejects(
+      () => storage.download('test', 'j1', 'http://localhost/secret'),
+      /host "localhost" is internal/,
+    );
+  });
+
+  it('blocks 127.0.0.1 loopback (SSRF)', async () => {
+    const { MediaStorage } = await import('../dist/mediahub/media-storage.js');
+    const storage = new MediaStorage('/tmp/mediahub-test');
+    await assert.rejects(
+      () => storage.download('test', 'j1', 'http://127.0.0.1/secret'),
+      /host "127.0.0.1" is internal/,
+    );
+  });
+
+  it('blocks 169.254.x.x link-local (SSRF)', async () => {
+    const { MediaStorage } = await import('../dist/mediahub/media-storage.js');
+    const storage = new MediaStorage('/tmp/mediahub-test');
+    await assert.rejects(
+      () => storage.download('test', 'j1', 'http://169.254.169.254/metadata'),
+      /host "169.254.169.254" is internal/,
+    );
+  });
+
+  it('blocks 10.x.x.x private range (SSRF)', async () => {
+    const { MediaStorage } = await import('../dist/mediahub/media-storage.js');
+    const storage = new MediaStorage('/tmp/mediahub-test');
+    await assert.rejects(
+      () => storage.download('test', 'j1', 'http://10.0.0.1/internal'),
+      /host "10.0.0.1" is internal/,
+    );
+  });
+
+  it('blocks 192.168.x.x private range (SSRF)', async () => {
+    const { MediaStorage } = await import('../dist/mediahub/media-storage.js');
+    const storage = new MediaStorage('/tmp/mediahub-test');
+    await assert.rejects(
+      () => storage.download('test', 'j1', 'http://192.168.1.1/admin'),
+      /host "192.168.1.1" is internal/,
+    );
+  });
 });
 
 // ==================== ProviderRegistry Tests ====================
@@ -221,5 +266,202 @@ describe('ProviderRegistry', () => {
     assert.equal(video.length, 1);
     const image = registry.listByCapability('text2image');
     assert.equal(image.length, 0);
+  });
+});
+
+// ==================== Bootstrap Fallback Tests ====================
+
+describe('bootstrapMediaHub fallback', () => {
+  it('falls back to in-memory when Redis is unreachable', async () => {
+    const origUrl = process.env['REDIS_URL'];
+    process.env['REDIS_URL'] = 'redis://127.0.0.1:1'; // unreachable port
+    try {
+      const { bootstrapMediaHub } = await import('../dist/mediahub/bootstrap.js');
+      // Should not throw — falls back to in-memory
+      await bootstrapMediaHub();
+
+      // Service is wired — listProviders should not throw
+      const { handleListProviders } = await import('../dist/mediahub/mediahub-tools.js');
+      const result = await handleListProviders();
+      assert.ok(result);
+    } finally {
+      if (origUrl === undefined) delete process.env['REDIS_URL'];
+      else process.env['REDIS_URL'] = origUrl;
+    }
+  });
+});
+
+// ==================== MediaHubService Tests ====================
+
+describe('MediaHubService', () => {
+  /** Helper: build a service with mock provider and in-memory store */
+  async function buildTestService(providerOverrides = {}) {
+    const { JobStore } = await import('../dist/mediahub/job-store.js');
+    const { ProviderRegistry } = await import('../dist/mediahub/provider.js');
+    const { MediaHubService } = await import('../dist/mediahub/mediahub-service.js');
+
+    // In-memory Redis stub
+    const data = new Map();
+    const sortedSets = new Map();
+    const redis = {
+      async hset(key, obj) {
+        data.set(key, { ...(data.get(key) ?? {}), ...obj });
+        return Object.keys(obj).length;
+      },
+      async hgetall(key) {
+        return data.get(key) ?? {};
+      },
+      async expire() {
+        return 1;
+      },
+      async zadd(key, ...args) {
+        const set = sortedSets.get(key) ?? [];
+        for (let i = 0; i < args.length; i += 2) {
+          const score = Number(args[i]);
+          const member = String(args[i + 1]);
+          const idx = set.findIndex((e) => e.member === member);
+          if (idx >= 0) set[idx].score = score;
+          else set.push({ score, member });
+        }
+        set.sort((a, b) => b.score - a.score);
+        sortedSets.set(key, set);
+        return args.length / 2;
+      },
+      async zrevrangebyscore(key, _max, _min, ...args) {
+        const set = sortedSets.get(key) ?? [];
+        let limit = set.length;
+        const li = args.indexOf('LIMIT');
+        if (li >= 0 && args[li + 2]) limit = Number(args[li + 2]);
+        return set.slice(0, limit).map((e) => e.member);
+      },
+      async del(key) {
+        data.delete(key);
+        return 1;
+      },
+    };
+
+    const mockProvider = {
+      id: 'mock',
+      info: { id: 'mock', name: 'Mock', capabilities: ['text2video'], models: ['m1'], authMode: 'api_key' },
+      supports: (cap) => cap === 'text2video',
+      submit: async () => ({ providerTaskId: 'task-1', status: 'running' }),
+      queryStatus: async () => ({ status: 'succeeded', providerResultUrl: 'https://cdn.example.com/out.mp4' }),
+      ...providerOverrides,
+    };
+
+    const registry = new ProviderRegistry();
+    registry.register(mockProvider);
+
+    const mockStorage = {
+      download: async () => '/data/mock/output.mp4',
+      getBaseDir: () => '/data',
+    };
+
+    const jobStore = new JobStore(redis);
+    const service = new MediaHubService(registry, jobStore, mockStorage);
+    return { service, jobStore };
+  }
+
+  it('generateVideo creates job and submits to provider', async () => {
+    const { service } = await buildTestService();
+    const job = await service.generateVideo({
+      providerId: 'mock',
+      prompt: 'cat dancing',
+      capability: 'text2video',
+    });
+    assert.ok(job.jobId);
+    assert.equal(job.providerId, 'mock');
+    assert.equal(job.status, 'running');
+    assert.equal(job.providerTaskId, 'task-1');
+  });
+
+  it('generateVideo returns failed when provider throws', async () => {
+    const { service } = await buildTestService({
+      submit: async () => {
+        throw new Error('API key invalid');
+      },
+    });
+    const job = await service.generateVideo({
+      providerId: 'mock',
+      prompt: 'cat dancing',
+      capability: 'text2video',
+    });
+    assert.equal(job.status, 'failed');
+    assert.equal(job.error, 'API key invalid');
+  });
+
+  it('generateVideo throws for unknown provider', async () => {
+    const { service } = await buildTestService();
+    await assert.rejects(
+      () =>
+        service.generateVideo({
+          providerId: 'nonexistent',
+          prompt: 'test',
+          capability: 'text2video',
+        }),
+      /Unknown provider: nonexistent/,
+    );
+  });
+
+  it('generateVideo throws for unsupported capability', async () => {
+    const { service } = await buildTestService();
+    await assert.rejects(
+      () =>
+        service.generateVideo({
+          providerId: 'mock',
+          prompt: 'test',
+          capability: 'text2image',
+        }),
+      /does not support text2image/,
+    );
+  });
+
+  it('getJobStatus returns not-found for unknown job', async () => {
+    const { service } = await buildTestService();
+    const result = await service.getJobStatus('no-such-id');
+    assert.equal(result.status, 'failed');
+    assert.match(result.error, /not found/i);
+  });
+
+  it('getJobStatus polls provider and downloads on success', async () => {
+    const { service } = await buildTestService();
+    const job = await service.generateVideo({
+      providerId: 'mock',
+      prompt: 'cat singing',
+      capability: 'text2video',
+    });
+
+    const status = await service.getJobStatus(job.jobId);
+    assert.equal(status.status, 'succeeded');
+    assert.equal(status.outputPath, '/data/mock/output.mp4');
+    assert.equal(status.providerResultUrl, 'https://cdn.example.com/out.mp4');
+  });
+
+  it('getJobStatus returns cached terminal state without re-polling', async () => {
+    let pollCount = 0;
+    const { service } = await buildTestService({
+      queryStatus: async () => {
+        pollCount++;
+        return { status: 'succeeded', providerResultUrl: 'https://cdn.example.com/out.mp4' };
+      },
+    });
+
+    const job = await service.generateVideo({
+      providerId: 'mock',
+      prompt: 'test',
+      capability: 'text2video',
+    });
+    await service.getJobStatus(job.jobId); // first poll → succeeds
+    const before = pollCount;
+    await service.getJobStatus(job.jobId); // second call → should use cached
+    assert.equal(pollCount, before); // no additional poll
+  });
+
+  it('listJobs returns submitted jobs', async () => {
+    const { service } = await buildTestService();
+    await service.generateVideo({ providerId: 'mock', prompt: 'a', capability: 'text2video' });
+    await service.generateVideo({ providerId: 'mock', prompt: 'b', capability: 'text2video' });
+    const jobs = await service.listJobs(10);
+    assert.equal(jobs.length, 2);
   });
 });

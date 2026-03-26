@@ -13,6 +13,38 @@ const DOWNLOAD_TIMEOUT_MS = 120_000; // 2 min
 const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024; // 500 MB
 const ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 
+const BLOCKED_HOSTNAMES = new Set(['localhost', '[::1]']);
+
+/** Check if an IPv4 address falls in a private/reserved range */
+function isPrivateIPv4(ip: string): boolean {
+  const parts = ip.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((p) => Number.isNaN(p))) return false;
+  const [a, b] = parts;
+  return (
+    a === 127 || // 127.0.0.0/8 loopback
+    a === 10 || // 10.0.0.0/8 private
+    (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12 private
+    (a === 192 && b === 168) || // 192.168.0.0/16 private
+    (a === 169 && b === 254) || // 169.254.0.0/16 link-local
+    a === 0 // 0.0.0.0/8
+  );
+}
+
+/** Block private/internal network targets to prevent SSRF */
+function assertPublicHost(hostname: string): void {
+  if (BLOCKED_HOSTNAMES.has(hostname.toLowerCase())) {
+    throw new Error(`Blocked download: host "${hostname}" is internal`);
+  }
+  // Strip brackets from IPv6
+  const bare = hostname.replace(/^\[|\]$/g, '');
+  if (bare === '::1' || bare.startsWith('fc') || bare.startsWith('fd') || bare.startsWith('fe80')) {
+    throw new Error(`Blocked download: host "${hostname}" is internal`);
+  }
+  if (isPrivateIPv4(bare)) {
+    throw new Error(`Blocked download: host "${bare}" is internal`);
+  }
+}
+
 export class MediaStorage {
   private readonly baseDir: string;
 
@@ -28,11 +60,12 @@ export class MediaStorage {
 
   /** Download a media file from URL and save locally. Returns local file path. */
   async download(providerId: string, jobId: string, url: string, filename?: string): Promise<string> {
-    // Validate URL protocol to prevent SSRF
+    // Validate URL protocol and host to prevent SSRF
     const parsed = new URL(url);
     if (!ALLOWED_PROTOCOLS.has(parsed.protocol)) {
       throw new Error(`Blocked download: protocol "${parsed.protocol}" not allowed`);
     }
+    assertPublicHost(parsed.hostname);
 
     const dir = this.ensureJobDir(providerId, jobId);
     const ext = this.guessExtension(url, filename);
