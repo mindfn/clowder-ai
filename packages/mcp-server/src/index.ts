@@ -31,7 +31,7 @@ export function createServer(): McpServer {
  */
 async function main(): Promise<void> {
   initCatCafeDir();
-  bootstrapMediaHub();
+  await bootstrapMediaHub();
   const server = createServer();
   const transport = new StdioServerTransport();
   console.error('[cat-cafe] MCP Server starting...');

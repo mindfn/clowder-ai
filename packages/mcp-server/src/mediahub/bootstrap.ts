@@ -88,35 +88,39 @@ function createMemoryRedisStub(): RedisClient {
   };
 }
 
-/** Try real Redis, fall back to in-memory stub */
-function createRedis(): { client: RedisClient; persistent: boolean } {
+const REDIS_PING_TIMEOUT_MS = 3000;
+
+/** Try real Redis with actual ping probe, fall back to in-memory stub */
+async function createRedis(): Promise<{ client: RedisClient; persistent: boolean }> {
+  const url = process.env['REDIS_URL'] ?? 'redis://localhost:6398';
   try {
-    const url = process.env['REDIS_URL'] ?? 'redis://localhost:6398';
     const ioredis = createRedisClient({ url, keyPrefix: 'cat-cafe:' });
 
-    // Attach error handler to prevent unhandled rejection on connect failure
-    let failed = false;
-    ioredis.on('error', () => {
-      failed = true;
-    });
+    // Suppress unhandled error events during probe
+    ioredis.on('error', () => {});
 
-    // If connection fails within 2s, bootstrapMediaHub will already have
-    // completed with the real client. The error handler above prevents crash.
-    // Jobs stored before disconnect are in Redis; after, calls will throw
-    // and tools will return error messages gracefully.
-    if (!failed) {
+    // Actually probe the connection — this catches unreachable hosts
+    const pingResult = await Promise.race([
+      ioredis.ping(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('ping timeout')), REDIS_PING_TIMEOUT_MS)),
+    ]);
+
+    if (pingResult === 'PONG') {
       console.error(`[mediahub] Redis connected: ${url}`);
       return { client: wrapIoredis(ioredis), persistent: true };
     }
+
+    // Unexpected ping response — disconnect and fall through
+    await ioredis.quit().catch(() => {});
   } catch {
-    // createRedisClient threw — fall through to in-memory
+    // ping failed or timed out — fall through to in-memory
   }
 
   console.error('[mediahub] Redis unavailable, using in-memory stub (jobs will not persist across restarts)');
   return { client: createMemoryRedisStub(), persistent: false };
 }
 
-export function bootstrapMediaHub(): void {
+export async function bootstrapMediaHub(): Promise<void> {
   const registry = new ProviderRegistry();
 
   const cogvideox = createCogVideoXProvider();
@@ -125,7 +129,7 @@ export function bootstrapMediaHub(): void {
     console.error('[mediahub] Registered provider: CogVideoX');
   }
 
-  const { client: redis, persistent } = createRedis();
+  const { client: redis, persistent } = await createRedis();
   const jobStore = new JobStore(redis);
   const storage = new MediaStorage();
 
