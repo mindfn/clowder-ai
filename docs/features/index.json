@@ -845,7 +845,13 @@
       "name": "Cat Café Video Studio — AI 视频制作管线",
       "status": "spec | **Owner**: 金渐层 | **Priority**: P1",
       "file": "F138-video-studio.md"
+    },
+    {
+      "id": "F139",
+      "name": "MediaHub — AI Media Generation Gateway",
+      "status": "spec | **Owner**: 布偶猫 | **Priority**: P1",
+      "file": "F139-mediahub.md"
     }
   ],
-  "generated_at": "2026-03-25T03:34:06.623Z"
+  "generated_at": "2026-03-26T06:51:21.057Z"
 }

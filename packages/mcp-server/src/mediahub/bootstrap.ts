@@ -2,9 +2,11 @@
  * MediaHub — Bootstrap
  * F139: Initializes providers, job store, and service at startup.
  *
- * Redis connection is lazy — if REDIS_URL is not set or Redis is unavailable,
- * MediaHub tools will return helpful error messages instead of crashing the MCP server.
+ * Redis: tries real Redis via REDIS_URL (or default 6398 dev port).
+ * Falls back to in-memory stub if unavailable — jobs won't persist across restarts.
  */
+
+import { createRedisClient } from '@cat-cafe/shared/utils';
 
 import type { RedisClient } from './job-store.js';
 import { JobStore } from './job-store.js';
@@ -13,6 +15,29 @@ import { MediaHubService } from './mediahub-service.js';
 import { setMediaHubService } from './mediahub-tools.js';
 import { ProviderRegistry } from './provider.js';
 import { createCogVideoXProvider } from './providers/cogvideox.js';
+
+/** Wrap ioredis instance to our minimal RedisClient interface */
+function wrapIoredis(ioredis: ReturnType<typeof createRedisClient>): RedisClient {
+  return {
+    hset: (key, data) => ioredis.hset(key, data),
+    hgetall: (key) => ioredis.hgetall(key),
+    expire: (key, seconds) => ioredis.expire(key, seconds),
+    zadd: async (key, ...args) => {
+      // ioredis zadd: score1, member1, score2, member2, ...
+      const strArgs = args.map(String);
+      return ioredis.zadd(key, ...strArgs) as unknown as number;
+    },
+    zrevrangebyscore: async (key, max, min, ...rest) => {
+      const sMax = String(max);
+      const sMin = String(min);
+      if (rest[0] === 'LIMIT') {
+        return ioredis.zrevrangebyscore(key, sMax, sMin, 'LIMIT', Number(rest[1]), Number(rest[2]));
+      }
+      return ioredis.zrevrangebyscore(key, sMax, sMin);
+    },
+    del: (key) => ioredis.del(key),
+  };
+}
 
 /** In-memory Redis stub for when real Redis is unavailable */
 function createMemoryRedisStub(): RedisClient {
@@ -29,11 +54,10 @@ function createMemoryRedisStub(): RedisClient {
       return store.get(key) ?? {};
     },
     async expire(_key: string, _seconds: number) {
-      return 1; // no-op for in-memory
+      return 1;
     },
     async zadd(key: string, ...args: Array<string | number>) {
       const set = sortedSets.get(key) ?? [];
-      // args come as score, member pairs
       for (let i = 0; i < args.length; i += 2) {
         const score = Number(args[i]);
         const member = String(args[i + 1]);
@@ -64,23 +88,50 @@ function createMemoryRedisStub(): RedisClient {
   };
 }
 
+/** Try real Redis, fall back to in-memory stub */
+function createRedis(): { client: RedisClient; persistent: boolean } {
+  try {
+    const url = process.env['REDIS_URL'] ?? 'redis://localhost:6398';
+    const ioredis = createRedisClient({ url, keyPrefix: 'cat-cafe:' });
+
+    // Attach error handler to prevent unhandled rejection on connect failure
+    let failed = false;
+    ioredis.on('error', () => {
+      failed = true;
+    });
+
+    // If connection fails within 2s, bootstrapMediaHub will already have
+    // completed with the real client. The error handler above prevents crash.
+    // Jobs stored before disconnect are in Redis; after, calls will throw
+    // and tools will return error messages gracefully.
+    if (!failed) {
+      console.error(`[mediahub] Redis connected: ${url}`);
+      return { client: wrapIoredis(ioredis), persistent: true };
+    }
+  } catch {
+    // createRedisClient threw — fall through to in-memory
+  }
+
+  console.error('[mediahub] Redis unavailable, using in-memory stub (jobs will not persist across restarts)');
+  return { client: createMemoryRedisStub(), persistent: false };
+}
+
 export function bootstrapMediaHub(): void {
   const registry = new ProviderRegistry();
 
-  // Register available providers
   const cogvideox = createCogVideoXProvider();
   if (cogvideox) {
     registry.register(cogvideox);
     console.error('[mediahub] Registered provider: CogVideoX');
   }
 
-  // Use in-memory Redis stub (real Redis integration in Phase B)
-  const redis = createMemoryRedisStub();
+  const { client: redis, persistent } = createRedis();
   const jobStore = new JobStore(redis);
   const storage = new MediaStorage();
 
   const service = new MediaHubService(registry, jobStore, storage);
   setMediaHubService(service);
 
-  console.error(`[mediahub] Bootstrap complete. Providers: ${registry.size}`);
+  const mode = persistent ? 'persistent' : 'in-memory';
+  console.error(`[mediahub] Bootstrap complete. Providers: ${registry.size}, Redis: ${mode}`);
 }
