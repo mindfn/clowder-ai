@@ -43,6 +43,7 @@ export const HUB_GROUPS: HubGroup[] = [
       { id: 'system', label: '系统配置', icon: 'settings' },
       { id: 'env', label: '环境 & 文件', icon: 'folder' },
       { id: 'provider-profiles', label: '账号配置', icon: 'user-cog' },
+      { id: 'mediahub', label: '媒体生成', icon: 'video' },
       { id: 'voice', label: '语音设置', icon: 'mic' },
       { id: 'notify', label: '通知', icon: 'bell' },
     ],

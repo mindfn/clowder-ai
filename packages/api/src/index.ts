@@ -120,6 +120,7 @@ import {
   invocationsRoutes,
   leaderboardEventsRoutes,
   leaderboardRoutes,
+  mediahubAccountsRoutes,
   memoryPublishRoutes,
   memoryRoutes,
   messageActionsRoutes,
@@ -1000,6 +1001,7 @@ async function main(): Promise<void> {
   await app.register(configRoutes);
   await app.register(featureDocDetailRoutes);
   await app.register(providerProfilesRoutes);
+  await app.register(mediahubAccountsRoutes, { redis });
   await app.register(claudeRescueRoutes);
   await app.register(auditRoutes, { threadStore });
   await app.register(capabilitiesRoutes);
