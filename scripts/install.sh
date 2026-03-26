@@ -716,6 +716,7 @@ MISSING_AGENTS=()
 command -v claude &>/dev/null && ok "Claude Code already installed" || MISSING_AGENTS+=("claude")
 command -v codex &>/dev/null && ok "Codex CLI already installed"  || MISSING_AGENTS+=("codex")
 command -v gemini &>/dev/null && ok "Gemini CLI already installed" || MISSING_AGENTS+=("gemini")
+command -v opencode &>/dev/null && ok "OpenCode CLI already installed" || MISSING_AGENTS+=("opencode")
 
 if [[ ${#MISSING_AGENTS[@]} -gt 0 ]]; then
     INSTALL_AGENTS=("${MISSING_AGENTS[@]}")  # default: install all missing
@@ -740,80 +741,34 @@ if [[ ${#MISSING_AGENTS[@]} -gt 0 ]]; then
             claude) install_claude_cli ;;
             codex)  install_npm_cli "Codex CLI" "codex" "@openai/codex" ;;
             gemini) install_npm_cli "Gemini CLI" "gemini" "@google/gemini-cli" ;;
+            opencode) install_npm_cli "OpenCode CLI" "opencode" "opencode-ai" ;;
         esac
     done
 fi
 
 # ── [7/9] Authentication setup / 认证配置 ─────────────────
-step "[7/9] Authentication setup / 认证配置..."
+step "[7/9] Authentication bootstrap / 认证引导初始化..."
 configure_agent_auth() {
     local name="$1" cmd="$2"
     command -v "$cmd" &>/dev/null || return 0
 
-    # Gemini CLI doesn't support custom API endpoints — always use OAuth
-    if [[ "$cmd" == "gemini" ]]; then
-        node scripts/install-auth-config.mjs client-auth set \
-            --project-dir "$PROJECT_DIR" \
-            --client "$cmd" \
-            --mode oauth
-        ok "$name: OAuth mode (Gemini CLI only supports Google official API)"
-        return 0
-    fi
-
-    local auth_sel
-    tty_select auth_sel "  $name ($cmd) — auth mode:" \
-        "OAuth / Subscription (recommended / 推荐)" \
-        "API Key"
-    if [[ "$auth_sel" != "1" ]]; then
-        # Remove stale installer API Key profile + set OAuth binding
-        node scripts/install-auth-config.mjs client-auth remove \
-            --project-dir "$PROJECT_DIR" \
-            --client "$cmd" 2>/dev/null || true
-        node scripts/install-auth-config.mjs client-auth set \
-            --project-dir "$PROJECT_DIR" \
-            --client "$cmd" \
-            --mode oauth
-        ok "$name: OAuth mode (login on first use: run '$cmd')"
-        return 0
-    fi
-    local key="" base_url="" model=""
-    tty_read_secret "    API Key: " key
-    tty_read "    Base URL (Enter = default): " base_url
-    tty_read "    Model (Enter = default): " model
-
-    if [[ -n "$key" ]]; then
-        # All clients use the same install-auth-config.mjs to create provider profiles
-        local install_args=(
-            node scripts/install-auth-config.mjs client-auth set
-            --project-dir "$PROJECT_DIR"
-            --client "$cmd"
-            --mode api_key
-            --base-url "${base_url:-}"
-        )
-        [[ -n "$model" ]] && install_args+=(--model "$model")
-        _INSTALLER_API_KEY="$key" "${install_args[@]}"
-        ok "$name: API key profile created in .cat-cafe/"
-    else
-        # No key provided — set OAuth mode via unified path
-        # Also remove any stale installer API Key profile for this client
-        node scripts/install-auth-config.mjs client-auth remove \
-            --project-dir "$PROJECT_DIR" \
-            --client "$cmd" 2>/dev/null || true
-        node scripts/install-auth-config.mjs client-auth set \
-            --project-dir "$PROJECT_DIR" \
-            --client "$cmd" \
-            --mode oauth
-        warn "$name: no key provided, keeping OAuth"
-    fi
+    # Installer no longer collects API keys. Use OAuth bootstrap and defer auth details
+    # to the first-run "add member" quest inside the app.
+    node scripts/install-auth-config.mjs client-auth remove \
+        --project-dir "$PROJECT_DIR" \
+        --client "$cmd" 2>/dev/null || true
+    node scripts/install-auth-config.mjs client-auth set \
+        --project-dir "$PROJECT_DIR" \
+        --client "$cmd" \
+        --mode oauth
+    ok "$name: deferred to first-run onboarding (run '$cmd' to login later)"
 }
 
-if [[ "$HAS_TTY" == true ]]; then
-    info "  Configure each agent / 逐个配置每只猫的认证方式："
-    configure_agent_auth "Claude (布偶猫)" "claude"; configure_agent_auth "Codex (缅因猫)" "codex"
-    configure_agent_auth "Gemini (暹罗猫)" "gemini"
-else
-    info "  Non-interactive — skipping auth. Run each CLI to log in: claude / codex / gemini"
-fi
+info "  API key setup moved to first-run onboarding / API Key 配置后置到首次引导"
+configure_agent_auth "Claude (布偶猫)" "claude"
+configure_agent_auth "Codex (缅因猫)" "codex"
+configure_agent_auth "Gemini (暹罗猫)" "gemini"
+configure_agent_auth "OpenCode (金渐层)" "opencode"
 
 # ── [8/9] Generate .env with all collected config ─────────
 step "[8/9] Generating config / 生成配置..."
@@ -829,6 +784,13 @@ for i in "${!ENV_KEYS[@]}"; do write_env_key "${ENV_KEYS[$i]}" "${ENV_VALUES[$i]
 [[ ${#ENV_KEYS[@]} -gt 0 ]] && ok "Auth config written to .env"
 # Auto-detect Docker: only set host default on a freshly generated .env.
 maybe_write_docker_api_host
+# First-run quest defaults to zero runtime members on fresh installs.
+if env_has_key "CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS"; then
+    ok "CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS already set — preserving existing value"
+else
+    write_env_key "CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS" "1"
+    ok "Enabled first-run zero-member bootstrap (CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS=1)"
+fi
 chmod 600 .env 2>/dev/null || true
 
 # ── [9/9] Done ──────────────────────────────────────────────

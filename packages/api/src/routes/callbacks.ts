@@ -31,6 +31,7 @@ import { getFeatureTagId } from './backlog-doc-import.js';
 import { enqueueA2ATargets, triggerA2AInvocation } from './callback-a2a-trigger.js';
 import { callbackAuthSchema } from './callback-auth-schema.js';
 import { registerCallbackBootcampRoutes } from './callback-bootcamp-routes.js';
+import { registerCallbackQuestRoutes } from './callback-quest-routes.js';
 import { registerCallbackDocumentRoutes } from './callback-document-routes.js';
 import { EXPIRED_CREDENTIALS_ERROR } from './callback-errors.js';
 import { registerCallbackLimbRoutes } from './callback-limb-routes.js';
@@ -1268,6 +1269,11 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
   // F087: Bootcamp state transition callbacks
   if (opts.threadStore) {
     registerCallbackBootcampRoutes(app, { registry, threadStore: opts.threadStore });
+  }
+
+  // F140: First-Run Quest state transition callbacks
+  if (opts.threadStore) {
+    registerCallbackQuestRoutes(app, { threadStore: opts.threadStore });
   }
 
   await registerCallbackMemoryRoutes(app, {
