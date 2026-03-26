@@ -25,6 +25,7 @@ import { HubEnvFilesTab } from './HubEnvFilesTab';
 import { HubGovernanceTab } from './HubGovernanceTab';
 import { HubLeaderboardTab } from './HubLeaderboardTab';
 import { HubMemoryTab } from './HubMemoryTab';
+import { HubMediaHubTab } from './HubMediaHubTab';
 import { HubRoutingPolicyTab } from './HubRoutingPolicyTab';
 import { HubToolUsageTab } from './HubToolUsageTab';
 import { PushSettingsPanel } from './PushSettingsPanel';
@@ -246,6 +247,8 @@ export function CatCafeHub() {
             {tab === 'routing' && <HubRoutingPolicyTab />}
             {tab === 'tool-usage' && <HubToolUsageTab />}
             {tab === 'env' && <HubEnvFilesTab />}
+            {tab === 'accounts' && <HubAccountsTab />}
+            {tab === 'mediahub' && <HubMediaHubTab />}
             {tab === 'accounts' && <HubAccountsTab />}
             {tab === 'voice' && <VoiceSettingsPanel />}
             {tab === 'notify' && <PushSettingsPanel />}
