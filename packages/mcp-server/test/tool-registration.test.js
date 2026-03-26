@@ -88,6 +88,11 @@ const EXPECTED_TOOLS = [
   'cat_cafe_preview_scheduled_task',
   'cat_cafe_register_scheduled_task',
   'cat_cafe_remove_scheduled_task',
+  // F139: MediaHub tools
+  'mediahub_list_providers',
+  'mediahub_generate_video',
+  'mediahub_get_job_status',
+  'mediahub_list_jobs',
 ];
 
 const EXPECTED_COLLAB_TOOLS = [
