@@ -871,6 +871,12 @@
       "file": "F142-connector-slash-commands.md"
     },
     {
+      "id": "F142-mh",
+      "name": "MediaHub — AI Media Generation Gateway",
+      "status": "in-progress | **Owner**: 布偶猫 | **Priority**: P1",
+      "file": "F142-mediahub.md"
+    },
+    {
       "id": "F143",
       "name": "Hostable Agent Runtime — 统一宿主抽象",
       "status": "spec | **Owner**: Ragdoll Opus 4.6 | **Priority**: P1",
