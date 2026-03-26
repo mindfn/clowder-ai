@@ -853,6 +853,12 @@
       "file": "F139-unified-schedule-abstraction.md"
     },
     {
+      "id": "F139b",
+      "name": "MediaHub — AI Media Generation Gateway",
+      "status": "spec | **Owner**: 布偶猫 | **Priority**: P1",
+      "file": "F139-mediahub.md"
+    },
+    {
       "id": "F140",
       "name": "GitHub PR Signals — 冲突检测 + Review Feedback 全来源感知",
       "status": "done | **Owner**: Ragdoll | **Priority**: P1 | **Completed**: 2026-03-27",
