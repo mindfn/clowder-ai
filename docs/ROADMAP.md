@@ -59,3 +59,4 @@ created: 2026-02-26
 | F136 | Unified Config Hot Reload — 配置热更新统一管线 | spec | 待定 | internal | [F136](features/F136-unified-config-hot-reload.md) |
 | F137 | WeChat Personal Gateway — 微信个人号 iLink Bot 接入 | impl | 金渐层 | internal | [F137](features/F137-weixin-personal-gateway.md) |
 | F138 | Cat Café Video Studio — AI 视频制作管线 | spec | 金渐层 | internal | [F138](features/F138-video-studio.md) |
+| F139 | MediaHub — AI Media Generation Gateway | spec | 布偶猫 | internal | [F139](features/F139-mediahub.md) |
