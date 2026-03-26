@@ -136,6 +136,46 @@ describe('cats routes read runtime catalog', { concurrency: false }, () => {
     assert.deepEqual(runtimeCat.mentionPatterns, ['@runtime-cat']);
   });
 
+  it('GET /api/cat-templates returns template cats even when runtime catalog has additional members', async () => {
+    const templateConfig = makeVersion2Config('template-cat', '模板猫', {
+      family: 'ragdoll',
+      roles: ['architect'],
+      lead: true,
+      evaluation: 'template-evaluation',
+      provider: 'anthropic',
+      defaultModel: 'claude-opus-4-6',
+    });
+    const runtimeCatalog = {
+      ...templateConfig,
+      breeds: [...templateConfig.breeds, ...makeCatalog('runtime-cat', '运行时猫').breeds],
+    };
+    const projectRoot = createRuntimeCatalogProject(runtimeCatalog, templateConfig);
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    const res = await app.inject({ method: 'GET', url: '/api/cat-templates' });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(Array.isArray(body.templates), 'templates should be an array');
+    assert.equal(body.templates.length, 1);
+    assert.equal(body.templates[0].id, 'template-cat');
+    assert.equal(body.templates[0].source, 'template');
+    assert.deepEqual(body.templates[0].roster, {
+      family: 'ragdoll',
+      roles: ['architect'],
+      lead: true,
+      available: true,
+      evaluation: 'template-evaluation',
+    });
+
+    await app.close();
+  });
+
   it('GET /api/cats annotates seed/runtime source and roster metadata', async () => {
     const templateConfig = makeVersion2Config('template-cat', '模板猫', {
       family: 'ragdoll',

@@ -60,3 +60,4 @@ created: 2026-02-26
 | F137 | WeChat Personal Gateway — 微信个人号 iLink Bot 接入 | impl | 金渐层 | internal | [F137](features/F137-weixin-personal-gateway.md) |
 | F138 | Cat Café Video Studio — AI 视频制作管线 | spec | 金渐层 | internal | [F138](features/F138-video-studio.md) |
 | F139 | MediaHub — AI Media Generation Gateway | spec | 布偶猫 | internal | [F139](features/F139-mediahub.md) |
+| F140 | First-Run Quest — 首次安装零成员 + 游戏化新手引导 | spec | 缅因猫 + 布偶猫 | internal | [F140](features/F140-first-run-quest-onboarding.md) |

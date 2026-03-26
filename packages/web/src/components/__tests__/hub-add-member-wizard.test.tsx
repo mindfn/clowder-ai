@@ -98,10 +98,10 @@ describe('HubAddMemberWizard', () => {
     root = createRoot(container);
     mockApiFetch.mockReset();
     mockApiFetch.mockImplementation((path: string) => {
-      if (path === '/api/cats') {
+      if (path === '/api/cat-templates') {
         return Promise.resolve(
           jsonResponse({
-            cats: [
+            templates: [
               {
                 id: 'antigravity-template',
                 provider: 'antigravity',
@@ -287,7 +287,7 @@ describe('HubAddMemberWizard', () => {
     );
   });
 
-  it('uses seed antigravity defaults from /api/cats instead of runtime cat values', async () => {
+  it('uses seed antigravity defaults from /api/cat-templates instead of runtime cat values', async () => {
     await act(async () => {
       root.render(React.createElement(WizardHost));
     });

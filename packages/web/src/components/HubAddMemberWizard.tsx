@@ -110,16 +110,16 @@ export function HubAddMemberWizard({ open, onClose, onComplete }: HubAddMemberWi
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    apiFetch('/api/cats')
+    apiFetch('/api/cat-templates')
       .then(async (res) => {
         if (!res.ok) throw new Error(`成员模板加载失败 (${res.status})`);
         return (await res.json()) as {
-          cats?: Array<{ provider: string; source?: string; defaultModel?: string; commandArgs?: string[] }>;
+          templates?: Array<{ provider: string; source?: string; defaultModel?: string; commandArgs?: string[] }>;
         };
       })
       .then((body) => {
         if (cancelled) return;
-        setSeedCats(Array.isArray(body.cats) ? body.cats : []);
+        setSeedCats(Array.isArray(body.templates) ? body.templates : []);
       })
       .catch(() => {
         if (!cancelled) setSeedCats([]);

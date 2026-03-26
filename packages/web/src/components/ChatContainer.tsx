@@ -28,6 +28,8 @@ import { A2ACollapsible } from './A2ACollapsible';
 import { AuthorizationCard } from './AuthorizationCard';
 import { BootcampListModal } from './BootcampListModal';
 import { CatCafeHub } from './CatCafeHub';
+import { FirstRunQuestWizard } from './FirstRunQuestWizard';
+import { QuestBanner } from './first-run-quest/QuestBanner';
 import { ChatContainerHeader } from './ChatContainerHeader';
 import { ChatInput } from './ChatInput';
 import { ChatMessage } from './ChatMessage';
@@ -54,6 +56,8 @@ import { ResizeHandle } from './workspace/ResizeHandle';
 interface ChatContainerProps {
   threadId: string;
 }
+
+const FIRST_RUN_QUEST_SKIP_KEY = 'cat-cafe:first-run-quest:skip-v1';
 
 export function ChatContainer({ threadId }: ChatContainerProps) {
   const {
@@ -97,7 +101,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   // AC-6: research=multi hint from Signal study "多猫研究" button
   const isResearchMode = searchParams?.get('research') === 'multi';
   const { clearTasks } = useTaskStore();
-  const { getCatById } = useCatData();
+  const { cats, getCatById } = useCatData();
   const workspaceWorktreeId = useChatStore((s) => s.workspaceWorktreeId);
   usePreviewAutoOpen(workspaceWorktreeId);
   useWorkspaceNavigate(workspaceWorktreeId, threadId);
@@ -106,6 +110,8 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   const [mobileStatusOpen, setMobileStatusOpen] = useState(false);
   const [showBootcampList, setShowBootcampList] = useState(false);
   const [showHubList, setShowHubList] = useState(false);
+  const [showFirstRunQuestPrompt, setShowFirstRunQuestPrompt] = useState(false);
+  const [showQuestWizard, setShowQuestWizard] = useState(false);
   // F106: fetch bootcamp count independently of sidebar lifecycle
   // refreshKey increments only on modal close → avoids duplicate fetch on open
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -267,6 +273,32 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   // setCurrentThread saves old thread state to map, restores new thread state.
   const setCurrentProject = useChatStore((s) => s.setCurrentProject);
   const storeThreads = useChatStore((s) => s.threads);
+  const handleSkipFirstRunQuest = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(FIRST_RUN_QUEST_SKIP_KEY, '1');
+    }
+    setShowFirstRunQuestPrompt(false);
+  }, []);
+  const handleStartFirstRunQuest = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(FIRST_RUN_QUEST_SKIP_KEY);
+    }
+    setShowFirstRunQuestPrompt(false);
+    setShowQuestWizard(true);
+  }, []);
+  useEffect(() => {
+    const isCurrentBootcamp = Boolean(storeThreads.find((thread) => thread.id === threadId)?.bootcampState);
+    if (isCurrentBootcamp || cats.length > 0) {
+      setShowFirstRunQuestPrompt(false);
+      return;
+    }
+    if (typeof window === 'undefined') {
+      setShowFirstRunQuestPrompt(false);
+      return;
+    }
+    const skipped = window.localStorage.getItem(FIRST_RUN_QUEST_SKIP_KEY) === '1';
+    setShowFirstRunQuestPrompt(!skipped);
+  }, [cats.length, storeThreads, threadId]);
   const prevThreadRef = useRef(threadId);
   useEffect(() => {
     if (prevThreadRef.current !== threadId) {
@@ -418,6 +450,14 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     [setViewMode, router],
   );
 
+  const handleQuestCreated = useCallback(
+    (questThreadId: string) => {
+      setShowQuestWizard(false);
+      router.push(`/thread/${questThreadId}`);
+    },
+    [router],
+  );
+
   if (viewMode === 'split') {
     return (
       <>
@@ -521,7 +561,9 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
               <div className="text-center mt-20">
                 <PawIcon className="w-12 h-12 text-cocreator-light mx-auto mb-4" />
                 <p className="text-lg text-gray-500 mb-1">欢迎来到 Clowder AI!</p>
-                <p className="text-sm text-gray-400">输入 @布偶 召唤布偶猫开始聊天</p>
+                <p className="text-sm text-gray-400">
+                  {cats.length > 0 ? '输入 @布偶 召唤布偶猫开始聊天' : '还没有可用成员，先开始新手教程创建第一只猫猫'}
+                </p>
                 {(() => {
                   const isCurrentBootcamp = storeThreads.find((t) => t.id === threadId)?.bootcampState;
                   if (isCurrentBootcamp) return null; // already in bootcamp thread
@@ -587,6 +629,22 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
         <ThreadExecutionBar />
         <QueuePanel threadId={threadId} />
         <VoteActiveBar threadId={threadId} onEnd={() => {}} />
+
+        {(() => {
+          const currentThread = storeThreads.find((t) => t.id === threadId);
+          const questState = (currentThread as Record<string, unknown> | undefined)?.firstRunQuestState as
+            | { phase: string; firstCatName?: string }
+            | undefined;
+          if (!questState) return null;
+          return (
+            <QuestBanner
+              phase={questState.phase}
+              firstCatName={questState.firstCatName}
+              onAddSecondCat={() => setShowQuestWizard(true)}
+              onComplete={() => router.push('/hub')}
+            />
+          );
+        })()}
 
         {isResearchMode && (
           <div className="mx-4 mb-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
@@ -698,7 +756,44 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
         threadId={threadId}
         messageSummary={messageSummary}
       />
+      {showFirstRunQuestPrompt && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4"
+          onClick={handleSkipFirstRunQuest}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-amber-200 bg-white p-6 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-gray-900">开始猫猫新手教程？</h3>
+            <p className="mt-2 text-sm text-gray-600">
+              当前还没有可用成员。我们可以先带你创建第一只猫猫，再开始首个协作任务。
+            </p>
+            <div className="mt-5 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={handleSkipFirstRunQuest}
+                className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+              >
+                跳过
+              </button>
+              <button
+                type="button"
+                onClick={handleStartFirstRunQuest}
+                className="rounded-lg bg-amber-500 px-3 py-2 text-sm font-medium text-white hover:bg-amber-600"
+              >
+                开始教程
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <CatCafeHub />
+      <FirstRunQuestWizard
+        open={showQuestWizard}
+        onClose={() => setShowQuestWizard(false)}
+        onCreated={handleQuestCreated}
+      />
       <BootcampListModal open={showBootcampList} onClose={handleBootcampModalClose} currentThreadId={threadId} />
       <HubListModal open={showHubList} onClose={() => setShowHubList(false)} currentThreadId={threadId} />
       {showVoteModal && <VoteConfigModal onSubmit={handleVoteSubmit} onCancel={() => setShowVoteModal(false)} />}

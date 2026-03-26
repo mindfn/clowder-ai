@@ -191,14 +191,14 @@ const coCreatorConfigSchema = z.object({
 /** Version 1: breeds only (legacy) */
 const catCafeConfigSchemaV1 = z.object({
   version: z.literal(1),
-  breeds: z.array(catBreedSchema).min(1),
+  breeds: z.array(catBreedSchema),
 });
 
 /** Version 2: breeds + roster + reviewPolicy (F032) + coCreator (F067) */
 const catCafeConfigSchemaV2 = z
   .object({
     version: z.literal(2),
-    breeds: z.array(catBreedSchema).min(1),
+    breeds: z.array(catBreedSchema),
     roster: z.record(z.string(), rosterEntrySchema),
     reviewPolicy: reviewPolicySchema,
     coCreator: coCreatorConfigSchema.optional(),
@@ -643,7 +643,7 @@ export function getDefaultCatId(): CatId {
     return _defaultCatId;
   }
 
-  // Ultimate fallback (should not trigger — config always has at least 1 breed)
+  // Ultimate fallback for zero-member bootstrap mode.
   return createCatId('opus');
 }
 

@@ -258,6 +258,27 @@ describe('cat-catalog-store', () => {
     );
   });
 
+  it('bootstraps an empty runtime catalog when CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS=1', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-empty-members-'));
+    const templatePath = join(projectRoot, 'cat-template.json');
+    const template = makeF127BootstrapTemplate();
+    writeFileSync(templatePath, JSON.stringify(template, null, 2));
+
+    const previous = process.env.CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS;
+    process.env.CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS = '1';
+    try {
+      const catalogPath = bootstrapCatCatalog(projectRoot, templatePath);
+      const runtimeCatalog = JSON.parse(readFileSync(catalogPath, 'utf-8'));
+      assert.deepEqual(runtimeCatalog.breeds, []);
+      assert.deepEqual(runtimeCatalog.roster, {});
+      assert.deepEqual(runtimeCatalog.reviewPolicy, template.reviewPolicy);
+      assert.deepEqual(runtimeCatalog.coCreator, template.coCreator);
+    } finally {
+      if (previous === undefined) delete process.env.CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS;
+      else process.env.CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS = previous;
+    }
+  });
+
   it('bootstraps installer api_key bindings while preserving skipped seed members', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-f127-installer-'));
     process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = projectRoot;

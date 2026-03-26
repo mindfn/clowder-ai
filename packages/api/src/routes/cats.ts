@@ -126,7 +126,7 @@ function resolveProjectRoot(): string {
   return resolveActiveProjectRoot();
 }
 
-type CatSource = 'seed' | 'runtime';
+type CatSource = 'seed' | 'runtime' | 'template';
 
 interface CatResponseMetadata {
   roster: RosterEntry | null;
@@ -329,6 +329,30 @@ interface CatsRoutesOptions {
 }
 
 export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opts) => {
+  // GET /api/cat-templates - 获取角色模板（与运行时成员分离）
+  app.get('/api/cat-templates', async () => {
+    try {
+      const projectRoot = resolveProjectRoot();
+      const templateConfig = loadCatConfig(resolveProjectTemplatePath(projectRoot));
+      const templateRoster = getRoster(templateConfig);
+      const templateCats = Object.values(toAllCatConfigs(templateConfig));
+      return {
+        templates: await Promise.all(
+          templateCats.map((cat) =>
+            toCatResponse(
+              cat,
+              { source: 'template', roster: templateRoster[cat.id] ?? null },
+              async (nextCat) => nextCat.accountRef,
+            ),
+          ),
+        ),
+      };
+    } catch (err) {
+      app.log.warn({ err }, 'Failed to load cat templates');
+      return { templates: [] };
+    }
+  });
+
   // GET /api/cats - 获取所有猫猫配置
   app.get('/api/cats', async () => {
     const projectRoot = resolveProjectRoot();

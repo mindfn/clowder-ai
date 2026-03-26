@@ -9,6 +9,13 @@ import { resolveProviderProfilesRootSync } from './provider-profiles-root.js';
 const CAT_CAFE_DIR = '.cat-cafe';
 const META_FILENAME = 'provider-profiles.json';
 const CAT_CATALOG_FILENAME = 'cat-catalog.json';
+const BOOTSTRAP_EMPTY_MEMBERS_ENV = 'CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS';
+
+function isTruthy(value: string | undefined): boolean {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
 
 function safePath(projectRoot: string, ...segments: string[]): string {
   const root = resolve(projectRoot);
@@ -332,6 +339,24 @@ function filterBootstrapCatalog(template: CatCafeConfig, projectRoot: string): C
   };
 }
 
+function createEmptyRuntimeCatalog(template: CatCafeConfig): CatCafeConfig {
+  if ('roster' in template) {
+    return {
+      ...template,
+      breeds: [],
+      roster: {},
+    };
+  }
+  return {
+    ...template,
+    breeds: [],
+  };
+}
+
+function shouldBootstrapEmptyMembers(): boolean {
+  return isTruthy(process.env[BOOTSTRAP_EMPTY_MEMBERS_ENV]);
+}
+
 export function resolveCatCatalogPath(projectRoot: string): string {
   return safePath(projectRoot, CAT_CAFE_DIR, CAT_CATALOG_FILENAME);
 }
@@ -373,7 +398,9 @@ export function bootstrapCatCatalog(projectRoot: string, templatePath: string): 
   const legacyConfigPath = resolve(projectRoot, 'cat-config.json');
   const sourcePath = existsSync(legacyConfigPath) ? legacyConfigPath : templatePath;
   const template = JSON.parse(readFileSync(sourcePath, 'utf-8')) as CatCafeConfig;
-  const runtimeCatalog = filterBootstrapCatalog(template, projectRoot);
+  const runtimeCatalog = shouldBootstrapEmptyMembers()
+    ? createEmptyRuntimeCatalog(template)
+    : filterBootstrapCatalog(template, projectRoot);
   mkdirSync(dirname(catalogPath), { recursive: true });
   writeFileAtomic(catalogPath, `${JSON.stringify(runtimeCatalog, null, 2)}\n`);
   return catalogPath;
