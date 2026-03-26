@@ -30,6 +30,25 @@ function isPrivateIPv4(ip: string): boolean {
   );
 }
 
+/**
+ * Extract the embedded IPv4 from an IPv4-mapped IPv6 address.
+ * Handles both dotted (::ffff:127.0.0.1) and hex (::ffff:7f00:1) forms.
+ */
+function extractMappedIPv4(ipv6: string): string | null {
+  const lower = ipv6.toLowerCase();
+  // Dotted form: ::ffff:A.B.C.D
+  const dottedMatch = lower.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (dottedMatch) return dottedMatch[1];
+  // Hex form: ::ffff:HHHH:HHHH
+  const hexMatch = lower.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (hexMatch) {
+    const hi = Number.parseInt(hexMatch[1], 16);
+    const lo = Number.parseInt(hexMatch[2], 16);
+    return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+  }
+  return null;
+}
+
 /** Block private/internal network targets to prevent SSRF */
 function assertPublicHost(hostname: string): void {
   if (BLOCKED_HOSTNAMES.has(hostname.toLowerCase())) {
@@ -38,6 +57,11 @@ function assertPublicHost(hostname: string): void {
   // Strip brackets from IPv6
   const bare = hostname.replace(/^\[|\]$/g, '');
   if (bare === '::1' || bare.startsWith('fc') || bare.startsWith('fd') || bare.startsWith('fe80')) {
+    throw new Error(`Blocked download: host "${hostname}" is internal`);
+  }
+  // IPv4-mapped IPv6 (::ffff:127.0.0.1 or ::ffff:7f00:1)
+  const mapped = extractMappedIPv4(bare);
+  if (mapped && isPrivateIPv4(mapped)) {
     throw new Error(`Blocked download: host "${hostname}" is internal`);
   }
   if (isPrivateIPv4(bare)) {

@@ -212,6 +212,24 @@ describe('MediaStorage', () => {
       /host "192.168.1.1" is internal/,
     );
   });
+
+  it('blocks IPv4-mapped IPv6 dotted form ::ffff:127.0.0.1 (SSRF)', async () => {
+    const { MediaStorage } = await import('../dist/mediahub/media-storage.js');
+    const storage = new MediaStorage('/tmp/mediahub-test');
+    await assert.rejects(() => storage.download('test', 'j1', 'http://[::ffff:127.0.0.1]/x'), /is internal/);
+  });
+
+  it('blocks IPv4-mapped IPv6 hex form ::ffff:7f00:1 (SSRF)', async () => {
+    const { MediaStorage } = await import('../dist/mediahub/media-storage.js');
+    const storage = new MediaStorage('/tmp/mediahub-test');
+    await assert.rejects(() => storage.download('test', 'j1', 'http://[::ffff:7f00:1]/x'), /is internal/);
+  });
+
+  it('blocks IPv4-mapped IPv6 with private 10.x (SSRF)', async () => {
+    const { MediaStorage } = await import('../dist/mediahub/media-storage.js');
+    const storage = new MediaStorage('/tmp/mediahub-test');
+    await assert.rejects(() => storage.download('test', 'j1', 'http://[::ffff:10.0.0.1]/x'), /is internal/);
+  });
 });
 
 // ==================== ProviderRegistry Tests ====================
