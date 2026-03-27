@@ -7,6 +7,7 @@ import { createCipheriv, randomBytes } from 'node:crypto';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { resolveUserId } from '../utils/request-identity.js';
 
 const CRED_PREFIX = 'mediahub:cred:';
 const CRED_INDEX = 'mediahub:creds';
@@ -80,7 +81,12 @@ export const mediahubAccountsRoutes: FastifyPluginAsync<MediaHubAccountsRoutesOp
   const enabled = !!(redis && credKey && credKey.length === 32);
 
   // GET /api/mediahub/providers — list all providers with bound status
-  app.get('/api/mediahub/providers', async (_request, reply) => {
+  app.get('/api/mediahub/providers', async (request, reply) => {
+    const userId = resolveUserId(request);
+    if (!userId) {
+      reply.status(401);
+      return { error: 'Identity required (X-Cat-Cafe-User header or userId query)' };
+    }
     if (!enabled || !redis) {
       return {
         enabled: false,
@@ -111,6 +117,11 @@ export const mediahubAccountsRoutes: FastifyPluginAsync<MediaHubAccountsRoutesOp
 
   // POST /api/mediahub/providers/:id/bind — bind credentials
   app.post<{ Params: { id: string } }>('/api/mediahub/providers/:id/bind', async (request, reply) => {
+    const userId = resolveUserId(request);
+    if (!userId) {
+      reply.status(401);
+      return { error: 'Identity required (X-Cat-Cafe-User header or userId query)' };
+    }
     if (!enabled || !redis || !credKey) {
       reply.status(503);
       return { error: 'MediaHub account management not enabled' };
@@ -155,6 +166,11 @@ export const mediahubAccountsRoutes: FastifyPluginAsync<MediaHubAccountsRoutesOp
 
   // DELETE /api/mediahub/providers/:id — unbind
   app.delete<{ Params: { id: string } }>('/api/mediahub/providers/:id', async (request, reply) => {
+    const userId = resolveUserId(request);
+    if (!userId) {
+      reply.status(401);
+      return { error: 'Identity required (X-Cat-Cafe-User header or userId query)' };
+    }
     if (!enabled || !redis) {
       reply.status(503);
       return { error: 'MediaHub account management not enabled' };
