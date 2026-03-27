@@ -540,6 +540,47 @@ describe('tryAutoLoadProvider', () => {
     assert.ok(registry.get('cogvideox'), 'env-only provider must NOT be unregistered');
   });
 
+  it('revokes provider bound via handleBindAccount when credentials are later deleted (P1 bind→Console-unbind gap)', async () => {
+    const { AccountManager } = await import('../dist/mediahub/account-manager.js');
+    const { ProviderRegistry } = await import('../dist/mediahub/provider.js');
+    const { setAccountRefs, registerProviderFactory, tryAutoLoadProvider } = await import(
+      '../dist/mediahub/account-tools.js'
+    );
+    const { handleBindAccount } = await import('../dist/mediahub/account-tools.js');
+
+    const key = randomBytes(32);
+    const redis = createMockRedis();
+    const manager = new AccountManager(redis, key);
+    const registry = new ProviderRegistry();
+    setAccountRefs(manager, registry);
+
+    registerProviderFactory('bind-revoke', (data) => ({
+      info: {
+        id: 'bind-revoke',
+        displayName: 'BindRevoke',
+        capabilities: ['text2video'],
+        authMode: 'api_key',
+        models: [],
+      },
+      supports: () => true,
+      submit: async () => ({ jobId: '', providerTaskId: 'x', status: 'queued' }),
+      queryStatus: async () => ({ jobId: '', status: 'running' }),
+    }));
+
+    // Step 1: Bind via MCP tool (handleBindAccount) — registers provider directly
+    const bindResult = await handleBindAccount({ provider: 'bind-revoke', credentials: { token: 'abc' } });
+    assert.ok(!bindResult.isError, 'bind should succeed');
+    assert.ok(registry.get('bind-revoke'), 'provider should be registered after bind');
+
+    // Step 2: Console unbind — delete credentials from Redis (simulating DELETE route)
+    await manager.removeCredential('bind-revoke');
+
+    // Step 3: tryAutoLoadProvider should detect missing creds and revoke
+    const result = await tryAutoLoadProvider('bind-revoke');
+    assert.equal(result, false, 'should return false — credentials were deleted');
+    assert.equal(registry.get('bind-revoke'), undefined, 'provider must be unregistered after Console unbind');
+  });
+
   it('concurrent tryAutoLoadProvider calls do not throw on duplicate registration', async () => {
     const { AccountManager } = await import('../dist/mediahub/account-manager.js');
     const { ProviderRegistry } = await import('../dist/mediahub/provider.js');
