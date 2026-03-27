@@ -315,6 +315,7 @@ function EnvVarsSection({
                   {isEditableVariable(v) ? (
                     <div className="space-y-1">
                       <input
+                        type={v.sensitive ? 'password' : 'text'}
                         aria-label={v.name}
                         value={drafts[v.name] ?? ''}
                         onChange={(e) => onDraftChange(v.name, e.target.value)}
