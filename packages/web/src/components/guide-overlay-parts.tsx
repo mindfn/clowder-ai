@@ -59,9 +59,10 @@ interface HUDActionsProps {
   hasPrev: boolean;
   hasNext: boolean;
   isComplete: boolean;
+  canSkip: boolean;
 }
 
-export function HUDActions({ onPrev, onNext, onSkip, onExit, hasPrev, hasNext, isComplete }: HUDActionsProps) {
+export function HUDActions({ onPrev, onNext, onSkip, onExit, hasPrev, hasNext, isComplete, canSkip }: HUDActionsProps) {
   return (
     <div className="flex items-center gap-2 border-t border-[var(--guide-hud-border)] pt-3">
       <button
@@ -82,13 +83,15 @@ export function HUDActions({ onPrev, onNext, onSkip, onExit, hasPrev, hasNext, i
           上一步
         </button>
       )}
-      <button
-        type="button"
-        onClick={onSkip}
-        className="rounded-lg px-3 py-1.5 text-xs text-[var(--guide-text-secondary)] transition hover:bg-black/5"
-      >
-        跳过
-      </button>
+      {canSkip && (
+        <button
+          type="button"
+          onClick={onSkip}
+          className="rounded-lg px-3 py-1.5 text-xs text-[var(--guide-text-secondary)] transition hover:bg-black/5"
+        >
+          跳过
+        </button>
+      )}
       {isComplete ? (
         <button
           type="button"
@@ -123,6 +126,7 @@ interface GuideHUDProps {
   onSkip: () => void;
   onExit: () => void;
   isComplete: boolean;
+  nudgeVisible: boolean;
 }
 
 export function GuideHUD({
@@ -136,6 +140,7 @@ export function GuideHUD({
   onSkip,
   onExit,
   isComplete,
+  nudgeVisible,
 }: GuideHUDProps) {
   // Position HUD near target, preferring below
   const style = computeHUDPosition(targetRect);
@@ -161,6 +166,13 @@ export function GuideHUD({
 
       {/* Instruction */}
       <p className="mb-3 text-sm leading-relaxed text-[var(--guide-text-secondary)]">{step.instruction}</p>
+
+      {/* Nudge hint (P1-2: shown after 8s idle) */}
+      {nudgeVisible && (
+        <p className="mb-3 text-xs text-[var(--guide-cutout-ring)] animate-pulse">
+          试试按照上方提示操作，或点击「跳过」继续
+        </p>
+      )}
 
       {/* Progress dots */}
       <div className="mb-3 flex gap-1">
@@ -189,6 +201,7 @@ export function GuideHUD({
         hasPrev={stepIndex > 0}
         hasNext={stepIndex < totalSteps - 1}
         isComplete={isComplete}
+        canSkip={step.canSkip !== false}
       />
     </div>
   );

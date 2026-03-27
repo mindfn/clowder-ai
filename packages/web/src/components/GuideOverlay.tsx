@@ -5,15 +5,18 @@ import { useGuideEngine } from '@/hooks/useGuideEngine';
 import { useGuideStore } from '@/stores/guideStore';
 import { GuideHUD } from './guide-overlay-parts';
 
+const NUDGE_DELAY_MS = 8_000;
+const DEFAULT_TIMEOUT_SEC = 180;
+
 /**
  * F150: Guide Overlay
  *
  * Full-screen overlay with spotlight cutout + HUD.
- * Uses box-shadow trick: a positioned div at the target rect
- * with a massive shadow that covers the rest of the screen.
+ * Box-shadow trick for dark mask; four-panel click shield
+ * leaves a genuine hole over the target element.
  */
 export function GuideOverlay() {
-  useGuideEngine(); // Register window.__startGuide + event listeners
+  useGuideEngine();
   const session = useGuideStore((s) => s.session);
   const nextStep = useGuideStore((s) => s.nextStep);
   const prevStep = useGuideStore((s) => s.prevStep);
@@ -24,9 +27,11 @@ export function GuideOverlay() {
 
   const [targetRect, setTargetRect] = useState<DOMRect | null>(null);
   const [targetFound, setTargetFound] = useState(false);
+  const [nudgeVisible, setNudgeVisible] = useState(false);
   const observerRef = useRef<MutationObserver | null>(null);
   const rafRef = useRef<number>(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const lastRectRef = useRef<{ t: number; l: number; w: number; h: number } | null>(null);
 
   const currentStep = session && session.currentStepIndex < session.steps.length
     ? session.steps[session.currentStepIndex]
@@ -45,8 +50,7 @@ export function GuideOverlay() {
     }
     const el = document.querySelector(`[data-guide-id="${currentStep.targetGuideId}"]`);
     if (el) {
-      const rect = el.getBoundingClientRect();
-      setTargetRect(rect);
+      setTargetRect(el.getBoundingClientRect());
       setTargetFound(true);
       setObservationState('active');
       setStepStatus('awaiting_user');
@@ -54,7 +58,6 @@ export function GuideOverlay() {
       setTargetRect(null);
       setTargetFound(false);
       setStepStatus('locating_target');
-      // Retry once after 300ms
       retryTimerRef.current = setTimeout(() => {
         const retryEl = document.querySelector(`[data-guide-id="${currentStep.targetGuideId}"]`);
         if (retryEl) {
@@ -70,14 +73,21 @@ export function GuideOverlay() {
     }
   }, [currentStep, setObservationState, setStepStatus]);
 
-  // Track target position on scroll/resize via rAF
+  // P2-2 fix: rAF with rect comparison to skip unnecessary re-renders
   useEffect(() => {
     if (!session || !currentStep || isComplete) return;
+    lastRectRef.current = null;
 
     const updateRect = () => {
       const el = document.querySelector(`[data-guide-id="${currentStep.targetGuideId}"]`);
       if (el) {
-        setTargetRect(el.getBoundingClientRect());
+        const r = el.getBoundingClientRect();
+        const prev = lastRectRef.current;
+        if (!prev || prev.t !== r.top || prev.l !== r.left
+          || prev.w !== r.width || prev.h !== r.height) {
+          lastRectRef.current = { t: r.top, l: r.left, w: r.width, h: r.height };
+          setTargetRect(r);
+        }
         if (!targetFound) {
           setTargetFound(true);
           setObservationState('active');
@@ -94,21 +104,34 @@ export function GuideOverlay() {
   // MutationObserver to detect when target appears in DOM
   useEffect(() => {
     if (!session || !currentStep || isComplete) return;
-
     locateTarget();
-
     const observer = new MutationObserver(() => {
       if (!targetFound) locateTarget();
     });
     observer.observe(document.body, { childList: true, subtree: true });
     observerRef.current = observer;
-
     return () => {
       observer.disconnect();
       observerRef.current = null;
       clearTimeout(retryTimerRef.current);
     };
   }, [session, currentStep, isComplete, locateTarget, targetFound]);
+
+  // P1-2 fix: Per-step idle timer (nudge at 8s, timeout at timeoutSec)
+  useEffect(() => {
+    if (!currentStep || isComplete || session?.stepStatus !== 'awaiting_user') {
+      setNudgeVisible(false);
+      return;
+    }
+    setNudgeVisible(false);
+    const nudgeTimer = setTimeout(() => setNudgeVisible(true), NUDGE_DELAY_MS);
+    const sec = currentStep.timeoutSec ?? DEFAULT_TIMEOUT_SEC;
+    const timeoutTimer = setTimeout(() => {
+      setStepStatus('timed_out');
+      setObservationState('error');
+    }, sec * 1000);
+    return () => { clearTimeout(nudgeTimer); clearTimeout(timeoutTimer); };
+  }, [currentStep, isComplete, session?.stepStatus, session?.currentStepIndex, setStepStatus, setObservationState]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -124,7 +147,6 @@ export function GuideOverlay() {
 
   if (!session) return null;
 
-  // Flow complete state
   if (isComplete) {
     return (
       <div className="fixed inset-0 z-[var(--guide-z-overlay)] flex items-center justify-center">
@@ -149,7 +171,6 @@ export function GuideOverlay() {
 
   if (!currentStep) return null;
 
-  // Spotlight cutout dimensions (with padding)
   const pad = 8;
   const cutoutStyle: React.CSSProperties = targetRect
     ? {
@@ -172,7 +193,6 @@ export function GuideOverlay() {
         pointerEvents: 'none' as const,
       };
 
-  // Spotlight ring (breathing animation)
   const ringStyle: React.CSSProperties = targetRect
     ? {
         position: 'fixed',
@@ -190,53 +210,25 @@ export function GuideOverlay() {
       }
     : {};
 
-  // Click shield: blocks clicks outside target, allows clicks on target
-  const handleOverlayClick = (e: React.MouseEvent) => {
-    if (!targetRect) return;
-    const { clientX, clientY } = e;
-    const inTarget =
-      clientX >= targetRect.left - pad &&
-      clientX <= targetRect.right + pad &&
-      clientY >= targetRect.top - pad &&
-      clientY <= targetRect.bottom + pad;
-    if (!inTarget) {
-      // Click outside target — do nothing (block it)
-      e.stopPropagation();
-    }
-    // Click on target — let it through (overlay has pointer-events: none on cutout)
-  };
+  const shieldZ = 1101;
 
   return (
     <>
-      {/* Dark mask with cutout */}
       <div style={cutoutStyle} aria-hidden="true" />
-
-      {/* Spotlight ring */}
       {targetRect && <div style={ringStyle} aria-hidden="true" />}
 
-      {/* Click shield (full screen, but pointer-events auto only outside target) */}
-      <div
-        className="fixed inset-0"
-        style={{ zIndex: 1101, pointerEvents: 'auto' }}
-        onClick={handleOverlayClick}
-        aria-hidden="true"
-      >
-        {/* Transparent hole over target to let clicks through */}
-        {targetRect && (
-          <div
-            style={{
-              position: 'fixed',
-              top: targetRect.top - pad,
-              left: targetRect.left - pad,
-              width: targetRect.width + pad * 2,
-              height: targetRect.height + pad * 2,
-              pointerEvents: 'none',
-            }}
-          />
-        )}
-      </div>
+      {/* P1-1 fix: Four-panel click shield with genuine hole over target */}
+      {targetRect ? (
+        <>
+          <div className="fixed top-0 left-0 right-0" style={{ height: Math.max(0, targetRect.top - pad), zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
+          <div className="fixed bottom-0 left-0 right-0" style={{ top: targetRect.bottom + pad, zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
+          <div className="fixed" style={{ top: targetRect.top - pad, left: 0, width: Math.max(0, targetRect.left - pad), height: targetRect.height + pad * 2, zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
+          <div className="fixed" style={{ top: targetRect.top - pad, left: targetRect.right + pad, right: 0, height: targetRect.height + pad * 2, zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
+        </>
+      ) : (
+        <div className="fixed inset-0" style={{ zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
+      )}
 
-      {/* HUD Panel */}
       <GuideHUD
         step={currentStep}
         stepIndex={session.currentStepIndex}
@@ -248,6 +240,7 @@ export function GuideOverlay() {
         onSkip={skipStep}
         onExit={exitGuide}
         isComplete={false}
+        nudgeVisible={nudgeVisible}
       />
     </>
   );
