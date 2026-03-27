@@ -439,4 +439,40 @@ describe('tryAutoLoadProvider', () => {
     assert.equal(second, false, 'should return false after credential deletion');
     assert.equal(registry.get('revoke-test'), undefined, 'provider must be unregistered after revocation');
   });
+
+  it('does NOT revoke env-only provider that has no factory (no Redis credentials)', async () => {
+    const { AccountManager } = await import('../dist/mediahub/account-manager.js');
+    const { ProviderRegistry } = await import('../dist/mediahub/provider.js');
+    const { setAccountRefs, tryAutoLoadProvider } = await import('../dist/mediahub/account-tools.js');
+
+    const key = randomBytes(32);
+    const redis = createMockRedis();
+    const manager = new AccountManager(redis, key);
+    const registry = new ProviderRegistry();
+    setAccountRefs(manager, registry);
+
+    // Simulate env-only provider: registered directly, NO factory, NO Redis credentials
+    const envProvider = {
+      info: {
+        id: 'cogvideox',
+        displayName: 'CogVideoX',
+        capabilities: ['text2video'],
+        authMode: 'env',
+        models: [],
+      },
+      supports: () => true,
+      submit: async () => ({ jobId: '', providerTaskId: 'x', status: 'queued' }),
+      queryStatus: async () => ({ jobId: '', status: 'running' }),
+    };
+    registry.register(envProvider);
+
+    // No factory registered for 'cogvideox' — it's env-only
+    // No Redis credentials either
+    assert.ok(registry.get('cogvideox'), 'env provider should be registered before call');
+
+    // tryAutoLoadProvider must NOT unregister env-only provider
+    const result = await tryAutoLoadProvider('cogvideox');
+    assert.equal(result, true, 'env-only provider should remain available');
+    assert.ok(registry.get('cogvideox'), 'env-only provider must NOT be unregistered');
+  });
 });
