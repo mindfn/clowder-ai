@@ -40,6 +40,7 @@ function wrapIoredis(ioredis: ReturnType<typeof createRedisClient>): RedisClient
       return ioredis.zrevrangebyscore(key, sMax, sMin);
     },
     del: (key) => ioredis.del(key),
+    zrem: async (key, ...members) => ioredis.zrem(key, ...members),
   };
 }
 
@@ -88,6 +89,19 @@ function createMemoryRedisStub(): RedisClient {
     async del(key: string) {
       store.delete(key);
       return 1;
+    },
+    async zrem(key: string, ...members: string[]) {
+      const set = sortedSets.get(key);
+      if (!set) return 0;
+      let removed = 0;
+      for (const m of members) {
+        const idx = set.findIndex((e) => e.member === m);
+        if (idx >= 0) {
+          set.splice(idx, 1);
+          removed++;
+        }
+      }
+      return removed;
     },
   };
 }

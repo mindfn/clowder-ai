@@ -20,6 +20,8 @@ let registryRef: ProviderRegistry | null = null;
 /** Provider factory: providerId → (credentials → provider | null) */
 type ProviderFactory = (data: Record<string, string>) => MediaProvider | null;
 const providerFactories = new Map<string, ProviderFactory>();
+/** Providers dynamically loaded via tryAutoLoadProvider (not env-registered at bootstrap) */
+const dynamicallyLoaded = new Set<string>();
 
 export function setAccountRefs(manager: AccountManager, registry: ProviderRegistry): void {
   accountRef = manager;
@@ -42,10 +44,11 @@ export async function tryAutoLoadProvider(providerId: string): Promise<boolean> 
   // Already registered — verify credentials still exist (revocation check)
   if (registryRef.get(providerId)) {
     if (data) return true;
-    // Only revoke providers that have a factory (dynamically loaded via Console).
-    // Env-only providers (no factory) were registered via env vars and must never be revoked.
-    if (providerFactories.has(providerId)) {
+    // Only revoke providers that were dynamically loaded via this function.
+    // Env-registered providers (bootstrap) must never be revoked, even if they have a factory.
+    if (dynamicallyLoaded.has(providerId)) {
       registryRef.unregister(providerId);
+      dynamicallyLoaded.delete(providerId);
       return false;
     }
     return true;
@@ -59,7 +62,10 @@ export async function tryAutoLoadProvider(providerId: string): Promise<boolean> 
   const provider = factory(data);
   if (!provider) return false;
 
+  // Guard against concurrent registration race (two parallel generate calls)
+  if (registryRef.get(providerId)) return true;
   registryRef.register(provider);
+  dynamicallyLoaded.add(providerId);
   return true;
 }
 

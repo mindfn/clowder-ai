@@ -47,6 +47,19 @@ function createMockRedis() {
       data.delete(key);
       return 1;
     },
+    async zrem(key, ...members) {
+      const set = sortedSets.get(key);
+      if (!set) return 0;
+      let removed = 0;
+      for (const m of members) {
+        const idx = set.findIndex((e) => e.member === String(m));
+        if (idx >= 0) {
+          set.splice(idx, 1);
+          removed++;
+        }
+      }
+      return removed;
+    },
   };
 }
 
@@ -103,6 +116,19 @@ describe('AccountManager', () => {
     const manager = await buildManager();
     const removed = await manager.removeCredential('nonexistent');
     assert.ok(!removed);
+  });
+
+  it('removeCredential cleans CRED_INDEX sorted set (no orphan entries)', async () => {
+    const manager = await buildManager();
+    await manager.saveCredential('kling', 'api_key', { accessKey: 'ak' });
+    await manager.saveCredential('jimeng', 'api_key', { accessKey: 'ak2' });
+    const before = await manager.listCredentials();
+    assert.equal(before.length, 2, 'should have 2 credentials before removal');
+
+    await manager.removeCredential('kling');
+    const after = await manager.listCredentials();
+    assert.equal(after.length, 1, 'should have 1 credential after removal');
+    assert.equal(after[0].providerId, 'jimeng', 'remaining credential should be jimeng');
   });
 
   it('lists stored credentials without decrypted data', async () => {
@@ -440,6 +466,44 @@ describe('tryAutoLoadProvider', () => {
     assert.equal(registry.get('revoke-test'), undefined, 'provider must be unregistered after revocation');
   });
 
+  it('does NOT revoke env-registered provider that also has a factory (bootstrap scenario)', async () => {
+    const { AccountManager } = await import('../dist/mediahub/account-manager.js');
+    const { ProviderRegistry } = await import('../dist/mediahub/provider.js');
+    const { setAccountRefs, registerProviderFactory, tryAutoLoadProvider } = await import(
+      '../dist/mediahub/account-tools.js'
+    );
+
+    const key = randomBytes(32);
+    const redis = createMockRedis();
+    const manager = new AccountManager(redis, key);
+    const registry = new ProviderRegistry();
+    setAccountRefs(manager, registry);
+
+    // Simulate bootstrap: register Kling via env vars AND register its factory
+    const envKling = {
+      info: {
+        id: 'kling',
+        displayName: 'Kling',
+        capabilities: ['text2video'],
+        authMode: 'env',
+        models: [],
+      },
+      supports: () => true,
+      submit: async () => ({ jobId: '', providerTaskId: 'x', status: 'queued' }),
+      queryStatus: async () => ({ jobId: '', status: 'running' }),
+    };
+    registry.register(envKling);
+    registerProviderFactory('kling', () => envKling);
+
+    // No Redis credentials for kling (env-only usage)
+    assert.ok(registry.get('kling'), 'env kling should be registered');
+
+    // tryAutoLoadProvider must NOT unregister env-registered provider
+    const result = await tryAutoLoadProvider('kling');
+    assert.equal(result, true, 'env-registered provider with factory should remain available');
+    assert.ok(registry.get('kling'), 'env kling must NOT be unregistered');
+  });
+
   it('does NOT revoke env-only provider that has no factory (no Redis credentials)', async () => {
     const { AccountManager } = await import('../dist/mediahub/account-manager.js');
     const { ProviderRegistry } = await import('../dist/mediahub/provider.js');
@@ -474,5 +538,40 @@ describe('tryAutoLoadProvider', () => {
     const result = await tryAutoLoadProvider('cogvideox');
     assert.equal(result, true, 'env-only provider should remain available');
     assert.ok(registry.get('cogvideox'), 'env-only provider must NOT be unregistered');
+  });
+
+  it('concurrent tryAutoLoadProvider calls do not throw on duplicate registration', async () => {
+    const { AccountManager } = await import('../dist/mediahub/account-manager.js');
+    const { ProviderRegistry } = await import('../dist/mediahub/provider.js');
+    const { setAccountRefs, registerProviderFactory, tryAutoLoadProvider } = await import(
+      '../dist/mediahub/account-tools.js'
+    );
+
+    const key = randomBytes(32);
+    const redis = createMockRedis();
+    const manager = new AccountManager(redis, key);
+    const registry = new ProviderRegistry();
+    setAccountRefs(manager, registry);
+
+    registerProviderFactory('race-test', () => ({
+      info: {
+        id: 'race-test',
+        displayName: 'RaceTest',
+        capabilities: ['text2video'],
+        authMode: 'api_key',
+        models: [],
+      },
+      supports: () => true,
+      submit: async () => ({ jobId: '', providerTaskId: 'x', status: 'queued' }),
+      queryStatus: async () => ({ jobId: '', status: 'running' }),
+    }));
+
+    await manager.saveCredential('race-test', 'api_key', { accessKey: 'ak', secretKey: 'sk' });
+
+    // Simulate concurrent calls — both should succeed without throwing
+    const [r1, r2] = await Promise.all([tryAutoLoadProvider('race-test'), tryAutoLoadProvider('race-test')]);
+    assert.equal(r1, true, 'first concurrent call should succeed');
+    assert.equal(r2, true, 'second concurrent call should succeed');
+    assert.ok(registry.get('race-test'), 'provider should be registered');
   });
 });
