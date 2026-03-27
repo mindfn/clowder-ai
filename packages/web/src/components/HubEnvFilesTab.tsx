@@ -208,7 +208,9 @@ function buildVariableHint(variable: EnvVar): string | null {
 }
 
 function isEditableVariable(variable: EnvVar): boolean {
-  return variable.runtimeEditable !== false && !variable.sensitive;
+  if (variable.runtimeEditable === false) return false;
+  if (variable.runtimeEditable === true) return true;
+  return !variable.sensitive;
 }
 
 function isMaskedUrlVariable(variable: EnvVar): boolean {
