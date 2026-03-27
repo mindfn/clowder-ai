@@ -1155,6 +1155,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'MediaHub 凭证加密密钥 (base64 编码，32 字节 AES-256)',
     category: 'mediahub',
     sensitive: true,
+    runtimeEditable: true,
   },
   {
     name: 'COGVIDEO_API_KEY',
@@ -1162,6 +1163,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'CogVideoX (智谱) API Key — 注册: open.bigmodel.cn',
     category: 'mediahub',
     sensitive: true,
+    runtimeEditable: true,
   },
   {
     name: 'KLING_ACCESS_KEY',
@@ -1169,6 +1171,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '可灵 (Kling) Access Key — 注册: kling.kuaishou.com',
     category: 'mediahub',
     sensitive: true,
+    runtimeEditable: true,
   },
   {
     name: 'KLING_SECRET_KEY',
@@ -1176,6 +1179,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '可灵 (Kling) Secret Key',
     category: 'mediahub',
     sensitive: true,
+    runtimeEditable: true,
   },
   {
     name: 'VOLC_ACCESSKEY',
@@ -1183,6 +1187,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '即梦 (Jimeng) Access Key (火山引擎) — 注册: jimeng.jianying.com',
     category: 'mediahub',
     sensitive: true,
+    runtimeEditable: true,
   },
   {
     name: 'VOLC_SECRETKEY',
@@ -1190,6 +1195,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '即梦 (Jimeng) Secret Key (火山引擎)',
     category: 'mediahub',
     sensitive: true,
+    runtimeEditable: true,
   },
 ];
 
