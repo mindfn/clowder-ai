@@ -42,8 +42,13 @@ export async function tryAutoLoadProvider(providerId: string): Promise<boolean> 
   // Already registered — verify credentials still exist (revocation check)
   if (registryRef.get(providerId)) {
     if (data) return true;
-    registryRef.unregister(providerId);
-    return false;
+    // Only revoke providers that have a factory (dynamically loaded via Console).
+    // Env-only providers (no factory) were registered via env vars and must never be revoked.
+    if (providerFactories.has(providerId)) {
+      registryRef.unregister(providerId);
+      return false;
+    }
+    return true;
   }
 
   if (!data) return false;
