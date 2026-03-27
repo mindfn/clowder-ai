@@ -89,6 +89,7 @@ export class AccountManager {
     const hash = await this.redis.hgetall(CRED_PREFIX + providerId);
     if (!hash['providerId']) return false;
     await this.redis.del(CRED_PREFIX + providerId);
+    await this.redis.zrem(CRED_INDEX, providerId);
     return true;
   }
 

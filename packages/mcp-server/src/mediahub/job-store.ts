@@ -17,6 +17,7 @@ export interface RedisClient {
   zadd(key: string, ...args: Array<string | number>): Promise<number>;
   zrevrangebyscore(key: string, max: string | number, min: string | number, ...args: string[]): Promise<string[]>;
   del(key: string): Promise<number>;
+  zrem(key: string, ...members: string[]): Promise<number>;
 }
 
 function jobToHash(job: JobRecord): Record<string, string> {
