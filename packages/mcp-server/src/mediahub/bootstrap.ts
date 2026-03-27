@@ -9,7 +9,7 @@
 import { createRedisClient } from '@cat-cafe/shared/utils';
 
 import { AccountManager } from './account-manager.js';
-import { registerProviderFactory, setAccountRefs } from './account-tools.js';
+import { registerProviderFactory, setAccountRefs, tryAutoLoadProvider } from './account-tools.js';
 import type { RedisClient } from './job-store.js';
 import { JobStore } from './job-store.js';
 import { MediaStorage } from './media-storage.js';
@@ -139,22 +139,14 @@ async function createRedis(): Promise<{ client: RedisClient; persistent: boolean
 }
 
 /** Load credentials from Redis and register providers not already active via env vars */
-async function autoLoadCredentials(accountManager: AccountManager, registry: ProviderRegistry): Promise<void> {
+async function autoLoadCredentials(accountManager: AccountManager): Promise<void> {
   const stored = await accountManager.listCredentials();
   for (const cred of stored) {
-    if (registry.get(cred.providerId)) continue; // already registered from env
-    const data = await accountManager.getCredentialData(cred.providerId);
-    if (!data) continue;
-    try {
-      let provider = null;
-      if (cred.providerId === 'kling') provider = createKlingProvider(data['accessKey'], data['secretKey']);
-      if (cred.providerId === 'jimeng') provider = createJimengProvider(data['accessKey'], data['secretKey']);
-      if (provider) {
-        registry.register(provider);
-        console.error(`[mediahub] Auto-loaded provider from stored credentials: ${cred.providerId}`);
-      }
-    } catch {
-      // Skip failed credential loads — provider can be re-bound
+    // tryAutoLoadProvider handles: skip env-registered, load from Redis,
+    // add to dynamicallyLoaded for proper revocation tracking
+    const loaded = await tryAutoLoadProvider(cred.providerId);
+    if (loaded) {
+      console.error(`[mediahub] Auto-loaded provider from stored credentials: ${cred.providerId}`);
     }
   }
 }
@@ -196,7 +188,7 @@ export async function bootstrapMediaHub(): Promise<void> {
     registerProviderFactory('kling', (d) => createKlingProvider(d['accessKey'], d['secretKey']));
     registerProviderFactory('jimeng', (d) => createJimengProvider(d['accessKey'], d['secretKey']));
     // Auto-load: register providers from stored credentials (skip already-registered)
-    await autoLoadCredentials(accountManager, registry);
+    await autoLoadCredentials(accountManager);
     console.error('[mediahub] AccountManager enabled');
   }
 
