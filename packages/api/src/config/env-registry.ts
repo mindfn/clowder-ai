@@ -33,7 +33,8 @@ export type EnvCategory =
   | 'github_review'
   | 'evidence'
   | 'quota'
-  | 'telemetry';
+  | 'telemetry'
+  | 'mediahub';
 
 export interface EnvDefinition {
   /** The env var name, e.g. 'REDIS_URL' */
@@ -76,6 +77,7 @@ export const ENV_CATEGORIES: Record<EnvCategory, string> = {
   evidence: 'F102 记忆系统',
   quota: '额度监控',
   telemetry: '可观测性 (OTel)',
+  mediahub: 'MediaHub 媒体生成',
 };
 
 export const ENV_VARS: EnvDefinition[] = [
@@ -1289,6 +1291,50 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '设为 true 完全禁用 OTel SDK',
     category: 'telemetry',
     sensitive: false,
+  },
+
+  // --- mediahub (F142 媒体生成) ---
+  {
+    name: 'MEDIAHUB_CREDENTIAL_KEY',
+    defaultValue: '(未设置 → 凭证管理不启用)',
+    description: 'MediaHub 凭证加密密钥 (base64 编码，32 字节 AES-256)',
+    category: 'mediahub',
+    sensitive: true,
+  },
+  {
+    name: 'COGVIDEO_API_KEY',
+    defaultValue: '(未设置)',
+    description: 'CogVideoX (智谱) API Key — 注册: open.bigmodel.cn',
+    category: 'mediahub',
+    sensitive: true,
+  },
+  {
+    name: 'KLING_ACCESS_KEY',
+    defaultValue: '(未设置)',
+    description: '可灵 (Kling) Access Key — 注册: kling.kuaishou.com',
+    category: 'mediahub',
+    sensitive: true,
+  },
+  {
+    name: 'KLING_SECRET_KEY',
+    defaultValue: '(未设置)',
+    description: '可灵 (Kling) Secret Key',
+    category: 'mediahub',
+    sensitive: true,
+  },
+  {
+    name: 'VOLC_ACCESSKEY',
+    defaultValue: '(未设置)',
+    description: '即梦 (Jimeng) Access Key (火山引擎) — 注册: jimeng.jianying.com',
+    category: 'mediahub',
+    sensitive: true,
+  },
+  {
+    name: 'VOLC_SECRETKEY',
+    defaultValue: '(未设置)',
+    description: '即梦 (Jimeng) Secret Key (火山引擎)',
+    category: 'mediahub',
+    sensitive: true,
   },
 ];
 
