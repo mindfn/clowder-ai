@@ -398,4 +398,45 @@ describe('tryAutoLoadProvider', () => {
     const result = await tryAutoLoadProvider('nonexistent');
     assert.equal(result, false);
   });
+
+  it('revokes registered provider when credentials are deleted (unbind→generate must fail)', async () => {
+    const { AccountManager } = await import('../dist/mediahub/account-manager.js');
+    const { ProviderRegistry } = await import('../dist/mediahub/provider.js');
+    const { setAccountRefs, registerProviderFactory, tryAutoLoadProvider } = await import(
+      '../dist/mediahub/account-tools.js'
+    );
+
+    const key = randomBytes(32);
+    const redis = createMockRedis();
+    const manager = new AccountManager(redis, key);
+    const registry = new ProviderRegistry();
+    setAccountRefs(manager, registry);
+
+    registerProviderFactory('revoke-test', (data) => ({
+      info: {
+        id: 'revoke-test',
+        displayName: 'RevokeTest',
+        capabilities: ['text2video'],
+        authMode: 'api_key',
+        models: [],
+      },
+      supports: () => true,
+      submit: async () => ({ jobId: '', providerTaskId: 'x', status: 'queued' }),
+      queryStatus: async () => ({ jobId: '', status: 'running' }),
+    }));
+
+    // Step 1: bind + lazy-load → provider available
+    await manager.saveCredential('revoke-test', 'api_key', { accessKey: 'ak', secretKey: 'sk' });
+    const first = await tryAutoLoadProvider('revoke-test');
+    assert.equal(first, true, 'first load should succeed');
+    assert.ok(registry.get('revoke-test'), 'provider should be registered');
+
+    // Step 2: unbind (delete credentials from Redis, simulating Console unbind API)
+    await manager.removeCredential('revoke-test');
+
+    // Step 3: tryAutoLoadProvider again → must return false AND unregister provider
+    const second = await tryAutoLoadProvider('revoke-test');
+    assert.equal(second, false, 'should return false after credential deletion');
+    assert.equal(registry.get('revoke-test'), undefined, 'provider must be unregistered after revocation');
+  });
 });

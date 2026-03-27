@@ -31,12 +31,21 @@ export function registerProviderFactory(id: string, factory: ProviderFactory): v
   providerFactories.set(id, factory);
 }
 
-/** Try to auto-load a provider from Redis credentials (lazy activation for Console-bound providers) */
+/** Try to auto-load a provider from Redis credentials (lazy activation for Console-bound providers).
+ *  Also enforces credential revocation: if a provider is registered but its credentials
+ *  have been deleted (Console unbind), it is immediately unregistered. */
 export async function tryAutoLoadProvider(providerId: string): Promise<boolean> {
   if (!accountRef || !registryRef) return false;
-  if (registryRef.get(providerId)) return true;
 
   const data = await accountRef.getCredentialData(providerId);
+
+  // Already registered — verify credentials still exist (revocation check)
+  if (registryRef.get(providerId)) {
+    if (data) return true;
+    registryRef.unregister(providerId);
+    return false;
+  }
+
   if (!data) return false;
 
   const factory = providerFactories.get(providerId);
