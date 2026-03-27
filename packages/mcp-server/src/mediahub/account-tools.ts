@@ -121,6 +121,7 @@ export async function handleBindAccount(args: {
         const provider = factory(args.credentials);
         if (provider) {
           registry.register(provider);
+          dynamicallyLoaded.add(args.provider);
           activated = true;
         }
       }
@@ -158,6 +159,7 @@ export async function handleUnbindAccount(args: { provider: string }): Promise<T
     const removed = await manager.removeCredential(args.provider);
     if (!removed) return errorResult(`No credentials found for provider "${args.provider}"`);
     registry.unregister(args.provider);
+    dynamicallyLoaded.delete(args.provider);
     return successResult(`Credentials removed and provider "${args.provider}" unregistered.`);
   } catch (err) {
     return errorResult(err instanceof Error ? err.message : String(err));
