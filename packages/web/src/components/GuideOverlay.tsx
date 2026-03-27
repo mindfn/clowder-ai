@@ -211,6 +211,7 @@ export function GuideOverlay() {
     : {};
 
   const shieldZ = 1101;
+  const panels = targetRect ? computeShieldPanels(targetRect, pad) : null;
 
   return (
     <>
@@ -218,12 +219,12 @@ export function GuideOverlay() {
       {targetRect && <div style={ringStyle} aria-hidden="true" />}
 
       {/* P1-1 fix: Four-panel click shield with genuine hole over target */}
-      {targetRect ? (
+      {panels ? (
         <>
-          <div className="fixed top-0 left-0 right-0" style={{ height: Math.max(0, targetRect.top - pad), zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
-          <div className="fixed bottom-0 left-0 right-0" style={{ top: targetRect.bottom + pad, zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
-          <div className="fixed" style={{ top: targetRect.top - pad, left: 0, width: Math.max(0, targetRect.left - pad), height: targetRect.height + pad * 2, zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
-          <div className="fixed" style={{ top: targetRect.top - pad, left: targetRect.right + pad, right: 0, height: targetRect.height + pad * 2, zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
+          <div className="fixed top-0 left-0 right-0" style={{ height: panels.top.height, zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
+          <div className="fixed bottom-0 left-0 right-0" style={{ top: panels.bottom.top, zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
+          <div className="fixed" style={{ top: panels.left.top, left: 0, width: panels.left.width, height: panels.left.height, zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
+          <div className="fixed" style={{ top: panels.right.top, left: panels.right.left, right: 0, height: panels.right.height, zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
         </>
       ) : (
         <div className="fixed inset-0" style={{ zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
@@ -244,4 +245,27 @@ export function GuideOverlay() {
       />
     </>
   );
+}
+
+/* ── Pure helpers (exported for testing) ── */
+
+export interface ShieldPanels {
+  top: { height: number };
+  bottom: { top: number };
+  left: { top: number; width: number; height: number };
+  right: { top: number; left: number; height: number };
+}
+
+/** Compute four click-shield panel dimensions that leave a hole over the target. */
+export function computeShieldPanels(
+  rect: { top: number; bottom: number; left: number; right: number; width: number; height: number },
+  pad: number,
+): ShieldPanels {
+  const h = rect.height + pad * 2;
+  return {
+    top: { height: Math.max(0, rect.top - pad) },
+    bottom: { top: rect.bottom + pad },
+    left: { top: rect.top - pad, width: Math.max(0, rect.left - pad), height: h },
+    right: { top: rect.top - pad, left: rect.right + pad, height: h },
+  };
 }
