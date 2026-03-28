@@ -111,6 +111,8 @@ export interface SocketCallbacks {
     reason: 'canceled' | 'failed';
     queue: import('../stores/chat-types').QueueEntry[];
   }) => void;
+  /** F150: Guide engine trigger */
+  onGuideStart?: (data: { guideId: string; threadId: string; timestamp: number }) => void;
 }
 
 const RECONNECT_RECONCILE_DELAY_MS = 2000;
@@ -632,6 +634,11 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string) {
         callbacksRef.current.onGameThreadCreated?.(data);
       },
     );
+
+    // F150: Guide engine trigger from MCP tool
+    socket.on('guide_start', (data: { guideId: string; threadId: string; timestamp: number }) => {
+      callbacksRef.current.onGuideStart?.(data);
+    });
 
     // F111 Phase B + F112 Phase A: Real-time voice stream events
     socket.on('voice_stream_start', handleVoiceStreamStart);
