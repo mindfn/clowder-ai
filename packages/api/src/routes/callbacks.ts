@@ -1312,7 +1312,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
   const resolveGuideSchema = callbackAuthSchema.extend({ intent: z.string().min(1) });
 
   // Static ESM import — fail loudly if loader is broken, no silent degradation
-  const { isValidGuideId, getRegistryEntries } = await import(
+  const { isValidGuideId, getRegistryEntries, resolveGuideForIntent } = await import(
     '../domains/guides/guide-registry-loader.js'
   );
 
@@ -1356,18 +1356,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       return EXPIRED_CREDENTIALS_ERROR;
     }
 
-    const entries = getRegistryEntries();
-    // Deterministic keyword matching: score by number of keyword hits
-    const query = intent.toLowerCase();
-    const matches = entries
-      .map((entry) => {
-        const score = entry.keywords.filter((kw: string) => query.includes(kw.toLowerCase()) || kw.toLowerCase().includes(query)).length;
-        return { ...entry, score };
-      })
-      .filter((e: { score: number }) => e.score > 0)
-      .sort((a: { score: number }, b: { score: number }) => b.score - a.score)
-      .map(({ id, name, description, score }: { id: string; name: string; description: string; score: number }) => ({ id, name, description, score }));
-
+    const matches = resolveGuideForIntent(intent);
     log.info({ intent, matchCount: matches.length, threadId: record.threadId }, '[F150] guide_resolve');
     return { status: 'ok', matches };
   });

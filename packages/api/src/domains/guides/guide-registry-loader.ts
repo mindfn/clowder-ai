@@ -64,3 +64,29 @@ export function getRegistryEntries(): GuideRegistryEntry[] {
 export function isValidGuideId(guideId: string): boolean {
   return getValidGuideIds().has(guideId);
 }
+
+export interface GuideMatch {
+  id: string;
+  name: string;
+  description: string;
+  score: number;
+}
+
+/**
+ * Match user intent against guide registry keywords.
+ * Returns matched guides sorted by score (highest first), or empty array.
+ * Used by both the MCP callback endpoint and the pre-invocation routing hook.
+ */
+export function resolveGuideForIntent(intent: string): GuideMatch[] {
+  const entries = getRegistryEntries();
+  const query = intent.toLowerCase();
+  return entries
+    .map((entry) => {
+      const score = entry.keywords.filter(
+        (kw) => query.includes(kw.toLowerCase()) || kw.toLowerCase().includes(query),
+      ).length;
+      return { id: entry.id, name: entry.name, description: entry.description, score };
+    })
+    .filter((e) => e.score > 0)
+    .sort((a, b) => b.score - a.score);
+}

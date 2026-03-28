@@ -869,10 +869,33 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     // Prepend staticIdentity to prompt when injection is needed
     // F070-P2: missionPrefix (dispatch context) is prepended for external projects
     const promptWithMission = missionPrefix ? `${missionPrefix}\n\n${prompt}` : prompt;
+
+    // F150: Pre-invocation guide routing hook — deterministic keyword match
+    let guideHint = '';
+    try {
+      const { resolveGuideForIntent } = await import('../../../../guides/guide-registry-loader.js');
+      const guideMatches = resolveGuideForIntent(prompt);
+      if (guideMatches.length > 0) {
+        const top = guideMatches[0];
+        guideHint = [
+          '',
+          '[F150 Guide Available]',
+          `检测到与用户问题匹配的交互引导流程: "${top.name}" (${top.id})`,
+          '你必须先调用 cat_cafe_guide_resolve 工具确认匹配，然后建议用户使用交互引导。',
+          '不要直接给出长文教程——先问用户是否要跟着引导走。',
+          '用户拒绝引导时再给简要文字步骤。',
+          '',
+        ].join('\n');
+        log.info({ guideId: top.id, guideName: top.name, score: top.score, catId }, '[F150] guide routing hook hit');
+      }
+    } catch {
+      // Guide registry unavailable — skip hint, normal invocation continues
+    }
+
     const effectivePrompt =
       injectSystemPrompt && params.systemPrompt
-        ? `${params.systemPrompt}\n\n---\n\n${promptWithMission}`
-        : promptWithMission;
+        ? `${params.systemPrompt}\n\n---\n\n${promptWithMission}${guideHint}`
+        : `${promptWithMission}${guideHint}`;
 
     // F089 Phase 2+3: Create tmux spawn override for agent-in-pane execution
     let spawnCliOverride: AgentServiceOptions['spawnCliOverride'];
