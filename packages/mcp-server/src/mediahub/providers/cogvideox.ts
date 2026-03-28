@@ -109,9 +109,9 @@ export class CogVideoXProvider implements MediaProvider {
   }
 }
 
-/** Factory: creates provider if API key is available */
-export function createCogVideoXProvider(): CogVideoXProvider | null {
-  const apiKey = process.env['COGVIDEO_API_KEY'];
-  if (!apiKey) return null;
-  return new CogVideoXProvider(apiKey);
+/** Factory: creates provider from explicit key or COGVIDEO_API_KEY env var */
+export function createCogVideoXProvider(apiKey?: string): CogVideoXProvider | null {
+  const key = apiKey ?? process.env['COGVIDEO_API_KEY'];
+  if (!key) return null;
+  return new CogVideoXProvider(key);
 }
