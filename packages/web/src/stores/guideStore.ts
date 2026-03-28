@@ -110,6 +110,9 @@ export const useGuideStore = create<GuideState>((set, get) => ({
   skipStep: () => {
     const { session } = get();
     if (!session) return;
+    // Enforce canSkip constraint — MCP control can't bypass flow contract
+    const currentStep = session.steps[session.currentStepIndex];
+    if (currentStep && currentStep.canSkip === false) return;
     const nextIndex = session.currentStepIndex + 1;
     if (nextIndex >= session.steps.length) {
       set({

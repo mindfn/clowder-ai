@@ -97,6 +97,22 @@ describe('guideStore', () => {
     expect(s.steps[2].timeoutSec).toBe(30);
   });
 
+  it('skipStep is blocked when canSkip is false', () => {
+    useGuideStore.getState().startGuide('test-flow', MOCK_STEPS);
+    useGuideStore.getState().nextStep(); // → s2 (canSkip undefined)
+    useGuideStore.getState().nextStep(); // → s3 (canSkip: false)
+    expect(useGuideStore.getState().session!.currentStepIndex).toBe(2);
+    useGuideStore.getState().skipStep(); // should be blocked
+    expect(useGuideStore.getState().session!.currentStepIndex).toBe(2); // still on s3
+  });
+
+  it('skipStep is allowed when canSkip is undefined (default)', () => {
+    useGuideStore.getState().startGuide('test-flow', MOCK_STEPS);
+    // s1 has canSkip: undefined → should allow skip
+    useGuideStore.getState().skipStep();
+    expect(useGuideStore.getState().session!.currentStepIndex).toBe(1);
+  });
+
   it('generates unique session IDs', () => {
     useGuideStore.getState().startGuide('a', MOCK_STEPS);
     const id1 = useGuideStore.getState().session!.sessionId;
