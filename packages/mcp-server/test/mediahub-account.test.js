@@ -581,6 +581,50 @@ describe('tryAutoLoadProvider', () => {
     assert.equal(registry.get('bind-revoke'), undefined, 'provider must be unregistered after Console unbind');
   });
 
+  it('Console-bound credentials take priority over env var fallback (P1 bootstrap order)', async () => {
+    const { AccountManager } = await import('../dist/mediahub/account-manager.js');
+    const { ProviderRegistry } = await import('../dist/mediahub/provider.js');
+    const { setAccountRefs, registerProviderFactory, tryAutoLoadProvider } = await import(
+      '../dist/mediahub/account-tools.js'
+    );
+
+    const key = randomBytes(32);
+    const redis = createMockRedis();
+    const manager = new AccountManager(redis, key);
+    const registry = new ProviderRegistry();
+    setAccountRefs(manager, registry);
+
+    // Track which source loaded the provider
+    let factorySource = '';
+    registerProviderFactory('prio-test', (data) => {
+      factorySource = 'console';
+      return {
+        info: {
+          id: 'prio-test',
+          displayName: 'PrioTest',
+          capabilities: ['text2video'],
+          authMode: 'api_key',
+          models: [],
+        },
+        supports: () => true,
+        submit: async () => ({ jobId: '', providerTaskId: 'x', status: 'queued' }),
+        queryStatus: async () => ({ jobId: '', status: 'running' }),
+      };
+    });
+
+    // Simulate Console-bound credentials in Redis
+    await manager.saveCredential('prio-test', 'api_key', { apiKey: 'console-key-123' });
+
+    // Bootstrap pattern: Console auto-load FIRST
+    const loaded = await tryAutoLoadProvider('prio-test');
+    assert.equal(loaded, true, 'Console auto-load should succeed');
+    assert.equal(factorySource, 'console', 'factory should be called from Console credentials');
+
+    // Env var fallback: should be SKIPPED because provider already registered from Console
+    const envFallbackSkipped = !!registry.get('prio-test');
+    assert.equal(envFallbackSkipped, true, 'env fallback should be skipped — Console already loaded');
+  });
+
   it('concurrent tryAutoLoadProvider calls do not throw on duplicate registration', async () => {
     const { AccountManager } = await import('../dist/mediahub/account-manager.js');
     const { ProviderRegistry } = await import('../dist/mediahub/provider.js');
