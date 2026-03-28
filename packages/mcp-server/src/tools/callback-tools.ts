@@ -711,6 +711,11 @@ export async function handleBootcampEnvCheck(input: { threadId: string }): Promi
   return callbackPost('/api/callbacks/bootcamp-env-check', { threadId: input.threadId });
 }
 
+// F150: Guide Engine
+export async function handleStartGuide(input: { guideId: string }): Promise<ToolResult> {
+  return callbackPost('/api/callbacks/start-guide', { guideId: input.guideId });
+}
+
 export const callbackTools = [
   {
     name: 'cat_cafe_post_message',
@@ -897,5 +902,21 @@ export const callbackTools = [
       'Returns the full check results for display to the user. Only use during bootcamp phase-2-env-check.',
     inputSchema: bootcampEnvCheckInputSchema,
     handler: handleBootcampEnvCheck,
+  },
+  // ============ F150: Guide Engine ============
+  {
+    name: 'cat_cafe_start_guide',
+    description:
+      'Start an interactive guided flow on the Console frontend. ' +
+      'When a user asks how to perform an operation (e.g. "怎么添加成员"), ' +
+      'use this tool to trigger the step-by-step guide overlay with spotlight + HUD. ' +
+      'Available flows: "add-member" (添加成员). ' +
+      'The guide will highlight each UI element in sequence and walk the user through the process. ' +
+      'IMPORTANT: This is your primary tool for teaching users how to use the Console — ' +
+      'always prefer this over text-only instructions when a matching guide flow exists.',
+    inputSchema: {
+      guideId: z.string().min(1).describe('Guide flow ID (e.g. "add-member"). Use __guideFlows to see available IDs.'),
+    },
+    handler: handleStartGuide,
   },
 ] as const;

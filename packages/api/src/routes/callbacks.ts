@@ -1306,4 +1306,31 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
   // F088 Phase J2: Document generation callback routes
   registerCallbackDocumentRoutes(app, { registry, socketManager });
+
+  // F150: Guide engine — start a guided flow on the frontend
+  const startGuideSchema = callbackAuthSchema.extend({
+    guideId: z.string().min(1),
+  });
+
+  app.post('/api/callbacks/start-guide', async (request, reply) => {
+    const parsed = startGuideSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.status(400);
+      return { error: 'Invalid request', details: parsed.error.issues };
+    }
+    const { invocationId, callbackToken, guideId } = parsed.data;
+    const record = registry.verify(invocationId, callbackToken);
+    if (!record) {
+      reply.status(401);
+      return EXPIRED_CREDENTIALS_ERROR;
+    }
+    if (!registry.isLatest(invocationId)) return { status: 'stale_ignored' };
+    socketManager.broadcastToRoom(`thread:${record.threadId}`, 'guide_start', {
+      guideId,
+      threadId: record.threadId,
+      timestamp: Date.now(),
+    });
+    log.info({ guideId, threadId: record.threadId }, '[F150] guide_start emitted');
+    return { status: 'ok', guideId };
+  });
 };
