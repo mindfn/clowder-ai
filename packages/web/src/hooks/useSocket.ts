@@ -114,6 +114,8 @@ export interface SocketCallbacks {
   }) => void;
   /** F150: Guide engine trigger */
   onGuideStart?: (data: { guideId: string; threadId: string; timestamp: number }) => void;
+  /** F150: Guide control (next/back/skip/exit) */
+  onGuideControl?: (data: { action: string; threadId: string; timestamp: number }) => void;
 }
 
 const RECONNECT_RECONCILE_DELAY_MS = 2000;
@@ -625,7 +627,24 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string) {
 
     // F150: Guide engine trigger from MCP tool
     socket.on('guide_start', (data: { guideId: string; threadId: string; timestamp: number }) => {
+      const routeThread = threadIdRef.current;
+      const storeThread = useChatStore.getState().currentThreadId;
+      const isActiveThread = Boolean(
+        data.threadId && routeThread && storeThread && data.threadId === routeThread && data.threadId === storeThread,
+      );
+      if (!isActiveThread) return;
       callbacksRef.current.onGuideStart?.(data);
+    });
+
+    // F150: Guide control (next/back/skip/exit) from MCP tool
+    socket.on('guide_control', (data: { action: string; threadId: string; timestamp: number }) => {
+      const routeThread = threadIdRef.current;
+      const storeThread = useChatStore.getState().currentThreadId;
+      const isActiveThread = Boolean(
+        data.threadId && routeThread && storeThread && data.threadId === routeThread && data.threadId === storeThread,
+      );
+      if (!isActiveThread) return;
+      callbacksRef.current.onGuideControl?.(data);
     });
 
     // F111 Phase B + F112 Phase A: Real-time voice stream events

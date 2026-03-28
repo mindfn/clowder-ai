@@ -1,0 +1,72 @@
+# F150 Guide Flow: 添加成员
+# P0 验证场景 — 纯 Console 内部流程
+
+id: add-member
+name: 添加成员
+description: 引导你完成新成员的创建和配置
+tags: [member, config, P0]
+estimated_time: 3min
+prerequisites: []
+
+steps:
+  - id: open-hub
+    type: console_action
+    target: hub.trigger
+    action: click
+    title: 打开 Hub
+    instruction: 点击这里打开 Hub 控制台
+    page: /
+
+  - id: go-to-cats
+    type: console_action
+    target: cats.overview
+    action: click
+    title: 进入成员总览
+    instruction: 点击「总览」查看所有成员
+    page: /hub
+
+  - id: click-add-member
+    type: console_action
+    target: cats.add-member
+    action: click
+    title: 添加成员
+    instruction: 点击「添加成员」开始创建
+    page: /hub/cats
+
+  - id: select-client
+    type: console_action
+    target: add-member.client
+    action: select
+    title: 选择 Client
+    instruction: 选择要接入的 CLI 工具或 Agent 平台
+    page: /hub/cats/add
+
+  - id: select-provider
+    type: console_action
+    target: add-member.provider-profile
+    action: select
+    title: 选择 Provider
+    instruction: 选择或配置 API 账号
+    page: /hub/cats/add
+
+  - id: select-model
+    type: console_action
+    target: add-member.model
+    action: select
+    title: 选择模型
+    instruction: 选择默认使用的 AI 模型
+    page: /hub/cats/add
+
+  - id: confirm-create
+    type: console_action
+    target: add-member.submit
+    action: click
+    title: 确认创建
+    instruction: 点击「创建后继续编辑」完成成员创建
+    page: /hub/cats/add
+
+  - id: complete
+    type: information
+    title: 创建完成
+    instruction: 成员创建成功！你可以继续编辑成员的详细配置。
+    canSkip: true

@@ -7,15 +7,18 @@ import { useGuideStore } from '@/stores/guideStore';
 /**
  * F150: Guide Engine hook
  *
- * - Exposes guide trigger on window for dev/testing
- * - Listens for socket events to start guides (Phase B)
- * - Provides startGuide helper
+ * - Listens for guide:start CustomEvent (from MCP → Socket.io bridge)
+ * - Listens for guide:control CustomEvent (next/back/skip/exit)
+ * - Exposes window helpers for dev testing
  */
 export function useGuideEngine() {
   const startGuide = useGuideStore((s) => s.startGuide);
+  const nextStep = useGuideStore((s) => s.nextStep);
+  const prevStep = useGuideStore((s) => s.prevStep);
+  const skipStep = useGuideStore((s) => s.skipStep);
+  const exitGuide = useGuideStore((s) => s.exitGuide);
 
   useEffect(() => {
-    // Expose on window for dev testing + MCP tool invocation
     const trigger = (flowId: string) => {
       const flow = GUIDE_FLOWS[flowId];
       if (!flow) {
@@ -25,24 +28,41 @@ export function useGuideEngine() {
       startGuide(flow.id, flow.steps);
     };
 
+    const controlActions: Record<string, () => void> = {
+      next: nextStep,
+      back: prevStep,
+      skip: skipStep,
+      exit: exitGuide,
+    };
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).__startGuide = trigger;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).__guideFlows = Object.keys(GUIDE_FLOWS);
 
-    // Custom event listener (for MCP tool bridge)
-    const handleGuideEvent = (e: Event) => {
+    // guide:start from MCP tool bridge
+    const handleGuideStart = (e: Event) => {
       const detail = (e as CustomEvent<{ flowId: string }>).detail;
       if (detail?.flowId) trigger(detail.flowId);
     };
-    window.addEventListener('guide:start', handleGuideEvent);
+
+    // guide:control from MCP tool bridge
+    const handleGuideControl = (e: Event) => {
+      const detail = (e as CustomEvent<{ action: string }>).detail;
+      const fn = detail?.action ? controlActions[detail.action] : undefined;
+      if (fn) fn();
+    };
+
+    window.addEventListener('guide:start', handleGuideStart);
+    window.addEventListener('guide:control', handleGuideControl);
 
     return () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       delete (window as any).__startGuide;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       delete (window as any).__guideFlows;
-      window.removeEventListener('guide:start', handleGuideEvent);
+      window.removeEventListener('guide:start', handleGuideStart);
+      window.removeEventListener('guide:control', handleGuideControl);
     };
-  }, [startGuide]);
+  }, [startGuide, nextStep, prevStep, skipStep, exitGuide]);
 }
