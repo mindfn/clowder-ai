@@ -2672,6 +2672,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
   it('F127 P1: falls back to CAT_TEMPLATE_PATH project when thread projectPath is absent', async () => {
     const { createProviderProfile } = await import('./helpers/create-test-account.js');
     const templateRoot = await mkdtemp(join(tmpdir(), 'f127-active-template-'));
+    process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = templateRoot;
     await writeFile(join(templateRoot, 'cat-template.json'), '{}', 'utf-8');
     const boundProfile = await createProviderProfile(templateRoot, {
       provider: 'openai',
@@ -2882,6 +2883,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
   it('F127 P1: prefers member-bound openai profile over protocol active profile', async () => {
     const { createProviderProfile } = await import('./helpers/create-test-account.js');
     const root = await mkdtemp(join(tmpdir(), 'f127-openai-profile-'));
+    process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = root;
     const apiDir = join(root, 'packages', 'api');
     await mkdir(apiDir, { recursive: true });
     await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n', 'utf-8');
@@ -3105,6 +3107,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
   it('F127: ignores legacy api_key protocol metadata when the member explicitly selected the client', async () => {
     const { createProviderProfile } = await import('./helpers/create-test-account.js');
     const root = await mkdtemp(join(tmpdir(), 'f127-bound-mismatch-'));
+    process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = root;
     const apiDir = join(root, 'packages', 'api');
     await mkdir(apiDir, { recursive: true });
     await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n', 'utf-8');
@@ -3242,6 +3245,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
   it('F127: injects OPENROUTER_API_KEY for opencode members bound to openai api_key profiles', async () => {
     const { createProviderProfile } = await import('./helpers/create-test-account.js');
     const root = await mkdtemp(join(tmpdir(), 'f127-openrouter-key-injection-'));
+    process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = root;
     const apiDir = join(root, 'packages', 'api');
     await mkdir(apiDir, { recursive: true });
     await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n', 'utf-8');
@@ -3314,6 +3318,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     mod._resetOpenCodeKnownModels(new Set(['anthropic/claude-opus-4-6']));
     const { createProviderProfile } = await import('./helpers/create-test-account.js');
     const root = await mkdtemp(join(tmpdir(), 'f189-opencode-custom-provider-'));
+    process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = root;
     const apiDir = join(root, 'packages', 'api');
     await mkdir(apiDir, { recursive: true });
     await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n', 'utf-8');
@@ -3394,6 +3399,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
   it('F189: bare model + provider assembles composite model for custom provider routing', async () => {
     const { createProviderProfile } = await import('./helpers/create-test-account.js');
     const root = await mkdtemp(join(tmpdir(), 'f189-oc-bare-model-'));
+    process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = root;
     const apiDir = join(root, 'packages', 'api');
     await mkdir(apiDir, { recursive: true });
     await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n', 'utf-8');
