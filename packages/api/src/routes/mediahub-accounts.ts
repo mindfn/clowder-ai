@@ -19,16 +19,14 @@ interface ProviderDef {
   displayName: string;
   capabilities: string[];
   requiredFields: { key: string; label: string; secret?: boolean }[];
-  envHint?: string;
 }
 
 const PROVIDERS: ProviderDef[] = [
   {
     id: 'cogvideox',
-    displayName: 'CogVideoX',
-    capabilities: ['text2video'],
-    requiredFields: [],
-    envHint: 'COGVIDEO_API_KEY (env var, no binding needed)',
+    displayName: 'CogVideoX (智谱)',
+    capabilities: ['text2video', 'image2video'],
+    requiredFields: [{ key: 'apiKey', label: 'API Key (open.bigmodel.cn)', secret: true }],
   },
   {
     id: 'kling',
@@ -97,12 +95,6 @@ export const mediahubAccountsRoutes: FastifyPluginAsync<MediaHubAccountsRoutesOp
 
     const items = [];
     for (const def of PROVIDERS) {
-      if (def.requiredFields.length === 0) {
-        // Env-only provider (e.g. CogVideoX)
-        const envOk = def.id === 'cogvideox' && !!process.env['COGVIDEO_API_KEY'];
-        items.push({ ...def, bound: envOk, healthStatus: envOk ? 'healthy' : 'unchecked', createdAt: 0 });
-        continue;
-      }
       const hash = await redis.hgetall(CRED_PREFIX + def.id);
       const bound = !!hash['providerId'];
       items.push({
@@ -129,9 +121,9 @@ export const mediahubAccountsRoutes: FastifyPluginAsync<MediaHubAccountsRoutesOp
 
     const { id } = request.params;
     const def = PROVIDERS.find((p) => p.id === id);
-    if (!def || def.requiredFields.length === 0) {
+    if (!def) {
       reply.status(400);
-      return { error: `Unknown or env-only provider: ${id}` };
+      return { error: `Unknown provider: ${id}` };
     }
 
     const parsed = bindSchema.safeParse(request.body);

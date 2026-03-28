@@ -185,6 +185,7 @@ export async function bootstrapMediaHub(): Promise<void> {
     const credKey = Buffer.from(credKeyB64, 'base64');
     const accountManager = new AccountManager(redis, credKey);
     setAccountRefs(accountManager, registry);
+    registerProviderFactory('cogvideox', (d) => createCogVideoXProvider(d['apiKey']));
     registerProviderFactory('kling', (d) => createKlingProvider(d['accessKey'], d['secretKey']));
     registerProviderFactory('jimeng', (d) => createJimengProvider(d['accessKey'], d['secretKey']));
     // Auto-load: register providers from stored credentials (skip already-registered)

@@ -82,6 +82,7 @@ function getRegistry(): ProviderRegistry {
 // ============ Required credential fields per provider ============
 
 const REQUIRED_FIELDS: Record<string, string[]> = {
+  cogvideox: ['apiKey'],
   kling: ['accessKey', 'secretKey'],
   jimeng: ['accessKey', 'secretKey'],
 };

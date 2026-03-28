@@ -391,11 +391,11 @@ describe('PATCH /api/config/env (route)', () => {
     }
   });
 
-  it('accepts sensitive env vars with explicit runtimeEditable=true (MediaHub keys)', async () => {
+  it('accepts sensitive env vars with explicit runtimeEditable=true (MEDIAHUB_CREDENTIAL_KEY)', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
     const envFilePath = resolve(tempRoot, '.env');
-    writeFileSync(envFilePath, 'COGVIDEO_API_KEY=old-key\n', 'utf8');
+    writeFileSync(envFilePath, 'MEDIAHUB_CREDENTIAL_KEY=old-key\n', 'utf8');
 
     const app = Fastify({ logger: false });
     try {
@@ -411,13 +411,13 @@ describe('PATCH /api/config/env (route)', () => {
         url: '/api/config/env',
         headers: { 'x-cat-cafe-user': 'codex' },
         payload: {
-          updates: [{ name: 'COGVIDEO_API_KEY', value: 'new-key' }],
+          updates: [{ name: 'MEDIAHUB_CREDENTIAL_KEY', value: 'new-key' }],
         },
       });
 
       assert.equal(res.statusCode, 200, `expected 200 but got ${res.statusCode}: ${res.payload}`);
       const envContent = readFileSync(envFilePath, 'utf8');
-      assert.match(envContent, /COGVIDEO_API_KEY=new-key/);
+      assert.match(envContent, /MEDIAHUB_CREDENTIAL_KEY=new-key/);
     } finally {
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });
