@@ -4098,3 +4098,113 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     assert.equal(optionsSeen[0]?.workingDirectory, undefined, 'workingDirectory must be undefined for game threads');
   });
 });
+
+// ---------------------------------------------------------------------------
+// F150: Pre-invocation guide routing hook
+// ---------------------------------------------------------------------------
+describe('F150 guide routing hook', () => {
+  before(async () => {
+    if (!invokeSingleCat) {
+      tempDir = await mkdtemp(join(tmpdir(), 'cat-audit-'));
+      process.env.AUDIT_LOG_DIR = tempDir;
+      const mod = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
+      invokeSingleCat = mod.invokeSingleCat;
+    }
+  });
+
+  function makeDeps() {
+    let counter = 0;
+    return {
+      registry: {
+        create: () => ({ invocationId: `inv-${++counter}`, callbackToken: `tok-${counter}` }),
+        verify: () => null,
+      },
+      sessionManager: {
+        get: async () => undefined,
+        getOrCreate: async () => ({}),
+        store: async () => {},
+        delete: async () => {},
+        resolveWorkingDirectory: () => '/tmp/test',
+      },
+      threadStore: null,
+      apiUrl: 'http://127.0.0.1:3004',
+    };
+  }
+
+  it('injects guide hint when rawUserMessage matches a guide keyword', async () => {
+    let promptSeen = '';
+    const service = {
+      async *invoke(prompt) {
+        promptSeen = prompt;
+        yield { type: 'text', catId: 'opus', content: 'ok', timestamp: Date.now() };
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+
+    await collect(
+      invokeSingleCat(makeDeps(), {
+        catId: 'opus',
+        service,
+        prompt: 'orchestrated context\n\n---\n\n怎么添加成员',
+        rawUserMessage: '怎么添加成员',
+        userId: 'u1',
+        threadId: 't-f150-hit',
+        isLastCat: true,
+      }),
+    );
+
+    assert.ok(promptSeen.includes('[F150 Guide Available]'), 'prompt must contain guide hint');
+    assert.ok(promptSeen.includes('add-member'), 'prompt must reference matched guide id');
+  });
+
+  it('does NOT inject guide hint when rawUserMessage has no keyword match', async () => {
+    let promptSeen = '';
+    const service = {
+      async *invoke(prompt) {
+        promptSeen = prompt;
+        yield { type: 'text', catId: 'opus', content: 'ok', timestamp: Date.now() };
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+
+    await collect(
+      invokeSingleCat(makeDeps(), {
+        catId: 'opus',
+        service,
+        prompt: 'hello world',
+        rawUserMessage: 'hello world',
+        userId: 'u1',
+        threadId: 't-f150-miss',
+        isLastCat: true,
+      }),
+    );
+
+    assert.ok(!promptSeen.includes('[F150 Guide Available]'), 'prompt must NOT contain guide hint');
+  });
+
+  it('gracefully degrades when rawUserMessage is not provided', async () => {
+    let promptSeen = '';
+    const service = {
+      async *invoke(prompt) {
+        promptSeen = prompt;
+        yield { type: 'text', catId: 'opus', content: 'ok', timestamp: Date.now() };
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+
+    const msgs = await collect(
+      invokeSingleCat(makeDeps(), {
+        catId: 'opus',
+        service,
+        prompt: '添加成员',
+        // rawUserMessage intentionally omitted — hook must be skipped
+        userId: 'u1',
+        threadId: 't-f150-no-raw',
+        isLastCat: true,
+      }),
+    );
+
+    assert.ok(!promptSeen.includes('[F150 Guide Available]'), 'prompt must NOT contain guide hint when rawUserMessage absent');
+    assert.ok(msgs.some((m) => m.type === 'done'), 'invocation must complete normally');
+  });
+});
