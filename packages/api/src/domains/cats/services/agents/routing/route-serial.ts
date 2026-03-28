@@ -432,6 +432,8 @@ export async function* routeSerial(
         ...(worklistEntry.a2aTriggerMessageId.get(catId)
           ? { a2aTriggerMessageId: worklistEntry.a2aTriggerMessageId.get(catId) }
           : {}),
+        // F150: Pass raw user message for guide routing hook (avoid matching orchestrated prompt)
+        rawUserMessage: message,
         isLastCat: false,
       })) {
         // F39 bugfix: stop yielding after cancel (pipe buffer may still drain)

@@ -233,6 +233,8 @@ export interface InvocationParams {
   readonly parentInvocationId?: string;
   /** F121: The A2A trigger message ID for auto-replyTo */
   readonly a2aTriggerMessageId?: string;
+  /** F150: Raw user message (before orchestration) for guide routing hook */
+  readonly rawUserMessage?: string;
 }
 
 /**
@@ -954,25 +956,28 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     const promptWithMission = missionPrefix ? `${missionPrefix}\n\n${prompt}` : prompt;
 
     // F150: Pre-invocation guide routing hook — deterministic keyword match
+    // Uses rawUserMessage (current turn only) to avoid false positives from history context.
     let guideHint = '';
-    try {
-      const { resolveGuideForIntent } = await import('../../../../guides/guide-registry-loader.js');
-      const guideMatches = resolveGuideForIntent(prompt);
-      if (guideMatches.length > 0) {
-        const top = guideMatches[0];
-        guideHint = [
-          '',
-          '[F150 Guide Available]',
-          `检测到与用户问题匹配的交互引导流程: "${top.name}" (${top.id})`,
-          '你必须先调用 cat_cafe_guide_resolve 工具确认匹配，然后建议用户使用交互引导。',
-          '不要直接给出长文教程——先问用户是否要跟着引导走。',
-          '用户拒绝引导时再给简要文字步骤。',
-          '',
-        ].join('\n');
-        log.info({ guideId: top.id, guideName: top.name, score: top.score, catId }, '[F150] guide routing hook hit');
+    if (params.rawUserMessage) {
+      try {
+        const { resolveGuideForIntent } = await import('../../../../guides/guide-registry-loader.js');
+        const guideMatches = resolveGuideForIntent(params.rawUserMessage);
+        if (guideMatches.length > 0) {
+          const top = guideMatches[0];
+          guideHint = [
+            '',
+            '[F150 Guide Available]',
+            `检测到与用户问题匹配的交互引导流程: "${top.name}" (${top.id})`,
+            '你必须先调用 cat_cafe_guide_resolve 工具确认匹配，然后建议用户使用交互引导。',
+            '不要直接给出长文教程——先问用户是否要跟着引导走。',
+            '用户拒绝引导时再给简要文字步骤。',
+            '',
+          ].join('\n');
+          log.info({ guideId: top.id, guideName: top.name, score: top.score, catId }, '[F150] guide routing hook hit');
+        }
+      } catch (err: unknown) {
+        log.warn({ err, catId, threadId }, '[F150] guide routing hook failed — skipping');
       }
-    } catch {
-      // Guide registry unavailable — skip hint, normal invocation continues
     }
 
     const effectivePrompt =
