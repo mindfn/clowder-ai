@@ -1355,6 +1355,22 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     guideId: z.string().min(1),
   });
 
+  // Lazy-load to avoid startup crash if registry.yaml is missing
+  let guideRegistryLoaded = false;
+  let isValidGuideId: (id: string) => boolean = () => true;
+  function ensureGuideRegistry() {
+    if (guideRegistryLoaded) return;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const loader = require('../domains/guides/guide-registry-loader.js');
+      isValidGuideId = loader.isValidGuideId;
+      guideRegistryLoaded = true;
+    } catch {
+      log.warn('[F150] Guide registry not available — skipping guideId validation');
+      guideRegistryLoaded = true;
+    }
+  }
+
   app.post('/api/callbacks/start-guide', async (request, reply) => {
     const parsed = startGuideSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -1368,6 +1384,11 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       return EXPIRED_CREDENTIALS_ERROR;
     }
     if (!registry.isLatest(invocationId)) return { status: 'stale_ignored' };
+    ensureGuideRegistry();
+    if (!isValidGuideId(guideId)) {
+      reply.status(400);
+      return { error: 'unknown_guide_id', message: `Guide "${guideId}" is not registered` };
+    }
     socketManager.broadcastToRoom(`thread:${record.threadId}`, 'guide_start', {
       guideId,
       threadId: record.threadId,
@@ -1375,5 +1396,75 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     });
     log.info({ guideId, threadId: record.threadId }, '[F150] guide_start emitted');
     return { status: 'ok', guideId };
+  });
+
+  // F150: Resolve user intent to matching guide flows
+  const resolveGuideSchema = callbackAuthSchema.extend({
+    intent: z.string().min(1),
+  });
+
+  app.post('/api/callbacks/guide-resolve', async (request, reply) => {
+    const parsed = resolveGuideSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.status(400);
+      return { error: 'Invalid request', details: parsed.error.issues };
+    }
+    const { invocationId, callbackToken, intent } = parsed.data;
+    const record = registry.verify(invocationId, callbackToken);
+    if (!record) {
+      reply.status(401);
+      return EXPIRED_CREDENTIALS_ERROR;
+    }
+
+    ensureGuideRegistry();
+    let entries: Array<{ id: string; name: string; description: string; keywords: string[] }> = [];
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const loader = require('../domains/guides/guide-registry-loader.js');
+      entries = loader.getRegistryEntries();
+    } catch {
+      return { status: 'ok', matches: [] };
+    }
+
+    // Deterministic keyword matching: score by number of keyword hits
+    const query = intent.toLowerCase();
+    const matches = entries
+      .map((entry) => {
+        const score = entry.keywords.filter((kw) => query.includes(kw.toLowerCase()) || kw.toLowerCase().includes(query)).length;
+        return { ...entry, score };
+      })
+      .filter((e) => e.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map(({ id, name, description, score }) => ({ id, name, description, score }));
+
+    log.info({ intent, matchCount: matches.length, threadId: record.threadId }, '[F150] guide_resolve');
+    return { status: 'ok', matches };
+  });
+
+  // F150: Control an active guide session (next/back/skip/exit)
+  const controlGuideSchema = callbackAuthSchema.extend({
+    action: z.enum(['next', 'back', 'skip', 'exit']),
+  });
+
+  app.post('/api/callbacks/guide-control', async (request, reply) => {
+    const parsed = controlGuideSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.status(400);
+      return { error: 'Invalid request', details: parsed.error.issues };
+    }
+    const { invocationId, callbackToken, action } = parsed.data;
+    const record = registry.verify(invocationId, callbackToken);
+    if (!record) {
+      reply.status(401);
+      return EXPIRED_CREDENTIALS_ERROR;
+    }
+    if (!registry.isLatest(invocationId)) return { status: 'stale_ignored' };
+    socketManager.broadcastToRoom(`thread:${record.threadId}`, 'guide_control', {
+      action,
+      threadId: record.threadId,
+      timestamp: Date.now(),
+    });
+    log.info({ action, threadId: record.threadId }, '[F150] guide_control emitted');
+    return { status: 'ok', action };
   });
 };

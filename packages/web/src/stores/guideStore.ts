@@ -20,7 +20,8 @@ export type GuideStepStatus =
 
 export interface GuideStep {
   id: string;
-  targetGuideId: string;
+  /** data-guide-id of the target element. Optional for `information` type steps. */
+  targetGuideId?: string;
   title: string;
   instruction: string;
   expectedAction: 'click' | 'visible' | 'select' | 'input' | 'confirm';

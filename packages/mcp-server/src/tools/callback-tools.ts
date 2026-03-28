@@ -727,6 +727,14 @@ export async function handleStartGuide(input: { guideId: string }): Promise<Tool
   return callbackPost('/api/callbacks/start-guide', { guideId: input.guideId });
 }
 
+export async function handleGuideResolve(input: { intent: string }): Promise<ToolResult> {
+  return callbackPost('/api/callbacks/guide-resolve', { intent: input.intent });
+}
+
+export async function handleGuideControl(input: { action: string }): Promise<ToolResult> {
+  return callbackPost('/api/callbacks/guide-control', { action: input.action });
+}
+
 export const callbackTools = [
   {
     name: 'cat_cafe_post_message',
@@ -926,18 +934,40 @@ export const callbackTools = [
   },
   // ============ F150: Guide Engine ============
   {
+    name: 'cat_cafe_guide_resolve',
+    description:
+      'Match user intent to available guided flows. ' +
+      'Call this when a user asks how to do something (e.g. "怎么添加成员", "how to add a member"). ' +
+      'Returns a ranked list of matching guide flows with IDs, names, and descriptions. ' +
+      'If matches are found, suggest the top match to the user and ask if they want to start the guide. ' +
+      'On confirmation, call cat_cafe_start_guide with the matched guideId.',
+    inputSchema: {
+      intent: z.string().min(1).describe('User intent text (e.g. "添加成员", "配置飞书")'),
+    },
+    handler: handleGuideResolve,
+  },
+  {
     name: 'cat_cafe_start_guide',
     description:
       'Start an interactive guided flow on the Console frontend. ' +
-      'When a user asks how to perform an operation (e.g. "怎么添加成员"), ' +
-      'use this tool to trigger the step-by-step guide overlay with spotlight + HUD. ' +
-      'Available flows: "add-member" (添加成员). ' +
-      'The guide will highlight each UI element in sequence and walk the user through the process. ' +
-      'IMPORTANT: This is your primary tool for teaching users how to use the Console — ' +
-      'always prefer this over text-only instructions when a matching guide flow exists.',
+      'Only call this AFTER using cat_cafe_guide_resolve to find the matching flow ' +
+      'AND getting user confirmation. ' +
+      'The guide will highlight each UI element in sequence and walk the user through the process.',
     inputSchema: {
-      guideId: z.string().min(1).describe('Guide flow ID (e.g. "add-member"). Use __guideFlows to see available IDs.'),
+      guideId: z.string().min(1).describe('Guide flow ID returned by cat_cafe_guide_resolve (e.g. "add-member")'),
     },
     handler: handleStartGuide,
+  },
+  {
+    name: 'cat_cafe_guide_control',
+    description:
+      'Control an active guide session on the Console frontend. ' +
+      'Use this to navigate the guide when the user asks to go forward, back, skip, or exit. ' +
+      'Actions: "next" (advance to next step), "back" (go to previous step), ' +
+      '"skip" (skip current step), "exit" (end guide session).',
+    inputSchema: {
+      action: z.enum(['next', 'back', 'skip', 'exit']).describe('Guide control action'),
+    },
+    handler: handleGuideControl,
   },
 ] as const;
