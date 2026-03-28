@@ -138,12 +138,10 @@ async function createRedis(): Promise<{ client: RedisClient; persistent: boolean
   return { client: createMemoryRedisStub(), persistent: false };
 }
 
-/** Load credentials from Redis and register providers not already active via env vars */
+/** Load credentials from Redis and register providers (Console-bound takes priority) */
 async function autoLoadCredentials(accountManager: AccountManager): Promise<void> {
   const stored = await accountManager.listCredentials();
   for (const cred of stored) {
-    // tryAutoLoadProvider handles: skip env-registered, load from Redis,
-    // add to dynamicallyLoaded for proper revocation tracking
     const loaded = await tryAutoLoadProvider(cred.providerId);
     if (loaded) {
       console.error(`[mediahub] Auto-loaded provider from stored credentials: ${cred.providerId}`);
@@ -154,24 +152,6 @@ async function autoLoadCredentials(accountManager: AccountManager): Promise<void
 export async function bootstrapMediaHub(): Promise<void> {
   const registry = new ProviderRegistry();
 
-  const cogvideox = createCogVideoXProvider();
-  if (cogvideox) {
-    registry.register(cogvideox);
-    console.error('[mediahub] Registered provider: CogVideoX');
-  }
-
-  const kling = createKlingProvider();
-  if (kling) {
-    registry.register(kling);
-    console.error('[mediahub] Registered provider: Kling');
-  }
-
-  const jimeng = createJimengProvider();
-  if (jimeng) {
-    registry.register(jimeng);
-    console.error('[mediahub] Registered provider: Jimeng');
-  }
-
   const { client: redis, persistent } = await createRedis();
   const jobStore = new JobStore(redis);
   const storage = new MediaStorage();
@@ -179,7 +159,7 @@ export async function bootstrapMediaHub(): Promise<void> {
   const service = new MediaHubService(registry, jobStore, storage);
   setMediaHubService(service);
 
-  // Account Manager: encrypted credential storage (requires MEDIAHUB_CREDENTIAL_KEY)
+  // 1. Console-bound credentials take priority (requires MEDIAHUB_CREDENTIAL_KEY)
   const credKeyB64 = process.env['MEDIAHUB_CREDENTIAL_KEY'];
   if (credKeyB64) {
     const credKey = Buffer.from(credKeyB64, 'base64');
@@ -188,9 +168,31 @@ export async function bootstrapMediaHub(): Promise<void> {
     registerProviderFactory('cogvideox', (d) => createCogVideoXProvider(d['apiKey']));
     registerProviderFactory('kling', (d) => createKlingProvider(d['accessKey'], d['secretKey']));
     registerProviderFactory('jimeng', (d) => createJimengProvider(d['accessKey'], d['secretKey']));
-    // Auto-load: register providers from stored credentials (skip already-registered)
     await autoLoadCredentials(accountManager);
     console.error('[mediahub] AccountManager enabled');
+  }
+
+  // 2. Env var fallback: only register providers not already loaded from Console
+  if (!registry.get('cogvideox')) {
+    const cogvideox = createCogVideoXProvider();
+    if (cogvideox) {
+      registry.register(cogvideox);
+      console.error('[mediahub] Registered provider: CogVideoX (env fallback)');
+    }
+  }
+  if (!registry.get('kling')) {
+    const kling = createKlingProvider();
+    if (kling) {
+      registry.register(kling);
+      console.error('[mediahub] Registered provider: Kling (env fallback)');
+    }
+  }
+  if (!registry.get('jimeng')) {
+    const jimeng = createJimengProvider();
+    if (jimeng) {
+      registry.register(jimeng);
+      console.error('[mediahub] Registered provider: Jimeng (env fallback)');
+    }
   }
 
   // Schedule periodic cleanup — only when Redis is persistent (in-memory store is empty,
