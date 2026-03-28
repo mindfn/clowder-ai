@@ -1,7 +1,6 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { GuideStep } from '@/stores/guideStore';
 import { HUDActions, CatEyeIndicator } from '../guide-overlay-parts';
 
 Object.assign(globalThis as Record<string, unknown>, { React });
