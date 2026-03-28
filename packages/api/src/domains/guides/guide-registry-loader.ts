@@ -5,7 +5,8 @@
  * and the full registry entries for the resolve MCP tool.
  */
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 
 export interface GuideRegistryEntry {
@@ -24,11 +25,11 @@ interface RegistryFile {
   guides: GuideRegistryEntry[];
 }
 
-/** Resolve project root (3 levels up from this file's dist location) */
+/** Resolve project root from this file's location */
 function findProjectRoot(): string {
   // At runtime: packages/api/dist/domains/guides/guide-registry-loader.js
-  // Project root is 5 dirs up from dist file
-  return resolve(__dirname, '..', '..', '..', '..', '..');
+  const thisDir = dirname(fileURLToPath(import.meta.url));
+  return resolve(thisDir, '..', '..', '..', '..', '..');
 }
 
 let cachedEntries: GuideRegistryEntry[] | null = null;

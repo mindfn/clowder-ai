@@ -1307,26 +1307,14 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
   // F088 Phase J2: Document generation callback routes
   registerCallbackDocumentRoutes(app, { registry, socketManager });
 
-  // F150: Guide engine — start a guided flow on the frontend
-  const startGuideSchema = callbackAuthSchema.extend({
-    guideId: z.string().min(1),
-  });
+  // F150: Guide engine
+  const startGuideSchema = callbackAuthSchema.extend({ guideId: z.string().min(1) });
+  const resolveGuideSchema = callbackAuthSchema.extend({ intent: z.string().min(1) });
 
-  // Lazy-load to avoid startup crash if registry.yaml is missing
-  let guideRegistryLoaded = false;
-  let isValidGuideId: (id: string) => boolean = () => true;
-  function ensureGuideRegistry() {
-    if (guideRegistryLoaded) return;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const loader = require('../domains/guides/guide-registry-loader.js');
-      isValidGuideId = loader.isValidGuideId;
-      guideRegistryLoaded = true;
-    } catch {
-      log.warn('[F150] Guide registry not available — skipping guideId validation');
-      guideRegistryLoaded = true;
-    }
-  }
+  // Static ESM import — fail loudly if loader is broken, no silent degradation
+  const { isValidGuideId, getRegistryEntries } = await import(
+    '../domains/guides/guide-registry-loader.js'
+  );
 
   app.post('/api/callbacks/start-guide', async (request, reply) => {
     const parsed = startGuideSchema.safeParse(request.body);
@@ -1341,7 +1329,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       return EXPIRED_CREDENTIALS_ERROR;
     }
     if (!registry.isLatest(invocationId)) return { status: 'stale_ignored' };
-    ensureGuideRegistry();
     if (!isValidGuideId(guideId)) {
       reply.status(400);
       return { error: 'unknown_guide_id', message: `Guide "${guideId}" is not registered` };
@@ -1356,10 +1343,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
   });
 
   // F150: Resolve user intent to matching guide flows
-  const resolveGuideSchema = callbackAuthSchema.extend({
-    intent: z.string().min(1),
-  });
-
   app.post('/api/callbacks/guide-resolve', async (request, reply) => {
     const parsed = resolveGuideSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -1373,26 +1356,17 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       return EXPIRED_CREDENTIALS_ERROR;
     }
 
-    ensureGuideRegistry();
-    let entries: Array<{ id: string; name: string; description: string; keywords: string[] }> = [];
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const loader = require('../domains/guides/guide-registry-loader.js');
-      entries = loader.getRegistryEntries();
-    } catch {
-      return { status: 'ok', matches: [] };
-    }
-
+    const entries = getRegistryEntries();
     // Deterministic keyword matching: score by number of keyword hits
     const query = intent.toLowerCase();
     const matches = entries
       .map((entry) => {
-        const score = entry.keywords.filter((kw) => query.includes(kw.toLowerCase()) || kw.toLowerCase().includes(query)).length;
+        const score = entry.keywords.filter((kw: string) => query.includes(kw.toLowerCase()) || kw.toLowerCase().includes(query)).length;
         return { ...entry, score };
       })
-      .filter((e) => e.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .map(({ id, name, description, score }) => ({ id, name, description, score }));
+      .filter((e: { score: number }) => e.score > 0)
+      .sort((a: { score: number }, b: { score: number }) => b.score - a.score)
+      .map(({ id, name, description, score }: { id: string; name: string; description: string; score: number }) => ({ id, name, description, score }));
 
     log.info({ intent, matchCount: matches.length, threadId: record.threadId }, '[F150] guide_resolve');
     return { status: 'ok', matches };
