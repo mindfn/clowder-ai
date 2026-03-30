@@ -130,6 +130,7 @@ import {
   exportRoutes,
   externalProjectRoutes,
   featureDocDetailRoutes,
+  guideActionRoutes,
   intentCardRoutes,
   invocationsRoutes,
   leaderboardEventsRoutes,
@@ -927,6 +928,10 @@ async function main(): Promise<void> {
     socketManager,
     threadStore,
   });
+  // F150: Frontend-facing guide actions (no MCP auth, uses userId header)
+  if (threadStore) {
+    await app.register(guideActionRoutes, { threadStore, socketManager });
+  }
   await app.register(catsRoutes);
   await app.register(quotaRoutes);
   // F128: Daily token usage aggregation

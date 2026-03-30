@@ -19,6 +19,7 @@ export { exportRoutes } from './export.js';
 export { externalProjectRoutes } from './external-projects.js';
 export { featureDocDetailRoutes } from './feature-doc-detail.js';
 export { gameRoutes } from './games.js';
+export { guideActionRoutes } from './guide-action-routes.js';
 export { intentCardRoutes } from './intent-card-routes.js';
 export { invocationsRoutes } from './invocations.js';
 export { leaderboardRoutes } from './leaderboard.js';
