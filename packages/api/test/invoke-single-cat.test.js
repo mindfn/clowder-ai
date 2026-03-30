@@ -4156,6 +4156,7 @@ describe('F150 guide routing hook', () => {
     assert.ok(promptSeen.includes('[F150 Guide Available]'), 'prompt must contain guide hint');
     assert.ok(promptSeen.includes('add-member'), 'prompt must reference matched guide id');
     assert.ok(promptSeen.includes('cat_cafe_create_rich_block'), 'prompt must instruct AI to use rich block');
+    assert.ok(promptSeen.includes('block 参数'), 'prompt must specify correct parameter name "block"');
     assert.ok(promptSeen.includes('"interactiveType":"select"'), 'prompt must contain interactive select JSON');
   });
 
