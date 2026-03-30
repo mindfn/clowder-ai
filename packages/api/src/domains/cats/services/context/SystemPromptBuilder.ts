@@ -622,10 +622,10 @@ export function buildInvocationContext(context: InvocationContext): string {
       if (isStart) {
         lines.push(
           `🧭 Guide Selection:${threadPart} 用户选择了「开始引导」 guideId=${id}`,
-          '你必须按以下步骤回复：',
+          '你必须按以下步骤回复（严格遵守，前端 overlay 接管后不需要你说话）：',
           `1. 调用 cat_cafe_update_guide_state(threadId="${context.threadId}", guideId="${id}", status="active")`,
           `2. 调用 cat_cafe_start_guide(guideId="${id}") 启动前端引导 overlay`,
-          '3. 回复一句鼓励的话，如「引导已启动，跟着页面上的提示一步步来就好！」',
+          '3. 不要写任何文字回复。前端引导 overlay 会接管交互，你只需要调用上面两个工具。',
           '',
         );
       } else if (isPreview) {
