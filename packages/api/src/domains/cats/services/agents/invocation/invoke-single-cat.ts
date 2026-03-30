@@ -964,8 +964,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         const guideMatches = resolveGuideForIntent(params.rawUserMessage);
         if (guideMatches.length > 0) {
           const top = guideMatches[0];
+          const blockId = `f150-guide-offer-${top.id}-${Date.now()}`;
           const richBlockJson = JSON.stringify({
-            id: `f150-guide-offer-${top.id}`,
+            id: blockId,
             kind: 'interactive',
             v: 1,
             interactiveType: 'select',
@@ -984,7 +985,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             '',
             '你必须按以下方式回复（严格遵守，不要自由发挥）：',
             `1. 写一句话：「我找到了「${top.name}」的交互引导流程，大约需要 ${top.estimatedTime}。」`,
-            `2. 调用 cat_cafe_create_rich_block 工具，content 参数传入以下 JSON：`,
+            `2. 调用 cat_cafe_create_rich_block 工具，block 参数传入以下 JSON 字符串：`,
             richBlockJson,
             '3. 禁止调用 cat_cafe_guide_resolve 工具',
             '4. 禁止直接给出教程或步骤列表',
