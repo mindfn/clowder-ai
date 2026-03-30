@@ -32,6 +32,13 @@ interface SessionChainRouteOptions extends FastifyPluginOptions {
   sessionSealer?: ISessionSealer;
 }
 
+function canAccessThread(thread: { id: string; createdBy: string } | null, userId: string): boolean {
+  if (!thread) return false;
+  if (thread.createdBy === userId) return true;
+  // "default" thread is created by system but is the global hub thread for every user session.
+  return thread.id === 'default' && thread.createdBy === 'system';
+}
+
 export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChainRouteOptions): Promise<void> {
   const { sessionChainStore, threadStore, messageStore, transcriptReader, sessionSealer } = opts;
 
@@ -47,7 +54,7 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
 
     const { threadId } = request.params;
     const thread = await threadStore.get(threadId);
-    if (!thread || thread.createdBy !== userId) {
+    if (!canAccessThread(thread, userId)) {
       reply.status(403);
       return { error: 'Access denied' };
     }
@@ -94,7 +101,7 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
       reply.status(404);
       return { error: 'Thread not found' };
     }
-    if (thread.createdBy !== userId) {
+    if (!canAccessThread(thread, userId)) {
       reply.status(403);
       return { error: 'Access denied' };
     }
@@ -125,7 +132,7 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
       reply.status(404);
       return { error: 'Thread not found' };
     }
-    if (thread.createdBy !== userId) {
+    if (!canAccessThread(thread, userId)) {
       reply.status(403);
       return { error: 'Access denied' };
     }
@@ -246,7 +253,7 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
       reply.status(404);
       return { error: 'Thread not found' };
     }
-    if (thread.createdBy !== userId) {
+    if (!canAccessThread(thread, userId)) {
       reply.status(403);
       return { error: 'Access denied' };
     }
