@@ -615,6 +615,9 @@ export class RedisThreadStore implements IThreadStore {
     if (thread.connectorHubState) {
       result.connectorHubState = JSON.stringify(thread.connectorHubState);
     }
+    if (thread.guideState) {
+      result.guideState = JSON.stringify(thread.guideState);
+    }
     return result;
   }
 
@@ -700,6 +703,16 @@ export class RedisThreadStore implements IThreadStore {
         const parsed = JSON.parse(data.connectorHubState);
         if (parsed && typeof parsed === 'object' && parsed.v === 1) {
           result.connectorHubState = parsed as ConnectorHubStateV1;
+        }
+      } catch {
+        /* ignore malformed JSON */
+      }
+    }
+    if (data.guideState) {
+      try {
+        const parsed = JSON.parse(data.guideState);
+        if (parsed && typeof parsed === 'object' && parsed.v === 1) {
+          result.guideState = parsed as GuideStateV1;
         }
       } catch {
         /* ignore malformed JSON */
