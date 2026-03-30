@@ -899,7 +899,25 @@
       "name": "i18n — Hub 界面中英文切换",
       "status": "idea | **Owner**: 待定 | **Priority**: 待定",
       "file": "F147-i18n-hub-locale-switch.md"
+    },
+    {
+      "id": "F150",
+      "name": "Add-Member Internal Guide UI Spec (Phase A)",
+      "status": "unknown",
+      "file": "F150-add-member-guide-ui-spec.md"
+    },
+    {
+      "id": "F150",
+      "name": "引导场景清单",
+      "status": "unknown",
+      "file": "F150-scene-catalog.md"
+    },
+    {
+      "id": "F150",
+      "name": "Scene-Based Bidirectional Guidance Engine",
+      "status": "spec | **Owner**: 布偶猫/宪宪 | **Priority**: P1",
+      "file": "F150-scene-guidance-engine.md"
     }
   ],
-  "generated_at": "2026-03-29T15:53:14.531Z"
+  "generated_at": "2026-03-30T14:55:08.832Z"
 }
