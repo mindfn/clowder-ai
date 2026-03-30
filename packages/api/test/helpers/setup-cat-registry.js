@@ -14,12 +14,16 @@ async function registerAllCats() {
   try {
     const { loadCatConfig, toAllCatConfigs } = await import('../../dist/config/cat-config-loader.js');
     const allConfigs = toAllCatConfigs(loadCatConfig());
-    for (const [id, config] of Object.entries(allConfigs)) {
-      if (!catRegistry.has(id)) {
-        catRegistry.register(id, config);
+    const ids = Object.keys(allConfigs);
+    if (ids.length > 0) {
+      for (const [id, config] of Object.entries(allConfigs)) {
+        if (!catRegistry.has(id)) {
+          catRegistry.register(id, config);
+        }
       }
+      return;
     }
-    return;
+    // Empty result (e.g. v2 config without cats key) — fall through to static defaults
   } catch {
     // Best-effort fallback for contexts without built dist/config support.
   }

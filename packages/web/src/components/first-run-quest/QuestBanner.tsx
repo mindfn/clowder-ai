@@ -42,6 +42,24 @@ export function QuestBanner({ phase, firstCatName, onAddSecondCat, onComplete }:
         />
       </div>
 
+      {phase === 'quest-2-cat-intro' && (
+        <p className="mt-2 text-xs text-amber-600">
+          在下方输入框 @{firstCatName ?? '猫猫'} 打个招呼，让它自我介绍一下吧！
+        </p>
+      )}
+
+      {phase === 'quest-3-task-select' && (
+        <p className="mt-2 text-xs text-amber-600">
+          {'试着给 '}{firstCatName ?? '猫猫'}{' 派一个简单任务，比如「帮我写一个 hello world」。'}
+        </p>
+      )}
+
+      {phase === 'quest-4-task-running' && (
+        <p className="mt-2 text-xs text-amber-600">
+          {firstCatName ?? '猫猫'} 正在执行任务，请耐心等待...
+        </p>
+      )}
+
       {isErrorPhase && (
         <div className="mt-3 rounded-lg border border-orange-200 bg-orange-50 p-3">
           <p className="text-sm text-orange-700">

@@ -9,8 +9,10 @@ import { promisify } from 'node:util';
 const execAsync = promisify(exec);
 
 export interface DetectedClient {
-  /** Client key matching ClientValue in frontend */
-  client: 'anthropic' | 'openai' | 'google' | 'opencode' | 'dare';
+  /** Client ID — the CLI tool identity (claude, codex, gemini, opencode, dare) */
+  client: 'claude' | 'codex' | 'gemini' | 'opencode' | 'dare';
+  /** Provider key matching ClientValue in hub-cat-editor (anthropic, openai, etc.) */
+  provider: 'anthropic' | 'openai' | 'google' | 'opencode' | 'dare';
   /** Human-readable label */
   label: string;
   /** CLI binary name */
@@ -25,6 +27,7 @@ export interface DetectedClient {
 
 interface CliSpec {
   client: DetectedClient['client'];
+  provider: DetectedClient['provider'];
   label: string;
   cli: string;
   versionCmd: string;
@@ -32,11 +35,39 @@ interface CliSpec {
 }
 
 const CLI_SPECS: CliSpec[] = [
-  { client: 'anthropic', label: 'Claude', cli: 'claude', versionCmd: 'claude --version', envKey: 'ANTHROPIC_API_KEY' },
-  { client: 'openai', label: 'Codex', cli: 'codex', versionCmd: 'codex --version', envKey: 'OPENAI_API_KEY' },
-  { client: 'opencode', label: 'OpenCode', cli: 'opencode', versionCmd: 'opencode version', envKey: 'ANTHROPIC_API_KEY' },
-  { client: 'google', label: 'Gemini', cli: 'gemini', versionCmd: 'gemini --version', envKey: 'GOOGLE_API_KEY' },
-  { client: 'dare', label: 'Dare', cli: 'dare', versionCmd: 'dare --version', envKey: '' },
+  {
+    client: 'claude',
+    provider: 'anthropic',
+    label: 'Claude',
+    cli: 'claude',
+    versionCmd: 'claude --version',
+    envKey: 'ANTHROPIC_API_KEY',
+  },
+  {
+    client: 'codex',
+    provider: 'openai',
+    label: 'Codex',
+    cli: 'codex',
+    versionCmd: 'codex --version',
+    envKey: 'OPENAI_API_KEY',
+  },
+  {
+    client: 'opencode',
+    provider: 'opencode',
+    label: 'OpenCode',
+    cli: 'opencode',
+    versionCmd: 'opencode version',
+    envKey: 'ANTHROPIC_API_KEY',
+  },
+  {
+    client: 'gemini',
+    provider: 'google',
+    label: 'Gemini',
+    cli: 'gemini',
+    versionCmd: 'gemini --version',
+    envKey: 'GOOGLE_API_KEY',
+  },
+  { client: 'dare', provider: 'dare', label: 'Dare', cli: 'dare', versionCmd: 'dare --version', envKey: '' },
 ];
 
 async function checkCli(spec: CliSpec): Promise<DetectedClient> {
@@ -45,6 +76,7 @@ async function checkCli(spec: CliSpec): Promise<DetectedClient> {
     const version = stdout.trim().split('\n').at(0) ?? '';
     return {
       client: spec.client,
+      provider: spec.provider,
       label: spec.label,
       cli: spec.cli,
       installed: true,
@@ -54,6 +86,7 @@ async function checkCli(spec: CliSpec): Promise<DetectedClient> {
   } catch {
     return {
       client: spec.client,
+      provider: spec.provider,
       label: spec.label,
       cli: spec.cli,
       installed: false,

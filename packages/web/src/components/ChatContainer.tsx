@@ -29,11 +29,11 @@ import { A2ACollapsible } from './A2ACollapsible';
 import { AuthorizationCard } from './AuthorizationCard';
 import { BootcampListModal } from './BootcampListModal';
 import { CatCafeHub } from './CatCafeHub';
-import { FirstRunQuestWizard } from './FirstRunQuestWizard';
-import { QuestBanner } from './first-run-quest/QuestBanner';
 import { ChatContainerHeader } from './ChatContainerHeader';
 import { ChatInput } from './ChatInput';
 import { ChatMessage } from './ChatMessage';
+import { FirstRunQuestWizard } from './FirstRunQuestWizard';
+import { QuestBanner } from './first-run-quest/QuestBanner';
 import { GameOverlayConnector } from './game/GameOverlayConnector';
 import { HubListModal } from './HubListModal';
 import { BootcampIcon } from './icons/BootcampIcon';
@@ -689,18 +689,25 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
             多猫研究模式 — 文章上下文已注入。请输入研究问题，猫猫会自动调用 multi_mention 邀请其他猫参与分析。
           </div>
         )}
-        <ChatInput
-          key={threadId}
-          threadId={threadId}
-          onSend={(content, images, whisper, deliveryMode) =>
-            handleSend(content, images, undefined, whisper, deliveryMode)
-          }
-          onStop={handleStop}
-          disabled={false}
-          hasActiveInvocation={hasActiveInvocation}
-          uploadStatus={uploadStatus}
-          uploadError={uploadError}
-        />
+        <div className={(() => {
+          const ct = storeThreads.find((t) => t.id === threadId);
+          const qs = (ct as Record<string, unknown> | undefined)?.firstRunQuestState as
+            | { phase: string } | undefined;
+          return qs?.phase === 'quest-2-cat-intro' ? 'quest-input-highlight rounded-xl mx-1' : '';
+        })()}>
+          <ChatInput
+            key={threadId}
+            threadId={threadId}
+            onSend={(content, images, whisper, deliveryMode) =>
+              handleSend(content, images, undefined, whisper, deliveryMode)
+            }
+            onStop={handleStop}
+            disabled={false}
+            hasActiveInvocation={hasActiveInvocation}
+            uploadStatus={uploadStatus}
+            uploadError={uploadError}
+          />
+        </div>
 
         {/* F101: "Return to game" banner when overlay is minimized */}
         {isGameActive && overlayMinimized && gameView?.threadId === threadId && (

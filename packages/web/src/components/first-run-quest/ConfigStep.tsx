@@ -1,179 +1,212 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
+import { builtinAccountIdForClient, type ClientValue, filterAccounts } from '../hub-cat-editor.model';
 import type { ProfileItem, ProviderProfilesResponse } from '../hub-provider-profiles.types';
-import { builtinAccountIdForClient, filterAccounts, type ClientValue } from '../hub-cat-editor.model';
+import { AuthProfileModal } from './AuthProfileModal';
+import type { EditProfileData } from './ApiKeyCreateForm';
+import { ProfileCard } from './ProfileCard';
 
 interface ConfigStepProps {
   client: string;
-  defaultModel?: string;
+  /** Account provider key (anthropic/openai/google) — distinct from model provider. */
+  clientId: string;
   onComplete: (config: { accountRef: string; model: string }) => void;
 }
 
-export function ConfigStep({ client, defaultModel, onComplete }: ConfigStepProps) {
+/** Map raw API error messages to user-friendly Chinese */
+function humanizeError(msg: string): string {
+  const lower = msg.toLowerCase();
+  if (lower.includes('401') || lower.includes('unauthorized'))
+    return 'Key 好像不对？请检查是否有多余空格或已过期';
+  if (lower.includes('403') || lower.includes('forbidden'))
+    return 'Key 权限不足，请确认已开通 API 访问';
+  if (lower.includes('429') || lower.includes('rate'))
+    return '请求太频繁，请稍后再试';
+  if (lower.includes('timeout') || lower.includes('超时'))
+    return '连接超时，请检查网络';
+  if (lower.includes('fetch') || lower.includes('network') || lower.includes('网络'))
+    return '网络错误，请检查连接';
+  return msg;
+}
+
+export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
   const [profiles, setProfiles] = useState<ProfileItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedProfileId, setSelectedProfileId] = useState('');
-  const [model, setModel] = useState(defaultModel ?? '');
+  const [expandedId, setExpandedId] = useState('');
+  const [selectedModel, setSelectedModel] = useState('');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message?: string } | null>(null);
+  const [showModal, setShowModal] = useState(false);
+  const [editProfile, setEditProfile] = useState<EditProfileData | undefined>();
+  const testSigRef = useRef('');
+  const testCacheRef = useRef<Map<string, { ok: boolean; message?: string }>>(new Map());
 
-  useEffect(() => {
-    let cancelled = false;
-    apiFetch('/api/provider-profiles')
-      .then(async (res) => (await res.json()) as ProviderProfilesResponse)
-      .then((body) => {
-        if (!cancelled) setProfiles(body.providers);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+  const fetchProfiles = useCallback(async () => {
+    const res = await apiFetch('/api/provider-profiles');
+    const body = (await res.json()) as ProviderProfilesResponse;
+    setProfiles(body.providers);
+    return body.providers;
   }, []);
 
-  const available = useMemo(
-    () => filterAccounts(client as ClientValue, profiles),
-    [client, profiles],
-  );
+  useEffect(() => {
+    fetchProfiles()
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [fetchProfiles]);
+
+  const available = useMemo(() => filterAccounts(clientId as ClientValue, profiles), [clientId, profiles]);
+
+  /** Pick first model from a profile */
+  const firstModel = (p?: ProfileItem) => p?.models?.filter(Boolean)?.[0] ?? '';
 
   useEffect(() => {
     if (!selectedProfileId && available.length > 0) {
-      setSelectedProfileId(builtinAccountIdForClient(client as ClientValue) ?? available[0]?.id ?? '');
+      const defaultId = builtinAccountIdForClient(clientId as ClientValue) ?? available[0]?.id ?? '';
+      setSelectedProfileId(defaultId);
+      setExpandedId(defaultId);
+      setSelectedModel(firstModel(available.find((p) => p.id === defaultId)));
     }
-  }, [available, client, selectedProfileId]);
+  }, [available, clientId, selectedProfileId]);
 
-  const selectedProfile = available.find((p) => p.id === selectedProfileId);
+  const handleSelectProfile = (id: string) => {
+    const collapse = expandedId === id && selectedProfileId === id;
+    setSelectedProfileId(id);
+    setExpandedId(collapse ? '' : id);
+    const model = firstModel(available.find((p) => p.id === id));
+    setSelectedModel(model);
+    setTestResult(testCacheRef.current.get(`${id}:${model}`) ?? null);
+  };
 
-  const selectableModels = useMemo(() => {
-    const fromProfile = selectedProfile?.models?.map((m) => m.trim()).filter(Boolean) ?? [];
-    const current = model.trim();
-    if (current && !fromProfile.includes(current)) return [current, ...fromProfile];
-    return fromProfile;
-  }, [model, selectedProfile]);
-
-  useEffect(() => {
-    if (!model.trim() && selectableModels.length > 0) {
-      setModel(selectableModels[0] ?? '');
-    }
-  }, [model, selectableModels]);
+  const handleModelSelect = (m: string) => {
+    setSelectedModel(m);
+    setTestResult(testCacheRef.current.get(`${selectedProfileId}:${m}`) ?? null);
+  };
 
   const handleTest = async () => {
-    if (!selectedProfileId) return;
+    if (!selectedProfileId || !selectedModel) return;
+    const sig = `${selectedProfileId}:${selectedModel}`;
+    testSigRef.current = sig;
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await apiFetch(`/api/provider-profiles/${encodeURIComponent(selectedProfileId)}/test`, {
+      const selectedProfile = available.find((p) => p.id === selectedProfileId);
+      const profileClientId = selectedProfile?.provider ?? clientId;
+      const res = await apiFetch('/api/first-run/connectivity-test', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profileId: selectedProfileId,
+          clientId: profileClientId,
+          client,
+          model: selectedModel || undefined,
+        }),
       });
+      if (testSigRef.current !== sig) return;
       const body = (await res.json()) as { ok: boolean; message?: string; error?: string };
-      setTestResult({ ok: body.ok, message: body.ok ? '连接成功！' : (body.error ?? body.message ?? '连接失败') });
+      const result = {
+        ok: body.ok,
+        message: body.ok
+          ? (body.message ?? '连接成功！')
+          : humanizeError(body.error ?? body.message ?? '连接失败'),
+      };
+      if (result.ok) testCacheRef.current.set(sig, result);
+      setTestResult(result);
     } catch {
-      setTestResult({ ok: false, message: '网络错误' });
+      if (testSigRef.current !== sig) return;
+      setTestResult({ ok: false, message: '网络错误，请检查连接' });
     } finally {
-      setTesting(false);
+      if (testSigRef.current === sig) setTesting(false);
     }
   };
+
+  const handleProfileCreated = useCallback(
+    async (newProfileId: string) => {
+      const updated = await fetchProfiles();
+      setSelectedProfileId(newProfileId);
+      setExpandedId(newProfileId);
+      setTestResult(null);
+      setSelectedModel(firstModel(updated.find((p) => p.id === newProfileId)));
+    },
+    [fetchProfiles],
+  );
+
+  const handleProfileRefresh = useCallback(async () => {
+    const updated = await fetchProfiles();
+    const profile = updated.find((p) => p.id === selectedProfileId);
+    const models = profile?.models?.filter(Boolean) ?? [];
+    if (selectedModel && !models.includes(selectedModel)) {
+      setSelectedModel(models[0] ?? '');
+    }
+  }, [fetchProfiles, selectedProfileId, selectedModel]);
 
   if (loading) {
     return <p className="py-8 text-center text-sm text-gray-400">加载认证配置...</p>;
   }
 
-  const canProceed = selectedProfileId && model.trim() && testResult?.ok;
+  const canProceed = selectedProfileId && selectedModel && testResult?.ok;
 
   return (
     <div>
       <h4 className="mb-1 text-sm font-semibold text-gray-700">认证和模型配置</h4>
-      <p className="mb-4 text-xs text-gray-500">选择账号并验证连通性</p>
+      <p className="mb-3 text-xs text-gray-500">选择账号，配置模型，验证连通性</p>
 
-      {available.length === 0 ? (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
-          未找到可用的认证配置。请在 Console 的 Provider Profiles 中添加。
-        </div>
-      ) : (
-        <>
-          <div className="mb-3 space-y-2">
-            {available.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => {
-                  setSelectedProfileId(p.id);
-                  setTestResult(null);
-                }}
-                className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition ${
-                  selectedProfileId === p.id
-                    ? 'border-amber-400 bg-amber-50'
-                    : 'border-gray-200 hover:border-amber-200'
-                }`}
-              >
-                <span className="font-medium">{p.displayName ?? p.name ?? p.id}</span>
-                <span className="text-xs text-gray-400">{p.builtin ? '内置' : 'API Key'}</span>
-              </button>
-            ))}
+      <div className="scrollbar-cafe mb-3 max-h-80 space-y-1.5 overflow-y-auto">
+        {available.length === 0 && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-center text-sm text-amber-700">
+            未找到可用账号，请点击下方新建一个 API Key
           </div>
+        )}
+        {available.map((p) => (
+          <ProfileCard
+            key={p.id}
+            profile={p}
+            isSelected={selectedProfileId === p.id}
+            isExpanded={expandedId === p.id && selectedProfileId === p.id}
+            selectedModel={selectedProfileId === p.id ? selectedModel : ''}
+            testing={selectedProfileId === p.id && testing}
+            testResult={selectedProfileId === p.id ? testResult : null}
+            onSelect={() => handleSelectProfile(p.id)}
+            onModelSelect={handleModelSelect}
+            onTest={handleTest}
+            onProfileRefresh={handleProfileRefresh}
+            onEdit={() => {
+              setEditProfile({ id: p.id, displayName: p.displayName ?? p.name, baseUrl: p.baseUrl });
+              setShowModal(true);
+            }}
+          />
+        ))}
+      </div>
 
-          <div className="mb-3">
-            <label htmlFor="quest-model" className="mb-1 block text-xs font-medium text-gray-600">模型</label>
-            {selectableModels.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">
-                {selectableModels.map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setModel(m)}
-                    className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
-                      model === m
-                        ? 'border-purple-400 bg-purple-50 text-purple-700'
-                        : 'border-gray-200 text-gray-500 hover:border-purple-200'
-                    }`}
-                  >
-                    {m}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <input
-                id="quest-model"
-                type="text"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder="输入模型名称..."
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
-              />
-            )}
-          </div>
+      <button
+        type="button"
+        onClick={() => { setEditProfile(undefined); setShowModal(true); }}
+        className="mb-3 text-xs font-medium text-amber-600 hover:text-amber-700"
+      >
+        + 新建 API Key 账号
+      </button>
 
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={handleTest}
-              disabled={testing || !selectedProfileId}
-              className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-700 transition hover:bg-amber-100 disabled:opacity-50"
-            >
-              {testing ? '测试中...' : '测试连接'}
-            </button>
-            {testResult && (
-              <span className={`text-sm ${testResult.ok ? 'text-green-600' : 'text-red-500'}`}>
-                {testResult.message}
-              </span>
-            )}
-          </div>
+      <button
+        type="button"
+        disabled={!canProceed}
+        onClick={() => onComplete({ accountRef: selectedProfileId, model: selectedModel })}
+        className={`w-full rounded-lg py-2.5 text-sm font-semibold transition ${
+          canProceed
+            ? 'bg-amber-500 text-white hover:bg-amber-600'
+            : 'cursor-not-allowed bg-gray-200 text-gray-400'
+        }`}
+      >
+        {canProceed ? '创建猫猫' : '请先完成连接测试'}
+      </button>
 
-          {canProceed && (
-            <button
-              type="button"
-              onClick={() => onComplete({ accountRef: selectedProfileId, model: model.trim() })}
-              className="mt-4 w-full rounded-lg bg-amber-500 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-600"
-            >
-              创建猫猫
-            </button>
-          )}
-        </>
-      )}
+      <AuthProfileModal
+        open={showModal}
+        onClose={() => { setShowModal(false); setEditProfile(undefined); }}
+        onCreated={handleProfileCreated}
+        editProfile={editProfile}
+      />
     </div>
   );
 }

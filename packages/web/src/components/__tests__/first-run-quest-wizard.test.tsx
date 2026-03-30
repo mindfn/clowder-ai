@@ -40,13 +40,7 @@ async function flushEffects() {
 
 function WizardHost({ onCreated }: { onCreated?: (tid: string) => void }) {
   const [open, setOpen] = useState(true);
-  return (
-    <FirstRunQuestWizard
-      open={open}
-      onClose={() => setOpen(false)}
-      onCreated={onCreated ?? (() => {})}
-    />
-  );
+  return <FirstRunQuestWizard open={open} onClose={() => setOpen(false)} onCreated={onCreated ?? (() => {})} />;
 }
 
 describe('FirstRunQuestWizard', () => {
@@ -72,15 +66,12 @@ describe('FirstRunQuestWizard', () => {
           templates: [
             {
               id: 'opus',
-              displayName: '布偶猫',
+              name: '布偶猫',
               nickname: '宪宪',
               avatar: '/avatars/opus.png',
               color: { primary: '#9B7EBD', secondary: '#E8DFF5' },
               roleDescription: '主架构师',
               personality: '温柔但有主见',
-              provider: 'anthropic',
-              defaultModel: 'claude-opus-4-6',
-              source: 'template',
             },
           ],
         });

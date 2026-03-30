@@ -51,6 +51,17 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     invokeSingleCat = mod.invokeSingleCat;
   });
 
+  /** Save/restore CAT_CAFE_GLOBAL_CONFIG_ROOT to prevent test profiles leaking to ~/.cat-cafe/ */
+  let _savedGlobalRoot;
+  function setGlobalRoot(dir) {
+    _savedGlobalRoot = process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT;
+    process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = dir;
+  }
+  function restoreGlobalRoot() {
+    if (_savedGlobalRoot === undefined) delete process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT;
+    else process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = _savedGlobalRoot;
+  }
+
   function makeDeps() {
     let counter = 0;
     return {
@@ -2606,6 +2617,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     const { createProviderProfile } = await import('./helpers/create-test-account.js');
     const templateRoot = await mkdtemp(join(tmpdir(), 'f127-active-template-'));
     await writeFile(join(templateRoot, 'cat-template.json'), '{}', 'utf-8');
+    setGlobalRoot(templateRoot);
     const boundProfile = await createProviderProfile(templateRoot, {
       provider: 'openai',
       name: 'template-bound-openai',
@@ -2655,6 +2667,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     } finally {
       if (previousTemplatePath === undefined) delete process.env.CAT_TEMPLATE_PATH;
       else process.env.CAT_TEMPLATE_PATH = previousTemplatePath;
+      restoreGlobalRoot();
       catRegistry.reset();
       for (const [id, config] of Object.entries(registrySnapshot)) {
         catRegistry.register(id, config);
@@ -2814,6 +2827,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     const apiDir = join(root, 'packages', 'api');
     await mkdir(apiDir, { recursive: true });
     await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n', 'utf-8');
+    setGlobalRoot(root);
 
     await createProviderProfile(root, {
       provider: 'openai',
@@ -2874,6 +2888,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       );
     } finally {
       process.chdir(previousCwd);
+      restoreGlobalRoot();
       catRegistry.reset();
       for (const [id, config] of Object.entries(registrySnapshot)) {
         catRegistry.register(id, config);
@@ -3028,6 +3043,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     const apiDir = join(root, 'packages', 'api');
     await mkdir(apiDir, { recursive: true });
     await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n', 'utf-8');
+    setGlobalRoot(root);
 
     const boundProfile = await createProviderProfile(root, {
       provider: 'openai',
@@ -3083,6 +3099,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       );
     } finally {
       process.chdir(previousCwd);
+      restoreGlobalRoot();
       catRegistry.reset();
       for (const [id, config] of Object.entries(registrySnapshot)) {
         catRegistry.register(id, config);
@@ -3097,6 +3114,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     const apiDir = join(root, 'packages', 'api');
     await mkdir(apiDir, { recursive: true });
     await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n', 'utf-8');
+    setGlobalRoot(root);
 
     const openrouterProfile = await createProviderProfile(root, {
       provider: 'openai',
@@ -3147,6 +3165,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       assert.ok(messages.some((m) => m.type === 'done'));
     } finally {
       process.chdir(previousCwd);
+      restoreGlobalRoot();
       catRegistry.reset();
       for (const [id, config] of Object.entries(registrySnapshot)) {
         catRegistry.register(id, config);
@@ -3718,6 +3737,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     const apiDir = join(root, 'packages', 'api');
     await mkdir(apiDir, { recursive: true });
     await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n', 'utf-8');
+    setGlobalRoot(root);
     await createProviderProfile(root, {
       provider: 'anthropic',
       name: 'sponsor-gateway',
@@ -3823,6 +3843,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       assert.equal(sealRequests.length, 0, 'should not request seal on approx api_key telemetry');
     } finally {
       process.chdir(previousCwd);
+      restoreGlobalRoot();
       if (previousProxyEnabled === undefined) delete process.env.ANTHROPIC_PROXY_ENABLED;
       else process.env.ANTHROPIC_PROXY_ENABLED = previousProxyEnabled;
       await rm(root, { recursive: true, force: true });
@@ -3844,6 +3865,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     const apiDir = join(root, 'packages', 'api');
     await mkdir(apiDir, { recursive: true });
     await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n', 'utf-8');
+    setGlobalRoot(root);
     await createProviderProfile(root, {
       provider: 'anthropic',
       name: 'sponsor-gateway',
@@ -3949,6 +3971,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       assert.equal(sealRequests.length, 0, 'should not request seal in api_key mode');
     } finally {
       process.chdir(previousCwd);
+      restoreGlobalRoot();
       if (previousProxyEnabled === undefined) delete process.env.ANTHROPIC_PROXY_ENABLED;
       else process.env.ANTHROPIC_PROXY_ENABLED = previousProxyEnabled;
       _clearTestStrategyOverrides();
@@ -3971,6 +3994,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     const apiDir = join(root, 'packages', 'api');
     await mkdir(apiDir, { recursive: true });
     await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n', 'utf-8');
+    setGlobalRoot(root);
     await createProviderProfile(root, {
       provider: 'anthropic',
       name: 'sponsor-gateway',
@@ -4062,6 +4086,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       assert.equal(sealRequests.length, 1, 'should request seal in handoff mode');
     } finally {
       process.chdir(previousCwd);
+      restoreGlobalRoot();
       if (previousProxyEnabled === undefined) delete process.env.ANTHROPIC_PROXY_ENABLED;
       else process.env.ANTHROPIC_PROXY_ENABLED = previousProxyEnabled;
       _clearTestStrategyOverrides();

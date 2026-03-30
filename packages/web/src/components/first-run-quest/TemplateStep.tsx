@@ -5,16 +5,13 @@ import { apiFetch } from '@/utils/api-client';
 
 export interface TemplateCard {
   id: string;
-  displayName: string;
+  name: string;
   nickname?: string;
   avatar: string;
   color: { primary: string; secondary: string };
   roleDescription: string;
   personality: string;
   teamStrengths?: string;
-  provider: string;
-  defaultModel: string;
-  source: string;
 }
 
 interface TemplateStepProps {
@@ -78,11 +75,11 @@ export function TemplateStep({ onSelect }: TemplateStepProps) {
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-lg"
               style={{ backgroundColor: t.color.secondary, color: t.color.primary }}
             >
-              {t.nickname?.charAt(0) ?? t.displayName.charAt(0)}
+              {t.nickname?.charAt(0) ?? t.name.charAt(0)}
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <span className="font-semibold text-gray-900">{t.displayName}</span>
+                <span className="font-semibold text-gray-900">{t.name}</span>
                 {t.nickname && <span className="text-xs text-gray-400">{t.nickname}</span>}
               </div>
               <p className="mt-0.5 line-clamp-1 text-xs text-gray-500">{t.roleDescription}</p>

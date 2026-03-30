@@ -74,8 +74,7 @@ export function buildErrorEncounteredBlock(catName: string) {
     v: 1 as const,
     interactiveType: 'confirm' as const,
     title: `${catName} 好像遇到了一点问题...`,
-    description:
-      '单独工作时犯错很正常！在真实团队里，我们会让另一只猫猫来 review 和监督。要不要再加一只猫猫？',
+    description: '单独工作时犯错很正常！在真实团队里，我们会让另一只猫猫来 review 和监督。要不要再加一只猫猫？',
     options: [
       { id: 'add-second-cat', label: '好！再来一只猫猫', emoji: '🐱' },
       { id: 'skip', label: '先跳过', emoji: '⏭️' },
@@ -86,10 +85,7 @@ export function buildErrorEncounteredBlock(catName: string) {
 /**
  * Build the collaboration demo auto-fill suggestion.
  */
-export function buildCollaborationPrompt(
-  secondCatName: string,
-  firstCatName: string,
-) {
+export function buildCollaborationPrompt(secondCatName: string, firstCatName: string) {
   return `@${secondCatName} 你来帮忙看看 ${firstCatName} 刚才写的代码，有没有问题？`;
 }
 

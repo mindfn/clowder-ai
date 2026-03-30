@@ -135,6 +135,8 @@ const testBodySchema = z.object({
   projectPath: z.string().optional(),
   provider: z.string().trim().min(1).optional(),
   protocol: protocolEnum.optional(),
+  /** When provided, probe with this model via chat/messages instead of /v1/models. */
+  model: z.string().trim().min(1).optional(),
 });
 
 async function resolveProjectRoot(projectPath?: string): Promise<string | null> {
@@ -484,10 +486,53 @@ export const providerProfilesRoutes: FastifyPluginAsync<ProviderProfilesRoutesOp
         runtime.models,
         params.profileId,
       );
-    const modelProbePaths = probeProtocol === 'google' ? ['/v1beta/models', '/models', '/v1/models'] : ['/v1/models'];
-    let modelsRes: Response | null = null;
-    let modelsError: string | null = null;
+    const requestedModel = parsed.data.model;
+
     try {
+      /* ── Model-specific probe: when caller provides a model, test with that model directly ── */
+      if (requestedModel) {
+        if (probeProtocol === 'anthropic') {
+          const res = await fetchImpl(probeUrl(baseUrl, '/v1/messages'), {
+            method: 'POST',
+            headers: { ...buildProbeHeaders(probeProtocol, runtime.apiKey), 'content-type': 'application/json' },
+            body: JSON.stringify({ model: requestedModel, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }),
+          });
+          if (res.ok) return { ok: true, mode: 'api_key', status: res.status, message: `${requestedModel} 连接正常` };
+          const error = await readProbeError(res);
+          if (isInvalidModelProbeError(error)) {
+            return { ok: false, mode: 'api_key', status: res.status, message: `模型 ${requestedModel} 不可用`, error };
+          }
+          return { ok: false, mode: 'api_key', status: res.status, error };
+        }
+
+        if (probeProtocol === 'google') {
+          const res = await fetchImpl(probeUrl(baseUrl, `/v1beta/models/${requestedModel}`), {
+            method: 'GET',
+            headers: buildProbeHeaders(probeProtocol, runtime.apiKey),
+          });
+          if (res.ok) return { ok: true, mode: 'api_key', status: res.status, message: `${requestedModel} 连接正常` };
+          return { ok: false, mode: 'api_key', status: res.status, error: await readProbeError(res) };
+        }
+
+        /* OpenAI-compatible: POST /v1/chat/completions */
+        const res = await fetchImpl(probeUrl(baseUrl, '/v1/chat/completions'), {
+          method: 'POST',
+          headers: { ...buildProbeHeaders(probeProtocol, runtime.apiKey), 'content-type': 'application/json' },
+          body: JSON.stringify({ model: requestedModel, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }),
+        });
+        if (res.ok) return { ok: true, mode: 'api_key', status: res.status, message: `${requestedModel} 连接正常` };
+        const error = await readProbeError(res);
+        if (isInvalidModelProbeError(error)) {
+          return { ok: false, mode: 'api_key', status: res.status, message: `模型 ${requestedModel} 不可用`, error };
+        }
+        return { ok: false, mode: 'api_key', status: res.status, error };
+      }
+
+      /* ── Generic connectivity probe: no model specified → list models ── */
+      const modelProbePaths = probeProtocol === 'google' ? ['/v1beta/models', '/models', '/v1/models'] : ['/v1/models'];
+      let modelsRes: Response | null = null;
+      let modelsError: string | null = null;
+
       for (const path of modelProbePaths) {
         const next = await fetchImpl(probeUrl(baseUrl, path), {
           method: 'GET',

@@ -1,11 +1,11 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { apiFetch } from '@/utils/api-client';
 import { useCatData } from '@/hooks/useCatData';
-import { TemplateStep, type TemplateCard } from './first-run-quest/TemplateStep';
+import { apiFetch } from '@/utils/api-client';
 import { ClientStep, type DetectedClient } from './first-run-quest/ClientStep';
 import { ConfigStep } from './first-run-quest/ConfigStep';
+import { type TemplateCard, TemplateStep } from './first-run-quest/TemplateStep';
 
 type WizardStep = 'template' | 'client' | 'config' | 'creating' | 'done';
 
@@ -46,15 +46,29 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
       setStep('creating');
       setError(null);
       try {
-        // Create cat via POST /api/cats
+        // Build a unique catId from template + timestamp suffix
+        const suffix = Date.now().toString(36).slice(-4);
+        const catId = `${selectedTemplate.id}-${suffix}`;
+        const catName = selectedTemplate.nickname ?? selectedTemplate.name;
+
+        // Create cat via POST /api/cats — must include all required fields from template
         const createRes = await apiFetch('/api/cats', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            client: selectedClient.client,
+            catId,
+            name: selectedTemplate.name,
+            displayName: selectedTemplate.name,
+            nickname: selectedTemplate.nickname,
+            avatar: selectedTemplate.avatar,
+            color: selectedTemplate.color,
+            mentionPatterns: [`@${catId}`],
+            roleDescription: selectedTemplate.roleDescription,
+            personality: selectedTemplate.personality,
+            teamStrengths: selectedTemplate.teamStrengths,
+            client: selectedClient.provider,
             accountRef: config.accountRef,
             defaultModel: config.model,
-            templateId: selectedTemplate.id,
           }),
         });
 
@@ -64,8 +78,8 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
         }
 
         const catBody = (await createRes.json()) as { cat?: { id: string; displayName: string } };
-        const catId = catBody.cat?.id ?? selectedTemplate.id;
-        const catName = catBody.cat?.displayName ?? selectedTemplate.displayName;
+        const createdCatId = catBody.cat?.id ?? catId;
+        const createdCatName = catBody.cat?.displayName ?? catName;
 
         // Refresh cat data
         await refresh();
@@ -74,7 +88,7 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
         const questRes = await apiFetch('/api/first-run/quest', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ firstCatId: catId, firstCatName: catName }),
+          body: JSON.stringify({ firstCatId: createdCatId, firstCatName: createdCatName }),
         });
 
         if (!questRes.ok) {
@@ -87,7 +101,7 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
         setStep('done');
 
         if (questThreadId) {
-          onCreated(questThreadId, catName);
+          onCreated(questThreadId, createdCatName);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : '创建失败');
@@ -107,10 +121,7 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
   };
 
   return (
-    <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" onClick={onClose}>
       <div
         className="flex max-h-[88vh] w-full max-w-lg flex-col rounded-2xl border border-amber-200 bg-white shadow-2xl"
         onClick={(e) => e.stopPropagation()}
@@ -119,11 +130,7 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
         <div className="flex items-center justify-between border-b border-amber-100 px-6 py-4">
           <div className="flex items-center gap-3">
             {canGoBack && (
-              <button
-                type="button"
-                onClick={handleBack}
-                className="text-sm text-gray-400 hover:text-gray-600"
-              >
+              <button type="button" onClick={handleBack} className="text-sm text-gray-400 hover:text-gray-600">
                 ← 上一步
               </button>
             )}
@@ -142,9 +149,7 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-4">
           {error && (
-            <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">
-              {error}
-            </div>
+            <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-600">{error}</div>
           )}
 
           {step === 'template' && <TemplateStep onSelect={handleTemplateSelect} />}
@@ -152,7 +157,7 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
           {step === 'config' && selectedClient && (
             <ConfigStep
               client={selectedClient.client}
-              defaultModel={selectedTemplate?.defaultModel}
+              clientId={selectedClient.provider}
               onComplete={handleConfigComplete}
             />
           )}
