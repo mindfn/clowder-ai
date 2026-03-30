@@ -16,6 +16,8 @@ import {
 import { CatOverviewTab, type ConfigData, SystemTab } from './config-viewer-tabs';
 import { HubCapabilityTab } from './HubCapabilityTab';
 import { HubCatEditor } from './HubCatEditor';
+import type { HubCatEditorDraft } from './hub-cat-editor.model';
+import { TemplateStep, type TemplateCard } from './first-run-quest/TemplateStep';
 import { HubClaudeRescueSection } from './HubClaudeRescueSection';
 import { HubCoCreatorEditor } from './HubCoCreatorEditor';
 import { HubCommandsTab } from './HubCommandsTab';
@@ -49,7 +51,17 @@ export function CatCafeHub() {
   const [coCreatorEditorOpen, setCoCreatorEditorOpen] = useState(false);
   const [editingCat, setEditingCat] = useState<(typeof cats)[number] | null>(null);
   const [createDraft, setCreateDraft] = useState<Parameters<typeof HubCatEditor>[0]['draft']>(null);
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [togglingCatId, setTogglingCatId] = useState<string | null>(null);
+
+  // F140: detect bootcamp add-teammate phase for template-based creation
+  const currentThreadId = useChatStore((s) => s.currentThreadId);
+  const threads = useChatStore((s) => s.threads);
+  const isBootcampAddTeammate = (() => {
+    const thread = threads.find((t) => t.id === currentThreadId);
+    const bs = thread?.bootcampState as { phase?: string } | undefined;
+    return bs?.phase === 'phase-4.5-add-teammate';
+  })();
 
   // P1 fix: Render-time state sync (React 18 "adjusting state on props change" pattern).
   // Avoids first-frame flash that useEffect would cause on deep-link opens.
@@ -86,6 +98,28 @@ export function CatCafeHub() {
   const openAddMember = useCallback(() => {
     setEditingCat(null);
     setCreateDraft(null);
+    if (isBootcampAddTeammate) {
+      setShowTemplatePicker(true);
+    } else {
+      setEditorOpen(true);
+    }
+  }, [isBootcampAddTeammate]);
+
+  const handleTemplateSelect = useCallback((template: TemplateCard) => {
+    const draft: HubCatEditorDraft = {
+      client: 'anthropic',
+      defaultModel: '',
+      templateName: template.name,
+      templateNickname: template.nickname,
+      templateAvatar: template.avatar,
+      templateColorPrimary: template.color.primary,
+      templateColorSecondary: template.color.secondary,
+      templateRoleDescription: template.roleDescription,
+      templatePersonality: template.personality,
+      templateTeamStrengths: template.teamStrengths,
+    };
+    setShowTemplatePicker(false);
+    setCreateDraft(draft);
     setEditorOpen(true);
   }, []);
 
@@ -249,6 +283,37 @@ export function CatCafeHub() {
             {tab === 'leaderboard' && <HubLeaderboardTab />}
           </div>
         </div>
+        {/* F140: Template picker for bootcamp add-teammate */}
+        {showTemplatePicker && (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30">
+            <div
+              className="rounded-2xl shadow-xl max-w-md w-full mx-4 p-5"
+              style={{ backgroundColor: '#FDF8F3' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-base font-bold text-gray-900">选择猫猫品种</h3>
+                <button
+                  onClick={() => setShowTemplatePicker(false)}
+                  className="text-gray-400 hover:text-gray-600 text-lg"
+                >
+                  &times;
+                </button>
+              </div>
+              <TemplateStep onSelect={handleTemplateSelect} />
+              <button
+                type="button"
+                onClick={() => {
+                  setShowTemplatePicker(false);
+                  setEditorOpen(true);
+                }}
+                className="mt-3 w-full text-center text-xs text-gray-400 hover:text-gray-600"
+              >
+                跳过模板，手动填写
+              </button>
+            </div>
+          </div>
+        )}
         <HubCatEditor
           open={editorOpen}
           cat={editingCat}
