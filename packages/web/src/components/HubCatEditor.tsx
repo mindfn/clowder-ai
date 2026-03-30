@@ -470,6 +470,7 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
       <div
         className="flex max-h-[88vh] w-full max-w-[560px] flex-col rounded-[32px] border border-[#F0DDCD] bg-[#FFF8F2] shadow-2xl"
         onClick={(event) => event.stopPropagation()}
+        data-bootcamp-step="cat-editor"
       >
         <div className="flex shrink-0 items-start justify-between border-b border-[#F0DDCD] px-7 py-5">
           <div>

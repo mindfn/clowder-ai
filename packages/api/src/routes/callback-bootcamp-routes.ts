@@ -22,6 +22,8 @@ const PHASE_ORDER = [
   'phase-3-config-help',
   'phase-3.5-advanced',
   'phase-4-task-select',
+  'phase-4-first-project',
+  'phase-4.5-add-teammate',
   'phase-5-kickoff',
   'phase-6-design',
   'phase-7-dev',
@@ -50,6 +52,8 @@ const updateBootcampStateCallbackSchema = callbackAuthSchema.extend({
     )
     .optional(),
   advancedFeatures: z.record(z.enum(['available', 'unavailable', 'skipped'])).optional(),
+  /** F140: sub-step for add-teammate console guide overlay */
+  guideStep: z.enum(['open-hub', 'click-add-member', 'fill-form', 'done']).nullable().optional(),
   completedAt: z.number().optional(),
 });
 

@@ -233,7 +233,9 @@ describe('POST /api/first-run/connectivity-test', () => {
     const app = Fastify();
     await app.register(firstRunQuestRoutes, { threadStore: new ThreadStore() });
     /* fetchImpl goes to provider-profiles — connectivity-test delegates to it via app.inject() */
-    await app.register(providerProfilesRoutes, { fetchImpl: fetchImpl ?? (async () => new Response('{}', { status: 200 })) });
+    await app.register(providerProfilesRoutes, {
+      fetchImpl: fetchImpl ?? (async () => new Response('{}', { status: 200 })),
+    });
     return app;
   }
 
@@ -509,7 +511,10 @@ describe('tryCliProbe (unit)', () => {
   test('includes --model in CLI command when model is provided', async () => {
     const { tryCliProbe } = await import('../dist/routes/first-run-quest.js');
     let capturedCmd = '';
-    const exec = async (cmd) => { capturedCmd = cmd; return { stdout: 'pong' }; };
+    const exec = async (cmd) => {
+      capturedCmd = cmd;
+      return { stdout: 'pong' };
+    };
     const result = await tryCliProbe('claude', { model: 'claude-sonnet-4-6', execFn: exec });
     assert.ok(result);
     assert.equal(result.ok, true);

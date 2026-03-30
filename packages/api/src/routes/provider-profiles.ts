@@ -495,7 +495,11 @@ export const providerProfilesRoutes: FastifyPluginAsync<ProviderProfilesRoutesOp
           const res = await fetchImpl(probeUrl(baseUrl, '/v1/messages'), {
             method: 'POST',
             headers: { ...buildProbeHeaders(probeProtocol, runtime.apiKey), 'content-type': 'application/json' },
-            body: JSON.stringify({ model: requestedModel, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }),
+            body: JSON.stringify({
+              model: requestedModel,
+              max_tokens: 1,
+              messages: [{ role: 'user', content: 'ping' }],
+            }),
           });
           if (res.ok) return { ok: true, mode: 'api_key', status: res.status, message: `${requestedModel} 连接正常` };
           const error = await readProbeError(res);

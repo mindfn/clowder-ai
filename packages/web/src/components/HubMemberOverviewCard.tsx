@@ -139,6 +139,7 @@ export function HubOverviewToolbar({ onAddMember }: { onAddMember?: () => void }
         onClick={onAddMember}
         className="rounded-full px-4 py-2 text-sm font-bold text-white"
         style={{ backgroundColor: '#D49266' }}
+        data-bootcamp-step="add-member-button"
       >
         + 添加成员
       </button>
