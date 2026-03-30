@@ -394,7 +394,7 @@ describe('writeGeminiMcpConfig', () => {
     });
   });
 
-  it('drops project-level pencil entry so Gemini only relies on shared home pencil server', async () => {
+  it('keeps project-level pencil entry when a resolved command is available', async () => {
     const file = join(dir, '.gemini', 'settings.json');
     await mkdir(join(dir, '.gemini'), { recursive: true });
     await writeFile(
@@ -412,7 +412,10 @@ describe('writeGeminiMcpConfig', () => {
     ]);
 
     const data = JSON.parse(await readFile(file, 'utf-8'));
-    assert.equal(data.mcpServers.pencil, undefined, 'project Gemini config should not contain pencil');
+    assert.deepEqual(data.mcpServers.pencil, {
+      command: '/new/pencil',
+      args: ['--app', 'antigravity'],
+    });
     assert.ok(data.mcpServers['cat-cafe'], 'cat-cafe server should still be written');
   });
 });

@@ -20,7 +20,7 @@ import pino from 'pino';
  */
 export const isDebugMode = process.argv.includes('--debug');
 const LOG_LEVEL = (isDebugMode ? 'debug' : (process.env.LOG_LEVEL ?? 'info')) as pino.Level;
-const LOG_DIR = resolve(process.cwd(), 'data', 'logs', 'api');
+const LOG_DIR = process.env.LOG_DIR ? resolve(process.env.LOG_DIR) : resolve(process.cwd(), 'data', 'logs', 'api');
 const RETENTION_FILES = 14;
 
 /**
@@ -55,7 +55,7 @@ const transport = pino.transport({
     {
       target: 'pino/file',
       options: { destination: 1 },
-      level: LOG_LEVEL,
+      level: 'trace',
     },
     {
       target: 'pino-roll',
@@ -66,7 +66,7 @@ const transport = pino.transport({
         limit: { count: RETENTION_FILES },
         mkdir: true,
       },
-      level: LOG_LEVEL,
+      level: 'trace',
     },
   ],
 });
@@ -90,32 +90,67 @@ export function createModuleLogger(module: string): pino.Logger {
 export const LOG_DIR_PATH = LOG_DIR;
 
 /**
- * KD-7: Redirect unmigrated console.* to stderr so process-layer `2>>`
- * captures them alongside tsx watch output and crash dumps.
- *
- * Why: macOS bash `tee` pipelines create orphan processes that
- * `kill $(jobs -p)` cannot clean up. Using `2>>` for process-layer
- * capture is the only orphan-free approach, but it only captures stderr.
- * This monkey-patch bridges the gap until Phase B migrates all console.*
- * to the Pino logger.
+ * KD-7: Redirect unmigrated console.* to both Pino and stderr.
+ * Sanitize args before utilFormat so secrets cannot leak through msg strings.
  */
-const stderrWrite = (prefix: string, args: unknown[]) => {
-  process.stderr.write(`[console.${prefix}] ${utilFormat(...args)}\n`);
-};
+const consoleLogger = logger.child({ module: 'console' });
 
-const origLog = console.log;
-const origWarn = console.warn;
-const origError = console.error;
+const SENSITIVE_KEYS = new Set(
+  REDACT_PATHS.map((path) => {
+    const segments = path.split(/[.[]/);
+    return segments[segments.length - 1].replace(/[\]"]/g, '').trim().toLowerCase();
+  }).filter(Boolean),
+);
 
-console.log = (...args: unknown[]) => {
-  stderrWrite('log', args);
-  origLog.apply(console, args);
-};
-console.warn = (...args: unknown[]) => {
-  stderrWrite('warn', args);
-  origWarn.apply(console, args);
-};
-console.error = (...args: unknown[]) => {
-  stderrWrite('error', args);
-  origError.apply(console, args);
-};
+function sanitizeEntries(obj: object, visited: WeakSet<object>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    result[key] = SENSITIVE_KEYS.has(key.toLowerCase()) ? '[REDACTED]' : sanitizeArg(value, visited);
+  }
+  return result;
+}
+
+function sanitizeArg(value: unknown, seen?: WeakSet<object>): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  const visited = seen ?? new WeakSet<object>();
+  if (visited.has(value as object)) return '[Circular]';
+  visited.add(value as object);
+  if (Array.isArray(value)) return value.map((item) => sanitizeArg(item, visited));
+  if (ArrayBuffer.isView(value)) return value;
+  if (value instanceof Error) {
+    const cleaned: Record<string, unknown> = {
+      name: value.name,
+      message: value.message,
+      stack: value.stack,
+    };
+    try {
+      Object.assign(cleaned, sanitizeEntries(value, visited));
+    } catch {
+      /* ignore throwing getters */
+    }
+    return cleaned;
+  }
+  try {
+    return sanitizeEntries(value as Record<string, unknown>, visited);
+  } catch {
+    return '[Object]';
+  }
+}
+
+type ConsolePinoLevel = 'info' | 'warn' | 'error' | 'debug';
+type ConsoleMethodLabel = 'log' | 'warn' | 'error' | 'info' | 'debug';
+
+function consoleToPino(level: ConsolePinoLevel, stderrLabel: ConsoleMethodLabel): (...args: unknown[]) => void {
+  return (...args: unknown[]) => {
+    const sanitized = args.map((arg) => sanitizeArg(arg));
+    const msg = utilFormat(...sanitized);
+    consoleLogger[level](msg);
+    process.stderr.write(`[console.${stderrLabel}] ${msg}\n`);
+  };
+}
+
+console.log = consoleToPino('info', 'log');
+console.warn = consoleToPino('warn', 'warn');
+console.error = consoleToPino('error', 'error');
+console.info = consoleToPino('info', 'info');
+console.debug = consoleToPino('debug', 'debug');
