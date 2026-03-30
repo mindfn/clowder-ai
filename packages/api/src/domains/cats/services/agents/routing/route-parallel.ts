@@ -87,6 +87,8 @@ export async function* routeParallel(
   let voiceMode: boolean | undefined;
   // F087: Bootcamp state for CVO onboarding
   let bootcampState: InvocationContext['bootcampState'];
+  // F150: Guide candidate from keyword matching against raw user message
+  let guideCandidate: InvocationContext['guideCandidate'];
   if (deps.invocationDeps.threadStore) {
     try {
       const thread = await deps.invocationDeps.threadStore.get(threadId);
@@ -111,6 +113,18 @@ export async function* routeParallel(
     } catch {
       /* best-effort */
     }
+  }
+
+  // F150: Match raw user message against guide registry (deterministic keyword match)
+  try {
+    const { resolveGuideForIntent } = await import('../../../../guides/guide-registry-loader.js');
+    const guideMatches = resolveGuideForIntent(message);
+    if (guideMatches.length > 0) {
+      const top = guideMatches[0];
+      guideCandidate = { id: top.id, name: top.name, estimatedTime: top.estimatedTime, status: 'offered' };
+    }
+  } catch {
+    /* best-effort: guide matching failure does not block invocation */
   }
 
   const streams = await Promise.all(
@@ -167,6 +181,7 @@ export async function* routeParallel(
         ...(activeSignals ? { activeSignals } : {}),
         ...(voiceMode ? { voiceMode } : {}),
         ...(bootcampState ? { bootcampState, threadId } : {}),
+        ...(guideCandidate ? { guideCandidate, threadId } : {}),
       });
 
       const targetContentBlocks = routeContentBlocksForCat(catId, contentBlocks);
@@ -297,8 +312,6 @@ export async function* routeParallel(
         ...(targetUploadDir ? { uploadDir: targetUploadDir } : {}),
         ...(signal ? { signal } : {}),
         ...(staticIdentity ? { systemPrompt: staticIdentity } : {}),
-        // F150: Pass raw user message for guide routing hook (avoid matching orchestrated prompt)
-        rawUserMessage: message,
         isLastCat: false,
       });
     }),

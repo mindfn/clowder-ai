@@ -231,8 +231,6 @@ export interface InvocationParams {
   readonly parentInvocationId?: string;
   /** F121: The A2A trigger message ID for auto-replyTo */
   readonly a2aTriggerMessageId?: string;
-  /** F150: Raw user message (before orchestration) for guide routing hook */
-  readonly rawUserMessage?: string;
 }
 
 /**
@@ -872,54 +870,10 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     // F070-P2: missionPrefix (dispatch context) is prepended for external projects
     const promptWithMission = missionPrefix ? `${missionPrefix}\n\n${prompt}` : prompt;
 
-    // F150: Pre-invocation guide routing hook — deterministic keyword match.
-    // Uses rawUserMessage (current turn only) to avoid false positives from history context.
-    // The hook discovers the guide (deterministic); the AI decides how to present it (context-aware).
-    let guideHint = '';
-    if (params.rawUserMessage) {
-      try {
-        const { resolveGuideForIntent } = await import('../../../../guides/guide-registry-loader.js');
-        const guideMatches = resolveGuideForIntent(params.rawUserMessage);
-        if (guideMatches.length > 0) {
-          const top = guideMatches[0];
-          const richBlockJson = JSON.stringify({
-            id: `f150-guide-offer-${top.id}-${invocationId}`,
-            kind: 'interactive',
-            v: 1,
-            interactiveType: 'select',
-            title: `我找到了「${top.name}」引导流程（约 ${top.estimatedTime}）。要现在开始吗？`,
-            options: [
-              { id: 'start', label: '开始引导（推荐）', emoji: '🚀' },
-              { id: 'preview', label: '先看步骤概览', emoji: '📋' },
-              { id: 'skip', label: '暂不需要', emoji: '⏭️' },
-            ],
-            messageTemplate: '引导流程：{selection}',
-          });
-          guideHint = [
-            '',
-            '[F150 Guide Available]',
-            `已匹配到引导流程「${top.name}」(${top.id})，约 ${top.estimatedTime}。`,
-            '',
-            '你必须按以下方式回复（严格遵守，不要自由发挥）：',
-            `1. 写一句简短的话告知用户你找到了「${top.name}」引导流程`,
-            `2. 调用 cat_cafe_create_rich_block 工具，block 参数传入以下 JSON 字符串：`,
-            richBlockJson,
-            '3. 禁止调用 cat_cafe_guide_resolve 工具',
-            '4. 禁止直接给出教程或步骤列表',
-            '5. 等用户在选项卡中做出选择后再继续',
-            '',
-          ].join('\n');
-          log.info({ guideId: top.id, guideName: top.name, score: top.score, catId }, '[F150] guide routing hook hit');
-        }
-      } catch (err: unknown) {
-        log.warn({ err, catId, threadId }, '[F150] guide routing hook failed — skipping');
-      }
-    }
-
     const effectivePrompt =
       injectSystemPrompt && params.systemPrompt
-        ? `${params.systemPrompt}\n\n---\n\n${promptWithMission}${guideHint}`
-        : `${promptWithMission}${guideHint}`;
+        ? `${params.systemPrompt}\n\n---\n\n${promptWithMission}`
+        : `${promptWithMission}`;
 
     // F089 Phase 2+3: Create tmux spawn override for agent-in-pane execution
     let spawnCliOverride: AgentServiceOptions['spawnCliOverride'];
