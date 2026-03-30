@@ -964,9 +964,8 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         const guideMatches = resolveGuideForIntent(params.rawUserMessage);
         if (guideMatches.length > 0) {
           const top = guideMatches[0];
-          const blockId = `f150-guide-offer-${top.id}-${Date.now()}`;
           const richBlockJson = JSON.stringify({
-            id: blockId,
+            id: `f150-guide-offer-${top.id}-${invocationId}`,
             kind: 'interactive',
             v: 1,
             interactiveType: 'select',
@@ -976,7 +975,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
               { id: 'preview', label: '先看步骤概览', emoji: '📋' },
               { id: 'skip', label: '暂不需要', emoji: '⏭️' },
             ],
-            messageTemplate: `引导「${top.name}」：{selection}`,
+            messageTemplate: '引导流程：{selection}',
           });
           guideHint = [
             '',
