@@ -55,7 +55,7 @@ export function ApiKeyCreateForm({ onCreated, editProfile }: ApiKeyCreateFormPro
           body: JSON.stringify(patch),
         });
         if (!res.ok) {
-          const body = await res.json().catch(() => ({})) as { error?: string };
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
           throw new Error(body.error ?? `更新失败 (${res.status})`);
         }
         onCreated(editProfile!.id);
@@ -107,9 +107,7 @@ export function ApiKeyCreateForm({ onCreated, editProfile }: ApiKeyCreateFormPro
         />
       </div>
       <div>
-        <label className="mb-0.5 block text-[11px] text-gray-500">
-          API Key{isEdit && '（留空保持不变）'}
-        </label>
+        <label className="mb-0.5 block text-[11px] text-gray-500">API Key{isEdit && '（留空保持不变）'}</label>
         <input
           type="password"
           autoComplete="off"
@@ -129,7 +127,7 @@ export function ApiKeyCreateForm({ onCreated, editProfile }: ApiKeyCreateFormPro
         disabled={saving || (!isEdit && !apiKey.trim())}
         className="w-full rounded-lg bg-amber-500 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-600 disabled:opacity-50"
       >
-        {saving ? (isEdit ? '保存中...' : '创建中...') : (isEdit ? '保存' : '创建')}
+        {saving ? (isEdit ? '保存中...' : '创建中...') : isEdit ? '保存' : '创建'}
       </button>
     </div>
   );

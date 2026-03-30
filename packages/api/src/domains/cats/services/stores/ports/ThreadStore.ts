@@ -145,6 +145,8 @@ export type BootcampPhase =
   | 'phase-3-config-help'
   | 'phase-3.5-advanced'
   | 'phase-4-task-select'
+  | 'phase-4-first-project'
+  | 'phase-4.5-add-teammate'
   | 'phase-5-kickoff'
   | 'phase-6-design'
   | 'phase-7-dev'
@@ -153,11 +155,16 @@ export type BootcampPhase =
   | 'phase-10-retro'
   | 'phase-11-farewell';
 
+/** F140: Sub-step for add-teammate console guide overlay */
+export type BootcampGuideStep = 'open-hub' | 'click-add-member' | 'fill-form' | 'done';
+
 export interface BootcampStateV1 {
   v: 1;
   phase: BootcampPhase;
   leadCat?: CatId;
   selectedTaskId?: string;
+  /** F140: sub-step for add-teammate console guide overlay */
+  guideStep?: BootcampGuideStep | null;
   envCheck?: Record<string, { ok: boolean; version?: string; note?: string }>;
   advancedFeatures?: Record<string, 'available' | 'unavailable' | 'skipped'>;
   startedAt: number;

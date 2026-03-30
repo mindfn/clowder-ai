@@ -65,14 +65,14 @@ export function QuestBanner({ phase, firstCatName, onAddSecondCat, onStartBootca
 
       {phase === 'quest-3-task-select' && (
         <p className="mt-2 text-xs text-amber-600">
-          {'试着给 '}{firstCatName ?? '猫猫'}{' 派一个简单任务，比如「帮我写一个 hello world」。'}
+          {'试着给 '}
+          {firstCatName ?? '猫猫'}
+          {' 派一个简单任务，比如「帮我写一个 hello world」。'}
         </p>
       )}
 
       {phase === 'quest-4-task-running' && (
-        <p className="mt-2 text-xs text-amber-600">
-          {firstCatName ?? '猫猫'} 正在执行任务，请耐心等待...
-        </p>
+        <p className="mt-2 text-xs text-amber-600">{firstCatName ?? '猫猫'} 正在执行任务，请耐心等待...</p>
       )}
 
       {isErrorPhase && (

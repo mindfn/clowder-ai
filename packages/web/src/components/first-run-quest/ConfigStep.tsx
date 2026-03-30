@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { builtinAccountIdForClient, type ClientValue, filterAccounts } from '../hub-cat-editor.model';
 import type { ProfileItem, ProviderProfilesResponse } from '../hub-provider-profiles.types';
-import { AuthProfileModal } from './AuthProfileModal';
 import type { EditProfileData } from './ApiKeyCreateForm';
+import { AuthProfileModal } from './AuthProfileModal';
 import { ProfileCard } from './ProfileCard';
 
 interface ConfigStepProps {
@@ -18,16 +18,11 @@ interface ConfigStepProps {
 /** Map raw API error messages to user-friendly Chinese */
 function humanizeError(msg: string): string {
   const lower = msg.toLowerCase();
-  if (lower.includes('401') || lower.includes('unauthorized'))
-    return 'Key 好像不对？请检查是否有多余空格或已过期';
-  if (lower.includes('403') || lower.includes('forbidden'))
-    return 'Key 权限不足，请确认已开通 API 访问';
-  if (lower.includes('429') || lower.includes('rate'))
-    return '请求太频繁，请稍后再试';
-  if (lower.includes('timeout') || lower.includes('超时'))
-    return '连接超时，请检查网络';
-  if (lower.includes('fetch') || lower.includes('network') || lower.includes('网络'))
-    return '网络错误，请检查连接';
+  if (lower.includes('401') || lower.includes('unauthorized')) return 'Key 好像不对？请检查是否有多余空格或已过期';
+  if (lower.includes('403') || lower.includes('forbidden')) return 'Key 权限不足，请确认已开通 API 访问';
+  if (lower.includes('429') || lower.includes('rate')) return '请求太频繁，请稍后再试';
+  if (lower.includes('timeout') || lower.includes('超时')) return '连接超时，请检查网络';
+  if (lower.includes('fetch') || lower.includes('network') || lower.includes('网络')) return '网络错误，请检查连接';
   return msg;
 }
 
@@ -108,9 +103,7 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
       const body = (await res.json()) as { ok: boolean; message?: string; error?: string };
       const result = {
         ok: body.ok,
-        message: body.ok
-          ? (body.message ?? '连接成功！')
-          : humanizeError(body.error ?? body.message ?? '连接失败'),
+        message: body.ok ? (body.message ?? '连接成功！') : humanizeError(body.error ?? body.message ?? '连接失败'),
       };
       if (result.ok) testCacheRef.current.set(sig, result);
       setTestResult(result);
@@ -182,7 +175,10 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
 
       <button
         type="button"
-        onClick={() => { setEditProfile(undefined); setShowModal(true); }}
+        onClick={() => {
+          setEditProfile(undefined);
+          setShowModal(true);
+        }}
         className="mb-3 text-xs font-medium text-amber-600 hover:text-amber-700"
       >
         + 新建 API Key 账号
@@ -193,9 +189,7 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
         disabled={!canProceed}
         onClick={() => onComplete({ accountRef: selectedProfileId, model: selectedModel })}
         className={`w-full rounded-lg py-2.5 text-sm font-semibold transition ${
-          canProceed
-            ? 'bg-amber-500 text-white hover:bg-amber-600'
-            : 'cursor-not-allowed bg-gray-200 text-gray-400'
+          canProceed ? 'bg-amber-500 text-white hover:bg-amber-600' : 'cursor-not-allowed bg-gray-200 text-gray-400'
         }`}
       >
         {canProceed ? '创建猫猫' : '请先完成连接测试'}
@@ -203,7 +197,10 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
 
       <AuthProfileModal
         open={showModal}
-        onClose={() => { setShowModal(false); setEditProfile(undefined); }}
+        onClose={() => {
+          setShowModal(false);
+          setEditProfile(undefined);
+        }}
         onCreated={handleProfileCreated}
         editProfile={editProfile}
       />

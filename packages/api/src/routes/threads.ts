@@ -63,6 +63,8 @@ const bootcampPhaseSchema = z.enum([
   'phase-3-config-help',
   'phase-3.5-advanced',
   'phase-4-task-select',
+  'phase-4-first-project',
+  'phase-4.5-add-teammate',
   'phase-5-kickoff',
   'phase-6-design',
   'phase-7-dev',
@@ -77,6 +79,8 @@ const bootcampStateSchema = z
     phase: bootcampPhaseSchema,
     leadCat: catIdSchema().optional(),
     selectedTaskId: z.string().max(50).optional(),
+    /** F140: sub-step for add-teammate console guide overlay */
+    guideStep: z.enum(['open-hub', 'click-add-member', 'fill-form', 'done']).nullable().optional(),
     envCheck: z
       .record(z.object({ ok: z.boolean(), version: z.string().optional(), note: z.string().optional() }))
       .optional(),
