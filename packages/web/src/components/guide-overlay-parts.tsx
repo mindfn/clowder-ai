@@ -28,13 +28,11 @@ export function CatEyeIndicator({ state }: { state: GuideObservationState }) {
   const animation = EYE_ANIMATIONS[state];
 
   return (
-    <div className={`flex items-center gap-1.5 ${animation}`} aria-label={`观测状态: ${state}`}>
+    <div className={`flex items-center gap-1.5 ${animation}`} role="status" aria-label={`观测状态: ${state}`}>
       <svg width="20" height="14" viewBox="0 0 20 14" fill="none" aria-hidden="true">
         <ellipse cx="10" cy="7" rx="9" ry="6" stroke={color} strokeWidth="1.5" fill="none" />
         <ellipse cx="10" cy="7" rx="3" ry="4.5" fill={color}>
-          {state === 'active' && (
-            <animate attributeName="rx" values="3;2.5;3" dur="1.8s" repeatCount="indefinite" />
-          )}
+          {state === 'active' && <animate attributeName="rx" values="3;2.5;3" dur="1.8s" repeatCount="indefinite" />}
         </ellipse>
         <circle cx="11.5" cy="5.5" r="1" fill="white" opacity="0.7" />
       </svg>
