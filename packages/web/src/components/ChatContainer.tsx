@@ -60,8 +60,6 @@ interface ChatContainerProps {
   threadId: string;
 }
 
-const FIRST_RUN_QUEST_SKIP_KEY = 'cat-cafe:first-run-quest:skip-v1';
-
 export function ChatContainer({ threadId }: ChatContainerProps) {
   const {
     messages,
@@ -279,32 +277,24 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   const setCurrentProject = useChatStore((s) => s.setCurrentProject);
   const storeThreads = useChatStore((s) => s.threads);
   const handleSkipFirstRunQuest = useCallback(() => {
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(FIRST_RUN_QUEST_SKIP_KEY, '1');
-    }
+    // Session-only skip — next refresh will re-check backend state
     setShowFirstRunQuestPrompt(false);
   }, []);
   const handleStartFirstRunQuest = useCallback(() => {
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(FIRST_RUN_QUEST_SKIP_KEY);
-    }
     setShowFirstRunQuestPrompt(false);
     setShowQuestWizard(true);
   }, []);
   useEffect(() => {
+    // Pure backend-driven: show prompt only when no cats AND no bootcamp thread
     const isCurrentBootcamp = Boolean(storeThreads.find((thread) => thread.id === threadId)?.bootcampState);
-    if (isCurrentBootcamp || cats.length > 0) {
+    const hasAnyBootcamp = storeThreads.some((t) => t.bootcampState);
+    if (isCurrentBootcamp || hasAnyBootcamp || cats.length > 0) {
       setShowFirstRunQuestPrompt(false);
       return;
     }
     // Wait for thread store to populate before deciding — prevents flash on page refresh
     if (storeThreads.length === 0) return;
-    if (typeof window === 'undefined') {
-      setShowFirstRunQuestPrompt(false);
-      return;
-    }
-    const skipped = window.localStorage.getItem(FIRST_RUN_QUEST_SKIP_KEY) === '1';
-    setShowFirstRunQuestPrompt(!skipped);
+    setShowFirstRunQuestPrompt(true);
   }, [cats.length, storeThreads, threadId]);
 
   // ── Bootcamp add-teammate guide: advance guideStep to 'done' when new cat appears ──
