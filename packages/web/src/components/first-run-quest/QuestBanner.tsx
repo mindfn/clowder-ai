@@ -19,10 +19,11 @@ interface QuestBannerProps {
   phase: string;
   firstCatName?: string;
   onAddSecondCat?: () => void;
+  onStartBootcamp?: () => void;
   onComplete?: () => void;
 }
 
-export function QuestBanner({ phase, firstCatName, onAddSecondCat, onComplete }: QuestBannerProps) {
+export function QuestBanner({ phase, firstCatName, onAddSecondCat, onStartBootcamp, onComplete }: QuestBannerProps) {
   const stepIndex = parseInt(phase.split('-')[1] ?? '0', 10);
   const progress = Math.min(((stepIndex + 1) / TOTAL_STEPS) * 100, 100);
   const label = QUEST_STEP_LABELS[phase] ?? phase;
@@ -43,9 +44,23 @@ export function QuestBanner({ phase, firstCatName, onAddSecondCat, onComplete }:
       </div>
 
       {phase === 'quest-2-cat-intro' && (
-        <p className="mt-2 text-xs text-amber-600">
-          在下方输入框 @{firstCatName ?? '猫猫'} 打个招呼，让它自我介绍一下吧！
-        </p>
+        <div className="mt-2 space-y-2">
+          <p className="text-xs text-amber-600">
+            在下方输入框 @{firstCatName ?? '猫猫'} 打个招呼，让它自我介绍一下吧！
+          </p>
+          <p className="text-xs text-amber-600">
+            打完招呼后，可以开始新手训练营，跟着 {firstCatName ?? '猫猫'} 完成第一个协作任务。
+          </p>
+          {onStartBootcamp && (
+            <button
+              type="button"
+              onClick={onStartBootcamp}
+              className="rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-amber-600"
+            >
+              开始新手训练营
+            </button>
+          )}
+        </div>
       )}
 
       {phase === 'quest-3-task-select' && (
