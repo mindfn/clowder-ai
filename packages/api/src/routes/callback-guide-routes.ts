@@ -68,9 +68,7 @@ export async function registerCallbackGuideRoutes(
   const log = app.log;
 
   // Static ESM import — fail loudly if loader is broken
-  const { isValidGuideId, resolveGuideForIntent } = await import(
-    '../domains/guides/guide-registry-loader.js'
-  );
+  const { isValidGuideId, resolveGuideForIntent } = await import('../domains/guides/guide-registry-loader.js');
 
   // POST /api/callbacks/update-guide-state
   app.post('/api/callbacks/update-guide-state', async (request, reply) => {

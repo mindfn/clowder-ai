@@ -106,11 +106,19 @@ export async function* routeParallel(
           try {
             const { getRegistryEntries } = await import('../../../../guides/guide-registry-loader.js');
             const entry = getRegistryEntries().find((e) => e.id === gs.guideId);
-            if (entry) { name = entry.name; estimatedTime = entry.estimated_time; }
-          } catch { /* best-effort */ }
+            if (entry) {
+              name = entry.name;
+              estimatedTime = entry.estimated_time;
+            }
+          } catch {
+            /* best-effort */
+          }
           const selectionMatch = message.match(/^引导流程：(.+)$/);
           guideCandidate = {
-            id: gs.guideId, name, estimatedTime, status: gs.status,
+            id: gs.guideId,
+            name,
+            estimatedTime,
+            status: gs.status,
             ...(selectionMatch ? { userSelection: selectionMatch[1] } : {}),
           };
         }

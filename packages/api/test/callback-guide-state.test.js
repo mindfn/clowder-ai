@@ -101,7 +101,10 @@ describe('F150 Guide State Callbacks', () => {
     const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
 
     await threadStore.updateGuideState(thread.id, {
-      v: 1, guideId: 'add-member', status: 'offered', offeredAt: 1000,
+      v: 1,
+      guideId: 'add-member',
+      status: 'offered',
+      offeredAt: 1000,
     });
 
     const res = await app.inject({
@@ -123,7 +126,11 @@ describe('F150 Guide State Callbacks', () => {
     const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
 
     await threadStore.updateGuideState(thread.id, {
-      v: 1, guideId: 'add-member', status: 'active', offeredAt: 1000, startedAt: 2000,
+      v: 1,
+      guideId: 'add-member',
+      status: 'active',
+      offeredAt: 1000,
+      startedAt: 2000,
     });
 
     const res = await app.inject({
@@ -143,7 +150,11 @@ describe('F150 Guide State Callbacks', () => {
     const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
 
     await threadStore.updateGuideState(thread.id, {
-      v: 1, guideId: 'add-member', status: 'active', offeredAt: 1000, startedAt: 2000,
+      v: 1,
+      guideId: 'add-member',
+      status: 'active',
+      offeredAt: 1000,
+      startedAt: 2000,
     });
 
     // Trying to go back to 'offered' is an invalid backward transition
@@ -163,7 +174,11 @@ describe('F150 Guide State Callbacks', () => {
     const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
 
     await threadStore.updateGuideState(thread.id, {
-      v: 1, guideId: 'add-member', status: 'completed', offeredAt: 1000, completedAt: 3000,
+      v: 1,
+      guideId: 'add-member',
+      status: 'completed',
+      offeredAt: 1000,
+      completedAt: 3000,
     });
 
     // completed is terminal; completed→offered is not a normal transition,
@@ -200,7 +215,13 @@ describe('F150 Guide State Callbacks', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-guide-state',
-      payload: { invocationId: 'fake', callbackToken: 'fake', threadId: 't1', guideId: 'add-member', status: 'offered' },
+      payload: {
+        invocationId: 'fake',
+        callbackToken: 'fake',
+        threadId: 't1',
+        guideId: 'add-member',
+        status: 'offered',
+      },
     });
 
     assert.equal(res.statusCode, 401);
@@ -214,7 +235,10 @@ describe('F150 Guide State Callbacks', () => {
     const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
 
     await threadStore.updateGuideState(thread.id, {
-      v: 1, guideId: 'add-member', status: 'offered', offeredAt: 1000,
+      v: 1,
+      guideId: 'add-member',
+      status: 'offered',
+      offeredAt: 1000,
     });
 
     const res = await app.inject({
@@ -254,7 +278,11 @@ describe('F150 Guide State Callbacks', () => {
     const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
 
     await threadStore.updateGuideState(thread.id, {
-      v: 1, guideId: 'add-member', status: 'active', offeredAt: 1000, startedAt: 2000,
+      v: 1,
+      guideId: 'add-member',
+      status: 'active',
+      offeredAt: 1000,
+      startedAt: 2000,
     });
 
     const res = await app.inject({
@@ -274,7 +302,11 @@ describe('F150 Guide State Callbacks', () => {
     const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
 
     await threadStore.updateGuideState(thread.id, {
-      v: 1, guideId: 'add-member', status: 'active', offeredAt: 1000, startedAt: 2000,
+      v: 1,
+      guideId: 'add-member',
+      status: 'active',
+      offeredAt: 1000,
+      startedAt: 2000,
     });
 
     const res = await app.inject({
@@ -310,7 +342,11 @@ describe('F150 Guide State Callbacks', () => {
     const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
 
     await threadStore.updateGuideState(thread.id, {
-      v: 1, guideId: 'add-member', status: 'active', offeredAt: 1000, startedAt: 2000,
+      v: 1,
+      guideId: 'add-member',
+      status: 'active',
+      offeredAt: 1000,
+      startedAt: 2000,
     });
 
     const res = await app.inject({

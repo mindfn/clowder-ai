@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { computeShieldPanels } from '../GuideOverlay';
-import { useGuideStore } from '@/stores/guideStore';
 import type { GuideStep } from '@/stores/guideStore';
+import { useGuideStore } from '@/stores/guideStore';
+import { computeShieldPanels } from '../GuideOverlay';
 
 /* ── computeShieldPanels geometry tests ── */
 
@@ -47,9 +47,9 @@ describe('computeShieldPanels', () => {
     const p = computeShieldPanels(rect, pad);
 
     // The hole is from (left.width, top.height) to (right.left, bottom.top)
-    const holeLeft = p.left.width;   // 300 - 8 = 292
-    const holeRight = p.right.left;  // 500 + 8 = 508
-    const holeTop = p.top.height;    // 200 - 8 = 192
+    const holeLeft = p.left.width; // 300 - 8 = 292
+    const holeRight = p.right.left; // 500 + 8 = 508
+    const holeTop = p.top.height; // 200 - 8 = 192
     const holeBottom = p.bottom.top; // 260 + 8 = 268
 
     expect(holeRight - holeLeft).toBe(rect.width + pad * 2);
@@ -60,7 +60,14 @@ describe('computeShieldPanels', () => {
 /* ── Timeout state machine scenario tests ── */
 
 const MOCK_STEPS: GuideStep[] = [
-  { id: 's1', targetGuideId: 'hub.trigger', title: 'Step 1', instruction: 'Click', expectedAction: 'click', timeoutSec: 30 },
+  {
+    id: 's1',
+    targetGuideId: 'hub.trigger',
+    title: 'Step 1',
+    instruction: 'Click',
+    expectedAction: 'click',
+    timeoutSec: 30,
+  },
   { id: 's2', targetGuideId: 'cats.overview', title: 'Step 2', instruction: 'Navigate', expectedAction: 'click' },
 ];
 

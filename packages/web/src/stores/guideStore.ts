@@ -10,13 +10,7 @@ import { create } from 'zustand';
 
 export type GuideObservationState = 'idle' | 'active' | 'success' | 'error' | 'verifying';
 
-export type GuideStepStatus =
-  | 'locating_target'
-  | 'awaiting_user'
-  | 'passed'
-  | 'failed'
-  | 'timed_out'
-  | 'skipped';
+export type GuideStepStatus = 'locating_target' | 'awaiting_user' | 'passed' | 'failed' | 'timed_out' | 'skipped';
 
 export interface GuideStep {
   id: string;

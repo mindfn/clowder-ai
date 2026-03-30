@@ -132,12 +132,20 @@ export async function* routeSerial(
           try {
             const { getRegistryEntries } = await import('../../../../guides/guide-registry-loader.js');
             const entry = getRegistryEntries().find((e) => e.id === gs.guideId);
-            if (entry) { name = entry.name; estimatedTime = entry.estimated_time; }
-          } catch { /* best-effort */ }
+            if (entry) {
+              name = entry.name;
+              estimatedTime = entry.estimated_time;
+            }
+          } catch {
+            /* best-effort */
+          }
           // Detect selection response: "引导流程：{label}"
           const selectionMatch = message.match(/^引导流程：(.+)$/);
           guideCandidate = {
-            id: gs.guideId, name, estimatedTime, status: gs.status,
+            id: gs.guideId,
+            name,
+            estimatedTime,
+            status: gs.status,
             ...(selectionMatch ? { userSelection: selectionMatch[1] } : {}),
           };
         }
@@ -170,7 +178,10 @@ export async function* routeSerial(
       if (guideMatches.length > 0) {
         const top = guideMatches[0];
         guideCandidate = { id: top.id, name: top.name, estimatedTime: top.estimatedTime, status: 'offered' };
-        log.info({ guideId: top.id, guideName: top.name, score: top.score }, '[F150] guide candidate matched at routing layer');
+        log.info(
+          { guideId: top.id, guideName: top.name, score: top.score },
+          '[F150] guide candidate matched at routing layer',
+        );
       }
     } catch {
       /* best-effort: guide matching failure does not block invocation */
