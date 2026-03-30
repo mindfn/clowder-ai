@@ -52,16 +52,20 @@ triggers:
    - 从消息文本判断选了哪只猫 → 对应 catId: opus/codex/gemini
    - 调用 `cat_cafe_update_bootcamp_state(threadId, phase='phase-1-intro', leadCat='{catId}')`
 
-### Phase 1: 猫猫天团自我介绍 (phase-1-intro)
+### Phase 1: 猫猫自我介绍 (phase-1-intro)
 
-被选为 leadCat 的猫先自我介绍，然后简短介绍另外两位队友。
-**不要一坨文字墙**，分段发送，有节奏感。
+leadCat 先做自我介绍。**不要一坨文字墙**，分段发送，有节奏感。
+
+**重要**：只介绍当前已存在的猫（通过 API /api/cats 可查），不要提还不存在的猫。
+如果你是唯一的猫，不要提"其他队友"或"另外两位"。后续流程中会在合适时机引导用户添加更多成员。
+
 介绍要有个性：
 - Ragdoll：深度思考派，喜欢画架构图，偶尔话多
 - Maine Coon：严谨可靠，review 很仔细，安全意识强
 - Siamese：视觉灵感担当，设计审美在线，创意无限
 
-介绍完后：`cat_cafe_update_bootcamp_state(threadId, phase='phase-2-env-check')`
+介绍完后告诉用户：接下来检查一下开发环境，然后开始第一个任务。
+调用：`cat_cafe_update_bootcamp_state(threadId, phase='phase-2-env-check')`
 
 ### Phase 2: 环境检测 (phase-2-env-check)
 

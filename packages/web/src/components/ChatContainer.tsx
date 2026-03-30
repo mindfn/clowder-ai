@@ -33,6 +33,7 @@ import { ChatContainerHeader } from './ChatContainerHeader';
 import { ChatInput } from './ChatInput';
 import { ChatMessage } from './ChatMessage';
 import { FirstRunQuestWizard } from './FirstRunQuestWizard';
+import { BootcampGuideOverlay } from './first-run-quest/BootcampGuideOverlay';
 import { QuestBanner } from './first-run-quest/QuestBanner';
 import { GameOverlayConnector } from './game/GameOverlayConnector';
 import { HubListModal } from './HubListModal';
@@ -296,6 +297,8 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
       setShowFirstRunQuestPrompt(false);
       return;
     }
+    // Wait for thread store to populate before deciding — prevents flash on page refresh
+    if (storeThreads.length === 0) return;
     if (typeof window === 'undefined') {
       setShowFirstRunQuestPrompt(false);
       return;
@@ -668,7 +671,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
         <QueuePanel threadId={threadId} />
         <VoteActiveBar threadId={threadId} onEnd={() => {}} />
 
-        {(() => {
+        {!showFirstRunQuestPrompt && !showQuestWizard && (() => {
           const currentThread = storeThreads.find((t) => t.id === threadId);
           const questState = (currentThread as Record<string, unknown> | undefined)?.firstRunQuestState as
             | { phase: string; firstCatName?: string }
@@ -679,6 +682,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
               phase={questState.phase}
               firstCatName={questState.firstCatName}
               onAddSecondCat={() => setShowQuestWizard(true)}
+              onStartBootcamp={() => setShowBootcampList(true)}
               onComplete={() => router.push('/hub')}
             />
           );
@@ -690,7 +694,14 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
           </div>
         )}
         <div className={(() => {
+          if (showFirstRunQuestPrompt || showQuestWizard) return '';
           const ct = storeThreads.find((t) => t.id === threadId);
+          // Bootcamp phase-1 with no messages: highlight + punch through overlay
+          const bs = ct?.bootcampState as { phase: string } | undefined;
+          if (bs?.phase === 'phase-1-intro' && messages.length === 0) {
+            return 'relative z-[70] quest-input-highlight rounded-xl mx-1';
+          }
+          // Legacy quest support
           const qs = (ct as Record<string, unknown> | undefined)?.firstRunQuestState as
             | { phase: string } | undefined;
           return qs?.phase === 'quest-2-cat-intro' ? 'quest-input-highlight rounded-xl mx-1' : '';
@@ -814,7 +825,6 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
       {showFirstRunQuestPrompt && (
         <div
           className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4"
-          onClick={handleSkipFirstRunQuest}
         >
           <div
             className="w-full max-w-md rounded-2xl border border-amber-200 bg-white p-6 shadow-2xl"
@@ -852,6 +862,19 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
       <BootcampListModal open={showBootcampList} onClose={handleBootcampModalClose} currentThreadId={threadId} />
       <HubListModal open={showHubList} onClose={() => setShowHubList(false)} currentThreadId={threadId} />
       {showVoteModal && <VoteConfigModal onSubmit={handleVoteSubmit} onCancel={() => setShowVoteModal(false)} />}
+      {/* Bootcamp guide: full-screen overlay when bootcamp thread is at early phase with no messages */}
+      {(() => {
+        if (showFirstRunQuestPrompt || showQuestWizard) return null;
+        const bt = storeThreads.find((t) => t.id === threadId);
+        const bs = bt?.bootcampState as { phase: string; leadCat?: string } | undefined;
+        if (!bs || messages.length > 0) return null;
+        // Get cat display name: try cats array first, then fall back to first cat available
+        const leadCat = cats.find((c) => c.id === bs.leadCat) ?? cats[0];
+        const catName = leadCat?.displayName ?? leadCat?.nickname ?? leadCat?.name;
+        // Don't show overlay until we have the cat name (avoids showing "@猫猫")
+        if (!catName) return null;
+        return <BootcampGuideOverlay phase={bs.phase} catName={catName} />;
+      })()}
     </div>
   );
 }

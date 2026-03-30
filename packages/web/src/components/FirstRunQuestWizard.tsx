@@ -62,7 +62,11 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
             nickname: selectedTemplate.nickname,
             avatar: selectedTemplate.avatar,
             color: selectedTemplate.color,
-            mentionPatterns: [`@${catId}`],
+            mentionPatterns: [
+              `@${catId}`,
+              `@${selectedTemplate.name}`,
+              ...(selectedTemplate.nickname ? [`@${selectedTemplate.nickname}`] : []),
+            ],
             roleDescription: selectedTemplate.roleDescription,
             personality: selectedTemplate.personality,
             teamStrengths: selectedTemplate.teamStrengths,
@@ -84,25 +88,29 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
         // Refresh cat data
         await refresh();
 
-        // Create quest thread
-        const questRes = await apiFetch('/api/first-run/quest', {
+        // Create bootcamp thread at phase-1 (skip phase-0 cat selection since wizard already did it)
+        const bootcampRes = await apiFetch('/api/threads', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ firstCatId: createdCatId, firstCatName: createdCatName }),
+          body: JSON.stringify({
+            title: '🎓 猫猫训练营',
+            bootcampState: {
+              v: 1,
+              phase: 'phase-1-intro',
+              leadCat: createdCatId,
+              startedAt: Date.now(),
+            },
+          }),
         });
 
-        if (!questRes.ok) {
-          throw new Error('创建教程线程失败');
+        if (!bootcampRes.ok) {
+          throw new Error('创建训练营线程失败');
         }
 
-        const questBody = (await questRes.json()) as { quest?: { threadId: string } };
-        const questThreadId = questBody.quest?.threadId;
+        const thread = (await bootcampRes.json()) as { id: string };
 
         setStep('done');
-
-        if (questThreadId) {
-          onCreated(questThreadId, createdCatName);
-        }
+        onCreated(thread.id, createdCatName);
       } catch (err) {
         setError(err instanceof Error ? err.message : '创建失败');
         setStep('config');
