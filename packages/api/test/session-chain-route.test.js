@@ -91,6 +91,45 @@ describe('Session Chain Routes', () => {
     assert.equal(res.statusCode, 403);
   });
 
+  it('GET /api/threads/default/sessions allows system-owned default thread', async () => {
+    const store = await setup(
+      mockThreadStore({
+        default: { id: 'default', createdBy: 'system' },
+      }),
+    );
+    store.create({ cliSessionId: 'cli-default-1', threadId: 'default', catId: 'opus', userId: 'default-user' });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/threads/default/sessions',
+      headers: { 'x-cat-cafe-user': 'default-user' },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.payload);
+    assert.equal(body.sessions.length, 1);
+  });
+
+  it('GET /api/sessions/:sessionId allows records under system-owned default thread', async () => {
+    const store = await setup(
+      mockThreadStore({
+        default: { id: 'default', createdBy: 'system' },
+      }),
+    );
+    const record = store.create({
+      cliSessionId: 'cli-default-2',
+      threadId: 'default',
+      catId: 'opus',
+      userId: 'default-user',
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${record.id}`,
+      headers: { 'x-cat-cafe-user': 'default-user' },
+    });
+    assert.equal(res.statusCode, 200);
+  });
+
   // --- Normal happy-path tests (with identity) ---
 
   it('GET /api/threads/:threadId/sessions returns empty array for unknown thread', async () => {
