@@ -192,4 +192,62 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
 
     assert.equal(res.statusCode, 401);
   });
+
+  // --- P1-1: Thread ownership (cross-user state tampering) ---
+
+  test('start: rejects when user does not own the thread (403)', async () => {
+    const app = await createApp();
+    const thread = await seedThread('add-member', 'offered'); // created by user-1
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/guide-actions/start',
+      headers: { 'x-cat-cafe-user': 'attacker-user' },
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 403, 'cross-user start must be rejected');
+  });
+
+  test('cancel: rejects when user does not own the thread (403)', async () => {
+    const app = await createApp();
+    const thread = await seedThread('add-member', 'offered'); // created by user-1
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/guide-actions/cancel',
+      headers: { 'x-cat-cafe-user': 'attacker-user' },
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 403, 'cross-user cancel must be rejected');
+  });
+
+  // --- P2-1: Header-only auth (query param userId spoofing) ---
+
+  test('start: rejects query-param userId without header (401)', async () => {
+    const app = await createApp();
+    const thread = await seedThread('add-member', 'offered');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/guide-actions/start?userId=user-1`,
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 401, 'query-param userId must not authenticate');
+  });
+
+  test('cancel: rejects query-param userId without header (401)', async () => {
+    const app = await createApp();
+    const thread = await seedThread('add-member', 'offered');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/guide-actions/cancel?userId=user-1`,
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 401, 'query-param userId must not authenticate');
+  });
 });

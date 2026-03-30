@@ -12,7 +12,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import type { GuideStateV1, IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
-import { resolveUserId } from '../utils/request-identity.js';
+import { resolveHeaderUserId } from '../utils/request-identity.js';
 
 export interface GuideActionRoutesOptions {
   threadStore: IThreadStore;
@@ -35,7 +35,7 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
 
   // POST /api/guide-actions/start — frontend clicks "开始引导"
   app.post('/api/guide-actions/start', async (request, reply) => {
-    const userId = resolveUserId(request);
+    const userId = resolveHeaderUserId(request);
     if (!userId) {
       reply.status(401);
       return { error: 'Identity required (X-Cat-Cafe-User header)' };
@@ -52,6 +52,11 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
     if (!thread) {
       reply.status(404);
       return { error: 'Thread not found' };
+    }
+
+    if (thread.createdBy !== userId) {
+      reply.status(403);
+      return { error: 'Thread access denied' };
     }
 
     const gs = thread.guideState;
@@ -78,7 +83,7 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
 
   // POST /api/guide-actions/cancel — frontend clicks "暂不需要"
   app.post('/api/guide-actions/cancel', async (request, reply) => {
-    const userId = resolveUserId(request);
+    const userId = resolveHeaderUserId(request);
     if (!userId) {
       reply.status(401);
       return { error: 'Identity required (X-Cat-Cafe-User header)' };
@@ -95,6 +100,11 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
     if (!thread) {
       reply.status(404);
       return { error: 'Thread not found' };
+    }
+
+    if (thread.createdBy !== userId) {
+      reply.status(403);
+      return { error: 'Thread access denied' };
     }
 
     const gs = thread.guideState;
