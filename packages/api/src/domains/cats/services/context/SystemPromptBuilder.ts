@@ -618,41 +618,19 @@ export function buildInvocationContext(context: InvocationContext): string {
     const { id, name, estimatedTime, status } = context.guideCandidate;
     const threadPart = context.threadId ? ` thread=${context.threadId}` : '';
     const userSelection = context.guideCandidate.userSelection;
-    if ((status === 'offered' || status === 'awaiting_choice') && userSelection) {
-      // User clicked a selection on the interactive card — handle their choice
-      const isStart = userSelection.includes('开始引导');
-      const isPreview = userSelection.includes('步骤概览');
-      // const isSkip = userSelection.includes('暂不需要');
-      if (isStart) {
-        lines.push(
-          `🧭 Guide Selection:${threadPart} 用户选择了「开始引导」 guideId=${id}`,
-          '你必须按以下步骤回复（严格遵守，前端 overlay 接管后不需要你说话）：',
-          `1. 调用 cat_cafe_update_guide_state(threadId="${context.threadId}", guideId="${id}", status="active")`,
-          `2. 调用 cat_cafe_start_guide(guideId="${id}") 启动前端引导 overlay`,
-          '3. 不要写任何文字回复。前端引导 overlay 会接管交互，你只需要调用上面两个工具。',
-          '',
-        );
-      } else if (isPreview) {
-        lines.push(
-          `🧭 Guide Selection:${threadPart} 用户选择了「步骤概览」 guideId=${id} name=${name}`,
-          '你必须按以下步骤回复：',
-          `1. 调用 cat_cafe_update_guide_state(threadId="${context.threadId}", guideId="${id}", status="awaiting_choice")`,
-          `2. 调用 cat_cafe_guide_resolve(intent="${name}") 获取步骤信息`,
-          '3. 用 3-5 条简要列出主要步骤',
-          '4. 在最后问用户是否要开始引导',
-          '',
-        );
-      } else {
-        // Skip or unknown selection
-        lines.push(
-          `🧭 Guide Selection:${threadPart} 用户选择了「暂不需要」 guideId=${id}`,
-          `1. 调用 cat_cafe_update_guide_state(threadId="${context.threadId}", guideId="${id}", status="cancelled")`,
-          '2. 简短回复「好的，有需要随时说。」',
-          '',
-        );
-      }
+    // "先看步骤概览" still comes through as a chat message; start/skip are frontend-only actions
+    if ((status === 'offered' || status === 'awaiting_choice') && userSelection?.includes('步骤概览')) {
+      lines.push(
+        `🧭 Guide Selection:${threadPart} 用户选择了「步骤概览」 guideId=${id} name=${name}`,
+        '你必须按以下步骤回复：',
+        `1. 调用 cat_cafe_update_guide_state(threadId="${context.threadId}", guideId="${id}", status="awaiting_choice")`,
+        `2. 调用 cat_cafe_guide_resolve(intent="${name}") 获取步骤信息`,
+        '3. 用 3-5 条简要列出主要步骤',
+        '4. 在最后问用户是否要开始引导',
+        '',
+      );
     } else if (status === 'offered') {
-      // First encounter: must emit interactive selection card, NOT a tutorial
+      // First encounter: emit interactive card with frontend-direct actions for start/skip
       const blockJson = JSON.stringify({
         id: `guide-offer-${id}-${(context.threadId ?? '').slice(-8) || 'x'}`,
         kind: 'interactive',
@@ -660,9 +638,27 @@ export function buildInvocationContext(context: InvocationContext): string {
         interactiveType: 'select',
         title: `我找到了「${name}」引导流程（约 ${estimatedTime}）。要现在开始吗？`,
         options: [
-          { id: 'start', label: '开始引导（推荐）', emoji: '🚀' },
+          {
+            id: 'start',
+            label: '开始引导（推荐）',
+            emoji: '🚀',
+            action: {
+              type: 'callback',
+              endpoint: '/api/guide-actions/start',
+              payload: { threadId: context.threadId, guideId: id },
+            },
+          },
           { id: 'preview', label: '先看步骤概览', emoji: '📋' },
-          { id: 'skip', label: '暂不需要', emoji: '⏭️' },
+          {
+            id: 'skip',
+            label: '暂不需要',
+            emoji: '⏭️',
+            action: {
+              type: 'callback',
+              endpoint: '/api/guide-actions/cancel',
+              payload: { threadId: context.threadId, guideId: id },
+            },
+          },
         ],
         messageTemplate: '引导流程：{selection}',
       });

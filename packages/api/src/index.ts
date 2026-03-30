@@ -131,6 +131,7 @@ import {
   externalProjectRoutes,
   featureDocDetailRoutes,
   governanceStatusRoute,
+  guideActionRoutes,
   intentCardRoutes,
   invocationsRoutes,
   leaderboardEventsRoutes,
@@ -1065,6 +1066,10 @@ async function main(): Promise<void> {
     socketManager,
     threadStore,
   });
+  // F150: Frontend-facing guide actions (no MCP auth, uses userId header)
+  if (threadStore) {
+    await app.register(guideActionRoutes, { threadStore, socketManager });
+  }
   await app.register(catsRoutes);
 
   // F149 Phase C: ACP pool diagnostics endpoint (gated by env flag)

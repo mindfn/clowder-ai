@@ -550,18 +550,31 @@ export function InteractiveBlock({
       setLocalDisabled(true);
       setLocalSelectedIds(optionIds);
 
-      // Read from ref to avoid stale closure — child calls setCustomText then onSelect
-      // in the same event loop, so state hasn't re-rendered yet
-      const ct = customTextRef.current;
-      const text = buildSelectionMessage(
-        block.interactiveType,
-        block.options,
-        optionIds,
-        block.messageTemplate,
-        block.title,
-        ct || undefined,
-      );
-      dispatchInteractiveSend(text);
+      // F150: Check if the selected option has a direct action (bypasses chat message pipeline)
+      const selectedOption = block.options.find((o) => optionIds.includes(o.id));
+      if (selectedOption?.action?.type === 'callback') {
+        try {
+          await apiFetch(selectedOption.action.endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(selectedOption.action.payload ?? {}),
+          });
+        } catch (err) {
+          console.error('[InteractiveBlock] callback action failed:', err);
+        }
+      } else {
+        // Default: send selection as a chat message
+        const ct = customTextRef.current;
+        const text = buildSelectionMessage(
+          block.interactiveType,
+          block.options,
+          optionIds,
+          block.messageTemplate,
+          block.title,
+          ct || undefined,
+        );
+        dispatchInteractiveSend(text);
+      }
 
       // P2-1 fix: write back to store so re-mount/thread-switch preserves state
       if (messageId) {
