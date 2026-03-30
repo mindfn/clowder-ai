@@ -881,13 +881,31 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         const guideMatches = resolveGuideForIntent(params.rawUserMessage);
         if (guideMatches.length > 0) {
           const top = guideMatches[0];
+          const richBlockJson = JSON.stringify({
+            id: `f150-guide-offer-${top.id}`,
+            kind: 'interactive',
+            v: 1,
+            interactiveType: 'select',
+            title: `我找到了「${top.name}」引导流程（约 ${top.estimatedTime}）。要现在开始吗？`,
+            options: [
+              { id: 'start', label: '开始引导（推荐）', emoji: '🚀' },
+              { id: 'preview', label: '先看步骤概览', emoji: '📋' },
+              { id: 'skip', label: '暂不需要', emoji: '⏭️' },
+            ],
+            messageTemplate: `引导「${top.name}」：{selection}`,
+          });
           guideHint = [
             '',
             '[F150 Guide Available]',
-            `检测到与用户问题匹配的交互引导流程: "${top.name}" (${top.id})`,
-            '你必须先调用 cat_cafe_guide_resolve 工具确认匹配，然后建议用户使用交互引导。',
-            '不要直接给出长文教程——先问用户是否要跟着引导走。',
-            '用户拒绝引导时再给简要文字步骤。',
+            `已匹配到引导流程「${top.name}」(${top.id})，约 ${top.estimatedTime}。`,
+            '',
+            '你必须按以下方式回复（严格遵守，不要自由发挥）：',
+            `1. 写一句话：「我找到了「${top.name}」的交互引导流程，大约需要 ${top.estimatedTime}。」`,
+            `2. 调用 cat_cafe_create_rich_block 工具，content 参数传入以下 JSON：`,
+            richBlockJson,
+            '3. 禁止调用 cat_cafe_guide_resolve 工具',
+            '4. 禁止直接给出教程或步骤列表',
+            '5. 等用户在选项卡中做出选择后再继续',
             '',
           ].join('\n');
           log.info({ guideId: top.id, guideName: top.name, score: top.score, catId }, '[F150] guide routing hook hit');
