@@ -111,6 +111,8 @@ export interface InvocationContext {
     name: string;
     estimatedTime: string;
     status: 'offered' | 'awaiting_choice' | 'active' | 'completed';
+    /** When user clicked an interactive selection, carries the chosen label. */
+    userSelection?: string;
   };
   /**
    * F129: Compiled pack blocks from active packs.
@@ -611,15 +613,84 @@ export function buildInvocationContext(context: InvocationContext): string {
     );
   }
 
-  // F150: Guide candidate — inject trigger so cats load guide-interaction skill
+  // F150: Guide candidate — inline protocol (cats don't have /Skill tool at runtime)
   if (context.guideCandidate) {
     const { id, name, estimatedTime, status } = context.guideCandidate;
     const threadPart = context.threadId ? ` thread=${context.threadId}` : '';
-    lines.push(
-      `🧭 Guide Available:${threadPart} id=${id} name=${name} time=${estimatedTime} status=${status}`,
-      '→ Load guide-interaction skill and act per current status.',
-      '',
-    );
+    const userSelection = context.guideCandidate.userSelection;
+    if ((status === 'offered' || status === 'awaiting_choice') && userSelection) {
+      // User clicked a selection on the interactive card — handle their choice
+      const isStart = userSelection.includes('开始引导');
+      const isPreview = userSelection.includes('步骤概览');
+      // const isSkip = userSelection.includes('暂不需要');
+      if (isStart) {
+        lines.push(
+          `🧭 Guide Selection:${threadPart} 用户选择了「开始引导」 guideId=${id}`,
+          '你必须按以下步骤回复：',
+          `1. 调用 cat_cafe_update_guide_state(threadId="${context.threadId}", guideId="${id}", status="active")`,
+          `2. 调用 cat_cafe_start_guide(guideId="${id}") 启动前端引导 overlay`,
+          '3. 回复一句鼓励的话，如「引导已启动，跟着页面上的提示一步步来就好！」',
+          '',
+        );
+      } else if (isPreview) {
+        lines.push(
+          `🧭 Guide Selection:${threadPart} 用户选择了「步骤概览」 guideId=${id} name=${name}`,
+          '你必须按以下步骤回复：',
+          `1. 调用 cat_cafe_update_guide_state(threadId="${context.threadId}", guideId="${id}", status="awaiting_choice")`,
+          `2. 调用 cat_cafe_guide_resolve(intent="${name}") 获取步骤信息`,
+          '3. 用 3-5 条简要列出主要步骤',
+          '4. 在最后问用户是否要开始引导',
+          '',
+        );
+      } else {
+        // Skip or unknown selection
+        lines.push(
+          `🧭 Guide Selection:${threadPart} 用户选择了「暂不需要」 guideId=${id}`,
+          `1. 调用 cat_cafe_update_guide_state(threadId="${context.threadId}", guideId="${id}", status="cancelled")`,
+          '2. 简短回复「好的，有需要随时说。」',
+          '',
+        );
+      }
+    } else if (status === 'offered') {
+      // First encounter: must emit interactive selection card, NOT a tutorial
+      const blockJson = JSON.stringify({
+        id: `guide-offer-${id}-${(context.threadId ?? '').slice(-8) || 'x'}`,
+        kind: 'interactive',
+        v: 1,
+        interactiveType: 'select',
+        title: `我找到了「${name}」引导流程（约 ${estimatedTime}）。要现在开始吗？`,
+        options: [
+          { id: 'start', label: '开始引导（推荐）', emoji: '🚀' },
+          { id: 'preview', label: '先看步骤概览', emoji: '📋' },
+          { id: 'skip', label: '暂不需要', emoji: '⏭️' },
+        ],
+        messageTemplate: '引导流程：{selection}',
+      });
+      lines.push(
+        `🧭 Guide Matched:${threadPart} id=${id} name=${name} time=${estimatedTime}`,
+        '你必须按以下步骤回复（严格遵守）：',
+        `1. 调用 cat_cafe_update_guide_state(threadId="${context.threadId}", guideId="${id}", status="offered")`,
+        `2. 写一句简短的话告知用户你找到了「${name}」引导流程`,
+        `3. 调用 cat_cafe_create_rich_block，block 参数传入以下 JSON 字符串：`,
+        blockJson,
+        '4. 禁止直接给出教程或步骤列表',
+        '5. 禁止调用 cat_cafe_start_guide（等用户在选项卡中选择后再启动）',
+        '',
+      );
+    } else if (status === 'awaiting_choice') {
+      lines.push(
+        `🧭 Guide Pending:${threadPart} id=${id} name=${name} — 用户尚未选择`,
+        '不要重复发送选项卡。用一句话提醒：「之前找到了引导流程，你要开始吗？」',
+        '',
+      );
+    } else if (status === 'active') {
+      lines.push(
+        `🧭 Guide Active:${threadPart} id=${id} name=${name}`,
+        '引导进行中。回答与引导相关的问题，不要重发选项卡。用户要退出时调用 cat_cafe_guide_control(action="exit")。',
+        '',
+      );
+    }
+    // completed/cancelled: no injection needed
   }
 
   // F091: Active Signal articles in discussion context
