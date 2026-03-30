@@ -124,7 +124,15 @@ export async function* routeSerial(
         const gs = thread.guideState;
         // If guide is still in-progress, inject existing state (no re-matching)
         if (gs.status !== 'completed' && gs.status !== 'cancelled') {
-          guideCandidate = { id: gs.guideId, name: gs.guideId, estimatedTime: '', status: gs.status };
+          // Back-fill display metadata from registry so SKILL gets real name/time
+          let name = gs.guideId;
+          let estimatedTime = '';
+          try {
+            const { getRegistryEntries } = await import('../../../../guides/guide-registry-loader.js');
+            const entry = getRegistryEntries().find((e) => e.id === gs.guideId);
+            if (entry) { name = entry.name; estimatedTime = entry.estimated_time; }
+          } catch { /* best-effort */ }
+          guideCandidate = { id: gs.guideId, name, estimatedTime, status: gs.status };
         }
       }
       // F073 P4: Read workflow-sop if thread is linked to a backlog item
