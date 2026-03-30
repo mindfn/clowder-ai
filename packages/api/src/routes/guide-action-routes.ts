@@ -54,7 +54,8 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
       return { error: 'Thread not found' };
     }
 
-    if (thread.createdBy !== userId) {
+    // Default thread (createdBy='system') is public — any authenticated user can access
+    if (thread.createdBy !== 'system' && thread.createdBy !== userId) {
       reply.status(403);
       return { error: 'Thread access denied' };
     }
@@ -102,7 +103,8 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
       return { error: 'Thread not found' };
     }
 
-    if (thread.createdBy !== userId) {
+    // Default thread (createdBy='system') is public — any authenticated user can access
+    if (thread.createdBy !== 'system' && thread.createdBy !== userId) {
       reply.status(403);
       return { error: 'Thread access denied' };
     }
