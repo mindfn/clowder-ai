@@ -113,6 +113,8 @@ export async function* routeSerial(
   let voiceMode: boolean | undefined;
   // F087: Bootcamp state for CVO onboarding
   let bootcampState: InvocationContext['bootcampState'];
+  // F150: Guide candidate from keyword matching against raw user message
+  let guideCandidate: InvocationContext['guideCandidate'];
   if (deps.invocationDeps.threadStore) {
     try {
       const thread = await deps.invocationDeps.threadStore.get(threadId);
@@ -137,6 +139,19 @@ export async function* routeSerial(
     } catch {
       /* best-effort */
     }
+  }
+
+  // F150: Match raw user message against guide registry (deterministic keyword match)
+  try {
+    const { resolveGuideForIntent } = await import('../../../../guides/guide-registry-loader.js');
+    const guideMatches = resolveGuideForIntent(message);
+    if (guideMatches.length > 0) {
+      const top = guideMatches[0];
+      guideCandidate = { id: top.id, name: top.name, estimatedTime: top.estimatedTime, status: 'offered' };
+      log.info({ guideId: top.id, guideName: top.name, score: top.score }, '[F150] guide candidate matched at routing layer');
+    }
+  } catch {
+    /* best-effort: guide matching failure does not block invocation */
   }
 
   try {
@@ -230,6 +245,7 @@ export async function* routeSerial(
         ...(activeSignals ? { activeSignals } : {}),
         ...(voiceMode ? { voiceMode } : {}),
         ...(bootcampState ? { bootcampState, threadId } : {}),
+        ...(guideCandidate ? { guideCandidate, threadId } : {}),
       });
 
       // F24 Phase E: Bootstrap context for Session #2+
@@ -432,8 +448,6 @@ export async function* routeSerial(
         ...(worklistEntry.a2aTriggerMessageId.get(catId)
           ? { a2aTriggerMessageId: worklistEntry.a2aTriggerMessageId.get(catId) }
           : {}),
-        // F150: Pass raw user message for guide routing hook (avoid matching orchestrated prompt)
-        rawUserMessage: message,
         isLastCat: false,
       })) {
         // F39 bugfix: stop yielding after cancel (pipe buffer may still drain)

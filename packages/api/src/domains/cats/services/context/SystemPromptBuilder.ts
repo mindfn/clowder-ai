@@ -103,6 +103,16 @@ export interface InvocationContext {
    */
   bootcampState?: BootcampStateV1;
   /**
+   * F150: Matched guide candidate from routing-layer keyword match.
+   * When present, cats load guide-interaction skill and offer the guide.
+   */
+  guideCandidate?: {
+    id: string;
+    name: string;
+    estimatedTime: string;
+    status: 'offered' | 'awaiting_choice' | 'active' | 'completed';
+  };
+  /**
    * F129: Compiled pack blocks from active packs.
    * Injected into static identity via buildStaticIdentity → packBlocks.
    */
@@ -597,6 +607,17 @@ export function buildInvocationContext(context: InvocationContext): string {
     lines.push(
       `Bootcamp Mode:${threadPart} phase=${phase}${leadCat ? ` leadCat=${leadCat}` : ''}${selectedTaskId ? ` task=${selectedTaskId}` : ''}`,
       '→ Load bootcamp-guide skill and act per current phase.',
+      '',
+    );
+  }
+
+  // F150: Guide candidate — inject trigger so cats load guide-interaction skill
+  if (context.guideCandidate) {
+    const { id, name, estimatedTime, status } = context.guideCandidate;
+    const threadPart = context.threadId ? ` thread=${context.threadId}` : '';
+    lines.push(
+      `🧭 Guide Available:${threadPart} id=${id} name=${name} time=${estimatedTime} status=${status}`,
+      '→ Load guide-interaction skill and act per current status.',
       '',
     );
   }
