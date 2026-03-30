@@ -36,15 +36,6 @@ describe('F115 AC-C3: proxy fallback to direct upstream', () => {
     await mkdir(apiDir, { recursive: true });
     await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n', 'utf-8');
 
-    await createProviderProfile(root, {
-      provider: 'anthropic',
-      name: 'test-gateway',
-      mode: 'api_key',
-      baseUrl: 'https://api.test-gateway.example',
-      apiKey: 'sk-test-fallback',
-      setActive: true,
-    });
-
     const optionsSeen = [];
     const service = {
       async *invoke(_prompt, options) {
@@ -69,10 +60,20 @@ describe('F115 AC-C3: proxy fallback to direct upstream', () => {
       apiUrl: 'http://127.0.0.1:3004',
     };
 
+    const savedGlobalRoot = process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT;
     const previousCwd = process.cwd();
     const previousProxyEnabled = process.env.ANTHROPIC_PROXY_ENABLED;
     const previousProxyPort = process.env.ANTHROPIC_PROXY_PORT;
     try {
+      process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = root;
+      await createProviderProfile(root, {
+        provider: 'anthropic',
+        name: 'test-gateway',
+        mode: 'api_key',
+        baseUrl: 'https://api.test-gateway.example',
+        apiKey: 'sk-test-fallback',
+        setActive: true,
+      });
       // Proxy is ENABLED but port 19871 has nothing listening
       delete process.env.ANTHROPIC_PROXY_ENABLED; // default = enabled
       process.env.ANTHROPIC_PROXY_PORT = '19871';
@@ -89,6 +90,8 @@ describe('F115 AC-C3: proxy fallback to direct upstream', () => {
       );
     } finally {
       process.chdir(previousCwd);
+      if (savedGlobalRoot === undefined) delete process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT;
+      else process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = savedGlobalRoot;
       if (previousProxyEnabled === undefined) delete process.env.ANTHROPIC_PROXY_ENABLED;
       else process.env.ANTHROPIC_PROXY_ENABLED = previousProxyEnabled;
       if (previousProxyPort === undefined) delete process.env.ANTHROPIC_PROXY_PORT;
@@ -114,15 +117,6 @@ describe('F115 AC-C3: proxy fallback to direct upstream', () => {
     await mkdir(apiDir, { recursive: true });
     await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n', 'utf-8');
 
-    await createProviderProfile(root, {
-      provider: 'anthropic',
-      name: 'nan-port-gateway',
-      mode: 'api_key',
-      baseUrl: 'https://api.nan-port.example',
-      apiKey: 'sk-nan-port',
-      setActive: true,
-    });
-
     const optionsSeen = [];
     const service = {
       async *invoke(_prompt, options) {
@@ -147,10 +141,20 @@ describe('F115 AC-C3: proxy fallback to direct upstream', () => {
       apiUrl: 'http://127.0.0.1:3004',
     };
 
+    const savedGlobalRoot2 = process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT;
     const previousCwd = process.cwd();
     const previousProxyEnabled = process.env.ANTHROPIC_PROXY_ENABLED;
     const previousProxyPort = process.env.ANTHROPIC_PROXY_PORT;
     try {
+      process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = root;
+      await createProviderProfile(root, {
+        provider: 'anthropic',
+        name: 'nan-port-gateway',
+        mode: 'api_key',
+        baseUrl: 'https://api.nan-port.example',
+        apiKey: 'sk-nan-port',
+        setActive: true,
+      });
       delete process.env.ANTHROPIC_PROXY_ENABLED;
       process.env.ANTHROPIC_PROXY_PORT = 'abc'; // non-numeric!
       process.chdir(apiDir);
@@ -166,6 +170,8 @@ describe('F115 AC-C3: proxy fallback to direct upstream', () => {
       );
     } finally {
       process.chdir(previousCwd);
+      if (savedGlobalRoot2 === undefined) delete process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT;
+      else process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = savedGlobalRoot2;
       if (previousProxyEnabled === undefined) delete process.env.ANTHROPIC_PROXY_ENABLED;
       else process.env.ANTHROPIC_PROXY_ENABLED = previousProxyEnabled;
       if (previousProxyPort === undefined) delete process.env.ANTHROPIC_PROXY_PORT;

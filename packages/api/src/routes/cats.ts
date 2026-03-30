@@ -329,27 +329,47 @@ interface CatsRoutesOptions {
 }
 
 export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opts) => {
-  // GET /api/cat-templates - 获取角色模板（与运行时成员分离）
+  // GET /api/cat-templates - 获取角色模板（纯灵魂层，不含 client/model 绑定）
   app.get('/api/cat-templates', async () => {
     try {
       const projectRoot = resolveProjectRoot();
-      const templateConfig = loadCatConfig(resolveProjectTemplatePath(projectRoot));
-      const templateRoster = getRoster(templateConfig);
-      const templateCats = Object.values(toAllCatConfigs(templateConfig));
+      const templatePath = resolveProjectTemplatePath(projectRoot);
+      const raw = JSON.parse(await import('node:fs').then((fs) => fs.promises.readFile(templatePath, 'utf-8'))) as {
+        roleTemplates?: {
+          id: string;
+          name: string;
+          nickname?: string;
+          avatar: string;
+          color: { primary: string; secondary: string };
+          roleDescription: string;
+          personality: string;
+          teamStrengths?: string;
+        }[];
+        clientDefaults?: Record<string, { defaultModel: string; models: string[] }>;
+      };
+      if (raw.roleTemplates && raw.roleTemplates.length > 0) {
+        return { templates: raw.roleTemplates, clientDefaults: raw.clientDefaults ?? {} };
+      }
+      // Fallback: extract from breeds (legacy)
+      const templateConfig = loadCatConfig(templatePath);
+      const allCats = Object.values(toAllCatConfigs(templateConfig));
+      const templateCats = allCats.filter((c) => c.isDefaultVariant);
       return {
-        templates: await Promise.all(
-          templateCats.map((cat) =>
-            toCatResponse(
-              cat,
-              { source: 'template', roster: templateRoster[cat.id] ?? null },
-              async (nextCat) => nextCat.accountRef,
-            ),
-          ),
-        ),
+        templates: templateCats.map((cat) => ({
+          id: cat.breedId ?? cat.id,
+          name: cat.breedDisplayName ?? cat.displayName ?? cat.name,
+          nickname: cat.nickname,
+          avatar: cat.avatar,
+          color: cat.color,
+          roleDescription: cat.roleDescription,
+          personality: cat.personality,
+          teamStrengths: cat.teamStrengths,
+        })),
+        clientDefaults: {},
       };
     } catch (err) {
       app.log.warn({ err }, 'Failed to load cat templates');
-      return { templates: [] };
+      return { templates: [], clientDefaults: {} };
     }
   });
 

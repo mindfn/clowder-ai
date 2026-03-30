@@ -38,10 +38,7 @@ const PHASE_INDEX = new Map(QUEST_PHASES.map((p, i) => [p, i]));
  * Validate that a phase transition is forward-only.
  * Returns null if invalid, new phase if valid.
  */
-export function validateQuestTransition(
-  current: QuestPhase,
-  next: QuestPhase,
-): QuestPhase | null {
+export function validateQuestTransition(current: QuestPhase, next: QuestPhase): QuestPhase | null {
   const currentIdx = PHASE_INDEX.get(current);
   const nextIdx = PHASE_INDEX.get(next);
   if (currentIdx === undefined || nextIdx === undefined) return null;

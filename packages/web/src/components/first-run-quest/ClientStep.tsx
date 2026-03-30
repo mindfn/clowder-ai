@@ -4,7 +4,10 @@ import { useEffect, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 
 export interface DetectedClient {
+  /** Client ID — CLI tool identity (claude, codex, gemini, opencode, dare) */
   client: string;
+  /** Client provider key for account binding (anthropic, openai, google) — distinct from model provider. */
+  provider: string;
   label: string;
   cli: string;
   installed: boolean;
@@ -74,9 +77,7 @@ export function ClientStep({ onSelect }: ClientStepProps) {
                   : 'border-gray-200 bg-white hover:border-amber-200'
               }`}
             >
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-100 text-green-600">
-                ✓
-              </div>
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-100 text-green-600">✓</div>
               <div>
                 <span className="font-semibold text-gray-900">{c.label}</span>
                 {c.version && <span className="ml-2 text-xs text-gray-400">{c.version}</span>}

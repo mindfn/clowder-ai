@@ -3,10 +3,10 @@
  * POST /api/callbacks/update-quest-state — advance quest phase
  */
 
-import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
-import type { IThreadStore, FirstRunQuestPhase } from '../domains/cats/services/stores/ports/ThreadStore.js';
+import { z } from 'zod';
 import { QUEST_PHASES, validateQuestTransition } from '../domains/cats/services/first-run-quest/quest-state.js';
+import type { FirstRunQuestPhase, IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 
 const questPhaseSchema = z.enum([...QUEST_PHASES]);
 
@@ -22,10 +22,7 @@ const updateQuestStateSchema = z.object({
   completedAt: z.number().optional(),
 });
 
-export function registerCallbackQuestRoutes(
-  app: FastifyInstance,
-  deps: { threadStore: IThreadStore },
-): void {
+export function registerCallbackQuestRoutes(app: FastifyInstance, deps: { threadStore: IThreadStore }): void {
   const { threadStore } = deps;
 
   app.post('/api/callbacks/update-quest-state', async (request, reply) => {
