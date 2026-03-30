@@ -957,23 +957,15 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
 
     // F150: Pre-invocation guide routing hook — deterministic keyword match.
     // Uses rawUserMessage (current turn only) to avoid false positives from history context.
-    let matchedGuideOffer:
-      | {
-          id: string;
-          name: string;
-          estimatedTime: string;
-          score: number;
-          block: Record<string, unknown>;
-          sentence: string;
-        }
-      | undefined;
+    // The hook discovers the guide (deterministic); the AI decides how to present it (context-aware).
+    let guideHint = '';
     if (params.rawUserMessage) {
       try {
         const { resolveGuideForIntent } = await import('../../../../guides/guide-registry-loader.js');
         const guideMatches = resolveGuideForIntent(params.rawUserMessage);
         if (guideMatches.length > 0) {
           const top = guideMatches[0];
-          const block = {
+          const richBlockJson = JSON.stringify({
             id: `f150-guide-offer-${top.id}-${invocationId}`,
             kind: 'interactive',
             v: 1,
@@ -985,15 +977,21 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
               { id: 'skip', label: '暂不需要', emoji: '⏭️' },
             ],
             messageTemplate: '引导流程：{selection}',
-          };
-          matchedGuideOffer = {
-            id: top.id,
-            name: top.name,
-            estimatedTime: top.estimatedTime,
-            score: top.score,
-            block,
-            sentence: `我找到了「${top.name}」的交互引导流程，大约需要 ${top.estimatedTime}。`,
-          };
+          });
+          guideHint = [
+            '',
+            '[F150 Guide Available]',
+            `已匹配到引导流程「${top.name}」(${top.id})，约 ${top.estimatedTime}。`,
+            '',
+            '你必须按以下方式回复（严格遵守，不要自由发挥）：',
+            `1. 写一句简短的话告知用户你找到了「${top.name}」引导流程`,
+            `2. 调用 cat_cafe_create_rich_block 工具，block 参数传入以下 JSON 字符串：`,
+            richBlockJson,
+            '3. 禁止调用 cat_cafe_guide_resolve 工具',
+            '4. 禁止直接给出教程或步骤列表',
+            '5. 等用户在选项卡中做出选择后再继续',
+            '',
+          ].join('\n');
           log.info({ guideId: top.id, guideName: top.name, score: top.score, catId }, '[F150] guide routing hook hit');
         }
       } catch (err: unknown) {
@@ -1003,8 +1001,8 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
 
     const effectivePrompt =
       injectSystemPrompt && params.systemPrompt
-        ? `${params.systemPrompt}\n\n---\n\n${promptWithMission}`
-        : `${promptWithMission}`;
+        ? `${params.systemPrompt}\n\n---\n\n${promptWithMission}${guideHint}`
+        : `${promptWithMission}${guideHint}`;
 
     // F089 Phase 2+3: Create tmux spawn override for agent-in-pane execution
     let spawnCliOverride: AgentServiceOptions['spawnCliOverride'];
@@ -1466,50 +1464,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         yield out;
       }
     };
-
-    // F150 P1 fix: Do not rely on model prompt obedience for guide offer.
-    // Emit one sentence + interactive block directly, then end this invocation.
-    if (matchedGuideOffer) {
-      const syntheticEvents: AgentMessage[] = [
-        {
-          type: 'system_info' as const,
-          catId,
-          content: JSON.stringify({ type: 'rich_block', block: matchedGuideOffer.block }),
-          timestamp: Date.now(),
-        },
-        {
-          type: 'text' as const,
-          catId,
-          content: matchedGuideOffer.sentence,
-          timestamp: Date.now(),
-        },
-        {
-          type: 'done' as const,
-          catId,
-          timestamp: Date.now(),
-        },
-      ];
-
-      log.info(
-        {
-          guideId: matchedGuideOffer.id,
-          guideName: matchedGuideOffer.name,
-          score: matchedGuideOffer.score,
-          invocationId,
-          catId,
-        },
-        '[F150] emitted deterministic guide offer and skipped provider invocation',
-      );
-
-      for (const event of syntheticEvents) {
-        for await (const out of streamProcessedOutputs(event)) {
-          yield out;
-        }
-      }
-
-      didComplete = true;
-      return;
-    }
 
     // Self-heal policy (at most one retry total):
     // 1) stale --resume session: "No conversation found with session ID ..."

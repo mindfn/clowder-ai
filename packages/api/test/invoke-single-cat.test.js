@@ -4400,17 +4400,17 @@ describe('F150 guide routing hook', () => {
     };
   }
 
-  it('emits deterministic interactive guide offer when rawUserMessage matches a guide keyword', async () => {
-    let serviceInvoked = false;
+  it('injects guide hint into prompt when rawUserMessage matches a guide keyword', async () => {
+    let promptSeen = '';
     const service = {
       async *invoke(prompt) {
-        serviceInvoked = true;
+        promptSeen = prompt;
         yield { type: 'text', catId: 'opus', content: 'ok', timestamp: Date.now() };
         yield { type: 'done', catId: 'opus', timestamp: Date.now() };
       },
     };
 
-    const msgs = await collect(
+    await collect(
       invokeSingleCat(makeDeps(), {
         catId: 'opus',
         service,
@@ -4422,26 +4422,11 @@ describe('F150 guide routing hook', () => {
       }),
     );
 
-    assert.equal(serviceInvoked, false, 'provider invoke must be skipped on guide match');
-    const richBlockEvent = msgs.find((m) => {
-      if (m.type !== 'system_info' || !m.content) return false;
-      try {
-        const payload = JSON.parse(m.content);
-        return payload.type === 'rich_block' && payload.block?.kind === 'interactive';
-      } catch {
-        return false;
-      }
-    });
-    assert.ok(richBlockEvent, 'must emit interactive rich block directly from backend');
-    const richPayload = JSON.parse(richBlockEvent.content);
-    assert.equal(richPayload.block.interactiveType, 'select');
-    assert.equal(richPayload.block.messageTemplate, '引导流程：{selection}');
-    assert.equal(richPayload.block.options.length, 3, 'must provide 3 guide options');
-    assert.ok(
-      msgs.some((m) => m.type === 'text' && typeof m.content === 'string' && m.content.includes('交互引导流程')),
-      'must emit one-sentence guide offer',
-    );
-    assert.ok(msgs.some((m) => m.type === 'done'), 'invocation must complete normally');
+    assert.ok(promptSeen.includes('[F150 Guide Available]'), 'prompt must contain guide hint');
+    assert.ok(promptSeen.includes('add-member'), 'prompt must reference matched guide id');
+    assert.ok(promptSeen.includes('cat_cafe_create_rich_block'), 'prompt must instruct AI to use rich block');
+    assert.ok(promptSeen.includes('block 参数'), 'prompt must specify correct parameter name "block"');
+    assert.ok(promptSeen.includes('"interactiveType":"select"'), 'prompt must contain interactive select JSON');
   });
 
   it('does NOT inject guide hint when rawUserMessage has no keyword match', async () => {
@@ -4497,10 +4482,8 @@ describe('F150 guide routing hook', () => {
 
   it('does NOT re-trigger on guide selection response (anti-loop)', async () => {
     let promptSeen = '';
-    let serviceInvoked = false;
     const service = {
       async *invoke(prompt) {
-        serviceInvoked = true;
         promptSeen = prompt;
         yield { type: 'text', catId: 'opus', content: 'ok', timestamp: Date.now() };
         yield { type: 'done', catId: 'opus', timestamp: Date.now() };
@@ -4510,7 +4493,7 @@ describe('F150 guide routing hook', () => {
     // Simulates the auto-message sent when user clicks an interactive block option.
     // messageTemplate is "引导流程：{selection}" → sent message is "引导流程：🚀 开始引导（推荐）".
     // This must NOT re-trigger the guide routing hook.
-    const msgs = await collect(
+    await collect(
       invokeSingleCat(makeDeps(), {
         catId: 'opus',
         service,
@@ -4522,18 +4505,6 @@ describe('F150 guide routing hook', () => {
       }),
     );
 
-    assert.equal(serviceInvoked, true, 'anti-loop message should follow normal provider path');
     assert.ok(!promptSeen.includes('[F150 Guide Available]'), 'guide selection response must NOT re-trigger hook');
-    assert.ok(
-      !msgs.some((m) => {
-        if (m.type !== 'system_info' || !m.content) return false;
-        try {
-          return JSON.parse(m.content).type === 'rich_block';
-        } catch {
-          return false;
-        }
-      }),
-      'guide selection response must NOT emit a new rich block',
-    );
   });
 });
