@@ -4210,4 +4210,32 @@ describe('F150 guide routing hook', () => {
     assert.ok(!promptSeen.includes('[F150 Guide Available]'), 'prompt must NOT contain guide hint when rawUserMessage absent');
     assert.ok(msgs.some((m) => m.type === 'done'), 'invocation must complete normally');
   });
+
+  it('does NOT re-trigger on guide selection response (anti-loop)', async () => {
+    let promptSeen = '';
+    const service = {
+      async *invoke(prompt) {
+        promptSeen = prompt;
+        yield { type: 'text', catId: 'opus', content: 'ok', timestamp: Date.now() };
+        yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+      },
+    };
+
+    // Simulates the auto-message sent when user clicks an interactive block option.
+    // messageTemplate is "引导流程：{selection}" → sent message is "引导流程：🚀 开始引导（推荐）".
+    // This must NOT re-trigger the guide routing hook.
+    await collect(
+      invokeSingleCat(makeDeps(), {
+        catId: 'opus',
+        service,
+        prompt: '引导流程：🚀 开始引导（推荐）',
+        rawUserMessage: '引导流程：🚀 开始引导（推荐）',
+        userId: 'u1',
+        threadId: 't-f150-anti-loop',
+        isLastCat: true,
+      }),
+    );
+
+    assert.ok(!promptSeen.includes('[F150 Guide Available]'), 'guide selection response must NOT re-trigger hook');
+  });
 });
