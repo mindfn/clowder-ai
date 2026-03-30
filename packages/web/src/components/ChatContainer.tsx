@@ -834,7 +834,8 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
         const phase = raw.phase as string;
         const guideStep = raw.guideStep as 'open-hub' | 'click-add-member' | 'fill-form' | 'done' | undefined;
         const isAddTeammate = phase === 'phase-4.5-add-teammate' && guideStep;
-        if (!isAddTeammate && messages.length > 0) return null;
+        const isFirstProject = phase === 'phase-4-first-project';
+        if (!isAddTeammate && !isFirstProject && messages.length > 0) return null;
         const leadCat = cats.find((c) => c.id === raw.leadCat) ?? cats[0];
         const catName = leadCat?.displayName ?? leadCat?.nickname ?? leadCat?.name;
         if (!catName && !isAddTeammate) return null;
