@@ -33,13 +33,10 @@ export function GuideOverlay() {
   const retryTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const lastRectRef = useRef<{ t: number; l: number; w: number; h: number } | null>(null);
 
-  const currentStep = session && session.currentStepIndex < session.steps.length
-    ? session.steps[session.currentStepIndex]
-    : null;
+  const currentStep =
+    session && session.currentStepIndex < session.steps.length ? session.steps[session.currentStepIndex] : null;
 
-  const isComplete = session
-    ? session.currentStepIndex >= session.steps.length
-    : false;
+  const isComplete = session ? session.currentStepIndex >= session.steps.length : false;
 
   // Locate target element by data-guide-id
   const locateTarget = useCallback(() => {
@@ -83,8 +80,7 @@ export function GuideOverlay() {
       if (el) {
         const r = el.getBoundingClientRect();
         const prev = lastRectRef.current;
-        if (!prev || prev.t !== r.top || prev.l !== r.left
-          || prev.w !== r.width || prev.h !== r.height) {
+        if (!prev || prev.t !== r.top || prev.l !== r.left || prev.w !== r.width || prev.h !== r.height) {
           lastRectRef.current = { t: r.top, l: r.left, w: r.width, h: r.height };
           setTargetRect(r);
         }
@@ -130,7 +126,10 @@ export function GuideOverlay() {
       setStepStatus('timed_out');
       setObservationState('error');
     }, sec * 1000);
-    return () => { clearTimeout(nudgeTimer); clearTimeout(timeoutTimer); };
+    return () => {
+      clearTimeout(nudgeTimer);
+      clearTimeout(timeoutTimer);
+    };
   }, [currentStep, isComplete, session?.stepStatus, session?.currentStepIndex, setStepStatus, setObservationState]);
 
   // Keyboard shortcuts
@@ -221,10 +220,40 @@ export function GuideOverlay() {
       {/* P1-1 fix: Four-panel click shield with genuine hole over target */}
       {panels ? (
         <>
-          <div className="fixed top-0 left-0 right-0" style={{ height: panels.top.height, zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
-          <div className="fixed bottom-0 left-0 right-0" style={{ top: panels.bottom.top, zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
-          <div className="fixed" style={{ top: panels.left.top, left: 0, width: panels.left.width, height: panels.left.height, zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
-          <div className="fixed" style={{ top: panels.right.top, left: panels.right.left, right: 0, height: panels.right.height, zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
+          <div
+            className="fixed top-0 left-0 right-0"
+            style={{ height: panels.top.height, zIndex: shieldZ, pointerEvents: 'auto' }}
+            aria-hidden="true"
+          />
+          <div
+            className="fixed bottom-0 left-0 right-0"
+            style={{ top: panels.bottom.top, zIndex: shieldZ, pointerEvents: 'auto' }}
+            aria-hidden="true"
+          />
+          <div
+            className="fixed"
+            style={{
+              top: panels.left.top,
+              left: 0,
+              width: panels.left.width,
+              height: panels.left.height,
+              zIndex: shieldZ,
+              pointerEvents: 'auto',
+            }}
+            aria-hidden="true"
+          />
+          <div
+            className="fixed"
+            style={{
+              top: panels.right.top,
+              left: panels.right.left,
+              right: 0,
+              height: panels.right.height,
+              zIndex: shieldZ,
+              pointerEvents: 'auto',
+            }}
+            aria-hidden="true"
+          />
         </>
       ) : (
         <div className="fixed inset-0" style={{ zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />

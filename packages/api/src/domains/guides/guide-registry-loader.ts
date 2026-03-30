@@ -86,7 +86,13 @@ export function resolveGuideForIntent(intent: string): GuideMatch[] {
       const score = entry.keywords.filter(
         (kw) => query.includes(kw.toLowerCase()) || kw.toLowerCase().includes(query),
       ).length;
-      return { id: entry.id, name: entry.name, description: entry.description, estimatedTime: entry.estimated_time, score };
+      return {
+        id: entry.id,
+        name: entry.name,
+        description: entry.description,
+        estimatedTime: entry.estimated_time,
+        score,
+      };
     })
     .filter((e) => e.score > 0)
     .sort((a, b) => b.score - a.score);

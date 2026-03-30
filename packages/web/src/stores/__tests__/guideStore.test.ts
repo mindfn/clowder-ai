@@ -5,7 +5,15 @@ import { useGuideStore } from '../guideStore';
 const MOCK_STEPS: GuideStep[] = [
   { id: 's1', targetGuideId: 'hub.trigger', title: 'Step 1', instruction: 'Do X', expectedAction: 'click' },
   { id: 's2', targetGuideId: 'cats.overview', title: 'Step 2', instruction: 'Do Y', expectedAction: 'click' },
-  { id: 's3', targetGuideId: 'cats.add-member', title: 'Step 3', instruction: 'Do Z', expectedAction: 'click', canSkip: false, timeoutSec: 30 },
+  {
+    id: 's3',
+    targetGuideId: 'cats.add-member',
+    title: 'Step 3',
+    instruction: 'Do Z',
+    expectedAction: 'click',
+    canSkip: false,
+    timeoutSec: 30,
+  },
 ];
 
 describe('guideStore', () => {

@@ -32,8 +32,8 @@ import { enqueueA2ATargets, triggerA2AInvocation } from './callback-a2a-trigger.
 import { callbackAuthSchema } from './callback-auth-schema.js';
 import { registerCallbackBootcampRoutes } from './callback-bootcamp-routes.js';
 import { registerCallbackDocumentRoutes } from './callback-document-routes.js';
-import { registerCallbackGuideRoutes } from './callback-guide-routes.js';
 import { EXPIRED_CREDENTIALS_ERROR } from './callback-errors.js';
+import { registerCallbackGuideRoutes } from './callback-guide-routes.js';
 import { registerCallbackLimbRoutes } from './callback-limb-routes.js';
 import { registerCallbackMemoryRoutes } from './callback-memory-routes.js';
 import { getMultiMentionOrchestrator, registerMultiMentionRoutes } from './callback-multi-mention-routes.js';

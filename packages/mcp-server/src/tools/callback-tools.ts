@@ -718,7 +718,9 @@ export const updateGuideStateInputSchema = {
   guideId: z.string().min(1).describe('Guide ID (e.g. "add-member")'),
   status: z
     .enum(['offered', 'awaiting_choice', 'active', 'completed', 'cancelled'])
-    .describe('Target guide status. Valid transitions: offered→awaiting_choice/active/cancelled, awaiting_choice→active/cancelled, active→completed/cancelled'),
+    .describe(
+      'Target guide status. Valid transitions: offered→awaiting_choice/active/cancelled, awaiting_choice→active/cancelled, active→completed/cancelled',
+    ),
   currentStep: z.number().int().min(0).optional().describe('Current step index (only when status=active)'),
 };
 
