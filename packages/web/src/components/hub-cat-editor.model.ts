@@ -40,6 +40,15 @@ export interface HubCatEditorDraft {
   providerProfileId?: string;
   defaultModel: string;
   commandArgs?: string;
+  /** F140: template identity fields for bootcamp-guided cat creation */
+  templateName?: string;
+  templateNickname?: string;
+  templateAvatar?: string;
+  templateColorPrimary?: string;
+  templateColorSecondary?: string;
+  templateRoleDescription?: string;
+  templatePersonality?: string;
+  templateTeamStrengths?: string;
 }
 
 export interface StrategyFormState {
@@ -235,16 +244,16 @@ export function initialState(cat?: CatData | null, draft?: HubCatEditorDraft | n
   const mentionPatterns = cat?.mentionPatterns ?? (catId ? [canonicalMentionPattern(catId)] : []);
   return {
     catId,
-    name: cat?.name ?? cat?.displayName ?? '',
-    displayName: cat?.displayName ?? cat?.name ?? '',
-    nickname: cat?.nickname ?? '',
-    avatar: cat?.avatar ?? '',
-    colorPrimary: cat?.color.primary ?? '#9B7EBD',
-    colorSecondary: cat?.color.secondary ?? '#E8DFF5',
+    name: cat?.name ?? cat?.displayName ?? createDraft?.templateName ?? '',
+    displayName: cat?.displayName ?? cat?.name ?? createDraft?.templateName ?? '',
+    nickname: cat?.nickname ?? createDraft?.templateNickname ?? '',
+    avatar: cat?.avatar ?? createDraft?.templateAvatar ?? '',
+    colorPrimary: cat?.color.primary ?? createDraft?.templateColorPrimary ?? '#9B7EBD',
+    colorSecondary: cat?.color.secondary ?? createDraft?.templateColorSecondary ?? '#E8DFF5',
     mentionPatterns: joinTags(mentionPatterns),
-    roleDescription: cat?.roleDescription ?? '',
-    personality: cat?.personality ?? '',
-    teamStrengths: cat?.teamStrengths ?? '',
+    roleDescription: cat?.roleDescription ?? createDraft?.templateRoleDescription ?? '',
+    personality: cat?.personality ?? createDraft?.templatePersonality ?? '',
+    teamStrengths: cat?.teamStrengths ?? createDraft?.templateTeamStrengths ?? '',
     caution: cat?.caution ?? '',
     strengths: cat?.strengths?.join(', ') ?? '',
     client: (cat?.provider as ClientValue | undefined) ?? createDraft?.client ?? 'anthropic',
