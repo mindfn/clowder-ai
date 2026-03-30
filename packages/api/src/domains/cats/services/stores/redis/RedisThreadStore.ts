@@ -16,6 +16,7 @@ import type { RedisClient } from '@cat-cafe/shared/utils';
 import type {
   BootcampStateV1,
   ConnectorHubStateV1,
+  GuideStateV1,
   IThreadStore,
   MentionActionabilityMode,
   Thread,
@@ -433,6 +434,15 @@ export class RedisThreadStore implements IThreadStore {
       await this.redis.hdel(key, 'bootcampState');
     } else {
       await this.redis.eval(HSET_IF_HAS_ID_LUA, 1, key, 'bootcampState', JSON.stringify(state));
+    }
+  }
+
+  async updateGuideState(threadId: string, state: GuideStateV1 | null): Promise<void> {
+    const key = ThreadKeys.detail(threadId);
+    if (state === null) {
+      await this.redis.hdel(key, 'guideState');
+    } else {
+      await this.redis.eval(HSET_IF_HAS_ID_LUA, 1, key, 'guideState', JSON.stringify(state));
     }
   }
 

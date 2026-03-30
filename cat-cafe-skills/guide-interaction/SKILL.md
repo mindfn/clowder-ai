@@ -35,11 +35,15 @@ triggers:
 
 ## 工具速查
 
-| 动作 | MCP 工具 |
-|------|----------|
-| 发送交互选择卡片 | `cat_cafe_create_rich_block(block=<JSON>)` |
-| 启动前端引导 overlay | `cat_cafe_start_guide(guideId, threadId)` |
-| 控制引导进度 | `cat_cafe_guide_control(action, guideId, threadId)` |
+| 动作 | MCP 工具 | 参数 |
+|------|----------|------|
+| 持久化引导状态 | `cat_cafe_update_guide_state` | `threadId`, `guideId`, `status`, `currentStep?` |
+| 发送交互选择卡片 | `cat_cafe_create_rich_block` | `block=<JSON string>` |
+| 启动前端引导 overlay | `cat_cafe_start_guide` | `guideId` |
+| 解析用户意图匹配 | `cat_cafe_guide_resolve` | `intent` |
+| 控制引导进度 | `cat_cafe_guide_control` | `action` (next/back/skip/exit) |
+
+**重要**：状态持久化是必须的。每次状态变更都要调用 `cat_cafe_update_guide_state`。
 
 ## Status 驱动行为
 
@@ -47,10 +51,11 @@ triggers:
 
 首次向用户展示引导选项。
 
-1. 写一句自然的话，告知用户你找到了匹配的引导流程
+1. 调用 `cat_cafe_update_guide_state(threadId, guideId, status='offered')` 持久化状态
+2. 写一句自然的话，告知用户你找到了匹配的引导流程
    - 示例：「我找到了「{guideName}」的交互引导流程，大约需要 {estimatedTime}。」
    - 可以根据对话上下文微调措辞，不必死板照搬
-2. 调用 `cat_cafe_create_rich_block`，`block` 参数传入以下 JSON 字符串：
+3. 调用 `cat_cafe_create_rich_block`，`block` 参数传入以下 JSON 字符串：
 
 ```json
 {
@@ -68,8 +73,8 @@ triggers:
 }
 ```
 
-3. **禁止**在这个阶段直接给出步骤教程
-4. 等待用户在选项卡中做出选择
+4. **禁止**在这个阶段直接给出步骤教程
+5. 等待用户在选项卡中做出选择
 
 ### status: awaiting_choice
 
@@ -83,17 +88,20 @@ triggers:
 根据选择内容执行：
 
 **用户选了「开始引导」**：
-1. 调用 `cat_cafe_start_guide(guideId, threadId)` 启动前端引导 overlay
-2. 回复一句鼓励的话，如「引导已启动，跟着页面上的提示一步步来就好！遇到问题随时问我。」
+1. 调用 `cat_cafe_update_guide_state(threadId, guideId, status='active')` 更新状态
+2. 调用 `cat_cafe_start_guide(guideId)` 启动前端引导 overlay
+3. 回复一句鼓励的话，如「引导已启动，跟着页面上的提示一步步来就好！遇到问题随时问我。」
 
 **用户选了「先看步骤概览」**：
-1. 从 guide catalog 读取步骤列表（调用 `cat_cafe_guide_resolve(intent={guideName})`）
-2. 用 3-5 条简要列出主要步骤
-3. 在最后问用户是否要开始引导
+1. 调用 `cat_cafe_update_guide_state(threadId, guideId, status='awaiting_choice')` 标记已看到
+2. 调用 `cat_cafe_guide_resolve(intent={guideName})` 获取步骤信息
+3. 用 3-5 条简要列出主要步骤
+4. 在最后问用户是否要开始引导
 
 **用户选了「暂不需要」**：
-1. 简短回复：「好的，有需要随时说。」
-2. 如果用户原本有其他问题，继续回答那个问题
+1. 调用 `cat_cafe_update_guide_state(threadId, guideId, status='cancelled')` 标记取消
+2. 简短回复：「好的，有需要随时说。」
+3. 如果用户原本有其他问题，继续回答那个问题
 
 ### status: active
 
@@ -101,9 +109,16 @@ triggers:
 - 监听用户反馈，感知用户遇到的困难
 - 如果用户问了和当前引导步骤相关的问题，结合引导上下文回答
 - 不要重复发送引导选项卡
+- 用户请求退出时：调用 `cat_cafe_guide_control(action='exit')`
 
 ### status: completed
 
 引导已完成。
+- 不再触发引导相关行为
+- 正常对话模式
+
+### status: cancelled
+
+引导已取消。
 - 不再触发引导相关行为
 - 正常对话模式

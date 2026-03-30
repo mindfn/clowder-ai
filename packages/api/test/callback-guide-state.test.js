@@ -1,0 +1,326 @@
+/**
+ * F150: Guide State Callback Tests
+ * POST /api/callbacks/update-guide-state
+ * POST /api/callbacks/start-guide
+ * POST /api/callbacks/guide-control
+ *
+ * Tests forward-only state machine, multi-cat dedup, and authorization.
+ */
+
+import assert from 'node:assert/strict';
+import { beforeEach, describe, test } from 'node:test';
+import Fastify from 'fastify';
+import './helpers/setup-cat-registry.js';
+
+describe('F150 Guide State Callbacks', () => {
+  let registry;
+  let threadStore;
+  let messageStore;
+  let socketManager;
+  let broadcastCalls;
+
+  beforeEach(async () => {
+    const { InvocationRegistry } = await import(
+      '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js'
+    );
+    const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
+
+    registry = new InvocationRegistry();
+    threadStore = new ThreadStore();
+    messageStore = new MessageStore();
+    broadcastCalls = [];
+    socketManager = {
+      broadcastAgentMessage() {},
+      broadcastToRoom(room, event, data) {
+        broadcastCalls.push({ room, event, data });
+      },
+      getMessages() {
+        return [];
+      },
+    };
+  });
+
+  async function createApp() {
+    const { callbacksRoutes } = await import('../dist/routes/callbacks.js');
+    const { leaderboardEventsRoutes } = await import('../dist/routes/leaderboard-events.js');
+    const { GameStore } = await import('../dist/domains/leaderboard/game-store.js');
+    const { AchievementStore } = await import('../dist/domains/leaderboard/achievement-store.js');
+    const app = Fastify();
+    await app.register(callbacksRoutes, {
+      registry,
+      messageStore,
+      socketManager,
+      threadStore,
+      sharedBank: 'cat-cafe-shared',
+    });
+    await app.register(leaderboardEventsRoutes, {
+      gameStore: new GameStore(),
+      achievementStore: new AchievementStore(),
+    });
+    return app;
+  }
+
+  // --- update-guide-state ---
+
+  test('creates initial guide state as "offered"', async () => {
+    const app = await createApp();
+    const thread = await threadStore.create('user-1', 'test-thread');
+    const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/update-guide-state',
+      payload: { invocationId, callbackToken, threadId: thread.id, guideId: 'add-member', status: 'offered' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.guideState.guideId, 'add-member');
+    assert.equal(body.guideState.status, 'offered');
+    assert.ok(body.guideState.offeredAt > 0);
+  });
+
+  test('rejects initial state that is not "offered"', async () => {
+    const app = await createApp();
+    const thread = await threadStore.create('user-1', 'test-thread');
+    const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/update-guide-state',
+      payload: { invocationId, callbackToken, threadId: thread.id, guideId: 'add-member', status: 'active' },
+    });
+
+    assert.equal(res.statusCode, 400);
+  });
+
+  test('allows valid forward transition: offered → active', async () => {
+    const app = await createApp();
+    const thread = await threadStore.create('user-1', 'test-thread');
+    const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
+
+    await threadStore.updateGuideState(thread.id, {
+      v: 1, guideId: 'add-member', status: 'offered', offeredAt: 1000,
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/update-guide-state',
+      payload: { invocationId, callbackToken, threadId: thread.id, guideId: 'add-member', status: 'active' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.guideState.status, 'active');
+    assert.ok(body.guideState.startedAt > 0);
+    assert.equal(body.guideState.offeredAt, 1000); // preserved
+  });
+
+  test('rejects invalid backward transition: active → offered', async () => {
+    const app = await createApp();
+    const thread = await threadStore.create('user-1', 'test-thread');
+    const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
+
+    await threadStore.updateGuideState(thread.id, {
+      v: 1, guideId: 'add-member', status: 'active', offeredAt: 1000, startedAt: 2000,
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/update-guide-state',
+      payload: { invocationId, callbackToken, threadId: thread.id, guideId: 'add-member', status: 'offered' },
+    });
+
+    assert.equal(res.statusCode, 400);
+    const body = JSON.parse(res.body);
+    assert.ok(body.error.includes('Invalid guide transition'));
+  });
+
+  test('rejects re-offering same guide when it is still active', async () => {
+    const app = await createApp();
+    const thread = await threadStore.create('user-1', 'test-thread');
+    const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
+
+    await threadStore.updateGuideState(thread.id, {
+      v: 1, guideId: 'add-member', status: 'active', offeredAt: 1000, startedAt: 2000,
+    });
+
+    // Trying to go back to 'offered' is an invalid backward transition
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/update-guide-state',
+      payload: { invocationId, callbackToken, threadId: thread.id, guideId: 'add-member', status: 'offered' },
+    });
+
+    assert.equal(res.statusCode, 400);
+    assert.ok(JSON.parse(res.body).error.includes('Invalid guide transition'));
+  });
+
+  test('allows re-offering same guide after it was completed', async () => {
+    const app = await createApp();
+    const thread = await threadStore.create('user-1', 'test-thread');
+    const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
+
+    await threadStore.updateGuideState(thread.id, {
+      v: 1, guideId: 'add-member', status: 'completed', offeredAt: 1000, completedAt: 3000,
+    });
+
+    // completed is terminal; completed→offered is not a normal transition,
+    // but the route should treat "same guideId + terminal state" as a new offer
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/update-guide-state',
+      payload: { invocationId, callbackToken, threadId: thread.id, guideId: 'add-member', status: 'offered' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.body).guideState.guideId, 'add-member');
+    assert.equal(JSON.parse(res.body).guideState.status, 'offered');
+  });
+
+  test('rejects cross-thread write', async () => {
+    const app = await createApp();
+    const thread1 = await threadStore.create('user-1', 'thread-1');
+    const thread2 = await threadStore.create('user-1', 'thread-2');
+    const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread1.id);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/update-guide-state',
+      payload: { invocationId, callbackToken, threadId: thread2.id, guideId: 'add-member', status: 'offered' },
+    });
+
+    assert.equal(res.statusCode, 403);
+  });
+
+  test('returns 401 for invalid credentials', async () => {
+    const app = await createApp();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/update-guide-state',
+      payload: { invocationId: 'fake', callbackToken: 'fake', threadId: 't1', guideId: 'add-member', status: 'offered' },
+    });
+
+    assert.equal(res.statusCode, 401);
+  });
+
+  // --- start-guide ---
+
+  test('start-guide transitions from offered → active and emits socket event', async () => {
+    const app = await createApp();
+    const thread = await threadStore.create('user-1', 'test-thread');
+    const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
+
+    await threadStore.updateGuideState(thread.id, {
+      v: 1, guideId: 'add-member', status: 'offered', offeredAt: 1000,
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/start-guide',
+      payload: { invocationId, callbackToken, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.guideState.status, 'active');
+
+    // Verify socket event was emitted
+    const guideStartEvent = broadcastCalls.find((c) => c.event === 'guide_start');
+    assert.ok(guideStartEvent, 'guide_start socket event should be emitted');
+    assert.equal(guideStartEvent.data.guideId, 'add-member');
+  });
+
+  test('start-guide rejects when no guide is offered', async () => {
+    const app = await createApp();
+    const thread = await threadStore.create('user-1', 'test-thread');
+    const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/start-guide',
+      payload: { invocationId, callbackToken, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 400);
+    assert.ok(JSON.parse(res.body).error.includes('guide_not_offered'));
+  });
+
+  test('start-guide rejects when guide is already active', async () => {
+    const app = await createApp();
+    const thread = await threadStore.create('user-1', 'test-thread');
+    const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
+
+    await threadStore.updateGuideState(thread.id, {
+      v: 1, guideId: 'add-member', status: 'active', offeredAt: 1000, startedAt: 2000,
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/start-guide',
+      payload: { invocationId, callbackToken, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 400);
+  });
+
+  // --- guide-control ---
+
+  test('guide-control emits socket event when guide is active', async () => {
+    const app = await createApp();
+    const thread = await threadStore.create('user-1', 'test-thread');
+    const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
+
+    await threadStore.updateGuideState(thread.id, {
+      v: 1, guideId: 'add-member', status: 'active', offeredAt: 1000, startedAt: 2000,
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/guide-control',
+      payload: { invocationId, callbackToken, action: 'next' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const controlEvent = broadcastCalls.find((c) => c.event === 'guide_control');
+    assert.ok(controlEvent, 'guide_control socket event should be emitted');
+    assert.equal(controlEvent.data.action, 'next');
+  });
+
+  test('guide-control rejects when no active guide', async () => {
+    const app = await createApp();
+    const thread = await threadStore.create('user-1', 'test-thread');
+    const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/guide-control',
+      payload: { invocationId, callbackToken, action: 'next' },
+    });
+
+    assert.equal(res.statusCode, 400);
+    assert.ok(JSON.parse(res.body).error.includes('no_active_guide'));
+  });
+
+  test('guide-control exit cancels the guide', async () => {
+    const app = await createApp();
+    const thread = await threadStore.create('user-1', 'test-thread');
+    const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
+
+    await threadStore.updateGuideState(thread.id, {
+      v: 1, guideId: 'add-member', status: 'active', offeredAt: 1000, startedAt: 2000,
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/guide-control',
+      payload: { invocationId, callbackToken, action: 'exit' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const updatedThread = await threadStore.get(thread.id);
+    assert.equal(updatedThread.guideState.status, 'cancelled');
+  });
+});

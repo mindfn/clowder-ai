@@ -97,6 +97,13 @@ export async function* routeParallel(
       routingPolicy = thread?.routingPolicy;
       voiceMode = thread?.voiceMode;
       bootcampState = thread?.bootcampState;
+      // F150: Read existing guide state from thread (authority source)
+      if (thread?.guideState) {
+        const gs = thread.guideState;
+        if (gs.status !== 'completed' && gs.status !== 'cancelled') {
+          guideCandidate = { id: gs.guideId, name: gs.guideId, estimatedTime: '', status: gs.status };
+        }
+      }
       // F073 P4: Read workflow-sop if thread is linked to a backlog item
       if (thread?.backlogItemId && deps.invocationDeps.workflowSopStore) {
         try {
@@ -123,16 +130,18 @@ export async function* routeParallel(
   const catToolNames = new Map<string, string[]>();
   const catCoverageMap = new Map<string, ContextEvalInput['coverageMap']>();
 
-  // F150: Match raw user message against guide registry (deterministic keyword match)
-  try {
-    const { resolveGuideForIntent } = await import('../../../../guides/guide-registry-loader.js');
-    const guideMatches = resolveGuideForIntent(message);
-    if (guideMatches.length > 0) {
-      const top = guideMatches[0];
-      guideCandidate = { id: top.id, name: top.name, estimatedTime: top.estimatedTime, status: 'offered' };
+  // F150: Match raw user message against guide registry (only if no existing guide state)
+  if (!guideCandidate) {
+    try {
+      const { resolveGuideForIntent } = await import('../../../../guides/guide-registry-loader.js');
+      const guideMatches = resolveGuideForIntent(message);
+      if (guideMatches.length > 0) {
+        const top = guideMatches[0];
+        guideCandidate = { id: top.id, name: top.name, estimatedTime: top.estimatedTime, status: 'offered' };
+      }
+    } catch {
+      /* best-effort: guide matching failure does not block invocation */
     }
-  } catch {
-    /* best-effort: guide matching failure does not block invocation */
   }
 
   const streams = await Promise.all(

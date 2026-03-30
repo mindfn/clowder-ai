@@ -32,6 +32,7 @@ import { enqueueA2ATargets, triggerA2AInvocation } from './callback-a2a-trigger.
 import { callbackAuthSchema } from './callback-auth-schema.js';
 import { registerCallbackBootcampRoutes } from './callback-bootcamp-routes.js';
 import { registerCallbackDocumentRoutes } from './callback-document-routes.js';
+import { registerCallbackGuideRoutes } from './callback-guide-routes.js';
 import { EXPIRED_CREDENTIALS_ERROR } from './callback-errors.js';
 import { registerCallbackGameRoutes } from './callback-game-routes.js';
 import { registerCallbackLimbRoutes } from './callback-limb-routes.js';
@@ -1350,86 +1351,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
   // F101: Game action callback for non-Claude cats (OpenCode/Codex/Gemini)
   registerCallbackGameRoutes(app, { registry });
 
-  // F150: Guide engine — start a guided flow on the frontend
-  const startGuideSchema = callbackAuthSchema.extend({
-    guideId: z.string().min(1),
-  });
-  const resolveGuideSchema = callbackAuthSchema.extend({ intent: z.string().min(1) });
-
-  // Static ESM import — fail loudly if loader is broken, no silent degradation
-  const { isValidGuideId, getRegistryEntries, resolveGuideForIntent } = await import(
-    '../domains/guides/guide-registry-loader.js'
-  );
-
-  app.post('/api/callbacks/start-guide', async (request, reply) => {
-    const parsed = startGuideSchema.safeParse(request.body);
-    if (!parsed.success) {
-      reply.status(400);
-      return { error: 'Invalid request', details: parsed.error.issues };
-    }
-    const { invocationId, callbackToken, guideId } = parsed.data;
-    const record = registry.verify(invocationId, callbackToken);
-    if (!record) {
-      reply.status(401);
-      return EXPIRED_CREDENTIALS_ERROR;
-    }
-    if (!registry.isLatest(invocationId)) return { status: 'stale_ignored' };
-    if (!isValidGuideId(guideId)) {
-      reply.status(400);
-      return { error: 'unknown_guide_id', message: `Guide "${guideId}" is not registered` };
-    }
-    socketManager.broadcastToRoom(`thread:${record.threadId}`, 'guide_start', {
-      guideId,
-      threadId: record.threadId,
-      timestamp: Date.now(),
-    });
-    log.info({ guideId, threadId: record.threadId }, '[F150] guide_start emitted');
-    return { status: 'ok', guideId };
-  });
-
-  // F150: Resolve user intent to matching guide flows
-  app.post('/api/callbacks/guide-resolve', async (request, reply) => {
-    const parsed = resolveGuideSchema.safeParse(request.body);
-    if (!parsed.success) {
-      reply.status(400);
-      return { error: 'Invalid request', details: parsed.error.issues };
-    }
-    const { invocationId, callbackToken, intent } = parsed.data;
-    const record = registry.verify(invocationId, callbackToken);
-    if (!record) {
-      reply.status(401);
-      return EXPIRED_CREDENTIALS_ERROR;
-    }
-
-    const matches = resolveGuideForIntent(intent);
-    log.info({ intent, matchCount: matches.length, threadId: record.threadId }, '[F150] guide_resolve');
-    return { status: 'ok', matches };
-  });
-
-  // F150: Control an active guide session (next/back/skip/exit)
-  const controlGuideSchema = callbackAuthSchema.extend({
-    action: z.enum(['next', 'back', 'skip', 'exit']),
-  });
-
-  app.post('/api/callbacks/guide-control', async (request, reply) => {
-    const parsed = controlGuideSchema.safeParse(request.body);
-    if (!parsed.success) {
-      reply.status(400);
-      return { error: 'Invalid request', details: parsed.error.issues };
-    }
-    const { invocationId, callbackToken, action } = parsed.data;
-    const record = registry.verify(invocationId, callbackToken);
-    if (!record) {
-      reply.status(401);
-      return EXPIRED_CREDENTIALS_ERROR;
-    }
-    if (!registry.isLatest(invocationId)) return { status: 'stale_ignored' };
-    socketManager.broadcastToRoom(`thread:${record.threadId}`, 'guide_control', {
-      action,
-      threadId: record.threadId,
-      timestamp: Date.now(),
-    });
-    log.info({ action, threadId: record.threadId }, '[F150] guide_control emitted');
-    return { status: 'ok', action };
-  });
+  // F150: Guide engine — state-validated routes with ThreadStore authority
+  if (opts.threadStore) {
+    await registerCallbackGuideRoutes(app, { registry, threadStore: opts.threadStore, socketManager });
+  }
 };
