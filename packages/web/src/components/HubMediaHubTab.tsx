@@ -12,7 +12,10 @@ interface ProviderField {
 interface ProviderItem {
   id: string;
   displayName: string;
+  category: 'generation' | 'analysis';
   capabilities: string[];
+  baseUrl: string;
+  models: string[];
   requiredFields: ProviderField[];
   envHint?: string;
   bound: boolean;
@@ -113,33 +116,49 @@ export function HubMediaHubTab() {
   }
 
   const providers = data?.providers ?? [];
+  const generationProviders = providers.filter((p) => p.category === 'generation');
+  const analysisProviders = providers.filter((p) => p.category === 'analysis');
+
+  const renderProviders = (list: ProviderItem[]) =>
+    list.map((p) => (
+      <ProviderCard
+        key={p.id}
+        provider={p}
+        busy={busyId === p.id}
+        binding={bindingId === p.id}
+        formValues={bindingId === p.id ? formValues : {}}
+        formError={bindingId === p.id ? formError : null}
+        onStartBind={() => {
+          setBindingId(p.id);
+          setFormValues({});
+          setFormError(null);
+        }}
+        onCancelBind={() => {
+          setBindingId(null);
+          setFormValues({});
+          setFormError(null);
+        }}
+        onFieldChange={(key, val) => setFormValues((prev) => ({ ...prev, [key]: val }))}
+        onBind={() => handleBind(p.id)}
+        onUnbind={() => handleUnbind(p.id)}
+      />
+    ));
 
   return (
     <div className="space-y-4 px-6 py-4">
       <SummaryCard enabled={data?.enabled ?? false} hint={data?.hint} />
-      {providers.map((p) => (
-        <ProviderCard
-          key={p.id}
-          provider={p}
-          busy={busyId === p.id}
-          binding={bindingId === p.id}
-          formValues={bindingId === p.id ? formValues : {}}
-          formError={bindingId === p.id ? formError : null}
-          onStartBind={() => {
-            setBindingId(p.id);
-            setFormValues({});
-            setFormError(null);
-          }}
-          onCancelBind={() => {
-            setBindingId(null);
-            setFormValues({});
-            setFormError(null);
-          }}
-          onFieldChange={(key, val) => setFormValues((prev) => ({ ...prev, [key]: val }))}
-          onBind={() => handleBind(p.id)}
-          onUnbind={() => handleUnbind(p.id)}
-        />
-      ))}
+      {generationProviders.length > 0 && (
+        <>
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400 pt-2">视频生成</h4>
+          {renderProviders(generationProviders)}
+        </>
+      )}
+      {analysisProviders.length > 0 && (
+        <>
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400 pt-2">视频分析</h4>
+          {renderProviders(analysisProviders)}
+        </>
+      )}
     </div>
   );
 }
@@ -216,6 +235,10 @@ function ProviderCard({
             <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">已绑定</span>
           )}
         </div>
+      </div>
+      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-gray-400">
+        <span>Base: {p.baseUrl}</span>
+        <span>Models: {p.models.join(', ')}</span>
       </div>
 
       {isEnvOnly && <p className="mt-2 text-xs text-gray-400">{p.envHint}</p>}
