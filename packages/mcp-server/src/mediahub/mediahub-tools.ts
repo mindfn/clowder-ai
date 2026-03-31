@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import type { ToolResult } from '../tools/file-tools.js';
 import { errorResult, successResult } from '../tools/file-tools.js';
-import { tryAutoLoadProvider } from './account-tools.js';
+import { resolveConsoleApiKey, tryAutoLoadProvider } from './account-tools.js';
 import { guessMimeType, isImageType, isVideoType, validateMediaFile } from './media-lifecycle.js';
 import type { MediaHubService } from './mediahub-service.js';
 import type { GenerationRequest, MediaCapability } from './types.js';
@@ -323,6 +323,14 @@ export async function handleAnalyzeVideo(args: {
     }
 
     const selectedProvider = (args.provider ?? 'auto') as 'auto' | VideoUnderstandingProvider;
+
+    // Resolve API key: explicit arg > env var > Console-bound credentials
+    let apiKey = args.api_key;
+    if (!apiKey) {
+      const consoleKey = await resolveConsoleApiKey('zhipu-analysis', 'cogvideox');
+      if (consoleKey) apiKey = consoleKey;
+    }
+
     const analysis = await analyzeVideoWithProvider({
       provider: selectedProvider,
       localPath,
@@ -330,7 +338,7 @@ export async function handleAnalyzeVideo(args: {
       mimeType,
       prompt: args.prompt,
       model: args.model,
-      apiKey: args.api_key,
+      apiKey,
       baseUrl: args.base_url,
     });
 
