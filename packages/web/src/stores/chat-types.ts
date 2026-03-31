@@ -68,6 +68,7 @@ export type RichBlockKind =
   | 'checklist'
   | 'media_gallery'
   | 'audio'
+  | 'video'
   | 'interactive'
   | 'html_widget'
   | 'file';
@@ -128,6 +129,20 @@ export interface RichAudioBlock {
   title?: string;
   durationSec?: number;
   mimeType?: string;
+}
+
+/** F138 Phase 4A: Video block for inline playback in Console */
+export interface RichVideoBlock {
+  id: string;
+  kind: 'video';
+  v: 1;
+  url: string;
+  title?: string;
+  poster?: string;
+  durationSec?: number;
+  mimeType?: string;
+  width?: number;
+  height?: number;
 }
 
 /** F096: Interactive block option */
@@ -194,6 +209,7 @@ export type RichBlock =
   | RichChecklistBlock
   | RichMediaGalleryBlock
   | RichAudioBlock
+  | RichVideoBlock
   | RichInteractiveBlock
   | RichHtmlWidgetBlock
   | RichFileBlock;

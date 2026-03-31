@@ -13,6 +13,7 @@ export type RichBlockKind =
   | 'checklist'
   | 'media_gallery'
   | 'audio'
+  | 'video'
   | 'interactive'
   | 'html_widget'
   | 'file';
@@ -129,6 +130,21 @@ export interface RichFileBlock extends RichBlockBase {
   fileSize?: number;
 }
 
+/** F138 Phase 4A: Video block for inline playback in Console. */
+export interface RichVideoBlock extends RichBlockBase {
+  kind: 'video';
+  /** URL to the video file (e.g. /api/mediahub/media/…) */
+  url: string;
+  title?: string;
+  /** Poster image URL shown before playback */
+  poster?: string;
+  /** Duration in seconds */
+  durationSec?: number;
+  mimeType?: string;
+  width?: number;
+  height?: number;
+}
+
 /** F120 Phase C: Inline HTML/JS widget rendered in sandboxed iframe (srcdoc).
  *  Similar to Claude.ai's visualize:show_widget — for charts, calculators, etc. */
 export interface RichHtmlWidgetBlock extends RichBlockBase {
@@ -149,6 +165,7 @@ export type RichBlock =
   | RichChecklistBlock
   | RichMediaGalleryBlock
   | RichAudioBlock
+  | RichVideoBlock
   | RichInteractiveBlock
   | RichHtmlWidgetBlock
   | RichFileBlock;
@@ -168,6 +185,7 @@ const VALID_KINDS: readonly string[] = [
   'checklist',
   'media_gallery',
   'audio',
+  'video',
   'interactive',
   'html_widget',
   'file',
