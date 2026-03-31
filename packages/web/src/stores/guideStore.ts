@@ -128,13 +128,13 @@ export const useGuideStore = create<GuideState>((set, get) => ({
 
   setObservationState: (observationState) => {
     const { session } = get();
-    if (!session) return;
+    if (!session || session.observationState === observationState) return;
     set({ session: { ...session, observationState } });
   },
 
   setStepStatus: (stepStatus) => {
     const { session } = get();
-    if (!session) return;
+    if (!session || session.stepStatus === stepStatus) return;
     set({ session: { ...session, stepStatus } });
   },
 
