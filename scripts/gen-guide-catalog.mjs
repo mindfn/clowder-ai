@@ -17,6 +17,8 @@ const ROOT = resolve(__dirname, '..');
 const GUIDES_DIR = resolve(ROOT, 'guides');
 const REGISTRY_PATH = resolve(GUIDES_DIR, 'registry.yaml');
 const VALID_ADVANCE_TYPES = new Set(['click', 'visible', 'input', 'confirm']);
+/** Must match GUIDE_TARGET_RE in guide-registry-loader.ts */
+const VALID_TARGET_RE = /^[a-zA-Z0-9._-]+$/;
 
 function loadRegistry() {
   if (!existsSync(REGISTRY_PATH)) {
@@ -53,7 +55,11 @@ function validateFlow(flow) {
     if (!step.id) errors.push('Step missing id');
     if (stepIds.has(step.id)) errors.push(`Duplicate step id: ${step.id}`);
     stepIds.add(step.id);
-    if (!step.target) errors.push(`Step ${step.id}: missing target (data-guide-id)`);
+    if (!step.target) {
+      errors.push(`Step ${step.id}: missing target (data-guide-id)`);
+    } else if (!VALID_TARGET_RE.test(step.target)) {
+      errors.push(`Step ${step.id}: invalid target "${step.target}" (must match ${VALID_TARGET_RE})`);
+    }
     if (!step.tips) errors.push(`Step ${step.id}: missing tips`);
     if (!step.advance) {
       errors.push(`Step ${step.id}: missing advance type`);

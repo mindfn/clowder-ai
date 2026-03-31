@@ -71,6 +71,15 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
       return { error: `Cannot start guide in status "${gs.status}"` };
     }
 
+    // P1 fix: validate flow is loadable before committing state transition
+    try {
+      loadGuideFlow(guideId);
+    } catch (err) {
+      log.warn({ guideId, threadId, err }, '[F150] start rejected — flow not loadable');
+      reply.status(400);
+      return { error: 'guide_flow_invalid', message: (err as Error).message };
+    }
+
     const updated: GuideStateV1 = { ...gs, status: 'active', startedAt: Date.now() };
     await threadStore.updateGuideState(threadId, updated);
 

@@ -193,6 +193,28 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
     assert.equal(res.statusCode, 401);
   });
 
+  // --- P1: start must reject when flow is not loadable ---
+
+  test('start: rejects when guide flow is not loadable (400)', async () => {
+    const app = await createApp();
+    // Seed thread with a guideId that has no corresponding flow YAML
+    const thread = await seedThread('nonexistent-flow', 'offered');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/guide-actions/start',
+      headers: { 'x-cat-cafe-user': 'user-1' },
+      payload: { threadId: thread.id, guideId: 'nonexistent-flow' },
+    });
+
+    assert.equal(res.statusCode, 400, 'start must fail when flow cannot be loaded');
+    const body = JSON.parse(res.body);
+    assert.equal(body.error, 'guide_flow_invalid');
+    // Verify state was NOT updated to active
+    const updated = await threadStore.get(thread.id);
+    assert.equal(updated.guideState.status, 'offered', 'state must remain offered on flow load failure');
+  });
+
   // --- P1-1: Thread ownership (cross-user state tampering) ---
 
   test('start: rejects when user does not own the thread (403)', async () => {

@@ -85,17 +85,16 @@ describe('InteractiveBlock direct callback actions', () => {
       optionBtn!.click();
     });
 
-    const confirmBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('确认选择'));
+    const confirmBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('确认选择'),
+    );
     expect(confirmBtn).toBeTruthy();
     await act(async () => {
       confirmBtn!.click();
       await Promise.resolve();
     });
 
-    expect(apiFetchMock).toHaveBeenCalledWith(
-      '/api/guide-actions/start',
-      expect.objectContaining({ method: 'POST' }),
-    );
+    expect(apiFetchMock).toHaveBeenCalledWith('/api/guide-actions/start', expect.objectContaining({ method: 'POST' }));
     expect(receivedGuideStart).toBeNull();
   });
 });
