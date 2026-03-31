@@ -1,6 +1,6 @@
 'use client';
 
-import React, { Component, useCallback, useEffect, useRef, useState } from 'react';
+import React, { Component, useEffect, useRef, useState } from 'react';
 import { useGuideEngine } from '@/hooks/useGuideEngine';
 import type { OrchestrationStep } from '@/stores/guideStore';
 import { useGuideStore } from '@/stores/guideStore';
@@ -61,10 +61,11 @@ function GuideOverlayInner() {
     if (!session || !currentStep || isComplete) return;
     lastRectRef.current = null;
     let cancelled = false;
+    const selector = buildGuideTargetSelector(currentStep.target);
 
     const updateRect = () => {
       if (cancelled) return;
-      const el = document.querySelector(`[data-guide-id="${currentStep.target}"]`);
+      const el = document.querySelector(selector);
       if (el) {
         const r = el.getBoundingClientRect();
         const prev = lastRectRef.current;
@@ -234,37 +235,63 @@ function GuideOverlayInner() {
 
 function useAutoAdvance(step: OrchestrationStep | null, advance: () => void, isActive: boolean) {
   const advanceRef = useRef(advance);
+  const listenerCleanupRef = useRef<(() => void) | null>(null);
+  const delayedAdvanceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bindingKeyRef = useRef<string | null>(null);
   advanceRef.current = advance;
 
   useEffect(() => {
+    listenerCleanupRef.current?.();
+    listenerCleanupRef.current = null;
+    if (delayedAdvanceRef.current) {
+      clearTimeout(delayedAdvanceRef.current);
+      delayedAdvanceRef.current = null;
+    }
+    bindingKeyRef.current = null;
+
     if (!step || !isActive) return;
 
     const target = step.target;
     const advanceType = step.advance;
+    const selector = buildGuideTargetSelector(target);
+    const bindingKey = `${step.id}:${target}:${advanceType}`;
+    bindingKeyRef.current = bindingKey;
+    let cancelled = false;
 
     // Small delay after step transition to let UI settle
     const setupTimer = setTimeout(() => {
-      const el = document.querySelector(`[data-guide-id="${target}"]`);
+      if (cancelled) return;
+      const el = document.querySelector(selector);
       if (!el) return;
 
       if (advanceType === 'click') {
         const handler = () => {
           // Delay advance to let the click action complete (e.g., open panel)
-          setTimeout(() => advanceRef.current(), 300);
+          delayedAdvanceRef.current = setTimeout(() => {
+            if (bindingKeyRef.current === bindingKey) {
+              advanceRef.current();
+            }
+          }, 300);
         };
         el.addEventListener('click', handler, { once: true, capture: true });
-        return () => el.removeEventListener('click', handler, { capture: true });
+        listenerCleanupRef.current = () => el.removeEventListener('click', handler, { capture: true });
+        return;
       }
 
       if (advanceType === 'input') {
         const handler = () => {
           const val = (el as HTMLInputElement).value;
           if (val && val.trim()) {
-            setTimeout(() => advanceRef.current(), 500);
+            delayedAdvanceRef.current = setTimeout(() => {
+              if (bindingKeyRef.current === bindingKey) {
+                advanceRef.current();
+              }
+            }, 500);
           }
         };
         el.addEventListener('input', handler);
-        return () => el.removeEventListener('input', handler);
+        listenerCleanupRef.current = () => el.removeEventListener('input', handler);
+        return;
       }
 
       // 'visible' and 'confirm' auto-advance immediately when target found
@@ -273,7 +300,19 @@ function useAutoAdvance(step: OrchestrationStep | null, advance: () => void, isA
       }
     }, 100);
 
-    return () => clearTimeout(setupTimer);
+    return () => {
+      cancelled = true;
+      clearTimeout(setupTimer);
+      if (delayedAdvanceRef.current) {
+        clearTimeout(delayedAdvanceRef.current);
+        delayedAdvanceRef.current = null;
+      }
+      listenerCleanupRef.current?.();
+      listenerCleanupRef.current = null;
+      if (bindingKeyRef.current === bindingKey) {
+        bindingKeyRef.current = null;
+      }
+    };
   }, [step?.id, step?.target, step?.advance, isActive]);
 }
 
@@ -388,4 +427,9 @@ export function computeShieldPanels(
     left: { top: rect.top - pad, width: Math.max(0, rect.left - pad), height: h },
     right: { top: rect.top - pad, left: rect.right + pad, height: h },
   };
+}
+
+export function buildGuideTargetSelector(target: string): string {
+  const escaped = globalThis.CSS?.escape ? globalThis.CSS.escape(target) : target;
+  return `[data-guide-id="${escaped}"]`;
 }

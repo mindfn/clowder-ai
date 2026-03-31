@@ -554,18 +554,30 @@ export function InteractiveBlock({
       const selectedOption = block.options.find((o) => optionIds.includes(o.id));
       if (selectedOption?.action?.type === 'callback') {
         const { endpoint, payload } = selectedOption.action;
-        // Fire API call for state tracking (non-blocking)
-        apiFetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload ?? {}),
-        }).catch((err) => console.error('[InteractiveBlock] callback action failed:', err));
+        try {
+          const response = await apiFetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload ?? {}),
+          });
+          if (!response.ok) {
+            console.error('[InteractiveBlock] callback action rejected:', response.status, endpoint);
+            setLocalDisabled(false);
+            setLocalSelectedIds([]);
+            return;
+          }
 
-        // F150: Trigger guide overlay directly — don't rely on socket round-trip
-        if (endpoint.includes('/guide-actions/start') && payload && 'guideId' in payload) {
-          window.dispatchEvent(
-            new CustomEvent('guide:start', { detail: { flowId: (payload as Record<string, unknown>).guideId } }),
-          );
+          // F150: Trigger guide overlay directly — don't rely on socket round-trip
+          if (endpoint.includes('/guide-actions/start') && payload && 'guideId' in payload) {
+            window.dispatchEvent(
+              new CustomEvent('guide:start', { detail: { flowId: (payload as Record<string, unknown>).guideId } }),
+            );
+          }
+        } catch (err) {
+          console.error('[InteractiveBlock] callback action failed:', err);
+          setLocalDisabled(false);
+          setLocalSelectedIds([]);
+          return;
         }
       } else {
         // Default: send selection as a chat message

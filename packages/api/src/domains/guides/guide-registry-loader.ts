@@ -34,6 +34,7 @@ function findProjectRoot(): string {
 
 let cachedEntries: GuideRegistryEntry[] | null = null;
 let cachedIds: Set<string> | null = null;
+const GUIDE_TARGET_RE = /^[a-zA-Z0-9._-]+$/;
 
 function ensureLoaded(): void {
   if (cachedEntries) return;
@@ -58,6 +59,10 @@ export function getValidGuideIds(): Set<string> {
 export function getRegistryEntries(): GuideRegistryEntry[] {
   ensureLoaded();
   return cachedEntries!;
+}
+
+export function isValidGuideTarget(target: string): boolean {
+  return GUIDE_TARGET_RE.test(target);
 }
 
 /** Check if a guideId is valid */
@@ -141,6 +146,9 @@ export function loadGuideFlow(guideId: string): OrchestrationFlow {
     steps: parsed.steps.map((s) => {
       if (!validAdvance.has(s.advance)) {
         throw new Error(`[F150] Invalid advance type "${s.advance}" in step "${s.id}"`);
+      }
+      if (!isValidGuideTarget(s.target)) {
+        throw new Error(`[F150] Invalid target "${s.target}" in step "${s.id}"`);
       }
       return {
         id: s.id,
