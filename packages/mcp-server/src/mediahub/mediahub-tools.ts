@@ -7,9 +7,10 @@ import { z } from 'zod';
 import type { ToolResult } from '../tools/file-tools.js';
 import { errorResult, successResult } from '../tools/file-tools.js';
 import { tryAutoLoadProvider } from './account-tools.js';
-import { guessMimeType, isImageType, validateMediaFile } from './media-lifecycle.js';
+import { guessMimeType, isImageType, isVideoType, validateMediaFile } from './media-lifecycle.js';
 import type { MediaHubService } from './mediahub-service.js';
 import type { GenerationRequest, MediaCapability } from './types.js';
+import { analyzeVideoWithGemini } from './video-understanding.js';
 
 // ============ Lazy service reference ============
 // Set by bootstrap; tools use this reference at call time.
@@ -88,6 +89,23 @@ export async function handleGenerateVideo(args: {
     // Lazy-load: if provider was bound via Console but not yet registered in this process
     await tryAutoLoadProvider(args.provider);
     const job = await getService().generateVideo(request);
+
+    // Progress card block for the cat to send via cat_cafe_create_rich_block
+    const progressBlock = {
+      id: `mh-prog-${job.jobId.slice(0, 8)}`,
+      kind: 'card',
+      v: 1,
+      title: job.status === 'failed' ? 'Generation Failed' : 'Generating...',
+      tone: job.status === 'failed' ? 'danger' : 'info',
+      bodyMarkdown: job.status === 'failed'
+        ? `**${job.providerId}** / ${job.model}\n\nError: ${job.error}`
+        : `**${job.providerId}** / ${job.model}\n\nPrompt: ${args.prompt.slice(0, 100)}\n\nStatus: queued`,
+      fields: [
+        { label: 'Job', value: job.jobId.slice(0, 8) },
+        { label: 'Status', value: job.status },
+      ],
+    };
+
     return successResult(
       JSON.stringify(
         {
@@ -96,10 +114,11 @@ export async function handleGenerateVideo(args: {
           provider: job.providerId,
           model: job.model,
           error: job.error,
+          progressBlock,
           message:
             job.status === 'failed'
               ? `Generation failed: ${job.error}`
-              : `Job submitted. Use mediahub_get_job_status with jobId="${job.jobId}" to check progress.`,
+              : `Job submitted. IMMEDIATELY call cat_cafe_create_rich_block with the progressBlock above to show the user that generation has started. Then poll with mediahub_get_job_status.`,
         },
         null,
         2,
@@ -133,6 +152,9 @@ export const sendMediaInputSchema = {
 
 export async function handleSendMedia(args: { job_id: string }): Promise<ToolResult> {
   try {
+    // Trigger terminal-status backfill (e.g. late local download for already-succeeded jobs).
+    await getService().getJobStatus(args.job_id);
+
     const job = await getService().getJob(args.job_id);
     if (!job) return errorResult(`Job "${args.job_id}" not found`);
     if (job.status !== 'succeeded') {
@@ -148,34 +170,51 @@ export async function handleSendMedia(args: { job_id: string }): Promise<ToolRes
       }
     }
 
-    const url = job.providerResultUrl ?? job.outputPath;
+    // Resolve serve URL: prefer local API route for reliable in-console playback.
+    let url: string | undefined;
+    if (job.outputPath) {
+      // Extract relative path under data/mediahub/outputs/ for local serve
+      const marker = 'data/mediahub/outputs/';
+      const idx = job.outputPath.indexOf(marker);
+      if (idx >= 0) {
+        const relative = job.outputPath.slice(idx + marker.length);
+        url = `/api/mediahub/media/${relative}`;
+      }
+    }
+    if (!url) {
+      url = job.providerResultUrl;
+    }
     if (!url) return errorResult('No media URL or file path available');
 
-    // Deliverability check: IM delivery requires https:// URL
-    if (!url.startsWith('https://')) {
-      return errorResult(
-        `Media not deliverable via IM: URL is not https://. ` +
-          'CDN URL required for OutboundDeliveryHook. Re-poll the job to obtain a provider URL.',
-      );
-    }
-
     const mime = fileValidation?.valid ? fileValidation.mimeType : guessMimeType(url);
-    const block = isImageType(mime)
-      ? {
-          id: `mh-${job.jobId.slice(0, 8)}`,
-          kind: 'media_gallery',
-          v: 1,
-          title: `Generated: ${job.prompt.slice(0, 60)}`,
-          items: [{ url, alt: job.prompt.slice(0, 100), caption: `${job.providerId} / ${job.model}` }],
-        }
-      : {
-          id: `mh-${job.jobId.slice(0, 8)}`,
-          kind: 'file',
-          v: 1,
-          url,
-          fileName: `${job.providerId}-${job.jobId.slice(0, 8)}${url.match(/\.\w+$/)?.[0] ?? '.mp4'}`,
-          mimeType: mime,
-        };
+    let block: Record<string, unknown>;
+    if (isImageType(mime)) {
+      block = {
+        id: `mh-${job.jobId.slice(0, 8)}`,
+        kind: 'media_gallery',
+        v: 1,
+        title: `Generated: ${job.prompt.slice(0, 60)}`,
+        items: [{ url, alt: job.prompt.slice(0, 100), caption: `${job.providerId} / ${job.model}` }],
+      };
+    } else if (isVideoType(mime)) {
+      block = {
+        id: `mh-${job.jobId.slice(0, 8)}`,
+        kind: 'video',
+        v: 1,
+        url,
+        title: `Generated: ${job.prompt.slice(0, 60)}`,
+        mimeType: mime,
+      };
+    } else {
+      block = {
+        id: `mh-${job.jobId.slice(0, 8)}`,
+        kind: 'file',
+        v: 1,
+        url,
+        fileName: `${job.providerId}-${job.jobId.slice(0, 8)}${url.match(/\.\w+$/)?.[0] ?? '.mp4'}`,
+        mimeType: mime,
+      };
+    }
 
     return successResult(
       JSON.stringify({ block, localPath: job.outputPath, cdnUrl: job.providerResultUrl, prompt: job.prompt }, null, 2),
@@ -194,7 +233,113 @@ export const getJobStatusInputSchema = {
 export async function handleGetJobStatus(args: { job_id: string }): Promise<ToolResult> {
   try {
     const result = await getService().getJobStatus(args.job_id);
-    return successResult(JSON.stringify(result, null, 2));
+    const status = (result as unknown as Record<string, unknown>).status as string;
+    const hint =
+      status === 'succeeded'
+        ? 'Job succeeded! Call mediahub_send_media now, then cat_cafe_create_rich_block with the returned block.'
+        : status === 'failed' || status === 'timeout'
+          ? 'Job failed. Inform the user.'
+          : 'Still in progress. Wait a few seconds, then poll again.';
+    return successResult(JSON.stringify({ ...(result as unknown as Record<string, unknown>), _hint: hint }, null, 2));
+  } catch (err) {
+    return errorResult(err instanceof Error ? err.message : String(err));
+  }
+}
+
+// ============ Tool: analyze_video ============
+
+export const analyzeVideoInputSchema = {
+  job_id: z.string().optional().describe('Succeeded MediaHub job ID to analyze (preferred)'),
+  video_url: z.string().url().optional().describe('Public video URL to analyze if no job_id is provided'),
+  prompt: z.string().optional().describe('Optional analysis focus (e.g. pacing, style, ad readiness)'),
+  model: z.string().optional().describe('Gemini model override (default: gemini-2.5-flash)'),
+};
+
+function buildLocalServeUrl(outputPath: string): string | undefined {
+  const marker = 'data/mediahub/outputs/';
+  const idx = outputPath.indexOf(marker);
+  if (idx < 0) return undefined;
+  const relative = outputPath.slice(idx + marker.length);
+  return `/api/mediahub/media/${relative}`;
+}
+
+export async function handleAnalyzeVideo(args: {
+  job_id?: string;
+  video_url?: string;
+  prompt?: string;
+  model?: string;
+}): Promise<ToolResult> {
+  try {
+    if (!args.job_id && !args.video_url) {
+      return errorResult('Either job_id or video_url is required');
+    }
+
+    let localPath: string | undefined;
+    let publicUrl = args.video_url;
+    let mimeType = publicUrl ? guessMimeType(publicUrl) : 'video/mp4';
+    let sourceJob: { jobId: string; providerId: string; model: string } | undefined;
+
+    if (args.job_id) {
+      await getService().getJobStatus(args.job_id);
+      const job = await getService().getJob(args.job_id);
+      if (!job) return errorResult(`Job "${args.job_id}" not found`);
+      if (job.status !== 'succeeded') {
+        return errorResult(`Job "${args.job_id}" status is "${job.status}" — only succeeded jobs can be analyzed`);
+      }
+
+      sourceJob = { jobId: job.jobId, providerId: job.providerId, model: job.model };
+      localPath = job.outputPath;
+      publicUrl = publicUrl ?? job.providerResultUrl;
+
+      if (localPath) {
+        const validation = validateMediaFile(localPath);
+        if (!validation.valid) return errorResult(`Media validation failed: ${validation.error}`);
+        if (!isVideoType(validation.mimeType)) {
+          return errorResult(`Only video analysis is supported. Current MIME: ${validation.mimeType}`);
+        }
+        mimeType = validation.mimeType;
+        publicUrl = publicUrl ?? buildLocalServeUrl(localPath);
+      } else if (publicUrl) {
+        mimeType = guessMimeType(publicUrl);
+      } else {
+        return errorResult('Job has no outputPath and no providerResultUrl to analyze');
+      }
+    }
+
+    if (!publicUrl && !localPath) {
+      return errorResult('No analyzable video source found');
+    }
+    if (!isVideoType(mimeType)) {
+      return errorResult(`Only video files are supported. MIME: ${mimeType}`);
+    }
+
+    const analysis = await analyzeVideoWithGemini({
+      localPath,
+      publicUrl,
+      mimeType,
+      prompt: args.prompt,
+      model: args.model,
+    });
+
+    const hint = analysis.analysis.recommendRegenerate
+      ? '建议重生成：根据 issues/regeneratePrompt 调整 prompt 后再次生成。'
+      : '质量可接受：可直接用于发布或进入下一步风格对齐。';
+
+    return successResult(
+      JSON.stringify(
+        {
+          sourceJob,
+          source: { localPath, publicUrl, mimeType },
+          analysis: analysis.analysis,
+          provider: analysis.provider,
+          model: analysis.model,
+          method: analysis.method,
+          _hint: hint,
+        },
+        null,
+        2,
+      ),
+    );
   } catch (err) {
     return errorResult(err instanceof Error ? err.message : String(err));
   }
@@ -258,9 +403,11 @@ export const mediahubTools = [
   {
     name: 'mediahub_generate_video',
     description:
-      'Submit a video or image generation job to a MediaHub provider. ' +
-      'Returns a job ID for tracking. Use mediahub_get_job_status to poll for completion. ' +
-      'Video generation is async and typically takes 30s-5min depending on the model.',
+      'Submit a video generation job to a MediaHub provider. Returns a job ID + progressBlock. ' +
+      'WORKFLOW: (1) Call this tool. (2) IMMEDIATELY call cat_cafe_create_rich_block with the returned progressBlock ' +
+      'to show the user that generation has started. (3) Poll mediahub_get_job_status until succeeded. ' +
+      '(4) Call mediahub_send_media. (5) Call cat_cafe_create_rich_block with the video block. ' +
+      'Video generation is async and typically takes 30s-5min.',
     inputSchema: generateVideoInputSchema,
     handler: handleGenerateVideo,
   },
@@ -276,8 +423,10 @@ export const mediahubTools = [
     name: 'mediahub_send_media',
     description:
       'Prepare a completed MediaHub job for IM delivery. Validates the output file (type/size), ' +
-      'then returns a Rich Block JSON (file or media_gallery) ready for cat_cafe_create_rich_block. ' +
-      'Only works on succeeded jobs.',
+      'then returns a Rich Block JSON (video, media_gallery, or file) for cat_cafe_create_rich_block. ' +
+      'Only works on succeeded jobs. ' +
+      'IMPORTANT: After calling this tool, you MUST immediately call cat_cafe_create_rich_block ' +
+      'with the returned block JSON to display the media inline in the chat. Do not just show the block as text.',
     inputSchema: sendMediaInputSchema,
     handler: handleSendMedia,
   },
@@ -286,9 +435,20 @@ export const mediahubTools = [
     description:
       'Check the status of a MediaHub generation job. Polls the provider for progress. ' +
       'When status is "succeeded", outputPath contains the local file path. ' +
-      'Call this periodically until status is terminal (succeeded/failed/timeout).',
+      'Call this periodically until status is terminal (succeeded/failed/timeout). ' +
+      'Once succeeded, call mediahub_send_media → cat_cafe_create_rich_block to display the media inline. ' +
+      'Optionally call mediahub_analyze_video for automatic quality assessment.',
     inputSchema: getJobStatusInputSchema,
     handler: handleGetJobStatus,
+  },
+  {
+    name: 'mediahub_analyze_video',
+    description:
+      'Analyze a generated video (or public video URL) with Gemini. ' +
+      'Returns structured JSON: summary, key moments, style tags, quality score, issues, and regenerate recommendation. ' +
+      'Use this after mediahub_get_job_status returns succeeded.',
+    inputSchema: analyzeVideoInputSchema,
+    handler: handleAnalyzeVideo,
   },
   {
     name: 'mediahub_list_jobs',
