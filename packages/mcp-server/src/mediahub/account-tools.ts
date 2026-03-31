@@ -69,6 +69,21 @@ export async function tryAutoLoadProvider(providerId: string): Promise<boolean> 
   return true;
 }
 
+/** Resolve an API key from Console-bound credentials (Redis).
+ *  Tries each providerId in order, returns the first `apiKey` found. */
+export async function resolveConsoleApiKey(...providerIds: string[]): Promise<string | undefined> {
+  if (!accountRef) return undefined;
+  for (const id of providerIds) {
+    const data = await accountRef.getCredentialData(id);
+    if (data) {
+      // Try common key field names
+      const key = data['apiKey'] ?? data['api_key'] ?? data['accessKey'];
+      if (key) return key;
+    }
+  }
+  return undefined;
+}
+
 function getManager(): AccountManager {
   if (!accountRef) throw new Error('AccountManager not initialized');
   return accountRef;
