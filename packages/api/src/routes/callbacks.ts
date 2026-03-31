@@ -203,6 +203,13 @@ const richBlockSchema = z.discriminatedUnion('kind', [
           group: z.string().optional(),
           customInput: z.boolean().optional(),
           customInputPlaceholder: z.string().optional(),
+          action: z
+            .object({
+              type: z.literal('callback'),
+              endpoint: z.string().min(1),
+              payload: z.record(z.unknown()).optional(),
+            })
+            .optional(),
         }),
       )
       .min(1),
