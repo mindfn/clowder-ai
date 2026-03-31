@@ -1,12 +1,44 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import React, { Component, useCallback, useEffect, useRef, useState } from 'react';
 import { useGuideEngine } from '@/hooks/useGuideEngine';
 import { useGuideStore } from '@/stores/guideStore';
 import { GuideHUD } from './guide-overlay-parts';
 
 const NUDGE_DELAY_MS = 8_000;
 const DEFAULT_TIMEOUT_SEC = 180;
+
+/** Error boundary — prevents guide overlay crash from taking down the whole app. */
+class GuideErrorBoundary extends Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error('[GuideOverlay] Caught error, auto-recovering:', error);
+    // Auto-exit the guide session so user isn't stuck
+    useGuideStore.getState().exitGuide();
+  }
+
+  render() {
+    if (this.state.hasError) return null;
+    return this.props.children;
+  }
+}
+
+/** Wrapped export with error boundary. */
+export function GuideOverlay() {
+  return (
+    <GuideErrorBoundary>
+      <GuideOverlayInner />
+    </GuideErrorBoundary>
+  );
+}
 
 /**
  * F150: Guide Overlay
@@ -15,7 +47,7 @@ const DEFAULT_TIMEOUT_SEC = 180;
  * Box-shadow trick for dark mask; four-panel click shield
  * leaves a genuine hole over the target element.
  */
-export function GuideOverlay() {
+function GuideOverlayInner() {
   useGuideEngine();
   const session = useGuideStore((s) => s.session);
   const nextStep = useGuideStore((s) => s.nextStep);
@@ -43,6 +75,14 @@ export function GuideOverlay() {
     if (!currentStep) {
       setTargetRect(null);
       setTargetFound(false);
+      return;
+    }
+    // Info-only steps (no targetGuideId) — skip DOM tracking, go straight to awaiting_user
+    if (!currentStep.targetGuideId) {
+      setTargetRect(null);
+      setTargetFound(true);
+      setObservationState('active');
+      setStepStatus('awaiting_user');
       return;
     }
     const el = document.querySelector(`[data-guide-id="${currentStep.targetGuideId}"]`);
@@ -73,9 +113,13 @@ export function GuideOverlay() {
   // P2-2 fix: rAF with rect comparison to skip unnecessary re-renders
   useEffect(() => {
     if (!session || !currentStep || isComplete) return;
+    // Info-only steps — no DOM element to track
+    if (!currentStep.targetGuideId) return;
     lastRectRef.current = null;
+    let cancelled = false;
 
     const updateRect = () => {
+      if (cancelled) return;
       const el = document.querySelector(`[data-guide-id="${currentStep.targetGuideId}"]`);
       if (el) {
         const r = el.getBoundingClientRect();
@@ -94,7 +138,10 @@ export function GuideOverlay() {
     };
 
     rafRef.current = requestAnimationFrame(updateRect);
-    return () => cancelAnimationFrame(rafRef.current);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafRef.current);
+    };
   }, [session, currentStep, isComplete, targetFound, setObservationState, setStepStatus]);
 
   // MutationObserver to detect when target appears in DOM
