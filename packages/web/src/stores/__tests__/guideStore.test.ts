@@ -1,20 +1,19 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { GuideStep } from '../guideStore';
+import type { OrchestrationFlow, OrchestrationStep } from '../guideStore';
 import { useGuideStore } from '../guideStore';
 
-const MOCK_STEPS: GuideStep[] = [
-  { id: 's1', targetGuideId: 'hub.trigger', title: 'Step 1', instruction: 'Do X', expectedAction: 'click' },
-  { id: 's2', targetGuideId: 'cats.overview', title: 'Step 2', instruction: 'Do Y', expectedAction: 'click' },
-  {
-    id: 's3',
-    targetGuideId: 'cats.add-member',
-    title: 'Step 3',
-    instruction: 'Do Z',
-    expectedAction: 'click',
-    canSkip: false,
-    timeoutSec: 30,
-  },
+const MOCK_STEPS: OrchestrationStep[] = [
+  { id: 's1', target: 'hub.trigger', tips: 'Click here', advance: 'click' },
+  { id: 's2', target: 'cats.overview', tips: 'Navigate here', advance: 'click' },
+  { id: 's3', target: 'cats.add-member', tips: 'Add a member', advance: 'click', timeoutSec: 30 },
 ];
+
+const MOCK_FLOW: OrchestrationFlow = {
+  id: 'test-flow',
+  name: 'Test Flow',
+  description: 'A test flow',
+  steps: MOCK_STEPS,
+};
 
 describe('guideStore', () => {
   beforeEach(() => {
@@ -22,110 +21,83 @@ describe('guideStore', () => {
   });
 
   it('starts a guide session with correct initial state', () => {
-    useGuideStore.getState().startGuide('test-flow', MOCK_STEPS);
+    useGuideStore.getState().startGuide(MOCK_FLOW);
     const s = useGuideStore.getState().session!;
     expect(s).not.toBeNull();
-    expect(s.guideId).toBe('test-flow');
+    expect(s.flow.id).toBe('test-flow');
     expect(s.currentStepIndex).toBe(0);
-    expect(s.observationState).toBe('active');
-    expect(s.stepStatus).toBe('locating_target');
-    expect(s.steps).toHaveLength(3);
+    expect(s.phase).toBe('locating');
+    expect(s.flow.steps).toHaveLength(3);
+    expect(s.startedAt).toBeGreaterThan(0);
   });
 
-  it('advances to next step', () => {
-    useGuideStore.getState().startGuide('test-flow', MOCK_STEPS);
-    useGuideStore.getState().nextStep();
+  it('advanceStep moves to next step and resets phase to locating', () => {
+    useGuideStore.getState().startGuide(MOCK_FLOW);
+    useGuideStore.getState().advanceStep();
     const s = useGuideStore.getState().session!;
     expect(s.currentStepIndex).toBe(1);
-    expect(s.observationState).toBe('active');
-    expect(s.stepStatus).toBe('locating_target');
-  });
-
-  it('goes back to previous step', () => {
-    useGuideStore.getState().startGuide('test-flow', MOCK_STEPS);
-    useGuideStore.getState().nextStep();
-    useGuideStore.getState().prevStep();
-    expect(useGuideStore.getState().session!.currentStepIndex).toBe(0);
-  });
-
-  it('prevStep does nothing at index 0', () => {
-    useGuideStore.getState().startGuide('test-flow', MOCK_STEPS);
-    useGuideStore.getState().prevStep();
-    expect(useGuideStore.getState().session!.currentStepIndex).toBe(0);
-  });
-
-  it('skipStep advances like nextStep', () => {
-    useGuideStore.getState().startGuide('test-flow', MOCK_STEPS);
-    useGuideStore.getState().skipStep();
-    expect(useGuideStore.getState().session!.currentStepIndex).toBe(1);
+    expect(s.phase).toBe('locating');
   });
 
   it('marks flow complete when advancing past last step', () => {
-    useGuideStore.getState().startGuide('test-flow', MOCK_STEPS);
-    useGuideStore.getState().nextStep(); // → 1
-    useGuideStore.getState().nextStep(); // → 2
-    useGuideStore.getState().nextStep(); // → 3 (past end)
+    useGuideStore.getState().startGuide(MOCK_FLOW);
+    useGuideStore.getState().advanceStep(); // -> 1
+    useGuideStore.getState().advanceStep(); // -> 2
+    useGuideStore.getState().advanceStep(); // -> 3 (past end)
     const s = useGuideStore.getState().session!;
     expect(s.currentStepIndex).toBe(3);
-    expect(s.observationState).toBe('success');
-    expect(s.stepStatus).toBe('passed');
+    expect(s.phase).toBe('complete');
   });
 
   it('exitGuide clears session', () => {
-    useGuideStore.getState().startGuide('test-flow', MOCK_STEPS);
+    useGuideStore.getState().startGuide(MOCK_FLOW);
     useGuideStore.getState().exitGuide();
     expect(useGuideStore.getState().session).toBeNull();
   });
 
-  it('setObservationState updates state', () => {
-    useGuideStore.getState().startGuide('test-flow', MOCK_STEPS);
-    useGuideStore.getState().setObservationState('error');
-    expect(useGuideStore.getState().session!.observationState).toBe('error');
+  it('setPhase updates phase', () => {
+    useGuideStore.getState().startGuide(MOCK_FLOW);
+    useGuideStore.getState().setPhase('active');
+    expect(useGuideStore.getState().session!.phase).toBe('active');
   });
 
-  it('setStepStatus updates status', () => {
-    useGuideStore.getState().startGuide('test-flow', MOCK_STEPS);
-    useGuideStore.getState().setStepStatus('timed_out');
-    expect(useGuideStore.getState().session!.stepStatus).toBe('timed_out');
+  it('setPhase is no-op when session is null', () => {
+    useGuideStore.getState().setPhase('active');
+    expect(useGuideStore.getState().session).toBeNull();
   });
 
-  it('completeCurrentStep sets passed + success', () => {
-    useGuideStore.getState().startGuide('test-flow', MOCK_STEPS);
-    useGuideStore.getState().completeCurrentStep();
+  it('setPhase is no-op when phase is already the same', () => {
+    useGuideStore.getState().startGuide(MOCK_FLOW);
+    // phase starts as 'locating'
+    useGuideStore.getState().setPhase('locating');
+    expect(useGuideStore.getState().session!.phase).toBe('locating');
+  });
+
+  it('advanceStep is no-op when session is null', () => {
+    useGuideStore.getState().advanceStep();
+    expect(useGuideStore.getState().session).toBeNull();
+  });
+
+  it('preserves timeoutSec on steps via flow', () => {
+    useGuideStore.getState().startGuide(MOCK_FLOW);
     const s = useGuideStore.getState().session!;
-    expect(s.stepStatus).toBe('passed');
-    expect(s.observationState).toBe('success');
-  });
-
-  it('preserves canSkip and timeoutSec on steps', () => {
-    useGuideStore.getState().startGuide('test-flow', MOCK_STEPS);
-    const s = useGuideStore.getState().session!;
-    expect(s.steps[0].canSkip).toBeUndefined();
-    expect(s.steps[2].canSkip).toBe(false);
-    expect(s.steps[2].timeoutSec).toBe(30);
-  });
-
-  it('skipStep is blocked when canSkip is false', () => {
-    useGuideStore.getState().startGuide('test-flow', MOCK_STEPS);
-    useGuideStore.getState().nextStep(); // → s2 (canSkip undefined)
-    useGuideStore.getState().nextStep(); // → s3 (canSkip: false)
-    expect(useGuideStore.getState().session!.currentStepIndex).toBe(2);
-    useGuideStore.getState().skipStep(); // should be blocked
-    expect(useGuideStore.getState().session!.currentStepIndex).toBe(2); // still on s3
-  });
-
-  it('skipStep is allowed when canSkip is undefined (default)', () => {
-    useGuideStore.getState().startGuide('test-flow', MOCK_STEPS);
-    // s1 has canSkip: undefined → should allow skip
-    useGuideStore.getState().skipStep();
-    expect(useGuideStore.getState().session!.currentStepIndex).toBe(1);
+    expect(s.flow.steps[0].timeoutSec).toBeUndefined();
+    expect(s.flow.steps[2].timeoutSec).toBe(30);
   });
 
   it('generates unique session IDs', () => {
-    useGuideStore.getState().startGuide('a', MOCK_STEPS);
+    useGuideStore.getState().startGuide(MOCK_FLOW);
     const id1 = useGuideStore.getState().session!.sessionId;
-    useGuideStore.getState().startGuide('b', MOCK_STEPS);
+    useGuideStore.getState().startGuide(MOCK_FLOW);
     const id2 = useGuideStore.getState().session!.sessionId;
     expect(id1).not.toBe(id2);
+  });
+
+  it('stores the full flow object in session', () => {
+    useGuideStore.getState().startGuide(MOCK_FLOW);
+    const s = useGuideStore.getState().session!;
+    expect(s.flow).toEqual(MOCK_FLOW);
+    expect(s.flow.name).toBe('Test Flow');
+    expect(s.flow.description).toBe('A test flow');
   });
 });

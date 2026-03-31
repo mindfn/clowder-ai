@@ -78,6 +78,85 @@ export interface GuideMatch {
  * Returns matched guides sorted by score (highest first), or empty array.
  * Used by both the MCP callback endpoint and the pre-invocation routing hook.
  */
+/* ── OrchestrationFlow v2 — runtime flow loader ── */
+
+export interface OrchestrationStep {
+  id: string;
+  target: string;
+  tips: string;
+  advance: 'click' | 'visible' | 'input' | 'confirm';
+  page?: string;
+  timeoutSec?: number;
+}
+
+export interface OrchestrationFlow {
+  id: string;
+  name: string;
+  description?: string;
+  steps: OrchestrationStep[];
+}
+
+interface RawFlowFile {
+  id: string;
+  name: string;
+  description?: string;
+  steps: Array<{
+    id: string;
+    target: string;
+    tips: string;
+    advance: string;
+    page?: string;
+    timeoutSec?: number;
+  }>;
+}
+
+const flowCache = new Map<string, OrchestrationFlow>();
+
+/**
+ * Load a guide flow YAML at runtime and return OrchestrationFlow.
+ * Throws if guide ID is unknown or flow file is invalid.
+ */
+export function loadGuideFlow(guideId: string): OrchestrationFlow {
+  const cached = flowCache.get(guideId);
+  if (cached) return cached;
+
+  const entries = getRegistryEntries();
+  const entry = entries.find((e) => e.id === guideId);
+  if (!entry) throw new Error(`[F150] Unknown guide: ${guideId}`);
+
+  const root = findProjectRoot();
+  const flowPath = resolve(root, 'guides', entry.flow_file);
+  const raw = readFileSync(flowPath, 'utf-8');
+  const parsed = YAML.parse(raw) as RawFlowFile;
+
+  if (!parsed?.steps || !Array.isArray(parsed.steps)) {
+    throw new Error(`[F150] Invalid flow file for "${guideId}": missing steps`);
+  }
+
+  const validAdvance = new Set(['click', 'visible', 'input', 'confirm']);
+  const flow: OrchestrationFlow = {
+    id: parsed.id,
+    name: parsed.name,
+    description: parsed.description,
+    steps: parsed.steps.map((s) => {
+      if (!validAdvance.has(s.advance)) {
+        throw new Error(`[F150] Invalid advance type "${s.advance}" in step "${s.id}"`);
+      }
+      return {
+        id: s.id,
+        target: s.target,
+        tips: s.tips,
+        advance: s.advance as OrchestrationStep['advance'],
+        ...(s.page && { page: s.page }),
+        ...(s.timeoutSec && { timeoutSec: s.timeoutSec }),
+      };
+    }),
+  };
+
+  flowCache.set(guideId, flow);
+  return flow;
+}
+
 export function resolveGuideForIntent(intent: string): GuideMatch[] {
   const entries = getRegistryEntries();
   const query = intent.toLowerCase();

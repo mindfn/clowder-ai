@@ -1,50 +1,50 @@
 /**
- * F150: Guide Engine Store
+ * F150: Guide Engine Store (v2 — tag-based engine)
  *
- * Zustand store managing guide session state.
- * Phase A: internal flows only (add-member).
+ * OrchestrationStep schema matches backend flow definitions.
+ * Engine auto-advances on user interaction — no manual next/prev/skip.
  */
 import { create } from 'zustand';
 
-/* ── Types ── */
+/* ── Orchestration Types (shared schema with backend) ── */
 
-export type GuideObservationState = 'idle' | 'active' | 'success' | 'error' | 'verifying';
-
-export type GuideStepStatus = 'locating_target' | 'awaiting_user' | 'passed' | 'failed' | 'timed_out' | 'skipped';
-
-export interface GuideStep {
+export interface OrchestrationStep {
   id: string;
-  /** data-guide-id of the target element. Optional for `information` type steps. */
-  targetGuideId?: string;
-  title: string;
-  instruction: string;
-  expectedAction: 'click' | 'visible' | 'select' | 'input' | 'confirm';
-  canSkip?: boolean;
+  /** data-guide-id value on the target element */
+  target: string;
+  /** Guide text shown to user (from flow definition, NOT frontend) */
+  tips: string;
+  /** How to auto-advance: click target / target becomes visible / input filled / manual confirm */
+  advance: 'click' | 'visible' | 'input' | 'confirm';
+  page?: string;
   timeoutSec?: number;
 }
 
+export interface OrchestrationFlow {
+  id: string;
+  name: string;
+  description?: string;
+  steps: OrchestrationStep[];
+}
+
+/* ── Session State ── */
+
+export type GuidePhase = 'locating' | 'active' | 'complete';
+
 export interface GuideSession {
-  guideId: string;
+  flow: OrchestrationFlow;
   sessionId: string;
-  steps: GuideStep[];
   currentStepIndex: number;
-  observationState: GuideObservationState;
-  stepStatus: GuideStepStatus;
+  phase: GuidePhase;
   startedAt: number;
 }
 
 interface GuideState {
   session: GuideSession | null;
-
-  // Actions
-  startGuide: (guideId: string, steps: GuideStep[]) => void;
-  nextStep: () => void;
-  prevStep: () => void;
-  skipStep: () => void;
+  startGuide: (flow: OrchestrationFlow) => void;
+  advanceStep: () => void;
   exitGuide: () => void;
-  setObservationState: (state: GuideObservationState) => void;
-  setStepStatus: (status: GuideStepStatus) => void;
-  completeCurrentStep: () => void;
+  setPhase: (phase: GuidePhase) => void;
 }
 
 let sessionCounter = 0;
@@ -52,95 +52,37 @@ let sessionCounter = 0;
 export const useGuideStore = create<GuideState>((set, get) => ({
   session: null,
 
-  startGuide: (guideId, steps) => {
+  startGuide: (flow) => {
     sessionCounter += 1;
     set({
       session: {
-        guideId,
-        sessionId: `guide-${guideId}-${sessionCounter}`,
-        steps,
+        flow,
+        sessionId: `guide-${flow.id}-${sessionCounter}`,
         currentStepIndex: 0,
-        observationState: 'active',
-        stepStatus: 'locating_target',
+        phase: 'locating',
         startedAt: Date.now(),
       },
     });
   },
 
-  nextStep: () => {
+  advanceStep: () => {
     const { session } = get();
     if (!session) return;
     const nextIndex = session.currentStepIndex + 1;
-    if (nextIndex >= session.steps.length) {
-      // Flow complete
-      set({
-        session: { ...session, observationState: 'success', stepStatus: 'passed', currentStepIndex: nextIndex },
-      });
+    if (nextIndex >= session.flow.steps.length) {
+      set({ session: { ...session, currentStepIndex: nextIndex, phase: 'complete' } });
       return;
     }
     set({
-      session: {
-        ...session,
-        currentStepIndex: nextIndex,
-        observationState: 'active',
-        stepStatus: 'locating_target',
-      },
-    });
-  },
-
-  prevStep: () => {
-    const { session } = get();
-    if (!session || session.currentStepIndex <= 0) return;
-    set({
-      session: {
-        ...session,
-        currentStepIndex: session.currentStepIndex - 1,
-        observationState: 'active',
-        stepStatus: 'locating_target',
-      },
-    });
-  },
-
-  skipStep: () => {
-    const { session } = get();
-    if (!session) return;
-    // Enforce canSkip constraint — MCP control can't bypass flow contract
-    const currentStep = session.steps[session.currentStepIndex];
-    if (currentStep && currentStep.canSkip === false) return;
-    const nextIndex = session.currentStepIndex + 1;
-    if (nextIndex >= session.steps.length) {
-      set({
-        session: { ...session, observationState: 'success', stepStatus: 'passed', currentStepIndex: nextIndex },
-      });
-      return;
-    }
-    set({
-      session: {
-        ...session,
-        currentStepIndex: nextIndex,
-        observationState: 'active',
-        stepStatus: 'locating_target',
-      },
+      session: { ...session, currentStepIndex: nextIndex, phase: 'locating' },
     });
   },
 
   exitGuide: () => set({ session: null }),
 
-  setObservationState: (observationState) => {
+  setPhase: (phase) => {
     const { session } = get();
-    if (!session || session.observationState === observationState) return;
-    set({ session: { ...session, observationState } });
-  },
-
-  setStepStatus: (stepStatus) => {
-    const { session } = get();
-    if (!session || session.stepStatus === stepStatus) return;
-    set({ session: { ...session, stepStatus } });
-  },
-
-  completeCurrentStep: () => {
-    const { session } = get();
-    if (!session) return;
-    set({ session: { ...session, stepStatus: 'passed', observationState: 'success' } });
+    if (!session || session.phase === phase) return;
+    set({ session: { ...session, phase } });
   },
 }));

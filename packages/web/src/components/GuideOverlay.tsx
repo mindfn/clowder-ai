@@ -3,28 +3,18 @@
 import React, { Component, useCallback, useEffect, useRef, useState } from 'react';
 import { useGuideEngine } from '@/hooks/useGuideEngine';
 import { useGuideStore } from '@/stores/guideStore';
-import { GuideHUD } from './guide-overlay-parts';
-
-const NUDGE_DELAY_MS = 8_000;
-const DEFAULT_TIMEOUT_SEC = 180;
+import type { OrchestrationStep } from '@/stores/guideStore';
 
 /** Error boundary — prevents guide overlay crash from taking down the whole app. */
-class GuideErrorBoundary extends Component<
-  { children: React.ReactNode },
-  { hasError: boolean }
-> {
+class GuideErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean }> {
   state = { hasError: false };
-
   static getDerivedStateFromError() {
     return { hasError: true };
   }
-
   componentDidCatch(error: Error) {
     console.error('[GuideOverlay] Caught error, auto-recovering:', error);
-    // Auto-exit the guide session so user isn't stuck
     useGuideStore.getState().exitGuide();
   }
-
   render() {
     if (this.state.hasError) return null;
     return this.props.children;
@@ -42,86 +32,39 @@ export function GuideOverlay() {
 }
 
 /**
- * F150: Guide Overlay
+ * F150: Guide Overlay (v2 — tag-based engine)
  *
- * Full-screen overlay with spotlight cutout + HUD.
- * Box-shadow trick for dark mask; four-panel click shield
- * leaves a genuine hole over the target element.
+ * - Mask + spotlight on target element (found by data-guide-id)
+ * - Tips from flow definition (not hardcoded)
+ * - Auto-advance: listen for user interaction with target (click/input/etc.)
+ * - HUD: only "退出" + tips + progress dots
  */
 function GuideOverlayInner() {
   useGuideEngine();
   const session = useGuideStore((s) => s.session);
-  const nextStep = useGuideStore((s) => s.nextStep);
-  const prevStep = useGuideStore((s) => s.prevStep);
-  const skipStep = useGuideStore((s) => s.skipStep);
+  const advanceStep = useGuideStore((s) => s.advanceStep);
   const exitGuide = useGuideStore((s) => s.exitGuide);
-  const setObservationState = useGuideStore((s) => s.setObservationState);
-  const setStepStatus = useGuideStore((s) => s.setStepStatus);
+  const setPhase = useGuideStore((s) => s.setPhase);
 
   const [targetRect, setTargetRect] = useState<DOMRect | null>(null);
-  const [targetFound, setTargetFound] = useState(false);
-  const [nudgeVisible, setNudgeVisible] = useState(false);
-  const observerRef = useRef<MutationObserver | null>(null);
   const rafRef = useRef<number>(0);
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const lastRectRef = useRef<{ t: number; l: number; w: number; h: number } | null>(null);
 
   const currentStep =
-    session && session.currentStepIndex < session.steps.length ? session.steps[session.currentStepIndex] : null;
+    session && session.currentStepIndex < session.flow.steps.length
+      ? session.flow.steps[session.currentStepIndex]
+      : null;
+  const isComplete = session ? session.phase === 'complete' : false;
 
-  const isComplete = session ? session.currentStepIndex >= session.steps.length : false;
-
-  // Locate target element by data-guide-id
-  const locateTarget = useCallback(() => {
-    if (!currentStep) {
-      setTargetRect(null);
-      setTargetFound(false);
-      return;
-    }
-    // Info-only steps (no targetGuideId) — skip DOM tracking, go straight to awaiting_user
-    if (!currentStep.targetGuideId) {
-      setTargetRect(null);
-      setTargetFound(true);
-      setObservationState('active');
-      setStepStatus('awaiting_user');
-      return;
-    }
-    const el = document.querySelector(`[data-guide-id="${currentStep.targetGuideId}"]`);
-    if (el) {
-      setTargetRect(el.getBoundingClientRect());
-      setTargetFound(true);
-      setObservationState('active');
-      setStepStatus('awaiting_user');
-    } else {
-      setTargetRect(null);
-      setTargetFound(false);
-      setStepStatus('locating_target');
-      retryTimerRef.current = setTimeout(() => {
-        const retryEl = document.querySelector(`[data-guide-id="${currentStep.targetGuideId}"]`);
-        if (retryEl) {
-          setTargetRect(retryEl.getBoundingClientRect());
-          setTargetFound(true);
-          setObservationState('active');
-          setStepStatus('awaiting_user');
-        } else {
-          setObservationState('error');
-          setStepStatus('failed');
-        }
-      }, 300);
-    }
-  }, [currentStep, setObservationState, setStepStatus]);
-
-  // P2-2 fix: rAF with rect comparison to skip unnecessary re-renders
+  // rAF loop: track target element position
   useEffect(() => {
     if (!session || !currentStep || isComplete) return;
-    // Info-only steps — no DOM element to track
-    if (!currentStep.targetGuideId) return;
     lastRectRef.current = null;
     let cancelled = false;
 
     const updateRect = () => {
       if (cancelled) return;
-      const el = document.querySelector(`[data-guide-id="${currentStep.targetGuideId}"]`);
+      const el = document.querySelector(`[data-guide-id="${currentStep.target}"]`);
       if (el) {
         const r = el.getBoundingClientRect();
         const prev = lastRectRef.current;
@@ -129,11 +72,11 @@ function GuideOverlayInner() {
           lastRectRef.current = { t: r.top, l: r.left, w: r.width, h: r.height };
           setTargetRect(r);
         }
-        if (!targetFound) {
-          setTargetFound(true);
-          setObservationState('active');
-          setStepStatus('awaiting_user');
-        }
+        if (session.phase === 'locating') setPhase('active');
+      } else {
+        // Target not found yet — keep locating
+        if (session.phase !== 'locating') setPhase('locating');
+        setTargetRect(null);
       }
       rafRef.current = requestAnimationFrame(updateRect);
     };
@@ -143,57 +86,24 @@ function GuideOverlayInner() {
       cancelled = true;
       cancelAnimationFrame(rafRef.current);
     };
-  }, [session, currentStep, isComplete, targetFound, setObservationState, setStepStatus]);
+  }, [session, currentStep, isComplete, session?.phase, setPhase]);
 
-  // MutationObserver to detect when target appears in DOM
-  useEffect(() => {
-    if (!session || !currentStep || isComplete) return;
-    locateTarget();
-    const observer = new MutationObserver(() => {
-      if (!targetFound) locateTarget();
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-    observerRef.current = observer;
-    return () => {
-      observer.disconnect();
-      observerRef.current = null;
-      clearTimeout(retryTimerRef.current);
-    };
-  }, [session, currentStep, isComplete, locateTarget, targetFound]);
+  // Auto-advance: listen for interaction with target element
+  useAutoAdvance(currentStep, advanceStep, session?.phase === 'active');
 
-  // P1-2 fix: Per-step idle timer (nudge at 8s, timeout at timeoutSec)
-  useEffect(() => {
-    if (!currentStep || isComplete || session?.stepStatus !== 'awaiting_user') {
-      setNudgeVisible(false);
-      return;
-    }
-    setNudgeVisible(false);
-    const nudgeTimer = setTimeout(() => setNudgeVisible(true), NUDGE_DELAY_MS);
-    const sec = currentStep.timeoutSec ?? DEFAULT_TIMEOUT_SEC;
-    const timeoutTimer = setTimeout(() => {
-      setStepStatus('timed_out');
-      setObservationState('error');
-    }, sec * 1000);
-    return () => {
-      clearTimeout(nudgeTimer);
-      clearTimeout(timeoutTimer);
-    };
-  }, [currentStep, isComplete, session?.stepStatus, session?.currentStepIndex, setStepStatus, setObservationState]);
-
-  // Keyboard shortcuts
+  // Keyboard: Escape to exit
   useEffect(() => {
     if (!session) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') exitGuide();
-      if (e.key === 'ArrowRight') nextStep();
-      if (e.key === 'ArrowLeft') prevStep();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [session, exitGuide, nextStep, prevStep]);
+  }, [session, exitGuide]);
 
   if (!session) return null;
 
+  // Completion screen
   if (isComplete) {
     return (
       <div className="fixed inset-0 z-[var(--guide-z-overlay)] flex items-center justify-center">
@@ -202,7 +112,7 @@ function GuideOverlayInner() {
           <div className="mb-4 text-4xl">🐾</div>
           <h3 className="mb-2 text-lg font-bold text-[var(--guide-text-primary)]">引导完成!</h3>
           <p className="mb-4 text-sm text-[var(--guide-text-secondary)]">
-            你已经完成了「{session.guideId === 'add-member' ? '添加成员' : session.guideId}」的全部步骤。
+            你已经完成了「{session.flow.name}」的全部步骤。
           </p>
           <button
             type="button"
@@ -265,7 +175,7 @@ function GuideOverlayInner() {
       <div style={cutoutStyle} aria-hidden="true" />
       {targetRect && <div style={ringStyle} aria-hidden="true" />}
 
-      {/* P1-1 fix: Four-panel click shield with genuine hole over target */}
+      {/* Four-panel click shield with genuine hole over target */}
       {panels ? (
         <>
           <div
@@ -307,21 +217,155 @@ function GuideOverlayInner() {
         <div className="fixed inset-0" style={{ zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
       )}
 
+      {/* HUD: tips + exit only */}
       <GuideHUD
         step={currentStep}
         stepIndex={session.currentStepIndex}
-        totalSteps={session.steps.length}
-        observationState={session.observationState}
+        totalSteps={session.flow.steps.length}
+        phase={session.phase}
         targetRect={targetRect}
-        onPrev={prevStep}
-        onNext={nextStep}
-        onSkip={skipStep}
         onExit={exitGuide}
-        isComplete={false}
-        nudgeVisible={nudgeVisible}
       />
     </>
   );
+}
+
+/* ── Auto-advance hook ── */
+
+function useAutoAdvance(step: OrchestrationStep | null, advance: () => void, isActive: boolean) {
+  const advanceRef = useRef(advance);
+  advanceRef.current = advance;
+
+  useEffect(() => {
+    if (!step || !isActive) return;
+
+    const target = step.target;
+    const advanceType = step.advance;
+
+    // Small delay after step transition to let UI settle
+    const setupTimer = setTimeout(() => {
+      const el = document.querySelector(`[data-guide-id="${target}"]`);
+      if (!el) return;
+
+      if (advanceType === 'click') {
+        const handler = () => {
+          // Delay advance to let the click action complete (e.g., open panel)
+          setTimeout(() => advanceRef.current(), 300);
+        };
+        el.addEventListener('click', handler, { once: true, capture: true });
+        return () => el.removeEventListener('click', handler, { capture: true });
+      }
+
+      if (advanceType === 'input') {
+        const handler = () => {
+          const val = (el as HTMLInputElement).value;
+          if (val && val.trim()) {
+            setTimeout(() => advanceRef.current(), 500);
+          }
+        };
+        el.addEventListener('input', handler);
+        return () => el.removeEventListener('input', handler);
+      }
+
+      // 'visible' and 'confirm' auto-advance immediately when target found
+      if (advanceType === 'visible') {
+        advanceRef.current();
+      }
+    }, 100);
+
+    return () => clearTimeout(setupTimer);
+  }, [step?.id, step?.target, step?.advance, isActive]);
+}
+
+/* ── Minimal HUD: tips + exit + progress ── */
+
+function GuideHUD({
+  step,
+  stepIndex,
+  totalSteps,
+  phase,
+  targetRect,
+  onExit,
+}: {
+  step: OrchestrationStep;
+  stepIndex: number;
+  totalSteps: number;
+  phase: string;
+  targetRect: DOMRect | null;
+  onExit: () => void;
+}) {
+  const style = computeHUDPosition(targetRect);
+
+  return (
+    <div
+      className="fixed z-[var(--guide-z-hud)] w-[280px] animate-guide-hud-enter rounded-[var(--guide-radius)] border border-[var(--guide-hud-border)] bg-[var(--guide-hud-bg)] p-4 shadow-xl"
+      style={style}
+      role="dialog"
+      aria-label="引导面板"
+      aria-live="polite"
+    >
+      {/* Progress dots */}
+      <div className="mb-3 flex gap-1">
+        {Array.from({ length: totalSteps }, (_, i) => (
+          <div
+            key={i}
+            className="h-1.5 flex-1 rounded-full transition-colors"
+            style={{
+              backgroundColor:
+                i < stepIndex
+                  ? 'var(--guide-success)'
+                  : i === stepIndex
+                    ? 'var(--guide-cutout-ring)'
+                    : 'var(--guide-hud-border)',
+            }}
+          />
+        ))}
+      </div>
+
+      {/* Tips from flow definition */}
+      <p className="mb-3 text-sm leading-relaxed text-[var(--guide-text-primary)]">{step.tips}</p>
+
+      {/* Locating indicator */}
+      {phase === 'locating' && (
+        <p className="mb-3 text-xs text-[var(--guide-text-secondary)] animate-pulse">正在定位目标元素...</p>
+      )}
+
+      {/* Exit only */}
+      <div className="flex items-center border-t border-[var(--guide-hud-border)] pt-3">
+        <button
+          type="button"
+          onClick={onExit}
+          className="rounded-lg px-3 py-1.5 text-xs text-[var(--guide-text-secondary)] transition hover:bg-black/5"
+          aria-label="退出引导"
+        >
+          退出
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── Position helpers ── */
+
+function computeHUDPosition(targetRect: DOMRect | null): React.CSSProperties {
+  if (!targetRect) {
+    return { top: '50%', left: '50%', transform: 'translate(-50%, -50%)' };
+  }
+  const hudWidth = 280;
+  const hudHeight = 160;
+  const gap = 16;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  let top = targetRect.bottom + gap;
+  let left = targetRect.left + targetRect.width / 2 - hudWidth / 2;
+
+  if (top + hudHeight > vh - gap) {
+    top = targetRect.top - hudHeight - gap;
+  }
+  left = Math.max(gap, Math.min(left, vw - hudWidth - gap));
+  top = Math.max(gap, top);
+  return { top, left };
 }
 
 /* ── Pure helpers (exported for testing) ── */
@@ -333,7 +377,6 @@ export interface ShieldPanels {
   right: { top: number; left: number; height: number };
 }
 
-/** Compute four click-shield panel dimensions that leave a hole over the target. */
 export function computeShieldPanels(
   rect: { top: number; bottom: number; left: number; right: number; width: number; height: number },
   pad: number,

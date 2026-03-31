@@ -11,6 +11,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import type { GuideStateV1, IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
+import { loadGuideFlow } from '../domains/guides/guide-registry-loader.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
 
@@ -80,6 +81,19 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
     });
     log.info({ guideId, threadId, userId }, '[F150] guide started via frontend action');
     return { status: 'ok', guideId, guideState: updated };
+  });
+
+  // GET /api/guide-flows/:guideId — serve flow definition at runtime
+  app.get<{ Params: { guideId: string } }>('/api/guide-flows/:guideId', async (request, reply) => {
+    const { guideId } = request.params;
+    try {
+      const flow = loadGuideFlow(guideId);
+      return flow;
+    } catch (err) {
+      log.warn({ guideId, err }, '[F150] Failed to load guide flow');
+      reply.status(404);
+      return { error: 'guide_not_found', message: (err as Error).message };
+    }
   });
 
   // POST /api/guide-actions/cancel — frontend clicks "暂不需要"

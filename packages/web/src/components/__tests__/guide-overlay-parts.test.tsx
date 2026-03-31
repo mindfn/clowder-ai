@@ -112,13 +112,13 @@ describe('CatEyeIndicator', () => {
     expect(html).toContain('观察中');
   });
 
-  it('renders error state label', () => {
-    const html = renderToStaticMarkup(<CatEyeIndicator state="error" />);
-    expect(html).toContain('需要帮助');
+  it('renders locating state label', () => {
+    const html = renderToStaticMarkup(<CatEyeIndicator state="locating" />);
+    expect(html).toContain('定位中');
   });
 
-  it('renders success state label', () => {
-    const html = renderToStaticMarkup(<CatEyeIndicator state="success" />);
+  it('renders complete state label', () => {
+    const html = renderToStaticMarkup(<CatEyeIndicator state="complete" />);
     expect(html).toContain('完成');
   });
 });

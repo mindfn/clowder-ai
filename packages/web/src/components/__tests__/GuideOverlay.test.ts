@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { GuideStep } from '@/stores/guideStore';
+import type { OrchestrationFlow } from '@/stores/guideStore';
 import { useGuideStore } from '@/stores/guideStore';
 import { computeShieldPanels } from '../GuideOverlay';
 
@@ -12,11 +12,11 @@ describe('computeShieldPanels', () => {
     const rect = { top: 100, bottom: 150, left: 200, right: 350, width: 150, height: 50 };
     const p = computeShieldPanels(rect, pad);
 
-    // Top panel: covers y=0 → y=92
+    // Top panel: covers y=0 -> y=92
     expect(p.top.height).toBe(92);
     // Bottom panel: starts at y=158
     expect(p.bottom.top).toBe(158);
-    // Left panel: at y=92, covers x=0 → x=192, height=66
+    // Left panel: at y=92, covers x=0 -> x=192, height=66
     expect(p.left).toEqual({ top: 92, width: 192, height: 66 });
     // Right panel: at y=92, starts x=358, height=66
     expect(p.right).toEqual({ top: 92, left: 358, height: 66 });
@@ -46,7 +46,6 @@ describe('computeShieldPanels', () => {
     const rect = { top: 200, bottom: 260, left: 300, right: 500, width: 200, height: 60 };
     const p = computeShieldPanels(rect, pad);
 
-    // The hole is from (left.width, top.height) to (right.left, bottom.top)
     const holeLeft = p.left.width; // 300 - 8 = 292
     const holeRight = p.right.left; // 500 + 8 = 508
     const holeTop = p.top.height; // 200 - 8 = 192
@@ -57,72 +56,60 @@ describe('computeShieldPanels', () => {
   });
 });
 
-/* ── Timeout state machine scenario tests ── */
+/* ── Phase state machine scenario tests ── */
 
-const MOCK_STEPS: GuideStep[] = [
-  {
-    id: 's1',
-    targetGuideId: 'hub.trigger',
-    title: 'Step 1',
-    instruction: 'Click',
-    expectedAction: 'click',
-    timeoutSec: 30,
-  },
-  { id: 's2', targetGuideId: 'cats.overview', title: 'Step 2', instruction: 'Navigate', expectedAction: 'click' },
-];
+const MOCK_FLOW: OrchestrationFlow = {
+  id: 'phase-test',
+  name: 'Phase Test',
+  steps: [
+    { id: 's1', target: 'hub.trigger', tips: 'Click', advance: 'click', timeoutSec: 30 },
+    { id: 's2', target: 'cats.overview', tips: 'Navigate', advance: 'click' },
+  ],
+};
 
-describe('Guide timeout state transitions', () => {
+describe('Guide phase transitions', () => {
   beforeEach(() => {
     useGuideStore.setState({ session: null });
   });
 
-  it('full timeout scenario: active → awaiting_user → timed_out + error', () => {
-    const store = useGuideStore.getState();
-    store.startGuide('timeout-test', MOCK_STEPS);
+  it('starts in locating phase, transitions to active', () => {
+    useGuideStore.getState().startGuide(MOCK_FLOW);
+    expect(useGuideStore.getState().session!.phase).toBe('locating');
 
-    // Simulate: target found, step transitions to awaiting_user
-    store.setObservationState('active');
-    store.setStepStatus('awaiting_user');
-    expect(useGuideStore.getState().session!.stepStatus).toBe('awaiting_user');
-    expect(useGuideStore.getState().session!.observationState).toBe('active');
-
-    // Simulate: timeout fires (component setTimeout → store actions)
-    store.setStepStatus('timed_out');
-    store.setObservationState('error');
-    const s = useGuideStore.getState().session!;
-    expect(s.stepStatus).toBe('timed_out');
-    expect(s.observationState).toBe('error');
+    useGuideStore.getState().setPhase('active');
+    expect(useGuideStore.getState().session!.phase).toBe('active');
   });
 
-  it('timeout resets when advancing to next step', () => {
-    const store = useGuideStore.getState();
-    store.startGuide('timeout-test', MOCK_STEPS);
-    store.setStepStatus('timed_out');
-    store.setObservationState('error');
-
-    // Advance: nextStep resets to locating_target + active
-    store.nextStep();
+  it('advanceStep resets phase to locating', () => {
+    useGuideStore.getState().startGuide(MOCK_FLOW);
+    useGuideStore.getState().setPhase('active');
+    useGuideStore.getState().advanceStep();
     const s = useGuideStore.getState().session!;
     expect(s.currentStepIndex).toBe(1);
-    expect(s.stepStatus).toBe('locating_target');
-    expect(s.observationState).toBe('active');
+    expect(s.phase).toBe('locating');
   });
 
-  it('timeout does not affect session after exitGuide', () => {
-    const store = useGuideStore.getState();
-    store.startGuide('timeout-test', MOCK_STEPS);
-    store.exitGuide();
+  it('advancing past last step sets phase to complete', () => {
+    useGuideStore.getState().startGuide(MOCK_FLOW);
+    useGuideStore.getState().advanceStep(); // -> 1
+    useGuideStore.getState().advanceStep(); // -> 2 (past end)
+    const s = useGuideStore.getState().session!;
+    expect(s.phase).toBe('complete');
+  });
 
-    // Simulate: late timeout fire — should be no-op (session null)
-    store.setStepStatus('timed_out');
-    store.setObservationState('error');
+  it('setPhase does not affect session after exitGuide', () => {
+    useGuideStore.getState().startGuide(MOCK_FLOW);
+    useGuideStore.getState().exitGuide();
+
+    // Late setPhase call should be no-op (session null)
+    useGuideStore.getState().setPhase('active');
     expect(useGuideStore.getState().session).toBeNull();
   });
 
-  it('preserves per-step timeoutSec in step data', () => {
-    useGuideStore.getState().startGuide('timeout-test', MOCK_STEPS);
+  it('preserves per-step timeoutSec in flow data', () => {
+    useGuideStore.getState().startGuide(MOCK_FLOW);
     const s = useGuideStore.getState().session!;
-    expect(s.steps[0].timeoutSec).toBe(30);
-    expect(s.steps[1].timeoutSec).toBeUndefined();
+    expect(s.flow.steps[0].timeoutSec).toBe(30);
+    expect(s.flow.steps[1].timeoutSec).toBeUndefined();
   });
 });

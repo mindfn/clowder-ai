@@ -1,29 +1,29 @@
+/**
+ * @deprecated This file is no longer used by GuideOverlay (v2).
+ * Kept for reference only. The v2 overlay uses inline HUD in GuideOverlay.tsx.
+ */
 'use client';
 
-import type { GuideObservationState, GuideStep } from '@/stores/guideStore';
+import type { GuidePhase, OrchestrationStep } from '@/stores/guideStore';
 
 /* ── CSS Custom Properties (injected once via globals.css) ── */
 // See guide tokens in globals.css
 
 /* ── Cat Eye Indicator ── */
 
-const EYE_COLORS: Record<GuideObservationState, string> = {
-  idle: '#6f6257',
+const EYE_COLORS: Record<GuidePhase, string> = {
+  locating: '#6f6257',
   active: '#D4853A',
-  success: '#2f9e44',
-  error: '#d94848',
-  verifying: '#E29578',
+  complete: '#2f9e44',
 };
 
-const EYE_ANIMATIONS: Record<GuideObservationState, string> = {
-  idle: '',
+const EYE_ANIMATIONS: Record<GuidePhase, string> = {
+  locating: 'animate-pulse',
   active: 'animate-pulse',
-  success: 'animate-guide-success',
-  error: 'animate-guide-error',
-  verifying: 'animate-spin',
+  complete: 'animate-guide-success',
 };
 
-export function CatEyeIndicator({ state }: { state: GuideObservationState }) {
+export function CatEyeIndicator({ state }: { state: GuidePhase }) {
   const color = EYE_COLORS[state];
   const animation = EYE_ANIMATIONS[state];
 
@@ -37,11 +37,9 @@ export function CatEyeIndicator({ state }: { state: GuideObservationState }) {
         <circle cx="11.5" cy="5.5" r="1" fill="white" opacity="0.7" />
       </svg>
       <span className="text-xs" style={{ color }}>
-        {state === 'idle' && '待命'}
+        {state === 'locating' && '定位中'}
         {state === 'active' && '观察中'}
-        {state === 'success' && '完成'}
-        {state === 'error' && '需要帮助'}
-        {state === 'verifying' && '验证中'}
+        {state === 'complete' && '完成'}
       </span>
     </div>
   );
@@ -114,10 +112,10 @@ export function HUDActions({ onPrev, onNext, onSkip, onExit, hasPrev, hasNext, i
 /* ── Guide HUD Panel ── */
 
 interface GuideHUDProps {
-  step: GuideStep;
+  step: OrchestrationStep;
   stepIndex: number;
   totalSteps: number;
-  observationState: GuideObservationState;
+  observationState: GuidePhase;
   targetRect: DOMRect | null;
   onPrev: () => void;
   onNext: () => void;
@@ -157,13 +155,13 @@ export function GuideHUD({
           <span className="text-xs font-semibold text-[var(--guide-cutout-ring)]">
             {stepIndex + 1} / {totalSteps}
           </span>
-          <span className="text-sm font-bold text-[var(--guide-text-primary)]">{step.title}</span>
+          <span className="text-sm font-bold text-[var(--guide-text-primary)]">{step.id}</span>
         </div>
         <CatEyeIndicator state={observationState} />
       </div>
 
-      {/* Instruction */}
-      <p className="mb-3 text-sm leading-relaxed text-[var(--guide-text-secondary)]">{step.instruction}</p>
+      {/* Tips */}
+      <p className="mb-3 text-sm leading-relaxed text-[var(--guide-text-secondary)]">{step.tips}</p>
 
       {/* Nudge hint (P1-2: shown after 8s idle) */}
       {nudgeVisible && (
@@ -199,7 +197,7 @@ export function GuideHUD({
         hasPrev={stepIndex > 0}
         hasNext={stepIndex < totalSteps - 1}
         isComplete={isComplete}
-        canSkip={step.canSkip !== false}
+        canSkip={false}
       />
     </div>
   );
