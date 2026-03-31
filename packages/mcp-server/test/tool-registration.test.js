@@ -94,6 +94,7 @@ const EXPECTED_TOOLS = [
   'mediahub_generate_image',
   'mediahub_send_media',
   'mediahub_get_job_status',
+  'mediahub_analyze_video',
   'mediahub_list_jobs',
   'mediahub_bind_account',
   'mediahub_unbind_account',

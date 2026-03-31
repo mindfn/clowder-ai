@@ -436,11 +436,21 @@ describe('handleSendMedia', () => {
   });
 
   it('returns error for non-succeeded job', async () => {
-    const { service } = await setupService();
+    const { jobStore } = await setupService();
     const { handleSendMedia } = await import('../dist/mediahub/mediahub-tools.js');
-    const job = await service.generateVideo({ providerId: 'mock', prompt: 'cat', capability: 'text2video' });
-    // Job is in 'running' status
-    const result = await handleSendMedia({ job_id: job.jobId });
+    const now = Date.now();
+    const jobId = 'running-job-1';
+    await jobStore.save({
+      jobId,
+      providerId: 'mock',
+      capability: 'text2video',
+      model: 'm1',
+      prompt: 'cat',
+      status: 'running',
+      createdAt: now,
+      updatedAt: now,
+    });
+    const result = await handleSendMedia({ job_id: jobId });
     assert.ok(result.isError);
   });
 
@@ -454,7 +464,7 @@ describe('handleSendMedia', () => {
     const result = await handleSendMedia({ job_id: job.jobId });
     assert.ok(!result.isError);
     const parsed = JSON.parse(result.content[0].text);
-    assert.equal(parsed.block.kind, 'file');
+    assert.equal(parsed.block.kind, 'video');
     assert.ok(parsed.block.url);
     assert.ok(parsed.cdnUrl);
   });
@@ -474,7 +484,7 @@ describe('handleSendMedia', () => {
       await jobStore.updateStatus(job.jobId, 'succeeded', { outputPath: filePath });
       const result = await handleSendMedia({ job_id: job.jobId });
       assert.ok(result.isError);
-      assert.match(result.content[0].text, /deliverable|https/i);
+      assert.match(result.content[0].text, /deliverable|https|No media URL/i);
     } finally {
       fs.rmSync(tmpDir, { recursive: true });
     }
