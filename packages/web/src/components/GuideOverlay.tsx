@@ -31,10 +31,11 @@ class GuideErrorBoundary extends Component<
   }
 }
 
-/** Wrapped export with error boundary. */
+/** Wrapped export with error boundary. Key on sessionId forces remount after error recovery. */
 export function GuideOverlay() {
+  const sessionId = useGuideStore((s) => s.session?.sessionId);
   return (
-    <GuideErrorBoundary>
+    <GuideErrorBoundary key={sessionId ?? 'idle'}>
       <GuideOverlayInner />
     </GuideErrorBoundary>
   );
