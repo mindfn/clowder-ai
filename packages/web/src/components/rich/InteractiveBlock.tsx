@@ -553,14 +553,19 @@ export function InteractiveBlock({
       // F150: Check if the selected option has a direct action (bypasses chat message pipeline)
       const selectedOption = block.options.find((o) => optionIds.includes(o.id));
       if (selectedOption?.action?.type === 'callback') {
-        try {
-          await apiFetch(selectedOption.action.endpoint, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(selectedOption.action.payload ?? {}),
-          });
-        } catch (err) {
-          console.error('[InteractiveBlock] callback action failed:', err);
+        const { endpoint, payload } = selectedOption.action;
+        // Fire API call for state tracking (non-blocking)
+        apiFetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload ?? {}),
+        }).catch((err) => console.error('[InteractiveBlock] callback action failed:', err));
+
+        // F150: Trigger guide overlay directly — don't rely on socket round-trip
+        if (endpoint.includes('/guide-actions/start') && payload && 'guideId' in payload) {
+          window.dispatchEvent(
+            new CustomEvent('guide:start', { detail: { flowId: (payload as Record<string, unknown>).guideId } }),
+          );
         }
       } else {
         // Default: send selection as a chat message
