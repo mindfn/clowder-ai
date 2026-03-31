@@ -17,21 +17,31 @@ const IV_BYTES = 16;
 interface ProviderDef {
   id: string;
   displayName: string;
+  category: 'generation' | 'analysis';
   capabilities: string[];
+  baseUrl: string;
+  models: string[];
   requiredFields: { key: string; label: string; secret?: boolean }[];
 }
 
 const PROVIDERS: ProviderDef[] = [
+  // ── 视频生成 ──
   {
     id: 'cogvideox',
     displayName: 'CogVideoX (智谱)',
+    category: 'generation',
     capabilities: ['text2video', 'image2video'],
+    baseUrl: 'https://open.bigmodel.cn',
+    models: ['cogvideox-flash'],
     requiredFields: [{ key: 'apiKey', label: 'API Key (open.bigmodel.cn)', secret: true }],
   },
   {
     id: 'kling',
     displayName: '可灵 (Kling AI)',
+    category: 'generation',
     capabilities: ['text2video', 'image2video'],
+    baseUrl: 'https://api.klingapi.com',
+    models: ['kling-v2.6-pro', 'kling-v1.6-pro'],
     requiredFields: [
       { key: 'accessKey', label: 'Access Key' },
       { key: 'secretKey', label: 'Secret Key', secret: true },
@@ -40,11 +50,24 @@ const PROVIDERS: ProviderDef[] = [
   {
     id: 'jimeng',
     displayName: '即梦 (Jimeng)',
+    category: 'generation',
     capabilities: ['text2video', 'image2video', 'text2image'],
+    baseUrl: 'https://visual.volcengineapi.com',
+    models: ['jimeng_t2v_v30', 'jimeng_i2v_v20', 'jimeng_high_aes_general_v21'],
     requiredFields: [
       { key: 'accessKey', label: 'Access Key (Volcengine)' },
       { key: 'secretKey', label: 'Secret Key (Volcengine)', secret: true },
     ],
+  },
+  // ── 视频分析 ──
+  {
+    id: 'zhipu-analysis',
+    displayName: '智谱 VLM',
+    category: 'analysis',
+    capabilities: ['video-understanding'],
+    baseUrl: 'https://open.bigmodel.cn',
+    models: ['glm-4.1v-thinking-flash'],
+    requiredFields: [{ key: 'apiKey', label: 'API Key (open.bigmodel.cn)', secret: true }],
   },
 ];
 
@@ -89,7 +112,12 @@ export const mediahubAccountsRoutes: FastifyPluginAsync<MediaHubAccountsRoutesOp
       return {
         enabled: false,
         hint: !redis ? 'Redis not connected' : 'MEDIAHUB_CREDENTIAL_KEY not set (base64 32 bytes)',
-        providers: PROVIDERS.map((p) => ({ ...p, bound: false, healthStatus: 'unchecked' as const, createdAt: 0 })),
+        providers: PROVIDERS.map((p) => ({
+          ...p,
+          bound: false,
+          healthStatus: 'unchecked' as const,
+          createdAt: 0,
+        })),
       };
     }
 
