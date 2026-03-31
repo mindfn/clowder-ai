@@ -10,7 +10,7 @@ import { tryAutoLoadProvider } from './account-tools.js';
 import { guessMimeType, isImageType, isVideoType, validateMediaFile } from './media-lifecycle.js';
 import type { MediaHubService } from './mediahub-service.js';
 import type { GenerationRequest, MediaCapability } from './types.js';
-import { analyzeVideoWithGemini } from './video-understanding.js';
+import { analyzeVideoWithProvider, type VideoUnderstandingProvider } from './video-understanding.js';
 
 // ============ Lazy service reference ============
 // Set by bootstrap; tools use this reference at call time.
@@ -251,8 +251,14 @@ export async function handleGetJobStatus(args: { job_id: string }): Promise<Tool
 export const analyzeVideoInputSchema = {
   job_id: z.string().optional().describe('Succeeded MediaHub job ID to analyze (preferred)'),
   video_url: z.string().url().optional().describe('Public video URL to analyze if no job_id is provided'),
+  provider: z
+    .enum(['auto', 'gemini', 'zhipu'])
+    .default('auto')
+    .describe('Analysis provider. auto=prefer Gemini then fallback to Zhipu'),
   prompt: z.string().optional().describe('Optional analysis focus (e.g. pacing, style, ad readiness)'),
-  model: z.string().optional().describe('Gemini model override (default: gemini-2.5-flash)'),
+  model: z.string().optional().describe('Model override for selected provider'),
+  api_key: z.string().optional().describe('Optional key override (otherwise uses bound account/env)'),
+  base_url: z.string().url().optional().describe('Optional base URL override (mainly for Zhipu-compatible endpoints)'),
 };
 
 function buildLocalServeUrl(outputPath: string): string | undefined {
@@ -266,8 +272,11 @@ function buildLocalServeUrl(outputPath: string): string | undefined {
 export async function handleAnalyzeVideo(args: {
   job_id?: string;
   video_url?: string;
+  provider?: 'auto' | 'gemini' | 'zhipu';
   prompt?: string;
   model?: string;
+  api_key?: string;
+  base_url?: string;
 }): Promise<ToolResult> {
   try {
     if (!args.job_id && !args.video_url) {
@@ -313,12 +322,16 @@ export async function handleAnalyzeVideo(args: {
       return errorResult(`Only video files are supported. MIME: ${mimeType}`);
     }
 
-    const analysis = await analyzeVideoWithGemini({
+    const selectedProvider = (args.provider ?? 'auto') as 'auto' | VideoUnderstandingProvider;
+    const analysis = await analyzeVideoWithProvider({
+      provider: selectedProvider,
       localPath,
       publicUrl,
       mimeType,
       prompt: args.prompt,
       model: args.model,
+      apiKey: args.api_key,
+      baseUrl: args.base_url,
     });
 
     const hint = analysis.analysis.recommendRegenerate
@@ -444,7 +457,8 @@ export const mediahubTools = [
   {
     name: 'mediahub_analyze_video',
     description:
-      'Analyze a generated video (or public video URL) with Gemini. ' +
+      'Analyze a generated video (or public video URL) with pluggable providers (Gemini/Zhipu). ' +
+      'Use provider=auto|gemini|zhipu. auto prefers Gemini and falls back to Zhipu. ' +
       'Returns structured JSON: summary, key moments, style tags, quality score, issues, and regenerate recommendation. ' +
       'Use this after mediahub_get_job_status returns succeeded.',
     inputSchema: analyzeVideoInputSchema,

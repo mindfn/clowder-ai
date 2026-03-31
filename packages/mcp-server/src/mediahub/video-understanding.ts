@@ -1,11 +1,12 @@
 /**
  * MediaHub — Video Understanding (Phase 4B)
- * Gemini-first video analysis with lightweight fallback strategy.
+ * Pluggable analyzers: Gemini + Zhipu VLM.
  */
 
 import { readFile, stat } from 'node:fs/promises';
 
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+const DEFAULT_ZHIPU_MODEL = 'glm-4.1v-thinking-flash';
 const DEFAULT_INLINE_LIMIT_BYTES = 20 * 1024 * 1024; // 20 MB
 const DEFAULT_ANALYSIS_PROMPT =
   'Describe this video in concise production terms and assess quality for social media publishing.';
@@ -24,6 +25,14 @@ interface GeminiResponse {
   }>;
 }
 
+interface ZhipuResponse {
+  choices?: Array<{
+    message?: {
+      content?: string | Array<{ type?: string; text?: string }>;
+    };
+  }>;
+}
+
 export interface VideoAnalysis {
   summary: string;
   keyMoments: string[];
@@ -34,16 +43,21 @@ export interface VideoAnalysis {
   regeneratePrompt?: string;
 }
 
-export interface GeminiAnalyzeInput {
+export type VideoUnderstandingProvider = 'gemini' | 'zhipu';
+
+export interface AnalyzeVideoInput {
+  provider?: VideoUnderstandingProvider | 'auto';
   localPath?: string;
   publicUrl?: string;
   mimeType: string;
   prompt?: string;
   model?: string;
+  apiKey?: string;
+  baseUrl?: string;
 }
 
-export interface GeminiAnalyzeOutput {
-  provider: 'gemini';
+export interface AnalyzeVideoOutput {
+  provider: VideoUnderstandingProvider;
   model: string;
   method: 'inline_video' | 'file_uri';
   source: { localPath?: string; publicUrl?: string; mimeType: string };
@@ -55,14 +69,28 @@ function getGeminiApiKey(): string | undefined {
   return process.env['GOOGLE_AI_API_KEY'] ?? process.env['GEMINI_API_KEY'];
 }
 
-function extractCandidateText(payload: GeminiResponse): string {
+function getZhipuApiKey(): string | undefined {
+  return process.env['ZHIPU_API_KEY'] ?? process.env['COGVIDEO_API_KEY'] ?? process.env['BIGMODEL_API_KEY'];
+}
+
+function extractGeminiText(payload: GeminiResponse): string {
   const parts = payload.candidates?.[0]?.content?.parts ?? [];
-  const text = parts
+  return parts
     .map((p) => p.text?.trim())
     .filter((v): v is string => Boolean(v))
     .join('\n')
     .trim();
-  return text;
+}
+
+function extractZhipuText(payload: ZhipuResponse): string {
+  const content = payload.choices?.[0]?.message?.content;
+  if (typeof content === 'string') return content.trim();
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((part) => (part?.type === 'text' ? part.text?.trim() : ''))
+    .filter((v): v is string => Boolean(v))
+    .join('\n')
+    .trim();
 }
 
 function unwrapJsonFence(raw: string): string {
@@ -143,105 +171,150 @@ function buildInstruction(prompt?: string): string {
   );
 }
 
-async function callGemini(
-  apiKey: string,
-  model: string,
-  videoPart: GeminiPart,
-  prompt?: string,
-): Promise<{ payload: GeminiResponse; rawText: string }> {
-  const endpoint =
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}` +
-    `:generateContent?key=${encodeURIComponent(apiKey)}`;
-  const requestBody = {
-    contents: [
-      {
-        role: 'user',
-        parts: [videoPart, { text: buildInstruction(prompt) }],
-      },
-    ],
-    generationConfig: {
-      temperature: 0.2,
-      responseMimeType: 'application/json',
-    },
-  };
-
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(requestBody),
-  });
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Gemini analyze failed (${response.status}): ${errorText}`);
-  }
-  const payload = (await response.json()) as GeminiResponse;
-  const rawText = extractCandidateText(payload);
-  if (!rawText) {
-    throw new Error('Gemini returned empty analysis');
-  }
-  return { payload, rawText };
-}
-
-export async function analyzeVideoWithGemini(input: GeminiAnalyzeInput): Promise<GeminiAnalyzeOutput> {
-  const apiKey = getGeminiApiKey();
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY (or GOOGLE_AI_API_KEY) is required for mediahub video analysis');
-  }
-
-  const model = input.model?.trim() || process.env['MEDIAHUB_GEMINI_MODEL'] || DEFAULT_GEMINI_MODEL;
-  const inlineLimitRaw = Number(process.env['MEDIAHUB_GEMINI_INLINE_LIMIT_BYTES'] ?? DEFAULT_INLINE_LIMIT_BYTES);
+async function resolveVideoSource(input: AnalyzeVideoInput): Promise<{
+  method: 'inline_video' | 'file_uri';
+  inlineData?: string;
+  publicUrl?: string;
+}> {
+  const inlineLimitRaw = Number(process.env['MEDIAHUB_INLINE_LIMIT_BYTES'] ?? DEFAULT_INLINE_LIMIT_BYTES);
   const inlineLimit = Number.isFinite(inlineLimitRaw) && inlineLimitRaw > 0 ? inlineLimitRaw : DEFAULT_INLINE_LIMIT_BYTES;
 
-  let method: GeminiAnalyzeOutput['method'];
-  let videoPart: GeminiPart;
   if (input.localPath) {
     const fileStat = await stat(input.localPath);
     if (fileStat.size <= inlineLimit) {
       const data = await readFile(input.localPath);
-      videoPart = {
-        inlineData: {
-          mimeType: input.mimeType,
-          data: data.toString('base64'),
-        },
-      };
-      method = 'inline_video';
-    } else if (input.publicUrl) {
-      videoPart = {
-        fileData: {
-          mimeType: input.mimeType,
-          fileUri: input.publicUrl,
-        },
-      };
-      method = 'file_uri';
-    } else {
-      throw new Error(
-        `Video exceeds inline limit (${fileStat.size} bytes > ${inlineLimit}) and no public URL fallback is available`,
-      );
+      return { method: 'inline_video', inlineData: data.toString('base64') };
     }
-  } else if (input.publicUrl) {
-    videoPart = {
-      fileData: {
-        mimeType: input.mimeType,
-        fileUri: input.publicUrl,
-      },
-    };
-    method = 'file_uri';
-  } else {
-    throw new Error('Either localPath or publicUrl must be provided');
+    if (input.publicUrl) return { method: 'file_uri', publicUrl: input.publicUrl };
+    throw new Error(
+      `Video exceeds inline limit (${fileStat.size} bytes > ${inlineLimit}) and no public URL fallback is available`,
+    );
+  }
+  if (input.publicUrl) return { method: 'file_uri', publicUrl: input.publicUrl };
+  throw new Error('Either localPath or publicUrl must be provided');
+}
+
+async function analyzeWithGemini(input: AnalyzeVideoInput): Promise<AnalyzeVideoOutput> {
+  const apiKey = input.apiKey ?? getGeminiApiKey();
+  if (!apiKey) throw new Error('Gemini API key missing (GEMINI_API_KEY / GOOGLE_AI_API_KEY)');
+
+  const model = input.model?.trim() || process.env['MEDIAHUB_GEMINI_MODEL'] || DEFAULT_GEMINI_MODEL;
+  const source = await resolveVideoSource(input);
+
+  const videoPart: GeminiPart =
+    source.method === 'inline_video'
+      ? { inlineData: { mimeType: input.mimeType, data: source.inlineData ?? '' } }
+      : { fileData: { mimeType: input.mimeType, fileUri: source.publicUrl ?? '' } };
+
+  const endpoint =
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}` +
+    `:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [videoPart, { text: buildInstruction(input.prompt) }] }],
+      generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Gemini analyze failed (${response.status}): ${errorText}`);
   }
 
-  const { rawText } = await callGemini(apiKey, model, videoPart, input.prompt);
+  const payload = (await response.json()) as GeminiResponse;
+  const rawText = extractGeminiText(payload);
+  if (!rawText) throw new Error('Gemini returned empty analysis');
 
   return {
     provider: 'gemini',
     model,
-    method,
-    source: {
-      localPath: input.localPath,
-      publicUrl: input.publicUrl,
-      mimeType: input.mimeType,
-    },
+    method: source.method,
+    source: { localPath: input.localPath, publicUrl: input.publicUrl, mimeType: input.mimeType },
     analysis: parseVideoAnalysis(rawText),
     rawText,
   };
+}
+
+async function analyzeWithZhipu(input: AnalyzeVideoInput): Promise<AnalyzeVideoOutput> {
+  const apiKey = input.apiKey ?? getZhipuApiKey();
+  if (!apiKey) throw new Error('Zhipu API key missing (ZHIPU_API_KEY / COGVIDEO_API_KEY / BIGMODEL_API_KEY)');
+
+  const model = input.model?.trim() || process.env['MEDIAHUB_ZHIPU_MODEL'] || DEFAULT_ZHIPU_MODEL;
+  const baseUrl = (input.baseUrl?.trim() || process.env['MEDIAHUB_ZHIPU_BASE_URL'] || 'https://open.bigmodel.cn/api/paas/v4').replace(/\/+$/, '');
+  const source = await resolveVideoSource(input);
+
+  // Zhipu multimodal currently works best with URL-style input.
+  const urlPayload =
+    source.method === 'file_uri'
+      ? source.publicUrl
+      : source.inlineData
+        ? `data:${input.mimeType};base64,${source.inlineData}`
+        : undefined;
+  if (!urlPayload) {
+    throw new Error('Failed to construct video payload for Zhipu analyzer');
+  }
+
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: buildInstruction(input.prompt) },
+            { type: 'video_url', video_url: { url: urlPayload } },
+          ],
+        },
+      ],
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Zhipu analyze failed (${response.status}): ${errorText}`);
+  }
+
+  const payload = (await response.json()) as ZhipuResponse;
+  const rawText = extractZhipuText(payload);
+  if (!rawText) throw new Error('Zhipu returned empty analysis');
+
+  return {
+    provider: 'zhipu',
+    model,
+    method: source.method,
+    source: { localPath: input.localPath, publicUrl: input.publicUrl, mimeType: input.mimeType },
+    analysis: parseVideoAnalysis(rawText),
+    rawText,
+  };
+}
+
+export async function analyzeVideoWithProvider(input: AnalyzeVideoInput): Promise<AnalyzeVideoOutput> {
+  const provider = input.provider ?? 'auto';
+  if (provider === 'gemini') return analyzeWithGemini(input);
+  if (provider === 'zhipu') return analyzeWithZhipu(input);
+
+  // auto: prefer Gemini when configured, then fallback to Zhipu.
+  if (input.apiKey || getGeminiApiKey()) {
+    try {
+      return await analyzeWithGemini(input);
+    } catch (err) {
+      const zhipuAvailable = Boolean(getZhipuApiKey());
+      if (!zhipuAvailable) throw err;
+    }
+  }
+  return analyzeWithZhipu(input);
+}
+
+export async function analyzeVideoWithGemini(input: AnalyzeVideoInput): Promise<AnalyzeVideoOutput> {
+  return analyzeWithGemini(input);
 }
