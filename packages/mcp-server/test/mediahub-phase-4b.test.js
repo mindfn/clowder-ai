@@ -188,4 +188,46 @@ describe('mediahub_analyze_video', () => {
       else process.env['GEMINI_API_KEY'] = originalKey;
     }
   });
+
+  it('supports explicit zhipu provider for video understanding', async () => {
+    const originalFetch = globalThis.fetch;
+    const originalZhipuKey = process.env['ZHIPU_API_KEY'];
+    process.env['ZHIPU_API_KEY'] = 'test-zhipu-key';
+
+    let calledUrl = '';
+    let requestBody;
+    globalThis.fetch = async (url, init) => {
+      calledUrl = String(url);
+      requestBody = JSON.parse(String(init?.body ?? '{}'));
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: '{"summary":"zhipu-ok","keyMoments":[],"styleTags":[],"qualityScore":81,"issues":[]}',
+              },
+            },
+          ],
+        }),
+      );
+    };
+
+    try {
+      const { handleAnalyzeVideo } = await import('../dist/mediahub/mediahub-tools.js');
+      const result = await handleAnalyzeVideo({
+        provider: 'zhipu',
+        video_url: 'https://cdn.example.com/demo.mp4',
+      });
+      assert.ok(!result.isError);
+      const parsed = JSON.parse(result.content[0].text);
+      assert.equal(parsed.provider, 'zhipu');
+      assert.equal(parsed.method, 'file_uri');
+      assert.match(calledUrl, /open\.bigmodel\.cn\/api\/paas\/v4\/chat\/completions/);
+      assert.equal(requestBody.messages[0].content[1].video_url.url, 'https://cdn.example.com/demo.mp4');
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalZhipuKey === undefined) delete process.env['ZHIPU_API_KEY'];
+      else process.env['ZHIPU_API_KEY'] = originalZhipuKey;
+    }
+  });
 });
