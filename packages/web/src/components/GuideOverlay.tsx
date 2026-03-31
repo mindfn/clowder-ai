@@ -2,8 +2,8 @@
 
 import React, { Component, useCallback, useEffect, useRef, useState } from 'react';
 import { useGuideEngine } from '@/hooks/useGuideEngine';
-import { useGuideStore } from '@/stores/guideStore';
 import type { OrchestrationStep } from '@/stores/guideStore';
+import { useGuideStore } from '@/stores/guideStore';
 
 /** Error boundary — prevents guide overlay crash from taking down the whole app. */
 class GuideErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean }> {
