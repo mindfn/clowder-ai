@@ -55,6 +55,10 @@ const nextConfig = {
         source: '/uploads/:path*',
         destination: `${apiBaseUrl}/uploads/:path*`,
       },
+      {
+        source: '/api/mediahub/media/:path*',
+        destination: `${apiBaseUrl}/api/mediahub/media/:path*`,
+      },
     ];
   },
 };

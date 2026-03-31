@@ -73,7 +73,17 @@ const EXT_TO_MIME: Record<string, string> = {
 };
 
 export function guessMimeType(filePath: string): string {
-  const ext = path.extname(filePath).toLowerCase();
+  let source = filePath;
+  // URL form may include query/hash (e.g. https://x/y.mp4?sig=...), strip to pathname first.
+  try {
+    if (/^https?:\/\//i.test(filePath)) {
+      source = new URL(filePath).pathname;
+    }
+  } catch {
+    // Fall through and parse as plain path.
+  }
+  source = source.split('?')[0]?.split('#')[0] ?? source;
+  const ext = path.extname(source).toLowerCase();
   return EXT_TO_MIME[ext] ?? 'application/octet-stream';
 }
 

@@ -240,6 +240,25 @@ const richBlockSchema = z.discriminatedUnion('kind', [
     mimeType: z.string().optional(),
     fileSize: z.number().int().min(0).optional(),
   }),
+  // F138 Phase 4A: video — inline playback in Console
+  z.object({
+    id: z.string().min(1),
+    kind: z.literal('video'),
+    v: z.literal(1),
+    url: z
+      .string()
+      .min(1)
+      .refine(
+        (u) => !u.includes('..') && (/^\/api\//.test(u) || /^https:\/\//.test(u)),
+        'video url must start with /api/ or https://',
+      ),
+    title: z.string().optional(),
+    poster: z.string().optional(),
+    durationSec: z.number().optional(),
+    mimeType: z.string().optional(),
+    width: z.number().int().min(1).optional(),
+    height: z.number().int().min(1).optional(),
+  }),
   // F120 Phase C: html_widget — inline sandboxed HTML/JS visualization
   z.object({
     id: z.string().min(1),

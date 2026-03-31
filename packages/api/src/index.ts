@@ -141,6 +141,7 @@ import {
   leaderboardEventsRoutes,
   leaderboardRoutes,
   mediahubAccountsRoutes,
+  mediahubMediaRoutes,
   memoryPublishRoutes,
   memoryRoutes,
   messageActionsRoutes,
@@ -1570,6 +1571,10 @@ async function main(): Promise<void> {
   // F088: Serve downloaded connector media files
   const connectorMediaDir = process.env.CONNECTOR_MEDIA_DIR ?? './data/connector-media';
   await app.register(connectorMediaRoutes, { mediaDir: connectorMediaDir });
+
+  // F138: Serve MediaHub generated media (video, images)
+  const mediahubMediaDir = process.env.MEDIAHUB_MEDIA_DIR ?? './data/mediahub/outputs';
+  await app.register(mediahubMediaRoutes, { mediaDir: mediahubMediaDir });
 
   // F34: TTS Provider (mlx-audio → Python TTS server)
   const ttsRegistry = new TtsRegistry();

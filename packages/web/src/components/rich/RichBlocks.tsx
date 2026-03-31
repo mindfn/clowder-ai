@@ -10,6 +10,7 @@ import { HtmlWidgetBlock } from './HtmlWidgetBlock';
 import { InteractiveBlock } from './InteractiveBlock';
 import { InteractiveBlockGroup } from './InteractiveBlockGroup';
 import { MediaGalleryBlock } from './MediaGalleryBlock';
+import { VideoBlock } from './VideoBlock';
 
 function RichBlockRenderer({ block, catId, messageId }: { block: RichBlock; catId?: string; messageId?: string }) {
   switch (block.kind) {
@@ -23,6 +24,8 @@ function RichBlockRenderer({ block, catId, messageId }: { block: RichBlock; catI
       return <MediaGalleryBlock block={block} />;
     case 'audio':
       return <AudioBlock block={block} catId={catId} />;
+    case 'video':
+      return <VideoBlock block={block} />;
     case 'interactive':
       return <InteractiveBlock block={block} messageId={messageId} />;
     case 'html_widget':

@@ -81,6 +81,22 @@ export class MediaHubService {
       return { jobId, status: 'failed', error: 'Job not found' };
     }
 
+    // If terminal succeeded but local output is missing, try backfilling download once.
+    if (job.status === 'succeeded' && !job.outputPath && job.providerResultUrl) {
+      try {
+        const outputPath = await this.storage.download(job.providerId, jobId, job.providerResultUrl);
+        await this.jobStore.updateStatus(jobId, 'succeeded', { outputPath, providerResultUrl: job.providerResultUrl });
+        return {
+          jobId,
+          status: 'succeeded',
+          outputPath,
+          providerResultUrl: job.providerResultUrl,
+        };
+      } catch {
+        // Keep terminal state; send_media may still use provider URL.
+      }
+    }
+
     // If already terminal, return cached state
     if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'timeout') {
       return {
