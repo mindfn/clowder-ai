@@ -323,7 +323,6 @@ function EnvVarsSection({
                   {isEditableVariable(v) ? (
                     <div className="space-y-1">
                       <input
-                        type={v.sensitive ? 'password' : 'text'}
                         aria-label={v.name}
                         type={isSensitiveEditable(v) ? 'password' : 'text'}
                         autoComplete={isSensitiveEditable(v) ? 'off' : undefined}
