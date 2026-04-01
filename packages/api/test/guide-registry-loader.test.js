@@ -22,4 +22,17 @@ describe('F150 guide registry loader target validation', async () => {
       assert.equal(isValidGuideTarget(step.target), true, `step ${step.id} target should be valid`);
     }
   });
+
+  test('loaded add-member flow waits for member profile save before completion', () => {
+    const flow = loadGuideFlow('add-member');
+    const createIndex = flow.steps.findIndex((step) => step.id === 'click-add-member');
+    const editIndex = flow.steps.findIndex((step) => step.id === 'edit-member-profile');
+    const editStep = flow.steps[editIndex];
+
+    assert.ok(createIndex >= 0, 'create step should exist');
+    assert.ok(editIndex > createIndex, 'edit step should happen after member creation');
+    assert.ok(editStep, 'edit-member-profile step should exist');
+    assert.equal(editStep.target, 'member-editor.profile');
+    assert.equal(editStep.advance, 'confirm');
+  });
 });

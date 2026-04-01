@@ -257,12 +257,16 @@ function useAutoAdvance(step: OrchestrationStep | null, advance: () => void, isA
     const bindingKey = `${step.id}:${target}:${advanceType}`;
     bindingKeyRef.current = bindingKey;
     let cancelled = false;
+    let attachTimer: ReturnType<typeof setTimeout> | null = null;
 
     // Small delay after step transition to let UI settle
-    const setupTimer = setTimeout(() => {
+    const attachListener = () => {
       if (cancelled) return;
       const el = document.querySelector(selector);
-      if (!el) return;
+      if (!el) {
+        attachTimer = setTimeout(attachListener, 100);
+        return;
+      }
 
       if (advanceType === 'click') {
         const handler = () => {
@@ -294,15 +298,29 @@ function useAutoAdvance(step: OrchestrationStep | null, advance: () => void, isA
         return;
       }
 
+      if (advanceType === 'confirm') {
+        const handler = (event: Event) => {
+          const detail = (event as CustomEvent<{ target?: string }>).detail;
+          if (detail?.target !== target) return;
+          if (bindingKeyRef.current === bindingKey) {
+            advanceRef.current();
+          }
+        };
+        window.addEventListener('guide:confirm', handler);
+        listenerCleanupRef.current = () => window.removeEventListener('guide:confirm', handler);
+        return;
+      }
+
       // 'visible' and 'confirm' auto-advance immediately when target found
       if (advanceType === 'visible') {
         advanceRef.current();
       }
-    }, 100);
+    };
+    attachTimer = setTimeout(attachListener, 100);
 
     return () => {
       cancelled = true;
-      clearTimeout(setupTimer);
+      if (attachTimer) clearTimeout(attachTimer);
       if (delayedAdvanceRef.current) {
         clearTimeout(delayedAdvanceRef.current);
         delayedAdvanceRef.current = null;

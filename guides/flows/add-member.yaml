@@ -4,7 +4,7 @@
 
 id: add-member
 name: 添加成员
-description: 引导你找到添加新成员的入口
+description: 引导你完成新成员创建并补充成员信息
 
 steps:
   - id: open-hub
@@ -21,3 +21,8 @@ steps:
     target: cats.add-member
     tips: 点击这里开始添加新成员
     advance: click
+
+  - id: edit-member-profile
+    target: member-editor.profile
+    tips: 补充成员信息并点击保存；保存成功后会自动完成本次引导
+    advance: confirm

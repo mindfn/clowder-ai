@@ -19,10 +19,17 @@ const FLOW: OrchestrationFlow = {
   ],
 };
 
+const CONFIRM_FLOW: OrchestrationFlow = {
+  id: 'confirm-flow',
+  name: 'Confirm Flow',
+  steps: [{ id: 'step-confirm', target: 'member-editor.profile', tips: 'fill profile', advance: 'confirm' }],
+};
+
 describe('GuideOverlay auto-advance lifecycle', () => {
   let container: HTMLDivElement;
   let root: Root;
   let target: HTMLButtonElement;
+  let confirmTarget: HTMLDivElement;
   let rafId = 0;
   const rafHandles = new Map<number, ReturnType<typeof setTimeout>>();
 
@@ -61,6 +68,11 @@ describe('GuideOverlay auto-advance lifecycle', () => {
     target.textContent = 'Hub';
     document.body.appendChild(target);
 
+    confirmTarget = document.createElement('div');
+    confirmTarget.setAttribute('data-guide-id', 'member-editor.profile');
+    confirmTarget.textContent = 'Member Editor';
+    document.body.appendChild(confirmTarget);
+
     act(() => {
       root.render(React.createElement(GuideOverlay));
     });
@@ -72,6 +84,7 @@ describe('GuideOverlay auto-advance lifecycle', () => {
     });
     container.remove();
     target.remove();
+    confirmTarget.remove();
     act(() => {
       useGuideStore.getState().exitGuide();
     });
@@ -110,5 +123,57 @@ describe('GuideOverlay auto-advance lifecycle', () => {
     });
 
     expect(useGuideStore.getState().session?.currentStepIndex).toBe(1);
+  });
+
+  it('advances confirm steps only after a matching guide:confirm event', () => {
+    act(() => {
+      useGuideStore.getState().startGuide(CONFIRM_FLOW);
+    });
+    act(() => {
+      vi.advanceTimersByTime(120);
+    });
+
+    expect(useGuideStore.getState().session?.phase).toBe('active');
+    expect(useGuideStore.getState().session?.currentStepIndex).toBe(0);
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent('guide:confirm', { detail: { target: 'other.target' } }));
+      vi.advanceTimersByTime(180);
+    });
+
+    expect(useGuideStore.getState().session?.currentStepIndex).toBe(0);
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent('guide:confirm', { detail: { target: 'member-editor.profile' } }));
+      vi.advanceTimersByTime(180);
+    });
+
+    expect(useGuideStore.getState().session?.phase).toBe('complete');
+  });
+
+  it('attaches confirm listeners when the target appears after the step starts', () => {
+    act(() => {
+      confirmTarget.remove();
+      useGuideStore.getState().startGuide(CONFIRM_FLOW);
+    });
+    act(() => {
+      vi.advanceTimersByTime(120);
+    });
+
+    expect(useGuideStore.getState().session?.phase).toBe('locating');
+
+    act(() => {
+      document.body.appendChild(confirmTarget);
+      vi.advanceTimersByTime(120);
+    });
+
+    expect(useGuideStore.getState().session?.phase).toBe('active');
+
+    act(() => {
+      vi.advanceTimersByTime(120);
+      window.dispatchEvent(new CustomEvent('guide:confirm', { detail: { target: 'member-editor.profile' } }));
+    });
+
+    expect(useGuideStore.getState().session?.phase).toBe('complete');
   });
 });

@@ -83,6 +83,13 @@ export const useGuideStore = create<GuideState>((set, get) => ({
   setPhase: (phase) => {
     const { session } = get();
     if (!session || session.phase === phase) return;
+    if (session.currentStepIndex >= session.flow.steps.length) {
+      if (session.phase !== 'complete') {
+        set({ session: { ...session, phase: 'complete' } });
+      }
+      return;
+    }
+    if (session.phase === 'complete') return;
     set({ session: { ...session, phase } });
   },
 }));
