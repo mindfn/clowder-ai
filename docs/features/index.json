@@ -842,8 +842,8 @@
     },
     {
       "id": "F138",
-      "name": "Cat Café Video Studio — AI 视频制作管线",
-      "status": "spec | **Owner**: 金渐层 | **Priority**: P1",
+      "name": "Cat Café Video Studio — AI 视频制作管线 (含 MediaHub Phase 4)",
+      "status": "in-progress | **Owner**: 布偶猫 + 缅因猫(gpt52) | **Priority**: P1 | Phase 4A done, 4B in-progress",
       "file": "F138-video-studio.md"
     },
     {
