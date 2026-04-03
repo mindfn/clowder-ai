@@ -99,7 +99,9 @@ export function useChatSocketCallbacks({
       },
       // F150: Guide engine — relay Socket.io events to CustomEvents for useGuideEngine
       onGuideStart: (data) => {
-        window.dispatchEvent(new CustomEvent('guide:start', { detail: { flowId: data.guideId } }));
+        window.dispatchEvent(
+          new CustomEvent('guide:start', { detail: { flowId: data.guideId, threadId: data.threadId } }),
+        );
       },
       onGuideControl: (data) => {
         window.dispatchEvent(new CustomEvent('guide:control', { detail: { action: data.action } }));

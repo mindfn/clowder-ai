@@ -34,6 +34,8 @@ export type GuidePhase = 'locating' | 'active' | 'complete';
 export interface GuideSession {
   flow: OrchestrationFlow;
   sessionId: string;
+  /** Thread where this guide was triggered (for completion callback) */
+  threadId: string | null;
   currentStepIndex: number;
   phase: GuidePhase;
   startedAt: number;
@@ -41,7 +43,7 @@ export interface GuideSession {
 
 interface GuideState {
   session: GuideSession | null;
-  startGuide: (flow: OrchestrationFlow) => void;
+  startGuide: (flow: OrchestrationFlow, threadId?: string) => void;
   advanceStep: () => void;
   exitGuide: () => void;
   setPhase: (phase: GuidePhase) => void;
@@ -52,12 +54,13 @@ let sessionCounter = 0;
 export const useGuideStore = create<GuideState>((set, get) => ({
   session: null,
 
-  startGuide: (flow) => {
+  startGuide: (flow, threadId) => {
     sessionCounter += 1;
     set({
       session: {
         flow,
         sessionId: `guide-${flow.id}-${sessionCounter}`,
+        threadId: threadId ?? null,
         currentStepIndex: 0,
         phase: 'locating',
         startedAt: Date.now(),

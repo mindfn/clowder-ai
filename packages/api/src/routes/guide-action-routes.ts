@@ -30,6 +30,11 @@ const cancelSchema = z.object({
   guideId: z.string().min(1),
 });
 
+const completeSchema = z.object({
+  threadId: z.string().min(1),
+  guideId: z.string().min(1),
+});
+
 export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = async (app, opts) => {
   const { threadStore, socketManager } = opts;
   const log = app.log;
@@ -145,5 +150,56 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
     await threadStore.updateGuideState(threadId, updated);
     log.info({ guideId, threadId, userId }, '[F150] guide cancelled via frontend action');
     return { status: 'ok', guideState: updated };
+  });
+
+  // POST /api/guide-actions/complete — frontend guide overlay finished all steps
+  app.post('/api/guide-actions/complete', async (request, reply) => {
+    const userId = resolveHeaderUserId(request);
+    if (!userId) {
+      reply.status(401);
+      return { error: 'Identity required (X-Cat-Cafe-User header)' };
+    }
+
+    const parsed = completeSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.status(400);
+      return { error: 'Invalid request', details: parsed.error.issues };
+    }
+
+    const { threadId, guideId } = parsed.data;
+    const thread = await threadStore.get(threadId);
+    if (!thread) {
+      reply.status(404);
+      return { error: 'Thread not found' };
+    }
+
+    if (thread.createdBy !== 'system' && thread.createdBy !== userId) {
+      reply.status(403);
+      return { error: 'Thread access denied' };
+    }
+
+    const gs = thread.guideState;
+    if (!gs || gs.guideId !== guideId) {
+      reply.status(400);
+      return { error: 'guide_not_active', message: `Guide "${guideId}" not active in this thread` };
+    }
+    if (gs.status === 'completed') {
+      return { status: 'ok', guideState: gs };
+    }
+    if (gs.status !== 'active') {
+      reply.status(400);
+      return { error: `Cannot complete guide in status "${gs.status}"` };
+    }
+
+    const updated: GuideStateV1 = { ...gs, status: 'completed', completedAt: Date.now() };
+    await threadStore.updateGuideState(threadId, updated);
+
+    socketManager.broadcastToRoom(`thread:${threadId}`, 'guide_complete', {
+      guideId,
+      threadId,
+      timestamp: Date.now(),
+    });
+    log.info({ guideId, threadId, userId }, '[F150] guide completed via frontend action');
+    return { status: 'ok', guideId, guideState: updated };
   });
 };

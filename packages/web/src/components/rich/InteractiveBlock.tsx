@@ -569,8 +569,11 @@ export function InteractiveBlock({
 
           // F150: Trigger guide overlay directly — don't rely on socket round-trip
           if (endpoint.includes('/guide-actions/start') && payload && 'guideId' in payload) {
+            const p = payload as Record<string, unknown>;
             window.dispatchEvent(
-              new CustomEvent('guide:start', { detail: { flowId: (payload as Record<string, unknown>).guideId } }),
+              new CustomEvent('guide:start', {
+                detail: { flowId: p.guideId, threadId: p.threadId },
+              }),
             );
           }
         } catch (err) {

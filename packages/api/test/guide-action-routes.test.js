@@ -304,4 +304,98 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
     assert.equal(res.statusCode, 200, 'system thread must allow any authenticated user');
     assert.equal(JSON.parse(res.body).guideState.status, 'cancelled');
   });
+
+  // --- /api/guide-actions/complete ---
+
+  test('complete: transitions active → completed and emits socket event', async () => {
+    const app = await createApp();
+    const thread = await seedThread('add-member', 'active');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/guide-actions/complete',
+      headers: { 'x-cat-cafe-user': 'user-1' },
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.guideState.status, 'completed');
+    assert.ok(body.guideState.completedAt);
+
+    assert.equal(broadcastCalls.length, 1);
+    assert.equal(broadcastCalls[0].event, 'guide_complete');
+    assert.equal(broadcastCalls[0].data.guideId, 'add-member');
+  });
+
+  test('complete: idempotent when already completed', async () => {
+    const app = await createApp();
+    const thread = await seedThread('add-member', 'completed');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/guide-actions/complete',
+      headers: { 'x-cat-cafe-user': 'user-1' },
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.body).guideState.status, 'completed');
+  });
+
+  test('complete: rejects when guide not active', async () => {
+    const app = await createApp();
+    const thread = await seedThread('add-member', 'offered');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/guide-actions/complete',
+      headers: { 'x-cat-cafe-user': 'user-1' },
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 400);
+  });
+
+  test('complete: rejects when user does not own the thread (403)', async () => {
+    const app = await createApp();
+    const thread = await seedThread('add-member', 'active');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/guide-actions/complete',
+      headers: { 'x-cat-cafe-user': 'attacker-user' },
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 403, 'cross-user complete must be rejected');
+  });
+
+  test('complete: rejects without user identity (401)', async () => {
+    const app = await createApp();
+    const thread = await seedThread('add-member', 'active');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/guide-actions/complete',
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 401);
+  });
+
+  test('complete: allows any authenticated user on system-owned thread', async () => {
+    const app = await createApp();
+    const thread = await seedThread('add-member', 'active', 'system');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/guide-actions/complete',
+      headers: { 'x-cat-cafe-user': 'any-user' },
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.body).guideState.status, 'completed');
+  });
 });

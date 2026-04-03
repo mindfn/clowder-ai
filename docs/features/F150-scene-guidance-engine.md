@@ -8,7 +8,7 @@ created: 2026-03-27
 
 # F150: Scene-Based Bidirectional Guidance Engine
 
-> **Status**: spec | **Owner**: 布偶猫/宪宪 | **Priority**: P1
+> **Status**: in-progress (Phase A 已闭环，当前在做真相源刷新 + 下一场景规划) | **Owner**: 布偶猫/宪宪 | **Priority**: P1
 
 ## Why
 
@@ -23,38 +23,65 @@ Console 功能日益复杂，但入口简单，用户不知道从哪开始。复
 
 ## What
 
-### 核心架构（四层解耦）
+### 核心架构（v2 — tag-based auto-advance engine）
 
 ```
-Element Tags → Guide Catalog (YAML) → Guide Engine (Frontend) → MCP Tools
-                                            ↕ 双向可观测
-                                        Cat (实时感知)
+data-guide-id tags → Flow YAML (guides/flows/) → Runtime API → Guide Engine (Frontend)
+                                                                      ↕ Socket.io
+                                                                  Cat (状态感知)
 ```
 
-### Phase A: Core Engine + 内部场景验证
+**设计原则**（CVO Phase A 反馈收敛）：
+- 自动推进：用户与目标元素交互后引导自动前进，无手动 下一步/上一步/跳过
+- HUD 极简：仅显示 tips + progress dots + "退出"
+- 标签驱动：前端元素仅标注 `data-guide-id`，tips 来自 YAML flow 定义
+- 运行时加载：flow 由 `GET /api/guide-flows/:guideId` 运行时获取，非构建时生成
 
-**元素标签系统**：页面关键控件加稳定 `data-guide-id`，命名空间式（如 `settings.auth.add-provider`），语义而非位置。
+### Phase A: Core Engine + 内部场景验证（✅ 已实现）
 
-**Guide Catalog**：YAML 编排文档定义场景流程，支持六种步骤类型：
-- `console_action` — Console 内操作（遮罩 + 高亮 + 等待用户操作）
-- `external_instruction` — 外部系统操作（文字说明 + 截图/链接）
-- `collect_input` — 收集用户在外部获取的值（表单输入）
-- `verification` — 自动验证（调 API 检查 + 成功/失败反馈）
-- `branch` — 条件分支（检查状态 → 跳过已完成步骤）
-- `information` — 纯说明（展示信息 + 下一步）
+**OrchestrationStep schema**（前后端共享）：
+```typescript
+interface OrchestrationStep {
+  id: string;
+  target: string;       // data-guide-id value
+  tips: string;         // 引导文案（来自 YAML）
+  advance: 'click' | 'visible' | 'input' | 'confirm';
+}
+```
 
-**Guide Engine（前端组件）**：
-- 全屏遮罩 + 目标元素区域镂空（柔和边缘 + 呼吸灯动效）
-- 步骤控制栏（HUD）：当前步骤说明 + 上一步/下一步/跳过
-- 页面导航监听：用户完成操作后自动推进
-- 容错：元素找不到时降级为文字指引
+**元素标签系统**：页面关键控件加稳定 `data-guide-id`，命名空间式（如 `hub.trigger`、`cats.add-member`），语义而非位置。Target whitelist: `/^[a-zA-Z0-9._-]+$/`。
 
-**MCP 工具**：
+**Flow YAML**：`guides/flows/*.yaml` 编排场景流程，`guides/registry.yaml` 注册发现。
+
+**Guide Engine（前端）**：
+- 全屏遮罩 + 目标元素区域镂空（呼吸灯动效）+ 四面板 click shield（镂空区可穿透点击）
+- rAF 循环跟踪目标元素位置（rect 比较优化）
+- 自动推进：`useAutoAdvance` hook 监听 click/input/visible/confirm 事件
+- `guide:confirm` CustomEvent 用于确认型步骤（如保存成功后触发）
+- 终态守卫：`setPhase('complete')` 后不可被 rAF 覆写为 `locating`
+- HUD：tips + progress dots + "退出"，位置自动计算避免遮挡
+- Error boundary：Guide crash 不影响主应用
+
+**完成回调（frontend → backend）**：
+- 前端 `phase='complete'` 时自动调用 `POST /api/guide-actions/complete`
+- 后端 `guideState: active → completed` + 发 `guide_complete` Socket.io 事件
+- 猫猫收到事件即可感知用户已完成引导
+
+**前端 API 端点**（userId-based auth）：
+- `POST /api/guide-actions/start` — offered/awaiting_choice → active
+- `POST /api/guide-actions/cancel` — → cancelled
+- `POST /api/guide-actions/complete` — active → completed
+- `GET /api/guide-flows/:guideId` — 运行时获取 flow 定义
+
+**MCP 工具**（callback auth）：
 - `resolve` — 根据用户意图匹配候选流程
 - `start` — 启动引导 session
-- `control` — next/back/skip/finish
+- `control` — next/back/skip/exit
+- `update-guide-state` — 通用状态机更新
 
-**P0 验证场景**：添加新成员（纯 Console 内部流程）
+**CI 验证**：`scripts/gen-guide-catalog.mjs` 校验 v2 schema + target whitelist
+
+**P0 验证场景**：添加新成员（4 步：open-hub → go-to-cats → click-add-member → edit-member-profile）
 
 ### Phase B: 双向可观测 + 跨系统引导
 
@@ -80,6 +107,22 @@ Element Tags → Guide Catalog (YAML) → Guide Engine (Frontend) → MCP Tools
 **CI 契约测试**：flow schema + tag 存在性 + auto_fill_from 校验 + verifier 注册 + skip_if DSL 限制 + 退出路径
 
 **P0 验证场景**：飞书机器人对接（跨系统流程）
+
+### 当前进展与阶段判断（2026-04-03）
+
+| 维度 | 当前状态 | 说明 |
+|------|---------|------|
+| 核心引擎 | ✅ 完成 | tag-based runtime、YAML flow、前端遮罩/镂空、auto-advance、exit-only HUD 已跑通 |
+| P0 内部场景 | ✅ 完成 | `add-member` 已收口为 4 步：`hub.trigger → cats.overview → cats.add-member → member-editor.profile(confirm)` |
+| 完成态闭环 | ✅ 完成 | 用户保存成功后才触发 `guide:confirm`；前端 `complete` 会回写后端 `guideState=completed` 并广播 `guide_complete` |
+| 双向可观测 | 🟡 部分完成 | 当前只有完成态回流；字段级 observe / idle / verifier 反馈仍未进入实现 |
+| 跨系统引导 | ⬜ 未开始 | `external_instruction / collect_input / verification / auto_fill_from` 仍属于下一阶段 |
+| 当前阶段判断 | `Phase A done` | 基础流程已闭环，可开始基于同一骨架继续补“典型场景”；Phase B 尚未开工 |
+
+这意味着：
+- F150 现在已经具备“从建议引导 → 前端操作 → 保存成功 → 后端状态同步 → 猫猫可感知完成”的最小完整闭环。
+- 后续继续补新场景时，优先复用现有 `data-guide-id + Flow YAML + advance mode + complete callback` 骨架，不再回到硬编码流程。
+- 下一步应该并行推进两件事：补下一个高价值典型场景，以及冻结 Phase B 的 observe/verifier 契约，避免场景扩展后再返工。
 
 ### 触发与发现规范
 
@@ -115,12 +158,13 @@ Element Tags → Guide Catalog (YAML) → Guide Engine (Frontend) → MCP Tools
 ## Acceptance Criteria
 
 ### Phase A（Core Engine）
-- [ ] AC-A1: 页面关键控件有稳定 `data-guide-id` 标签（至少覆盖"添加成员"流程涉及的元素）
-- [ ] AC-A2: Guide Catalog 解析器能加载 YAML flow 文档
-- [ ] AC-A3: Guide Engine 前端组件：遮罩 + 高亮 + 步骤导航（上一步/下一步/跳过）
-- [ ] AC-A4: MCP resolve/start/control 工具可用
-- [ ] AC-A5: "添加成员" 引导流程端到端可运行
-- [ ] AC-A6: 对话触发：用户问"怎么添加成员" → 猫建议引导 → 用户确认 → 启动
+- [x] AC-A1: 页面关键控件有稳定 `data-guide-id` 标签（覆盖"添加成员"流程 4 个元素）
+- [x] AC-A2: Guide flow YAML 加载器 + CI schema 验证（v2 schema + target whitelist）
+- [x] AC-A3: Guide Engine 前端组件：遮罩 + 高亮 + 自动推进（v2: 无手动导航，HUD 仅退出）
+- [x] AC-A4: MCP resolve/start/control 工具 + 前端 action routes（start/cancel/complete）
+- [x] AC-A5: "添加成员" 引导流程端到端可运行（含 confirm 步骤 + 保存成功回调）
+- [x] AC-A6: 对话触发：猫建议引导 → InteractiveBlock → 用户确认 → 启动
+- [x] AC-A7: 完成回调：前端 complete → 后端 guideState completed → Socket.io 通知猫猫
 
 ### Phase B（双向可观测 + 跨系统）
 - [ ] AC-B1: observe 层实时上报字段状态和用户行为到猫（事件推送，非轮询）
@@ -232,12 +276,20 @@ Element Tags → Guide Catalog (YAML) → Guide Engine (Frontend) → MCP Tools
 | KD-6 | observe.fields 对 sensitive 字段只上报 {filled, valid} | 防止侧信道泄漏长度/前缀 | 2026-03-27 |
 | KD-7 | 迭代策略：核心引擎先完整 → P0(1内部+1外部)验收 → 再逐场景补全 | 不一次性实现所有场景；编排文件按需补充 | 2026-03-27 |
 | KD-8 | external_instruction 支持富内容（多图 + 链接 + 前置条件 + 版本要求） | 胶囊 HUD 不够，外部步骤需要完整的操作指引卡片 | 2026-03-27 |
+| KD-9 | v2 重构：自动推进取代手动导航，HUD 仅保留"退出" | CVO Phase A 反馈：手动导航降低体验，用户操作即推进 | 2026-03-30 |
+| KD-10 | v2 步骤类型收敛为 4 种 advance mode（click/visible/input/confirm） | 简化 Phase A 范围，6 种步骤类型推迟到 Phase B 按需扩展 | 2026-03-30 |
+| KD-11 | Flow YAML 运行时加载（API），不在构建时生成 TS | 解耦部署：改 flow 不需要重新构建前端 | 2026-03-30 |
+| KD-12 | 完成回调作为基础能力：前端 complete → 后端状态 + Socket 通知 | CVO 明确要求：完整流程闭环是基础能力，不是后续补充 | 2026-04-03 |
 
 ## Timeline
 
 | 日期 | 事件 |
 |------|------|
 | 2026-03-27 | 三猫讨论收敛 + 立项 |
+| 2026-03-30 | v2 tag-based auto-advance engine 跑通，HUD 收敛为 exit-only，flow 改为运行时加载 |
+| 2026-03-31 | P0 场景 add-member 4 步端到端验证通过 |
+| 2026-04-01 | `add-member` 第 4 步收敛为 `confirm` 型步骤，保存成功后才允许完成 |
+| 2026-04-03 | guide completion callback 打通：前端 complete → 后端 `guideState=completed` → Socket `guide_complete` |
 
 ## Review Gate
 
