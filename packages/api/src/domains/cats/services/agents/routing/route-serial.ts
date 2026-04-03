@@ -445,6 +445,8 @@ export async function* routeSerial(
       let firstMetadata: MessageMetadata | undefined;
       let doneMsg: AgentMessage | undefined;
       let hadError = false;
+      /** F150: tracks whether cat produced user-visible output (for guide completion ack). */
+      let catProducedOutput = false;
       let sawUserFacingSystemInfo = false;
       // #267: track errors that happened BEFORE abort — only these are real provider failures
       let hadProviderError = false;
@@ -694,6 +696,7 @@ export async function* routeSerial(
       let mentionsUser = false;
 
       if (textContent) {
+        catProducedOutput = true;
         const sanitized = sanitizeInjectedContent(textContent);
 
         // F22: Extract cc_rich blocks from text (Route B fallback for non-MCP cats)
@@ -983,6 +986,7 @@ export async function* routeSerial(
         }
         handoffEmitted = worklist.length;
       } else if (!hadError) {
+        catProducedOutput = true;
         // No text content and no error.
         // Persist only when we have non-text payload (tool/thinking/rich).
         // Purely empty turns should not create blank chat bubbles.
@@ -1204,10 +1208,10 @@ export async function* routeSerial(
         });
       }
 
-      // F150: Ack guide completion after invocation succeeds (not before).
-      // Only ack when this cat actually received the completed injection.
-      // P2-1 fallback: when offeredBy is absent, any cat receiving injection can ack.
+      // F150: Ack guide completion only after cat produced visible output.
+      // Skip ack on error-only turns so next turn retries delivery.
       if (
+        catProducedOutput &&
         guideCandidate?.status === 'completed' &&
         (!guideCompletionOwner || guideCompletionOwner === catId) &&
         deps.invocationDeps.threadStore

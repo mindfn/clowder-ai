@@ -616,8 +616,10 @@ export async function* routeParallel(
       // recreating an orphan Redis hash key via HSET.
       catInvocationId.delete(msg.catId);
       const bufferedBlocks = getRichBlockBuffer().consume(threadId, msg.catId, ownInvId);
+      let catProducedOutput = false;
       const text = catText.get(msg.catId);
       if (text) {
+        catProducedOutput = true;
         const meta = catMeta.get(msg.catId);
         const sanitized = sanitizeInjectedContent(text);
         // F22: Extract cc_rich blocks from text + merge with buffered
@@ -773,6 +775,7 @@ export async function* routeParallel(
           }
         }
       } else if (!catHadError.has(msg.catId)) {
+        catProducedOutput = true;
         // No text content and no error.
         // Persist only when there is non-text payload (tool/thinking/rich).
         // Purely empty turns should not create blank chat bubbles.
@@ -960,10 +963,10 @@ export async function* routeParallel(
         }
       }
 
-      // F150: Ack guide completion after invocation succeeds (not before).
-      // Only ack when this cat actually received the completed injection.
-      // P2-1 fallback: when offeredBy is absent, any cat receiving injection can ack.
+      // F150: Ack guide completion only after cat produced visible output.
+      // Skip ack on error-only turns so next turn retries delivery.
       if (
+        catProducedOutput &&
         guideCandidate?.status === 'completed' &&
         (!guideCompletionOwner || guideCompletionOwner === msg.catId) &&
         deps.invocationDeps.threadStore
