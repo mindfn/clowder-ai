@@ -188,6 +188,8 @@ export interface GuideStateV1 {
   offeredAt: number;
   startedAt?: number;
   completedAt?: number;
+  /** True after the first agent turn has seen the completion (one-shot consumption). */
+  completionAcked?: boolean;
   /** catId that offered this guide (prevents multi-cat duplicate offers). */
   offeredBy?: string;
 }

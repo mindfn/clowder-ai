@@ -125,10 +125,9 @@ export async function* routeSerial(
       if (thread?.guideState) {
         const gs = thread.guideState;
         // cancelled: fully terminal, skip
-        // completed: inject if recent (within 5min) so cat can acknowledge
-        const recentlyCompleted =
-          gs.status === 'completed' && gs.completedAt && Date.now() - gs.completedAt < 5 * 60 * 1000;
-        const shouldInject = (gs.status !== 'completed' && gs.status !== 'cancelled') || recentlyCompleted;
+        // completed: one-shot inject if not yet acked, then mark acked
+        const justCompleted = gs.status === 'completed' && !gs.completionAcked;
+        const shouldInject = (gs.status !== 'completed' && gs.status !== 'cancelled') || justCompleted;
         if (shouldInject) {
           // Back-fill display metadata from registry so prompt gets real name/time
           let name = gs.guideId;
@@ -152,6 +151,11 @@ export async function* routeSerial(
             status: gs.status as 'offered' | 'awaiting_choice' | 'active' | 'completed',
             ...(selectionMatch ? { userSelection: selectionMatch[1] } : {}),
           };
+          // One-shot: mark completion as consumed so next turn won't re-inject
+          if (justCompleted) {
+            const store = deps.invocationDeps.threadStore!;
+            Promise.resolve(store.updateGuideState(threadId, { ...gs, completionAcked: true })).catch(() => {});
+          }
         }
       }
       // F073 P4: Read workflow-sop if thread is linked to a backlog item
