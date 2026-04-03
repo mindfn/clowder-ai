@@ -235,7 +235,7 @@ brief → asset ingest → video-spec → voice-script → preview render → re
 | KD-10 | ~~无头浏览器只做 fallback~~ → 见 KD-14 | 已被 KD-14 取代 | 2026-03-28 |
 | KD-11 | Console MediaHub tab 是 provider key 唯一配置入口 | 铲屎官："能在这里填写就没必要环境配置那边保留了" | 2026-03-28 |
 | KD-12 | CogVideoX API key = 智谱 API key（同一平台 open.bigmodel.cn） | 同一把 key 同时用于视频生成和视频理解（VLM），无需分别配置 | 2026-04-01 |
-| KD-13 | Gemini 视频分析走 REST API（需 `GEMINI_API_KEY`）；未来可探索内建 cat 多模态路径 | 当前实现通过 Gemini Files API 上传视频再调用 generateContent，需独立配置 key | 2026-04-01 |
+| KD-13 | Gemini 视频分析走 REST API（需 `GEMINI_API_KEY`）；未来可探索内建 cat 多模态路径 | 当前实现通过 Gemini REST 路径（inlineData/fileUri + generateContent），需独立配置 key | 2026-04-01 |
 | KD-14 | 可灵/即梦用 agent-browser (Chrome MCP) 而非 Playwright/API | 铲屎官明确：API key 太贵；Cat Cafe 已有 agent-server 支持 Chrome MCP | 2026-04-02 |
 | KD-15 | 可灵/即梦 API 路径降为备用 | API key 充值门槛高（可灵 10,000 RMB），分支实现保留但不作为主路径 | 2026-04-02 |
 | KD-16 | MediaHub 实现归属 F138 Phase 4，F138 为唯一 SSOT | 分支名 `feat/F139-mediahub-phase-b` 为历史遗留（F139 实际是 schedule abstraction） | 2026-04-03 |
