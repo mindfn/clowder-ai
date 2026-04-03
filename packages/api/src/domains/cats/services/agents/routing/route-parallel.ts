@@ -100,7 +100,12 @@ export async function* routeParallel(
       // F150: Read existing guide state from thread (authority source)
       if (thread?.guideState) {
         const gs = thread.guideState;
-        if (gs.status !== 'completed' && gs.status !== 'cancelled') {
+        // cancelled: fully terminal, skip
+        // completed: inject if recent (within 5min) so cat can acknowledge
+        const recentlyCompleted =
+          gs.status === 'completed' && gs.completedAt && Date.now() - gs.completedAt < 5 * 60 * 1000;
+        const shouldInject = (gs.status !== 'completed' && gs.status !== 'cancelled') || recentlyCompleted;
+        if (shouldInject) {
           let name = gs.guideId;
           let estimatedTime = '';
           try {
@@ -118,7 +123,7 @@ export async function* routeParallel(
             id: gs.guideId,
             name,
             estimatedTime,
-            status: gs.status,
+            status: gs.status as 'offered' | 'awaiting_choice' | 'active' | 'completed',
             ...(selectionMatch ? { userSelection: selectionMatch[1] } : {}),
           };
         }

@@ -685,8 +685,14 @@ export function buildInvocationContext(context: InvocationContext): string {
         '引导进行中。回答与引导相关的问题，不要重发选项卡。用户要退出时调用 cat_cafe_guide_control(action="exit")。',
         '',
       );
+    } else if (status === 'completed') {
+      lines.push(
+        `🧭 Guide Completed:${threadPart} id=${id} name=${name}`,
+        '用户刚完成了这个引导流程。用一句话肯定用户的操作（如"添加成员成功了"），并询问是否需要进一步帮助。不要重发选项卡。',
+        '',
+      );
     }
-    // completed/cancelled: no injection needed
+    // cancelled: no injection needed
   }
 
   // F091: Active Signal articles in discussion context

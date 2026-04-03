@@ -124,8 +124,12 @@ export async function* routeSerial(
       // F150: Read existing guide state from thread (authority source)
       if (thread?.guideState) {
         const gs = thread.guideState;
-        // If guide is still in-progress, inject existing state (no re-matching)
-        if (gs.status !== 'completed' && gs.status !== 'cancelled') {
+        // cancelled: fully terminal, skip
+        // completed: inject if recent (within 5min) so cat can acknowledge
+        const recentlyCompleted =
+          gs.status === 'completed' && gs.completedAt && Date.now() - gs.completedAt < 5 * 60 * 1000;
+        const shouldInject = (gs.status !== 'completed' && gs.status !== 'cancelled') || recentlyCompleted;
+        if (shouldInject) {
           // Back-fill display metadata from registry so prompt gets real name/time
           let name = gs.guideId;
           let estimatedTime = '';
@@ -145,7 +149,7 @@ export async function* routeSerial(
             id: gs.guideId,
             name,
             estimatedTime,
-            status: gs.status,
+            status: gs.status as 'offered' | 'awaiting_choice' | 'active' | 'completed',
             ...(selectionMatch ? { userSelection: selectionMatch[1] } : {}),
           };
         }

@@ -57,12 +57,30 @@ export function useGuideEngine() {
     const guideId = session.flow.id;
     if (!threadId) return;
 
-    apiFetch('/api/guide-actions/complete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ threadId, guideId }),
-    }).catch((err) => {
-      console.error('[Guide] Completion callback failed:', err);
-    });
+    const notify = async (attempt = 1) => {
+      try {
+        const res = await apiFetch('/api/guide-actions/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ threadId, guideId }),
+        });
+        if (!res.ok && attempt < 2) {
+          console.warn(`[Guide] Completion callback ${res.status}, retrying…`);
+          notify(2);
+          return;
+        }
+        if (!res.ok) {
+          console.error(`[Guide] Completion callback failed: ${res.status}`);
+        }
+      } catch (err) {
+        if (attempt < 2) {
+          console.warn('[Guide] Completion callback error, retrying…', err);
+          notify(2);
+          return;
+        }
+        console.error('[Guide] Completion callback failed after retry:', err);
+      }
+    };
+    notify();
   }, [session?.phase, session?.flow.id, session?.threadId, session]);
 }
