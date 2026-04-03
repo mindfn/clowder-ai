@@ -115,6 +115,8 @@ export async function* routeSerial(
   let bootcampState: InvocationContext['bootcampState'];
   // F150: Guide candidate from keyword matching against raw user message
   let guideCandidate: InvocationContext['guideCandidate'];
+  /** catId that should receive the one-shot completion notice (offeredBy). */
+  let guideCompletionOwner: string | undefined;
   if (deps.invocationDeps.threadStore) {
     try {
       const thread = await deps.invocationDeps.threadStore.get(threadId);
@@ -153,6 +155,7 @@ export async function* routeSerial(
           };
           // One-shot: mark completion as consumed so next turn won't re-inject
           if (justCompleted) {
+            guideCompletionOwner = gs.offeredBy;
             const store = deps.invocationDeps.threadStore!;
             Promise.resolve(store.updateGuideState(threadId, { ...gs, completionAcked: true })).catch(() => {});
           }
@@ -287,7 +290,10 @@ export async function* routeSerial(
         ...(activeSignals ? { activeSignals } : {}),
         ...(voiceMode ? { voiceMode } : {}),
         ...(bootcampState ? { bootcampState, threadId } : {}),
-        ...(guideCandidate ? { guideCandidate, threadId } : {}),
+        ...(guideCandidate &&
+        (guideCandidate.status !== 'completed' || !guideCompletionOwner || guideCompletionOwner === catId)
+          ? { guideCandidate, threadId }
+          : {}),
       });
 
       // F24 Phase E: Bootstrap context for Session #2+
