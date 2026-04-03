@@ -1,6 +1,6 @@
 ---
 feature_ids: [F138]
-related_features: [F054, F093, F139, F142]
+related_features: [F054, F093, F139]
 topics: [video, remotion, waoowaoo, bilibili, tutorial, content-pipeline, schema, mediahub, cogvideox, kling, jimeng, agent-browser, zhipu, gemini]
 doc_kind: spec
 created: 2026-03-24
@@ -11,7 +11,7 @@ updated: 2026-04-03
 
 > **Status**: in-progress | **Owner**: 布偶猫 + 缅因猫(gpt52) | **Priority**: P1
 >
-> **Note**: F142 (MediaHub — AI Media Generation Gateway) 已合并入本文档 Phase 4。F142 的独立 spec 不再维护，以本文档为唯一真相源。
+> **Branch**: `feat/F139-mediahub-phase-b` (F139 前缀为历史遗留，实际承载 F138 Phase 4 MediaHub 实现)
 
 ## Why
 
@@ -177,15 +177,15 @@ brief → asset ingest → video-spec → voice-script → preview render → re
 - [ ] AC-3b: prompt eval suite 覆盖 5+ 个 tutorial brief
 - [ ] AC-3c: AI 生成的 draft 可直接落进 video-spec
 
-### Phase 4A（对话内生成 + 播放）— ✅ Done
-- [x] AC-4Aa: provider-agnostic 接口定义（CogVideoX/Kling/Jimeng） ✅ 2026-03-28
-- [x] AC-4Ab: Console BYOK 凭证绑定 + 加密存储 ✅ 2026-03-28
-- [x] AC-4Ac: video rich block — 对话内直接播放生成的视频 ✅ 2026-04-01
-- [x] AC-4Ad: 媒体 serve 路由 — @fastify/static + Next.js rewrite proxy ✅ 2026-04-01
-- [x] AC-4Ae: 生成进度可视化 — progressBlock card on submission ✅ 2026-04-01
+### Phase 4A（对话内生成 + 播放）— Implemented (branch), pending merge
+- [x] AC-4Aa: provider-agnostic 接口定义（CogVideoX/Kling/Jimeng） — branch 2026-03-28
+- [x] AC-4Ab: Console BYOK 凭证绑定 + 加密存储 — branch 2026-03-28
+- [x] AC-4Ac: video rich block — 对话内直接播放（铲屎官验收通过）— branch 2026-04-01
+- [x] AC-4Ad: 媒体 serve 路由 — @fastify/static + Next.js rewrite proxy — branch 2026-04-01
+- [x] AC-4Ae: 生成进度可视化 — progressBlock card on submission — branch 2026-04-01
 
-### Phase 4B（视频理解）— In Progress
-- [ ] AC-4Ba: 猫猫能描述生成视频的内容 — 代码已就绪（gemini/zhipu 双 provider + Console 凭据桥接），待 E2E 验证
+### Phase 4B（视频理解）— In Progress (branch)
+- [ ] AC-4Ba: 猫猫能描述生成视频的内容 — 代码在分支（gemini REST + zhipu 双 provider），Zhipu 已做 Console 凭据桥接，待 E2E 验证
 - [ ] AC-4Bb: 生成质量评估 + 重生成闭环 — 返回值含 qualityScore/issues/recommendRegenerate，但未做成对话内卡片或自动重生成链路
 
 ### Phase 4C（更多 Provider 集成）— Not Started (browser path)
@@ -199,7 +199,6 @@ brief → asset ingest → video-spec → voice-script → preview render → re
 ## Dependencies
 
 - **Evolved from**: F054（HCI 预热基础设施 — B 站 MCP 调研在 F054 Phase 1）
-- **Absorbed**: F142（MediaHub — AI Media Generation Gateway）— 已合并入 Phase 4（KD-16）
 - **Related**: F093（Cats & U 世界引擎 — 介绍视频的创意方向）
 - **Related**: F066/F103（Voice Pipeline / Per-Cat Voice Identity — TTS 配音能力）
 - **Related**: F139（Unified Schedule Abstraction — 任务编排基础设施）
@@ -236,7 +235,7 @@ brief → asset ingest → video-spec → voice-script → preview render → re
 | KD-10 | ~~无头浏览器只做 fallback~~ → 见 KD-14 | 已被 KD-14 取代 | 2026-03-28 |
 | KD-11 | Console MediaHub tab 是 provider key 唯一配置入口 | 铲屎官："能在这里填写就没必要环境配置那边保留了" | 2026-03-28 |
 | KD-12 | CogVideoX API key = 智谱 API key（同一平台 open.bigmodel.cn） | 同一把 key 同时用于视频生成和视频理解（VLM），无需分别配置 | 2026-04-01 |
-| KD-13 | Gemini 视频理解不需额外 API key | Gemini 已作为内建 cat 接入，直接用 cat 的多模态能力分析视频 | 2026-04-01 |
+| KD-13 | Gemini 视频分析走 REST API（需 `GEMINI_API_KEY`）；未来可探索内建 cat 多模态路径 | 当前实现通过 Gemini Files API 上传视频再调用 generateContent，需独立配置 key | 2026-04-01 |
 | KD-14 | 可灵/即梦用 agent-browser (Chrome MCP) 而非 Playwright/API | 铲屎官明确：API key 太贵；Cat Cafe 已有 agent-server 支持 Chrome MCP | 2026-04-02 |
 | KD-15 | 可灵/即梦 API 路径降为备用 | API key 充值门槛高（可灵 10,000 RMB），分支实现保留但不作为主路径 | 2026-04-02 |
-| KD-16 | F142 合并入 F138 Phase 4，不再独立维护 | 消除双真相源：F138 是唯一 SSOT，分支名 F139 为历史遗留 | 2026-04-03 |
+| KD-16 | MediaHub 实现归属 F138 Phase 4，F138 为唯一 SSOT | 分支名 `feat/F139-mediahub-phase-b` 为历史遗留（F139 实际是 schedule abstraction） | 2026-04-03 |
