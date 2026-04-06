@@ -83,7 +83,9 @@ interface OrchestrationStep {
 
 **P0 验证场景**：添加新成员（4 步：open-hub → go-to-cats → click-add-member → edit-member-profile）
 
-### Phase B: 双向可观测 + 跨系统引导
+### Phase B: 双向可观测 + 平台内场景扩展
+
+> **Scope 调整（KD-13）**：Phase B 聚焦平台内已有功能的引导，不做跨系统深度集成。外部平台（飞书/微信等）的配置流程后续按场景单独做配置页签，不纳入 Guide Engine。
 
 **观测层**：Guide Engine 实时上报字段状态 + 用户行为 → 猫猫实时感知：
 - `observe.fields`：监听字段变化，实时校验，sensitive 字段只上报 `{filled, valid}`
@@ -92,21 +94,16 @@ interface OrchestrationStep {
 - MCP `guide_observe` 工具：猫猫主动查询当前引导状态
 - 事件推送（非轮询）：field_changed / step_completed / user_idle / verification_failed
 
-**跨系统引导**：
-- `external_instruction` 步骤：支持富内容卡片（多张截图 + 链接 + 前置条件声明 + 版本要求），不局限于胶囊 HUD
-- `collect_input` 步骤：非模态 inline form 嵌入 HUD，sensitive 字段脱敏显示
-- `auto_fill_from`：从 collect 步骤自动填充 Console 表单（白名单映射）
-- `template_vars`：动态值注入（如 webhook URL）
+**场景扩展**：基于已有 Console 功能逐场景补充引导流程，复用 Phase A 骨架（data-guide-id + Flow YAML + advance mode + complete callback）。具体场景所需的额外步骤类型或信息补充，结合场景实际需求决定。
 
-**视觉状态机**：
-- 内外步骤色彩区分：猫咖橙(内部) vs 深空灰+外部Logo(外部)
+**视觉增强**：
 - 猫眼观测指示灯：正确→眯眼绿勾，错误→圆眼警示，停滞→晃动求助
-- 跨系统胶囊 HUD：`[控制台]──[飞书]` 双端状态
-- 心跳验证：Webhook 握手成功 → HUD 闪橙
 
-**CI 契约测试**：flow schema + tag 存在性 + auto_fill_from 校验 + verifier 注册 + skip_if DSL 限制 + 退出路径
+**CI 契约测试**：flow schema + tag 存在性 + 退出路径
 
-**P0 验证场景**：飞书机器人对接（跨系统流程）
+**P0 验证场景**：基于已有 Console 功能的高价值场景（如 API Provider 配置、连接器配置等）
+
+**跨系统引导（deferred）**：外部平台对接（飞书/微信/钉钉）的配置流程不走 Guide Engine 遮罩引导，改为独立配置页签 + 分步操作说明，按场景需求单独设计。
 
 ### 当前进展与阶段判断（2026-04-03）
 
@@ -116,7 +113,7 @@ interface OrchestrationStep {
 | P0 内部场景 | ✅ 完成 | `add-member` 已收口为 4 步：`hub.trigger → cats.overview → cats.add-member → member-editor.profile(confirm)` |
 | 完成态闭环 | ✅ 完成 | 用户保存成功后才触发 `guide:confirm`；前端 `complete` 会回写后端 `guideState=completed` 并广播 `guide_complete` |
 | 双向可观测 | 🟡 部分完成 | 当前只有完成态回流；字段级 observe / idle / verifier 反馈仍未进入实现 |
-| 跨系统引导 | ⬜ 未开始 | `external_instruction / collect_input / verification / auto_fill_from` 仍属于下一阶段 |
+| 跨系统引导 | 🔒 deferred | KD-13：外部平台配置改为独立页签，不纳入 Guide Engine |
 | 当前阶段判断 | `Phase A done` | 基础流程已闭环，可开始基于同一骨架继续补“典型场景”；Phase B 尚未开工 |
 
 这意味着：
@@ -141,7 +138,7 @@ interface OrchestrationStep {
 | 优先级 | 场景 | Console Tab | 复杂度 | 跨系统 |
 |--------|------|------------|--------|--------|
 | P0 | 添加成员 | cats → HubCatEditor | 极高 | 否 |
-| P0 | 飞书对接 | connector config | 高 | 是 |
+| ~~P0~~ deferred | 飞书对接 | 独立配置页签（不走 Guide Engine）| 高 | 是 |
 | P1 | 配置 API Provider | provider-profiles | 高 | 否 |
 | P1 | 添加连接器（通用） | connector config | 高 | 是 |
 | P1 | 开启推送通知 | notify | 中 | 否 |
@@ -166,14 +163,13 @@ interface OrchestrationStep {
 - [x] AC-A6: 对话触发：猫建议引导 → InteractiveBlock → 用户确认 → 启动
 - [x] AC-A7: 完成回调：前端 complete → 后端 guideState completed → Socket.io 通知猫猫
 
-### Phase B（双向可观测 + 跨系统）
+### Phase B（双向可观测 + 平台内场景扩展）
 - [ ] AC-B1: observe 层实时上报字段状态和用户行为到猫（事件推送，非轮询）
 - [ ] AC-B2: 猫可通过 MCP guide_observe 主动查询当前引导状态
-- [ ] AC-B3: external_instruction + collect_input + verification 步骤类型可用
-- [ ] AC-B4: auto_fill_from 自动填充 Console 表单
-- [ ] AC-B5: "飞书机器人对接" 引导流程端到端可运行（含外部步骤 + 凭证收集 + 连通验证）
-- [ ] AC-B6: 视觉状态机：内外步骤区分 + 观测指示灯 + 跨系统 HUD
-- [ ] AC-B7: CI 契约测试通过（flow schema + tag + auto_fill_from + verifier + exit path）
+- [ ] AC-B3: 基于已有 Console 功能扩展 2+ 个引导场景（如 API Provider 配置、连接器配置）
+- [ ] AC-B4: 猫眼观测指示灯（正确/错误/停滞视觉反馈）
+- [ ] AC-B5: ~~飞书对接 E2E~~ → deferred（KD-13：外部平台配置改为独立页签，不走 Guide Engine）
+- [ ] AC-B6: CI 契约测试通过（flow schema + tag + 退出路径）
 
 ### 安全门禁（跨 Phase，P0 硬性）
 - [ ] AC-S1: Sensitive Data Containment — sensitive 值仅服务端持有（TTL + thread/user 绑定），前端只拿 secretRef，刷新后强制重填，observe 不上报长度/前缀，TTL 到期后 secretRef 失效 + 服务端 secrets 清理
@@ -225,13 +221,13 @@ interface OrchestrationStep {
 | S3-CI6 | CI-Static | `skip_if` DSL 语法与操作符白名单 | 非声明式表达式阻塞合并 | CI 日志 |
 | S3-CI7 | CI-Static | flow 退出路径校验（skip/cancel） | 无退出路径阻塞合并 | CI 日志 |
 | S3-E2E-A1 | CI-E2E | P0 场景回归：添加成员（纯内部） | 主路径可完成，关键状态可回放 | E2E junit XML |
-| S3-E2E-B1 | CI-E2E | P0 场景回归：飞书对接（跨系统） | 含 external_instruction + collect + verify 全链路 | E2E junit XML |
+| ~~S3-E2E-B1~~ | ~~CI-E2E~~ | ~~飞书对接（跨系统）~~ | deferred（KD-13） | — |
 
 ### 质量门禁映射（建议）
 
 - PR Gate（必须）：S1-U1/U2、S2-U1/U2、S3-CI1~CI7
 - Phase A Gate（必须）：S1-I1/I2/I3、S2-I1/I2/I5/I6、S3-E2E-A1
-- Phase B Gate（必须）：S1-E1、S1-Sec1/Sec2、S2-I3/I4/I7、S2-E1、S3-E2E-B1
+- Phase B Gate（必须）：S1-E1、S1-Sec1/Sec2、S2-I3/I4/I7、S2-E1
 
 ### 证据归档格式（建议）
 
@@ -280,6 +276,7 @@ interface OrchestrationStep {
 | KD-10 | v2 步骤类型收敛为 4 种 advance mode（click/visible/input/confirm） | 简化 Phase A 范围，6 种步骤类型推迟到 Phase B 按需扩展 | 2026-03-30 |
 | KD-11 | Flow YAML 运行时加载（API），不在构建时生成 TS | 解耦部署：改 flow 不需要重新构建前端 | 2026-03-30 |
 | KD-12 | 完成回调作为基础能力：前端 complete → 后端状态 + Socket 通知 | CVO 明确要求：完整流程闭环是基础能力，不是后续补充 | 2026-04-03 |
+| KD-13 | Phase B 聚焦平台内引导，外部平台配置改为独立页签（不走 Guide Engine） | CVO：跨系统对接方式可能变化（扫码等），引导引擎聚焦已有功能；外部流程按场景单独做页签 | 2026-04-06 |
 
 ## Timeline
 
@@ -290,6 +287,7 @@ interface OrchestrationStep {
 | 2026-03-31 | P0 场景 add-member 4 步端到端验证通过 |
 | 2026-04-01 | `add-member` 第 4 步收敛为 `confirm` 型步骤，保存成功后才允许完成 |
 | 2026-04-03 | guide completion callback 打通：前端 complete → 后端 `guideState=completed` → Socket `guide_complete` |
+| 2026-04-06 | CVO 方向校准：Phase B 聚焦平台内引导，跨系统配置改为独立页签（KD-13） |
 
 ## Review Gate
 
