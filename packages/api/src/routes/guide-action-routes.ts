@@ -16,6 +16,7 @@ import {
   type IThreadStore,
 } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { loadGuideFlow } from '../domains/guides/guide-registry-loader.js';
+import { canAccessGuideState } from '../domains/guides/guide-state-access.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
 
@@ -42,17 +43,6 @@ const completeSchema = z.object({
 function canAccessGuideThread(thread: { id: string; createdBy: string } | null, userId: string): boolean {
   if (!thread) return false;
   return thread.createdBy === userId || (thread.id === DEFAULT_THREAD_ID && thread.createdBy === 'system');
-}
-
-function canAccessGuideState(
-  thread: { id: string; createdBy: string } | null,
-  guideState: GuideStateV1 | undefined,
-  userId: string,
-): boolean {
-  if (!thread || !guideState) return false;
-  if (thread.createdBy === userId) return true;
-  if (thread.id !== DEFAULT_THREAD_ID || thread.createdBy !== 'system') return false;
-  return guideState.userId === userId;
 }
 
 export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = async (app, opts) => {

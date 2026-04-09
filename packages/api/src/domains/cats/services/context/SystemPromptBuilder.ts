@@ -623,13 +623,24 @@ export function buildInvocationContext(context: InvocationContext): string {
     const isNewOffer = context.guideCandidate.isNewOffer === true;
     // "先看步骤概览" still comes through as a chat message; start/skip are frontend-only actions
     if ((status === 'offered' || status === 'awaiting_choice') && userSelection?.includes('步骤概览')) {
+      const previewSteps =
+        status === 'offered'
+          ? [
+              `1. 调用 cat_cafe_update_guide_state(threadId="${context.threadId}", guideId="${id}", status="awaiting_choice")`,
+              `2. 调用 cat_cafe_guide_resolve(intent="${name}") 获取步骤信息`,
+              '3. 用 3-5 条简要列出主要步骤',
+              '4. 在最后问用户是否要开始引导',
+            ]
+          : [
+              '1. 不要再次调用 cat_cafe_update_guide_state（当前已经是 awaiting_choice）',
+              `2. 调用 cat_cafe_guide_resolve(intent="${name}") 获取步骤信息`,
+              '3. 用 3-5 条简要列出主要步骤',
+              '4. 在最后问用户是否要开始引导',
+            ];
       lines.push(
         `🧭 Guide Selection:${threadPart} 用户选择了「步骤概览」 guideId=${id} name=${name}`,
         '你必须按以下步骤回复：',
-        `1. 调用 cat_cafe_update_guide_state(threadId="${context.threadId}", guideId="${id}", status="awaiting_choice")`,
-        `2. 调用 cat_cafe_guide_resolve(intent="${name}") 获取步骤信息`,
-        '3. 用 3-5 条简要列出主要步骤',
-        '4. 在最后问用户是否要开始引导',
+        ...previewSteps,
         '',
       );
     } else if (status === 'offered' && isNewOffer) {

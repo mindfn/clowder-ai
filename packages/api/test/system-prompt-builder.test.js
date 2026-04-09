@@ -905,6 +905,55 @@ describe('SystemPromptBuilder', () => {
     assert.ok(!ctx.includes('cat_cafe_create_rich_block'), 'existing offered guide must not repeat the offer card');
   });
 
+  test('guide preview from offered state advances to awaiting_choice once', async () => {
+    const { buildInvocationContext } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
+    const ctx = buildInvocationContext({
+      catId: 'opus',
+      mode: 'independent',
+      teammates: [],
+      mcpAvailable: false,
+      threadId: 'thread-guide',
+      guideCandidate: {
+        id: 'add-member',
+        name: '添加成员',
+        estimatedTime: '3min',
+        status: 'offered',
+        userSelection: '步骤概览',
+      },
+    });
+
+    assert.ok(ctx.includes('Guide Selection'), 'preview branch should still activate from offered state');
+    assert.ok(
+      ctx.includes('status="awaiting_choice"'),
+      'first preview should advance the guide to awaiting_choice before resolving steps',
+    );
+  });
+
+  test('guide preview from awaiting_choice does not re-send awaiting_choice transition', async () => {
+    const { buildInvocationContext } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
+    const ctx = buildInvocationContext({
+      catId: 'opus',
+      mode: 'independent',
+      teammates: [],
+      mcpAvailable: false,
+      threadId: 'thread-guide',
+      guideCandidate: {
+        id: 'add-member',
+        name: '添加成员',
+        estimatedTime: '3min',
+        status: 'awaiting_choice',
+        userSelection: '步骤概览',
+      },
+    });
+
+    assert.ok(ctx.includes('Guide Selection'), 'preview branch should remain available after awaiting_choice');
+    assert.ok(ctx.includes('cat_cafe_guide_resolve'), 'repeated preview should still resolve and summarize steps');
+    assert.ok(
+      !ctx.includes('status="awaiting_choice"'),
+      'repeated preview must not emit an awaiting_choice -> awaiting_choice self-transition',
+    );
+  });
+
   test('buildInvocationContext omits SOP hint when sopStageHint absent', async () => {
     const { buildInvocationContext } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
     const ctx = buildInvocationContext({

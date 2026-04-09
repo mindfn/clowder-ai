@@ -61,6 +61,19 @@ describe('F150 Guide State Callbacks', () => {
     return app;
   }
 
+  async function seedDefaultThread(guideId, status, userId = 'default-user') {
+    const thread = await threadStore.get('default');
+    await threadStore.updateGuideState(thread.id, {
+      v: 1,
+      guideId,
+      status,
+      offeredAt: Date.now(),
+      ...(status === 'active' ? { startedAt: Date.now() } : {}),
+      userId,
+    });
+    return thread;
+  }
+
   // --- update-guide-state ---
 
   test('creates initial guide state as "offered"', async () => {
@@ -227,6 +240,23 @@ describe('F150 Guide State Callbacks', () => {
     assert.equal(res.statusCode, 401);
   });
 
+  test('update-guide-state rejects cross-user mutation on system-owned default thread', async () => {
+    const app = await createApp();
+    const thread = await seedDefaultThread('add-member', 'offered', 'guide-owner');
+    const { invocationId, callbackToken } = registry.create('attacker-user', 'opus', thread.id);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/update-guide-state',
+      payload: { invocationId, callbackToken, threadId: thread.id, guideId: 'add-member', status: 'active' },
+    });
+
+    assert.equal(res.statusCode, 403);
+    const stored = await threadStore.get(thread.id);
+    assert.equal(stored.guideState.status, 'offered');
+    assert.equal(stored.guideState.userId, 'guide-owner');
+  });
+
   // --- start-guide ---
 
   test('start-guide transitions from offered → active and emits socket event', async () => {
@@ -294,6 +324,26 @@ describe('F150 Guide State Callbacks', () => {
     assert.equal(res.statusCode, 400);
   });
 
+  test('start-guide rejects cross-user start on system-owned default thread', async () => {
+    const app = await createApp();
+    const thread = await seedDefaultThread('add-member', 'offered', 'guide-owner');
+    const { invocationId, callbackToken } = registry.create('attacker-user', 'opus', thread.id);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/start-guide',
+      payload: { invocationId, callbackToken, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 403);
+    const stored = await threadStore.get(thread.id);
+    assert.equal(stored.guideState.status, 'offered');
+    assert.equal(
+      broadcastCalls.find((c) => c.event === 'guide_start'),
+      undefined,
+    );
+  });
+
   // --- guide-control ---
 
   test('guide-control emits socket event when guide is active', async () => {
@@ -358,5 +408,25 @@ describe('F150 Guide State Callbacks', () => {
     assert.equal(res.statusCode, 200);
     const updatedThread = await threadStore.get(thread.id);
     assert.equal(updatedThread.guideState.status, 'cancelled');
+  });
+
+  test('guide-control rejects cross-user control on system-owned default thread', async () => {
+    const app = await createApp();
+    const thread = await seedDefaultThread('add-member', 'active', 'guide-owner');
+    const { invocationId, callbackToken } = registry.create('attacker-user', 'opus', thread.id);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/guide-control',
+      payload: { invocationId, callbackToken, action: 'exit' },
+    });
+
+    assert.equal(res.statusCode, 403);
+    const stored = await threadStore.get(thread.id);
+    assert.equal(stored.guideState.status, 'active');
+    assert.equal(
+      broadcastCalls.find((c) => c.event === 'guide_control'),
+      undefined,
+    );
   });
 });

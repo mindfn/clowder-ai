@@ -18,6 +18,7 @@ import { getCatVoice } from '../../../../../config/cat-voices.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import { detectUserMention } from '../../../../../routes/user-mention.js';
 import { estimateTokens } from '../../../../../utils/token-counter.js';
+import { canAccessGuideState } from '../../../../guides/guide-state-access.js';
 import { assembleContext } from '../../context/ContextAssembler.js';
 import {
   buildInvocationContext,
@@ -154,9 +155,11 @@ export async function* routeSerial(
       routingPolicy = thread?.routingPolicy;
       voiceMode = thread?.voiceMode;
       bootcampState = thread?.bootcampState;
+      const threadGuideState = thread?.guideState;
+      const guideState = canAccessGuideState(thread, threadGuideState, userId) ? threadGuideState : undefined;
       // F150: Read existing guide state from thread (authority source)
-      if (thread?.guideState) {
-        const gs = thread.guideState;
+      if (guideState) {
+        const gs = guideState;
         // cancelled: fully terminal, skip
         // completed: one-shot inject if not yet acked, then mark acked
         const justCompleted = gs.status === 'completed' && !gs.completionAcked;
@@ -1278,8 +1281,16 @@ export async function* routeSerial(
         deps.invocationDeps.threadStore
       ) {
         try {
-          const gs = (await deps.invocationDeps.threadStore.get(threadId))?.guideState;
-          if (gs && gs.guideId === guideCandidate.id && gs.status === 'completed' && !gs.completionAcked) {
+          const thread = await deps.invocationDeps.threadStore.get(threadId);
+          const gs = thread?.guideState;
+          if (
+            thread &&
+            gs &&
+            canAccessGuideState(thread, gs, userId) &&
+            gs.guideId === guideCandidate.id &&
+            gs.status === 'completed' &&
+            !gs.completionAcked
+          ) {
             await deps.invocationDeps.threadStore.updateGuideState(threadId, { ...gs, completionAcked: true });
           }
         } catch {

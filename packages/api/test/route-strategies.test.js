@@ -83,6 +83,35 @@ function createGuideAckThreadStore(initialGuideState, currentGuideState, project
   };
 }
 
+function createSharedDefaultGuideThreadStore(guideState) {
+  const updates = [];
+  return {
+    updates,
+    async get() {
+      return {
+        id: 'default',
+        title: 'Default Thread',
+        createdBy: 'system',
+        participants: [],
+        lastActiveAt: Date.now(),
+        createdAt: Date.now(),
+        projectPath: 'default',
+        guideState,
+      };
+    },
+    async getParticipantsWithActivity() {
+      return [];
+    },
+    async consumeMentionRoutingFeedback() {
+      return null;
+    },
+    async updateParticipantActivity() {},
+    async updateGuideState(threadId, nextGuideState) {
+      updates.push({ threadId, guideState: nextGuideState });
+    },
+  };
+}
+
 function createMockDeps(services, appendCalls, threadStore = null) {
   let counter = 0;
   return {
@@ -787,6 +816,34 @@ describe('routeParallel abort marks healthy (#267)', () => {
 });
 
 describe('F150 guide offer ownership', () => {
+  it('serial: ignores another user guide state on shared default thread', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const codexService = createCapturingService('codex', '我来处理这个请求');
+    const threadStore = createSharedDefaultGuideThreadStore({
+      v: 1,
+      guideId: 'configure-provider',
+      status: 'completed',
+      offeredAt: Date.now(),
+      completedAt: Date.now(),
+      offeredBy: 'opus',
+      userId: 'other-user',
+    });
+    const deps = createMockDeps({ codex: codexService }, null, threadStore);
+
+    for await (const _ of routeSerial(deps, ['codex'], '请帮我添加成员', 'user1', 'default')) {
+    }
+
+    assert.ok(
+      codexService.calls[0].includes('Guide Matched:'),
+      'foreign guide state should be hidden so current user can receive a fresh guide offer',
+    );
+    assert.ok(
+      !codexService.calls[0].includes('Guide Completed:'),
+      'foreign completed guide must not leak into the current user prompt',
+    );
+    assert.equal(threadStore.updates.length, 0, 'hidden foreign guide must not be acked by the wrong user');
+  });
+
   it('serial: injects offered guide only to the first target cat', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const opusService = createCapturingService('opus', '我来处理引导');
@@ -999,6 +1056,34 @@ describe('F150 guide offer ownership', () => {
       !codexService.calls[0].includes('status="offered"'),
       'second cat must not receive duplicate guide offer instructions',
     );
+  });
+
+  it('parallel: ignores another user guide state on shared default thread', async () => {
+    const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
+    const codexService = createCapturingService('codex', '我来处理这个请求');
+    const threadStore = createSharedDefaultGuideThreadStore({
+      v: 1,
+      guideId: 'configure-provider',
+      status: 'completed',
+      offeredAt: Date.now(),
+      completedAt: Date.now(),
+      offeredBy: 'opus',
+      userId: 'other-user',
+    });
+    const deps = createMockDeps({ codex: codexService }, null, threadStore);
+
+    for await (const _ of routeParallel(deps, ['codex'], '请帮我添加成员', 'user1', 'default')) {
+    }
+
+    assert.ok(
+      codexService.calls[0].includes('Guide Matched:'),
+      'foreign guide state should be hidden so current user can receive a fresh guide offer',
+    );
+    assert.ok(
+      !codexService.calls[0].includes('Guide Completed:'),
+      'foreign completed guide must not leak into the current user prompt',
+    );
+    assert.equal(threadStore.updates.length, 0, 'hidden foreign guide must not be acked by the wrong user');
   });
 });
 

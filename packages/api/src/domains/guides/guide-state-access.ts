@@ -1,0 +1,20 @@
+import { DEFAULT_THREAD_ID, type GuideStateV1 } from '../cats/services/stores/ports/ThreadStore.js';
+
+interface GuideThreadAccess {
+  id: string;
+  createdBy: string;
+}
+
+export function isSharedDefaultGuideThread(thread: GuideThreadAccess | null | undefined): boolean {
+  return Boolean(thread && thread.id === DEFAULT_THREAD_ID && thread.createdBy === 'system');
+}
+
+export function canAccessGuideState(
+  thread: GuideThreadAccess | null | undefined,
+  guideState: Pick<GuideStateV1, 'userId'> | null | undefined,
+  userId: string,
+): boolean {
+  if (!thread || !guideState) return false;
+  if (thread.createdBy === userId) return true;
+  return isSharedDefaultGuideThread(thread) && guideState.userId === userId;
+}

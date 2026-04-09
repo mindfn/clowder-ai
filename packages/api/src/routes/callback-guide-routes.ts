@@ -10,6 +10,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { InvocationRegistry } from '../domains/cats/services/agents/invocation/InvocationRegistry.js';
 import type { GuideStateV1, GuideStatus, IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
+import { canAccessGuideState } from '../domains/guides/guide-state-access.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { callbackAuthSchema } from './callback-auth-schema.js';
 import { EXPIRED_CREDENTIALS_ERROR } from './callback-errors.js';
@@ -113,6 +114,11 @@ export async function registerCallbackGuideRoutes(
     }
 
     const existing = thread.guideState;
+    const existingIsTerminal = existing?.status === 'completed' || existing?.status === 'cancelled';
+    if (existing && !existingIsTerminal && !canAccessGuideState(thread, existing, record.userId)) {
+      reply.status(403);
+      return { error: 'Guide access denied' };
+    }
 
     // First offer — no existing state
     if (!existing) {
@@ -226,6 +232,10 @@ export async function registerCallbackGuideRoutes(
         message: `Guide "${guideId}" has not been offered in this thread — call update-guide-state first`,
       };
     }
+    if (!canAccessGuideState(thread, guideState, record.userId)) {
+      reply.status(403);
+      return { error: 'Guide access denied' };
+    }
     if (guideState.status !== 'offered' && guideState.status !== 'awaiting_choice') {
       reply.status(400);
       return {
@@ -298,6 +308,10 @@ export async function registerCallbackGuideRoutes(
         error: 'no_active_guide',
         message: `No active guide in thread — current status: ${guideState?.status ?? 'none'}`,
       };
+    }
+    if (!canAccessGuideState(thread, guideState, record.userId)) {
+      reply.status(403);
+      return { error: 'Guide access denied' };
     }
 
     // Exit action → cancel guide
