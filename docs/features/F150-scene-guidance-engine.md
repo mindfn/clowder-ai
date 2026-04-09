@@ -8,7 +8,7 @@ created: 2026-03-27
 
 # F150: Scene-Based Bidirectional Guidance Engine
 
-> **Status**: Phase A 收尾中 — 基础引导引擎 CVO 验收通过，收尾修复待 review 确认 | **Owner**: 布偶猫/宪宪 | **Priority**: P1
+> **Status**: Phase A accepted / frozen — 基础引导引擎已验收冻结，可开 PR 合入 | **Owner**: 布偶猫/宪宪 | **Priority**: P1
 
 ## Why
 
@@ -112,8 +112,8 @@ interface OrchestrationStep {
 | 完成态闭环 | ✅ 完成 | 前端 `complete` → 后端 `guideState=completed` → Socket 通知猫 → 一次性消费 ack |
 | Esc 误退修复 | ✅ 完成 | KD-14：GuideOverlay preventDefault + CatCafeHub guideActive guard |
 | CVO 验收 | ✅ 通过 | 2026-04-09 CVO 手动测试”添加成员”流程，确认链路通畅 |
-| gpt52 review | 🔄 收尾轮 | completion callback 6 轮放行；收尾修复（Esc/doc/skill）待确认 |
-| 当前阶段判断 | **Phase A 收尾中** | 基础引导引擎已验收，收尾修复待 review 确认后冻结 |
+| gpt52 review | ✅ 放行 | completion callback 6 轮 + 收尾 2 轮，全部 P1/P2 已修复 |
+| 当前阶段判断 | **Phase A accepted / frozen** | 基础引导引擎已验收冻结，可开 PR 合入 main |
 
 **Phase A 交付物**：
 - 前端引擎：`guideStore.ts` + `useGuideEngine.ts` + `GuideOverlay.tsx`（含 auto-advance）

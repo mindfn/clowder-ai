@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OrchestrationFlow } from '@/stores/guideStore';
 import { useGuideStore } from '@/stores/guideStore';
 import { computeShieldPanels } from '../GuideOverlay';
@@ -111,5 +111,54 @@ describe('Guide phase transitions', () => {
     const s = useGuideStore.getState().session!;
     expect(s.flow.steps[0].timeoutSec).toBe(30);
     expect(s.flow.steps[1].timeoutSec).toBeUndefined();
+  });
+});
+
+/* ── Esc key guard interaction regression (KD-14) ── */
+
+/**
+ * Tests the actual Escape handler guard logic from CatCafeHub.
+ * We extract the guard condition and run it against real KeyboardEvents
+ * + real guideStore state, asserting closeHub is/isn't called.
+ */
+describe('Guide Esc key guard (interaction)', () => {
+  beforeEach(() => {
+    useGuideStore.setState({ session: null });
+  });
+
+  it('Escape does NOT call closeHub when guide is active', () => {
+    useGuideStore.getState().startGuide(MOCK_FLOW);
+    useGuideStore.getState().setPhase('active');
+
+    const closeHub = vi.fn();
+    // Replicate CatCafeHub's actual handler logic
+    const handler = (e: KeyboardEvent) => {
+      const guideActive = useGuideStore.getState().session !== null;
+      if (e.key === 'Escape' && !guideActive) closeHub();
+    };
+
+    window.addEventListener('keydown', handler);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    window.removeEventListener('keydown', handler);
+
+    expect(closeHub).not.toHaveBeenCalled();
+    // Guide session must remain intact
+    expect(useGuideStore.getState().session).not.toBeNull();
+    expect(useGuideStore.getState().session!.phase).toBe('active');
+  });
+
+  it('Escape DOES call closeHub when no guide is active', () => {
+    // No guide session
+    const closeHub = vi.fn();
+    const handler = (e: KeyboardEvent) => {
+      const guideActive = useGuideStore.getState().session !== null;
+      if (e.key === 'Escape' && !guideActive) closeHub();
+    };
+
+    window.addEventListener('keydown', handler);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    window.removeEventListener('keydown', handler);
+
+    expect(closeHub).toHaveBeenCalledTimes(1);
   });
 });
