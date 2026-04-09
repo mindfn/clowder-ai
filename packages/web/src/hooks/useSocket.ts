@@ -114,7 +114,7 @@ export interface SocketCallbacks {
   /** F150: Guide engine trigger */
   onGuideStart?: (data: { guideId: string; threadId: string; timestamp: number }) => void;
   /** F150: Guide control (next/back/skip/exit) */
-  onGuideControl?: (data: { action: string; threadId: string; timestamp: number }) => void;
+  onGuideControl?: (data: { action: string; guideId: string; threadId: string; timestamp: number }) => void;
 }
 
 const RECONNECT_RECONCILE_DELAY_MS = 2000;
@@ -649,7 +649,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string) {
     });
 
     // F150: Guide control (next/back/skip/exit) from MCP tool
-    socket.on('guide_control', (data: { action: string; threadId: string; timestamp: number }) => {
+    socket.on('guide_control', (data: { action: string; guideId: string; threadId: string; timestamp: number }) => {
       const routeThread = threadIdRef.current;
       const storeThread = useChatStore.getState().currentThreadId;
       const isActiveThread = Boolean(
