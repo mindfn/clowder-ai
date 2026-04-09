@@ -59,9 +59,26 @@ const log = createModuleLogger('route-serial');
 function shouldHandleCompletedGuide(
   guideCompletionOwner: string | undefined,
   targetCatIds: ReadonlySet<string>,
+  fallbackCatId: string | undefined,
   catId: string,
 ): boolean {
-  return !guideCompletionOwner || guideCompletionOwner === catId || !targetCatIds.has(guideCompletionOwner);
+  if (!guideCompletionOwner) return true;
+  if (guideCompletionOwner === catId) return true;
+  if (!targetCatIds.has(guideCompletionOwner)) return fallbackCatId === catId;
+  return false;
+}
+
+function shouldHandleOfferedGuide(
+  guideOfferOwner: string | undefined,
+  targetCatIds: ReadonlySet<string>,
+  fallbackCatId: string | undefined,
+  catId: string,
+  hasUserSelection: boolean,
+): boolean {
+  if (!guideOfferOwner) return true;
+  if (guideOfferOwner === catId) return true;
+  if (hasUserSelection && !targetCatIds.has(guideOfferOwner)) return fallbackCatId === catId;
+  return false;
 }
 
 export async function* routeSerial(
@@ -125,8 +142,11 @@ export async function* routeSerial(
   let guideCandidate: InvocationContext['guideCandidate'];
   /** catId that owns an offered guide prompt, to avoid duplicate offered→offered writes. */
   let guideOfferOwner: string | undefined;
+  /** catId that should receive offered-guide selection when owner is absent. */
+  let guideOfferSelectionFallbackCatId: string | undefined;
   /** catId that should receive the one-shot completion notice (offeredBy). */
   let guideCompletionOwner: string | undefined;
+  let guideCompletionFallbackCatId: string | undefined;
   const targetCatIds = new Set<string>(targetCats);
   if (deps.invocationDeps.threadStore) {
     try {
@@ -167,9 +187,15 @@ export async function* routeSerial(
           };
           if (gs.status === 'offered') {
             guideOfferOwner = gs.offeredBy;
+            if (selectionMatch && gs.offeredBy && !targetCatIds.has(gs.offeredBy)) {
+              guideOfferSelectionFallbackCatId = targetCats[0];
+            }
           }
           if (justCompleted) {
             guideCompletionOwner = gs.offeredBy;
+            if (gs.offeredBy && !targetCatIds.has(gs.offeredBy)) {
+              guideCompletionFallbackCatId = targetCats[0];
+            }
           }
         }
       }
@@ -311,11 +337,15 @@ export async function* routeSerial(
         ...(bootcampState ? { bootcampState, threadId } : {}),
         ...(guideCandidate &&
         (guideCandidate.status === 'completed'
-          ? shouldHandleCompletedGuide(guideCompletionOwner, targetCatIds, catId)
+          ? shouldHandleCompletedGuide(guideCompletionOwner, targetCatIds, guideCompletionFallbackCatId, catId)
           : guideCandidate.status === 'offered'
-            ? !guideOfferOwner ||
-              guideOfferOwner === catId ||
-              (!!guideCandidate.userSelection && !targetCatIds.has(guideOfferOwner))
+            ? shouldHandleOfferedGuide(
+                guideOfferOwner,
+                targetCatIds,
+                guideOfferSelectionFallbackCatId,
+                catId,
+                Boolean(guideCandidate.userSelection),
+              )
             : true)
           ? { guideCandidate, threadId }
           : {}),
@@ -1244,7 +1274,7 @@ export async function* routeSerial(
       if (
         catProducedOutput &&
         guideCandidate?.status === 'completed' &&
-        shouldHandleCompletedGuide(guideCompletionOwner, targetCatIds, catId) &&
+        shouldHandleCompletedGuide(guideCompletionOwner, targetCatIds, guideCompletionFallbackCatId, catId) &&
         deps.invocationDeps.threadStore
       ) {
         try {

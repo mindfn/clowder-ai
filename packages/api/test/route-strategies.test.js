@@ -851,6 +851,52 @@ describe('F150 guide offer ownership', () => {
     );
   });
 
+  it('serial: routes owner-missing guide selection to only the first target cat', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const opusService = createCapturingService('opus', '我来给步骤概览');
+    const codexService = createCapturingService('codex', '我不该收到选择分支');
+    const threadStore = {
+      async get() {
+        return {
+          id: 'thread1',
+          title: 'Test',
+          createdBy: 'user1',
+          participants: [],
+          lastActiveAt: Date.now(),
+          createdAt: Date.now(),
+          projectPath: 'default',
+          guideState: {
+            v: 1,
+            guideId: 'add-member',
+            status: 'offered',
+            offeredAt: Date.now(),
+            offeredBy: 'dare',
+          },
+        };
+      },
+      async getParticipantsWithActivity() {
+        return [];
+      },
+      async consumeMentionRoutingFeedback() {
+        return null;
+      },
+      async updateParticipantActivity() {},
+    };
+    const deps = createMockDeps({ opus: opusService, codex: codexService }, null, threadStore);
+
+    for await (const _ of routeSerial(deps, ['opus', 'codex'], '引导流程：步骤概览', 'user1', 'thread1')) {
+    }
+
+    assert.ok(
+      opusService.calls[0].includes('用户选择了「步骤概览」'),
+      'first target cat should receive selection fallback',
+    );
+    assert.ok(
+      !codexService.calls[0].includes('用户选择了「步骤概览」'),
+      'second target cat must not receive duplicate selection fallback',
+    );
+  });
+
   it('parallel: passes guide selection context to a non-owner target cat', async () => {
     const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
     const codexService = createCapturingService('codex', '我来给步骤概览');
@@ -1074,6 +1120,32 @@ describe('F150 guide completion ack ownership', () => {
     );
     assert.equal(threadStore.updates.length, 1, 'visible non-owner response should ack guide completion');
     assert.equal(threadStore.updates[0].guideState.completionAcked, true);
+  });
+
+  it('serial: routes completed-guide fallback only to the first target cat', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const completedGuide = {
+      v: 1,
+      guideId: 'add-member',
+      status: 'completed',
+      offeredAt: Date.now(),
+      completedAt: Date.now(),
+      offeredBy: 'dare',
+    };
+    const threadStore = createGuideAckThreadStore(completedGuide, completedGuide, 'default');
+    const opusService = createCapturingService('opus', '我来接着处理');
+    const codexService = createCapturingService('codex', '我也看到了');
+    const deps = createMockDeps({ opus: opusService, codex: codexService }, null, threadStore);
+
+    for await (const _ of routeSerial(deps, ['opus', 'codex'], '继续', 'user1', 'thread1')) {
+    }
+
+    assert.ok(opusService.calls[0].includes('Guide Completed:'), 'first target cat should receive completed guide');
+    assert.ok(
+      !codexService.calls[0].includes('Guide Completed:'),
+      'second target cat must not receive duplicate completed guide fallback',
+    );
+    assert.equal(threadStore.updates.length, 1, 'only one routed cat should ack the completed guide');
   });
 
   it('parallel: injects and acks completed guide when owner cat is not routed', async () => {
