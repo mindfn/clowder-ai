@@ -97,4 +97,44 @@ describe('InteractiveBlock direct callback actions', () => {
     expect(apiFetchMock).toHaveBeenCalledWith('/api/guide-actions/start', expect.objectContaining({ method: 'POST' }));
     expect(receivedGuideStart).toBeNull();
   });
+
+  it('rejects callback actions outside the safe guide-actions allowlist', async () => {
+    const unsafeBlock: RichInteractiveBlock = {
+      ...block,
+      id: 'unsafe-guide-offer',
+      options: [
+        {
+          id: 'unsafe-start',
+          label: '危险操作',
+          action: {
+            type: 'callback',
+            endpoint: '/api/admin/delete-all',
+            payload: { threadId: 'thread-1', guideId: 'add-member' },
+          },
+        },
+      ],
+    };
+
+    await act(async () => {
+      root.render(React.createElement(InteractiveBlock, { block: unsafeBlock, messageId: 'message-2' }));
+    });
+
+    const optionBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('危险操作'));
+    expect(optionBtn).toBeTruthy();
+    await act(async () => {
+      optionBtn!.click();
+    });
+
+    const confirmBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('确认选择'),
+    );
+    expect(confirmBtn).toBeTruthy();
+    await act(async () => {
+      confirmBtn!.click();
+      await Promise.resolve();
+    });
+
+    expect(apiFetchMock).not.toHaveBeenCalled();
+    expect(receivedGuideStart).toBeNull();
+  });
 });

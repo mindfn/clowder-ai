@@ -54,6 +54,20 @@ function dispatchInteractiveSend(text: string) {
   window.dispatchEvent(new CustomEvent('cat-cafe:interactive-send', { detail: { text } }));
 }
 
+const GUIDE_ACTIONS_CALLBACK_PREFIX = '/api/guide-actions/';
+const GUIDE_START_CALLBACK_PATH = '/api/guide-actions/start';
+
+function resolveSafeInteractiveCallbackEndpoint(endpoint: string): string | null {
+  try {
+    const url = new URL(endpoint, window.location.origin);
+    if (url.origin !== window.location.origin) return null;
+    if (!url.pathname.startsWith(GUIDE_ACTIONS_CALLBACK_PREFIX)) return null;
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return null;
+  }
+}
+
 /** Render option icon: prefer SVG icon over emoji */
 function OptionIcon({ opt, className = 'w-5 h-5' }: { opt: InteractiveOption; className?: string }) {
   if (opt.icon)
@@ -554,21 +568,28 @@ export function InteractiveBlock({
       const selectedOption = block.options.find((o) => optionIds.includes(o.id));
       if (selectedOption?.action?.type === 'callback') {
         const { endpoint, payload } = selectedOption.action;
+        const safeEndpoint = resolveSafeInteractiveCallbackEndpoint(endpoint);
+        if (!safeEndpoint) {
+          console.error('[InteractiveBlock] callback action blocked by endpoint allowlist:', endpoint);
+          setLocalDisabled(false);
+          setLocalSelectedIds([]);
+          return;
+        }
         try {
-          const response = await apiFetch(endpoint, {
+          const response = await apiFetch(safeEndpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload ?? {}),
           });
           if (!response.ok) {
-            console.error('[InteractiveBlock] callback action rejected:', response.status, endpoint);
+            console.error('[InteractiveBlock] callback action rejected:', response.status, safeEndpoint);
             setLocalDisabled(false);
             setLocalSelectedIds([]);
             return;
           }
 
           // F150: Trigger guide overlay directly — don't rely on socket round-trip
-          if (endpoint.includes('/guide-actions/start') && payload && 'guideId' in payload) {
+          if (safeEndpoint === GUIDE_START_CALLBACK_PATH && payload && 'guideId' in payload) {
             const p = payload as Record<string, unknown>;
             window.dispatchEvent(
               new CustomEvent('guide:start', {

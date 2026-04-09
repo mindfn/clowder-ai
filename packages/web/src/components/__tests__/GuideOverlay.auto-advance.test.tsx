@@ -214,4 +214,19 @@ describe('GuideOverlay auto-advance lifecycle', () => {
 
     expect(useGuideStore.getState().session?.phase).toBe('complete');
   });
+
+  it('does not block UI interaction while target is still unresolved', () => {
+    act(() => {
+      confirmTarget.remove();
+      useGuideStore.getState().startGuide(CONFIRM_FLOW);
+    });
+    act(() => {
+      vi.advanceTimersByTime(120);
+    });
+
+    expect(useGuideStore.getState().session?.phase).toBe('locating');
+    const fallbackShield = container.querySelector('[data-guide-click-shield="fallback"]');
+    expect(fallbackShield).toBeInstanceOf(HTMLDivElement);
+    expect((fallbackShield as HTMLDivElement).style.pointerEvents).toBe('none');
+  });
 });

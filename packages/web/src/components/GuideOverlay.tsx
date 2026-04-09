@@ -196,16 +196,19 @@ function GuideOverlayInner() {
       {panels ? (
         <>
           <div
+            data-guide-click-shield="panel"
             className="fixed top-0 left-0 right-0"
             style={{ height: panels.top.height, zIndex: shieldZ, pointerEvents: 'auto' }}
             aria-hidden="true"
           />
           <div
+            data-guide-click-shield="panel"
             className="fixed bottom-0 left-0 right-0"
             style={{ top: panels.bottom.top, zIndex: shieldZ, pointerEvents: 'auto' }}
             aria-hidden="true"
           />
           <div
+            data-guide-click-shield="panel"
             className="fixed"
             style={{
               top: panels.left.top,
@@ -218,6 +221,7 @@ function GuideOverlayInner() {
             aria-hidden="true"
           />
           <div
+            data-guide-click-shield="panel"
             className="fixed"
             style={{
               top: panels.right.top,
@@ -231,7 +235,12 @@ function GuideOverlayInner() {
           />
         </>
       ) : (
-        <div className="fixed inset-0" style={{ zIndex: shieldZ, pointerEvents: 'auto' }} aria-hidden="true" />
+        <div
+          data-guide-click-shield="fallback"
+          className="fixed inset-0"
+          style={{ zIndex: shieldZ, pointerEvents: 'none' }}
+          aria-hidden="true"
+        />
       )}
 
       {/* HUD: tips + exit only */}
