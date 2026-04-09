@@ -2,7 +2,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useGuideEngine } from '@/hooks/useGuideEngine';
-import { useGuideStore, type OrchestrationFlow } from '@/stores/guideStore';
+import { type OrchestrationFlow, useGuideStore } from '@/stores/guideStore';
 
 const apiFetchMock = vi.fn();
 

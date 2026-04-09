@@ -771,10 +771,7 @@ describe('F150 guide offer ownership', () => {
 
     assert.equal(opusService.calls.length, 1, 'first cat should be invoked');
     assert.equal(codexService.calls.length, 1, 'second cat should still be invoked');
-    assert.ok(
-      opusService.calls[0].includes('status="offered"'),
-      'first cat should receive guide offer instructions',
-    );
+    assert.ok(opusService.calls[0].includes('status="offered"'), 'first cat should receive guide offer instructions');
     assert.ok(
       !codexService.calls[0].includes('status="offered"'),
       'second cat must not receive duplicate guide offer instructions',
@@ -792,10 +789,7 @@ describe('F150 guide offer ownership', () => {
 
     assert.equal(opusService.calls.length, 1, 'first cat should be invoked');
     assert.equal(codexService.calls.length, 1, 'second cat should still be invoked');
-    assert.ok(
-      opusService.calls[0].includes('status="offered"'),
-      'first cat should receive guide offer instructions',
-    );
+    assert.ok(opusService.calls[0].includes('status="offered"'), 'first cat should receive guide offer instructions');
     assert.ok(
       !codexService.calls[0].includes('status="offered"'),
       'second cat must not receive duplicate guide offer instructions',
