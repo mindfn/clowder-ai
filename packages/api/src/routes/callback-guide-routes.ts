@@ -124,6 +124,7 @@ export async function registerCallbackGuideRoutes(
         v: 1,
         guideId,
         status: 'offered',
+        userId: record.userId,
         offeredAt: Date.now(),
         offeredBy: record.catId ?? undefined,
       };
@@ -151,6 +152,7 @@ export async function registerCallbackGuideRoutes(
         v: 1,
         guideId,
         status: 'offered',
+        userId: record.userId,
         offeredAt: Date.now(),
         offeredBy: record.catId ?? undefined,
       };
@@ -165,6 +167,7 @@ export async function registerCallbackGuideRoutes(
         v: 1,
         guideId,
         status: 'offered',
+        userId: record.userId,
         offeredAt: Date.now(),
         offeredBy: record.catId ?? undefined,
       };

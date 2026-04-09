@@ -293,6 +293,31 @@ describe('Session bind API route', () => {
     }
   });
 
+  test('returns 403 when default-thread active session belongs to another user', async () => {
+    const { app, threadStore, sessionChainStore } = await buildApp();
+    try {
+      const thread = await threadStore.get('default');
+
+      sessionChainStore.create({
+        cliSessionId: 'cli-owner',
+        threadId: thread.id,
+        catId: 'opus',
+        userId: 'owner-user',
+      });
+
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/api/threads/${thread.id}/sessions/opus/bind`,
+        headers: { 'x-cat-cafe-user': 'attacker-user' },
+        payload: { cliSessionId: 'cli-evil' },
+      });
+
+      assert.equal(res.statusCode, 403);
+    } finally {
+      await app.close();
+    }
+  });
+
   test('supports all valid catIds', async () => {
     const { app, threadStore } = await buildApp();
     try {

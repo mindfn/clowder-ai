@@ -44,6 +44,17 @@ function canAccessGuideThread(thread: { id: string; createdBy: string } | null, 
   return thread.createdBy === userId || (thread.id === DEFAULT_THREAD_ID && thread.createdBy === 'system');
 }
 
+function canAccessGuideState(
+  thread: { id: string; createdBy: string } | null,
+  guideState: GuideStateV1 | undefined,
+  userId: string,
+): boolean {
+  if (!thread || !guideState) return false;
+  if (thread.createdBy === userId) return true;
+  if (thread.id !== DEFAULT_THREAD_ID || thread.createdBy !== 'system') return false;
+  return guideState.userId === userId;
+}
+
 export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = async (app, opts) => {
   const { threadStore, socketManager } = opts;
   const log = app.log;
@@ -78,6 +89,10 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
     if (!gs || gs.guideId !== guideId) {
       reply.status(400);
       return { error: 'guide_not_offered', message: `Guide "${guideId}" not offered in this thread` };
+    }
+    if (!canAccessGuideState(thread, gs, userId)) {
+      reply.status(403);
+      return { error: 'Guide access denied' };
     }
     if (gs.status !== 'offered' && gs.status !== 'awaiting_choice') {
       reply.status(400);
@@ -155,6 +170,10 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
       reply.status(400);
       return { error: 'guide_not_offered', message: `Guide "${guideId}" not offered in this thread` };
     }
+    if (!canAccessGuideState(thread, gs, userId)) {
+      reply.status(403);
+      return { error: 'Guide access denied' };
+    }
     if (gs.status === 'completed' || gs.status === 'cancelled') {
       return { status: 'ok', guideState: gs };
     }
@@ -202,6 +221,10 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
     if (!gs || gs.guideId !== guideId) {
       reply.status(400);
       return { error: 'guide_not_active', message: `Guide "${guideId}" not active in this thread` };
+    }
+    if (!canAccessGuideState(thread, gs, userId)) {
+      reply.status(403);
+      return { error: 'Guide access denied' };
     }
     if (gs.status === 'completed') {
       return { status: 'ok', guideState: gs };

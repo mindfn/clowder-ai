@@ -184,6 +184,8 @@ export interface GuideStateV1 {
   v: 1;
   guideId: string;
   status: GuideStatus;
+  /** Owning user for default-thread guide state. */
+  userId?: string;
   currentStep?: number;
   offeredAt: number;
   startedAt?: number;

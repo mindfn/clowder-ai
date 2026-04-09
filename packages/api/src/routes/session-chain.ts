@@ -39,6 +39,20 @@ function canAccessThread(thread: { id: string; createdBy: string } | null, userI
   return thread.id === DEFAULT_THREAD_ID && thread.createdBy === 'system';
 }
 
+function isSharedDefaultThread(thread: { id: string; createdBy: string } | null): boolean {
+  return Boolean(thread && thread.id === DEFAULT_THREAD_ID && thread.createdBy === 'system');
+}
+
+function canAccessSessionRecord(
+  thread: { id: string; createdBy: string } | null,
+  session: { userId: string } | null,
+  userId: string,
+): boolean {
+  if (!thread || !session) return false;
+  if (thread.createdBy === userId) return true;
+  return isSharedDefaultThread(thread) && session.userId === userId;
+}
+
 export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChainRouteOptions): Promise<void> {
   const { sessionChainStore, threadStore, messageStore, transcriptReader, sessionSealer } = opts;
 
@@ -72,12 +86,14 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
         return { error: `Cannot query sessions for cat '${catId}' — you are '${callerCatId}'` };
       }
       const sessions = await sessionChainStore.getChain(effectiveCatId as CatId, threadId);
-      return reply.send({ sessions });
+      const visibleSessions = isSharedDefaultThread(thread) ? sessions.filter((session) => session.userId === userId) : sessions;
+      return reply.send({ sessions: visibleSessions });
     }
 
-    // No catId filter at all (hub UI god-view) — return all sessions for the thread
+    // No catId filter at all (hub UI god-view) — default thread stays user-scoped.
     const sessions = await sessionChainStore.getChainByThread(threadId);
-    return reply.send({ sessions });
+    const visibleSessions = isSharedDefaultThread(thread) ? sessions.filter((session) => session.userId === userId) : sessions;
+    return reply.send({ sessions: visibleSessions });
   });
 
   app.get<{
@@ -101,7 +117,7 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
       reply.status(404);
       return { error: 'Thread not found' };
     }
-    if (!canAccessThread(thread, userId)) {
+    if (!canAccessThread(thread, userId) || !canAccessSessionRecord(thread, session, userId)) {
       reply.status(403);
       return { error: 'Access denied' };
     }
@@ -132,7 +148,7 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
       reply.status(404);
       return { error: 'Thread not found' };
     }
-    if (!canAccessThread(thread, userId)) {
+    if (!canAccessThread(thread, userId) || !canAccessSessionRecord(thread, session, userId)) {
       reply.status(403);
       return { error: 'Access denied' };
     }
@@ -260,6 +276,10 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
 
     // Check for active session
     const active = await sessionChainStore.getActive(catId as CatId, threadId);
+    if (active && !canAccessSessionRecord(thread, active, userId)) {
+      reply.status(403);
+      return { error: 'Access denied' };
+    }
 
     let session;
     let mode: 'updated' | 'created';
