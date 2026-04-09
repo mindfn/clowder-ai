@@ -56,6 +56,33 @@ function createSequentialCapturingService(catId, responses) {
   };
 }
 
+function createGuideAckThreadStore(initialGuideState, currentGuideState) {
+  let getCount = 0;
+  const updates = [];
+  return {
+    updates,
+    async get() {
+      getCount += 1;
+      return {
+        id: 'thread1',
+        projectPath: '/tmp/test',
+        title: 'Test',
+        createdBy: 'user1',
+        participants: [],
+        lastActiveAt: Date.now(),
+        createdAt: Date.now(),
+        guideState: getCount === 1 ? initialGuideState : currentGuideState,
+      };
+    },
+    async getParticipantsWithActivity() {
+      return [];
+    },
+    async updateGuideState(threadId, guideState) {
+      updates.push({ threadId, guideState });
+    },
+  };
+}
+
 function createMockDeps(services, appendCalls, threadStore = null) {
   let counter = 0;
   return {
@@ -794,6 +821,63 @@ describe('F150 guide offer ownership', () => {
       !codexService.calls[0].includes('status="offered"'),
       'second cat must not receive duplicate guide offer instructions',
     );
+  });
+});
+
+describe('F150 guide completion ack ownership', () => {
+  it('serial: does not ack a different guide that replaced the completed one', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const threadStore = createGuideAckThreadStore(
+      {
+        v: 1,
+        guideId: 'add-member',
+        status: 'completed',
+        offeredAt: Date.now(),
+        completedAt: Date.now(),
+        offeredBy: 'opus',
+      },
+      {
+        v: 1,
+        guideId: 'configure-provider',
+        status: 'offered',
+        offeredAt: Date.now(),
+        offeredBy: 'codex',
+      },
+    );
+    const deps = createMockDeps({ opus: createMockService('opus', 'done') }, null, threadStore);
+
+    for await (const _ of routeSerial(deps, ['opus'], '继续', 'user1', 'thread1')) {
+    }
+
+    assert.equal(threadStore.updates.length, 0, 'must not ack a replacement guide');
+  });
+
+  it('parallel: does not ack a different guide that replaced the completed one', async () => {
+    const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
+    const threadStore = createGuideAckThreadStore(
+      {
+        v: 1,
+        guideId: 'add-member',
+        status: 'completed',
+        offeredAt: Date.now(),
+        completedAt: Date.now(),
+        offeredBy: 'opus',
+      },
+      {
+        v: 1,
+        guideId: 'configure-provider',
+        status: 'active',
+        offeredAt: Date.now(),
+        startedAt: Date.now(),
+        offeredBy: 'codex',
+      },
+    );
+    const deps = createMockDeps({ opus: createMockService('opus', 'done') }, null, threadStore);
+
+    for await (const _ of routeParallel(deps, ['opus'], '继续', 'user1', 'thread1')) {
+    }
+
+    assert.equal(threadStore.updates.length, 0, 'must not ack a replacement guide');
   });
 });
 

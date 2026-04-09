@@ -62,13 +62,19 @@ export async function registerCallbackGuideRoutes(
     registry: InvocationRegistry;
     threadStore: IThreadStore;
     socketManager: SocketManager;
+    loadGuideFlow?: (guideId: string) => unknown;
   },
 ): Promise<void> {
   const { registry, threadStore, socketManager } = deps;
   const log = app.log;
 
   // Static ESM import — fail loudly if loader is broken
-  const { isValidGuideId, resolveGuideForIntent } = await import('../domains/guides/guide-registry-loader.js');
+  const {
+    isValidGuideId,
+    loadGuideFlow: defaultLoadGuideFlow,
+    resolveGuideForIntent,
+  } = await import('../domains/guides/guide-registry-loader.js');
+  const loadGuideFlow = deps.loadGuideFlow ?? defaultLoadGuideFlow;
 
   // POST /api/callbacks/update-guide-state
   app.post('/api/callbacks/update-guide-state', async (request, reply) => {
@@ -222,6 +228,14 @@ export async function registerCallbackGuideRoutes(
       return {
         error: `Cannot start guide in status "${guideState.status}" — must be "offered" or "awaiting_choice"`,
       };
+    }
+
+    try {
+      loadGuideFlow(guideId);
+    } catch (err) {
+      reply.status(400);
+      log.warn({ guideId, threadId: record.threadId, err }, '[F150] callback start rejected — flow not loadable');
+      return { error: 'guide_flow_invalid', message: (err as Error).message };
     }
 
     // Transition to active

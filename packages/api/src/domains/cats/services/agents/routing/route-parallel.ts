@@ -990,7 +990,7 @@ export async function* routeParallel(
       ) {
         try {
           const gs = (await deps.invocationDeps.threadStore.get(threadId))?.guideState;
-          if (gs && !gs.completionAcked) {
+          if (gs && gs.guideId === guideCandidate.id && gs.status === 'completed' && !gs.completionAcked) {
             await deps.invocationDeps.threadStore.updateGuideState(threadId, { ...gs, completionAcked: true });
           }
         } catch {

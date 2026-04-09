@@ -36,7 +36,7 @@ describe('F150 Guide callback routes', () => {
     };
   });
 
-  async function createApp() {
+  async function createApp(overrides = {}) {
     const { callbacksRoutes } = await import('../dist/routes/callbacks.js');
     const app = Fastify();
     await app.register(callbacksRoutes, {
@@ -44,6 +44,7 @@ describe('F150 Guide callback routes', () => {
       messageStore,
       socketManager,
       threadStore,
+      ...overrides,
     });
     return app;
   }
@@ -133,6 +134,29 @@ describe('F150 Guide callback routes', () => {
 
       const body = JSON.parse(res.body);
       assert.equal(body.status, 'stale_ignored');
+      assert.equal(broadcasts.length, 0);
+    });
+
+    test('rejects callback start when guide flow is not loadable', async () => {
+      const app = await createApp({
+        loadGuideFlow() {
+          throw new Error('broken flow yaml');
+        },
+      });
+      const { invocationId, callbackToken, threadId } = createCreds();
+      await seedGuideState(threadId, 'add-member', 'offered');
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/callbacks/start-guide',
+        payload: { invocationId, callbackToken, guideId: 'add-member' },
+      });
+
+      assert.equal(res.statusCode, 400);
+      const body = JSON.parse(res.body);
+      assert.equal(body.error, 'guide_flow_invalid');
+      assert.equal(body.message, 'broken flow yaml');
+      assert.equal((await threadStore.get(threadId)).guideState.status, 'offered');
       assert.equal(broadcasts.length, 0);
     });
   });
