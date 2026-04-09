@@ -199,4 +199,44 @@ describe('InteractiveBlock direct callback actions', () => {
     expect(apiFetchMock).toHaveBeenCalledWith('/api/guide-actions/start', expect.objectContaining({ method: 'POST' }));
     expect(receivedGuideStart).toBe('add-member');
   });
+
+  it('keeps ordinary non-callback interactive blocks one-shot', async () => {
+    apiFetchMock.mockResolvedValue({ ok: true, status: 200 });
+    const oneShotBlock: RichInteractiveBlock = {
+      id: 'one-shot-select',
+      kind: 'interactive',
+      v: 1,
+      interactiveType: 'select',
+      title: '选一个答案',
+      options: [
+        { id: 'a', label: 'A' },
+        { id: 'b', label: 'B' },
+      ],
+    };
+
+    await act(async () => {
+      root.render(React.createElement(InteractiveBlock, { block: oneShotBlock, messageId: 'message-4' }));
+    });
+
+    const optionBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('A'));
+    expect(optionBtn).toBeTruthy();
+    await act(async () => {
+      optionBtn!.click();
+    });
+
+    const confirmBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('确认选择'),
+    );
+    expect(confirmBtn).toBeTruthy();
+    await act(async () => {
+      confirmBtn!.click();
+      await Promise.resolve();
+    });
+
+    const optionBtnsAfterSubmit = Array.from(container.querySelectorAll('button')).filter(
+      (b) => b.textContent?.includes('A') || b.textContent?.includes('B'),
+    ) as HTMLButtonElement[];
+    expect(optionBtnsAfterSubmit).toHaveLength(2);
+    expect(optionBtnsAfterSubmit.every((btn) => btn.disabled)).toBe(true);
+  });
 });

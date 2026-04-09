@@ -894,6 +894,49 @@ describe('F150 guide offer ownership', () => {
     );
   });
 
+  it('parallel: routes owner-missing guide selection to only the first target cat', async () => {
+    const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
+    const opusService = createCapturingService('opus', '我来给步骤概览');
+    const codexService = createCapturingService('codex', '我不该收到选择分支');
+    const threadStore = {
+      async get() {
+        return {
+          id: 'thread1',
+          title: 'Test',
+          createdBy: 'user1',
+          participants: [],
+          lastActiveAt: Date.now(),
+          createdAt: Date.now(),
+          projectPath: 'default',
+          guideState: {
+            v: 1,
+            guideId: 'add-member',
+            status: 'offered',
+            offeredAt: Date.now(),
+            offeredBy: 'dare',
+          },
+        };
+      },
+      async getParticipantsWithActivity() {
+        return [];
+      },
+      async updateParticipantActivity() {},
+    };
+    const deps = createMockDeps({ opus: opusService, codex: codexService }, null, threadStore);
+
+    for await (const _ of routeParallel(deps, ['opus', 'codex'], '引导流程：步骤概览', 'user1', 'thread1')) {
+    }
+
+    assert.ok(
+      opusService.calls[0].includes('用户选择了「步骤概览」'),
+      'first target cat should receive selection fallback',
+    );
+    assert.ok(
+      !codexService.calls[0].includes('用户选择了「步骤概览」'),
+      'second target cat must not receive duplicate selection fallback',
+    );
+  });
+
   it('parallel: injects offered guide only to the first target cat', async () => {
     const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
     const opusService = createCapturingService('opus', '我来处理引导');

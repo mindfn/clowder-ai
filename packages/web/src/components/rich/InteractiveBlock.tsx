@@ -68,6 +68,25 @@ function resolveSafeInteractiveCallbackEndpoint(endpoint: string): string | null
   }
 }
 
+function shouldKeepGuideOfferInteractive(
+  block: RichInteractiveBlock,
+  selectedOption: InteractiveOption | undefined,
+): boolean {
+  if (!selectedOption || selectedOption.id !== 'preview' || selectedOption.action) return false;
+  if (block.messageTemplate !== '引导流程：{selection}') return false;
+
+  const callbackEndpoints = new Set(
+    block.options
+      .map((option) => (option.action?.type === 'callback' ? option.action.endpoint : null))
+      .filter((endpoint): endpoint is string => Boolean(endpoint)),
+  );
+
+  return (
+    callbackEndpoints.has(GUIDE_START_CALLBACK_PATH) ||
+    [...callbackEndpoints].some((endpoint) => endpoint.startsWith(GUIDE_ACTIONS_CALLBACK_PREFIX))
+  );
+}
+
 /** Render option icon: prefer SVG icon over emoji */
 function OptionIcon({ opt, className = 'w-5 h-5' }: { opt: InteractiveOption; className?: string }) {
   if (opt.icon)
@@ -562,7 +581,7 @@ export function InteractiveBlock({
       }
 
       const selectedOption = block.options.find((o) => optionIds.includes(o.id));
-      const shouldDisable = selectedOption?.action?.type === 'callback';
+      const shouldDisable = !shouldKeepGuideOfferInteractive(block, selectedOption);
       setLocalSelectedIds(optionIds);
       setLocalDisabled(shouldDisable);
 
