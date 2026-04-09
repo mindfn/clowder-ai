@@ -8,7 +8,7 @@ created: 2026-03-27
 
 # F150: Scene-Based Bidirectional Guidance Engine
 
-> **Status**: Phase A accepted / frozen — 基础引导引擎已验收，可开 PR 合入 | **Owner**: 布偶猫/宪宪 | **Priority**: P1
+> **Status**: Phase A 收尾中 — 基础引导引擎 CVO 验收通过，收尾修复待 review 确认 | **Owner**: 布偶猫/宪宪 | **Priority**: P1
 
 ## Why
 
@@ -110,10 +110,10 @@ interface OrchestrationStep {
 | 核心引擎 | ✅ 完成 | tag-based runtime、YAML flow、前端遮罩/镂空、auto-advance、exit-only HUD 已跑通 |
 | P0 内部场景 | ✅ 完成 | `add-member` 已收口为 4 步：`hub.trigger → cats.overview → cats.add-member → member-editor.profile(confirm)` |
 | 完成态闭环 | ✅ 完成 | 前端 `complete` → 后端 `guideState=completed` → Socket 通知猫 → 一次性消费 ack |
-| Esc 误退修复 | ✅ 完成 | KD-14：禁用全局 Esc 退出，仅保留显式退出按钮 |
+| Esc 误退修复 | ✅ 完成 | KD-14：GuideOverlay preventDefault + CatCafeHub guideActive guard |
 | CVO 验收 | ✅ 通过 | 2026-04-09 CVO 手动测试”添加成员”流程，确认链路通畅 |
-| gpt52 review | ✅ 放行 | 6 轮 review，所有 P1/P2 已修复 |
-| 当前阶段判断 | **Phase A accepted / frozen** | 基础引导引擎已验收冻结，可开 PR 合入 main |
+| gpt52 review | 🔄 收尾轮 | completion callback 6 轮放行；收尾修复（Esc/doc/skill）待确认 |
+| 当前阶段判断 | **Phase A 收尾中** | 基础引导引擎已验收，收尾修复待 review 确认后冻结 |
 
 **Phase A 交付物**：
 - 前端引擎：`guideStore.ts` + `useGuideEngine.ts` + `GuideOverlay.tsx`（含 auto-advance）
@@ -132,8 +132,8 @@ interface OrchestrationStep {
 
 ### guide-authoring Skill
 
-已创建 `cat-cafe-skills/guide-authoring/SKILL.md`，定义 7 步标准 SOP：
-场景识别 → YAML 编排 → 标签标注 → 注册发现 → 资产准备 → CI 契约 → E2E 验证。
+已创建 `cat-cafe-skills/guide-authoring/SKILL.md`，定义 6 步标准 SOP（v2）：
+场景识别 → YAML 编排（v2 auto-advance） → 标签标注 → 注册发现 → CI 契约 → E2E 验证。
 
 ### 场景优先级（能力审计结果）
 
