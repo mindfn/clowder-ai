@@ -5,9 +5,14 @@ import { InteractiveBlock } from '@/components/rich/InteractiveBlock';
 import type { RichInteractiveBlock } from '@/stores/chat-types';
 
 const apiFetchMock = vi.fn();
+const mockUpdateRichBlock = vi.fn();
+const mockStoreState = {
+  currentThreadId: 'thread-1',
+  updateRichBlock: mockUpdateRichBlock,
+};
 
 vi.mock('@/stores/chatStore', () => ({
-  useChatStore: { getState: () => ({ updateRichBlock: vi.fn() }) },
+  useChatStore: { getState: () => mockStoreState },
 }));
 
 vi.mock('@/utils/api-client', () => ({
@@ -58,6 +63,8 @@ describe('InteractiveBlock direct callback actions', () => {
   beforeEach(() => {
     receivedGuideStart = null;
     apiFetchMock.mockReset();
+    mockUpdateRichBlock.mockReset();
+    mockStoreState.currentThreadId = 'thread-1';
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -95,6 +102,44 @@ describe('InteractiveBlock direct callback actions', () => {
     });
 
     expect(apiFetchMock).toHaveBeenCalledWith('/api/guide-actions/start', expect.objectContaining({ method: 'POST' }));
+    expect(receivedGuideStart).toBeNull();
+  });
+
+  it('does not dispatch local guide:start after the active thread changes before start resolves', async () => {
+    let resolveStart: ((value: { ok: boolean; status: number }) => void) | null = null;
+    apiFetchMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveStart = resolve as (value: { ok: boolean; status: number }) => void;
+        }),
+    );
+
+    await act(async () => {
+      root.render(React.createElement(InteractiveBlock, { block, messageId: 'message-stale-thread' }));
+    });
+
+    const optionBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('开始引导'));
+    expect(optionBtn).toBeTruthy();
+    await act(async () => {
+      optionBtn!.click();
+    });
+
+    const confirmBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('确认选择'),
+    );
+    expect(confirmBtn).toBeTruthy();
+    await act(async () => {
+      confirmBtn!.click();
+      await Promise.resolve();
+    });
+
+    mockStoreState.currentThreadId = 'thread-2';
+
+    await act(async () => {
+      resolveStart?.({ ok: true, status: 200 });
+      await Promise.resolve();
+    });
+
     expect(receivedGuideStart).toBeNull();
   });
 

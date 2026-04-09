@@ -87,6 +87,15 @@ function shouldKeepGuideOfferInteractive(
   );
 }
 
+function shouldDispatchLocalGuideStart(
+  payload: Record<string, unknown>,
+): payload is { guideId: string; threadId: string } {
+  const { currentThreadId } = useChatStore.getState();
+  return (
+    typeof payload.guideId === 'string' && typeof payload.threadId === 'string' && payload.threadId === currentThreadId
+  );
+}
+
 /** Render option icon: prefer SVG icon over emoji */
 function OptionIcon({ opt, className = 'w-5 h-5' }: { opt: InteractiveOption; className?: string }) {
   if (opt.icon)
@@ -611,11 +620,13 @@ export function InteractiveBlock({
           // F150: Trigger guide overlay directly — don't rely on socket round-trip
           if (safeEndpoint === GUIDE_START_CALLBACK_PATH && payload && 'guideId' in payload) {
             const p = payload as Record<string, unknown>;
-            window.dispatchEvent(
-              new CustomEvent('guide:start', {
-                detail: { flowId: p.guideId, threadId: p.threadId },
-              }),
-            );
+            if (shouldDispatchLocalGuideStart(p)) {
+              window.dispatchEvent(
+                new CustomEvent('guide:start', {
+                  detail: { flowId: p.guideId, threadId: p.threadId },
+                }),
+              );
+            }
           }
         } catch (err) {
           console.error('[InteractiveBlock] callback action failed:', err);
