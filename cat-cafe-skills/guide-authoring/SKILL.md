@@ -1,6 +1,32 @@
+---
+name: guide-authoring
+description: >
+  标准引导流程设计 SOP：场景识别 → YAML 编排 → 标签标注 → 注册发现 → 测试验证。
+  Use when: 新建引导流程、添加场景引导、维护 Guide Catalog、编写引导 YAML。
+  Not for: 使用引导（用户侧）、Guide Engine 代码实现（用 tdd）、视觉设计（用 pencil-design）。
+  Output: Flow YAML + tag-manifest 更新 + registry 注册 + CI 校验通过。
+triggers:
+  - "新建引导"
+  - "添加场景引导"
+  - "写引导流程"
+  - "guide authoring"
+  - "引导 YAML"
+---
+
 # Guide Authoring
 
 为 Console 已有功能编写引导流程的标准 SOP：场景识别 → YAML 编排 → 标签标注 → 注册发现 → 测试验证。
+
+## When to Use
+
+- 需要为 Console 已有功能新增一条可触发的引导流程
+- 需要维护 `guides/flows/*.yaml`、`guides/tag-manifest.yaml`、`guides/registry.yaml`
+- 需要给已有功能补引导标签或补 registry 发现规则
+
+**Not for**：
+- 用户正在实际使用引导流程时的交互处理，用 `guide-interaction`
+- Guide Engine / callback route / overlay 的代码实现与 bug 修复，用 `tdd`
+- 纯视觉稿、动效或高保真设计稿，用 `pencil-design`
 
 ## 核心知识
 
