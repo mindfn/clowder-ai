@@ -86,13 +86,17 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
         return { error: `Cannot query sessions for cat '${catId}' — you are '${callerCatId}'` };
       }
       const sessions = await sessionChainStore.getChain(effectiveCatId as CatId, threadId);
-      const visibleSessions = isSharedDefaultThread(thread) ? sessions.filter((session) => session.userId === userId) : sessions;
+      const visibleSessions = isSharedDefaultThread(thread)
+        ? sessions.filter((session) => session.userId === userId)
+        : sessions;
       return reply.send({ sessions: visibleSessions });
     }
 
     // No catId filter at all (hub UI god-view) — default thread stays user-scoped.
     const sessions = await sessionChainStore.getChainByThread(threadId);
-    const visibleSessions = isSharedDefaultThread(thread) ? sessions.filter((session) => session.userId === userId) : sessions;
+    const visibleSessions = isSharedDefaultThread(thread)
+      ? sessions.filter((session) => session.userId === userId)
+      : sessions;
     return reply.send({ sessions: visibleSessions });
   });
 
