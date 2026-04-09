@@ -19,6 +19,7 @@ export function useGuideEngine() {
   const retreatStep = useGuideStore((s) => s.retreatStep);
   const exitGuide = useGuideStore((s) => s.exitGuide);
   const startInFlightRef = useRef<string | null>(null);
+  const pendingRetryRef = useRef<string | null>(null);
 
   // Start listener: fetch flow + trigger overlay
   useEffect(() => {
@@ -34,7 +35,11 @@ export function useGuideEngine() {
 
     const trigger = async (flowId: string, threadId?: string) => {
       const startKey = `${threadId ?? 'no-thread'}::${flowId}`;
-      if (hasActiveSession(flowId, threadId) || startInFlightRef.current === startKey) {
+      if (hasActiveSession(flowId, threadId)) {
+        return;
+      }
+      if (startInFlightRef.current === startKey) {
+        pendingRetryRef.current = startKey;
         return;
       }
       startInFlightRef.current = startKey;
@@ -52,6 +57,12 @@ export function useGuideEngine() {
       } finally {
         if (startInFlightRef.current === startKey) {
           startInFlightRef.current = null;
+        }
+        if (pendingRetryRef.current === startKey && !hasActiveSession(flowId, threadId)) {
+          pendingRetryRef.current = null;
+          queueMicrotask(() => {
+            void trigger(flowId, threadId);
+          });
         }
       }
     };

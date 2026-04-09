@@ -148,6 +148,13 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
 
     const updated: GuideStateV1 = { ...gs, status: 'cancelled', completedAt: Date.now() };
     await threadStore.updateGuideState(threadId, updated);
+
+    socketManager.broadcastToRoom(`thread:${threadId}`, 'guide_control', {
+      action: 'exit',
+      guideId,
+      threadId,
+      timestamp: Date.now(),
+    });
     log.info({ guideId, threadId, userId }, '[F150] guide cancelled via frontend action');
     return { status: 'ok', guideState: updated };
   });

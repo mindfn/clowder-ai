@@ -37,10 +37,13 @@ function dispatchGuideControl(
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  void promise.catch(() => {});
+  return { promise, resolve, reject };
 }
 
 describe('useGuideEngine duplicate start protection', () => {
@@ -95,6 +98,33 @@ describe('useGuideEngine duplicate start protection', () => {
       await Promise.resolve();
     });
 
+    expect(useGuideStore.getState().session?.flow.id).toBe('add-member');
+  });
+
+  it('retries a duplicate guide:start after the in-flight fetch fails', async () => {
+    const firstFetch = deferred<{ json: () => Promise<OrchestrationFlow> }>();
+    apiFetchMock.mockReturnValueOnce(firstFetch.promise).mockResolvedValueOnce({ json: async () => FLOW });
+
+    act(() => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      dispatchGuideStart('add-member');
+      dispatchGuideStart('add-member');
+      await Promise.resolve();
+    });
+
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      firstFetch.reject(new Error('temporary failure'));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(apiFetchMock).toHaveBeenCalledTimes(2);
     expect(useGuideStore.getState().session?.flow.id).toBe('add-member');
   });
 

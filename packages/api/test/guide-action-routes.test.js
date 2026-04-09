@@ -134,7 +134,7 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
 
   // --- /api/guide-actions/cancel ---
 
-  test('cancel: transitions offered → cancelled', async () => {
+  test('cancel: transitions offered → cancelled and emits exit control event', async () => {
     const app = await createApp();
     const thread = await seedThread('add-member', 'offered');
 
@@ -149,6 +149,19 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
     const body = JSON.parse(res.body);
     assert.equal(body.guideState.status, 'cancelled');
     assert.ok(body.guideState.completedAt);
+
+    assert.equal(broadcastCalls.length, 1);
+    assert.deepEqual(broadcastCalls[0], {
+      room: `thread:${thread.id}`,
+      event: 'guide_control',
+      data: {
+        action: 'exit',
+        guideId: 'add-member',
+        threadId: thread.id,
+        timestamp: broadcastCalls[0].data.timestamp,
+      },
+    });
+    assert.equal(typeof broadcastCalls[0].data.timestamp, 'number');
   });
 
   test('cancel: idempotent when already cancelled', async () => {
