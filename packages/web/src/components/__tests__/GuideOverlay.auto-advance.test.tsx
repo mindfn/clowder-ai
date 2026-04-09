@@ -31,11 +31,18 @@ const CONFIRM_FLOW: OrchestrationFlow = {
   steps: [{ id: 'step-confirm', target: 'member-editor.profile', tips: 'fill profile', advance: 'confirm' }],
 };
 
+const INPUT_FLOW: OrchestrationFlow = {
+  id: 'input-flow',
+  name: 'Input Flow',
+  steps: [{ id: 'step-input', target: 'member-editor.name', tips: 'type name', advance: 'input' }],
+};
+
 describe('GuideOverlay auto-advance lifecycle', () => {
   let container: HTMLDivElement;
   let root: Root;
   let target: HTMLButtonElement;
   let confirmTarget: HTMLDivElement;
+  let inputTarget: HTMLInputElement;
   let rafId = 0;
   const rafHandles = new Map<number, ReturnType<typeof setTimeout>>();
 
@@ -80,6 +87,10 @@ describe('GuideOverlay auto-advance lifecycle', () => {
     confirmTarget.textContent = 'Member Editor';
     document.body.appendChild(confirmTarget);
 
+    inputTarget = document.createElement('input');
+    inputTarget.setAttribute('data-guide-id', 'member-editor.name');
+    document.body.appendChild(inputTarget);
+
     act(() => {
       root.render(React.createElement(GuideOverlay));
     });
@@ -92,6 +103,7 @@ describe('GuideOverlay auto-advance lifecycle', () => {
     container.remove();
     target.remove();
     confirmTarget.remove();
+    inputTarget.remove();
     act(() => {
       useGuideStore.getState().exitGuide();
     });
@@ -228,5 +240,41 @@ describe('GuideOverlay auto-advance lifecycle', () => {
     const fallbackShield = container.querySelector('[data-guide-click-shield="fallback"]');
     expect(fallbackShield).toBeInstanceOf(HTMLDivElement);
     expect((fallbackShield as HTMLDivElement).style.pointerEvents).toBe('none');
+  });
+
+  it('debounces input auto-advance from the latest keystroke', () => {
+    act(() => {
+      useGuideStore.getState().startGuide(INPUT_FLOW);
+      useGuideStore.getState().setPhase('active');
+    });
+    act(() => {
+      vi.advanceTimersByTime(120);
+    });
+
+    expect(useGuideStore.getState().session?.phase).toBe('active');
+
+    act(() => {
+      inputTarget.value = 'A';
+      inputTarget.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+
+    act(() => {
+      inputTarget.value = 'Al';
+      inputTarget.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    act(() => {
+      vi.advanceTimersByTime(150);
+    });
+
+    expect(useGuideStore.getState().session?.phase).toBe('active');
+
+    act(() => {
+      vi.advanceTimersByTime(350);
+    });
+
+    expect(useGuideStore.getState().session?.phase).toBe('complete');
   });
 });

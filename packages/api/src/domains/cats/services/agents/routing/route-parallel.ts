@@ -48,9 +48,13 @@ const log = createModuleLogger('route-parallel');
 function shouldHandleCompletedGuide(
   guideCompletionOwner: string | undefined,
   targetCatIds: ReadonlySet<string>,
+  fallbackCatId: string | undefined,
   catId: string,
 ): boolean {
-  return !guideCompletionOwner || guideCompletionOwner === catId || !targetCatIds.has(guideCompletionOwner);
+  if (!guideCompletionOwner) return true;
+  if (guideCompletionOwner === catId) return true;
+  if (!targetCatIds.has(guideCompletionOwner)) return fallbackCatId === catId;
+  return false;
 }
 
 export async function* routeParallel(
@@ -104,6 +108,7 @@ export async function* routeParallel(
   /** catId that should receive the one-shot completion notice (offeredBy). */
   let guideCompletionOwner: string | undefined;
   const targetCatIds = new Set<string>(targetCats);
+  let guideCompletionFallbackCatId: string | undefined;
   if (deps.invocationDeps.threadStore) {
     try {
       const thread = await deps.invocationDeps.threadStore.get(threadId);
@@ -144,6 +149,9 @@ export async function* routeParallel(
           }
           if (justCompleted) {
             guideCompletionOwner = gs.offeredBy;
+            if (gs.offeredBy && !targetCatIds.has(gs.offeredBy)) {
+              guideCompletionFallbackCatId = targetCats[0];
+            }
           }
         }
       }
@@ -250,7 +258,7 @@ export async function* routeParallel(
         ...(bootcampState ? { bootcampState, threadId } : {}),
         ...(guideCandidate &&
         (guideCandidate.status === 'completed'
-          ? shouldHandleCompletedGuide(guideCompletionOwner, targetCatIds, catId)
+          ? shouldHandleCompletedGuide(guideCompletionOwner, targetCatIds, guideCompletionFallbackCatId, catId)
           : guideCandidate.status === 'offered'
             ? !guideOfferOwner ||
               guideOfferOwner === catId ||
@@ -1000,7 +1008,12 @@ export async function* routeParallel(
       if (
         catProducedOutput &&
         guideCandidate?.status === 'completed' &&
-        shouldHandleCompletedGuide(guideCompletionOwner, targetCatIds, msg.catId as string) &&
+        shouldHandleCompletedGuide(
+          guideCompletionOwner,
+          targetCatIds,
+          guideCompletionFallbackCatId,
+          msg.catId as string,
+        ) &&
         deps.invocationDeps.threadStore
       ) {
         try {

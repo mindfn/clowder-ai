@@ -1058,6 +1058,32 @@ describe('F150 guide completion ack ownership', () => {
     assert.equal(threadStore.updates.length, 1, 'visible non-owner response should ack guide completion');
     assert.equal(threadStore.updates[0].guideState.completionAcked, true);
   });
+
+  it('parallel: routes completed-guide fallback only to the first target cat', async () => {
+    const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
+    const completedGuide = {
+      v: 1,
+      guideId: 'add-member',
+      status: 'completed',
+      offeredAt: Date.now(),
+      completedAt: Date.now(),
+      offeredBy: 'dare',
+    };
+    const threadStore = createGuideAckThreadStore(completedGuide, completedGuide, 'default');
+    const opusService = createCapturingService('opus', '我来接着处理');
+    const codexService = createCapturingService('codex', '我也看到了');
+    const deps = createMockDeps({ opus: opusService, codex: codexService }, null, threadStore);
+
+    for await (const _ of routeParallel(deps, ['opus', 'codex'], '继续', 'user1', 'thread1')) {
+    }
+
+    assert.ok(opusService.calls[0].includes('Guide Completed:'), 'first target cat should receive completed guide');
+    assert.ok(
+      !codexService.calls[0].includes('Guide Completed:'),
+      'second target cat must not receive duplicate completed guide fallback',
+    );
+    assert.equal(threadStore.updates.length, 1, 'only one routed cat should ack the completed guide');
+  });
 });
 
 describe('routeParallel whisper privacy (F35)', () => {

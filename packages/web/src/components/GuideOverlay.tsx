@@ -283,6 +283,16 @@ function useAutoAdvance(step: OrchestrationStep | null, advance: () => void, isA
     bindingKeyRef.current = bindingKey;
     let cancelled = false;
     let attachTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleAdvance = (delayMs: number) => {
+      if (delayedAdvanceRef.current) {
+        clearTimeout(delayedAdvanceRef.current);
+      }
+      delayedAdvanceRef.current = setTimeout(() => {
+        if (bindingKeyRef.current === bindingKey) {
+          advanceRef.current();
+        }
+      }, delayMs);
+    };
 
     // Small delay after step transition to let UI settle
     const attachListener = () => {
@@ -296,11 +306,7 @@ function useAutoAdvance(step: OrchestrationStep | null, advance: () => void, isA
       if (advanceType === 'click') {
         const handler = () => {
           // Delay advance to let the click action complete (e.g., open panel)
-          delayedAdvanceRef.current = setTimeout(() => {
-            if (bindingKeyRef.current === bindingKey) {
-              advanceRef.current();
-            }
-          }, 300);
+          scheduleAdvance(300);
         };
         el.addEventListener('click', handler, { once: true, capture: true });
         listenerCleanupRef.current = () => el.removeEventListener('click', handler, { capture: true });
@@ -311,11 +317,7 @@ function useAutoAdvance(step: OrchestrationStep | null, advance: () => void, isA
         const handler = () => {
           const val = (el as HTMLInputElement).value;
           if (val && val.trim()) {
-            delayedAdvanceRef.current = setTimeout(() => {
-              if (bindingKeyRef.current === bindingKey) {
-                advanceRef.current();
-              }
-            }, 500);
+            scheduleAdvance(500);
           }
         };
         el.addEventListener('input', handler);
