@@ -275,6 +275,24 @@ describe('Session bind API route', () => {
     }
   });
 
+  test('returns 403 for non-default system-owned thread', async () => {
+    const { app, threadStore } = await buildApp();
+    try {
+      const thread = await threadStore.create('system', 'System Thread');
+
+      const res = await app.inject({
+        method: 'PATCH',
+        url: `/api/threads/${thread.id}/sessions/opus/bind`,
+        headers: { 'x-cat-cafe-user': 'other-user' },
+        payload: { cliSessionId: 'cli-system' },
+      });
+
+      assert.equal(res.statusCode, 403);
+    } finally {
+      await app.close();
+    }
+  });
+
   test('supports all valid catIds', async () => {
     const { app, threadStore } = await buildApp();
     try {

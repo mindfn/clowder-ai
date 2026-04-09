@@ -10,7 +10,11 @@
  */
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import type { GuideStateV1, IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
+import {
+  DEFAULT_THREAD_ID,
+  type GuideStateV1,
+  type IThreadStore,
+} from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { loadGuideFlow } from '../domains/guides/guide-registry-loader.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
@@ -34,6 +38,11 @@ const completeSchema = z.object({
   threadId: z.string().min(1),
   guideId: z.string().min(1),
 });
+
+function canAccessGuideThread(thread: { id: string; createdBy: string } | null, userId: string): boolean {
+  if (!thread) return false;
+  return thread.createdBy === userId || (thread.id === DEFAULT_THREAD_ID && thread.createdBy === 'system');
+}
 
 export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = async (app, opts) => {
   const { threadStore, socketManager } = opts;
@@ -60,8 +69,7 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
       return { error: 'Thread not found' };
     }
 
-    // Default thread (createdBy='system') is public — any authenticated user can access
-    if (thread.createdBy !== 'system' && thread.createdBy !== userId) {
+    if (!canAccessGuideThread(thread, userId)) {
       reply.status(403);
       return { error: 'Thread access denied' };
     }
@@ -137,8 +145,7 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
       return { error: 'Thread not found' };
     }
 
-    // Default thread (createdBy='system') is public — any authenticated user can access
-    if (thread.createdBy !== 'system' && thread.createdBy !== userId) {
+    if (!canAccessGuideThread(thread, userId)) {
       reply.status(403);
       return { error: 'Thread access denied' };
     }
@@ -186,7 +193,7 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
       return { error: 'Thread not found' };
     }
 
-    if (thread.createdBy !== 'system' && thread.createdBy !== userId) {
+    if (!canAccessGuideThread(thread, userId)) {
       reply.status(403);
       return { error: 'Thread access denied' };
     }

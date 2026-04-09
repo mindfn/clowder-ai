@@ -17,7 +17,7 @@ import type { ISessionSealer } from '../domains/cats/services/session/SessionSea
 import type { TranscriptReader } from '../domains/cats/services/session/TranscriptReader.js';
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { ISessionChainStore } from '../domains/cats/services/stores/ports/SessionChainStore.js';
-import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
+import { DEFAULT_THREAD_ID, type IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { resolveUserId } from '../utils/request-identity.js';
 
 const bindSessionSchema = z.object({
@@ -35,8 +35,8 @@ interface SessionChainRouteOptions extends FastifyPluginOptions {
 function canAccessThread(thread: { id: string; createdBy: string } | null, userId: string): boolean {
   if (!thread) return false;
   if (thread.createdBy === userId) return true;
-  // "default" thread is created by system but is the global hub thread for every user session.
-  return thread.id === 'default' && thread.createdBy === 'system';
+  // Only the real default thread is globally readable/writable.
+  return thread.id === DEFAULT_THREAD_ID && thread.createdBy === 'system';
 }
 
 export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChainRouteOptions): Promise<void> {

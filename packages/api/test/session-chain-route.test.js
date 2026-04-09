@@ -130,6 +130,22 @@ describe('Session Chain Routes', () => {
     assert.equal(res.statusCode, 200);
   });
 
+  it('GET /api/threads/:threadId/sessions rejects system-owned non-default threads', async () => {
+    await setup(
+      mockThreadStore({
+        'system-thread': { id: 'system-thread', createdBy: 'system' },
+      }),
+    );
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/threads/system-thread/sessions',
+      headers: { 'x-cat-cafe-user': 'other-user' },
+    });
+
+    assert.equal(res.statusCode, 403);
+  });
+
   // --- Normal happy-path tests (with identity) ---
 
   it('GET /api/threads/:threadId/sessions returns empty array for unknown thread', async () => {
@@ -349,5 +365,28 @@ describe('Session Chain Routes', () => {
     assert.equal(res.statusCode, 409);
     const body = JSON.parse(res.payload);
     assert.equal(body.activeSessionId, active.id);
+  });
+
+  it('POST /api/sessions/:sessionId/unseal rejects system-owned non-default threads', async () => {
+    const store = await setup(
+      mockThreadStore({
+        'system-thread': { id: 'system-thread', createdBy: 'system' },
+      }),
+    );
+    const sealed = store.create({
+      cliSessionId: 'cli-system-thread',
+      threadId: 'system-thread',
+      catId: 'opus',
+      userId: 'system',
+    });
+    store.update(sealed.id, { status: 'sealed', sealReason: 'threshold', sealedAt: Date.now(), updatedAt: Date.now() });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${sealed.id}/unseal`,
+      headers: { 'x-cat-cafe-user': 'other-user' },
+    });
+
+    assert.equal(res.statusCode, 403);
   });
 });

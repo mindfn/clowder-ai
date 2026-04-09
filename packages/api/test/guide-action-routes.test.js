@@ -51,6 +51,17 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
     return thread;
   }
 
+  async function seedDefaultThread(guideId, status) {
+    const thread = await threadStore.get('default');
+    await threadStore.updateGuideState(thread.id, {
+      v: 1,
+      guideId,
+      status,
+      offeredAt: Date.now(),
+    });
+    return thread;
+  }
+
   // --- /api/guide-actions/start ---
 
   test('start: transitions offered → active and emits socket event', async () => {
@@ -290,7 +301,7 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
 
   test('start: allows any authenticated user on system-owned default thread', async () => {
     const app = await createApp();
-    const thread = await seedThread('add-member', 'offered', 'system');
+    const thread = await seedDefaultThread('add-member', 'offered');
 
     const res = await app.inject({
       method: 'POST',
@@ -305,7 +316,7 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
 
   test('cancel: allows any authenticated user on system-owned default thread', async () => {
     const app = await createApp();
-    const thread = await seedThread('add-member', 'offered', 'system');
+    const thread = await seedDefaultThread('add-member', 'offered');
 
     const res = await app.inject({
       method: 'POST',
@@ -316,6 +327,36 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
 
     assert.equal(res.statusCode, 200, 'system thread must allow any authenticated user');
     assert.equal(JSON.parse(res.body).guideState.status, 'cancelled');
+  });
+
+  test('start: rejects arbitrary users on non-default system-owned threads', async () => {
+    const app = await createApp();
+    const thread = await seedThread('add-member', 'offered', 'system');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/guide-actions/start',
+      headers: { 'x-cat-cafe-user': 'any-user' },
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 403);
+    assert.equal(JSON.parse(res.body).error, 'Thread access denied');
+  });
+
+  test('cancel: rejects arbitrary users on non-default system-owned threads', async () => {
+    const app = await createApp();
+    const thread = await seedThread('add-member', 'offered', 'system');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/guide-actions/cancel',
+      headers: { 'x-cat-cafe-user': 'any-user' },
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 403);
+    assert.equal(JSON.parse(res.body).error, 'Thread access denied');
   });
 
   // --- /api/guide-flows/:guideId ---
@@ -429,7 +470,7 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
 
   test('complete: allows any authenticated user on system-owned thread', async () => {
     const app = await createApp();
-    const thread = await seedThread('add-member', 'active', 'system');
+    const thread = await seedDefaultThread('add-member', 'active');
 
     const res = await app.inject({
       method: 'POST',
@@ -440,5 +481,20 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
 
     assert.equal(res.statusCode, 200);
     assert.equal(JSON.parse(res.body).guideState.status, 'completed');
+  });
+
+  test('complete: rejects arbitrary users on non-default system-owned threads', async () => {
+    const app = await createApp();
+    const thread = await seedThread('add-member', 'active', 'system');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/guide-actions/complete',
+      headers: { 'x-cat-cafe-user': 'any-user' },
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 403);
+    assert.equal(JSON.parse(res.body).error, 'Thread access denied');
   });
 });
