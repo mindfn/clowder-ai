@@ -92,15 +92,16 @@ function GuideOverlayInner() {
   // Auto-advance: listen for interaction with target element
   useAutoAdvance(currentStep, advanceStep, session?.phase === 'active');
 
-  // Keyboard: Escape to exit
+  // Keyboard: Escape disabled during guide to prevent accidental exit (KD-14).
+  // Users must click the explicit "退出" button in the HUD.
   useEffect(() => {
     if (!session) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') exitGuide();
+      if (e.key === 'Escape') e.preventDefault();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [session, exitGuide]);
+  }, [session]);
 
   if (!session) return null;
 

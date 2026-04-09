@@ -8,7 +8,7 @@ created: 2026-03-27
 
 # F150: Scene-Based Bidirectional Guidance Engine
 
-> **Status**: in-progress (Phase A 已闭环，当前在做真相源刷新 + 下一场景规划) | **Owner**: 布偶猫/宪宪 | **Priority**: P1
+> **Status**: Phase A accepted / frozen — 基础引导引擎已验收，可开 PR 合入 | **Owner**: 布偶猫/宪宪 | **Priority**: P1
 
 ## Why
 
@@ -83,43 +83,45 @@ interface OrchestrationStep {
 
 **P0 验证场景**：添加新成员（4 步：open-hub → go-to-cats → click-add-member → edit-member-profile）
 
-### Phase B: 双向可观测 + 平台内场景扩展
+### Phase B: 平台内场景扩展（F150 scope）
 
-> **Scope 调整（KD-13）**：Phase B 聚焦平台内已有功能的引导，不做跨系统深度集成。外部平台（飞书/微信等）的配置流程后续按场景单独做配置页签，不纳入 Guide Engine。
-
-**观测层**：Guide Engine 实时上报字段状态 + 用户行为 → 猫猫实时感知：
-- `observe.fields`：监听字段变化，实时校验，sensitive 字段只上报 `{filled, valid}`
-- `on_error: notify_cat`：校验失败通知猫
-- `on_idle: {seconds}`：用户停滞超时通知猫
-- MCP `guide_observe` 工具：猫猫主动查询当前引导状态
-- 事件推送（非轮询）：field_changed / step_completed / user_idle / verification_failed
+> **Scope 调整（KD-13 + KD-14）**：
+> - Phase B 聚焦平台内已有功能的引导场景扩展，不做跨系统深度集成
+> - 双向可观测（observe/verifier）已拆出为独立 feature 待立项，不再是 F150 的一部分
+> - 外部平台（飞书/微信等）的配置流程按场景单独做配置页签，不纳入 Guide Engine
 
 **场景扩展**：基于已有 Console 功能逐场景补充引导流程，复用 Phase A 骨架（data-guide-id + Flow YAML + advance mode + complete callback）。具体场景所需的额外步骤类型或信息补充，结合场景实际需求决定。
-
-**视觉增强**：
-- 猫眼观测指示灯：正确→眯眼绿勾，错误→圆眼警示，停滞→晃动求助
 
 **CI 契约测试**：flow schema + tag 存在性 + 退出路径
 
 **P0 验证场景**：基于已有 Console 功能的高价值场景（如 API Provider 配置、连接器配置等）
 
-**跨系统引导（deferred）**：外部平台对接（飞书/微信/钉钉）的配置流程不走 Guide Engine 遮罩引导，改为独立配置页签 + 分步操作说明，按场景需求单独设计。
+### 已拆出的独立方向
 
-### 当前进展与阶段判断（2026-04-03）
+| 方向 | 归属 | 说明 |
+|------|------|------|
+| 自动观测 substrate | 独立 feature 待立项 | 不只服务 guide，可被 guide/debug/diagnostics 复用。含 observe.fields、idle 检测、verifier 契约、猫眼指示灯 |
+| 跨系统配置页签 | 按场景单独设计 | 飞书/微信/钉钉等外部平台配置流程，不走 Guide Engine 遮罩引导 |
+
+### 当前进展与阶段判断（2026-04-09）
 
 | 维度 | 当前状态 | 说明 |
 |------|---------|------|
 | 核心引擎 | ✅ 完成 | tag-based runtime、YAML flow、前端遮罩/镂空、auto-advance、exit-only HUD 已跑通 |
 | P0 内部场景 | ✅ 完成 | `add-member` 已收口为 4 步：`hub.trigger → cats.overview → cats.add-member → member-editor.profile(confirm)` |
-| 完成态闭环 | ✅ 完成 | 用户保存成功后才触发 `guide:confirm`；前端 `complete` 会回写后端 `guideState=completed` 并广播 `guide_complete` |
-| 双向可观测 | 🟡 部分完成 | 当前只有完成态回流；字段级 observe / idle / verifier 反馈仍未进入实现 |
-| 跨系统引导 | 🔒 deferred | KD-13：外部平台配置改为独立页签，不纳入 Guide Engine |
-| 当前阶段判断 | `Phase A done` | 基础流程已闭环，可开始基于同一骨架继续补“典型场景”；Phase B 尚未开工 |
+| 完成态闭环 | ✅ 完成 | 前端 `complete` → 后端 `guideState=completed` → Socket 通知猫 → 一次性消费 ack |
+| Esc 误退修复 | ✅ 完成 | KD-14：禁用全局 Esc 退出，仅保留显式退出按钮 |
+| CVO 验收 | ✅ 通过 | 2026-04-09 CVO 手动测试”添加成员”流程，确认链路通畅 |
+| gpt52 review | ✅ 放行 | 6 轮 review，所有 P1/P2 已修复 |
+| 当前阶段判断 | **Phase A accepted / frozen** | 基础引导引擎已验收冻结，可开 PR 合入 main |
 
-这意味着：
-- F150 现在已经具备“从建议引导 → 前端操作 → 保存成功 → 后端状态同步 → 猫猫可感知完成”的最小完整闭环。
-- 后续继续补新场景时，优先复用现有 `data-guide-id + Flow YAML + advance mode + complete callback` 骨架，不再回到硬编码流程。
-- 下一步应该并行推进两件事：补下一个高价值典型场景，以及冻结 Phase B 的 observe/verifier 契约，避免场景扩展后再返工。
+**Phase A 交付物**：
+- 前端引擎：`guideStore.ts` + `useGuideEngine.ts` + `GuideOverlay.tsx`（含 auto-advance）
+- 后端 API：`guide-action-routes.ts`（start/cancel/complete）
+- 路由感知：`route-serial.ts` + `route-parallel.ts`（completionAcked + guideCompletionOwner + catProducedOutput）
+- Prompt 注入：`SystemPromptBuilder.ts`（completed handler）
+- 测试：22 个 API 测试
+- 文档：feature doc + guide-authoring skill + flow YAML + tag manifest
 
 ### 触发与发现规范
 
@@ -163,77 +165,39 @@ interface OrchestrationStep {
 - [x] AC-A6: 对话触发：猫建议引导 → InteractiveBlock → 用户确认 → 启动
 - [x] AC-A7: 完成回调：前端 complete → 后端 guideState completed → Socket.io 通知猫猫
 
-### Phase B（双向可观测 + 平台内场景扩展）
-- [ ] AC-B1: observe 层实时上报字段状态和用户行为到猫（事件推送，非轮询）
-- [ ] AC-B2: 猫可通过 MCP guide_observe 主动查询当前引导状态
-- [ ] AC-B3: 基于已有 Console 功能扩展 2+ 个引导场景（如 API Provider 配置、连接器配置）
-- [ ] AC-B4: 猫眼观测指示灯（正确/错误/停滞视觉反馈）
-- [ ] AC-B5: ~~飞书对接 E2E~~ → deferred（KD-13：外部平台配置改为独立页签，不走 Guide Engine）
-- [ ] AC-B6: CI 契约测试通过（flow schema + tag + 退出路径）
+### Phase B（平台内场景扩展）
+- [ ] AC-B1: 基于已有 Console 功能扩展 2+ 个引导场景（如 API Provider 配置、连接器配置）
+- [ ] AC-B2: CI 契约测试通过（flow schema + tag + 退出路径）
 
-### 安全门禁（跨 Phase，P0 硬性）
-- [ ] AC-S1: Sensitive Data Containment — sensitive 值仅服务端持有（TTL + thread/user 绑定），前端只拿 secretRef，刷新后强制重填，observe 不上报长度/前缀，TTL 到期后 secretRef 失效 + 服务端 secrets 清理
-- [ ] AC-S2: Verifier Permission Boundary — 只允许 verifierId 引用，sideEffect=true 必须 confirm:required，带 thread/user scope guard + timeout 熔断 + rate-limit 限流
-- [ ] AC-S3: CI Contract Gate — flow schema 合法性 + tag 存在性 + auto_fill_from 校验 + verifier 注册校验 + skip_if 限声明式 DSL + 退出路径
+### 已拆出（不再属于 F150 scope）
+- ~~AC-B1(旧): observe 层~~ → 独立 feature "自动观测 substrate" 待立项
+- ~~AC-B2(旧): MCP guide_observe~~ → 同上
+- ~~AC-B4(旧): 猫眼观测指示灯~~ → 同上
+- ~~AC-B5: 飞书 E2E~~ → KD-13 deferred
+- ~~AC-S1: Sensitive Data Containment~~ → 随独立 observe feature 走
+- ~~AC-S2: Verifier Permission Boundary~~ → 随独立 observe feature 走
 
-## AC-S1/S2/S3 测试矩阵（草案）
+### 安全门禁（F150 scope 内保留）
+- [ ] AC-S3: CI Contract Gate — flow schema 合法性 + tag 存在性 + 退出路径
 
-> 目标：把安全门禁从“声明”变成“可执行验证”。
-> 执行节奏：PR 内必须过 Unit + Integration；Phase Gate 过 E2E + Security。
+## AC-S3 测试矩阵（F150 scope 内保留）
 
-### AC-S1: Sensitive Data Containment
-
-| Test ID | 层级 | 场景 | 期望结果 | 证据 |
-|---|---|---|---|---|
-| S1-U1 | Unit | `collect_input(sensitive=true)` 序列化 guide state | 输出仅含 `secretRef`，无明文/可逆摘要 | 测试断言 + snapshot |
-| S1-U2 | Unit | `guide_observe` 输出敏感字段 | 仅 `{ filled, valid }`，不含 value/length/prefix | 测试断言 |
-| S1-I1 | Integration | 完整 collect → observe → event push 链路 | HTTP/WS payload 均无敏感值 | 抓包日志（脱敏） |
-| S1-I2 | Integration | 页面刷新后恢复 guide session | sensitive 字段状态为 `needs_reentry=true` | API 响应断言 |
-| S1-E1 | E2E | 飞书场景输入 secret 后切步 | HUD 显示已收集，回查历史消息/日志无 secret | E2E 断言 + trace JSONL（录屏补充） |
-| S1-I3 | Integration | TTL 到期后访问 secretRef | secretRef 返回 `expired`，服务端 secrets 已清理 | API 断言 + DB 查询 |
-| S1-Sec1 | Security | 伪造 `guide_observe` 请求读取他人 session | 403 + `guide_session_access_denied`，不泄露字段存在性 | 安全测试 JSONL |
-| S1-Sec2 | Security | TTL 过期后探测 secretRef 残留 | 403 + 无信息泄露（不区分"过期"与"不存在"） | 安全测试 JSONL |
-
-### AC-S2: Verifier Permission Boundary
-
-| Test ID | 层级 | 场景 | 期望结果 | 证据 |
-|---|---|---|---|---|
-| S2-U1 | Unit | YAML verification 直写 URL/Method | 编排校验失败 | schema 测试断言 |
-| S2-U2 | Unit | `sideEffect=true` + `confirm=auto` | 编排校验失败（强制 required） | 规则测试断言 |
-| S2-I1 | Integration | `verifierId` 不存在 | 400 + 明确错误码 `verifier_not_found` | API 断言 |
-| S2-I2 | Integration | 跨 thread/user 执行 verifier | 403（scope guard 生效） | API 断言 |
-| S2-I3 | Integration | sideEffect verifier 未确认直接执行 | 409 + `verifier_confirmation_required` | API 断言 |
-| S2-I4 | Integration | 同一确认 token 重放 | 幂等拒绝或去重，不重复副作用 | 审计日志对比 |
-| S2-I5 | Integration | verifier 执行超过注册 timeout | 熔断返回 `verifier_timeout`，不阻塞引导流程 | API 断言 + 耗时日志 |
-| S2-I6 | Integration | 同一 verifier 短时间内超过 rateLimit | 429 + `verifier_rate_limited` | API 断言 |
-| S2-I7 | Integration | rate-limit 后自动退避重试 | 退避间隔符合注册配置，最终恢复或报错 | 时序日志断言 |
-| S2-E1 | E2E | verification 失败 | HUD 展示基于 `verifierId + errorCode` 的自检清单 | E2E 断言 + 截图补充 |
+> AC-S1（Sensitive Data）和 AC-S2（Verifier Boundary）已随 observe substrate 拆出为独立 feature。
+> 原始测试矩阵草案保留在 git 历史中（commit `a6588af` 之前），独立 feature 立项时可参考。
 
 ### AC-S3: CI Contract Gate
 
 | Test ID | 层级 | 场景 | 期望结果 | 证据 |
 |---|---|---|---|---|
-| S3-CI1 | CI-Static | Flow schema 校验（step 类型/字段） | 非法 flow 阻塞合并 | CI 日志 |
-| S3-CI2 | CI-Static | Step graph 校验（无死链/环路/孤儿） | 非法 graph 阻塞合并 | CI 日志 |
-| S3-CI3 | CI-Static | flow target 与 `data-guide-id` manifest 对照 | 缺失/重命名标签阻塞合并 | CI 日志 |
-| S3-CI4 | CI-Static | `auto_fill_from` source/sink 类型与敏感级别校验 | 越权映射阻塞合并 | CI 日志 |
-| S3-CI5 | CI-Static | verifier registry 存在性 + `sideEffect->confirm` 规则 | 违规阻塞合并 | CI 日志 |
-| S3-CI6 | CI-Static | `skip_if` DSL 语法与操作符白名单 | 非声明式表达式阻塞合并 | CI 日志 |
-| S3-CI7 | CI-Static | flow 退出路径校验（skip/cancel） | 无退出路径阻塞合并 | CI 日志 |
+| S3-CI1 | CI-Static | Flow schema 校验（step 字段 + advance 类型） | 非法 flow 阻塞合并 | CI 日志 |
+| S3-CI2 | CI-Static | flow target 与 `data-guide-id` manifest 对照 | 缺失/重命名标签阻塞合并 | CI 日志 |
+| S3-CI3 | CI-Static | flow 退出路径校验 | 无退出路径阻塞合并 | CI 日志 |
 | S3-E2E-A1 | CI-E2E | P0 场景回归：添加成员（纯内部） | 主路径可完成，关键状态可回放 | E2E junit XML |
-| ~~S3-E2E-B1~~ | ~~CI-E2E~~ | ~~飞书对接（跨系统）~~ | deferred（KD-13） | — |
 
-### 质量门禁映射（建议）
+### 质量门禁映射
 
-- PR Gate（必须）：S1-U1/U2、S2-U1/U2、S3-CI1~CI7
-- Phase A Gate（必须）：S1-I1/I2/I3、S2-I1/I2/I5/I6、S3-E2E-A1
-- Phase B Gate（必须）：S1-E1、S1-Sec1/Sec2、S2-I3/I4/I7、S2-E1
-
-### 证据归档格式（建议）
-
-- 测试报告：`docs/review-notes/F150-security-gate-YYYY-MM-DD.md`
-- 每条失败用例记录：`Test ID / 失败现象 / 根因 / 修复 commit`
-- Quality Gate 结论必须逐条引用 S1/S2/S3 Test ID，不接受“整体通过”口头结论
+- PR Gate（必须）：S3-CI1~CI3
+- Phase A Gate（必须）：S3-E2E-A1
 
 ## Dependencies
 
@@ -277,6 +241,8 @@ interface OrchestrationStep {
 | KD-11 | Flow YAML 运行时加载（API），不在构建时生成 TS | 解耦部署：改 flow 不需要重新构建前端 | 2026-03-30 |
 | KD-12 | 完成回调作为基础能力：前端 complete → 后端状态 + Socket 通知 | CVO 明确要求：完整流程闭环是基础能力，不是后续补充 | 2026-04-03 |
 | KD-13 | Phase B 聚焦平台内引导，外部平台配置改为独立页签（不走 Guide Engine） | CVO：跨系统对接方式可能变化（扫码等），引导引擎聚焦已有功能；外部流程按场景单独做页签 | 2026-04-06 |
+| KD-14 | 禁用引导模式下全局 Esc 退出，仅保留显式退出按钮 | CVO 手测反馈：误触 Esc 导致引导意外退出，体验差 | 2026-04-09 |
+| KD-15 | 双向可观测拆出为独立 feature，不再是 F150 Phase B | CVO + gpt52 共识：observe substrate 应更大——不只服务 guide，可被 debug/diagnostics 复用 | 2026-04-09 |
 
 ## Timeline
 
@@ -288,6 +254,7 @@ interface OrchestrationStep {
 | 2026-04-01 | `add-member` 第 4 步收敛为 `confirm` 型步骤，保存成功后才允许完成 |
 | 2026-04-03 | guide completion callback 打通：前端 complete → 后端 `guideState=completed` → Socket `guide_complete` |
 | 2026-04-06 | CVO 方向校准：Phase B 聚焦平台内引导，跨系统配置改为独立页签（KD-13） |
+| 2026-04-09 | CVO 验收 Phase A 通过；Esc 误退修复（KD-14）；observe 拆出独立 feature（KD-15）；Phase A accepted/frozen |
 
 ## Review Gate
 
