@@ -115,6 +115,8 @@ export interface SocketCallbacks {
   onGuideStart?: (data: { guideId: string; threadId: string; timestamp: number }) => void;
   /** F150: Guide control (next/back/skip/exit) */
   onGuideControl?: (data: { action: string; guideId: string; threadId: string; timestamp: number }) => void;
+  /** F150: Guide completed in another client/session */
+  onGuideComplete?: (data: { guideId: string; threadId: string; timestamp: number }) => void;
 }
 
 const RECONNECT_RECONCILE_DELAY_MS = 2000;
@@ -657,6 +659,16 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string) {
       );
       if (!isActiveThread) return;
       callbacksRef.current.onGuideControl?.(data);
+    });
+
+    socket.on('guide_complete', (data: { guideId: string; threadId: string; timestamp: number }) => {
+      const routeThread = threadIdRef.current;
+      const storeThread = useChatStore.getState().currentThreadId;
+      const isActiveThread = Boolean(
+        data.threadId && routeThread && storeThread && data.threadId === routeThread && data.threadId === storeThread,
+      );
+      if (!isActiveThread) return;
+      callbacksRef.current.onGuideComplete?.(data);
     });
 
     // F111 Phase B + F112 Phase A: Real-time voice stream events

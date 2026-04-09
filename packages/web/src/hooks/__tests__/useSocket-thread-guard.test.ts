@@ -254,6 +254,34 @@ describe('useSocket thread guard (P1 regression: cross-thread event leakage)', (
     expect(mockSetThreadTargetCats).toHaveBeenCalledWith('thread-A', ['opus']);
   });
 
+  it('guide_complete from active thread is forwarded to callback', () => {
+    mockStoreCurrentThreadId = 'thread-A';
+    const onGuideComplete = vi.fn();
+    const callbacks: SocketCallbacks = {
+      onMessage: vi.fn(),
+      onGuideComplete,
+    };
+
+    act(() => {
+      root.render(React.createElement(HookWrapper, { callbacks, threadId: 'thread-A' }));
+    });
+
+    act(() => {
+      simulateServerEvent('guide_complete', {
+        guideId: 'add-member',
+        threadId: 'thread-A',
+        timestamp: Date.now(),
+      });
+    });
+
+    expect(onGuideComplete).toHaveBeenCalledTimes(1);
+    expect(onGuideComplete).toHaveBeenCalledWith({
+      guideId: 'add-member',
+      threadId: 'thread-A',
+      timestamp: expect.any(Number),
+    });
+  });
+
   it('intent_mode for switched-away thread routes to background after thread change', () => {
     const onIntentMode = vi.fn();
     const callbacks: SocketCallbacks = {

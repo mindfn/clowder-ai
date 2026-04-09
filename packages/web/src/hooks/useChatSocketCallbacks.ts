@@ -110,6 +110,13 @@ export function useChatSocketCallbacks({
           }),
         );
       },
+      onGuideComplete: (data) => {
+        window.dispatchEvent(
+          new CustomEvent('guide:complete', {
+            detail: { guideId: data.guideId, threadId: data.threadId },
+          }),
+        );
+      },
     }),
     [
       handleAgentMessage,

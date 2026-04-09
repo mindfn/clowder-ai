@@ -96,4 +96,27 @@ describe('useChatSocketCallbacks guide control bridge', () => {
       threadId: 'thread-1',
     });
   });
+
+  it('dispatches guide:complete with guideId and threadId', () => {
+    let detail: Record<string, unknown> | undefined;
+    const handler = (event: Event) => {
+      detail = (event as CustomEvent<Record<string, unknown>>).detail;
+    };
+    window.addEventListener('guide:complete', handler);
+
+    try {
+      captured!.onGuideComplete!({
+        guideId: 'add-member',
+        threadId: 'thread-1',
+        timestamp: Date.now(),
+      });
+    } finally {
+      window.removeEventListener('guide:complete', handler);
+    }
+
+    expect(detail).toEqual({
+      guideId: 'add-member',
+      threadId: 'thread-1',
+    });
+  });
 });

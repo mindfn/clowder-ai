@@ -35,6 +35,10 @@ function dispatchGuideControl(
   window.dispatchEvent(new CustomEvent('guide:control', { detail: { action, ...detail } }));
 }
 
+function dispatchGuideComplete(detail: { guideId?: string; threadId?: string } = {}) {
+  window.dispatchEvent(new CustomEvent('guide:complete', { detail }));
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -203,5 +207,27 @@ describe('useGuideEngine duplicate start protection', () => {
     });
 
     expect(useGuideStore.getState().session?.flow.id).toBe('add-member');
+  });
+
+  it('marks the current session complete on a matching guide:complete event', async () => {
+    apiFetchMock.mockResolvedValueOnce({ json: async () => FLOW }).mockResolvedValueOnce({ ok: true });
+
+    act(() => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      dispatchGuideStart('add-member');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(useGuideStore.getState().session?.phase).toBe('locating');
+
+    act(() => {
+      dispatchGuideComplete({ guideId: 'add-member', threadId: 'thread-1' });
+    });
+
+    expect(useGuideStore.getState().session?.phase).toBe('complete');
   });
 });

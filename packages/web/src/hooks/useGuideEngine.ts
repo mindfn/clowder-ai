@@ -20,6 +20,7 @@ export function useGuideEngine() {
   const exitGuide = useGuideStore((s) => s.exitGuide);
   const startInFlightRef = useRef<string | null>(null);
   const pendingRetryRef = useRef<string | null>(null);
+  const setPhase = useGuideStore((s) => s.setPhase);
 
   // Start listener: fetch flow + trigger overlay
   useEffect(() => {
@@ -104,15 +105,26 @@ export function useGuideEngine() {
       }
     };
 
+    const handleGuideComplete = (e: Event) => {
+      const detail = (e as CustomEvent<{ guideId?: string; threadId?: string }>).detail;
+      const session = useGuideStore.getState().session;
+      if (!session) return;
+      if (detail?.guideId && detail.guideId !== session.flow.id) return;
+      if (detail?.threadId && detail.threadId !== session.threadId) return;
+      setPhase('complete');
+    };
+
     window.addEventListener('guide:start', handleGuideStart);
     window.addEventListener('guide:control', handleGuideControl);
+    window.addEventListener('guide:complete', handleGuideComplete);
     return () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       delete (window as any).__startGuide;
       window.removeEventListener('guide:start', handleGuideStart);
       window.removeEventListener('guide:control', handleGuideControl);
+      window.removeEventListener('guide:complete', handleGuideComplete);
     };
-  }, [advanceStep, exitGuide, retreatStep, startGuide]);
+  }, [advanceStep, exitGuide, retreatStep, setPhase, startGuide]);
 
   // Completion callback: when phase becomes 'complete', notify backend
   const session = useGuideStore((s) => s.session);
