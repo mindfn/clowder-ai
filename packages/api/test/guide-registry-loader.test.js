@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 describe('F150 guide registry loader target validation', async () => {
-  const { isValidGuideTarget, loadGuideFlow } = await import('../dist/domains/guides/guide-registry-loader.js');
+  const { isValidGuideTarget, loadGuideFlow, resolveGuideForIntent } = await import(
+    '../dist/domains/guides/guide-registry-loader.js'
+  );
 
   test('accepts registry-safe target ids', () => {
     assert.equal(isValidGuideTarget('hub.trigger'), true);
@@ -34,5 +36,20 @@ describe('F150 guide registry loader target validation', async () => {
     assert.ok(editStep, 'edit-member-profile step should exist');
     assert.equal(editStep.target, 'member-editor.profile');
     assert.equal(editStep.advance, 'confirm');
+  });
+
+  test('matches meaningful partial queries without requiring full keyword', () => {
+    const matches = resolveGuideForIntent('添加');
+    assert.equal(matches[0]?.id, 'add-member');
+  });
+
+  test('does not offer guides for single-character queries', () => {
+    const matches = resolveGuideForIntent('添');
+    assert.equal(matches.length, 0);
+  });
+
+  test('matches exact keyword queries regardless of reverse-match threshold', () => {
+    const matches = resolveGuideForIntent('加成员');
+    assert.equal(matches[0]?.id, 'add-member');
   });
 });

@@ -116,6 +116,20 @@ interface RawFlowFile {
 }
 
 const flowCache = new Map<string, OrchestrationFlow>();
+const MIN_ASCII_REVERSE_MATCH_LENGTH = 3;
+const MIN_NON_ASCII_REVERSE_MATCH_LENGTH = 2;
+
+function normalizeGuideIntent(text: string): string {
+  return text.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function canUseReverseSubstringMatch(query: string): boolean {
+  const compact = query.replace(/\s+/g, '');
+  if (!compact) return false;
+  return /^[a-z0-9._-]+$/i.test(compact)
+    ? compact.length >= MIN_ASCII_REVERSE_MATCH_LENGTH
+    : compact.length >= MIN_NON_ASCII_REVERSE_MATCH_LENGTH;
+}
 
 /**
  * Load a guide flow YAML at runtime and return OrchestrationFlow.
@@ -167,12 +181,15 @@ export function loadGuideFlow(guideId: string): OrchestrationFlow {
 
 export function resolveGuideForIntent(intent: string): GuideMatch[] {
   const entries = getRegistryEntries();
-  const query = intent.toLowerCase();
+  const query = normalizeGuideIntent(intent);
+  if (!query) return [];
+  const allowReverseSubstringMatch = canUseReverseSubstringMatch(query);
   return entries
     .map((entry) => {
-      const score = entry.keywords.filter(
-        (kw) => query.includes(kw.toLowerCase()) || kw.toLowerCase().includes(query),
-      ).length;
+      const score = entry.keywords.filter((kw) => {
+        const normalizedKeyword = normalizeGuideIntent(kw);
+        return query.includes(normalizedKeyword) || (allowReverseSubstringMatch && normalizedKeyword.includes(query));
+      }).length;
       return {
         id: entry.id,
         name: entry.name,
