@@ -805,6 +805,95 @@ describe('F150 guide offer ownership', () => {
     );
   });
 
+  it('serial: passes guide selection context to a non-owner target cat', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const codexService = createCapturingService('codex', '我来给步骤概览');
+    const threadStore = {
+      async get() {
+        return {
+          id: 'thread1',
+          title: 'Test',
+          createdBy: 'user1',
+          participants: [],
+          lastActiveAt: Date.now(),
+          createdAt: Date.now(),
+          projectPath: 'default',
+          guideState: {
+            v: 1,
+            guideId: 'add-member',
+            status: 'offered',
+            offeredAt: Date.now(),
+            offeredBy: 'opus',
+          },
+        };
+      },
+      async getParticipantsWithActivity() {
+        return [];
+      },
+      async consumeMentionRoutingFeedback() {
+        return null;
+      },
+      async updateParticipantActivity() {},
+    };
+    const deps = createMockDeps({ codex: codexService }, null, threadStore);
+
+    for await (const _ of routeSerial(deps, ['codex'], '引导流程：步骤概览', 'user1', 'thread1')) {
+    }
+
+    assert.equal(codexService.calls.length, 1, 'non-owner target cat should still be invoked');
+    assert.ok(
+      codexService.calls[0].includes('用户选择了「步骤概览」'),
+      'selected guide branch must be visible to the routed cat even when it did not offer the guide',
+    );
+    assert.ok(
+      !codexService.calls[0].includes('status="offered"'),
+      'selection follow-up must not regress into a duplicate offered prompt',
+    );
+  });
+
+  it('parallel: passes guide selection context to a non-owner target cat', async () => {
+    const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
+    const codexService = createCapturingService('codex', '我来给步骤概览');
+    const threadStore = {
+      async get() {
+        return {
+          id: 'thread1',
+          title: 'Test',
+          createdBy: 'user1',
+          participants: [],
+          lastActiveAt: Date.now(),
+          createdAt: Date.now(),
+          projectPath: 'default',
+          guideState: {
+            v: 1,
+            guideId: 'add-member',
+            status: 'offered',
+            offeredAt: Date.now(),
+            offeredBy: 'opus',
+          },
+        };
+      },
+      async getParticipantsWithActivity() {
+        return [];
+      },
+      async updateParticipantActivity() {},
+    };
+    const deps = createMockDeps({ codex: codexService }, null, threadStore);
+
+    for await (const _ of routeParallel(deps, ['codex'], '引导流程：步骤概览', 'user1', 'thread1')) {
+    }
+
+    assert.equal(codexService.calls.length, 1, 'parallel non-owner target cat should still be invoked');
+    assert.ok(
+      codexService.calls[0].includes('用户选择了「步骤概览」'),
+      'parallel routed cat must see the selected guide context when the offer owner is absent',
+    );
+    assert.ok(
+      !codexService.calls[0].includes('status="offered"'),
+      'parallel selection follow-up must not regress into a duplicate offered prompt',
+    );
+  });
+
   it('parallel: injects offered guide only to the first target cat', async () => {
     const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
     const opusService = createCapturingService('opus', '我来处理引导');

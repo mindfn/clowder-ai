@@ -99,6 +99,12 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
 
   // GET /api/guide-flows/:guideId — serve flow definition at runtime
   app.get<{ Params: { guideId: string } }>('/api/guide-flows/:guideId', async (request, reply) => {
+    const userId = resolveHeaderUserId(request);
+    if (!userId) {
+      reply.status(401);
+      return { error: 'Identity required (X-Cat-Cafe-User header)' };
+    }
+
     const { guideId } = request.params;
     try {
       const flow = loadGuideFlow(guideId);

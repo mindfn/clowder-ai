@@ -318,6 +318,36 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
     assert.equal(JSON.parse(res.body).guideState.status, 'cancelled');
   });
 
+  // --- /api/guide-flows/:guideId ---
+
+  test('guide-flows: rejects without user identity (401)', async () => {
+    const app = await createApp();
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/guide-flows/add-member',
+    });
+
+    assert.equal(res.statusCode, 401);
+    assert.equal(JSON.parse(res.body).error, 'Identity required (X-Cat-Cafe-User header)');
+  });
+
+  test('guide-flows: returns flow for authenticated users', async () => {
+    const app = await createApp();
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/guide-flows/add-member',
+      headers: { 'x-cat-cafe-user': 'user-1' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.id, 'add-member');
+    assert.ok(Array.isArray(body.steps));
+    assert.ok(body.steps.length > 0);
+  });
+
   // --- /api/guide-actions/complete ---
 
   test('complete: transitions active → completed and emits socket event', async () => {
