@@ -45,6 +45,14 @@ import { buildVoteTally, checkVoteCompletion, extractVoteFromText, VOTE_RESULT_S
 
 const log = createModuleLogger('route-parallel');
 
+function shouldHandleCompletedGuide(
+  guideCompletionOwner: string | undefined,
+  targetCatIds: ReadonlySet<string>,
+  catId: string,
+): boolean {
+  return !guideCompletionOwner || guideCompletionOwner === catId || !targetCatIds.has(guideCompletionOwner);
+}
+
 export async function* routeParallel(
   deps: RouteStrategyDeps,
   targetCats: CatId[],
@@ -242,7 +250,7 @@ export async function* routeParallel(
         ...(bootcampState ? { bootcampState, threadId } : {}),
         ...(guideCandidate &&
         (guideCandidate.status === 'completed'
-          ? !guideCompletionOwner || guideCompletionOwner === catId
+          ? shouldHandleCompletedGuide(guideCompletionOwner, targetCatIds, catId)
           : guideCandidate.status === 'offered'
             ? !guideOfferOwner ||
               guideOfferOwner === catId ||
@@ -992,7 +1000,7 @@ export async function* routeParallel(
       if (
         catProducedOutput &&
         guideCandidate?.status === 'completed' &&
-        (!guideCompletionOwner || guideCompletionOwner === msg.catId) &&
+        shouldHandleCompletedGuide(guideCompletionOwner, targetCatIds, msg.catId as string) &&
         deps.invocationDeps.threadStore
       ) {
         try {

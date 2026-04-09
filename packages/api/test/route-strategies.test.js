@@ -1006,6 +1006,58 @@ describe('F150 guide completion ack ownership', () => {
 
     assert.equal(threadStore.updates.length, 0, 'silent done-only turn must not ack guide completion');
   });
+
+  it('serial: injects and acks completed guide when owner cat is not routed', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const completedGuide = {
+      v: 1,
+      guideId: 'add-member',
+      status: 'completed',
+      offeredAt: Date.now(),
+      completedAt: Date.now(),
+      offeredBy: 'opus',
+    };
+    const threadStore = createGuideAckThreadStore(completedGuide, completedGuide, 'default');
+    const codexService = createCapturingService('codex', '好的，我继续帮你');
+    const deps = createMockDeps({ codex: codexService }, null, threadStore);
+
+    for await (const _ of routeSerial(deps, ['codex'], '继续', 'user1', 'thread1')) {
+    }
+
+    assert.equal(codexService.calls.length, 1, 'routed non-owner cat should still be invoked');
+    assert.ok(
+      codexService.calls[0].includes('Guide Completed:'),
+      'routed non-owner cat must see completed guide context when owner is absent',
+    );
+    assert.equal(threadStore.updates.length, 1, 'visible non-owner response should ack guide completion');
+    assert.equal(threadStore.updates[0].guideState.completionAcked, true);
+  });
+
+  it('parallel: injects and acks completed guide when owner cat is not routed', async () => {
+    const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
+    const completedGuide = {
+      v: 1,
+      guideId: 'add-member',
+      status: 'completed',
+      offeredAt: Date.now(),
+      completedAt: Date.now(),
+      offeredBy: 'opus',
+    };
+    const threadStore = createGuideAckThreadStore(completedGuide, completedGuide, 'default');
+    const codexService = createCapturingService('codex', '好的，我继续帮你');
+    const deps = createMockDeps({ codex: codexService }, null, threadStore);
+
+    for await (const _ of routeParallel(deps, ['codex'], '继续', 'user1', 'thread1')) {
+    }
+
+    assert.equal(codexService.calls.length, 1, 'routed non-owner cat should still be invoked');
+    assert.ok(
+      codexService.calls[0].includes('Guide Completed:'),
+      'routed non-owner cat must see completed guide context when owner is absent',
+    );
+    assert.equal(threadStore.updates.length, 1, 'visible non-owner response should ack guide completion');
+    assert.equal(threadStore.updates[0].guideState.completionAcked, true);
+  });
 });
 
 describe('routeParallel whisper privacy (F35)', () => {
