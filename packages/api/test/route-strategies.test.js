@@ -759,6 +759,50 @@ describe('routeParallel abort marks healthy (#267)', () => {
   });
 });
 
+describe('F150 guide offer ownership', () => {
+  it('serial: injects offered guide only to the first target cat', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const opusService = createCapturingService('opus', '我来处理引导');
+    const codexService = createCapturingService('codex', '不该收到引导 offer');
+    const deps = createMockDeps({ opus: opusService, codex: codexService });
+
+    for await (const _ of routeSerial(deps, ['opus', 'codex'], '请帮我添加成员', 'user1', 'thread1')) {
+    }
+
+    assert.equal(opusService.calls.length, 1, 'first cat should be invoked');
+    assert.equal(codexService.calls.length, 1, 'second cat should still be invoked');
+    assert.ok(
+      opusService.calls[0].includes('status="offered"'),
+      'first cat should receive guide offer instructions',
+    );
+    assert.ok(
+      !codexService.calls[0].includes('status="offered"'),
+      'second cat must not receive duplicate guide offer instructions',
+    );
+  });
+
+  it('parallel: injects offered guide only to the first target cat', async () => {
+    const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
+    const opusService = createCapturingService('opus', '我来处理引导');
+    const codexService = createCapturingService('codex', '不该收到引导 offer');
+    const deps = createMockDeps({ opus: opusService, codex: codexService });
+
+    for await (const _ of routeParallel(deps, ['opus', 'codex'], '请帮我添加成员', 'user1', 'thread1')) {
+    }
+
+    assert.equal(opusService.calls.length, 1, 'first cat should be invoked');
+    assert.equal(codexService.calls.length, 1, 'second cat should still be invoked');
+    assert.ok(
+      opusService.calls[0].includes('status="offered"'),
+      'first cat should receive guide offer instructions',
+    );
+    assert.ok(
+      !codexService.calls[0].includes('status="offered"'),
+      'second cat must not receive duplicate guide offer instructions',
+    );
+  });
+});
+
 describe('routeParallel whisper privacy (F35)', () => {
   it('does NOT inject whisper content for non-recipient cat in parallel mode', async () => {
     const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import type { OrchestrationFlow } from '@/stores/guideStore';
 import { useGuideStore } from '@/stores/guideStore';
 import { apiFetch } from '@/utils/api-client';
@@ -15,11 +15,26 @@ import { apiFetch } from '@/utils/api-client';
  */
 export function useGuideEngine() {
   const startGuide = useGuideStore((s) => s.startGuide);
-  const exitGuide = useGuideStore((s) => s.exitGuide);
+  const startInFlightRef = useRef<string | null>(null);
 
   // Start listener: fetch flow + trigger overlay
   useEffect(() => {
+    const hasActiveSession = (flowId: string, threadId?: string) => {
+      const session = useGuideStore.getState().session;
+      return (
+        !!session &&
+        session.flow.id === flowId &&
+        session.threadId === (threadId ?? null) &&
+        session.phase !== 'complete'
+      );
+    };
+
     const trigger = async (flowId: string, threadId?: string) => {
+      const startKey = `${threadId ?? 'no-thread'}::${flowId}`;
+      if (hasActiveSession(flowId, threadId) || startInFlightRef.current === startKey) {
+        return;
+      }
+      startInFlightRef.current = startKey;
       try {
         const res = await apiFetch(`/api/guide-flows/${encodeURIComponent(flowId)}`);
         const flow = (await res.json()) as OrchestrationFlow;
@@ -27,9 +42,14 @@ export function useGuideEngine() {
           console.warn(`[Guide] Empty flow: ${flowId}`);
           return;
         }
+        if (hasActiveSession(flowId, threadId)) return;
         startGuide(flow, threadId);
       } catch (err) {
         console.error(`[Guide] Failed to fetch flow "${flowId}":`, err);
+      } finally {
+        if (startInFlightRef.current === startKey) {
+          startInFlightRef.current = null;
+        }
       }
     };
 
@@ -47,7 +67,7 @@ export function useGuideEngine() {
       delete (window as any).__startGuide;
       window.removeEventListener('guide:start', handleGuideStart);
     };
-  }, [startGuide, exitGuide]);
+  }, [startGuide]);
 
   // Completion callback: when phase becomes 'complete', notify backend
   const session = useGuideStore((s) => s.session);

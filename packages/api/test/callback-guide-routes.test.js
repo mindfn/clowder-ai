@@ -54,12 +54,23 @@ describe('F150 Guide callback routes', () => {
     return { invocationId, callbackToken, threadId: thread.id };
   }
 
+  async function seedGuideState(threadId, guideId, status) {
+    await threadStore.updateGuideState(threadId, {
+      v: 1,
+      guideId,
+      status,
+      offeredAt: Date.now(),
+      ...(status === 'active' ? { startedAt: Date.now() } : {}),
+    });
+  }
+
   // ─── start-guide ───
 
   describe('POST /api/callbacks/start-guide', () => {
     test('starts guide with valid guideId', async () => {
       const app = await createApp();
       const { invocationId, callbackToken, threadId } = createCreds();
+      await seedGuideState(threadId, 'add-member', 'offered');
 
       const res = await app.inject({
         method: 'POST',
@@ -181,6 +192,7 @@ describe('F150 Guide callback routes', () => {
     test('broadcasts control action with valid credentials', async () => {
       const app = await createApp();
       const { invocationId, callbackToken, threadId } = createCreds();
+      await seedGuideState(threadId, 'add-member', 'active');
 
       const res = await app.inject({
         method: 'POST',
