@@ -792,7 +792,6 @@ export async function* routeParallel(
           }
         }
       } else if (!catHadError.has(msg.catId)) {
-        catProducedOutput = true;
         // No text content and no error.
         // Persist only when there is non-text payload (tool/thinking/rich).
         // Purely empty turns should not create blank chat bubbles.
@@ -804,20 +803,25 @@ export async function* routeParallel(
         const sawUserFacingSystemInfo = catSawUserFacingSystemInfo.get(msg.catId) === true;
         const shouldPersistNoTextMessage =
           hasRichBlocks || (catTools?.length ?? 0) > 0 || Boolean(thinking?.trim().length ?? 0);
+        const shouldEmitSilentCompletion = (catTools?.length ?? 0) > 0 && !hasRichBlocks && !sawUserFacingSystemInfo;
 
         // Diagnostic: if cat ran tools but produced no text, emit a system_info so the
         // user sees *something* instead of a silent vanish (bugfix: silent-exit P1).
-        if (catTools && catTools.length > 0 && !hasRichBlocks && !sawUserFacingSystemInfo) {
+        if (shouldEmitSilentCompletion) {
           yield {
             type: 'system_info' as AgentMessageType,
             catId: msg.catId,
             content: JSON.stringify({
               type: 'silent_completion',
               detail: `${msg.catId} completed with tool calls but no text response.`,
-              toolCount: catTools.length,
+              toolCount: catTools?.length ?? 0,
             }),
             timestamp: Date.now(),
           } as AgentMessage;
+        }
+
+        if (shouldPersistNoTextMessage || sawUserFacingSystemInfo || shouldEmitSilentCompletion) {
+          catProducedOutput = true;
         }
 
         if (shouldPersistNoTextMessage) {

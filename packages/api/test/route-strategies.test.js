@@ -56,7 +56,7 @@ function createSequentialCapturingService(catId, responses) {
   };
 }
 
-function createGuideAckThreadStore(initialGuideState, currentGuideState) {
+function createGuideAckThreadStore(initialGuideState, currentGuideState, projectPath = '/tmp/test') {
   let getCount = 0;
   const updates = [];
   return {
@@ -65,12 +65,12 @@ function createGuideAckThreadStore(initialGuideState, currentGuideState) {
       getCount += 1;
       return {
         id: 'thread1',
-        projectPath: '/tmp/test',
         title: 'Test',
         createdBy: 'user1',
         participants: [],
         lastActiveAt: Date.now(),
         createdAt: Date.now(),
+        projectPath,
         guideState: getCount === 1 ? initialGuideState : currentGuideState,
       };
     },
@@ -878,6 +878,44 @@ describe('F150 guide completion ack ownership', () => {
     }
 
     assert.equal(threadStore.updates.length, 0, 'must not ack a replacement guide');
+  });
+
+  it('serial: does not ack completed guide after a silent done-only turn', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const completedGuide = {
+      v: 1,
+      guideId: 'add-member',
+      status: 'completed',
+      offeredAt: Date.now(),
+      completedAt: Date.now(),
+      offeredBy: 'codex',
+    };
+    const threadStore = createGuideAckThreadStore(completedGuide, completedGuide, 'default');
+    const deps = createMockDeps({ codex: createDoneOnlyService('codex') }, null, threadStore);
+
+    for await (const _ of routeSerial(deps, ['codex'], '继续', 'user1', 'thread1')) {
+    }
+
+    assert.equal(threadStore.updates.length, 0, 'silent done-only turn must not ack guide completion');
+  });
+
+  it('parallel: does not ack completed guide after a silent done-only turn', async () => {
+    const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
+    const completedGuide = {
+      v: 1,
+      guideId: 'add-member',
+      status: 'completed',
+      offeredAt: Date.now(),
+      completedAt: Date.now(),
+      offeredBy: 'codex',
+    };
+    const threadStore = createGuideAckThreadStore(completedGuide, completedGuide, 'default');
+    const deps = createMockDeps({ codex: createDoneOnlyService('codex') }, null, threadStore);
+
+    for await (const _ of routeParallel(deps, ['codex'], '继续', 'user1', 'thread1')) {
+    }
+
+    assert.equal(threadStore.updates.length, 0, 'silent done-only turn must not ack guide completion');
   });
 });
 
