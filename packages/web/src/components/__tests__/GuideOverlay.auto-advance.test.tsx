@@ -5,8 +5,14 @@ import { GuideOverlay } from '@/components/GuideOverlay';
 import type { OrchestrationFlow } from '@/stores/guideStore';
 import { useGuideStore } from '@/stores/guideStore';
 
+const apiFetchMock = vi.fn();
+
 vi.mock('@/hooks/useGuideEngine', () => ({
   useGuideEngine: () => {},
+}));
+
+vi.mock('@/utils/api-client', () => ({
+  apiFetch: (...args: unknown[]) => apiFetchMock(...args),
 }));
 
 const FLOW: OrchestrationFlow = {
@@ -44,6 +50,7 @@ describe('GuideOverlay auto-advance lifecycle', () => {
   });
 
   beforeEach(() => {
+    apiFetchMock.mockReset();
     vi.useFakeTimers();
     vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
       const id = ++rafId;
@@ -123,6 +130,37 @@ describe('GuideOverlay auto-advance lifecycle', () => {
     });
 
     expect(useGuideStore.getState().session?.currentStepIndex).toBe(1);
+  });
+
+  it('persists guide cancellation before closing the overlay', async () => {
+    apiFetchMock.mockResolvedValue({ ok: true });
+
+    act(() => {
+      useGuideStore.getState().startGuide(FLOW, 'thread-1');
+      useGuideStore.getState().setPhase('active');
+    });
+    act(() => {
+      vi.advanceTimersByTime(120);
+    });
+
+    const exitButton = container.querySelector('[aria-label="退出引导"]');
+    expect(exitButton).toBeInstanceOf(HTMLButtonElement);
+
+    await act(async () => {
+      (exitButton as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      '/api/guide-actions/cancel',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threadId: 'thread-1', guideId: 'listener-cleanup' }),
+      }),
+    );
+    expect(useGuideStore.getState().session).toBeNull();
   });
 
   it('advances confirm steps only after a matching guide:confirm event', () => {

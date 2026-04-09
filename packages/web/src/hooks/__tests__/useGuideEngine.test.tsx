@@ -28,6 +28,13 @@ function dispatchGuideStart(flowId: string, threadId = 'thread-1') {
   window.dispatchEvent(new CustomEvent('guide:start', { detail: { flowId, threadId } }));
 }
 
+function dispatchGuideControl(
+  action: 'next' | 'back' | 'skip' | 'exit',
+  detail: { guideId?: string; threadId?: string } = {},
+) {
+  window.dispatchEvent(new CustomEvent('guide:control', { detail: { action, ...detail } }));
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((res) => {
@@ -114,5 +121,57 @@ describe('useGuideEngine duplicate start protection', () => {
 
     expect(apiFetchMock).toHaveBeenCalledTimes(1);
     expect(useGuideStore.getState().session?.currentStepIndex).toBe(1);
+  });
+
+  it('applies matching guide:control events to the current session', async () => {
+    apiFetchMock.mockResolvedValue({ json: async () => FLOW });
+
+    act(() => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      dispatchGuideStart('add-member');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(useGuideStore.getState().session?.currentStepIndex).toBe(0);
+
+    act(() => {
+      dispatchGuideControl('next', { guideId: 'add-member', threadId: 'thread-1' });
+    });
+    expect(useGuideStore.getState().session?.currentStepIndex).toBe(1);
+
+    act(() => {
+      dispatchGuideControl('back', { guideId: 'add-member', threadId: 'thread-1' });
+    });
+    expect(useGuideStore.getState().session?.currentStepIndex).toBe(0);
+
+    act(() => {
+      dispatchGuideControl('exit', { guideId: 'add-member', threadId: 'thread-1' });
+    });
+    expect(useGuideStore.getState().session).toBeNull();
+  });
+
+  it('ignores guide:control events for a different guide or thread', async () => {
+    apiFetchMock.mockResolvedValue({ json: async () => FLOW });
+
+    act(() => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      dispatchGuideStart('add-member');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    act(() => {
+      dispatchGuideControl('exit', { guideId: 'other-guide', threadId: 'thread-1' });
+      dispatchGuideControl('exit', { guideId: 'add-member', threadId: 'thread-2' });
+    });
+
+    expect(useGuideStore.getState().session?.flow.id).toBe('add-member');
   });
 });

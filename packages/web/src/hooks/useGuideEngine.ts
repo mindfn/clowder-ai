@@ -15,6 +15,9 @@ import { apiFetch } from '@/utils/api-client';
  */
 export function useGuideEngine() {
   const startGuide = useGuideStore((s) => s.startGuide);
+  const advanceStep = useGuideStore((s) => s.advanceStep);
+  const retreatStep = useGuideStore((s) => s.retreatStep);
+  const exitGuide = useGuideStore((s) => s.exitGuide);
   const startInFlightRef = useRef<string | null>(null);
 
   // Start listener: fetch flow + trigger overlay
@@ -61,13 +64,44 @@ export function useGuideEngine() {
       if (detail?.flowId) trigger(detail.flowId, detail.threadId);
     };
 
+    const handleGuideControl = (e: Event) => {
+      const detail = (
+        e as CustomEvent<{
+          action: 'next' | 'back' | 'skip' | 'exit';
+          guideId?: string;
+          threadId?: string;
+        }>
+      ).detail;
+      if (!detail?.action) return;
+
+      const session = useGuideStore.getState().session;
+      if (!session) return;
+      if (detail.guideId && detail.guideId !== session.flow.id) return;
+      if (detail.threadId && detail.threadId !== session.threadId) return;
+
+      switch (detail.action) {
+        case 'next':
+        case 'skip':
+          advanceStep();
+          break;
+        case 'back':
+          retreatStep();
+          break;
+        case 'exit':
+          exitGuide();
+          break;
+      }
+    };
+
     window.addEventListener('guide:start', handleGuideStart);
+    window.addEventListener('guide:control', handleGuideControl);
     return () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       delete (window as any).__startGuide;
       window.removeEventListener('guide:start', handleGuideStart);
+      window.removeEventListener('guide:control', handleGuideControl);
     };
-  }, [startGuide]);
+  }, [advanceStep, exitGuide, retreatStep, startGuide]);
 
   // Completion callback: when phase becomes 'complete', notify backend
   const session = useGuideStore((s) => s.session);

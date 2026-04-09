@@ -127,6 +127,7 @@ export async function* routeParallel(
             name,
             estimatedTime,
             status: gs.status as 'offered' | 'awaiting_choice' | 'active' | 'completed',
+            ...(gs.status === 'offered' ? { isNewOffer: false } : {}),
             ...(selectionMatch ? { userSelection: selectionMatch[1] } : {}),
           };
           if (gs.status === 'offered') {
@@ -170,7 +171,13 @@ export async function* routeParallel(
       const guideMatches = resolveGuideForIntent(message);
       if (guideMatches.length > 0) {
         const top = guideMatches[0];
-        guideCandidate = { id: top.id, name: top.name, estimatedTime: top.estimatedTime, status: 'offered' };
+        guideCandidate = {
+          id: top.id,
+          name: top.name,
+          estimatedTime: top.estimatedTime,
+          status: 'offered',
+          isNewOffer: true,
+        };
         guideOfferOwner = targetCats[0];
       }
     } catch {

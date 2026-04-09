@@ -4,6 +4,7 @@ import React, { Component, useEffect, useRef, useState } from 'react';
 import { useGuideEngine } from '@/hooks/useGuideEngine';
 import type { OrchestrationStep } from '@/stores/guideStore';
 import { useGuideStore } from '@/stores/guideStore';
+import { apiFetch } from '@/utils/api-client';
 
 /** Error boundary — prevents guide overlay crash from taking down the whole app. */
 class GuideErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean }> {
@@ -55,6 +56,20 @@ function GuideOverlayInner() {
       ? session.flow.steps[session.currentStepIndex]
       : null;
   const isComplete = session ? session.phase === 'complete' : false;
+  const handleExit = async () => {
+    if (session?.threadId) {
+      try {
+        await apiFetch('/api/guide-actions/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ threadId: session.threadId, guideId: session.flow.id }),
+        });
+      } catch (error) {
+        console.error('[GuideOverlay] Failed to persist guide cancellation:', error);
+      }
+    }
+    exitGuide();
+  };
 
   // rAF loop: track target element position
   useEffect(() => {
@@ -226,7 +241,7 @@ function GuideOverlayInner() {
         totalSteps={session.flow.steps.length}
         phase={session.phase}
         targetRect={targetRect}
-        onExit={exitGuide}
+        onExit={handleExit}
       />
     </>
   );

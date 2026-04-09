@@ -862,6 +862,49 @@ describe('SystemPromptBuilder', () => {
     assert.ok(ctx.includes('F073'), 'Should contain feature ID');
   });
 
+  test('guide prompt emits offered transition only for a brand-new guide match', async () => {
+    const { buildInvocationContext } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
+    const ctx = buildInvocationContext({
+      catId: 'opus',
+      mode: 'independent',
+      teammates: [],
+      mcpAvailable: false,
+      threadId: 'thread-guide',
+      guideCandidate: {
+        id: 'add-member',
+        name: '添加成员',
+        estimatedTime: '3min',
+        status: 'offered',
+        isNewOffer: true,
+      },
+    });
+
+    assert.ok(ctx.includes('Guide Matched'), 'new match should emit offer card instructions');
+    assert.ok(ctx.includes('status="offered"'), 'new match should persist offered transition exactly once');
+  });
+
+  test('guide prompt does not re-send offered transition after the guide is already offered', async () => {
+    const { buildInvocationContext } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
+    const ctx = buildInvocationContext({
+      catId: 'opus',
+      mode: 'independent',
+      teammates: [],
+      mcpAvailable: false,
+      threadId: 'thread-guide',
+      guideCandidate: {
+        id: 'add-member',
+        name: '添加成员',
+        estimatedTime: '3min',
+        status: 'offered',
+        isNewOffer: false,
+      },
+    });
+
+    assert.ok(ctx.includes('Guide Pending'), 'existing offered guide should become a stable pending reminder');
+    assert.ok(!ctx.includes('status="offered"'), 'existing offered guide must not re-send offered transition');
+    assert.ok(!ctx.includes('cat_cafe_create_rich_block'), 'existing offered guide must not repeat the offer card');
+  });
+
   test('buildInvocationContext omits SOP hint when sopStageHint absent', async () => {
     const { buildInvocationContext } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
     const ctx = buildInvocationContext({

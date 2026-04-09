@@ -111,6 +111,8 @@ export interface InvocationContext {
     name: string;
     estimatedTime: string;
     status: 'offered' | 'awaiting_choice' | 'active' | 'completed';
+    /** True only on the first routing-layer match before any guideState has been persisted. */
+    isNewOffer?: boolean;
     /** When user clicked an interactive selection, carries the chosen label. */
     userSelection?: string;
   };
@@ -618,6 +620,7 @@ export function buildInvocationContext(context: InvocationContext): string {
     const { id, name, estimatedTime, status } = context.guideCandidate;
     const threadPart = context.threadId ? ` thread=${context.threadId}` : '';
     const userSelection = context.guideCandidate.userSelection;
+    const isNewOffer = context.guideCandidate.isNewOffer === true;
     // "先看步骤概览" still comes through as a chat message; start/skip are frontend-only actions
     if ((status === 'offered' || status === 'awaiting_choice') && userSelection?.includes('步骤概览')) {
       lines.push(
@@ -629,7 +632,7 @@ export function buildInvocationContext(context: InvocationContext): string {
         '4. 在最后问用户是否要开始引导',
         '',
       );
-    } else if (status === 'offered') {
+    } else if (status === 'offered' && isNewOffer) {
       // First encounter: emit interactive card with frontend-direct actions for start/skip
       const blockJson = JSON.stringify({
         id: `guide-offer-${id}-${(context.threadId ?? '').slice(-8) || 'x'}`,
@@ -673,7 +676,7 @@ export function buildInvocationContext(context: InvocationContext): string {
         '5. 禁止调用 cat_cafe_start_guide（等用户在选项卡中选择后再启动）',
         '',
       );
-    } else if (status === 'awaiting_choice') {
+    } else if (status === 'offered' || status === 'awaiting_choice') {
       lines.push(
         `🧭 Guide Pending:${threadPart} id=${id} name=${name} — 用户尚未选择`,
         '不要重复发送选项卡。用一句话提醒：「之前找到了引导流程，你要开始吗？」',

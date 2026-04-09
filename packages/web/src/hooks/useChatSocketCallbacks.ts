@@ -104,7 +104,11 @@ export function useChatSocketCallbacks({
         );
       },
       onGuideControl: (data) => {
-        window.dispatchEvent(new CustomEvent('guide:control', { detail: { action: data.action } }));
+        window.dispatchEvent(
+          new CustomEvent('guide:control', {
+            detail: { action: data.action, guideId: data.guideId, threadId: data.threadId },
+          }),
+        );
       },
     }),
     [
