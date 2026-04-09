@@ -9,7 +9,7 @@ import { getCatContextBudget } from '../../../../../config/cat-budgets.js';
 import { getConfigSessionStrategy, isSessionChainEnabled } from '../../../../../config/cat-config-loader.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import { estimateTokens } from '../../../../../utils/token-counter.js';
-import { canAccessGuideState } from '../../../../guides/guide-state-access.js';
+import { canAccessGuideState, hasHiddenForeignNonTerminalGuideState } from '../../../../guides/guide-state-access.js';
 import { assembleContext } from '../../context/ContextAssembler.js';
 import {
   buildInvocationContext,
@@ -125,6 +125,7 @@ export async function* routeParallel(
   let guideCompletionOwner: string | undefined;
   const targetCatIds = new Set<string>(targetCats);
   let guideCompletionFallbackCatId: string | undefined;
+  let hiddenForeignNonTerminalGuideState = false;
   if (deps.invocationDeps.threadStore) {
     try {
       const thread = await deps.invocationDeps.threadStore.get(threadId);
@@ -132,6 +133,7 @@ export async function* routeParallel(
       voiceMode = thread?.voiceMode;
       bootcampState = thread?.bootcampState;
       const threadGuideState = thread?.guideState;
+      hiddenForeignNonTerminalGuideState = hasHiddenForeignNonTerminalGuideState(thread, threadGuideState, userId);
       const guideState = canAccessGuideState(thread, threadGuideState, userId) ? threadGuideState : undefined;
       // F150: Read existing guide state from thread (authority source)
       if (guideState) {
@@ -203,7 +205,7 @@ export async function* routeParallel(
   const catCoverageMap = new Map<string, ContextEvalInput['coverageMap']>();
 
   // F150: Match raw user message against guide registry (only if no existing guide state)
-  if (!guideCandidate) {
+  if (!guideCandidate && !hiddenForeignNonTerminalGuideState) {
     try {
       const { resolveGuideForIntent } = await import('../../../../guides/guide-registry-loader.js');
       const guideMatches = resolveGuideForIntent(message);

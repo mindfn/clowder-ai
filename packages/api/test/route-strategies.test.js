@@ -816,6 +816,34 @@ describe('routeParallel abort marks healthy (#267)', () => {
 });
 
 describe('F150 guide offer ownership', () => {
+  it('serial: suppresses fresh guide offers when another user has a non-terminal guide on shared default thread', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const codexService = createCapturingService('codex', '我来处理这个请求');
+    const threadStore = createSharedDefaultGuideThreadStore({
+      v: 1,
+      guideId: 'configure-provider',
+      status: 'active',
+      offeredAt: Date.now(),
+      startedAt: Date.now(),
+      offeredBy: 'opus',
+      userId: 'other-user',
+    });
+    const deps = createMockDeps({ codex: codexService }, null, threadStore);
+
+    for await (const _ of routeSerial(deps, ['codex'], '请帮我添加成员', 'user1', 'default')) {
+    }
+
+    assert.ok(
+      !codexService.calls[0].includes('Guide Matched:'),
+      'foreign non-terminal guide must block fresh guide matching for another user',
+    );
+    assert.ok(
+      !codexService.calls[0].includes('status="offered"'),
+      'routing must not emit a fresh offered guide when another user already owns the active guide',
+    );
+    assert.equal(threadStore.updates.length, 0, 'blocked guide state must not be mutated by the wrong user');
+  });
+
   it('serial: ignores another user guide state on shared default thread', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const codexService = createCapturingService('codex', '我来处理这个请求');
@@ -1056,6 +1084,34 @@ describe('F150 guide offer ownership', () => {
       !codexService.calls[0].includes('status="offered"'),
       'second cat must not receive duplicate guide offer instructions',
     );
+  });
+
+  it('parallel: suppresses fresh guide offers when another user has a non-terminal guide on shared default thread', async () => {
+    const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
+    const codexService = createCapturingService('codex', '我来处理这个请求');
+    const threadStore = createSharedDefaultGuideThreadStore({
+      v: 1,
+      guideId: 'configure-provider',
+      status: 'active',
+      offeredAt: Date.now(),
+      startedAt: Date.now(),
+      offeredBy: 'opus',
+      userId: 'other-user',
+    });
+    const deps = createMockDeps({ codex: codexService }, null, threadStore);
+
+    for await (const _ of routeParallel(deps, ['codex'], '请帮我添加成员', 'user1', 'default')) {
+    }
+
+    assert.ok(
+      !codexService.calls[0].includes('Guide Matched:'),
+      'foreign non-terminal guide must block fresh guide matching for another user',
+    );
+    assert.ok(
+      !codexService.calls[0].includes('status="offered"'),
+      'parallel routing must not emit a fresh offered guide when another user already owns the active guide',
+    );
+    assert.equal(threadStore.updates.length, 0, 'blocked guide state must not be mutated by the wrong user');
   });
 
   it('parallel: ignores another user guide state on shared default thread', async () => {

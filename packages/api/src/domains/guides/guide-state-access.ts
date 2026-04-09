@@ -18,3 +18,13 @@ export function canAccessGuideState(
   if (thread.createdBy === userId) return true;
   return isSharedDefaultGuideThread(thread) && guideState.userId === userId;
 }
+
+export function hasHiddenForeignNonTerminalGuideState(
+  thread: GuideThreadAccess | null | undefined,
+  guideState: Pick<GuideStateV1, 'status' | 'userId'> | null | undefined,
+  userId: string,
+): boolean {
+  if (!thread || !guideState) return false;
+  if (canAccessGuideState(thread, guideState, userId)) return false;
+  return guideState.status !== 'completed' && guideState.status !== 'cancelled';
+}
