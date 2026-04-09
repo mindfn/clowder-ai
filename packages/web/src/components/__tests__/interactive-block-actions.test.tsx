@@ -137,4 +137,66 @@ describe('InteractiveBlock direct callback actions', () => {
     expect(apiFetchMock).not.toHaveBeenCalled();
     expect(receivedGuideStart).toBeNull();
   });
+
+  it('keeps guide offer card interactive after preview selection', async () => {
+    apiFetchMock.mockResolvedValue({ ok: true, status: 200 });
+    const previewableBlock: RichInteractiveBlock = {
+      ...block,
+      id: 'guide-offer-previewable',
+      messageTemplate: '引导流程：{selection}',
+      options: [
+        { id: 'preview', label: '先看步骤概览' },
+        {
+          id: 'start',
+          label: '开始引导',
+          action: {
+            type: 'callback',
+            endpoint: '/api/guide-actions/start',
+            payload: { threadId: 'thread-1', guideId: 'add-member' },
+          },
+        },
+      ],
+    };
+
+    await act(async () => {
+      root.render(React.createElement(InteractiveBlock, { block: previewableBlock, messageId: 'message-3' }));
+    });
+
+    const previewBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('先看步骤概览'),
+    );
+    expect(previewBtn).toBeTruthy();
+    await act(async () => {
+      previewBtn!.click();
+    });
+
+    let confirmBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('确认选择'));
+    expect(confirmBtn).toBeTruthy();
+    await act(async () => {
+      confirmBtn!.click();
+      await Promise.resolve();
+    });
+
+    const startBtnAfterPreview = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('开始引导'),
+    ) as HTMLButtonElement | undefined;
+    expect(startBtnAfterPreview).toBeTruthy();
+    expect(startBtnAfterPreview?.disabled).toBe(false);
+    expect(apiFetchMock.mock.calls.some(([url]) => url === '/api/guide-actions/start')).toBe(false);
+    expect(receivedGuideStart).toBeNull();
+
+    await act(async () => {
+      startBtnAfterPreview!.click();
+    });
+
+    confirmBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('确认选择'));
+    expect(confirmBtn).toBeTruthy();
+    await act(async () => {
+      confirmBtn!.click();
+      await Promise.resolve();
+    });
+
+    expect(apiFetchMock).toHaveBeenCalledWith('/api/guide-actions/start', expect.objectContaining({ method: 'POST' }));
+    expect(receivedGuideStart).toBe('add-member');
+  });
 });

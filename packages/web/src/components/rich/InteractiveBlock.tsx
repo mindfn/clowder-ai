@@ -561,11 +561,12 @@ export function InteractiveBlock({
         return;
       }
 
-      setLocalDisabled(true);
+      const selectedOption = block.options.find((o) => optionIds.includes(o.id));
+      const shouldDisable = selectedOption?.action?.type === 'callback';
       setLocalSelectedIds(optionIds);
+      setLocalDisabled(shouldDisable);
 
       // F150: Check if the selected option has a direct action (bypasses chat message pipeline)
-      const selectedOption = block.options.find((o) => optionIds.includes(o.id));
       if (selectedOption?.action?.type === 'callback') {
         const { endpoint, payload } = selectedOption.action;
         const safeEndpoint = resolveSafeInteractiveCallbackEndpoint(endpoint);
@@ -619,9 +620,12 @@ export function InteractiveBlock({
 
       // P2-1 fix: write back to store so re-mount/thread-switch preserves state
       if (messageId) {
-        useChatStore.getState().updateRichBlock(messageId, block.id, { disabled: true, selectedIds: optionIds });
+        useChatStore.getState().updateRichBlock(messageId, block.id, {
+          disabled: shouldDisable,
+          selectedIds: optionIds,
+        });
         // Persist to backend
-        patchBlockState(messageId, block.id, { disabled: true, selectedIds: optionIds }).catch(() => {
+        patchBlockState(messageId, block.id, { disabled: shouldDisable, selectedIds: optionIds }).catch(() => {
           // Persistence failure is non-critical — local + store state already updated
         });
       }
