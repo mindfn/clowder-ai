@@ -75,10 +75,13 @@ function shouldHandleOfferedGuide(
   fallbackCatId: string | undefined,
   catId: string,
   hasUserSelection: boolean,
+  allowOwnerMissingFallback = false,
 ): boolean {
   if (!guideOfferOwner) return true;
   if (guideOfferOwner === catId) return true;
-  if (hasUserSelection && !targetCatIds.has(guideOfferOwner)) return fallbackCatId === catId;
+  if ((hasUserSelection || allowOwnerMissingFallback) && !targetCatIds.has(guideOfferOwner)) {
+    return fallbackCatId === catId;
+  }
   return false;
 }
 
@@ -190,9 +193,9 @@ export async function* routeSerial(
             ...(gs.status === 'offered' ? { isNewOffer: false } : {}),
             ...(selectionMatch ? { userSelection: selectionMatch[1] } : {}),
           };
-          if (gs.status === 'offered') {
+          if (gs.status === 'offered' || gs.status === 'awaiting_choice') {
             guideOfferOwner = gs.offeredBy;
-            if (selectionMatch && gs.offeredBy && !targetCatIds.has(gs.offeredBy)) {
+            if ((selectionMatch || gs.status === 'awaiting_choice') && gs.offeredBy && !targetCatIds.has(gs.offeredBy)) {
               guideOfferSelectionFallbackCatId = targetCats[0];
             }
           }
@@ -343,13 +346,14 @@ export async function* routeSerial(
         ...(guideCandidate &&
         (guideCandidate.status === 'completed'
           ? shouldHandleCompletedGuide(guideCompletionOwner, targetCatIds, guideCompletionFallbackCatId, catId)
-          : guideCandidate.status === 'offered'
+          : guideCandidate.status === 'offered' || guideCandidate.status === 'awaiting_choice'
             ? shouldHandleOfferedGuide(
                 guideOfferOwner,
                 targetCatIds,
                 guideOfferSelectionFallbackCatId,
                 catId,
                 Boolean(guideCandidate.userSelection),
+                guideCandidate.status === 'awaiting_choice',
               )
             : true)
           ? { guideCandidate, threadId }

@@ -982,6 +982,52 @@ describe('F150 guide offer ownership', () => {
     );
   });
 
+  it('serial: routes owner-missing awaiting_choice guide to only the first target cat', async () => {
+    const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
+    const opusService = createCapturingService('opus', '我来处理等待中的引导');
+    const codexService = createCapturingService('codex', '我不该收到 pending guide');
+    const threadStore = {
+      async get() {
+        return {
+          id: 'thread1',
+          title: 'Test',
+          createdBy: 'user1',
+          participants: [],
+          lastActiveAt: Date.now(),
+          createdAt: Date.now(),
+          projectPath: 'default',
+          guideState: {
+            v: 1,
+            guideId: 'add-member',
+            status: 'awaiting_choice',
+            offeredAt: Date.now(),
+            offeredBy: 'dare',
+          },
+        };
+      },
+      async getParticipantsWithActivity() {
+        return [];
+      },
+      async consumeMentionRoutingFeedback() {
+        return null;
+      },
+      async updateParticipantActivity() {},
+    };
+    const deps = createMockDeps({ opus: opusService, codex: codexService }, null, threadStore);
+
+    for await (const _ of routeSerial(deps, ['opus', 'codex'], '继续', 'user1', 'thread1')) {
+    }
+
+    assert.ok(
+      opusService.calls[0].includes('Guide Pending:'),
+      'first target cat should receive the awaiting_choice reminder fallback',
+    );
+    assert.ok(
+      !codexService.calls[0].includes('Guide Pending:'),
+      'second target cat must not receive duplicate awaiting_choice context',
+    );
+  });
+
   it('parallel: passes guide selection context to a non-owner target cat', async () => {
     const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
     const codexService = createCapturingService('codex', '我来给步骤概览');
@@ -1065,6 +1111,49 @@ describe('F150 guide offer ownership', () => {
     assert.ok(
       !codexService.calls[0].includes('用户选择了「步骤概览」'),
       'second target cat must not receive duplicate selection fallback',
+    );
+  });
+
+  it('parallel: routes owner-missing awaiting_choice guide to only the first target cat', async () => {
+    const { routeParallel } = await import('../dist/domains/cats/services/agents/routing/route-parallel.js');
+    const opusService = createCapturingService('opus', '我来处理等待中的引导');
+    const codexService = createCapturingService('codex', '我不该收到 pending guide');
+    const threadStore = {
+      async get() {
+        return {
+          id: 'thread1',
+          title: 'Test',
+          createdBy: 'user1',
+          participants: [],
+          lastActiveAt: Date.now(),
+          createdAt: Date.now(),
+          projectPath: 'default',
+          guideState: {
+            v: 1,
+            guideId: 'add-member',
+            status: 'awaiting_choice',
+            offeredAt: Date.now(),
+            offeredBy: 'dare',
+          },
+        };
+      },
+      async getParticipantsWithActivity() {
+        return [];
+      },
+      async updateParticipantActivity() {},
+    };
+    const deps = createMockDeps({ opus: opusService, codex: codexService }, null, threadStore);
+
+    for await (const _ of routeParallel(deps, ['opus', 'codex'], '继续', 'user1', 'thread1')) {
+    }
+
+    assert.ok(
+      opusService.calls[0].includes('Guide Pending:'),
+      'first target cat should receive the awaiting_choice reminder fallback',
+    );
+    assert.ok(
+      !codexService.calls[0].includes('Guide Pending:'),
+      'second target cat must not receive duplicate awaiting_choice context',
     );
   });
 
