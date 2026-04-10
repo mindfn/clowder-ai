@@ -1,6 +1,6 @@
 /**
- * F150: Guide Callback Routes
- * POST /api/callbacks/update-guide-state — update guide session state (forward-only)
+ * F155: Guide Callback Routes
+ * POST /api/callbacks/update-guide-state — update guide session state (forward-only, non-start transitions)
  * POST /api/callbacks/start-guide       — start a guide (validates offered→active)
  * POST /api/callbacks/guide-resolve      — resolve user intent to matching guides
  * POST /api/callbacks/guide-control      — control an active guide (next/back/skip/exit)
@@ -135,7 +135,7 @@ export async function registerCallbackGuideRoutes(
         offeredBy: record.catId ?? undefined,
       };
       await threadStore.updateGuideState(threadId, newState);
-      log.info({ guideId, threadId, catId: record.catId }, '[F150] guide state created: offered');
+      log.info({ guideId, threadId, catId: record.catId }, '[F155] guide state created: offered');
       return { guideState: newState };
     }
 
@@ -163,7 +163,7 @@ export async function registerCallbackGuideRoutes(
         offeredBy: record.catId ?? undefined,
       };
       await threadStore.updateGuideState(threadId, newState);
-      log.info({ guideId, threadId }, '[F150] guide state replaced (previous was terminal)');
+      log.info({ guideId, threadId }, '[F155] guide state replaced (previous was terminal)');
       return { guideState: newState };
     }
 
@@ -178,11 +178,20 @@ export async function registerCallbackGuideRoutes(
         offeredBy: record.catId ?? undefined,
       };
       await threadStore.updateGuideState(threadId, newState);
-      log.info({ guideId, threadId }, '[F150] guide re-offered after terminal state');
+      log.info({ guideId, threadId }, '[F155] guide re-offered after terminal state');
       return { guideState: newState };
     }
 
-    // Same guide — validate state transition
+    if (status === 'active') {
+      reply.status(400);
+      return {
+        error: 'guide_start_required',
+        message:
+          'Use /api/callbacks/start-guide to transition a pending guide to "active" so guide_start side effects run',
+      };
+    }
+
+    // Same guide — validate non-start state transition
     if (!isValidTransition(existing.status, status)) {
       reply.status(400);
       return {
@@ -194,12 +203,11 @@ export async function registerCallbackGuideRoutes(
     const updated: GuideStateV1 = {
       ...existing,
       status,
-      ...(status === 'active' ? { startedAt: Date.now() } : {}),
       ...(status === 'completed' || status === 'cancelled' ? { completedAt: Date.now() } : {}),
       ...(currentStep !== undefined ? { currentStep } : {}),
     };
     await threadStore.updateGuideState(threadId, updated);
-    log.info({ guideId, threadId, transition: `${existing.status}→${status}` }, '[F150] guide state updated');
+    log.info({ guideId, threadId, transition: `${existing.status}→${status}` }, '[F155] guide state updated');
     return { guideState: updated };
   });
 
@@ -247,7 +255,7 @@ export async function registerCallbackGuideRoutes(
       loadGuideFlow(guideId);
     } catch (err) {
       reply.status(400);
-      log.warn({ guideId, threadId: record.threadId, err }, '[F150] callback start rejected — flow not loadable');
+      log.warn({ guideId, threadId: record.threadId, err }, '[F155] callback start rejected — flow not loadable');
       return { error: 'guide_flow_invalid', message: (err as Error).message };
     }
 
@@ -261,7 +269,7 @@ export async function registerCallbackGuideRoutes(
       threadId: record.threadId,
       timestamp: Date.now(),
     });
-    log.info({ guideId, threadId: record.threadId }, '[F150] guide started (state: active)');
+    log.info({ guideId, threadId: record.threadId }, '[F155] guide started (state: active)');
     return { status: 'ok', guideId, guideState: updated };
   });
 
@@ -280,7 +288,7 @@ export async function registerCallbackGuideRoutes(
     }
 
     const matches = resolveGuideForIntent(intent);
-    log.info({ intent, matchCount: matches.length, threadId: record.threadId }, '[F150] guide_resolve');
+    log.info({ intent, matchCount: matches.length, threadId: record.threadId }, '[F155] guide_resolve');
     return { status: 'ok', matches };
   });
 
@@ -326,7 +334,7 @@ export async function registerCallbackGuideRoutes(
       threadId: record.threadId,
       timestamp: Date.now(),
     });
-    log.info({ action, guideId: guideState.guideId, threadId: record.threadId }, '[F150] guide_control');
+    log.info({ action, guideId: guideState.guideId, threadId: record.threadId }, '[F155] guide_control');
     return { status: 'ok', action };
   });
 }

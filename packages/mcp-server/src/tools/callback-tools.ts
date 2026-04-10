@@ -722,7 +722,7 @@ export async function handleGetThreadCats(): Promise<ToolResult> {
   return callbackGet('/api/callbacks/thread-cats');
 }
 
-// F150: Guide Engine
+// F155: Guide Engine
 
 export const updateGuideStateInputSchema = {
   threadId: z.string().min(1).describe('Thread ID where the guide is being offered/active'),
@@ -955,13 +955,14 @@ export const callbackTools = [
     inputSchema: bootcampEnvCheckInputSchema,
     handler: handleBootcampEnvCheck,
   },
-  // ============ F150: Guide Engine ============
+  // ============ F155: Guide Engine ============
   {
     name: 'cat_cafe_update_guide_state',
     description:
       'Update the guide session state for a thread. Must be called to persist state transitions. ' +
-      'First call creates state (status must be "offered"). Subsequent calls must follow valid transitions: ' +
-      'offered→awaiting_choice/active/cancelled, awaiting_choice→active/cancelled, active→completed/cancelled. ' +
+      'First call creates state (status must be "offered"). Subsequent calls must follow valid non-start transitions: ' +
+      'offered→awaiting_choice/cancelled, awaiting_choice→cancelled, active→completed/cancelled. ' +
+      'Do not use this tool to enter "active" — call cat_cafe_start_guide for offered/awaiting_choice→active so frontend start side effects run. ' +
       'One active guide per thread — complete or cancel before offering a new one.',
     inputSchema: updateGuideStateInputSchema,
     handler: handleUpdateGuideState,

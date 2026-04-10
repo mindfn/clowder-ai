@@ -43,7 +43,7 @@ triggers:
 | 解析用户意图匹配 | `cat_cafe_guide_resolve` | `intent` |
 | 控制引导进度 | `cat_cafe_guide_control` | `action` (next/back/skip/exit) |
 
-**重要**：状态持久化是必须的。每次状态变更都要调用 `cat_cafe_update_guide_state`。
+**重要**：状态持久化是必须的，但进入 `active` 是例外。开始引导时必须调用 `cat_cafe_start_guide`，不要手动 `status='active'`，否则前端 overlay 不会收到完整 start side effects。
 
 ## Status 驱动行为
 
@@ -88,8 +88,8 @@ triggers:
 根据选择内容执行：
 
 **用户选了「开始引导」**：
-1. 调用 `cat_cafe_update_guide_state(threadId, guideId, status='active')` 更新状态
-2. 调用 `cat_cafe_start_guide(guideId)` 启动前端引导 overlay
+1. 调用 `cat_cafe_start_guide(guideId)` 启动前端引导 overlay
+2. `cat_cafe_start_guide` 会同时完成 `offered/awaiting_choice → active` 的状态更新和 socket side effects
 3. 回复一句鼓励的话，如「引导已启动，跟着页面上的提示一步步来就好！遇到问题随时问我。」
 
 **用户选了「先看步骤概览」**：

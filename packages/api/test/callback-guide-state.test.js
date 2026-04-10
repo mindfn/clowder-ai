@@ -1,5 +1,5 @@
 /**
- * F150: Guide State Callback Tests
+ * F155: Guide State Callback Tests
  * POST /api/callbacks/update-guide-state
  * POST /api/callbacks/start-guide
  * POST /api/callbacks/guide-control
@@ -12,7 +12,7 @@ import { beforeEach, describe, test } from 'node:test';
 import Fastify from 'fastify';
 import './helpers/setup-cat-registry.js';
 
-describe('F150 Guide State Callbacks', () => {
+describe('F155 Guide State Callbacks', () => {
   let registry;
   let threadStore;
   let messageStore;
@@ -113,7 +113,7 @@ describe('F150 Guide State Callbacks', () => {
     assert.equal(res.statusCode, 400);
   });
 
-  test('allows valid forward transition: offered → active', async () => {
+  test('update-guide-state rejects active transition and requires start-guide side effects', async () => {
     const app = await createApp();
     const thread = await threadStore.create('user-1', 'test-thread');
     const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
@@ -131,11 +131,16 @@ describe('F150 Guide State Callbacks', () => {
       payload: { invocationId, callbackToken, threadId: thread.id, guideId: 'add-member', status: 'active' },
     });
 
-    assert.equal(res.statusCode, 200);
+    assert.equal(res.statusCode, 400);
     const body = JSON.parse(res.body);
-    assert.equal(body.guideState.status, 'active');
-    assert.ok(body.guideState.startedAt > 0);
-    assert.equal(body.guideState.offeredAt, 1000); // preserved
+    assert.equal(body.error, 'guide_start_required');
+    assert.match(body.message, /start-guide/i);
+
+    const stored = await threadStore.get(thread.id);
+    assert.equal(stored.guideState.status, 'offered');
+    assert.equal(stored.guideState.offeredAt, 1000);
+    assert.deepEqual(emitCalls, []);
+    assert.deepEqual(broadcastCalls, []);
   });
 
   test('rejects invalid backward transition: active → offered', async () => {
