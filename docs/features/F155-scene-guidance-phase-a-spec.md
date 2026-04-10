@@ -1,12 +1,12 @@
 ---
-feature_ids: [F150]
+feature_ids: [F155]
 related_features: [F087, F110, F134, F099]
 topics: [guidance, ux, mcp, frontend, security]
 doc_kind: spec
 created: 2026-03-27
 ---
 
-# F150: Scene-Based Bidirectional Guidance Engine
+# F155: Scene-Based Bidirectional Guidance Engine
 
 > **Status**: Phase A accepted / frozen — 基础引导引擎已验收冻结，可开 PR 合入 | **Owner**: 布偶猫/宪宪 | **Priority**: P1
 
@@ -83,11 +83,11 @@ interface OrchestrationStep {
 
 **P0 验证场景**：添加新成员（4 步：open-hub → go-to-cats → click-add-member → edit-member-profile）
 
-### Phase B: 平台内场景扩展（F150 scope）
+### Phase B: 平台内场景扩展（F155 scope）
 
 > **Scope 调整（KD-13 + KD-14）**：
 > - Phase B 聚焦平台内已有功能的引导场景扩展，不做跨系统深度集成
-> - 双向可观测（observe/verifier）已拆出为独立 feature 待立项，不再是 F150 的一部分
+> - 双向可观测（observe/verifier）已拆出为独立 feature 待立项，不再是 F155 的一部分
 > - 外部平台（飞书/微信等）的配置流程按场景单独做配置页签，不纳入 Guide Engine
 
 **场景扩展**：基于已有 Console 功能逐场景补充引导流程，复用 Phase A 骨架（data-guide-id + Flow YAML + advance mode + complete callback）。具体场景所需的额外步骤类型或信息补充，结合场景实际需求决定。
@@ -169,7 +169,7 @@ interface OrchestrationStep {
 - [ ] AC-B1: 基于已有 Console 功能扩展 2+ 个引导场景（如 API Provider 配置、连接器配置）
 - [ ] AC-B2: CI 契约测试通过（flow schema + tag + 退出路径）
 
-### 已拆出（不再属于 F150 scope）
+### 已拆出（不再属于 F155 scope）
 - ~~AC-B1(旧): observe 层~~ → 独立 feature "自动观测 substrate" 待立项
 - ~~AC-B2(旧): MCP guide_observe~~ → 同上
 - ~~AC-B4(旧): 猫眼观测指示灯~~ → 同上
@@ -177,10 +177,10 @@ interface OrchestrationStep {
 - ~~AC-S1: Sensitive Data Containment~~ → 随独立 observe feature 走
 - ~~AC-S2: Verifier Permission Boundary~~ → 随独立 observe feature 走
 
-### 安全门禁（F150 scope 内保留）
+### 安全门禁（F155 scope 内保留）
 - [ ] AC-S3: CI Contract Gate — flow schema 合法性 + tag 存在性 + 退出路径
 
-## AC-S3 测试矩阵（F150 scope 内保留）
+## AC-S3 测试矩阵（F155 scope 内保留）
 
 > AC-S1（Sensitive Data）和 AC-S2（Verifier Boundary）已随 observe substrate 拆出为独立 feature。
 > 原始测试矩阵草案保留在 git 历史中（commit `a6588af` 之前），独立 feature 立项时可参考。
@@ -242,7 +242,7 @@ interface OrchestrationStep {
 | KD-12 | 完成回调作为基础能力：前端 complete → 后端状态 + Socket 通知 | CVO 明确要求：完整流程闭环是基础能力，不是后续补充 | 2026-04-03 |
 | KD-13 | Phase B 聚焦平台内引导，外部平台配置改为独立页签（不走 Guide Engine） | CVO：跨系统对接方式可能变化（扫码等），引导引擎聚焦已有功能；外部流程按场景单独做页签 | 2026-04-06 |
 | KD-14 | 禁用引导模式下全局 Esc 退出，仅保留显式退出按钮 | CVO 手测反馈：误触 Esc 导致引导意外退出，体验差 | 2026-04-09 |
-| KD-15 | 双向可观测拆出为独立 feature，不再是 F150 Phase B | CVO + gpt52 共识：observe substrate 应更大——不只服务 guide，可被 debug/diagnostics 复用 | 2026-04-09 |
+| KD-15 | 双向可观测拆出为独立 feature，不再是 F155 Phase B | CVO + gpt52 共识：observe substrate 应更大——不只服务 guide，可被 debug/diagnostics 复用 | 2026-04-09 |
 
 ## Timeline
 
@@ -266,7 +266,7 @@ interface OrchestrationStep {
 | 类型 | 路径 | 说明 |
 |------|------|------|
 | **Discussion** | `docs/discussions/2026-03-27-F150-guidance-engine-convergence.md` | 三猫讨论收敛纪要 |
-| **Scene Catalog** | `docs/features/F150-scene-catalog.md` | 全量引导场景清单（12 场景，含步骤概要） |
+| **Scene Catalog** | `docs/features/F155-scene-catalog.md` | 全量引导场景清单（12 场景，含步骤概要） |
 | **Skill** | `cat-cafe-skills/guide-authoring/SKILL.md` | 引导流程设计 SOP |
 | **Feature** | `docs/features/F087-bootcamp.md` | 类似引导概念（训练营） |
 | **Feature** | `docs/features/F134-feishu-group-chat.md` | 飞书对接（P0 验证场景） |

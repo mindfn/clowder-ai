@@ -1,11 +1,11 @@
 ---
-feature_ids: [F150]
+feature_ids: [F155]
 topics: [guidance-engine, scenes]
 doc_kind: note
 created: 2026-03-27
 ---
 
-# F150 引导场景清单
+# F155 引导场景清单
 
 > **原则**：核心引擎先做完 → P0 验收通过 → 再逐场景迭代补全。
 > 所有场景用同一套编排文件 + 元素标签体系，实现流程一致。

@@ -1,12 +1,12 @@
 ---
-feature_ids: [F150]
+feature_ids: [F155]
 related_features: [F099, F127]
 topics: [guidance, ui, interaction, accessibility]
 doc_kind: spec
 created: 2026-03-27
 ---
 
-# F150: Add-Member Internal Guide UI Spec (Phase A)
+# F155: Add-Member Internal Guide UI Spec (Phase A)
 
 > Status: spec | Owner: 缅因猫/砚砚 (codex) | Scope: 内部场景（添加成员）
 
