@@ -351,7 +351,7 @@ describe('HubCatEditor', () => {
     const onGuideConfirm = vi.fn();
     window.addEventListener('guide:confirm', onGuideConfirm as EventListener);
     mockApiFetch.mockImplementation((path: string) => {
-      if (path === '/api/provider-profiles') {
+      if (path === '/api/accounts') {
         return Promise.resolve(
           jsonResponse({
             projectPath: '/tmp/project',
@@ -385,7 +385,7 @@ describe('HubCatEditor', () => {
       root.render(
         React.createElement(HubCatEditor, {
           open: true,
-          draft: { client: 'openai', accountRef: 'codex-sponsor', defaultModel: 'gpt-5.4-mini' },
+          draft: { clientId: 'openai', accountRef: 'codex-sponsor', defaultModel: 'gpt-5.4-mini' },
           onClose: vi.fn(),
           onSaved,
         }),
@@ -417,7 +417,7 @@ describe('HubCatEditor', () => {
     const onGuideConfirm = vi.fn();
     window.addEventListener('guide:confirm', onGuideConfirm as EventListener);
     mockApiFetch.mockImplementation((path: string) => {
-      if (path === '/api/provider-profiles') {
+      if (path === '/api/accounts') {
         return Promise.resolve(
           jsonResponse({
             projectPath: '/tmp/project',
@@ -451,7 +451,7 @@ describe('HubCatEditor', () => {
       root.render(
         React.createElement(HubCatEditor, {
           open: true,
-          draft: { client: 'openai', accountRef: 'codex-sponsor', defaultModel: 'gpt-5.4-mini' },
+          draft: { clientId: 'openai', accountRef: 'codex-sponsor', defaultModel: 'gpt-5.4-mini' },
           onClose: vi.fn(),
           onSaved,
         }),
