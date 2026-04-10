@@ -255,8 +255,8 @@ export async function registerCallbackGuideRoutes(
     const updated: GuideStateV1 = { ...guideState, status: 'active', startedAt: Date.now() };
     await threadStore.updateGuideState(record.threadId, updated);
 
-    // Emit socket event for frontend guide engine
-    socketManager.broadcastToRoom(`thread:${record.threadId}`, 'guide_start', {
+    // Guide UI events must stay user-scoped because the default thread is shared.
+    socketManager.emitToUser(record.userId, 'guide_start', {
       guideId,
       threadId: record.threadId,
       timestamp: Date.now(),
@@ -320,7 +320,7 @@ export async function registerCallbackGuideRoutes(
       await threadStore.updateGuideState(record.threadId, updated);
     }
 
-    socketManager.broadcastToRoom(`thread:${record.threadId}`, 'guide_control', {
+    socketManager.emitToUser(record.userId, 'guide_control', {
       action,
       guideId: guideState.guideId,
       threadId: record.threadId,

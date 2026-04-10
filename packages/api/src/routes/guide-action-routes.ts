@@ -101,7 +101,8 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
     const updated: GuideStateV1 = { ...gs, status: 'active', startedAt: Date.now() };
     await threadStore.updateGuideState(threadId, updated);
 
-    socketManager.broadcastToRoom(`thread:${threadId}`, 'guide_start', {
+    // Guide UI events must stay user-scoped because the default thread is shared.
+    socketManager.emitToUser(userId, 'guide_start', {
       guideId,
       threadId,
       timestamp: Date.now(),
@@ -171,7 +172,7 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
     const updated: GuideStateV1 = { ...gs, status: 'cancelled', completedAt: Date.now() };
     await threadStore.updateGuideState(threadId, updated);
 
-    socketManager.broadcastToRoom(`thread:${threadId}`, 'guide_control', {
+    socketManager.emitToUser(userId, 'guide_control', {
       action: 'exit',
       guideId,
       threadId,
@@ -227,7 +228,7 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
     const updated: GuideStateV1 = { ...gs, status: 'completed', completedAt: Date.now() };
     await threadStore.updateGuideState(threadId, updated);
 
-    socketManager.broadcastToRoom(`thread:${threadId}`, 'guide_complete', {
+    socketManager.emitToUser(userId, 'guide_complete', {
       guideId,
       threadId,
       timestamp: Date.now(),

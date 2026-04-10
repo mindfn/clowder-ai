@@ -16,15 +16,20 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
   let threadStore;
   let socketManager;
   let broadcastCalls;
+  let emitCalls;
 
   beforeEach(async () => {
     const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
     threadStore = new ThreadStore();
     broadcastCalls = [];
+    emitCalls = [];
     socketManager = {
       broadcastAgentMessage() {},
       broadcastToRoom(room, event, data) {
         broadcastCalls.push({ room, event, data });
+      },
+      emitToUser(userId, event, data) {
+        emitCalls.push({ userId, event, data });
       },
       getMessages() {
         return [];
@@ -82,9 +87,19 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
     assert.ok(body.guideState.startedAt);
 
     // Verify socket event
-    assert.equal(broadcastCalls.length, 1);
-    assert.equal(broadcastCalls[0].event, 'guide_start');
-    assert.equal(broadcastCalls[0].data.guideId, 'add-member');
+    assert.equal(broadcastCalls.length, 0);
+    assert.deepEqual(emitCalls, [
+      {
+        userId: 'user-1',
+        event: 'guide_start',
+        data: {
+          guideId: 'add-member',
+          threadId: thread.id,
+          timestamp: emitCalls[0].data.timestamp,
+        },
+      },
+    ]);
+    assert.equal(typeof emitCalls[0].data.timestamp, 'number');
   });
 
   test('start: transitions awaiting_choice → active', async () => {
@@ -162,18 +177,20 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
     assert.equal(body.guideState.status, 'cancelled');
     assert.ok(body.guideState.completedAt);
 
-    assert.equal(broadcastCalls.length, 1);
-    assert.deepEqual(broadcastCalls[0], {
-      room: `thread:${thread.id}`,
-      event: 'guide_control',
-      data: {
-        action: 'exit',
-        guideId: 'add-member',
-        threadId: thread.id,
-        timestamp: broadcastCalls[0].data.timestamp,
+    assert.equal(broadcastCalls.length, 0);
+    assert.deepEqual(emitCalls, [
+      {
+        userId: 'user-1',
+        event: 'guide_control',
+        data: {
+          action: 'exit',
+          guideId: 'add-member',
+          threadId: thread.id,
+          timestamp: emitCalls[0].data.timestamp,
+        },
       },
-    });
-    assert.equal(typeof broadcastCalls[0].data.timestamp, 'number');
+    ]);
+    assert.equal(typeof emitCalls[0].data.timestamp, 'number');
   });
 
   test('cancel: idempotent when already cancelled', async () => {
@@ -313,6 +330,18 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
 
     assert.equal(res.statusCode, 200, 'default-thread guide owner should be allowed');
     assert.equal(JSON.parse(res.body).guideState.status, 'active');
+    assert.equal(broadcastCalls.length, 0, 'guide_start must not broadcast to shared default thread room');
+    assert.equal(emitCalls.length, 1, 'guide_start must be emitted only to the guide owner');
+    assert.deepEqual(emitCalls[0], {
+      userId: 'default-user',
+      event: 'guide_start',
+      data: {
+        guideId: 'add-member',
+        threadId: thread.id,
+        timestamp: emitCalls[0].data.timestamp,
+      },
+    });
+    assert.equal(typeof emitCalls[0].data.timestamp, 'number');
   });
 
   test('start: rejects other users on system-owned default thread', async () => {
@@ -342,6 +371,19 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
 
     assert.equal(res.statusCode, 200, 'default-thread guide owner should be allowed');
     assert.equal(JSON.parse(res.body).guideState.status, 'cancelled');
+    assert.equal(broadcastCalls.length, 0, 'guide_control exit must not broadcast to shared default thread room');
+    assert.equal(emitCalls.length, 1, 'guide_control exit must be emitted only to the guide owner');
+    assert.deepEqual(emitCalls[0], {
+      userId: 'default-user',
+      event: 'guide_control',
+      data: {
+        action: 'exit',
+        guideId: 'add-member',
+        threadId: thread.id,
+        timestamp: emitCalls[0].data.timestamp,
+      },
+    });
+    assert.equal(typeof emitCalls[0].data.timestamp, 'number');
   });
 
   test('cancel: rejects other users on system-owned default thread', async () => {
@@ -436,9 +478,19 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
     assert.equal(body.guideState.status, 'completed');
     assert.ok(body.guideState.completedAt);
 
-    assert.equal(broadcastCalls.length, 1);
-    assert.equal(broadcastCalls[0].event, 'guide_complete');
-    assert.equal(broadcastCalls[0].data.guideId, 'add-member');
+    assert.equal(broadcastCalls.length, 0);
+    assert.deepEqual(emitCalls, [
+      {
+        userId: 'user-1',
+        event: 'guide_complete',
+        data: {
+          guideId: 'add-member',
+          threadId: thread.id,
+          timestamp: emitCalls[0].data.timestamp,
+        },
+      },
+    ]);
+    assert.equal(typeof emitCalls[0].data.timestamp, 'number');
   });
 
   test('complete: idempotent when already completed', async () => {
@@ -510,6 +562,18 @@ describe('F150 Guide Action Routes (frontend-facing)', () => {
 
     assert.equal(res.statusCode, 200);
     assert.equal(JSON.parse(res.body).guideState.status, 'completed');
+    assert.equal(broadcastCalls.length, 0, 'guide_complete must not broadcast to shared default thread room');
+    assert.equal(emitCalls.length, 1, 'guide_complete must be emitted only to the guide owner');
+    assert.deepEqual(emitCalls[0], {
+      userId: 'default-user',
+      event: 'guide_complete',
+      data: {
+        guideId: 'add-member',
+        threadId: thread.id,
+        timestamp: emitCalls[0].data.timestamp,
+      },
+    });
+    assert.equal(typeof emitCalls[0].data.timestamp, 'number');
   });
 
   test('complete: rejects other users on system-owned default thread', async () => {

@@ -14,6 +14,7 @@ describe('F150 Guide callback routes', () => {
   let threadStore;
   let socketManager;
   let broadcasts;
+  let emits;
 
   beforeEach(async () => {
     const { InvocationRegistry } = await import(
@@ -26,13 +27,16 @@ describe('F150 Guide callback routes', () => {
     messageStore = new MessageStore();
     threadStore = new ThreadStore();
     broadcasts = [];
+    emits = [];
 
     socketManager = {
       broadcastAgentMessage() {},
       broadcastToRoom(room, event, data) {
         broadcasts.push({ room, event, data });
       },
-      emitToUser() {},
+      emitToUser(userId, event, data) {
+        emits.push({ userId, event, data });
+      },
     };
   });
 
@@ -84,11 +88,19 @@ describe('F150 Guide callback routes', () => {
       assert.equal(body.status, 'ok');
       assert.equal(body.guideId, 'add-member');
 
-      // Verify broadcast
-      assert.equal(broadcasts.length, 1);
-      assert.equal(broadcasts[0].event, 'guide_start');
-      assert.equal(broadcasts[0].room, `thread:${threadId}`);
-      assert.equal(broadcasts[0].data.guideId, 'add-member');
+      assert.equal(broadcasts.length, 0);
+      assert.deepEqual(emits, [
+        {
+          userId: 'user-1',
+          event: 'guide_start',
+          data: {
+            guideId: 'add-member',
+            threadId,
+            timestamp: emits[0].data.timestamp,
+          },
+        },
+      ]);
+      assert.equal(typeof emits[0].data.timestamp, 'number');
     });
 
     test('rejects unknown guideId', async () => {
@@ -213,7 +225,7 @@ describe('F150 Guide callback routes', () => {
   // ─── guide-control ───
 
   describe('POST /api/callbacks/guide-control', () => {
-    test('broadcasts control action with valid credentials', async () => {
+    test('emits control action to the invocation user with valid credentials', async () => {
       const app = await createApp();
       const { invocationId, callbackToken, threadId } = createCreds();
       await seedGuideState(threadId, 'add-member', 'active');
@@ -228,9 +240,20 @@ describe('F150 Guide callback routes', () => {
       const body = JSON.parse(res.body);
       assert.equal(body.status, 'ok');
       assert.equal(body.action, 'next');
-      assert.equal(broadcasts.length, 1);
-      assert.equal(broadcasts[0].event, 'guide_control');
-      assert.equal(broadcasts[0].room, `thread:${threadId}`);
+      assert.equal(broadcasts.length, 0);
+      assert.deepEqual(emits, [
+        {
+          userId: 'user-1',
+          event: 'guide_control',
+          data: {
+            action: 'next',
+            guideId: 'add-member',
+            threadId,
+            timestamp: emits[0].data.timestamp,
+          },
+        },
+      ]);
+      assert.equal(typeof emits[0].data.timestamp, 'number');
     });
 
     test('rejects invalid action', async () => {

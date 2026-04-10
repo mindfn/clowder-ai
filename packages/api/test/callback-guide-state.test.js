@@ -18,6 +18,7 @@ describe('F150 Guide State Callbacks', () => {
   let messageStore;
   let socketManager;
   let broadcastCalls;
+  let emitCalls;
 
   beforeEach(async () => {
     const { InvocationRegistry } = await import(
@@ -30,10 +31,14 @@ describe('F150 Guide State Callbacks', () => {
     threadStore = new ThreadStore();
     messageStore = new MessageStore();
     broadcastCalls = [];
+    emitCalls = [];
     socketManager = {
       broadcastAgentMessage() {},
       broadcastToRoom(room, event, data) {
         broadcastCalls.push({ room, event, data });
+      },
+      emitToUser(userId, event, data) {
+        emitCalls.push({ userId, event, data });
       },
       getMessages() {
         return [];
@@ -281,10 +286,54 @@ describe('F150 Guide State Callbacks', () => {
     const body = JSON.parse(res.body);
     assert.equal(body.guideState.status, 'active');
 
-    // Verify socket event was emitted
-    const guideStartEvent = broadcastCalls.find((c) => c.event === 'guide_start');
-    assert.ok(guideStartEvent, 'guide_start socket event should be emitted');
-    assert.equal(guideStartEvent.data.guideId, 'add-member');
+    assert.equal(
+      broadcastCalls.find((c) => c.event === 'guide_start'),
+      undefined,
+      'guide_start should be user-scoped',
+    );
+    assert.deepEqual(emitCalls, [
+      {
+        userId: 'user-1',
+        event: 'guide_start',
+        data: {
+          guideId: 'add-member',
+          threadId: thread.id,
+          timestamp: emitCalls[0].data.timestamp,
+        },
+      },
+    ]);
+    assert.equal(typeof emitCalls[0].data.timestamp, 'number');
+  });
+
+  test('start-guide emits guide_start only to the guide owner on shared default thread', async () => {
+    const app = await createApp();
+    const thread = await seedDefaultThread('add-member', 'offered', 'guide-owner');
+    const { invocationId, callbackToken } = registry.create('guide-owner', 'opus', thread.id);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/start-guide',
+      payload: { invocationId, callbackToken, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(
+      broadcastCalls.find((c) => c.event === 'guide_start'),
+      undefined,
+      'shared default-thread guide_start must not use room broadcast',
+    );
+    assert.deepEqual(emitCalls, [
+      {
+        userId: 'guide-owner',
+        event: 'guide_start',
+        data: {
+          guideId: 'add-member',
+          threadId: thread.id,
+          timestamp: emitCalls[0].data.timestamp,
+        },
+      },
+    ]);
+    assert.equal(typeof emitCalls[0].data.timestamp, 'number');
   });
 
   test('start-guide rejects when no guide is offered', async () => {
@@ -366,9 +415,56 @@ describe('F150 Guide State Callbacks', () => {
     });
 
     assert.equal(res.statusCode, 200);
-    const controlEvent = broadcastCalls.find((c) => c.event === 'guide_control');
-    assert.ok(controlEvent, 'guide_control socket event should be emitted');
-    assert.equal(controlEvent.data.action, 'next');
+    assert.equal(
+      broadcastCalls.find((c) => c.event === 'guide_control'),
+      undefined,
+      'guide_control should be user-scoped',
+    );
+    assert.deepEqual(emitCalls, [
+      {
+        userId: 'user-1',
+        event: 'guide_control',
+        data: {
+          action: 'next',
+          guideId: 'add-member',
+          threadId: thread.id,
+          timestamp: emitCalls[0].data.timestamp,
+        },
+      },
+    ]);
+    assert.equal(typeof emitCalls[0].data.timestamp, 'number');
+  });
+
+  test('guide-control emits only to the guide owner on shared default thread', async () => {
+    const app = await createApp();
+    const thread = await seedDefaultThread('add-member', 'active', 'guide-owner');
+    const { invocationId, callbackToken } = registry.create('guide-owner', 'opus', thread.id);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/guide-control',
+      payload: { invocationId, callbackToken, action: 'next' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(
+      broadcastCalls.find((c) => c.event === 'guide_control'),
+      undefined,
+      'shared default-thread guide_control must not use room broadcast',
+    );
+    assert.deepEqual(emitCalls, [
+      {
+        userId: 'guide-owner',
+        event: 'guide_control',
+        data: {
+          action: 'next',
+          guideId: 'add-member',
+          threadId: thread.id,
+          timestamp: emitCalls[0].data.timestamp,
+        },
+      },
+    ]);
+    assert.equal(typeof emitCalls[0].data.timestamp, 'number');
   });
 
   test('guide-control rejects when no active guide', async () => {
