@@ -169,7 +169,11 @@ export async function* routeParallel(
           };
           if (gs.status === 'offered' || gs.status === 'awaiting_choice') {
             guideOfferOwner = gs.offeredBy;
-            if ((selectionMatch || gs.status === 'awaiting_choice') && gs.offeredBy && !targetCatIds.has(gs.offeredBy)) {
+            if (
+              (selectionMatch || gs.status === 'awaiting_choice') &&
+              gs.offeredBy &&
+              !targetCatIds.has(gs.offeredBy)
+            ) {
               guideOfferSelectionFallbackCatId = targetCats[0];
             }
           }
