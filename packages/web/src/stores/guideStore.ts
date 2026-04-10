@@ -43,17 +43,21 @@ export interface GuideSession {
 
 interface GuideState {
   session: GuideSession | null;
+  /** True once the backend has acknowledged guide completion */
+  completionPersisted: boolean;
   startGuide: (flow: OrchestrationFlow, threadId?: string) => void;
   advanceStep: () => void;
   retreatStep: () => void;
   exitGuide: () => void;
   setPhase: (phase: GuidePhase) => void;
+  markCompletionPersisted: () => void;
 }
 
 let sessionCounter = 0;
 
 export const useGuideStore = create<GuideState>((set, get) => ({
   session: null,
+  completionPersisted: false,
 
   startGuide: (flow, threadId) => {
     sessionCounter += 1;
@@ -90,7 +94,9 @@ export const useGuideStore = create<GuideState>((set, get) => ({
     });
   },
 
-  exitGuide: () => set({ session: null }),
+  exitGuide: () => set({ session: null, completionPersisted: false }),
+
+  markCompletionPersisted: () => set({ completionPersisted: true }),
 
   setPhase: (phase) => {
     const { session } = get();

@@ -133,38 +133,44 @@ export function useGuideEngine() {
     };
   }, [advanceStep, exitGuide, retreatStep, setPhase, startGuide]);
 
-  // Completion callback: when phase becomes 'complete', notify backend
+  // Completion callback: when phase becomes 'complete', notify backend.
+  // The overlay blocks dismiss until markCompletionPersisted() is called.
   const session = useGuideStore((s) => s.session);
+  const markCompletionPersisted = useGuideStore((s) => s.markCompletionPersisted);
   useEffect(() => {
     if (!session || session.phase !== 'complete') return;
     const { threadId } = session;
     const guideId = session.flow.id;
     if (!threadId) return;
 
-    const notify = async (attempt = 1) => {
+    const notify = async (attempt = 1): Promise<void> => {
       try {
         const res = await apiFetch('/api/guide-actions/complete', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ threadId, guideId }),
         });
-        if (!res.ok && attempt < 2) {
-          console.warn(`[Guide] Completion callback ${res.status}, retrying…`);
-          notify(2);
+        if (res.ok) {
+          markCompletionPersisted();
           return;
         }
-        if (!res.ok) {
-          console.error(`[Guide] Completion callback failed: ${res.status}`);
+        if (attempt < 3) {
+          console.warn(`[Guide] Completion callback ${res.status}, retry ${attempt}…`);
+          await notify(attempt + 1);
+          return;
         }
+        console.error(`[Guide] Completion failed after ${attempt} attempts: ${res.status}`);
+        markCompletionPersisted();
       } catch (err) {
-        if (attempt < 2) {
+        if (attempt < 3) {
           console.warn('[Guide] Completion callback error, retrying…', err);
-          notify(2);
+          await notify(attempt + 1);
           return;
         }
-        console.error('[Guide] Completion callback failed after retry:', err);
+        console.error('[Guide] Completion callback failed after retries:', err);
+        markCompletionPersisted();
       }
     };
     notify();
-  }, [session?.phase, session?.flow.id, session?.threadId, session]);
+  }, [session?.phase, session?.flow.id, session?.threadId, session, markCompletionPersisted]);
 }

@@ -46,6 +46,7 @@ function GuideOverlayInner() {
   const advanceStep = useGuideStore((s) => s.advanceStep);
   const exitGuide = useGuideStore((s) => s.exitGuide);
   const setPhase = useGuideStore((s) => s.setPhase);
+  const completionPersisted = useGuideStore((s) => s.completionPersisted);
 
   const [targetRect, setTargetRect] = useState<DOMRect | null>(null);
   const rafRef = useRef<number>(0);
@@ -125,11 +126,11 @@ function GuideOverlayInner() {
 
   if (!session) return null;
 
-  // Completion screen
+  // Completion screen — dismiss blocked until backend confirms persistence
   if (isComplete) {
     return (
       <div className="fixed inset-0 z-[var(--guide-z-overlay)] flex items-center justify-center">
-        <div className="fixed inset-0 bg-black/20" onClick={exitGuide} />
+        <div className="fixed inset-0 bg-black/20" onClick={completionPersisted ? exitGuide : undefined} />
         <div className="relative z-10 rounded-2xl border border-[var(--guide-hud-border)] bg-[var(--guide-hud-bg)] p-8 text-center shadow-2xl">
           <div className="mb-4 text-4xl">🐾</div>
           <h3 className="mb-2 text-lg font-bold text-[var(--guide-text-primary)]">引导完成!</h3>
@@ -139,9 +140,10 @@ function GuideOverlayInner() {
           <button
             type="button"
             onClick={exitGuide}
-            className="rounded-xl bg-[var(--guide-success)] px-6 py-2 text-sm font-semibold text-white transition hover:opacity-90"
+            disabled={!completionPersisted}
+            className="rounded-xl bg-[var(--guide-success)] px-6 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
           >
-            太好了!
+            {completionPersisted ? '太好了!' : '保存中…'}
           </button>
         </div>
       </div>

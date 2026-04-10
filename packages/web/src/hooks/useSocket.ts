@@ -797,14 +797,15 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string) {
     }
   }, [threadId, joinRoom]);
 
+  const storeThreadId = useChatStore((s) => s.currentThreadId);
   useEffect(() => {
     if (!threadId) return;
-    if (useChatStore.getState().currentThreadId !== threadId) return;
+    if (storeThreadId !== threadId) return;
     const pendingStart = pendingGuideStartsRef.current.get(threadId);
     if (!pendingStart) return;
     pendingGuideStartsRef.current.delete(threadId);
     callbacksRef.current.onGuideStart?.(pendingStart);
-  }, [threadId]);
+  }, [threadId, storeThreadId]);
 
   const cancelInvocation = useCallback((tid: string) => {
     socketRef.current?.emit('cancel_invocation', { threadId: tid });
