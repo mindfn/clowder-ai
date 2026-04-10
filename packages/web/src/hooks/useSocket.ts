@@ -229,6 +229,9 @@ function reconcileInvocationStateOnReconnect(activeThreadId: string | null): voi
 export function useSocket(callbacks: SocketCallbacks, threadId?: string) {
   const socketRef = useRef<Socket | null>(null);
   const joinedRoomsRef = useRef<Set<string>>(new Set());
+  const pendingGuideStartsRef = useRef<Map<string, { guideId: string; threadId: string; timestamp: number }>>(
+    new Map(),
+  );
   const bgStreamRefsRef = useRef<Map<string, { id: string; threadId: string; catId: string }>>(new Map());
   const bgReplacedInvocationsRef = useRef<Map<string, string>>(new Map());
   const bgFinalizedRefsRef = useRef<Map<string, string>>(new Map());
@@ -646,7 +649,11 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string) {
       const isActiveThread = Boolean(
         data.threadId && routeThread && storeThread && data.threadId === routeThread && data.threadId === storeThread,
       );
-      if (!isActiveThread) return;
+      if (!isActiveThread) {
+        pendingGuideStartsRef.current.set(data.threadId, data);
+        return;
+      }
+      pendingGuideStartsRef.current.delete(data.threadId);
       callbacksRef.current.onGuideStart?.(data);
     });
 
@@ -789,6 +796,15 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string) {
       joinRoom(threadId);
     }
   }, [threadId, joinRoom]);
+
+  useEffect(() => {
+    if (!threadId) return;
+    if (useChatStore.getState().currentThreadId !== threadId) return;
+    const pendingStart = pendingGuideStartsRef.current.get(threadId);
+    if (!pendingStart) return;
+    pendingGuideStartsRef.current.delete(threadId);
+    callbacksRef.current.onGuideStart?.(pendingStart);
+  }, [threadId]);
 
   const cancelInvocation = useCallback((tid: string) => {
     socketRef.current?.emit('cancel_invocation', { threadId: tid });

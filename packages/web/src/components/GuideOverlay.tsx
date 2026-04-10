@@ -59,13 +59,18 @@ function GuideOverlayInner() {
   const handleExit = async () => {
     if (session?.threadId) {
       try {
-        await apiFetch('/api/guide-actions/cancel', {
+        const response = await apiFetch('/api/guide-actions/cancel', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ threadId: session.threadId, guideId: session.flow.id }),
         });
+        if (!response.ok) {
+          console.error('[GuideOverlay] Failed to persist guide cancellation:', response.status);
+          return;
+        }
       } catch (error) {
         console.error('[GuideOverlay] Failed to persist guide cancellation:', error);
+        return;
       }
     }
     exitGuide();

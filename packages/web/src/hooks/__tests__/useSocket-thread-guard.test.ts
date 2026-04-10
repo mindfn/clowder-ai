@@ -282,6 +282,41 @@ describe('useSocket thread guard (P1 regression: cross-thread event leakage)', (
     });
   });
 
+  it('replays a dropped guide_start when that thread becomes active again', () => {
+    const onGuideStart = vi.fn();
+    const callbacks: SocketCallbacks = {
+      onMessage: vi.fn(),
+      onGuideStart,
+    };
+
+    mockStoreCurrentThreadId = 'thread-B';
+    act(() => {
+      root.render(React.createElement(HookWrapper, { callbacks, threadId: 'thread-B' }));
+    });
+
+    act(() => {
+      simulateServerEvent('guide_start', {
+        guideId: 'add-member',
+        threadId: 'thread-A',
+        timestamp: 123,
+      });
+    });
+
+    expect(onGuideStart).not.toHaveBeenCalled();
+
+    mockStoreCurrentThreadId = 'thread-A';
+    act(() => {
+      root.render(React.createElement(HookWrapper, { callbacks, threadId: 'thread-A' }));
+    });
+
+    expect(onGuideStart).toHaveBeenCalledTimes(1);
+    expect(onGuideStart).toHaveBeenCalledWith({
+      guideId: 'add-member',
+      threadId: 'thread-A',
+      timestamp: 123,
+    });
+  });
+
   it('intent_mode for switched-away thread routes to background after thread change', () => {
     const onIntentMode = vi.fn();
     const callbacks: SocketCallbacks = {

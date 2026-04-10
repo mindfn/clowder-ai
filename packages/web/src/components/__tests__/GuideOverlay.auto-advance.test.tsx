@@ -175,6 +175,32 @@ describe('GuideOverlay auto-advance lifecycle', () => {
     expect(useGuideStore.getState().session).toBeNull();
   });
 
+  it('keeps the overlay open when guide cancellation returns a non-2xx response', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    apiFetchMock.mockResolvedValue({ ok: false, status: 500 });
+
+    act(() => {
+      useGuideStore.getState().startGuide(FLOW, 'thread-1');
+      useGuideStore.getState().setPhase('active');
+    });
+    act(() => {
+      vi.advanceTimersByTime(120);
+    });
+
+    const exitButton = container.querySelector('[aria-label="退出引导"]');
+    expect(exitButton).toBeInstanceOf(HTMLButtonElement);
+
+    await act(async () => {
+      (exitButton as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    expect(useGuideStore.getState().session?.flow.id).toBe('listener-cleanup');
+
+    consoleErrorSpy.mockRestore();
+  });
+
   it('advances confirm steps only after a matching guide:confirm event', () => {
     act(() => {
       useGuideStore.getState().startGuide(CONFIRM_FLOW);
