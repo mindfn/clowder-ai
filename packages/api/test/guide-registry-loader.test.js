@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
+import { rmSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { describe, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 describe('F150 guide registry loader target validation', async () => {
-  const { isValidGuideTarget, loadGuideFlow, resolveGuideForIntent } = await import(
-    '../dist/domains/guides/guide-registry-loader.js'
-  );
+  const { getRegistryEntries, getValidGuideIds, isValidGuideTarget, loadGuideFlow, resolveGuideForIntent } =
+    await import('../dist/domains/guides/guide-registry-loader.js');
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
   test('accepts registry-safe target ids', () => {
     assert.equal(isValidGuideTarget('hub.trigger'), true);
@@ -51,5 +54,49 @@ describe('F150 guide registry loader target validation', async () => {
   test('matches exact keyword queries regardless of reverse-match threshold', () => {
     const matches = resolveGuideForIntent('加成员');
     assert.equal(matches[0]?.id, 'add-member');
+  });
+
+  test('rejects a flow file whose internal id does not match the requested guide id', () => {
+    const guideId = 'test-mismatched-flow-id';
+    const flowPath = resolve(repoRoot, 'guides', 'flows', `${guideId}.yaml`);
+    const entry = {
+      id: guideId,
+      name: 'Test mismatched flow',
+      description: 'Regression fixture for mismatched flow ids',
+      flow_file: `flows/${guideId}.yaml`,
+      keywords: ['mismatched flow id'],
+      category: 'test',
+      priority: 'P0',
+      cross_system: false,
+      estimated_time: '1min',
+    };
+
+    writeFileSync(
+      flowPath,
+      [
+        'id: wrong-flow-id',
+        'name: Wrong Flow',
+        'steps:',
+        '  - id: step-1',
+        '    target: hub.trigger',
+        '    tips: Open hub',
+        '    advance: click',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    getRegistryEntries().push(entry);
+    getValidGuideIds().add(guideId);
+
+    try {
+      assert.throws(
+        () => loadGuideFlow(guideId),
+        /Invalid flow file for "test-mismatched-flow-id": expected id "test-mismatched-flow-id"/,
+      );
+    } finally {
+      getRegistryEntries().pop();
+      getValidGuideIds().delete(guideId);
+      rmSync(flowPath, { force: true });
+    }
   });
 });

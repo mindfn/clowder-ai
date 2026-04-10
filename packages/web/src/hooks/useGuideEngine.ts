@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { useChatStore } from '@/stores/chatStore';
 import type { OrchestrationFlow } from '@/stores/guideStore';
 import { useGuideStore } from '@/stores/guideStore';
 import { apiFetch } from '@/utils/api-client';
@@ -24,6 +25,8 @@ export function useGuideEngine() {
 
   // Start listener: fetch flow + trigger overlay
   useEffect(() => {
+    const isActiveThread = (threadId?: string) => !threadId || useChatStore.getState().currentThreadId === threadId;
+
     const hasActiveSession = (flowId: string, threadId?: string) => {
       const session = useGuideStore.getState().session;
       return (
@@ -36,6 +39,9 @@ export function useGuideEngine() {
 
     const trigger = async (flowId: string, threadId?: string) => {
       const startKey = `${threadId ?? 'no-thread'}::${flowId}`;
+      if (!isActiveThread(threadId)) {
+        return;
+      }
       if (hasActiveSession(flowId, threadId)) {
         return;
       }
@@ -51,6 +57,7 @@ export function useGuideEngine() {
           console.warn(`[Guide] Empty flow: ${flowId}`);
           return;
         }
+        if (!isActiveThread(threadId)) return;
         if (hasActiveSession(flowId, threadId)) return;
         startGuide(flow, threadId);
       } catch (err) {
@@ -59,7 +66,7 @@ export function useGuideEngine() {
         if (startInFlightRef.current === startKey) {
           startInFlightRef.current = null;
         }
-        if (pendingRetryRef.current === startKey && !hasActiveSession(flowId, threadId)) {
+        if (pendingRetryRef.current === startKey && isActiveThread(threadId) && !hasActiveSession(flowId, threadId)) {
           pendingRetryRef.current = null;
           queueMicrotask(() => {
             void trigger(flowId, threadId);

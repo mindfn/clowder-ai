@@ -2,6 +2,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useGuideEngine } from '@/hooks/useGuideEngine';
+import { useChatStore } from '@/stores/chatStore';
 import { type OrchestrationFlow, useGuideStore } from '@/stores/guideStore';
 
 const apiFetchMock = vi.fn();
@@ -66,6 +67,7 @@ describe('useGuideEngine duplicate start protection', () => {
 
   beforeEach(() => {
     apiFetchMock.mockReset();
+    useChatStore.setState({ currentThreadId: 'thread-1' });
     useGuideStore.setState({ session: null });
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -77,6 +79,7 @@ describe('useGuideEngine duplicate start protection', () => {
       root.unmount();
     });
     container.remove();
+    useChatStore.setState({ currentThreadId: 'default' });
     useGuideStore.setState({ session: null });
   });
 
@@ -155,6 +158,30 @@ describe('useGuideEngine duplicate start protection', () => {
 
     expect(apiFetchMock).toHaveBeenCalledTimes(1);
     expect(useGuideStore.getState().session?.currentStepIndex).toBe(1);
+  });
+
+  it('does not start a fetched guide after the active thread changes before the flow resolves', async () => {
+    const pending = deferred<{ json: () => Promise<OrchestrationFlow> }>();
+    apiFetchMock.mockReturnValue(pending.promise);
+
+    act(() => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      dispatchGuideStart('add-member', 'thread-1');
+      await Promise.resolve();
+    });
+
+    useChatStore.setState({ currentThreadId: 'thread-2' });
+
+    await act(async () => {
+      pending.resolve({ json: async () => FLOW });
+      await pending.promise;
+      await Promise.resolve();
+    });
+
+    expect(useGuideStore.getState().session).toBeNull();
   });
 
   it('applies matching guide:control events to the current session', async () => {

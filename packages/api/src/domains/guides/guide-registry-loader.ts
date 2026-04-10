@@ -148,6 +148,12 @@ export function loadGuideFlow(guideId: string): OrchestrationFlow {
   const raw = readFileSync(flowPath, 'utf-8');
   const parsed = YAML.parse(raw) as RawFlowFile;
 
+  if (parsed?.id !== guideId) {
+    throw new Error(
+      `[F150] Invalid flow file for "${guideId}": expected id "${guideId}", got "${String(parsed?.id ?? '')}"`,
+    );
+  }
+
   if (!parsed?.steps || !Array.isArray(parsed.steps)) {
     throw new Error(`[F150] Invalid flow file for "${guideId}": missing steps`);
   }
