@@ -679,10 +679,10 @@ export function buildInvocationContext(context: InvocationContext): string {
       lines.push(
         `🧭 Guide Matched:${threadPart} id=${id} name=${name} time=${estimatedTime}`,
         '你必须按以下步骤回复（严格遵守）：',
-        `1. 调用 cat_cafe_update_guide_state(threadId="${context.threadId}", guideId="${id}", status="offered")`,
-        `2. 写一句简短的话告知用户你找到了「${name}」引导流程`,
-        `3. 调用 cat_cafe_create_rich_block，block 参数传入以下 JSON 字符串：`,
+        '1. 写一句简短的话告知用户你找到了引导流程',
+        '2. 调用 cat_cafe_create_rich_block，block 参数传入以下 JSON 字符串：',
         blockJson,
+        `3. 调用 cat_cafe_update_guide_state(threadId="${context.threadId}", guideId="${id}", status="offered")（必须在 rich block 之后）`,
         '4. 禁止直接给出教程或步骤列表',
         '5. 禁止调用 cat_cafe_start_guide（等用户在选项卡中选择后再启动）',
         '',

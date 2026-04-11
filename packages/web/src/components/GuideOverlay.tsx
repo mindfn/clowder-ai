@@ -47,6 +47,7 @@ function GuideOverlayInner() {
   const exitGuide = useGuideStore((s) => s.exitGuide);
   const setPhase = useGuideStore((s) => s.setPhase);
   const completionPersisted = useGuideStore((s) => s.completionPersisted);
+  const completionFailed = useGuideStore((s) => s.completionFailed);
 
   const [targetRect, setTargetRect] = useState<DOMRect | null>(null);
   const rafRef = useRef<number>(0);
@@ -130,20 +131,27 @@ function GuideOverlayInner() {
   if (isComplete) {
     return (
       <div className="fixed inset-0 z-[var(--guide-z-overlay)] flex items-center justify-center">
-        <div className="fixed inset-0 bg-black/20" onClick={completionPersisted ? exitGuide : undefined} />
+        <div
+          className="fixed inset-0 bg-black/20"
+          onClick={completionPersisted || completionFailed ? exitGuide : undefined}
+        />
         <div className="relative z-10 rounded-2xl border border-[var(--guide-hud-border)] bg-[var(--guide-hud-bg)] p-8 text-center shadow-2xl">
-          <div className="mb-4 text-4xl">🐾</div>
-          <h3 className="mb-2 text-lg font-bold text-[var(--guide-text-primary)]">引导完成!</h3>
+          <div className="mb-4 text-4xl">{completionFailed ? '⚠️' : '🐾'}</div>
+          <h3 className="mb-2 text-lg font-bold text-[var(--guide-text-primary)]">
+            {completionFailed ? '保存失败' : '引导完成!'}
+          </h3>
           <p className="mb-4 text-sm text-[var(--guide-text-secondary)]">
-            你已经完成了「{session.flow.name}」的全部步骤。
+            {completionFailed
+              ? '引导已完成但保存失败，下次打开时可能需要重新引导。'
+              : `你已经完成了「${session.flow.name}」的全部步骤。`}
           </p>
           <button
             type="button"
             onClick={exitGuide}
-            disabled={!completionPersisted}
+            disabled={!completionPersisted && !completionFailed}
             className="rounded-xl bg-[var(--guide-success)] px-6 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
           >
-            {completionPersisted ? '太好了!' : '保存中…'}
+            {completionPersisted ? '太好了!' : completionFailed ? '知道了' : '保存中…'}
           </button>
         </div>
       </div>

@@ -45,11 +45,14 @@ interface GuideState {
   session: GuideSession | null;
   /** True once the backend has acknowledged guide completion */
   completionPersisted: boolean;
+  /** True when completion callback failed permanently — overlay shows error instead of dismiss */
+  completionFailed: boolean;
   startGuide: (flow: OrchestrationFlow, threadId?: string) => void;
   advanceStep: () => void;
   exitGuide: () => void;
   setPhase: (phase: GuidePhase) => void;
   markCompletionPersisted: (sessionId: string) => void;
+  markCompletionFailed: (sessionId: string) => void;
 }
 
 let sessionCounter = 0;
@@ -57,11 +60,13 @@ let sessionCounter = 0;
 export const useGuideStore = create<GuideState>((set, get) => ({
   session: null,
   completionPersisted: false,
+  completionFailed: false,
 
   startGuide: (flow, threadId) => {
     sessionCounter += 1;
     set({
       completionPersisted: false,
+      completionFailed: false,
       session: {
         flow,
         sessionId: `guide-${flow.id}-${sessionCounter}`,
@@ -86,7 +91,7 @@ export const useGuideStore = create<GuideState>((set, get) => ({
     });
   },
 
-  exitGuide: () => set({ session: null, completionPersisted: false }),
+  exitGuide: () => set({ session: null, completionPersisted: false, completionFailed: false }),
 
   markCompletionPersisted: (sessionId) =>
     set((state) => {
@@ -95,6 +100,15 @@ export const useGuideStore = create<GuideState>((set, get) => ({
         return state;
       }
       return { completionPersisted: true };
+    }),
+
+  markCompletionFailed: (sessionId) =>
+    set((state) => {
+      if (!state.session) return state;
+      if (state.session.sessionId !== sessionId || state.session.phase !== 'complete') {
+        return state;
+      }
+      return { completionFailed: true };
     }),
 
   setPhase: (phase) => {

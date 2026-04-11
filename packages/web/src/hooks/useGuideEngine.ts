@@ -133,6 +133,7 @@ export function useGuideEngine() {
   // The overlay blocks dismiss until markCompletionPersisted() is called.
   const session = useGuideStore((s) => s.session);
   const markCompletionPersisted = useGuideStore((s) => s.markCompletionPersisted);
+  const markCompletionFailed = useGuideStore((s) => s.markCompletionFailed);
   useEffect(() => {
     if (!session || session.phase !== 'complete') return;
     const { sessionId, threadId } = session;
@@ -156,7 +157,7 @@ export function useGuideEngine() {
           return;
         }
         console.error(`[Guide] Completion failed after ${attempt} attempts: ${res.status}`);
-        markCompletionPersisted(sessionId);
+        markCompletionFailed(sessionId);
       } catch (err) {
         if (attempt < 3) {
           console.warn('[Guide] Completion callback error, retrying…', err);
@@ -164,9 +165,17 @@ export function useGuideEngine() {
           return;
         }
         console.error('[Guide] Completion callback failed after retries:', err);
-        markCompletionPersisted(sessionId);
+        markCompletionFailed(sessionId);
       }
     };
     notify();
-  }, [session?.phase, session?.flow.id, session?.sessionId, session?.threadId, session, markCompletionPersisted]);
+  }, [
+    session?.phase,
+    session?.flow.id,
+    session?.sessionId,
+    session?.threadId,
+    session,
+    markCompletionPersisted,
+    markCompletionFailed,
+  ]);
 }
