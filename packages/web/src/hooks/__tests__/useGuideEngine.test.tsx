@@ -38,10 +38,7 @@ function dispatchGuideStart(flowId: string, threadId = 'thread-1') {
   window.dispatchEvent(new CustomEvent('guide:start', { detail: { flowId, threadId } }));
 }
 
-function dispatchGuideControl(
-  action: 'next' | 'skip' | 'exit',
-  detail: { guideId?: string; threadId?: string } = {},
-) {
+function dispatchGuideControl(action: 'next' | 'skip' | 'exit', detail: { guideId?: string; threadId?: string } = {}) {
   window.dispatchEvent(new CustomEvent('guide:control', { detail: { action, ...detail } }));
 }
 
