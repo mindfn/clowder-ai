@@ -10,10 +10,7 @@
  */
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import {
-  type GuideStateV1,
-  type IThreadStore,
-} from '../domains/cats/services/stores/ports/ThreadStore.js';
+import { type GuideStateV1, type IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { loadGuideFlow } from '../domains/guides/guide-registry-loader.js';
 import { canAccessGuideState, canAccessThread } from '../domains/guides/guide-state-access.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
