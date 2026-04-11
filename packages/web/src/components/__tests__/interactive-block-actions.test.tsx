@@ -183,6 +183,48 @@ describe('InteractiveBlock direct callback actions', () => {
     expect(receivedGuideStart).toBeNull();
   });
 
+  it('rejects disallowed guide-actions callback endpoints even when they share the prefix', async () => {
+    const disallowedGuideActionBlock: RichInteractiveBlock = {
+      ...block,
+      id: 'disallowed-guide-action',
+      options: [
+        {
+          id: 'unsafe-complete',
+          label: '直接完成',
+          action: {
+            type: 'callback',
+            endpoint: '/api/guide-actions/complete',
+            payload: { threadId: 'thread-1', guideId: 'add-member' },
+          },
+        },
+      ],
+    };
+
+    await act(async () => {
+      root.render(
+        React.createElement(InteractiveBlock, { block: disallowedGuideActionBlock, messageId: 'message-2b' }),
+      );
+    });
+
+    const optionBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('直接完成'));
+    expect(optionBtn).toBeTruthy();
+    await act(async () => {
+      optionBtn!.click();
+    });
+
+    const confirmBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('确认选择'),
+    );
+    expect(confirmBtn).toBeTruthy();
+    await act(async () => {
+      confirmBtn!.click();
+      await Promise.resolve();
+    });
+
+    expect(apiFetchMock).not.toHaveBeenCalled();
+    expect(receivedGuideStart).toBeNull();
+  });
+
   it('keeps guide offer card interactive after preview selection', async () => {
     apiFetchMock.mockResolvedValue({ ok: true, status: 200 });
     const previewableBlock: RichInteractiveBlock = {

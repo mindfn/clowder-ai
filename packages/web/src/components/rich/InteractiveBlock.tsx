@@ -54,14 +54,15 @@ function dispatchInteractiveSend(text: string) {
   window.dispatchEvent(new CustomEvent('cat-cafe:interactive-send', { detail: { text } }));
 }
 
-const GUIDE_ACTIONS_CALLBACK_PREFIX = '/api/guide-actions/';
 const GUIDE_START_CALLBACK_PATH = '/api/guide-actions/start';
+const GUIDE_CANCEL_CALLBACK_PATH = '/api/guide-actions/cancel';
+const GUIDE_ACTIONS_CALLBACK_ALLOWLIST = new Set([GUIDE_START_CALLBACK_PATH, GUIDE_CANCEL_CALLBACK_PATH]);
 
 function resolveSafeInteractiveCallbackEndpoint(endpoint: string): string | null {
   try {
     const url = new URL(endpoint, window.location.origin);
     if (url.origin !== window.location.origin) return null;
-    if (!url.pathname.startsWith(GUIDE_ACTIONS_CALLBACK_PREFIX)) return null;
+    if (!GUIDE_ACTIONS_CALLBACK_ALLOWLIST.has(url.pathname)) return null;
     return `${url.pathname}${url.search}`;
   } catch {
     return null;
@@ -77,14 +78,13 @@ function shouldKeepGuideOfferInteractive(
 
   const callbackEndpoints = new Set(
     block.options
-      .map((option) => (option.action?.type === 'callback' ? option.action.endpoint : null))
+      .map((option) =>
+        option.action?.type === 'callback' ? resolveSafeInteractiveCallbackEndpoint(option.action.endpoint) : null,
+      )
       .filter((endpoint): endpoint is string => Boolean(endpoint)),
   );
 
-  return (
-    callbackEndpoints.has(GUIDE_START_CALLBACK_PATH) ||
-    [...callbackEndpoints].some((endpoint) => endpoint.startsWith(GUIDE_ACTIONS_CALLBACK_PREFIX))
-  );
+  return callbackEndpoints.has(GUIDE_START_CALLBACK_PATH) || callbackEndpoints.has(GUIDE_CANCEL_CALLBACK_PATH);
 }
 
 function shouldDispatchLocalGuideStart(
