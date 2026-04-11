@@ -139,7 +139,7 @@ export function useGuideEngine() {
   const markCompletionPersisted = useGuideStore((s) => s.markCompletionPersisted);
   useEffect(() => {
     if (!session || session.phase !== 'complete') return;
-    const { threadId } = session;
+    const { sessionId, threadId } = session;
     const guideId = session.flow.id;
     if (!threadId) return;
 
@@ -151,7 +151,7 @@ export function useGuideEngine() {
           body: JSON.stringify({ threadId, guideId }),
         });
         if (res.ok) {
-          markCompletionPersisted();
+          markCompletionPersisted(sessionId);
           return;
         }
         if (attempt < 3) {
@@ -160,7 +160,7 @@ export function useGuideEngine() {
           return;
         }
         console.error(`[Guide] Completion failed after ${attempt} attempts: ${res.status}`);
-        markCompletionPersisted();
+        markCompletionPersisted(sessionId);
       } catch (err) {
         if (attempt < 3) {
           console.warn('[Guide] Completion callback error, retrying…', err);
@@ -168,9 +168,9 @@ export function useGuideEngine() {
           return;
         }
         console.error('[Guide] Completion callback failed after retries:', err);
-        markCompletionPersisted();
+        markCompletionPersisted(sessionId);
       }
     };
     notify();
-  }, [session?.phase, session?.flow.id, session?.threadId, session, markCompletionPersisted]);
+  }, [session?.phase, session?.flow.id, session?.sessionId, session?.threadId, session, markCompletionPersisted]);
 }

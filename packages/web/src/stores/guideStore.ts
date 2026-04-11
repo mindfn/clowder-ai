@@ -50,7 +50,7 @@ interface GuideState {
   retreatStep: () => void;
   exitGuide: () => void;
   setPhase: (phase: GuidePhase) => void;
-  markCompletionPersisted: () => void;
+  markCompletionPersisted: (sessionId: string) => void;
 }
 
 let sessionCounter = 0;
@@ -97,7 +97,14 @@ export const useGuideStore = create<GuideState>((set, get) => ({
 
   exitGuide: () => set({ session: null, completionPersisted: false }),
 
-  markCompletionPersisted: () => set({ completionPersisted: true }),
+  markCompletionPersisted: (sessionId) =>
+    set((state) => {
+      if (!state.session) return state;
+      if (state.session.sessionId !== sessionId || state.session.phase !== 'complete') {
+        return state;
+      }
+      return { completionPersisted: true };
+    }),
 
   setPhase: (phase) => {
     const { session } = get();

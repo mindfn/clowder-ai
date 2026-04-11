@@ -20,6 +20,15 @@ const FLOW: OrchestrationFlow = {
   ],
 };
 
+const FLOW_2: OrchestrationFlow = {
+  id: 'invite-reviewer',
+  name: 'Invite Reviewer',
+  steps: [
+    { id: 'step-1', target: 'reviewers.tab', tips: 'Open reviewers', advance: 'click' },
+    { id: 'step-2', target: 'reviewers.invite', tips: 'Invite reviewer', advance: 'click' },
+  ],
+};
+
 function Harness() {
   useGuideEngine();
   return null;
@@ -256,5 +265,57 @@ describe('useGuideEngine duplicate start protection', () => {
     });
 
     expect(useGuideStore.getState().session?.phase).toBe('complete');
+  });
+
+  it('does not mark completion persisted for a newer session when an older completion request resolves later', async () => {
+    const completionPending = deferred<{ ok: boolean }>();
+    apiFetchMock.mockImplementation((url: string) => {
+      if (url === '/api/guide-flows/add-member') {
+        return Promise.resolve({ json: async () => FLOW });
+      }
+      if (url === '/api/guide-flows/invite-reviewer') {
+        return Promise.resolve({ json: async () => FLOW_2 });
+      }
+      if (url === '/api/guide-actions/complete') {
+        return completionPending.promise;
+      }
+      throw new Error(`Unexpected apiFetch call: ${url}`);
+    });
+
+    act(() => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      dispatchGuideStart('add-member');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      dispatchGuideComplete({ guideId: 'add-member', threadId: 'thread-1' });
+      await Promise.resolve();
+    });
+
+    expect(useGuideStore.getState().session?.phase).toBe('complete');
+    expect(useGuideStore.getState().completionPersisted).toBe(false);
+
+    await act(async () => {
+      dispatchGuideStart('invite-reviewer');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(useGuideStore.getState().session?.flow.id).toBe('invite-reviewer');
+    expect(useGuideStore.getState().completionPersisted).toBe(false);
+
+    await act(async () => {
+      completionPending.resolve({ ok: true });
+      await completionPending.promise;
+      await Promise.resolve();
+    });
+
+    expect(useGuideStore.getState().session?.flow.id).toBe('invite-reviewer');
+    expect(useGuideStore.getState().completionPersisted).toBe(false);
   });
 });
