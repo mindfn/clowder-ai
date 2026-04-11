@@ -79,6 +79,8 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
     if (!gs) {
       // Self-healing: card was delivered but offered state never persisted.
       // Only allowed when no existing guide state exists (preserves one-guide-at-a-time invariant).
+      // offeredBy (catId) is unavailable here — frontend has userId only. Routing layer
+      // tolerates undefined offeredBy; completion notice simply won't target a specific cat.
       const created: GuideStateV1 = {
         v: 1,
         guideId,

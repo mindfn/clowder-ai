@@ -131,7 +131,7 @@ describe('F155 Guide Action Routes (frontend-facing)', () => {
     assert.equal(res.statusCode, 400);
   });
 
-  test('start: rejects when no guide offered', async () => {
+  test('start: self-heals when no guide state exists (card-first delivery)', async () => {
     const app = await createApp();
     const thread = await threadStore.create('user-1', 'test-thread');
 
@@ -142,8 +142,12 @@ describe('F155 Guide Action Routes (frontend-facing)', () => {
       payload: { threadId: thread.id, guideId: 'add-member' },
     });
 
-    assert.equal(res.statusCode, 400);
-    assert.equal(JSON.parse(res.body).error, 'guide_not_offered');
+    assert.equal(res.statusCode, 200, 'self-heal should create active state');
+    const body = JSON.parse(res.body);
+    assert.equal(body.guideState.status, 'active');
+    assert.equal(body.guideState.guideId, 'add-member');
+    assert.equal(body.guideState.userId, 'user-1');
+    assert.ok(body.guideState.startedAt);
   });
 
   test('start: rejects without user identity', async () => {
@@ -208,7 +212,7 @@ describe('F155 Guide Action Routes (frontend-facing)', () => {
     assert.equal(JSON.parse(res.body).guideState.status, 'cancelled');
   });
 
-  test('cancel: rejects when guide not offered', async () => {
+  test('cancel: returns OK when no guide state exists (card-first delivery)', async () => {
     const app = await createApp();
     const thread = await threadStore.create('user-1', 'test-thread');
 
@@ -219,7 +223,8 @@ describe('F155 Guide Action Routes (frontend-facing)', () => {
       payload: { threadId: thread.id, guideId: 'add-member' },
     });
 
-    assert.equal(res.statusCode, 400);
+    assert.equal(res.statusCode, 200, 'cancel with no state should be idempotent');
+    assert.equal(JSON.parse(res.body).guideState, null);
   });
 
   test('cancel: rejects without user identity', async () => {
