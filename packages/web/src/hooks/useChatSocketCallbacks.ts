@@ -14,6 +14,7 @@ interface ExternalDeps {
   handleAuthRequest: NonNullable<SocketCallbacks['onAuthorizationRequest']>;
   handleAuthResponse: NonNullable<SocketCallbacks['onAuthorizationResponse']>;
   onNavigateToThread?: (threadId: string) => void;
+  onIndexEvent?: SocketCallbacks['onIndexEvent'];
 }
 
 /**
@@ -29,6 +30,7 @@ export function useChatSocketCallbacks({
   handleAuthRequest,
   handleAuthResponse,
   onNavigateToThread,
+  onIndexEvent,
 }: ExternalDeps): SocketCallbacks {
   const {
     updateThreadTitle,
@@ -117,6 +119,7 @@ export function useChatSocketCallbacks({
           }),
         );
       },
+      onIndexEvent,
     }),
     [
       handleAgentMessage,
@@ -135,6 +138,7 @@ export function useChatSocketCallbacks({
       handleAuthRequest,
       handleAuthResponse,
       onNavigateToThread,
+      onIndexEvent,
       threadId,
       userId,
     ],

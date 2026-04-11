@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { BrakeModal } from '@/components/BrakeModal';
 import { GuideOverlay } from '@/components/GuideOverlay';
+import { SessionBootstrap } from '@/components/SessionBootstrap';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { ToastContainer } from '@/components/ToastContainer';
 import { ConfirmProvider } from '@/components/useConfirm';
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="zh-CN" suppressHydrationWarning>
       <body className="min-h-screen">
+        <SessionBootstrap />
         <ThemeProvider>
           <ConfirmProvider>{children}</ConfirmProvider>
           <BrakeModal />

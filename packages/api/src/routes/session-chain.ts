@@ -63,7 +63,7 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
     const userId = resolveUserId(request);
     if (!userId) {
       reply.status(401);
-      return { error: 'Identity required (X-Cat-Cafe-User header or userId query)' };
+      return { error: 'Identity required (session cookie or X-Cat-Cafe-User header)' };
     }
 
     const { threadId } = request.params;
@@ -106,7 +106,7 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
     const userId = resolveUserId(request);
     if (!userId) {
       reply.status(401);
-      return { error: 'Identity required (X-Cat-Cafe-User header or userId query)' };
+      return { error: 'Identity required (session cookie or X-Cat-Cafe-User header)' };
     }
 
     const { sessionId } = request.params;
@@ -138,7 +138,7 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
     const userId = resolveUserId(request);
     if (!userId) {
       reply.status(401);
-      return { error: 'Identity required (X-Cat-Cafe-User header or userId query)' };
+      return { error: 'Identity required (session cookie or X-Cat-Cafe-User header)' };
     }
 
     const { sessionId } = request.params;
@@ -247,7 +247,7 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
     const userId = resolveUserId(request);
     if (!userId) {
       reply.status(401);
-      return { error: 'Identity required (X-Cat-Cafe-User header or userId query)' };
+      return { error: 'Identity required (session cookie or X-Cat-Cafe-User header)' };
     }
 
     const { threadId, catId } = request.params;
