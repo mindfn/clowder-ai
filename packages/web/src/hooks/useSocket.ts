@@ -666,7 +666,12 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string) {
       const isActiveThread = Boolean(
         data.threadId && routeThread && storeThread && data.threadId === routeThread && data.threadId === storeThread,
       );
-      if (!isActiveThread) return;
+      if (!isActiveThread) {
+        if (data.action === 'exit') {
+          pendingGuideStartsRef.current.delete(data.threadId);
+        }
+        return;
+      }
       callbacksRef.current.onGuideControl?.(data);
     });
 

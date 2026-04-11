@@ -69,29 +69,33 @@ const mockGetThreadState = vi.fn(() => ({
 let mockStoreCurrentThreadId = 'thread-B';
 
 vi.mock('@/stores/chatStore', () => {
-  const store = {
-    getState: () => ({
-      currentThreadId: mockStoreCurrentThreadId,
-      addMessageToThread: mockAddMessageToThread,
-      appendToThreadMessage: mockAppendToThreadMessage,
-      appendToolEventToThread: mockAppendToolEventToThread,
-      setThreadCatInvocation: mockSetThreadCatInvocation,
-      setThreadMessageMetadata: mockSetThreadMessageMetadata,
-      setThreadMessageUsage: mockSetThreadMessageUsage,
-      setThreadMessageStreaming: mockSetThreadMessageStreaming,
-      setThreadLoading: mockSetThreadLoading,
-      setThreadHasActiveInvocation: mockSetThreadHasActiveInvocation,
-      setQueue: mockSetQueue,
-      setQueuePaused: mockSetQueuePaused,
-      setQueueFull: mockSetQueueFull,
-      setThreadIntentMode: mockSetThreadIntentMode,
-      setThreadTargetCats: mockSetThreadTargetCats,
-      updateThreadCatStatus: mockUpdateThreadCatStatus,
-      clearThreadActiveInvocation: mockClearThreadActiveInvocation,
-      getThreadState: mockGetThreadState,
-    }),
+  const getState = () => ({
+    currentThreadId: mockStoreCurrentThreadId,
+    addMessageToThread: mockAddMessageToThread,
+    appendToThreadMessage: mockAppendToThreadMessage,
+    appendToolEventToThread: mockAppendToolEventToThread,
+    setThreadCatInvocation: mockSetThreadCatInvocation,
+    setThreadMessageMetadata: mockSetThreadMessageMetadata,
+    setThreadMessageUsage: mockSetThreadMessageUsage,
+    setThreadMessageStreaming: mockSetThreadMessageStreaming,
+    setThreadLoading: mockSetThreadLoading,
+    setThreadHasActiveInvocation: mockSetThreadHasActiveInvocation,
+    setQueue: mockSetQueue,
+    setQueuePaused: mockSetQueuePaused,
+    setQueueFull: mockSetQueueFull,
+    setThreadIntentMode: mockSetThreadIntentMode,
+    setThreadTargetCats: mockSetThreadTargetCats,
+    updateThreadCatStatus: mockUpdateThreadCatStatus,
+    clearThreadActiveInvocation: mockClearThreadActiveInvocation,
+    getThreadState: mockGetThreadState,
+  });
+  const useChatStore = ((selector?: (state: ReturnType<typeof getState>) => unknown) =>
+    selector ? selector(getState()) : getState()) as {
+    (selector?: (state: ReturnType<typeof getState>) => unknown): unknown;
+    getState: typeof getState;
   };
-  return { useChatStore: store };
+  useChatStore.getState = getState;
+  return { useChatStore };
 });
 
 vi.mock('@/stores/toastStore', () => ({
@@ -315,6 +319,45 @@ describe('useSocket thread guard (P1 regression: cross-thread event leakage)', (
       threadId: 'thread-A',
       timestamp: 123,
     });
+  });
+
+  it('does not replay a queued guide_start after off-thread exit control clears it', () => {
+    const onGuideStart = vi.fn();
+    const callbacks: SocketCallbacks = {
+      onMessage: vi.fn(),
+      onGuideStart,
+    };
+
+    mockStoreCurrentThreadId = 'thread-B';
+    act(() => {
+      root.render(React.createElement(HookWrapper, { callbacks, threadId: 'thread-B' }));
+    });
+
+    act(() => {
+      simulateServerEvent('guide_start', {
+        guideId: 'add-member',
+        threadId: 'thread-A',
+        timestamp: 123,
+      });
+    });
+
+    expect(onGuideStart).not.toHaveBeenCalled();
+
+    act(() => {
+      simulateServerEvent('guide_control', {
+        action: 'exit',
+        guideId: 'add-member',
+        threadId: 'thread-A',
+        timestamp: 124,
+      });
+    });
+
+    mockStoreCurrentThreadId = 'thread-A';
+    act(() => {
+      root.render(React.createElement(HookWrapper, { callbacks, threadId: 'thread-A' }));
+    });
+
+    expect(onGuideStart).not.toHaveBeenCalled();
   });
 
   it('intent_mode for switched-away thread routes to background after thread change', () => {
