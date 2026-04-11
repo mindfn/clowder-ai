@@ -995,9 +995,9 @@ export const callbackTools = [
     name: 'cat_cafe_guide_control',
     description:
       'Control an active guide session. Requires guide to be in "active" state. ' +
-      'Actions: "next" (advance), "back" (previous step), "skip" (skip step), "exit" (cancel guide).',
+      'Actions: "next" (advance), "skip" (skip step), "exit" (cancel guide). Forward-only — no back.',
     inputSchema: {
-      action: z.enum(['next', 'back', 'skip', 'exit']).describe('Guide control action'),
+      action: z.enum(['next', 'skip', 'exit']).describe('Guide control action'),
     },
     handler: handleGuideControl,
   },

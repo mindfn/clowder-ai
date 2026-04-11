@@ -113,7 +113,7 @@ export interface SocketCallbacks {
   }) => void;
   /** F155: Guide engine trigger */
   onGuideStart?: (data: { guideId: string; threadId: string; timestamp: number }) => void;
-  /** F155: Guide control (next/back/skip/exit) */
+  /** F155: Guide control (next/skip/exit) */
   onGuideControl?: (data: { action: string; guideId: string; threadId: string; timestamp: number }) => void;
   /** F155: Guide completed in another client/session */
   onGuideComplete?: (data: { guideId: string; threadId: string; timestamp: number }) => void;
@@ -661,7 +661,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string) {
       callbacksRef.current.onGuideStart?.(data);
     });
 
-    // F155: Guide control (next/back/skip/exit) from MCP tool
+    // F155: Guide control (next/skip/exit) from MCP tool
     socket.on('guide_control', (data: { action: string; guideId: string; threadId: string; timestamp: number }) => {
       // Always clear queued starts on exit — prevents stale replay even if user switched to this thread
       if (data.action === 'exit') {
