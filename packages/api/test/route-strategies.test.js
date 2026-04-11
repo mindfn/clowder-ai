@@ -815,7 +815,7 @@ describe('routeParallel abort marks healthy (#267)', () => {
   });
 });
 
-describe('F150 guide offer ownership', () => {
+describe('F155 guide offer ownership', () => {
   it('serial: suppresses fresh guide offers when another user has a non-terminal guide on shared default thread', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const codexService = createCapturingService('codex', '我来处理这个请求');
@@ -1232,7 +1232,7 @@ describe('F150 guide offer ownership', () => {
   });
 });
 
-describe('F150 guide completion ack ownership', () => {
+describe('F155 guide completion ack ownership', () => {
   it('serial: does not ack a different guide that replaced the completed one', async () => {
     const { routeSerial } = await import('../dist/domains/cats/services/agents/routing/route-serial.js');
     const threadStore = createGuideAckThreadStore(

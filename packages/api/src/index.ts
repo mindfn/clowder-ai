@@ -1142,7 +1142,7 @@ async function main(): Promise<void> {
     socketManager,
     threadStore,
   });
-  // F150: Frontend-facing guide actions (no MCP auth, uses userId header)
+  // F155: Frontend-facing guide actions (no MCP auth, uses userId header)
   if (threadStore) {
     await app.register(guideActionRoutes, { threadStore, socketManager });
   }

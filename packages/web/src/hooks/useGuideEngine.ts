@@ -7,7 +7,7 @@ import { useGuideStore } from '@/stores/guideStore';
 import { apiFetch } from '@/utils/api-client';
 
 /**
- * F150: Guide Engine hook (v2 — tag-based engine)
+ * F155: Guide Engine hook (v2 — tag-based engine)
  *
  * - Listens for guide:start CustomEvent (from InteractiveBlock callback)
  * - Fetches flow definition from API at runtime (no build-time catalog)

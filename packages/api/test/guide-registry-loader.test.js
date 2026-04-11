@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-describe('F150 guide registry loader target validation', async () => {
+describe('F155 guide registry loader target validation', async () => {
   const { getRegistryEntries, getValidGuideIds, isValidGuideTarget, loadGuideFlow, resolveGuideForIntent } =
     await import('../dist/domains/guides/guide-registry-loader.js');
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');

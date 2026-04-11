@@ -1,5 +1,5 @@
 /**
- * F150: Frontend-Facing Guide Action Routes
+ * F155: Frontend-Facing Guide Action Routes
  *
  * These endpoints are called directly by the frontend InteractiveBlock
  * when a user clicks a guide option with an `action` field.
@@ -93,7 +93,7 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
     try {
       loadGuideFlow(guideId);
     } catch (err) {
-      log.warn({ guideId, threadId, err }, '[F150] start rejected — flow not loadable');
+      log.warn({ guideId, threadId, err }, '[F155] start rejected — flow not loadable');
       reply.status(400);
       return { error: 'guide_flow_invalid', message: (err as Error).message };
     }
@@ -107,7 +107,7 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
       threadId,
       timestamp: Date.now(),
     });
-    log.info({ guideId, threadId, userId }, '[F150] guide started via frontend action');
+    log.info({ guideId, threadId, userId }, '[F155] guide started via frontend action');
     return { status: 'ok', guideId, guideState: updated };
   });
 
@@ -124,7 +124,7 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
       const flow = loadGuideFlow(guideId);
       return flow;
     } catch (err) {
-      log.warn({ guideId, err }, '[F150] Failed to load guide flow');
+      log.warn({ guideId, err }, '[F155] Failed to load guide flow');
       reply.status(404);
       return { error: 'guide_not_found', message: (err as Error).message };
     }
@@ -178,7 +178,7 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
       threadId,
       timestamp: Date.now(),
     });
-    log.info({ guideId, threadId, userId }, '[F150] guide cancelled via frontend action');
+    log.info({ guideId, threadId, userId }, '[F155] guide cancelled via frontend action');
     return { status: 'ok', guideState: updated };
   });
 
@@ -233,7 +233,7 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
       threadId,
       timestamp: Date.now(),
     });
-    log.info({ guideId, threadId, userId }, '[F150] guide completed via frontend action');
+    log.info({ guideId, threadId, userId }, '[F155] guide completed via frontend action');
     return { status: 'ok', guideId, guideState: updated };
   });
 };

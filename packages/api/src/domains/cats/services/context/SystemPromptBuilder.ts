@@ -103,7 +103,7 @@ export interface InvocationContext {
    */
   bootcampState?: BootcampStateV1;
   /**
-   * F150: Matched guide candidate from routing-layer keyword match.
+   * F155: Matched guide candidate from routing-layer keyword match.
    * When present, cats load guide-interaction skill and offer the guide.
    */
   guideCandidate?: {
@@ -615,7 +615,7 @@ export function buildInvocationContext(context: InvocationContext): string {
     );
   }
 
-  // F150: Guide candidate — inline protocol (cats don't have /Skill tool at runtime)
+  // F155: Guide candidate — inline protocol (cats don't have /Skill tool at runtime)
   if (context.guideCandidate) {
     const { id, name, estimatedTime, status } = context.guideCandidate;
     const threadPart = context.threadId ? ` thread=${context.threadId}` : '';

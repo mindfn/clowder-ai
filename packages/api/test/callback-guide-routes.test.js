@@ -1,5 +1,5 @@
 /**
- * F150: Guide engine callback route tests
+ * F155: Guide engine callback route tests
  * Tests: start-guide, guide-resolve, guide-control
  */
 
@@ -8,7 +8,7 @@ import { beforeEach, describe, test } from 'node:test';
 import Fastify from 'fastify';
 import './helpers/setup-cat-registry.js';
 
-describe('F150 Guide callback routes', () => {
+describe('F155 Guide callback routes', () => {
   let registry;
   let messageStore;
   let threadStore;

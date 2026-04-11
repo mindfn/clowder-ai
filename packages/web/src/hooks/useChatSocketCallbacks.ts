@@ -99,7 +99,7 @@ export function useChatSocketCallbacks({
           onNavigateToThread?.(data.gameThreadId);
         }
       },
-      // F150: Guide engine — relay Socket.io events to CustomEvents for useGuideEngine
+      // F155: Guide engine — relay Socket.io events to CustomEvents for useGuideEngine
       onGuideStart: (data) => {
         window.dispatchEvent(
           new CustomEvent('guide:start', { detail: { flowId: data.guideId, threadId: data.threadId } }),

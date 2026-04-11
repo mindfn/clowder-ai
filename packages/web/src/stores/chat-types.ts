@@ -130,7 +130,7 @@ export interface RichAudioBlock {
   mimeType?: string;
 }
 
-/** F150: Direct action for interactive options that bypass the chat message pipeline */
+/** F155: Direct action for interactive options that bypass the chat message pipeline */
 export interface OptionAction {
   type: 'callback';
   endpoint: string;
@@ -151,7 +151,7 @@ export interface InteractiveOption {
   customInput?: boolean;
   /** Placeholder text for the custom input field */
   customInputPlaceholder?: string;
-  /** F150: When present, clicking calls the endpoint directly instead of sending a chat message */
+  /** F155: When present, clicking calls the endpoint directly instead of sending a chat message */
   action?: OptionAction;
 }
 

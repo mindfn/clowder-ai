@@ -1,5 +1,5 @@
 /**
- * F150: Tests for the generated guide catalog.
+ * F155: Tests for the generated guide catalog.
  *
  * @deprecated The guide catalog (guide-catalog.gen.ts) uses legacy v1 step shape
  * and is pending regeneration for v2 OrchestrationFlow schema.

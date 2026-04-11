@@ -594,7 +594,7 @@ export function InteractiveBlock({
       setLocalSelectedIds(optionIds);
       setLocalDisabled(shouldDisable);
 
-      // F150: Check if the selected option has a direct action (bypasses chat message pipeline)
+      // F155: Check if the selected option has a direct action (bypasses chat message pipeline)
       if (selectedOption?.action?.type === 'callback') {
         const { endpoint, payload } = selectedOption.action;
         const safeEndpoint = resolveSafeInteractiveCallbackEndpoint(endpoint);
@@ -617,7 +617,7 @@ export function InteractiveBlock({
             return;
           }
 
-          // F150: Trigger guide overlay directly — don't rely on socket round-trip
+          // F155: Trigger guide overlay directly — don't rely on socket round-trip
           if (safeEndpoint === GUIDE_START_CALLBACK_PATH && payload && 'guideId' in payload) {
             const p = payload as Record<string, unknown>;
             if (shouldDispatchLocalGuideStart(p)) {

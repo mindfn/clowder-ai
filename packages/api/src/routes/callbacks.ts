@@ -51,7 +51,7 @@ export interface CallbackRoutesOptions {
   registry: InvocationRegistry;
   messageStore: IMessageStore;
   socketManager: SocketManager;
-  /** F150 review fix: allow tests to inject a failing guide flow loader. */
+  /** F155 review fix: allow tests to inject a failing guide flow loader. */
   loadGuideFlow?: (guideId: string) => unknown;
   taskStore?: ITaskStore;
   backlogStore?: IBacklogStore;
@@ -1360,7 +1360,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
   // F101: Game action callback for non-Claude cats (OpenCode/Codex/Gemini)
   registerCallbackGameRoutes(app, { registry });
 
-  // F150: Guide engine — state-validated routes with ThreadStore authority
+  // F155: Guide engine — state-validated routes with ThreadStore authority
   if (opts.threadStore) {
     await registerCallbackGuideRoutes(app, {
       registry,

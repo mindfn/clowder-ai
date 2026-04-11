@@ -33,7 +33,7 @@ export function GuideOverlay() {
 }
 
 /**
- * F150: Guide Overlay (v2 — tag-based engine)
+ * F155: Guide Overlay (v2 — tag-based engine)
  *
  * - Mask + spotlight on target element (found by data-guide-id)
  * - Tips from flow definition (not hardcoded)

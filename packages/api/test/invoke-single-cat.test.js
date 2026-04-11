@@ -4525,7 +4525,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
   });
 });
 
-// F150: Old pre-invocation guide routing hook tests removed.
+// F155: Old pre-invocation guide routing hook tests removed.
 // Guide matching now happens at routing layer (route-serial/route-parallel)
 // and is injected via SystemPromptBuilder + guide-interaction skill.
 // New tests for the routing-layer matching should be added separately.

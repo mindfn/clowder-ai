@@ -118,7 +118,7 @@ export async function* routeParallel(
   let voiceMode: boolean | undefined;
   // F087: Bootcamp state for CVO onboarding
   let bootcampState: InvocationContext['bootcampState'];
-  // F150: Guide candidate from keyword matching against raw user message
+  // F155: Guide candidate from keyword matching against raw user message
   let guideCandidate: InvocationContext['guideCandidate'];
   /** catId that owns an offered guide prompt, to avoid duplicate offered→offered writes. */
   let guideOfferOwner: string | undefined;
@@ -138,7 +138,7 @@ export async function* routeParallel(
       const threadGuideState = thread?.guideState;
       hiddenForeignNonTerminalGuideState = hasHiddenForeignNonTerminalGuideState(thread, threadGuideState, userId);
       const guideState = canAccessGuideState(thread, threadGuideState, userId) ? threadGuideState : undefined;
-      // F150: Read existing guide state from thread (authority source)
+      // F155: Read existing guide state from thread (authority source)
       if (guideState) {
         const gs = guideState;
         // cancelled: fully terminal, skip
@@ -211,7 +211,7 @@ export async function* routeParallel(
   const catToolNames = new Map<string, string[]>();
   const catCoverageMap = new Map<string, ContextEvalInput['coverageMap']>();
 
-  // F150: Match raw user message against guide registry (only if no existing guide state)
+  // F155: Match raw user message against guide registry (only if no existing guide state)
   if (!guideCandidate && !hiddenForeignNonTerminalGuideState) {
     try {
       const { resolveGuideForIntent } = await import('../../../../guides/guide-registry-loader.js');
@@ -1038,7 +1038,7 @@ export async function* routeParallel(
         }
       }
 
-      // F150: Ack guide completion only after cat produced visible output.
+      // F155: Ack guide completion only after cat produced visible output.
       // Skip ack on error-only turns so next turn retries delivery.
       if (
         catProducedOutput &&

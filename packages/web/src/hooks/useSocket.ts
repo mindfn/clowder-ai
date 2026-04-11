@@ -111,11 +111,11 @@ export interface SocketCallbacks {
     reason: 'canceled' | 'failed';
     queue: import('../stores/chat-types').QueueEntry[];
   }) => void;
-  /** F150: Guide engine trigger */
+  /** F155: Guide engine trigger */
   onGuideStart?: (data: { guideId: string; threadId: string; timestamp: number }) => void;
-  /** F150: Guide control (next/back/skip/exit) */
+  /** F155: Guide control (next/back/skip/exit) */
   onGuideControl?: (data: { action: string; guideId: string; threadId: string; timestamp: number }) => void;
-  /** F150: Guide completed in another client/session */
+  /** F155: Guide completed in another client/session */
   onGuideComplete?: (data: { guideId: string; threadId: string; timestamp: number }) => void;
   /** F152 Phase B: Memory bootstrap index events */
   onIndexEvent?: (event: string, data: Record<string, unknown>) => void;
@@ -644,7 +644,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string) {
       },
     );
 
-    // F150: Guide engine trigger from MCP tool
+    // F155: Guide engine trigger from MCP tool
     socket.on('guide_start', (data: { guideId: string; threadId: string; timestamp: number }) => {
       const routeThread = threadIdRef.current;
       const storeThread = useChatStore.getState().currentThreadId;
@@ -659,7 +659,7 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string) {
       callbacksRef.current.onGuideStart?.(data);
     });
 
-    // F150: Guide control (next/back/skip/exit) from MCP tool
+    // F155: Guide control (next/back/skip/exit) from MCP tool
     socket.on('guide_control', (data: { action: string; guideId: string; threadId: string; timestamp: number }) => {
       const routeThread = threadIdRef.current;
       const storeThread = useChatStore.getState().currentThreadId;

@@ -1,5 +1,5 @@
 /**
- * F150: Frontend-Facing Guide Action Routes Tests
+ * F155: Frontend-Facing Guide Action Routes Tests
  * POST /api/guide-actions/start  — start guide via frontend click
  * POST /api/guide-actions/cancel — cancel guide via frontend click
  *
@@ -12,7 +12,7 @@ import { beforeEach, describe, test } from 'node:test';
 import Fastify from 'fastify';
 import './helpers/setup-cat-registry.js';
 
-describe('F150 Guide Action Routes (frontend-facing)', () => {
+describe('F155 Guide Action Routes (frontend-facing)', () => {
   let threadStore;
   let socketManager;
   let broadcastCalls;

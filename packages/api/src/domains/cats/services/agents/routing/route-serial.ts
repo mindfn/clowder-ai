@@ -142,7 +142,7 @@ export async function* routeSerial(
   let voiceMode: boolean | undefined;
   // F087: Bootcamp state for CVO onboarding
   let bootcampState: InvocationContext['bootcampState'];
-  // F150: Guide candidate from keyword matching against raw user message
+  // F155: Guide candidate from keyword matching against raw user message
   let guideCandidate: InvocationContext['guideCandidate'];
   /** catId that owns an offered guide prompt, to avoid duplicate offered→offered writes. */
   let guideOfferOwner: string | undefined;
@@ -162,7 +162,7 @@ export async function* routeSerial(
       const threadGuideState = thread?.guideState;
       hiddenForeignNonTerminalGuideState = hasHiddenForeignNonTerminalGuideState(thread, threadGuideState, userId);
       const guideState = canAccessGuideState(thread, threadGuideState, userId) ? threadGuideState : undefined;
-      // F150: Read existing guide state from thread (authority source)
+      // F155: Read existing guide state from thread (authority source)
       if (guideState) {
         const gs = guideState;
         // cancelled: fully terminal, skip
@@ -231,7 +231,7 @@ export async function* routeSerial(
     }
   }
 
-  // F150: Match raw user message against guide registry (only if no existing guide state)
+  // F155: Match raw user message against guide registry (only if no existing guide state)
   if (!guideCandidate && !hiddenForeignNonTerminalGuideState) {
     try {
       const { resolveGuideForIntent } = await import('../../../../guides/guide-registry-loader.js');
@@ -248,7 +248,7 @@ export async function* routeSerial(
         guideOfferOwner = targetCats[0];
         log.info(
           { guideId: top.id, guideName: top.name, score: top.score },
-          '[F150] guide candidate matched at routing layer',
+          '[F155] guide candidate matched at routing layer',
         );
       }
     } catch {
@@ -516,7 +516,7 @@ export async function* routeSerial(
       let firstMetadata: MessageMetadata | undefined;
       let doneMsg: AgentMessage | undefined;
       let hadError = false;
-      /** F150: tracks whether cat produced user-visible output (for guide completion ack). */
+      /** F155: tracks whether cat produced user-visible output (for guide completion ack). */
       let catProducedOutput = false;
       let sawUserFacingSystemInfo = false;
       // #267: track errors that happened BEFORE abort — only these are real provider failures
@@ -1314,7 +1314,7 @@ export async function* routeSerial(
         });
       }
 
-      // F150: Ack guide completion only after cat produced visible output.
+      // F155: Ack guide completion only after cat produced visible output.
       // Skip ack on error-only turns so next turn retries delivery.
       if (
         catProducedOutput &&

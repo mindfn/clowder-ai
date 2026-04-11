@@ -1,5 +1,5 @@
 /**
- * F150: Load guide registry from YAML source.
+ * F155: Load guide registry from YAML source.
  *
  * Provides a validated set of known guide IDs for server-side validation,
  * and the full registry entries for the resolve MCP tool.
@@ -43,7 +43,7 @@ function ensureLoaded(): void {
   const raw = readFileSync(registryPath, 'utf-8');
   const parsed = YAML.parse(raw) as RegistryFile;
   if (!parsed?.guides || !Array.isArray(parsed.guides)) {
-    throw new Error('[F150] Invalid guide registry: missing "guides" array');
+    throw new Error('[F155] Invalid guide registry: missing "guides" array');
   }
   cachedEntries = parsed.guides;
   cachedIds = new Set(parsed.guides.map((g) => g.id));
@@ -141,7 +141,7 @@ export function loadGuideFlow(guideId: string): OrchestrationFlow {
 
   const entries = getRegistryEntries();
   const entry = entries.find((e) => e.id === guideId);
-  if (!entry) throw new Error(`[F150] Unknown guide: ${guideId}`);
+  if (!entry) throw new Error(`[F155] Unknown guide: ${guideId}`);
 
   const root = findProjectRoot();
   const flowPath = resolve(root, 'guides', entry.flow_file);
@@ -150,12 +150,12 @@ export function loadGuideFlow(guideId: string): OrchestrationFlow {
 
   if (parsed?.id !== guideId) {
     throw new Error(
-      `[F150] Invalid flow file for "${guideId}": expected id "${guideId}", got "${String(parsed?.id ?? '')}"`,
+      `[F155] Invalid flow file for "${guideId}": expected id "${guideId}", got "${String(parsed?.id ?? '')}"`,
     );
   }
 
   if (!parsed?.steps || !Array.isArray(parsed.steps)) {
-    throw new Error(`[F150] Invalid flow file for "${guideId}": missing steps`);
+    throw new Error(`[F155] Invalid flow file for "${guideId}": missing steps`);
   }
 
   const validAdvance = new Set(['click', 'visible', 'input', 'confirm']);
@@ -165,10 +165,10 @@ export function loadGuideFlow(guideId: string): OrchestrationFlow {
     description: parsed.description,
     steps: parsed.steps.map((s) => {
       if (!validAdvance.has(s.advance)) {
-        throw new Error(`[F150] Invalid advance type "${s.advance}" in step "${s.id}"`);
+        throw new Error(`[F155] Invalid advance type "${s.advance}" in step "${s.id}"`);
       }
       if (!isValidGuideTarget(s.target)) {
-        throw new Error(`[F150] Invalid target "${s.target}" in step "${s.id}"`);
+        throw new Error(`[F155] Invalid target "${s.target}" in step "${s.id}"`);
       }
       return {
         id: s.id,
