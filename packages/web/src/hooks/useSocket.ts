@@ -663,17 +663,16 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string) {
 
     // F155: Guide control (next/back/skip/exit) from MCP tool
     socket.on('guide_control', (data: { action: string; guideId: string; threadId: string; timestamp: number }) => {
+      // Always clear queued starts on exit — prevents stale replay even if user switched to this thread
+      if (data.action === 'exit') {
+        pendingGuideStartsRef.current.delete(data.threadId);
+      }
       const routeThread = threadIdRef.current;
       const storeThread = useChatStore.getState().currentThreadId;
       const isActiveThread = Boolean(
         data.threadId && routeThread && storeThread && data.threadId === routeThread && data.threadId === storeThread,
       );
-      if (!isActiveThread) {
-        if (data.action === 'exit') {
-          pendingGuideStartsRef.current.delete(data.threadId);
-        }
-        return;
-      }
+      if (!isActiveThread) return;
       callbacksRef.current.onGuideControl?.(data);
     });
 
