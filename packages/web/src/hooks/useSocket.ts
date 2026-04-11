@@ -669,6 +669,8 @@ export function useSocket(callbacks: SocketCallbacks, threadId?: string) {
     });
 
     socket.on('guide_complete', (data: { guideId: string; threadId: string; timestamp: number }) => {
+      // Always clear queued starts for this thread — prevents stale replay after switching back
+      pendingGuideStartsRef.current.delete(data.threadId);
       const routeThread = threadIdRef.current;
       const storeThread = useChatStore.getState().currentThreadId;
       const isActiveThread = Boolean(

@@ -62,6 +62,7 @@ export const useGuideStore = create<GuideState>((set, get) => ({
   startGuide: (flow, threadId) => {
     sessionCounter += 1;
     set({
+      completionPersisted: false,
       session: {
         flow,
         sessionId: `guide-${flow.id}-${sessionCounter}`,
