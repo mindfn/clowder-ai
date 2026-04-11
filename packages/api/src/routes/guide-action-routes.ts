@@ -66,10 +66,30 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
       return { error: 'Thread access denied' };
     }
 
-    const gs = thread.guideState;
-    if (!gs || gs.guideId !== guideId) {
+    // P1 fix: validate flow is loadable before committing state transition
+    try {
+      loadGuideFlow(guideId);
+    } catch (err) {
+      log.warn({ guideId, threadId, err }, '[F155] start rejected — flow not loadable');
       reply.status(400);
-      return { error: 'guide_not_offered', message: `Guide "${guideId}" not offered in this thread` };
+      return { error: 'guide_flow_invalid', message: (err as Error).message };
+    }
+
+    const gs = thread.guideState;
+    // Self-healing: if card was delivered but offered state never persisted,
+    // create the state atomically (skipping offered → straight to active).
+    if (!gs || gs.guideId !== guideId) {
+      const created: GuideStateV1 = {
+        guideId,
+        status: 'active',
+        userId,
+        offeredAt: Date.now(),
+        startedAt: Date.now(),
+      };
+      await threadStore.updateGuideState(threadId, created);
+      socketManager.emitToUser(userId, 'guide_start', { guideId, threadId, timestamp: Date.now() });
+      log.info({ guideId, threadId, userId }, '[F155] guide started (self-healed missing offered state)');
+      return { status: 'ok', guideId, guideState: created };
     }
     if (!canAccessGuideState(thread, gs, userId)) {
       reply.status(403);
@@ -78,15 +98,6 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
     if (gs.status !== 'offered' && gs.status !== 'awaiting_choice') {
       reply.status(400);
       return { error: `Cannot start guide in status "${gs.status}"` };
-    }
-
-    // P1 fix: validate flow is loadable before committing state transition
-    try {
-      loadGuideFlow(guideId);
-    } catch (err) {
-      log.warn({ guideId, threadId, err }, '[F155] start rejected — flow not loadable');
-      reply.status(400);
-      return { error: 'guide_flow_invalid', message: (err as Error).message };
     }
 
     const updated: GuideStateV1 = { ...gs, status: 'active', startedAt: Date.now() };
@@ -148,9 +159,9 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
     }
 
     const gs = thread.guideState;
+    // Self-healing: if no state exists (card delivered but state never persisted), treat as no-op
     if (!gs || gs.guideId !== guideId) {
-      reply.status(400);
-      return { error: 'guide_not_offered', message: `Guide "${guideId}" not offered in this thread` };
+      return { status: 'ok', guideState: null };
     }
     if (!canAccessGuideState(thread, gs, userId)) {
       reply.status(403);

@@ -125,15 +125,28 @@ function GuideOverlayInner() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [session]);
 
+  // Reconciliation dismiss: when completion failed, cancel server-side active state before local cleanup
+  const dismissWithReconciliation = () => {
+    if (session?.threadId && session?.flow.id) {
+      apiFetch('/api/guide-actions/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threadId: session.threadId, guideId: session.flow.id }),
+      }).catch(() => {}); // best-effort — don't block dismiss
+    }
+    exitGuide();
+  };
+
   if (!session) return null;
 
   // Completion screen — dismiss blocked until backend confirms persistence
   if (isComplete) {
+    const handleDismiss = completionFailed ? dismissWithReconciliation : exitGuide;
     return (
       <div className="fixed inset-0 z-[var(--guide-z-overlay)] flex items-center justify-center">
         <div
           className="fixed inset-0 bg-black/20"
-          onClick={completionPersisted || completionFailed ? exitGuide : undefined}
+          onClick={completionPersisted || completionFailed ? handleDismiss : undefined}
         />
         <div className="relative z-10 rounded-2xl border border-[var(--guide-hud-border)] bg-[var(--guide-hud-bg)] p-8 text-center shadow-2xl">
           <div className="mb-4 text-4xl">{completionFailed ? '⚠️' : '🐾'}</div>
@@ -147,7 +160,7 @@ function GuideOverlayInner() {
           </p>
           <button
             type="button"
-            onClick={exitGuide}
+            onClick={handleDismiss}
             disabled={!completionPersisted && !completionFailed}
             className="rounded-xl bg-[var(--guide-success)] px-6 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
           >
