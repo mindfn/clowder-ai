@@ -76,10 +76,11 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
     }
 
     const gs = thread.guideState;
-    // Self-healing: if card was delivered but offered state never persisted,
-    // create the state atomically (skipping offered → straight to active).
-    if (!gs || gs.guideId !== guideId) {
+    if (!gs) {
+      // Self-healing: card was delivered but offered state never persisted.
+      // Only allowed when no existing guide state exists (preserves one-guide-at-a-time invariant).
       const created: GuideStateV1 = {
+        v: 1,
         guideId,
         status: 'active',
         userId,
@@ -90,6 +91,10 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
       socketManager.emitToUser(userId, 'guide_start', { guideId, threadId, timestamp: Date.now() });
       log.info({ guideId, threadId, userId }, '[F155] guide started (self-healed missing offered state)');
       return { status: 'ok', guideId, guideState: created };
+    }
+    if (gs.guideId !== guideId) {
+      reply.status(400);
+      return { error: 'guide_not_offered', message: `Guide "${guideId}" not offered in this thread` };
     }
     if (!canAccessGuideState(thread, gs, userId)) {
       reply.status(403);
@@ -159,7 +164,7 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
     }
 
     const gs = thread.guideState;
-    // Self-healing: if no state exists (card delivered but state never persisted), treat as no-op
+    // No state or different guide — nothing to cancel (self-healing for card-first delivery)
     if (!gs || gs.guideId !== guideId) {
       return { status: 'ok', guideState: null };
     }
