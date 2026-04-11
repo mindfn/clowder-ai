@@ -35,7 +35,7 @@ community_pr: "clowder-ai#398"
 
 ### Phase A 收尾（merge 后立即处理）
 
-- [ ] 移除 `retreatStep` 死代码（与 KD-9 forward-only 矛盾）
+- [x] 移除 `retreatStep` 死代码（与 KD-9 forward-only 矛盾）
 - [ ] 添加 `schemaVersion` 到 YAML flow 格式 + loader 启动校验
 - [ ] 无障碍：exit 按钮 `tabIndex` + `Enter`/`Space`、ARIA live regions、`prefers-reduced-motion`
 - [ ] 遥测埋点：`guide_offered` / `guide_started` / `guide_step_advanced` / `guide_completed` / `guide_dismissed(reason)` + 服务端 kill switch per flow ID

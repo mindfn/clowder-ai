@@ -17,7 +17,6 @@ import { apiFetch } from '@/utils/api-client';
 export function useGuideEngine() {
   const startGuide = useGuideStore((s) => s.startGuide);
   const advanceStep = useGuideStore((s) => s.advanceStep);
-  const retreatStep = useGuideStore((s) => s.retreatStep);
   const exitGuide = useGuideStore((s) => s.exitGuide);
   const startInFlightRef = useRef<string | null>(null);
   const pendingRetryRef = useRef<string | null>(null);
@@ -86,7 +85,7 @@ export function useGuideEngine() {
     const handleGuideControl = (e: Event) => {
       const detail = (
         e as CustomEvent<{
-          action: 'next' | 'back' | 'skip' | 'exit';
+          action: 'next' | 'skip' | 'exit';
           guideId?: string;
           threadId?: string;
         }>
@@ -102,9 +101,6 @@ export function useGuideEngine() {
         case 'next':
         case 'skip':
           advanceStep();
-          break;
-        case 'back':
-          retreatStep();
           break;
         case 'exit':
           exitGuide();
@@ -131,7 +127,7 @@ export function useGuideEngine() {
       window.removeEventListener('guide:control', handleGuideControl);
       window.removeEventListener('guide:complete', handleGuideComplete);
     };
-  }, [advanceStep, exitGuide, retreatStep, setPhase, startGuide]);
+  }, [advanceStep, exitGuide, setPhase, startGuide]);
 
   // Completion callback: when phase becomes 'complete', notify backend.
   // The overlay blocks dismiss until markCompletionPersisted() is called.

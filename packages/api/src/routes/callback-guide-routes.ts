@@ -3,7 +3,7 @@
  * POST /api/callbacks/update-guide-state — update guide session state (forward-only, non-start transitions)
  * POST /api/callbacks/start-guide       — start a guide (validates offered→active)
  * POST /api/callbacks/guide-resolve      — resolve user intent to matching guides
- * POST /api/callbacks/guide-control      — control an active guide (next/back/skip/exit)
+ * POST /api/callbacks/guide-control      — control an active guide (next/skip/exit)
  */
 
 import type { FastifyInstance } from 'fastify';
@@ -51,7 +51,7 @@ const resolveGuideSchema = callbackAuthSchema.extend({
 });
 
 const controlGuideSchema = callbackAuthSchema.extend({
-  action: z.enum(['next', 'back', 'skip', 'exit']),
+  action: z.enum(['next', 'skip', 'exit']),
 });
 
 // ---------------------------------------------------------------------------

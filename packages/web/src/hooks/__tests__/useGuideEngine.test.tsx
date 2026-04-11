@@ -39,7 +39,7 @@ function dispatchGuideStart(flowId: string, threadId = 'thread-1') {
 }
 
 function dispatchGuideControl(
-  action: 'next' | 'back' | 'skip' | 'exit',
+  action: 'next' | 'skip' | 'exit',
   detail: { guideId?: string; threadId?: string } = {},
 ) {
   window.dispatchEvent(new CustomEvent('guide:control', { detail: { action, ...detail } }));
@@ -212,11 +212,6 @@ describe('useGuideEngine duplicate start protection', () => {
       dispatchGuideControl('next', { guideId: 'add-member', threadId: 'thread-1' });
     });
     expect(useGuideStore.getState().session?.currentStepIndex).toBe(1);
-
-    act(() => {
-      dispatchGuideControl('back', { guideId: 'add-member', threadId: 'thread-1' });
-    });
-    expect(useGuideStore.getState().session?.currentStepIndex).toBe(0);
 
     act(() => {
       dispatchGuideControl('exit', { guideId: 'add-member', threadId: 'thread-1' });

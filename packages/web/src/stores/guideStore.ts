@@ -47,7 +47,6 @@ interface GuideState {
   completionPersisted: boolean;
   startGuide: (flow: OrchestrationFlow, threadId?: string) => void;
   advanceStep: () => void;
-  retreatStep: () => void;
   exitGuide: () => void;
   setPhase: (phase: GuidePhase) => void;
   markCompletionPersisted: (sessionId: string) => void;
@@ -84,14 +83,6 @@ export const useGuideStore = create<GuideState>((set, get) => ({
     }
     set({
       session: { ...session, currentStepIndex: nextIndex, phase: 'locating' },
-    });
-  },
-
-  retreatStep: () => {
-    const { session } = get();
-    if (!session || session.currentStepIndex <= 0 || session.phase === 'complete') return;
-    set({
-      session: { ...session, currentStepIndex: session.currentStepIndex - 1, phase: 'locating' },
     });
   },
 

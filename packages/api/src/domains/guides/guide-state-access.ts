@@ -5,8 +5,21 @@ interface GuideThreadAccess {
   createdBy: string;
 }
 
-export function isSharedDefaultGuideThread(thread: GuideThreadAccess | null | undefined): boolean {
+export function isSharedDefaultThread(thread: GuideThreadAccess | null | undefined): boolean {
   return Boolean(thread && thread.id === DEFAULT_THREAD_ID && thread.createdBy === 'system');
+}
+
+/** @deprecated Use isSharedDefaultThread — kept as alias during migration */
+export const isSharedDefaultGuideThread = isSharedDefaultThread;
+
+/**
+ * General-purpose thread access check.
+ * Owner always has access; the shared default thread is globally accessible.
+ */
+export function canAccessThread(thread: GuideThreadAccess | null, userId: string): boolean {
+  if (!thread) return false;
+  if (thread.createdBy === userId) return true;
+  return thread.id === DEFAULT_THREAD_ID && thread.createdBy === 'system';
 }
 
 export function canAccessGuideState(
@@ -16,7 +29,7 @@ export function canAccessGuideState(
 ): boolean {
   if (!thread || !guideState) return false;
   if (thread.createdBy === userId) return true;
-  return isSharedDefaultGuideThread(thread) && guideState.userId === userId;
+  return isSharedDefaultThread(thread) && guideState.userId === userId;
 }
 
 export function hasHiddenForeignNonTerminalGuideState(

@@ -17,7 +17,8 @@ import type { ISessionSealer } from '../domains/cats/services/session/SessionSea
 import type { TranscriptReader } from '../domains/cats/services/session/TranscriptReader.js';
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { ISessionChainStore } from '../domains/cats/services/stores/ports/SessionChainStore.js';
-import { DEFAULT_THREAD_ID, type IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
+import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
+import { canAccessThread, isSharedDefaultThread } from '../domains/guides/guide-state-access.js';
 import { resolveUserId } from '../utils/request-identity.js';
 
 const bindSessionSchema = z.object({
@@ -30,17 +31,6 @@ interface SessionChainRouteOptions extends FastifyPluginOptions {
   messageStore?: IMessageStore;
   transcriptReader?: TranscriptReader;
   sessionSealer?: ISessionSealer;
-}
-
-function canAccessThread(thread: { id: string; createdBy: string } | null, userId: string): boolean {
-  if (!thread) return false;
-  if (thread.createdBy === userId) return true;
-  // Only the real default thread is globally readable/writable.
-  return thread.id === DEFAULT_THREAD_ID && thread.createdBy === 'system';
-}
-
-function isSharedDefaultThread(thread: { id: string; createdBy: string } | null): boolean {
-  return Boolean(thread && thread.id === DEFAULT_THREAD_ID && thread.createdBy === 'system');
 }
 
 function canAccessSessionRecord(
