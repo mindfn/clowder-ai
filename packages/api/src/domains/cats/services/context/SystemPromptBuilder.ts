@@ -16,6 +16,7 @@ import {
   isCatLead,
 } from '../../../../config/cat-config-loader.js';
 import { getCatModel } from '../../../../config/cat-models.js';
+import { loadGuideFlow } from '../../../guides/guide-registry-loader.js';
 import type {
   BootcampStateV1,
   ThreadMentionRoutingFeedback,
@@ -623,19 +624,28 @@ export function buildInvocationContext(context: InvocationContext): string {
     const isNewOffer = context.guideCandidate.isNewOffer === true;
     // "先看步骤概览" still comes through as a chat message; start/skip are frontend-only actions
     if ((status === 'offered' || status === 'awaiting_choice') && userSelection?.includes('步骤概览')) {
+      // Load real flow steps so the cat describes actual steps instead of hallucinating
+      let stepTips: string[] = [];
+      try {
+        const flow = loadGuideFlow(id);
+        stepTips = flow.steps.map((s, i) => `${i + 1}. ${s.tips}`);
+      } catch {
+        stepTips = ['（步骤加载失败，请告知用户稍后再试）'];
+      }
+
       const previewSteps =
         status === 'offered'
           ? [
               `1. 调用 cat_cafe_update_guide_state(threadId="${context.threadId}", guideId="${id}", status="awaiting_choice")`,
-              `2. 调用 cat_cafe_guide_resolve(intent="${name}") 获取步骤信息`,
-              '3. 用 3-5 条简要列出主要步骤',
-              '4. 在最后问用户是否要开始引导',
+              '2. 用以下步骤概览回复用户：',
+              ...stepTips.map((t) => `   ${t}`),
+              '3. 在最后问用户是否要开始引导',
             ]
           : [
               '1. 不要再次调用 cat_cafe_update_guide_state（当前已经是 awaiting_choice）',
-              `2. 调用 cat_cafe_guide_resolve(intent="${name}") 获取步骤信息`,
-              '3. 用 3-5 条简要列出主要步骤',
-              '4. 在最后问用户是否要开始引导',
+              '2. 用以下步骤概览回复用户：',
+              ...stepTips.map((t) => `   ${t}`),
+              '3. 在最后问用户是否要开始引导',
             ];
       lines.push(
         `🧭 Guide Selection:${threadPart} 用户选择了「步骤概览」 guideId=${id} name=${name}`,

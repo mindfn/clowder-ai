@@ -728,9 +728,9 @@ export const updateGuideStateInputSchema = {
   threadId: z.string().min(1).describe('Thread ID where the guide is being offered/active'),
   guideId: z.string().min(1).describe('Guide ID (e.g. "add-member")'),
   status: z
-    .enum(['offered', 'awaiting_choice', 'active', 'completed', 'cancelled'])
+    .enum(['offered', 'awaiting_choice', 'completed', 'cancelled'])
     .describe(
-      'Target guide status. Valid transitions: offered→awaiting_choice/active/cancelled, awaiting_choice→active/cancelled, active→completed/cancelled',
+      'Target guide status. Valid transitions: offered→awaiting_choice/cancelled, awaiting_choice→cancelled, active→completed/cancelled. Use cat_cafe_start_guide for →active.',
     ),
   currentStep: z.number().int().min(0).optional().describe('Current step index (only when status=active)'),
 };
