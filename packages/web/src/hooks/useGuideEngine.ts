@@ -52,8 +52,9 @@ export function useGuideEngine() {
       try {
         const res = await apiFetch(`/api/guide-flows/${encodeURIComponent(flowId)}`);
         if (!res.ok) {
-          console.error(`[Guide] Flow fetch failed (${res.status}), will retry on next event`);
-          pendingRetryRef.current = startKey;
+          // Don't set pendingRetryRef — that would trigger immediate self-loop via finally.
+          // startInFlightRef clears in finally; next guide_start event (socket replay) can retry.
+          console.error(`[Guide] Flow fetch failed (${res.status}), awaiting next guide_start event`);
           return;
         }
         const flow = (await res.json()) as OrchestrationFlow;
@@ -66,7 +67,6 @@ export function useGuideEngine() {
         startGuide(flow, threadId);
       } catch (err) {
         console.error(`[Guide] Failed to fetch flow "${flowId}":`, err);
-        pendingRetryRef.current = startKey;
       } finally {
         if (startInFlightRef.current === startKey) {
           startInFlightRef.current = null;
