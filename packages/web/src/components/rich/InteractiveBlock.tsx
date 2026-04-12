@@ -56,7 +56,12 @@ function dispatchInteractiveSend(text: string) {
 
 const GUIDE_START_CALLBACK_PATH = '/api/guide-actions/start';
 const GUIDE_CANCEL_CALLBACK_PATH = '/api/guide-actions/cancel';
-const GUIDE_ACTIONS_CALLBACK_ALLOWLIST = new Set([GUIDE_START_CALLBACK_PATH, GUIDE_CANCEL_CALLBACK_PATH]);
+const GUIDE_PREVIEW_CALLBACK_PATH = '/api/guide-actions/preview';
+const GUIDE_ACTIONS_CALLBACK_ALLOWLIST = new Set([
+  GUIDE_START_CALLBACK_PATH,
+  GUIDE_CANCEL_CALLBACK_PATH,
+  GUIDE_PREVIEW_CALLBACK_PATH,
+]);
 
 function resolveSafeInteractiveCallbackEndpoint(endpoint: string): string | null {
   try {
@@ -73,7 +78,7 @@ function shouldKeepGuideOfferInteractive(
   block: RichInteractiveBlock,
   selectedOption: InteractiveOption | undefined,
 ): boolean {
-  if (!selectedOption || selectedOption.id !== 'preview' || selectedOption.action) return false;
+  if (!selectedOption || selectedOption.id !== 'preview') return false;
   if (block.messageTemplate !== '引导流程：{selection}') return false;
 
   const callbackEndpoints = new Set(
@@ -627,6 +632,20 @@ export function InteractiveBlock({
                 }),
               );
             }
+          }
+
+          // F155: Preview callback self-heals state, then sends chat message
+          // so the routing layer (now with awaiting_choice state) triggers the cat
+          // to respond with a formatted step list.
+          if (safeEndpoint === GUIDE_PREVIEW_CALLBACK_PATH) {
+            const text = buildSelectionMessage(
+              block.interactiveType,
+              block.options,
+              optionIds,
+              block.messageTemplate,
+              block.title,
+            );
+            dispatchInteractiveSend(text);
           }
         } catch (err) {
           console.error('[InteractiveBlock] callback action failed:', err);
