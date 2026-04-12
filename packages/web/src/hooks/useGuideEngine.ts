@@ -51,6 +51,11 @@ export function useGuideEngine() {
       startInFlightRef.current = startKey;
       try {
         const res = await apiFetch(`/api/guide-flows/${encodeURIComponent(flowId)}`);
+        if (!res.ok) {
+          console.error(`[Guide] Flow fetch failed (${res.status}), will retry on next event`);
+          pendingRetryRef.current = startKey;
+          return;
+        }
         const flow = (await res.json()) as OrchestrationFlow;
         if (!flow?.steps?.length) {
           console.warn(`[Guide] Empty flow: ${flowId}`);
@@ -61,6 +66,7 @@ export function useGuideEngine() {
         startGuide(flow, threadId);
       } catch (err) {
         console.error(`[Guide] Failed to fetch flow "${flowId}":`, err);
+        pendingRetryRef.current = startKey;
       } finally {
         if (startInFlightRef.current === startKey) {
           startInFlightRef.current = null;

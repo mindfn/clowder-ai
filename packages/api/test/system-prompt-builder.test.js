@@ -947,7 +947,7 @@ describe('SystemPromptBuilder', () => {
     });
 
     assert.ok(ctx.includes('Guide Selection'), 'preview branch should remain available after awaiting_choice');
-    assert.ok(ctx.includes('cat_cafe_guide_resolve'), 'repeated preview should still resolve and summarize steps');
+    assert.ok(ctx.includes('步骤概览回复用户'), 'repeated preview should still present inline step tips');
     assert.ok(
       !ctx.includes('status="awaiting_choice"'),
       'repeated preview must not emit an awaiting_choice -> awaiting_choice self-transition',
