@@ -6,6 +6,7 @@
  * They use userId-based auth (X-Cat-Cafe-User header), NOT MCP callback auth.
  *
  * POST /api/guide-actions/start   — start a guide (offered/awaiting_choice → active)
+ * POST /api/guide-actions/preview — preview steps (offered → awaiting_choice)
  * POST /api/guide-actions/cancel  — cancel a guide (offered/awaiting_choice → cancelled)
  */
 import type { FastifyPluginAsync } from 'fastify';
@@ -27,6 +28,11 @@ const startSchema = z.object({
 });
 
 const cancelSchema = z.object({
+  threadId: z.string().min(1),
+  guideId: z.string().min(1),
+});
+
+const previewSchema = z.object({
   threadId: z.string().min(1),
   guideId: z.string().min(1),
 });
@@ -189,6 +195,75 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
     });
     log.info({ guideId, threadId, userId }, '[F155] guide cancelled via frontend action');
     return { status: 'ok', guideState: updated };
+  });
+
+  // POST /api/guide-actions/preview — frontend clicks "先看步骤概览"
+  app.post('/api/guide-actions/preview', async (request, reply) => {
+    const userId = resolveHeaderUserId(request);
+    if (!userId) {
+      reply.status(401);
+      return { error: 'Identity required (X-Cat-Cafe-User header)' };
+    }
+
+    const parsed = previewSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.status(400);
+      return { error: 'Invalid request', details: parsed.error.issues };
+    }
+
+    const { threadId, guideId } = parsed.data;
+    const thread = await threadStore.get(threadId);
+    if (!thread) {
+      reply.status(404);
+      return { error: 'Thread not found' };
+    }
+
+    if (!canAccessThread(thread, userId)) {
+      reply.status(403);
+      return { error: 'Thread access denied' };
+    }
+
+    let flow;
+    try {
+      flow = loadGuideFlow(guideId);
+    } catch {
+      reply.status(400);
+      return { error: 'guide_flow_invalid', message: `Guide flow "${guideId}" not found` };
+    }
+
+    const gs = thread.guideState;
+    if (!gs) {
+      // Self-heal: card delivered but offered state never persisted
+      const created: GuideStateV1 = {
+        v: 1,
+        guideId,
+        status: 'awaiting_choice',
+        userId,
+        offeredAt: Date.now(),
+      };
+      await threadStore.updateGuideState(threadId, created);
+      log.info({ guideId, threadId, userId }, '[F155] guide preview (self-healed to awaiting_choice)');
+      return { status: 'ok', guideState: created, flow };
+    }
+
+    if (gs.guideId !== guideId) {
+      reply.status(400);
+      return { error: 'guide_not_offered', message: `Guide "${guideId}" not offered in this thread` };
+    }
+    if (!canAccessGuideState(thread, gs, userId)) {
+      reply.status(403);
+      return { error: 'Guide access denied' };
+    }
+
+    // Transition offered → awaiting_choice; idempotent if already awaiting_choice
+    if (gs.status === 'offered') {
+      const updated: GuideStateV1 = { ...gs, status: 'awaiting_choice' };
+      await threadStore.updateGuideState(threadId, updated);
+      log.info({ guideId, threadId, userId }, '[F155] guide preview (offered → awaiting_choice)');
+      return { status: 'ok', guideState: updated, flow };
+    }
+
+    return { status: 'ok', guideState: gs, flow };
   });
 
   // POST /api/guide-actions/complete — frontend guide overlay finished all steps

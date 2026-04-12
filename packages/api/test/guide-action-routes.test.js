@@ -240,6 +240,75 @@ describe('F155 Guide Action Routes (frontend-facing)', () => {
     assert.equal(res.statusCode, 401);
   });
 
+  // --- /api/guide-actions/preview ---
+
+  test('preview: transitions offered → awaiting_choice and returns flow', async () => {
+    const app = await createApp();
+    const thread = await seedThread('add-member', 'offered');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/guide-actions/preview',
+      headers: { 'x-cat-cafe-user': 'user-1' },
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.guideState.status, 'awaiting_choice');
+    assert.ok(body.flow);
+    assert.ok(Array.isArray(body.flow.steps));
+  });
+
+  test('preview: self-heals when no guide state exists (card-first delivery)', async () => {
+    const app = await createApp();
+    const thread = await threadStore.create('user-1', 'test-thread');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/guide-actions/preview',
+      headers: { 'x-cat-cafe-user': 'user-1' },
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 200, 'preview self-heal should create awaiting_choice state');
+    const body = JSON.parse(res.body);
+    assert.equal(body.guideState.status, 'awaiting_choice');
+    assert.equal(body.guideState.guideId, 'add-member');
+    assert.ok(body.flow);
+    assert.ok(Array.isArray(body.flow.steps));
+  });
+
+  test('preview: idempotent when already awaiting_choice', async () => {
+    const app = await createApp();
+    const thread = await seedThread('add-member', 'awaiting_choice');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/guide-actions/preview',
+      headers: { 'x-cat-cafe-user': 'user-1' },
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.guideState.status, 'awaiting_choice');
+    assert.ok(body.flow);
+  });
+
+  test('preview: rejects without user identity', async () => {
+    const app = await createApp();
+    const thread = await seedThread('add-member', 'offered');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/guide-actions/preview',
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 401);
+  });
+
   // --- P1: start must reject when flow is not loadable ---
 
   test('start: rejects when guide flow is not loadable (400)', async () => {

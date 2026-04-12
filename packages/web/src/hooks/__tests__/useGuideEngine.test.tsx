@@ -310,4 +310,70 @@ describe('useGuideEngine duplicate start protection', () => {
     expect(useGuideStore.getState().session?.flow.id).toBe('invite-reviewer');
     expect(useGuideStore.getState().completionPersisted).toBe(false);
   });
+
+  it('marks completionFailed (not persisted) when completion POST fails after all retries', async () => {
+    apiFetchMock.mockImplementation((url: string) => {
+      if (url === '/api/guide-flows/add-member') {
+        return Promise.resolve({ json: async () => FLOW });
+      }
+      if (url === '/api/guide-actions/complete') {
+        return Promise.resolve({ ok: false, status: 500 });
+      }
+      throw new Error(`Unexpected apiFetch call: ${url}`);
+    });
+
+    act(() => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      dispatchGuideStart('add-member');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      dispatchGuideComplete({ guideId: 'add-member', threadId: 'thread-1' });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(useGuideStore.getState().completionPersisted).toBe(false);
+    expect(useGuideStore.getState().completionFailed).toBe(true);
+  });
+
+  it('marks completionFailed when completion POST throws after all retries', async () => {
+    apiFetchMock.mockImplementation((url: string) => {
+      if (url === '/api/guide-flows/add-member') {
+        return Promise.resolve({ json: async () => FLOW });
+      }
+      if (url === '/api/guide-actions/complete') {
+        return Promise.reject(new Error('network failure'));
+      }
+      throw new Error(`Unexpected apiFetch call: ${url}`);
+    });
+
+    act(() => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      dispatchGuideStart('add-member');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      dispatchGuideComplete({ guideId: 'add-member', threadId: 'thread-1' });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(useGuideStore.getState().completionPersisted).toBe(false);
+    expect(useGuideStore.getState().completionFailed).toBe(true);
+  });
 });

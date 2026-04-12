@@ -662,7 +662,16 @@ export function buildInvocationContext(context: InvocationContext): string {
               payload: { threadId: context.threadId, guideId: id },
             },
           },
-          { id: 'preview', label: '先看步骤概览', emoji: '📋' },
+          {
+            id: 'preview',
+            label: '先看步骤概览',
+            emoji: '📋',
+            action: {
+              type: 'callback',
+              endpoint: '/api/guide-actions/preview',
+              payload: { threadId: context.threadId, guideId: id },
+            },
+          },
           {
             id: 'skip',
             label: '暂不需要',
