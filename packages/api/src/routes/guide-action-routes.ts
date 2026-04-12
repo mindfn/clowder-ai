@@ -13,7 +13,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { type GuideStateV1, type IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { loadGuideFlow } from '../domains/guides/guide-registry-loader.js';
-import { canAccessGuideState, canAccessThread } from '../domains/guides/guide-state-access.js';
+import { canAccessGuideState, canAccessThread, isSharedDefaultThread } from '../domains/guides/guide-state-access.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
 
@@ -84,7 +84,12 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
     const gs = thread.guideState;
     if (!gs) {
       // Self-healing: card was delivered but offered state never persisted.
-      // Only allowed when no existing guide state exists (preserves one-guide-at-a-time invariant).
+      // Block on shared default thread — anyone can access it, so self-heal
+      // would let any authenticated user manufacture guide state.
+      if (isSharedDefaultThread(thread)) {
+        reply.status(409);
+        return { error: 'guide_not_offered', message: 'No guide offered on shared thread' };
+      }
       // offeredBy (catId) is unavailable here — frontend has userId only. Routing layer
       // tolerates undefined offeredBy; completion notice simply won't target a specific cat.
       const created: GuideStateV1 = {
@@ -233,7 +238,13 @@ export const guideActionRoutes: FastifyPluginAsync<GuideActionRoutesOptions> = a
 
     const gs = thread.guideState;
     if (!gs) {
-      // Self-heal: card delivered but offered state never persisted
+      // Self-heal: card delivered but offered state never persisted.
+      // Block on shared default thread — any authenticated user could
+      // manufacture guide state and occupy the single guide slot.
+      if (isSharedDefaultThread(thread)) {
+        reply.status(409);
+        return { error: 'guide_not_offered', message: 'No guide offered on shared thread' };
+      }
       const created: GuideStateV1 = {
         v: 1,
         guideId,

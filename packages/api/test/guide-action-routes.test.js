@@ -150,6 +150,23 @@ describe('F155 Guide Action Routes (frontend-facing)', () => {
     assert.ok(body.guideState.startedAt);
   });
 
+  test('start: blocks self-heal on shared default thread (prevents state manufacturing)', async () => {
+    const app = await createApp();
+    const thread = await threadStore.get('default');
+    // No guideState set — simulates naked POST without prior offer
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/guide-actions/start',
+      headers: { 'x-cat-cafe-user': 'default-user' },
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 409, 'self-heal must be blocked on shared default thread');
+    const body = JSON.parse(res.body);
+    assert.equal(body.error, 'guide_not_offered');
+  });
+
   test('start: rejects without user identity', async () => {
     const app = await createApp();
     const thread = await seedThread('add-member', 'offered');
@@ -277,6 +294,23 @@ describe('F155 Guide Action Routes (frontend-facing)', () => {
     assert.equal(body.guideState.guideId, 'add-member');
     assert.ok(body.flow);
     assert.ok(Array.isArray(body.flow.steps));
+  });
+
+  test('preview: blocks self-heal on shared default thread (prevents state manufacturing)', async () => {
+    const app = await createApp();
+    const thread = await threadStore.get('default');
+    // No guideState set — simulates naked POST without prior offer
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/guide-actions/preview',
+      headers: { 'x-cat-cafe-user': 'default-user' },
+      payload: { threadId: thread.id, guideId: 'add-member' },
+    });
+
+    assert.equal(res.statusCode, 409, 'preview self-heal must be blocked on shared default thread');
+    const body = JSON.parse(res.body);
+    assert.equal(body.error, 'guide_not_offered');
   });
 
   test('preview: idempotent when already awaiting_choice', async () => {
