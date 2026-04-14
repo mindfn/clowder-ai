@@ -14,14 +14,15 @@ import { BOOTCAMP_PHASE_ACHIEVEMENTS } from '../domains/leaderboard/achievement-
 import { callbackAuthSchema } from './callback-auth-schema.js';
 import { EXPIRED_CREDENTIALS_ERROR } from './callback-errors.js';
 
-/** Ordered phase list — index determines valid transitions (forward-only) */
+/**
+ * Ordered phase list — index determines valid transitions (forward-only).
+ * Wizard creates thread at phase-1-intro directly (Phase 0 handled by UI).
+ * Legacy phases (phase-3.5-advanced, phase-4-task-select) removed per F140 KD-6.
+ */
 const PHASE_ORDER = [
-  'phase-0-select-cat',
   'phase-1-intro',
   'phase-2-env-check',
   'phase-3-config-help',
-  'phase-3.5-advanced',
-  'phase-4-task-select',
   'phase-4-first-project',
   'phase-4.5-add-teammate',
   'phase-5-kickoff',
@@ -52,8 +53,11 @@ const updateBootcampStateCallbackSchema = callbackAuthSchema.extend({
     )
     .optional(),
   advancedFeatures: z.record(z.enum(['available', 'unavailable', 'skipped'])).optional(),
-  /** F140: sub-step for add-teammate console guide overlay */
-  guideStep: z.enum(['open-hub', 'click-add-member', 'fill-form', 'done']).nullable().optional(),
+  /** F140: sub-step for bootcamp guide overlay */
+  guideStep: z
+    .enum(['open-hub', 'click-add-member', 'fill-form', 'done', 'return-to-chat', 'mention-teammate'])
+    .nullable()
+    .optional(),
   completedAt: z.number().optional(),
 });
 
@@ -97,7 +101,7 @@ export function registerCallbackBootcampRoutes(
     // Merge updates into existing bootcampState
     const existing = thread.bootcampState ?? {
       v: 1 as const,
-      phase: 'phase-0-select-cat' as const,
+      phase: 'phase-1-intro' as const,
       startedAt: Date.now(),
     };
 
@@ -111,11 +115,14 @@ export function registerCallbackBootcampRoutes(
         reply.status(400);
         return { error: `Invalid phase transition: ${existing.phase} → ${updates.phase} (must advance forward)` };
       }
-      // Only allow advancing by 1 step (or to the immediately next phase)
-      // Exception: allow skipping phase-3.5-advanced (optional advanced features)
+      // Only allow advancing by 1 step, with defined skip exceptions:
+      // - phase-2-env-check → phase-4-first-project (skip phase-3 when env is OK)
+      // - phase-4.5-add-teammate → phase-11-farewell (graduation shortcut, skip phases 5-10)
       const gap = targetIdx - currentIdx;
-      const skippingAdvanced = existing.phase === 'phase-3-config-help' && updates.phase === 'phase-4-task-select';
-      if (gap > 1 && !skippingAdvanced) {
+      const allowedSkip =
+        (existing.phase === 'phase-2-env-check' && updates.phase === 'phase-4-first-project') ||
+        (existing.phase === 'phase-4.5-add-teammate' && updates.phase === 'phase-11-farewell');
+      if (gap > 1 && !allowedSkip) {
         reply.status(400);
         return { error: `Phase skip not allowed: ${existing.phase} → ${updates.phase} (max 1 step forward)` };
       }
@@ -129,6 +136,7 @@ export function registerCallbackBootcampRoutes(
     if (updates.selectedTaskId !== undefined) raw.selectedTaskId = updates.selectedTaskId;
     if (updates.envCheck !== undefined) raw.envCheck = updates.envCheck;
     if (updates.advancedFeatures !== undefined) raw.advancedFeatures = updates.advancedFeatures;
+    if (updates.guideStep !== undefined) raw.guideStep = updates.guideStep;
     if (updates.completedAt !== undefined) raw.completedAt = updates.completedAt;
 
     await threadStore.updateBootcampState(threadId, raw as unknown as BootcampStateV1);

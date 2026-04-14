@@ -26,9 +26,8 @@ pnpm install
 # 3. 构建（必需 — 为工作区包生成 dist/）
 pnpm build
 
-# 4. 配置环境
+# 4. 配置基础设施（API key 在启动后通过前端 UI 添加）
 cp .env.example .env
-# 编辑 .env — 添加模型 API key 或配置 CLI 认证（见下方）
 
 # 5. 启动
 pnpm start
@@ -91,9 +90,8 @@ git checkout v0.4.0          # 或者 Releases 页面上的任意 tag
 pnpm install
 pnpm build
 
-# 4. 配置
+# 4. 配置基础设施（API key 在启动后通过 UI 添加）
 cp .env.example .env
-# 编辑 .env — 添加 API key
 
 # 5. 直接启动（跳过 worktree，不会自动更新）
 pnpm start:direct
@@ -180,26 +178,11 @@ sudo journalctl -u clowder-ai -f
 
 ## 配置
 
-### 模型 API Key（推荐）
+### 基础设施（`.env`）
 
-如果直接使用 API key，至少需要一个模型 provider 才能有一个可用的 agent。建议三个都配，这样才能完整体验多 agent 协作。
+`.env` 文件只配置**基础设施** — 端口、Redis 和可选的服务 URL。模型 API key 通过 Web UI 管理（见下方）。
 
-> **用 CLI 认证？** 如果你已经通过 `claude`、`codex` 或 `gemini` CLI 工具登录认证，可以跳过 API key — CLI 订阅会处理认证。API key 只在直接调用 API 时需要。
-
-```bash
-# Claude（布偶猫/宪宪）— 推荐作为主力
-ANTHROPIC_API_KEY=your-anthropic-api-key
-
-# GPT / Codex（缅因猫/砚砚）— 代码审查专家
-OPENAI_API_KEY=your-openai-api-key
-
-# Gemini（暹罗猫/烁烁）— 视觉设计
-GOOGLE_API_KEY=...
-```
-
-### Redis
-
-Redis 是线程、消息、任务和记忆的持久化存储。
+**Redis** — 线程、消息、任务和记忆的持久化存储：
 
 ```bash
 REDIS_URL=redis://localhost:6399
@@ -209,15 +192,78 @@ REDIS_URL=redis://localhost:6399
 
 **没有 Redis？** 用 `pnpm start --memory` 启动纯内存模式（重启后数据丢失 — 试玩够用了）。
 
-### 前端
+**前端：**
 
 ```bash
 NEXT_PUBLIC_API_URL=http://localhost:3004
 ```
 
+### 模型接入（UI）
+
+启动后，打开 `http://localhost:3003`，进入 **Hub → 系统配置 → 账号配置** 来配置模型 provider。
+
+账号分两种类型：
+
+| 类型 | 工作方式 | 适用 Provider |
+|------|---------|--------------|
+| **内置（OAuth / CLI 订阅）** | 通过 provider 的 CLI 工具认证（`claude`、`codex`、`gemini`），无需 API key — CLI 订阅自动处理认证 | Claude、GPT/Codex、Gemini |
+| **API Key** | 输入 API key + base URL 直接调用 API。兼容任何 OpenAI 或 Anthropic 协议的端点 | Claude、GPT、Gemini、**Kimi、GLM、MiniMax、Qwen、OpenRouter** 等 |
+
+**步骤：**
+1. 在账号配置页点击 **"添加账号"**
+2. 选择一个 provider 或添加自定义 provider
+3. 内置 provider：选择 OAuth/订阅模式（CLI 已认证则无需 key）
+4. API key provider：输入 API key，可选填自定义 base URL
+5. 点击 **保存**
+
+**添加国产 / 第三方 provider（Kimi、GLM、MiniMax、Qwen、OpenRouter）：**
+
+这些 provider 以 API key 账号形式配置，需要填写自定义 base URL。在**账号配置** UI 中添加新账号，选择 provider，输入 API key，填入该 provider 的 OpenAI 兼容端点 URL，选择对应协议，点击**保存**。
+
+**示例 — 阿里百炼（Qwen）：**
+
+![百炼 Provider 账号配置](docs/setup/setup-provider-bailian.png)
+
+> **兼容模式：** 系统仍会从 `.env` 读取 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`GOOGLE_API_KEY` 作为兜底，但这条路径已不推荐。新安装请统一用 UI 配置。
+
+### 成员配置
+
+给团队成员（猫猫）绑定特定的 provider：
+
+1. 进入 **Hub → 成员协作 → 总览**
+2. 每个成员可以绑定账号配置中的一个 provider 账号
+3. 内置 provider 支持 OAuth；第三方 provider 使用 API key 账号
+
+![成员绑定百炼 Provider](docs/setup/setup-member-binding.png)
+
 ## 可选功能
 
-只要有模型访问（API key 或 CLI 认证）+ Redis（或 `--memory` 模式），Clowder 就能开箱即用。以下功能全是可选的。
+只要有模型访问 + Redis（或 `--memory` 模式），Clowder 就能开箱即用。以下功能全是可选的。
+
+### 设计工具（Pencil MCP）
+
+设计任务、UI 迭代、截图、设计转代码等工作流需要在编辑器（VS Code、Cursor 或 Antigravity）中安装 [Pencil](https://marketplace.visualstudio.com/items?itemName=highagency.pencildev)。
+
+不装 Pencil：Clowder 照常运行，编码任务不受影响，设计任务退化为纯文本指导。
+
+**自动配置：** 能力编排器会自动检测你的 Pencil 安装，按以下顺序扫描：
+
+1. `PENCIL_MCP_BIN` 环境变量（显式路径 — 最高优先级）
+2. `~/.antigravity/extensions/highagency.pencildev-*/`
+3. `~/.vscode/extensions/highagency.pencildev-*/`
+4. `~/.cursor/extensions/highagency.pencildev-*/`
+5. `~/.vscode-insiders/extensions/highagency.pencildev-*/`
+
+自动选择所有编辑器中最新的版本。当两个编辑器安装了相同版本时，优先选择 Antigravity。
+
+**环境变量覆盖：**
+
+| 变量 | 用途 | 示例 |
+|------|------|------|
+| `PENCIL_MCP_BIN` | 强制指定 Pencil 二进制路径 | `/path/to/mcp-server-darwin-arm64` |
+| `PENCIL_MCP_APP` | 强制连接到指定编辑器 | `vscode`、`antigravity`、`cursor`、`vscode-insiders` |
+
+**诊断：** `pnpm mcp:doctor` 显示 MCP 就绪状态（ready / missing / unresolved）。
 
 ### 语音输入 / 输出
 
@@ -499,8 +545,9 @@ API_SERVER_HOST=0.0.0.0
 # 前端 URL — 用于 CORS 和重定向
 FRONTEND_URL=https://your-domain.com
 
-# API URL — 前端需要能访问到 API
-NEXT_PUBLIC_API_URL=http://your-domain.com:3004
+# API URL — 反向代理场景通常不需要设置（自动探测）。
+# 仅在 API 使用独立域名等非标准端点时设置。
+# NEXT_PUBLIC_API_URL=https://api.your-domain.com
 
 # Redis — 如果在其他机器上
 REDIS_URL=redis://your-redis-host:6399
@@ -523,11 +570,16 @@ NEXT_PUBLIC_LLM_POSTPROCESS_URL=http://your-llm-host:9878
 
 API 自动接受以下来源的请求：
 - `localhost` / `127.0.0.1`（任意端口）
-- RFC 1918 内网地址（`10.x.x.x`、`172.16-31.x.x`、`192.168.x.x`）
-- Tailscale IP（`100.x.x.x`）
 - 你设置的 `FRONTEND_URL`
 
-大多数局域网 / VPN 场景不需要额外的 CORS 配置。
+如果你是直接通过局域网 / Tailscale IP 打开 Cat Cafe（例如 `http://192.168.x.x:3003` 或 `http://100.x.x.x:3003`），还需要在 `.env` 里加上：
+
+```bash
+API_SERVER_HOST=0.0.0.0
+CORS_ALLOW_PRIVATE_NETWORK=true
+```
+
+这个显式开关会信任 RFC 1918 内网地址（`10.x.x.x`、`172.16-31.x.x`、`192.168.x.x`）和 Tailscale IP（`100.x.x.x`）上的浏览器。如果你走反向代理或固定 `FRONTEND_URL`，通常不需要额外打开这个选项。
 
 ## 常见问题
 
@@ -542,9 +594,11 @@ API 自动接受以下来源的请求：
 - 确认 Redis 已安装：`redis-server --version`
 
 **没有 agent 响应？**
-- 检查 `.env` 里有有效的 API key，或确认 CLI 认证正常（`claude --version`、`codex --version`）
+- 检查是否已在 **Hub → 系统配置 → 账号配置** 中添加了至少一个 provider 账号
+- 如果用 CLI 认证，确认认证正常（`claude --version`、`codex --version`）
 - 看终端里 API 日志有没有认证错误
 
 **前端连不上 API？**
-- 确认设了 `NEXT_PUBLIC_API_URL=http://localhost:3004`
+- 本地开发确认 `.env` 里有 `NEXT_PUBLIC_API_URL=http://localhost:3004`
+- 反向代理场景下前端会自动探测同源 API —— 确保 Nginx 把 `/api/` 和 `/socket.io/` 代理到 3004 端口
 - API 必须在前端加载前启动

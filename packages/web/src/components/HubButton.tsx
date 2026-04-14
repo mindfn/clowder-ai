@@ -11,6 +11,7 @@ export function HubButton() {
       aria-label="Clowder AI Hub"
       title="Clowder AI Hub"
       data-bootcamp-step="hub-button"
+      data-guide-id="hub.trigger"
     >
       <svg
         className="w-5 h-5 text-cafe-secondary"

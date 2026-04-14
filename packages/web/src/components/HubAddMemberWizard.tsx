@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
+import type { AccountsResponse, ProfileItem } from './hub-accounts.types';
 import {
   ChoiceButton,
   CLIENT_ROW_1,
@@ -10,14 +11,15 @@ import {
   FALLBACK_ANTIGRAVITY_ARGS,
   FALLBACK_ANTIGRAVITY_MODELS,
   PillChoiceButton,
+  type SeedTemplate,
+  TemplatePicker,
 } from './hub-add-member-wizard.parts';
 import {
   builtinAccountIdForClient,
-  type ClientValue,
+  type ClientId,
   filterAccounts,
   type HubCatEditorDraft,
 } from './hub-cat-editor.model';
-import type { ProfileItem, ProviderProfilesResponse } from './hub-provider-profiles.types';
 
 interface HubAddMemberWizardProps {
   open: boolean;
@@ -27,27 +29,26 @@ interface HubAddMemberWizardProps {
 
 export function HubAddMemberWizard({ open, onClose, onComplete }: HubAddMemberWizardProps) {
   const [profiles, setProfiles] = useState<ProfileItem[]>([]);
-  const [seedCats, setSeedCats] = useState<
-    Array<{ provider: string; source?: string; defaultModel?: string; commandArgs?: string[] }>
-  >([]);
+  const [templates, setTemplates] = useState<SeedTemplate[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState<SeedTemplate | null>(null);
   const [loadingProfiles, setLoadingProfiles] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [client, setClient] = useState<ClientValue | null>(null);
+  const [client, setClient] = useState<ClientId | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState('');
   const [defaultModel, setDefaultModel] = useState('');
   const [commandArgs, setCommandArgs] = useState(FALLBACK_ANTIGRAVITY_ARGS);
 
   const antigravityDefaults = useMemo((): { command: string; models: string[] } => {
-    const templateAntigravity = seedCats.filter(
-      (cat) => cat.provider === 'antigravity' && (cat.source === 'seed' || cat.source === undefined),
+    const templateAntigravity = templates.filter(
+      (t) => t.provider === 'antigravity' && (t.source === 'seed' || t.source === undefined),
     );
-    const command = templateAntigravity.find((cat) => (cat.commandArgs?.length ?? 0) > 0)?.commandArgs?.join(' ');
-    const models = templateAntigravity.map((cat) => cat.defaultModel?.trim() ?? '').filter((value) => value.length > 0);
+    const command = templateAntigravity.find((t) => (t.commandArgs?.length ?? 0) > 0)?.commandArgs?.join(' ');
+    const models = templateAntigravity.map((t) => t.defaultModel?.trim() ?? '').filter((v) => v.length > 0);
     return {
       command: command?.trim() || FALLBACK_ANTIGRAVITY_ARGS,
       models: models.length > 0 ? Array.from(new Set(models)) : [...FALLBACK_ANTIGRAVITY_MODELS],
     };
-  }, [seedCats]);
+  }, [templates]);
 
   const availableProfiles = useMemo(() => {
     if (!client || client === 'antigravity') return [];
@@ -70,15 +71,11 @@ export function HubAddMemberWizard({ open, onClose, onComplete }: HubAddMemberWi
     return profileModels;
   }, [antigravityDefaults.models, client, defaultModel, selectedProfile]);
 
-  function profileSubtitle(profile: ProfileItem) {
-    if (profile.builtin) return '内置';
-    return 'API Key';
-  }
-
   useEffect(() => {
     if (!open) return;
     setError(null);
     setClient(null);
+    setSelectedTemplate(null);
     setSelectedProfileId('');
     setDefaultModel('');
     setCommandArgs(antigravityDefaults.command);
@@ -88,10 +85,10 @@ export function HubAddMemberWizard({ open, onClose, onComplete }: HubAddMemberWi
     if (!open) return;
     let cancelled = false;
     setLoadingProfiles(true);
-    apiFetch('/api/provider-profiles')
+    apiFetch('/api/accounts')
       .then(async (res) => {
         if (!res.ok) throw new Error(`账号配置加载失败 (${res.status})`);
-        return (await res.json()) as ProviderProfilesResponse;
+        return (await res.json()) as AccountsResponse;
       })
       .then((body) => {
         if (!cancelled) setProfiles(body.providers);
@@ -113,16 +110,14 @@ export function HubAddMemberWizard({ open, onClose, onComplete }: HubAddMemberWi
     apiFetch('/api/cat-templates')
       .then(async (res) => {
         if (!res.ok) throw new Error(`成员模板加载失败 (${res.status})`);
-        return (await res.json()) as {
-          templates?: Array<{ provider: string; source?: string; defaultModel?: string; commandArgs?: string[] }>;
-        };
+        return (await res.json()) as { templates?: SeedTemplate[] };
       })
       .then((body) => {
         if (cancelled) return;
-        setSeedCats(Array.isArray(body.templates) ? body.templates : []);
+        setTemplates(Array.isArray(body.templates) ? body.templates : []);
       })
       .catch(() => {
-        if (!cancelled) setSeedCats([]);
+        if (!cancelled) setTemplates([]);
       });
     return () => {
       cancelled = true;
@@ -153,7 +148,7 @@ export function HubAddMemberWizard({ open, onClose, onComplete }: HubAddMemberWi
       (client === 'antigravity' ? commandArgs.trim().length > 0 : Boolean(selectedProfile)),
   );
 
-  const handleClientSelect = (nextClient: ClientValue) => {
+  const handleClientSelect = (nextClient: ClientId) => {
     setClient(nextClient);
     setSelectedProfileId(nextClient === 'antigravity' ? '' : (builtinAccountIdForClient(nextClient) ?? ''));
     setDefaultModel(nextClient === 'antigravity' ? (antigravityDefaults.models[0] ?? '') : '');
@@ -168,29 +163,39 @@ export function HubAddMemberWizard({ open, onClose, onComplete }: HubAddMemberWi
 
   const handleComplete = () => {
     if (!client || !defaultModel.trim()) return;
+    const t = selectedTemplate;
+    const tpl = t
+      ? {
+          templateName: t.name,
+          templateNickname: t.nickname,
+          templateAvatar: t.avatar,
+          templateColorPrimary: t.color?.primary,
+          templateColorSecondary: t.color?.secondary,
+          templateRoleDescription: t.roleDescription,
+          templatePersonality: t.personality,
+          templateTeamStrengths: t.teamStrengths,
+        }
+      : {};
     if (client === 'antigravity') {
-      onComplete({
-        client,
-        defaultModel: defaultModel.trim(),
-        commandArgs: commandArgs.trim(),
-      });
+      onComplete({ clientId: client, defaultModel: defaultModel.trim(), commandArgs: commandArgs.trim(), ...tpl });
       return;
     }
     const resolvedProfileId =
       availableProfiles.find((profile) => profile.id === selectedProfileId)?.id ?? selectedProfileId.trim();
     if (!resolvedProfileId) return;
-    onComplete({
-      client,
-      accountRef: resolvedProfileId,
-      defaultModel: defaultModel.trim(),
-    });
+    onComplete({ clientId: client, accountRef: resolvedProfileId, defaultModel: defaultModel.trim(), ...tpl });
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4"
+      onClick={onClose}
+      data-bootcamp-host="add-member-wizard"
+    >
       <div
         className="flex max-h-[88vh] w-full max-w-[520px] flex-col rounded-[32px] border border-[#F0DDCD] bg-[#FFF8F2] shadow-2xl"
         onClick={(event) => event.stopPropagation()}
+        data-bootcamp-step="add-member-wizard"
       >
         <div className="flex shrink-0 items-start justify-between px-7 pb-2 pt-7">
           <p className="text-[13px] font-semibold text-[#D18A61]">成员协作 &gt; 总览 &gt; 添加成员</p>
@@ -200,7 +205,19 @@ export function HubAddMemberWizard({ open, onClose, onComplete }: HubAddMemberWi
         </div>
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-7 py-6">
-          <section className="space-y-4 rounded-[20px] border border-[#F1E7DF] bg-[#FFFDFC] p-[18px]">
+          <TemplatePicker
+            templates={templates}
+            selectedId={selectedTemplate?.id}
+            onSelect={(t) => {
+              setSelectedTemplate(t);
+              if (t?.provider) handleClientSelect(t.provider as ClientId);
+              if (t?.defaultModel) setDefaultModel(t.defaultModel);
+            }}
+          />
+          <section
+            className="space-y-4 rounded-[20px] border border-[#F1E7DF] bg-[#FFFDFC] p-[18px]"
+            data-guide-id="add-member.client"
+          >
             <div>
               <h4 className="text-[17px] font-bold text-[#2D2118]">Step 1: 选择 Client</h4>
               <p className="mt-1 text-sm leading-6 text-[#7F7168]">
@@ -221,7 +238,10 @@ export function HubAddMemberWizard({ open, onClose, onComplete }: HubAddMemberWi
             ))}
           </section>
 
-          <section className="space-y-4 rounded-[20px] border border-[#F1E7DF] bg-[#FFFDFC] p-[18px]">
+          <section
+            className="space-y-4 rounded-[20px] border border-[#F1E7DF] bg-[#FFFDFC] p-[18px]"
+            data-guide-id="add-member.provider-profile"
+          >
             <div>
               <h4 className="text-[17px] font-bold text-[#2D2118]">Step 2: 选择 Provider / 配置 CLI</h4>
             </div>
@@ -249,7 +269,7 @@ export function HubAddMemberWizard({ open, onClose, onComplete }: HubAddMemberWi
                     <ChoiceButton
                       key={profile.id}
                       label={profile.displayName}
-                      subtitle={profileSubtitle(profile)}
+                      subtitle={profile.builtin ? '内置' : 'API Key'}
                       selected={selectedProfileId === profile.id}
                       onClick={() => handleProviderSelect(profile.id)}
                     />
@@ -263,7 +283,10 @@ export function HubAddMemberWizard({ open, onClose, onComplete }: HubAddMemberWi
             )}
           </section>
 
-          <section className="space-y-4 rounded-[20px] border border-[#F1E7DF] bg-[#FFFDFC] p-[18px]">
+          <section
+            className="space-y-4 rounded-[20px] border border-[#F1E7DF] bg-[#FFFDFC] p-[18px]"
+            data-guide-id="add-member.model"
+          >
             <div>
               <h4 className="text-[17px] font-bold text-[#2D2118]">Step 3: 选择模型</h4>
             </div>
@@ -322,6 +345,7 @@ export function HubAddMemberWizard({ open, onClose, onComplete }: HubAddMemberWi
             onClick={handleComplete}
             disabled={!canFinish}
             className="rounded-xl bg-[#D49266] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#C88254] disabled:opacity-50"
+            data-guide-id="add-member.submit"
           >
             创建后继续编辑
           </button>

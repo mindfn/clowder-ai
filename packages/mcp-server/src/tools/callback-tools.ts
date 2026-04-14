@@ -86,7 +86,7 @@ export const postMessageInputSchema = {
     .array(z.string().min(1))
     .optional()
     .describe(
-      'Optional explicit target cat IDs (e.g. ["codex","gpt52"]). Merged with @mentions parsed from content. Used for direction rendering in frontend.',
+      'Optional explicit target cat IDs. Merged with @mentions parsed from content. Used for direction rendering in frontend. Use get_thread_cats to discover valid catIds.',
     ),
 };
 
@@ -125,7 +125,9 @@ export const getThreadContextInputSchema = {
     .string()
     .min(1)
     .optional()
-    .describe('Optional: filter messages whose content contains this keyword (case-insensitive).'),
+    .describe(
+      'Optional: filter and rank messages by keyword relevance. Multi-word keywords are tokenized and scored (0-1). Results sorted by relevance when keyword is provided.',
+    ),
 };
 
 export const listThreadsInputSchema = {
@@ -184,6 +186,10 @@ export const listTasksInputSchema = {
   threadId: z.string().min(1).optional().describe('Optional thread ID filter'),
   catId: z.string().min(1).optional().describe('Optional owner catId filter'),
   status: z.enum(['todo', 'doing', 'blocked', 'done']).optional().describe('Optional task status filter'),
+  kind: z
+    .enum(['work', 'pr_tracking'])
+    .optional()
+    .describe('Optional task kind filter (work = manual tasks, pr_tracking = PR automation)'),
 };
 
 export async function handlePostMessage(input: {
@@ -326,11 +332,13 @@ export async function handleListTasks(input: {
   threadId?: string | undefined;
   catId?: string | undefined;
   status?: 'todo' | 'doing' | 'blocked' | 'done' | undefined;
+  kind?: 'work' | 'pr_tracking' | undefined;
 }): Promise<ToolResult> {
   return callbackGet('/api/callbacks/list-tasks', {
     ...(input.threadId ? { threadId: input.threadId } : {}),
     ...(input.catId ? { catId: input.catId } : {}),
     ...(input.status ? { status: input.status } : {}),
+    ...(input.kind ? { kind: input.kind } : {}),
   });
 }
 
@@ -486,7 +494,7 @@ export const updateWorkflowInputSchema = {
     .string()
     .min(1)
     .optional()
-    .describe('Unique handle of the cat currently holding the baton (e.g. "opus", "codex")'),
+    .describe('Unique handle of the cat currently holding the baton (a valid registered catId)'),
   nextSkill: z
     .string()
     .nullable()
@@ -553,7 +561,7 @@ export const multiMentionInputSchema = {
     .array(z.string().min(1))
     .min(1)
     .max(3)
-    .describe('Cat IDs to invoke in parallel (max 3). Example: ["codex","gemini"]'),
+    .describe('Cat IDs to invoke in parallel (max 3). Use get_thread_cats to discover valid catIds.'),
   question: z.string().min(1).max(5000).describe('The question or request for the target cats'),
   callbackTo: z.string().min(1).describe('Cat ID to route all responses back to (required, usually yourself)'),
   context: z.string().max(5000).optional().describe('Additional context to include for the targets'),
@@ -623,7 +631,7 @@ export const startVoteInputSchema = {
     .array(z.string().min(1).max(50))
     .min(1)
     .max(20)
-    .describe('CatIds of voters (e.g. ["opus", "codex", "gemini"])'),
+    .describe('CatIds of voters. Use get_thread_cats to discover valid catIds.'),
   anonymous: z.boolean().optional().describe('Anonymous voting (default: false)'),
   timeoutSec: z.number().int().min(10).max(600).optional().describe('Timeout in seconds (default: 120)'),
 };
@@ -650,12 +658,11 @@ export const updateBootcampStateInputSchema = {
   threadId: z.string().min(1).describe('Thread ID of the bootcamp thread'),
   phase: z
     .enum([
-      'phase-0-select-cat',
       'phase-1-intro',
       'phase-2-env-check',
       'phase-3-config-help',
-      'phase-3.5-advanced',
-      'phase-4-task-select',
+      'phase-4-first-project',
+      'phase-4.5-add-teammate',
       'phase-5-kickoff',
       'phase-6-design',
       'phase-7-dev',
@@ -666,7 +673,7 @@ export const updateBootcampStateInputSchema = {
     ])
     .optional()
     .describe('New bootcamp phase to advance to'),
-  leadCat: z.string().optional().describe('Selected lead cat ID (e.g. "opus", "codex", "gemini")'),
+  leadCat: z.string().optional().describe('Selected lead cat ID (a valid registered catId)'),
   selectedTaskId: z.string().max(50).optional().describe('Selected task ID (e.g. "Q1", "Q7")'),
   envCheck: z
     .record(z.object({ ok: z.boolean(), version: z.string().optional(), note: z.string().optional() }))
@@ -706,14 +713,58 @@ export async function handleBootcampEnvCheck(input: { threadId: string }): Promi
   return callbackPost('/api/callbacks/bootcamp-env-check', { threadId: input.threadId });
 }
 
+// ============ Thread Cats Discovery ============
+
+export const getThreadCatsInputSchema = {};
+
+export async function handleGetThreadCats(): Promise<ToolResult> {
+  return callbackGet('/api/callbacks/thread-cats');
+}
+
+// F155: Guide Engine
+
+export const updateGuideStateInputSchema = {
+  threadId: z.string().min(1).describe('Thread ID where the guide is being offered/active'),
+  guideId: z.string().min(1).describe('Guide ID (e.g. "add-member")'),
+  status: z
+    .enum(['offered', 'awaiting_choice', 'completed', 'cancelled'])
+    .describe(
+      'Target guide status. Valid transitions: offered→awaiting_choice/cancelled, awaiting_choice→cancelled, active→completed/cancelled. Use cat_cafe_start_guide for →active.',
+    ),
+  currentStep: z.number().int().min(0).optional().describe('Current step index (only when status=active)'),
+};
+
+export async function handleUpdateGuideState(input: {
+  threadId: string;
+  guideId: string;
+  status: string;
+  currentStep?: number | undefined;
+}): Promise<ToolResult> {
+  const body: Record<string, unknown> = { threadId: input.threadId, guideId: input.guideId, status: input.status };
+  if (input.currentStep !== undefined) body['currentStep'] = input.currentStep;
+  return callbackPost('/api/callbacks/update-guide-state', body);
+}
+
+export async function handleStartGuide(input: { guideId: string }): Promise<ToolResult> {
+  return callbackPost('/api/callbacks/start-guide', { guideId: input.guideId });
+}
+
+export async function handleGuideResolve(input: { intent: string }): Promise<ToolResult> {
+  return callbackPost('/api/callbacks/guide-resolve', { intent: input.intent });
+}
+
+export async function handleGuideControl(input: { action: string }): Promise<ToolResult> {
+  return callbackPost('/api/callbacks/guide-control', { action: input.action });
+}
+
 export const callbackTools = [
   {
     name: 'cat_cafe_post_message',
     description:
       'Post a proactive async message to YOUR CURRENT thread mid-task (e.g. progress updates, sharing results). ' +
       'Always posts to the thread your invocation belongs to. To post to a DIFFERENT thread, use cat_cafe_cross_post_message instead. ' +
-      'To simply @mention another cat at the end of your response, use @猫名 in your reply text instead — it is free and never expires. ' +
-      'GOTCHA: This tool uses callback credentials that expire — if it fails with 401, fall back to inline @mention in your response text. ' +
+      'To hand off to another cat, write @猫名 on its own line at the START of the line (sentence-internal @mention does NOT route — it is treated as narrative only). ' +
+      'GOTCHA: This tool uses callback credentials that expire — if it fails with 401, fall back to line-start @mention in your response text. ' +
       'GOTCHA: Do NOT use this for routine replies — only for mid-task proactive messages when you need to share something before your response completes.',
     inputSchema: postMessageInputSchema,
     handler: handlePostMessage,
@@ -738,14 +789,23 @@ export const callbackTools = [
   {
     name: 'cat_cafe_get_thread_context',
     description:
-      'Get recent conversation messages for context. Use to understand what has been discussed recently in a thread. ' +
+      'READ raw messages from a thread. Use to understand what has been discussed recently. ' +
       'Pass threadId to read a DIFFERENT thread (cross-thread context); omit to read the current thread. ' +
-      'Use keyword filter to find specific topics without reading all messages. ' +
-      'TIP: For searching across ALL threads/sessions, use search_evidence instead — this tool only reads one thread.',
+      'Use keyword to find and RANK messages by relevance (multi-word tokenized scoring, results sorted by match quality). ' +
+      'BOUNDARY: This tool READS one thread. For FINDING information across all project knowledge (features, decisions, plans, lessons), use search_evidence instead.',
     inputSchema: getThreadContextInputSchema,
     handler: handleGetThreadContext,
   },
   // D15: cat_cafe_search_messages removed — superseded by search_evidence + get_thread_context
+  {
+    name: 'cat_cafe_get_thread_cats',
+    description:
+      'Discover which cats are in the current thread: participants (with activity stats), routable cats, and availability. ' +
+      'Use BEFORE multi_mention / start_vote / @mentions to find valid catIds — do NOT guess catIds from memory. ' +
+      'Returns: participants (catId, displayName, lastMessageAt, messageCount), routableNow, routableNotJoined, notRoutable.',
+    inputSchema: getThreadCatsInputSchema,
+    handler: handleGetThreadCats,
+  },
   {
     name: 'cat_cafe_list_threads',
     description:
@@ -870,7 +930,7 @@ export const callbackTools = [
       'Start a voting session in the current thread for collective decision-making ' +
       '(e.g. "REST vs GraphQL?"). Voters receive notification and reply with [VOTE:option]. ' +
       'Auto-closes when all voters have voted or timeout expires (default 120s). ' +
-      'GOTCHA: voters must be valid catIds (e.g. ["opus", "codex", "gemini"]). Options need at least 2 choices.',
+      'GOTCHA: voters must be valid registered catIds (use get_thread_cats to discover them). Options need at least 2 choices.',
     inputSchema: startVoteInputSchema,
     handler: handleStartVote,
   },
@@ -893,5 +953,51 @@ export const callbackTools = [
       'Returns the full check results for display to the user. Only use during bootcamp phase-2-env-check.',
     inputSchema: bootcampEnvCheckInputSchema,
     handler: handleBootcampEnvCheck,
+  },
+  // ============ F155: Guide Engine ============
+  {
+    name: 'cat_cafe_update_guide_state',
+    description:
+      'Update the guide session state for a thread. Must be called to persist state transitions. ' +
+      'First call creates state (status must be "offered"). Subsequent calls must follow valid non-start transitions: ' +
+      'offered→awaiting_choice/cancelled, awaiting_choice→cancelled, active→completed/cancelled. ' +
+      'Do not use this tool to enter "active" — call cat_cafe_start_guide for offered/awaiting_choice→active so frontend start side effects run. ' +
+      'One active guide per thread — complete or cancel before offering a new one.',
+    inputSchema: updateGuideStateInputSchema,
+    handler: handleUpdateGuideState,
+  },
+  {
+    name: 'cat_cafe_guide_resolve',
+    description:
+      'Match user intent to available guided flows. ' +
+      'Call this when a user asks how to do something (e.g. "怎么添加成员", "how to add a member"). ' +
+      'Returns a ranked list of matching guide flows with IDs, names, and descriptions. ' +
+      'If matches are found, suggest the top match to the user and ask if they want to start the guide. ' +
+      'On confirmation, call cat_cafe_start_guide with the matched guideId.',
+    inputSchema: {
+      intent: z.string().min(1).describe('User intent text (e.g. "添加成员", "配置飞书")'),
+    },
+    handler: handleGuideResolve,
+  },
+  {
+    name: 'cat_cafe_start_guide',
+    description:
+      'Start an interactive guided flow on the Console frontend. ' +
+      'Requires the guide to be in "offered" or "awaiting_choice" state (call cat_cafe_update_guide_state first). ' +
+      'Transitions guide to "active" and emits socket event for frontend overlay.',
+    inputSchema: {
+      guideId: z.string().min(1).describe('Guide flow ID (e.g. "add-member")'),
+    },
+    handler: handleStartGuide,
+  },
+  {
+    name: 'cat_cafe_guide_control',
+    description:
+      'Control an active guide session. Requires guide to be in "active" state. ' +
+      'Actions: "next" (advance), "skip" (skip step), "exit" (cancel guide). Forward-only — no back.',
+    inputSchema: {
+      action: z.enum(['next', 'skip', 'exit']).describe('Guide control action'),
+    },
+    handler: handleGuideControl,
   },
 ] as const;

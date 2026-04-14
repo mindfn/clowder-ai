@@ -1,8 +1,11 @@
 // F102: IIndexBuilder — scan docs, parse frontmatter, build/rebuild evidence index
+// F152 Phase A: refactored to use RepoScanner strategy (KD-5)
 
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
+import { CatCafeScanner, extractAnchor, extractFrontmatter } from './CatCafeScanner.js';
+import { GenericRepoScanner } from './GenericRepoScanner.js';
 import type {
   ConsistencyReport,
   EvidenceItem,
@@ -10,26 +13,15 @@ import type {
   IEmbeddingService,
   IIndexBuilder,
   RebuildResult,
+  RepoScanner,
 } from './interfaces.js';
+
+// Re-export for backward compatibility — external code imports KIND_DIRS from IndexBuilder
+export { KIND_DIRS } from './CatCafeScanner.js';
+
 import type { SqliteEvidenceStore } from './SqliteEvidenceStore.js';
 import { SIGNAL_FLAGS } from './summary-config.js';
 import type { VectorStore } from './VectorStore.js';
-
-const KIND_DIRS: Record<string, EvidenceKind> = {
-  features: 'feature',
-  decisions: 'decision',
-  plans: 'plan',
-  lessons: 'lesson',
-  discussions: 'discussion',
-  research: 'research',
-  phases: 'plan',
-  reflections: 'lesson',
-  methods: 'lesson',
-  episodes: 'lesson',
-  postmortems: 'lesson',
-  guides: 'plan',
-  stories: 'lesson', // 猫猫的 soul — 名字故事、经历、成长记忆
-};
 
 /** Higher number = higher priority for anchor ownership */
 const KIND_PRIORITY: Record<EvidenceKind, number> = {
@@ -79,9 +71,52 @@ export type MessageListFn = (
   limit?: number,
 ) => StoredMessageSnapshot[] | Promise<StoredMessageSnapshot[]>;
 
+const PROJECT_MANIFESTS = [
+  'package.json',
+  'Cargo.toml',
+  'go.mod',
+  'pyproject.toml',
+  'pom.xml',
+  'build.gradle',
+  'Gemfile',
+  'composer.json',
+  'pubspec.yaml',
+];
+
+function hasProjectManifest(dir: string): boolean {
+  return PROJECT_MANIFESTS.some((f) => existsSync(join(dir, f)));
+}
+
+/** AC-A3: auto-select scanner + resolve the correct scan root (P1-1 fix) */
+function detectScanner(docsRoot: string): { scanner: RepoScanner; scanRoot: string } {
+  // Cat-café repos have features/ or decisions/ inside docsRoot
+  if (existsSync(join(docsRoot, 'features')) || existsSync(join(docsRoot, 'decisions'))) {
+    return { scanner: new CatCafeScanner(), scanRoot: docsRoot };
+  }
+  // docsRoot itself might be a project root (has manifests directly)
+  if (hasProjectManifest(docsRoot)) {
+    return { scanner: new GenericRepoScanner(), scanRoot: docsRoot };
+  }
+  // Production path: docsRoot is a docs/ subdirectory — check parent for manifests
+  const parentDir = resolve(docsRoot, '..');
+  if (parentDir !== resolve(docsRoot) && hasProjectManifest(parentDir)) {
+    return { scanner: new GenericRepoScanner(), scanRoot: parentDir };
+  }
+  // Default: CatCafeScanner (backward compatible)
+  return { scanner: new CatCafeScanner(), scanRoot: docsRoot };
+}
+
 export class IndexBuilder implements IIndexBuilder {
   /** E-2: Set of threadIds that have been modified since last flush */
   private dirtyThreads = new Set<string>();
+
+  /** F152 Phase A: pluggable scanner — defaults to CatCafeScanner */
+  private readonly scanner: RepoScanner & {
+    parseSingle?(f: string, r: string): import('./interfaces.js').ScannedEvidence | null;
+  };
+
+  /** F152 P1-1 fix: the root directory the scanner should scan (may differ from docsRoot) */
+  private readonly scanRoot: string;
 
   constructor(
     private readonly store: SqliteEvidenceStore,
@@ -91,10 +126,31 @@ export class IndexBuilder implements IIndexBuilder {
     private readonly threadListFn?: ThreadListFn,
     private readonly messageListFn?: MessageListFn,
     private readonly excludeThreadIdsFn?: ExcludeThreadIdsFn,
-  ) {}
+    scanner?: RepoScanner,
+  ) {
+    if (scanner) {
+      this.scanner = scanner;
+      this.scanRoot = docsRoot;
+    } else {
+      const detected = detectScanner(docsRoot);
+      this.scanner = detected.scanner;
+      this.scanRoot = detected.scanRoot;
+    }
+  }
 
   setEmbedDeps(deps: { embedding: IEmbeddingService; vectorStore: VectorStore }): void {
     this.embedDeps = deps;
+  }
+
+  /** P2-4 fix: auto-skip soft clues for large repos (AC-A5 performance guard) */
+  private buildScanOptions(): Record<string, unknown> {
+    if (!(this.scanner instanceof GenericRepoScanner)) return {};
+    try {
+      const entryCount = readdirSync(this.scanRoot).length;
+      return entryCount > 200 ? { skipSoftClues: true } : {};
+    } catch {
+      return {};
+    }
   }
 
   async rebuild(options?: { force?: boolean }): Promise<RebuildResult> {
@@ -102,50 +158,43 @@ export class IndexBuilder implements IIndexBuilder {
     let indexed = 0;
     let skipped = 0;
 
-    const files = this.discoverFiles();
+    // F152 Phase A: delegate to pluggable scanner (KD-5)
+    const scannedItems = this.scanner.discover(this.scanRoot, this.buildScanOptions());
     const currentAnchors = new Set<string>();
     const indexedItems: EvidenceItem[] = [];
 
-    // E8: Split lessons-learned.md into per-lesson entries for better recall
-    const lessonItems = this.splitLessonsLearned();
-    for (const item of lessonItems) {
+    for (const scanned of scannedItems) {
+      const sourceHash = scanned.rawContent
+        ? createHash('sha256').update(scanned.rawContent).digest('hex').slice(0, 16)
+        : ((scanned.item as EvidenceItem).sourceHash ??
+          createHash('sha256').update(scanned.item.title).digest('hex').slice(0, 16));
+
+      const item: EvidenceItem = {
+        ...scanned.item,
+        sourceHash,
+        provenance: scanned.provenance,
+      };
+
       currentAnchors.add(item.anchor);
+
+      // Skip if hash unchanged AND provenance already populated (unless force)
+      // P1-2 fix: don't skip when existing doc lacks provenance but new scan provides it
       if (!options?.force) {
         const existing = await this.store.getByAnchor(item.anchor);
         if (existing?.sourceHash === item.sourceHash) {
-          skipped++;
-          continue;
-        }
-      }
-      await this.store.upsert([item]);
-      indexedItems.push(item);
-      indexed++;
-    }
-
-    for (const file of files) {
-      const parsed = this.parseFile(file.path);
-      if (!parsed) {
-        skipped++;
-        continue;
-      }
-
-      currentAnchors.add(parsed.anchor);
-
-      // Skip if hash unchanged (unless force)
-      if (!options?.force) {
-        const existing = await this.store.getByAnchor(parsed.anchor);
-        if (existing?.sourceHash === parsed.sourceHash) {
-          skipped++;
-          continue;
+          const needsProvenanceBackfill = !existing?.provenance?.tier && item.provenance?.tier;
+          if (!needsProvenanceBackfill) {
+            skipped++;
+            continue;
+          }
         }
       }
 
       // Kind-priority guard: don't let lower-priority docs overwrite higher-priority ones
-      // BUT: if the existing owner's source file no longer exists on disk, allow takeover
-      const existing = await this.store.getByAnchor(parsed.anchor);
+      const existing = await this.store.getByAnchor(item.anchor);
       if (existing) {
         const existingPriority = KIND_PRIORITY[existing.kind] ?? 0;
-        const newPriority = KIND_PRIORITY[parsed.kind] ?? 0;
+        const newPriority = KIND_PRIORITY[item.kind] ?? 0;
         const existingFileExists = existing.sourcePath ? existsSync(join(this.docsRoot, existing.sourcePath)) : false;
         if (newPriority < existingPriority && existingFileExists) {
           skipped++;
@@ -153,23 +202,17 @@ export class IndexBuilder implements IIndexBuilder {
         }
       }
 
-      await this.store.upsert([parsed]);
-      indexedItems.push(parsed);
+      await this.store.upsert([item]);
+      indexedItems.push(item);
       indexed++;
     }
 
     // Phase D: auto-extract edges from frontmatter cross-references (AC-D18, KD-29)
-    // Clear stale auto-generated 'related' edges before re-extracting (P1 fix: only-increase bug)
     this.store.getDb().prepare("DELETE FROM edges WHERE relation = 'related'").run();
 
-    for (const file of files) {
-      let content: string;
-      try {
-        content = readFileSync(file.path, 'utf-8');
-      } catch {
-        continue;
-      }
-      const fm = extractFrontmatter(content);
+    for (const scanned of scannedItems) {
+      if (!scanned.rawContent) continue;
+      const fm = extractFrontmatter(scanned.rawContent);
       if (!fm) continue;
       const anchor = extractAnchor(fm);
       if (!anchor) continue;
@@ -272,14 +315,21 @@ export class IndexBuilder implements IIndexBuilder {
     }
 
     // Phase E-3: Index thread message passages
+    let threads: ThreadSnapshot[] = [];
     if (this.messageListFn && this.threadListFn && !threadListFailed) {
-      let threads: ThreadSnapshot[];
       try {
         threads = await this.threadListFn();
       } catch {
         threads = [];
       }
       await this.indexPassages(threads);
+    }
+
+    // Phase I (AC-I1/I3): Backfill from JSONL transcripts for threads with expired Redis messages
+    if (this.transcriptDataDir && threads.length > 0) {
+      for (const thread of threads) {
+        this.backfillPassagesFromTranscript(thread.id);
+      }
     }
 
     // Remove stale anchors that no longer exist on disk
@@ -310,7 +360,7 @@ export class IndexBuilder implements IIndexBuilder {
     const toDelete: string[] = [];
 
     for (const filePath of changedPaths) {
-      const parsed = this.parseFile(filePath);
+      const parsed = this.parseSingleFile(filePath);
       if (parsed) {
         toUpsert.push({ filePath, parsed });
       } else {
@@ -321,7 +371,8 @@ export class IndexBuilder implements IIndexBuilder {
     // Pass 1: deletions (P1: sync vector deletion) + backfill from candidate docs
     const deletedAnchors: string[] = [];
     for (const filePath of toDelete) {
-      const relPath = relative(this.docsRoot, filePath);
+      // P1-5 fix: use scanRoot (not docsRoot) — source_path stored relative to scanRoot
+      const relPath = relative(this.scanRoot, filePath);
       const db = this.store.getDb();
       const row = db.prepare('SELECT anchor FROM evidence_docs WHERE source_path = ?').get(relPath) as
         | { anchor: string }
@@ -335,16 +386,23 @@ export class IndexBuilder implements IIndexBuilder {
 
     // Backfill: for each deleted anchor, scan for remaining docs that claim it
     if (deletedAnchors.length > 0) {
-      const allFiles = this.discoverFiles();
+      const allScanned = this.scanner.discover(this.scanRoot, this.buildScanOptions());
       for (const anchor of deletedAnchors) {
-        const candidates = allFiles
-          .map((f) => this.parseFile(f.path))
-          .filter((p): p is EvidenceItem => p !== null && p.anchor === anchor);
+        const candidates = allScanned
+          .filter((s) => s.item.anchor === anchor)
+          .map(
+            (s) =>
+              ({
+                ...s.item,
+                sourceHash: s.rawContent
+                  ? createHash('sha256').update(s.rawContent).digest('hex').slice(0, 16)
+                  : undefined,
+                provenance: s.provenance,
+              }) as EvidenceItem,
+          );
         if (candidates.length > 0) {
-          // Pick highest-priority candidate
           candidates.sort((a, b) => (KIND_PRIORITY[b.kind] ?? 0) - (KIND_PRIORITY[a.kind] ?? 0));
           const best = candidates[0]!;
-          // Only backfill if not already queued for upsert
           if (!toUpsert.some((u) => u.parsed.anchor === anchor)) {
             toUpsert.push({ filePath: join(this.docsRoot, best.sourcePath!), parsed: best });
           }
@@ -428,133 +486,17 @@ export class IndexBuilder implements IIndexBuilder {
     }
   }
 
-  private discoverFiles(): Array<{ path: string; kind: EvidenceKind }> {
-    const results: Array<{ path: string; kind: EvidenceKind }> = [];
-
-    // Helper: recursively scan a directory for .md files
-    const scanDir = (dirPath: string, kind: EvidenceKind, depth = 0) => {
-      if (depth > 10) return; // prevent infinite recursion
-      try {
-        const entries = readdirSync(dirPath);
-        for (const entry of entries) {
-          const fullPath = join(dirPath, entry);
-          try {
-            // P2 fix: skip symlinks to prevent directory loops
-            const lst = lstatSync(fullPath);
-            if (lst.isSymbolicLink()) continue;
-
-            if (lst.isFile() && entry.endsWith('.md')) {
-              results.push({ path: fullPath, kind });
-            } else if (lst.isDirectory()) {
-              scanDir(fullPath, kind, depth + 1);
-            }
-          } catch {
-            // skip inaccessible entries
-          }
-        }
-      } catch {
-        // Directory doesn't exist — skip
-      }
-    };
-
-    // Scan primary docs directories
-    for (const [dir, kind] of Object.entries(KIND_DIRS)) {
-      scanDir(join(this.docsRoot, dir), kind);
+  /** F152: Bridge — delegate single-file parsing to scanner (for incrementalUpdate) */
+  private parseSingleFile(filePath: string): EvidenceItem | null {
+    if ('parseSingle' in this.scanner && typeof this.scanner.parseSingle === 'function') {
+      const scanned = this.scanner.parseSingle(filePath, this.scanRoot);
+      if (!scanned) return null;
+      const sourceHash = scanned.rawContent
+        ? createHash('sha256').update(scanned.rawContent).digest('hex').slice(0, 16)
+        : undefined;
+      return { ...scanned.item, sourceHash, provenance: scanned.provenance };
     }
-
-    // Scan archive directories (same structure as docs/)
-    const archiveRoot = join(this.docsRoot, 'archive');
-    try {
-      const archiveEntries = readdirSync(archiveRoot);
-      for (const dateDir of archiveEntries) {
-        const datePath = join(archiveRoot, dateDir);
-        try {
-          if (!statSync(datePath).isDirectory()) continue;
-          // Each archive date folder mirrors docs/ structure
-          for (const [dir, kind] of Object.entries(KIND_DIRS)) {
-            scanDir(join(datePath, dir), kind);
-          }
-        } catch {
-          // skip
-        }
-      }
-    } catch {
-      // archive doesn't exist — skip
-    }
-
-    // Also scan top-level .md files in docs/ (VISION.md, SOP.md, BACKLOG.md, etc.)
-    try {
-      const topFiles = readdirSync(this.docsRoot);
-      for (const entry of topFiles) {
-        if (!entry.endsWith('.md')) continue;
-        const fullPath = join(this.docsRoot, entry);
-        try {
-          if (statSync(fullPath).isFile()) {
-            results.push({ path: fullPath, kind: 'plan' as EvidenceKind });
-          }
-        } catch {
-          // skip
-        }
-      }
-    } catch {
-      // skip
-    }
-
-    return results;
-  }
-
-  /**
-   * E8: Split lessons-learned.md into per-lesson evidence items for better recall.
-   * Each ### LL-NNN section becomes a separate evidence_docs entry.
-   */
-  private splitLessonsLearned(): EvidenceItem[] {
-    const filePath = join(this.docsRoot, 'lessons-learned.md');
-    let content: string;
-    try {
-      content = readFileSync(filePath, 'utf-8');
-    } catch {
-      return [];
-    }
-
-    const results: EvidenceItem[] = [];
-    const sections = content.split(/^### /m).slice(1); // split on ### headings, skip preamble
-
-    for (const section of sections) {
-      const titleMatch = section.match(/^(LL-\d+):\s*(.+)/);
-      if (!titleMatch) continue;
-
-      const llId = titleMatch[1]; // e.g., LL-015
-      const title = `${llId}: ${titleMatch[2].trim()}`;
-      const body = section.slice(section.indexOf('\n') + 1).trim();
-      const summary = body.length > 300 ? `${body.slice(0, 297)}...` : body;
-      const sourceHash = createHash('sha256').update(section).digest('hex').slice(0, 16);
-
-      // Extract keywords from the section
-      const keywords: string[] = [];
-      const kwMatch = body.match(/关联：(.+)/);
-      if (kwMatch) {
-        keywords.push(
-          ...kwMatch[1]
-            .split(/[|,]/)
-            .map((s) => s.trim())
-            .filter(Boolean),
-        );
-      }
-
-      results.push({
-        anchor: llId,
-        kind: 'lesson',
-        status: 'active',
-        title,
-        summary,
-        keywords: keywords.length > 0 ? keywords : undefined,
-        sourcePath: 'lessons-learned.md',
-        sourceHash,
-        updatedAt: new Date().toISOString(),
-      });
-    }
-
-    return results;
+    return null;
   }
 
   /**
@@ -787,13 +729,13 @@ export class IndexBuilder implements IIndexBuilder {
     if (!this.messageListFn) return;
     const db = this.store.getDb();
 
+    // Phase I (AC-I2): INSERT OR IGNORE — passages only increase, never deleted on rebuild.
+    // Previously used DELETE-then-INSERT which lost passages when Redis messages expired.
     const upsertStmt = db.prepare(`
-      INSERT OR REPLACE INTO evidence_passages
+      INSERT OR IGNORE INTO evidence_passages
       (doc_anchor, passage_id, content, speaker, position, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
     `);
-    // P1 fix: clear stale passages before re-inserting (passage only-increase bug)
-    const deleteByAnchorStmt = db.prepare('DELETE FROM evidence_passages WHERE doc_anchor = ?');
 
     for (const thread of threads) {
       let messages: StoredMessageSnapshot[];
@@ -804,8 +746,6 @@ export class IndexBuilder implements IIndexBuilder {
       }
 
       const tx = db.transaction((msgs: StoredMessageSnapshot[]) => {
-        // Clear old passages for this thread before inserting current ones
-        deleteByAnchorStmt.run(`thread-${thread.id}`);
         for (let i = 0; i < msgs.length; i++) {
           const msg = msgs[i];
           upsertStmt.run(
@@ -823,143 +763,99 @@ export class IndexBuilder implements IIndexBuilder {
     }
   }
 
-  private parseFile(filePath: string): EvidenceItem | null {
-    let content: string;
+  /**
+   * Phase I (AC-I1): Backfill passages from JSONL transcript events.
+   * Reads events.jsonl files, aggregates text chunks per invocationId,
+   * and inserts as passages with INSERT OR IGNORE (idempotent).
+   * Returns count of newly added passages.
+   */
+  backfillPassagesFromTranscript(threadId: string): number {
+    if (!this.transcriptDataDir) return 0;
+    const db = this.store.getDb();
+    const threadDir = join(this.transcriptDataDir, 'threads', threadId);
+
+    let catDirs: string[];
     try {
-      content = readFileSync(filePath, 'utf-8');
+      catDirs = readdirSync(threadDir).filter((e) => !e.startsWith('.'));
     } catch {
-      return null;
+      return 0;
     }
 
-    const frontmatter = extractFrontmatter(content);
-    // Files without frontmatter: generate collision-safe path-based anchor
-    // Use full relative path (with / preserved as /) to avoid a-b/c vs a/b-c collisions
-    const anchor =
-      (frontmatter ? extractAnchor(frontmatter) : null) ??
-      `doc:${relative(this.docsRoot, filePath).replace(/\.md$/, '')}`;
+    const insertStmt = db.prepare(`
+      INSERT OR IGNORE INTO evidence_passages
+      (doc_anchor, passage_id, content, speaker, position, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
 
-    const kind = frontmatter ? inferKind(frontmatter, filePath) : inferKindFromPath(filePath);
-    const title = extractTitle(content);
-    const summary = extractSummary(content);
-    const sourceHash = createHash('sha256').update(content).digest('hex').slice(0, 16);
+    let added = 0;
+    let position = 10000; // offset to avoid collision with Redis-sourced positions (0-based)
 
-    const status = (
-      frontmatter && typeof frontmatter.status === 'string' ? frontmatter.status : 'active'
-    ) as EvidenceItem['status'];
+    for (const catId of catDirs) {
+      const sessionsDir = join(threadDir, catId, 'sessions');
+      let sessionDirs: string[];
+      try {
+        sessionDirs = readdirSync(sessionsDir).filter((e) => !e.startsWith('.'));
+      } catch {
+        continue;
+      }
 
-    const item: EvidenceItem = {
-      anchor,
-      kind,
-      status,
-      title: title ?? anchor,
-      updatedAt: new Date().toISOString(),
-      sourcePath: relative(this.docsRoot, filePath),
-    };
-    if (summary) item.summary = summary;
-    const topics = frontmatter?.topics;
-    if (Array.isArray(topics)) item.keywords = topics as string[];
-    item.sourceHash = sourceHash;
+      for (const sessionId of sessionDirs) {
+        const eventsPath = join(sessionsDir, sessionId, 'events.jsonl');
+        let content: string;
+        try {
+          content = readFileSync(eventsPath, 'utf-8');
+        } catch {
+          continue;
+        }
 
-    return item;
-  }
-}
+        // Accumulate text chunks by invocationId
+        const invocationTexts = new Map<string, { text: string; t: number; catId: string }>();
 
-// ── Frontmatter parsing ──────────────────────────────────────────────
+        for (const line of content.split('\n')) {
+          if (!line.trim()) continue;
+          try {
+            const evt = JSON.parse(line);
+            if (evt.event?.type === 'text' && typeof evt.event?.content === 'string') {
+              const invId = evt.invocationId ?? `${sessionId}-noninv`;
+              const existing = invocationTexts.get(invId);
+              if (existing) {
+                existing.text += evt.event.content;
+              } else {
+                invocationTexts.set(invId, {
+                  text: evt.event.content,
+                  catId: evt.catId ?? catId,
+                  t: evt.t,
+                });
+              }
+            }
+          } catch {
+            /* skip malformed lines */
+          }
+        }
 
-function extractFrontmatter(content: string): Record<string, unknown> | null {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!match?.[1]) return null;
-
-  const yaml = match[1];
-  const result: Record<string, unknown> = {};
-
-  for (const line of yaml.split('\n')) {
-    const kv = line.match(/^(\w+):\s*(.+)$/);
-    if (!kv) continue;
-    const key = kv[1]!;
-    const rawVal = kv[2]!;
-    // Parse simple arrays: [a, b, c]
-    const arrMatch = rawVal.match(/^\[(.+)]$/);
-    if (arrMatch) {
-      result[key] = arrMatch[1]?.split(',').map((s) => s.trim().replace(/^['"]|['"]$/g, ''));
-    } else {
-      result[key] = rawVal.trim();
+        // Insert accumulated text per invocation as passages
+        const tx = db.transaction(() => {
+          for (const [invId, data] of invocationTexts) {
+            if (!data.text.trim()) continue;
+            // Guard: skip entries with missing/invalid timestamp (P1 fix)
+            const ts = new Date(data.t);
+            if (Number.isNaN(ts.getTime())) continue;
+            const result = insertStmt.run(
+              `thread-${threadId}`,
+              `transcript-${invId}`,
+              data.text,
+              data.catId,
+              position++,
+              ts.toISOString(),
+            );
+            if (result.changes > 0) added++;
+          }
+        });
+        tx();
+      }
     }
+    return added;
   }
-
-  return Object.keys(result).length > 0 ? result : null;
 }
 
-function extractAnchor(fm: Record<string, unknown>): string | null {
-  // Direct anchor field (from MaterializationService or explicit frontmatter)
-  const anchor = fm.anchor;
-  if (typeof anchor === 'string') return anchor;
-  // feature_ids: [F042] → F042
-  const featureIds = fm.feature_ids;
-  if (Array.isArray(featureIds) && featureIds.length > 0) {
-    return featureIds[0] as string;
-  }
-  // decision_id: ADR-005
-  const decisionId = fm.decision_id;
-  if (typeof decisionId === 'string') return decisionId;
-  // plan_id: PLAN-001
-  const planId = fm.plan_id;
-  if (typeof planId === 'string') return planId;
-  return null;
-}
-
-function inferKind(fm: Record<string, unknown>, filePath: string): EvidenceKind {
-  const docKind = fm.doc_kind;
-  if (docKind === 'decision' || filePath.includes('/decisions/')) return 'decision';
-  if (
-    docKind === 'plan' ||
-    filePath.includes('/plans/') ||
-    filePath.includes('/phases/') ||
-    filePath.includes('/guides/')
-  )
-    return 'plan';
-  if (
-    docKind === 'lesson' ||
-    filePath.includes('/lessons/') ||
-    filePath.includes('/reflections/') ||
-    filePath.includes('/postmortems/') ||
-    filePath.includes('/stories/')
-  )
-    return 'lesson';
-  if (docKind === 'discussion' || filePath.includes('/discussions/')) return 'discussion';
-  if (docKind === 'research' || filePath.includes('/research/')) return 'research';
-  if (docKind === 'spec' || filePath.includes('/features/')) return 'feature';
-  return 'plan'; // default for unknown docs
-}
-
-/** Infer kind from file path alone (no frontmatter available) */
-function inferKindFromPath(filePath: string): EvidenceKind {
-  for (const [dir, kind] of Object.entries(KIND_DIRS)) {
-    if (filePath.includes(`/${dir}/`)) return kind;
-  }
-  return 'plan'; // default
-}
-
-function extractTitle(content: string): string | null {
-  // First # heading after frontmatter
-  const match = content.match(/^#\s+(.+)$/m);
-  return match?.[1]?.trim() ?? null;
-}
-
-function extractSummary(content: string): string | null {
-  // First meaningful paragraph after the title — skip blockquotes, status lines, and metadata
-  const afterTitle = content.replace(/^---[\s\S]*?---\s*/, '').replace(/^#.*$/m, '');
-  const paragraphs = afterTitle.split(/\n\n+/).filter((p) => {
-    const t = p.trim();
-    if (!t) return false;
-    if (t.startsWith('#')) return false;
-    if (t.startsWith('>')) return false; // blockquotes (often status lines)
-    if (t.startsWith('|')) return false; // tables
-    if (t.startsWith('```')) return false; // code blocks
-    return true;
-  });
-  const first = paragraphs[0];
-  if (!first) return null;
-  const trimmed = first.trim().replace(/\n/g, ' ');
-  return trimmed.length > 300 ? `${trimmed.slice(0, 297)}...` : trimmed;
-}
+// Helper functions moved to CatCafeScanner.ts (F152 Phase A, KD-5)

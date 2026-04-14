@@ -104,14 +104,14 @@ describe('HubAddMemberWizard', () => {
             templates: [
               {
                 id: 'antigravity-template',
-                provider: 'antigravity',
+                clientId: 'antigravity',
                 source: 'seed',
                 defaultModel: 'template-antigravity-model',
                 commandArgs: ['. --remote-debugging-port=9010'],
               },
               {
                 id: 'runtime-antigravity-preview',
-                provider: 'antigravity',
+                clientId: 'antigravity',
                 source: 'runtime',
                 defaultModel: 'runtime-custom-model',
                 commandArgs: ['. --remote-debugging-port=9999'],
@@ -120,7 +120,7 @@ describe('HubAddMemberWizard', () => {
           }),
         );
       }
-      if (path === '/api/provider-profiles') {
+      if (path === '/api/accounts') {
         return Promise.resolve(
           jsonResponse({
             projectPath: '/tmp/project',
@@ -182,6 +182,35 @@ describe('HubAddMemberWizard', () => {
                 createdAt: '2026-03-18T00:00:00.000Z',
                 updatedAt: '2026-03-18T00:00:00.000Z',
               },
+              {
+                id: 'kimi',
+                provider: 'kimi',
+                displayName: 'Kimi (OAuth)',
+                name: 'Kimi (OAuth)',
+                authType: 'oauth',
+                protocol: 'kimi',
+                builtin: true,
+                mode: 'subscription',
+                client: 'kimi',
+                models: ['kimi-code/kimi-for-coding'],
+                hasApiKey: false,
+                createdAt: '2026-03-18T00:00:00.000Z',
+                updatedAt: '2026-03-18T00:00:00.000Z',
+              },
+              {
+                id: 'moonshot-sponsor',
+                provider: 'moonshot-sponsor',
+                displayName: 'Moonshot Sponsor',
+                name: 'Moonshot Sponsor',
+                authType: 'api_key',
+                protocol: 'kimi',
+                builtin: false,
+                mode: 'api_key',
+                models: ['kimi-code/kimi-for-coding'],
+                hasApiKey: true,
+                createdAt: '2026-03-18T00:00:00.000Z',
+                updatedAt: '2026-03-18T00:00:00.000Z',
+              },
             ],
           }),
         );
@@ -231,7 +260,7 @@ describe('HubAddMemberWizard', () => {
     expect(queryField<HTMLInputElement>(container, 'input[aria-label="Model"]').value).toBe('gpt-5.4-mini');
   });
 
-  it('allows opencode member with bare model (ocProviderName is set in editor)', async () => {
+  it('allows opencode member with bare model (provider is set in editor)', async () => {
     const onComplete = vi.fn();
 
     await act(async () => {
@@ -248,7 +277,7 @@ describe('HubAddMemberWizard', () => {
     await click(queryButton(container, 'OpenCode'));
     await click(queryButton(container, 'Codex Sponsor'));
 
-    // Finish button should NOT be disabled — bare model is allowed, editor will collect ocProviderName.
+    // Finish button should NOT be disabled — bare model is allowed, editor will collect provider.
     const finishButton = queryButton(container, '创建后继续编辑');
     expect(finishButton.disabled).toBe(false);
 
@@ -256,6 +285,35 @@ describe('HubAddMemberWizard', () => {
     await flushEffects();
 
     expect(onComplete).toHaveBeenCalled();
+  });
+
+  it('shows Kimi builtin and API-key profiles in the wizard', async () => {
+    await act(async () => {
+      root.render(
+        React.createElement(HubAddMemberWizard, {
+          open: true,
+          onClose: vi.fn(),
+          onComplete: vi.fn(),
+        }),
+      );
+    });
+    await flushEffects();
+
+    await click(queryButton(container, 'Kimi'));
+    expect(container.textContent).toContain('Kimi (OAuth)');
+    expect(container.textContent).toContain('Moonshot Sponsor');
+  });
+
+  it('shows Kimi builtin and API profiles when selecting the Kimi client', async () => {
+    await act(async () => {
+      root.render(React.createElement(HubAddMemberWizard, { open: true, onClose: vi.fn(), onComplete: vi.fn() }));
+    });
+    await flushEffects();
+
+    await click(queryButton(container, 'Kimi'));
+    expect(container.textContent).toContain('Kimi (OAuth)');
+    expect(container.textContent).toContain('Moonshot Sponsor');
+    expect(container.textContent).not.toContain('Codex Sponsor');
   });
 
   it('walks the Antigravity flow with default CLI args and lands in the editor', async () => {

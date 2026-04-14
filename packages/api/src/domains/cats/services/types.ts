@@ -4,6 +4,7 @@
  */
 
 import type { CatId, MessageContent } from '@cat-cafe/shared';
+import type { Span } from '@opentelemetry/api';
 import type { CliSpawnOptions } from '../../../utils/cli-types.js';
 
 /** F8: Unified token usage type across all three cats.
@@ -101,7 +102,9 @@ export type AgentMessageType =
   | 'error'
   | 'done'
   | 'a2a_handoff'
-  | 'system_info'; // budget warnings, cancel feedback, extraction progress, thinking
+  | 'system_info' // budget warnings, cancel feedback, extraction progress, thinking
+  | 'provider_signal' // F149: upstream capacity/retry signals — skipped by invocation timeout & content flags
+  | 'liveness_signal'; // F149: stream idle watchdog — skipped by invocation timeout & content flags
 
 /**
  * A message yielded from an agent during invocation
@@ -115,6 +118,9 @@ export interface AgentMessage {
   content?: string;
   /** Session ID (for 'session_init' type) */
   sessionId?: string;
+  /** ACP transport: sessionId is per-invocation, not a persistent CLI session.
+   *  When true, a different sessionId does NOT mean "session replaced" — skip seal. */
+  ephemeralSession?: boolean;
   /** Tool name (for 'tool_use' type) */
   toolName?: string;
   /** Tool input parameters (for 'tool_use' type) */
@@ -188,6 +194,8 @@ export interface AgentServiceOptions {
   };
   /** F127: Extra --config key=value pairs to pass to the CLI. */
   cliConfigArgs?: readonly string[];
+  /** F153 Phase B: Parent OTel span for creating CLI session child span */
+  parentSpan?: Span;
 }
 
 /**

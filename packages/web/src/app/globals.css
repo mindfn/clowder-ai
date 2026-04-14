@@ -48,6 +48,11 @@
   --color-gemini-dark: #3a6fa5;
   --color-gemini-bg: #eaf4fb;
 
+  --color-kimi-primary: #4b5563;
+  --color-kimi-light: #e5e7eb;
+  --color-kimi-dark: #1f2937;
+  --color-kimi-bg: #f9fafb;
+
   --color-dare-primary: #d4a76a;
   --color-dare-light: #e8c99b;
   --color-dare-dark: #8b6f47;
@@ -58,12 +63,124 @@
   --color-cocreator-dark: #815b5b;
   --color-cocreator-bg: #fff5f2;
 
+  /* --- Connector Identity Colors (light defaults) --- */
+  --conn-slate-bg: #f1f5f9;
+  --conn-slate-ring: #e2e8f0;
+  --conn-slate-text: #334155;
+  --conn-slate-hover: #0f172a;
+  --conn-slate-bubble-bg: #f8fafc;
+  --conn-slate-bubble-border: #e2e8f0;
+
+  --conn-gray-bg: #f3f4f6;
+  --conn-gray-ring: #d1d5db;
+  --conn-gray-text: #1f2937;
+  --conn-gray-hover: #000000;
+  --conn-gray-bubble-bg: #f9fafb;
+  --conn-gray-bubble-border: #d1d5db;
+
+  --conn-amber-bg: #fef3c7;
+  --conn-amber-ring: #fde68a;
+  --conn-amber-text: #b45309;
+  --conn-amber-hover: #78350f;
+  --conn-amber-bubble-bg: #fffbeb;
+  --conn-amber-bubble-border: #fde68a;
+
+  --conn-purple-bg: #f3e8ff;
+  --conn-purple-ring: #e9d5ff;
+  --conn-purple-text: #7e22ce;
+  --conn-purple-hover: #581c87;
+  --conn-purple-bubble-bg: #faf5ff;
+  --conn-purple-bubble-border: #e9d5ff;
+
+  --conn-emerald-bg: #d1fae5;
+  --conn-emerald-ring: #a7f3d0;
+  --conn-emerald-text: #047857;
+  --conn-emerald-hover: #064e3b;
+  --conn-emerald-bubble-bg: #ecfdf5;
+  --conn-emerald-bubble-border: #a7f3d0;
+
+  --conn-blue-bg: #dbeafe;
+  --conn-blue-ring: #bfdbfe;
+  --conn-blue-text: #1d4ed8;
+  --conn-blue-hover: #1e3a8a;
+  --conn-blue-bubble-bg: #eff6ff;
+  --conn-blue-bubble-border: #bfdbfe;
+
+  --conn-sky-bg: #e0f2fe;
+  --conn-sky-ring: #bae6fd;
+  --conn-sky-text: #0369a1;
+  --conn-sky-hover: #0c4a6e;
+  --conn-sky-bubble-bg: #f0f9ff;
+  --conn-sky-bubble-border: #bae6fd;
+
+  --conn-cyan-bg: #cffafe;
+  --conn-cyan-ring: #a5f3fc;
+  --conn-cyan-text: #0e7490;
+  --conn-cyan-hover: #164e63;
+  --conn-cyan-bubble-bg: #ecfeff;
+  --conn-cyan-bubble-border: #a5f3fc;
+
+  --conn-red-bg: #fee2e2;
+  --conn-red-ring: #fecaca;
+  --conn-red-text: #b91c1c;
+  --conn-red-hover: #7f1d1d;
+  --conn-red-bubble-bg: #fef2f2;
+  --conn-red-bubble-border: #fecaca;
+
+  --conn-indigo-bg: #e0e7ff;
+  --conn-indigo-ring: #c7d2fe;
+  --conn-indigo-text: #4338ca;
+  --conn-indigo-hover: #312e81;
+  --conn-indigo-bubble-bg: #eef2ff;
+  --conn-indigo-bubble-border: #c7d2fe;
+
+  --conn-violet-bg: #ede9fe;
+  --conn-violet-ring: #ddd6fe;
+  --conn-violet-text: #6d28d9;
+  --conn-violet-hover: #4c1d95;
+  --conn-violet-bubble-bg: #f5f3ff;
+  --conn-violet-bubble-border: #ddd6fe;
+
+  --conn-green-bg: #dcfce7;
+  --conn-green-ring: #bbf7d0;
+  --conn-green-text: #15803d;
+  --conn-green-hover: #14532d;
+  --conn-green-bubble-bg: #f0fdf4;
+  --conn-green-bubble-border: #bbf7d0;
+
   /* Legacy aliases (consumed by body selector + existing components) */
   --bg-app: var(--cafe-surface);
   --text-primary: var(--cafe-text);
   --text-secondary: var(--cafe-text-secondary);
   --border-radius-base: 16px;
   --spacing-unit: 8px;
+
+  /* F155: Guide Engine Tokens */
+  --guide-overlay-bg: rgba(12, 16, 24, 0.62);
+  --guide-cutout-ring: #d4853a;
+  --guide-cutout-shadow: rgba(212, 133, 58, 0.35);
+  --guide-hud-bg: #fffdf8;
+  --guide-hud-border: #e7dac7;
+  --guide-text-primary: #2b251f;
+  --guide-text-secondary: #6f6257;
+  --guide-success: #2f9e44;
+  --guide-error: #d94848;
+  --guide-z-overlay: 1100;
+  --guide-z-hud: 1110;
+  --guide-z-pulse: 1120;
+  --guide-radius: 14px;
+  --guide-gap: 12px;
+  --guide-motion-fast: 160ms;
+  --guide-motion-normal: 260ms;
+  --guide-breathe-animation: guide-breathe 1.8s ease-in-out infinite;
+  --guide-transition-duration: var(--guide-motion-normal);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --guide-breathe-animation: none;
+    --guide-transition-duration: 0ms;
+  }
 }
 
 /* --- Dark Mode: override semantic tokens only --- */
@@ -101,7 +218,93 @@
   --color-opus-bg: rgba(155, 126, 189, 0.15);
   --color-codex-bg: rgba(91, 140, 90, 0.15);
   --color-gemini-bg: rgba(91, 155, 213, 0.15);
+  --color-kimi-bg: rgba(75, 85, 99, 0.18);
   --color-dare-bg: rgba(212, 167, 106, 0.15);
+
+  /* Connector dark mode overrides — muted translucent backgrounds, lighter text */
+  --conn-slate-bg: rgba(148, 163, 184, 0.15);
+  --conn-slate-ring: rgba(148, 163, 184, 0.25);
+  --conn-slate-text: #cbd5e1;
+  --conn-slate-hover: #e2e8f0;
+  --conn-slate-bubble-bg: rgba(30, 41, 59, 0.35);
+  --conn-slate-bubble-border: rgba(71, 85, 105, 0.6);
+
+  --conn-gray-bg: rgba(156, 163, 175, 0.15);
+  --conn-gray-ring: rgba(156, 163, 175, 0.25);
+  --conn-gray-text: #d1d5db;
+  --conn-gray-hover: #e5e7eb;
+  --conn-gray-bubble-bg: rgba(31, 41, 55, 0.35);
+  --conn-gray-bubble-border: rgba(75, 85, 99, 0.6);
+
+  --conn-amber-bg: rgba(245, 158, 11, 0.15);
+  --conn-amber-ring: rgba(245, 158, 11, 0.25);
+  --conn-amber-text: #fcd34d;
+  --conn-amber-hover: #fde68a;
+  --conn-amber-bubble-bg: rgba(120, 53, 15, 0.35);
+  --conn-amber-bubble-border: rgba(180, 83, 9, 0.5);
+
+  --conn-purple-bg: rgba(168, 85, 247, 0.15);
+  --conn-purple-ring: rgba(168, 85, 247, 0.25);
+  --conn-purple-text: #d8b4fe;
+  --conn-purple-hover: #e9d5ff;
+  --conn-purple-bubble-bg: rgba(88, 28, 135, 0.35);
+  --conn-purple-bubble-border: rgba(126, 34, 206, 0.5);
+
+  --conn-emerald-bg: rgba(16, 185, 129, 0.15);
+  --conn-emerald-ring: rgba(16, 185, 129, 0.25);
+  --conn-emerald-text: #6ee7b7;
+  --conn-emerald-hover: #a7f3d0;
+  --conn-emerald-bubble-bg: rgba(6, 78, 59, 0.35);
+  --conn-emerald-bubble-border: rgba(4, 120, 87, 0.5);
+
+  --conn-blue-bg: rgba(59, 130, 246, 0.15);
+  --conn-blue-ring: rgba(59, 130, 246, 0.25);
+  --conn-blue-text: #93c5fd;
+  --conn-blue-hover: #bfdbfe;
+  --conn-blue-bubble-bg: rgba(30, 58, 138, 0.35);
+  --conn-blue-bubble-border: rgba(29, 78, 216, 0.5);
+
+  --conn-sky-bg: rgba(14, 165, 233, 0.15);
+  --conn-sky-ring: rgba(14, 165, 233, 0.25);
+  --conn-sky-text: #7dd3fc;
+  --conn-sky-hover: #bae6fd;
+  --conn-sky-bubble-bg: rgba(7, 89, 133, 0.35);
+  --conn-sky-bubble-border: rgba(3, 105, 161, 0.5);
+
+  --conn-cyan-bg: rgba(6, 182, 212, 0.15);
+  --conn-cyan-ring: rgba(6, 182, 212, 0.25);
+  --conn-cyan-text: #67e8f9;
+  --conn-cyan-hover: #a5f3fc;
+  --conn-cyan-bubble-bg: rgba(21, 94, 117, 0.35);
+  --conn-cyan-bubble-border: rgba(14, 116, 144, 0.5);
+
+  --conn-red-bg: rgba(239, 68, 68, 0.15);
+  --conn-red-ring: rgba(239, 68, 68, 0.25);
+  --conn-red-text: #fca5a5;
+  --conn-red-hover: #fecaca;
+  --conn-red-bubble-bg: rgba(127, 29, 29, 0.35);
+  --conn-red-bubble-border: rgba(185, 28, 28, 0.5);
+
+  --conn-indigo-bg: rgba(99, 102, 241, 0.15);
+  --conn-indigo-ring: rgba(99, 102, 241, 0.25);
+  --conn-indigo-text: #a5b4fc;
+  --conn-indigo-hover: #c7d2fe;
+  --conn-indigo-bubble-bg: rgba(49, 46, 129, 0.35);
+  --conn-indigo-bubble-border: rgba(67, 56, 202, 0.5);
+
+  --conn-violet-bg: rgba(139, 92, 246, 0.15);
+  --conn-violet-ring: rgba(139, 92, 246, 0.25);
+  --conn-violet-text: #c4b5fd;
+  --conn-violet-hover: #ddd6fe;
+  --conn-violet-bubble-bg: rgba(76, 29, 149, 0.35);
+  --conn-violet-bubble-border: rgba(109, 40, 217, 0.5);
+
+  --conn-green-bg: rgba(34, 197, 94, 0.15);
+  --conn-green-ring: rgba(34, 197, 94, 0.25);
+  --conn-green-text: #86efac;
+  --conn-green-hover: #bbf7d0;
+  --conn-green-bubble-bg: rgba(20, 83, 45, 0.35);
+  --conn-green-bubble-border: rgba(21, 128, 61, 0.5);
 }
 
 body {
@@ -161,6 +364,84 @@ body {
 .quest-input-highlight {
   animation: quest-glow 2.5s ease-in-out infinite;
   border-color: rgb(245, 158, 11) !important;
+}
+
+/* F155: Guide Engine Animations — wrapped for reduced-motion (A-3) */
+@keyframes guide-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.03);
+    opacity: 0.85;
+  }
+}
+
+@keyframes guide-hud-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes guide-success-flash {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(0.9);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes guide-error-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-3px);
+  }
+  75% {
+    transform: translateX(3px);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .animate-guide-hud-enter {
+    animation: guide-hud-enter 160ms ease-out;
+  }
+
+  .animate-guide-success {
+    animation: guide-success-flash 0.4s ease-out;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-guide-hud-enter {
+    animation: none;
+  }
+
+  .animate-guide-success {
+    animation: none;
+  }
+
+  /* Disable breathe ring and transitions on guide overlay elements */
+  [style*="guide-breathe"] {
+    animation: none !important;
+  }
+}
+
+.animate-guide-error {
+  animation: guide-error-shake 0.3s ease-out;
 }
 
 @keyframes shake {

@@ -149,6 +149,7 @@ test('injects cat-cafe MCP config when workingDirectory contains mcp-server', as
           CAT_CAFE_INVOCATION_ID: 'inv-test-1',
           CAT_CAFE_CALLBACK_TOKEN: 'tok-test-1',
           CAT_CAFE_USER_ID: 'user-test-1\nline2',
+          CAT_CAFE_CAT_ID: 'codex',
           CAT_CAFE_SIGNAL_USER: 'codex',
         },
       }),
@@ -166,6 +167,10 @@ test('injects cat-cafe MCP config when workingDirectory contains mcp-server', as
     assert.ok(args.includes('mcp_servers.cat-cafe.env.CAT_CAFE_INVOCATION_ID="inv-test-1"'));
     assert.ok(args.includes('mcp_servers.cat-cafe.env.CAT_CAFE_CALLBACK_TOKEN="tok-test-1"'));
     assert.ok(args.includes('mcp_servers.cat-cafe.env.CAT_CAFE_USER_ID="user-test-1\\nline2"'));
+    assert.ok(
+      args.includes('mcp_servers.cat-cafe.env.CAT_CAFE_CAT_ID="codex"'),
+      'must inject CAT_CAFE_CAT_ID for game action auth',
+    );
     assert.ok(args.includes('mcp_servers.cat-cafe.env.CAT_CAFE_SIGNAL_USER="codex"'));
   } finally {
     rmSync(tmpRoot, { recursive: true, force: true });
@@ -192,6 +197,23 @@ test('does not include resume when no sessionId', async () => {
   assert.ok(args.includes('danger-full-access'), 'default sandbox should allow git writes');
   assert.ok(args.includes('approval_policy="on-request"'), 'fresh exec should set default approval policy');
   assert.ok(!args.includes('approval_policy=\\"on-request\\"'), 'argv should not contain literal backslash escapes');
+});
+
+test('unknown Codex cat falls back to xhigh reasoning effort for new invocations', async () => {
+  const proc = createMockProcess();
+  const spawnFn = createMockSpawnFn(proc);
+  const service = new CodexAgentService({ spawnFn, catId: 'runtime-unknown-codex', model: 'gpt-5.4' });
+
+  const promise = collect(service.invoke('hello'));
+  emitCodexEvents(proc, [{ type: 'thread.started', thread_id: 't-effort-fallback' }]);
+  await promise;
+
+  const args = spawnFn.mock.calls[0].arguments[1];
+  assert.ok(args.includes('--config'), 'reasoning effort must be passed via --config');
+  assert.ok(
+    args.includes('model_reasoning_effort="xhigh"'),
+    `expected xhigh fallback for unknown Codex cat, got argv: ${JSON.stringify(args)}`,
+  );
 });
 
 test('adds --skip-git-repo-check when workingDirectory is not a git repository', async () => {
@@ -334,6 +356,74 @@ test('resume session does NOT include --add-dir (sandbox locked at creation)', a
   const args = spawnFn.mock.calls[0].arguments[1];
   assert.ok(!args.includes('--add-dir'), 'resume args must not include --add-dir');
   assert.ok(!args.includes('--sandbox'), 'resume args must not include --sandbox');
+});
+
+test('custom provider: model passed via --config as-is', async () => {
+  const proc = createMockProcess();
+  const spawnFn = createMockSpawnFn(proc);
+  const service = new CodexAgentService({ spawnFn, model: 'qwen-plus' });
+
+  // Emit events after a tick to ensure generator has started consuming
+  const promise = collect(
+    service.invoke('test custom model', {
+      callbackEnv: {
+        OPENAI_BASE_URL: 'https://dashscope.aliyuncs.com/compatible-mode/v1/',
+        OPENAI_API_KEY: 'sk-test',
+        CODEX_AUTH_MODE: 'api_key',
+      },
+    }),
+  );
+  setTimeout(() => emitCodexEvents(proc, [{ type: 'thread.started', thread_id: 'thread-custom-prefix' }]), 50);
+  await promise;
+
+  const args = spawnFn.mock.calls[0].arguments[1];
+  // custom provider: model passed via --config (not --model) to bypass metadata lookup
+  assert.ok(!args.includes('--model'), 'must NOT use --model flag for custom provider');
+  assert.ok(args.includes('model="qwen-plus"'), 'model must be passed as-is via --config');
+  assert.ok(args.includes('model_provider="custom"'), 'must set model_provider=custom');
+});
+
+test('custom provider: multi-segment model slug preserved as-is', async () => {
+  const proc = createMockProcess();
+  const spawnFn = createMockSpawnFn(proc);
+  // Model like "google/gemini-3-flash-preview" (OpenRouter format) — must NOT be stripped
+  const service = new CodexAgentService({ spawnFn, model: 'google/gemini-3-flash-preview' });
+
+  const promise = collect(
+    service.invoke('test multi-segment', {
+      callbackEnv: {
+        OPENAI_BASE_URL: 'https://openrouter.ai/api/v1/',
+        OPENAI_API_KEY: 'sk-test',
+        CODEX_AUTH_MODE: 'api_key',
+      },
+    }),
+  );
+  setTimeout(() => emitCodexEvents(proc, [{ type: 'thread.started', thread_id: 'thread-multi-seg' }]), 50);
+  await promise;
+
+  const args = spawnFn.mock.calls[0].arguments[1];
+  const modelArg = args.find((a) => a.startsWith('model='));
+  assert.equal(
+    modelArg,
+    'model="google/gemini-3-flash-preview"',
+    'multi-segment model slug must be preserved verbatim',
+  );
+});
+
+test('no custom provider: model is passed as-is', async () => {
+  const proc = createMockProcess();
+  const spawnFn = createMockSpawnFn(proc);
+  const service = new CodexAgentService({ spawnFn, model: 'gpt-5.3-codex' });
+
+  const promise = collect(service.invoke('test no custom'));
+  emitCodexEvents(proc, [{ type: 'thread.started', thread_id: 'thread-no-custom' }]);
+  await promise;
+
+  const args = spawnFn.mock.calls[0].arguments[1];
+  const modelIdx = args.indexOf('--model');
+  assert.ok(modelIdx >= 0, 'must use --model flag for non-custom provider');
+  assert.equal(args[modelIdx + 1], 'gpt-5.3-codex', 'model without custom base URL stays as-is');
+  assert.ok(!args.includes('model_provider="custom"'), 'must not set model_provider when no custom URL');
 });
 
 test('handles multiple agent_message items', async () => {

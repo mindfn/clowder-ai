@@ -2,11 +2,9 @@
  * Unified API client for Clowder AI frontend.
  *
  * - Auto-prepends NEXT_PUBLIC_API_URL
- * - Auto-injects X-Cat-Cafe-User identity header on every request
- * - Replaces scattered raw fetch() calls across hooks/components
+ * - Identity via HttpOnly session cookie (F156 D-1), not header self-reporting
+ * - First call lazily establishes session, subsequent calls reuse the cookie
  */
-
-import { getUserId } from './userId';
 
 function getBrowserLocation(): Location | null {
   if (typeof globalThis !== 'object' || globalThis === null) return null;
@@ -14,37 +12,53 @@ function getBrowserLocation(): Location | null {
   return candidate ?? null;
 }
 
-function resolveApiUrl(): string {
+/** @internal Exported for testing — prefer using `API_URL` constant. */
+export function resolveApiUrl(): string {
   const location = getBrowserLocation();
 
   // Cloudflare Tunnel: API 走 api.clowder-ai.com，Access cookie 在 .clowder-ai.com 上共享
   if (location?.hostname === 'cafe.clowder-ai.com') {
     return 'https://api.clowder-ai.com';
   }
-  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  const envUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (envUrl) {
+    // Build-time default (localhost) is wrong when accessed remotely — skip and auto-detect.
+    const isLocalhostDefault = /^https?:\/\/(localhost|127\.0\.0\.1)[:/]/.test(envUrl);
+    const isRemoteAccess = location != null && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1';
+    if (!isLocalhostDefault || !isRemoteAccess) return envUrl;
+  }
   if (typeof window === 'undefined') return 'http://localhost:3004';
-  // Derive API port from frontend port: convention is frontend + 1 = API
-  // (runtime: 3001→3002, alpha: 3011→3012). Fallback to +1 of current port.
-  const frontendPort = Number(location?.port ?? '') || 3001;
-  const apiPort = frontendPort + 1;
   const protocol = location?.protocol ?? 'http:';
   const hostname = location?.hostname ?? 'localhost';
-  return `${protocol}//${hostname}:${apiPort}`;
+  const port = Number(location?.port ?? '') || 0;
+  // Behind reverse proxy (default port 80/443 → port is empty string):
+  // API lives at the same origin, proxied via /api/ and /socket.io/ paths.
+  if (!port) return `${protocol}//${hostname}`;
+  // Direct access with explicit port: convention frontendPort + 1 = apiPort
+  // (runtime: 3001→3002, alpha: 3011→3012).
+  return `${protocol}//${hostname}:${port + 1}`;
 }
 export const API_URL = resolveApiUrl();
 
+let sessionGate: Promise<void> | null = null;
+
+function ensureSession(): Promise<void> {
+  if (sessionGate) return sessionGate;
+  sessionGate = fetch(`${API_URL}/api/session`, { credentials: 'include' })
+    .then(() => {})
+    .catch(() => {});
+  return sessionGate;
+}
+
 /**
- * Fetch wrapper that injects identity header.
+ * Fetch wrapper with session-cookie identity.
  * @param path - API path starting with '/' (e.g. '/api/messages')
  * @param init - Standard RequestInit options
  */
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  const headers = new Headers(init?.headers);
-  headers.set('X-Cat-Cafe-User', getUserId());
+  await ensureSession();
   return fetch(`${API_URL}${path}`, {
     ...init,
-    headers,
-    // Cloudflare Access: 跨子域名请求需要 credentials 才能带 CF_Authorization cookie
-    credentials: API_URL.includes('clowder-ai.com') ? 'include' : (init?.credentials ?? 'same-origin'),
+    credentials: 'include',
   });
 }

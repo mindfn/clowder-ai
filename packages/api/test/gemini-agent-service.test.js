@@ -5,6 +5,9 @@
 
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { describe, mock, test } from 'node:test';
 import { ensureFakeCliOnPath } from './helpers/fake-cli-path.js';
@@ -477,6 +480,46 @@ describe('GeminiAgentService (antigravity adapter)', () => {
     assert.equal(spawnOpts.env.CAT_CAFE_CALLBACK_TOKEN, 'tok-2');
   });
 
+  test('preserves inherited env vars (not whitelist) — regression for v2 strip approach', async () => {
+    const prevKey = process.env.GEMINI_API_KEY;
+    const prevCustom = process.env.MY_CUSTOM_VAR;
+    process.env.GEMINI_API_KEY = 'aiza-inherited-key';
+    process.env.MY_CUSTOM_VAR = 'custom-value';
+
+    const antigravitySpawnFn = mock.fn(() => ({
+      on: mock.fn(),
+      unref: mock.fn(),
+      pid: 99999,
+    }));
+
+    const service = new GeminiAgentService({
+      adapter: 'antigravity',
+      antigravitySpawnFn,
+    });
+
+    const callbackEnv = {
+      CAT_CAFE_API_URL: 'http://localhost:3004',
+      CAT_CAFE_INVOCATION_ID: 'inv-inherit',
+      CAT_CAFE_CALLBACK_TOKEN: 'tok-inherit',
+    };
+
+    try {
+      await collect(service.invoke('test', { callbackEnv }));
+
+      const spawnOpts = antigravitySpawnFn.mock.calls[0].arguments[2];
+      // Inherited API key must be present (v1 whitelist dropped these)
+      assert.equal(spawnOpts.env.GEMINI_API_KEY, 'aiza-inherited-key');
+      assert.equal(spawnOpts.env.MY_CUSTOM_VAR, 'custom-value');
+      // callbackEnv still merged
+      assert.equal(spawnOpts.env.CAT_CAFE_INVOCATION_ID, 'inv-inherit');
+    } finally {
+      if (prevKey !== undefined) process.env.GEMINI_API_KEY = prevKey;
+      else delete process.env.GEMINI_API_KEY;
+      if (prevCustom !== undefined) process.env.MY_CUSTOM_VAR = prevCustom;
+      else delete process.env.MY_CUSTOM_VAR;
+    }
+  });
+
   test('errors when callbackEnv is missing', async () => {
     const antigravitySpawnFn = mock.fn();
 
@@ -712,4 +755,105 @@ test('F24: prefers stats.context_window over stats.contextWindow when both exist
   const done = msgs.find((m) => m.type === 'done');
   assert.ok(done?.metadata?.usage, 'done should have usage metadata');
   assert.equal(done.metadata.usage.contextWindowSize, 900000);
+});
+
+test('emits wrapped thinking from local Gemini session snapshots when available', async () => {
+  const proc = createMockProcess();
+  const spawnFn = createMockSpawnFn(proc);
+  const service = new GeminiAgentService({ spawnFn, adapter: 'gemini-cli' });
+
+  const fakeHome = mkdtempSync(join(tmpdir(), 'gemini-home-'));
+  const sessionDir = join(fakeHome, '.gemini', 'tmp', 'clowder-ai', 'chats');
+  mkdirSync(sessionDir, { recursive: true });
+  const previousHome = process.env.HOME;
+  process.env.HOME = fakeHome;
+
+  try {
+    const promise = collect(service.invoke('test thinking', { workingDirectory: '/home/user/clowder-ai' }));
+
+    emitGeminiEvents(proc, [
+      { type: 'init', session_id: 'gem-s1', model: 'gemini-3.1-pro-preview' },
+      { type: 'message', role: 'assistant', content: 'Final answer', delta: true },
+      { type: 'result', status: 'success', stats: { total_tokens: 123 } },
+    ]);
+
+    writeFileSync(
+      join(sessionDir, 'session-2026-04-06T12-00-test.json'),
+      JSON.stringify(
+        {
+          sessionId: 'gem-s1',
+          messages: [
+            {
+              id: 'm1',
+              type: 'gemini',
+              content: 'Final answer',
+              thoughts: [
+                { subject: 'Planning', description: 'First think.' },
+                { subject: 'Checking', description: 'Second think.' },
+              ],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const msgs = await promise;
+    const thinkingMsg = msgs.find((m) => m.type === 'system_info' && m.content.includes('"type":"thinking"'));
+    assert.ok(thinkingMsg, 'should emit thinking system_info');
+    const parsed = JSON.parse(thinkingMsg.content);
+    assert.equal(parsed.type, 'thinking');
+    assert.match(parsed.text, /\*\*Planning\*\*/);
+    assert.match(parsed.text, /Second think\./);
+  } finally {
+    process.env.HOME = previousHome;
+  }
+});
+
+test('skips Gemini local thinking hydration when the latest session content does not match this reply', async () => {
+  const proc = createMockProcess();
+  const spawnFn = createMockSpawnFn(proc);
+  const service = new GeminiAgentService({ spawnFn, adapter: 'gemini-cli' });
+
+  const fakeHome = mkdtempSync(join(tmpdir(), 'gemini-home-'));
+  const sessionDir = join(fakeHome, '.gemini', 'tmp', 'clowder-ai', 'chats');
+  mkdirSync(sessionDir, { recursive: true });
+  const previousHome = process.env.HOME;
+  process.env.HOME = fakeHome;
+
+  try {
+    const promise = collect(service.invoke('test mismatch', { workingDirectory: '/home/user/clowder-ai' }));
+
+    emitGeminiEvents(proc, [
+      { type: 'init', session_id: 'gem-s2', model: 'gemini-3.1-pro-preview' },
+      { type: 'message', role: 'assistant', content: 'Actual reply', delta: true },
+      { type: 'result', status: 'success', stats: { total_tokens: 123 } },
+    ]);
+
+    writeFileSync(
+      join(sessionDir, 'session-2026-04-06T12-01-test.json'),
+      JSON.stringify(
+        {
+          sessionId: 'gem-s2',
+          messages: [
+            {
+              id: 'm1',
+              type: 'gemini',
+              content: 'Some older unrelated reply',
+              thoughts: [{ subject: 'Old', description: 'Should not attach.' }],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+
+    const msgs = await promise;
+    const thinkingMsg = msgs.find((m) => m.type === 'system_info' && m.content.includes('"type":"thinking"'));
+    assert.equal(thinkingMsg, undefined);
+  } finally {
+    process.env.HOME = previousHome;
+  }
 });

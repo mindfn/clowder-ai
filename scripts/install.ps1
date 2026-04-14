@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-  Clowder AI - Windows Repo-Local Install Helper
+  Cat Cafe - Windows Repo-Local Install Helper
 
 .DESCRIPTION
-  Installs prerequisites and sets up the current checked-out clowder-ai repo.
+  Installs prerequisites and sets up the current checked-out cat-cafe repo.
   Clone or download the repo first, then run this helper from inside it.
   Steps: env detect -> preflight network check -> Node/pnpm install -> Redis -> .env generate
          -> deps & build -> skills mount -> AI CLI tools -> auth config -> verify & optionally start
@@ -92,7 +92,7 @@ function Resolve-ProjectRoot {
     $projectRoot = Split-Path -Parent $ScriptDir
     if (-not (Test-Path (Join-Path $projectRoot "package.json")) -or
         -not (Test-Path (Join-Path $projectRoot "packages/api"))) {
-        Write-Err "Run this helper from a checked-out clowder-ai repo: .\scripts\install.ps1"
+        Write-Err "Run this helper from a checked-out cat-cafe repo: .\scripts\install.ps1"
         exit 1
     }
     $gitRepoUnavailable = $false
@@ -273,7 +273,7 @@ if (Test-Path $envFile) {
 } elseif (Test-Path $envExample) {
     Copy-Item $envExample $envFile
     Write-Ok ".env created from .env.example"
-    Write-Warn "Edit .env to add your API keys and customize ports"
+    Write-Warn "After launch, add API keys in Hub > System Settings > Account Configuration"
 } else {
     Write-Warn ".env.example not found - creating minimal .env"
     @"
@@ -344,7 +344,8 @@ Write-Step "Step 7/9 - AI CLI tools"
 $cliTools = @(
     @{ Name = "Claude"; Label = "Claude"; Cmd = "claude"; Pkg = "@anthropic-ai/claude-code" },
     @{ Name = "Codex"; Label = "Codex"; Cmd = "codex"; Pkg = "@openai/codex" },
-    @{ Name = "Gemini"; Label = "Gemini"; Cmd = "gemini"; Pkg = "@google/gemini-cli" }
+    @{ Name = "Gemini"; Label = "Gemini"; Cmd = "gemini"; Pkg = "@google/gemini-cli" },
+    @{ Name = "Kimi"; Label = "Kimi"; Cmd = "kimi"; Pkg = "kimi-cli"; InstallKind = "python" }
 )
 
 if (-not $SkipCli) {
@@ -362,8 +363,20 @@ if (-not $SkipCli) {
         } else {
             Write-Host "  Installing $($tool.Name) CLI..."
             try {
-                if (-not $npmInstallCommand) { throw "npm command not found" }
-                & $npmInstallCommand install -g $tool.Pkg 2>$null
+                if ($tool.InstallKind -eq "python") {
+                    $uvCommand = Resolve-ToolCommand -Name "uv"
+                    if ($uvCommand) {
+                        & $uvCommand tool install --python 3.13 $tool.Pkg 2>$null
+                    } else {
+                        $pythonCommand = Resolve-ToolCommand -Name "python"
+                        if (-not $pythonCommand) { $pythonCommand = Resolve-ToolCommand -Name "py" }
+                        if (-not $pythonCommand) { throw "python command not found" }
+                        & $pythonCommand -m pip install --user --upgrade $tool.Pkg 2>$null
+                    }
+                } else {
+                    if (-not $npmInstallCommand) { throw "npm command not found" }
+                    & $npmInstallCommand install -g $tool.Pkg 2>$null
+                }
                 if (Resolve-ToolCommandWithRetry -Name $tool.Cmd -Attempts 6) {
                     Write-Ok "$($tool.Name) CLI installed"
                 } else {
@@ -388,6 +401,7 @@ Apply-InstallerAuthEnv -State $authState -EnvFile $envFile
 $hasClaude = $null -ne (Resolve-ToolCommandWithRetry -Name "claude" -Attempts 6)
 $hasCodex = $null -ne (Resolve-ToolCommandWithRetry -Name "codex" -Attempts 6)
 $hasGemini = $null -ne (Resolve-ToolCommandWithRetry -Name "gemini" -Attempts 6)
+$hasKimi = $null -ne (Resolve-ToolCommandWithRetry -Name "kimi" -Attempts 6)
 
 Write-Step "Step 9/9 - Verify and launch"
 
@@ -405,7 +419,7 @@ if (-not $allGood -and -not $SkipBuild) {
 
 Write-Host ""
 Write-Host "  ========================================" -ForegroundColor Green
-Write-Host "  Clowder AI installed!" -ForegroundColor Green
+Write-Host "  Cat Cafe installed!" -ForegroundColor Green
 Write-Host "  ========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Project: $ProjectRoot"
@@ -414,6 +428,7 @@ Write-Host "  Redis:   $(if ($hasRedis) { 'available' } else { 'not configured' 
 Write-Host "  Claude:  $(if ($hasClaude) { 'ready' } else { 'not installed' })"
 Write-Host "  Codex:   $(if ($hasCodex) { 'ready' } else { 'not installed' })"
 Write-Host "  Gemini:  $(if ($hasGemini) { 'ready' } else { 'not installed' })"
+Write-Host "  Kimi:    $(if ($hasKimi) { 'ready' } else { 'not installed' })"
 Write-Host ""
 Write-Host "  Start the app:" -ForegroundColor Cyan
 $startCmd = ".\scripts\start-windows.ps1"

@@ -5,11 +5,20 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 
-function runSourceOnlySnippet(scriptPath, snippet) {
+function baseShellEnv(overrides = {}) {
+  return {
+    PATH: process.env.PATH ?? '',
+    HOME: process.env.HOME ?? '',
+    TERM: process.env.TERM ?? 'xterm-256color',
+    ...overrides,
+  };
+}
+
+function runSourceOnlySnippet(scriptPath, snippet, envOverrides = {}) {
   const result = spawnSync(
     'bash',
     ['-lc', `set -e\nsource "${scriptPath}" --source-only >/dev/null 2>&1\ntrap - EXIT INT TERM\n${snippet}`],
-    { encoding: 'utf8' },
+    { encoding: 'utf8', env: baseShellEnv(envOverrides) },
   );
 
   assert.equal(result.status, 0, `snippet failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
@@ -27,9 +36,11 @@ declare -F background_eval_with_null_stdin >/dev/null
 declare -F wait_for_port_or_exit >/dev/null
 declare -F api_launch_command >/dev/null
 declare -F frontend_launch_command >/dev/null
+declare -F web_production_build_ready >/dev/null
 declare -F default_redis_storage_key >/dev/null
 declare -F default_redis_data_dir >/dev/null
 declare -F default_redis_backup_dir >/dev/null
+declare -F maybe_quarantine_stale_aof_dir >/dev/null
 printf 'ok'
 `,
   );
@@ -134,12 +145,11 @@ test('explicit port env vars override .env values for direct startup', () => {
     ],
     {
       encoding: 'utf8',
-      env: {
-        ...process.env,
+      env: baseShellEnv({
         FRONTEND_PORT: '3023',
         API_SERVER_PORT: '3024',
         REDIS_PORT: '6409',
-      },
+      }),
     },
   );
 
@@ -157,10 +167,9 @@ test('explicit NEXT_PUBLIC_API_URL override survives project .env during direct 
     ],
     {
       encoding: 'utf8',
-      env: {
-        ...process.env,
+      env: baseShellEnv({
         NEXT_PUBLIC_API_URL: 'http://localhost:3035',
-      },
+      }),
     },
   );
 
@@ -178,10 +187,9 @@ test('explicit PREVIEW_GATEWAY_PORT override survives project .env during direct
     ],
     {
       encoding: 'utf8',
-      env: {
-        ...process.env,
+      env: baseShellEnv({
         PREVIEW_GATEWAY_PORT: '5120',
-      },
+      }),
     },
   );
 
@@ -194,12 +202,9 @@ test('direct command mode can prefer current .env ports over ambient shell ports
   const tempRoot = mkdtempSync(join(tmpdir(), 'cat-cafe-start-dev-dotenv-ports-'));
   const tempScriptPath = join(tempRoot, 'scripts', 'start-dev.sh');
   const tempOverridesPath = join(tempRoot, 'scripts', 'download-source-overrides.sh');
-  const baseEnv = {
-    PATH: process.env.PATH ?? '',
-    HOME: process.env.HOME ?? '',
-    TERM: process.env.TERM ?? 'xterm-256color',
+  const baseEnv = baseShellEnv({
     CAT_CAFE_RESPECT_DOTENV_PORTS: '1',
-  };
+  });
 
   try {
     mkdirSync(join(tempRoot, 'scripts'), { recursive: true });
@@ -257,12 +262,7 @@ test('raw dev entry remaps setup-style Redis 6399 defaults to dev Redis 6398', (
       {
         cwd: tempRoot,
         encoding: 'utf8',
-        env: {
-          ...process.env,
-          PATH: process.env.PATH ?? '',
-          HOME: process.env.HOME ?? '',
-          TERM: process.env.TERM ?? 'xterm-256color',
-        },
+        env: baseShellEnv(),
       },
     );
 
@@ -294,13 +294,9 @@ test('respect-dotenv mode keeps explicit Redis 6399 defaults intact for wrappers
       {
         cwd: tempRoot,
         encoding: 'utf8',
-        env: {
-          ...process.env,
-          PATH: process.env.PATH ?? '',
-          HOME: process.env.HOME ?? '',
-          TERM: process.env.TERM ?? 'xterm-256color',
+        env: baseShellEnv({
           CAT_CAFE_RESPECT_DOTENV_PORTS: '1',
-        },
+        }),
       },
     );
 
@@ -324,11 +320,10 @@ test('redis port override also recomputes isolated redis dirs', () => {
       ],
       {
         encoding: 'utf8',
-        env: {
-          ...process.env,
+        env: baseShellEnv({
           HOME: tempHome,
           REDIS_PORT: '6409',
-        },
+        }),
       },
     );
 
@@ -368,6 +363,116 @@ test('redis snapshot archive failure warns and does not abort startup flow', () 
     assert.match(result.stdout, /ok$/);
   } finally {
     chmodSync(backupDir, 0o700);
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('stale AOF guard quarantines tiny old appendonlydir before cold start', () => {
+  const scriptPath = resolve(process.cwd(), '../../scripts/start-dev.sh');
+  const tempRoot = mkdtempSync(join(tmpdir(), 'cat-cafe-start-dev-stale-aof-'));
+  const dataDir = join(tempRoot, 'data');
+  const backupDir = join(tempRoot, 'backup');
+
+  try {
+    const output = runSourceOnlySnippet(
+      scriptPath,
+      `
+mkdir -p "${dataDir}/appendonlydir" "${backupDir}"
+REDIS_STORAGE_KEY=test-6399
+REDIS_DATA_DIR="${dataDir}"
+REDIS_BACKUP_DIR="${backupDir}"
+REDIS_DBFILE=dump.rdb
+dd if=/dev/zero of="${dataDir}/dump.rdb" bs=1024 count=2048 >/dev/null 2>&1
+printf 'file appendonly.aof.1.base.rdb seq 1 type b\\n' > "${dataDir}/appendonlydir/appendonly.aof.manifest"
+touch -t 202401010000 "${dataDir}/appendonlydir/appendonly.aof.manifest"
+touch "${dataDir}/dump.rdb"
+maybe_quarantine_stale_aof_dir >/dev/null
+if [ -d "${dataDir}/appendonlydir" ]; then
+  printf 'dir-present'
+elif compgen -G "${backupDir}/stale-aof-test-6399-*" >/dev/null; then
+  printf 'moved'
+else
+  printf 'missing-backup'
+fi
+`,
+    );
+
+    assert.equal(output, 'moved');
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('stale AOF guard keeps appendonlydir when base size is proportional to dump', () => {
+  const scriptPath = resolve(process.cwd(), '../../scripts/start-dev.sh');
+  const tempRoot = mkdtempSync(join(tmpdir(), 'cat-cafe-start-dev-healthy-aof-'));
+  const dataDir = join(tempRoot, 'data');
+  const backupDir = join(tempRoot, 'backup');
+
+  try {
+    const output = runSourceOnlySnippet(
+      scriptPath,
+      `
+mkdir -p "${dataDir}/appendonlydir" "${backupDir}"
+REDIS_STORAGE_KEY=test-6399
+REDIS_DATA_DIR="${dataDir}"
+REDIS_BACKUP_DIR="${backupDir}"
+REDIS_DBFILE=dump.rdb
+dd if=/dev/zero of="${dataDir}/dump.rdb" bs=1024 count=2048 >/dev/null 2>&1
+dd if=/dev/zero of="${dataDir}/appendonlydir/appendonly.aof.1.base.rdb" bs=1024 count=1024 >/dev/null 2>&1
+dd if=/dev/zero of="${dataDir}/appendonlydir/appendonly.aof.1.incr.aof" bs=1024 count=256 >/dev/null 2>&1
+touch -t 202401010000 "${dataDir}/appendonlydir/appendonly.aof.1.incr.aof"
+touch -t 202401010000 "${dataDir}/appendonlydir/appendonly.aof.1.base.rdb"
+touch "${dataDir}/dump.rdb"
+maybe_quarantine_stale_aof_dir >/dev/null
+if [ -d "${dataDir}/appendonlydir" ]; then
+  printf 'kept'
+else
+  printf 'moved'
+fi
+`,
+    );
+
+    assert.equal(output, 'kept');
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test('stale AOF guard quarantines tiny base even when incr AOF exists', () => {
+  const scriptPath = resolve(process.cwd(), '../../scripts/start-dev.sh');
+  const tempRoot = mkdtempSync(join(tmpdir(), 'cat-cafe-start-dev-stale-aof-incr-'));
+  const dataDir = join(tempRoot, 'data');
+  const backupDir = join(tempRoot, 'backup');
+
+  try {
+    const output = runSourceOnlySnippet(
+      scriptPath,
+      `
+mkdir -p "${dataDir}/appendonlydir" "${backupDir}"
+REDIS_STORAGE_KEY=test-6399
+REDIS_DATA_DIR="${dataDir}"
+REDIS_BACKUP_DIR="${backupDir}"
+REDIS_DBFILE=dump.rdb
+dd if=/dev/zero of="${dataDir}/dump.rdb" bs=1024 count=2048 >/dev/null 2>&1
+dd if=/dev/zero of="${dataDir}/appendonlydir/appendonly.aof.1.base.rdb" bs=1 count=88 >/dev/null 2>&1
+dd if=/dev/zero of="${dataDir}/appendonlydir/appendonly.aof.1.incr.aof" bs=1024 count=256 >/dev/null 2>&1
+touch -t 202401010000 "${dataDir}/appendonlydir/appendonly.aof.1.base.rdb"
+touch -t 202401010000 "${dataDir}/appendonlydir/appendonly.aof.1.incr.aof"
+touch "${dataDir}/dump.rdb"
+maybe_quarantine_stale_aof_dir >/dev/null
+if [ -d "${dataDir}/appendonlydir" ]; then
+  printf 'dir-present'
+elif compgen -G "${backupDir}/stale-aof-test-6399-*" >/dev/null; then
+  printf 'moved'
+else
+  printf 'missing-backup'
+fi
+`,
+    );
+
+    assert.equal(output, 'moved');
+  } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
 });
@@ -556,6 +661,37 @@ printf '%s' "$(frontend_launch_command)"
   );
 
   assert.equal(output, 'cd packages/web && PORT=3013 exec pnpm exec next start -p 3013 -H 0.0.0.0');
+});
+
+test('web_production_build_ready requires BUILD_ID instead of only .next directory', () => {
+  const scriptPath = resolve(process.cwd(), '../../scripts/start-dev.sh');
+  const tempRoot = mkdtempSync(join(tmpdir(), 'cat-cafe-start-dev-web-build-'));
+
+  try {
+    mkdirSync(join(tempRoot, 'packages', 'web', '.next'), { recursive: true });
+
+    const output = runSourceOnlySnippet(
+      scriptPath,
+      `
+PROJECT_DIR="${tempRoot}"
+if web_production_build_ready; then
+  printf 'ready-before|'
+else
+  printf 'missing-before|'
+fi
+printf 'build-id' > "$PROJECT_DIR/packages/web/.next/BUILD_ID"
+if web_production_build_ready; then
+  printf 'ready-after'
+else
+  printf 'missing-after'
+fi
+`,
+    );
+
+    assert.equal(output, 'missing-before|ready-after');
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test('print_manual_download_source_summary returns zero under set -e even when no overrides are set', () => {

@@ -24,6 +24,7 @@ export type EnvCategory =
   | 'codex'
   | 'dare'
   | 'gemini'
+  | 'kimi'
   | 'tts'
   | 'stt'
   | 'frontend'
@@ -31,7 +32,8 @@ export type EnvCategory =
   | 'signal'
   | 'github_review'
   | 'evidence'
-  | 'quota';
+  | 'quota'
+  | 'telemetry';
 
 export interface EnvDefinition {
   /** The env var name, e.g. 'REDIS_URL' */
@@ -64,6 +66,7 @@ export const ENV_CATEGORIES: Record<EnvCategory, string> = {
   codex: '缅因猫 (Codex)',
   dare: '狸花猫 (Dare)',
   gemini: '暹罗猫 (Gemini)',
+  kimi: 'Kimi',
   tts: '语音合成 (TTS)',
   stt: '语音识别 (STT)',
   frontend: '前端',
@@ -72,6 +75,7 @@ export const ENV_CATEGORIES: Record<EnvCategory, string> = {
   github_review: 'GitHub Review 监控',
   evidence: 'F102 记忆系统',
   quota: '额度监控',
+  telemetry: '可观测性 (OTel)',
 };
 
 export const ENV_VARS: EnvDefinition[] = [
@@ -96,9 +100,19 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'API_SERVER_HOST',
     defaultValue: '127.0.0.1',
-    description: 'API 监听地址',
+    description: 'API 监听地址（改为 0.0.0.0 可让手机/平板通过局域网或 Tailscale 访问）',
     category: 'server',
     sensitive: false,
+  },
+  {
+    name: 'CORS_ALLOW_PRIVATE_NETWORK',
+    defaultValue: 'false',
+    description:
+      '允许局域网/Tailscale 设备访问（手机、平板等）。开启后，来自 192.168.x.x / 10.x.x.x / Tailscale 100.x.x.x 的浏览器可以正常连接。注意：会信任整个私网内的所有设备。修改后需重启服务生效',
+    category: 'server',
+    sensitive: false,
+    runtimeEditable: false,
+    exampleRecommended: true,
   },
   { name: 'UPLOAD_DIR', defaultValue: './uploads', description: '文件上传目录', category: 'server', sensitive: false },
   {
@@ -127,14 +141,15 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'FRONTEND_URL',
     defaultValue: '(自动检测)',
-    description: '前端 URL（导出长图用）',
+    description:
+      '前端固定地址（有反向代理或固定域名时设置，如 https://cafe.example.com）。本机和局域网直连通常不需要改',
     category: 'server',
     sensitive: false,
   },
   {
     name: 'FRONTEND_PORT',
     defaultValue: '3003',
-    description: '前端端口（导出长图用）',
+    description: '前端端口',
     category: 'server',
     sensitive: false,
   },
@@ -183,12 +198,11 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'ANTHROPIC_API_KEY',
-    defaultValue: '(未设置 → 使用 proxy profile)',
-    description: 'Anthropic API Key（直连模式；proxy 模式由 provider profile 注入）',
+    defaultValue: '(未设置 → 由 accounts/credentials 系统注入)',
+    description: 'Anthropic API Key（#340 P6: 由统一账户系统管理，不再从 .env 读取）',
     category: 'server',
     sensitive: true,
     hubVisible: false,
-    exampleRecommended: true,
   },
   {
     name: 'LOG_LEVEL',
@@ -256,7 +270,7 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'CAT_CAFE_GLOBAL_CONFIG_ROOT',
     defaultValue: '(未设置 → homedir())',
-    description: '全局配置根目录（cat catalog / credentials / provider profiles 查找路径）',
+    description: '全局配置根目录（accounts / credentials 查找路径的父目录，实际路径为 ${ROOT}/.cat-cafe/）',
     category: 'server',
     sensitive: false,
     hubVisible: false,
@@ -299,7 +313,8 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'MESSAGE_TTL_SECONDS',
     defaultValue: '604800 (7天)',
-    description: '消息过期时间',
+    description:
+      '消息过期时间（秒）。默认 604800（7天）。设为 0 或负数 → 消息永不过期。注意：过期的 Redis 消息不影响已索引的 evidence_passages（Phase I 保证永久性）。',
     category: 'storage',
     sensitive: false,
   },
@@ -577,6 +592,14 @@ export const ENV_VARS: EnvDefinition[] = [
     hubVisible: false,
   },
   {
+    name: 'CAT_CAFE_DIAGNOSTICS',
+    defaultValue: '(未设置)',
+    description: '设为 1 启用 /api/diagnostics/* 端点（调试用，默认关闭）',
+    category: 'cli',
+    sensitive: false,
+    hubVisible: false,
+  },
+  {
     name: 'CAT_CAFE_DISABLE_SHARED_STATE_PREFLIGHT',
     defaultValue: '(未设置)',
     description: '设为 1 跳过 shared state preflight 检查（CI / 调试用）',
@@ -696,6 +719,27 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '钉钉应用 AppSecret',
     category: 'connector',
     sensitive: true,
+  },
+  {
+    name: 'XIAOYI_AK',
+    defaultValue: '(未设置 → 不启用)',
+    description: '华为小艺 OpenClaw Access Key',
+    category: 'connector',
+    sensitive: false,
+  },
+  {
+    name: 'XIAOYI_SK',
+    defaultValue: '(未设置)',
+    description: '华为小艺 OpenClaw Secret Key',
+    category: 'connector',
+    sensitive: true,
+  },
+  {
+    name: 'XIAOYI_AGENT_ID',
+    defaultValue: '(未设置)',
+    description: '华为小艺 Agent ID',
+    category: 'connector',
+    sensitive: false,
   },
   {
     name: 'FEISHU_BOT_OPEN_ID',
@@ -860,11 +904,10 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'OPENAI_API_KEY',
-    defaultValue: '(未设置)',
-    description: 'OpenAI API Key (api_key 模式用；env-owning，不走 accounts/credentials)',
+    defaultValue: '(未设置 → 由 accounts/credentials 系统注入)',
+    description: 'OpenAI API Key（#340 P6: 由统一账户系统管理，子进程通过 callbackEnv 注入）',
     category: 'codex',
     sensitive: true,
-    runtimeEditable: true,
   },
 
   // --- dare ---
@@ -874,12 +917,11 @@ export const ENV_VARS: EnvDefinition[] = [
   // --- gemini ---
   {
     name: 'GOOGLE_API_KEY',
-    defaultValue: '(未设置)',
-    description: 'Google API Key（暹罗猫 Gemini 直连用）',
+    defaultValue: '(未设置 → 由 accounts/credentials 系统注入)',
+    description: 'Google API Key（#340 P6: 由统一账户系统管理，子进程通过 callbackEnv 注入）',
     category: 'gemini',
     sensitive: true,
     hubVisible: false,
-    exampleRecommended: true,
   },
   {
     name: 'GEMINI_ADAPTER',
@@ -887,6 +929,50 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '暹罗猫适配器 (gemini-cli/antigravity)',
     category: 'gemini',
     sensitive: false,
+  },
+
+  // --- kimi ---
+  {
+    name: 'MOONSHOT_API_KEY',
+    defaultValue: '(未设置)',
+    description: 'Kimi / Moonshot API Key（官方 kimi-cli API Key 模式用）',
+    category: 'kimi',
+    sensitive: true,
+    hubVisible: false,
+  },
+  {
+    name: 'KIMI_SHARE_DIR',
+    defaultValue: '~/.kimi',
+    description: '官方 kimi-cli 共享目录（session / mcp / logs）',
+    category: 'kimi',
+    sensitive: false,
+    hubVisible: false,
+  },
+  {
+    name: 'KIMI_CONFIG_FILE',
+    defaultValue: '~/.kimi/config.toml',
+    description: '官方 kimi-cli 配置文件路径（覆盖默认 ~/.kimi/config.toml）',
+    category: 'kimi',
+    sensitive: false,
+    hubVisible: false,
+    runtimeEditable: false,
+  },
+  {
+    name: 'KIMI_AUTH_TOKEN',
+    defaultValue: '(未设置)',
+    description: 'Kimi 官方额度抓取用的 kimi-auth token（来自 kimi.com）',
+    category: 'quota',
+    sensitive: true,
+    hubVisible: false,
+  },
+  {
+    name: 'KIMI_QUOTA_API_FALLBACK_ENABLED',
+    defaultValue: '0（默认关闭）',
+    description: '设为 1 允许 Kimi 额度在 CLI /usage 失败时降级到 API（仍需 KIMI_AUTH_TOKEN）',
+    category: 'quota',
+    sensitive: false,
+    hubVisible: false,
+    runtimeEditable: false,
   },
 
   // --- tts ---
@@ -1086,6 +1172,20 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
   },
   {
+    name: 'F102_DURABLE_CANDIDATES',
+    defaultValue: 'off',
+    description: 'Phase G candidate 提取 (off/on)，on = 摘要时提取 durable knowledge 候选到 MarkerQueue',
+    category: 'evidence',
+    sensitive: false,
+  },
+  {
+    name: 'F102_TOPIC_SEGMENTS',
+    defaultValue: 'off',
+    description: 'Phase G topic 分段 (off/on)，on = 摘要按话题切分多个 segment',
+    category: 'evidence',
+    sensitive: false,
+  },
+  {
     name: 'EMBED_URL',
     defaultValue: 'http://127.0.0.1:9880',
     description: 'Embedding 服务地址（独立 Python GPU 进程 scripts/embed-api.py）',
@@ -1096,6 +1196,13 @@ export const ENV_VARS: EnvDefinition[] = [
     name: 'EVIDENCE_DB',
     defaultValue: '{repoRoot}/evidence.sqlite',
     description: 'F102 SQLite 数据库路径',
+    category: 'evidence',
+    sensitive: false,
+  },
+  {
+    name: 'GLOBAL_KNOWLEDGE_DB',
+    defaultValue: '~/.cat-cafe/global_knowledge.sqlite',
+    description: 'F-4: 全局知识 SQLite 路径（Skills + MEMORY.md 编译产物）',
     category: 'evidence',
     sensitive: false,
   },
@@ -1126,7 +1233,7 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'QUOTA_OFFICIAL_REFRESH_ENABLED',
     defaultValue: '0（默认关闭）',
-    description: '设为 1 允许官方额度抓取（需要 Chrome OAuth cookie）',
+    description: '设为 1 允许官方额度抓取（Claude/Codex OAuth + Kimi auth token）',
     category: 'quota',
     sensitive: false,
   },
@@ -1145,6 +1252,43 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'quota',
     sensitive: false,
     hubVisible: false,
+  },
+
+  // --- telemetry (F153) ---
+  {
+    name: 'TELEMETRY_HMAC_SALT',
+    defaultValue: '(dev/test 自动 fallback)',
+    description: 'HMAC salt — 遥测系统 ID 伪名化用。生产环境必设，缺失则禁用 OTel',
+    category: 'telemetry',
+    sensitive: true,
+  },
+  {
+    name: 'TELEMETRY_EXPORT_RAW_SYSTEM_IDS',
+    defaultValue: '(未设置 → HMAC 伪名化)',
+    description: '设为 1 跳过 HMAC，导出原始系统 ID（仅限自托管受控环境）',
+    category: 'telemetry',
+    sensitive: false,
+  },
+  {
+    name: 'PROMETHEUS_PORT',
+    defaultValue: '9464',
+    description: 'Prometheus /metrics 抓取端口',
+    category: 'telemetry',
+    sensitive: false,
+  },
+  {
+    name: 'OTEL_EXPORTER_OTLP_ENDPOINT',
+    defaultValue: '(未设置 → 仅 Prometheus)',
+    description: 'OTLP 导出端点（设置后同时推送 traces/metrics/logs 到该端点）',
+    category: 'telemetry',
+    sensitive: false,
+  },
+  {
+    name: 'OTEL_SDK_DISABLED',
+    defaultValue: '(未设置 → 启用)',
+    description: '设为 true 完全禁用 OTel SDK',
+    category: 'telemetry',
+    sensitive: false,
   },
 ];
 

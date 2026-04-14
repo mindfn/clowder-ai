@@ -24,6 +24,7 @@ import type { IThreadReadStateStore } from '../domains/cats/services/stores/port
 import type {
   BootcampStateV1,
   IThreadStore,
+  Thread,
   ThreadRoutingPolicyV1,
 } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { createModuleLogger } from '../infrastructure/logger.js';
@@ -53,6 +54,8 @@ export interface ThreadsRoutesOptions {
   readStateStore?: IThreadReadStateStore;
   /** F095 Phase C: validate backlogItemId on thread creation */
   backlogStore?: IBacklogStore;
+  /** B-4: Cascade delete guide session when thread is deleted */
+  guideSessionStore?: import('../domains/guides/GuideSessionRepository.js').IGuideSessionStore;
 }
 
 /** F087: Bootcamp state Zod schema */
@@ -125,6 +128,10 @@ function parseOptionalBooleanQuery(value: string | boolean | undefined): boolean
   if (normalized === 'true' || normalized === '1') return true;
   if (normalized === 'false' || normalized === '0') return false;
   return undefined;
+}
+
+function sanitizeThreadForResponse(thread: Thread, _userId: string): Thread {
+  return thread;
 }
 
 const threadRoutingRuleSchema = z
@@ -207,7 +214,7 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
     const userId = resolveUserId(request, { fallbackUserId: legacyUserId });
     if (!userId) {
       reply.status(401);
-      return { error: 'Identity required (X-Cat-Cafe-User header or userId query)' };
+      return { error: 'Identity required (session cookie or X-Cat-Cafe-User header)' };
     }
 
     // Validate projectPath is a real directory under allowed roots
@@ -283,11 +290,14 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
 
     // F095 Phase D: Return soft-deleted threads when deleted=true
     if (showDeleted) {
-      const deletedThreads = await threadStore.listDeleted(userId);
+      const deletedThreads = (await threadStore.listDeleted(userId)).map((thread) =>
+        sanitizeThreadForResponse(thread, userId),
+      );
       return { threads: deletedThreads };
     }
 
     let threads = projectPath ? await threadStore.listByProject(userId, projectPath) : await threadStore.list(userId);
+    threads = threads.map((thread) => sanitizeThreadForResponse(thread, userId));
 
     // F058 Phase G: Match threads by feature IDs in titles
     if (featureIds) {
@@ -394,7 +404,8 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
       reply.status(404);
       return { error: 'Thread not found' };
     }
-    return thread;
+    const userId = resolveUserId(request, { defaultUserId: 'default-user' }) ?? 'default-user';
+    return sanitizeThreadForResponse(thread, userId);
   });
 
   // PATCH /api/threads/:id - 更新标题/置顶/收藏
@@ -491,6 +502,9 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
         reply.status(400);
         return { error: 'Cannot delete this thread' };
       }
+
+      // B-4: Cascade delete guide session to prevent stale sessions on deleted threads
+      void opts.guideSessionStore?.delete(id).catch(() => {});
 
       // I-2: Audit thread deletion for traceability (best-effort, don't block response)
       const userId = resolveUserId(request, {});

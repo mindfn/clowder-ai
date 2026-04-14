@@ -26,9 +26,8 @@ pnpm install
 # 3. Build (required — creates dist/ for workspace packages)
 pnpm build
 
-# 4. Configure
+# 4. Configure infrastructure (API keys are added via UI after launch)
 cp .env.example .env
-# Edit .env — add model API keys or configure CLI auth (see below)
 
 # 5. Run
 pnpm start
@@ -91,9 +90,8 @@ git checkout v0.4.0          # or any tag from the Releases page
 pnpm install
 pnpm build
 
-# 4. Configure
+# 4. Configure infrastructure (API keys are added via UI after launch)
 cp .env.example .env
-# Edit .env — add API keys
 
 # 5. Start directly (bypasses worktree, won't auto-update)
 pnpm start:direct
@@ -180,26 +178,11 @@ sudo journalctl -u clowder-ai -f
 
 ## Configuration
 
-### Model API Keys (recommended)
+### Infrastructure (`.env`)
 
-If you use API keys directly, at least one model provider is needed for a working agent. All three are recommended for full multi-agent collaboration.
+The `.env` file configures **infrastructure only** — ports, Redis, and optional service URLs. Model API keys are managed through the web UI (see below).
 
-> **Using CLI auth?** If you've already authenticated via `claude`, `codex`, or `gemini` CLI tools, you can skip API keys — the CLI subscription handles authentication. API keys are only needed for direct API access.
-
-```bash
-# Claude (Ragdoll cat / 布偶猫) — recommended as primary
-ANTHROPIC_API_KEY=your-anthropic-api-key
-
-# GPT / Codex (Maine Coon / 缅因猫) — code review specialist
-OPENAI_API_KEY=your-openai-api-key
-
-# Gemini (Siamese / 暹罗猫) — visual design
-GOOGLE_API_KEY=...
-```
-
-### Redis
-
-Redis is the persistent store for threads, messages, tasks, and memory.
+**Redis** — persistent store for threads, messages, tasks, and memory:
 
 ```bash
 REDIS_URL=redis://localhost:6399
@@ -209,15 +192,78 @@ The `pnpm start` command auto-starts Redis on port 6399. Data persists in `~/.ca
 
 **No Redis?** Use `pnpm start --memory` for in-memory mode (data lost on restart — fine for trying things out).
 
-### Frontend
+**Frontend:**
 
 ```bash
 NEXT_PUBLIC_API_URL=http://localhost:3004
 ```
 
+### Model Access (UI)
+
+After launching, open `http://localhost:3003` and navigate to **Hub → System Settings → Account Configuration** to set up your model providers.
+
+There are two types of accounts:
+
+| Type | How It Works | Providers |
+|------|-------------|-----------|
+| **Built-in (OAuth / CLI subscription)** | Authenticate via the provider's CLI tool (`claude`, `codex`, `gemini`). No API key needed — the CLI subscription handles auth. | Claude, GPT/Codex, Gemini |
+| **API Key** | Enter your API key + base URL for direct API access. Works with any OpenAI-compatible or Anthropic-compatible endpoint. | Claude, GPT, Gemini, **Kimi, GLM, MiniMax, Qwen, OpenRouter**, and more |
+
+**Steps:**
+1. Click **"Add Account"** in the Account Configuration tab
+2. Choose a provider or add a custom one
+3. For built-in providers: select OAuth/subscription mode (no key needed if CLI is authenticated)
+4. For API key providers: enter your API key and (optionally) a custom base URL
+5. Click **Save**
+
+**Adding Chinese / third-party providers (Kimi, GLM, MiniMax, Qwen, OpenRouter):**
+
+These providers are configured as API key accounts with a custom base URL. In the **Account Configuration** UI, add a new account, choose the provider, enter your API key, and set the base URL to the provider's OpenAI-compatible endpoint. Select the appropriate protocol and click **Save**.
+
+**Example — Alibaba Bailian (Qwen):**
+
+![Provider account configuration for Bailian](docs/setup/setup-provider-bailian.png)
+
+> **Legacy `.env` fallback:** The system still reads `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `GOOGLE_API_KEY` from `.env` as a fallback, but this path is deprecated. Use the UI for all new setups.
+
+### Member Configuration
+
+To add team members (cats) that use specific providers:
+
+1. Go to **Hub → Member Collaboration → Overview**
+2. Each member can be bound to a provider account from your Account Configuration
+3. Built-in providers support OAuth; third-party providers use API key accounts
+
+![Member bound to Bailian provider](docs/setup/setup-member-binding.png)
+
 ## Optional Features
 
-Clowder works out of the box with model access (API keys or CLI auth) and Redis (or `--memory` mode). Everything below is opt-in.
+Clowder works out of the box with model access and Redis (or `--memory` mode). Everything below is opt-in.
+
+### Design Tooling (Pencil MCP)
+
+For design tasks, UI iteration, screenshots, and design-to-code workflows, install [Pencil](https://marketplace.visualstudio.com/items?itemName=highagency.pencildev) in your editor (VS Code, Cursor, or Antigravity).
+
+Without Pencil: Clowder still runs, coding tasks still work, design tasks degrade to plain text guidance.
+
+**Auto-configuration:** The capability orchestrator automatically detects your Pencil installation by scanning (in order):
+
+1. `PENCIL_MCP_BIN` environment variable (explicit path — highest priority)
+2. `~/.antigravity/extensions/highagency.pencildev-*/`
+3. `~/.vscode/extensions/highagency.pencildev-*/`
+4. `~/.cursor/extensions/highagency.pencildev-*/`
+5. `~/.vscode-insiders/extensions/highagency.pencildev-*/`
+
+The newest version across all editors is selected. When two editors have the same version, Antigravity is preferred.
+
+**Environment variable overrides:**
+
+| Variable | Purpose | Example |
+|----------|---------|---------|
+| `PENCIL_MCP_BIN` | Force a specific Pencil binary path | `/path/to/mcp-server-darwin-arm64` |
+| `PENCIL_MCP_APP` | Force which editor to connect to | `vscode`, `antigravity`, `cursor`, `vscode-insiders` |
+
+**Diagnostics:** `pnpm mcp:doctor` shows MCP readiness (ready / missing / unresolved).
 
 ### Voice Input / Output
 
@@ -499,8 +545,9 @@ API_SERVER_HOST=0.0.0.0
 # Frontend URL — used for CORS and redirects
 FRONTEND_URL=https://your-domain.com
 
-# API URL — the frontend needs to reach the API
-NEXT_PUBLIC_API_URL=http://your-domain.com:3004
+# API URL — usually not needed behind a reverse proxy (auto-detected).
+# Only set if you need a non-standard endpoint (e.g. separate API domain).
+# NEXT_PUBLIC_API_URL=https://api.your-domain.com
 
 # Redis — if running on a separate host
 REDIS_URL=redis://your-redis-host:6399
@@ -523,11 +570,16 @@ NEXT_PUBLIC_LLM_POSTPROCESS_URL=http://your-llm-host:9878
 
 The API automatically accepts requests from:
 - `localhost` / `127.0.0.1` (any port)
-- RFC 1918 private networks (`10.x.x.x`, `172.16-31.x.x`, `192.168.x.x`)
-- Tailscale IPs (`100.x.x.x`)
 - The `FRONTEND_URL` you set
 
-No additional CORS configuration is needed for most LAN / VPN setups.
+If you open Cat Cafe directly from a LAN / Tailscale IP (for example `http://192.168.x.x:3003` or `http://100.x.x.x:3003`), also set:
+
+```bash
+API_SERVER_HOST=0.0.0.0
+CORS_ALLOW_PRIVATE_NETWORK=true
+```
+
+This opt-in trusts browsers from RFC 1918 private networks (`10.x.x.x`, `172.16-31.x.x`, `192.168.x.x`) and Tailscale IPs (`100.x.x.x`). If you use a reverse proxy or a fixed `FRONTEND_URL`, you usually do not need the extra flag.
 
 ## Troubleshooting
 
@@ -542,10 +594,11 @@ No additional CORS configuration is needed for most LAN / VPN setups.
 - Make sure Redis is installed: `redis-server --version`
 
 **No agents responding?**
-- Check `.env` has at least one valid API key, or verify CLI auth is working (`claude --version`, `codex --version`)
+- Check that you've added at least one provider account in **Hub → System Settings → Account Configuration**
+- If using CLI auth, verify it's working (`claude --version`, `codex --version`)
 - Check the API logs in terminal for auth errors
 
 **Frontend can't connect to API?**
-- Make sure `NEXT_PUBLIC_API_URL=http://localhost:3004` is set
+- For local dev, `NEXT_PUBLIC_API_URL=http://localhost:3004` should be in `.env`
+- Behind a reverse proxy, the frontend auto-detects the API at the same origin — make sure Nginx proxies `/api/` and `/socket.io/` to port 3004
 - API must be running before frontend loads
-

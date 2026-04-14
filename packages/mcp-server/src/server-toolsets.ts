@@ -3,6 +3,7 @@ import { mediahubTools } from './mediahub/mediahub-tools.js';
 import {
   callbackMemoryTools,
   callbackTools,
+  distillationTools,
   evidenceTools,
   gameActionTools,
   limbTools,
@@ -30,6 +31,7 @@ const collabTools: readonly ToolDef[] = [
 
 const memoryTools: readonly ToolDef[] = [
   ...callbackMemoryTools,
+  ...distillationTools,
   ...evidenceTools,
   ...reflectTools,
   ...sessionChainTools,

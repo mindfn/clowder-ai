@@ -92,9 +92,11 @@ export type {
 export type {
   CatColor,
   CatConfig,
+  /** @deprecated F340: Use ClientId instead. */
   CatProvider,
   CatState,
   CatStatus,
+  ClientId,
 } from './cat.js';
 export {
   CAT_CONFIGS,
@@ -141,6 +143,7 @@ export type {
 export {
   getAllConnectorDefinitions,
   getConnectorDefinition,
+  SCHEDULER_TRIGGER_PREFIX,
 } from './connector.js';
 // Deliberate types (4-E 两轮制 - 类型预埋)
 export type {
@@ -388,8 +391,13 @@ export type {
 } from './summary.js';
 // Task types (毛线球)
 export type {
+  AutomationState,
+  CiAutomationState,
+  ConflictAutomationState,
   CreateTaskInput,
+  ReviewAutomationState,
   TaskItem,
+  TaskKind,
   TaskStatus,
   UpdateTaskInput,
 } from './task.js';

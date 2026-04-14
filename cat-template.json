@@ -163,6 +163,13 @@
       "lead": true,
       "available": true,
       "evaluation": "开源多模型编码猫，自带 Oh My OpenCode 多专家编排 + LSP (F105)"
+    },
+    "kimi": {
+      "family": "moonshot",
+      "roles": ["research", "writer"],
+      "lead": true,
+      "available": true,
+      "evaluation": "中文长文理解与总结强，适合中文表达、资料整理与结构化输出"
     }
   },
   "reviewPolicy": {
@@ -191,7 +198,7 @@
       "variants": [
         {
           "id": "opus-default",
-          "provider": "anthropic",
+          "clientId": "anthropic",
           "defaultModel": "claude-opus-4-6",
           "mcpSupport": true,
           "cli": {
@@ -224,7 +231,7 @@
           "variantLabel": "Sonnet",
           "displayName": "布偶猫",
           "mentionPatterns": ["@sonnet", "@布偶sonnet"],
-          "provider": "anthropic",
+          "clientId": "anthropic",
           "defaultModel": "claude-sonnet-4-6",
           "mcpSupport": true,
           "avatar": "/avatars/sonnet.png",
@@ -264,7 +271,7 @@
           "variantLabel": "Opus 4.5",
           "displayName": "布偶猫",
           "mentionPatterns": ["@opus45", "@opus-45", "@布偶opus45", "@布偶猫4.5"],
-          "provider": "anthropic",
+          "clientId": "anthropic",
           "defaultModel": "claude-opus-4-5-20251101",
           "mcpSupport": true,
           "avatar": "/avatars/opus-45.png",
@@ -323,7 +330,7 @@
       "variants": [
         {
           "id": "codex-default",
-          "provider": "openai",
+          "clientId": "openai",
           "defaultModel": "gpt-5.3-codex",
           "mcpSupport": true,
           "cli": {
@@ -367,7 +374,7 @@
             "@gpt-5.4",
             "@缅因gpt52"
           ],
-          "provider": "openai",
+          "clientId": "openai",
           "defaultModel": "gpt-5.4",
           "mcpSupport": true,
           "avatar": "/avatars/gpt52.png",
@@ -407,7 +414,7 @@
           "variantLabel": "Spark",
           "displayName": "缅因猫 Spark",
           "mentionPatterns": ["@spark", "@缅因spark", "@codex-spark"],
-          "provider": "openai",
+          "clientId": "openai",
           "defaultModel": "gpt-5.3-codex-spark",
           "mcpSupport": true,
           "avatar": "/avatars/sliced-finial/codex_box.png",
@@ -465,13 +472,19 @@
       "variants": [
         {
           "id": "gemini-default",
-          "provider": "google",
+          "clientId": "google",
           "defaultModel": "gemini-3.1-pro-preview",
           "mcpSupport": true,
           "cli": {
             "command": "gemini",
             "outputFormat": "stream-json",
             "defaultArgs": []
+          },
+          "acp": {
+            "command": "gemini",
+            "startupArgs": ["--acp", "--approval-mode", "yolo"],
+            "mcpWhitelist": ["cat-cafe", "cat-cafe-memory", "cat-cafe-collab", "cat-cafe-signals", "pencil"],
+            "supportsMultiplexing": true
           },
           "personality": "热血奔放，爱发富文本和语音消息，善于用视觉语言表达想法，表达力是全队最强的",
           "strengths": ["visual-design", "ui-ux", "creativity"],
@@ -497,7 +510,7 @@
           "variantLabel": "Gemini 2.5",
           "displayName": "暹罗猫",
           "mentionPatterns": ["@gemini25", "@gemini-25", "@暹罗gemini25"],
-          "provider": "google",
+          "clientId": "google",
           "defaultModel": "gemini-2.5-pro",
           "mcpSupport": true,
           "avatar": "/avatars/gemini25.png",
@@ -509,6 +522,12 @@
             "command": "gemini",
             "outputFormat": "stream-json",
             "defaultArgs": []
+          },
+          "acp": {
+            "command": "gemini",
+            "startupArgs": ["--acp", "--approval-mode", "yolo"],
+            "mcpWhitelist": ["cat-cafe", "cat-cafe-memory", "cat-cafe-collab", "cat-cafe-signals", "pencil"],
+            "supportsMultiplexing": true
           },
           "personality": "暹罗猫的经典版本，创意灵感同样丰富",
           "strengths": ["visual-design", "creativity", "multimodal"],
@@ -551,7 +570,7 @@
       "variants": [
         {
           "id": "dare-default",
-          "provider": "dare",
+          "clientId": "dare",
           "defaultModel": "z-ai/glm-4.7",
           "mcpSupport": false,
           "cli": {
@@ -593,7 +612,7 @@
         {
           "id": "antigravity-gemini",
           "variantLabel": "Gemini",
-          "provider": "antigravity",
+          "clientId": "antigravity",
           "defaultModel": "gemini-3.1-pro",
           "mcpSupport": false,
           "cli": {
@@ -625,7 +644,7 @@
           "variantLabel": "Claude Opus",
           "displayName": "孟加拉猫",
           "mentionPatterns": ["@antig-opus", "@孟加拉opus", "@antigravity-claude"],
-          "provider": "antigravity",
+          "clientId": "antigravity",
           "defaultModel": "claude-opus-4-6",
           "mcpSupport": false,
           "avatar": "/avatars/antig-opus.png",
@@ -680,7 +699,7 @@
       "variants": [
         {
           "id": "opencode-default",
-          "provider": "opencode",
+          "clientId": "opencode",
           "defaultModel": "claude-opus-4-6",
           "mcpSupport": true,
           "cli": {
@@ -704,6 +723,43 @@
             "refText": "你的本事不错，对丘丘…咳…邪魔从不手软，我们结伴而行如何。",
             "instruct": "用一个正直可靠的少年语气说话，话不多但每句都认真",
             "temperature": 0.3
+          }
+        }
+      ]
+    },
+    {
+      "id": "moonshot",
+      "catId": "kimi",
+      "name": "梵花猫",
+      "displayName": "梵花猫",
+      "avatar": "/avatars/kimi.png",
+      "color": {
+        "primary": "#4B5563",
+        "secondary": "#E5E7EB"
+      },
+      "mentionPatterns": ["@kimi", "@moonshot", "@月之暗面", "@梵花猫"],
+      "roleDescription": "中文长文本助手，擅长中文语境理解、资料整理与结构化表达",
+      "teamStrengths": "中文长文、总结归纳、资料整理",
+      "caution": null,
+      "defaultVariantId": "kimi-default",
+      "variants": [
+        {
+          "id": "kimi-default",
+          "clientId": "kimi",
+          "defaultModel": "kimi-code/kimi-for-coding",
+          "mcpSupport": true,
+          "cli": {
+            "command": "kimi",
+            "outputFormat": "stream-json",
+            "defaultArgs": ["--print", "--output-format", "stream-json"]
+          },
+          "personality": "稳健细致，擅长长文阅读和中文语境下的结构化表达",
+          "strengths": ["long-context", "chinese-writing", "summarization"],
+          "contextBudget": {
+            "maxPromptTokens": 240000,
+            "maxContextTokens": 216000,
+            "maxMessages": 200,
+            "maxContentLengthPerMsg": 10000
           }
         }
       ]

@@ -25,11 +25,12 @@ export const HUB_GROUPS: HubGroup[] = [
     label: '成员协作',
     icon: 'cat',
     color: '#9B7EBD',
-    preview: '总览 · 能力 · 配额 · 排行',
+    preview: '总览 · 能力 · 配额 · 工具 · 排行',
     tabs: [
       { id: 'cats', label: '总览', icon: 'users' },
       { id: 'capabilities', label: '能力中心', icon: 'sparkles' },
       { id: 'routing', label: '配额看板', icon: 'chart-pie' },
+      { id: 'tool-usage', label: '工具统计', icon: 'wrench' },
       { id: 'leaderboard', label: '排行榜', icon: 'trophy' },
     ],
   },
@@ -42,7 +43,7 @@ export const HUB_GROUPS: HubGroup[] = [
     tabs: [
       { id: 'system', label: '系统配置', icon: 'settings' },
       { id: 'env', label: '环境 & 文件', icon: 'folder' },
-      { id: 'provider-profiles', label: '账号配置', icon: 'user-cog' },
+      { id: 'accounts', label: '账号配置', icon: 'user-cog' },
       { id: 'voice', label: '语音设置', icon: 'mic' },
       { id: 'notify', label: '通知', icon: 'bell' },
     ],
@@ -52,10 +53,11 @@ export const HUB_GROUPS: HubGroup[] = [
     label: '监控与治理',
     icon: 'activity',
     color: '#5B9BD5',
-    preview: '治理 · 健康 · 救援 · 命令速查',
+    preview: '治理 · 健康 · 记忆 · 救援 · 命令速查',
     tabs: [
       { id: 'governance', label: '治理看板', icon: 'shield' },
       { id: 'health', label: '健康', icon: 'heart-pulse' },
+      { id: 'memory', label: '记忆状态', icon: 'brain' },
       { id: 'rescue', label: '布偶猫救援', icon: 'activity' },
       { id: 'commands', label: '命令速查', icon: 'terminal' },
     ],
@@ -121,6 +123,7 @@ export function AccordionSection({
                 onClick={() => onSelectTab(tab.id)}
                 className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-left text-sm transition-colors"
                 style={isActive ? { backgroundColor: `${group.color}10`, color: group.color } : {}}
+                data-guide-id={tab.id === 'cats' ? 'cats.overview' : undefined}
               >
                 <span style={isActive ? { color: group.color } : { color: '#9ca3af' }}>
                   <HubIcon name={tab.icon} className="h-4 w-4" />

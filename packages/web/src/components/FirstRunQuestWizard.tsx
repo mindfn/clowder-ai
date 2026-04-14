@@ -63,9 +63,9 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
             avatar: selectedTemplate.avatar,
             color: selectedTemplate.color,
             mentionPatterns: [
-              `@${catId}`,
               `@${selectedTemplate.name}`,
               ...(selectedTemplate.nickname ? [`@${selectedTemplate.nickname}`] : []),
+              `@${catId}`,
             ],
             roleDescription: selectedTemplate.roleDescription,
             personality: selectedTemplate.personality,
@@ -88,7 +88,7 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
         // Refresh cat data
         await refresh();
 
-        // Create bootcamp thread at phase-1 (skip phase-0 cat selection since wizard already did it)
+        // Create bootcamp thread at phase-1-intro (wizard already handled cat selection).
         const bootcampRes = await apiFetch('/api/threads', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

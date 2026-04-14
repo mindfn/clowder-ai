@@ -164,6 +164,14 @@ export interface AgentRouterOptions {
   >;
   /** F129: Pack store for loading active packs at invocation time */
   packStore?: import('../../../../packs/PackStore.js').PackStore;
+  /** F148: Evidence store for hierarchical context recall */
+  evidenceStore?: import('../../../../memory/interfaces.js').IEvidenceStore;
+  /** F150: Tool usage counter */
+  toolUsageCounter?: import('../../tool-usage/ToolUsageCounter.js').ToolUsageCounter;
+  /** F155 B-4: Independent guide session store */
+  guideSessionStore?: import('../../../../guides/GuideSessionRepository.js').IGuideSessionStore;
+  /** F155 B-6: Dismiss tracker for guide offer suppression */
+  dismissTracker?: import('../../../../guides/GuideDismissTracker.js').IGuideDismissTracker;
 }
 
 /**
@@ -203,6 +211,13 @@ export class AgentRouter {
       >)
     | undefined;
   private packStore?: import('../../../../packs/PackStore.js').PackStore;
+  private evidenceStore?: import('../../../../memory/interfaces.js').IEvidenceStore;
+  /** F150 */
+  private toolUsageCounter?: import('../../tool-usage/ToolUsageCounter.js').ToolUsageCounter;
+  /** F155 B-4 */
+  private guideSessionStore?: import('../../../../guides/GuideSessionRepository.js').IGuideSessionStore;
+  /** F155 B-6 */
+  private dismissTracker?: import('../../../../guides/GuideDismissTracker.js').IGuideDismissTracker;
   private speechMentionRe: RegExp;
 
   private rebuildRuntimeCaches(agentRegistry: AgentRegistry): void {
@@ -239,6 +254,10 @@ export class AgentRouter {
     this.agentPaneRegistry = options.agentPaneRegistry;
     this.signalArticleLookup = options.signalArticleLookup;
     this.packStore = options.packStore;
+    this.evidenceStore = options.evidenceStore;
+    this.toolUsageCounter = options.toolUsageCounter;
+    this.guideSessionStore = options.guideSessionStore;
+    this.dismissTracker = options.dismissTracker;
   }
 
   refreshFromRegistry(agentRegistry: AgentRegistry): void {
@@ -657,12 +676,16 @@ export class AgentRouter {
         ...(this.tmuxGateway ? { tmuxGateway: this.tmuxGateway } : {}),
         ...(this.agentPaneRegistry ? { agentPaneRegistry: this.agentPaneRegistry } : {}),
         ...(this.signalArticleLookup ? { signalArticleLookup: this.signalArticleLookup } : {}),
+        ...(this.guideSessionStore ? { guideSessionStore: this.guideSessionStore } : {}),
+        ...(this.dismissTracker ? { dismissTracker: this.dismissTracker } : {}),
       },
       messageStore: this.messageStore,
       deliveryCursorStore: this.deliveryCursorStore,
       ...(this.draftStore ? { draftStore: this.draftStore } : {}),
       ...(this.socketManager ? { socketManager: this.socketManager } : {}),
       ...(this.packStore ? { packStore: this.packStore } : {}),
+      ...(this.evidenceStore ? { evidenceStore: this.evidenceStore } : {}),
+      ...(this.toolUsageCounter ? { toolUsageCounter: this.toolUsageCounter } : {}),
     };
   }
 

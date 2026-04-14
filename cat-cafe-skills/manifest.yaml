@@ -81,6 +81,34 @@ skills:
     sop_step: null
     merged_from: ["brainstorming", "multi-cat-brainstorm", "discussion-convergence"]
 
+  # ── 专家辩论团 ──
+  expert-panel:
+    description: >
+      多猫专家辩论团：独立分析→挑战→收敛→风险预演→语音汇报→文档交付。
+      Use when: 技术趋势判断、竞品分析、行业事件分析、需要多视角决策支持、铲屎官说"帮我分析一下"。
+      Not for: 单猫能搞定的问题、代码实现、bug fix、日常聊天。
+      Output: 洞察卡片(rich block) + 语音总结 + 会议纪要 + 正式报告(DOCX/PDF)。
+    triggers:
+      - "帮我分析一下"
+      - "专家辩论"
+      - "expert panel"
+      - "技术参谋"
+      - "竞品分析"
+      - "行业分析"
+      - "趋势判断"
+      - "多猫分析"
+      - "三猫讨论"
+      - "showcase"
+    not_for:
+      - "单猫能搞定的问题"
+      - "代码实现"
+      - "bug fix"
+      - "日常聊天"
+    output: "Insight card + voice summary + meeting notes + formal report (DOCX/PDF)"
+    next: ["feat-lifecycle", "deep-research", "collaborative-thinking"]
+    sop_step: null
+    merged_from: null
+
   # ── 计划编写 ──
   writing-plans:
     description: >
@@ -332,12 +360,35 @@ skills:
     sop_step: null
     merged_from: ["deep-research-pipeline"]
 
+  # ── 知识工程（F152 Phase 0）──
+  knowledge-engineering:
+    description: >
+      猫猫指导外部项目文档重构 — AI FDE 知识工程方法论。
+      Use when: 猫猫部署到外部项目、用户项目缺少结构化文档、需要知识工程指导、冷启动理解业务。
+      Not for: cat-cafe 项目自身开发、已有完善 docs/ 结构的项目（直接用 CatCafeScanner）。
+      Output: 文档现状诊断 + 路径选择 + 三层知识注入建议 + 文档骨架模板。
+    triggers:
+      - "知识工程"
+      - "文档重构"
+      - "外部项目"
+      - "knowledge engineering"
+      - "冷启动"
+      - "AI FDE"
+      - "帮我整理文档"
+    not_for:
+      - "cat-cafe 自身开发"
+      - "已有完善 docs/ 结构"
+    output: "Documentation assessment + path selection + three-layer knowledge injection + skeleton templates"
+    next: []
+    sop_step: null
+    merged_from: null
+
   # ── 定时任务 ──
   schedule-tasks:
     description: >
-      定时任务注册、管理、能力指南。
-      Use when: 用户想设定时任务、定期提醒、周期巡检、定时发送内容。
-      Not for: 一次性即时操作、已有 builtin 任务的手动触发。
+      定时任务注册、管理、能力指南。支持周期任务和一次性延迟任务。
+      Use when: 用户想设定时任务、定期提醒、周期巡检、定时发送内容、延迟执行一次性操作。
+      Not for: 已有 builtin 任务的手动触发。
       Output: 注册/管理定时任务，任务到点唤醒猫执行。
     triggers:
       - "定时"
@@ -351,10 +402,38 @@ skills:
       - "定期"
       - "周期"
       - "定时任务"
+      - "分钟后"
+      - "小时后"
+      - "之后"
+      - "later"
+      - "in 5 minutes"
+      - "once"
     not_for:
-      - "一次性即时操作"
       - "builtin 任务手动触发"
     output: "Registered/managed scheduled task"
+    next: ["rich-messaging"]
+    sop_step: null
+    merged_from: null
+
+  # ── 视频制作 ──
+  video-forge:
+    description: >
+      视频制作全链路：素材入库 → 剧本冻结 → 全局配音 → 对齐 → 渲染 → 审查 → 交付。
+      Use when: 做视频、做 showcase、做教程视频、录屏剪辑、video review、节奏审查。
+      Not for: 纯代码开发（用 worktree/tdd）、纯文档写作（直接写）、PPT（用 ppt-forge）。
+      Output: schema 驱动的视频成片 + 多猫审查通过 + 可发布。
+    triggers:
+      - "做视频"
+      - "showcase 视频"
+      - "教程视频"
+      - "录屏剪辑"
+      - "video review"
+      - "节奏审查"
+    not_for:
+      - "纯代码开发"
+      - "纯文档写作"
+      - "PPT"
+    output: "Schema-driven video production pipeline"
     next: ["rich-messaging"]
     sop_step: null
     merged_from: null
@@ -622,6 +701,33 @@ skills:
     next: []
     sop_step: null
     merged_from: null
+
+  # ── PPT 制作全链路 (F144) ──
+  ppt-forge:
+    description: >
+      PPT 制作全链路：内容规划 → 风格定调 → Slide 制作 → 视觉审查 → 导出验证 → 交付。
+      Use when: 做 PPT、做演示文稿、做 slide、做海报、PPT review、视觉审查。
+      Not for: 纯代码开发（用 worktree/tdd）、纯文档写作（直接写）。
+      Output: 高密度 HTML slide + 多猫审查通过 + 导出验证。
+    triggers:
+      - "做 PPT"
+      - "做个 PPT"
+      - "做演示"
+      - "做 slide"
+      - "PPT review"
+      - "视觉审查"
+      - "ppt-forge"
+      - "做海报"
+      - "华为风格"
+      - "做个演示文稿"
+    not_for:
+      - "纯代码开发"
+      - "纯文档写作"
+    output: "High-density HTML slides + multi-cat visual review pass + export verification"
+    next: ["feat-lifecycle"]
+    sop_step: null
+    merged_from: null
+    feature: "F144"
 
 # ─── 降级为 refs/（不再是独立 skill） ─────────────────
 refs:

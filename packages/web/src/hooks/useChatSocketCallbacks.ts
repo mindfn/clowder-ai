@@ -1,7 +1,7 @@
 import type { GameView } from '@cat-cafe/shared';
 import { useMemo } from 'react';
 import type { SocketCallbacks } from '@/hooks/useSocket';
-import { type ChatMessage as ChatMessageData, useChatStore } from '@/stores/chatStore';
+import { useChatStore } from '@/stores/chatStore';
 import { useGameStore } from '@/stores/gameStore';
 import { type TaskItem, useTaskStore } from '@/stores/taskStore';
 
@@ -14,6 +14,7 @@ interface ExternalDeps {
   handleAuthRequest: NonNullable<SocketCallbacks['onAuthorizationRequest']>;
   handleAuthResponse: NonNullable<SocketCallbacks['onAuthorizationResponse']>;
   onNavigateToThread?: (threadId: string) => void;
+  onIndexEvent?: SocketCallbacks['onIndexEvent'];
 }
 
 /**
@@ -29,6 +30,7 @@ export function useChatSocketCallbacks({
   handleAuthRequest,
   handleAuthResponse,
   onNavigateToThread,
+  onIndexEvent,
 }: ExternalDeps): SocketCallbacks {
   const {
     updateThreadTitle,
@@ -37,7 +39,6 @@ export function useChatSocketCallbacks({
     setHasActiveInvocation,
     setIntentMode,
     setTargetCats,
-    addMessage,
     removeThreadMessage,
     requestStreamCatchUp,
   } = useChatStore();
@@ -62,32 +63,24 @@ export function useChatSocketCallbacks({
         setIntentMode(data.mode as 'ideate' | 'execute');
         setTargetCats((data as { targetCats?: string[] }).targetCats ?? []);
       },
-      onTaskCreated: (task) => addTask(task as unknown as TaskItem),
-      onTaskUpdated: (task) => updateTask(task as unknown as TaskItem),
-      onThreadSummary: (summary) => {
-        const s = summary as {
-          id: string;
-          threadId: string;
-          topic: string;
-          conclusions: string[];
-          openQuestions: string[];
-          createdBy: string;
-          createdAt: number;
-        };
-        addMessage({
-          id: `summary-${s.id}`,
-          type: 'summary',
-          content: s.topic,
-          timestamp: s.createdAt,
-          summary: {
-            id: s.id,
-            topic: s.topic,
-            conclusions: s.conclusions,
-            openQuestions: s.openQuestions,
-            createdBy: s.createdBy,
-          },
-        } as ChatMessageData);
+      onSpawnStarted: (data) => {
+        // F118 D2: Earliest signal — fires before intent_mode.
+        // Per-cat setCatStatus('spawning') is handled by the socket layer.
+        setLoading(true);
+        setHasActiveInvocation(true);
+        setTargetCats(data.targetCats ?? []);
       },
+      onTaskCreated: (task) => {
+        const t = task as Record<string, unknown>;
+        if (t.threadId !== threadId || t.kind === 'pr_tracking') return;
+        addTask(task as unknown as TaskItem);
+      },
+      onTaskUpdated: (task) => {
+        const t = task as Record<string, unknown>;
+        if (t.threadId !== threadId || t.kind === 'pr_tracking') return;
+        updateTask(task as unknown as TaskItem);
+      },
+      // onThreadSummary removed (clowder-ai#343): summaries no longer injected into chat flow.
       onHeartbeat: (data) => {
         if (data.threadId === threadId) resetTimeout();
       },
@@ -113,17 +106,20 @@ export function useChatSocketCallbacks({
           onNavigateToThread?.(data.gameThreadId);
         }
       },
+      // B-5: Guide events now flow directly from useSocket → guideStore.reduceServerEvent
+      // (CustomEvent bridge removed — no onGuideStart/onGuideControl/onGuideComplete needed)
+      onIndexEvent,
     }),
     [
       handleAgentMessage,
       updateThreadTitle,
+      updateThreadParticipants,
       setLoading,
       setHasActiveInvocation,
       setIntentMode,
       setTargetCats,
       addTask,
       updateTask,
-      addMessage,
       removeThreadMessage,
       requestStreamCatchUp,
       resetTimeout,
@@ -131,6 +127,7 @@ export function useChatSocketCallbacks({
       handleAuthRequest,
       handleAuthResponse,
       onNavigateToThread,
+      onIndexEvent,
       threadId,
       userId,
     ],

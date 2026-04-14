@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { type CatConfig, type CatId, CORE_COMMANDS, catRegistry } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { createRedisClient, SessionStore } from '@cat-cafe/shared/utils';
+import fastifyCookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify from 'fastify';
@@ -16,6 +17,7 @@ import { resolveBoundAccountRefForCat } from './config/cat-account-binding.js';
 import { getCatContextBudget } from './config/cat-budgets.js';
 import {
   bootstrapDefaultCatCatalog,
+  getAcpConfig,
   getAllCatIdsFromConfig,
   getConfigSessionStrategy,
   isCatAvailable,
@@ -48,10 +50,10 @@ import {
   DeliveryCursorStore,
   GeminiAgentService,
   getEventAuditLog,
+  KimiAgentService,
   MemoryGovernanceStore,
   OpenCodeAgentService,
 } from './domains/cats/services/index.js';
-import { AutoSummarizer } from './domains/cats/services/orchestration/AutoSummarizer.js';
 import { initPushNotificationService } from './domains/cats/services/push/PushNotificationService.js';
 import type { HandoffConfig } from './domains/cats/services/session/SessionSealer.js';
 import { SessionSealer } from './domains/cats/services/session/SessionSealer.js';
@@ -98,19 +100,20 @@ import {
   ConnectorInvokeTrigger,
   GhCliReviewContentFetcher,
   MemoryProcessedEmailStore,
-  MemoryPrTrackingStore,
-  RedisPrTrackingStore,
   ReviewFeedbackRouter,
   ReviewRouter,
   startGithubReviewWatcher,
   stopGithubReviewWatcher,
 } from './infrastructure/email/index.js';
 import { runSchedulerReplyUserIdBackfill } from './infrastructure/scheduler/scheduler-reply-userid-backfill.js';
+import { securityHeadersPlugin } from './infrastructure/security-headers.js';
+import { sessionAuthPlugin, sessionRoute } from './infrastructure/session-auth.js';
 import { SocketManager } from './infrastructure/websocket/index.js';
 import { configSecretsRoutes } from './routes/config-secrets.js';
 import { connectorWebhookRoutes } from './routes/connector-webhooks.js';
 import { gameRoutes } from './routes/games.js';
 import {
+  accountsRoutes,
   auditRoutes,
   authorizationRoutes,
   backlogRoutes,
@@ -125,6 +128,7 @@ import {
   configRoutes,
   connectorHubRoutes,
   connectorMediaRoutes,
+  distillationRoutes,
   evidenceRoutes,
   executionDigestRoutes,
   exportRoutes,
@@ -132,6 +136,7 @@ import {
   featureDocDetailRoutes,
   firstRunQuestRoutes,
   governanceStatusRoute,
+  guideActionRoutes,
   intentCardRoutes,
   invocationsRoutes,
   leaderboardEventsRoutes,
@@ -143,8 +148,8 @@ import {
   mkdirRoute,
   packsRoutes,
   projectSetupRoute,
+  projectsBootstrapRoutes,
   projectsRoutes,
-  providerProfilesRoutes,
   pushRoutes,
   queueRoutes,
   quotaRoutes,
@@ -167,6 +172,7 @@ import {
   threadBranchRoutes,
   threadCatsRoutes,
   threadsRoutes,
+  toolUsageRoutes,
   ttsRoutes,
   uploadsRoutes,
   usageRoutes,
@@ -176,7 +182,6 @@ import {
   workspaceRoutes,
 } from './routes/index.js';
 import { knowledgeFeedRoutes } from './routes/knowledge-feed.js';
-import { prTrackingRoutes } from './routes/pr-tracking.js';
 import { previewRoutes } from './routes/preview.js';
 import { terminalRoutes } from './routes/terminal.js';
 import { threadExportRoutes } from './routes/thread-export.js';
@@ -205,6 +210,11 @@ const PROCESS_START_AT = Date.now();
 
 async function main(): Promise<void> {
   const { logger: customLogger, isDebugMode, LOG_DIR_PATH } = await import('./infrastructure/logger.js');
+
+  // F152: Initialize OpenTelemetry SDK (must be early, before routes)
+  const { initTelemetry } = await import('./infrastructure/telemetry/init.js');
+  const shutdownTelemetry = initTelemetry();
+
   const app = Fastify({ logger: customLogger as unknown as import('fastify').FastifyBaseLogger });
 
   if (isDebugMode) {
@@ -216,6 +226,14 @@ async function main(): Promise<void> {
     origin: resolveFrontendCorsOrigins(process.env, app.log),
     credentials: true,
   });
+
+  // F156 D-2: Anti-clickjacking headers (X-Frame-Options + CSP frame-ancestors)
+  await app.register(securityHeadersPlugin);
+
+  // F156 D-1: Cookie parsing + session-based identity (replaces userId self-reporting)
+  await app.register(fastifyCookie);
+  await app.register(sessionAuthPlugin);
+  await app.register(sessionRoute);
 
   // WebSocket support (F089 terminal)
   await app.register(fastifyWebsocket);
@@ -233,6 +251,38 @@ async function main(): Promise<void> {
 
   // Health check
   app.get('/health', async () => ({ status: 'ok', timestamp: Date.now() }));
+
+  // F152: Readiness check — verifies dependencies are reachable.
+  // evidenceStoreRef is set after memoryServices init; handler runs at request time.
+  let evidenceStoreRef: { health(): Promise<boolean> } | null = null;
+  app.get('/ready', async (_request, reply) => {
+    const checks: Record<string, { ok: boolean; ms: number; error?: string }> = {};
+    // Redis probe
+    if (redisClient) {
+      const t0 = Date.now();
+      try {
+        await redisClient.ping();
+        checks.redis = { ok: true, ms: Date.now() - t0 };
+      } catch (err) {
+        checks.redis = { ok: false, ms: Date.now() - t0, error: String(err) };
+      }
+    } else {
+      checks.redis = { ok: true, ms: 0 }; // memory mode, always ready
+    }
+    // SQLite probe
+    if (evidenceStoreRef) {
+      const t0 = Date.now();
+      try {
+        const ok = await evidenceStoreRef.health();
+        checks.sqlite = { ok, ms: Date.now() - t0, ...(ok ? {} : { error: 'SELECT 1 failed' }) };
+      } catch (err) {
+        checks.sqlite = { ok: false, ms: Date.now() - t0, error: String(err) };
+      }
+    }
+    const allOk = Object.values(checks).every((c) => c.ok);
+    if (!allOk) reply.code(503);
+    return { status: allOk ? 'ready' : 'degraded', timestamp: Date.now(), checks };
+  });
 
   // Create invocation tracker for cancellation support
   const invocationTracker = new InvocationTracker();
@@ -302,7 +352,21 @@ async function main(): Promise<void> {
   const sessionStore = redis ? new SessionStore(redis) : undefined;
   const deliveryCursorStore = new DeliveryCursorStore(sessionStore);
   const threadStore = createThreadStore(redis);
+  // F155 B-4/B-6: Guide state is runtime-only (in-memory, resets on restart)
+  const { InMemoryGuideSessionStore } = await import('./domains/guides/GuideSessionRepository.js');
+  const guideSessionStore = new InMemoryGuideSessionStore();
+  const { InMemoryGuideDismissTracker } = await import('./domains/guides/GuideDismissTracker.js');
+  const dismissTracker = new InMemoryGuideDismissTracker();
   const taskStore = createTaskStore(redis);
+  if (redis) {
+    const { RedisPrTrackingStore } = await import('./infrastructure/email/RedisPrTrackingStore.js');
+    const { backfillLegacyPrTracking } = await import('./infrastructure/email/backfill-legacy-pr-tracking.js');
+    await backfillLegacyPrTracking({
+      legacyStore: new RedisPrTrackingStore(redis),
+      taskStore,
+      log: app.log,
+    });
+  }
   const backlogStore = createBacklogStore(redis);
   const workflowSopStore = createWorkflowSopStore(redis);
   const summaryStore = createSummaryStore(redis);
@@ -353,13 +417,9 @@ async function main(): Promise<void> {
           projectRoot = thread.projectPath;
         }
         const catConfig = catRegistry.tryGet(catId)?.config;
-        if (catConfig?.provider === 'anthropic' || catConfig?.provider === 'opencode') {
-          const boundAccountRef = resolveBoundAccountRefForCat(
-            projectRoot,
-            catId,
-            catConfig as CatConfig & { providerProfileId?: string },
-          );
-          const runtime = resolveForClient(projectRoot, catConfig.provider, boundAccountRef);
+        if (catConfig?.clientId === 'anthropic' || catConfig?.clientId === 'opencode') {
+          const effectiveAccountRef = resolveBoundAccountRefForCat(projectRoot, catId, catConfig);
+          const runtime = resolveForClient(projectRoot, catConfig.clientId, effectiveAccountRef);
           if (!runtime?.apiKey) return null;
           return { apiKey: runtime.apiKey, baseUrl: runtime.baseUrl || 'https://api.anthropic.com' };
         }
@@ -379,6 +439,7 @@ async function main(): Promise<void> {
     transcriptReader,
     (catId) => getCatContextBudget(catId).maxPromptTokens,
     handoffConfig,
+    summaryStore,
   );
 
   // F102: Memory services — SQLite-only
@@ -403,15 +464,15 @@ async function main(): Promise<void> {
     // Phase E-2: message passage indexing — provide a callback that reads thread messages
     messageListFn: async (threadId: string, limit?: number) => {
       const messages = await messageStore.getByThread(threadId, limit ?? 2000, 'default-user');
-      return messages.map(
-        (m: { id: string; content: string; catId?: string | null; threadId: string; timestamp: number }) => ({
+      return messages
+        .filter((m: { origin?: string }) => m.origin !== 'briefing') // F148 Phase E (AC-E2): exclude briefing from evidence index
+        .map((m: { id: string; content: string; catId?: string | null; threadId: string; timestamp: number }) => ({
           id: m.id,
           content: m.content,
           catId: m.catId ?? undefined,
           threadId: m.threadId,
           timestamp: m.timestamp,
-        }),
-      );
+        }));
     },
     // Phase E-1: thread summary indexing — provide a callback that lists all threads
     threadListFn: async () => {
@@ -436,7 +497,46 @@ async function main(): Promise<void> {
       return excluded;
     },
   });
+  // F152: Wire evidence store into /ready probe
+  evidenceStoreRef = memoryServices.evidenceStore;
   app.log.info('[api] F102: SQLite memory services initialized');
+
+  // F152 Phase B: Expedition Bootstrap — state manager + service
+  const { IndexStateManager } = await import('./domains/memory/IndexStateManager.js');
+  const { ExpeditionBootstrapService } = await import('./domains/memory/ExpeditionBootstrapService.js');
+  const indexStateManager = new IndexStateManager(memoryServices.store.getDb());
+  const { execFileSync } = await import('node:child_process');
+  const expeditionBootstrapService = new ExpeditionBootstrapService(indexStateManager, {
+    rebuildIndex: async (projectPath: string) => {
+      const startMs = Date.now();
+      const { buildStructuralSummary } = await import('./domains/memory/ExpeditionBootstrapService.js');
+      const summary = buildStructuralSummary(projectPath);
+      return { docsIndexed: summary.docsList.length, durationMs: Date.now() - startMs };
+    },
+    getFingerprint: (projectPath: string) => {
+      try {
+        return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: projectPath, encoding: 'utf-8' }).trim();
+      } catch {
+        return '';
+      }
+    },
+    getTierCoverage: async (projectPath: string) => {
+      // Guard: only overlay store tiers for our own repo (Phase D: project isolation)
+      if (resolve(projectPath) !== resolve(repoRoot)) return {};
+
+      const db = memoryServices.store.getDb();
+      const rows = db
+        .prepare(
+          `SELECT provenance_tier, COUNT(*) as cnt FROM evidence_docs WHERE provenance_tier IS NOT NULL AND source_path NOT LIKE 'archive/%' GROUP BY provenance_tier`,
+        )
+        .all() as Array<{ provenance_tier: string; cnt: number }>;
+      const result: Record<string, number> = {};
+      for (const row of rows) {
+        result[row.provenance_tier] = row.cnt;
+      }
+      return result;
+    },
+  });
 
   // F102 D-2: Auto-rebuild evidence index on startup (AC-D4)
   if (memoryServices.indexBuilder) {
@@ -448,6 +548,16 @@ async function main(): Promise<void> {
       );
     } catch (err) {
       app.log.warn(`[api] F102: evidence index rebuild failed (non-fatal): ${err}`);
+    }
+  }
+
+  // F-4: Global knowledge rebuild (Skills + MEMORY.md → global_knowledge.sqlite)
+  if (memoryServices.globalIndexBuilder) {
+    try {
+      const gResult = await memoryServices.globalIndexBuilder.rebuild();
+      app.log.info(`[api] F102: global knowledge rebuilt — ${gResult.docsIndexed} indexed (${gResult.durationMs}ms)`);
+    } catch (err) {
+      app.log.warn(`[api] F102: global knowledge rebuild failed (non-fatal): ${err}`);
     }
   }
 
@@ -500,9 +610,10 @@ async function main(): Promise<void> {
   const packTemplateStore = new PackTemplateStore(schedulerDb);
 
   // Phase 4: delivery + content fetch for template execution
-  const { createDeliverFn } = await import('./infrastructure/scheduler/delivery.js');
+  const { createDeliverFn, createLifecycleToastFn } = await import('./infrastructure/scheduler/delivery.js');
   const { createFetchContentFn } = await import('./infrastructure/scheduler/content-fetcher.js');
   const schedulerDeliver = createDeliverFn({ messageStore, socketManager });
+  const schedulerLifecycleToast = createLifecycleToastFn({ socketManager });
   const schedulerFetchContent = createFetchContentFn();
 
   const taskRunnerV2 = new TaskRunnerV2({
@@ -512,6 +623,7 @@ async function main(): Promise<void> {
     globalControlStore,
     emissionStore,
     deliver: schedulerDeliver,
+    notifyLifecycle: schedulerLifecycleToast,
     fetchContent: schedulerFetchContent,
   });
 
@@ -519,6 +631,7 @@ async function main(): Promise<void> {
   const { DynamicTaskStore } = await import('./infrastructure/scheduler/DynamicTaskStore.js');
   const { templateRegistry } = await import('./infrastructure/scheduler/templates/registry.js');
   const dynamicTaskStore = new DynamicTaskStore(schedulerDb);
+  taskRunnerV2.setDynamicTaskStore(dynamicTaskStore); // #415: wire store for once-trigger auto-retirement
 
   // ── F139 Phase 2+3A+3B: Schedule panel API routes ──
   const { scheduleRoutes } = await import('./routes/schedule.js');
@@ -528,6 +641,8 @@ async function main(): Promise<void> {
     templateRegistry,
     globalControlStore,
     packTemplateStore,
+    taskStore,
+    notifyLifecycle: schedulerLifecycleToast,
   });
 
   // ── Phase G: Summary Compaction (registers into unified scheduler) ──
@@ -538,7 +653,7 @@ async function main(): Promise<void> {
 
       // Abstractive summary API config resolution (priority order):
       // 1. F102_API_BASE + F102_API_KEY (explicit override)
-      // 2. ANTHROPIC_API_KEY + local proxy (http://127.0.0.1:{ANTHROPIC_PROXY_PORT}/{first-slug})
+      // 2. Unified accounts system (credentials.json) + local proxy
       // 3. null → skip abstractive
       const generateAbstractive = createAbstractiveClient(
         async () => {
@@ -546,8 +661,9 @@ async function main(): Promise<void> {
           if (process.env.F102_API_BASE && process.env.F102_API_KEY) {
             return { mode: 'api_key' as const, baseUrl: process.env.F102_API_BASE, apiKey: process.env.F102_API_KEY };
           }
-          // Priority 2: use existing ANTHROPIC_API_KEY + local proxy
-          const apiKey = process.env.ANTHROPIC_API_KEY;
+          // Priority 2: deterministic binding with installer-only fallback (502 regression)
+          const runtimeProfile = resolveAnthropicRuntimeProfile(process.cwd());
+          const apiKey = runtimeProfile.apiKey;
           if (!apiKey) return null;
           const proxyPort = process.env.ANTHROPIC_PROXY_PORT || '9877';
           // Read first upstream slug from proxy-upstreams.json
@@ -607,69 +723,82 @@ async function main(): Promise<void> {
             }
           : undefined,
         // H-3: Submit durable candidates to knowledge emergence pipeline
-        submitCandidate: async (candidate) => {
-          const marker = await memoryServices.markerQueue.submit({
-            content: `[${candidate.kind}] ${candidate.title}: ${candidate.claim}`,
-            source: `thread:${candidate.threadId}`,
-            status: 'captured',
-            // method → lesson: EvidenceKind has no 'method' variant; methods are stored as lessons
-            targetKind: candidate.kind === 'decision' ? 'decision' : 'lesson',
-          });
-          // Auto-approve explicit candidates (铲屎官不需要每条都审)
-          if (candidate.confidence === 'explicit') {
-            await memoryServices.markerQueue.transition(marker.id, 'normalized');
-            await memoryServices.markerQueue.transition(marker.id, 'approved');
-            app.log.info(`[knowledge-emergence] auto-approved: [${candidate.kind}] ${candidate.title}`);
-          } else {
-            app.log.info(`[knowledge-emergence] submitted for review: [${candidate.kind}] ${candidate.title}`);
-          }
-        },
+        // Gated by F102_DURABLE_CANDIDATES flag (spec §F102 env config)
+        submitCandidate:
+          process.env.F102_DURABLE_CANDIDATES !== 'on'
+            ? undefined
+            : async (candidate) => {
+                const marker = await memoryServices.markerQueue.submit({
+                  content: `[${candidate.kind}] ${candidate.title}: ${candidate.claim}`,
+                  source: `thread:${candidate.threadId}`,
+                  status: 'captured',
+                  // method → lesson: EvidenceKind has no 'method' variant; methods are stored as lessons
+                  targetKind: candidate.kind === 'decision' ? 'decision' : 'lesson',
+                });
+                // Auto-approve explicit candidates (铲屎官不需要每条都审)
+                if (candidate.confidence === 'explicit') {
+                  await memoryServices.markerQueue.transition(marker.id, 'normalized');
+                  await memoryServices.markerQueue.transition(marker.id, 'approved');
+                  app.log.info(`[knowledge-emergence] auto-approved: [${candidate.kind}] ${candidate.title}`);
+                } else {
+                  app.log.info(`[knowledge-emergence] submitted for review: [${candidate.kind}] ${candidate.title}`);
+                }
+              },
         logger: { info: app.log.info.bind(app.log), error: app.log.error.bind(app.log) },
       });
 
       taskRunnerV2.register(summarySpec);
-      app.log.info('[api] F139: summary-compact spec registered');
+      const candidatesOn = process.env.F102_DURABLE_CANDIDATES === 'on';
+      const topicSegOn = process.env.F102_TOPIC_SEGMENTS === 'on';
+      app.log.info(
+        `[api] F139: summary-compact spec registered (candidates=${candidatesOn ? 'on' : 'off'}, topicSegments=${topicSegOn ? 'on' : 'off'})`,
+      );
 
       // H-3 backfill: replay lost candidates from summary_segments into MarkerQueue.
-      // Before the mkdirSync fix, submit() silently failed (ENOENT). This one-shot
-      // replay recovers those candidates. Idempotent via content-based dedup: each
-      // candidate is skipped if a marker with identical content already exists.
-      const existingMarkers = await memoryServices.markerQueue.list();
-      const existingContents = new Set(existingMarkers.map((m) => m.content));
-      const rows = db
-        .prepare('SELECT thread_id, candidates FROM summary_segments WHERE candidates IS NOT NULL')
-        .all() as Array<{ thread_id: string; candidates: string }>;
-      let backfilled = 0;
-      for (const row of rows) {
-        try {
-          const candidates = JSON.parse(row.candidates) as Array<{
-            kind: string;
-            title: string;
-            claim: string;
-            confidence?: string;
-          }>;
-          for (const c of candidates) {
-            const content = `[${c.kind}] ${c.title}: ${c.claim}`;
-            if (existingContents.has(content)) continue;
-            const marker = await memoryServices.markerQueue.submit({
-              content,
-              source: `thread:${row.thread_id}`,
-              status: 'captured',
-              targetKind: c.kind === 'decision' ? 'decision' : 'lesson',
-            });
-            if ((c.confidence ?? 'inferred') === 'explicit') {
-              await memoryServices.markerQueue.transition(marker.id, 'normalized');
-              await memoryServices.markerQueue.transition(marker.id, 'approved');
+      // Gated by F102_DURABLE_CANDIDATES (same gate as submitCandidate above).
+      if (!candidatesOn) {
+        app.log.info('[knowledge-backfill] skipped (F102_DURABLE_CANDIDATES=off)');
+      } else {
+        // Before the mkdirSync fix, submit() silently failed (ENOENT). This one-shot
+        // replay recovers those candidates. Idempotent via content-based dedup: each
+        // candidate is skipped if a marker with identical content already exists.
+        const existingMarkers = await memoryServices.markerQueue.list();
+        const existingContents = new Set(existingMarkers.map((m) => m.content));
+        const rows = db
+          .prepare('SELECT thread_id, candidates FROM summary_segments WHERE candidates IS NOT NULL')
+          .all() as Array<{ thread_id: string; candidates: string }>;
+        let backfilled = 0;
+        for (const row of rows) {
+          try {
+            const candidates = JSON.parse(row.candidates) as Array<{
+              kind: string;
+              title: string;
+              claim: string;
+              confidence?: string;
+            }>;
+            for (const c of candidates) {
+              const content = `[${c.kind}] ${c.title}: ${c.claim}`;
+              if (existingContents.has(content)) continue;
+              const marker = await memoryServices.markerQueue.submit({
+                content,
+                source: `thread:${row.thread_id}`,
+                status: 'captured',
+                targetKind: c.kind === 'decision' ? 'decision' : 'lesson',
+              });
+              if ((c.confidence ?? 'inferred') === 'explicit') {
+                await memoryServices.markerQueue.transition(marker.id, 'normalized');
+                await memoryServices.markerQueue.transition(marker.id, 'approved');
+              }
+              existingContents.add(content);
+              backfilled++;
             }
-            existingContents.add(content);
-            backfilled++;
+          } catch (backfillErr) {
+            app.log.error(`[knowledge-backfill] failed for thread ${row.thread_id}: ${backfillErr}`);
           }
-        } catch (backfillErr) {
-          app.log.error(`[knowledge-backfill] failed for thread ${row.thread_id}: ${backfillErr}`);
         }
-      }
-      if (backfilled > 0) {
-        app.log.info(`[knowledge-backfill] replayed ${backfilled} lost candidates into MarkerQueue`);
+        if (backfilled > 0) {
+          app.log.info(`[knowledge-backfill] replayed ${backfilled} lost candidates into MarkerQueue`);
+        }
       }
     } catch (err) {
       app.log.warn(`[api] F102 Phase G: scheduler init failed (non-fatal): ${err}`);
@@ -694,6 +823,11 @@ async function main(): Promise<void> {
     }
   }
 
+  // ── F149 Phase C: ACP process pool registry (variantId → AcpProcessPool) ──
+  // Using Map<string, any> because AcpProcessPool is dynamically imported only when acp config present.
+  // biome-ignore lint: dynamic import bridge
+  const acpPoolRegistry = new Map<string, any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
+
   // ── F32-b: AgentRegistry (catId → AgentService) — one instance per cat ──
   // Each cat gets its own AgentService instance with its catId + model.
   const agentRegistry = new AgentRegistry();
@@ -705,15 +839,59 @@ async function main(): Promise<void> {
       // F32-b P1 fix: do NOT pass model here — let constructors resolve via
       // getCatModel(catId) which respects env override (CAT_*_MODEL > config > fallback)
       let service: AgentService;
-      switch (config.provider) {
+      switch (config.clientId) {
         case 'anthropic':
           service = new ClaudeAgentService({ catId });
           break;
         case 'openai':
           service = new CodexAgentService({ catId });
           break;
-        case 'google':
-          service = new GeminiAgentService({ catId });
+        case 'google': {
+          const acpConfig = getAcpConfig(id);
+          if (acpConfig) {
+            const { GeminiAcpAdapter } = await import(
+              './domains/cats/services/agents/providers/acp/GeminiAcpAdapter.js'
+            );
+            const { AcpProcessPool } = await import('./domains/cats/services/agents/providers/acp/AcpProcessPool.js');
+            const { AcpClient } = await import('./domains/cats/services/agents/providers/acp/AcpClient.js');
+            const acpProjectRoot = findMonorepoRoot();
+            const poolKey = { projectPath: acpProjectRoot, providerProfile: id };
+            // Shared pool per variant — reused across cats with same variant
+            if (!acpPoolRegistry.has(id)) {
+              const pool = new AcpProcessPool(
+                {
+                  maxLiveProcesses: acpConfig.pool?.maxLiveProcesses ?? 3,
+                  idleTtlMs: acpConfig.pool?.idleTtlMs ?? 5 * 60 * 1000,
+                  healthCheckIntervalMs: 30_000,
+                },
+                acpConfig,
+                () =>
+                  new AcpClient({
+                    command: acpConfig.command,
+                    args: acpConfig.startupArgs,
+                    cwd: acpProjectRoot,
+                  }),
+              );
+              acpPoolRegistry.set(id, pool);
+            }
+            const { resolveAcpMcpServers } = await import(
+              './domains/cats/services/agents/providers/acp/acp-mcp-resolver.js'
+            );
+            const mcpServers = resolveAcpMcpServers(acpProjectRoot, acpConfig.mcpWhitelist ?? []);
+            service = new GeminiAcpAdapter({
+              catId,
+              pool: acpPoolRegistry.get(id)!,
+              poolKey,
+              projectRoot: acpProjectRoot,
+              mcpServers,
+            });
+          } else {
+            service = new GeminiAgentService({ catId });
+          }
+          break;
+        }
+        case 'kimi':
+          service = new KimiAgentService({ catId });
           break;
         case 'dare':
           service = new DareAgentService({ catId });
@@ -739,7 +917,7 @@ async function main(): Promise<void> {
           break;
         }
         default:
-          app.log.warn(`[api] Unknown provider "${config.provider}" for cat "${id}". It will not be routable.`);
+          app.log.warn(`[api] Unknown client "${config.clientId}" for cat "${id}". It will not be routable.`);
           continue;
       }
       agentRegistry.register(id, service);
@@ -810,6 +988,62 @@ async function main(): Promise<void> {
   const packStoreDir = join(findMonorepoRoot(process.cwd()), '.cat-cafe', 'packs');
   const packStore = new PackStore(packStoreDir);
 
+  // F150: Tool usage counter (fire-and-forget INCR on tool_use events)
+  const toolUsageArchiver = redis
+    ? new (await import('./domains/cats/services/tool-usage/ToolUsageArchiver.js')).ToolUsageArchiver(
+        join(findMonorepoRoot(process.cwd()), '.cat-cafe', 'tool-usage-archive.jsonl'),
+      )
+    : undefined;
+  const toolUsageCounter = redis
+    ? new (await import('./domains/cats/services/tool-usage/ToolUsageCounter.js')).ToolUsageCounter(
+        redis,
+        toolUsageArchiver,
+      )
+    : undefined;
+
+  // F150: Daily archive sweep — persist expiring Redis counters to JSONL
+  if (toolUsageCounter && toolUsageArchiver) {
+    const sweepLog = (await import('./infrastructure/logger.js')).createModuleLogger('tool-usage-sweep');
+    let sweepInFlight = false;
+    const runSweep = async () => {
+      if (sweepInFlight) return;
+      sweepInFlight = true;
+      try {
+        const archivedDates = await toolUsageArchiver.getArchivedDates();
+        // Catch-up: archive ALL unarchived dates older than 7 days (not just 85-89).
+        // Covers downtime gaps — any date still in Redis but not yet archived gets saved.
+        const now = new Date();
+        const targetDates = new Set<string>();
+        for (let offset = 7; offset <= 89; offset++) {
+          const d = new Date(now);
+          d.setDate(d.getDate() - offset);
+          const dateStr = d.toISOString().slice(0, 10);
+          if (!archivedDates.has(dateStr)) targetDates.add(dateStr);
+        }
+        if (targetDates.size === 0) return;
+        // Single SCAN for all dates, then filter client-side
+        const allEntries = await toolUsageCounter.fetchAllEntries();
+        let archived = 0;
+        for (const date of targetDates) {
+          const entries = allEntries.filter((e) => e.date === date);
+          if (entries.length > 0) {
+            archived += await toolUsageArchiver.archiveEntries(entries);
+          }
+        }
+        if (archived > 0) sweepLog.info({ archived }, 'Tool usage archive sweep completed');
+      } catch (err) {
+        sweepLog.warn({ err }, 'Tool usage archive sweep failed');
+      } finally {
+        sweepInFlight = false;
+      }
+    };
+    // First sweep 30s after startup, then daily
+    const startupTimer = setTimeout(runSweep, 30_000);
+    startupTimer.unref();
+    const dailyTimer = setInterval(runSweep, 24 * 60 * 60 * 1000);
+    dailyTimer.unref();
+  }
+
   // Shared AgentRouter — used by messagesRoutes and invocationsRoutes
   router = new AgentRouter({
     agentRegistry,
@@ -832,9 +1066,11 @@ async function main(): Promise<void> {
     ...(agentPaneRegistry ? { agentPaneRegistry } : {}),
     signalArticleLookup: createSignalArticleLookup({ transcriptReader }),
     packStore,
+    evidenceStore: memoryServices.evidenceStore,
+    ...(toolUsageCounter ? { toolUsageCounter } : {}),
+    guideSessionStore,
+    dismissTracker,
   });
-
-  const autoSummarizer = new AutoSummarizer({ messageStore, summaryStore });
 
   // F39: Message queue delivery
   const invocationQueue = new InvocationQueue();
@@ -878,6 +1114,8 @@ async function main(): Promise<void> {
           wakeCat,
           actionNotifier: sharedActionNotifier,
           orchestrator: sharedOrchestrator,
+          messageStore,
+          socketManager,
         },
       });
       app.log.info('[api] F101 game driver: GameNarratorDriver (agent-driven)');
@@ -901,7 +1139,6 @@ async function main(): Promise<void> {
     threadStore,
     invocationTracker,
     invocationRecordStore,
-    autoSummarizer,
     summaryStore,
     draftStore,
     invocationQueue,
@@ -931,10 +1168,36 @@ async function main(): Promise<void> {
     socketManager,
     threadStore,
   });
+  // F155: Frontend-facing guide actions (no MCP auth, uses userId header)
+  if (threadStore) {
+    await app.register(guideActionRoutes, {
+      threadStore,
+      socketManager,
+      guideSessionStore,
+      dismissTracker,
+    });
+  }
   await app.register(catsRoutes);
+
+  // F149 Phase C: ACP pool diagnostics endpoint (gated by env flag)
+  app.get('/api/diagnostics/acp-pool', async (_req, reply) => {
+    if (process.env.CAT_CAFE_DIAGNOSTICS !== '1') {
+      return reply.code(403).send({ error: 'Diagnostics disabled' });
+    }
+    const pools: Record<string, unknown> = {};
+    for (const [variantId, pool] of acpPoolRegistry) {
+      pools[variantId] = pool.getMetrics();
+    }
+    return { pools, poolCount: acpPoolRegistry.size };
+  });
+
   await app.register(quotaRoutes);
   // F128: Daily token usage aggregation
   await app.register(usageRoutes, { invocationRecordStore });
+  // F150: Tool/Skill/MCP usage statistics
+  if (toolUsageCounter) {
+    await app.register(toolUsageRoutes, { toolUsageCounter });
+  }
   // F075 Phase B+C: Game + Achievement stores
   const { GameStore } = await import('./domains/leaderboard/game-store.js');
   const { AchievementStore } = await import('./domains/leaderboard/achievement-store.js');
@@ -975,10 +1238,6 @@ async function main(): Promise<void> {
 
     app.log.info('[api] F101 game routes registered');
   }
-
-  // TD091: Create prTrackingStore early so callbacks can use it for MCP registration
-  const prTrackingStore = redis ? new RedisPrTrackingStore(redis) : new MemoryPrTrackingStore();
-  app.log.info(`[api] PrTrackingStore: ${redis ? 'Redis' : 'Memory'}`);
 
   // Phase D (AC-D1): validate repo exists via `gh repo view` before PR tracking registration.
   // Generic — works for any GitHub repo the caller has access to, not hardcoded to ours.
@@ -1025,11 +1284,11 @@ async function main(): Promise<void> {
     taskStore,
     backlogStore,
     threadStore,
+    agentRegistry,
     router,
     invocationRecordStore,
     invocationTracker,
     deliveryCursorStore,
-    prTrackingStore,
     validateRepo,
     ...(workflowSopStore ? { workflowSopStore } : {}),
     queueProcessor,
@@ -1039,6 +1298,7 @@ async function main(): Promise<void> {
     reflectionService: memoryServices.reflectionService,
     limbRegistry,
     limbPairingStore,
+    guideSessionStore,
   } as Parameters<typeof callbacksRoutes>[1];
   await app.register(callbacksRoutes, callbackOpts);
 
@@ -1070,6 +1330,7 @@ async function main(): Promise<void> {
     taskProgressStore,
     backlogStore,
     ...(readStateStore ? { readStateStore } : {}),
+    guideSessionStore,
   });
   await app.register(threadBranchRoutes, {
     threadStore,
@@ -1127,12 +1388,20 @@ async function main(): Promise<void> {
   await app.register(projectsRoutes);
   await app.register(mkdirRoute);
   await app.register(governanceStatusRoute);
-  await app.register(projectSetupRoute);
+  await app.register(projectSetupRoute, {
+    memoryBootstrapService: expeditionBootstrapService as { bootstrap: (p: string, o?: unknown) => Promise<unknown> },
+    socketManager: socketManager ?? undefined,
+  });
+  await app.register(projectsBootstrapRoutes, {
+    stateManager: indexStateManager,
+    bootstrapService: expeditionBootstrapService,
+    socketManager: socketManager!,
+  });
   await app.register(exportRoutes, { messageStore, threadStore });
   await app.register(configRoutes);
   await app.register(configSecretsRoutes);
   await app.register(featureDocDetailRoutes);
-  await app.register(providerProfilesRoutes);
+  await app.register(accountsRoutes);
   await app.register(claudeRescueRoutes);
   await app.register(auditRoutes, { threadStore });
   await app.register(capabilitiesRoutes);
@@ -1193,11 +1462,23 @@ async function main(): Promise<void> {
   const { voteRoutes } = await import('./routes/votes.js');
   await app.register(voteRoutes, { threadStore, socketManager, messageStore });
 
-  // Evidence search (SQLite) + reindex endpoint (D-11)
+  // Evidence search (SQLite) + reindex endpoint (D-11) + F-4 federated search
   await app.register(evidenceRoutes, {
     evidenceStore: memoryServices.evidenceStore,
     indexBuilder: memoryServices.indexBuilder,
+    knowledgeResolver: memoryServices.knowledgeResolver,
   });
+
+  // F152 Phase C: Distillation routes (global lesson reflow)
+  if (memoryServices.globalStore) {
+    const { DistillationService } = await import('./domains/memory/distillation-service.js');
+    const distillationService = new DistillationService(memoryServices.store, memoryServices.globalStore);
+    await distillationService.initialize();
+    await app.register(distillationRoutes, {
+      evidenceStore: memoryServices.evidenceStore,
+      distillationService,
+    });
+  }
 
   // F129: Pack system routes (reuse shared packStore from above)
   {
@@ -1205,7 +1486,13 @@ async function main(): Promise<void> {
     const { PackLoader } = await import('./domains/packs/PackLoader.js');
     const packGuard = new PackSecurityGuard();
     const packLoader = new PackLoader(packStore, packGuard);
-    await app.register(packsRoutes, { packLoader });
+    const root = findMonorepoRoot(process.cwd());
+    await app.register(packsRoutes, {
+      packLoader,
+      catConfigPath: join(root, 'cat-config.json'),
+      sharedRulesPath: join(root, 'cat-cafe-skills', 'refs', 'shared-rules.md'),
+      skillsManifestPath: join(root, 'cat-cafe-skills', 'manifest.yaml'),
+    });
   }
 
   // Reflect (SQLite-backed reflection)
@@ -1217,6 +1504,7 @@ async function main(): Promise<void> {
   await knowledgeFeedRoutes(app, {
     markerQueue: memoryServices.markerQueue,
     db: memoryServices.store.getDb(),
+    materializationService: memoryServices.materializationService,
   });
 
   // Memory governance (publish workflow)
@@ -1311,7 +1599,7 @@ async function main(): Promise<void> {
   // Must register routes BEFORE app.listen()
   const processedEmailStore = new MemoryProcessedEmailStore();
   const reviewRouter = new ReviewRouter({
-    prTrackingStore,
+    taskStore,
     processedEmailStore,
     threadStore,
     messageStore,
@@ -1320,7 +1608,6 @@ async function main(): Promise<void> {
     defaultUserId: 'default-user',
     reviewContentFetcher: new GhCliReviewContentFetcher(app.log),
   });
-  await app.register(prTrackingRoutes, { prTrackingStore, validateRepo });
 
   // F088: Register connector webhook routes BEFORE listen (Fastify requires it)
   const connectorWebhookHandlers = new Map<string, import('./routes/connector-webhooks.js').ConnectorWebhookHandler>();
@@ -1370,6 +1657,14 @@ async function main(): Promise<void> {
     );
   }
 
+  // F149 Phase C: graceful shutdown for ACP process pools
+  app.addHook('onClose', async () => {
+    for (const pool of acpPoolRegistry.values()) {
+      await pool.closeAll();
+    }
+    acpPoolRegistry.clear();
+  });
+
   // F101: register onClose hook BEFORE listen (Fastify forbids addHook after listen).
   // The actual recovery player is assigned post-listen; stopAllLoops is a no-op if null.
   let f101RecoveryPlayer: { stopAllLoops(): void } | null = null;
@@ -1387,6 +1682,15 @@ async function main(): Promise<void> {
   }
   app.log.info(`[api] Server running on ${address}`);
   app.log.info(`[ws] WebSocket server ready`);
+
+  // F156: Friendly hint for private network access
+  if (HOST === '0.0.0.0' && process.env.CORS_ALLOW_PRIVATE_NETWORK !== 'true') {
+    app.log.warn(
+      '[network] 检测到监听所有网络 (0.0.0.0)，但私网设备访问未开启。' +
+        '手机/平板通过局域网或 Tailscale 访问可能被拦截。' +
+        '在 .env 中添加 CORS_ALLOW_PRIVATE_NETWORK=true 并重启服务（参考 .env.example）',
+    );
+  }
 
   // F048 Phase A: Sweep orphaned invocations from previous process crash.
   // Runs only after the API has both:
@@ -1456,6 +1760,7 @@ async function main(): Promise<void> {
         anthropic: join(root, '.mcp.json'),
         openai: join(root, '.codex', 'config.toml'),
         google: join(root, '.gemini', 'settings.json'),
+        kimi: join(root, '.kimi', 'mcp.json'),
       });
       app.log.info('[api] CLI configs regenerated at startup');
     }
@@ -1463,26 +1768,12 @@ async function main(): Promise<void> {
     app.log.warn(`[api] CLI config regeneration failed (best-effort): ${String(err)}`);
   }
 
-  // F136 Phase 4a: Migrate provider-profiles → accounts + conflict scan (HC-3/HC-5/LL-043).
-  // HC-5: conflict is a HARD error — must propagate, not swallow.
-  // LL-043: legacy source present + accounts missing is a HARD error — don't run with empty accounts.
-  // Migration filesystem errors are best-effort.
-  try {
+  // F340: Account startup — fail-fast (LL-043 / migration conflict / corrupt credentials).
+  // Errors propagate to main().catch → process.exit(1).
+  {
     const { accountStartupHook } = await import('./config/account-startup.js');
     const startupResult = accountStartupHook(findMonorepoRoot(process.cwd()));
-    if (startupResult.migration.migrated) {
-      app.log.info(
-        `[api] F136 account migration: ${startupResult.migration.accountsMigrated} account(s), ${startupResult.migration.credentialsMigrated} credential(s)`,
-      );
-    }
-  } catch (err) {
-    // HC-5 and LL-043 errors are HARD errors — let them crash the server.
-    if (err instanceof Error && (err.message.includes('HC-5') || err.message.includes('LL-043'))) {
-      app.log.error(`[api] ${err.message}`);
-      throw err;
-    }
-    // Other errors (migration filesystem issues) are best-effort.
-    app.log.warn(`[api] F136 account startup hook failed (best-effort): ${String(err)}`);
+    app.log.info(`[api] F340 accounts: ${startupResult.accountCount} account(s) loaded`);
   }
 
   // F101 Phase G: Recover auto-play loops for active games after restart.
@@ -1561,14 +1852,14 @@ async function main(): Promise<void> {
     const deliveryDeps = { messageStore, socketManager };
 
     const cicdRouter = new CiCdRouter({
-      prTrackingStore,
+      taskStore,
       deliveryDeps,
       log: app.log,
     });
 
     // F140: ConflictRouter (state-transition dedup + KD-9 fingerprint reset)
     const conflictRouter = new ConflictRouter({
-      prTrackingStore,
+      taskStore,
       deliveryDeps,
       log: app.log,
     });
@@ -1579,7 +1870,7 @@ async function main(): Promise<void> {
       log: app.log,
     });
 
-    taskRunnerV2.register(createCiCdCheckTaskSpec({ prTrackingStore, cicdRouter, invokeTrigger, log: app.log }));
+    taskRunnerV2.register(createCiCdCheckTaskSpec({ taskStore, cicdRouter, invokeTrigger, log: app.log }));
 
     // F140: conflict-check with ConflictRouter + urgent trigger
     const checkMergeable = async (repo: string, pr: number) => {
@@ -1602,7 +1893,7 @@ async function main(): Promise<void> {
 
     taskRunnerV2.register(
       createConflictCheckTaskSpec({
-        prTrackingStore,
+        taskStore,
         checkMergeable,
         conflictRouter,
         invokeTrigger,
@@ -1630,7 +1921,7 @@ async function main(): Promise<void> {
 
     taskRunnerV2.register(
       createReviewFeedbackTaskSpec({
-        prTrackingStore,
+        taskStore,
         fetchComments: async (repo, pr) => {
           const [reviewComments, issueComments] = await Promise.all([
             fetchPaginated(`/repos/${repo}/pulls/${pr}/comments`),
@@ -1947,6 +2238,13 @@ async function main(): Promise<void> {
       } catch (err) {
         exitCode = 1;
         app.log.error(`[api] SocketManager close failed: ${String(err)}`);
+      }
+
+      // F152: Flush and shutdown OTel SDK before closing server
+      try {
+        await shutdownTelemetry();
+      } catch (err) {
+        app.log.error(`[api] OTel shutdown failed: ${String(err)}`);
       }
 
       // Close Fastify server

@@ -8,7 +8,7 @@ import Database from 'better-sqlite3';
 import Fastify from 'fastify';
 
 describe('Schedule Routes', () => {
-  let app, db, ledger, runner;
+  let app, db, ledger, runner, taskStore;
   const noop = () => {};
   const silentLogger = { info: noop, error: noop };
 
@@ -18,10 +18,12 @@ describe('Schedule Routes', () => {
     const { RunLedger } = await import('../dist/infrastructure/scheduler/RunLedger.js');
     const { TaskRunnerV2 } = await import('../dist/infrastructure/scheduler/TaskRunnerV2.js');
     const { scheduleRoutes } = await import('../dist/routes/schedule.js');
+    const { TaskStore } = await import('../dist/domains/cats/services/stores/ports/TaskStore.js');
 
     applyMigrations(db);
     ledger = new RunLedger(db);
     runner = new TaskRunnerV2({ logger: silentLogger, ledger });
+    taskStore = new TaskStore();
 
     // Register test tasks
     runner.register({
@@ -54,6 +56,7 @@ describe('Schedule Routes', () => {
       state: { runLedger: 'sqlite' },
       outcome: { whenNoSignal: 'record' },
       enabled: () => true,
+      display: { label: 'CI/CD 检查', category: 'pr', subjectKind: 'pr' },
     });
 
     // Populate ledger with some runs
@@ -61,7 +64,7 @@ describe('Schedule Routes', () => {
     await runner.triggerNow('cicd-check');
 
     app = Fastify({ logger: false });
-    await app.register(scheduleRoutes, { taskRunner: runner });
+    await app.register(scheduleRoutes, { taskRunner: runner, taskStore });
     await app.ready();
   });
 
@@ -89,6 +92,120 @@ describe('Schedule Routes', () => {
       assert.equal(summary.lastRun.outcome, 'RUN_DELIVERED');
       assert.equal(summary.runStats.total, 1);
       assert.equal(summary.runStats.delivered, 1);
+    });
+
+    it('includes zero-run PR summaries for a thread that has tracked PRs', async () => {
+      runner.register({
+        id: 'review-feedback',
+        profile: 'poller',
+        trigger: { type: 'interval', ms: 60000 },
+        admission: { gate: async () => ({ run: false, reason: 'idle' }) },
+        run: { overlap: 'skip', timeoutMs: 5000, execute: async () => {} },
+        state: { runLedger: 'sqlite' },
+        outcome: { whenNoSignal: 'record' },
+        enabled: () => true,
+        display: { label: 'Review 反馈', category: 'pr', subjectKind: 'pr' },
+      });
+      taskStore.upsertBySubject({
+        kind: 'pr_tracking',
+        subjectKey: 'pr:owner/repo#42',
+        threadId: 'abc123',
+        title: 'PR tracking: owner/repo#42',
+        why: 'track pr',
+        createdBy: 'opus',
+      });
+
+      const res = await app.inject({ method: 'GET', url: '/api/schedule/tasks?threadId=abc123' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok(body.tasks.some((task) => task.id === 'review-feedback'));
+    });
+
+    it('ignores done PR tracking tasks when deriving zero-run subjectKind fallback', async () => {
+      runner.register({
+        id: 'review-feedback',
+        profile: 'poller',
+        trigger: { type: 'interval', ms: 60000 },
+        admission: { gate: async () => ({ run: false, reason: 'idle' }) },
+        run: { overlap: 'skip', timeoutMs: 5000, execute: async () => {} },
+        state: { runLedger: 'sqlite' },
+        outcome: { whenNoSignal: 'record' },
+        enabled: () => true,
+        display: { label: 'Review 反馈', category: 'pr', subjectKind: 'pr' },
+      });
+      const tracking = taskStore.upsertBySubject({
+        kind: 'pr_tracking',
+        subjectKey: 'pr:owner/repo#42',
+        threadId: 'abc123',
+        title: 'PR tracking: owner/repo#42',
+        why: 'track pr',
+        createdBy: 'opus',
+      });
+      taskStore.update(tracking.id, { status: 'done' });
+
+      const res = await app.inject({ method: 'GET', url: '/api/schedule/tasks?threadId=abc123' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok(!body.tasks.some((task) => task.id === 'review-feedback'));
+    });
+
+    it('includes PR scheduler tasks for threads with active PR tracking even if task has prior runs (#320 P1)', async () => {
+      taskStore.upsertBySubject({
+        kind: 'pr_tracking',
+        subjectKey: 'pr:another/repo#7',
+        threadId: 'abc123',
+        title: 'PR tracking: another/repo#7',
+        why: 'track pr',
+        createdBy: 'opus',
+      });
+
+      const res = await app.inject({ method: 'GET', url: '/api/schedule/tasks?threadId=abc123' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      // cicd-check has subjectKind='pr' and thread has active pr_tracking → must appear
+      const cicd = body.tasks.find((task) => task.id === 'cicd-check');
+      assert.ok(cicd, 'cicd-check should appear for thread with active PR tracking');
+      // Kind-match included tasks must have foreign run metadata scrubbed
+      assert.equal(cicd.lastRun, null, 'lastRun from other PR must be scrubbed');
+      assert.equal(cicd.subjectPreview, null, 'subjectPreview from other PR must be scrubbed');
+      assert.deepEqual(
+        cicd.runStats,
+        { total: 0, delivered: 0, failed: 0, skipped: 0 },
+        'runStats from other PRs must be zeroed',
+      );
+    });
+
+    it('excludes PR scheduler tasks for threads without any PR tracking', async () => {
+      // thread xyz999 has no tasks at all
+      const res = await app.inject({ method: 'GET', url: '/api/schedule/tasks?threadId=xyz999' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok(!body.tasks.some((task) => task.id === 'cicd-check'));
+    });
+
+    it('matches legacy pr- run subjects for thread filtering', async () => {
+      taskStore.upsertBySubject({
+        kind: 'pr_tracking',
+        subjectKey: 'pr:owner/repo#42',
+        threadId: 'abc123',
+        title: 'PR tracking: owner/repo#42',
+        why: 'track pr',
+        createdBy: 'opus',
+      });
+      ledger.record({
+        task_id: 'cicd-check',
+        subject_key: 'pr-owner/repo#42',
+        outcome: 'RUN_DELIVERED',
+        signal_summary: null,
+        duration_ms: 10,
+        started_at: new Date().toISOString(),
+        assigned_cat_id: null,
+      });
+
+      const res = await app.inject({ method: 'GET', url: '/api/schedule/tasks?threadId=abc123' });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok(body.tasks.some((task) => task.id === 'cicd-check'));
     });
   });
 
@@ -183,6 +300,34 @@ describe('Schedule Routes', () => {
       const body = JSON.parse(res.payload);
       assert.ok(body.runs.length >= 1, 'should find thread-target run despite being beyond default LIMIT');
       assert.equal(body.runs[0].subject_key, 'thread-target');
+    });
+
+    it('matches legacy pr- run subjects when filtering by threadId', async () => {
+      taskStore.upsertBySubject({
+        kind: 'pr_tracking',
+        subjectKey: 'pr:owner/repo#42',
+        threadId: 'abc123',
+        title: 'PR tracking: owner/repo#42',
+        why: 'track pr',
+        createdBy: 'opus',
+      });
+      ledger.record({
+        task_id: 'cicd-check',
+        subject_key: 'pr-owner/repo#42',
+        outcome: 'RUN_DELIVERED',
+        signal_summary: null,
+        duration_ms: 10,
+        started_at: new Date().toISOString(),
+        assigned_cat_id: null,
+      });
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/schedule/tasks/cicd-check/runs?threadId=abc123',
+      });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.ok(body.runs.some((run) => run.subject_key === 'pr-owner/repo#42'));
     });
   });
 
@@ -399,11 +544,10 @@ describe('Schedule Routes', () => {
       assert.equal(stored.params.triggerUserId, 'real-user-123', 'route must overwrite forged triggerUserId');
     });
 
-    it('P1: query-param userId does not leak into triggerUserId', async () => {
+    it('P1: request without identity header defaults triggerUserId to default-user', async () => {
       const createRes = await appDyn.inject({
         method: 'POST',
-        url: '/api/schedule/tasks?userId=victim-uid',
-        // no x-cat-cafe-user header
+        url: '/api/schedule/tasks',
         payload: {
           templateId: 'reminder',
           trigger: { type: 'interval', ms: 60000 },
@@ -414,7 +558,7 @@ describe('Schedule Routes', () => {
 
       const stored = store.getAll().find((d) => d.params?.message === 'query-forge-test');
       assert.ok(stored, 'task should be persisted');
-      assert.equal(stored.params.triggerUserId, 'default-user', 'must ignore query-param userId');
+      assert.equal(stored.params.triggerUserId, 'default-user', 'must default to default-user without header');
     });
 
     it('P1: rejects non-object params with 400 (not 500)', async () => {

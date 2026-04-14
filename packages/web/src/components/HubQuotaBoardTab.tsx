@@ -4,7 +4,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useCatData } from '@/hooks/useCatData';
 import { apiFetch } from '@/utils/api-client';
-import type { ProviderProfilesResponse } from './hub-provider-profiles.types';
+import type { AccountsResponse } from './hub-accounts.types';
 import { type AccountQuotaPoolGroup, buildAccountQuotaGroups } from './hub-quota-pools';
 import { type CodexUsageItem, QuotaPoolRow, type QuotaResponse, riskDotClass, toUtilization } from './quota-cards';
 
@@ -19,12 +19,20 @@ function maxUtilization(quota: QuotaResponse | null): number {
   for (const item of quota.codex.usageItems) max = Math.max(max, toUtilization(item));
   for (const item of quota.claude.usageItems ?? []) max = Math.max(max, toUtilization(item));
   for (const item of quota.gemini?.usageItems ?? []) max = Math.max(max, toUtilization(item));
+  for (const item of quota.kimi?.usageItems ?? []) max = Math.max(max, toUtilization(item));
   for (const item of quota.antigravity?.usageItems ?? []) max = Math.max(max, toUtilization(item));
   return max;
 }
 
 function resolveRisk(quota: QuotaResponse | null, refreshError: string | null): 'ok' | 'warn' | 'high' {
-  if (refreshError || quota?.codex?.error || quota?.claude?.error || quota?.gemini?.error || quota?.antigravity?.error)
+  if (
+    refreshError ||
+    quota?.codex?.error ||
+    quota?.claude?.error ||
+    quota?.gemini?.error ||
+    quota?.kimi?.error ||
+    quota?.antigravity?.error
+  )
     return 'high';
   const max = maxUtilization(quota);
   if (max >= 95) return 'high';
@@ -56,7 +64,7 @@ export function HubQuotaBoardTab() {
   const { cats } = useCatData();
   const [quota, setQuota] = useState<QuotaResponse | null>(null);
   const [quotaError, setQuotaError] = useState<string | null>(null);
-  const [profiles, setProfiles] = useState<ProviderProfilesResponse['providers']>([]);
+  const [profiles, setProfiles] = useState<AccountsResponse['providers']>([]);
   const [profilesError, setProfilesError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
@@ -88,13 +96,13 @@ export function HubQuotaBoardTab() {
   useEffect(() => {
     let cancelled = false;
     setProfilesError(null);
-    apiFetch('/api/provider-profiles')
+    apiFetch('/api/accounts')
       .then(async (res) => {
         if (!res.ok) {
           if (!cancelled) setProfilesError(`账号配置加载失败 (${res.status})，额度池成员归属可能不完整`);
           return null;
         }
-        return (await res.json()) as ProviderProfilesResponse;
+        return (await res.json()) as AccountsResponse;
       })
       .then((body) => {
         if (!cancelled && body) {
@@ -141,18 +149,33 @@ export function HubQuotaBoardTab() {
     setRefreshing(true);
     setRefreshError(null);
     try {
-      const res = await apiFetch('/api/quota/refresh/official', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ interactive: true }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setRefreshError(body.error ?? '获取官方额度失败');
+      const [officialRes, kimiRes] = await Promise.all([
+        apiFetch('/api/quota/refresh/official', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ interactive: true }),
+        }),
+        apiFetch('/api/quota/refresh/kimi', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ]);
+
+      const errors: string[] = [];
+      if (!officialRes.ok) {
+        const body = (await officialRes.json().catch(() => ({}))) as { error?: string };
+        errors.push(body.error ?? '获取官方额度失败');
+      }
+      if (!kimiRes.ok) {
+        const body = (await kimiRes.json().catch(() => ({}))) as { error?: string };
+        errors.push(body.error ?? '刷新 Kimi 额度失败');
+      }
+      if (errors.length > 0) {
+        setRefreshError(errors.join('；'));
       }
       await fetchQuota();
     } catch {
-      setRefreshError('获取官方额度失败，请稍后重试');
+      setRefreshError('刷新配额失败，请稍后重试');
     } finally {
       setRefreshing(false);
     }
@@ -168,6 +191,7 @@ export function HubQuotaBoardTab() {
         quota?.codex?.error,
         quota?.claude?.error,
         quota?.gemini?.error,
+        quota?.kimi?.error,
         quota?.antigravity?.error,
       ].filter(Boolean) as string[],
     ),

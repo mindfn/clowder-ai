@@ -4,13 +4,18 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CatData } from '@/hooks/useCatData';
 import { apiFetch } from '@/utils/api-client';
 import type { ConfigData } from './config-viewer-types';
+import type { AccountsResponse, ProfileItem } from './hub-accounts.types';
+import { type SeedTemplate, TemplatePicker } from './hub-add-member-wizard.parts';
 import { buildEditorLoadingNote, uploadAvatarAsset } from './hub-cat-editor.client';
 import {
+  autoSlug,
   buildCatPayload,
   buildCodexConfigPatches,
   buildStrategyPayload,
   builtinAccountIdForClient,
+  type ClientId,
   type CodexRuntimeSettings,
+  canonicalMentionPattern,
   DEFAULT_ANTIGRAVITY_COMMAND_ARGS,
   filterAccounts,
   type HubCatEditorDraft,
@@ -24,7 +29,6 @@ import {
 import { AccountSection, IdentitySection, RoutingSection } from './hub-cat-editor.sections';
 import { AdvancedRuntimeSection } from './hub-cat-editor-advanced';
 import { PersistenceBanner } from './hub-cat-editor-fields';
-import type { ProfileItem, ProviderProfilesResponse } from './hub-provider-profiles.types';
 import type { CatStrategyEntry } from './hub-strategy-types';
 import { useConfirm } from './useConfirm';
 
@@ -55,17 +59,19 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
   const [strategyBaselineHasOverride, setStrategyBaselineHasOverride] = useState(false);
   const [codexSettings, setCodexSettings] = useState<CodexRuntimeSettings | null>(null);
   const [codexSettingsBaseline, setCodexSettingsBaseline] = useState<CodexRuntimeSettings | null>(null);
+  const [templates, setTemplates] = useState<SeedTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>('custom');
 
-  const availableProfiles = useMemo(() => filterAccounts(form.client, profiles), [form.client, profiles]);
+  const availableProfiles = useMemo(() => filterAccounts(form.clientId, profiles), [form.clientId, profiles]);
   const selectedProfile = useMemo(
     () => availableProfiles.find((profile) => profile.id === form.accountRef) ?? null,
     [availableProfiles, form.accountRef],
   );
   const modelOptions = useMemo(() => {
-    if (form.client === 'antigravity') return [];
+    if (form.clientId === 'antigravity') return [];
     return selectedProfile?.models ?? [];
-  }, [form.client, selectedProfile]);
-  const showCodexSettings = form.client === 'openai';
+  }, [form.clientId, selectedProfile]);
+  const showCodexSettings = form.clientId === 'openai';
   const codexSettingsEditable = !showCodexSettings || codexSettingsBaseline !== null;
 
   useEffect(() => {
@@ -77,6 +83,7 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
     setCodexSettingsError(null);
     setStrategyBaselineHasOverride(false);
     setCodexSettingsBaseline(null);
+    setSelectedTemplateId('custom');
     setHasUnsavedChanges(false);
   }, [open, cat, draft]);
 
@@ -84,18 +91,18 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
   const [profilesVersion, setProfilesVersion] = useState(0);
   useEffect(() => {
     const handler = () => setProfilesVersion((v) => v + 1);
-    window.addEventListener('provider-profiles-changed', handler);
-    return () => window.removeEventListener('provider-profiles-changed', handler);
+    window.addEventListener('accounts-changed', handler);
+    return () => window.removeEventListener('accounts-changed', handler);
   }, []);
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
     setLoadingProfiles(true);
-    apiFetch('/api/provider-profiles')
+    apiFetch('/api/accounts')
       .then(async (res) => {
         if (!res.ok) throw new Error(`账号配置加载失败 (${res.status})`);
-        return (await res.json()) as ProviderProfilesResponse;
+        return (await res.json()) as AccountsResponse;
       })
       .then((body) => {
         if (!cancelled) setProfiles(body.providers);
@@ -110,6 +117,26 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
       cancelled = true;
     };
   }, [open, profilesVersion]);
+
+  useEffect(() => {
+    if (!open || cat) {
+      setTemplates([]);
+      return;
+    }
+    let cancelled = false;
+    apiFetch('/api/cat-templates')
+      .then(async (res) => {
+        if (!res.ok) return;
+        return (await res.json()) as { templates?: SeedTemplate[] };
+      })
+      .then((body) => {
+        if (!cancelled && body) setTemplates(Array.isArray(body.templates) ? body.templates : []);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, cat]);
 
   useEffect(() => {
     if (!open || !cat) {
@@ -184,7 +211,7 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
   }, [cat, open, showCodexSettings]);
 
   useEffect(() => {
-    if (form.client === 'antigravity') {
+    if (form.clientId === 'antigravity') {
       setForm((prev) => (prev.accountRef === '' ? prev : { ...prev, accountRef: '' }));
       return;
     }
@@ -193,7 +220,7 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
         return prev;
       }
       if (availableProfiles.length === 0) return prev;
-      const preferredBuiltin = builtinAccountIdForClient(prev.client);
+      const preferredBuiltin = builtinAccountIdForClient(prev.clientId);
       const nextProfile =
         availableProfiles.find((profile) => profile.id === prev.accountRef) ??
         (preferredBuiltin ? availableProfiles.find((profile) => profile.id === preferredBuiltin) : null) ??
@@ -203,26 +230,26 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
       if (prev.accountRef === nextProfile.id) return prev;
       return { ...prev, accountRef: nextProfile.id };
     });
-  }, [availableProfiles, cat, draft, form.client]);
+  }, [availableProfiles, cat, draft, form.clientId]);
 
   useEffect(() => {
-    if (form.client === 'antigravity' || modelOptions.length === 0) return;
+    if (form.clientId === 'antigravity' || modelOptions.length === 0) return;
     if (form.defaultModel.trim().length > 0) return;
     setForm((prev) => {
-      if (prev.client === 'antigravity' || prev.defaultModel.trim().length > 0) return prev;
+      if (prev.clientId === 'antigravity' || prev.defaultModel.trim().length > 0) return prev;
       return { ...prev, defaultModel: modelOptions[0] ?? '' };
     });
-  }, [form.client, form.defaultModel, modelOptions]);
+  }, [form.clientId, form.defaultModel, modelOptions]);
 
   useEffect(() => {
-    if (form.client !== 'antigravity') return;
+    if (form.clientId !== 'antigravity') return;
     if (form.commandArgs.trim().length > 0) return;
     setForm((prev) => {
-      if (prev.client !== 'antigravity') return prev;
+      if (prev.clientId !== 'antigravity') return prev;
       if (prev.commandArgs.trim().length > 0) return prev;
       return { ...prev, commandArgs: DEFAULT_ANTIGRAVITY_COMMAND_ARGS };
     });
-  }, [form.client, form.commandArgs]);
+  }, [form.clientId, form.commandArgs]);
 
   if (!open) return null;
 
@@ -237,7 +264,7 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
     if (patch.name !== undefined || patch.roleDescription !== undefined) {
       setFieldErrors((prev) => ({ ...prev, identity: false }));
     }
-    if (patch.defaultModel !== undefined || patch.client !== undefined) {
+    if (patch.defaultModel !== undefined || patch.clientId !== undefined) {
       setFieldErrors((prev) => ({ ...prev, account: false }));
     }
   };
@@ -251,6 +278,35 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
       ...(prev ?? toCodexRuntimeSettings()),
       ...patch,
     }));
+  };
+
+  const handleTemplateSelect = (t: SeedTemplate | null) => {
+    if (!t || t.id === 'custom') {
+      setSelectedTemplateId('custom');
+      setForm(initialState(null, null));
+      setHasUnsavedChanges(false);
+      return;
+    }
+    setSelectedTemplateId(t.id ?? null);
+    const name = t.name ?? '';
+    const catId = name ? autoSlug(name) : '';
+    patchForm({
+      name,
+      displayName: name,
+      nickname: t.nickname ?? '',
+      avatar: t.avatar ?? '',
+      colorPrimary: t.color?.primary ?? '#9B7EBD',
+      colorSecondary: t.color?.secondary ?? '#E8DFF5',
+      roleDescription: t.roleDescription ?? '',
+      personality: t.personality ?? '',
+      teamStrengths: t.teamStrengths ?? '',
+      clientId: (t.provider as ClientId) ?? 'anthropic',
+      accountRef: builtinAccountIdForClient((t.provider as ClientId) ?? 'anthropic') ?? '',
+      defaultModel: t.defaultModel ?? '',
+      catId,
+      mentionPatterns: catId ? canonicalMentionPattern(catId) : '',
+      commandArgs: t.commandArgs?.join(' ') ?? '',
+    });
   };
 
   const requestClose = async () => {
@@ -290,9 +346,9 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
         errors.account = true;
         errorMessages.push('Model');
       } else if (
-        form.client === 'opencode' &&
+        form.clientId === 'opencode' &&
         selectedProfile?.authType === 'api_key' &&
-        !form.ocProviderName.trim() &&
+        !form.provider.trim() &&
         (() => {
           const m = form.defaultModel.trim();
           const si = m.indexOf('/');
@@ -429,6 +485,7 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
       }
 
       await onSaved();
+      window.dispatchEvent(new CustomEvent('guide:confirm', { detail: { target: 'member-editor.profile' } }));
       onClose();
     } catch (err) {
       await rollbackMutations();
@@ -466,9 +523,14 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4" onClick={requestClose}>
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4"
+      onClick={requestClose}
+      data-bootcamp-host="cat-editor-modal"
+    >
       <div
         className="flex max-h-[88vh] w-full max-w-[560px] flex-col rounded-[32px] border border-[#F0DDCD] bg-[#FFF8F2] shadow-2xl"
+        data-guide-id="member-editor.profile"
         onClick={(event) => event.stopPropagation()}
         data-bootcamp-step="cat-editor"
       >
@@ -479,7 +541,7 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {cat && cat.source === 'runtime' ? (
+            {cat && cat.source !== 'seed' ? (
               <button
                 type="button"
                 onClick={handleDelete}
@@ -509,6 +571,13 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-7 py-5">
+          {!cat && templates.length > 0 && (
+            <TemplatePicker
+              templates={[{ id: 'custom', name: '自定义', provider: 'anthropic' } as SeedTemplate, ...templates]}
+              selectedId={selectedTemplateId ?? undefined}
+              onSelect={handleTemplateSelect}
+            />
+          )}
           <IdentitySection
             cat={cat}
             form={form}

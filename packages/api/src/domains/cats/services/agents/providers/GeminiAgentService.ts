@@ -18,12 +18,21 @@
 
 import { spawn as nodeSpawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, join } from 'node:path';
 import { type CatId, createCatId } from '@cat-cafe/shared';
 import { getCatModel } from '../../../../../config/cat-models.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import { formatCliExitError } from '../../../../../utils/cli-format.js';
 import { formatCliNotFoundError, resolveCliCommand } from '../../../../../utils/cli-resolve.js';
-import { isCliError, isCliTimeout, isLivenessWarning, spawnCli } from '../../../../../utils/cli-spawn.js';
+import {
+  buildChildEnv,
+  isCliError,
+  isCliTimeout,
+  isLivenessWarning,
+  spawnCli,
+} from '../../../../../utils/cli-spawn.js';
 import type { SpawnFn } from '../../../../../utils/cli-types.js';
 import type { AgentMessage, AgentService, AgentServiceOptions, MessageMetadata, TokenUsage } from '../../types.js';
 import { appendLocalImagePathHints, collectImageAccessDirectories } from '../providers/image-cli-bridge.js';
@@ -33,6 +42,105 @@ import { isKnownPostResponseCandidatesCrash, isResultErrorEvent, transformGemini
 const log = createModuleLogger('gemini-agent');
 
 type GeminiAdapter = 'gemini-cli' | 'antigravity';
+
+interface GeminiStoredThought {
+  readonly subject?: string;
+  readonly description?: string;
+}
+
+interface GeminiStoredMessage {
+  readonly type?: string;
+  readonly content?: string;
+  readonly thoughts?: readonly GeminiStoredThought[];
+}
+
+interface GeminiStoredSession {
+  readonly sessionId?: string;
+  readonly messages?: readonly GeminiStoredMessage[];
+}
+
+function normalizeGeminiContent(value: string | undefined): string {
+  return (value ?? '').replace(/\s+/g, ' ').trim();
+}
+
+function formatGeminiThoughts(thoughts: readonly GeminiStoredThought[]): string {
+  return thoughts
+    .map((thought) => {
+      const subject = thought.subject?.trim();
+      const description = thought.description?.trim();
+      if (subject && description) return `**${subject}**\n${description}`;
+      if (subject) return `**${subject}**`;
+      if (description) return description;
+      return '';
+    })
+    .filter((chunk) => chunk.length > 0)
+    .join('\n\n---\n\n');
+}
+
+function readGeminiThinkingFromLocalSession(
+  sessionId: string | undefined,
+  assistantText: string,
+  workingDirectory?: string,
+): string | null {
+  if (!sessionId) return null;
+
+  const geminiTmpRoot = join(homedir(), '.gemini', 'tmp');
+  if (!existsSync(geminiTmpRoot)) return null;
+
+  const preferredProjectDir = workingDirectory ? basename(workingDirectory) : null;
+  const projectDirs = readdirSync(geminiTmpRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort((a, b) => {
+      if (preferredProjectDir && a === preferredProjectDir) return -1;
+      if (preferredProjectDir && b === preferredProjectDir) return 1;
+      return 0;
+    });
+
+  const normalizedAssistantText = normalizeGeminiContent(assistantText);
+
+  for (const projectDir of projectDirs) {
+    const chatsDir = join(geminiTmpRoot, projectDir, 'chats');
+    if (!existsSync(chatsDir)) continue;
+
+    const sessionFiles = readdirSync(chatsDir)
+      .filter((name) => name.startsWith('session-') && name.endsWith('.json'))
+      .map((name) => ({
+        path: join(chatsDir, name),
+        mtimeMs: statSync(join(chatsDir, name)).mtimeMs,
+      }))
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+    for (const file of sessionFiles) {
+      try {
+        const parsed = JSON.parse(readFileSync(file.path, 'utf8')) as GeminiStoredSession;
+        if (parsed.sessionId !== sessionId || !Array.isArray(parsed.messages)) continue;
+
+        const candidates = parsed.messages.filter(
+          (message): message is GeminiStoredMessage =>
+            message?.type === 'gemini' &&
+            Array.isArray(message.thoughts) &&
+            message.thoughts.length > 0 &&
+            typeof message.content === 'string',
+        );
+        if (candidates.length === 0) return null;
+
+        const exact =
+          normalizedAssistantText.length > 0
+            ? [...candidates]
+                .reverse()
+                .find((message) => normalizeGeminiContent(message.content) === normalizedAssistantText)
+            : candidates[candidates.length - 1];
+        const selected = exact ?? null;
+        return selected ? formatGeminiThoughts(selected.thoughts ?? []) || null : null;
+      } catch {
+        // Best effort: skip malformed/partial session files while Gemini is still writing them.
+      }
+    }
+  }
+
+  return null;
+}
 /**
  * Options for constructing GeminiAgentService (dependency injection)
  * F32-b: catId and model are constructor parameters
@@ -118,6 +226,7 @@ export class GeminiAgentService implements AgentService {
       let sawResultError = false;
       let sawAssistantText = false;
       let suppressCliExitError = false;
+      let fullAssistantText = '';
       const cliOpts = {
         command: geminiCommand,
         args,
@@ -127,6 +236,7 @@ export class GeminiAgentService implements AgentService {
         ...(options?.invocationId ? { invocationId: options.invocationId } : {}),
         ...(options?.cliSessionId ? { cliSessionId: options.cliSessionId } : {}),
         ...(options?.livenessProbe ? { livenessProbe: options.livenessProbe } : {}),
+        ...(options?.parentSpan ? { parentSpan: options.parentSpan } : {}),
       };
       const events = options?.spawnCliOverride
         ? options.spawnCliOverride(cliOpts)
@@ -227,8 +337,10 @@ export class GeminiAgentService implements AgentService {
             // Each Gemini message/assistant is a complete turn (unlike Claude's
             // incremental deltas), so direct concatenation loses inter-turn spacing.
             if (sawAssistantText && result.content) {
+              fullAssistantText += `\n\n${result.content}`;
               yield { ...result, content: `\n\n${result.content}`, metadata };
             } else {
+              fullAssistantText += result.content ?? '';
               yield { ...result, metadata };
             }
             sawAssistantText = true;
@@ -239,6 +351,21 @@ export class GeminiAgentService implements AgentService {
             yield { ...result, metadata };
           }
         }
+      }
+
+      const thinking = readGeminiThinkingFromLocalSession(
+        metadata.sessionId,
+        fullAssistantText,
+        options?.workingDirectory,
+      );
+      if (thinking) {
+        yield {
+          type: 'system_info',
+          catId: this.catId,
+          content: JSON.stringify({ type: 'thinking', catId: this.catId, text: thinking }),
+          metadata,
+          timestamp: Date.now(),
+        };
       }
 
       yield { type: 'done', catId: this.catId, metadata, timestamp: Date.now() };
@@ -283,10 +410,14 @@ export class GeminiAgentService implements AgentService {
     let spawnError: Error | null = null;
 
     try {
+      // Clone all env, strip bloated vars (LS_COLORS etc.) to avoid E2BIG,
+      // then merge callbackEnv overrides. Preserves API keys etc. from parent env.
+      const childEnv = buildChildEnv(options.callbackEnv);
+
       const child = this.antigravitySpawnFn('antigravity', ['chat', '--mode', 'agent', prompt], {
         detached: true,
         stdio: 'ignore',
-        env: { ...process.env, ...options.callbackEnv },
+        env: childEnv as Record<string, string>,
       });
       // Capture async spawn errors (ENOENT etc.) that fire on next tick.
       child.on('error', (err: Error) => {

@@ -839,6 +839,165 @@ created: 2026-02-26
   3. 测试 IME 场景时，模拟 `compositionstart` → `keydown(Enter)` 序列，不要用 `Object.defineProperty(event, 'isComposing', { value: true })`
 - 关联：F080（输入历史）| ChatInput | ThreadItem
 
+### LL-045: Runtime worktree 反复被猫污染——三次误删 + 进程表爆炸导致系统重启
+- 状态：draft
+- 更新时间：2026-03-31
+
+- 坑：2026-03-29 ～ 2026-03-31 期间，runtime worktree（`cat-cafe-runtime`）被多个Ragdoll session 反复弄脏，导致 `pnpm start` 无法启动。发现三批污染：
+  1. **WeixinAdapter voice_item A/B test**（`WEIXIN_VOICE_ITEM_MODE` env 切换 `minimal` vs `metadata`）——调试微信语音问题，直接在 runtime 编辑
+  2. **invoke-single-cat.ts account resolution 调试**——插入 `appendFileSync('/tmp/cat-cafe-account-debug.log')` 文件日志 + 多个 `let→const` 误改（会导致运行时崩溃）+ proxy fallback if/else 逻辑被重构坏
+  3. **`process-liveness-probe.test.js` 进程泄漏**——同一测试文件被多实例并发运行（疑似 watch 模式反复触发），每个实例 spawn 子进程不回收，进程数飙至 10472，Load Average 199，系统进入 `EAGAIN`（fork failed: resource temporarily unavailable），最终只能重启 macOS
+  - 另有 Knowledge Feed markers（`docs/markers/*.yaml`）和开源同步残留（`LICENSE`、`ROADMAP.md`、`.sync-provenance.json`）出现在 runtime
+
+- 根因：
+  1. **P0 铁律执行失败**：`feedback_no_touch_runtime.md` 已明确"禁止直接操作 runtime worktree"，但多个 session 的Ragdoll仍然在 runtime 里直接编辑代码/运行测试/运行脚本
+  2. **runtime 无写保护**：除了 `pnpm start` 时的脏检查（`git status -uno`），runtime worktree 没有任何机制阻止猫直接写入
+  3. **测试进程无上限**：`process-liveness-probe.test.js` 涉及 spawn 子进程，但无 maxprocs / ulimit 保护，watch 模式下可指数膨胀
+  4. **清理时二次伤害**：发现污染后，当前 session 的Ragdoll三次不检查内容就执行 `git checkout --` / `git clean -fd`，导致调试进度（invoke-single-cat.ts）和 Knowledge Feed markers 不可逆丢失
+
+- 触发条件：
+  - 猫在 runtime worktree 目录下执行编辑/测试/脚本（而非 feature worktree）
+  - 测试涉及 process spawn 且在 watch 模式下运行
+  - 发现脏文件后不检查内容直接清理
+
+- 修复：
+  - 第 1 批：stash 保留（`runtime-rescue: WeixinAdapter voice_item A/B test`），记录到 F137 changelog
+  - 第 2 批：被误清理（`git checkout -- .`），diff 内容保存到 GitHub Issue #862
+  - 第 3 批（进程爆炸）：`killall -9 node` + 系统重启
+
+- 防护：
+  1. **runtime worktree 写保护**：考虑用 `chflags uchg` 或 git hook 阻止非 `runtime-worktree.sh` 的写入
+  2. **测试进程上限**：`process-liveness-probe.test.js` 需加 spawn 计数器 + `ulimit -u` 防护
+  3. **清理前必须检查**：见 `feedback_never_clean_without_checking.md`——`git checkout/clean/rm` 前先 `ls`/`cat`/`git diff` 看内容，stash 优先于 checkout
+  4. **脏检查应区分 tracked 和 untracked**：当前 `ensure_runtime_clean` 用 `-uno` 忽略 untracked 文件，markers/sync 残留不会阻止启动但会持续积累
+
+- 来源锚点：
+  - GitHub Issue: #862
+  - F137 changelog 2026-03-29 条目
+  - `feedback_never_clean_without_checking.md`
+  - `scripts/runtime-worktree.sh` ensure_runtime_clean 函数
+
+- 关联：F137（WeixinAdapter voice）| F118（invoke-single-cat audit）| #862 | feedback_no_touch_runtime.md
+
+---
+
+### LL-046: AOF/RDB 持久化脱节——冷启动加载空 AOF 导致 42K keys 归零
+- 状态：validated
+- 更新时间：2026-03-31
+
+- 坑：重启 macOS 后 `pnpm start` 冷启动 Redis 6399，发现 915 个 thread / 42,778 keys 全部消失，只剩启动后新写入的 7 个 thread。铲屎官以为数据全丢了。
+- 根因：**AOF 和 RDB 两套持久化机制脱节了 48 天**。
+  1. 2月9日 `383e23791` 给 `start-dev.sh` 加了 `--appendonly yes`
+  2. 2月10日首次带 AOF 启动，Redis 创建了 AOF base 文件（此时 DB 是空的 → base = 0 keys，88 bytes）
+  3. 之后某次 Redis 被 restore 脚本或手动方式重启，**没带 `--appendonly`**，进入纯 RDB 模式
+  4. 2月～3月：Redis 一直跑在纯 RDB 模式，数据涨到 42,778 keys。AOF 文件在 `appendonlydir/` 里吃灰，停留在 2月10日的空壳状态
+  5. 3月31日：LL-045 进程爆炸 → macOS 强制重启 → Redis 进程死亡 → `pnpm start` 用 `--appendonly yes` 冷启动 → Redis 看到 `appendonlydir/` 存在 → **优先加载 AOF（空的）→ 忽略 110MB 的 dump.rdb** → 空库
+- 以前没出事的原因：Redis 进程从来没被杀过。每次 `pnpm start` 发现 6399 已在跑就直连（`start-dev.sh:927`），不触发冷启动。这是第一次真正的冷启动。
+- 救命的备份：`archive_redis_snapshot "pre-start"` 在每次 `pnpm start` 启动前自动备份 dump.rdb 到 `~/.cat-cafe/redis-backups/dev/`（保留 20 份）。今天 07:34 的 `dev-pre-start-20260331-073456.rdb` 包含完整的 42,778 keys，恢复成功。**这个机制源自 2月10日 LL-015 事故后的加固。**
+
+- 修复（已提交 `3ae239a1a`）：
+  1. **stale AOF 冷启动防护**（`start-dev.sh:716 maybe_quarantine_stale_aof_dir`）：冷启动前比较 AOF base 与 dump.rdb 体积比，dump/base >= 100 倍判定为 stale，自动隔离 `appendonlydir/` 到 backup
+  2. **restore 脚本 AOF 盲区**（`redis-restore-from-rdb.sh:96`）：恢复后强制带 `--appendonly yes` 启动 + 旧 `appendonlydir` 迁移备份，杜绝"恢复后进入纯 RDB 模式"
+  3. **回归测试**：28/28 通过，覆盖 stale 隔离、proportional base 保留、tiny base + incr 存在仍隔离三个场景
+
+- 教训：
+  1. **"以前没事"不等于"没有 bug"**——很多配置只在冷启动时生效，如果从来没冷启动过就从来不会暴露。定期冷启动演练是必要的
+  2. **两套持久化机制必须保持同步**——Redis 的 AOF 优先于 RDB 加载，如果 AOF 是 stale 的，RDB 里的数据会被完全忽略
+  3. **所有启动 Redis 的代码路径必须统一**——restore 脚本、手动启动、start-dev.sh 如果参数不一致，就会制造 AOF/RDB 脱节的窗口
+  4. **备份机制越早建越好**——LL-015 的"坑"变成了 LL-046 的"救命稻草"
+
+- 来源锚点：
+  - 提交：`3ae239a1a fix(redis): harden stale AOF detection and restore startup`
+  - 起因：`383e23791 feat(redis): isolate personal storage and add durability guardrails`
+  - 关联：LL-015（Redis 端口误触事故）| LL-045（runtime 进程爆炸导致重启）
+
+---
+
+### LL-047: Socket.IO `cors` 不保护 WebSocket — `allowRequest` 才是安全边界
+- 状态：validated
+- 更新时间：2026-04-10
+
+- 背景：Cat Cafe Hub 的 Socket.IO 实时通道被发现存在 CSWSH（Cross-Site WebSocket Hijacking）风险。`Origin: https://evil.example` 可以成功建立 WebSocket 连接到 `127.0.0.1:3004`
+
+- 影响：恶意网页可从任意 Origin 连接本机 WebSocket，冒充用户、监听消息、干扰猫猫工作
+
+- 根因：
+  1. **Socket.IO v4 的 `cors` 配置只对 HTTP long-polling 生效**，不校验 WebSocket upgrade 请求的 Origin 头（Socket.IO 官方文档 2026-02-16 明确标注）
+  2. 身份自报（`handshake.auth.userId`）无服务端校验
+  3. Room 无 ACL，任何连接可加入任意 room
+  4. @fastify/websocket 的 plain WS 端点（terminal PTY）完全绕过 Socket.IO，无任何 Origin 检查
+
+- 修复：
+  1. **Phase A**（PR #1041）：`allowRequest` hook 显式校验 Origin + 禁止自报 userId + 私网 Origin 收紧
+  2. **Phase B**（PR #1045）：terminal WS Origin gate + cancelAll 授权 + 全局 room ACL
+  3. **Phase D**（规划中）：HTTP session 替代自报身份 + Clickjacking + CSP + Prompt Injection 降权
+
+- 教训：
+  1. **框架的 CORS 配置 ≠ WebSocket 安全**——Socket.IO/Express 的 cors 中间件只管 HTTP，WebSocket upgrade 是独立的协议切换，必须在 upgrade 层单独校验
+  2. **本机 ≠ 安全**——浏览器同源策略不阻止 JS 向 localhost 发 WebSocket 连接，任何打开的网页都是潜在攻击面
+  3. **"能连上"比"能做什么"更危险**——一旦连接建立，后续的身份/Room/事件授权都是亡羊补牢；连接层拒绝是第一道也是最关键的防线
+  4. **Agent 产品的攻击面比传统 Web 应用更大**——Prompt Injection、工具调用误用、外部内容驱动的高危操作是传统安全审计不覆盖的维度
+
+- 来源锚点：
+  - F156 spec：`docs/features/F156-websocket-security-hardening.md`
+  - 三猫安全审计：*(internal reference removed)*
+  - PR #1041（Phase A）、PR #1045（Phase B）
+  - 外部参考：OpenClaw CVE-2026-25253 + ClawJacked（同类攻击链）
+
+### LL-048: 用户可感知状态禁止默认 TTL——静默消失按 P0 治理
+- 状态：validated
+- 更新时间：2026-04-10
+
+- 坑：F100 Self-Evolution 线程在创建 30 天后突然从 Hub UI 消失——不在列表、不在垃圾桶、搜索不到。铲屎官："太恐怖了！"
+- 根因：`RedisThreadStore.ts` 硬编码 `DEFAULT_TTL = 30 * 24 * 60 * 60`（30 天），thread 创建时调用 `EXPIRE`。但 `updateLastActive()` 只更新排序分数，**从不刷新 hash TTL**。到期后 Redis 静默删除 hash，而 sorted set index 因其他 thread 操作续期而存活——形成"索引有 ID 但 hash 已消失"的孤儿状态。
+- 触发条件：任何带非零 DEFAULT_TTL 的 Redis store（thread/message/task/summary/backlog/session 等），只要用户在 TTL 窗口内未触发恰好刷新 hash TTL 的操作，就会静默丢失。
+- 修复：
+  1. 全量止血：所有 16+ Redis store 的 DEFAULT_TTL 改为 0（persistent），`EXPIRE 0` / `SET EX 0` 陷阱用条件分支防御
+  2. 自愈机制：`get()` 发现 hash 缺失时从 message timeline 重建元数据（`recoverThreadFromMessages`）
+  3. 统一 key 续期：所有 detail 变更通过 `setDetailFields()`/`deleteDetailFields()` 自动调用 `applyKeyRetention()`
+  4. 文档 + .env.example 同步更新
+- 防护：
+  1. 铁律 #5"禁止用户状态静默消失"——默认持久化，TTL 只能 opt-in
+  2. 新增 Redis store 必须 DEFAULT_TTL=0，引入非零 TTL 需 P0 级审批
+  3. 任何 `EXPIRE` / `SET EX` 调用必须有 `> 0` 守卫，防止 TTL=0 变成立即删除
+- 来源锚点：
+  - 根因文件：`packages/api/src/domains/cats/services/stores/redis/RedisThreadStore.ts:32`
+  - 丢失 thread：`thread_mmlv4v2oq6dxefr6`（2026-03-11 创建，2026-04-10 过期）
+  - Feature spec：`docs/features/F100-self-evolution.md` line 54
+- 原理：**EXPIRE 0 = 立即删除**（Redis 语义）。框架层 TTL 默认值决定了用户数据的生死线——这不是"配置"，而是产品决策。opt-out 持久化 = 用户必须知道一个他们不可能知道的配置才能保住自己的数据，这在产品层面是不可接受的。
+
+---
+
+### LL-049: `pnpm dev:direct` 无差别杀端口——review 踢翻 runtime
+- 状态：draft
+- 更新时间：2026-04-11
+
+- 坑：2026-04-10，Maine Coon在 review F152 PR (#1070) 时，在主仓库执行 `pnpm dev:direct`。`start-dev.sh` 的 `kill_managed_ports()` 无条件杀掉 3003/3004 端口上的进程——正在运行的 runtime 被踢掉，铲屎官被动中断。
+- 根因：
+  1. **`kill_port()` 不检查进程归属**：谁占着端口就杀谁，不区分是本 worktree 残留还是 runtime/alpha 等其他实例
+  2. **护栏分裂**：`runtime-worktree.sh` 有 `CAT_CAFE_RUNTIME_RESTART_OK` 授权门，但 `dev:direct` 走 `start-dev.sh`，绕过了这道门
+  3. **`guard_main_branch_start()` 盲区**：只拦 `main` 分支 + `cat-cafe` 仓库名，主仓库切到 feature branch 照样触发事故
+  4. **review 沙盒规范有文档无工具**：request-review skill 写了"在沙盒操作"，但缺少统一入口和强制机制
+- 触发条件：任何猫在非隔离环境（主仓库、错误 worktree）执行 `pnpm dev:direct` / `pnpm start`，且 runtime 正在使用相同端口
+- 修复（PR #1077，已合入 `807536df5`）：
+  1. 新增 `pid_cwd()` + `path_is_within_project()` + `guard_port_kill_ownership()`：`kill_port()` 前检查占用进程的工作目录是否属于当前 `$PROJECT_DIR`，跨 worktree 默认拒绝 kill
+  2. `CAT_CAFE_RUNTIME_RESTART_OK=1` 显式授权才放行
+  3. 新增 `scripts/review-start.sh`（`pnpm review:start`）：review 验证统一入口，自动分配 3201/3202 端口、内存 Redis、review 沙盒路径
+  4. review 模板新增"沙盒路径 + 启动命令 + 实际端口"必填字段
+- 防护：
+  1. `start-dev.sh` 端口归属 guard（基于进程 cwd，不硬编码端口号）——任何端口冲突都能防
+  2. 回归测试覆盖"默认拒绝跨 worktree kill"和"显式授权放行"两条路径
+  3. `pnpm review:start` 统一入口消除"在哪启动、用什么端口"的歧义
+  4. request-review 模板强制证据字段（reviewer 必须填沙盒路径和端口）
+- 来源锚点：
+  - 事故报告：`docs/bug-report/2026-04-10-review-dev-direct-runtime-interruption/bug-report.md`
+  - 修复 PR：zts212653/cat-cafe#1077
+  - 端口归属 guard：`scripts/start-dev.sh:450`（`guard_port_kill_ownership`）
+  - review 入口：`scripts/review-start.sh`
+- 原理：**"默认安全"优于"靠人记得"**。LL-045 证明纪律文档拦不住猫——写了"不要动 runtime"但多个 session 仍然直接操作。端口保护和 Redis production Redis (sacred)一样，必须在工具层面做到"默认不可能发生"，而非"读了文档就不会发生"。
+
+- 关联：LL-045（runtime worktree 反复被猫污染）| PR #1077 | `feedback_no_touch_runtime.md` | CLAUDE.md 铁律 #4
+
 ---
 
 ## 8) 维护约定

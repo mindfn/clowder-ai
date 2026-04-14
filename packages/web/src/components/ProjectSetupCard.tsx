@@ -5,6 +5,7 @@
  * Separate from GovernanceBlockedCard (which handles dispatch-failure retry).
  */
 import { useCallback, useState } from 'react';
+import { useIMEGuard } from '@/hooks/useIMEGuard';
 import { apiFetch } from '@/utils/api-client';
 
 /* Anime-style cat illustrations generated via Gemini */
@@ -39,6 +40,7 @@ export function ProjectSetupCard({
   const [state, setState] = useState<CardState>('idle');
   const [cloneUrl, setCloneUrl] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const ime = useIMEGuard();
 
   const dirName = projectPath.split(/[/\\]/).pop() ?? projectPath;
 
@@ -87,6 +89,7 @@ export function ProjectSetupCard({
           className={`max-w-[85%] w-full rounded-lg border p-4 ${state === 'done' ? 'border-green-200 bg-green-50' : 'border-amber-200 bg-amber-50'}`}
         >
           <div className="flex items-center gap-4">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={state === 'done' ? '/images/setup-cat-done.png' : '/images/setup-cat-working.png'}
               alt={state === 'done' ? '完成' : '工作中'}
@@ -123,6 +126,7 @@ export function ProjectSetupCard({
       <div className="max-w-[85%] w-full rounded-lg border border-cocreator-primary/20 bg-cocreator-bg/30 p-5">
         {/* Header */}
         <div className="flex items-center gap-4 mb-4">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/images/setup-cat-idle.png" alt="设置" className="w-20 h-20 flex-shrink-0 object-contain" />
           <div>
             <p className="text-sm font-medium text-cafe-black">发现了一片新大陆！</p>
@@ -164,10 +168,16 @@ export function ProjectSetupCard({
                     type="text"
                     value={cloneUrl}
                     onChange={(e) => setCloneUrl(e.target.value)}
+                    onCompositionStart={ime.onCompositionStart}
+                    onCompositionEnd={ime.onCompositionEnd}
                     placeholder="https:// 或 git@..."
                     className="flex-1 text-xs px-3 py-2 rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-1 focus:ring-cocreator-primary"
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.nativeEvent.isComposing && cloneUrl.trim()) handleSetup('clone');
+                      if (e.key === 'Enter' && ime.isComposing()) {
+                        e.preventDefault();
+                        return;
+                      }
+                      if (e.key === 'Enter' && cloneUrl.trim()) handleSetup('clone');
                     }}
                   />
                   <button

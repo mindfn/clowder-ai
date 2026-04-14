@@ -16,6 +16,7 @@ import {
   isCatLead,
 } from '../../../../config/cat-config-loader.js';
 import { getCatModel } from '../../../../config/cat-models.js';
+import { buildGuidePromptLines } from '../../../guides/GuidePromptSection.js';
 import type {
   BootcampStateV1,
   ThreadMentionRoutingFeedback,
@@ -102,6 +103,25 @@ export interface InvocationContext {
    * When present, cats inject bootcamp-guide behavior per phase.
    */
   bootcampState?: BootcampStateV1;
+  /**
+   * F155: Matched guide candidate from routing-layer keyword match.
+   * When present, cats load guide-interaction skill and offer the guide.
+   */
+  guideCandidate?: {
+    id: string;
+    name: string;
+    estimatedTime: string;
+    status: 'offered' | 'awaiting_choice' | 'active' | 'completed';
+    /** True only on the first routing-layer match before any guideState has been persisted. */
+    isNewOffer?: boolean;
+    /** When user clicked an interactive selection, carries the chosen label. */
+    userSelection?: string;
+  };
+  /**
+   * F087: Number of cats currently registered in this account.
+   * Injected alongside bootcampState so the model knows team size without querying /api/cats.
+   */
+  bootcampMemberCount?: number;
   /**
    * F129: Compiled pack blocks from active packs.
    * Injected into static identity via buildStaticIdentity → packBlocks.
@@ -204,7 +224,7 @@ const MCP_TOOLS_SECTION = `
 MCP 工具用于异步汇报等场景（token 有效期有限）：
 
 **记忆工具（先搜后问）：**
-- cat_cafe_search_evidence: **首选入口** — 搜索项目知识库（决策/讨论/教训/phase history）
+- cat_cafe_search_evidence: **首选入口** — 搜索知识库。depth=raw 返回消息级细节
 - cat_cafe_reflect: 反思性问题 — 从项目知识中合成洞察
 
 **记忆 drill-down 工具（search_evidence 命中后深入）：**
@@ -346,7 +366,7 @@ export function buildStaticIdentity(catId: CatId, options?: StaticIdentityOption
   const config = getConfig(catId as string);
   if (!config) return '';
 
-  const providerLabel = PROVIDER_LABELS[config.provider] ?? config.provider;
+  const providerLabel = PROVIDER_LABELS[config.clientId] ?? config.clientId;
   const lines: string[] = [];
 
   // Identity
@@ -594,11 +614,17 @@ export function buildInvocationContext(context: InvocationContext): string {
   if (context.bootcampState) {
     const { phase, leadCat, selectedTaskId } = context.bootcampState;
     const threadPart = context.threadId ? ` thread=${context.threadId}` : '';
+    const membersPart = context.bootcampMemberCount != null ? ` members=${context.bootcampMemberCount}` : '';
     lines.push(
-      `Bootcamp Mode:${threadPart} phase=${phase}${leadCat ? ` leadCat=${leadCat}` : ''}${selectedTaskId ? ` task=${selectedTaskId}` : ''}`,
+      `🎓 Bootcamp Mode:${threadPart} phase=${phase}${leadCat ? ` leadCat=${leadCat}` : ''}${selectedTaskId ? ` task=${selectedTaskId}` : ''}${membersPart}`,
       '→ Load bootcamp-guide skill and act per current phase.',
       '',
     );
+  }
+
+  // F155: Guide candidate — inline protocol (cats don't have /Skill tool at runtime)
+  if (context.guideCandidate) {
+    lines.push(...buildGuidePromptLines(context.guideCandidate, context.threadId));
   }
 
   // F091: Active Signal articles in discussion context

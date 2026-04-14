@@ -7,6 +7,12 @@ import { useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '@/utils/api-client';
 import { getUserId } from '@/utils/userId';
 import { CafeIcon } from './CafeIcons';
+import {
+  dispatchGuideStartIfNeeded,
+  GUIDE_PREVIEW_CALLBACK_PATH,
+  resolveSafeInteractiveCallbackEndpoint,
+  shouldKeepGuideOfferInteractive,
+} from './guideClientActions';
 
 // ── Pure function (exported for testing) ────────────────────
 
@@ -547,27 +553,78 @@ export function InteractiveBlock({
         return;
       }
 
-      setLocalDisabled(true);
+      const selectedOption = block.options.find((o) => optionIds.includes(o.id));
+      const shouldDisable = !shouldKeepGuideOfferInteractive(block, selectedOption);
       setLocalSelectedIds(optionIds);
+      setLocalDisabled(shouldDisable);
 
-      // Read from ref to avoid stale closure — child calls setCustomText then onSelect
-      // in the same event loop, so state hasn't re-rendered yet
-      const ct = customTextRef.current;
-      const text = buildSelectionMessage(
-        block.interactiveType,
-        block.options,
-        optionIds,
-        block.messageTemplate,
-        block.title,
-        ct || undefined,
-      );
-      dispatchInteractiveSend(text);
+      // F155: Check if the selected option has a direct action (bypasses chat message pipeline)
+      if (selectedOption?.action?.type === 'callback') {
+        const { endpoint, payload } = selectedOption.action;
+        const safeEndpoint = resolveSafeInteractiveCallbackEndpoint(endpoint);
+        if (!safeEndpoint) {
+          console.error('[InteractiveBlock] callback action blocked by endpoint allowlist:', endpoint);
+          setLocalDisabled(false);
+          setLocalSelectedIds([]);
+          return;
+        }
+        try {
+          const response = await apiFetch(safeEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload ?? {}),
+          });
+          if (!response.ok) {
+            console.error('[InteractiveBlock] callback action rejected:', response.status, safeEndpoint);
+            setLocalDisabled(false);
+            setLocalSelectedIds([]);
+            return;
+          }
+
+          // B-5: Trigger guide start via Zustand reducer (no CustomEvent bridge)
+          await dispatchGuideStartIfNeeded(safeEndpoint, payload as Record<string, unknown> | undefined);
+
+          // F155: Preview callback self-heals state, then sends chat message
+          // so the routing layer (now with awaiting_choice state) triggers the cat
+          // to respond with a formatted step list.
+          if (safeEndpoint === GUIDE_PREVIEW_CALLBACK_PATH) {
+            const text = buildSelectionMessage(
+              block.interactiveType,
+              block.options,
+              optionIds,
+              block.messageTemplate,
+              block.title,
+            );
+            dispatchInteractiveSend(text);
+          }
+        } catch (err) {
+          console.error('[InteractiveBlock] callback action failed:', err);
+          setLocalDisabled(false);
+          setLocalSelectedIds([]);
+          return;
+        }
+      } else {
+        // Default: send selection as a chat message
+        const ct = customTextRef.current;
+        const text = buildSelectionMessage(
+          block.interactiveType,
+          block.options,
+          optionIds,
+          block.messageTemplate,
+          block.title,
+          ct || undefined,
+        );
+        dispatchInteractiveSend(text);
+      }
 
       // P2-1 fix: write back to store so re-mount/thread-switch preserves state
       if (messageId) {
-        useChatStore.getState().updateRichBlock(messageId, block.id, { disabled: true, selectedIds: optionIds });
+        useChatStore.getState().updateRichBlock(messageId, block.id, {
+          disabled: shouldDisable,
+          selectedIds: optionIds,
+        });
         // Persist to backend
-        patchBlockState(messageId, block.id, { disabled: true, selectedIds: optionIds }).catch(() => {
+        patchBlockState(messageId, block.id, { disabled: shouldDisable, selectedIds: optionIds }).catch(() => {
           // Persistence failure is non-critical — local + store state already updated
         });
       }

@@ -23,6 +23,7 @@ function renderContentBlocks(blocks: MessageContent[]) {
       const src = block.url.startsWith('/uploads/') ? `${API_URL}${block.url}` : block.url;
       const isSafeUrl = src.startsWith('/') || src.startsWith('http://') || src.startsWith('https://');
       return (
+        // eslint-disable-next-line @next/next/no-img-element
         <img
           key={i}
           src={src}
@@ -42,10 +43,10 @@ interface ConnectorBubbleProps {
 
 /** Default theme for connectors without a registered tailwindTheme. */
 const DEFAULT_CONNECTOR_THEME: ConnectorTailwindTheme = {
-  avatar: 'bg-blue-100 ring-2 ring-blue-200',
-  label: 'text-blue-700',
-  labelLink: 'text-blue-700 hover:text-blue-900',
-  bubble: 'border border-blue-200 bg-blue-50',
+  avatar: 'bg-conn-blue-bg ring-2 ring-conn-blue-ring',
+  label: 'text-conn-blue-text',
+  labelLink: 'text-conn-blue-text hover:text-conn-blue-hover',
+  bubble: 'border border-conn-blue-bubble-border bg-conn-blue-bubble-bg',
 };
 
 /** F056: Designed icon per connector — replaces emoji with SVG/PNG icons. */
@@ -63,6 +64,8 @@ function ConnectorIcon({ connector, fallbackIcon }: { connector: string; fallbac
       return <ConnectorImage src="/images/connectors/dingtalk.png" alt="DingTalk" className="w-5 h-5" />;
     case 'wecom-bot':
       return <ConnectorImage src="/images/connectors/wecom-bot.png" alt="WeCom" className="w-5 h-5" />;
+    case 'xiaoyi':
+      return <ConnectorImage src="/images/connectors/xiaoyi.png" alt="XiaoYi" className="w-5 h-5" />;
     case 'github-review':
     case 'github-ci':
     case 'github-repo-event':
@@ -106,6 +109,7 @@ function getConnectorTheme(connector: string | undefined): ConnectorTailwindThem
 export function ConnectorBubble({ message }: ConnectorBubbleProps) {
   const source = message.source;
   if (!source) return null;
+  if (message.extra?.scheduler?.hiddenTrigger) return null;
 
   const theme = getConnectorTheme(source.connector);
   const hasBlocks = message.contentBlocks && message.contentBlocks.length > 0;

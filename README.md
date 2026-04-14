@@ -12,6 +12,7 @@
 [![pnpm](https://img.shields.io/badge/pnpm-9+-F69220?logo=pnpm&logoColor=white)](https://pnpm.io/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5+-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![LINUX DO](https://img.shields.io/badge/LINUX-DO-FFB003.svg?logo=data:image/svg%2bxml;base64,DQo8c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiPjxwYXRoIGQ9Ik00Ni44Mi0uMDU1aDYuMjVxMjMuOTY5IDIuMDYyIDM4IDIxLjQyNmM1LjI1OCA3LjY3NiA4LjIxNSAxNi4xNTYgOC44NzUgMjUuNDV2Ni4yNXEtMi4wNjQgMjMuOTY4LTIxLjQzIDM4LTExLjUxMiA3Ljg4NS0yNS40NDUgOC44NzRoLTYuMjVxLTIzLjk3LTIuMDY0LTM4LjAwNC0yMS40M1EuOTcxIDY3LjA1Ni0uMDU0IDUzLjE4di02LjQ3M0MxLjM2MiAzMC43ODEgOC41MDMgMTguMTQ4IDIxLjM3IDguODE3IDI5LjA0NyAzLjU2MiAzNy41MjcuNjA0IDQ2LjgyMS0uMDU2IiBzdHlsZT0ic3Ryb2tlOm5vbmU7ZmlsbC1ydWxlOmV2ZW5vZGQ7ZmlsbDojZWNlY2VjO2ZpbGwtb3BhY2l0eToxIi8+PHBhdGggZD0iTTQ3LjI2NiAyLjk1N3EyMi41My0uNjUgMzcuNzc3IDE1LjczOGE0OS43IDQ5LjcgMCAwIDEgNi44NjcgMTAuMTU3cS00MS45NjQuMjIyLTgzLjkzIDAgOS43NS0xOC42MTYgMzAuMDI0LTI0LjM4N2E2MSA2MSAwIDAgMSA5LjI2Mi0xLjUwOCIgc3R5bGU9InN0cm9rZTpub25lO2ZpbGwtcnVsZTpldmVub2RkO2ZpbGw6IzE5MTkxOTtmaWxsLW9wYWNpdHk6MSIvPjxwYXRoIGQ9Ik03Ljk4IDcwLjkyNmMyNy45NzctLjAzNSA1NS45NTQgMCA4My45My4xMTNRODMuNDI2IDg3LjQ3MyA2Ni4xMyA5NC4wODZxLTE4LjgxIDYuNTQ0LTM2LjgzMi0xLjg5OC0xNC4yMDMtNy4wOS0yMS4zMTctMjEuMjYyIiBzdHlsZT0ic3Ryb2tlOm5vbmU7ZmlsbC1ydWxlOmV2ZW5vZGQ7ZmlsbDojZjlhZjAwO2ZpbGwtb3BhY2l0eToxIi8+PC9zdmc+)](https://linux.do/t/topic/1900303)
 
 **English** | [中文](README.zh-CN.md)
 
@@ -83,7 +84,7 @@ pnpm install
 # 3. Build all packages (required before first start)
 pnpm build
 
-# 4. Configure — add at least one model API key
+# 4. Configure infrastructure (API keys are added in the UI after launch)
 cp .env.example .env
 
 # 5. Start (auto-creates runtime worktree, starts Redis + API + Frontend)
@@ -99,13 +100,13 @@ pnpm start:status
 pnpm stop
 ```
 
-Open `http://localhost:3003` and start talking to your team.
+Open `http://localhost:3003` → go to **Hub → System Settings → Account Configuration** to add your model API keys (Claude, GPT, Gemini, or third-party providers like Kimi, GLM, MiniMax).
 
 > **One-line alternative (Linux):** `bash scripts/install.sh` handles Node, pnpm, Redis, dependencies, `.env`, and first launch in one step. Options: `--start` (auto-start), `--memory` (skip Redis), `--registry=URL` (custom npm mirror). On **Windows**, use `scripts/install.ps1` then `scripts/start-windows.ps1`.
 
-**Full setup guide** (API keys, CLI auth, voice, Feishu/Telegram, troubleshooting): **[SETUP.opensource.md](SETUP.opensource.md)**
+**Full setup guide** (API keys, CLI auth, voice, Feishu/Telegram, troubleshooting): **[SETUP.md](SETUP.md)**
 
-> **Want to stay on a specific version?** See [Running a Specific Version](SETUP.opensource.md#running-a-specific-version-without-auto-update) in the setup guide.
+> **Want to stay on a specific version?** See [Running a Specific Version](SETUP.md#running-a-specific-version-without-auto-update) in the setup guide.
 
 > **CVO Bootcamp is live!** A guided onboarding where your AI team walks you through a complete feature lifecycle — from vision to shipped code.
 
@@ -219,7 +220,7 @@ Hit the Hub button to open the floating command center. Tabs include:
 | **Skills** | On-demand skills loaded by agents (TDD, debugging, review, etc.) |
 | **Quota Board** | Real-time token usage and cost tracking per agent |
 | **Routing Policy** | How tasks get routed — which agent handles what |
-| **Provider Profiles** | Model configurations, API keys, output format per provider |
+| **Account Configuration** | Add model API keys, configure OAuth, manage provider profiles (Claude, GPT, Gemini, Kimi, GLM, MiniMax, etc.) |
 
 <details><summary>📹 Demo: Hub & Mission Hub walkthrough</summary>
 
@@ -361,7 +362,7 @@ We build in the open. Here's where we are.
 
 | Feature | Status |
 |---------|--------|
-| Multi-User Collaboration (OAuth + ACL) | Spec |
+| Multi-User Collaboration (OAuth + Provider Profiles) | Phase 1 Done |
 | Mission Hub (cross-project command center) | Phase 2 Done |
 | Cold-Start Verifier | Spec |
 
@@ -416,6 +417,7 @@ We're not building tools. We're building homes.
 
 - **[Tutorials](https://github.com/zts212653/cat-cafe-tutorials)** — Step-by-step guides for building with Clowder AI
 - **[SETUP.md](SETUP.md)** — Full installation and configuration guide
+- **[Third-Party AI Provider Guide](SETUP.md#model-access-ui)** — Configure Kimi, GLM, MiniMax, Qwen, OpenRouter, and other providers
 - **[Tips](docs/TIPS.md)** — Magic words, @mentions, voice companion, and other usage tips
 - **[docs/](docs/)** — Architecture decisions, feature specs, and lessons learned
 

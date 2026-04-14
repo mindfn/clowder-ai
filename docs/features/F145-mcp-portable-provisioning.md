@@ -8,7 +8,7 @@ created: 2026-03-27
 
 # F145: MCP Portable Provisioning — 声明式 MCP 期望态 + 本机解析
 
-> **Status**: done | **Completed**: 2026-03-27 | **Owner**: Ragdoll + Maine Coon | **Priority**: P1
+> **Status**: done | **Owner**: Ragdoll + Maine Coon | **Priority**: P1
 
 ## Why
 
@@ -67,6 +67,19 @@ created: 2026-03-27
    - 输出 ready/missing/unresolved 报告
    - 不能自动安装的宿主软件（如 Antigravity / VS Code 本体），给出一条明确安装指引
 
+### Phase C: Built-in Cat Café MCP Auto-Provision for ACP ✅
+
+**痛点**：ACP resolver (`acp-mcp-resolver.ts`) 把内置 `cat-cafe*` servers 和外部 MCP 一视同仁，全从 `.mcp.json` 读取。社区用户 clone 后没有 `.mcp.json`（gitignored），Gemini ACP 就拿不到任何 MCP server。
+
+**改法**（Maine Coon GPT-5.4 审定边界）：
+
+1. **共享 helper**：`resolveBuiltinCatCafeMcpServers(projectRoot, whitelist)` — 从 `packages/mcp-server/dist/` 自动生成内置 server 配置
+   - `cat-cafe` → `dist/index.js`（全量 server，含 limb tools）
+   - `cat-cafe-{suffix}` → `dist/{suffix}.js`
+2. **ACP resolver 改造**：内置 `cat-cafe*` 走 helper，外部 server（`pencil` 等）才 fallback 到 `.mcp.json`
+3. **capabilities.json bootstrap 补齐**：`cat-cafe` 主 server 加入 bootstrap/migration（当前只有 split 三件套）
+4. **mcp:doctor 对齐**：确认 doctor 报告包含 `cat-cafe` 主 server 状态
+
 ## Acceptance Criteria
 
 ### Phase A（Pencil Resolver + 去机器态）✅
@@ -85,6 +98,13 @@ created: 2026-03-27
 - [x] AC-B4: `pnpm mcp:doctor` 输出 ready/missing/unresolved 报告
 - [x] AC-B5: 新机器 clone + `pnpm install && pnpm mcp:doctor` 后，报告准确反映本机 MCP 状态
 
+### Phase C（Built-in MCP Auto-Provision for ACP）✅
+- [x] AC-C1: ACP resolver 不依赖 `.mcp.json` 获取 `cat-cafe*` servers — 从 `projectRoot` 自动生成
+- [x] AC-C2: 外部 MCP（`pencil` 等）仍从 `.mcp.json` fallback 读取
+- [x] AC-C3: `capabilities.json` bootstrap 包含 `cat-cafe` 主 server（含 limb tools）
+- [x] AC-C4: 新机器 clone + `pnpm install` 后，Gemini ACP session 自动获得内置 MCP servers（无需手写 `.mcp.json`）
+- [x] AC-C5: 现有 ACP adapter + resolver 测试全绿 + 新增 auto-provision 回归测试
+
 ## Dependencies
 
 - **Evolved from**: F041（能力看板 + 配置编排器）
@@ -98,6 +118,29 @@ created: 2026-03-27
 | Schema 改动影响现有 capabilities.json 消费者 | resolver 是 optional 字段，现有逻辑不受影响；migration 一次性清洗 |
 | Pencil 扩展路径在不同 OS/架构上不同 | 先只做 macOS ARM64（当前唯一 target），其他平台留 env override |
 | mcp-resolved.json 和 capabilities.json 不同步 | generateCliConfigs() 每次都先 resolve 再生成，不缓存旧结果 |
+
+## Known Issues
+
+### Phase D: ~/.claude.json stale override 遮蔽 resolver 输出（2026-04-08 发现）
+
+**症状**：Pencil resolver 正确解析到 VS Code 0.6.39（`--app vscode`），`.mcp.json` 也正确生成，但 Claude Code session 里 pencil 工具始终不可用。Siamese（Gemini ACP）同样不可用。
+
+**根因**：`~/.claude.json` 有两层 stale pencil 配置覆盖了 `.mcp.json`：
+1. **Per-project mcpServers**（优先级最高）：指向已卸载的 `pencildev-0.6.26`（文件不存在） + `--app antigravity`
+2. **Global mcpServers**：指向 `.pencil/mcp/antigravity/`（文件存在但用旧 `--app antigravity`）
+
+Claude Code 读配置时 per-project override > `.mcp.json` > global，拿到不存在的二进制 → 启动失败 → 静默跳过。
+
+**紧急修复（2026-04-08）**：手动清理 `~/.claude.json` 中 per-project 和 global 的 stale pencil entries。
+
+**根因修复**：`generateCliConfigs()` 在写完 `.mcp.json` 后，对 resolver-backed servers 清理 `~/.claude.json` 中 per-project overrides，防止 stale entries 遮蔽 resolver 输出。→ Phase D (PR #1017, merged `b527aac0`)
+
+### Phase D: generateCliConfigs() 清理 stale Claude overrides ✅
+
+- [x] AC-D1: `generateCliConfigs()` 写完 `.mcp.json` 后，清理 `~/.claude.json` per-project mcpServers 中 resolver-backed server 的 stale entries
+- [x] AC-D2: Global mcpServers 不清理（设计决策：global 优先级低于 `.mcp.json`，不遮蔽 resolver 输出，清理反而会影响其他项目）
+- [x] AC-D3: 不影响非 resolver-backed servers（如用户手动配置的 xiaohongshu、jetbrains 等）
+- [x] AC-D4: 清理操作有日志输出（`[F145] Cleaned ...` / `[F145] Failed ...`），不静默
 
 ## Key Decisions
 

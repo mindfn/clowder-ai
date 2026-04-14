@@ -3,14 +3,18 @@
  * 三只 AI 猫猫的类型定义和配置
  */
 
-import type { ContextBudget } from './cat-breed.js';
+import type { CliConfig, ContextBudget } from './cat-breed.js';
 import type { CatId, SessionId } from './ids.js';
 import { createCatId } from './ids.js';
 
 /**
- * AI provider behind a cat
+ * CLI client identity used to invoke a cat (e.g. 'anthropic' → claude CLI, 'openai' → codex CLI).
+ * Renamed from CatProvider in F340 P5.
  */
-export type CatProvider = 'anthropic' | 'openai' | 'google' | 'dare' | 'antigravity' | 'opencode' | 'a2a';
+export type ClientId = 'anthropic' | 'openai' | 'google' | 'kimi' | 'dare' | 'antigravity' | 'opencode' | 'a2a';
+
+/** @deprecated F340: Use {@link ClientId} instead. Kept as alias for backward compatibility. */
+export type CatProvider = ClientId;
 
 /**
  * Cat status in the system
@@ -37,10 +41,13 @@ export interface CatConfig {
   readonly avatar: string;
   readonly color: CatColor;
   readonly mentionPatterns: readonly string[];
+  readonly source?: 'seed' | 'runtime';
   readonly accountRef?: string;
-  readonly provider: CatProvider;
+  /** F340 P5: CLI client identity (renamed from `provider`). */
+  readonly clientId: ClientId;
   readonly defaultModel: string;
   readonly mcpSupport: boolean;
+  readonly cli?: CliConfig;
   readonly commandArgs?: readonly string[];
   readonly contextBudget?: ContextBudget;
   readonly roleDescription: string;
@@ -63,8 +70,9 @@ export interface CatConfig {
   readonly sessionChain?: boolean;
   /** F127: Extra CLI --config key=value pairs passed to the client at invocation time. */
   readonly cliConfigArgs?: readonly string[];
-  /** F189: OpenCode custom provider name for api_key routing (runtime assembles provider/model). */
-  readonly ocProviderName?: string;
+  /** F340 P5: Model provider name for api_key routing (renamed from `ocProviderName`).
+   *  e.g. "openrouter", "maas", "deepseek". Runtime assembles provider/model for the -m flag. */
+  readonly provider?: string;
 }
 
 /**
@@ -96,7 +104,7 @@ export const CAT_CONFIGS: Record<string, CatConfig> = {
       secondary: '#E8DFF5',
     },
     mentionPatterns: ['@opus', '@布偶猫', '@布偶', '@ragdoll', '@宪宪'],
-    provider: 'anthropic',
+    clientId: 'anthropic',
     defaultModel: 'claude-sonnet-4-5-20250929',
     mcpSupport: true,
     breedId: 'ragdoll',
@@ -114,7 +122,7 @@ export const CAT_CONFIGS: Record<string, CatConfig> = {
       secondary: '#D4E6D3',
     },
     mentionPatterns: ['@codex', '@缅因猫', '@缅因', '@maine', '@砚砚'],
-    provider: 'openai',
+    clientId: 'openai',
     defaultModel: 'codex',
     mcpSupport: false,
     breedId: 'maine-coon',
@@ -131,12 +139,29 @@ export const CAT_CONFIGS: Record<string, CatConfig> = {
       secondary: '#D6E9F8',
     },
     mentionPatterns: ['@gemini', '@暹罗猫', '@暹罗', '@siamese', '@暄罗猫', '@暄罗'],
-    provider: 'google',
+    clientId: 'google',
     defaultModel: 'gemini-2.5-pro',
     mcpSupport: false,
     breedId: 'siamese',
     roleDescription: '视觉设计师和创意顾问，擅长 UI/UX 设计和视觉表达',
     personality: '活泼有创意，善于用视觉语言表达想法，喜欢尝试新事物',
+  },
+  kimi: {
+    id: createCatId('kimi'),
+    name: '梵花猫',
+    displayName: '梵花猫',
+    avatar: '/avatars/kimi.png',
+    color: {
+      primary: '#4B5563',
+      secondary: '#E5E7EB',
+    },
+    mentionPatterns: ['@kimi', '@moonshot', '@月之暗面', '@梵花猫'],
+    clientId: 'kimi',
+    defaultModel: 'kimi-code/kimi-for-coding',
+    mcpSupport: true,
+    breedId: 'moonshot',
+    roleDescription: '中文推理与长文本助手，擅长中文表达、总结与资料整理',
+    personality: '稳健细致，擅长长文阅读和中文语境下的结构化表达',
   },
 } as const;
 

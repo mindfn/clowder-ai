@@ -19,25 +19,28 @@ import type { IBacklogStore } from '../domains/cats/services/stores/ports/Backlo
 import type { DeliveryCursorStore } from '../domains/cats/services/stores/ports/DeliveryCursorStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
 import { hydrateReplyPreview, type IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
-import type { ITaskStore } from '../domains/cats/services/stores/ports/TaskStore.js';
+import { type ITaskStore, isSubjectOwnershipConflictError } from '../domains/cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore, VotingStateV1 } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { canViewMessage } from '../domains/cats/services/stores/visibility.js';
 import { getVoiceBlockSynthesizer } from '../domains/cats/services/tts/VoiceBlockSynthesizer.js';
 import type { IEvidenceStore, IMarkerQueue, IReflectionService } from '../domains/memory/interfaces.js';
-import type { IPrTrackingStore } from '../infrastructure/email/PrTrackingStore.js';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
+import { scoreKeywordRelevance, tokenizeKeyword } from '../utils/keyword-relevance.js';
 import { getFeatureTagId } from './backlog-doc-import.js';
 import { enqueueA2ATargets, triggerA2AInvocation } from './callback-a2a-trigger.js';
 import { callbackAuthSchema } from './callback-auth-schema.js';
 import { registerCallbackBootcampRoutes } from './callback-bootcamp-routes.js';
 import { registerCallbackDocumentRoutes } from './callback-document-routes.js';
 import { EXPIRED_CREDENTIALS_ERROR } from './callback-errors.js';
+import { registerCallbackGameRoutes } from './callback-game-routes.js';
+import { registerCallbackGuideRoutes } from './callback-guide-routes.js';
 import { registerCallbackLimbRoutes } from './callback-limb-routes.js';
 import { registerCallbackMemoryRoutes } from './callback-memory-routes.js';
 import { getMultiMentionOrchestrator, registerMultiMentionRoutes } from './callback-multi-mention-routes.js';
 import { registerCallbackQuestRoutes } from './callback-quest-routes.js';
 import { registerCallbackTaskRoutes } from './callback-task-routes.js';
+import { registerCallbackThreadCatsRoutes } from './callback-thread-cats-routes.js';
 import { registerCallbackWorkflowSopRoutes } from './callback-workflow-sop-routes.js';
 import { type FeatIndexEntry, readFeatIndexEntries } from './feat-index-doc-import.js';
 import { detectUserMention } from './user-mention.js';
@@ -49,18 +52,22 @@ export interface CallbackRoutesOptions {
   registry: InvocationRegistry;
   messageStore: IMessageStore;
   socketManager: SocketManager;
+  /** F155 review fix: allow tests to inject a failing guide flow loader. */
+  loadGuideFlow?: (guideId: string) => unknown;
   taskStore?: ITaskStore;
   backlogStore?: IBacklogStore;
-  /** For thinking mode filtering in thread-context */
+  /** For thinking mode filtering in thread-context + thread-cats discovery */
   threadStore?: IThreadStore;
+  /** F155 B-4: Independent guide session store */
+  guideSessionStore?: import('../domains/guides/GuideSessionRepository.js').IGuideSessionStore;
+  /** AgentRegistry for thread-cats MCP callback */
+  agentRegistry?: { getAllEntries(): Map<string, unknown> };
   /** For post_message @mention → invocation triggering */
   router?: AgentRouter;
   invocationRecordStore?: IInvocationRecordStore;
   invocationTracker?: InvocationTracker;
   /** For mention ack cursor tracking (#77) */
   deliveryCursorStore?: DeliveryCursorStore;
-  /** TD091: PR tracking registration via MCP callback */
-  prTrackingStore?: IPrTrackingStore;
   /** Phase D: validates GitHub repo exists before PR tracking registration */
   validateRepo?: (repoFullName: string) => Promise<boolean>;
   /** F043 P1: feat_index provider override for tests */
@@ -201,6 +208,13 @@ const richBlockSchema = z.discriminatedUnion('kind', [
           group: z.string().optional(),
           customInput: z.boolean().optional(),
           customInputPlaceholder: z.string().optional(),
+          action: z
+            .object({
+              type: z.literal('callback'),
+              endpoint: z.string().min(1),
+              payload: z.record(z.unknown()).optional(),
+            })
+            .optional(),
         }),
       )
       .min(1),
@@ -290,7 +304,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     invocationRecordStore,
     invocationTracker,
     deliveryCursorStore,
-    prTrackingStore,
     validateRepo,
     featIndexProvider,
     queueProcessor,
@@ -514,7 +527,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         content: storedContent,
         origin: 'callback',
         messageId: storedMsg.id,
-        ...(invocationId ? { invocationId } : {}),
+        invocationId, // #454: always propagate — required by callback auth
         // F52+F098-C1: Include crossPost + targetCats in real-time broadcast
         ...(isCrossThread || validExplicitTargets.length
           ? {
@@ -536,12 +549,14 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
     // #83: Broadcast each extracted rich block as SSE event for live rendering
     // P2 cloud-review: include messageId for frontend correlation
+    // #454: include invocationId so frontend can exact-match callback to stream bubble
     for (const block of richBlocks) {
       socketManager.broadcastAgentMessage(
         {
           type: 'system_info' as const,
           catId: record.catId,
           content: JSON.stringify({ type: 'rich_block', block, messageId: storedMsg.id }),
+          invocationId,
           timestamp: Date.now(),
         },
         effectiveThreadId,
@@ -760,7 +775,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
     // F-Swarm-6: allow reading a different thread's context
     const effectiveThreadId = overrideThreadId ?? record.threadId;
-    const normalizedKeyword = keyword?.toLowerCase();
+    // F148 Phase B (AC-B2): tokenize keyword for relevance scoring
+    const keywordTerms = keyword ? tokenizeKeyword(keyword) : [];
 
     const requestedLimit = limit ?? 20;
     let needsPlayFilter = false;
@@ -778,6 +794,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       ? { type: 'cat' as const, catId: createCatId(record.catId) }
       : { type: 'user' as const };
     const matchesExtraFilters = (item: Awaited<ReturnType<typeof messageStore.getByThread>>[number]): boolean => {
+      // F148 Phase E (AC-E2): briefing messages are non-routing, never enter cat context
+      if (item.origin === 'briefing') return false;
       if (filterCatId) {
         if (filterCatId === 'user') {
           if (item.catId !== null) return false;
@@ -785,7 +803,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           return false;
         }
       }
-      if (normalizedKeyword && !item.content.toLowerCase().includes(normalizedKeyword)) {
+      // F148 Phase B (AC-B2): tokenized keyword relevance (replaces substring .includes())
+      if (keywordTerms.length > 0 && scoreKeywordRelevance(item.content, keywordTerms) === 0) {
         return false;
       }
       return true;
@@ -818,8 +837,18 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         cursorId = oldest.id;
       }
 
-      visible.sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
-      filtered = visible.slice(-requestedLimit);
+      // F148 Phase B (AC-B2): sort by keyword relevance when searching, chronological otherwise
+      if (keywordTerms.length > 0) {
+        visible.sort((a, b) => {
+          const sa = scoreKeywordRelevance(a.content, keywordTerms);
+          const sb = scoreKeywordRelevance(b.content, keywordTerms);
+          return sb - sa || b.timestamp - a.timestamp; // higher relevance first, then newest first
+        });
+        filtered = visible.slice(0, requestedLimit); // P1-1 fix: take HEAD (highest relevance)
+      } else {
+        visible.sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
+        filtered = visible.slice(-requestedLimit); // take TAIL (most recent)
+      }
     } else {
       // Play mode: paginate backwards collecting visible messages until we have enough
       // or data is exhausted. No fixed page cap — correctness over latency.
@@ -856,9 +885,18 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       }
 
       // visible is accumulated in reverse-chronological page order but each page is ascending.
-      // Re-sort ascending and take newest requestedLimit.
-      visible.sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
-      filtered = visible.slice(-requestedLimit);
+      // P2-1 fix: play mode also sorts by keyword relevance when keyword is active
+      if (keywordTerms.length > 0) {
+        visible.sort((a, b) => {
+          const sa = scoreKeywordRelevance(a.content, keywordTerms);
+          const sb = scoreKeywordRelevance(b.content, keywordTerms);
+          return sb - sa || b.timestamp - a.timestamp;
+        });
+        filtered = visible.slice(0, requestedLimit);
+      } else {
+        visible.sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
+        filtered = visible.slice(-requestedLimit);
+      }
     }
 
     // F073 P1: Look up workflow SOP for resume capsule if thread has linked backlog item
@@ -892,6 +930,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         content: item.content,
         ...(item.contentBlocks ? { contentBlocks: item.contentBlocks } : {}),
         timestamp: item.timestamp,
+        // F148 Phase B (AC-B2): include relevance score when keyword search is active
+        ...(keywordTerms.length > 0 ? { relevanceScore: scoreKeywordRelevance(item.content, keywordTerms) } : {}),
       })),
       ...(workflowSop ? { workflowSop } : {}),
     };
@@ -997,9 +1037,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
   });
 
   app.post('/api/callbacks/register-pr-tracking', async (request, reply) => {
-    if (!prTrackingStore) {
+    // #320: Unified model — write to TaskStore instead of PrTrackingStore
+    if (!taskStore) {
       reply.status(503);
-      return { error: 'PR tracking not configured' };
+      return { error: 'Task store not configured' };
     }
 
     const parsed = registerPrTrackingSchema.safeParse(request.body);
@@ -1016,7 +1057,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     }
 
     // Use authoritative catId from invocation record, not caller payload.
-    // LLMs may pass wrong catId (e.g. tool description examples bias).
     const catId = record.catId;
 
     // Phase D: validate repo exists and is accessible (AC-D1)
@@ -1034,22 +1074,27 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       }
     }
 
-    // Cloud Codex P1-2: ownership protection — reject cross-user overwrites
-    const existing = await prTrackingStore.get(repoFullName, prNumber);
-    if (existing && existing.userId !== record.userId) {
-      reply.status(409);
-      return { error: `PR ${repoFullName}#${prNumber} already registered by another user` };
+    const subjectKey = `pr:${repoFullName}#${prNumber}`;
+    try {
+      const task = await taskStore.upsertBySubject({
+        kind: 'pr_tracking',
+        subjectKey,
+        threadId: record.threadId,
+        title: `PR tracking: ${repoFullName}#${prNumber}`,
+        ownerCatId: catId,
+        why: `Tracking PR ${repoFullName}#${prNumber} for review feedback, CI/CD, and conflict detection`,
+        createdBy: catId,
+        userId: record.userId,
+      });
+
+      return { status: 'ok', threadId: record.threadId, task };
+    } catch (error) {
+      if (isSubjectOwnershipConflictError(error)) {
+        reply.status(409);
+        return { error: `PR ${repoFullName}#${prNumber} already registered by another user` };
+      }
+      throw error;
     }
-
-    const entry = await prTrackingStore.register({
-      repoFullName,
-      prNumber,
-      catId,
-      threadId: record.threadId,
-      userId: record.userId,
-    });
-
-    return { status: 'ok', threadId: record.threadId, entry };
   });
 
   // F22: Rich block creation via MCP callback
@@ -1096,12 +1141,14 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const isNew = getRichBlockBuffer().add(record.threadId, record.catId as string, resolvedBlock, invocationId);
 
     // Only broadcast new blocks (dedup retries at server to prevent frontend duplicates)
+    // #454: include invocationId so frontend can exact-match callback to stream bubble
     if (isNew) {
       socketManager.broadcastAgentMessage(
         {
           type: 'system_info' as const,
           catId: record.catId,
           content: JSON.stringify({ type: 'rich_block', block: resolvedBlock }),
+          invocationId,
           timestamp: Date.now(),
         },
         record.threadId,
@@ -1276,6 +1323,15 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     registerCallbackQuestRoutes(app, { threadStore: opts.threadStore });
   }
 
+  // Thread cats discovery for MCP
+  if (opts.threadStore && opts.agentRegistry) {
+    registerCallbackThreadCatsRoutes(app, {
+      registry,
+      threadStore: opts.threadStore,
+      agentRegistry: opts.agentRegistry,
+    });
+  }
+
   await registerCallbackMemoryRoutes(app, {
     registry,
     evidenceStore: opts.evidenceStore,
@@ -1312,4 +1368,18 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
   // F088 Phase J2: Document generation callback routes
   registerCallbackDocumentRoutes(app, { registry, socketManager });
+
+  // F101: Game action callback for non-Claude cats (OpenCode/Codex/Gemini)
+  registerCallbackGameRoutes(app, { registry });
+
+  // F155: Guide engine — state-validated routes with ThreadStore authority
+  if (opts.threadStore) {
+    await registerCallbackGuideRoutes(app, {
+      registry,
+      threadStore: opts.threadStore,
+      socketManager,
+      ...(opts.guideSessionStore ? { guideSessionStore: opts.guideSessionStore } : {}),
+      ...(opts.loadGuideFlow ? { loadGuideFlow: opts.loadGuideFlow } : {}),
+    });
+  }
 };

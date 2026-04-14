@@ -15,18 +15,21 @@ import { relative, resolve, sep } from 'node:path';
 import type { CapabilitiesConfig, CapabilityEntry, McpServerDescriptor } from '@cat-cafe/shared';
 import { catRegistry } from '@cat-cafe/shared';
 import {
+  cleanStaleClaudeProjectOverrides,
   readClaudeMcpConfig,
   readCodexMcpConfig,
   readGeminiMcpConfig,
+  readKimiMcpConfig,
   writeClaudeMcpConfig,
   writeCodexMcpConfig,
   writeGeminiMcpConfig,
+  writeKimiMcpConfig,
 } from './mcp-config-adapters.js';
 
 // ────────── Constants ──────────
 
 const CAPABILITIES_FILENAME = 'capabilities.json';
-const CAT_CAFE_DIR = '.cat-cafe';
+const CONFIG_SUBDIR = '.cat-cafe';
 const MCP_RESOLVED_FILENAME = 'mcp-resolved.json';
 
 const PENCIL_EXTENSIONS_DIR = resolve(homedir(), '.antigravity/extensions');
@@ -103,6 +106,7 @@ const PROVIDER_WRITERS = {
   anthropic: writeClaudeMcpConfig,
   openai: writeCodexMcpConfig,
   google: writeGeminiMcpConfig,
+  kimi: writeKimiMcpConfig,
 } as const;
 
 /** Check if a descriptor has a usable transport (stdio command, local resolver, or streamableHttp URL). */
@@ -191,10 +195,17 @@ export function deduplicateDiscoveredMcpServers<T extends DiscoveredMcpLike>(ser
   return [...byName.values()];
 }
 
+/** Normalize a raw app name to the PencilApp union. Returns undefined for unknown values. */
+function normalizePencilApp(raw?: string): PencilApp | undefined {
+  const v = raw?.trim().toLowerCase();
+  if (v === 'antigravity') return 'antigravity';
+  if (v === 'vscode' || v === 'cursor' || v === 'vscode-insiders' || v === 'visual_studio_code') return 'vscode';
+  return undefined;
+}
+
 function inferPencilApp(command: string, envApp?: string): PencilApp {
-  const explicit = envApp?.trim().toLowerCase();
-  if (explicit === 'vscode' || explicit === 'cursor' || explicit === 'vscode-insiders') return 'vscode';
-  if (explicit === 'antigravity') return 'antigravity';
+  const normalized = normalizePencilApp(envApp);
+  if (normalized) return normalized;
   if (
     command.includes(`${sep}.vscode${sep}extensions${sep}`) ||
     command.includes(`${sep}.cursor${sep}extensions${sep}`) ||
@@ -246,7 +257,7 @@ export async function resolvePencilCommand(
     return { command: explicitCommand, args: ['--app', app] };
   }
 
-  const candidates = (
+  const allCandidates = (
     await Promise.all([
       collectAccessiblePencilCandidates(options.antigravityDir ?? PENCIL_EXTENSIONS_DIR, 'antigravity'),
       collectAccessiblePencilCandidates(options.vscodeDir ?? VSCODE_EXTENSIONS_DIR, 'vscode'),
@@ -255,7 +266,21 @@ export async function resolvePencilCommand(
     ])
   )
     .flat()
-    .sort((a, b) => comparePencilDirs(a.dirName, b.dirName));
+    .sort((a, b) => {
+      const versionCmp = comparePencilDirs(a.dirName, b.dirName);
+      if (versionCmp !== 0) return versionCmp;
+      // Tie-break: prefer antigravity over vscode (specialty editor; if installed, user likely prefers it)
+      return (a.app === 'antigravity' ? 1 : 0) - (b.app === 'antigravity' ? 1 : 0);
+    });
+
+  // PENCIL_MCP_APP (without PENCIL_MCP_BIN) filters candidates to the preferred app.
+  // Normalize aliases (cursor, vscode-insiders → vscode) to match candidate app values.
+  // Falls back to all candidates if the preferred app has no installations.
+  const preferredApp = normalizePencilApp(env.PENCIL_MCP_APP?.trim());
+  const candidates =
+    preferredApp && allCandidates.some((c) => c.app === preferredApp)
+      ? allCandidates.filter((c) => c.app === preferredApp)
+      : allCandidates;
 
   const latest = candidates[candidates.length - 1];
   if (latest) {
@@ -289,7 +314,7 @@ function safePath(projectRoot: string, ...segments: string[]): string {
 }
 
 export async function readCapabilitiesConfig(projectRoot: string): Promise<CapabilitiesConfig | null> {
-  const filePath = safePath(projectRoot, CAT_CAFE_DIR, CAPABILITIES_FILENAME);
+  const filePath = safePath(projectRoot, CONFIG_SUBDIR, CAPABILITIES_FILENAME);
   try {
     const raw = await readFile(filePath, 'utf-8');
     const data = JSON.parse(raw) as CapabilitiesConfig;
@@ -301,14 +326,14 @@ export async function readCapabilitiesConfig(projectRoot: string): Promise<Capab
 }
 
 export async function writeCapabilitiesConfig(projectRoot: string, config: CapabilitiesConfig): Promise<void> {
-  const dir = safePath(projectRoot, CAT_CAFE_DIR);
+  const dir = safePath(projectRoot, CONFIG_SUBDIR);
   await mkdir(dir, { recursive: true });
-  const filePath = safePath(projectRoot, CAT_CAFE_DIR, CAPABILITIES_FILENAME);
+  const filePath = safePath(projectRoot, CONFIG_SUBDIR, CAPABILITIES_FILENAME);
   await writeFile(filePath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
 }
 
 export async function readResolvedMcpState(projectRoot: string): Promise<ResolvedMcpState> {
-  const filePath = safePath(projectRoot, CAT_CAFE_DIR, MCP_RESOLVED_FILENAME);
+  const filePath = safePath(projectRoot, CONFIG_SUBDIR, MCP_RESOLVED_FILENAME);
   try {
     const raw = await readFile(filePath, 'utf-8');
     const data = JSON.parse(raw) as ResolvedMcpState;
@@ -319,9 +344,9 @@ export async function readResolvedMcpState(projectRoot: string): Promise<Resolve
 }
 
 export async function writeResolvedMcpState(projectRoot: string, state: ResolvedMcpState): Promise<void> {
-  const dir = safePath(projectRoot, CAT_CAFE_DIR);
+  const dir = safePath(projectRoot, CONFIG_SUBDIR);
   await mkdir(dir, { recursive: true });
-  const filePath = safePath(projectRoot, CAT_CAFE_DIR, MCP_RESOLVED_FILENAME);
+  const filePath = safePath(projectRoot, CONFIG_SUBDIR, MCP_RESOLVED_FILENAME);
   await writeFile(filePath, `${JSON.stringify(state, null, 2)}\n`, 'utf-8');
 }
 
@@ -331,6 +356,7 @@ export interface DiscoveryPaths {
   claudeConfig: string; // e.g. <projectRoot>/.mcp.json
   codexConfig: string; // e.g. <projectRoot>/.codex/config.toml
   geminiConfig: string; // e.g. <projectRoot>/.gemini/settings.json
+  kimiConfig: string; // e.g. <projectRoot>/.kimi/mcp.json
 }
 
 /**
@@ -338,13 +364,14 @@ export interface DiscoveryPaths {
  * Merges by name; if same name appears in multiple, first wins.
  */
 export async function discoverExternalMcpServers(paths: DiscoveryPaths): Promise<McpServerDescriptor[]> {
-  const [claude, codex, gemini] = await Promise.all([
+  const [claude, codex, gemini, kimi] = await Promise.all([
     readClaudeMcpConfig(paths.claudeConfig),
     readCodexMcpConfig(paths.codexConfig),
     readGeminiMcpConfig(paths.geminiConfig),
+    readKimiMcpConfig(paths.kimiConfig),
   ]);
   return deduplicateDiscoveredMcpServers(
-    [...claude, ...codex, ...gemini]
+    [...claude, ...codex, ...gemini, ...kimi]
       .filter((server) => hasUsableTransport(server))
       .map((server) => ({ ...server, source: 'external' as const })),
   );
@@ -506,6 +533,42 @@ export function migrateResolverBackedCapabilities(config: CapabilitiesConfig): {
   return { migrated: true, config: { ...config, capabilities } };
 }
 
+/**
+ * F145 Phase C: Ensure the cat-cafe main server (index.js, hosts limb tools)
+ * exists alongside split servers. Handles upgrades from pre-AC-C3 installs
+ * where only split servers were bootstrapped.
+ */
+export function ensureCatCafeMainServer(
+  config: CapabilitiesConfig,
+  opts?: { catCafeRepoRoot?: string; projectRoot?: string },
+): { migrated: boolean; config: CapabilitiesConfig } {
+  const projectRoot = opts?.catCafeRepoRoot ?? opts?.projectRoot;
+  if (!projectRoot) return { migrated: false, config };
+
+  const splitSet = new Set<string>(CAT_CAFE_SPLIT_SERVER_IDS);
+  const hasSplit = config.capabilities.some((cap) => splitSet.has(cap.id));
+  if (!hasSplit) return { migrated: false, config };
+
+  const hasMain = config.capabilities.some((cap) => cap.type === 'mcp' && cap.id === 'cat-cafe');
+  if (hasMain) return { migrated: false, config };
+
+  // Inherit enabled/overrides/env/workingDir from the first split server,
+  // so we don't re-enable a server the user explicitly disabled.
+  const firstSplit = config.capabilities.find((cap) => splitSet.has(cap.id));
+  const mainEntry = toCapabilityEntry(buildCatCafeMcpDescriptor(projectRoot));
+  if (firstSplit) {
+    mainEntry.enabled = firstSplit.enabled;
+    if (firstSplit.overrides) mainEntry.overrides = firstSplit.overrides.map((o) => ({ ...o }));
+    if (firstSplit.mcpServer?.env) mainEntry.mcpServer!.env = { ...firstSplit.mcpServer.env };
+    if (firstSplit.mcpServer?.workingDir) mainEntry.mcpServer!.workingDir = firstSplit.mcpServer.workingDir;
+  }
+  const firstSplitIdx = config.capabilities.findIndex((cap) => splitSet.has(cap.id));
+  const capabilities = [...config.capabilities];
+  capabilities.splice(firstSplitIdx, 0, mainEntry);
+
+  return { migrated: true, config: { ...config, capabilities } };
+}
+
 // ────────── Bootstrap: Create initial capabilities.json ──────────
 
 /**
@@ -517,13 +580,15 @@ export async function bootstrapCapabilities(
   discoveryPaths: DiscoveryPaths,
   opts?: { catCafeRepoRoot?: string },
 ): Promise<CapabilitiesConfig> {
-  const catCafeServers = buildCatCafeSplitMcpDescriptors(opts?.catCafeRepoRoot ?? projectRoot);
+  const catCafeRepoRoot = opts?.catCafeRepoRoot ?? projectRoot;
+  const catCafeServers = buildCatCafeSplitMcpDescriptors(catCafeRepoRoot);
   const externals = await discoverExternalMcpServers(discoveryPaths);
 
   const capabilities: CapabilityEntry[] = [];
 
-  // Add Cat Cafe's own MCP (split servers)
-  for (const entry of buildSplitCapabilityEntries(opts?.catCafeRepoRoot ?? projectRoot)) {
+  // Add Cat Cafe's own MCP (main server + split servers)
+  capabilities.push(toCapabilityEntry(buildCatCafeMcpDescriptor(catCafeRepoRoot)));
+  for (const entry of buildSplitCapabilityEntries(catCafeRepoRoot)) {
     capabilities.push(entry);
   }
 
@@ -548,10 +613,11 @@ export interface CliConfigPaths {
   anthropic: string; // e.g. <projectRoot>/.mcp.json
   openai: string; // e.g. <projectRoot>/.codex/config.toml
   google: string; // e.g. <projectRoot>/.gemini/settings.json
+  kimi: string; // e.g. <projectRoot>/.kimi/mcp.json
 }
 
 /** Providers that support streamableHttp transport (URL-based MCP). */
-const STREAMABLE_HTTP_PROVIDERS = new Set(['anthropic']);
+const STREAMABLE_HTTP_PROVIDERS = new Set(['anthropic', 'kimi']);
 
 /**
  * Resolve effective MCP servers for a specific cat.
@@ -559,7 +625,7 @@ const STREAMABLE_HTTP_PROVIDERS = new Set(['anthropic']);
  */
 export function resolveServersForCat(config: CapabilitiesConfig, catId: string): McpServerDescriptor[] {
   const entry = catRegistry.tryGet(catId);
-  const provider = entry?.config.provider;
+  const provider = entry?.config.clientId;
 
   return config.capabilities
     .filter((cap) => cap.type === 'mcp' && cap.mcpServer)
@@ -606,7 +672,7 @@ function collectServersPerProvider(config: CapabilitiesConfig): Record<string, M
   for (const catId of catRegistry.getAllIds()) {
     const entry = catRegistry.tryGet(catId as string);
     if (!entry) continue;
-    const provider = entry.config.provider;
+    const provider = entry.config.clientId;
 
     if (!providerServers[provider]) {
       providerServers[provider] = new Map();
@@ -682,7 +748,8 @@ export async function resolveMachineSpecificServers(
  */
 export async function generateCliConfigs(config: CapabilitiesConfig, paths: CliConfigPaths): Promise<void> {
   const perProvider = collectServersPerProvider(config);
-  await resolveMachineSpecificServers(perProvider, { projectRoot: resolve(paths.anthropic, '..') });
+  const projectRoot = resolve(paths.anthropic, '..');
+  await resolveMachineSpecificServers(perProvider, { projectRoot });
 
   const writes: Promise<void>[] = [];
   for (const [provider, servers] of Object.entries(perProvider)) {
@@ -694,6 +761,22 @@ export async function generateCliConfigs(config: CapabilitiesConfig, paths: CliC
   }
 
   await Promise.all(writes);
+
+  // Best-effort: clean resolver-managed per-project overrides from ~/.claude.json (F145 Phase D).
+  // Per-project mcpServers shadow .mcp.json (higher priority), causing silent MCP failures
+  // when the binary path becomes outdated. Global mcpServers are left untouched.
+  const resolverBacked = config.capabilities.filter((c) => c.type === 'mcp' && c.mcpServer?.resolver).map((c) => c.id);
+  if (resolverBacked.length > 0) {
+    try {
+      const claudeConfigPath = resolve(homedir(), '.claude.json');
+      const cleaned = await cleanStaleClaudeProjectOverrides(claudeConfigPath, projectRoot, resolverBacked);
+      if (cleaned.length > 0) {
+        console.warn(`[F145] Cleaned resolver-managed overrides from ~/.claude.json: ${cleaned.join(', ')}`);
+      }
+    } catch (err) {
+      console.warn(`[F145] Failed to clean ~/.claude.json overrides (non-blocking): ${(err as Error).message}`);
+    }
+  }
 }
 
 /**
@@ -711,13 +794,12 @@ export async function orchestrate(
   if (!config) {
     config = await bootstrapCapabilities(projectRoot, discoveryPaths, opts);
   } else {
-    const migrated = migrateLegacyCatCafeCapability(
-      config,
-      opts?.catCafeRepoRoot ? { projectRoot, catCafeRepoRoot: opts.catCafeRepoRoot } : { projectRoot },
-    );
+    const rootOpts = opts?.catCafeRepoRoot ? { projectRoot, catCafeRepoRoot: opts.catCafeRepoRoot } : { projectRoot };
+    const migrated = migrateLegacyCatCafeCapability(config, rootOpts);
     const resolverMigrated = migrateResolverBackedCapabilities(migrated.config);
-    config = resolverMigrated.config;
-    if (migrated.migrated || resolverMigrated.migrated) {
+    const mainServerMigrated = ensureCatCafeMainServer(resolverMigrated.config, rootOpts);
+    config = mainServerMigrated.config;
+    if (migrated.migrated || resolverMigrated.migrated || mainServerMigrated.migrated) {
       await writeCapabilitiesConfig(projectRoot, config);
     }
   }

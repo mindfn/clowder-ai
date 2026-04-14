@@ -28,6 +28,7 @@ triggers:
 | 测试全绿 | 附测试命令输出 | BLOCKED — 修到绿灯再发 |
 | 原始需求可引用 | Discussion/Interview 文档路径 + ≤5 行摘录 | BLOCKED — reviewer 有权拒绝审查 |
 | 前端改动已浏览器实测 | Playwright/Chrome 截图证据 | BLOCKED — 涉及前端必须真实打开浏览器验证 |
+| 根目录工件闸门通过 | 无根目录媒体/设计工件（工作树 + 已提交差异） | BLOCKED — 先归档/清理再发 |
 
 > **教训（F041）**：review 信只附了 spec，没附原始 Discussion。结果 10 轮云端 review 全在抓 edge case，没有一轮说"UI 不可用"。Reviewer 没有上下文，无法做愿景验证。
 
@@ -59,6 +60,9 @@ BEFORE 发 review 请求:
 2. 确认测试全绿（附这次真实运行的输出）
 3. 找到原始 Discussion 文档路径 + 摘录 ≤5 行铲屎官原话
 4. 检查 worktree 工具落点（git status 干净）
+4.5 检查根目录工件闸门（两条都要为空）：
+   - `git status --short | rg '^.. [^/]+\.(png|jpe?g|webp|gif|webm|mp4|mov|wav|pdf|pen)$'`
+   - `git diff --name-only origin/main...HEAD | rg '^[^/]+\.(png|jpe?g|webp|gif|webm|mp4|mov|wav|pdf|pen)$'`
 5. 匹配 reviewer（跨 family 优先）
 6. 用模板写 review 请求 → 存档 mailbox
 7. 发给 reviewer
@@ -71,7 +75,7 @@ BEFORE 发 review 请求:
 关键字段提醒：
 - **Original Requirements**: 必填，≤5 行铲屎官原话 + 来源文档路径，并明确请 reviewer 对照判断
 - **Open Questions**: 标注 review 重点，帮 reviewer 快速定位
-- **自检证据**: 附 quality-gate report 摘要 + 测试命令输出
+- **自检证据**: 附 quality-gate report 摘要 + 测试命令输出 + 根目录工件闸门输出
 
 存档：*(internal reference removed)*
 
@@ -94,6 +98,14 @@ Branch: {branch-name}
 /tmp/cat-cafe-review/{review-target-id}/{reviewer-handle}
 ```
 例：`/tmp/cat-cafe-review/f113/codex`
+
+**Reviewer 启动命令（统一入口）：**
+```
+pnpm review:start
+```
+说明：
+- 该入口默认在 review 沙盒内运行，自动分配隔离端口（起点 3201/3202）
+- review 请求信里必须记录实际启动端口（web/api）
 
 沙盒必须是 detached HEAD / read-only。要改代码 = TAKEOVER，开正式 worktree。
 

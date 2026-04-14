@@ -47,6 +47,24 @@ pnpm gate
 2. SHA：基于最新 `origin/main` rebase 后的 HEAD SHA
 3. 状态：已 rebase 到最新 `origin/main`
 
+### Root Artifact Guard（Step 0.5，开 PR 前必跑）
+
+```bash
+ROOT_ARTIFACTS="$(git diff --name-only origin/main...HEAD | \
+  rg '^[^/]+\.(png|jpe?g|webp|gif|webm|mp4|mov|wav|pdf|pen)$' || true)"
+
+if [ -n "$ROOT_ARTIFACTS" ]; then
+  echo "❌ 根目录存在媒体/设计工件（已提交差异），停止 merge-gate"
+  printf '%s\n' "$ROOT_ARTIFACTS"
+  echo "请先归档到 docs/evidence/、docs/features/assets/F{NNN}/ 或其他正式目录。"
+  exit 1
+fi
+```
+
+这个检查和 Step 8 的脏工作树 fail-closed 互补：  
+- Step 0.5 拦“已经进分支历史但放错位置”的文件  
+- Step 8 拦“还在工作树里没处理的脏改动”
+
 ### 合入方式（唯一正确做法）
 
 ```bash
@@ -124,7 +142,16 @@ gh pr merge {PR_NUMBER} --squash --delete-branch
 # 7.5 Phase 文档同步（每次 merge 必做！）🔴
 # → 见下方「Phase 文档同步」章节
 
-# 8. 更新本地 + 清理
+# 8. 更新本地 + 清理（fail-closed）
+# ⚠️ 发现脏工作树就停止，不要“即兴”用 git stash -u 清理。
+# 原因：git stash -u/--include-untracked 会删除 untracked 文件（内部 git clean），
+# 在多 session 共享工作目录时可能导致其他 session 的未 commit 产出丢失。
+if [ -n "$(git status --porcelain)" ]; then
+  echo "❌ 工作树不干净，停止 merge-gate（fail-closed）"
+  echo "请先处理改动后再继续。禁止使用 git stash -u/--include-untracked。"
+  git status --short
+  exit 1
+fi
 git checkout main && git pull origin main
 git worktree remove ../cat-cafe-{feature-name}
 git branch -d {branch-name} && git worktree prune
@@ -237,6 +264,7 @@ gh api --paginate repos/{OWNER}/{REPO}/pulls/{PR_NUMBER}/comments \
 | 本地 `git rebase -i` 手动 squash | 用 `gh pr merge --squash`（GitHub 处理） |
 | 本地 merge 后 `gh pr close` | `gh pr close` = 放弃，`gh pr merge` = 合入 |
 | 不等云端 review 直接合入 | 必须等 0 P1/P2 |
+| 把截图/录屏/.pen 直接 commit 到仓库根目录 | Step 0.5 Root Artifact Guard 先拦截；先归档再开 PR |
 | Merge 后不更新 feature doc | Step 7.5 Phase 文档同步（每次 merge 必做！） |
 | Merge 后不清理 review 沙盒 | Step 8.5 按 review-target-id 回收 `/tmp/cat-cafe-review/` |
 

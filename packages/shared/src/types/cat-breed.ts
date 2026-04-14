@@ -7,7 +7,7 @@
  * Phase 4-F: 支持多 Variant（多版本猫召唤）
  */
 
-import type { CatColor, CatProvider } from './cat.js';
+import type { CatColor, ClientId } from './cat.js';
 import type { CatId } from './ids.js';
 import type { VoiceConfig } from './tts.js';
 
@@ -29,6 +29,8 @@ export interface ContextBudget {
 /**
  * CLI invocation config for a variant
  */
+import type { CliEffortValue } from '../cli-effort.js';
+
 export interface CliConfig {
   readonly command: string; // 'claude' | 'codex' | 'gemini'
   readonly outputFormat: string; // 'stream-json' | 'json'
@@ -39,7 +41,7 @@ export interface CliConfig {
    *   codex:  --config model_reasoning_effort="low|medium|high|xhigh"
    * Default: 'max' (claude) / 'xhigh' (codex)
    */
-  readonly effort?: 'low' | 'medium' | 'high' | 'max' | 'xhigh';
+  readonly effort?: CliEffortValue;
 }
 
 /**
@@ -60,9 +62,12 @@ export interface CatVariant {
   /** Independent mention patterns for this variant (F32-b).
    *  Default variant inherits breed mentionPatterns; non-default variants fallback to @catId when unspecified. */
   readonly mentionPatterns?: readonly string[];
+  /** Bootstrap-stamped origin: 'seed' (from template) or 'runtime' (user-created). */
+  readonly source?: 'seed' | 'runtime';
   /** F127: member-side binding to a concrete account config (built-in or API key). */
   readonly accountRef?: string;
-  readonly provider: CatProvider;
+  /** F340 P5: CLI client identity (renamed from `provider`). */
+  readonly clientId: ClientId;
   readonly defaultModel: string;
   readonly mcpSupport: boolean;
   readonly cli: CliConfig;
@@ -89,10 +94,11 @@ export interface CatVariant {
   /** F127: Extra CLI --config key=value pairs passed to the client at invocation time.
    *  Each entry is a raw config string, e.g. 'model_reasoning_effort="low"'. */
   readonly cliConfigArgs?: readonly string[];
-  /** F189: OpenCode custom provider name (e.g. "maas", "deepseek").
-   *  Used with api_key auth — runtime assembles `ocProviderName/defaultModel` for the -m flag
+  /** F340 P5: Model provider name for api_key routing (renamed from `ocProviderName`).
+   *  e.g. "openrouter", "maas", "deepseek".
+   *  Used with api_key auth — runtime assembles `provider/defaultModel` for the -m flag
    *  and generates an OPENCODE_CONFIG runtime config file for the provider. */
-  readonly ocProviderName?: string;
+  readonly provider?: string;
 }
 
 /**
@@ -192,15 +198,14 @@ export interface ReviewPolicy {
 // ── F136 Phase 4: Account config types ──────────────────────────────────
 
 /** Protocol that the LLM endpoint speaks. */
-export type AccountProtocol = 'anthropic' | 'openai' | 'openai-responses' | 'google';
+export type AccountProtocol = 'anthropic' | 'openai' | 'openai-responses' | 'google' | 'kimi';
 
 /**
- * Account configuration — lives in cat-catalog.json `accounts` section.
+ * Account configuration — lives in ~/.cat-cafe/accounts.json (global).
  * Maps an accountRef to its LLM endpoint metadata (no secrets).
  */
 export interface AccountConfig {
   readonly authType: 'oauth' | 'api_key';
-  readonly protocol: AccountProtocol;
   readonly baseUrl?: string;
   readonly models?: readonly string[];
   readonly displayName?: string;
@@ -251,7 +256,11 @@ export interface CatCafeConfigV2 {
   readonly roster: Roster;
   readonly reviewPolicy: ReviewPolicy;
   readonly coCreator?: CoCreatorConfig;
-  /** F136 Phase 4: Account metadata (accountRef → config). HC-2: runtime write source. */
+  /**
+   * @deprecated F340: Accounts moved to global ~/.cat-cafe/accounts.json.
+   * This field is only read during one-time migration (catalog → global).
+   * New code must use catalog-accounts.ts which reads the global file.
+   */
   readonly accounts?: Readonly<Record<string, AccountConfig>>;
 }
 

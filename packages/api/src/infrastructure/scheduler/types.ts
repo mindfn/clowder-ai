@@ -22,8 +22,11 @@ export interface GateCtx {
 /** Task profile presets (ADR-022 KD-1) */
 export type TaskProfile = 'awareness' | 'poller';
 
-/** Phase 2: Trigger spec — interval or cron */
-export type TriggerSpec = { type: 'interval'; ms: number } | { type: 'cron'; expression: string; timezone?: string };
+/** Phase 2: Trigger spec — interval, cron, or once (#415) */
+export type TriggerSpec =
+  | { type: 'interval'; ms: number }
+  | { type: 'cron'; expression: string; timezone?: string }
+  | { type: 'once'; fireAt: number };
 
 /** Phase 2: Context dimension — session × materialization */
 export interface ContextSpec {
@@ -39,6 +42,7 @@ export type RunOutcome =
   | 'SKIP_GLOBAL_PAUSE'
   | 'SKIP_TASK_OVERRIDE'
   | 'SKIP_SELF_ECHO'
+  | 'SKIP_MISSED_WINDOW'
   | 'RUN_DELIVERED'
   | 'RUN_FAILED';
 
@@ -68,12 +72,36 @@ export interface TaskDisplayMeta {
   subjectKind?: SubjectKind;
 }
 
+export type SchedulerLifecycleEvent =
+  | 'registered'
+  | 'paused'
+  | 'resumed'
+  | 'deleted'
+  | 'succeeded'
+  | 'failed'
+  | 'missed_window';
+
+export interface SchedulerToastPayload {
+  type: 'success' | 'error' | 'info';
+  title: string;
+  message: string;
+  duration: number;
+  lifecycleEvent: SchedulerLifecycleEvent;
+}
+
+export interface SchedulerMessageExtra {
+  scheduler?: {
+    hiddenTrigger?: boolean;
+    toast?: SchedulerToastPayload;
+  };
+}
+
 /** Phase 4: options for delivering a message to a thread */
 export interface DeliverOpts {
   threadId: string;
   content: string;
-  catId: string;
   userId: string;
+  extra?: SchedulerMessageExtra;
 }
 
 /** Phase 4: result of fetching web content */
@@ -91,6 +119,14 @@ export interface ScheduleTriggerPolicy {
   readonly reason?: string;
   readonly suggestedSkill?: string;
 }
+
+export interface ScheduleLifecycleNotice {
+  threadId: string;
+  userId: string;
+  toast: SchedulerToastPayload;
+}
+
+export type ScheduleLifecycleNotifier = (notice: ScheduleLifecycleNotice) => void;
 
 /** Fire-and-forget cat invocation trigger — subset of ConnectorInvokeTrigger */
 export interface ScheduleInvokeTrigger {

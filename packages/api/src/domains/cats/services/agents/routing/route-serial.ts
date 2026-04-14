@@ -18,6 +18,11 @@ import { getCatVoice } from '../../../../../config/cat-voices.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import { detectUserMention } from '../../../../../routes/user-mention.js';
 import { estimateTokens } from '../../../../../utils/token-counter.js';
+import {
+  ackGuideCompletion,
+  guideContextForCat,
+  prepareGuideContext,
+} from '../../../../guides/GuideRoutingInterceptor.js';
 import { assembleContext } from '../../context/ContextAssembler.js';
 import {
   buildInvocationContext,
@@ -28,7 +33,7 @@ import { formatDegradationMessage } from '../../orchestration/DegradationPolicy.
 import { AuditEventTypes, getEventAuditLog } from '../../orchestration/EventAuditLog.js';
 import { buildSessionBootstrap } from '../../session/SessionBootstrap.js';
 import { hydrateReplyPreview, type StoredToolEvent } from '../../stores/ports/MessageStore.js';
-import type { ThreadRoutingPolicyV1 } from '../../stores/ports/ThreadStore.js';
+import type { Thread, ThreadRoutingPolicyV1 } from '../../stores/ports/ThreadStore.js';
 import { getStreamingTtsRegistry, StreamingTtsChunker } from '../../tts/StreamingTtsChunker.js';
 import { getVoiceBlockSynthesizer } from '../../tts/VoiceBlockSynthesizer.js';
 import type { AgentMessage, AgentMessageType, MessageMetadata } from '../../types.js';
@@ -36,12 +41,15 @@ import { invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/McpPromptInjector.js';
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
 import { resolveDefaultClaudeMcpServerPath } from '../providers/ClaudeAgentService.js';
-import { getMaxA2ADepth, parseA2AMentions } from '../routing/a2a-mentions.js';
+import { detectInlineActionMentions, getMaxA2ADepth, parseA2AMentions } from '../routing/a2a-mentions.js';
 import { registerWorklist, unregisterWorklist } from '../routing/WorklistRegistry.js';
+import { extractContextEvalSignals } from './context-eval.js';
+import { buildBriefingMessage } from './format-briefing.js';
 import { extractRichFromText, isValidRichBlock } from './rich-block-extract.js';
 import type { RouteOptions, RouteStrategyDeps } from './route-helpers.js';
 import {
   assembleIncrementalContext,
+  createLeakedToolCallStreamStripper,
   detectContextDegradation,
   getService,
   isUserFacingSystemInfoContent,
@@ -111,16 +119,19 @@ export async function* routeSerial(
   let voiceMode: boolean | undefined;
   // F087: Bootcamp state for CVO onboarding
   let bootcampState: InvocationContext['bootcampState'];
+  const targetCatIds = new Set<string>(targetCats);
+  // Thread read: shared across routingPolicy, voiceMode, bootcamp, SOP, and guide interceptor
+  let routeThread: Thread | null = null;
   if (deps.invocationDeps.threadStore) {
     try {
-      const thread = await deps.invocationDeps.threadStore.get(threadId);
-      routingPolicy = thread?.routingPolicy;
-      voiceMode = thread?.voiceMode;
-      bootcampState = thread?.bootcampState;
+      routeThread = (await deps.invocationDeps.threadStore.get(threadId)) ?? null;
+      routingPolicy = routeThread?.routingPolicy;
+      voiceMode = routeThread?.voiceMode;
+      bootcampState = routeThread?.bootcampState;
       // F073 P4: Read workflow-sop if thread is linked to a backlog item
-      if (thread?.backlogItemId && deps.invocationDeps.workflowSopStore) {
+      if (routeThread?.backlogItemId && deps.invocationDeps.workflowSopStore) {
         try {
-          const sop = await deps.invocationDeps.workflowSopStore.get(thread.backlogItemId);
+          const sop = await deps.invocationDeps.workflowSopStore.get(routeThread.backlogItemId);
           if (sop) {
             sopStageHint = {
               stage: sop.stage,
@@ -137,10 +148,25 @@ export async function* routeSerial(
     }
   }
 
+  // F155: Guide interceptor — resolve existing state + match new candidates
+  const guideCtx = await prepareGuideContext({
+    thread: routeThread,
+    guideSessionStore: deps.invocationDeps.guideSessionStore,
+    targetCats,
+    message,
+    userId,
+    threadId,
+    log,
+    dismissTracker: deps.invocationDeps.dismissTracker,
+  });
+
   try {
     while (index < worklist.length) {
       if (signal?.aborted) break;
       const catId = worklist[index]!;
+      // F148 OQ-2: briefing→invocation link + context eval
+      let briefingMessageId: string | undefined;
+      let briefingCoverageMap: import('./context-transport.js').CoverageMap | undefined;
 
       // Only pass images/uploads for the first cat (user's original target)
       const isOriginalTarget = index < targetCats.length;
@@ -224,7 +250,8 @@ export async function* routeSerial(
         ...(sopStageHint ? { sopStageHint } : {}),
         ...(activeSignals ? { activeSignals } : {}),
         ...(voiceMode ? { voiceMode } : {}),
-        ...(bootcampState ? { bootcampState, threadId } : {}),
+        ...(bootcampState ? { bootcampState, threadId, bootcampMemberCount: Object.keys(catRegistry.getAllConfigs()).length } : {}),
+        ...guideContextForCat(guideCtx, catId, targetCatIds, threadId),
       });
 
       // F24 Phase E: Bootstrap context for Session #2+
@@ -293,6 +320,36 @@ export async function* routeSerial(
             timestamp: Date.now(),
           } as AgentMessage;
         }
+
+        // F148 Phase E: Auto-insert context briefing when smart window triggered (AC-E1)
+        if (inc.coverageMap) {
+          const briefingInput = buildBriefingMessage(inc.coverageMap, threadId, inc.briefingContext);
+          try {
+            const stored = await deps.messageStore.append(briefingInput);
+            briefingMessageId = stored.id;
+            briefingCoverageMap = inc.coverageMap;
+            // P1-3: Include full stored message in payload so frontend can addMessage directly
+            yield {
+              type: 'system_info' as AgentMessageType,
+              catId,
+              content: JSON.stringify({
+                type: 'context_briefing',
+                messageId: stored.id,
+                storedMessage: {
+                  id: stored.id,
+                  content: stored.content,
+                  origin: stored.origin,
+                  timestamp: stored.timestamp,
+                  extra: stored.extra,
+                },
+              }),
+              timestamp: stored.timestamp,
+            } as AgentMessage;
+          } catch {
+            // fail-open: briefing is non-critical UI enhancement
+          }
+        }
+
         const catModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt;
         const parts = [invocationContext, catModePrompt, bootstrapContext, mcpInstructions].filter(Boolean);
         if (inc.contextText) parts.push(inc.contextText);
@@ -349,10 +406,16 @@ export async function* routeSerial(
       let firstMetadata: MessageMetadata | undefined;
       let doneMsg: AgentMessage | undefined;
       let hadError = false;
+      /** F155: tracks whether cat produced user-visible output (for guide completion ack). */
+      let catProducedOutput = false;
       let sawUserFacingSystemInfo = false;
       // #267: track errors that happened BEFORE abort — only these are real provider failures
       let hadProviderError = false;
+      // Collect error text separately for system-message persistence (F5 reload)
+      let collectedErrorText = '';
       const collectedToolEvents: StoredToolEvent[] = [];
+      // F148 OQ-2: Collect tool names for context eval signals
+      const collectedToolNames: string[] = [];
       // F060: Collect rich blocks emitted inline via system_info (not MCP buffer)
       const streamRichBlocks: import('@cat-cafe/shared').RichBlock[] = [];
       // F22 R2 P1-1: Capture own invocationId from stream (not getLatestId)
@@ -378,6 +441,7 @@ export async function* routeSerial(
         { catId: catId as string, threadId, promptLength: prompt.length, index, worklistSize: worklist.length },
         'Invoking cat via invokeSingleCat',
       );
+      const leakedPayloadStripper = createLeakedToolCallStreamStripper();
       for await (const msg of invokeSingleCat(deps.invocationDeps, {
         catId,
         service: getService(deps.services, catId),
@@ -398,104 +462,113 @@ export async function* routeSerial(
         // F39 bugfix: stop yielding after cancel (pipe buffer may still drain)
         if (signal?.aborted) break;
 
-        // F22 R2 P1-1: Capture invocationId from the initial system_info.
-        // Keep forwarding this boundary event so frontend can reset stale task progress.
-        if (msg.type === 'system_info' && msg.content && !ownInvocationId) {
-          try {
-            const parsed = JSON.parse(msg.content);
-            if (parsed.type === 'invocation_created') {
-              ownInvocationId = parsed.invocationId;
-              // F111 Phase B: Start streaming TTS when we have an invocationId
-              if (voiceMode && deps.socketManager) {
-                const ttsRegistry = getStreamingTtsRegistry();
-                if (ttsRegistry) {
-                  voiceChunker = new StreamingTtsChunker({
-                    catId: catId as string,
-                    invocationId: ownInvocationId!,
-                    threadId,
-                    voiceConfig: getCatVoice(catId as string),
-                    broadcaster: deps.socketManager,
-                    ttsRegistry,
-                    signal,
-                  });
-                }
-              }
-              // Issue #83: Start keepalive timer once we have an invocationId.
-              // This ensures draft TTL is renewed even during long silent tool calls.
-              if (deps.draftStore && !keepaliveTimer) {
-                const keepInvId = ownInvocationId!;
-                keepaliveTimer = setInterval(() => {
-                  deps.draftStore!.touch(userId, threadId, keepInvId)?.catch?.(noop);
-                }, KEEPALIVE_INTERVAL_MS);
-              }
-            }
-          } catch {
-            /* ignore parse errors */
-          }
-        }
+        const effectiveMsgs: AgentMessage[] = [];
         if (msg.type === 'text' && msg.content) {
-          textContent += msg.content;
-          voiceChunker?.feed(msg.content);
-        }
-        // F045: Accumulate thinking blocks for persistence (F5 recovery)
-        if (msg.type === 'system_info' && msg.content) {
-          if (isUserFacingSystemInfoContent(msg.content)) {
-            sawUserFacingSystemInfo = true;
+          effectiveMsgs.push({ ...msg, content: leakedPayloadStripper.push(msg.content) });
+        } else if (msg.type === 'done') {
+          const flushedText = leakedPayloadStripper.flush();
+          if (flushedText) {
+            effectiveMsgs.push({
+              type: 'text',
+              catId,
+              content: flushedText,
+              timestamp: msg.timestamp,
+            });
           }
-          try {
-            const parsed = JSON.parse(msg.content);
-            if (parsed.type === 'thinking' && typeof parsed.text === 'string') {
-              thinkingContent += (thinkingContent ? '\n\n---\n\n' : '') + parsed.text;
-            }
-            // F060: Collect inline rich_block for persistence (P1 fix)
-            if (parsed.type === 'rich_block' && parsed.block && isValidRichBlock(parsed.block)) {
-              streamRichBlocks.push(parsed.block);
-            }
-          } catch {
-            /* ignore parse errors */
-          }
-        }
-        // Accumulate tool events for persistence (before draft flush so current event is available)
-        const toolEvt = toStoredToolEvent(msg);
-        if (toolEvt) {
-          collectedToolEvents.push(toolEvt);
+          effectiveMsgs.push(msg);
+        } else {
+          effectiveMsgs.push(msg);
         }
 
-        // #80: Draft flush — fire-and-forget periodic persistence for F5 recovery
-        if (deps.draftStore && ownInvocationId) {
-          const now = Date.now();
-          const charDelta = textContent.length - lastFlushLen;
-          const neverFlushed = lastFlushLen === 0 && lastFlushToolLen === 0;
-          if (
-            msg.type === 'text' &&
-            charDelta > 0 &&
-            (neverFlushed || now - lastFlushTime >= FLUSH_INTERVAL_MS || charDelta >= FLUSH_CHAR_DELTA)
-          ) {
-            deps.draftStore
-              .upsert({
-                userId,
-                threadId,
-                invocationId: ownInvocationId,
-                catId,
-                content: textContent,
-                ...(collectedToolEvents.length > 0 ? { toolEvents: collectedToolEvents } : {}),
-                ...(thinkingContent ? { thinking: thinkingContent } : {}),
-                updatedAt: now,
-              })
-              ?.catch?.(noop);
-            lastFlushTime = now;
-            lastFlushLen = textContent.length;
-            lastFlushToolLen = collectedToolEvents.length;
-          } else if (
-            (msg.type === 'tool_use' || msg.type === 'tool_result') &&
-            // Cloud R7 P1: bypass interval for the very first flush — tool-first invocations
-            // must create a draft immediately, not wait 2s for the interval gate.
-            (neverFlushed || now - lastFlushTime >= FLUSH_INTERVAL_MS)
-          ) {
-            // Heartbeat for non-text events: keep draft alive during long tool calls.
-            // Cloud R6 P1: upsert when there's unsaved text OR new tool events —
-            // tool-first invocations (no text yet) must still create a draft record.
-            if (textContent.length > lastFlushLen || collectedToolEvents.length > lastFlushToolLen) {
+        for (const effectiveMsg of effectiveMsgs) {
+          // F22 R2 P1-1: Capture invocationId from the initial system_info.
+          // Keep forwarding this boundary event so frontend can reset stale task progress.
+          if (effectiveMsg.type === 'system_info' && effectiveMsg.content && !ownInvocationId) {
+            try {
+              const parsed = JSON.parse(effectiveMsg.content);
+              if (parsed.type === 'invocation_created') {
+                ownInvocationId = parsed.invocationId;
+                // F111 Phase B: Start streaming TTS when we have an invocationId
+                if (voiceMode && deps.socketManager) {
+                  const ttsRegistry = getStreamingTtsRegistry();
+                  if (ttsRegistry) {
+                    voiceChunker = new StreamingTtsChunker({
+                      catId: catId as string,
+                      invocationId: ownInvocationId!,
+                      threadId,
+                      voiceConfig: getCatVoice(catId as string),
+                      broadcaster: deps.socketManager,
+                      ttsRegistry,
+                      signal,
+                    });
+                  }
+                }
+                // Issue #83: Start keepalive timer once we have an invocationId.
+                // This ensures draft TTL is renewed even during long silent tool calls.
+                if (deps.draftStore && !keepaliveTimer) {
+                  const keepInvId = ownInvocationId!;
+                  keepaliveTimer = setInterval(() => {
+                    deps.draftStore!.touch(userId, threadId, keepInvId)?.catch?.(noop);
+                  }, KEEPALIVE_INTERVAL_MS);
+                }
+              }
+            } catch {
+              /* ignore parse errors */
+            }
+          }
+
+          if (effectiveMsg.type === 'text' && effectiveMsg.content) {
+            textContent += effectiveMsg.content;
+            voiceChunker?.feed(effectiveMsg.content);
+          }
+          // F045: Accumulate thinking blocks for persistence (F5 recovery)
+          if (effectiveMsg.type === 'system_info' && effectiveMsg.content) {
+            if (isUserFacingSystemInfoContent(effectiveMsg.content)) {
+              sawUserFacingSystemInfo = true;
+            }
+            try {
+              const parsed = JSON.parse(effectiveMsg.content);
+              if (parsed.type === 'thinking' && typeof parsed.text === 'string') {
+                thinkingContent += (thinkingContent ? '\n\n---\n\n' : '') + parsed.text;
+              }
+              // F060: Collect inline rich_block for persistence (P1 fix)
+              if (parsed.type === 'rich_block' && parsed.block && isValidRichBlock(parsed.block)) {
+                streamRichBlocks.push(parsed.block);
+              }
+            } catch {
+              /* ignore parse errors */
+            }
+          }
+          // Accumulate tool events for persistence (before draft flush so current event is available)
+          const toolEvt = toStoredToolEvent(effectiveMsg);
+          if (toolEvt) {
+            collectedToolEvents.push(toolEvt);
+          }
+
+          // F148 OQ-2: Collect tool names for context eval
+          if (effectiveMsg.type === 'tool_use' && effectiveMsg.toolName) {
+            collectedToolNames.push(effectiveMsg.toolName);
+          }
+
+          // F150: Fire-and-forget tool usage counter
+          if (effectiveMsg.type === 'tool_use' && deps.toolUsageCounter && effectiveMsg.catId) {
+            deps.toolUsageCounter.recordToolUse(
+              effectiveMsg.catId as string,
+              effectiveMsg.toolName ?? 'unknown',
+              effectiveMsg.toolInput as Record<string, unknown> | undefined,
+            );
+          }
+
+          // #80: Draft flush — fire-and-forget periodic persistence for F5 recovery
+          if (deps.draftStore && ownInvocationId) {
+            const now = Date.now();
+            const charDelta = textContent.length - lastFlushLen;
+            const neverFlushed = lastFlushLen === 0 && lastFlushToolLen === 0;
+            if (
+              effectiveMsg.type === 'text' &&
+              charDelta > 0 &&
+              (neverFlushed || now - lastFlushTime >= FLUSH_INTERVAL_MS || charDelta >= FLUSH_CHAR_DELTA)
+            ) {
               deps.draftStore
                 .upsert({
                   userId,
@@ -508,38 +581,67 @@ export async function* routeSerial(
                   updatedAt: now,
                 })
                 ?.catch?.(noop);
+              lastFlushTime = now;
               lastFlushLen = textContent.length;
               lastFlushToolLen = collectedToolEvents.length;
-            } else {
-              deps.draftStore.touch(userId, threadId, ownInvocationId)?.catch?.(noop);
-            }
-            lastFlushTime = now;
-          }
-        }
-
-        if (msg.type === 'error') {
-          hadError = true;
-          // #267: errors before abort are real provider failures; errors after abort are cleanup
-          if (!signal?.aborted) hadProviderError = true;
-          if (msg.error) {
-            textContent += `${textContent ? '\n\n' : ''}[错误] ${msg.error}`;
-          }
-        }
-        if (msg.metadata && !firstMetadata) {
-          firstMetadata = msg.metadata;
-        }
-        if (msg.type === 'done') {
-          doneMsg = msg; // Buffer — yield after A2A detection
-        } else {
-          // Tag CLI stdout text with origin: 'stream' (thinking/internal)
-          yield msg.type === 'text'
-            ? {
-                ...msg,
-                origin: 'stream' as const,
-                ...(streamReplyTo ? { replyTo: streamReplyTo } : {}),
-                ...(streamReplyPreview ? { replyPreview: streamReplyPreview } : {}),
+            } else if (
+              (effectiveMsg.type === 'tool_use' || effectiveMsg.type === 'tool_result') &&
+              // Cloud R7 P1: bypass interval for the very first flush — tool-first invocations
+              // must create a draft immediately, not wait 2s for the interval gate.
+              (neverFlushed || now - lastFlushTime >= FLUSH_INTERVAL_MS)
+            ) {
+              // Heartbeat for non-text events: keep draft alive during long tool calls.
+              // Cloud R6 P1: upsert when there's unsaved text OR new tool events —
+              // tool-first invocations (no text yet) must still create a draft record.
+              if (textContent.length > lastFlushLen || collectedToolEvents.length > lastFlushToolLen) {
+                deps.draftStore
+                  .upsert({
+                    userId,
+                    threadId,
+                    invocationId: ownInvocationId,
+                    catId,
+                    content: textContent,
+                    ...(collectedToolEvents.length > 0 ? { toolEvents: collectedToolEvents } : {}),
+                    ...(thinkingContent ? { thinking: thinkingContent } : {}),
+                    updatedAt: now,
+                  })
+                  ?.catch?.(noop);
+                lastFlushLen = textContent.length;
+                lastFlushToolLen = collectedToolEvents.length;
+              } else {
+                deps.draftStore.touch(userId, threadId, ownInvocationId)?.catch?.(noop);
               }
-            : msg;
+              lastFlushTime = now;
+            }
+          }
+
+          if (effectiveMsg.type === 'error') {
+            hadError = true;
+            // #267: errors before abort are real provider failures; errors after abort are cleanup
+            if (!signal?.aborted) hadProviderError = true;
+            if (effectiveMsg.error) {
+              collectedErrorText += `${collectedErrorText ? '\n' : ''}${effectiveMsg.error}`;
+            }
+          }
+          if (effectiveMsg.metadata && !firstMetadata) {
+            firstMetadata = effectiveMsg.metadata;
+          }
+          if (effectiveMsg.type === 'done') {
+            doneMsg = effectiveMsg; // Buffer — yield after A2A detection
+          } else {
+            if (effectiveMsg.type === 'text' && !effectiveMsg.content) {
+              continue;
+            }
+            // Tag CLI stdout text with origin: 'stream' (thinking/internal)
+            yield effectiveMsg.type === 'text'
+              ? {
+                  ...effectiveMsg,
+                  origin: 'stream' as const,
+                  ...(streamReplyTo ? { replyTo: streamReplyTo } : {}),
+                  ...(streamReplyPreview ? { replyPreview: streamReplyPreview } : {}),
+                }
+              : effectiveMsg;
+          }
         }
       }
 
@@ -580,6 +682,7 @@ export async function* routeSerial(
       let mentionsUser = false;
 
       if (textContent) {
+        catProducedOutput = true;
         const sanitized = sanitizeInjectedContent(textContent);
 
         // F22: Extract cc_rich blocks from text (Route B fallback for non-MCP cats)
@@ -613,6 +716,57 @@ export async function* routeSerial(
         // A2A mention detection (缅因猫 P1-3: only after full text accumulated)
         // Line-start @mention = always actionable (no keyword gate)
         a2aMentions = parseA2AMentions(storedContent, catId);
+
+        // #417 / F064 AC-B3: Write-side feedback for inline action-like @mentions
+        if (deps.invocationDeps.threadStore) {
+          const inlineHits = detectInlineActionMentions(storedContent, catId, a2aMentions);
+          if (inlineHits.length > 0) {
+            try {
+              await deps.invocationDeps.threadStore.setMentionRoutingFeedback(threadId, catId, {
+                sourceTimestamp: Date.now(),
+                items: inlineHits.map((m) => ({ targetCatId: m.catId, reason: 'inline_action' as const })),
+              });
+              log.info(
+                { catId: catId as string, threadId, targets: inlineHits.map((h) => h.catId) },
+                'Inline action @mention detected — wrote routing feedback',
+              );
+            } catch {
+              /* best-effort */
+            }
+            // #1062: User-visible system message when chain would break
+            // (inline action detected but no line-start @ = no routing will happen)
+            if (a2aMentions.length === 0) {
+              try {
+                const targets = inlineHits.map((h) => `@${h.catId}`).join(', ');
+                const hintSource = { connector: 'inline-mention-hint', label: 'Routing hint', icon: 'lightbulb' };
+                const stored = await deps.messageStore.append({
+                  userId: 'system',
+                  catId: null,
+                  threadId,
+                  content: `💡 ${targets} was mentioned but not routed — @ must be on its own line at the start to trigger handoff.`,
+                  mentions: [],
+                  timestamp: Date.now(),
+                  source: hintSource,
+                });
+                // Broadcast so frontend sees it in real-time (same pattern as vote result)
+                if (deps.socketManager) {
+                  deps.socketManager.broadcastToRoom(`thread:${threadId}`, 'connector_message', {
+                    threadId,
+                    message: {
+                      id: stored.id,
+                      type: 'connector',
+                      content: stored.content,
+                      source: hintSource,
+                      timestamp: stored.timestamp,
+                    },
+                  });
+                }
+              } catch {
+                /* best-effort */
+              }
+            }
+          }
+        }
 
         // F079 Phase 2: Vote interception — extract [VOTE:xxx] from cat response
         const votedOption = extractVoteFromText(storedContent);
@@ -857,6 +1011,7 @@ export async function* routeSerial(
         const hasRichBlocks = noTextBlocks.length > 0;
         const shouldPersistNoTextMessage =
           hasRichBlocks || collectedToolEvents.length > 0 || Boolean(thinkingContent?.trim().length > 0);
+        const shouldEmitSilentCompletion = collectedToolEvents.length > 0 && !hasRichBlocks && !sawUserFacingSystemInfo;
 
         log.debug(
           {
@@ -872,7 +1027,7 @@ export async function* routeSerial(
         );
         // Diagnostic: if cat ran tools but produced no text, emit a system_info so the
         // user sees *something* instead of a silent vanish (bugfix: silent-exit P1).
-        if (collectedToolEvents.length > 0 && !hasRichBlocks && !sawUserFacingSystemInfo) {
+        if (shouldEmitSilentCompletion) {
           yield {
             type: 'system_info' as AgentMessageType,
             catId,
@@ -883,6 +1038,9 @@ export async function* routeSerial(
             }),
             timestamp: Date.now(),
           } as AgentMessage;
+        }
+        if (shouldPersistNoTextMessage || sawUserFacingSystemInfo || shouldEmitSilentCompletion) {
+          catProducedOutput = true;
         }
 
         if (shouldPersistNoTextMessage) {
@@ -1005,9 +1163,34 @@ export async function* routeSerial(
         if (deps.draftStore && ownInvocationId) {
           deps.draftStore.delete(userId, threadId, ownInvocationId)?.catch?.(noop);
         }
+        // Update activity for error-only responses (no text/tools branch handles it)
+        if (deps.invocationDeps.threadStore) {
+          try {
+            await deps.invocationDeps.threadStore.updateParticipantActivity(threadId, catId, !hadProviderError);
+          } catch (activityErr) {
+            log.warn({ catId: catId as string, err: activityErr }, 'updateParticipantActivity failed');
+          }
+        }
       }
-      // hadError && textContent === '' && no toolEvents → skip persistence
-      // Error events were already yielded to frontend via the stream.
+
+      // Persist error as system message so it survives F5 reload.
+      // During streaming, errors render as red badges via ephemeral frontend state.
+      // Without persistence, they vanish on page refresh.
+      if (collectedErrorText) {
+        try {
+          await deps.messageStore.append({
+            userId: 'system',
+            catId: null,
+            content: `Error: ${collectedErrorText}`,
+            mentions: [],
+            origin: 'stream',
+            timestamp: Date.now(),
+            threadId,
+          });
+        } catch (err) {
+          log.error({ catId: catId as string, err }, 'messageStore.append (error system msg) failed');
+        }
+      }
 
       // Ack cursor regardless of hadError: messages were assembled into the prompt
       // and delivered to the cat. Not acking causes infinite re-delivery on subsequent
@@ -1024,6 +1207,42 @@ export async function* routeSerial(
             log.error({ catId: catId as string, err }, 'ackCursor failed');
           }
         }
+      }
+
+      // F148 OQ-2: Log briefing→invocation link + context eval signals
+      if (briefingMessageId && ownInvocationId) {
+        const evalSignals = briefingCoverageMap
+          ? extractContextEvalSignals({
+              coverageMap: briefingCoverageMap,
+              toolNames: collectedToolNames,
+              responseTokenEstimate: estimateTokens(textContent),
+            })
+          : undefined;
+        log.info({
+          f148: 'briefing-invocation-link',
+          briefingMessageId,
+          invocationId: ownInvocationId,
+          catId,
+          threadId,
+          hadError: hadProviderError,
+          ...(evalSignals ? { eval: evalSignals } : {}),
+        });
+      }
+
+      // F155: Ack guide completion only after cat produced visible output.
+      if (deps.invocationDeps.threadStore) {
+        const { createGuideStoreBridge } = await import('../../../../guides/GuideSessionRepository.js');
+        const sessionStore = deps.invocationDeps.guideSessionStore!;
+        await ackGuideCompletion({
+          ctx: guideCtx,
+          catId,
+          catProducedOutput,
+          targetCatIds,
+          threadId,
+          userId,
+          guideStore: createGuideStoreBridge(sessionStore),
+          threadStore: deps.invocationDeps.threadStore!,
+        });
       }
 
       // Yield buffered done with correct isFinal (evaluated AFTER worklist may have grown)

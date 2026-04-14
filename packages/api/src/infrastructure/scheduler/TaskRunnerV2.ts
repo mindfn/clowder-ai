@@ -1,7 +1,8 @@
 import { getNextCronMs } from './cron-utils.js';
-import type { DynamicTaskStore } from './DynamicTaskStore.js';
+import type { DynamicTaskDef, DynamicTaskStore } from './DynamicTaskStore.js';
 import { executeTaskPipeline } from './execute-pipeline.js';
 import type { RunLedger } from './RunLedger.js';
+import { notifyTaskFailed, notifyTaskSucceeded } from './schedule-notify.js';
 import type { TaskTemplate } from './templates/types.js';
 import type {
   ActorRole,
@@ -10,6 +11,7 @@ import type {
   FetchResult,
   RunLedgerRow,
   ScheduleInvokeTrigger,
+  ScheduleLifecycleNotifier,
   ScheduleTaskSummary,
   SubjectKind,
   TaskSource,
@@ -31,6 +33,10 @@ export interface TaskRunnerV2Options {
   fetchContent?: (url: string) => Promise<FetchResult>;
   /** Phase 4b: invoke a cat to handle a scheduled task (fire-and-forget) */
   invokeTrigger?: ScheduleInvokeTrigger;
+  /** Ephemeral lifecycle notifications (toast-only, not persisted in thread history) */
+  notifyLifecycle?: ScheduleLifecycleNotifier;
+  /** #415: dynamic task store — needed for once-trigger auto-retirement */
+  dynamicTaskStore?: DynamicTaskStore;
 }
 
 /** Phase 2.5: Compute human-readable subject preview from subjectKind + lastRun (AC-E2) */
@@ -43,8 +49,10 @@ export function computeSubjectPreview(
   // Strict prefix matching: unrecognized keys (e.g. task.id from SKIP_NO_SIGNAL) → null
   switch (subjectKind) {
     case 'pr': {
-      if (!key.startsWith('pr-')) return null;
-      return key.slice(3);
+      // #320: unified subject key uses `pr:owner/repo#N` format
+      if (key.startsWith('pr:')) return key.slice(3);
+      if (key.startsWith('pr-')) return key.slice(3);
+      return null;
     }
     case 'thread': {
       if (key.startsWith('thread-')) return formatThreadPreview(key.slice(7));
@@ -90,6 +98,8 @@ export class TaskRunnerV2 {
   private deliver: TaskRunnerV2Options['deliver'];
   private fetchContent: TaskRunnerV2Options['fetchContent'];
   private invokeTrigger: TaskRunnerV2Options['invokeTrigger'];
+  private notifyLifecycle: TaskRunnerV2Options['notifyLifecycle'];
+  private dynamicTaskStore: TaskRunnerV2Options['dynamicTaskStore'];
 
   constructor(opts: TaskRunnerV2Options) {
     this.logger = opts.logger;
@@ -100,11 +110,18 @@ export class TaskRunnerV2 {
     this.deliver = opts.deliver;
     this.fetchContent = opts.fetchContent;
     this.invokeTrigger = opts.invokeTrigger;
+    this.notifyLifecycle = opts.notifyLifecycle;
+    this.dynamicTaskStore = opts.dynamicTaskStore;
   }
 
   /** Late-bind invokeTrigger (constructed after TaskRunnerV2 in boot sequence) */
   setInvokeTrigger(trigger: ScheduleInvokeTrigger): void {
     this.invokeTrigger = trigger;
+  }
+
+  /** #415: Late-bind dynamicTaskStore (constructed after TaskRunnerV2 in boot sequence) */
+  setDynamicTaskStore(store: DynamicTaskStore): void {
+    this.dynamicTaskStore = store;
   }
 
   register(task: AnyTaskSpec): void {
@@ -147,6 +164,12 @@ export class TaskRunnerV2 {
     const defs = store.getAll().filter((d) => d.enabled);
     let loaded = 0;
     for (const def of defs) {
+      // #415: once tasks with past fireAt → missed window, cancel + notify + retire
+      if (def.trigger.type === 'once' && def.trigger.fireAt < Date.now()) {
+        this.handleMissedOnceTask(def, store);
+        continue;
+      }
+
       const template = templateGetter.get(def.templateId);
       if (!template) {
         this.logger.error(`[scheduler] hydrate: unknown template "${def.templateId}" for def ${def.id}`);
@@ -188,6 +211,8 @@ export class TaskRunnerV2 {
 
     if (task.trigger.type === 'cron') {
       this.scheduleCronTick(task);
+    } else if (task.trigger.type === 'once') {
+      this.scheduleOnceTick(task);
     } else {
       const runTick = () => {
         // Guard: skip if task was unregistered before tick fires (防幽灵执行)
@@ -228,6 +253,100 @@ export class TaskRunnerV2 {
     this.logger.info(
       `[scheduler] ${task.id}: registered (profile=${task.profile}, cron="${task.trigger.expression}", next in ${ms}ms)`,
     );
+  }
+
+  /** Max safe setTimeout delay — Node clamps values above 2^31-1 ms to ~1ms */
+  private static MAX_TIMER_DELAY = 2_147_483_647;
+
+  /** #415: Schedule a one-shot task — fires once at fireAt, then auto-retires */
+  private scheduleOnceTick(task: AnyTaskSpec): void {
+    if (task.trigger.type !== 'once') return;
+    const remaining = Math.max(0, task.trigger.fireAt - Date.now());
+    // Node setTimeout overflows at 2^31-1 ms — chunk long delays into safe steps
+    if (remaining > TaskRunnerV2.MAX_TIMER_DELAY) {
+      const timer = setTimeout(() => this.scheduleOnceTick(task), TaskRunnerV2.MAX_TIMER_DELAY);
+      if (typeof timer === 'object' && 'unref' in timer) timer.unref();
+      this.timers.set(task.id, timer);
+      return;
+    }
+    const timer = setTimeout(() => {
+      // Guard: skip if task was unregistered before timeout fires
+      if (!this.timers.has(task.id)) return;
+      this.executePipeline(task)
+        .catch((err) => {
+          this.logger.error(`[scheduler] ${task.id}: pipeline error`, err);
+        })
+        .finally(() => {
+          // Check ledger to distinguish governance skip from actual execution/other skips
+          const entries = this.ledger.query(task.id, 1);
+          const lastOutcome = entries[0]?.outcome;
+          const isGovernanceSkip = lastOutcome === 'SKIP_GLOBAL_PAUSE' || lastOutcome === 'SKIP_TASK_OVERRIDE';
+          if (isGovernanceSkip) {
+            this.logger.info(`[scheduler] ${task.id}: once task governance-skipped, retrying in 30s`);
+            const retryTimer = setTimeout(() => {
+              if (!this.started || !this.tasks.some((t) => t.id === task.id)) return;
+              this.scheduleOnceTick(task);
+            }, 30_000);
+            if (typeof retryTimer === 'object' && 'unref' in retryTimer) retryTimer.unref();
+            this.timers.set(task.id, retryTimer);
+          } else {
+            this.retireOnceTask(task.id);
+          }
+        });
+    }, remaining);
+    if (typeof timer === 'object' && 'unref' in timer) timer.unref();
+    this.timers.set(task.id, timer);
+    this.logger.info(
+      `[scheduler] ${task.id}: registered (profile=${task.profile}, once, fireAt=${new Date(task.trigger.fireAt).toISOString()}, delay=${remaining}ms)`,
+    );
+  }
+
+  /** #415: Remove a once-task from runtime + persistent store after execution */
+  private retireOnceTask(taskId: string): void {
+    // Use taskId directly — for dynamic tasks, taskId === dynDefId
+    if (this.dynamicTaskStore) {
+      this.dynamicTaskStore.remove(taskId);
+    }
+    this.unregister(taskId);
+    this.logger.info(`[scheduler] ${taskId}: retired (once task completed)`);
+  }
+
+  /** #415: Handle once-task that missed its execution window (hydrated after restart) */
+  private handleMissedOnceTask(def: DynamicTaskDef, store: DynamicTaskStore): void {
+    const fireAt = def.trigger.type === 'once' ? def.trigger.fireAt : 0;
+    const fireAtIso = new Date(fireAt).toISOString();
+    this.logger.info(`[scheduler] ${def.id}: once task missed window (fireAt=${fireAtIso}), retiring`);
+
+    // Record in ledger for audit trail
+    this.ledger.record({
+      task_id: def.id,
+      subject_key: def.id,
+      outcome: 'SKIP_MISSED_WINDOW',
+      signal_summary: `Execution window missed: fireAt=${fireAtIso}`,
+      duration_ms: 0,
+      started_at: new Date().toISOString(),
+      assigned_cat_id: null,
+      error_summary: null,
+    });
+
+    // Notify user ephemerally so admin receipts don't pollute thread history.
+    if (def.deliveryThreadId && this.notifyLifecycle) {
+      const label = def.display?.label ?? def.templateId;
+      this.notifyLifecycle({
+        threadId: def.deliveryThreadId,
+        userId: ((def.params as Record<string, unknown>).triggerUserId as string) ?? 'system',
+        toast: {
+          type: 'error',
+          title: '定时任务错过执行窗口',
+          message: `「${label}」原定 ${fireAtIso} 执行，服务当时未运行，任务已自动取消。`,
+          duration: 6000,
+          lifecycleEvent: 'missed_window',
+        },
+      });
+    }
+
+    // Remove from persistent store
+    store.remove(def.id);
   }
 
   stop(): void {
@@ -289,6 +408,10 @@ export class TaskRunnerV2 {
   }
 
   private async executePipeline(task: AnyTaskSpec, isManualTrigger?: boolean): Promise<void> {
+    // #415 P2 fix: aggregate outcomes at run level, send one notification per tick
+    let hasDelivered = false;
+    let lastError: string | null = null;
+
     await executeTaskPipeline({
       task,
       ledger: this.ledger,
@@ -303,6 +426,20 @@ export class TaskRunnerV2 {
       deliver: this.deliver,
       fetchContent: this.fetchContent,
       invokeTrigger: this.invokeTrigger,
+      onItemOutcome: (_taskId, _subjectKey, outcome, errorSummary) => {
+        if (outcome === 'RUN_DELIVERED') hasDelivered = true;
+        if (outcome === 'RUN_FAILED') lastError = errorSummary;
+      },
     });
+
+    // Run-level notification: one message per tick, not per workItem
+    const dynDefId = this.dynamicTaskIds.get(task.id);
+    if (dynDefId && this.dynamicTaskStore) {
+      const def = this.dynamicTaskStore.getById(dynDefId);
+      if (def) {
+        if (lastError) notifyTaskFailed(this.notifyLifecycle, def, lastError);
+        else if (hasDelivered) notifyTaskSucceeded(this.notifyLifecycle, def);
+      }
+    }
   }
 }

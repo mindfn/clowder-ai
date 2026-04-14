@@ -19,9 +19,9 @@ const CONFIG: ConfigData & {
     color: { primary: '#E29578', secondary: '#FFE4D6' },
   },
   cats: {
-    opus: { displayName: '布偶猫', provider: 'anthropic', model: 'claude-opus-4-5-20250214', mcpSupport: true },
-    codex: { displayName: '缅因猫', provider: 'openai', model: 'codex-2025-03', mcpSupport: false },
-    antigravity: { displayName: '孟加拉猫', provider: 'antigravity', model: 'gemini-bridge', mcpSupport: false },
+    opus: { displayName: '布偶猫', clientId: 'anthropic', model: 'claude-opus-4-5-20250214', mcpSupport: true },
+    codex: { displayName: '缅因猫', clientId: 'openai', model: 'codex-2025-03', mcpSupport: false },
+    antigravity: { displayName: '孟加拉猫', clientId: 'antigravity', model: 'gemini-bridge', mcpSupport: false },
   },
   perCatBudgets: {
     opus: { maxPromptTokens: 150000, maxContextTokens: 200000, maxMessages: 50, maxContentLengthPerMsg: 64000 },
@@ -38,7 +38,7 @@ const CATS: CatData[] = [
     displayName: '布偶猫 Opus',
     breedDisplayName: '布偶猫',
     nickname: '宪宪',
-    provider: 'anthropic',
+    clientId: 'anthropic',
     accountRef: 'claude',
     defaultModel: 'claude-opus-4-5',
     color: { primary: '#6366f1', secondary: '#818cf8' },
@@ -60,7 +60,7 @@ const CATS: CatData[] = [
     displayName: '缅因猫 Codex',
     breedDisplayName: '缅因猫',
     nickname: '砚砚',
-    provider: 'openai',
+    clientId: 'openai',
     accountRef: 'sponsor1',
     defaultModel: 'codex',
     color: { primary: '#22c55e', secondary: '#4ade80' },
@@ -82,7 +82,7 @@ const CATS: CatData[] = [
     displayName: '孟加拉猫 Antigravity',
     breedDisplayName: '孟加拉猫',
     nickname: '阿吉',
-    provider: 'antigravity',
+    clientId: 'antigravity',
     defaultModel: 'gemini-bridge',
     commandArgs: ['npx', 'antigravity', '--bridge'],
     color: { primary: '#f59e0b', secondary: '#fcd34d' },
@@ -117,15 +117,15 @@ describe('CatOverviewTab', () => {
     expect(html).toContain('/avatars/owner-custom.png');
     expect(html.indexOf('Co-worker')).toBeLessThan(html.indexOf('布偶猫 · 宪宪'));
     expect(html).toContain('全部');
-    expect(html).toContain('订阅');
-    expect(html).toContain('API Key');
+    expect(html).toContain('CLI（内置）');
+    expect(html).toContain('CLI（配置）');
     expect(html).toContain('未启用');
     expect(html.indexOf('+ 添加成员')).toBeLessThan(html.indexOf('布偶猫 · 宪宪'));
     expect(html).toContain('布偶猫 · 宪宪');
     expect(html).toContain('缅因猫 · 砚砚');
     expect(html).toContain('孟加拉猫 · 阿吉');
-    expect(html).toContain('内置 OAuth 账号');
-    expect(html).toContain('API Key · sponsor1');
+    expect(html).toContain('CLI（内置）账号');
+    expect(html).toContain('CLI（配置） · sponsor1');
     expect(html).toContain('已启用');
     expect(html).toContain('@布偶猫');
     expect(html).toContain('只能编辑，不能新增或删除');

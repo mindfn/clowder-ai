@@ -4,7 +4,11 @@
  */
 
 import { spawn as nodeSpawn } from 'node:child_process';
+import type { Span } from '@opentelemetry/api';
+import { context, SpanStatusCode, trace } from '@opentelemetry/api';
 import { createModuleLogger } from '../infrastructure/logger.js';
+import { registerLivenessProbe, unregisterLivenessProbe } from '../infrastructure/telemetry/instruments.js';
+import { emitOtelLog } from '../infrastructure/telemetry/otel-logger.js';
 import { escapeBashArg, escapeCmdArg, findGitBashPath, resolveWindowsShimSpawn } from './cli-spawn-win.js';
 import { resolveCliTimeoutMs } from './cli-timeout.js';
 import type { ChildProcessLike, CliSpawnOptions, SpawnFn } from './cli-types.js';
@@ -41,9 +45,20 @@ export interface CliSpawnerDeps {
   spawnFn?: SpawnFn;
 }
 
-function buildChildEnv(overrides?: Record<string, string | null>): NodeJS.ProcessEnv {
-  if (!overrides) return process.env;
-  const merged: NodeJS.ProcessEnv = { ...process.env };
+/** Env vars to strip from child processes to prevent E2BIG (overly large values). */
+const ENV_VARS_TO_STRIP: ReadonlySet<string> = new Set([
+  'LS_COLORS', // typically 1-2 KB of color mappings
+  'LSCOLORS', // BSD/macOS equivalent
+]);
+
+export function buildChildEnv(overrides?: Record<string, string | null>): NodeJS.ProcessEnv {
+  // Clone process.env but strip known bloated vars to avoid E2BIG (ARG_MAX exceeded).
+  const merged: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (ENV_VARS_TO_STRIP.has(key)) continue;
+    merged[key] = value;
+  }
+  if (!overrides) return merged;
   for (const [key, value] of Object.entries(overrides)) {
     if (value === null) {
       delete merged[key];
@@ -79,6 +94,26 @@ export async function* spawnCli(
   });
 
   log.debug({ pid: child.pid, command: options.command }, 'CLI process spawned');
+
+  // F153 Phase B: Create CLI session child span under invocation span
+  let cliSpan: Span | undefined;
+  if (options.parentSpan) {
+    const tracer = trace.getTracer('cat-cafe-api');
+    const parentCtx = trace.setSpan(context.active(), options.parentSpan);
+    cliSpan = tracer.startSpan(
+      'cat_cafe.cli_session',
+      {
+        attributes: {
+          'cli.command': options.command,
+          'cli.arg_count': options.args.length,
+          ...(child.pid ? { 'cli.pid': child.pid } : {}),
+          ...(options.invocationId ? { invocationId: options.invocationId } : {}),
+          ...(options.cliSessionId ? { sessionId: options.cliSessionId } : {}),
+        },
+      },
+      parentCtx,
+    );
+  }
 
   // Buffer stderr for error reporting (handler attached after resetTimeout is defined)
   let stderrBuffer = '';
@@ -188,6 +223,11 @@ export async function* spawnCli(
   if (options.livenessProbe && child.pid !== undefined) {
     probe = new ProcessLivenessProbe(child.pid, options.livenessProbe);
     probe.start();
+    // F152: Register probe for OTel agentLiveness gauge
+    if (options.invocationId) {
+      const catId = options.env?.CAT_CAFE_CAT_ID ?? 'unknown';
+      registerLivenessProbe(options.invocationId, catId, () => probe!.getState());
+    }
   }
 
   try {
@@ -302,6 +342,17 @@ export async function* spawnCli(
       await Promise.race([exitPromise, new Promise<void>((r) => setTimeout(r, SEMANTIC_COMPLETION_GRACE_MS).unref())]);
     }
 
+    if (exitCode === 0 && exitSignal === null && stderrBuffer.trim()) {
+      log.debug(
+        {
+          command: options.command,
+          hadNdjsonEvent: firstEventAt !== null,
+          stderr: stderrBuffer.trim().slice(-1000),
+        },
+        'CLI stderr on successful exit',
+      );
+    }
+
     // Yield error on abnormal exit (only if WE didn't kill it AND no semantic completion)
     // Covers both non-zero exitCode AND external signal kills
     // Windows: exit code 3221226505 (0xC0000409 STATUS_STACK_BUFFER_OVERRUN) is a libuv
@@ -363,7 +414,28 @@ export async function* spawnCli(
     }
     process.off('exit', exitHandler);
     probe?.stop();
+    // F152: Unregister probe from OTel gauge
+    if (options.invocationId) unregisterLivenessProbe(options.invocationId);
     killChild();
+
+    // F153 Phase B: End CLI session span with appropriate status
+    if (cliSpan) {
+      if (timedOut) {
+        cliSpan.setStatus({ code: SpanStatusCode.ERROR, message: 'CLI timeout' });
+        emitOtelLog('ERROR', 'cli_session_timeout', { 'cli.timeout_ms': timeoutMs }, cliSpan);
+      } else if (exitCode !== null && exitCode !== 0) {
+        cliSpan.setStatus({ code: SpanStatusCode.ERROR, message: `CLI exit code ${exitCode}` });
+        emitOtelLog('ERROR', 'cli_session_error', { 'cli.exit_code': exitCode }, cliSpan);
+      } else if (exitSignal) {
+        cliSpan.setStatus({ code: SpanStatusCode.ERROR, message: `CLI killed by ${exitSignal}` });
+        emitOtelLog('WARN', 'cli_session_killed', { 'cli.signal': exitSignal }, cliSpan);
+      } else {
+        cliSpan.setStatus({ code: SpanStatusCode.OK });
+      }
+      cliSpan.setAttribute('cli.exit_code', exitCode ?? -1);
+      if (exitSignal) cliSpan.setAttribute('cli.exit_signal', exitSignal);
+      cliSpan.end();
+    }
   }
 }
 
@@ -445,7 +517,10 @@ function defaultSpawn(
   if (IS_WINDOWS) {
     const shimSpawn = resolveWindowsShimSpawn(command, args);
     if (shimSpawn) {
-      log.debug({ original: command, resolved: shimSpawn.command, args: shimSpawn.args }, 'Windows shim resolved');
+      log.debug(
+        { original: command, resolved: shimSpawn.command, argCount: shimSpawn.args.length },
+        'Windows shim resolved',
+      );
       return nodeSpawn(shimSpawn.command, shimSpawn.args, {
         cwd: options.cwd,
         env: options.env,

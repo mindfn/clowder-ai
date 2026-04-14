@@ -31,7 +31,7 @@ import {
 const log = createModuleLogger('redis-message-store');
 
 const DEFAULT_LIMIT = 50;
-const DEFAULT_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
+const DEFAULT_TTL_SECONDS = 0; // persistent — set >0 via env to enable expiry
 
 export class RedisMessageStore {
   private readonly redis: RedisClient;
@@ -49,15 +49,11 @@ export class RedisMessageStore {
   ) {
     this.redis = redis;
     this.onAppend = options?.onAppend;
-    const ttl = options?.ttlSeconds;
-    if (ttl === undefined) {
-      this.ttlSeconds = DEFAULT_TTL_SECONDS;
-    } else if (!Number.isFinite(ttl)) {
-      this.ttlSeconds = DEFAULT_TTL_SECONDS;
-    } else if (ttl <= 0) {
+    const raw = options?.ttlSeconds ?? DEFAULT_TTL_SECONDS;
+    if (!Number.isFinite(raw) || raw <= 0) {
       this.ttlSeconds = null;
     } else {
-      this.ttlSeconds = Math.floor(ttl);
+      this.ttlSeconds = Math.floor(raw);
     }
   }
 
@@ -226,8 +222,8 @@ export class RedisMessageStore {
       ...(deletedAt ? { deletedAt, deletedBy: data.deletedBy ?? '' } : {}),
       ...(data._tombstone === '1' ? { _tombstone: true as const } : {}),
       ...(data.thinking ? { thinking: data.thinking } : {}),
-      ...(data.origin === 'stream' || data.origin === 'callback'
-        ? { origin: data.origin as 'stream' | 'callback' }
+      ...(data.origin === 'stream' || data.origin === 'callback' || data.origin === 'briefing'
+        ? { origin: data.origin as 'stream' | 'callback' | 'briefing' }
         : {}),
       ...(data.visibility === 'whisper' ? { visibility: 'whisper' as const } : {}),
       ...(data.whisperTo ? { whisperTo: safeParseMentions(data.whisperTo) } : {}),
@@ -832,7 +828,9 @@ export class RedisMessageStore {
         ...(deletedAt ? { deletedAt, deletedBy: d.deletedBy ?? '' } : {}),
         ...(d._tombstone === '1' ? { _tombstone: true as const } : {}),
         ...(d.thinking ? { thinking: d.thinking } : {}),
-        ...(d.origin === 'stream' || d.origin === 'callback' ? { origin: d.origin as 'stream' | 'callback' } : {}),
+        ...(d.origin === 'stream' || d.origin === 'callback' || d.origin === 'briefing'
+          ? { origin: d.origin as 'stream' | 'callback' | 'briefing' }
+          : {}),
         ...(d.visibility === 'whisper' ? { visibility: 'whisper' as const } : {}),
         ...(d.whisperTo ? { whisperTo: safeParseMentions(d.whisperTo) } : {}),
         ...(d.revealedAt ? { revealedAt: parseInt(d.revealedAt, 10) } : {}),

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useCatData } from '@/hooks/useCatData';
 import { useChatStore } from '@/stores/chatStore';
+import { useGuideStore } from '@/stores/guideStore';
 import { apiFetch } from '@/utils/api-client';
 import { BrakeSettingsPanel } from './BrakeSettingsPanel';
 import {
@@ -14,18 +15,18 @@ import {
   resolveRequestedHubTab,
 } from './cat-cafe-hub.navigation';
 import { CatOverviewTab, type ConfigData, SystemTab } from './config-viewer-tabs';
+import { HubAccountsTab } from './HubAccountsTab';
 import { HubCapabilityTab } from './HubCapabilityTab';
 import { HubCatEditor } from './HubCatEditor';
-import type { HubCatEditorDraft } from './hub-cat-editor.model';
-import { TemplateStep, type TemplateCard } from './first-run-quest/TemplateStep';
 import { HubClaudeRescueSection } from './HubClaudeRescueSection';
 import { HubCoCreatorEditor } from './HubCoCreatorEditor';
 import { HubCommandsTab } from './HubCommandsTab';
 import { HubEnvFilesTab } from './HubEnvFilesTab';
 import { HubGovernanceTab } from './HubGovernanceTab';
 import { HubLeaderboardTab } from './HubLeaderboardTab';
-import { HubProviderProfilesTab } from './HubProviderProfilesTab';
+import { HubMemoryTab } from './HubMemoryTab';
 import { HubRoutingPolicyTab } from './HubRoutingPolicyTab';
+import { HubToolUsageTab } from './HubToolUsageTab';
 import { PushSettingsPanel } from './PushSettingsPanel';
 import { VoiceSettingsPanel } from './VoiceSettingsPanel';
 
@@ -36,6 +37,7 @@ export { findGroupForTab, resolveRequestedHubTab } from './cat-cafe-hub.navigati
 export function CatCafeHub() {
   const hubState = useChatStore((s) => s.hubState);
   const closeHub = useChatStore((s) => s.closeHub);
+  const guideActive = useGuideStore((s) => s.session !== null);
   const { cats, getCatById, refresh } = useCatData();
 
   const open = hubState?.open ?? false;
@@ -51,17 +53,7 @@ export function CatCafeHub() {
   const [coCreatorEditorOpen, setCoCreatorEditorOpen] = useState(false);
   const [editingCat, setEditingCat] = useState<(typeof cats)[number] | null>(null);
   const [createDraft, setCreateDraft] = useState<Parameters<typeof HubCatEditor>[0]['draft']>(null);
-  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [togglingCatId, setTogglingCatId] = useState<string | null>(null);
-
-  // F140: detect bootcamp add-teammate phase for template-based creation
-  const currentThreadId = useChatStore((s) => s.currentThreadId);
-  const threads = useChatStore((s) => s.threads);
-  const isBootcampAddTeammate = (() => {
-    const thread = threads.find((t) => t.id === currentThreadId);
-    const bs = thread?.bootcampState as { phase?: string } | undefined;
-    return bs?.phase === 'phase-4.5-add-teammate';
-  })();
 
   // P1 fix: Render-time state sync (React 18 "adjusting state on props change" pattern).
   // Avoids first-frame flash that useEffect would cause on deep-link opens.
@@ -98,28 +90,6 @@ export function CatCafeHub() {
   const openAddMember = useCallback(() => {
     setEditingCat(null);
     setCreateDraft(null);
-    if (isBootcampAddTeammate) {
-      setShowTemplatePicker(true);
-    } else {
-      setEditorOpen(true);
-    }
-  }, [isBootcampAddTeammate]);
-
-  const handleTemplateSelect = useCallback((template: TemplateCard) => {
-    const draft: HubCatEditorDraft = {
-      client: 'anthropic',
-      defaultModel: '',
-      templateName: template.name,
-      templateNickname: template.nickname,
-      templateAvatar: template.avatar,
-      templateColorPrimary: template.color.primary,
-      templateColorSecondary: template.color.secondary,
-      templateRoleDescription: template.roleDescription,
-      templatePersonality: template.personality,
-      templateTeamStrengths: template.teamStrengths,
-    };
-    setShowTemplatePicker(false);
-    setCreateDraft(draft);
     setEditorOpen(true);
   }, []);
 
@@ -199,16 +169,21 @@ export function CatCafeHub() {
   useEffect(() => {
     if (!open) return;
     const h = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeHub();
+      // Skip Escape when guide overlay is active to prevent accidental exit (KD-14)
+      if (e.key === 'Escape' && !guideActive) closeHub();
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }, [open, closeHub]);
+  }, [open, closeHub, guideActive]);
 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={closeHub}>
+    <div
+      className="fixed inset-0 bg-black/30 flex items-center justify-center z-50"
+      onClick={closeHub}
+      data-bootcamp-host="hub-modal"
+    >
       <div
         className="rounded-2xl shadow-xl max-w-4xl w-full mx-4 h-[85vh] flex flex-col"
         style={{ backgroundColor: '#FDF8F3' }}
@@ -273,47 +248,18 @@ export function CatCafeHub() {
               ) : null)}
             {tab === 'commands' && <HubCommandsTab />}
             {tab === 'routing' && <HubRoutingPolicyTab />}
+            {tab === 'tool-usage' && <HubToolUsageTab />}
             {tab === 'env' && <HubEnvFilesTab />}
-            {tab === 'provider-profiles' && <HubProviderProfilesTab />}
+            {tab === 'accounts' && <HubAccountsTab />}
             {tab === 'voice' && <VoiceSettingsPanel />}
             {tab === 'notify' && <PushSettingsPanel />}
             {tab === 'governance' && <HubGovernanceTab />}
             {tab === 'health' && <BrakeSettingsPanel />}
+            {tab === 'memory' && <HubMemoryTab />}
             {tab === 'rescue' && <HubClaudeRescueSection />}
             {tab === 'leaderboard' && <HubLeaderboardTab />}
           </div>
         </div>
-        {/* F140: Template picker for bootcamp add-teammate */}
-        {showTemplatePicker && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30">
-            <div
-              className="rounded-2xl shadow-xl max-w-md w-full mx-4 p-5"
-              style={{ backgroundColor: '#FDF8F3' }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-base font-bold text-gray-900">选择猫猫品种</h3>
-                <button
-                  onClick={() => setShowTemplatePicker(false)}
-                  className="text-gray-400 hover:text-gray-600 text-lg"
-                >
-                  &times;
-                </button>
-              </div>
-              <TemplateStep onSelect={handleTemplateSelect} />
-              <button
-                type="button"
-                onClick={() => {
-                  setShowTemplatePicker(false);
-                  setEditorOpen(true);
-                }}
-                className="mt-3 w-full text-center text-xs text-gray-400 hover:text-gray-600"
-              >
-                跳过模板，手动填写
-              </button>
-            </div>
-          </div>
-        )}
         <HubCatEditor
           open={editorOpen}
           cat={editingCat}

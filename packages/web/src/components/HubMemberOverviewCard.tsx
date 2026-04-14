@@ -8,45 +8,47 @@ function safeAvatarSrc(value: string | null | undefined): string | null {
   return null;
 }
 
-function humanizeProvider(provider: string) {
-  if (provider === 'openai') return 'OpenAI';
-  if (provider === 'anthropic') return 'Anthropic';
-  if (provider === 'google') return 'Gemini';
-  if (provider === 'dare') return 'Dare';
-  if (provider === 'opencode') return 'OpenCode';
-  if (provider === 'antigravity') return 'Antigravity';
-  return provider;
+function humanizeClientId(clientId: string) {
+  if (clientId === 'openai') return 'OpenAI';
+  if (clientId === 'anthropic') return 'Anthropic';
+  if (clientId === 'google') return 'Gemini';
+  if (clientId === 'dare') return 'Dare';
+  if (clientId === 'opencode') return 'OpenCode';
+  if (clientId === 'antigravity') return 'Antigravity';
+  return clientId;
 }
 
 function clientRuntimeLabel(cat: CatData, configCat?: CatConfig) {
-  const accountRef = (cat.accountRef ?? cat.providerProfileId ?? '').toLowerCase();
+  const accountRef = (cat.accountRef ?? '').toLowerCase();
   if (accountRef.includes('claude')) return 'Claude';
   if (accountRef.includes('codex')) return 'Codex';
   if (accountRef.includes('gemini')) return 'Gemini';
+  if (accountRef.includes('kimi') || accountRef.includes('moonshot')) return 'Kimi';
   if (accountRef.includes('opencode')) return 'OpenCode';
   if (accountRef.includes('dare')) return 'Dare';
-  if (cat.provider === 'antigravity') return 'Antigravity';
-  if (cat.source === 'runtime' && cat.provider === 'openai') return 'OpenAI-Compatible';
-  return humanizeProvider(configCat?.provider ?? cat.provider);
+  if (cat.clientId === 'antigravity') return 'Antigravity';
+  if (cat.source === 'runtime' && cat.clientId === 'openai') return 'OpenAI-Compatible';
+  return humanizeClientId(configCat?.clientId ?? cat.clientId);
 }
 
 function accountSummary(cat: CatData) {
-  const accountRef = cat.accountRef?.trim() ?? cat.providerProfileId?.trim() ?? '';
-  if (!accountRef) return humanizeProvider(cat.provider);
+  const accountRef = cat.accountRef?.trim() ?? '';
+  if (!accountRef) return humanizeClientId(cat.clientId);
   if (
     accountRef === 'claude' ||
     accountRef === 'codex' ||
     accountRef === 'gemini' ||
+    accountRef === 'kimi' ||
     accountRef === 'dare' ||
     accountRef === 'opencode'
   ) {
-    return '内置 OAuth 账号';
+    return 'CLI（内置）账号';
   }
-  return `API Key · ${accountRef}`;
+  return `CLI（配置） · ${accountRef}`;
 }
 
 function getMetaSummary(cat: CatData, configCat?: CatConfig) {
-  if (cat.provider === 'antigravity') {
+  if (cat.clientId === 'antigravity') {
     return `Antigravity · ${configCat?.model ?? cat.defaultModel} · CLI Bridge`;
   }
 
@@ -102,6 +104,7 @@ export function HubCoCreatorOverviewCard({ coCreator, onEdit }: { coCreator: CoC
           >
             {avatarSrc ? (
               // biome-ignore lint/performance/noImgElement: co-creator avatar may be runtime upload URL
+              // eslint-disable-next-line @next/next/no-img-element
               <img src={avatarSrc} alt={`${coCreator.name} avatar`} className="h-full w-full object-cover" />
             ) : (
               'ME'
@@ -133,13 +136,14 @@ export function HubCoCreatorOverviewCard({ coCreator, onEdit }: { coCreator: CoC
 export function HubOverviewToolbar({ onAddMember }: { onAddMember?: () => void }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <p className="text-[13px] text-[#8F8075]">全部 · 订阅 · API Key · 未启用</p>
+      <p className="text-[13px] text-[#8F8075]">全部 · CLI（内置） · CLI（配置） · 未启用</p>
       <button
         type="button"
         onClick={onAddMember}
         className="rounded-full px-4 py-2 text-sm font-bold text-white"
         style={{ backgroundColor: '#D49266' }}
         data-bootcamp-step="add-member-button"
+        data-guide-id="cats.add-member"
       >
         + 添加成员
       </button>
@@ -203,7 +207,18 @@ export function HubMemberOverviewCard({
         </button>
       </div>
 
-      <p className="mt-2.5 text-[13px] text-[#8A776B]">{getMetaSummary(cat, configCat)}</p>
+      <p className="mt-2.5 text-[13px] text-[#8A776B]">
+        {getMetaSummary(cat, configCat)}
+        {cat.adapterMode ? (
+          <span
+            className={`ml-1.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+              cat.adapterMode === 'acp' ? 'bg-[#E8F5E9] text-[#4CAF50]' : 'bg-slate-100 text-slate-500'
+            }`}
+          >
+            {cat.adapterMode.toUpperCase()}
+          </span>
+        ) : null}
+      </p>
 
       <p className="mt-2 text-[13px] text-[#9D7BC7]">{formatMentionPreview(cat.mentionPatterns)}</p>
     </section>

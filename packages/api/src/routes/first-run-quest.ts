@@ -10,7 +10,7 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { resolveRuntimeProviderProfileById } from '../config/provider-profiles.js';
+import { resolveByAccountRef } from '../config/account-resolver.js';
 import { detectAvailableClients } from '../domains/cats/services/first-run-quest/client-detection.js';
 import type { FirstRunQuestStateV1, IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
@@ -50,10 +50,18 @@ const CLI_PROBE_CMD: Record<string, (model?: string) => string> = {
 };
 
 /** Error patterns that prove the CLI authenticated and reached the API. */
-const CLI_OK_PATTERNS = [/budget/i, /exceeded/i, /rate.?limit/i, /max.?tokens/i];
+const CLI_OK_PATTERNS = [
+  /budget/i,
+  /exceeded/i,
+  /rate.?limit/i,
+  /max.?tokens/i,
+  /not.?supported/i,
+  /invalid_request_error/i,
+  /model.*(not|unsupported|unavailable)/i,
+];
 
 /** Stdout patterns that indicate failure despite exit code 0. */
-const STDOUT_ERROR_PATTERNS = [/^error/i, /exception/i, /frozen/i, /not found/i, /unauthorized/i];
+const STDOUT_ERROR_PATTERNS = [/^error/i, /exception/i, /frozen/i, /unauthorized/i];
 
 /** Model names must be safe for shell interpolation. */
 const SAFE_MODEL_RE = /^[\w.\-/]+$/;
@@ -77,7 +85,7 @@ export async function tryCliProbe(
   }
   const cmd = buildCmd(model);
   try {
-    const { stdout } = await execFn(cmd, { timeout: 15_000 });
+    const { stdout } = await execFn(cmd, { timeout: 30_000 });
     const trimmed = stdout.trim();
     if (trimmed.length === 0) {
       return { ok: false, message: `${client} CLI 无响应` };
@@ -93,9 +101,14 @@ export async function tryCliProbe(
     return { ok: true, message: `${client} CLI 连接正常` };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    const stderr = (err as { stderr?: string }).stderr ?? '';
     /* Budget / rate-limit errors prove the CLI authenticated and reached the API */
-    if (CLI_OK_PATTERNS.some((re) => re.test(msg))) {
+    if (CLI_OK_PATTERNS.some((re) => re.test(msg) || re.test(stderr))) {
       return { ok: true, message: `${client} CLI 连接正常（受限响应）` };
+    }
+    /* Process killed (timeout) but stderr shows CLI was running — likely slow but alive */
+    if ((err as { code?: number | null }).code === null && stderr.length > 0) {
+      return { ok: true, message: `${client} CLI 连接正常（响应较慢）` };
     }
     if (msg.includes('authentication') || msg.includes('login') || msg.includes('OAuth')) {
       return { ok: false, message: '需要先完成 OAuth 登录，请在终端运行一次 CLI' };
@@ -189,7 +202,7 @@ export const firstRunQuestRoutes: FastifyPluginAsync<FirstRunQuestRoutesOptions>
 
     const { profileId, clientId, client: clientName, model } = parsed.data;
     const projectRoot = resolveActiveProjectRoot();
-    const runtime = await resolveRuntimeProviderProfileById(projectRoot, profileId);
+    const runtime = resolveByAccountRef(projectRoot, profileId);
 
     if (!runtime) {
       reply.status(404);

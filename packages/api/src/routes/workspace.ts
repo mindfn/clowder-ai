@@ -107,7 +107,7 @@ interface TreeNode {
   children?: TreeNode[];
 }
 
-const SKIP_DIRS = new Set(['node_modules', '.next', 'dist', '.git', '.turbo', 'coverage']);
+const SKIP_DIRS = new Set(['node_modules', '.next', 'dist', '.git', '.turbo', 'coverage', '.claude']);
 
 interface WorkspaceSearchResult {
   path: string;
@@ -118,27 +118,50 @@ interface WorkspaceSearchResult {
 }
 
 async function listWorkspaceFiles(root: string): Promise<string[]> {
+  // Use -prune to skip entire directory trees efficiently.
+  // Hidden dirs (.*) are pruned in one rule — covers .venv, .git, .claude,
+  // .next, .playwright-mcp, .idea, etc. without listing each one.
   const { stdout } = await execFileAsync(
     'find',
     [
       root,
+      '(',
+      '-name',
+      '.*',
+      '-not',
+      '-name',
+      '.',
+      '-type',
+      'd',
+      ')',
+      '-prune',
+      '-o',
+      '(',
+      '-name',
+      'node_modules',
+      '-type',
+      'd',
+      ')',
+      '-prune',
+      '-o',
+      '(',
+      '-name',
+      'dist',
+      '-type',
+      'd',
+      ')',
+      '-prune',
+      '-o',
+      '(',
+      '-name',
+      'secrets',
+      '-type',
+      'd',
+      ')',
+      '-prune',
+      '-o',
       '-type',
       'f',
-      '-not',
-      '-path',
-      '*/node_modules/*',
-      '-not',
-      '-path',
-      '*/.git/*',
-      '-not',
-      '-path',
-      '*/.next/*',
-      '-not',
-      '-path',
-      '*/dist/*',
-      '-not',
-      '-path',
-      '*/secrets/*',
       '-not',
       '-name',
       '.env*',
@@ -151,8 +174,9 @@ async function listWorkspaceFiles(root: string): Promise<string[]> {
       '-not',
       '-name',
       'id_rsa*',
+      '-print',
     ],
-    { timeout: 5000, maxBuffer: 5 * 1024 * 1024 },
+    { timeout: 5000, maxBuffer: 10 * 1024 * 1024 },
   );
 
   return stdout
@@ -225,7 +249,7 @@ async function buildTree(root: string, dirPath: string, depth: number, maxDepth:
   });
 
   for (const entry of sorted) {
-    if (entry.name.startsWith('.') && entry.name !== '.claude') continue;
+    if (entry.name.startsWith('.') && entry.name !== '.claude' && entry.name !== '.kimi') continue;
     if (SKIP_DIRS.has(entry.name)) continue;
 
     const fullPath = join(dirPath, entry.name);
@@ -470,6 +494,7 @@ export const workspaceRoutes: FastifyPluginAsync<WorkspaceRouteOpts> = async (ap
         reply.status(e.code === 'NOT_FOUND' ? 404 : 403);
         return { error: e.message };
       }
+      request.log.error({ err: e }, 'workspace search failed');
       reply.status(500);
       return { error: 'Internal error' };
     }

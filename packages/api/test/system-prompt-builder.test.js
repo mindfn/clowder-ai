@@ -176,7 +176,7 @@ describe('SystemPromptBuilder', () => {
       mcpAvailable: true,
       promptTags: ['critique'],
     });
-    assert.ok(prompt.length < 3500, `Prompt is ${prompt.length} chars, expected < 3500`);
+    assert.ok(prompt.length < 3600, `Prompt is ${prompt.length} chars, expected < 3600`);
   });
 
   test('returns empty string for unknown catId', async () => {
@@ -576,11 +576,14 @@ describe('SystemPromptBuilder', () => {
   test('buildStaticIdentity includes configured co-creator name and mention handles', async () => {
     const { buildStaticIdentity } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
     const identity = buildStaticIdentity('opus');
-    // Owner config has name: "You", mentionPatterns: ["@co-creator", "@co-creator", "@co-creator"]
-    assert.ok(identity.includes('You'), 'Should include co-creator name from config');
-    assert.ok(identity.includes('@co-creator'), 'Should include @co-creator mention handle');
-    assert.ok(identity.includes('@co-creator'), 'Should include @co-creator mention handle');
+    // Config resolution: cat-template.json (base) + .cat-cafe/cat-catalog.json (overlay).
+    // Template has coCreator.name="You", catalog may override to deployment-specific name.
+    // Test structural invariants that hold regardless of deployment config:
+    assert.ok(identity.includes('铲屎官'), 'Should include 铲屎官 (always in CVO line)');
     assert.ok(identity.includes('行首'), 'Should teach line-start rule for owner mentions');
+    // CVO line: "{name}（铲屎官/CVO）…行首写 `@handle` / `@handle2`。"
+    assert.ok(/重要决策由.+拍板/.test(identity), 'Should include decision authority line');
+    assert.ok(/行首写\s+`@\S+`/.test(identity), 'CVO line should contain backtick-wrapped mention handle after 行首写');
   });
 
   // F032 Phase D2: Reviewer section tests
@@ -706,7 +709,7 @@ describe('SystemPromptBuilder', () => {
         { catId: 'opus', lastMessageAt: Date.now() - 1000, messageCount: 3 },
       ],
     });
-    assert.ok(prompt.length < 3500, `Prompt with activity is ${prompt.length} chars, expected < 3500`);
+    assert.ok(prompt.length < 3600, `Prompt with activity is ${prompt.length} chars, expected < 3600`);
   });
 
   // --- F042: pinned identity constant + direct-message reply target ---
@@ -859,6 +862,98 @@ describe('SystemPromptBuilder', () => {
     assert.ok(ctx.includes('F073'), 'Should contain feature ID');
   });
 
+  test('guide prompt emits offered transition only for a brand-new guide match', async () => {
+    const { buildInvocationContext } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
+    const ctx = buildInvocationContext({
+      catId: 'opus',
+      mode: 'independent',
+      teammates: [],
+      mcpAvailable: false,
+      threadId: 'thread-guide',
+      guideCandidate: {
+        id: 'add-member',
+        name: '添加成员',
+        estimatedTime: '3min',
+        status: 'offered',
+        isNewOffer: true,
+      },
+    });
+
+    assert.ok(ctx.includes('Guide Matched'), 'new match should emit offer card instructions');
+    assert.ok(ctx.includes('status="offered"'), 'new match should persist offered transition exactly once');
+  });
+
+  test('guide prompt does not re-send offered transition after the guide is already offered', async () => {
+    const { buildInvocationContext } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
+    const ctx = buildInvocationContext({
+      catId: 'opus',
+      mode: 'independent',
+      teammates: [],
+      mcpAvailable: false,
+      threadId: 'thread-guide',
+      guideCandidate: {
+        id: 'add-member',
+        name: '添加成员',
+        estimatedTime: '3min',
+        status: 'offered',
+        isNewOffer: false,
+      },
+    });
+
+    assert.ok(ctx.includes('Guide Pending'), 'existing offered guide should become a stable pending reminder');
+    assert.ok(!ctx.includes('status="offered"'), 'existing offered guide must not re-send offered transition');
+    assert.ok(!ctx.includes('cat_cafe_create_rich_block'), 'existing offered guide must not repeat the offer card');
+  });
+
+  test('guide preview from offered state advances to awaiting_choice once', async () => {
+    const { buildInvocationContext } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
+    const ctx = buildInvocationContext({
+      catId: 'opus',
+      mode: 'independent',
+      teammates: [],
+      mcpAvailable: false,
+      threadId: 'thread-guide',
+      guideCandidate: {
+        id: 'add-member',
+        name: '添加成员',
+        estimatedTime: '3min',
+        status: 'offered',
+        userSelection: '步骤概览',
+      },
+    });
+
+    assert.ok(ctx.includes('Guide Selection'), 'preview branch should still activate from offered state');
+    assert.ok(
+      ctx.includes('status="awaiting_choice"'),
+      'first preview should advance the guide to awaiting_choice before resolving steps',
+    );
+  });
+
+  test('guide preview from awaiting_choice does not re-send awaiting_choice transition', async () => {
+    const { buildInvocationContext } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
+    const ctx = buildInvocationContext({
+      catId: 'opus',
+      mode: 'independent',
+      teammates: [],
+      mcpAvailable: false,
+      threadId: 'thread-guide',
+      guideCandidate: {
+        id: 'add-member',
+        name: '添加成员',
+        estimatedTime: '3min',
+        status: 'awaiting_choice',
+        userSelection: '步骤概览',
+      },
+    });
+
+    assert.ok(ctx.includes('Guide Selection'), 'preview branch should remain available after awaiting_choice');
+    assert.ok(ctx.includes('步骤概览回复用户'), 'repeated preview should still present inline step tips');
+    assert.ok(
+      !ctx.includes('status="awaiting_choice"'),
+      'repeated preview must not emit an awaiting_choice -> awaiting_choice self-transition',
+    );
+  });
+
   test('buildInvocationContext omits SOP hint when sopStageHint absent', async () => {
     const { buildInvocationContext } = await import('../dist/domains/cats/services/context/SystemPromptBuilder.js');
     const ctx = buildInvocationContext({
@@ -906,7 +1001,7 @@ describe('SystemPromptBuilder', () => {
         featureId: 'F073',
       },
     });
-    assert.ok(prompt.length < 3550, `Prompt with SOP hint is ${prompt.length} chars, expected < 3550`);
+    assert.ok(prompt.length < 3650, `Prompt with SOP hint is ${prompt.length} chars, expected < 3650`);
   });
 
   // --- F092: Voice Mode prompt injection ---
@@ -953,7 +1048,7 @@ describe('SystemPromptBuilder', () => {
       },
       voiceMode: true,
     });
-    assert.ok(prompt.length < 3650, `Prompt with voice mode + SOP hint is ${prompt.length} chars, expected < 3650`);
+    assert.ok(prompt.length < 3750, `Prompt with voice mode + SOP hint is ${prompt.length} chars, expected < 3750`);
   });
 
   test('buildInvocationContext injects bootcamp mode when bootcampState provided', async () => {

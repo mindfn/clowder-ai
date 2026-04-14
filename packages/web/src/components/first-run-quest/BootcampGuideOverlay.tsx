@@ -1,15 +1,14 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { apiFetch } from '@/utils/api-client';
-
-type GuideStep = 'open-hub' | 'click-add-member' | 'fill-form' | 'done';
-
-interface BootcampState {
-  phase: string;
-  guideStep?: GuideStep | null;
-  [key: string]: unknown;
-}
+import { AddTeammateGuide } from './AddTeammateGuide';
+import type { BootcampState, GuideStep } from './guideOverlayTypes';
+import { hostSelector } from './guideStepConfig';
+import { LifecyclePhaseTip, type LifecycleTipConfig } from './LifecyclePhaseTip';
+import { MentionTeammateGuide } from './MentionTeammateGuide';
+import { PreviewResultGuide } from './PreviewResultGuide';
+import { syncLocalBootcampState } from './syncLocalBootcampState';
 
 interface BootcampGuideOverlayProps {
   catName?: string;
@@ -20,57 +19,22 @@ interface BootcampGuideOverlayProps {
   bootcampState?: BootcampState | null;
 }
 
-/** Guide tips for the initial intro phase (no messages yet). */
 const PHASE_TIPS: Record<string, (catName: string) => string> = {
   'phase-1-intro': (cat) => `在下方输入框输入 @${cat} 你好  开始训练营`,
   'phase-2-env-check': (cat) => `${cat} 正在检查你的开发环境...`,
   'phase-3-config-help': (cat) => `跟着 ${cat} 的指引完成配置`,
 };
 
-/** Guide tips for the add-teammate flow (console navigation). */
-const GUIDE_STEP_CONFIG: Record<
-  GuideStep,
-  {
-    tip: string;
-    target: string;
-    arrow: 'left' | 'up' | 'none';
-    /** Next step to advance to when user clicks the target */
-    nextStep: GuideStep | null;
-  }
-> = {
-  'open-hub': {
-    tip: '点击右上角的 ⚙️ 设置按钮，打开 Hub 控制台',
-    target: 'hub-button',
-    arrow: 'left',
-    nextStep: 'click-add-member',
-  },
-  'click-add-member': {
-    tip: '点击「+ 添加成员」按钮，添加一位新的猫猫队友',
-    target: 'add-member-button',
-    arrow: 'up',
-    nextStep: 'fill-form',
-  },
-  'fill-form': {
-    tip: '填写猫猫信息，选择客户端和模型，然后点击保存',
-    target: 'cat-editor',
-    arrow: 'none',
-    nextStep: null, // Advance handled by watching cats.length in ChatContainer
-  },
-  done: {
-    tip: '',
-    target: '',
-    arrow: 'none',
-    nextStep: null,
-  },
+const LIFECYCLE_TIPS: Record<string, LifecycleTipConfig> = {
+  'phase-5-kickoff': { icon: '\u{1F680}', text: '告诉猫猫你想做什么项目，TA 会帮你分析和拆解需求', variant: 'blue' },
+  'phase-6-design': { icon: '\u{1F3A8}', text: '猫猫会给出设计方案，选择你喜欢的然后继续', variant: 'purple' },
+  'phase-7-dev': { icon: '\u{1F4BB}', text: '猫猫正在开发，遇到关键决策会问你', variant: 'amber' },
+  'phase-8-review': { icon: '\u{1F50D}', text: '让队友来 review 代码，在输入框 @TA 的名字', variant: 'blue' },
+  'phase-9-complete': { icon: '\u2705', text: 'Review 通过，准备合入主分支', variant: 'green' },
+  'phase-10-retro': { icon: '\u{1F4DD}', text: '和猫猫一起回顾这个项目，看看学到了什么', variant: 'amber' },
+  'phase-11-farewell': { icon: '\u{1F393}', text: '恭喜完成训练营！你已经掌握了多猫协作的基本流程', variant: 'green' },
 };
 
-/**
- * Bootcamp guide overlay system.
- *
- * Two modes:
- * 1. **Initial intro**: Full-screen overlay with input punch-through (phase-1-intro, no messages)
- * 2. **Add-teammate guide**: Step-by-step overlay highlighting specific UI elements
- */
 export function BootcampGuideOverlay({
   catName,
   phase,
@@ -79,33 +43,34 @@ export function BootcampGuideOverlay({
   threadId,
   bootcampState,
 }: BootcampGuideOverlayProps) {
-  // ── Mode 1: Add-teammate guide (phase-4.5-add-teammate) ──
-  if (phase === 'phase-4.5-add-teammate' && guideStep && guideStep !== 'done') {
+  if (
+    phase === 'phase-4.5-add-teammate' &&
+    guideStep &&
+    !['done', 'return-to-chat', 'mention-teammate'].includes(guideStep)
+  ) {
     return <AddTeammateGuide guideStep={guideStep} threadId={threadId} bootcampState={bootcampState} />;
   }
 
-  // ── Mode 1b: Add-teammate done — show floating @mention tip (no overlay) ──
-  if (phase === 'phase-4.5-add-teammate' && guideStep === 'done') {
-    return (
-      <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[66] pointer-events-none">
-        <div className="rounded-xl border border-green-300 bg-green-50 px-5 py-3 shadow-xl animate-fade-in">
-          <div className="flex items-center gap-2">
-            <span className="text-lg">🎉</span>
-            <span className="text-sm font-medium text-green-800">
-              新队友已加入！在下方输入框 @TA 的名字，让 TA 来 review 代码
-            </span>
-          </div>
-        </div>
-      </div>
-    );
+  if (phase === 'phase-4.5-add-teammate' && (guideStep === 'done' || guideStep === 'return-to-chat')) {
+    return <PostAddTeammateTip threadId={threadId} bootcampState={bootcampState} guideStep={guideStep} />;
   }
 
-  // ── Mode 1c: First project "mistake" tip — delayed floating hint ──
-  if (phase === 'phase-4-first-project' && hasMessages) {
-    return <DelayedMistakeTip catName={catName} />;
+  if (phase === 'phase-4.5-add-teammate' && guideStep === 'mention-teammate') {
+    return <MentionTeammateGuide />;
   }
 
-  // ── Mode 2: Initial intro overlay (no messages yet) ──
+  if (phase === 'phase-4-first-project' && guideStep === 'preview-result') {
+    return <PreviewResultGuide catName={catName} threadId={threadId} bootcampState={bootcampState} />;
+  }
+
+  // DelayedMistakeTip removed: preview-result advance is now event-driven
+  // via useEffect in ChatContainer (fires when gate detects invocation end).
+
+  const lifecycleTip = LIFECYCLE_TIPS[phase];
+  if (lifecycleTip) {
+    return <LifecyclePhaseTip phase={phase} config={lifecycleTip} />;
+  }
+
   if (hasMessages) return null;
   const cat = catName ?? '猫猫';
   const tipFn = PHASE_TIPS[phase];
@@ -113,181 +78,82 @@ export function BootcampGuideOverlay({
   const tip = tipFn(cat);
 
   return (
-    <div className="fixed inset-0 z-[60] flex flex-col justify-end bg-black/30" style={{ pointerEvents: 'auto' }}>
-      <div className="pointer-events-none mx-auto mb-20 rounded-xl border border-amber-300 bg-amber-50 px-5 py-3 shadow-xl">
-        <div className="flex items-center gap-2">
-          <span className="text-lg">👇</span>
-          <span className="text-sm font-medium text-amber-800">{tip}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * Step-by-step overlay for adding a teammate via Hub console.
- * Highlights target elements and auto-advances guideStep on click.
- */
-function AddTeammateGuide({
-  guideStep,
-  threadId,
-  bootcampState,
-}: {
-  guideStep: GuideStep;
-  threadId?: string;
-  bootcampState?: BootcampState | null;
-}) {
-  const config = GUIDE_STEP_CONFIG[guideStep];
-  const [targetRect, setTargetRect] = useState<DOMRect | null>(null);
-  const rafRef = useRef<number>(0);
-  const advancingRef = useRef(false);
-
-  // Track the target element's position via rAF
-  useEffect(() => {
-    const update = () => {
-      const el = document.querySelector(`[data-bootcamp-step="${config.target}"]`);
-      if (el) {
-        setTargetRect(el.getBoundingClientRect());
-      } else {
-        setTargetRect(null);
-      }
-      rafRef.current = requestAnimationFrame(update);
-    };
-    rafRef.current = requestAnimationFrame(update);
-    return () => cancelAnimationFrame(rafRef.current);
-  }, [config.target]);
-
-  // Listen for clicks on the target element to auto-advance guideStep
-  useEffect(() => {
-    if (!config.nextStep || !threadId || !bootcampState) return;
-    const nextStep = config.nextStep;
-
-    const handleClick = () => {
-      if (advancingRef.current) return;
-      advancingRef.current = true;
-      apiFetch(`/api/threads/${threadId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          bootcampState: { ...bootcampState, guideStep: nextStep },
-        }),
-      }).finally(() => {
-        advancingRef.current = false;
-      });
-    };
-
-    // Small delay to ensure the element is rendered
-    const timer = setTimeout(() => {
-      const el = document.querySelector(`[data-bootcamp-step="${config.target}"]`);
-      if (el) {
-        el.addEventListener('click', handleClick, { once: true });
-      }
-    }, 100);
-
-    return () => {
-      clearTimeout(timer);
-      const el = document.querySelector(`[data-bootcamp-step="${config.target}"]`);
-      if (el) el.removeEventListener('click', handleClick);
-    };
-  }, [config.target, config.nextStep, threadId, bootcampState]);
-
-  const arrowIcon = config.arrow === 'left' ? '👈' : config.arrow === 'up' ? '👆' : '✨';
-
-  return (
     <>
-      {/* Dark overlay — blocks clicks everywhere */}
-      <div className="fixed inset-0 z-[60] bg-black/40" style={{ pointerEvents: 'auto' }}>
-        {/* Spotlight glow ring around target */}
-        {targetRect && (
-          <div
-            className="absolute rounded-xl pointer-events-none"
-            style={{
-              top: targetRect.top - 6,
-              left: targetRect.left - 6,
-              width: targetRect.width + 12,
-              height: targetRect.height + 12,
-              border: '2px solid rgba(245, 158, 11, 0.8)',
-              animation: 'quest-glow 2.5s ease-in-out infinite',
-            }}
-          />
-        )}
+      {/* Full-screen overlay with input punch-through */}
+      <div className="fixed inset-0 z-[60] bg-black/30" style={{ pointerEvents: 'auto' }} />
+      <style>{`[data-bootcamp-step="chat-input"] { position: relative; z-index: 65 !important; }`}</style>
+      <div className="pointer-events-none fixed bottom-24 left-1/2 -translate-x-1/2 z-[66]">
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-5 py-3 shadow-xl animate-fade-in">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">👇</span>
+            <span className="text-sm font-medium text-amber-800">{tip}</span>
+          </div>
+        </div>
       </div>
-
-      {/* Elevate the target element above the overlay so it's clickable */}
-      <style>{`[data-bootcamp-step="${config.target}"] { position: relative; z-index: 65 !important; }`}</style>
-
-      {/* Floating tip near the target */}
-      {targetRect && (
-        <div className="fixed z-[66] pointer-events-none" style={getTipPosition(targetRect, config.arrow)}>
-          <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 shadow-xl max-w-xs animate-fade-in">
-            <div className="flex items-center gap-2">
-              <span className="text-lg flex-shrink-0">{arrowIcon}</span>
-              <span className="text-sm font-medium text-amber-800">{config.tip}</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Fallback: target not yet visible — centered loading tip */}
-      {!targetRect && (
-        <div className="fixed inset-0 z-[66] flex items-center justify-center pointer-events-none">
-          <div className="rounded-xl border border-amber-300 bg-amber-50 px-5 py-3 shadow-xl">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">⏳</span>
-              <span className="text-sm font-medium text-amber-800">{config.tip}</span>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 }
 
 /**
- * Delayed floating tip for phase-4-first-project.
- * Shows 3 seconds after the cat "finishes" its deliberately flawed work.
+ * Post-add-teammate tip: shows green celebration tip and auto-advances
+ * to `mention-teammate` when Hub modal is closed.
  */
-function DelayedMistakeTip({ catName }: { catName?: string }) {
-  const [visible, setVisible] = useState(false);
-  const cat = catName ?? '猫猫';
+function PostAddTeammateTip({
+  threadId,
+  bootcampState,
+  guideStep,
+}: {
+  threadId?: string;
+  bootcampState?: BootcampState | null;
+  guideStep: GuideStep;
+}) {
+  const advancedRef = useRef(false);
+
+  const advanceToMention = useCallback(() => {
+    if (advancedRef.current || !threadId || !bootcampState) return;
+    advancedRef.current = true;
+    const next: BootcampState = { ...bootcampState, guideStep: 'mention-teammate' };
+    syncLocalBootcampState(threadId, next);
+    apiFetch(`/api/threads/${threadId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bootcampState: next }),
+    }).catch(() => {});
+  }, [threadId, bootcampState]);
 
   useEffect(() => {
-    const timer = setTimeout(() => setVisible(true), 3000);
-    return () => clearTimeout(timer);
-  }, []);
+    advancedRef.current = false;
+  }, [guideStep, threadId]);
 
-  if (!visible) return null;
+  // Auto-advance to mention-teammate when Hub modal is no longer in the DOM
+  useEffect(() => {
+    let frame = 0;
+    const check = () => {
+      const hubModal = document.querySelector(hostSelector('hub-modal'));
+      if (!hubModal) {
+        advanceToMention();
+        return;
+      }
+      frame = requestAnimationFrame(check);
+    };
+    // Small delay to let the DOM settle after step transition
+    const timer = window.setTimeout(check, 300);
+    return () => {
+      window.clearTimeout(timer);
+      cancelAnimationFrame(frame);
+    };
+  }, [advanceToMention]);
 
   return (
     <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[66] pointer-events-none">
-      <div className="rounded-xl border border-orange-300 bg-orange-50 px-5 py-3 shadow-xl animate-fade-in">
+      <div className="rounded-xl border border-green-300 bg-green-50 px-5 py-3 shadow-xl animate-fade-in">
         <div className="flex items-center gap-2">
-          <span className="text-lg">🤔</span>
-          <span className="text-sm font-medium text-orange-800">
-            似乎{cat}执行的不是那么合适…… 让我们再来一只猫猫监督 TA 干活吧！
+          <span className="text-lg">🎉</span>
+          <span className="text-sm font-medium text-green-800">
+            新队友已加入！以后可以在 Hub 随时添加更多猫猫。关闭设置回到聊天吧！
           </span>
         </div>
       </div>
     </div>
   );
-}
-
-/** Position the floating tip near the target element. */
-function getTipPosition(rect: DOMRect, arrow: 'left' | 'up' | 'none'): React.CSSProperties {
-  if (arrow === 'left') {
-    return {
-      top: rect.top + rect.height / 2 - 20,
-      left: rect.right + 16,
-    };
-  }
-  if (arrow === 'up') {
-    return {
-      top: rect.bottom + 12,
-      left: Math.max(16, rect.left + rect.width / 2 - 140),
-    };
-  }
-  return {
-    top: rect.bottom + 12,
-    left: Math.max(16, rect.left - 60),
-  };
 }

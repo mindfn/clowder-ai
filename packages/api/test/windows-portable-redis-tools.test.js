@@ -128,6 +128,27 @@ test('Windows command forwarding helpers avoid PowerShell automatic $args collis
   assert.doesNotMatch(helpersScript, /\$args = @\("claude-profile", "set"/);
 });
 
+test('Windows OAuth helpers do not force-remove global installer accounts before set', () => {
+  const codexOAuthBody = helpersScript.match(/function Set-CodexOAuthMode \{([\s\S]*?)^}/m)?.[1] ?? '';
+  const geminiOAuthBody = helpersScript.match(/function Set-GeminiOAuthMode \{([\s\S]*?)^}/m)?.[1] ?? '';
+  const claudeRemoveBody = helpersScript.match(/function Remove-ClaudeInstallerProfile \{([\s\S]*?)^}/m)?.[1] ?? '';
+
+  assert.notEqual(codexOAuthBody, '', 'expected Set-CodexOAuthMode body');
+  assert.notEqual(geminiOAuthBody, '', 'expected Set-GeminiOAuthMode body');
+  assert.notEqual(claudeRemoveBody, '', 'expected Remove-ClaudeInstallerProfile body');
+
+  assert.match(codexOAuthBody, /"client-auth", "set".*"--mode", "oauth"/s);
+  assert.doesNotMatch(codexOAuthBody, /"client-auth", "remove"/);
+  assert.doesNotMatch(codexOAuthBody, /"--force", "true"/);
+
+  assert.match(geminiOAuthBody, /"client-auth", "set".*"--mode", "oauth"/s);
+  assert.doesNotMatch(geminiOAuthBody, /"client-auth", "remove"/);
+  assert.doesNotMatch(geminiOAuthBody, /"--force", "true"/);
+
+  assert.match(claudeRemoveBody, /"claude-profile", "remove"/);
+  assert.doesNotMatch(claudeRemoveBody, /"--force", "true"/);
+});
+
 test('Windows installer probes the npm shim path when pnpm is installed but not yet on PATH', () => {
   assert.match(
     commandHelpersScript,
@@ -199,6 +220,7 @@ test('Windows installer uses interactive selectors instead of typed or letter-ba
   assert.match(installScript, /Name = "Claude"; Label = "Claude"; Cmd = "claude"/);
   assert.match(installScript, /Name = "Codex"; Label = "Codex"; Cmd = "codex"/);
   assert.match(installScript, /Name = "Gemini"; Label = "Gemini"; Cmd = "gemini"/);
+  assert.match(installScript, /Name = "Kimi"; Label = "Kimi"; Cmd = "kimi"/);
   assert.match(installScript, /Select-InstallerMultiChoice -Title "Missing agent CLIs"/);
   assert.doesNotMatch(uiHelpersScript, /Label = "&All"/);
   assert.doesNotMatch(uiHelpersScript, /Label = "&Select"/);
@@ -208,6 +230,7 @@ test('Windows installer uses interactive selectors instead of typed or letter-ba
   assert.match(helpersScript, /Select-InstallerChoice -Title "Claude auth"/);
   assert.match(helpersScript, /Select-InstallerChoice -Title "Codex auth"/);
   assert.match(helpersScript, /Select-InstallerChoice -Title "Gemini auth"/);
+  assert.match(helpersScript, /Select-InstallerChoice -Title "Kimi auth"/);
   assert.doesNotMatch(helpersScript, /Read-Host " {4}Choose \[1\/2\]/);
 });
 
@@ -218,7 +241,11 @@ test('Windows installer masks provider API key prompts instead of echoing secret
   assert.match(helpersScript, /ZeroFreeBSTR/);
 
   const apiPromptMatches = helpersScript.match(/\$apiKey = Read-InstallerSecret " {4}API Key"/g) ?? [];
-  assert.equal(apiPromptMatches.length, 3, 'expected Claude, Codex, and Gemini API key prompts to use masked input');
+  assert.equal(
+    apiPromptMatches.length,
+    4,
+    'expected Claude, Codex, Gemini, and Kimi API key prompts to use masked input',
+  );
   assert.doesNotMatch(helpersScript, /\$apiKey = Read-Host " {4}API Key"/);
 });
 

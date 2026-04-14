@@ -260,6 +260,15 @@ ensure_runtime_clean() {
   local dirty
   dirty=$(git -C "$RUNTIME_DIR" status --short -uno 2>/dev/null || true)
   if [ -n "$dirty" ] && [ "$FORCE" != "true" ]; then
+    # Auto-stash isolated pnpm-lock.yaml drift (common after pnpm install on
+    # a previous run). Only the lock file dirty → safe to stash and proceed.
+    local drift_files
+    drift_files=$(git -C "$RUNTIME_DIR" diff HEAD --name-only 2>/dev/null || true)
+    if [ "$drift_files" = "pnpm-lock.yaml" ]; then
+      info "lock drift detected — stashing before sync"
+      git -C "$RUNTIME_DIR" stash push -m "lock-drift-pre-sync-stash" -- pnpm-lock.yaml
+      return 0
+    fi
     die "runtime worktree has local changes. Commit/stash first, or re-run with --force."
   fi
 }
@@ -322,7 +331,14 @@ sync_runtime_worktree() {
 
   info "syncing runtime worktree with $REMOTE_NAME/main (ff-only)"
   git -C "$RUNTIME_DIR" fetch "$REMOTE_NAME" main
-  git -C "$RUNTIME_DIR" merge --ff-only "$REMOTE_NAME/main"
+  if ! git -C "$RUNTIME_DIR" merge --ff-only "$REMOTE_NAME/main" 2>/dev/null; then
+    echo ""
+    echo "  ff-only merge failed — likely stale untracked files blocking the sync."
+    echo "  Check with:  git -C \"$RUNTIME_DIR\" status"
+    echo "  Quick fix:   git -C \"$RUNTIME_DIR\" clean -fd .claude/skills/"
+    echo ""
+    die "runtime sync failed (see above)"
+  fi
 
   if [ "$RUN_INSTALL" = "true" ]; then
     info "refreshing dependencies in runtime worktree"
@@ -375,7 +391,7 @@ start_runtime_worktree() {
     ensure_runtime_start_prereqs
     info "running in-place (deployment mode): $PROJECT_DIR"
     cd "$PROJECT_DIR"
-    exec env CAT_CAFE_STRICT_PROFILE_DEFAULTS=1 ./scripts/start-dev.sh --prod-web --profile=production ${START_ARGS[@]+"${START_ARGS[@]}"}
+    exec env CAT_CAFE_STRICT_PROFILE_DEFAULTS=1 ./scripts/start-dev.sh --prod-web --profile=opensource ${START_ARGS[@]+"${START_ARGS[@]}"}
   fi
 
   if ! worktree_exists; then
@@ -403,7 +419,7 @@ start_runtime_worktree() {
   cd "$RUNTIME_DIR"
   # Runtime = production: auto-inject --prod-web for PWA + Tailscale support.
   # Bash 3.2 + set -u: empty-array expansion can throw "unbound variable".
-  exec env CAT_CAFE_STRICT_PROFILE_DEFAULTS=1 ./scripts/start-dev.sh --prod-web --profile=production ${START_ARGS[@]+"${START_ARGS[@]}"}
+  exec env CAT_CAFE_STRICT_PROFILE_DEFAULTS=1 ./scripts/start-dev.sh --prod-web --profile=opensource ${START_ARGS[@]+"${START_ARGS[@]}"}
 }
 
 COMMAND="${1:-status}"

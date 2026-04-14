@@ -18,6 +18,7 @@ import type { TranscriptReader } from '../domains/cats/services/session/Transcri
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { ISessionChainStore } from '../domains/cats/services/stores/ports/SessionChainStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
+import { canAccessThread, isSharedDefaultThread } from '../domains/guides/guide-state-access.js';
 import { resolveUserId } from '../utils/request-identity.js';
 
 const bindSessionSchema = z.object({
@@ -32,6 +33,16 @@ interface SessionChainRouteOptions extends FastifyPluginOptions {
   sessionSealer?: ISessionSealer;
 }
 
+function canAccessSessionRecord(
+  thread: { id: string; createdBy: string } | null,
+  session: { userId: string } | null,
+  userId: string,
+): boolean {
+  if (!thread || !session) return false;
+  if (thread.createdBy === userId) return true;
+  return isSharedDefaultThread(thread) && session.userId === userId;
+}
+
 export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChainRouteOptions): Promise<void> {
   const { sessionChainStore, threadStore, messageStore, transcriptReader, sessionSealer } = opts;
 
@@ -42,12 +53,12 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
     const userId = resolveUserId(request);
     if (!userId) {
       reply.status(401);
-      return { error: 'Identity required (X-Cat-Cafe-User header or userId query)' };
+      return { error: 'Identity required (session cookie or X-Cat-Cafe-User header)' };
     }
 
     const { threadId } = request.params;
     const thread = await threadStore.get(threadId);
-    if (!thread || thread.createdBy !== userId) {
+    if (!canAccessThread(thread, userId)) {
       reply.status(403);
       return { error: 'Access denied' };
     }
@@ -65,12 +76,18 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
         return { error: `Cannot query sessions for cat '${catId}' — you are '${callerCatId}'` };
       }
       const sessions = await sessionChainStore.getChain(effectiveCatId as CatId, threadId);
-      return reply.send({ sessions });
+      const visibleSessions = isSharedDefaultThread(thread)
+        ? sessions.filter((session) => session.userId === userId)
+        : sessions;
+      return reply.send({ sessions: visibleSessions });
     }
 
-    // No catId filter at all (hub UI god-view) — return all sessions for the thread
+    // No catId filter at all (hub UI god-view) — default thread stays user-scoped.
     const sessions = await sessionChainStore.getChainByThread(threadId);
-    return reply.send({ sessions });
+    const visibleSessions = isSharedDefaultThread(thread)
+      ? sessions.filter((session) => session.userId === userId)
+      : sessions;
+    return reply.send({ sessions: visibleSessions });
   });
 
   app.get<{
@@ -79,7 +96,7 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
     const userId = resolveUserId(request);
     if (!userId) {
       reply.status(401);
-      return { error: 'Identity required (X-Cat-Cafe-User header or userId query)' };
+      return { error: 'Identity required (session cookie or X-Cat-Cafe-User header)' };
     }
 
     const { sessionId } = request.params;
@@ -94,7 +111,7 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
       reply.status(404);
       return { error: 'Thread not found' };
     }
-    if (thread.createdBy !== userId) {
+    if (!canAccessThread(thread, userId) || !canAccessSessionRecord(thread, session, userId)) {
       reply.status(403);
       return { error: 'Access denied' };
     }
@@ -111,7 +128,7 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
     const userId = resolveUserId(request);
     if (!userId) {
       reply.status(401);
-      return { error: 'Identity required (X-Cat-Cafe-User header or userId query)' };
+      return { error: 'Identity required (session cookie or X-Cat-Cafe-User header)' };
     }
 
     const { sessionId } = request.params;
@@ -125,7 +142,7 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
       reply.status(404);
       return { error: 'Thread not found' };
     }
-    if (thread.createdBy !== userId) {
+    if (!canAccessThread(thread, userId) || !canAccessSessionRecord(thread, session, userId)) {
       reply.status(403);
       return { error: 'Access denied' };
     }
@@ -220,7 +237,7 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
     const userId = resolveUserId(request);
     if (!userId) {
       reply.status(401);
-      return { error: 'Identity required (X-Cat-Cafe-User header or userId query)' };
+      return { error: 'Identity required (session cookie or X-Cat-Cafe-User header)' };
     }
 
     const { threadId, catId } = request.params;
@@ -246,13 +263,17 @@ export async function sessionChainRoutes(app: FastifyInstance, opts: SessionChai
       reply.status(404);
       return { error: 'Thread not found' };
     }
-    if (thread.createdBy !== userId) {
+    if (!canAccessThread(thread, userId)) {
       reply.status(403);
       return { error: 'Access denied' };
     }
 
     // Check for active session
     const active = await sessionChainStore.getActive(catId as CatId, threadId);
+    if (active && !canAccessSessionRecord(thread, active, userId)) {
+      reply.status(403);
+      return { error: 'Access denied' };
+    }
 
     let session;
     let mode: 'updated' | 'created';

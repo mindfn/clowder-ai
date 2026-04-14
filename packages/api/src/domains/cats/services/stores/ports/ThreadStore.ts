@@ -51,7 +51,7 @@ export interface ThreadRoutingPolicyV1 {
   scopes?: Partial<Record<ThreadRoutingScope, ThreadRoutingRule>>;
 }
 
-/** F065 Phase B: Rolling thread-level memory across sealed sessions. */
+/** F065 Phase B + F148 VG-3: Rolling thread-level memory across sealed sessions. */
 export interface ThreadMemoryV1 {
   v: 1;
   /** Rolling summary text */
@@ -60,9 +60,15 @@ export interface ThreadMemoryV1 {
   sessionsIncorporated: number;
   /** Unix timestamp of last update */
   updatedAt: number;
+  /** VG-3: Key decisions extracted from sessions (max 8) */
+  decisions?: string[];
+  /** VG-3: Open questions extracted from sessions (max 5) */
+  openQuestions?: string[];
+  /** VG-3: Referenced artifacts — ADRs, Feature IDs (max 8) */
+  artifacts?: string[];
 }
 
-export type MentionRoutingSuppressionReason = 'no_action' | 'cross_paragraph';
+export type MentionRoutingSuppressionReason = 'no_action' | 'cross_paragraph' | 'inline_action';
 export type MentionActionabilityMode = 'strict' | 'relaxed';
 
 export interface ThreadMentionRoutingFeedbackItem {
@@ -162,7 +168,7 @@ export type BootcampPhase =
   | 'phase-11-farewell';
 
 /** F140: Sub-step for add-teammate console guide overlay */
-export type BootcampGuideStep = 'open-hub' | 'click-add-member' | 'fill-form' | 'done';
+export type BootcampGuideStep = 'preview-result' | 'open-hub' | 'click-add-member' | 'fill-form' | 'done';
 
 export interface BootcampStateV1 {
   v: 1;
@@ -202,6 +208,26 @@ export interface FirstRunQuestStateV1 {
   secondCatName?: string;
   selectedTaskId?: string;
   errorDetected?: boolean;
+}
+
+/** F155: Guide session status */
+export type GuideStatus = 'offered' | 'awaiting_choice' | 'active' | 'completed' | 'cancelled';
+
+/** F155: Scene-based bidirectional guide state — thread-level authority */
+export interface GuideStateV1 {
+  v: 1;
+  guideId: string;
+  status: GuideStatus;
+  /** Owning user for default-thread guide state. */
+  userId?: string;
+  currentStep?: number;
+  offeredAt: number;
+  startedAt?: number;
+  completedAt?: number;
+  /** True after the first agent turn has seen the completion (one-shot consumption). */
+  completionAcked?: boolean;
+  /** catId that offered this guide (prevents multi-cat duplicate offers). */
+  offeredBy?: string;
 }
 
 /** F079: Voting state stored in thread metadata */

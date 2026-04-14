@@ -18,6 +18,7 @@ type SavedScrollState = {
 const scrollPositionsByThread = new Map<string, SavedScrollState>();
 const SCROLL_BOTTOM_THRESHOLD_PX = 24;
 const MAX_RESTORE_FRAMES = 90;
+const CHAT_LAYOUT_CHANGED_EVENT = 'catcafe:chat-layout-changed';
 
 function isNearBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.clientHeight - el.scrollTop <= SCROLL_BOTTOM_THRESHOLD_PX;
@@ -52,6 +53,9 @@ type ReplaceHydrationMergeResult = {
   stats: ReplaceHydrationMergeStats;
 };
 
+type MessageExtra = NonNullable<ChatMessageData['extra']>;
+type MessageRichPayload = MessageExtra['rich'];
+
 function getHistoryInvocationId(msg: ChatMessageData): string | undefined {
   return getBubbleInvocationId(msg);
 }
@@ -83,6 +87,61 @@ function getMessagePhasePriority(msg: ChatMessageData): number {
   return 0;
 }
 
+function pickLongerText(a: string | undefined, b: string | undefined): string | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return a.length >= b.length ? a : b;
+}
+
+function pickRicherToolEvents(
+  a: ChatMessageData['toolEvents'],
+  b: ChatMessageData['toolEvents'],
+): ChatMessageData['toolEvents'] {
+  if (!a?.length) return b;
+  if (!b?.length) return a;
+  return a.length >= b.length ? a : b;
+}
+
+function mergeRichPayload(
+  preferred: MessageRichPayload | undefined,
+  fallback: MessageRichPayload | undefined,
+): MessageRichPayload | undefined {
+  if (!preferred && !fallback) return undefined;
+  const blocks = [...(preferred?.blocks ?? [])];
+  const seen = new Set(blocks.map((block) => block.id));
+  for (const block of fallback?.blocks ?? []) {
+    if (seen.has(block.id)) continue;
+    seen.add(block.id);
+    blocks.push(block);
+  }
+  return { v: 1 as const, blocks };
+}
+
+function mergeMessageExtra(
+  preferred: ChatMessageData['extra'],
+  fallback: ChatMessageData['extra'],
+): ChatMessageData['extra'] | undefined {
+  const rich = mergeRichPayload(preferred?.rich, fallback?.rich);
+  const crossPost = preferred?.crossPost ?? fallback?.crossPost;
+  const stream = preferred?.stream ?? fallback?.stream;
+  const targetCats = preferred?.targetCats ?? fallback?.targetCats;
+  const scheduler = preferred?.scheduler ?? fallback?.scheduler;
+  const timeoutDiagnostics = preferred?.timeoutDiagnostics ?? fallback?.timeoutDiagnostics;
+  const governanceBlocked = preferred?.governanceBlocked ?? fallback?.governanceBlocked;
+  if (!rich && !crossPost && !stream && !targetCats && !scheduler && !timeoutDiagnostics && !governanceBlocked) {
+    return undefined;
+  }
+  return {
+    ...(rich ? { rich } : {}),
+    ...(crossPost ? { crossPost } : {}),
+    ...(stream ? { stream } : {}),
+    ...(targetCats ? { targetCats } : {}),
+    ...(scheduler ? { scheduler } : {}),
+    ...(timeoutDiagnostics ? { timeoutDiagnostics } : {}),
+    ...(governanceBlocked ? { governanceBlocked } : {}),
+  };
+}
+
 function getMessageOrderTimestamp(msg: ChatMessageData): number {
   return msg.deliveredAt ?? msg.timestamp;
 }
@@ -108,6 +167,46 @@ function shouldPreferCurrentMessage(current: ChatMessageData, history: ChatMessa
     return currentRichness[i]! > historyRichness[i]!;
   }
   return false;
+}
+
+function mergeSameIdHydrationMessage(history: ChatMessageData, current: ChatMessageData): ChatMessageData {
+  const preferCurrent = shouldPreferCurrentMessage(current, history);
+  const preferred = preferCurrent ? current : history;
+  const fallback = preferCurrent ? history : current;
+  const toolEvents = pickRicherToolEvents(preferred.toolEvents, fallback.toolEvents);
+  const thinking = pickLongerText(preferred.thinking, fallback.thinking);
+  const extra = mergeMessageExtra(preferred.extra, fallback.extra);
+
+  return {
+    ...fallback,
+    ...preferred,
+    content: preferred.content || fallback.content,
+    ...((preferred.contentBlocks ?? fallback.contentBlocks)
+      ? { contentBlocks: preferred.contentBlocks ?? fallback.contentBlocks }
+      : {}),
+    ...(toolEvents ? { toolEvents } : {}),
+    ...((preferred.metadata ?? fallback.metadata) ? { metadata: preferred.metadata ?? fallback.metadata } : {}),
+    ...(thinking ? { thinking } : {}),
+    ...(extra ? { extra } : {}),
+    ...((preferred.summary ?? fallback.summary) ? { summary: preferred.summary ?? fallback.summary } : {}),
+    ...((preferred.source ?? fallback.source) ? { source: preferred.source ?? fallback.source } : {}),
+    ...((preferred.visibility ?? fallback.visibility)
+      ? { visibility: preferred.visibility ?? fallback.visibility }
+      : {}),
+    ...((preferred.whisperTo ?? fallback.whisperTo) ? { whisperTo: preferred.whisperTo ?? fallback.whisperTo } : {}),
+    ...((preferred.revealedAt ?? fallback.revealedAt)
+      ? { revealedAt: preferred.revealedAt ?? fallback.revealedAt }
+      : {}),
+    ...((preferred.deliveredAt ?? fallback.deliveredAt)
+      ? { deliveredAt: preferred.deliveredAt ?? fallback.deliveredAt }
+      : {}),
+    ...((preferred.replyTo ?? fallback.replyTo) ? { replyTo: preferred.replyTo ?? fallback.replyTo } : {}),
+    ...((preferred.replyPreview ?? fallback.replyPreview)
+      ? { replyPreview: preferred.replyPreview ?? fallback.replyPreview }
+      : {}),
+    ...(preferred.mentionsUser || fallback.mentionsUser ? { mentionsUser: true } : {}),
+    ...(preferred.isStreaming !== undefined ? { isStreaming: preferred.isStreaming } : {}),
+  };
 }
 
 function mergeReplaceHydrationMessages(
@@ -138,7 +237,13 @@ function mergeReplaceHydrationMessages(
   let replacedHistoryCount = 0;
 
   for (const msg of currentMsgs) {
-    if (historyIds.has(msg.id)) continue;
+    if (historyIds.has(msg.id)) {
+      const historyIndex = mergedMsgs.findIndex((candidate) => candidate.id === msg.id);
+      if (historyIndex !== -1) {
+        mergedMsgs[historyIndex] = mergeSameIdHydrationMessage(mergedMsgs[historyIndex]!, msg);
+      }
+      continue;
+    }
 
     const invocationId = msg.catId ? getLocalPlaceholderInvocationId(msg, currentCatInvocations) : undefined;
     const streamKey = msg.catId && invocationId ? `${msg.catId}:${invocationId}` : undefined;
@@ -224,6 +329,21 @@ export function useChatHistory(threadId: string) {
     }
   }, []);
 
+  const followBottomAnchor = useCallback((behavior: ScrollBehavior = 'auto') => {
+    const currentThread = threadIdRef.current;
+    const el = scrollContainerRef.current;
+    if (!el || useChatStore.getState().currentThreadId !== currentThread) return;
+
+    const saved = scrollPositionsByThread.get(currentThread);
+    if (saved?.anchor !== 'bottom') return;
+
+    messagesEndRef.current?.scrollIntoView({ behavior });
+    scrollPositionsByThread.set(currentThread, {
+      top: Math.max(0, el.scrollHeight - el.clientHeight),
+      anchor: 'bottom',
+    });
+  }, []);
+
   const scheduleRestore = useCallback(
     (saved: SavedScrollState) => {
       cancelPendingRestore();
@@ -301,12 +421,29 @@ export function useChatHistory(threadId: string) {
             contentBlocks?: unknown[];
             toolEvents?: unknown[];
             metadata?: { provider: string; model: string; sessionId?: string };
-            origin?: 'stream' | 'callback';
+            origin?: 'stream' | 'callback' | 'briefing';
             thinking?: string;
             extra?: {
               rich?: { v: number; blocks: unknown[] };
               crossPost?: { sourceThreadId: string; sourceInvocationId?: string };
               stream?: { invocationId?: string };
+              scheduler?: {
+                hiddenTrigger?: boolean;
+                toast?: {
+                  type: 'success' | 'error' | 'info';
+                  title: string;
+                  message: string;
+                  duration: number;
+                  lifecycleEvent:
+                    | 'registered'
+                    | 'paused'
+                    | 'resumed'
+                    | 'deleted'
+                    | 'succeeded'
+                    | 'failed'
+                    | 'missed_window';
+                };
+              };
             };
             timestamp: number;
             summary?: { id: string; topic: string; conclusions: string[]; openQuestions: string[]; createdBy: string };
@@ -338,12 +475,13 @@ export function useChatHistory(threadId: string) {
               ...(m.metadata ? { metadata: m.metadata } : {}),
               ...(m.origin ? { origin: m.origin } : {}),
               ...(m.thinking ? { thinking: m.thinking } : {}),
-              ...(m.extra?.rich || m.extra?.crossPost || m.extra?.stream
+              ...(m.extra?.rich || m.extra?.crossPost || m.extra?.stream || m.extra?.scheduler
                 ? {
                     extra: {
                       ...(m.extra.rich ? { rich: m.extra.rich } : {}),
                       ...(m.extra.crossPost ? { crossPost: m.extra.crossPost } : {}),
                       ...(m.extra.stream ? { stream: m.extra.stream } : {}),
+                      ...(m.extra.scheduler ? { scheduler: m.extra.scheduler } : {}),
                     },
                   }
                 : {}),
@@ -417,7 +555,7 @@ export function useChatHistory(threadId: string) {
     if (!controller) return;
 
     try {
-      const res = await apiFetch(`/api/tasks?threadId=${encodeURIComponent(fetchForThread)}`, {
+      const res = await apiFetch(`/api/tasks?threadId=${encodeURIComponent(fetchForThread)}&kind=work`, {
         signal: controller.signal,
       });
       if (!res.ok) return;
@@ -513,7 +651,7 @@ export function useChatHistory(threadId: string) {
         queue: QueueEntry[];
         paused: boolean;
         pauseReason?: 'canceled' | 'failed';
-        activeInvocations?: string[];
+        activeInvocations?: Array<{ catId: string; startedAt: number }>;
       };
       // Always sync server state — clears stale local data when server queue is empty
       setQueue(fetchForThread, data.queue);
@@ -523,8 +661,9 @@ export function useChatHistory(threadId: string) {
       // and always overwrites stale snapshots restored by setCurrentThread().
       const store = useChatStore.getState();
       if (data.activeInvocations && data.activeInvocations.length > 0) {
-        replaceThreadTargetCats(fetchForThread, data.activeInvocations);
-        for (const catId of data.activeInvocations) {
+        const activeCatIds = data.activeInvocations.map((s) => s.catId);
+        replaceThreadTargetCats(fetchForThread, activeCatIds);
+        for (const catId of activeCatIds) {
           updateThreadCatStatus(fetchForThread, catId, 'streaming');
         }
         // F108B P1-2: Clear stale activeInvocations before hydrating from server truth.
@@ -533,13 +672,13 @@ export function useChatHistory(threadId: string) {
         store.clearThreadActiveInvocation(fetchForThread);
         store.setThreadHasActiveInvocation(fetchForThread, true);
         // Hydrate activeInvocations record so ThreadExecutionBar renders.
-        // Server returns catIds only; synthesize placeholder invocationIds for display.
-        for (const catId of data.activeInvocations) {
-          const syntheticId = `hydrated-${fetchForThread}-${catId}`;
+        // Server now returns {catId, startedAt} — use server startedAt to preserve elapsed time.
+        for (const slot of data.activeInvocations) {
+          const syntheticId = `hydrated-${fetchForThread}-${slot.catId}`;
           if (fetchForThread === store.currentThreadId) {
-            store.addActiveInvocation(syntheticId, catId, 'execute');
+            store.addActiveInvocation(syntheticId, slot.catId, 'execute', slot.startedAt);
           } else {
-            store.addThreadActiveInvocation(fetchForThread, syntheticId, catId, 'execute');
+            store.addThreadActiveInvocation(fetchForThread, syntheticId, slot.catId, 'execute', slot.startedAt);
           }
         }
       } else {
@@ -718,6 +857,23 @@ export function useChatHistory(threadId: string) {
       }
     }
   }, [messages, scheduleRestore, threadId]);
+
+  useEffect(() => {
+    let rafId: number | null = null;
+    const handler = () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        followBottomAnchor('auto');
+      });
+    };
+
+    window.addEventListener(CHAT_LAYOUT_CHANGED_EVENT, handler);
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      window.removeEventListener(CHAT_LAYOUT_CHANGED_EVENT, handler);
+    };
+  }, [followBottomAnchor]);
 
   // Load more when scrolled to top + clowder-ai#27 continuous scroll save
   const handleScroll = useCallback(() => {

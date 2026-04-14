@@ -39,6 +39,47 @@ function readEnvFile(relPath) {
   return vars;
 }
 
+function readEnvTemplateKeys(relPath) {
+  const content = readFileSync(resolve(ROOT, relPath), 'utf-8');
+  const keys = new Set();
+
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    const activeMatch = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=/);
+    if (activeMatch) {
+      keys.add(activeMatch[1]);
+      continue;
+    }
+
+    const commentedMatch = trimmed.match(/^#\s*([A-Za-z_][A-Za-z0-9_]*)=/);
+    if (commentedMatch) {
+      keys.add(commentedMatch[1]);
+    }
+  }
+
+  return keys;
+}
+
+function loadExampleRecommendedRegistryNames() {
+  const src = readFileSync(resolve(ROOT, 'packages/api/src/config/env-registry.ts'), 'utf-8');
+  const recommended = new Set();
+
+  const objPattern = /\{([^}]+)\}/gs;
+  for (const block of src.matchAll(objPattern)) {
+    const body = block[1];
+    const nameMatch = body.match(/name:\s*['"]([A-Z_][A-Z0-9_]*)['"]/);
+    if (!nameMatch) continue;
+
+    if (/exampleRecommended:\s*true/.test(body)) {
+      recommended.add(nameMatch[1]);
+    }
+  }
+
+  return recommended;
+}
+
 function readScriptFallback(relPath, varName) {
   const content = readFileSync(resolve(ROOT, relPath), 'utf-8');
   // Match pattern: VAR=${ENV_NAME:-DEFAULT}
@@ -122,6 +163,8 @@ describe(
   { skip: !hasEnvExampleOpensource && '.env.example.opensource not present (open-source repo uses .env.example)' },
   () => {
     const env = readEnvFile('.env.example.opensource');
+    const envTemplateKeys = readEnvTemplateKeys('.env.example.opensource');
+    const recommendedRegistryNames = loadExampleRecommendedRegistryNames();
 
     it('API_SERVER_PORT matches sync convention (3004)', () => {
       assert.equal(
@@ -165,6 +208,23 @@ describe(
       assert.ok(
         content.includes('3004') && content.includes('3003'),
         'Comment header should mention both 3003 and 3004',
+      );
+    });
+
+    it('includes every exampleRecommended env var from env-registry', () => {
+      const missing = [...recommendedRegistryNames].filter((name) => !envTemplateKeys.has(name));
+      assert.deepEqual(
+        missing,
+        [],
+        `Missing exampleRecommended env vars in .env.example.opensource: ${missing.join(', ')}`,
+      );
+    });
+
+    it('documents the private-network access pair for LAN / Tailscale setups', () => {
+      assert.ok(envTemplateKeys.has('API_SERVER_HOST'), 'Expected .env.example.opensource to document API_SERVER_HOST');
+      assert.ok(
+        envTemplateKeys.has('CORS_ALLOW_PRIVATE_NETWORK'),
+        'Expected .env.example.opensource to document CORS_ALLOW_PRIVATE_NETWORK',
       );
     });
   },
@@ -750,6 +810,50 @@ describe(
         gate,
         /pnpm --filter @cat-cafe\/api run test:public 2>&1 \| tail -5/,
         'test:public should not pipe directly into tail, or failures become opaque',
+      );
+    });
+
+    it('real full sync exports from a detached origin/main source checkout', () => {
+      const content = readSyncScript();
+      assert.match(
+        content,
+        /prepare_source_sync_tree\(\) \{[\s\S]*git -C "\$SOURCE_DIR" fetch --no-tags origin main[\s\S]*git -C "\$SOURCE_DIR" worktree add --detach "\$SOURCE_SYNC_DIR" refs\/remotes\/origin\/main/m,
+        'real full sync should materialize a detached source worktree from origin/main',
+      );
+      assert.match(
+        content,
+        /if \[ "\$DRY_RUN" = false \] && \[ "\$VALIDATE" = false \]; then[\s\S]*if \[ "\$SYNC_MODULE" = "all" \]; then[\s\S]*prepare_source_sync_tree/m,
+        'only real full sync should switch the source baseline to origin/main',
+      );
+      assert.match(
+        content,
+        /MANIFEST="\$SOURCE_SYNC_DIR\/sync-manifest.yaml"/,
+        'manifest parsing should follow the detached source checkout, not the caller worktree',
+      );
+      assert.match(
+        content,
+        /git -C "\$SOURCE_SYNC_DIR" archive HEAD \| tar -x -C "\$STAGING_DIR"/,
+        'step 1 export should archive the detached origin/main checkout for real full sync',
+      );
+      assert.match(
+        content,
+        /SOURCE_DISPLAY_SHA="\$\{SOURCE_SHA_SHORT\} \(origin\/main\)"/,
+        'operator-facing provenance should make it explicit that full sync used origin/main',
+      );
+      assert.match(
+        content,
+        /prepare_source_sync_tree[\s\S]*?trap 'cleanup_source_sync_tree' EXIT/,
+        'source sync worktree cleanup must be registered immediately after creation (P2: no leaked worktrees on early exit)',
+      );
+      assert.match(
+        content,
+        /node "\$SOURCE_SYNC_DIR\/scripts\/export-public-feature-docs\.mjs"/,
+        'feature-doc exporter must run from SOURCE_SYNC_DIR, not SOURCE_DIR (P1: no mixed provenance)',
+      );
+      assert.match(
+        content,
+        /SANITIZER="\$SOURCE_SYNC_DIR\/scripts\/_sanitize-rules\.pl"/,
+        'sanitizer rules must load from SOURCE_SYNC_DIR, not SOURCE_DIR (P1: no mixed provenance)',
       );
     });
   },

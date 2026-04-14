@@ -8,6 +8,7 @@ import { apiFetch } from '@/utils/api-client';
 import { AuditExplorerPanel } from './audit/AuditExplorerPanel';
 import { CatTokenUsage } from './CatTokenUsage';
 import { PlanBoardPanel } from './PlanBoardPanel';
+import { deriveActiveCats } from './parallel-status-helpers';
 import { SessionChainPanel } from './SessionChainPanel';
 import { type CatStatus, type IntentMode, modeLabel, statusLabel, statusTone, truncateId } from './status-helpers';
 import { CatInvocationTime, CollapsibleIds } from './status-panel-parts';
@@ -323,6 +324,7 @@ export function RightStatusPanel({
   messageSummary,
   width,
 }: RightStatusPanelProps) {
+  const activeInvocations = useChatStore((s) => s.activeInvocations);
   // F26: Split into active (working now) vs history (appeared before)
   const { activeCats, historyCats } = useMemo(() => {
     const snapshotCats = Object.entries(catInvocations)
@@ -332,20 +334,21 @@ export function RightStatusPanel({
         return taskProgress.snapshotStatus !== 'completed';
       })
       .map(([catId]) => catId);
-    const active = Array.from(new Set([...targetCats, ...snapshotCats]));
+    const slotCats = deriveActiveCats(targetCats, activeInvocations);
+    const active = Array.from(new Set([...slotCats, ...snapshotCats]));
     const allParticipants = new Set([...active, ...Object.keys(catInvocations)]);
     const history = [...allParticipants].filter((c) => !active.includes(c));
     return { activeCats: active, historyCats: history };
-  }, [targetCats, catInvocations]);
+  }, [targetCats, catInvocations, activeInvocations]);
 
   const { getCatById } = useCatData();
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [viewSessionId, setViewSessionId] = useState<string | null>(null);
+  const [viewSession, setViewSession] = useState<{ id: string; catId?: string } | null>(null);
 
   // Clear session viewer when switching threads
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally reset on threadId change only
   React.useEffect(() => {
-    setViewSessionId(null);
+    setViewSession(null);
   }, [threadId]);
 
   const openHub = useChatStore((s) => s.openHub);
@@ -458,7 +461,11 @@ export function RightStatusPanel({
 
       <PlanBoardPanel threadId={threadId} catInvocations={catInvocations} />
 
-      <SessionChainPanel threadId={threadId} catInvocations={catInvocations} onViewSession={setViewSessionId} />
+      <SessionChainPanel
+        threadId={threadId}
+        catInvocations={catInvocations}
+        onViewSession={(id, catId) => setViewSession({ id, catId })}
+      />
 
       <section className="rounded-lg border border-cafe bg-cafe-surface-elevated/70 p-3">
         <h3 className="text-xs font-semibold text-cafe-secondary mb-2">对话信息</h3>
@@ -484,8 +491,9 @@ export function RightStatusPanel({
       <AuditExplorerPanel
         key={threadId}
         threadId={threadId}
-        externalSessionId={viewSessionId}
-        onCloseSession={() => setViewSessionId(null)}
+        externalSessionId={viewSession?.id ?? null}
+        externalSessionCatId={viewSession?.catId}
+        onCloseSession={() => setViewSession(null)}
       />
 
       {/* ── F130: Runtime logs quick-access ────────────── */}

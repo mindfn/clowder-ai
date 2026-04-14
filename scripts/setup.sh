@@ -120,8 +120,8 @@ echo -e "  ${GREEN}✓${NC} Packages installed"
 echo ""
 echo -e "${CYAN}[3/6] Optional features / 可选功能${NC}"
 echo ""
-echo "Cat Cafe works with just a model API key."
-echo "猫猫咖啡只需一个模型 API Key 即可运行。"
+echo "Cat Cafe works out of the box. Add model API keys via UI after launch."
+echo "猫猫咖啡开箱即用。启动后在前端 UI 添加模型 API Key。"
 echo ""
 echo "The following features are optional. Choose what you want:"
 echo "以下功能均为可选，选择你需要的："
@@ -263,13 +263,6 @@ NEXT_PUBLIC_API_URL=http://localhost:3004
 REDIS_PORT=6399
 REDIS_URL=redis://localhost:6399
 
-# ── Model API Keys 模型密钥 ──────────────────────────────────
-# Optional if your CLI subscription already handles auth.
-# 如果 CLI 订阅已管理认证，这里可以留空。
-# ANTHROPIC_API_KEY=
-# OPENAI_API_KEY=
-# GOOGLE_API_KEY=
-
 # ── API Gateway Proxy 反向代理 ───────────────────────────────
 ANTHROPIC_PROXY_ENABLED=$([ "$ENABLE_PROXY" = true ] && echo "1" || echo "0")
 # ANTHROPIC_PROXY_PORT=9877
@@ -381,7 +374,7 @@ echo ""
 
 SKILLS_SOURCE="$PROJECT_DIR/cat-cafe-skills"
 if [[ -d "$SKILLS_SOURCE" ]]; then
-    for tdir in "$HOME/.claude/skills" "$HOME/.codex/skills" "$HOME/.gemini/skills"; do
+    for tdir in "$HOME/.claude/skills" "$HOME/.codex/skills" "$HOME/.gemini/skills" "$HOME/.kimi/skills"; do
         mkdir -p "$tdir"
         for sd in "$SKILLS_SOURCE"/*/; do
             [[ -d "$sd" ]] || continue
@@ -390,7 +383,7 @@ if [[ -d "$SKILLS_SOURCE" ]]; then
             ln -sfn "$sd" "$tdir/$sn"
         done
     done
-    echo -e "  ${GREEN}✓${NC} Skills linked to ~/.claude/skills, ~/.codex/skills, ~/.gemini/skills"
+    echo -e "  ${GREEN}✓${NC} Skills linked to ~/.claude/skills, ~/.codex/skills, ~/.gemini/skills, ~/.kimi/skills"
 else
     echo -e "  ${YELLOW}⚠${NC} cat-cafe-skills/ not found — skills will not be available"
     echo "     You can link them later by re-running this script after cloning cat-cafe-skills."
@@ -412,8 +405,8 @@ echo "    ✓ Core (API + Frontend + Redis)"
 [ "$ENABLE_PROXY" = true ] && echo "    ✓ API Gateway Proxy"
 echo ""
 echo "  Next steps / 下一步:"
-echo "    1. Edit $ENV_FILE and add your API key(s)"
-echo "       编辑 $ENV_FILE 填入你的 API Key"
+echo "    1. Open http://localhost:3003 → Hub → System Settings → Account Configuration"
+echo "       打开 http://localhost:3003 → Hub → 系统配置 → 账号配置，添加模型 API Key"
 echo ""
 if [ "$HAS_REDIS" = true ]; then
     echo "    2. Start: pnpm start"

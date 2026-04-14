@@ -18,6 +18,10 @@ export interface PassageResult {
   content: string;
   speaker?: string;
   position?: number;
+  /** AC-I7: ISO8601 timestamp of when the passage was created */
+  createdAt?: string;
+  /** AC-I8: surrounding passages within the context window */
+  context?: PassageResult[];
 }
 
 export interface EmbedDeps {
@@ -73,6 +77,9 @@ export class SqliteEvidenceStore implements IEvidenceStore {
     const excludeSession = options?.scope === 'docs' || options?.scope === 'memory';
     // F129 AC-A10: exclude pack-knowledge from global search unless explicitly requested
     const excludePackKnowledge = effectiveKind !== 'pack-knowledge';
+    // F148 Phase B (AC-B1): threadId filter — scope to a specific thread's evidence
+    // Anchor convention: thread-{threadId} (e.g. thread-thread_abc for threadId="thread_abc")
+    const threadAnchor = options?.threadId ? `thread-${options.threadId}` : undefined;
     // ── Exact-anchor bypass ──────────────────────────────────────────
     // FTS5 unicode61 tokenizer splits "F042" → "F"+"042" and "ADR-005" → "ADR"+"005".
     // For anchor-shaped queries, do a direct lookup so precision isn't lost.
@@ -98,6 +105,15 @@ export class SqliteEvidenceStore implements IEvidenceStore {
     if (options?.keywords?.length) {
       anchorSql += ` AND (${options.keywords.map(() => 'keywords LIKE ?').join(' OR ')})`;
       anchorParams.push(...options.keywords.map((kw) => `%"${kw}"%`));
+    }
+    if (threadAnchor) {
+      anchorSql += ' AND anchor = ?';
+      anchorParams.push(threadAnchor);
+    }
+    // F152 AC-A6: provenance tier filter
+    if (options?.provenanceTier) {
+      anchorSql += ' AND provenance_tier = ?';
+      anchorParams.push(options.provenanceTier);
     }
     const exactRow = this.db?.prepare(anchorSql).get(...anchorParams) as RowShape | undefined;
     if (exactRow) {
@@ -140,9 +156,27 @@ export class SqliteEvidenceStore implements IEvidenceStore {
           sql += ` AND (${options.keywords.map(() => 'd.keywords LIKE ?').join(' OR ')})`;
           params.push(...options.keywords.map((kw) => `%"${kw}"%`));
         }
+        if (threadAnchor) {
+          sql += ' AND d.anchor = ?';
+          params.push(threadAnchor);
+        }
+        if (options?.dateFrom) {
+          sql += ' AND d.updated_at >= ?';
+          params.push(options.dateFrom);
+        }
+        if (options?.dateTo) {
+          sql += ' AND d.updated_at <= ?';
+          params.push(options.dateTo.length === 10 ? `${options.dateTo}T23:59:59` : options.dateTo);
+        }
+        // F152 AC-A6: provenance tier filter
+        if (options?.provenanceTier) {
+          sql += ' AND d.provenance_tier = ?';
+          params.push(options.provenanceTier);
+        }
 
-        // Superseded items sort last (KD-16), archive results deprioritized (P2 fix)
-        sql += " ORDER BY (d.superseded_by IS NOT NULL), (d.source_path LIKE 'archive/%'), rank";
+        // Superseded items sort last (KD-16), archive results deprioritized (P2 fix), authoritative first (F152 AC-A6, P1-2 NULL-safe)
+        sql +=
+          " ORDER BY (d.superseded_by IS NOT NULL), (d.source_path LIKE 'archive/%'), (CASE WHEN d.provenance_tier = 'authoritative' THEN 0 WHEN d.provenance_tier IS NOT NULL THEN 1 ELSE 2 END), rank";
         sql += ' LIMIT ?';
         params.push(bm25Pool);
 
@@ -183,7 +217,17 @@ export class SqliteEvidenceStore implements IEvidenceStore {
           kwSql += ` AND (${options.keywords.map(() => 'keywords LIKE ?').join(' OR ')})`;
           kwParams.push(...options.keywords.map((kw) => `%"${kw}"%`));
         }
-        kwSql += " ORDER BY (superseded_by IS NOT NULL), (source_path LIKE 'archive/%'), updated_at DESC LIMIT ?";
+        if (threadAnchor) {
+          kwSql += ' AND anchor = ?';
+          kwParams.push(threadAnchor);
+        }
+        // F152 AC-A6: provenance tier filter
+        if (options?.provenanceTier) {
+          kwSql += ' AND provenance_tier = ?';
+          kwParams.push(options.provenanceTier);
+        }
+        kwSql +=
+          " ORDER BY (superseded_by IS NOT NULL), (source_path LIKE 'archive/%'), (CASE WHEN provenance_tier = 'authoritative' THEN 0 WHEN provenance_tier IS NOT NULL THEN 1 ELSE 2 END), updated_at DESC LIMIT ?";
         kwParams.push(bm25Pool);
         try {
           const kwRows = this.db?.prepare(kwSql).all(...kwParams) as RowShape[];
@@ -199,22 +243,55 @@ export class SqliteEvidenceStore implements IEvidenceStore {
       }
     }
 
-    // Phase E: passage search when depth=raw and scope includes threads
+    // Phase E + AC-I9: passage search when depth=raw and scope includes threads
     if (options?.depth === 'raw' && (!options?.scope || options.scope === 'all' || options.scope === 'threads')) {
-      const passages = this.searchPassages(trimmed, limit);
+      const cw = options?.contextWindow;
+      const passages = this.searchPassages(
+        trimmed,
+        limit,
+        { dateFrom: options?.dateFrom, dateTo: options?.dateTo },
+        cw && cw > 0 ? { contextWindow: cw } : undefined,
+      );
+      // Group passages by docAnchor for structured return
+      // P1-2 fix: when threadId filter is active, skip passages from other threads
+      const passagesByAnchor = new Map<string, typeof passages>();
       for (const p of passages) {
-        if (!seenAnchors.has(p.docAnchor)) {
-          // Synthesize an EvidenceItem from the passage's parent doc anchor
-          const parentDoc = this.db?.prepare('SELECT * FROM evidence_docs WHERE anchor = ?').get(p.docAnchor) as
+        if (threadAnchor && p.docAnchor !== threadAnchor) continue;
+        const arr = passagesByAnchor.get(p.docAnchor) ?? [];
+        arr.push(p);
+        passagesByAnchor.set(p.docAnchor, arr);
+      }
+      for (const [anchor, pList] of passagesByAnchor) {
+        // Find existing result or synthesize from parent doc
+        let item = results.find((r) => r.anchor === anchor);
+        if (!item) {
+          const parentDoc = this.db?.prepare('SELECT * FROM evidence_docs WHERE anchor = ?').get(anchor) as
             | RowShape
             | undefined;
           if (parentDoc) {
-            const item = rowToItem(parentDoc);
-            // Enrich summary with passage match context
-            item.summary = `[passage match] ${p.speaker ? `${p.speaker}: ` : ''}${p.content.slice(0, 200)}`;
+            item = rowToItem(parentDoc);
+            item.summary = `[passage match] ${pList[0].speaker ? `${pList[0].speaker}: ` : ''}${pList[0].content.slice(0, 200)}`;
             results.push(item);
-            seenAnchors.add(p.docAnchor);
+            seenAnchors.add(anchor);
           }
+        }
+        if (item) {
+          item.passages = pList.map((p) => ({
+            passageId: p.passageId,
+            content: p.content,
+            speaker: p.speaker,
+            createdAt: p.createdAt,
+            ...(p.context
+              ? {
+                  context: p.context.map((c) => ({
+                    passageId: c.passageId,
+                    content: c.content,
+                    speaker: c.speaker,
+                    createdAt: c.createdAt,
+                  })),
+                }
+              : {}),
+          }));
         }
       }
     }
@@ -330,6 +407,17 @@ export class SqliteEvidenceStore implements IEvidenceStore {
       sql += ` AND (${options.keywords.map(() => 'keywords LIKE ?').join(' OR ')})`;
       params.push(...options.keywords.map((kw) => `%"${kw}"%`));
     }
+    // R2-P1 fix: threadId filter for semantic search
+    const semanticThreadAnchor = options?.threadId ? `thread-${options.threadId}` : undefined;
+    if (semanticThreadAnchor) {
+      sql += ' AND anchor = ?';
+      params.push(semanticThreadAnchor);
+    }
+    // P1-3 fix: provenanceTier filter for semantic search
+    if (options?.provenanceTier) {
+      sql += ' AND provenance_tier = ?';
+      params.push(options.provenanceTier);
+    }
 
     const rows = this.db?.prepare(sql).all(...params) as RowShape[];
     const docMap = new Map(rows.map((r) => [r.anchor, rowToItem(r)]));
@@ -406,6 +494,17 @@ export class SqliteEvidenceStore implements IEvidenceStore {
         sql += ` AND (${options.keywords.map(() => 'keywords LIKE ?').join(' OR ')})`;
         params.push(...options.keywords.map((kw) => `%"${kw}"%`));
       }
+      // R2-P1 fix: threadId filter for hybrid NN hydrate
+      const hybridThreadAnchor = options?.threadId ? `thread-${options.threadId}` : undefined;
+      if (hybridThreadAnchor) {
+        sql += ' AND anchor = ?';
+        params.push(hybridThreadAnchor);
+      }
+      // P1-3 fix: provenanceTier filter for hybrid NN hydrate
+      if (options?.provenanceTier) {
+        sql += ' AND provenance_tier = ?';
+        params.push(options.provenanceTier);
+      }
 
       const rows = this.db.prepare(sql).all(...params) as RowShape[];
       for (const row of rows) {
@@ -431,8 +530,8 @@ export class SqliteEvidenceStore implements IEvidenceStore {
     const stmt = db.prepare(`
 				INSERT OR REPLACE INTO evidence_docs
 				(anchor, kind, status, title, summary, keywords, source_path, source_hash,
-				 superseded_by, materialized_from, updated_at, pack_id)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				 superseded_by, materialized_from, updated_at, pack_id, provenance_tier, provenance_source, generalizable)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`);
 
     const tx = db.transaction((items: EvidenceItem[]) => {
@@ -450,6 +549,9 @@ export class SqliteEvidenceStore implements IEvidenceStore {
           item.materializedFrom ?? null,
           item.updatedAt,
           item.packId ?? null,
+          item.provenance?.tier ?? null,
+          item.provenance?.source ?? null,
+          item.generalizable == null ? null : item.generalizable ? 1 : 0,
         );
       }
     });
@@ -524,7 +626,12 @@ export class SqliteEvidenceStore implements IEvidenceStore {
   // ── Passage operations ─────────────────────────────────────────────
 
   /** Search passage_fts and return matching passages with doc context. */
-  searchPassages(query: string, limit = 10): PassageResult[] {
+  searchPassages(
+    query: string,
+    limit = 10,
+    timeFilter?: { dateFrom?: string; dateTo?: string },
+    options?: { contextWindow?: number },
+  ): PassageResult[] {
     this.ensureOpen();
     const trimmed = query.trim();
     if (!trimmed) return [];
@@ -538,32 +645,77 @@ export class SqliteEvidenceStore implements IEvidenceStore {
     if (!ftsQuery) return [];
 
     try {
-      const rows = this.db
-        ?.prepare(
-          `SELECT p.doc_anchor, p.passage_id, p.content, p.speaker, p.position,
+      let sql = `SELECT p.doc_anchor, p.passage_id, p.content, p.speaker, p.position, p.created_at,
                   bm25(passage_fts) AS rank
            FROM passage_fts f
            JOIN evidence_passages p ON p.rowid = f.rowid
-           WHERE passage_fts MATCH ?
-           ORDER BY rank
-           LIMIT ?`,
-        )
-        .all(ftsQuery, limit) as Array<{
+           WHERE passage_fts MATCH ?`;
+      const params: unknown[] = [ftsQuery];
+
+      if (timeFilter?.dateFrom) {
+        sql += ' AND p.created_at >= ?';
+        params.push(timeFilter.dateFrom);
+      }
+      if (timeFilter?.dateTo) {
+        // Add 'T23:59:59' to make dateTo inclusive for the full day
+        sql += ' AND p.created_at <= ?';
+        params.push(timeFilter.dateTo.length === 10 ? `${timeFilter.dateTo}T23:59:59` : timeFilter.dateTo);
+      }
+
+      sql += ' ORDER BY rank LIMIT ?';
+      params.push(limit);
+
+      const rows = this.db?.prepare(sql).all(...params) as Array<{
         doc_anchor: string;
         passage_id: string;
         content: string;
         speaker: string | null;
         position: number | null;
+        created_at: string | null;
         rank: number;
       }>;
 
-      return (rows ?? []).map((r) => ({
+      const results: PassageResult[] = (rows ?? []).map((r) => ({
         docAnchor: r.doc_anchor,
         passageId: r.passage_id,
         content: r.content,
         speaker: r.speaker ?? undefined,
         position: r.position ?? undefined,
+        createdAt: r.created_at ?? undefined,
       }));
+
+      // AC-I8: fetch surrounding passages within the context window
+      const cw = options?.contextWindow;
+      if (cw && cw > 0 && this.db) {
+        const ctxStmt = this.db.prepare(
+          `SELECT doc_anchor, passage_id, content, speaker, position, created_at
+           FROM evidence_passages
+           WHERE doc_anchor = ? AND position BETWEEN ? AND ? AND passage_id != ?
+           ORDER BY position`,
+        );
+        for (const r of results) {
+          if (r.position != null) {
+            const ctxRows = ctxStmt.all(r.docAnchor, r.position - cw, r.position + cw, r.passageId) as Array<{
+              doc_anchor: string;
+              passage_id: string;
+              content: string;
+              speaker: string | null;
+              position: number | null;
+              created_at: string | null;
+            }>;
+            r.context = ctxRows.map((c) => ({
+              docAnchor: c.doc_anchor,
+              passageId: c.passage_id,
+              content: c.content,
+              speaker: c.speaker ?? undefined,
+              position: c.position ?? undefined,
+              createdAt: c.created_at ?? undefined,
+            }));
+          }
+        }
+      }
+
+      return results;
     } catch {
       // FTS5 syntax error — degrade gracefully
       return [];
@@ -599,6 +751,9 @@ interface RowShape {
   materialized_from: string | null;
   updated_at: string;
   pack_id: string | null;
+  provenance_tier: string | null;
+  provenance_source: string | null;
+  generalizable: number | null;
 }
 
 function rowToItem(row: RowShape): EvidenceItem {
@@ -616,5 +771,12 @@ function rowToItem(row: RowShape): EvidenceItem {
   if (row.superseded_by != null) item.supersededBy = row.superseded_by;
   if (row.materialized_from != null) item.materializedFrom = row.materialized_from;
   if (row.pack_id != null) item.packId = row.pack_id;
+  if (row.provenance_tier != null) {
+    item.provenance = {
+      tier: row.provenance_tier as 'authoritative' | 'derived' | 'soft_clue',
+      source: row.provenance_source ?? '',
+    };
+  }
+  if (row.generalizable != null) item.generalizable = row.generalizable === 1;
   return item;
 }

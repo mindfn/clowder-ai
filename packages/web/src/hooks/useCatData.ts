@@ -21,13 +21,19 @@ export interface CatData {
   mentionPatterns: string[];
   breedId?: string;
   accountRef?: string;
-  /** Legacy compatibility while older runtime data is migrated. */
-  providerProfileId?: string;
-  provider: string;
+  /** F340 P5: CLI client identity (renamed from provider). */
+  clientId: string;
   defaultModel: string;
+  cli?: {
+    command?: string;
+    outputFormat?: string;
+    defaultArgs?: string[];
+    effort?: string;
+  };
   commandArgs?: string[];
   cliConfigArgs?: string[];
-  ocProviderName?: string;
+  /** F340 P5: Model provider name (renamed from ocProviderName). */
+  provider?: string;
   contextBudget?: {
     maxPromptTokens: number;
     maxContextTokens: number;
@@ -47,6 +53,8 @@ export interface CatData {
   isDefaultVariant?: boolean;
   /** F32-b P4: Breed-level display name (e.g. "布偶猫"), for group headings */
   breedDisplayName?: string;
+  /** F149: Adapter mode for Google provider cats (ACP vs legacy CLI) */
+  adapterMode?: 'acp' | 'cli';
   /** F127: Seed cats come from cat-template.json; runtime cats are added later */
   source: 'seed' | 'runtime';
   /** F127: Roster metadata used by Hub ownership/lead markers */
@@ -80,7 +88,7 @@ function buildFallbackCats(): CatData[] {
     color: { primary: c.color.primary, secondary: c.color.secondary },
     mentionPatterns: [...c.mentionPatterns],
     breedId: undefined,
-    provider: c.provider,
+    clientId: c.clientId,
     defaultModel: c.defaultModel,
     avatar: c.avatar,
     roleDescription: c.roleDescription,
@@ -120,9 +128,10 @@ function normalizeCats(rawCats: unknown[]): CatData[] {
       displayName: cat.displayName ?? cat.id ?? '',
       color: cat.color ?? { primary: '#000000', secondary: '#ffffff' },
       mentionPatterns: Array.isArray(cat.mentionPatterns) ? cat.mentionPatterns : [],
-      accountRef: cat.accountRef ?? cat.providerProfileId,
-      provider: cat.provider ?? 'openai',
+      accountRef: cat.accountRef,
+      clientId: cat.clientId ?? 'openai',
       defaultModel: cat.defaultModel ?? '',
+      cli: cat.cli,
       avatar: cat.avatar ?? '',
       roleDescription: cat.roleDescription ?? '',
       personality: cat.personality ?? '',

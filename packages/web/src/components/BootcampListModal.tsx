@@ -8,12 +8,11 @@ import { BootcampIcon } from './icons/BootcampIcon';
 
 /** Phase labels for human-readable display */
 const PHASE_LABELS: Record<string, string> = {
-  'phase-0-select-cat': '选猫',
   'phase-1-intro': '天团登场',
   'phase-2-env-check': '环境检测',
   'phase-3-config-help': '配置帮助',
-  'phase-3.5-advanced': '进阶功能',
-  'phase-4-task-select': '选任务',
+  'phase-4-first-project': '第一个项目',
+  'phase-4.5-add-teammate': '添加队友',
   'phase-5-kickoff': '立项',
   'phase-6-design': '设计',
   'phase-7-dev': '开发',
@@ -24,12 +23,11 @@ const PHASE_LABELS: Record<string, string> = {
 };
 
 const PHASE_ORDER = [
-  'phase-0-select-cat',
   'phase-1-intro',
   'phase-2-env-check',
   'phase-3-config-help',
-  'phase-3.5-advanced',
-  'phase-4-task-select',
+  'phase-4-first-project',
+  'phase-4.5-add-teammate',
   'phase-5-kickoff',
   'phase-6-design',
   'phase-7-dev',
@@ -104,7 +102,7 @@ export function BootcampListModal({ open, onClose, currentThreadId }: BootcampLi
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: '🎓 猫猫训练营',
-          bootcampState: { v: 1, phase: 'phase-0-select-cat', startedAt: Date.now() },
+          bootcampState: { v: 1, phase: 'phase-1-intro', startedAt: Date.now() },
         }),
       });
       if (!res.ok) return;

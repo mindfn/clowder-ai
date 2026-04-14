@@ -155,6 +155,22 @@ export const CONNECTOR_PLATFORMS: PlatformDef[] = [
     ],
   },
   {
+    id: 'xiaoyi',
+    name: '小艺',
+    nameEn: 'XiaoYi (Huawei)',
+    fields: [
+      { envName: 'XIAOYI_AK', label: 'Access Key', sensitive: false },
+      { envName: 'XIAOYI_SK', label: 'Secret Key', sensitive: true },
+      { envName: 'XIAOYI_AGENT_ID', label: 'Agent ID', sensitive: false },
+    ],
+    docsUrl: 'https://developer.huawei.com/consumer/cn/service/josp/agc/index.html',
+    steps: [
+      { text: '在小艺开放平台创建 OpenClaw 模式智能体，获取 AK/SK 和 Agent ID' },
+      { text: '填写以下配置并保存，重启 API 服务后自动通过 WebSocket 连接华为 HAG' },
+      { text: '在小艺 APP 中发送消息验证对话链路是否正常' },
+    ],
+  },
+  {
     id: 'weixin',
     name: '微信',
     nameEn: 'WeChat Personal',
@@ -327,6 +343,21 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
     }
   });
 
+  app.post('/api/connector/feishu/disconnect', async (request, reply) => {
+    const userId = requireTrustedHubIdentity(request, reply);
+    if (!userId) return { error: 'Identity required' };
+
+    await applyConnectorSecretUpdates(
+      [
+        { name: 'FEISHU_APP_ID', value: null },
+        { name: 'FEISHU_APP_SECRET', value: null },
+      ],
+      { envFilePath: opts.envFilePath },
+    );
+    app.log.info({ userId }, '[Feishu] Disconnected by user');
+    return { ok: true };
+  });
+
   // ── F137: WeChat QR code login routes ──
 
   app.post('/api/connector/weixin/qrcode', async (request, reply) => {
@@ -370,8 +401,11 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
           return { error: 'WeChat adapter not ready — please retry shortly' };
         }
         adapter.setBotToken(status.botToken);
+        await applyConnectorSecretUpdates([{ name: 'WEIXIN_BOT_TOKEN', value: status.botToken }], {
+          envFilePath: opts.envFilePath,
+        });
         opts.startWeixinPolling?.();
-        app.log.info('[WeChat QR] Auto-activated — bot_token set server-side, polling started');
+        app.log.info('[WeChat QR] Auto-activated — bot_token persisted to .env, polling started');
         return { status: 'confirmed' };
       }
 
@@ -416,7 +450,10 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
     }
 
     await adapter.disconnect();
-    app.log.info({ userId }, '[WeChat] Disconnected by user');
+    await applyConnectorSecretUpdates([{ name: 'WEIXIN_BOT_TOKEN', value: null }], {
+      envFilePath: opts.envFilePath,
+    });
+    app.log.info({ userId }, '[WeChat] Disconnected by user — token cleared from .env');
 
     return { ok: true };
   });

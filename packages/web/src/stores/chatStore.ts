@@ -64,7 +64,16 @@ function snapshotActive(s: ChatState): ThreadState {
     currentGame: s.currentGame,
     unreadCount: 0, // active thread always 0
     hasUserMention: false,
-    lastActivity: Date.now(),
+    // If the thread is actively streaming, Date.now() is correct — there IS real activity.
+    // Otherwise, preserve the real timestamp so a mere thread switch doesn't reorder the sidebar.
+    lastActivity: s.hasActiveInvocation
+      ? Date.now()
+      : Math.max(
+          s.threadStates[s.currentThreadId]?.lastActivity ?? 0,
+          s.messages.length > 0
+            ? (s.messages[s.messages.length - 1].deliveredAt ?? s.messages[s.messages.length - 1].timestamp)
+            : 0,
+        ),
     queue: s.queue,
     queuePaused: s.queuePaused,
     queuePauseReason: s.queuePauseReason,
@@ -74,6 +83,25 @@ function snapshotActive(s: ChatState): ThreadState {
     workspaceOpenTabs: s.workspaceOpenTabs,
     workspaceOpenFilePath: s.workspaceOpenFilePath,
     workspaceOpenFileLine: s.workspaceOpenFileLine,
+  };
+}
+
+/** Stamp completion time into threadStates for a given thread.
+ *  Centralizes the "real activity just ended" semantic so all invocation-clearing
+ *  paths share one definition. Optional `patch` merges extra fields before stamping. */
+function stampThreadCompletion(
+  threadStates: Record<string, ThreadState>,
+  threadId: string,
+  patch?: Partial<ThreadState>,
+): Record<string, ThreadState> {
+  const existing = threadStates[threadId];
+  return {
+    ...threadStates,
+    [threadId]: {
+      ...(existing ?? { ...DEFAULT_THREAD_STATE }),
+      ...patch,
+      lastActivity: Date.now(),
+    },
   };
 }
 
@@ -456,7 +484,7 @@ interface ChatState {
   setLoading: (loading: boolean) => void;
   setHasActiveInvocation: (v: boolean) => void;
   /** F108: Register a new active invocation slot */
-  addActiveInvocation: (invocationId: string, catId: string, mode: string) => void;
+  addActiveInvocation: (invocationId: string, catId: string, mode: string, startedAt?: number) => void;
   /** F108: Remove an active invocation slot; derives hasActiveInvocation */
   removeActiveInvocation: (invocationId: string) => void;
   /** F108: Clear all active invocations (timeout/error/stop recovery) */
@@ -517,7 +545,13 @@ interface ChatState {
   setThreadLoading: (threadId: string, loading: boolean) => void;
   setThreadHasActiveInvocation: (threadId: string, active: boolean) => void;
   /** F108: Add an active invocation to a thread (background or active) */
-  addThreadActiveInvocation: (threadId: string, invocationId: string, catId: string, mode: string) => void;
+  addThreadActiveInvocation: (
+    threadId: string,
+    invocationId: string,
+    catId: string,
+    mode: string,
+    startedAt?: number,
+  ) => void;
   /** F108: Remove an active invocation from a thread; derives hasActiveInvocation */
   removeThreadActiveInvocation: (threadId: string, invocationId: string) => void;
   /** F108: Clear all active invocations for a thread (cancel fallback when invocationId unknown) */
@@ -602,8 +636,8 @@ interface ChatState {
   setWorkspaceRevealPath: (path: string | null, originThreadId?: string | null) => void;
 
   // Phase H + F139: Workspace mode (dev tools / knowledge feed / schedule panel)
-  workspaceMode: 'dev' | 'knowledge' | 'schedule';
-  setWorkspaceMode: (mode: 'dev' | 'knowledge' | 'schedule') => void;
+  workspaceMode: 'dev' | 'recall' | 'schedule';
+  setWorkspaceMode: (mode: 'dev' | 'recall' | 'schedule') => void;
 
   // ── F120: Preview auto-open (always-mounted listener) ──
   pendingPreviewAutoOpen: { port: number; path: string } | null;
@@ -1044,24 +1078,57 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })),
 
   setLoading: (loading) => set({ isLoading: loading }),
-  setHasActiveInvocation: (v) => set({ hasActiveInvocation: v }),
-  /** F108: Register a new active invocation slot */
-  addActiveInvocation: (invocationId, catId, mode) =>
+  setHasActiveInvocation: (v) =>
     set((state) => {
-      const activeInvocations = { ...state.activeInvocations, [invocationId]: { catId, mode, startedAt: Date.now() } };
+      // Stamp completion time when transitioning active → inactive on the current thread,
+      // so snapshotActive sees real completion time instead of stale message timestamps.
+      if (!v && state.hasActiveInvocation) {
+        return {
+          hasActiveInvocation: false,
+          threadStates: stampThreadCompletion(state.threadStates, state.currentThreadId),
+        };
+      }
+      return { hasActiveInvocation: v };
+    }),
+  /** F108: Register a new active invocation slot */
+  addActiveInvocation: (invocationId, catId, mode, startedAt?) =>
+    set((state) => {
+      const activeInvocations = {
+        ...state.activeInvocations,
+        [invocationId]: { catId, mode, startedAt: startedAt ?? Date.now() },
+      };
       return { activeInvocations, hasActiveInvocation: true };
     }),
   /** F108: Remove an active invocation slot; derives hasActiveInvocation */
   removeActiveInvocation: (invocationId) =>
     set((state) => {
       if (!(invocationId in state.activeInvocations)) {
-        return { hasActiveInvocation: Object.keys(state.activeInvocations).length > 0 };
+        const hasActive = Object.keys(state.activeInvocations).length > 0;
+        if (!hasActive && state.hasActiveInvocation) {
+          return {
+            hasActiveInvocation: false,
+            threadStates: stampThreadCompletion(state.threadStates, state.currentThreadId),
+          };
+        }
+        return { hasActiveInvocation: hasActive };
       }
       const rest = Object.fromEntries(Object.entries(state.activeInvocations).filter(([k]) => k !== invocationId));
-      return { activeInvocations: rest, hasActiveInvocation: Object.keys(rest).length > 0 };
+      const hasActive = Object.keys(rest).length > 0;
+      // When the last invocation ends, stamp the completion time into threadStates
+      // so snapshotActive's idle branch picks up the real "just finished streaming" time.
+      return {
+        activeInvocations: rest,
+        hasActiveInvocation: hasActive,
+        ...(!hasActive ? { threadStates: stampThreadCompletion(state.threadStates, state.currentThreadId) } : {}),
+      };
     }),
   /** F108: Clear all active invocations (timeout/error/stop recovery) */
-  clearAllActiveInvocations: () => set({ activeInvocations: {}, hasActiveInvocation: false }),
+  clearAllActiveInvocations: () =>
+    set((state) => ({
+      activeInvocations: {},
+      hasActiveInvocation: false,
+      threadStates: stampThreadCompletion(state.threadStates, state.currentThreadId),
+    })),
   setLoadingHistory: (loading) => set({ isLoadingHistory: loading }),
   setIntentMode: (mode) => set({ intentMode: mode }),
 
@@ -1526,19 +1593,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }),
 
   /** F108: Add an active invocation to a thread (background or active) */
-  addThreadActiveInvocation: (threadId, invocationId, catId, mode) =>
+  addThreadActiveInvocation: (threadId, invocationId, catId, mode, startedAt?) =>
     set((state) => {
+      const ts = startedAt ?? Date.now();
       if (threadId === state.currentThreadId) {
         const activeInvocations = {
           ...state.activeInvocations,
-          [invocationId]: { catId, mode, startedAt: Date.now() },
+          [invocationId]: { catId, mode, startedAt: ts },
         };
         return { activeInvocations, hasActiveInvocation: true };
       }
       const existing = state.threadStates[threadId] ?? { ...DEFAULT_THREAD_STATE };
       const activeInvocations = {
         ...existing.activeInvocations,
-        [invocationId]: { catId, mode, startedAt: Date.now() },
+        [invocationId]: { catId, mode, startedAt: ts },
       };
       return {
         threadStates: {
@@ -1559,15 +1627,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (!existing) return state;
       const rest = Object.fromEntries(Object.entries(existing.activeInvocations).filter(([k]) => k !== invocationId));
       return {
-        threadStates: {
-          ...state.threadStates,
-          [threadId]: {
-            ...existing,
-            activeInvocations: rest,
-            hasActiveInvocation: Object.keys(rest).length > 0,
-            lastActivity: Date.now(),
-          },
-        },
+        threadStates: stampThreadCompletion(state.threadStates, threadId, {
+          activeInvocations: rest,
+          hasActiveInvocation: Object.keys(rest).length > 0,
+        }),
       };
     }),
 
@@ -1575,20 +1638,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
   clearAllThreadActiveInvocations: (threadId) =>
     set((state) => {
       if (threadId === state.currentThreadId) {
-        return { activeInvocations: {}, hasActiveInvocation: false };
+        return {
+          activeInvocations: {},
+          hasActiveInvocation: false,
+          threadStates: stampThreadCompletion(state.threadStates, state.currentThreadId),
+        };
       }
       const existing = state.threadStates[threadId];
       if (!existing) return state;
       return {
-        threadStates: {
-          ...state.threadStates,
-          [threadId]: {
-            ...existing,
-            activeInvocations: {},
-            hasActiveInvocation: false,
-            lastActivity: Date.now(),
-          },
-        },
+        threadStates: stampThreadCompletion(state.threadStates, threadId, {
+          activeInvocations: {},
+          hasActiveInvocation: false,
+        }),
       };
     }),
 
@@ -1861,9 +1923,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
   /** Clear hasActiveInvocation for a specific thread (active or background) */
   clearThreadActiveInvocation: (threadId) =>
     set((state) => {
-      // Active thread — clear flat state
+      // Active-thread clear is used by hydration/reconciliation paths to drop stale slots.
+      // Do not stamp lastActivity here: that would turn routine state repair into fake recency.
+      // Real completion paths stamp via removeActiveInvocation / setHasActiveInvocation(false) /
+      // clearAllActiveInvocations / resetThreadInvocationState.
       if (threadId === state.currentThreadId) {
-        return { hasActiveInvocation: false, activeInvocations: {} };
+        return {
+          hasActiveInvocation: false,
+          activeInvocations: {},
+        };
       }
       // Background thread — update in threadStates map (no-op if unknown)
       const ts = state.threadStates[threadId];
@@ -1887,23 +1955,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
         catStatuses: {} as Record<string, CatStatusType>,
       };
 
-      // Active thread — clear flat state
+      // Active thread — clear flat state + stamp completion time
       if (threadId === state.currentThreadId) {
-        return resetPatch;
+        return {
+          ...resetPatch,
+          threadStates: stampThreadCompletion(state.threadStates, state.currentThreadId),
+        };
       }
 
       // Background thread — update in threadStates map (no-op if unknown)
       const ts = state.threadStates[threadId];
       if (!ts) return state;
       return {
-        threadStates: {
-          ...state.threadStates,
-          [threadId]: {
-            ...ts,
-            ...resetPatch,
-            lastActivity: Date.now(),
-          },
-        },
+        threadStates: stampThreadCompletion(state.threadStates, threadId, resetPatch),
       };
     }),
 

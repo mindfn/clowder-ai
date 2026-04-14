@@ -29,11 +29,13 @@ packages/web/public/worker-*.js
 .augment/
 .codex/
 .gemini/
+.kimi/
 .kiro/
 .trae/
 .dare/
 .codex/
 .gemini/
+.gitnexus/
 *.swp
 *.swo
 
@@ -125,6 +127,10 @@ private/
 *.mp4
 *.avi
 *.mkv
+*.wav
+
+# Large source PDFs (external storage preferred)
+docs/discussions/**/sources/*.pdf
 
 # Playwright MCP cache
 .playwright-mcp/
@@ -140,3 +146,4 @@ __pycache__/
 *.pyc
 .claude/skills/browser-automation
 .claude/skills/browser-preview
+.claude/skills/video-forge

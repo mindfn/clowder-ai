@@ -16,6 +16,7 @@ import {
   getAllRuntimeOverrides,
   setRuntimeOverride,
 } from '../config/session-strategy-overrides.js';
+import { resolveHeaderUserId } from '../utils/request-identity.js';
 
 /** Providers that support compression event signaling (PreCompact hook) */
 const HOOK_CAPABLE_PROVIDERS = new Set(['anthropic']);
@@ -49,13 +50,13 @@ export async function sessionStrategyConfigRoutes(app: FastifyInstance, _opts: F
       cats.push({
         catId,
         displayName: entry.config.displayName,
-        provider: entry.config.provider,
+        clientId: entry.config.clientId,
         breedId: entry.config.breedId,
         effective,
         source,
         hasOverride: override != null,
         override: override ?? null,
-        hybridCapable: HOOK_CAPABLE_PROVIDERS.has(entry.config.provider),
+        hybridCapable: HOOK_CAPABLE_PROVIDERS.has(entry.config.clientId),
         sessionChainEnabled: isSessionChainEnabled(catId),
       });
     }
@@ -69,7 +70,7 @@ export async function sessionStrategyConfigRoutes(app: FastifyInstance, _opts: F
    * The override is deep-merged with the base strategy at read time.
    */
   app.patch<{ Params: { catId: string } }>('/api/config/session-strategy/:catId', async (request, reply) => {
-    const operator = resolveOperator(request.headers['x-cat-cafe-user']);
+    const operator = resolveHeaderUserId(request);
     if (!operator) {
       reply.status(400);
       return { error: 'Identity required (X-Cat-Cafe-User header)' };
@@ -98,12 +99,12 @@ export async function sessionStrategyConfigRoutes(app: FastifyInstance, _opts: F
     }
 
     // Guard: hybrid requires hook-capable provider
-    if (override.strategy === 'hybrid' && !HOOK_CAPABLE_PROVIDERS.has(entry.config.provider)) {
+    if (override.strategy === 'hybrid' && !HOOK_CAPABLE_PROVIDERS.has(entry.config.clientId)) {
       reply.status(422);
       return {
         error:
           `hybrid strategy requires a hook-capable provider (${[...HOOK_CAPABLE_PROVIDERS].join(', ')}), ` +
-          `but "${catId}" uses provider "${entry.config.provider}"`,
+          `but "${catId}" uses provider "${entry.config.clientId}"`,
       };
     }
 
@@ -127,7 +128,7 @@ export async function sessionStrategyConfigRoutes(app: FastifyInstance, _opts: F
    * Remove a runtime override for a variant cat — it falls back to lower-priority sources.
    */
   app.delete<{ Params: { catId: string } }>('/api/config/session-strategy/:catId', async (request, reply) => {
-    const operator = resolveOperator(request.headers['x-cat-cafe-user']);
+    const operator = resolveHeaderUserId(request);
     if (!operator) {
       reply.status(400);
       return { error: 'Identity required (X-Cat-Cafe-User header)' };

@@ -28,6 +28,10 @@ export interface IOutboundAdapter {
     externalChatId: string,
     payload: { type: 'image' | 'file' | 'audio'; [key: string]: unknown },
   ): Promise<void>;
+  /** F151: Delivery batch complete. `chainDone=true` = no more output for this task; send close frame. */
+  onDeliveryBatchDone?(externalChatId: string, chainDone: boolean): Promise<void>;
+  /** F157: Add an emoji reaction to a message (e.g. ❤️ on user's message as instant ack). */
+  addReaction?(platformMessageId: string, emojiType: string): Promise<void>;
 }
 
 /** Adapter that supports edit-in-place streaming (placeholder → progressive edits). */
@@ -38,6 +42,11 @@ export interface IStreamableOutboundAdapter extends IOutboundAdapter {
   editMessage(externalChatId: string, platformMessageId: string, text: string): Promise<void>;
   /** Delete a message by platform message ID (cleanup after streaming). */
   deleteMessage?(platformMessageId: string): Promise<void>;
+  /**
+   * F157: Edit a streaming placeholder to a minimal completion state (e.g. "✅ 已回复").
+   * When present, cleanup prefers this over deleteMessage to avoid "recall" notifications.
+   */
+  finalizeStreamCard?(externalChatId: string, platformMessageId: string, catDisplayName: string): Promise<void>;
 }
 
 export interface ThreadMeta {
@@ -75,6 +84,18 @@ export class OutboundDeliveryHook {
   }
 
   async deliver(
+    threadId: string,
+    content: string,
+    catId?: CatId,
+    richBlocks?: RichBlock[],
+    threadMeta?: ThreadMeta,
+    origin?: MessageOrigin,
+    triggerMessageId?: string,
+  ): Promise<void> {
+    return this.executeDelivery(threadId, content, catId, richBlocks, threadMeta, origin, triggerMessageId);
+  }
+
+  private async executeDelivery(
     threadId: string,
     content: string,
     catId?: CatId,
