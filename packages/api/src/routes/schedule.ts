@@ -87,11 +87,12 @@ function addSubjectKeyWithAliases(target: Set<string>, subjectKey: string): void
   if (subjectKey.startsWith('pr-')) target.add(`pr:${subjectKey.slice(3)}`);
 }
 
-type DeliveryThreadResolutionCode = 'STALE_INVOCATION' | 'INVALID_CALLBACK_CREDENTIALS';
+type DeliveryThreadResolutionCode = 'STALE_INVOCATION';
 
 /** Resolve deliveryThreadId from preHandler auth (headers) or explicit body param.
  *  Panel UI requests have no auth → uses explicit deliveryThreadId or null.
- *  MCP requests have callbackAuth → infer from invocation record. */
+ *  MCP requests have callbackAuth → infer from invocation record.
+ *  Invalid credentials are rejected at the preHandler level (fail-closed, #474). */
 function resolveDeliveryThreadId(
   callbackAuth: InvocationRecord | undefined,
   body: { deliveryThreadId?: string },
@@ -299,13 +300,6 @@ export const scheduleRoutes: FastifyPluginAsync<ScheduleRoutesOptions> = async (
         code: 'STALE_INVOCATION',
       };
     }
-    if (resolution.code === 'INVALID_CALLBACK_CREDENTIALS') {
-      reply.status(401);
-      return {
-        error: 'Invalid callback credentials',
-        code: 'INVALID_CALLBACK_CREDENTIALS',
-      };
-    }
 
     return {
       draft: {
@@ -387,13 +381,6 @@ export const scheduleRoutes: FastifyPluginAsync<ScheduleRoutesOptions> = async (
       return {
         error: 'Stale callback invocation superseded by a newer invocation',
         code: 'STALE_INVOCATION',
-      };
-    }
-    if (resolution.code === 'INVALID_CALLBACK_CREDENTIALS') {
-      reply.status(401);
-      return {
-        error: 'Invalid callback credentials',
-        code: 'INVALID_CALLBACK_CREDENTIALS',
       };
     }
 

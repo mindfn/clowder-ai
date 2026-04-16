@@ -76,31 +76,21 @@ describe('Callback Auth PreHandler (#476)', () => {
     await app.close();
   });
 
-  it('returns 401 when credentials are invalid', async () => {
+  it('returns 401 from preHandler when credentials are invalid (fail-closed, #474)', async () => {
     const registry = createMockRegistry(new Map([['inv-001', VALID_RECORD]]));
     const app = await buildApp(registry);
 
     const res = await app.inject({
       method: 'GET',
-      url: '/test/require-auth',
+      url: '/test/optional-auth',
       headers: { 'x-invocation-id': 'inv-001', 'x-callback-token': 'wrong-token' },
     });
 
-    assert.equal(res.statusCode, 401);
+    assert.equal(res.statusCode, 401, 'bad creds must be rejected at preHandler, not silently ignored');
     await app.close();
   });
 
-  it('leaves callbackAuth undefined when headers absent (optional path)', async () => {
-    const registry = createMockRegistry();
-    const app = await buildApp(registry);
-
-    const res = await app.inject({ method: 'GET', url: '/test/optional-auth' });
-    assert.equal(res.statusCode, 200);
-    assert.equal(res.json().hasAuth, false);
-    await app.close();
-  });
-
-  it('handles partial credentials (only invocationId) as unauthenticated', async () => {
+  it('returns 401 from preHandler when only one header is present (malformed)', async () => {
     const registry = createMockRegistry(new Map([['inv-001', VALID_RECORD]]));
     const app = await buildApp(registry);
 
@@ -110,6 +100,15 @@ describe('Callback Auth PreHandler (#476)', () => {
       headers: { 'x-invocation-id': 'inv-001' },
     });
 
+    assert.equal(res.statusCode, 401, 'partial headers must be rejected, not treated as panel request');
+    await app.close();
+  });
+
+  it('leaves callbackAuth undefined when headers absent (panel/optional path)', async () => {
+    const registry = createMockRegistry();
+    const app = await buildApp(registry);
+
+    const res = await app.inject({ method: 'GET', url: '/test/optional-auth' });
     assert.equal(res.statusCode, 200);
     assert.equal(res.json().hasAuth, false);
     await app.close();

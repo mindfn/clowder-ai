@@ -19,17 +19,30 @@ interface CallbackAuthRegistry {
   verify(invocationId: string, callbackToken: string): InvocationRecord | null;
 }
 
-/** Register the callbackAuth decoration + preHandler on a Fastify instance. */
+/** Register the callbackAuth decoration + preHandler on a Fastify instance.
+ *
+ *  Behavior:
+ *  - No auth headers → no-op (panel / non-callback request)
+ *  - Both headers present + valid → decorates request.callbackAuth
+ *  - Both headers present + invalid → immediate 401 (fail-closed, #474)
+ *  - Only one header present → immediate 401 (malformed request)
+ */
 export function registerCallbackAuthHook(app: FastifyInstance, registry: CallbackAuthRegistry): void {
   app.decorateRequest('callbackAuth', undefined);
-  app.addHook('preHandler', async (request: FastifyRequest) => {
+  app.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
     const invocationId = firstHeaderValue(request.headers['x-invocation-id']);
     const callbackToken = firstHeaderValue(request.headers['x-callback-token']);
-    if (!invocationId || !callbackToken) return;
-    const record = registry.verify(invocationId, callbackToken);
-    if (record) {
-      request.callbackAuth = record;
+    if (!invocationId && !callbackToken) return;
+    if (!invocationId || !callbackToken) {
+      reply.status(401).send(EXPIRED_CREDENTIALS_ERROR);
+      return;
     }
+    const record = registry.verify(invocationId, callbackToken);
+    if (!record) {
+      reply.status(401).send(EXPIRED_CREDENTIALS_ERROR);
+      return;
+    }
+    request.callbackAuth = record;
   });
 }
 

@@ -469,7 +469,7 @@ describe('Schedule Routes', () => {
       assert.equal(body.code, 'STALE_INVOCATION');
     });
 
-    it('returns 401 for invalid callback credentials in preview', async () => {
+    it('returns 401 for invalid callback credentials in preview (fail-closed, #474)', async () => {
       const { invocationId } = registry.create('user-1', 'opus', 'thread-preview-invalid');
       const res = await appDyn.inject({
         method: 'POST',
@@ -485,7 +485,7 @@ describe('Schedule Routes', () => {
 
       assert.equal(res.statusCode, 401);
       const body = res.json();
-      assert.equal(body.code, 'INVALID_CALLBACK_CREDENTIALS');
+      assert.ok(body.error.includes('expired'), 'preHandler rejects invalid creds before route handler');
     });
   });
 
@@ -744,7 +744,7 @@ describe('Schedule Routes', () => {
       assert.equal(stored, undefined);
     });
 
-    it('returns 401 and does not persist for invalid callback credentials', async () => {
+    it('returns 401 and does not persist for invalid callback credentials (fail-closed, #474)', async () => {
       const { invocationId } = registry.create('user-1', 'opus', 'thread-create-invalid');
       const res = await appDyn.inject({
         method: 'POST',
@@ -760,7 +760,7 @@ describe('Schedule Routes', () => {
 
       assert.equal(res.statusCode, 401);
       const body = res.json();
-      assert.equal(body.code, 'INVALID_CALLBACK_CREDENTIALS');
+      assert.ok(body.error.includes('expired'), 'preHandler rejects invalid creds before route handler');
       const stored = store.getAll().find((d) => d.params?.message === 'invalid-create');
       assert.equal(stored, undefined);
     });
