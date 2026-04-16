@@ -19,6 +19,7 @@ interface OutboxEntry {
   apiUrl: string;
   path: string;
   body: Record<string, unknown>;
+  headers?: Record<string, string>;
   attempts: number;
   lastError: string;
 }
@@ -27,6 +28,7 @@ export interface CallbackRequest {
   apiUrl: string;
   path: string;
   body: Record<string, unknown>;
+  headers?: Record<string, string>;
 }
 
 function parseIntEnv(raw: string | undefined): number | null {
@@ -122,7 +124,12 @@ async function flushOutbox(): Promise<void> {
         continue;
       }
 
-      const replay = await postJsonWithRetry(`${entry.apiUrl}${entry.path}`, JSON.stringify(entry.body), retryDelaysMs);
+      const replay = await postJsonWithRetry(
+        `${entry.apiUrl}${entry.path}`,
+        JSON.stringify(entry.body),
+        retryDelaysMs,
+        entry.headers,
+      );
       if (replay.ok) {
         await unlink(processingPath);
         continue;
@@ -158,7 +165,7 @@ export async function sendCallbackRequest(
 
   const retryDelaysMs = getRetryDelaysMs();
   const payload = JSON.stringify(request.body);
-  const result = await postJsonWithRetry(`${request.apiUrl}${request.path}`, payload, retryDelaysMs);
+  const result = await postJsonWithRetry(`${request.apiUrl}${request.path}`, payload, retryDelaysMs, request.headers);
   if (result.ok) return { ok: true, data: result.data };
 
   if (enableOutbox && result.failure.retryable) {
@@ -169,6 +176,7 @@ export async function sendCallbackRequest(
       apiUrl: request.apiUrl,
       path: request.path,
       body: request.body,
+      ...(request.headers ? { headers: request.headers } : {}),
       attempts: 0,
       lastError: result.failure.error,
     });

@@ -436,12 +436,11 @@ describe('Schedule Routes', () => {
       const res = await appDyn.inject({
         method: 'POST',
         url: '/api/schedule/tasks/preview',
+        headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
         payload: {
           templateId: 'reminder',
           trigger: { type: 'once', delayMs: 1000 },
           params: { message: 'hello' },
-          invocationId,
-          callbackToken,
         },
       });
       assert.equal(res.statusCode, 200);
@@ -456,13 +455,12 @@ describe('Schedule Routes', () => {
       const res = await appDyn.inject({
         method: 'POST',
         url: '/api/schedule/tasks/preview',
+        headers: { 'x-invocation-id': stale.invocationId, 'x-callback-token': stale.callbackToken },
         payload: {
           templateId: 'reminder',
           trigger: { type: 'once', delayMs: 1000 },
           params: { message: 'stale-preview' },
           deliveryThreadId: 'thread-explicit-preview',
-          invocationId: stale.invocationId,
-          callbackToken: stale.callbackToken,
         },
       });
 
@@ -476,13 +474,12 @@ describe('Schedule Routes', () => {
       const res = await appDyn.inject({
         method: 'POST',
         url: '/api/schedule/tasks/preview',
+        headers: { 'x-invocation-id': invocationId, 'x-callback-token': 'invalid-token' },
         payload: {
           templateId: 'reminder',
           trigger: { type: 'once', delayMs: 1000 },
           params: { message: 'invalid-preview' },
           deliveryThreadId: 'thread-explicit-preview',
-          invocationId,
-          callbackToken: 'invalid-token',
         },
       });
 
@@ -668,12 +665,11 @@ describe('Schedule Routes', () => {
       const res = await appDyn.inject({
         method: 'POST',
         url: '/api/schedule/tasks',
+        headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
         payload: {
           templateId: 'reminder',
           trigger: { type: 'once', delayMs: 1000 },
           params: { message: 'body-auth-thread' },
-          invocationId,
-          callbackToken,
         },
       });
       assert.equal(res.statusCode, 200);
@@ -710,13 +706,12 @@ describe('Schedule Routes', () => {
       const res = await appDyn.inject({
         method: 'POST',
         url: '/api/schedule/tasks',
+        headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
         payload: {
           templateId: 'reminder',
           trigger: { type: 'once', delayMs: 1000 },
           params: { message: 'explicit-thread-wins' },
           deliveryThreadId: 'thread-explicit',
-          invocationId,
-          callbackToken,
         },
       });
       assert.equal(res.statusCode, 200);
@@ -733,13 +728,12 @@ describe('Schedule Routes', () => {
       const res = await appDyn.inject({
         method: 'POST',
         url: '/api/schedule/tasks',
+        headers: { 'x-invocation-id': stale.invocationId, 'x-callback-token': stale.callbackToken },
         payload: {
           templateId: 'reminder',
           trigger: { type: 'once', delayMs: 1000 },
           params: { message: 'stale-create' },
           deliveryThreadId: 'thread-explicit-create',
-          invocationId: stale.invocationId,
-          callbackToken: stale.callbackToken,
         },
       });
 
@@ -755,13 +749,12 @@ describe('Schedule Routes', () => {
       const res = await appDyn.inject({
         method: 'POST',
         url: '/api/schedule/tasks',
+        headers: { 'x-invocation-id': invocationId, 'x-callback-token': 'invalid-token' },
         payload: {
           templateId: 'reminder',
           trigger: { type: 'once', delayMs: 1000 },
           params: { message: 'invalid-create' },
           deliveryThreadId: 'thread-explicit-create',
-          invocationId,
-          callbackToken: 'invalid-token',
         },
       });
 
