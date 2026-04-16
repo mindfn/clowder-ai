@@ -8,7 +8,6 @@
  *   - docs/ROADMAP.md
  *   - docs/ROADMAP.md
  *   - cat-template.json
- *   - cat-config.json
  *
  * On non-main branches (worktrees / feature branches), the **unpushed** check
  * is skipped because the branch inherits committed diffs from main that aren't
@@ -21,7 +20,7 @@ import { createModuleLogger } from '../infrastructure/logger.js';
 
 const log = createModuleLogger('shared-state-preflight');
 
-const SHARED_STATE_PATTERN = /^(docs\/ROADMAP\.md|docs\/ROADMAP\.md|cat-template\.json|cat-config\.json)$/;
+const SHARED_STATE_PATTERN = /^(docs\/ROADMAP\.md|docs\/ROADMAP\.md|cat-template\.json)$/;
 
 const MAIN_BRANCHES = new Set(['main', 'master']);
 

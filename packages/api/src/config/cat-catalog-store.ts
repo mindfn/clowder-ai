@@ -204,18 +204,6 @@ export function readCatCatalog(projectRoot: string): CatCafeConfig | null {
   return JSON.parse(raw) as CatCafeConfig;
 }
 
-function readBootstrapSourceConfig(
-  projectRoot: string,
-  templatePath: string,
-): { catalog: CatCafeConfig; sourcePath: string } {
-  const legacyConfigPath = safePath(projectRoot, 'cat-config.json');
-  const sourcePath = existsSync(legacyConfigPath) ? legacyConfigPath : templatePath;
-  return {
-    catalog: JSON.parse(readFileSync(sourcePath, 'utf-8')) as CatCafeConfig,
-    sourcePath,
-  };
-}
-
 export function bootstrapCatCatalog(projectRoot: string, templatePath: string): string {
   const catalogPath = resolveCatCatalogPath(projectRoot);
   if (existsSync(catalogPath)) {
@@ -225,14 +213,11 @@ export function bootstrapCatCatalog(projectRoot: string, templatePath: string): 
     return catalogPath;
   }
 
-  // Bootstrap must preserve legacy project customizations when upgrading from
-  // installs that still have cat-config.json but no runtime catalog yet.
-  const { catalog: template, sourcePath } = readBootstrapSourceConfig(projectRoot, templatePath);
-
   // Bootstrap is the only time template-derived defaults are stamped into the runtime catalog.
   // After this write, runtime reads only the catalog.
+  const template = JSON.parse(readFileSync(templatePath, 'utf-8')) as CatCafeConfig;
   const { catalog: migratedCatalog } = migrateCatalogVariants(template);
-  const seedCatIds = sourcePath === templatePath ? collectCatIds(migratedCatalog) : readSeedCatIds(templatePath);
+  const seedCatIds = collectCatIds(migratedCatalog);
   const runtimeCatalog = applyBootstrapDefaultAccountRefs(migratedCatalog, seedCatIds);
 
   mkdirSync(dirname(catalogPath), { recursive: true });

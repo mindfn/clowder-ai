@@ -384,7 +384,7 @@ yield { __cliError: true, message: `CLI 异常退出 (code: ${exitCode})` };
 模型配置支持三层优先级：
 
 ```
-环境变量 > cat-config.json > 硬编码默认值
+环境变量 > 运行时猫配置（`cat-template.json` + `.cat-cafe/cat-catalog.json`） > 硬编码默认值
 ```
 
 **环境变量：**
@@ -394,7 +394,7 @@ CAT_CODEX_MODEL=gpt-5.3-codex
 CAT_GEMINI_MODEL=gemini-3-pro
 ```
 
-**配置文件 (`cat-config.json`)：**
+**配置文件（repo 根 `cat-template.json`，运行时 overlay 在 `.cat-cafe/cat-catalog.json`）：**
 ```json
 {
   "version": 1,
@@ -415,9 +415,9 @@ export function getCatModel(catName: 'opus' | 'codex' | 'gemini'): string {
   const envValue = process.env[MODEL_ENV_KEYS[catName]];
   if (envValue?.trim()) return envValue.trim();
 
-  // 2. cat-config.json 次优先
-  const jsonModels = loadModelsFromJson();
-  if (jsonModels[catName]) return jsonModels[catName];
+  // 2. 运行时配置（由 cat-template.json + .cat-cafe/cat-catalog.json 合成）
+  const entry = catRegistry.tryGet(catName);
+  if (entry) return entry.config.defaultModel;
 
   // 3. 硬编码默认值
   return CAT_CONFIGS[catName].defaultModel;

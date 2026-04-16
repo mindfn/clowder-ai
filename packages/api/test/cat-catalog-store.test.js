@@ -315,7 +315,7 @@ describe('cat-catalog-store', () => {
     assert.equal(runtimeCatalog.breeds[0]?.variants[0]?.accountRef, 'claude');
   });
 
-  it('bootstraps from legacy cat-config.json before falling back to cat-template.json', () => {
+  it('ignores stale cat-config.json and bootstraps from cat-template.json', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-legacy-bootstrap-'));
     const templatePath = join(projectRoot, 'cat-template.json');
     const template = validConfig();
@@ -332,18 +332,16 @@ describe('cat-catalog-store', () => {
     const catalogPath = bootstrapCatCatalog(projectRoot, templatePath);
     const runtimeCatalog = JSON.parse(readFileSync(catalogPath, 'utf-8'));
 
-    assert.equal(runtimeCatalog.breeds[0]?.displayName, '旧配置布偶猫');
-    assert.equal(runtimeCatalog.breeds[0]?.variants[0]?.defaultModel, 'legacy-model');
-    assert.equal(runtimeCatalog.roster?.opus?.evaluation, 'legacy-eval');
+    assert.equal(runtimeCatalog.breeds[0]?.displayName, '模板布偶猫');
+    assert.equal(runtimeCatalog.breeds[0]?.variants[0]?.defaultModel, 'template-model');
+    assert.notEqual(runtimeCatalog.roster?.opus?.evaluation, 'legacy-eval');
   });
 
-  it('only backfills bootstrap accountRef for seed members when legacy cat-config adds custom variants', () => {
+  it('backfills bootstrap accountRef for seed members declared in cat-template.json', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-legacy-custom-variant-'));
     const templatePath = join(projectRoot, 'cat-template.json');
-    writeFileSync(templatePath, JSON.stringify(validConfig(), null, 2));
-
-    const legacyConfig = validConfig();
-    legacyConfig.breeds[0].variants.push({
+    const template = validConfig();
+    template.breeds[0].variants.push({
       id: 'opus-custom',
       catId: 'opus-custom',
       displayName: '自定义布偶猫',
@@ -353,7 +351,7 @@ describe('cat-catalog-store', () => {
       mcpSupport: true,
       cli: { command: 'codex', outputFormat: 'json' },
     });
-    writeFileSync(join(projectRoot, 'cat-config.json'), JSON.stringify(legacyConfig, null, 2));
+    writeFileSync(templatePath, JSON.stringify(template, null, 2));
 
     const catalogPath = bootstrapCatCatalog(projectRoot, templatePath);
     const runtimeCatalog = JSON.parse(readFileSync(catalogPath, 'utf-8'));
@@ -362,7 +360,7 @@ describe('cat-catalog-store', () => {
     const customVariant = legacyBreed?.variants.find((variant) => variant.id === 'opus-custom');
 
     assert.equal(seedVariant?.accountRef, 'claude');
-    assert.equal(customVariant?.accountRef, undefined);
+    assert.equal(customVariant?.accountRef, 'codex');
   });
 
   it('keeps existing .cat-cafe/cat-catalog.json runtime edits and leaves unbound variants alone', () => {

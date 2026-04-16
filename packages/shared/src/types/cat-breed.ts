@@ -109,7 +109,7 @@ export interface CatFeatures {
   /** F24: Enable session chain (context health tracking, auto-seal, bootstrap).
    *  Default: true. Set false for cats with inaccurate token stats (e.g. Gemini). */
   readonly sessionChain?: boolean;
-  /** F33 Phase 2: Per-breed session strategy override from cat-config.json.
+  /** F33 Phase 2: Per-breed session strategy override from the resolved runtime cat config.
    *  Partial config — merged with provider/global defaults at runtime.
    *  Matches SessionStrategyConfig shape (all fields except strategy are optional). */
   readonly sessionStrategy?: {

@@ -2,7 +2,7 @@
  * Cat Model Configuration
  * F32-b: Dynamic env key resolution — CAT_{CATID}_MODEL (uppercased, hyphens → underscores)
  *
- * 优先级: 环境变量 > catRegistry (from cat-config.json) > CAT_CONFIGS 硬编码
+ * 优先级: 环境变量 > catRegistry（from resolved runtime cat config） > CAT_CONFIGS 硬编码
  *
  * 环境变量 examples:
  *   CAT_OPUS_MODEL      → 布偶猫模型
@@ -10,7 +10,7 @@
  *   CAT_CODEX_MODEL     → 缅因猫模型
  *   CAT_GEMINI_MODEL    → 暹罗猫模型
  *
- * 或直接修改项目根目录的 cat-config.json
+ * 或修改 repo 根 `cat-template.json` / 运行时 `.cat-cafe/cat-catalog.json`
  */
 
 import { CAT_CONFIGS, catRegistry } from '@cat-cafe/shared';
@@ -26,7 +26,7 @@ function getCatModelEnvKey(catId: string): string {
 /**
  * 获取猫的实际模型
  * F32-b: Dynamic env key + catRegistry as primary source
- * 优先级: 环境变量 > catRegistry (from cat-config.json) > CAT_CONFIGS 硬编码
+ * 优先级: 环境变量 > catRegistry（from resolved runtime cat config） > CAT_CONFIGS 硬编码
  */
 export function getCatModel(catName: string): string {
   // 1. 环境变量最高优先 (dynamic key: CAT_{CATID}_MODEL)
@@ -36,7 +36,7 @@ export function getCatModel(catName: string): string {
     return envValue;
   }
 
-  // 2. catRegistry (populated from cat-config.json at startup)
+  // 2. catRegistry (populated from the resolved runtime cat config at startup)
   const entry = catRegistry.tryGet(catName);
   if (entry) {
     return entry.config.defaultModel;

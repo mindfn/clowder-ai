@@ -1,7 +1,7 @@
 /**
  * Auto-populate catRegistry for tests.
  *
- * Prefer the real cat-config.json expansion so route tests see the same
+ * Prefer the real runtime cat config expansion so route tests see the same
  * variant roster as runtime (gpt52/sonnet/spark/etc.), then fall back
  * to shared static defaults if config loading is unavailable.
  *

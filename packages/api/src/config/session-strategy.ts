@@ -7,9 +7,9 @@
  *   - hybrid: allow N compressions, then seal (hook-capable providers only)
  *
  * Lookup order (Phase 3):
- *   test override → runtime override (Redis, per-variant) → cat-config.json (breed) → STRATEGY_BY_BREED → provider default → global default
+ *   test override → runtime override (Redis, per-variant) → resolved cat config (breed) → STRATEGY_BY_BREED → provider default → global default
  *
- * Phase 2: seal-thresholds.ts merged into this file; cat-config.json integration added.
+ * Phase 2: seal-thresholds.ts merged into this file; runtime config integration added.
  * Phase 3: Runtime override via Redis + settings UI.
  */
 
@@ -91,7 +91,7 @@ export type StrategySource = 'runtime_override' | 'config_file' | 'breed_code' |
  * Lookup order (Phase 3):
  * 1. Test override (testing only)
  * 2. Runtime override (Redis, per-variant) — Phase 3 UI writes here
- * 3. cat-config.json features.sessionStrategy (Phase 2: config-driven, breed level)
+ * 3. Resolved cat config features.sessionStrategy (Phase 2: config-driven, breed level)
  * 4. STRATEGY_BY_BREED code override
  * 5. Provider default → global default
  */
@@ -138,7 +138,7 @@ function resolveFallbackStrategy(catName: string): {
 } {
   const base = getBaseStrategy(catName);
 
-  // Phase 2: cat-config.json features.sessionStrategy (breed level)
+  // Phase 2: resolved cat config features.sessionStrategy (breed level)
   const configOverride = getConfigSessionStrategy(catName);
   if (configOverride) {
     return { effective: mergeStrategyConfig(base, configOverride), source: 'config_file' };

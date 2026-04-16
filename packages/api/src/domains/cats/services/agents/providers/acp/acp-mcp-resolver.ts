@@ -80,7 +80,7 @@ function readMcpJson(mcpJsonPath: string): Record<string, McpJsonEntry> {
  * External servers fall back to .mcp.json.
  *
  * @param projectRoot — monorepo root
- * @param whitelist — server names from cat-config.json mcpWhitelist
+ * @param whitelist — server names from the resolved runtime cat config mcpWhitelist
  * @returns AcpMcpServer[] ready for newSession()
  * @throws when whitelist is non-empty but zero servers could be resolved
  */

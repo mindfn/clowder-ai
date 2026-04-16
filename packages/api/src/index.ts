@@ -1487,7 +1487,7 @@ async function main(): Promise<void> {
     const root = findMonorepoRoot(process.cwd());
     await app.register(packsRoutes, {
       packLoader,
-      catConfigPath: join(root, 'cat-config.json'),
+      catTemplatePath: join(root, 'cat-template.json'),
       sharedRulesPath: join(root, 'cat-cafe-skills', 'refs', 'shared-rules.md'),
       skillsManifestPath: join(root, 'cat-cafe-skills', 'manifest.yaml'),
     });

@@ -10,7 +10,7 @@ const { getCatModel, getAllCatModels } = await import('../dist/config/cat-models
 
 describe('F32-b: getCatModel dynamic env key', () => {
   it('resolves default model from CAT_CONFIGS fallback', () => {
-    // Without catRegistry population from cat-config.json, falls through to CAT_CONFIGS
+    // Without catRegistry population from the resolved runtime cat config, falls through to CAT_CONFIGS
     // catRegistry IS populated by setup-cat-registry.js, so it reads from there
     const model = getCatModel('opus');
     assert.ok(typeof model === 'string');
