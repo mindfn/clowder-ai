@@ -22,18 +22,30 @@ interface CallbackAuthRegistry {
 /** Register the callbackAuth decoration + preHandler on a Fastify instance.
  *
  *  Behavior:
- *  - No auth headers → no-op (panel / non-callback request)
- *  - Both headers present + valid → decorates request.callbackAuth
- *  - Both headers present + invalid → immediate 401 (fail-closed, #474)
- *  - Only one header present → immediate 401 (malformed request)
+ *  1. Try X-Invocation-Id + X-Callback-Token headers (preferred)
+ *  2. Fallback: read from body/query (legacy compat window, logs deprecation)
+ *  3. Neither present → no-op (panel / non-callback request)
+ *  4. Credentials present but invalid → immediate 401 (fail-closed, #474)
  */
 export function registerCallbackAuthHook(app: FastifyInstance, registry: CallbackAuthRegistry): void {
   if (!app.hasRequestDecorator('callbackAuth')) {
     app.decorateRequest('callbackAuth', undefined);
   }
   app.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
-    const invocationId = firstHeaderValue(request.headers['x-invocation-id']);
-    const callbackToken = firstHeaderValue(request.headers['x-callback-token']);
+    let invocationId = firstHeaderValue(request.headers['x-invocation-id']);
+    let callbackToken = firstHeaderValue(request.headers['x-callback-token']);
+    let legacy = false;
+
+    // Fallback: body/query for legacy MCP clients (#476 compat window)
+    if (!invocationId && !callbackToken) {
+      const fromBody = extractLegacyCredentials(request);
+      if (fromBody) {
+        invocationId = fromBody.invocationId;
+        callbackToken = fromBody.callbackToken;
+        legacy = true;
+      }
+    }
+
     if (!invocationId && !callbackToken) return;
     if (!invocationId || !callbackToken) {
       reply.status(401).send(EXPIRED_CREDENTIALS_ERROR);
@@ -44,8 +56,27 @@ export function registerCallbackAuthHook(app: FastifyInstance, registry: Callbac
       reply.status(401).send(EXPIRED_CREDENTIALS_ERROR);
       return;
     }
+    if (legacy) {
+      request.log.warn(
+        { invocationId, path: request.url },
+        '[#476 DEPRECATED] Callback credentials received via body/query — migrate to X-Invocation-Id / X-Callback-Token headers',
+      );
+    }
     request.callbackAuth = record;
   });
+}
+
+/** Extract legacy credentials from body (POST) or query (GET). */
+function extractLegacyCredentials(request: FastifyRequest): { invocationId: string; callbackToken: string } | null {
+  const body = request.body as Record<string, unknown> | undefined;
+  if (body && typeof body.invocationId === 'string' && typeof body.callbackToken === 'string') {
+    return { invocationId: body.invocationId, callbackToken: body.callbackToken };
+  }
+  const query = request.query as Record<string, unknown> | undefined;
+  if (query && typeof query.invocationId === 'string' && typeof query.callbackToken === 'string') {
+    return { invocationId: query.invocationId, callbackToken: query.callbackToken };
+  }
+  return null;
 }
 
 /** Require callbackAuth on the request — returns record or sends 401. */

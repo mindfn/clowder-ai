@@ -81,6 +81,16 @@ function parseOutboxEntry(raw: string): OutboxEntry | null {
   }
 }
 
+/** Extract auth headers from legacy body fields (pre-#476 outbox entries). */
+function legacyHeadersFromBody(body: Record<string, unknown>): Record<string, string> | undefined {
+  const invocationId = body.invocationId;
+  const callbackToken = body.callbackToken;
+  if (typeof invocationId === 'string' && typeof callbackToken === 'string') {
+    return { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken };
+  }
+  return undefined;
+}
+
 async function enqueueOutbox(entry: OutboxEntry): Promise<boolean> {
   try {
     const dir = getOutboxDir();
@@ -124,11 +134,14 @@ async function flushOutbox(): Promise<void> {
         continue;
       }
 
+      // Legacy fixup (#476): entries queued before header migration have creds
+      // in body, not headers. Migrate them so the new preHandler accepts them.
+      const replayHeaders = entry.headers ?? legacyHeadersFromBody(entry.body);
       const replay = await postJsonWithRetry(
         `${entry.apiUrl}${entry.path}`,
         JSON.stringify(entry.body),
         retryDelaysMs,
-        entry.headers,
+        replayHeaders,
       );
       if (replay.ok) {
         await unlink(processingPath);
