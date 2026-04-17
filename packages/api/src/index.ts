@@ -905,6 +905,13 @@ async function main(): Promise<void> {
         case 'opencode':
           service = new OpenCodeAgentService({ catId });
           break;
+        case 'catagent': {
+          const { CatAgentService } = await import(
+            './domains/cats/services/agents/providers/catagent/CatAgentService.js'
+          );
+          service = new CatAgentService({ catId, projectRoot: findMonorepoRoot(), catConfig: config });
+          break;
+        }
         case 'a2a': {
           const { A2AAgentService } = await import('./domains/cats/services/agents/providers/A2AAgentService.js');
           const envKey = `CAT_${id.toUpperCase()}_A2A_URL`;
@@ -1311,7 +1318,7 @@ async function main(): Promise<void> {
     auditStore: authAuditStore,
     io: socketManager.getIO(),
   });
-  await app.register(callbackAuthRoutes, { registry, authManager });
+  await app.register(callbackAuthRoutes, { authManager, registry });
   await app.register(authorizationRoutes, {
     authManager,
     ruleStore: authRuleStore,
