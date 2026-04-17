@@ -70,7 +70,7 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
             roleDescription: selectedTemplate.roleDescription,
             personality: selectedTemplate.personality,
             teamStrengths: selectedTemplate.teamStrengths,
-            client: selectedClient.provider,
+            clientId: selectedClient.provider,
             accountRef: config.accountRef,
             defaultModel: config.model,
           }),

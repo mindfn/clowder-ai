@@ -4,8 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import type { AccountsResponse, ProfileItem } from '../hub-accounts.types';
 import { builtinAccountIdForClient, type ClientValue, filterAccounts } from '../hub-cat-editor.model';
-import type { EditProfileData } from './ApiKeyCreateForm';
-import { AuthProfileModal } from './AuthProfileModal';
+import { type UnifiedAuthEditData, UnifiedAuthModal } from '../UnifiedAuthModal';
 import { ProfileCard } from './ProfileCard';
 
 interface ConfigStepProps {
@@ -35,7 +34,7 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message?: string } | null>(null);
   const [showModal, setShowModal] = useState(false);
-  const [editProfile, setEditProfile] = useState<EditProfileData | undefined>();
+  const [editProfile, setEditProfile] = useState<UnifiedAuthEditData | undefined>();
   const testSigRef = useRef('');
   const testCacheRef = useRef<Map<string, { ok: boolean; message?: string }>>(new Map());
 
@@ -149,7 +148,7 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
       <div className="scrollbar-cafe mb-3 max-h-80 space-y-1.5 overflow-y-auto">
         {available.length === 0 && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-center text-sm text-amber-700">
-            未找到可用账号，请点击下方新建一个 API Key
+            未找到可用账号，请点击下方新建一个账号认证
           </div>
         )}
         {available.map((p) => (
@@ -166,7 +165,13 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
             onTest={handleTest}
             onProfileRefresh={handleProfileRefresh}
             onEdit={() => {
-              setEditProfile({ id: p.id, displayName: p.displayName ?? p.name, baseUrl: p.baseUrl });
+              setEditProfile({
+                id: p.id,
+                displayName: p.displayName ?? p.name,
+                baseUrl: p.baseUrl,
+                clientId: p.clientId,
+                models: p.models?.filter(Boolean),
+              });
               setShowModal(true);
             }}
           />
@@ -181,7 +186,7 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
         }}
         className="mb-3 text-xs font-medium text-amber-600 hover:text-amber-700"
       >
-        + 新建 API Key 账号
+        + 新建账号认证
       </button>
 
       <button
@@ -195,7 +200,8 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
         {canProceed ? '创建猫猫' : '请先完成连接测试'}
       </button>
 
-      <AuthProfileModal
+      <UnifiedAuthModal
+        key={editProfile?.id ?? 'create'}
         open={showModal}
         onClose={() => {
           setShowModal(false);
@@ -203,7 +209,7 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
         }}
         onCreated={handleProfileCreated}
         editProfile={editProfile}
-        clientId={clientId}
+        initialClientId={clientId as 'anthropic' | 'openai' | 'google' | 'kimi' | 'dare' | 'opencode'}
       />
     </div>
   );

@@ -8,25 +8,37 @@ import { TagEditor } from './hub-tag-editor';
 
 const CLIENT_OPTIONS: BuiltinAccountClient[] = ['anthropic', 'openai', 'google', 'kimi', 'dare', 'opencode'];
 
+export interface UnifiedAuthEditData {
+  id: string;
+  displayName?: string;
+  baseUrl?: string;
+  clientId?: BuiltinAccountClient;
+  models?: string[];
+}
+
 interface UnifiedAuthModalProps {
   open: boolean;
   onClose: () => void;
   onCreated: (profileId: string) => void;
+  editProfile?: UnifiedAuthEditData;
+  initialClientId?: BuiltinAccountClient;
 }
 
-export function UnifiedAuthModal({ open, onClose, onCreated }: UnifiedAuthModalProps) {
-  const [clientId, setClientId] = useState<BuiltinAccountClient>('anthropic');
-  const [displayName, setDisplayName] = useState('');
-  const [baseUrl, setBaseUrl] = useState('');
+export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initialClientId }: UnifiedAuthModalProps) {
+  const isEdit = Boolean(editProfile);
+  const defaultClientId = editProfile?.clientId ?? initialClientId ?? 'anthropic';
+  const [clientId, setClientId] = useState<BuiltinAccountClient>(defaultClientId);
+  const [displayName, setDisplayName] = useState(editProfile?.displayName ?? '');
+  const [baseUrl, setBaseUrl] = useState(editProfile?.baseUrl ?? '');
   const [apiKey, setApiKey] = useState('');
-  const [models, setModels] = useState<string[]>([]);
+  const [models, setModels] = useState<string[]>(editProfile?.models ?? []);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!open) return null;
 
   const resetForm = () => {
-    setClientId('anthropic');
+    setClientId(defaultClientId);
     setDisplayName('');
     setBaseUrl('');
     setApiKey('');
@@ -39,31 +51,54 @@ export function UnifiedAuthModal({ open, onClose, onCreated }: UnifiedAuthModalP
     onClose();
   };
 
-  const canSubmit = displayName.trim() && baseUrl.trim() && apiKey.trim() && models.length > 0;
+  const canSubmit = isEdit
+    ? displayName.trim() && baseUrl.trim() && models.length > 0
+    : displayName.trim() && baseUrl.trim() && apiKey.trim() && models.length > 0;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSaving(true);
     setError(null);
     try {
-      const res = await apiFetch('/api/accounts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      if (isEdit) {
+        const patch: Record<string, unknown> = {
           displayName: displayName.trim(),
-          authType: 'api_key',
-          clientId,
           baseUrl: baseUrl.trim(),
-          apiKey: apiKey.trim(),
+          clientId,
           models,
-        }),
-      });
-      const body = (await res.json()) as { profile?: { id?: string }; error?: string };
-      if (!res.ok) throw new Error(body.error ?? `创建失败 (${res.status})`);
-      if (body.profile?.id) {
-        resetForm();
-        onCreated(body.profile.id);
+        };
+        if (apiKey.trim()) patch.apiKey = apiKey.trim();
+        const res = await apiFetch(`/api/accounts/${encodeURIComponent(editProfile!.id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? `更新失败 (${res.status})`);
+        }
+        onCreated(editProfile!.id);
         onClose();
+      } else {
+        const res = await apiFetch('/api/accounts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            displayName: displayName.trim(),
+            authType: 'api_key',
+            clientId,
+            baseUrl: baseUrl.trim(),
+            apiKey: apiKey.trim(),
+            models,
+          }),
+        });
+        const body = (await res.json()) as { profile?: { id?: string }; error?: string };
+        if (!res.ok) throw new Error(body.error ?? `创建失败 (${res.status})`);
+        if (body.profile?.id) {
+          resetForm();
+          onCreated(body.profile.id);
+          onClose();
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -79,7 +114,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated }: UnifiedAuthModalP
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h4 className="text-sm font-semibold text-[#8A776B]">新增 API Key 认证</h4>
+          <h4 className="text-sm font-semibold text-[#8A776B]">{isEdit ? '编辑 API Key 认证' : '新增 API Key 认证'}</h4>
           <button
             type="button"
             onClick={handleClose}
@@ -127,7 +162,9 @@ export function UnifiedAuthModal({ open, onClose, onCreated }: UnifiedAuthModalP
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-[#8A776B]">API Key</label>
+            <label className="mb-1 block text-xs font-medium text-[#8A776B]">
+              API Key{isEdit && '（留空保持不变）'}
+            </label>
             <input
               type="password"
               autoComplete="off"
@@ -136,7 +173,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated }: UnifiedAuthModalP
                 setApiKey(e.target.value);
                 setError(null);
               }}
-              placeholder="sk-..."
+              placeholder={isEdit ? '••••••••••••' : 'sk-...'}
               className="w-full rounded-lg border border-[#E8DCCF] bg-white px-3 py-2 text-sm placeholder:text-[#C4B5A8]"
             />
           </div>
@@ -162,7 +199,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated }: UnifiedAuthModalP
           disabled={saving || !canSubmit}
           className="mt-4 w-full rounded-lg bg-[#D49266] py-2 text-sm font-semibold text-white transition hover:bg-[#c47f52] disabled:opacity-50"
         >
-          {saving ? '创建中...' : '创建'}
+          {saving ? (isEdit ? '保存中...' : '创建中...') : isEdit ? '保存' : '创建'}
         </button>
       </div>
     </div>
