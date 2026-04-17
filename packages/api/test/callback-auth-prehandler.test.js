@@ -227,4 +227,25 @@ describe('Callback Auth PreHandler (#476)', () => {
     assert.equal(res.statusCode, 401, 'invalid legacy creds must still be rejected (fail-closed)');
     await app.close();
   });
+
+  it('returns 401 when only one legacy body credential is present (partial → fail-closed)', async () => {
+    const registry = createMockRegistry(new Map([['inv-001', VALID_RECORD]]));
+    const { registerCallbackAuthHook } = await import('../dist/routes/callback-auth-prehandler.js');
+    const app = Fastify({ logger: false });
+    registerCallbackAuthHook(app, registry);
+
+    app.post('/test/optional-auth', async (request) => {
+      return { hasAuth: !!request.callbackAuth };
+    });
+    await app.ready();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/test/optional-auth',
+      payload: { invocationId: 'inv-001' },
+    });
+
+    assert.equal(res.statusCode, 401, 'partial legacy creds must be rejected, not treated as panel request');
+    await app.close();
+  });
 });

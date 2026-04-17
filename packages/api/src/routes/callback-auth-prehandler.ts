@@ -66,15 +66,23 @@ export function registerCallbackAuthHook(app: FastifyInstance, registry: Callbac
   });
 }
 
-/** Extract legacy credentials from body (POST) or query (GET). */
-function extractLegacyCredentials(request: FastifyRequest): { invocationId: string; callbackToken: string } | null {
+/** Extract legacy credentials from body (POST) or query (GET).
+ *  Returns partial results so the caller's `!id || !token` guard
+ *  rejects malformed requests (fail-closed, consistent with headers). */
+function extractLegacyCredentials(
+  request: FastifyRequest,
+): { invocationId: string | undefined; callbackToken: string | undefined } | null {
   const body = request.body as Record<string, unknown> | undefined;
-  if (body && typeof body.invocationId === 'string' && typeof body.callbackToken === 'string') {
-    return { invocationId: body.invocationId, callbackToken: body.callbackToken };
+  if (body) {
+    const id = typeof body.invocationId === 'string' ? body.invocationId : undefined;
+    const tok = typeof body.callbackToken === 'string' ? body.callbackToken : undefined;
+    if (id || tok) return { invocationId: id, callbackToken: tok };
   }
   const query = request.query as Record<string, unknown> | undefined;
-  if (query && typeof query.invocationId === 'string' && typeof query.callbackToken === 'string') {
-    return { invocationId: query.invocationId, callbackToken: query.callbackToken };
+  if (query) {
+    const id = typeof query.invocationId === 'string' ? query.invocationId : undefined;
+    const tok = typeof query.callbackToken === 'string' ? query.callbackToken : undefined;
+    if (id || tok) return { invocationId: id, callbackToken: tok };
   }
   return null;
 }
