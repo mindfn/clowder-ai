@@ -287,7 +287,7 @@ function mergeById(base: HasId[], overlay: HasId[]): HasId[] {
     const bItem = baseMap.get(oItem.id);
     result.push(bItem ? (deepMergeConfig(bItem, oItem) as HasId) : oItem);
   }
-  // Preserve base-only items (new items added to cat-config.json but not yet in catalog)
+  // Preserve base-only items (new items added to cat-template.json but not yet in catalog)
   for (const bItem of base) {
     if (!seen.has(bItem.id)) result.push(bItem);
   }
@@ -552,7 +552,7 @@ let _catIdToBreedSource: CatCafeConfig | null = null;
 
 /**
  * Check if F24 session chain is enabled for a cat.
- * Returns true by default — only false when explicitly disabled in cat-config.json.
+ * Returns true by default — only false when explicitly disabled in the resolved cat config.
  * Gracefully returns true if config file is unreadable (availability over strictness).
  *
  * F32-b: Now resolves variant catIds to their parent breed via index.
@@ -579,7 +579,7 @@ export function isSessionChainEnabled(catId: CatId | string, config?: CatCafeCon
 // ── F33 Phase 2: Session Strategy from config ─────────────────────────
 
 /**
- * Get session strategy config from cat-config.json for a cat.
+ * Get session strategy config from the resolved cat config for a cat.
  * Returns undefined if not configured (caller falls back to code defaults).
  *
  * F33 Phase 2: Same lookup pattern as isSessionChainEnabled — catId → breed → features.
@@ -604,7 +604,7 @@ export function getConfigSessionStrategy(
 }
 
 /**
- * Get Mission Hub self-claim scope from cat-config.json for a cat.
+ * Get Mission Hub self-claim scope from the resolved cat config for a cat.
  * Defaults to 'disabled' when not configured.
  */
 export function getMissionHubSelfClaimScope(catId: string, config?: CatCafeConfig): MissionHubSelfClaimScope {
@@ -686,7 +686,7 @@ function buildCatIdToVariantIndex(config: CatCafeConfig): Map<string, CatVariant
 export type CliEffortLevel = 'low' | 'medium' | 'high' | 'max' | 'xhigh';
 
 /**
- * Get CLI effort level for a cat from cat-config.json.
+ * Get CLI effort level for a cat from the resolved cat config.
  * Default when not configured:
  *   claude (anthropic): 'max'
  *   codex (openai):     'xhigh'
@@ -743,7 +743,7 @@ export interface AcpVariantConfig {
 }
 
 /**
- * Get ACP config for a cat from the raw cat-config.json variant.
+ * Get ACP config for a cat from the resolved raw runtime variant.
  * Returns undefined if the variant has no `acp` section (= use legacy CLI).
  * Reads raw JSON because `acp` is not in the typed CatConfig (intentionally).
  */
@@ -887,7 +887,7 @@ const DEFAULT_CO_CREATOR_MENTION_PATTERNS = ['@co-creator', '@铲屎官'];
 let _cachedCoCreator: CoCreatorConfig | null = null;
 
 /**
- * Get coCreator config from cat-config.json.
+ * Get coCreator config from the resolved cat config.
  * Returns a default config with @co-creator/@铲屎官 patterns when not configured.
  */
 export function getCoCreatorConfig(config?: CatCafeConfig): CoCreatorConfig {
