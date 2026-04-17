@@ -1,10 +1,16 @@
-import { CLI_EFFORT_VALUES, type CliEffortValue, getCliEffortOptionsForProvider } from '@cat-cafe/shared';
+import {
+  builtinAccountFamilyForClient,
+  CLI_EFFORT_VALUES,
+  type CliEffortValue,
+  getCliEffortOptionsForProvider,
+  builtinAccountIdForClient as sharedBuiltinAccountIdForClient,
+} from '@cat-cafe/shared';
 import type { CatData } from '@/hooks/useCatData';
 import type { BuiltinAccountClient, ProfileItem } from './hub-accounts.types';
 import type { CatStrategyEntry, StrategyType } from './hub-strategy-types';
 
 /** F340 P5: Renamed from ClientValue → ClientId (aligned with shared type). */
-export type ClientId = 'anthropic' | 'openai' | 'google' | 'kimi' | 'dare' | 'opencode' | 'antigravity';
+export type ClientId = 'anthropic' | 'openai' | 'google' | 'kimi' | 'dare' | 'opencode' | 'antigravity' | 'catagent';
 /** @deprecated F340: Use {@link ClientId} instead. */
 export type ClientValue = ClientId;
 export type SessionChainValue = 'true' | 'false';
@@ -71,6 +77,7 @@ export const CLIENT_OPTIONS: Array<{ value: ClientId; label: string }> = [
   { value: 'dare', label: 'Dare' },
   { value: 'opencode', label: 'OpenCode' },
   { value: 'antigravity', label: 'Antigravity' },
+  { value: 'catagent', label: 'CatAgent' },
 ];
 
 export const SESSION_CHAIN_OPTIONS: Array<{ value: SessionChainValue; label: string }> = [
@@ -104,6 +111,8 @@ export const CODEX_AUTH_MODE_OPTIONS: Array<{ value: CodexAuthMode; label: strin
 ];
 
 export const DEFAULT_ANTIGRAVITY_COMMAND_ARGS = '. --remote-debugging-port=9000';
+
+const GOOGLE_OWNED_DOMAINS = ['generativelanguage.googleapis.com', 'googleapis.com'];
 
 function isCliEffortValue(value: string | undefined): value is CliEffortValue {
   return value !== undefined && CLI_EFFORT_VALUES.includes(value as CliEffortValue);
@@ -212,32 +221,50 @@ function legacyProfileClient(profile: ProfileItem): BuiltinAccountClient | undef
   return undefined;
 }
 
-export function builtinAccountIdForClient(client: ClientId): string | null {
-  if (!isBuiltinClient(client)) return null;
-  switch (client) {
-    case 'anthropic':
-      return 'claude';
-    case 'openai':
-      return 'codex';
-    case 'google':
-      return 'gemini';
-    case 'kimi':
-      return 'kimi';
-    case 'dare':
-      return 'dare';
-    case 'opencode':
-      return 'opencode';
+function parseHostname(baseUrl: string | undefined): string | null {
+  if (!baseUrl) return null;
+  try {
+    return new URL(baseUrl).hostname.toLowerCase();
+  } catch {
+    return null;
   }
 }
 
+function isOfficialGoogleHostname(hostname: string): boolean {
+  return GOOGLE_OWNED_DOMAINS.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+}
+
+function isAllowedGoogleGatewayProfile(profile: ProfileItem): boolean {
+  if (profile.authType !== 'api_key') return false;
+  const hostname = parseHostname(profile.baseUrl);
+  return hostname !== null && !isOfficialGoogleHostname(hostname);
+}
+
+function resolveBuiltinClientFamily(client: ClientId): BuiltinAccountClient | null {
+  if (typeof builtinAccountFamilyForClient === 'function') {
+    const family = builtinAccountFamilyForClient(client);
+    if (family) return family;
+  }
+  if (isBuiltinClient(client)) return client;
+  if (client === 'catagent') return 'anthropic';
+  return null;
+}
+
+export function builtinAccountIdForClient(client: ClientId): string | null {
+  return sharedBuiltinAccountIdForClient(client);
+}
+
 export function filterAccounts(client: ClientId, profiles: ProfileItem[]): ProfileItem[] {
-  if (!isBuiltinClient(client)) return [];
+  const effective = resolveBuiltinClientFamily(client);
+  if (!effective || !isBuiltinClient(effective)) return [];
   const builtinProfiles = profiles.filter(
-    (profile) => profile.authType !== 'api_key' && legacyProfileClient(profile) === client,
+    (profile) => profile.authType !== 'api_key' && legacyProfileClient(profile) === effective,
   );
-  // Gemini CLI only supports builtin Google auth — no API key profiles.
-  if (client === 'google') return builtinProfiles;
-  if (client === 'kimi') {
+  if (effective === 'google') {
+    const gatewayProfiles = profiles.filter(isAllowedGoogleGatewayProfile);
+    return [...builtinProfiles, ...gatewayProfiles.filter((profile) => !builtinProfiles.includes(profile))];
+  }
+  if (effective === 'kimi') {
     const kimiApiProfiles = profiles.filter(
       (profile) => profile.authType === 'api_key' && legacyProfileClient(profile) === 'kimi',
     );
