@@ -12,19 +12,11 @@ export interface EditProfileData {
 interface ApiKeyCreateFormProps {
   onCreated: (profileId: string) => void;
   editProfile?: EditProfileData;
+  /** Target client identity (anthropic/openai/google/…) — persisted as account metadata. */
+  clientId?: string;
 }
 
-/** Infer provider from base URL for protocol detection. Falls back to 'custom'. */
-function inferProvider(url: string): string {
-  const lower = url.toLowerCase();
-  if (lower.includes('anthropic')) return 'anthropic';
-  if (lower.includes('openai.com') || lower.includes('openai.')) return 'openai';
-  if (lower.includes('googleapis') || lower.includes('generativelanguage')) return 'google';
-  if (lower.includes('openrouter')) return 'openrouter';
-  return 'custom';
-}
-
-export function ApiKeyCreateForm({ onCreated, editProfile }: ApiKeyCreateFormProps) {
+export function ApiKeyCreateForm({ onCreated, editProfile, clientId }: ApiKeyCreateFormProps) {
   const isEdit = Boolean(editProfile);
   const [displayName, setDisplayName] = useState(editProfile?.displayName ?? '');
   const [baseUrl, setBaseUrl] = useState(editProfile?.baseUrl ?? '');
@@ -46,10 +38,10 @@ export function ApiKeyCreateForm({ onCreated, editProfile }: ApiKeyCreateFormPro
     try {
       if (isEdit) {
         const patch: Record<string, string> = {};
-        if (displayName.trim()) patch.name = displayName.trim();
+        if (displayName.trim()) patch.displayName = displayName.trim();
         if (baseUrl.trim()) patch.baseUrl = baseUrl.trim();
         if (apiKey.trim()) patch.apiKey = apiKey.trim();
-        const res = await apiFetch(`/api/provider-profiles/${encodeURIComponent(editProfile!.id)}`, {
+        const res = await apiFetch(`/api/accounts/${encodeURIComponent(editProfile!.id)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(patch),
@@ -60,18 +52,16 @@ export function ApiKeyCreateForm({ onCreated, editProfile }: ApiKeyCreateFormPro
         }
         onCreated(editProfile!.id);
       } else {
-        const provider = inferProvider(baseUrl);
         const name = displayName.trim() || 'API Key';
-        const res = await apiFetch('/api/provider-profiles', {
+        const res = await apiFetch('/api/accounts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             displayName: name,
             authType: 'api_key',
-            provider,
+            ...(clientId ? { clientId } : {}),
             baseUrl: baseUrl.trim(),
             apiKey: apiKey.trim(),
-            setActive: false,
           }),
         });
         const body = (await res.json()) as { profile?: { id?: string }; error?: string };

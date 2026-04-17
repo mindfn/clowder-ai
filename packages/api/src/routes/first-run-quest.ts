@@ -14,6 +14,7 @@ import { resolveByAccountRef } from '../config/account-resolver.js';
 import { detectAvailableClients } from '../domains/cats/services/first-run-quest/client-detection.js';
 import type { FirstRunQuestStateV1, IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
+import { probeApiKey } from '../utils/api-key-probe.js';
 import { resolveUserId } from '../utils/request-identity.js';
 
 const execAsync = promisify(exec);
@@ -185,7 +186,7 @@ export const firstRunQuestRoutes: FastifyPluginAsync<FirstRunQuestRoutesOptions>
   /**
    * Probe provider API connectivity for a given profile.
    * - Builtin/OAuth profiles → CLI probe (tryCliProbe)
-   * - API-key profiles → delegate to existing POST /api/provider-profiles/:id/test
+   * - API-key profiles → direct probe via api-key-probe utility
    */
   app.post('/api/first-run/connectivity-test', async (request, reply) => {
     const userId = resolveUserId(request);
@@ -218,18 +219,10 @@ export const firstRunQuestRoutes: FastifyPluginAsync<FirstRunQuestRoutesOptions>
       return { ok: false, message: '内置认证需要通过 CLI 验证，请确认 CLI 已登录' };
     }
 
-    /* API-key profiles: delegate to the existing provider-profiles test endpoint */
-    const proxyRes = await app.inject({
-      method: 'POST',
-      url: `/api/provider-profiles/${encodeURIComponent(profileId)}/test`,
-      headers: {
-        'x-cat-cafe-user': userId,
-        'content-type': 'application/json',
-      },
-      payload: model ? { model } : {},
-    });
-
-    reply.status(proxyRes.statusCode);
-    return proxyRes.json();
+    /* API-key profiles: direct probe using resolved runtime credentials */
+    if (!runtime.baseUrl || !runtime.apiKey) {
+      return { ok: false, error: 'API Key 账号缺少 baseUrl 或 apiKey，请编辑补全' };
+    }
+    return probeApiKey(runtime.baseUrl, runtime.apiKey, { model, clientId });
   });
 };

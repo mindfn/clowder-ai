@@ -3,19 +3,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { HubAccountItem, type ProfileEditPayload } from './HubAccountItem';
-import { AccountsSummaryCard, CreateApiKeyAccountSection } from './hub-accounts.sections';
+import { AccountsSummaryCard } from './hub-accounts.sections';
 import type { AccountsResponse } from './hub-accounts.types';
 import { ensureBuiltinAccounts, resolveAccountActionId } from './hub-accounts.view';
+import { UnifiedAuthModal } from './UnifiedAuthModal';
 
 export function HubAccountsTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<AccountsResponse | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [createDisplayName, setCreateDisplayName] = useState('');
-  const [createBaseUrl, setCreateBaseUrl] = useState('');
-  const [createApiKey, setCreateApiKey] = useState('');
-  const [createModels, setCreateModels] = useState<string[]>([]);
+  const [showAuthModal, setShowAuthModal] = useState(false);
 
   const fetchAccounts = useCallback(async () => {
     setError(null);
@@ -55,40 +53,11 @@ export function HubAccountsTab() {
     return body;
   }, []);
 
-  const createAccount = useCallback(async () => {
-    if (!createDisplayName.trim()) {
-      setError('请输入账号显示名');
-      return;
-    }
-    if (!createBaseUrl.trim() || !createApiKey.trim()) {
-      setError('API Key 账号需要填写 baseUrl 和 apiKey');
-      return;
-    }
-    setBusyId('create');
-    setError(null);
-    try {
-      await callApi('/api/accounts', {
-        method: 'POST',
-        body: JSON.stringify({
-          displayName: createDisplayName.trim(),
-          authType: 'api_key',
-          baseUrl: createBaseUrl.trim(),
-          apiKey: createApiKey.trim(),
-          models: createModels,
-        }),
-      });
-      setCreateDisplayName('');
-      setCreateBaseUrl('');
-      setCreateApiKey('');
-      setCreateModels([]);
-      await fetchAccounts();
-      window.dispatchEvent(new CustomEvent('accounts-changed'));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusyId(null);
-    }
-  }, [callApi, createApiKey, createBaseUrl, createDisplayName, createModels, fetchAccounts]);
+  const handleAuthCreated = useCallback(async () => {
+    setShowAuthModal(false);
+    await fetchAccounts();
+    window.dispatchEvent(new CustomEvent('accounts-changed'));
+  }, [fetchAccounts]);
 
   const deleteAccount = useCallback(
     async (accountId: string) => {
@@ -153,21 +122,18 @@ export function HubAccountsTab() {
         ))}
       </div>
 
-      <CreateApiKeyAccountSection
-        displayName={createDisplayName}
-        baseUrl={createBaseUrl}
-        apiKey={createApiKey}
-        models={createModels}
-        busy={busyId === 'create'}
-        onDisplayNameChange={setCreateDisplayName}
-        onBaseUrlChange={setCreateBaseUrl}
-        onApiKeyChange={setCreateApiKey}
-        onModelsChange={setCreateModels}
-        onCreate={createAccount}
-      />
+      <button
+        type="button"
+        onClick={() => setShowAuthModal(true)}
+        className="w-full rounded-[20px] border border-[#E8C9AF] bg-[#F7EEE6] px-[18px] py-3 text-left text-base font-bold text-[#D49266] hover:bg-[#F1E7DF] transition"
+      >
+        + 新增账户认证
+      </button>
       <p className="text-xs leading-5 text-[#B59A88]">
         secrets 存储在 `~/.cat-cafe/credentials.json`（全局），Git 忽略。
       </p>
+
+      <UnifiedAuthModal open={showAuthModal} onClose={() => setShowAuthModal(false)} onCreated={handleAuthCreated} />
     </div>
   );
 }

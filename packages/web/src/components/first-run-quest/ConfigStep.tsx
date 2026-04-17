@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
+import type { AccountsResponse, ProfileItem } from '../hub-accounts.types';
 import { builtinAccountIdForClient, type ClientValue, filterAccounts } from '../hub-cat-editor.model';
-import type { ProfileItem, ProviderProfilesResponse } from '../hub-provider-profiles.types';
 import type { EditProfileData } from './ApiKeyCreateForm';
 import { AuthProfileModal } from './AuthProfileModal';
 import { ProfileCard } from './ProfileCard';
@@ -40,8 +40,8 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
   const testCacheRef = useRef<Map<string, { ok: boolean; message?: string }>>(new Map());
 
   const fetchProfiles = useCallback(async () => {
-    const res = await apiFetch('/api/provider-profiles');
-    const body = (await res.json()) as ProviderProfilesResponse;
+    const res = await apiFetch('/api/accounts');
+    const body = (await res.json()) as AccountsResponse;
     setProfiles(body.providers);
     return body.providers;
   }, []);
@@ -203,6 +203,7 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
         }}
         onCreated={handleProfileCreated}
         editProfile={editProfile}
+        clientId={clientId}
       />
     </div>
   );

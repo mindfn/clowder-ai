@@ -226,16 +226,15 @@ describe('POST /api/first-run/connectivity-test', () => {
     else process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = savedGlobalRoot;
   }
 
-  async function createTestApp(fetchImpl) {
+  async function createTestApp(fetchMock) {
     const { firstRunQuestRoutes } = await import('../dist/routes/first-run-quest.js');
-    const { providerProfilesRoutes } = await import('../dist/routes/provider-profiles.js');
+    const { accountsRoutes } = await import('../dist/routes/accounts.js');
     const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
     const app = Fastify();
     await app.register(firstRunQuestRoutes, { threadStore: new ThreadStore() });
-    /* fetchImpl goes to provider-profiles — connectivity-test delegates to it via app.inject() */
-    await app.register(providerProfilesRoutes, {
-      fetchImpl: fetchImpl ?? (async () => new Response('{}', { status: 200 })),
-    });
+    await app.register(accountsRoutes);
+    /* probeApiKey uses global fetch — mock it for test control */
+    if (fetchMock) global.fetch = fetchMock;
     return app;
   }
 
@@ -285,28 +284,26 @@ describe('POST /api/first-run/connectivity-test', () => {
     }
   });
 
-  test('probes anthropic protocol with fetchImpl and returns ok on success', async () => {
+  test('probes anthropic protocol and returns ok on success', async () => {
     const calls = [];
-    const fetchImpl = async (url, init) => {
-      calls.push({ url: String(url), method: init?.method });
-      return new Response('{"id":"msg_test"}', { status: 200 });
-    };
+    const savedFetch = global.fetch;
     const projectDir = await mkdtemp(join(homedir(), '.cat-cafe-frq-test-'));
     setGlobalRoot(projectDir);
     try {
-      const app = await createTestApp(fetchImpl);
-      // Create a profile via provider-profiles route
+      const fetchMock = async (url, init) => {
+        calls.push({ url: String(url), method: init?.method });
+        return new Response('{"id":"msg_test"}', { status: 200 });
+      };
+      const app = await createTestApp(fetchMock);
       const createRes = await app.inject({
         method: 'POST',
-        url: '/api/provider-profiles',
+        url: '/api/accounts',
         headers: { ...AUTH_HEADERS, 'content-type': 'application/json' },
         payload: {
           displayName: 'test-key',
           authType: 'api_key',
-          provider: 'anthropic',
           baseUrl: 'https://api.anthropic.test',
           apiKey: 'sk-test-123',
-          setActive: false,
         },
       });
       const profileId = createRes.json().profile.id;
@@ -321,10 +318,10 @@ describe('POST /api/first-run/connectivity-test', () => {
       assert.equal(res.statusCode, 200);
       const body = res.json();
       assert.equal(body.ok, true);
-      /* Model-specific probe: anthropic uses /v1/messages with the selected model */
       assert.ok(calls.some((c) => c.url.includes('/v1/messages')));
       await app.close();
     } finally {
+      global.fetch = savedFetch;
       restoreGlobalRoot();
       await rm(projectDir, { recursive: true, force: true });
     }
@@ -332,25 +329,24 @@ describe('POST /api/first-run/connectivity-test', () => {
 
   test('probes openai protocol with selected model via chat/completions', async () => {
     const calls = [];
-    const fetchImpl = async (url, init) => {
-      calls.push({ url: String(url), method: init?.method });
-      return new Response('{"id":"chatcmpl-test"}', { status: 200 });
-    };
+    const savedFetch = global.fetch;
     const projectDir = await mkdtemp(join(homedir(), '.cat-cafe-frq-test-'));
     setGlobalRoot(projectDir);
     try {
-      const app = await createTestApp(fetchImpl);
+      const fetchMock = async (url, init) => {
+        calls.push({ url: String(url), method: init?.method });
+        return new Response('{"id":"chatcmpl-test"}', { status: 200 });
+      };
+      const app = await createTestApp(fetchMock);
       const createRes = await app.inject({
         method: 'POST',
-        url: '/api/provider-profiles',
+        url: '/api/accounts',
         headers: { ...AUTH_HEADERS, 'content-type': 'application/json' },
         payload: {
           displayName: 'openai-test',
           authType: 'api_key',
-          provider: 'openai',
           baseUrl: 'https://api.openai.test',
           apiKey: 'sk-openai-test',
-          setActive: false,
         },
       });
       const profileId = createRes.json().profile.id;
@@ -363,10 +359,10 @@ describe('POST /api/first-run/connectivity-test', () => {
       });
       assert.equal(res.statusCode, 200);
       assert.equal(res.json().ok, true);
-      /* Model-specific probe: openai uses /v1/chat/completions with the selected model */
       assert.ok(calls.some((c) => c.url.includes('/v1/chat/completions')));
       await app.close();
     } finally {
+      global.fetch = savedFetch;
       restoreGlobalRoot();
       await rm(projectDir, { recursive: true, force: true });
     }
@@ -374,25 +370,24 @@ describe('POST /api/first-run/connectivity-test', () => {
 
   test('works with custom provider (openrouter) without 400 selector error', async () => {
     const calls = [];
-    const fetchImpl = async (url, init) => {
-      calls.push({ url: String(url), method: init?.method });
-      return new Response('{"id":"chatcmpl-or"}', { status: 200 });
-    };
+    const savedFetch = global.fetch;
     const projectDir = await mkdtemp(join(homedir(), '.cat-cafe-frq-test-'));
     setGlobalRoot(projectDir);
     try {
-      const app = await createTestApp(fetchImpl);
+      const fetchMock = async (url, init) => {
+        calls.push({ url: String(url), method: init?.method });
+        return new Response('{"id":"chatcmpl-or"}', { status: 200 });
+      };
+      const app = await createTestApp(fetchMock);
       const createRes = await app.inject({
         method: 'POST',
-        url: '/api/provider-profiles',
+        url: '/api/accounts',
         headers: { ...AUTH_HEADERS, 'content-type': 'application/json' },
         payload: {
           displayName: 'openrouter-key',
           authType: 'api_key',
-          provider: 'openrouter',
           baseUrl: 'https://openrouter.ai/api/v1',
           apiKey: 'sk-or-test',
-          setActive: false,
         },
       });
       const profileId = createRes.json().profile.id;
@@ -404,34 +399,33 @@ describe('POST /api/first-run/connectivity-test', () => {
         headers: { ...AUTH_HEADERS, 'content-type': 'application/json' },
         payload: { profileId, clientId: 'openrouter' },
       });
-      // Must NOT be 400 — previously failed with "profile not found" due to assertProviderSelector
       assert.notEqual(res.statusCode, 400, 'custom provider should not trigger selector error');
       assert.equal(res.statusCode, 200);
       assert.equal(res.json().ok, true);
       await app.close();
     } finally {
+      global.fetch = savedFetch;
       restoreGlobalRoot();
       await rm(projectDir, { recursive: true, force: true });
     }
   });
 
-  test('delegates to provider-profiles test and returns error on 401', async () => {
-    const fetchImpl = async () => new Response('Unauthorized', { status: 401 });
+  test('returns error on 401 from api-key probe', async () => {
+    const savedFetch = global.fetch;
     const projectDir = await mkdtemp(join(homedir(), '.cat-cafe-frq-test-'));
     setGlobalRoot(projectDir);
     try {
-      const app = await createTestApp(fetchImpl);
+      const fetchMock = async () => new Response('Unauthorized', { status: 401 });
+      const app = await createTestApp(fetchMock);
       const createRes = await app.inject({
         method: 'POST',
-        url: '/api/provider-profiles',
+        url: '/api/accounts',
         headers: { ...AUTH_HEADERS, 'content-type': 'application/json' },
         payload: {
           displayName: 'bad-key',
           authType: 'api_key',
-          provider: 'anthropic',
           baseUrl: 'https://api.anthropic.test',
           apiKey: 'sk-bad',
-          setActive: false,
         },
       });
       const profileId = createRes.json().profile.id;
@@ -447,6 +441,7 @@ describe('POST /api/first-run/connectivity-test', () => {
       assert.equal(res.json().status, 401);
       await app.close();
     } finally {
+      global.fetch = savedFetch;
       restoreGlobalRoot();
       await rm(projectDir, { recursive: true, force: true });
     }

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
-import type { ProfileItem } from '../hub-provider-profiles.types';
+import type { ProfileItem } from '../hub-accounts.types';
 
 interface ProfileCardProps {
   profile: ProfileItem;
@@ -49,7 +49,7 @@ export function ProfileCard({
 
   const updateModels = async (updated: string[]): Promise<boolean> => {
     setModelError('');
-    const res = await apiFetch(`/api/provider-profiles/${encodeURIComponent(profile.id)}`, {
+    const res = await apiFetch(`/api/accounts/${encodeURIComponent(profile.id)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ models: updated }),

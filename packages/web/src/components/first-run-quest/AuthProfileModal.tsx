@@ -7,9 +7,11 @@ interface AuthProfileModalProps {
   onClose: () => void;
   onCreated: (profileId: string) => void;
   editProfile?: EditProfileData;
+  /** Target client identity — forwarded to ApiKeyCreateForm for account metadata. */
+  clientId?: string;
 }
 
-export function AuthProfileModal({ open, onClose, onCreated, editProfile }: AuthProfileModalProps) {
+export function AuthProfileModal({ open, onClose, onCreated, editProfile, clientId }: AuthProfileModalProps) {
   if (!open) return null;
 
   return (
@@ -34,6 +36,7 @@ export function AuthProfileModal({ open, onClose, onCreated, editProfile }: Auth
         <ApiKeyCreateForm
           key={editProfile?.id ?? 'create'}
           editProfile={editProfile}
+          clientId={clientId}
           onCreated={(id) => {
             onCreated(id);
             onClose();

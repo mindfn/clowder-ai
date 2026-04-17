@@ -235,7 +235,7 @@ describe('CatCafeHub provider profiles tab', () => {
     expect(container.textContent).toContain('Dare (client-auth)');
     expect(container.textContent).not.toContain('OAuth-like');
     expect(container.textContent).not.toContain('内置认证');
-    expect(container.textContent).toContain('新建 API Key 账号');
+    expect(container.textContent).toContain('新增账户认证');
     expect(container.textContent).not.toContain('布偶猫救援中心');
     expect(mockApiFetch).not.toHaveBeenCalledWith('/api/claude-rescue/sessions');
   });
@@ -443,30 +443,32 @@ describe('CatCafeHub provider profiles tab', () => {
 
     expect(container.textContent).toContain('内置');
     expect(container.textContent).toContain('系统配置 > 账号配置');
-    expect(container.textContent).toContain('+ 新建 API Key 账号');
+    expect(container.textContent).toContain('+ 新增账户认证');
     expect(container.textContent).not.toContain('默认/覆盖模型');
 
-    // Form is collapsed by default — expand it
-    const expandButton = Array.from(container.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('新建 API Key 账号'),
+    // Open unified auth modal
+    const openButton = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('新增账户认证'),
     )!;
     await act(async () => {
-      expandButton.click();
+      openButton.click();
     });
     await flushEffects();
 
-    expect(container.querySelector('input[placeholder*="API 服务地址"]')).toBeTruthy();
-    // Protocol is auto-inferred, no manual selector
-    expect(container.textContent).not.toContain('API 协议');
-    const createApiKeyInput = container.querySelector('input[placeholder*="sk-"]') as HTMLInputElement | null;
+    // Modal shows API Key creation form directly (builtins are auto-configured)
+    expect(document.body.textContent).toContain('新增 API Key 认证');
+    expect(document.body.textContent).toContain('目标客户端');
+
+    expect(document.querySelector('input[placeholder*="api.example.com"]')).toBeTruthy();
+    const createApiKeyInput = document.querySelector('input[placeholder*="sk-"]') as HTMLInputElement | null;
     expect(createApiKeyInput).toBeTruthy();
     expect(createApiKeyInput?.type).toBe('password');
     expect(createApiKeyInput?.getAttribute('autocomplete')).toBe('off');
-    expect(container.textContent).toContain('+ 添加模型');
+    expect(document.body.textContent).toContain('+ 添加模型');
 
     const profileList = container.querySelector('[aria-label="Account List"]');
     expect(profileList?.textContent).not.toContain('Antigravity');
-    expect(container.textContent).toContain('可用模型');
+    expect(document.body.textContent).toContain('可用模型');
     expect(container.textContent).not.toContain('测试');
   });
 
@@ -514,21 +516,24 @@ describe('CatCafeHub provider profiles tab', () => {
     });
     await flushEffects();
 
-    // Expand the collapsed create form
-    const expandButton = Array.from(container.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('新建 API Key 账号'),
+    // Open unified auth modal (now API-key-only, no tab switching needed)
+    const openButton = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('新增账户认证'),
     )!;
     await act(async () => {
-      expandButton.click();
+      openButton.click();
     });
     await flushEffects();
 
-    const displayNameInput = container.querySelector('input[placeholder*="账号显示名"]') as HTMLInputElement;
-    const baseUrlInput = container.querySelector('input[placeholder*="API 服务地址"]') as HTMLInputElement;
-    const apiKeyInput = container.querySelector('input[placeholder*="sk-"]') as HTMLInputElement;
+    expect(document.body.textContent).toContain('新增 API Key 认证');
+    expect(document.body.textContent).toContain('目标客户端');
+
+    const displayNameInput = document.querySelector('input[placeholder*="my-glm"]') as HTMLInputElement;
+    const baseUrlInput = document.querySelector('input[placeholder*="api.example.com"]') as HTMLInputElement;
+    const apiKeyInput = document.querySelector('input[placeholder*="sk-"]') as HTMLInputElement;
     expect(apiKeyInput.type).toBe('password');
     expect(apiKeyInput.getAttribute('autocomplete')).toBe('off');
-    const createButton = queryButton(container, '创建');
+    const createButton = queryButton(document.body as HTMLElement, '创建');
 
     await changeField(displayNameInput, 'Sponsor Gemini');
     await changeField(baseUrlInput, 'https://llm.sponsor.example/v1');
@@ -539,9 +544,9 @@ describe('CatCafeHub provider profiles tab', () => {
     expect(createButton.disabled).toBe(true);
 
     // Verify the form uses a tag editor (not a textarea) for models
-    expect(container.querySelector('textarea[aria-label="Supported Models"]')).toBeNull();
-    expect(container.textContent).toContain('可用模型');
-    expect(container.textContent).toContain('至少添加 1 个模型');
+    expect(document.querySelector('textarea[aria-label="Supported Models"]')).toBeNull();
+    expect(document.body.textContent).toContain('可用模型');
+    expect(document.body.textContent).toContain('至少添加 1 个模型');
   });
 
   it('creates api-key profile without projectPath (global profiles stored in ~/.cat-cafe/)', async () => {
@@ -590,24 +595,24 @@ describe('CatCafeHub provider profiles tab', () => {
     });
     await flushEffects();
 
-    // Expand the collapsed create form
-    const expandButton = Array.from(container.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('新建 API Key 账号'),
+    // Open unified auth modal (now API-key-only, no tab switching needed)
+    const openButton = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('新增账户认证'),
     )!;
     await act(async () => {
-      expandButton.click();
+      openButton.click();
     });
     await flushEffects();
 
-    const displayNameInput = container.querySelector('input[placeholder*="账号显示名"]') as HTMLInputElement;
-    const baseUrlInput = container.querySelector('input[placeholder*="API 服务地址"]') as HTMLInputElement;
-    const apiKeyInput = container.querySelector('input[placeholder*="sk-"]') as HTMLInputElement;
+    const displayNameInput = document.querySelector('input[placeholder*="my-glm"]') as HTMLInputElement;
+    const baseUrlInput = document.querySelector('input[placeholder*="api.example.com"]') as HTMLInputElement;
+    const apiKeyInput = document.querySelector('input[placeholder*="sk-"]') as HTMLInputElement;
 
     await changeField(displayNameInput, 'Sponsor Gemini');
     await changeField(baseUrlInput, 'https://llm.sponsor.example/v1');
     await changeField(apiKeyInput, 'sk-test');
 
-    const addButtons = Array.from(container.querySelectorAll('button')).filter(
+    const addButtons = Array.from(document.querySelectorAll('button')).filter(
       (button) => button.textContent?.trim() === '+ 添加模型',
     );
     const createFormAddButton = addButtons[addButtons.length - 1] as HTMLButtonElement;
@@ -615,10 +620,10 @@ describe('CatCafeHub provider profiles tab', () => {
       createFormAddButton.click();
     });
 
-    const tagDraftInput = container.querySelector('input[placeholder*="输入模型名"]') as HTMLInputElement;
+    const tagDraftInput = document.querySelector('input[placeholder*="输入模型名"]') as HTMLInputElement;
     await changeField(tagDraftInput, 'gemini-2.5-pro');
 
-    const confirmAddButton = Array.from(container.querySelectorAll('button')).find(
+    const confirmAddButton = Array.from(document.querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === '添加',
     ) as HTMLButtonElement | undefined;
     expect(confirmAddButton).toBeTruthy();
@@ -626,7 +631,7 @@ describe('CatCafeHub provider profiles tab', () => {
       confirmAddButton?.click();
     });
 
-    const createButton = queryButton(container, '创建');
+    const createButton = queryButton(document.body as HTMLElement, '创建');
     expect(createButton.disabled).toBe(false);
 
     await act(async () => {

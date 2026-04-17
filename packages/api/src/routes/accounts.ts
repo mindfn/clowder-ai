@@ -48,7 +48,7 @@ function accountToView(id: string, account: AccountConfig, apiKeyPresent: boolea
     kind: isBuiltin ? 'builtin' : ('api_key' as const),
     authType: account.authType,
     builtin: isBuiltin,
-    ...(isBuiltin ? { clientId: builtinClient } : {}),
+    ...(isBuiltin ? { clientId: builtinClient } : account.clientId ? { clientId: account.clientId } : {}),
     ...(account.baseUrl ? { baseUrl: account.baseUrl } : {}),
     models: account.models ? [...account.models] : [],
     hasApiKey: apiKeyPresent,
@@ -115,6 +115,8 @@ const createBodySchema = z
   .object({
     projectPath: z.string().optional(),
     provider: z.string().trim().min(1).optional(),
+    /** F140: Explicit client identity for API key accounts. */
+    clientId: z.string().trim().min(1).optional(),
     name: z.string().trim().min(1).optional(),
     displayName: z.string().trim().min(1).optional(),
     mode: modeEnum.optional(),
@@ -146,6 +148,7 @@ const createBodySchema = z
 const updateBodySchema = z.object({
   projectPath: z.string().optional(),
   provider: z.string().trim().min(1).optional(),
+  clientId: z.string().trim().min(1).optional(),
   name: z.string().trim().min(1).optional(),
   displayName: z.string().trim().min(1).optional(),
   mode: modeEnum.optional(),
@@ -245,6 +248,7 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
       // accountRef binding; system callers use well-known builtin IDs.
       const account: AccountConfig = {
         authType: (body.authType as 'oauth' | 'api_key') ?? 'api_key',
+        ...(body.clientId ? { clientId: body.clientId } : {}),
         ...(body.baseUrl ? { baseUrl: body.baseUrl } : {}),
         ...(body.models ? { models: body.models } : {}),
         ...((body.displayName ?? body.name) ? { displayName: body.displayName ?? body.name } : {}),
@@ -301,6 +305,11 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
       // F340: protocol not persisted — derived at runtime from well-known account IDs.
       const account: AccountConfig = {
         authType: (parsed.data.authType as 'oauth' | 'api_key') ?? existing.authType,
+        ...(parsed.data.clientId
+          ? { clientId: parsed.data.clientId }
+          : existing.clientId
+            ? { clientId: existing.clientId }
+            : {}),
         ...(parsed.data.baseUrl != null
           ? { baseUrl: parsed.data.baseUrl || undefined }
           : existing.baseUrl
