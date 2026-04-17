@@ -102,30 +102,30 @@ export function ProfileCard({
 
       {isExpanded && (
         <div className="space-y-2 border-t border-amber-100 px-3 py-2">
-          {profile.authType === 'oauth' ? (
-            <p className="text-xs text-gray-500">内置 OAuth 认证账号</p>
-          ) : (
-            <div className="flex items-start justify-between">
-              <div className="space-y-0.5">
-                <p className="truncate text-[11px] text-gray-400">
-                  {profile.baseUrl || (profile.clientId && PROVIDER_DEFAULT_HOST[profile.clientId]) || ''}
-                </p>
-                <p className="text-xs text-gray-500">
-                  API Key: {profile.hasApiKey ? '已配置' : '未配置'}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit();
-                }}
-                className="shrink-0 text-[11px] text-amber-500 hover:text-amber-700"
-              >
-                编辑
-              </button>
+          <div className="flex items-start justify-between">
+            <div className="space-y-0.5">
+              {profile.authType === 'oauth' ? (
+                <p className="text-xs text-gray-500">OAuth 认证账号</p>
+              ) : (
+                <>
+                  <p className="truncate text-[11px] text-gray-400">
+                    {profile.baseUrl || (profile.clientId && PROVIDER_DEFAULT_HOST[profile.clientId]) || ''}
+                  </p>
+                  <p className="text-xs text-gray-500">API Key: {profile.hasApiKey ? '已配置' : '未配置'}</p>
+                </>
+              )}
             </div>
-          )}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit();
+              }}
+              className="shrink-0 text-[11px] text-amber-500 hover:text-amber-700"
+            >
+              编辑
+            </button>
+          </div>
 
           {/* Model chips with add/delete */}
           <div>

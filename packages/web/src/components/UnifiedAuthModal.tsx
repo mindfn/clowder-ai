@@ -10,7 +10,13 @@ const CLIENT_OPTIONS: BuiltinAccountClient[] = ['anthropic', 'openai', 'google',
 
 /** Suggested models per client — kept in sync with cat-template.json clientDefaults. */
 const MODEL_SUGGESTIONS: Partial<Record<BuiltinAccountClient, string[]>> = {
-  anthropic: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-opus-4-6[1m]', 'claude-sonnet-4-5-20250929', 'claude-opus-4-5-20251101'],
+  anthropic: [
+    'claude-sonnet-4-6',
+    'claude-opus-4-6',
+    'claude-opus-4-6[1m]',
+    'claude-sonnet-4-5-20250929',
+    'claude-opus-4-5-20251101',
+  ],
   openai: ['gpt-5.4', 'gpt-5.3-codex', 'gpt-5.3-codex-spark'],
   google: ['gemini-2.5-pro', 'gemini-3-flash-preview', 'gemini-3.1-pro-preview'],
   dare: ['claude-sonnet-4-6'],
@@ -134,7 +140,10 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
             authType: 'oauth',
             clientId: effectiveClientId,
             ...(models.length > 0 ? { models } : {}),
-            ...(() => { const ev = buildEnvVars(); return ev ? { envVars: ev } : {}; })(),
+            ...(() => {
+              const ev = buildEnvVars();
+              return ev ? { envVars: ev } : {};
+            })(),
           }),
         });
         const body = (await res.json()) as { profile?: { id?: string }; error?: string };
@@ -155,7 +164,10 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
             baseUrl: baseUrl.trim(),
             apiKey: apiKey.trim(),
             models,
-            ...(() => { const ev = buildEnvVars(); return ev ? { envVars: ev } : {}; })(),
+            ...(() => {
+              const ev = buildEnvVars();
+              return ev ? { envVars: ev } : {};
+            })(),
           }),
         });
         const body = (await res.json()) as { profile?: { id?: string }; error?: string };
@@ -193,12 +205,8 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
           </button>
         </div>
 
-        <p className="mb-1 text-[11px] text-[#B59A88]">
-          {isEdit ? '编辑账户' : '系统配置 > 账户配置 > 添加认证'}
-        </p>
-        <h4 className="mb-4 text-base font-semibold text-[#5C4D42]">
-          {isEdit ? '编辑账户认证' : '添加账户认证'}
-        </h4>
+        <p className="mb-1 text-[11px] text-[#B59A88]">{isEdit ? '编辑账户' : '系统配置 > 账户配置 > 添加认证'}</p>
+        <h4 className="mb-4 text-base font-semibold text-[#5C4D42]">{isEdit ? '编辑账户认证' : '添加账户认证'}</h4>
 
         {/* Mode toggle — only in create mode */}
         {!isEdit && (
@@ -210,7 +218,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                 isOAuth ? 'bg-[#D49266] text-white shadow-sm' : 'text-[#8A776B] hover:bg-[#F5EDE6]'
               }`}
             >
-              内置 Client
+              OAuth
             </button>
             <button
               type="button"
@@ -239,7 +247,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
           {/* OAuth mode: Client dropdown */}
           {isOAuth && (
             <div className="rounded-lg border border-[#E8DCCF] bg-[#FAF7F4] p-3">
-              <label className="mb-1 block text-xs font-medium text-[#8A776B]">Client (内置 Client)</label>
+              <label className="mb-1 block text-xs font-medium text-[#8A776B]">Client</label>
               {initialClientId ? (
                 <p className="text-sm text-[#5C4D42]">{builtinClientLabel(initialClientId)}</p>
               ) : (
@@ -377,9 +385,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                   ))}
                   {envEntries.some((e) => e.key.trim() && !isValidEnvKey(e.key.trim())) && (
                     <p className="text-[10px] text-red-500">
-                      {envEntries.some((e) => e.key.trim().startsWith('CAT_CAFE_'))
-                        ? 'CAT_CAFE_ 前缀为系统保留；'
-                        : ''}
+                      {envEntries.some((e) => e.key.trim().startsWith('CAT_CAFE_')) ? 'CAT_CAFE_ 前缀为系统保留；' : ''}
                       变量名须以大写字母或下划线开头，仅含 A-Z、0-9、_
                     </p>
                   )}

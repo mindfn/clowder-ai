@@ -119,11 +119,23 @@ export function HubAccountsTab() {
     <div className="space-y-4">
       {error && <p className="text-sm text-red-500 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
 
-      <div className="px-1">
-        <p className="text-[13px] font-semibold text-[#E29578]">系统配置 &gt; 账号配置</p>
-        <p className="mt-1 text-[13px] leading-6 text-[#8A776B]">
-          每个账号可添加或删除模型。账号配置全局共享，所有项目通用。
-        </p>
+      <div className="flex items-start justify-between gap-3 px-1">
+        <div>
+          <p className="text-[13px] font-semibold text-[#E29578]">系统配置 &gt; 账号配置</p>
+          <p className="mt-1 text-[13px] leading-6 text-[#8A776B]">
+            每个账号可添加或删除模型。账号配置全局共享，所有项目通用。
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setEditTarget(undefined);
+            setShowAuthModal(true);
+          }}
+          className="shrink-0 rounded-full bg-[#D49266] px-4 py-1.5 text-xs font-semibold text-white hover:bg-[#c47f52] transition"
+        >
+          + 新增账户认证
+        </button>
       </div>
 
       <div role="group" aria-label="Account List" className="space-y-4">
@@ -139,20 +151,16 @@ export function HubAccountsTab() {
         ))}
       </div>
 
-      <button
-        type="button"
-        onClick={() => { setEditTarget(undefined); setShowAuthModal(true); }}
-        className="w-full rounded-[20px] bg-[#F7EEE6] px-[18px] py-3 text-left text-base font-bold text-[#D49266] hover:bg-[#F1E7DF] transition"
-      >
-        + 新增账户认证
-      </button>
       <p className="text-xs leading-5 text-[#B59A88]">
         secrets 存储在 `~/.cat-cafe/credentials.json`（全局），Git 忽略。
       </p>
 
       <UnifiedAuthModal
         open={showAuthModal}
-        onClose={() => { setShowAuthModal(false); setEditTarget(undefined); }}
+        onClose={() => {
+          setShowAuthModal(false);
+          setEditTarget(undefined);
+        }}
         onCreated={handleAuthCreated}
         editProfile={editTarget}
       />
