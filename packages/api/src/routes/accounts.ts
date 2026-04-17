@@ -106,6 +106,8 @@ const MONOREPO_ROOT = findMonorepoRoot();
 
 const authTypeEnum = z.enum(['oauth', 'api_key']);
 const modeEnum = z.enum(['subscription', 'api_key']);
+/** F140: restrict clientId to known clients — prevents silent data rot when frontend truststhis as enum. */
+const accountClientEnum = z.enum(['anthropic', 'openai', 'google', 'kimi', 'dare', 'opencode']);
 
 const projectQuerySchema = z.object({
   projectPath: z.string().optional(),
@@ -116,7 +118,7 @@ const createBodySchema = z
     projectPath: z.string().optional(),
     provider: z.string().trim().min(1).optional(),
     /** F140: Explicit client identity for API key accounts. */
-    clientId: z.string().trim().min(1).optional(),
+    clientId: accountClientEnum.optional(),
     name: z.string().trim().min(1).optional(),
     displayName: z.string().trim().min(1).optional(),
     mode: modeEnum.optional(),
@@ -148,7 +150,7 @@ const createBodySchema = z
 const updateBodySchema = z.object({
   projectPath: z.string().optional(),
   provider: z.string().trim().min(1).optional(),
-  clientId: z.string().trim().min(1).optional(),
+  clientId: accountClientEnum.optional(),
   name: z.string().trim().min(1).optional(),
   displayName: z.string().trim().min(1).optional(),
   mode: modeEnum.optional(),

@@ -123,4 +123,119 @@ describe('FirstRunQuestWizard', () => {
     // Should degrade gracefully, not crash
     expect(container.textContent).toContain('暂无可用角色模板');
   });
+
+  it('sends clientId (not client) in POST /api/cats payload', async () => {
+    let catsPayload: Record<string, unknown> | null = null;
+
+    mockApiFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes('/api/cat-templates')) {
+        return jsonResponse({
+          templates: [
+            {
+              id: 'ragdoll',
+              name: '布偶猫',
+              nickname: '宪宪',
+              avatar: '/avatars/opus.png',
+              color: { primary: '#9B7EBD', secondary: '#E8DFF5' },
+              roleDescription: '主架构师',
+              personality: '温柔',
+            },
+          ],
+        });
+      }
+      if (url.includes('/api/first-run/available-clients')) {
+        return jsonResponse({
+          clients: [
+            { client: 'claude', provider: 'anthropic', label: 'Claude', cli: 'claude', installed: true, hasApiKey: false },
+          ],
+        });
+      }
+      if (url.includes('/api/accounts')) {
+        return jsonResponse({
+          providers: [
+            {
+              id: 'claude',
+              displayName: 'Claude (OAuth)',
+              name: 'Claude (OAuth)',
+              authType: 'oauth',
+              kind: 'builtin',
+              builtin: true,
+              mode: 'subscription',
+              models: ['claude-opus-4-6'],
+              hasApiKey: false,
+              createdAt: '2026-01-01',
+              updatedAt: '2026-01-01',
+            },
+          ],
+        });
+      }
+      if (url.includes('/api/first-run/connectivity-test')) {
+        return jsonResponse({ ok: true, message: '连接成功' });
+      }
+      if (url === '/api/cats' && init?.method === 'POST') {
+        catsPayload = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return jsonResponse({ cat: { id: 'ragdoll-test', displayName: '布偶猫' } });
+      }
+      if (url === '/api/threads' && init?.method === 'POST') {
+        return jsonResponse({ id: 'thread-test-123' });
+      }
+      if (url === '/api/threads') {
+        return jsonResponse({ threads: [] });
+      }
+      return jsonResponse({});
+    });
+
+    await act(async () => {
+      root.render(<WizardHost />);
+    });
+    await flushEffects();
+
+    // Step 1: select template
+    const templateButton = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('布偶猫'),
+    );
+    expect(templateButton).toBeTruthy();
+    await act(async () => {
+      templateButton!.click();
+    });
+    await flushEffects();
+
+    // Step 2: select client
+    const clientButton = Array.from(document.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Claude'),
+    );
+    expect(clientButton).toBeTruthy();
+    await act(async () => {
+      clientButton!.click();
+    });
+    await flushEffects();
+
+    // Step 3: profile auto-selected, select model, test, then create
+    // Click test button
+    const testButton = Array.from(document.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('测试连接'),
+    );
+    if (testButton) {
+      await act(async () => {
+        testButton.click();
+      });
+      await flushEffects();
+    }
+
+    // Click create button
+    const createButton = Array.from(document.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('创建猫猫'),
+    );
+    if (createButton && !createButton.disabled) {
+      await act(async () => {
+        createButton.click();
+      });
+      await flushEffects();
+    }
+
+    // Assert: POST /api/cats must use clientId, not client
+    expect(catsPayload).not.toBeNull();
+    expect(catsPayload!.clientId).toBe('anthropic');
+    expect(catsPayload!.client).toBeUndefined();
+  });
 });

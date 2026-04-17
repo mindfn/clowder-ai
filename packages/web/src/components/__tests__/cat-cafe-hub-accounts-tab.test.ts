@@ -642,6 +642,9 @@ describe('CatCafeHub provider profiles tab', () => {
     // Global profiles: no projectPath in POST body
     expect(createPayload).not.toBeNull();
     expect((createPayload as unknown as Record<string, unknown>)?.projectPath).toBeUndefined();
+    // F140: clientId must be a valid enum value, not a bare string
+    expect((createPayload as unknown as Record<string, unknown>)?.clientId).toBe('anthropic');
+    expect((createPayload as unknown as Record<string, unknown>)?.authType).toBe('api_key');
   });
 
   it('shows built-in and custom provider cards together without the old filter tabs', async () => {
