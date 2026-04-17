@@ -5,11 +5,13 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import type { InvocationRegistry } from '../domains/cats/services/agents/invocation/InvocationRegistry.js';
 import type { AuthorizationManager } from '../domains/cats/services/auth/AuthorizationManager.js';
-import { requireCallbackAuth } from './callback-auth-prehandler.js';
+import { registerCallbackAuthHook, requireCallbackAuth } from './callback-auth-prehandler.js';
 
 export interface CallbackAuthRoutesOptions {
   authManager: AuthorizationManager;
+  registry: InvocationRegistry;
 }
 
 const requestPermissionSchema = z.object({
@@ -23,7 +25,8 @@ const permissionStatusSchema = z.object({
 });
 
 export const callbackAuthRoutes: FastifyPluginAsync<CallbackAuthRoutesOptions> = async (app, opts) => {
-  const { authManager } = opts;
+  const { authManager, registry } = opts;
+  registerCallbackAuthHook(app, registry);
 
   // POST /api/callbacks/request-permission
   app.post('/api/callbacks/request-permission', async (request, reply) => {

@@ -28,7 +28,9 @@ interface CallbackAuthRegistry {
  *  - Only one header present → immediate 401 (malformed request)
  */
 export function registerCallbackAuthHook(app: FastifyInstance, registry: CallbackAuthRegistry): void {
-  app.decorateRequest('callbackAuth', undefined);
+  if (!app.hasRequestDecorator('callbackAuth')) {
+    app.decorateRequest('callbackAuth', undefined);
+  }
   app.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
     const invocationId = firstHeaderValue(request.headers['x-invocation-id']);
     const callbackToken = firstHeaderValue(request.headers['x-callback-token']);

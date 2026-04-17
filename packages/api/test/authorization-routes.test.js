@@ -18,7 +18,7 @@ const { AuthorizationAuditStore } = await import(
 const { AuthorizationManager } = await import('../dist/domains/cats/services/auth/AuthorizationManager.js');
 const { callbackAuthRoutes } = await import('../dist/routes/callback-auth.js');
 const { authorizationRoutes } = await import('../dist/routes/authorization.js');
-const { registerCallbackAuthHook } = await import('../dist/routes/callback-auth-prehandler.js');
+// registerCallbackAuthHook is called internally by callbackAuthRoutes
 
 function createMockSocketManager() {
   const events = [];
@@ -54,8 +54,7 @@ describe('POST /api/callbacks/request-permission', () => {
 
   async function createApp() {
     const app = Fastify();
-    registerCallbackAuthHook(app, registry);
-    await app.register(callbackAuthRoutes, { authManager });
+    await app.register(callbackAuthRoutes, { authManager, registry });
     return app;
   }
 
@@ -164,8 +163,7 @@ describe('GET /api/callbacks/permission-status', () => {
 
   async function createApp() {
     const app = Fastify();
-    registerCallbackAuthHook(app, registry);
-    await app.register(callbackAuthRoutes, { authManager });
+    await app.register(callbackAuthRoutes, { authManager, registry });
     return app;
   }
 
