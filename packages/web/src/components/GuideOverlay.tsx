@@ -295,7 +295,8 @@ function GuideOverlayInner() {
     : {};
 
   const shieldZ = 1101;
-  const panels = targetRect ? computeShieldPanels(targetRect, pad) : null;
+  // 'next' mode: block target click-through (no hole in shield)
+  const panels = targetRect && currentStep.advance !== 'next' ? computeShieldPanels(targetRect, pad) : null;
 
   return (
     <>
@@ -357,7 +358,7 @@ function GuideOverlayInner() {
         />
       )}
 
-      {/* HUD: tips + exit only */}
+      {/* HUD: tips + exit + optional next button */}
       <GuideHUD
         ref={hudRef}
         step={currentStep}
@@ -366,6 +367,7 @@ function GuideOverlayInner() {
         phase={session.phase}
         targetRect={targetRect}
         onExit={handleExit}
+        onNext={currentStep.advance === 'next' ? advanceStep : undefined}
       />
     </>
   );
@@ -453,10 +455,14 @@ function useAutoAdvance(step: OrchestrationStep | null, advance: () => void, isA
         return;
       }
 
-      // 'visible' and 'confirm' auto-advance immediately when target found
+      // 'visible' auto-advances immediately when target found
       if (advanceType === 'visible') {
         advanceRef.current();
+        return;
       }
+
+      // 'next' — no auto-advance; user clicks "下一步" in HUD
+      // (no listener needed)
     };
     attachTimer = setTimeout(attachListener, 100);
 
@@ -485,10 +491,12 @@ interface GuideHUDProps {
   phase: string;
   targetRect: DOMRect | null;
   onExit: () => void;
+  /** Present when advance mode is 'next' — manual step forward button */
+  onNext?: () => void;
 }
 
 const GuideHUD = React.forwardRef<HTMLDivElement, GuideHUDProps>(function GuideHUD(
-  { step, stepIndex, totalSteps, phase, targetRect, onExit },
+  { step, stepIndex, totalSteps, phase, targetRect, onExit, onNext },
   ref,
 ) {
   const style = computeHUDPosition(targetRect);
@@ -527,8 +535,8 @@ const GuideHUD = React.forwardRef<HTMLDivElement, GuideHUDProps>(function GuideH
         <p className="mb-3 text-xs text-[var(--guide-text-secondary)] animate-pulse">正在定位目标元素...</p>
       )}
 
-      {/* Exit only */}
-      <div className="flex items-center border-t border-[var(--guide-hud-border)] pt-3">
+      {/* Footer: exit + optional next */}
+      <div className="flex items-center justify-between border-t border-[var(--guide-hud-border)] pt-3">
         <button
           type="button"
           onClick={onExit}
@@ -537,6 +545,16 @@ const GuideHUD = React.forwardRef<HTMLDivElement, GuideHUDProps>(function GuideH
         >
           退出
         </button>
+        {onNext && (
+          <button
+            type="button"
+            onClick={onNext}
+            className="rounded-lg bg-[var(--guide-cutout-ring)] px-4 py-1.5 text-xs font-medium text-white transition hover:opacity-90"
+            aria-label={stepIndex === totalSteps - 1 ? '完成引导' : '下一步'}
+          >
+            {stepIndex === totalSteps - 1 ? '知道了!' : '下一步'}
+          </button>
+        )}
       </div>
     </div>
   );

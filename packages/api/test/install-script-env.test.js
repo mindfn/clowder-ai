@@ -216,51 +216,8 @@ cat .env
   }
 });
 
-test('installer defaults CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS=1 when env key is missing', () => {
-  const envRoot = mkdtempSync(join(tmpdir(), 'clowder-install-empty-members-default-'));
-
-  try {
-    writeFileSync(join(envRoot, '.env'), "OTHER_KEY='keep-me'\n", 'utf8');
-
-    const output = runSourceOnlySnippet(`
-cd "${envRoot}"
-if env_has_key "CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS"; then
-  :
-else
-  write_env_key "CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS" "1"
-fi
-cat .env
-`);
-
-    assert.match(output, /^OTHER_KEY='keep-me'$/m);
-    assert.match(output, /^CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS='1'$/m);
-  } finally {
-    rmSync(envRoot, { recursive: true, force: true });
-  }
-});
-
-test('installer preserves existing CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS value', () => {
-  const envRoot = mkdtempSync(join(tmpdir(), 'clowder-install-empty-members-preserve-'));
-
-  try {
-    writeFileSync(join(envRoot, '.env'), "CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS='0'\n", 'utf8');
-
-    const output = runSourceOnlySnippet(`
-cd "${envRoot}"
-if env_has_key "CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS"; then
-  :
-else
-  write_env_key "CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS" "1"
-fi
-cat .env
-`);
-
-    assert.match(output, /^CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS='0'$/m);
-    assert.doesNotMatch(output, /^CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS='1'$/m);
-  } finally {
-    rmSync(envRoot, { recursive: true, force: true });
-  }
-});
+// CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS removed — empty catalog is now the default.
+// CAT_CAFE_BOOTSTRAP_SEED_TEMPLATE=1 is dev-only opt-in, not managed by installer.
 
 test('use_registry sets only env vars without writing to user npmrc', () => {
   const tmpHome = mkdtempSync(join(tmpdir(), 'clowder-install-registry-'));

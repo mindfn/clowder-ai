@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 
-const { bootstrapCatCatalog, resolveCatCatalogPath } = await import('../dist/config/cat-catalog-store.js');
+const { bootstrapCatCatalog, resolveCatCatalogPath, writeCatCatalog } = await import('../dist/config/cat-catalog-store.js');
 const { createRuntimeCat, deleteRuntimeCat, readRuntimeCatCatalog, updateRuntimeCat } = await import(
   '../dist/config/runtime-cat-catalog.js'
 );
@@ -238,102 +238,32 @@ describe('cat-catalog-store', () => {
     else process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = savedGlobalRoot;
   });
 
-  it('bootstraps managed clients with bindings while preserving skipped seed members', () => {
+  it('bootstraps an empty catalog by default (first-run quest)', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-f127-default-'));
     const templatePath = join(projectRoot, 'cat-template.json');
-    writeFileSync(templatePath, JSON.stringify(makeF127BootstrapTemplate(), null, 2));
-
-    const catalogPath = bootstrapCatCatalog(projectRoot, templatePath);
-    const runtimeCatalog = JSON.parse(readFileSync(catalogPath, 'utf-8'));
-
-    // Bootstrap persists template-default bindings for seed cats so activation can
-    // later retarget them deterministically, while runtime migrations remain non-
-    // backfilling for custom/runtime cats.
-    assert.deepEqual(
-      runtimeCatalog.breeds.map((breed) => [breed.id, breed.variants.map((variant) => variant.accountRef ?? null)]),
-      [
-        ['ragdoll', ['claude', 'claude']],
-        ['maine-coon', ['codex', 'codex']],
-        ['siamese', ['gemini']],
-        ['dragon-li', ['dare']],
-        ['golden-chinchilla', ['opencode']],
-      ],
-    );
-  });
-
-  it('bootstraps an empty runtime catalog when CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS=1', () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-empty-members-'));
-    const templatePath = join(projectRoot, 'cat-template.json');
     const template = makeF127BootstrapTemplate();
     writeFileSync(templatePath, JSON.stringify(template, null, 2));
 
-    const previous = process.env.CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS;
-    process.env.CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS = '1';
-    try {
-      const catalogPath = bootstrapCatCatalog(projectRoot, templatePath);
-      const runtimeCatalog = JSON.parse(readFileSync(catalogPath, 'utf-8'));
-      assert.deepEqual(runtimeCatalog.breeds, []);
-      assert.deepEqual(runtimeCatalog.roster, {});
-      assert.deepEqual(runtimeCatalog.reviewPolicy, template.reviewPolicy);
-      assert.deepEqual(runtimeCatalog.coCreator, template.coCreator);
-    } finally {
-      if (previous === undefined) delete process.env.CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS;
-      else process.env.CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS = previous;
-    }
-  });
-
-  it('bootstrap ignores legacy provider-profiles.json and keeps template default bindings', () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-f127-installer-'));
-    process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = projectRoot;
-    const templatePath = join(projectRoot, 'cat-template.json');
-    writeFileSync(templatePath, JSON.stringify(makeF127BootstrapTemplate(), null, 2));
-
     const catalogPath = bootstrapCatCatalog(projectRoot, templatePath);
     const runtimeCatalog = JSON.parse(readFileSync(catalogPath, 'utf-8'));
 
-    assert.deepEqual(
-      runtimeCatalog.breeds.map((breed) => [breed.id, breed.variants.map((variant) => variant.accountRef ?? null)]),
-      [
-        ['ragdoll', ['claude', 'claude']],
-        ['maine-coon', ['codex', 'codex']],
-        ['siamese', ['gemini']],
-        ['dragon-li', ['dare']],
-        ['golden-chinchilla', ['opencode']],
-      ],
-    );
+    assert.deepEqual(runtimeCatalog.breeds, []);
+    assert.deepEqual(runtimeCatalog.roster, {
+      owner: { family: 'owner', roles: ['owner'], lead: false, available: true, evaluation: '铲屎官 / 大当家' },
+    });
+    // Non-breed config (reviewPolicy, coCreator) is preserved from template.
+    assert.deepEqual(runtimeCatalog.reviewPolicy, template.reviewPolicy);
+    assert.deepEqual(runtimeCatalog.coCreator, template.coCreator);
   });
 
-  it('preserves explicit seed account markers while bootstrapping runtime catalog', () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-f127-explicit-seed-'));
-    const templatePath = join(projectRoot, 'cat-template.json');
-    const template = makeF127BootstrapTemplate();
-    const codexBreed = template.breeds.find((breed) => breed.catId === 'codex');
-    if (!codexBreed) throw new Error('codex breed missing from template');
-    codexBreed.variants[0].accountRef = 'codex-pinned';
-    writeFileSync(templatePath, JSON.stringify(template, null, 2));
-
-    const catalogPath = bootstrapCatCatalog(projectRoot, templatePath);
-    const runtimeCatalog = JSON.parse(readFileSync(catalogPath, 'utf-8'));
-    const runtimeCodexBreed = runtimeCatalog.breeds.find((breed) => breed.catId === 'codex');
-    const runtimeCodexVariant = runtimeCodexBreed?.variants[0];
-
-    // F136 Phase 4d: without bootstrap bindings, raw variant passes through.
-    // accountRef is preserved as-is on bootstrap.
-    assert.equal(runtimeCodexVariant?.accountRef, 'codex-pinned');
-  });
-
-  it('bootstraps .cat-cafe/cat-catalog.json from cat-template.json', () => {
+  it('creates catalog file at .cat-cafe/cat-catalog.json', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-'));
     const templatePath = join(projectRoot, 'cat-template.json');
-    const template = validConfig();
-    writeFileSync(templatePath, JSON.stringify(template, null, 2));
+    writeFileSync(templatePath, JSON.stringify(validConfig(), null, 2));
 
     const catalogPath = bootstrapCatCatalog(projectRoot, templatePath);
     assert.equal(catalogPath, resolveCatCatalogPath(projectRoot));
     assert.ok(existsSync(catalogPath), 'runtime catalog should be created');
-    const runtimeCatalog = JSON.parse(readFileSync(catalogPath, 'utf-8'));
-    // Bootstrap persists the template's default seed binding into the runtime catalog.
-    assert.equal(runtimeCatalog.breeds[0]?.variants[0]?.accountRef, 'claude');
   });
 
   it('keeps existing .cat-cafe/cat-catalog.json runtime edits and leaves unbound variants alone', () => {
@@ -401,7 +331,7 @@ describe('cat-catalog-store', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-'));
     const templatePath = join(projectRoot, 'cat-template.json');
     writeFileSync(templatePath, JSON.stringify(validConfig(), null, 2));
-    bootstrapCatCatalog(projectRoot, templatePath);
+    writeCatCatalog(projectRoot, validConfig());
 
     await createRuntimeCat(projectRoot, {
       catId: 'spark-lite',
@@ -442,7 +372,7 @@ describe('cat-catalog-store', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-'));
     const templatePath = join(projectRoot, 'cat-template.json');
     writeFileSync(templatePath, JSON.stringify(validConfig(), null, 2));
-    bootstrapCatCatalog(projectRoot, templatePath);
+    writeCatCatalog(projectRoot, validConfig());
 
     await updateRuntimeCat(projectRoot, 'opus', {
       displayName: '运行时布偶猫',
@@ -475,7 +405,7 @@ describe('cat-catalog-store', () => {
       cli: { command: 'claude', outputFormat: 'stream-json' },
     });
     writeFileSync(templatePath, JSON.stringify(template, null, 2));
-    bootstrapCatCatalog(projectRoot, templatePath);
+    writeCatCatalog(projectRoot, template);
 
     await updateRuntimeCat(projectRoot, 'opus-sonnet', { sessionChain: false });
 
@@ -504,7 +434,7 @@ describe('cat-catalog-store', () => {
       cli: { command: 'claude', outputFormat: 'stream-json' },
     });
     writeFileSync(templatePath, JSON.stringify(template, null, 2));
-    bootstrapCatCatalog(projectRoot, templatePath);
+    writeCatCatalog(projectRoot, template);
 
     await updateRuntimeCat(projectRoot, 'opus-sonnet', { roleDescription: '副手架构师' });
 
@@ -533,7 +463,7 @@ describe('cat-catalog-store', () => {
       cli: { command: 'claude', outputFormat: 'stream-json' },
     });
     writeFileSync(templatePath, JSON.stringify(template, null, 2));
-    bootstrapCatCatalog(projectRoot, templatePath);
+    writeCatCatalog(projectRoot, template);
 
     await updateRuntimeCat(projectRoot, 'opus', { roleDescription: '默认成员专属职责' });
 
@@ -563,7 +493,7 @@ describe('cat-catalog-store', () => {
       cli: { command: 'claude', outputFormat: 'stream-json' },
     });
     writeFileSync(templatePath, JSON.stringify(template, null, 2));
-    bootstrapCatCatalog(projectRoot, templatePath);
+    writeCatCatalog(projectRoot, template);
 
     await updateRuntimeCat(projectRoot, 'opus', { sessionChain: false });
 
@@ -583,7 +513,7 @@ describe('cat-catalog-store', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-'));
     const templatePath = join(projectRoot, 'cat-template.json');
     writeFileSync(templatePath, JSON.stringify(validConfig(), null, 2));
-    bootstrapCatCatalog(projectRoot, templatePath);
+    writeCatCatalog(projectRoot, validConfig());
 
     // Trigger eager migration (F136 Phase 4d backfills accountRef on first read)
     readRuntimeCatCatalog(projectRoot);
@@ -602,7 +532,7 @@ describe('cat-catalog-store', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-'));
     const templatePath = join(projectRoot, 'cat-template.json');
     writeFileSync(templatePath, JSON.stringify(validConfig(), null, 2));
-    bootstrapCatCatalog(projectRoot, templatePath);
+    writeCatCatalog(projectRoot, validConfig());
 
     // Trigger eager migration (F136 Phase 4d backfills accountRef on first read)
     readRuntimeCatCatalog(projectRoot);
@@ -634,7 +564,7 @@ describe('cat-catalog-store', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-'));
     const templatePath = join(projectRoot, 'cat-template.json');
     writeFileSync(templatePath, JSON.stringify(validConfig(), null, 2));
-    bootstrapCatCatalog(projectRoot, templatePath);
+    writeCatCatalog(projectRoot, validConfig());
 
     await createRuntimeCat(projectRoot, {
       catId: 'temp-cat',
@@ -670,7 +600,10 @@ describe('cat-catalog-store', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-stale-template-'));
     const templatePath = join(projectRoot, 'cat-template.json');
     writeFileSync(templatePath, JSON.stringify(validConfig(), null, 2));
-    bootstrapCatCatalog(projectRoot, templatePath);
+    // Pre-populate with seed-marked breeds (simulates existing catalog from before empty-bootstrap)
+    const seededConfig = validConfig();
+    seededConfig.breeds[0].variants[0].source = 'seed';
+    writeCatCatalog(projectRoot, seededConfig);
 
     const previousTemplatePath = process.env.CAT_TEMPLATE_PATH;
     process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'missing-template.json');
@@ -688,7 +621,7 @@ describe('cat-catalog-store', () => {
     );
   });
 
-  it('ignores sibling CAT_TEMPLATE_PATH prefixes when bootstrapping a runtime catalog', async () => {
+  it('ignores sibling CAT_TEMPLATE_PATH prefixes during runtime cat operations', async () => {
     const parentRoot = mkdtempSync(join(tmpdir(), 'cat-catalog-store-boundary-'));
     const projectRoot = join(parentRoot, 'clowder-ai');
     const siblingRoot = join(parentRoot, 'clowder-ai-old');
@@ -699,6 +632,7 @@ describe('cat-catalog-store', () => {
     const siblingTemplatePath = join(siblingRoot, 'cat-template.json');
     writeFileSync(templatePath, JSON.stringify(validConfig(), null, 2));
     writeFileSync(siblingTemplatePath, JSON.stringify(makeSiblingTemplate('shadow-seed'), null, 2));
+    writeCatCatalog(projectRoot, validConfig());
 
     const previousTemplatePath = process.env.CAT_TEMPLATE_PATH;
     process.env.CAT_TEMPLATE_PATH = siblingTemplatePath;
@@ -727,12 +661,12 @@ describe('cat-catalog-store', () => {
     assert.equal(
       catalog.breeds.some((breed) => breed.catId === 'opus'),
       true,
-      'runtime bootstrap should use the in-project template',
+      'local catalog breeds should be preserved',
     );
     assert.equal(
       catalog.breeds.some((breed) => breed.catId === 'shadow-seed'),
       false,
-      'sibling template must not seed this project',
+      'sibling template must not leak into this project',
     );
   });
 
@@ -747,7 +681,7 @@ describe('cat-catalog-store', () => {
     const siblingTemplatePath = join(siblingRoot, 'cat-template.json');
     writeFileSync(templatePath, JSON.stringify(validConfig(), null, 2));
     writeFileSync(siblingTemplatePath, JSON.stringify(makeSiblingTemplate('shadow-seed'), null, 2));
-    bootstrapCatCatalog(projectRoot, templatePath);
+    writeCatCatalog(projectRoot, validConfig());
 
     await createRuntimeCat(projectRoot, {
       catId: 'shadow-seed',

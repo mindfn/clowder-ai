@@ -29,31 +29,6 @@ const BUILTIN_CLIENT_LABELS: Record<BuiltinAccountClient, string> = {
   opencode: 'OpenCode',
 };
 
-const BUILTIN_ACCOUNT_IDS: Record<BuiltinAccountClient, string> = {
-  anthropic: 'claude',
-  openai: 'codex',
-  google: 'gemini',
-  kimi: 'kimi',
-  dare: 'dare',
-  opencode: 'opencode',
-};
-
-function builtinDisplayName(client: BuiltinAccountClient): string {
-  switch (client) {
-    case 'anthropic':
-      return 'Claude（CLI 内置）';
-    case 'openai':
-      return 'Codex（CLI 内置）';
-    case 'google':
-      return 'Gemini（CLI 内置）';
-    case 'kimi':
-      return 'Kimi（CLI 内置）';
-    case 'dare':
-      return 'Dare (client-auth)';
-    case 'opencode':
-      return 'OpenCode (client-auth)';
-  }
-}
 
 function uniqueTags(tags: string[]): string[] {
   return [...new Set(tags.filter(Boolean))];
@@ -131,18 +106,9 @@ export function buildAccountQuotaGroups(
   profiles: ProfileItem[],
   cats: CatData[],
 ): AccountQuotaPoolGroup[] {
-  const builtinProfiles =
-    profiles.filter((profile) => profile.builtin).length > 0
-      ? profiles.filter((profile) => profile.builtin)
-      : (Object.entries(BUILTIN_ACCOUNT_IDS) as Array<[BuiltinAccountClient, string]>).map(([client, id]) => ({
-          id,
-          displayName: builtinDisplayName(client),
-          clientId: client,
-          builtin: true,
-          authType: 'oauth' as const,
-        }));
+  const oauthProfiles = profiles.filter((profile) => profile.authType === 'oauth');
 
-  const builtinPools = builtinProfiles.map<AccountQuotaPool>((profile) => ({
+  const builtinPools = oauthProfiles.map<AccountQuotaPool>((profile) => ({
     id: profile.id,
     title: profile.displayName || BUILTIN_CLIENT_LABELS[profile.clientId ?? 'anthropic'],
     items: builtinQuotaItems(profile.id, quota),
@@ -151,7 +117,7 @@ export function buildAccountQuotaGroups(
   }));
 
   const apiKeyPools = profiles
-    .filter((profile) => profile.authType === 'api_key' && !profile.builtin)
+    .filter((profile) => profile.authType === 'api_key')
     .map<AccountQuotaPool>((profile) => ({
       id: profile.id,
       title: profile.displayName,

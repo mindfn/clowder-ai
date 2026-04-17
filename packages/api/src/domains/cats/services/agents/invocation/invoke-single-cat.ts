@@ -870,6 +870,16 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       if (resolvedAccount.baseUrl) callbackEnv.DARE_ENDPOINT = resolvedAccount.baseUrl;
     }
 
+    // F140: Inject user-defined env vars from account config.
+    // Key format: [A-Z_][A-Za-z0-9_]* (POSIX). CAT_CAFE_ prefix reserved.
+    if (resolvedAccount?.envVars) {
+      const validEnvKey = /^[A-Z_][A-Za-z0-9_]*$/;
+      for (const [k, v] of Object.entries(resolvedAccount.envVars)) {
+        if (!validEnvKey.test(k) || k.startsWith('CAT_CAFE_')) continue;
+        callbackEnv[k] = v;
+      }
+    }
+
     const trimmedDefaultModel = typeof defaultModel === 'string' ? defaultModel.trim() : undefined;
     const modelProviderName = catConfig?.provider?.trim() || undefined;
     const parsedOpenCodeModel =
@@ -1547,6 +1557,40 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     const shouldTrackGeminiResumeFailures = catId === 'gemini' && Boolean(initialResumeSessionId);
     const resumeFailureCounts: Partial<Record<ResumeFailureKind, number>> = {};
     const maxAttempts = 2;
+
+    // Universal debug log: capture everything needed to diagnose invocation issues.
+    // This is provider-agnostic — every cat (Claude, Codex, Gemini, OpenCode, etc.)
+    // passes through here before service.invoke() is called.
+    {
+      const safeCallbackEnv: Record<string, string> = {};
+      for (const [k, v] of Object.entries(callbackEnv)) {
+        safeCallbackEnv[k] = /key|secret|token|password/i.test(k) ? v.slice(0, 6) + '***' : v;
+      }
+      log.debug(
+        {
+          invocationId,
+          catId,
+          threadId,
+          userId,
+          provider: provider ?? 'unknown',
+          protocol: effectiveProtocol ?? 'default',
+          model: defaultModel ?? 'default',
+          accountId: resolvedAccount?.id ?? null,
+          accountAuthType: resolvedAccount?.authType ?? null,
+          sessionId: sessionId ?? null,
+          isResume,
+          injectSystemPrompt,
+          forceReinjection,
+          workingDirectory: workingDirectory ?? null,
+          promptLength: effectivePrompt.length,
+          promptPreview: effectivePrompt.slice(0, 200),
+          systemPromptLength: params.systemPrompt?.length ?? 0,
+          callbackEnv: safeCallbackEnv,
+        },
+        '[invocation] service.invoke() — full context before subprocess launch',
+      );
+    }
+
     let allowSessionRetry = Boolean(sessionId);
     let allowTransientRetry = true;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {

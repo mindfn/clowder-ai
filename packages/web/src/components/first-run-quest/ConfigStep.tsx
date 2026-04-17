@@ -171,6 +171,7 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
                 baseUrl: p.baseUrl,
                 clientId: p.clientId,
                 models: p.models?.filter(Boolean),
+                envVars: p.envVars,
               });
               setShowModal(true);
             }}

@@ -35,15 +35,25 @@ function Harness() {
 }
 
 function dispatchGuideStart(flowId: string, threadId = 'thread-1') {
-  window.dispatchEvent(new CustomEvent('guide:start', { detail: { flowId, threadId } }));
+  useGuideStore.getState().reduceServerEvent({ action: 'start', guideId: flowId, threadId });
 }
 
 function dispatchGuideControl(action: 'next' | 'skip' | 'exit', detail: { guideId?: string; threadId?: string } = {}) {
-  window.dispatchEvent(new CustomEvent('guide:control', { detail: { action, ...detail } }));
+  const guideId = detail.guideId ?? useGuideStore.getState().session?.flow.id;
+  const threadId = detail.threadId ?? useGuideStore.getState().session?.threadId;
+  if (!guideId || !threadId) return;
+  useGuideStore.getState().reduceServerEvent({
+    action: action === 'next' ? 'control_next' : action === 'skip' ? 'control_skip' : 'control_exit',
+    guideId,
+    threadId,
+  });
 }
 
 function dispatchGuideComplete(detail: { guideId?: string; threadId?: string } = {}) {
-  window.dispatchEvent(new CustomEvent('guide:complete', { detail }));
+  const guideId = detail.guideId ?? useGuideStore.getState().session?.flow.id;
+  const threadId = detail.threadId ?? useGuideStore.getState().session?.threadId;
+  if (!guideId || !threadId) return;
+  useGuideStore.getState().reduceServerEvent({ action: 'complete', guideId, threadId });
 }
 
 function deferred<T>() {
@@ -74,7 +84,7 @@ describe('useGuideEngine duplicate start protection', () => {
   beforeEach(() => {
     apiFetchMock.mockReset();
     useChatStore.setState({ currentThreadId: 'thread-1' });
-    useGuideStore.setState({ session: null });
+    useGuideStore.setState({ session: null, pendingStart: null, completionPersisted: false, completionFailed: false });
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -86,11 +96,11 @@ describe('useGuideEngine duplicate start protection', () => {
     });
     container.remove();
     useChatStore.setState({ currentThreadId: 'default' });
-    useGuideStore.setState({ session: null });
+    useGuideStore.setState({ session: null, pendingStart: null, completionPersisted: false, completionFailed: false });
   });
 
   it('does not fetch the same flow twice while the first start is still in flight', async () => {
-    const pending = deferred<{ json: () => Promise<OrchestrationFlow> }>();
+    const pending = deferred<{ ok: boolean; json: () => Promise<OrchestrationFlow> }>();
     apiFetchMock.mockReturnValue(pending.promise);
 
     act(() => {
@@ -106,7 +116,7 @@ describe('useGuideEngine duplicate start protection', () => {
     expect(apiFetchMock).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      pending.resolve({ json: async () => FLOW });
+      pending.resolve({ ok: true, json: async () => FLOW });
       await pending.promise;
       await Promise.resolve();
     });
@@ -115,8 +125,8 @@ describe('useGuideEngine duplicate start protection', () => {
   });
 
   it('retries a duplicate guide:start after the in-flight fetch fails', async () => {
-    const firstFetch = deferred<{ json: () => Promise<OrchestrationFlow> }>();
-    apiFetchMock.mockReturnValueOnce(firstFetch.promise).mockResolvedValueOnce({ json: async () => FLOW });
+    const firstFetch = deferred<{ ok: boolean; json: () => Promise<OrchestrationFlow> }>();
+    apiFetchMock.mockReturnValueOnce(firstFetch.promise).mockResolvedValueOnce({ ok: true, json: async () => FLOW });
 
     act(() => {
       root.render(React.createElement(Harness));
@@ -124,11 +134,15 @@ describe('useGuideEngine duplicate start protection', () => {
 
     await act(async () => {
       dispatchGuideStart('add-member');
-      dispatchGuideStart('add-member');
       await Promise.resolve();
     });
 
     expect(apiFetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      dispatchGuideStart('add-member');
+      await Promise.resolve();
+    });
 
     await act(async () => {
       firstFetch.reject(new Error('temporary failure'));
@@ -142,7 +156,7 @@ describe('useGuideEngine duplicate start protection', () => {
   });
 
   it('does not reset the current guide when the same start event arrives again after progress', async () => {
-    apiFetchMock.mockResolvedValue({ json: async () => FLOW });
+    apiFetchMock.mockResolvedValue({ ok: true, json: async () => FLOW });
 
     act(() => {
       root.render(React.createElement(Harness));
@@ -154,7 +168,9 @@ describe('useGuideEngine duplicate start protection', () => {
       await Promise.resolve();
     });
 
-    useGuideStore.getState().advanceStep();
+    act(() => {
+      useGuideStore.getState().advanceStep();
+    });
     expect(useGuideStore.getState().session?.currentStepIndex).toBe(1);
 
     await act(async () => {
@@ -167,7 +183,7 @@ describe('useGuideEngine duplicate start protection', () => {
   });
 
   it('does not start a fetched guide after the active thread changes before the flow resolves', async () => {
-    const pending = deferred<{ json: () => Promise<OrchestrationFlow> }>();
+    const pending = deferred<{ ok: boolean; json: () => Promise<OrchestrationFlow> }>();
     apiFetchMock.mockReturnValue(pending.promise);
 
     act(() => {
@@ -182,7 +198,7 @@ describe('useGuideEngine duplicate start protection', () => {
     useChatStore.setState({ currentThreadId: 'thread-2' });
 
     await act(async () => {
-      pending.resolve({ json: async () => FLOW });
+      pending.resolve({ ok: true, json: async () => FLOW });
       await pending.promise;
       await Promise.resolve();
     });
@@ -191,7 +207,7 @@ describe('useGuideEngine duplicate start protection', () => {
   });
 
   it('applies matching guide:control events to the current session', async () => {
-    apiFetchMock.mockResolvedValue({ json: async () => FLOW });
+    apiFetchMock.mockResolvedValue({ ok: true, json: async () => FLOW });
 
     act(() => {
       root.render(React.createElement(Harness));
@@ -217,7 +233,7 @@ describe('useGuideEngine duplicate start protection', () => {
   });
 
   it('ignores guide:control events for a different guide or thread', async () => {
-    apiFetchMock.mockResolvedValue({ json: async () => FLOW });
+    apiFetchMock.mockResolvedValue({ ok: true, json: async () => FLOW });
 
     act(() => {
       root.render(React.createElement(Harness));
@@ -238,7 +254,7 @@ describe('useGuideEngine duplicate start protection', () => {
   });
 
   it('marks the current session complete on a matching guide:complete event', async () => {
-    apiFetchMock.mockResolvedValueOnce({ json: async () => FLOW }).mockResolvedValueOnce({ ok: true });
+    apiFetchMock.mockResolvedValueOnce({ ok: true, json: async () => FLOW }).mockResolvedValueOnce({ ok: true });
 
     act(() => {
       root.render(React.createElement(Harness));
@@ -263,10 +279,10 @@ describe('useGuideEngine duplicate start protection', () => {
     const completionPending = deferred<{ ok: boolean }>();
     apiFetchMock.mockImplementation((url: string) => {
       if (url === '/api/guide-flows/add-member') {
-        return Promise.resolve({ json: async () => FLOW });
+        return Promise.resolve({ ok: true, json: async () => FLOW });
       }
       if (url === '/api/guide-flows/invite-reviewer') {
-        return Promise.resolve({ json: async () => FLOW_2 });
+        return Promise.resolve({ ok: true, json: async () => FLOW_2 });
       }
       if (url === '/api/guide-actions/complete') {
         return completionPending.promise;
@@ -314,7 +330,7 @@ describe('useGuideEngine duplicate start protection', () => {
   it('marks completionFailed (not persisted) when completion POST fails after all retries', async () => {
     apiFetchMock.mockImplementation((url: string) => {
       if (url === '/api/guide-flows/add-member') {
-        return Promise.resolve({ json: async () => FLOW });
+        return Promise.resolve({ ok: true, json: async () => FLOW });
       }
       if (url === '/api/guide-actions/complete') {
         return Promise.resolve({ ok: false, status: 500 });
@@ -347,7 +363,7 @@ describe('useGuideEngine duplicate start protection', () => {
   it('marks completionFailed when completion POST throws after all retries', async () => {
     apiFetchMock.mockImplementation((url: string) => {
       if (url === '/api/guide-flows/add-member') {
-        return Promise.resolve({ json: async () => FLOW });
+        return Promise.resolve({ ok: true, json: async () => FLOW });
       }
       if (url === '/api/guide-actions/complete') {
         return Promise.reject(new Error('network failure'));

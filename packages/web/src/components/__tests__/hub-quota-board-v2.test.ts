@@ -150,7 +150,7 @@ function defaultQuotaApiFetch(path: string) {
             name: 'Claude (OAuth)',
             authType: 'oauth',
             protocol: 'anthropic',
-            builtin: true,
+
             mode: 'subscription',
             models: ['claude-opus-4-6'],
             hasApiKey: false,
@@ -164,7 +164,7 @@ function defaultQuotaApiFetch(path: string) {
             name: 'Codex (OAuth)',
             authType: 'oauth',
             protocol: 'openai',
-            builtin: true,
+
             mode: 'subscription',
             models: ['gpt-5.4'],
             hasApiKey: false,
@@ -178,7 +178,7 @@ function defaultQuotaApiFetch(path: string) {
             name: 'Gemini (OAuth)',
             authType: 'oauth',
             protocol: 'google',
-            builtin: true,
+
             mode: 'subscription',
             models: ['gemini-2.5-pro'],
             hasApiKey: false,
@@ -192,7 +192,7 @@ function defaultQuotaApiFetch(path: string) {
             name: 'Codex Sponsor',
             authType: 'api_key',
             protocol: 'openai',
-            builtin: false,
+
             mode: 'api_key',
             models: ['gpt-5.4-mini'],
             hasApiKey: true,

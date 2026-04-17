@@ -15,7 +15,6 @@ import {
   builtinAccountIdForClient,
   type ClientId,
   type CodexRuntimeSettings,
-  canonicalMentionPattern,
   DEFAULT_ANTIGRAVITY_COMMAND_ARGS,
   filterAccounts,
   type HubCatEditorDraft,
@@ -304,7 +303,7 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
       accountRef: builtinAccountIdForClient((t.provider as ClientId) ?? 'anthropic') ?? '',
       defaultModel: t.defaultModel ?? '',
       catId,
-      mentionPatterns: catId ? canonicalMentionPattern(catId) : '',
+      mentionPatterns: '',
       commandArgs: t.commandArgs?.join(' ') ?? '',
     });
   };

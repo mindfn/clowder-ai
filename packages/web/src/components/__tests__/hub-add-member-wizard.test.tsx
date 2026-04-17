@@ -104,14 +104,14 @@ describe('HubAddMemberWizard', () => {
             templates: [
               {
                 id: 'antigravity-template',
-                clientId: 'antigravity',
+                provider: 'antigravity',
                 source: 'seed',
                 defaultModel: 'template-antigravity-model',
                 commandArgs: ['. --remote-debugging-port=9010'],
               },
               {
                 id: 'runtime-antigravity-preview',
-                clientId: 'antigravity',
+                provider: 'antigravity',
                 source: 'runtime',
                 defaultModel: 'runtime-custom-model',
                 commandArgs: ['. --remote-debugging-port=9999'],
@@ -133,7 +133,7 @@ describe('HubAddMemberWizard', () => {
                 name: 'Claude (OAuth)',
                 authType: 'oauth',
                 protocol: 'anthropic',
-                builtin: true,
+
                 mode: 'subscription',
                 models: ['claude-opus-4-6'],
                 hasApiKey: false,
@@ -147,7 +147,7 @@ describe('HubAddMemberWizard', () => {
                 name: 'Codex (OAuth)',
                 authType: 'oauth',
                 protocol: 'openai',
-                builtin: true,
+
                 mode: 'subscription',
                 models: ['gpt-5.4'],
                 hasApiKey: false,
@@ -161,7 +161,7 @@ describe('HubAddMemberWizard', () => {
                 name: 'Claude Sponsor',
                 authType: 'api_key',
                 protocol: 'anthropic',
-                builtin: false,
+
                 mode: 'api_key',
                 models: ['claude-opus-4-6'],
                 hasApiKey: true,
@@ -175,7 +175,7 @@ describe('HubAddMemberWizard', () => {
                 name: 'Codex Sponsor',
                 authType: 'api_key',
                 protocol: 'openai',
-                builtin: false,
+
                 mode: 'api_key',
                 models: ['gpt-5.4-mini'],
                 hasApiKey: true,
@@ -189,7 +189,7 @@ describe('HubAddMemberWizard', () => {
                 name: 'Kimi (OAuth)',
                 authType: 'oauth',
                 protocol: 'kimi',
-                builtin: true,
+
                 mode: 'subscription',
                 client: 'kimi',
                 models: ['kimi-code/kimi-for-coding'],
@@ -204,7 +204,7 @@ describe('HubAddMemberWizard', () => {
                 name: 'Moonshot Sponsor',
                 authType: 'api_key',
                 protocol: 'kimi',
-                builtin: false,
+
                 mode: 'api_key',
                 models: ['kimi-code/kimi-for-coding'],
                 hasApiKey: true,

@@ -158,8 +158,7 @@ describe('FirstRunQuestWizard', () => {
               displayName: 'Claude (OAuth)',
               name: 'Claude (OAuth)',
               authType: 'oauth',
-              kind: 'builtin',
-              builtin: true,
+
               mode: 'subscription',
               models: ['claude-opus-4-6'],
               hasApiKey: false,

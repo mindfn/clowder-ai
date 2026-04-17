@@ -29,7 +29,7 @@ const LIFECYCLE_TIPS: Record<string, LifecycleTipConfig> = {
   'phase-5-kickoff': { icon: '\u{1F680}', text: '告诉猫猫你想做什么项目，TA 会帮你分析和拆解需求', variant: 'blue' },
   'phase-6-design': { icon: '\u{1F3A8}', text: '猫猫会给出设计方案，选择你喜欢的然后继续', variant: 'purple' },
   'phase-7-dev': { icon: '\u{1F4BB}', text: '猫猫正在开发，遇到关键决策会问你', variant: 'amber' },
-  'phase-8-review': { icon: '\u{1F50D}', text: '让队友来 review 代码，在输入框 @TA 的名字', variant: 'blue' },
+  'phase-8-collab': { icon: '\u{1F50D}', text: '多猫协作中，队友正在 review 代码', variant: 'blue' },
   'phase-9-complete': { icon: '\u2705', text: 'Review 通过，准备合入主分支', variant: 'green' },
   'phase-10-retro': { icon: '\u{1F4DD}', text: '和猫猫一起回顾这个项目，看看学到了什么', variant: 'amber' },
   'phase-11-farewell': { icon: '\u{1F393}', text: '恭喜完成训练营！你已经掌握了多猫协作的基本流程', variant: 'green' },
@@ -44,22 +44,22 @@ export function BootcampGuideOverlay({
   bootcampState,
 }: BootcampGuideOverlayProps) {
   if (
-    phase === 'phase-4.5-add-teammate' &&
+    phase === 'phase-7.5-add-teammate' &&
     guideStep &&
     !['done', 'return-to-chat', 'mention-teammate'].includes(guideStep)
   ) {
     return <AddTeammateGuide guideStep={guideStep} threadId={threadId} bootcampState={bootcampState} />;
   }
 
-  if (phase === 'phase-4.5-add-teammate' && (guideStep === 'done' || guideStep === 'return-to-chat')) {
+  if (phase === 'phase-7.5-add-teammate' && (guideStep === 'done' || guideStep === 'return-to-chat')) {
     return <PostAddTeammateTip threadId={threadId} bootcampState={bootcampState} guideStep={guideStep} />;
   }
 
-  if (phase === 'phase-4.5-add-teammate' && guideStep === 'mention-teammate') {
+  if (phase === 'phase-7.5-add-teammate' && guideStep === 'mention-teammate') {
     return <MentionTeammateGuide />;
   }
 
-  if (phase === 'phase-4-first-project' && guideStep === 'preview-result') {
+  if (phase === 'phase-7-dev' && guideStep === 'preview-result') {
     return <PreviewResultGuide catName={catName} threadId={threadId} bootcampState={bootcampState} />;
   }
 

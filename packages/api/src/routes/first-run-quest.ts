@@ -211,7 +211,7 @@ export const firstRunQuestRoutes: FastifyPluginAsync<FirstRunQuestRoutesOptions>
     }
 
     /* Builtin/OAuth profiles: use CLI probe — the CLI handles its own auth */
-    if (runtime.kind === 'builtin' || runtime.authType === 'oauth') {
+    if (runtime.authType === 'oauth') {
       if (clientName) {
         const cliResult = await tryCliProbe(clientName, { model });
         if (cliResult) return cliResult;

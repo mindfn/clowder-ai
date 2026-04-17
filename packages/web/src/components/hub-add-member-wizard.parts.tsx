@@ -30,7 +30,10 @@ export function TemplatePicker({
   const named = templates.filter((t) => t.name);
   if (named.length === 0) return null;
   return (
-    <section className="space-y-2 rounded-[20px] border border-[#F1E7DF] bg-[#FFFDFC] p-[18px]" data-guide-id="add-member.template-picker">
+    <section
+      className="space-y-2 rounded-[20px] border border-[#F1E7DF] bg-[#FFFDFC] p-[18px]"
+      data-guide-id="add-member.template-picker"
+    >
       <h4 className="text-[15px] font-bold text-[#2D2118]">模板快选（可选）</h4>
       <div className="flex flex-wrap gap-2">
         {named.map((t) => (

@@ -14,6 +14,32 @@ async function seedTemplate(projectRoot, mutateTemplate) {
   await writeFile(join(projectRoot, 'cat-template.json'), `${JSON.stringify(template, null, 2)}\n`, 'utf-8');
 }
 
+/**
+ * F140: bootstrapCatCatalog() now creates empty catalogs (first-run quest).
+ * Populate breeds from the template into the catalog, stamping default
+ * accountRef and source values that the old bootstrap used to do.
+ */
+const BUILTIN_ACCOUNT_IDS = { anthropic: 'claude', openai: 'codex', google: 'gemini', kimi: 'kimi', dare: 'dare', opencode: 'opencode' };
+
+async function seedCatalogBreeds(projectRoot) {
+  const template = JSON.parse(await readFile(join(projectRoot, 'cat-template.json'), 'utf-8'));
+  const catalogPath = join(projectRoot, '.cat-cafe', 'cat-catalog.json');
+  const catalog = JSON.parse(await readFile(catalogPath, 'utf-8'));
+  catalog.breeds = structuredClone(template.breeds || []);
+  for (const breed of catalog.breeds) {
+    for (const variant of breed.variants || []) {
+      if (!variant.accountRef && variant.clientId && BUILTIN_ACCOUNT_IDS[variant.clientId]) {
+        variant.accountRef = BUILTIN_ACCOUNT_IDS[variant.clientId];
+      }
+      if (!variant.source) variant.source = 'seed';
+    }
+  }
+  if (template.roster) {
+    catalog.roster = { ...(catalog.roster || {}), ...template.roster };
+  }
+  await writeFile(catalogPath, `${JSON.stringify(catalog, null, 2)}\n`, 'utf-8');
+}
+
 describe('cat account binding', () => {
   it('treats bootstrapped seed cats as inheriting the active bootstrap binding', async () => {
     const { bootstrapCatCatalog, resolveCatCatalogPath } = await import('../dist/config/cat-catalog-store.js');
@@ -26,6 +52,7 @@ describe('cat account binding', () => {
     try {
       await seedTemplate(projectRoot);
       bootstrapCatCatalog(projectRoot, join(projectRoot, 'cat-template.json'));
+      await seedCatalogBreeds(projectRoot);
       const catConfig = toAllCatConfigs(loadCatConfig(resolveCatCatalogPath(projectRoot))).codex;
       assert.ok(catConfig, 'codex should be present in bootstrapped runtime catalog');
       assert.equal(resolveBoundAccountRefForCat(projectRoot, 'codex', catConfig), 'codex');
@@ -51,6 +78,7 @@ describe('cat account binding', () => {
         codexBreed.variants[0].accountRef = 'codex-pinned';
       });
       bootstrapCatCatalog(projectRoot, join(projectRoot, 'cat-template.json'));
+      await seedCatalogBreeds(projectRoot);
       const catConfig = toAllCatConfigs(loadCatConfig(resolveCatCatalogPath(projectRoot))).codex;
       assert.ok(catConfig, 'codex should be present in bootstrapped runtime catalog');
       assert.equal(resolveBoundAccountRefForCat(projectRoot, 'codex', catConfig), 'codex-pinned');
@@ -72,10 +100,18 @@ describe('cat account binding', () => {
     const previousGlobalRoot = process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT;
 
     try {
-      await seedTemplate(projectRoot);
+      await seedTemplate(projectRoot, (template) => {
+        const codexBreed = template.breeds.find((breed) => breed.catId === 'codex');
+        codexBreed.variants.push({
+          id: 'codex-spark', catId: 'spark', clientId: 'openai',
+          defaultModel: 'gpt-5.4-spark', mcpSupport: false,
+          cli: { command: 'codex', outputFormat: 'json' },
+        });
+      });
       process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
       process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = projectRoot;
       bootstrapCatCatalog(projectRoot, process.env.CAT_TEMPLATE_PATH);
+      await seedCatalogBreeds(projectRoot);
 
       const catalogPath = resolveCatCatalogPath(projectRoot);
       const runtimeCatalog = JSON.parse(await readFile(catalogPath, 'utf-8'));
@@ -122,9 +158,17 @@ describe('cat account binding', () => {
     process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = projectRoot;
 
     try {
-      await seedTemplate(projectRoot);
+      await seedTemplate(projectRoot, (template) => {
+        const codexBreed = template.breeds.find((breed) => breed.catId === 'codex');
+        codexBreed.variants.push({
+          id: 'codex-spark', catId: 'spark', clientId: 'openai',
+          defaultModel: 'gpt-5.4-spark', mcpSupport: false,
+          cli: { command: 'codex', outputFormat: 'json' },
+        });
+      });
       process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
       bootstrapCatCatalog(projectRoot, process.env.CAT_TEMPLATE_PATH);
+      await seedCatalogBreeds(projectRoot);
 
       const catalogPath = resolveCatCatalogPath(projectRoot);
       const runtimeCatalog = JSON.parse(await readFile(catalogPath, 'utf-8'));
@@ -175,7 +219,7 @@ describe('cat account binding', () => {
     try {
       await seedTemplate(projectRoot);
       bootstrapCatCatalog(projectRoot, join(projectRoot, 'cat-template.json'));
-      await mkdir(join(projectRoot, '.cat-cafe'), { recursive: true });
+      await seedCatalogBreeds(projectRoot);
       await writeFile(
         join(projectRoot, '.cat-cafe', 'accounts.json'),
         JSON.stringify(

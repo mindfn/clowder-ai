@@ -303,7 +303,7 @@ async function validateAccountBindingOrThrow(
   if (compatibilityError) {
     throw new Error(compatibilityError);
   }
-  const modelFormatError = validateModelFormatForProvider(client, defaultModel, runtimeProfile.kind, providerName, {
+  const modelFormatError = validateModelFormatForProvider(client, defaultModel, runtimeProfile.authType, providerName, {
     ...options,
     accountModels: runtimeProfile.models,
   });

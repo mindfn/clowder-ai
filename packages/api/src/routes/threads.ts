@@ -58,20 +58,17 @@ export interface ThreadsRoutesOptions {
   guideSessionStore?: import('../domains/guides/GuideSessionRepository.js').IGuideSessionStore;
 }
 
-/** F087: Bootcamp state Zod schema */
+/** F087: Bootcamp state Zod schema (F140 v2 flow) */
 const bootcampPhaseSchema = z.enum([
-  'phase-0-select-cat',
   'phase-1-intro',
   'phase-2-env-check',
   'phase-3-config-help',
-  'phase-3.5-advanced',
   'phase-4-task-select',
-  'phase-4-first-project',
-  'phase-4.5-add-teammate',
   'phase-5-kickoff',
   'phase-6-design',
   'phase-7-dev',
-  'phase-8-review',
+  'phase-7.5-add-teammate',
+  'phase-8-collab',
   'phase-9-complete',
   'phase-10-retro',
   'phase-11-farewell',

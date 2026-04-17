@@ -195,7 +195,9 @@ export async function* routeParallel(
         ...(sopStageHint ? { sopStageHint } : {}),
         ...(activeSignals ? { activeSignals } : {}),
         ...(voiceMode ? { voiceMode } : {}),
-        ...(bootcampState ? { bootcampState, threadId, bootcampMemberCount: Object.keys(catRegistry.getAllConfigs()).length } : {}),
+        ...(bootcampState
+          ? { bootcampState, threadId, bootcampMemberCount: Object.keys(catRegistry.getAllConfigs()).length }
+          : {}),
         ...guideContextForCat(guideCtx, catId, targetCatIds, threadId),
       });
 

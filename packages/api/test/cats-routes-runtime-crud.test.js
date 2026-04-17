@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, afterEach, beforeEach, describe, it } from 'node:test';
@@ -72,11 +72,35 @@ function makeTemplate() {
   };
 }
 
+/**
+ * F140: bootstrapCatCatalog() now creates empty catalogs (first-run quest).
+ * Pre-write a catalog with breeds from the template so tests that operate on
+ * seed cats still find them. Stamps default accountRef and source: 'seed'.
+ */
+const BUILTIN_ACCOUNT_IDS = { anthropic: 'claude', openai: 'codex', google: 'gemini', kimi: 'kimi', dare: 'dare', opencode: 'opencode' };
+
+function seedCatalogFromTemplate(projectRoot, templatePath) {
+  const tpl = templatePath || join(projectRoot, 'cat-template.json');
+  const template = JSON.parse(readFileSync(tpl, 'utf-8'));
+  for (const breed of template.breeds || []) {
+    for (const variant of breed.variants || []) {
+      if (!variant.accountRef && variant.clientId && BUILTIN_ACCOUNT_IDS[variant.clientId]) {
+        variant.accountRef = BUILTIN_ACCOUNT_IDS[variant.clientId];
+      }
+      if (!variant.source) variant.source = 'seed';
+    }
+  }
+  const catCafeDir = join(projectRoot, '.cat-cafe');
+  mkdirSync(catCafeDir, { recursive: true });
+  writeFileSync(join(catCafeDir, 'cat-catalog.json'), `${JSON.stringify(template, null, 2)}\n`, 'utf-8');
+}
+
 function createProjectRoot() {
   const projectRoot = mkdtempSync(join(tmpdir(), 'cats-route-crud-'));
   tempDirs.push(projectRoot);
   process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = projectRoot;
   writeFileSync(join(projectRoot, 'cat-template.json'), JSON.stringify(makeTemplate(), null, 2));
+  seedCatalogFromTemplate(projectRoot);
   return projectRoot;
 }
 
@@ -93,6 +117,7 @@ function createProjectRootFromRepoTemplate() {
   const templateDest = join(projectRoot, 'cat-template.json');
   const repoTemplate = JSON.parse(readFileSync(join(__dirname, '..', '..', '..', 'cat-template.json'), 'utf-8'));
   writeFileSync(templateDest, JSON.stringify(repoTemplate, null, 2));
+  seedCatalogFromTemplate(projectRoot, templateDest);
   process.env.CAT_TEMPLATE_PATH = templateDest;
   return projectRoot;
 }
@@ -1516,11 +1541,8 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
   });
 
   it('PATCH /api/cats/:id allows non-provider edits for unbound opencode seed member', async () => {
-    if (savedTemplatePath === undefined) {
-      delete process.env.CAT_TEMPLATE_PATH;
-    } else {
-      process.env.CAT_TEMPLATE_PATH = savedTemplatePath;
-    }
+    const projectRoot = createProjectRootFromRepoTemplate();
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
 
     const Fastify = (await import('fastify')).default;
     const { catsRoutes } = await import('../dist/routes/cats.js');

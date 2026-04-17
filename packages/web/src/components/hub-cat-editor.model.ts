@@ -279,7 +279,7 @@ export function initialState(cat?: CatData | null, draft?: HubCatEditorDraft | n
   const persistedCliEffort = cat?.cli?.effort;
   const nameForCreate = createDraft?.templateName ?? '';
   const catId = cat?.id ?? (nameForCreate ? autoSlug(nameForCreate) : '');
-  const mentionPatterns = cat?.mentionPatterns ?? (catId ? [canonicalMentionPattern(catId)] : []);
+  const mentionPatterns = cat?.mentionPatterns ?? [];
   return {
     catId,
     name: cat?.name ?? cat?.displayName ?? createDraft?.templateName ?? '',

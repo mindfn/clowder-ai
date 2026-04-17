@@ -269,7 +269,7 @@ export function HubAddMemberWizard({ open, onClose, onComplete }: HubAddMemberWi
                     <ChoiceButton
                       key={profile.id}
                       label={profile.displayName}
-                      subtitle={profile.builtin ? '内置' : 'API Key'}
+                      subtitle={profile.authType === 'oauth' ? '内置' : 'API Key'}
                       selected={selectedProfileId === profile.id}
                       onClick={() => handleProviderSelect(profile.id)}
                     />

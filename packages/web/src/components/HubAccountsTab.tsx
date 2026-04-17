@@ -1,12 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { HubAccountItem, type ProfileEditPayload } from './HubAccountItem';
-import { AccountsSummaryCard } from './hub-accounts.sections';
-import type { AccountsResponse } from './hub-accounts.types';
-import { ensureBuiltinAccounts, resolveAccountActionId } from './hub-accounts.view';
-import { UnifiedAuthModal } from './UnifiedAuthModal';
+import type { AccountsResponse, ProfileItem } from './hub-accounts.types';
+import { resolveAccountActionId } from './hub-accounts.view';
+import { type UnifiedAuthEditData, UnifiedAuthModal } from './UnifiedAuthModal';
 
 export function HubAccountsTab() {
   const [loading, setLoading] = useState(true);
@@ -14,6 +13,7 @@ export function HubAccountsTab() {
   const [data, setData] = useState<AccountsResponse | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [editTarget, setEditTarget] = useState<UnifiedAuthEditData | undefined>(undefined);
 
   const fetchAccounts = useCallback(async () => {
     setError(null);
@@ -55,9 +55,23 @@ export function HubAccountsTab() {
 
   const handleAuthCreated = useCallback(async () => {
     setShowAuthModal(false);
+    setEditTarget(undefined);
     await fetchAccounts();
     window.dispatchEvent(new CustomEvent('accounts-changed'));
   }, [fetchAccounts]);
+
+  const handleEdit = useCallback((profile: ProfileItem) => {
+    setEditTarget({
+      id: resolveAccountActionId(profile),
+      displayName: profile.displayName,
+      baseUrl: profile.baseUrl,
+      clientId: profile.clientId,
+      authType: profile.authType,
+      models: profile.models,
+      envVars: profile.envVars,
+    });
+    setShowAuthModal(true);
+  }, []);
 
   const deleteAccount = useCallback(
     async (accountId: string) => {
@@ -96,10 +110,7 @@ export function HubAccountsTab() {
     [callApi, fetchAccounts],
   );
 
-  const displayAccounts = useMemo(() => ensureBuiltinAccounts(data?.providers ?? []), [data?.providers]);
-  const builtinAccounts = useMemo(() => displayAccounts.filter((a) => a.builtin), [displayAccounts]);
-  const customAccounts = useMemo(() => displayAccounts.filter((a) => !a.builtin), [displayAccounts]);
-  const displayCards = useMemo(() => [...builtinAccounts, ...customAccounts], [builtinAccounts, customAccounts]);
+  const displayCards = data?.providers ?? [];
 
   if (loading) return <p className="text-sm text-cafe-muted">加载中...</p>;
   if (!data) return <p className="text-sm text-cafe-muted">暂无数据</p>;
@@ -108,7 +119,12 @@ export function HubAccountsTab() {
     <div className="space-y-4">
       {error && <p className="text-sm text-red-500 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
 
-      <AccountsSummaryCard />
+      <div className="px-1">
+        <p className="text-[13px] font-semibold text-[#E29578]">系统配置 &gt; 账号配置</p>
+        <p className="mt-1 text-[13px] leading-6 text-[#8A776B]">
+          每个账号可添加或删除模型。账号配置全局共享，所有项目通用。
+        </p>
+      </div>
 
       <div role="group" aria-label="Account List" className="space-y-4">
         {displayCards.map((account) => (
@@ -118,14 +134,15 @@ export function HubAccountsTab() {
             busy={busyId === resolveAccountActionId(account)}
             onSave={(_id, payload) => saveAccount(resolveAccountActionId(account), payload)}
             onDelete={() => deleteAccount(resolveAccountActionId(account))}
+            onEdit={handleEdit}
           />
         ))}
       </div>
 
       <button
         type="button"
-        onClick={() => setShowAuthModal(true)}
-        className="w-full rounded-[20px] border border-[#E8C9AF] bg-[#F7EEE6] px-[18px] py-3 text-left text-base font-bold text-[#D49266] hover:bg-[#F1E7DF] transition"
+        onClick={() => { setEditTarget(undefined); setShowAuthModal(true); }}
+        className="w-full rounded-[20px] bg-[#F7EEE6] px-[18px] py-3 text-left text-base font-bold text-[#D49266] hover:bg-[#F1E7DF] transition"
       >
         + 新增账户认证
       </button>
@@ -133,7 +150,12 @@ export function HubAccountsTab() {
         secrets 存储在 `~/.cat-cafe/credentials.json`（全局），Git 忽略。
       </p>
 
-      <UnifiedAuthModal open={showAuthModal} onClose={() => setShowAuthModal(false)} onCreated={handleAuthCreated} />
+      <UnifiedAuthModal
+        open={showAuthModal}
+        onClose={() => { setShowAuthModal(false); setEditTarget(undefined); }}
+        onCreated={handleAuthCreated}
+        editProfile={editTarget}
+      />
     </div>
   );
 }

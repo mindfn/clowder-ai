@@ -1081,7 +1081,7 @@ describe('SystemPromptBuilder', () => {
       threadId: 'thread_abc123',
       bootcampState: {
         v: 1,
-        phase: 'phase-0-select-cat',
+        phase: 'phase-1-intro',
         startedAt: Date.now(),
       },
     });

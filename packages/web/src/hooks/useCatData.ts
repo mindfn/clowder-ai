@@ -3,10 +3,10 @@
 /**
  * F32-b Phase 3: Central hook for dynamic cat data from /api/cats.
  * Fetches once per session, caches module-level. All consumers share same data.
- * Falls back to static CAT_CONFIGS from @cat-cafe/shared during initial load.
+ * Returns empty array until API responds — no static fallback so that
+ * F140 first-run quest can detect the zero-member state reliably.
  */
 
-import { CAT_CONFIGS } from '@cat-cafe/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { refreshMentionData } from '@/lib/mention-highlight';
 import { apiFetch } from '@/utils/api-client';
@@ -80,28 +80,6 @@ function notifyListeners(cats: CatData[]): void {
   }
 }
 
-function buildFallbackCats(): CatData[] {
-  return Object.values(CAT_CONFIGS).map((c) => ({
-    id: c.id as string,
-    displayName: c.displayName,
-    nickname: c.nickname,
-    color: { primary: c.color.primary, secondary: c.color.secondary },
-    mentionPatterns: [...c.mentionPatterns],
-    breedId: undefined,
-    clientId: c.clientId,
-    defaultModel: c.defaultModel,
-    avatar: c.avatar,
-    roleDescription: c.roleDescription,
-    personality: c.personality,
-    teamStrengths: c.teamStrengths,
-    caution: c.caution,
-    strengths: c.strengths ? [...c.strengths] : undefined,
-    sessionChain: c.sessionChain,
-    roster: null,
-    source: 'seed',
-  }));
-}
-
 interface FetchResult {
   cats: CatData[];
   fromApi: boolean;
@@ -110,12 +88,12 @@ interface FetchResult {
 async function fetchCats(): Promise<FetchResult> {
   try {
     const res = await apiFetch('/api/cats');
-    if (!res.ok) return { cats: buildFallbackCats(), fromApi: false };
+    if (!res.ok) return { cats: [], fromApi: false };
     const data = await res.json();
     const cats = Array.isArray(data?.cats) ? normalizeCats(data.cats) : null;
-    return cats ? { cats, fromApi: true } : { cats: buildFallbackCats(), fromApi: false };
+    return cats ? { cats, fromApi: true } : { cats: [], fromApi: false };
   } catch {
-    return { cats: buildFallbackCats(), fromApi: false };
+    return { cats: [], fromApi: false };
   }
 }
 
@@ -163,7 +141,7 @@ async function refreshCatsNow(): Promise<FetchResult> {
 // ── Hook ────────────────────────────────────────────────
 
 export function useCatData() {
-  const [cats, setCats] = useState<CatData[]>(() => _cached ?? buildFallbackCats());
+  const [cats, setCats] = useState<CatData[]>(() => _cached ?? []);
   const [isLoading, setIsLoading] = useState(!_cached);
   const [retryCount, setRetryCount] = useState(0);
 
@@ -252,9 +230,9 @@ export function formatCatName(cat: { displayName: string; variantLabel?: string 
   return cat.variantLabel ? `${cat.displayName}（${cat.variantLabel}）` : cat.displayName;
 }
 
-/** Get cached cats synchronously (for non-hook contexts). Returns fallback if not loaded. */
+/** Get cached cats synchronously (for non-hook contexts). Returns empty if not loaded. */
 export function getCachedCats(): CatData[] {
-  return _cached ?? buildFallbackCats();
+  return _cached ?? [];
 }
 
 /** Reset module-level cache (for testing) */

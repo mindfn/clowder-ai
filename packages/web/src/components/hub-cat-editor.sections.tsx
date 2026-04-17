@@ -289,7 +289,7 @@ function buildCallHint(
   model: string,
   providerName: string,
 ): CallHint | null {
-  if (!profile || profile.builtin || !profile.baseUrl) return null;
+  if (!profile || profile.authType === 'oauth' || !profile.baseUrl) return null;
   const base = profile.baseUrl.replace(/\/+$/, '');
   const hasV1Suffix = /\/v1$/i.test(base);
   // Strip trailing /v1 from base to avoid /v1/v1 duplication when pathSuffix already includes /v1
@@ -382,12 +382,12 @@ export function AccountSection({
                 ...accountOptions
                   .filter((profile) => {
                     // Gemini CLI doesn't support custom API endpoints — only show builtin
-                    if (form.clientId === 'google' && !profile.builtin) return false;
+                    if (form.clientId === 'google' && profile.authType !== 'oauth') return false;
                     return true;
                   })
                   .map((profile) => ({
                     value: profile.id,
-                    label: profile.builtin ? `${profile.displayName}（内置）` : `${profile.displayName}（API Key）`,
+                    label: profile.authType === 'oauth' ? `${profile.displayName}（内置）` : `${profile.displayName}（API Key）`,
                   })),
               ]}
               onChange={(value) => onChange({ accountRef: value, defaultModel: '', provider: '' })}

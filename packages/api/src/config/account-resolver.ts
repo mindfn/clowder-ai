@@ -11,17 +11,16 @@ import { readCredential } from './credentials.js';
 // ── Types surviving from provider-profiles.types.ts (F136 Phase 4d) ──
 
 export type BuiltinAccountClient = Extract<ClientId, 'anthropic' | 'openai' | 'google' | 'kimi' | 'dare' | 'opencode'>;
-export type ProviderProfileKind = 'builtin' | 'api_key';
-
 export interface RuntimeProviderProfile {
   id: string;
   authType: 'oauth' | 'api_key';
-  kind: ProviderProfileKind;
   client?: BuiltinAccountClient;
   protocol?: AccountProtocol;
   baseUrl?: string;
   apiKey?: string;
   models?: string[];
+  /** F140: User-defined env vars for agent subprocess injection. */
+  envVars?: Record<string, string>;
 }
 
 export interface AnthropicRuntimeProfile {
@@ -134,7 +133,6 @@ export function resolveByAccountRef(projectRoot: string, accountRef: string): Ru
     return {
       id: accountRef,
       authType: 'oauth',
-      kind: 'builtin',
       client: builtin.client,
       protocol: builtin.protocol,
     };
@@ -167,7 +165,6 @@ export function resolveForClient(
       return {
         id: preferredAccountRef,
         authType: 'oauth',
-        kind: 'builtin',
         client: builtin.client,
         protocol: builtin.protocol,
       };
@@ -202,7 +199,6 @@ export function resolveForClient(
       return {
         id: wellKnownRef,
         authType: 'oauth',
-        kind: 'builtin',
         client: builtin.client,
         protocol: builtin.protocol,
       };
@@ -233,19 +229,19 @@ function accountToRuntimeProfile(ref: string, account: AccountConfig, projectRoo
   const credential = readCredential(ref, projectRoot);
   const apiKey = credential?.apiKey;
 
-  const isBuiltin = account.authType === 'oauth';
   // F340: Derive client and protocol solely from well-known account ID map.
   // account.protocol is retired — not read, not written.
   const builtinInfo = BUILTIN_ACCOUNT_MAP[ref];
+  const isOAuth = account.authType === 'oauth';
   return {
     id: ref,
     authType: account.authType,
-    kind: isBuiltin ? 'builtin' : 'api_key',
-    ...(isBuiltin && builtinInfo ? { client: builtinInfo.client } : {}),
+    ...(isOAuth && builtinInfo ? { client: builtinInfo.client } : {}),
     ...(builtinInfo?.protocol ? { protocol: builtinInfo.protocol } : {}),
     ...(account.baseUrl ? { baseUrl: account.baseUrl } : {}),
     ...(apiKey ? { apiKey } : {}),
     ...(account.models && account.models.length > 0 ? { models: [...account.models] } : {}),
+    ...(account.envVars && Object.keys(account.envVars).length > 0 ? { envVars: { ...account.envVars } } : {}),
   };
 }
 
@@ -256,11 +252,11 @@ export function validateRuntimeProviderBinding(
   profile: RuntimeProviderProfile,
   _defaultModel?: string | null,
 ): string | null {
-  if (clientId === 'google' && profile.kind !== 'builtin') {
+  if (clientId === 'google' && profile.authType !== 'oauth') {
     return 'client "google" only supports builtin Gemini auth';
   }
   const expectedClient = resolveBuiltinClientForProvider(clientId);
-  if (expectedClient && profile.kind === 'builtin' && profile.client && profile.client !== expectedClient) {
+  if (expectedClient && profile.authType === 'oauth' && profile.client && profile.client !== expectedClient) {
     return `bound provider profile "${profile.id}" is incompatible with client "${clientId}"`;
   }
   // Protocol matching removed: protocol is now provider-determined, not an
@@ -271,12 +267,12 @@ export function validateRuntimeProviderBinding(
 export function validateModelFormatForProvider(
   clientId: ClientId,
   defaultModel?: string | null,
-  profileKind?: ProviderProfileKind,
+  authType?: 'oauth' | 'api_key',
   providerName?: string | null,
   options?: { legacyCompat?: boolean; accountModels?: string[] },
 ): string | null {
   if (clientId !== 'opencode') return null;
-  if (profileKind === 'api_key') {
+  if (authType === 'api_key') {
     const trimmedProvider = providerName?.trim();
     // F189 intake: provider/model in defaultModel is the primary path.
     // provider name is only required when defaultModel is a bare model name.

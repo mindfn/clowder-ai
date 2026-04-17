@@ -197,6 +197,7 @@ export function CatCafeHub() {
             className="text-cafe-muted hover:text-cafe-secondary text-lg"
             title="关闭"
             aria-label="关闭"
+            data-guide-id="hub.close"
           >
             &times;
           </button>

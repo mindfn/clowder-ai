@@ -82,9 +82,24 @@ export async function* spawnCli(
   // Default timeout is configurable via CLI_TIMEOUT_MS env var; 0 disables timeout.
   const timeoutMs = resolveCliTimeoutMs(options.timeoutMs);
 
+  // Redact prompt content from args (-p value) but show all other args for diagnosability.
+  const redactedArgs = options.args.map((arg, i) => {
+    const prev = i > 0 ? options.args[i - 1] : '';
+    if (prev === '-p' || prev === '--append-system-prompt') {
+      return `[${arg.length} chars]`;
+    }
+    return arg;
+  });
   log.debug(
-    { command: options.command, argCount: options.args.length, cwd: options.cwd, timeoutMs },
-    'Spawning CLI process',
+    {
+      command: options.command,
+      args: redactedArgs,
+      argCount: options.args.length,
+      cwd: options.cwd,
+      timeoutMs,
+      invocationId: options.invocationId,
+    },
+    '[cli-spawn] Spawning CLI process',
   );
 
   const child = doSpawn(options.command, options.args, {

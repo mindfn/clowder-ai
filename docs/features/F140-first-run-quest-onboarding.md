@@ -9,7 +9,7 @@ updated: 2026-04-06
 
 # F140: First-Run Quest — 首次安装零成员 + 游戏化新手引导
 
-> **Status**: in-progress (Phase A-B done, C mostly done, D partial, E partial)
+> **Status**: in-progress (Phase A-B done, C mostly done, D mostly done, E partial)
 > **Owner**: Maine Coon + Ragdoll | **Priority**: P1
 
 > **⚠️ ID 冲突**: `F140` 在 `index.json` 中已指向 `F140-github-pr-automation.md`（已完成）。
@@ -43,14 +43,14 @@ CVO 明确拍板（2026-03-26）：
 ┌─ Bootcamp Skill Phases（bootcamp-guide/SKILL.md）──────┐
 │  phase-1-intro（自我介绍）                              │
 │  → phase-2-env-check（环境检测）                        │
-│  → phase-4-first-project（故意犯错 + overlay tip）      │
-│  → phase-4.5-add-teammate（Hub 遮罩引导添加第二只猫）   │
+│  → phase-7-dev（开发 + overlay tip）                     │
+│  → phase-7.5-add-teammate（Hub 遮罩引导添加第二只猫）   │
 │  → phase-11-farewell（毕业 + 选正式项目）               │
 │  → phase-5~10（可选：完整项目生命周期）                 │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**注意**：Phase 0（选引导猫）在 SKILL.md 中定义但当前 UI 跳过——FirstRunQuestWizard 创建猫后直接建 bootcamp thread 从 `phase-1-intro` 开始。Phase 3.5（进阶功能）暂停，等 F150 重构后启用。
+**注意**：选引导猫由 FirstRunQuestWizard 完成，创建猫后直接建 bootcamp thread 从 `phase-1-intro` 开始。Phase 3（配置帮助）在 happy path 中跳过（phase-2→phase-4），仅在环境缺失时进入。
 
 ## What
 
@@ -60,7 +60,7 @@ CVO 明确拍板（2026-03-26）：
   - `Template Catalog`：角色模板（来自 `cat-template.json`）
   - `Runtime Members`：活跃成员（首次为空，`cat-catalog.json`）
 - API 明确区分 `/api/cat-templates`（模板）与 `/api/cats`（当前成员）
-- `BOOTSTRAP_EMPTY_MEMBERS` 环境变量支持零成员启动
+- 空启动为默认行为（无环境变量开关，首次安装始终零成员）
 - 零成员时系统可启动、UI 可引导，不因空 roster 崩溃
 
 ### Phase B: 安装器改造（认证后置 + opencode）✅
@@ -75,6 +75,9 @@ CVO 明确拍板（2026-03-26）：
 - 引导 Wizard：模板选择（TemplatePicker）→ Client 选择 → 认证/模型 → 连通性探测
 - 创建第一只成员后自动建 bootcamp thread，猫猫发出自我介绍
 - **统一模板选择**：`HubAddMemberWizard` 普通模式和 bootcamp 模式共用（不再有两套流程）
+- **账号认证统一**：新建/编辑共用 `UnifiedAuthModal`，支持 OAuth（内置 Client）和 API Key 两种模式
+- **账号类型模型简化**：移除冗余的 `builtin` 标记和 `ProfileKind` 类型，`authType: 'oauth' | 'api_key'` 成为唯一判别轴。移除前端 `ensureBuiltinAccounts()` 幽灵 profile 合成逻辑和 `hub-quota-pools` 的 fallback builtin profile 创建——Hub 只显示真实存在的账号
+- **ProfileCard 显示修正**：无自定义 baseUrl 时显示供应商默认地址（如 `api.anthropic.com`），API Key 状态统一为 `已配置/未配置`
 
 **残留**：
 - legacy `/api/first-run/quest` 路由仍保留（待清理或复用）
@@ -84,9 +87,13 @@ CVO 明确拍板（2026-03-26）：
 
 - SKILL.md 已重写（435→201 行），Phase 4 引导猫故意制造明显问题
 - `BootcampGuideOverlay` 组件已创建，支持 spotlight/tips/floating 三种模式
-- Phase 4.5 分步遮罩引导（open-hub → click-add-member → fill-form → done）已落地，并能在 reload / Hub 已开场景下自动对齐 guideStep
-- Phase 4 新输出结束后会自动查找当前线程可安全判定的 preview 端口，并 auto-open Browser panel
+- Phase 7.5 分步遮罩引导（open-hub → click-add-member → fill-form → done）已落地，并能在 reload / Hub 已开场景下自动对齐 guideStep
+- Phase 7 新输出结束后会自动查找当前线程可安全判定的 preview 端口，并 auto-open Browser panel
 - 毕业后通过 `bootcamp-task-select` card-grid 让用户选正式项目
+- **Phase 7.5 WebSocket 链路修复**：`callback-bootcamp-routes` 推进 phase 后通过 `thread_updated` 事件广播 `bootcampState`，前端 `useChatSocketCallbacks` 实时更新 store，ChatInput 的 `disabled` 检查生效
+- **guideStep 初始化**：SKILL.md 的 phase-7.5 转换显式设置 `guideStep='open-hub'`，确保前端立即阻断输入并拉起 overlay
+- **首条回复改用 `post_message`**：避免 agent message（CLI output）默认折叠导致新用户迷茫
+- **成就映射修正**：`bootcamp-env-ready` 从 phase-3（happy path 跳过）迁移到 phase-4（收敛点）
 
 **未闭环**：
 - 端到端流程未完成验收
@@ -121,8 +128,8 @@ CVO 明确拍板（2026-03-26）：
 - [ ] AC-C4: 普通模式和 bootcamp 模式共用 HubAddMemberWizard（E2E 验证）
 
 ### Phase D（故意犯错 + 协作）
-- [x] AC-D1: Phase 4 猫猫故意制造明显问题，前端 overlay 弹 tip，且可安全判定时自动把 preview 端上桌，引出多猫协作
-- [ ] AC-D2: Phase 4.5 分步遮罩引导添加第二只猫
+- [x] AC-D1: Phase 7 猫猫独立开发，前端 overlay 弹 tip，且可安全判定时自动把 preview 端上桌
+- [x] AC-D2: Phase 7.5 分步遮罩引导添加第二只猫（WebSocket 链路 + guideStep 初始化 + 前端阻断）
 - [ ] AC-D3: 完成首训后明确提示 Console 管理入口
 
 ### Phase E（迁移与质量）

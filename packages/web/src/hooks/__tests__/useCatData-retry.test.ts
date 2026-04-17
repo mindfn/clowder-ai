@@ -2,7 +2,7 @@
  * F32-b Phase 3: Regression test for useCatData in-session retry mechanism.
  *
  * Verifies: first fetch fails → 10s timer → retry succeeds →
- *           cats updated from fallback to API data → no further retries.
+ *           cats updated from empty to API data → no further retries.
  */
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -13,23 +13,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 const mockApiFetch = vi.fn();
 vi.mock('@/utils/api-client', () => ({
   apiFetch: (...args: unknown[]) => mockApiFetch(...args),
-}));
-
-vi.mock('@cat-cafe/shared', () => ({
-  CAT_CONFIGS: {
-    opus: {
-      id: 'opus',
-      displayName: '布偶猫',
-      nickname: '宪宪',
-      color: { primary: '#9B7EBD', secondary: '#E8D5F5' },
-      mentionPatterns: ['@布偶', '@布偶猫', '@opus'],
-      clientId: 'anthropic',
-      defaultModel: 'opus',
-      avatar: '/a.png',
-      roleDescription: 'dev',
-      personality: 'kind',
-    },
-  },
 }));
 
 vi.mock('@/lib/mention-highlight', () => ({ refreshMentionData: vi.fn() }));
@@ -124,7 +107,7 @@ afterEach(() => {
 
 describe('useCatData retry mechanism', () => {
   it('retries after 10s on failure and stops after success', async () => {
-    // First call: API down → fallback returned
+    // First call: API down → empty array returned
     mockApiFetch.mockResolvedValueOnce({ ok: false });
     // Second call (10s retry): API up → real cats
     mockApiFetch.mockResolvedValueOnce({
@@ -137,12 +120,9 @@ describe('useCatData retry mechanism', () => {
       root.render(React.createElement(TestComponent));
     });
 
-    // First fetch resolved (failure) → fallback cats, no breedId
+    // First fetch resolved (failure) → empty cats (no fallback)
     expect(hookResult.isLoading).toBe(false);
-    expect(hookResult.cats[0].id).toBe('opus');
-    expect(hookResult.cats[0].breedId).toBeUndefined(); // fallback marker
-    expect((hookResult.cats[0] as CatData & { source?: string }).source).toBe('seed');
-    expect((hookResult.cats[0] as CatData & { roster?: unknown }).roster ?? null).toBeNull();
+    expect(hookResult.cats).toHaveLength(0);
     expect(mockApiFetch).toHaveBeenCalledTimes(1);
 
     // Advance 10s → retry timer fires → retryCount increments → re-fetch

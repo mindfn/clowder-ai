@@ -211,6 +211,9 @@ export interface AccountConfig {
   readonly baseUrl?: string;
   readonly models?: readonly string[];
   readonly displayName?: string;
+  /** F140: User-defined env vars injected into agent subprocess.
+   *  Keys starting with CAT_CAFE_ are reserved and cannot be overridden. */
+  readonly envVars?: Readonly<Record<string, string>>;
 }
 
 /**

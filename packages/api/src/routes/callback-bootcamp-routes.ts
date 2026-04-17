@@ -11,24 +11,27 @@ import type { InvocationRegistry } from '../domains/cats/services/agents/invocat
 import { runEnvironmentCheck } from '../domains/cats/services/bootcamp/env-check.js';
 import type { BootcampStateV1, IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { BOOTCAMP_PHASE_ACHIEVEMENTS } from '../domains/leaderboard/achievement-defs.js';
+import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { callbackAuthSchema } from './callback-auth-schema.js';
 import { EXPIRED_CREDENTIALS_ERROR } from './callback-errors.js';
 
 /**
  * Ordered phase list — index determines valid transitions (forward-only).
  * Wizard creates thread at phase-1-intro directly (Phase 0 handled by UI).
- * Legacy phases (phase-3.5-advanced, phase-4-task-select) removed per F140 KD-6.
+ *
+ * F140 v2 flow: first cat develops solo (phases 4-7) → add teammate (7.5) →
+ * collaboration (8) → project complete (9) → farewell guidance (10-11).
  */
 const PHASE_ORDER = [
   'phase-1-intro',
   'phase-2-env-check',
   'phase-3-config-help',
-  'phase-4-first-project',
-  'phase-4.5-add-teammate',
+  'phase-4-task-select',
   'phase-5-kickoff',
   'phase-6-design',
   'phase-7-dev',
-  'phase-8-review',
+  'phase-7.5-add-teammate',
+  'phase-8-collab',
   'phase-9-complete',
   'phase-10-retro',
   'phase-11-farewell',
@@ -55,7 +58,11 @@ const updateBootcampStateCallbackSchema = callbackAuthSchema.extend({
   advancedFeatures: z.record(z.enum(['available', 'unavailable', 'skipped'])).optional(),
   /** F140: sub-step for bootcamp guide overlay */
   guideStep: z
-    .enum(['open-hub', 'click-add-member', 'fill-form', 'done', 'return-to-chat', 'mention-teammate'])
+    .enum([
+      'open-hub', 'click-add-member', 'fill-form', 'done',
+      'return-to-chat', 'mention-teammate',
+      'farewell-new-thread', 'farewell-bootcamp', 'farewell-input-tips',
+    ])
     .nullable()
     .optional(),
   completedAt: z.number().optional(),
@@ -63,9 +70,9 @@ const updateBootcampStateCallbackSchema = callbackAuthSchema.extend({
 
 export function registerCallbackBootcampRoutes(
   app: FastifyInstance,
-  deps: { registry: InvocationRegistry; threadStore: IThreadStore },
+  deps: { registry: InvocationRegistry; threadStore: IThreadStore; socketManager: SocketManager },
 ): void {
-  const { registry, threadStore } = deps;
+  const { registry, threadStore, socketManager } = deps;
 
   app.post('/api/callbacks/update-bootcamp-state', async (request, reply) => {
     const parsed = updateBootcampStateCallbackSchema.safeParse(request.body);
@@ -111,18 +118,30 @@ export function registerCallbackBootcampRoutes(
       const currentPhase = existing.phase as (typeof PHASE_ORDER)[number];
       const currentIdx = PHASE_INDEX.get(currentPhase) ?? 0;
       const targetIdx = PHASE_INDEX.get(updates.phase);
+      request.log.info(
+        { threadId, currentPhase, targetPhase: updates.phase, currentIdx, targetIdx, catId: record.catId },
+        '[bootcamp] phase transition attempt',
+      );
       if (targetIdx === undefined || targetIdx <= currentIdx) {
+        request.log.warn(
+          { threadId, currentPhase, targetPhase: updates.phase, reason: 'not-forward' },
+          '[bootcamp] phase transition REJECTED',
+        );
         reply.status(400);
         return { error: `Invalid phase transition: ${existing.phase} → ${updates.phase} (must advance forward)` };
       }
       // Only allow advancing by 1 step, with defined skip exceptions:
-      // - phase-2-env-check → phase-4-first-project (skip phase-3 when env is OK)
-      // - phase-4.5-add-teammate → phase-11-farewell (graduation shortcut, skip phases 5-10)
+      // - phase-2-env-check → phase-4-task-select (skip phase-3 when env is OK)
+      // - phase-9-complete → phase-11-farewell (skip retro when farewell guide handles it)
       const gap = targetIdx - currentIdx;
       const allowedSkip =
-        (existing.phase === 'phase-2-env-check' && updates.phase === 'phase-4-first-project') ||
-        (existing.phase === 'phase-4.5-add-teammate' && updates.phase === 'phase-11-farewell');
+        (existing.phase === 'phase-2-env-check' && updates.phase === 'phase-4-task-select') ||
+        (existing.phase === 'phase-9-complete' && updates.phase === 'phase-11-farewell');
       if (gap > 1 && !allowedSkip) {
+        request.log.warn(
+          { threadId, currentPhase, targetPhase: updates.phase, gap, reason: 'skip-not-allowed' },
+          '[bootcamp] phase transition REJECTED',
+        );
         reply.status(400);
         return { error: `Phase skip not allowed: ${existing.phase} → ${updates.phase} (max 1 step forward)` };
       }
@@ -140,6 +159,12 @@ export function registerCallbackBootcampRoutes(
     if (updates.completedAt !== undefined) raw.completedAt = updates.completedAt;
 
     await threadStore.updateBootcampState(threadId, raw as unknown as BootcampStateV1);
+
+    // Push bootcamp state change to frontend via WebSocket
+    socketManager.broadcastToRoom(`thread:${threadId}`, 'thread_updated', {
+      threadId,
+      bootcampState: raw,
+    });
 
     // Auto-pin thread when bootcamp reaches farewell phase
     if (updates.phase === 'phase-11-farewell') {

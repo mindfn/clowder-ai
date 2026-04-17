@@ -1315,7 +1315,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
   // F087: Bootcamp state transition callbacks
   if (opts.threadStore) {
-    registerCallbackBootcampRoutes(app, { registry, threadStore: opts.threadStore });
+    registerCallbackBootcampRoutes(app, { registry, threadStore: opts.threadStore, socketManager });
   }
 
   // F140: First-Run Quest state transition callbacks

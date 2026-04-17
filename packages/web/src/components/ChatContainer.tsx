@@ -313,14 +313,14 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     // DelayedMistakeTip's 1500ms onVisible timer on every storeThreads change).
     const currentThread = useChatStore.getState().threads.find((thread) => thread.id === threadId);
     const raw = currentThread?.bootcampState;
-    if (!raw || raw.phase !== 'phase-4-first-project') return;
+    if (!raw || raw.phase !== 'phase-7-dev') return;
 
     const key = `${threadId}:${String(raw.startedAt ?? 'unknown')}:phase-4`;
     if (mistakeTipAdvanceKeyRef.current === key) return;
     mistakeTipAdvanceKeyRef.current = key;
     const nextBootcampState: NonNullable<Thread['bootcampState']> = {
       ...raw,
-      phase: 'phase-4-first-project',
+      phase: 'phase-7-dev',
       guideStep: 'preview-result',
     };
 
@@ -342,7 +342,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     }
   }, [showFirstProjectMistakeTip, handleMistakeTipVisible]);
   useEffect(() => {
-    if (currentBootcampPhase !== 'phase-4-first-project') {
+    if (currentBootcampPhase !== 'phase-7-dev') {
       mistakeTipAdvanceKeyRef.current = null;
     }
   }, [currentBootcampPhase, threadId]);
@@ -364,7 +364,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   useEffect(() => {
     const bt = storeThreads.find((t) => t.id === threadId);
     const bs = bt?.bootcampState;
-    if (bs?.phase !== 'phase-4.5-add-teammate' || bs.guideStep !== 'fill-form') {
+    if (bs?.phase !== 'phase-7.5-add-teammate' || bs.guideStep !== 'fill-form') {
       prevCatCountRef.current = cats.length;
       return;
     }
@@ -684,6 +684,8 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
             ref={scrollContainerRef}
             onScroll={handleScroll}
             className="h-full overflow-y-auto p-4"
+            data-guide-id="bootcamp.preview-result"
+            data-bootcamp-host="chat-messages"
             data-chat-container
           >
             {isLoadingHistory && <div className="text-center py-3 text-sm text-cafe-muted">加载历史消息...</div>}
@@ -792,57 +794,59 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
           <QueuePanel threadId={threadId} />
           <VoteActiveBar threadId={threadId} onEnd={() => {}} />
 
-        {!showFirstRunQuestPrompt &&
-          !showQuestWizard &&
-          (() => {
-            const currentThread = storeThreads.find((t) => t.id === threadId);
-            const questState = (currentThread as Record<string, unknown> | undefined)?.firstRunQuestState as
-              | { phase: string; firstCatName?: string }
-              | undefined;
-            if (!questState) return null;
-            return (
-              <QuestBanner
-                phase={questState.phase}
-                firstCatName={questState.firstCatName}
-                onAddSecondCat={() => setShowQuestWizard(true)}
-                onStartBootcamp={() => setShowBootcampList(true)}
-                onComplete={() => router.push('/hub')}
-              />
-            );
-          })()}
+          {!showFirstRunQuestPrompt &&
+            !showQuestWizard &&
+            (() => {
+              const currentThread = storeThreads.find((t) => t.id === threadId);
+              const questState = (currentThread as Record<string, unknown> | undefined)?.firstRunQuestState as
+                | { phase: string; firstCatName?: string }
+                | undefined;
+              if (!questState) return null;
+              return (
+                <QuestBanner
+                  phase={questState.phase}
+                  firstCatName={questState.firstCatName}
+                  onAddSecondCat={() => setShowQuestWizard(true)}
+                  onStartBootcamp={() => setShowBootcampList(true)}
+                  onComplete={() => router.push('/hub')}
+                />
+              );
+            })()}
 
           {isResearchMode && (
             <div className="mx-4 mb-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
               多猫研究模式 — 文章上下文已注入。请输入研究问题，猫猫会自动调用 multi_mention 邀请其他猫参与分析。
             </div>
           )}
-        <div
-          className={(() => {
-            if (showFirstRunQuestPrompt || showQuestWizard) return '';
-            const ct = storeThreads.find((t) => t.id === threadId);
-            // Bootcamp phase-1 with no messages: highlight + punch through overlay
-            const bs = ct?.bootcampState as { phase: string } | undefined;
-            if (bs?.phase === 'phase-1-intro' && messages.length === 0) {
-              return 'relative z-[70] quest-input-highlight rounded-xl mx-1';
-            }
-            // Legacy quest support
-            const qs = (ct as Record<string, unknown> | undefined)?.firstRunQuestState as { phase: string } | undefined;
-            return qs?.phase === 'quest-2-cat-intro' ? 'quest-input-highlight rounded-xl mx-1' : '';
-          })()}
-        >
-          <ChatInput
-            key={threadId}
-            threadId={threadId}
-            onSend={(content, images, whisper, deliveryMode) =>
-              handleSend(content, images, undefined, whisper, deliveryMode)
-            }
-            onStop={handleStop}
-            disabled={false}
-            hasActiveInvocation={hasActiveInvocation}
-            uploadStatus={uploadStatus}
-            uploadError={uploadError}
-          />
-        </div>
+          <div
+            className={(() => {
+              if (showFirstRunQuestPrompt || showQuestWizard) return '';
+              const ct = storeThreads.find((t) => t.id === threadId);
+              // Bootcamp phase-1 with no messages: highlight + punch through overlay
+              const bs = ct?.bootcampState as { phase: string } | undefined;
+              if (bs?.phase === 'phase-1-intro' && messages.length === 0) {
+                return 'relative z-[70] quest-input-highlight rounded-xl mx-1';
+              }
+              // Legacy quest support
+              const qs = (ct as Record<string, unknown> | undefined)?.firstRunQuestState as
+                | { phase: string }
+                | undefined;
+              return qs?.phase === 'quest-2-cat-intro' ? 'quest-input-highlight rounded-xl mx-1' : '';
+            })()}
+          >
+            <ChatInput
+              key={threadId}
+              threadId={threadId}
+              onSend={(content, images, whisper, deliveryMode) =>
+                handleSend(content, images, undefined, whisper, deliveryMode)
+              }
+              onStop={handleStop}
+              disabled={currentBootcampPhase === 'phase-7.5-add-teammate' && ['open-hub', 'click-add-member', 'fill-form'].includes(currentBootcampState?.guideStep ?? '')}
+              hasActiveInvocation={hasActiveInvocation}
+              uploadStatus={uploadStatus}
+              uploadError={uploadError}
+            />
+          </div>
 
           {/* F101: "Return to game" banner when overlay is minimized */}
           {isGameActive && overlayMinimized && gameView?.threadId === threadId && (
@@ -1001,8 +1005,8 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
           | 'return-to-chat'
           | 'mention-teammate'
           | undefined;
-        const isAddTeammate = phase === 'phase-4.5-add-teammate' && guideStep;
-        const isFirstProject = phase === 'phase-4-first-project';
+        const isAddTeammate = phase === 'phase-7.5-add-teammate' && guideStep;
+        const isFirstProject = phase === 'phase-7-dev';
         const isLifecyclePhase = /^phase-(5|6|7|8|9|10|11)-/.test(phase);
         if (!isAddTeammate && !isFirstProject && !isLifecyclePhase && messages.length > 0) return null;
         const leadCat = cats.find((c) => c.id === raw.leadCat) ?? cats[0];

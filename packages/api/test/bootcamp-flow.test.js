@@ -26,6 +26,7 @@ describe('Bootcamp Flow Integration', () => {
     messageStore = new MessageStore();
     socketManager = {
       broadcastAgentMessage() {},
+      broadcastToRoom() {},
       getMessages() {
         return [];
       },
@@ -68,7 +69,7 @@ describe('Bootcamp Flow Integration', () => {
         title: '🎓 猫猫训练营',
         bootcampState: {
           v: 1,
-          phase: 'phase-0-select-cat',
+          phase: 'phase-1-intro',
           leadCat: 'opus',
           startedAt: 1000,
         },
@@ -78,7 +79,7 @@ describe('Bootcamp Flow Integration', () => {
     assert.equal(createRes.statusCode, 201);
     const thread = JSON.parse(createRes.body);
     assert.ok(thread.id);
-    assert.equal(thread.bootcampState.phase, 'phase-0-select-cat');
+    assert.equal(thread.bootcampState.phase, 'phase-1-intro');
 
     // Helper: advance phase (creates fresh invocation each time, simulating multiple turns)
     async function advancePhase(threadId, phase, extra = {}) {
@@ -92,12 +93,7 @@ describe('Bootcamp Flow Integration', () => {
       return JSON.parse(res.body);
     }
 
-    // Step 2: Cat starts → advance to phase-1-intro (fires enrolled achievement)
-    const s2 = await advancePhase(thread.id, 'phase-1-intro');
-    assert.equal(s2.bootcampState.phase, 'phase-1-intro');
-    assert.equal(s2.bootcampState.leadCat, 'opus');
-
-    // Step 3: Intro done → env check
+    // Step 2: Intro done → env check
     await advancePhase(thread.id, 'phase-2-env-check');
 
     // Step 3b: Run env check → auto-stores results
@@ -112,19 +108,21 @@ describe('Bootcamp Flow Integration', () => {
     const afterEnv = await threadStore.get(thread.id);
     assert.ok(afterEnv.bootcampState.envCheck);
 
-    // Step 4: Env OK → skip phase-3, jump directly to phase-4-first-project (allowed skip)
-    const s4 = await advancePhase(thread.id, 'phase-4-first-project');
-    assert.equal(s4.bootcampState.phase, 'phase-4-first-project');
+    // Step 4: Env OK → skip phase-3, jump directly to phase-4-task-select (allowed skip)
+    const s4 = await advancePhase(thread.id, 'phase-4-task-select');
+    assert.equal(s4.bootcampState.phase, 'phase-4-task-select');
     assert.equal(s4.bootcampState.leadCat, 'opus'); // preserved
 
-    // Step 5: First project done (deliberately flawed) → add teammate
-    const s5 = await advancePhase(thread.id, 'phase-4.5-add-teammate', {
-      guideStep: 'open-hub',
-    });
-    assert.equal(s5.bootcampState.phase, 'phase-4.5-add-teammate');
-    assert.equal(s5.bootcampState.guideStep, 'open-hub');
+    // Step 5-8: Linear progression through dev → add-teammate → collab → complete
+    await advancePhase(thread.id, 'phase-5-kickoff', { selectedTaskId: 'custom' });
+    await advancePhase(thread.id, 'phase-6-design');
+    await advancePhase(thread.id, 'phase-7-dev');
+    await advancePhase(thread.id, 'phase-7.5-add-teammate', { guideStep: 'open-hub' });
+    await advancePhase(thread.id, 'phase-8-collab', { guideStep: null });
+    const s9 = await advancePhase(thread.id, 'phase-9-complete');
+    assert.equal(s9.bootcampState.phase, 'phase-9-complete');
 
-    // Step 6: Teammate added → graduation shortcut to phase-11 (skip phases 5-10)
+    // Step 9: Graduation shortcut (phase-9 → phase-11, allowed skip)
     const completedAt = Date.now();
     const s6 = await advancePhase(thread.id, 'phase-11-farewell', { completedAt, guideStep: null });
     assert.equal(s6.bootcampState.phase, 'phase-11-farewell');

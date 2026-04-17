@@ -1,17 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, relative, resolve, sep } from 'node:path';
-import type { CatCafeConfig, ClientId } from '@cat-cafe/shared';
+import type { CatCafeConfig, ClientId, RosterEntry } from '@cat-cafe/shared';
 import { builtinAccountIdForClient, resolveBuiltinClientForProvider } from './account-resolver.js';
 
 const CONFIG_SUBDIR = '.cat-cafe';
 const CAT_CATALOG_FILENAME = 'cat-catalog.json';
-const BOOTSTRAP_EMPTY_MEMBERS_ENV = 'CAT_CAFE_BOOTSTRAP_EMPTY_MEMBERS';
-
-function isTruthy(value: string | undefined): boolean {
-  if (!value) return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
-}
 
 function safePath(projectRoot: string, ...segments: string[]): string {
   const root = resolve(projectRoot);
@@ -68,7 +61,7 @@ function readSeedCatIds(templatePath: string): Set<string> {
  *   1. old `provider` (clientId value) → `clientId` (P5 field rename)
  *   2. old `ocProviderName` → `provider` (P5 field rename)
  *   3. old `providerProfileId` → `accountRef` (P5 field rename)
- * Bootstrap-only default bindings are handled separately in applyBootstrapDefaultAccountRefs().
+ * Bootstrap creates an empty catalog; template breeds are used as a menu when adding members.
  */
 function migrateCatalogVariants(catalog: CatCafeConfig): { catalog: CatCafeConfig; dirty: boolean } {
   let dirty = false;
@@ -128,33 +121,6 @@ function migrateCatalogVariants(catalog: CatCafeConfig): { catalog: CatCafeConfi
   return { catalog: next, dirty };
 }
 
-function applyBootstrapDefaultAccountRefs(catalog: CatCafeConfig, seedCatIds: ReadonlySet<string>): CatCafeConfig {
-  const next = structuredClone(catalog) as CatCafeConfig;
-
-  for (const breed of next.breeds as unknown as Record<string, unknown>[]) {
-    const breedCatId = typeof breed.catId === 'string' ? breed.catId : '';
-    const variants = Array.isArray(breed.variants) ? (breed.variants as Record<string, unknown>[]) : [];
-    for (const variant of variants) {
-      if (variant.source !== 'seed' && variant.source !== 'runtime') {
-        const catId = typeof variant.catId === 'string' ? variant.catId : breedCatId;
-        variant.source = catId && seedCatIds.has(catId) ? 'seed' : 'runtime';
-      }
-
-      const existingAccountRef = typeof variant.accountRef === 'string' ? variant.accountRef.trim() : '';
-      if (existingAccountRef) continue;
-      const catId = typeof variant.catId === 'string' ? variant.catId : breedCatId;
-      if (!catId || !seedCatIds.has(catId)) continue;
-
-      const client = resolveBuiltinClientForProvider((variant.clientId ?? variant.provider) as ClientId);
-      if (!client) continue;
-
-      variant.accountRef = builtinAccountIdForClient(client);
-    }
-  }
-
-  return next;
-}
-
 /** One-time migration: stamp `source` on variants written before #441. Idempotent.
  *  Only stamps source — does NOT touch accountRef (existing unbound variants stay unbound). */
 function backfillVariantSource(catalogPath: string, templatePath: string): void {
@@ -183,12 +149,25 @@ function backfillVariantSource(catalogPath: string, templatePath: string): void 
   writeFileAtomic(catalogPath, `${JSON.stringify(next, null, 2)}\n`);
 }
 
+const OWNER_ROSTER_KEY = 'owner';
+
+function buildOwnerRosterEntry(): RosterEntry {
+  return {
+    family: 'owner',
+    roles: ['owner'],
+    lead: false,
+    available: true,
+    evaluation: '铲屎官 / 大当家',
+  };
+}
+
 function createEmptyRuntimeCatalog(template: CatCafeConfig): CatCafeConfig {
+  const ownerEntry = buildOwnerRosterEntry();
   if ('roster' in template) {
     return {
       ...template,
       breeds: [],
-      roster: {},
+      roster: { [OWNER_ROSTER_KEY]: ownerEntry },
     };
   }
   return {
@@ -197,9 +176,23 @@ function createEmptyRuntimeCatalog(template: CatCafeConfig): CatCafeConfig {
   };
 }
 
-function shouldBootstrapEmptyMembers(): boolean {
-  return isTruthy(process.env[BOOTSTRAP_EMPTY_MEMBERS_ENV]);
+/** Ensure the owner entry exists in an existing catalog. Returns true if backfilled. */
+function ensureOwnerInRoster(catalogPath: string): boolean {
+  let raw: string;
+  try {
+    raw = readFileSync(catalogPath, 'utf-8');
+  } catch {
+    return false;
+  }
+  const catalog = JSON.parse(raw) as CatCafeConfig;
+  if (!('roster' in catalog)) return false;
+  const roster = catalog.roster as Record<string, unknown>;
+  if (roster[OWNER_ROSTER_KEY]) return false;
+  roster[OWNER_ROSTER_KEY] = buildOwnerRosterEntry();
+  writeFileAtomic(catalogPath, `${JSON.stringify(catalog, null, 2)}\n`);
+  return true;
 }
+
 
 export function resolveCatCatalogPath(projectRoot: string): string {
   return safePath(projectRoot, CONFIG_SUBDIR, CAT_CATALOG_FILENAME);
@@ -242,18 +235,17 @@ export function bootstrapCatCatalog(projectRoot: string, templatePath: string): 
     readCatCatalogRaw(projectRoot);
     // Backfill source on existing catalogs written before #441.
     backfillVariantSource(catalogPath, templatePath);
+    // Ensure owner is always present in roster.
+    ensureOwnerInRoster(catalogPath);
     return catalogPath;
   }
 
   const { catalog: template } = readBootstrapSourceConfig(templatePath);
-
-  // Bootstrap is the only time template-derived defaults are stamped into the runtime catalog.
-  // After this write, runtime reads only the catalog.
   const { catalog: migratedCatalog } = migrateCatalogVariants(template);
-  const seedCatIds = collectCatIds(migratedCatalog);
-  const runtimeCatalog = shouldBootstrapEmptyMembers()
-    ? createEmptyRuntimeCatalog(migratedCatalog)
-    : applyBootstrapDefaultAccountRefs(migratedCatalog, seedCatIds);
+
+  // Always start empty — first-run wizard guides users to add their first cat.
+  // Template breeds are used as a menu when adding members, not seeded on startup.
+  const runtimeCatalog = createEmptyRuntimeCatalog(migratedCatalog);
 
   mkdirSync(dirname(catalogPath), { recursive: true });
   writeFileAtomic(catalogPath, `${JSON.stringify(runtimeCatalog, null, 2)}\n`);
