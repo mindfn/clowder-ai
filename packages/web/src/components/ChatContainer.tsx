@@ -359,19 +359,49 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     setShowFirstRunQuestPrompt(true);
   }, [cats.length, storeThreads, threadId]);
 
-  // ── Bootcamp add-teammate: trigger guide engine on phase transition ──
+  // ── Bootcamp add-teammate: trigger guide engine when user interacts with input ──
   const guideSessionPhase = useGuideStore((s) => s.session?.phase);
   const guideFlowId = useGuideStore((s) => s.session?.flow.id);
+  const guideCurrentTarget = useGuideStore(
+    (s) => (s.session ? s.session.flow.steps[s.session.currentStepIndex]?.target : null),
+  );
   useEffect(() => {
     if (currentBootcampPhase !== 'phase-7.5-add-teammate') return;
     const { session } = useGuideStore.getState();
     if (session?.flow.id === 'bootcamp-add-teammate') return;
-    useGuideStore.getState().reduceServerEvent({
-      action: 'start',
-      guideId: 'bootcamp-add-teammate',
-      threadId,
-    });
+
+    const startGuide = () => {
+      const { session: s } = useGuideStore.getState();
+      if (s?.flow.id === 'bootcamp-add-teammate') return;
+      useGuideStore.getState().reduceServerEvent({
+        action: 'start',
+        guideId: 'bootcamp-add-teammate',
+        threadId,
+      });
+    };
+
+    // Wait for user to interact with chat input before starting guide
+    const handler = (e: Event) => {
+      if ((e.target as HTMLElement)?.closest('[data-guide-id="chat.input"]')) {
+        startGuide();
+        document.removeEventListener('focusin', handler);
+        document.removeEventListener('input', handler, true);
+      }
+    };
+    document.addEventListener('focusin', handler);
+    document.addEventListener('input', handler, true);
+    return () => {
+      document.removeEventListener('focusin', handler);
+      document.removeEventListener('input', handler, true);
+    };
   }, [currentBootcampPhase, threadId]);
+
+  // ── Bootcamp add-teammate: close hub when guide reaches chat.input step ──
+  useEffect(() => {
+    if (guideFlowId === 'bootcamp-add-teammate' && guideCurrentTarget === 'chat.input') {
+      useChatStore.getState().closeHub();
+    }
+  }, [guideFlowId, guideCurrentTarget]);
 
   // ── Bootcamp add-teammate: advance to phase-8 on guide completion ──
   const guideCompletionAdvancedRef = useRef(false);

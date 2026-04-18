@@ -689,7 +689,6 @@ export const updateBootcampStateInputSchema = {
       'click-add-member',
       'fill-form',
       'mention-teammate',
-      'return-to-chat',
       'done',
     ])
     .nullable()

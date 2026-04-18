@@ -34,11 +34,6 @@ steps:
     tips: 填写猫猫信息，选择客户端和模型，然后点击保存
     advance: confirm
 
-  - id: return-to-chat
-    target: hub.close
-    tips: 关闭设置页面，回到对话
-    advance: click
-
   - id: mention-teammate
     target: chat.input
     tips: 试试 @新猫名 来评价下刚才的工作，看看怎么继续优化
