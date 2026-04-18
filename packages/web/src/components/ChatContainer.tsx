@@ -362,9 +362,6 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   // ── Bootcamp add-teammate: trigger guide engine when user interacts with input ──
   const guideSessionPhase = useGuideStore((s) => s.session?.phase);
   const guideFlowId = useGuideStore((s) => s.session?.flow.id);
-  const guideCurrentTarget = useGuideStore(
-    (s) => (s.session ? s.session.flow.steps[s.session.currentStepIndex]?.target : null),
-  );
   useEffect(() => {
     if (currentBootcampPhase !== 'phase-7.5-add-teammate') return;
     const { session } = useGuideStore.getState();
@@ -395,13 +392,6 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
       document.removeEventListener('input', handler, true);
     };
   }, [currentBootcampPhase, threadId]);
-
-  // ── Bootcamp add-teammate: close hub when guide reaches chat.input step ──
-  useEffect(() => {
-    if (guideFlowId === 'bootcamp-add-teammate' && guideCurrentTarget === 'chat.input') {
-      useChatStore.getState().closeHub();
-    }
-  }, [guideFlowId, guideCurrentTarget]);
 
   // ── Bootcamp add-teammate: advance to phase-8 on guide completion ──
   const guideCompletionAdvancedRef = useRef(false);
