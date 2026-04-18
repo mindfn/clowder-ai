@@ -98,11 +98,9 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
     onClose();
   };
 
-  const canSubmit = isEdit
-    ? displayName.trim() && models.length > 0
-    : isOAuth
-      ? displayName.trim()
-      : displayName.trim() && baseUrl.trim() && apiKey.trim() && models.length > 0;
+  const canSubmit = isOAuth
+    ? Boolean(displayName.trim())
+    : Boolean(displayName.trim()) && models.length > 0 && (isEdit || Boolean(baseUrl.trim() && apiKey.trim()));
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
@@ -208,29 +206,27 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
         <p className="mb-1 text-[11px] text-[#B59A88]">{isEdit ? '编辑账户' : '系统配置 > 账户配置 > 添加认证'}</p>
         <h4 className="mb-4 text-base font-semibold text-[#5C4D42]">{isEdit ? '编辑账户认证' : '添加账户认证'}</h4>
 
-        {/* Mode toggle — only in create mode */}
-        {!isEdit && (
-          <div className="mb-4 flex rounded-lg border border-[#E8DCCF] p-0.5">
-            <button
-              type="button"
-              onClick={() => setAuthMode('oauth')}
-              className={`flex-1 rounded-md py-1.5 text-xs font-medium transition ${
-                isOAuth ? 'bg-[#D49266] text-white shadow-sm' : 'text-[#8A776B] hover:bg-[#F5EDE6]'
-              }`}
-            >
-              OAuth
-            </button>
-            <button
-              type="button"
-              onClick={() => setAuthMode('api_key')}
-              className={`flex-1 rounded-md py-1.5 text-xs font-medium transition ${
-                !isOAuth ? 'bg-[#D49266] text-white shadow-sm' : 'text-[#8A776B] hover:bg-[#F5EDE6]'
-              }`}
-            >
-              API Key
-            </button>
-          </div>
-        )}
+        {/* Mode toggle */}
+        <div className="mb-4 flex rounded-lg border border-[#E8DCCF] p-0.5">
+          <button
+            type="button"
+            onClick={() => !isEdit && setAuthMode('oauth')}
+            className={`flex-1 rounded-md py-1.5 text-xs font-medium transition ${
+              isOAuth ? 'bg-[#D49266] text-white shadow-sm' : 'text-[#8A776B] hover:bg-[#F5EDE6]'
+            } ${isEdit ? 'cursor-default' : ''}`}
+          >
+            OAuth
+          </button>
+          <button
+            type="button"
+            onClick={() => !isEdit && setAuthMode('api_key')}
+            className={`flex-1 rounded-md py-1.5 text-xs font-medium transition ${
+              !isOAuth ? 'bg-[#D49266] text-white shadow-sm' : 'text-[#8A776B] hover:bg-[#F5EDE6]'
+            } ${isEdit ? 'cursor-default' : ''}`}
+          >
+            API Key
+          </button>
+        </div>
 
         <div className="space-y-3">
           {/* 账号名称 — always shown */}
