@@ -1,19 +1,14 @@
 # F140 Guide Flow: Bootcamp Add Teammate
 # First-run quest — after cat delivers first project, guide user to add a second cat.
-# Auto-triggered when bootcamp Phase 4 (first-project) completes.
+# Auto-triggered when bootcamp transitions to phase-7.5-add-teammate.
 # Schema: OrchestrationFlow v2 (tag-based engine)
 
 schemaVersion: 1
 id: bootcamp-add-teammate
 name: 添加第二只猫猫
-description: 看完猫猫做的效果后，添加第二只猫猫队友来协作
+description: 开发完成后，添加第二只猫猫队友来协作
 
 steps:
-  - id: preview-result
-    target: bootcamp.preview-result
-    tips: 看看猫猫做的效果！点击聊天中的链接打开预览
-    advance: click
-
   - id: open-hub
     target: hub.trigger
     tips: 觉得有改进空间？点击 ⚙️ 设置，添加一只新猫猫来帮忙！

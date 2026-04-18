@@ -22,6 +22,7 @@ import { useVoiceStream } from '@/hooks/useVoiceStream';
 import { useWorkspaceNavigate } from '@/hooks/useWorkspaceNavigate';
 import { type ChatMessage as ChatMessageData, type Thread, useChatStore } from '@/stores/chatStore';
 import { useGameStore } from '@/stores/gameStore';
+import { useGuideStore } from '@/stores/guideStore';
 import { useTaskStore } from '@/stores/taskStore';
 import { apiFetch } from '@/utils/api-client';
 import { computeScrollRecomputeSignal } from '@/utils/scrollRecomputeSignal';
@@ -292,17 +293,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     setShowFirstRunQuestPrompt(false);
     setShowQuestWizard(true);
   }, []);
-  const currentBootcampStateRaw = storeThreads.find((thread) => thread.id === threadId)?.bootcampState;
-  // Default guideStep to 'open-hub' when phase is add-teammate but guideStep is missing
-  // (race: backend cat may advance phase before frontend sets guideStep)
-  const currentBootcampState = currentBootcampStateRaw
-    ? {
-        ...currentBootcampStateRaw,
-        guideStep:
-          currentBootcampStateRaw.guideStep ??
-          (currentBootcampStateRaw.phase === 'phase-7.5-add-teammate' ? 'open-hub' : undefined),
-      }
-    : undefined;
+  const currentBootcampState = storeThreads.find((thread) => thread.id === threadId)?.bootcampState;
   const currentBootcampPhase = currentBootcampState?.phase;
   const showFirstProjectMistakeTip = useFirstProjectMistakeTipGate({
     threadId,
@@ -331,7 +322,6 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     const nextBootcampState: NonNullable<Thread['bootcampState']> = {
       ...raw,
       phase: 'phase-7.5-add-teammate',
-      guideStep: 'open-hub',
     };
 
     void apiFetch(`/api/threads/${threadId}`, {
@@ -369,29 +359,42 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     setShowFirstRunQuestPrompt(true);
   }, [cats.length, storeThreads, threadId]);
 
-  // ── Bootcamp add-teammate guide: advance guideStep to 'done' when new cat appears ──
-  const prevCatCountRef = useRef(cats.length);
+  // ── Bootcamp add-teammate: trigger guide engine on phase transition ──
+  const guideSessionPhase = useGuideStore((s) => s.session?.phase);
+  const guideFlowId = useGuideStore((s) => s.session?.flow.id);
   useEffect(() => {
-    const bt = storeThreads.find((t) => t.id === threadId);
-    const bs = bt?.bootcampState;
-    if (bs?.phase !== 'phase-7.5-add-teammate' || bs.guideStep !== 'fill-form') {
-      prevCatCountRef.current = cats.length;
-      return;
-    }
-    if (cats.length > prevCatCountRef.current) {
-      const nextBootcampState: NonNullable<Thread['bootcampState']> = { ...bs, guideStep: 'mention-teammate' };
-      useChatStore.getState().closeHub();
+    if (currentBootcampPhase !== 'phase-7.5-add-teammate') return;
+    const { session } = useGuideStore.getState();
+    if (session?.flow.id === 'bootcamp-add-teammate') return;
+    useGuideStore.getState().reduceServerEvent({
+      action: 'start',
+      guideId: 'bootcamp-add-teammate',
+      threadId,
+    });
+  }, [currentBootcampPhase, threadId]);
+
+  // ── Bootcamp add-teammate: advance to phase-8 on guide completion ──
+  const guideCompletionAdvancedRef = useRef(false);
+  useEffect(() => {
+    if (guideFlowId === 'bootcamp-add-teammate' && guideSessionPhase === 'complete') {
+      if (guideCompletionAdvancedRef.current) return;
+      guideCompletionAdvancedRef.current = true;
+      const bt = useChatStore.getState().threads.find((t) => t.id === threadId);
+      const raw = bt?.bootcampState;
+      if (!raw || raw.phase !== 'phase-7.5-add-teammate') return;
+      const next: NonNullable<Thread['bootcampState']> = { ...raw, phase: 'phase-8-collab' };
       apiFetch(`/api/threads/${threadId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bootcampState: nextBootcampState }),
+        body: JSON.stringify({ bootcampState: next }),
       }).then((res) => {
-        if (res.ok) syncLocalBootcampState(threadId, nextBootcampState);
+        if (res.ok) syncLocalBootcampState(threadId, next);
         return res;
       });
+    } else {
+      guideCompletionAdvancedRef.current = false;
     }
-    prevCatCountRef.current = cats.length;
-  }, [cats.length, storeThreads, threadId]);
+  }, [guideFlowId, guideSessionPhase, threadId]);
 
   const prevThreadRef = useRef(threadId);
   useEffect(() => {
@@ -852,7 +855,6 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
                 handleSend(content, images, undefined, whisper, deliveryMode)
               }
               onStop={handleStop}
-              disabled={currentBootcampPhase === 'phase-7.5-add-teammate' && ['open-hub', 'click-add-member', 'fill-form'].includes(currentBootcampState?.guideStep ?? '')}
               hasActiveInvocation={hasActiveInvocation}
               uploadStatus={uploadStatus}
               uploadError={uploadError}
@@ -1000,37 +1002,25 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
       <BootcampListModal open={showBootcampList} onClose={handleBootcampModalClose} currentThreadId={threadId} />
       <HubListModal open={showHubList} onClose={() => setShowHubList(false)} currentThreadId={threadId} />
       {showVoteModal && <VoteConfigModal onSubmit={handleVoteSubmit} onCancel={() => setShowVoteModal(false)} />}
-      {/* Bootcamp guide overlay: intro phase (no messages) + add-teammate guide (any time) */}
+      {/* Bootcamp guide overlay: intro phase tips + lifecycle tips (phase-7.5 uses guide engine) */}
       {(() => {
         if (showFirstRunQuestPrompt || showQuestWizard) return null;
         const bt = storeThreads.find((t) => t.id === threadId);
         const raw = bt?.bootcampState;
         if (!raw) return null;
         const phase = raw.phase;
-        const guideStep = raw.guideStep as
-          | 'preview-result'
-          | 'open-hub'
-          | 'click-add-member'
-          | 'fill-form'
-          | 'done'
-          | 'return-to-chat'
-          | 'mention-teammate'
-          | undefined;
-        const isAddTeammate = phase === 'phase-7.5-add-teammate' && guideStep;
-        const isFirstProject = phase === 'phase-7-dev';
+        // Guide engine handles phase-7.5 — no custom overlay needed
+        if (phase === 'phase-7.5-add-teammate') return null;
         const isLifecyclePhase = /^phase-(5|6|7|8|9|10|11)-/.test(phase);
-        if (!isAddTeammate && !isFirstProject && !isLifecyclePhase && messages.length > 0) return null;
+        if (!isLifecyclePhase && messages.length > 0) return null;
         const leadCat = cats.find((c) => c.id === raw.leadCat) ?? cats[0];
         const catName = leadCat?.displayName ?? leadCat?.nickname ?? leadCat?.name;
-        if (!catName && !isAddTeammate) return null;
+        if (!catName) return null;
         return (
           <BootcampGuideOverlay
             phase={phase}
             catName={catName}
-            guideStep={guideStep}
             hasMessages={messages.length > 0}
-            threadId={threadId}
-            bootcampState={{ ...raw, phase, guideStep }}
           />
         );
       })()}

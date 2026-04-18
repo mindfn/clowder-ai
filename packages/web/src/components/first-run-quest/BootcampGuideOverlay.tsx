@@ -1,22 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useRef } from 'react';
-import { apiFetch } from '@/utils/api-client';
-import { AddTeammateGuide } from './AddTeammateGuide';
-import type { BootcampState, GuideStep } from './guideOverlayTypes';
-import { hostSelector } from './guideStepConfig';
 import { LifecyclePhaseTip, type LifecycleTipConfig } from './LifecyclePhaseTip';
-import { MentionTeammateGuide } from './MentionTeammateGuide';
-import { PreviewResultGuide } from './PreviewResultGuide';
-import { syncLocalBootcampState } from './syncLocalBootcampState';
 
 interface BootcampGuideOverlayProps {
   catName?: string;
   phase: string;
-  guideStep?: GuideStep | null;
   hasMessages?: boolean;
-  threadId?: string;
-  bootcampState?: BootcampState | null;
 }
 
 const PHASE_TIPS: Record<string, (catName: string) => string> = {
@@ -38,34 +27,8 @@ const LIFECYCLE_TIPS: Record<string, LifecycleTipConfig> = {
 export function BootcampGuideOverlay({
   catName,
   phase,
-  guideStep,
   hasMessages,
-  threadId,
-  bootcampState,
 }: BootcampGuideOverlayProps) {
-  if (
-    phase === 'phase-7.5-add-teammate' &&
-    guideStep &&
-    !['done', 'return-to-chat', 'mention-teammate'].includes(guideStep)
-  ) {
-    return <AddTeammateGuide guideStep={guideStep} threadId={threadId} bootcampState={bootcampState} />;
-  }
-
-  if (phase === 'phase-7.5-add-teammate' && (guideStep === 'done' || guideStep === 'return-to-chat')) {
-    return <PostAddTeammateTip threadId={threadId} bootcampState={bootcampState} guideStep={guideStep} />;
-  }
-
-  if (phase === 'phase-7.5-add-teammate' && guideStep === 'mention-teammate') {
-    return <MentionTeammateGuide />;
-  }
-
-  if (phase === 'phase-7-dev' && guideStep === 'preview-result') {
-    return <PreviewResultGuide catName={catName} threadId={threadId} bootcampState={bootcampState} />;
-  }
-
-  // DelayedMistakeTip removed: preview-result advance is now event-driven
-  // via useEffect in ChatContainer (fires when gate detects invocation end).
-
   const lifecycleTip = LIFECYCLE_TIPS[phase];
   if (lifecycleTip) {
     return <LifecyclePhaseTip phase={phase} config={lifecycleTip} />;
@@ -91,69 +54,5 @@ export function BootcampGuideOverlay({
         </div>
       </div>
     </>
-  );
-}
-
-/**
- * Post-add-teammate tip: shows green celebration tip and auto-advances
- * to `mention-teammate` when Hub modal is closed.
- */
-function PostAddTeammateTip({
-  threadId,
-  bootcampState,
-  guideStep,
-}: {
-  threadId?: string;
-  bootcampState?: BootcampState | null;
-  guideStep: GuideStep;
-}) {
-  const advancedRef = useRef(false);
-
-  const advanceToMention = useCallback(() => {
-    if (advancedRef.current || !threadId || !bootcampState) return;
-    advancedRef.current = true;
-    const next: BootcampState = { ...bootcampState, guideStep: 'mention-teammate' };
-    syncLocalBootcampState(threadId, next);
-    apiFetch(`/api/threads/${threadId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bootcampState: next }),
-    }).catch(() => {});
-  }, [threadId, bootcampState]);
-
-  useEffect(() => {
-    advancedRef.current = false;
-  }, [guideStep, threadId]);
-
-  // Auto-advance to mention-teammate when Hub modal is no longer in the DOM
-  useEffect(() => {
-    let frame = 0;
-    const check = () => {
-      const hubModal = document.querySelector(hostSelector('hub-modal'));
-      if (!hubModal) {
-        advanceToMention();
-        return;
-      }
-      frame = requestAnimationFrame(check);
-    };
-    // Small delay to let the DOM settle after step transition
-    const timer = window.setTimeout(check, 300);
-    return () => {
-      window.clearTimeout(timer);
-      cancelAnimationFrame(frame);
-    };
-  }, [advanceToMention]);
-
-  return (
-    <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[66] pointer-events-none">
-      <div className="rounded-xl border border-green-300 bg-green-50 px-5 py-3 shadow-xl animate-fade-in">
-        <div className="flex items-center gap-2">
-          <span className="text-lg">🎉</span>
-          <span className="text-sm font-medium text-green-800">
-            新队友已加入！以后可以在 Hub 随时添加更多猫猫。关闭设置回到聊天吧！
-          </span>
-        </div>
-      </div>
-    </div>
   );
 }
