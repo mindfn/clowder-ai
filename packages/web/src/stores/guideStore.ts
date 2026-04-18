@@ -14,8 +14,8 @@ export interface OrchestrationStep {
   target: string;
   /** Guide text shown to user (from flow definition, NOT frontend) */
   tips: string;
-  /** How to advance: click target / visible / input / confirm / next (manual HUD button) */
-  advance: 'click' | 'visible' | 'input' | 'confirm' | 'next';
+  /** How to advance: click target / visible / input / confirm / auto-confirm / next (manual HUD button) */
+  advance: 'click' | 'visible' | 'input' | 'confirm' | 'auto-confirm' | 'next';
   page?: string;
   timeoutSec?: number;
 }

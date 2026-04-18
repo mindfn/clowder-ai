@@ -42,4 +42,4 @@ steps:
   - id: mention-teammate
     target: chat.input
     tips: 在输入框输入 @ 加上新猫猫的名字，邀请它来评价第一个项目的成果吧
-    advance: confirm
+    advance: auto-confirm

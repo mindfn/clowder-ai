@@ -80,11 +80,13 @@ function GuideOverlayInner() {
       : null;
   const isComplete = session ? session.phase === 'complete' : false;
 
-  // Auto-dismiss on completion — backend persistence fires independently
-  // via useGuideEngine's completion effect. No popup needed.
+  // Auto-dismiss: when last step uses 'auto-confirm', skip the completion popup.
+  // 'confirm' steps still show the popup for explicit user acknowledgement.
+  const lastStep = session ? session.flow.steps[session.flow.steps.length - 1] : null;
+  const isAutoConfirmFinish = lastStep?.advance === 'auto-confirm';
   useEffect(() => {
-    if (isComplete) exitGuide();
-  }, [isComplete, exitGuide]);
+    if (isComplete && isAutoConfirmFinish) exitGuide();
+  }, [isComplete, isAutoConfirmFinish, exitGuide]);
 
   const handleExit = async () => {
     if (session?.threadId) {
@@ -457,7 +459,7 @@ function useAutoAdvance(step: OrchestrationStep | null, advance: () => void) {
         return;
       }
 
-      if (advanceType === 'confirm') {
+      if (advanceType === 'confirm' || advanceType === 'auto-confirm') {
         const handler = (event: Event) => {
           const detail = (event as CustomEvent<{ target?: string }>).detail;
           if (detail?.target !== target) return;
