@@ -45,7 +45,7 @@ describe('HubAccountItem', () => {
     vi.clearAllMocks();
   });
 
-  it('shows edit and delete buttons for API key accounts and calls onEdit', async () => {
+  it('clicking the card triggers onEdit for API key accounts', async () => {
     const profile: ProfileItem = {
       id: 'claude-api',
       provider: 'claude-api',
@@ -67,11 +67,13 @@ describe('HubAccountItem', () => {
       );
     });
 
-    expect(container.textContent).toContain('编辑');
+    expect(container.textContent).not.toContain('编辑');
     expect(container.textContent).toContain('删除');
 
+    // Click the card itself to trigger edit
+    const card = container.querySelector('[class*="rounded-"]') as HTMLElement;
     await act(async () => {
-      queryButton(container, '编辑').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      card.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(onEdit).toHaveBeenCalledWith(profile);
   });

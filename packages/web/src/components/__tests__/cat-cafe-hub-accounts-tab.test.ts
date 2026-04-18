@@ -734,10 +734,10 @@ describe('CatCafeHub provider profiles tab', () => {
     expect(profileList?.textContent).not.toContain('Dare (client-auth)');
     expect(container.textContent).not.toContain('全部');
     expect(container.textContent).not.toContain('内置认证');
-    // F140: OAuth and API Key both show edit buttons — 3 OAuth + 1 API Key = 4
+    // F140: cards are clickable for edit — no separate edit buttons
     expect(
       Array.from(container.querySelectorAll('button')).filter((button) => button.textContent?.includes('编辑')),
-    ).toHaveLength(4);
+    ).toHaveLength(0);
   });
 
   it('does not expose 测试 buttons on provider cards', async () => {
