@@ -772,7 +772,7 @@ describe('HubCatEditor', () => {
     await flushEffects();
     const providerSelect = queryField<HTMLSelectElement>(container, 'select[aria-label="认证信息"]');
     const optionLabels = Array.from(providerSelect.options).map((option) => option.textContent ?? '');
-    expect(optionLabels).toContain('Codex (OAuth)（内置）');
+    expect(optionLabels).toContain('Codex (OAuth)（OAuth）');
     expect(optionLabels).toContain('Claude Sponsor（API Key）');
   });
 

@@ -429,7 +429,7 @@ describe('CatCafeHub provider profiles tab', () => {
     });
     await flushEffects();
 
-    expect(container.textContent).toContain('内置');
+    expect(container.textContent).toContain('oauth');
     expect(container.textContent).toContain('系统配置 > 账号配置');
     expect(container.textContent).toContain('+ 新增账户认证');
     expect(container.textContent).not.toContain('默认/覆盖模型');
@@ -443,9 +443,9 @@ describe('CatCafeHub provider profiles tab', () => {
     });
     await flushEffects();
 
-    // Modal opens in builtin mode by default — switch to API Key tab
+    // Modal opens in OAuth mode by default — switch to API Key tab
     expect(document.body.textContent).toContain('添加账户认证');
-    expect(document.body.textContent).toContain('内置 Client');
+    expect(document.body.textContent).toContain('OAuth');
 
     const apiKeyTab = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.trim() === 'API Key')!;
     await act(async () => {
@@ -734,9 +734,10 @@ describe('CatCafeHub provider profiles tab', () => {
     expect(profileList?.textContent).not.toContain('Dare (client-auth)');
     expect(container.textContent).not.toContain('全部');
     expect(container.textContent).not.toContain('内置认证');
+    // F140: OAuth and API Key both show edit buttons — 3 OAuth + 1 API Key = 4
     expect(
       Array.from(container.querySelectorAll('button')).filter((button) => button.textContent?.includes('编辑')),
-    ).toHaveLength(1);
+    ).toHaveLength(4);
   });
 
   it('does not expose 测试 buttons on provider cards', async () => {
