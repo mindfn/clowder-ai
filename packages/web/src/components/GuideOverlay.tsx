@@ -79,6 +79,13 @@ function GuideOverlayInner() {
       ? session.flow.steps[session.currentStepIndex]
       : null;
   const isComplete = session ? session.phase === 'complete' : false;
+
+  // Auto-dismiss on completion — backend persistence fires independently
+  // via useGuideEngine's completion effect. No popup needed.
+  useEffect(() => {
+    if (isComplete) exitGuide();
+  }, [isComplete, exitGuide]);
+
   const handleExit = async () => {
     if (session?.threadId) {
       try {
