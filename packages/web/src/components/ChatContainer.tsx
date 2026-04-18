@@ -320,8 +320,8 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     mistakeTipAdvanceKeyRef.current = key;
     const nextBootcampState: NonNullable<Thread['bootcampState']> = {
       ...raw,
-      phase: 'phase-7-dev',
-      guideStep: 'preview-result',
+      phase: 'phase-7.5-add-teammate',
+      guideStep: 'open-hub',
     };
 
     void apiFetch(`/api/threads/${threadId}`, {
@@ -369,7 +369,8 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
       return;
     }
     if (cats.length > prevCatCountRef.current) {
-      const nextBootcampState: NonNullable<Thread['bootcampState']> = { ...bs, guideStep: 'done' };
+      const nextBootcampState: NonNullable<Thread['bootcampState']> = { ...bs, guideStep: 'mention-teammate' };
+      useChatStore.getState().closeHub();
       apiFetch(`/api/threads/${threadId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },

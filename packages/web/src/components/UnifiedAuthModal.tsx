@@ -267,7 +267,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
           )}
 
           {/* API Key mode: Base URL + API Key */}
-          {(!isOAuth || isEdit) && (
+          {!isOAuth && (
             <>
               <div>
                 <label className="mb-1 block text-xs font-medium text-[#8A776B]">API 服务地址 (Base URL)</label>

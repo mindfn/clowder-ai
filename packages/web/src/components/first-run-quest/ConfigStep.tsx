@@ -170,6 +170,7 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
                 displayName: p.displayName ?? p.name,
                 baseUrl: p.baseUrl,
                 clientId: p.clientId,
+                authType: p.authType,
                 models: p.models?.filter(Boolean),
                 envVars: p.envVars,
               });
