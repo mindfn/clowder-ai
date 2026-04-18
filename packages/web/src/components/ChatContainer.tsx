@@ -375,18 +375,15 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
       });
     };
 
-    // Wait for user to interact with chat input before starting guide
+    // Wait for user to type in chat input before starting guide
     const handler = (e: Event) => {
       if ((e.target as HTMLElement)?.closest('[data-guide-id="chat.input"]')) {
         startGuide();
-        document.removeEventListener('focusin', handler);
         document.removeEventListener('input', handler, true);
       }
     };
-    document.addEventListener('focusin', handler);
     document.addEventListener('input', handler, true);
     return () => {
-      document.removeEventListener('focusin', handler);
       document.removeEventListener('input', handler, true);
     };
   }, [currentBootcampPhase, threadId]);

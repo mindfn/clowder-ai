@@ -133,7 +133,7 @@ function GuideOverlayInner() {
   }, [session, currentStep, isComplete, session?.phase, setPhase]);
 
   // Auto-advance: listen for interaction with target element
-  useAutoAdvance(currentStep, advanceStep, session?.phase === 'active');
+  useAutoAdvance(currentStep, advanceStep);
 
   // A-3: Focus trap — Tab cycles between HUD and target element (passthrough).
   // Escape disabled (KD-14): users must click "退出" button.
@@ -375,7 +375,7 @@ function GuideOverlayInner() {
 
 /* ── Auto-advance hook ── */
 
-function useAutoAdvance(step: OrchestrationStep | null, advance: () => void, isActive: boolean) {
+function useAutoAdvance(step: OrchestrationStep | null, advance: () => void) {
   const advanceRef = useRef(advance);
   const listenerCleanupRef = useRef<(() => void) | null>(null);
   const delayedAdvanceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -391,7 +391,7 @@ function useAutoAdvance(step: OrchestrationStep | null, advance: () => void, isA
     }
     bindingKeyRef.current = null;
 
-    if (!step || !isActive) return;
+    if (!step) return;
 
     const target = step.target;
     const advanceType = step.advance;
@@ -411,9 +411,17 @@ function useAutoAdvance(step: OrchestrationStep | null, advance: () => void, isA
       }, delayMs);
     };
 
-    // Small delay after step transition to let UI settle
+    // Poll for both element AND active phase before attaching listener.
+    // Phase is checked via store snapshot (not a dependency) so that
+    // phase → locating transitions don't trigger effect cleanup and
+    // cancel pending advance timers (e.g. hub.close click unmounts element).
     const attachListener = () => {
       if (cancelled) return;
+      const phase = useGuideStore.getState().session?.phase;
+      if (phase !== 'active') {
+        attachTimer = setTimeout(attachListener, 100);
+        return;
+      }
       const el = document.querySelector(selector);
       if (!el) {
         attachTimer = setTimeout(attachListener, 100);
@@ -479,7 +487,7 @@ function useAutoAdvance(step: OrchestrationStep | null, advance: () => void, isA
         bindingKeyRef.current = null;
       }
     };
-  }, [step?.id, step?.target, step?.advance, isActive]);
+  }, [step?.id, step?.target, step?.advance]);
 }
 
 /* ── Minimal HUD: tips + exit + progress ── */
