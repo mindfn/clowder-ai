@@ -292,7 +292,17 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     setShowFirstRunQuestPrompt(false);
     setShowQuestWizard(true);
   }, []);
-  const currentBootcampState = storeThreads.find((thread) => thread.id === threadId)?.bootcampState;
+  const currentBootcampStateRaw = storeThreads.find((thread) => thread.id === threadId)?.bootcampState;
+  // Default guideStep to 'open-hub' when phase is add-teammate but guideStep is missing
+  // (race: backend cat may advance phase before frontend sets guideStep)
+  const currentBootcampState = currentBootcampStateRaw
+    ? {
+        ...currentBootcampStateRaw,
+        guideStep:
+          currentBootcampStateRaw.guideStep ??
+          (currentBootcampStateRaw.phase === 'phase-7.5-add-teammate' ? 'open-hub' : undefined),
+      }
+    : undefined;
   const currentBootcampPhase = currentBootcampState?.phase;
   const showFirstProjectMistakeTip = useFirstProjectMistakeTipGate({
     threadId,

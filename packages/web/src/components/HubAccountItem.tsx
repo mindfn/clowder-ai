@@ -1,6 +1,7 @@
 'use client';
 
 import type { ProfileItem } from './hub-accounts.types';
+import { builtinClientLabel } from './hub-accounts.view';
 import { TagEditor } from './hub-tag-editor';
 import { useConfirm } from './useConfirm';
 
@@ -20,21 +21,12 @@ interface HubAccountItemProps {
   onEdit?: (profile: ProfileItem) => void;
 }
 
-const PROVIDER_DEFAULT_HOST: Record<string, string> = {
-  anthropic: 'api.anthropic.com',
-  openai: 'api.openai.com',
-  google: 'generativelanguage.googleapis.com',
-};
-
 function summaryText(profile: ProfileItem): string | null {
   if (profile.authType === 'oauth') {
-    const host = profile.clientId && PROVIDER_DEFAULT_HOST[profile.clientId];
-    return host ? `${host} · OAuth` : 'OAuth';
+    const label = profile.clientId ? builtinClientLabel(profile.clientId) : null;
+    return label ? `${label} · OAuth` : 'OAuth';
   }
-  const host =
-    profile.baseUrl?.replace(/^https?:\/\//, '').replace(/\/+$/, '') ||
-    (profile.clientId && PROVIDER_DEFAULT_HOST[profile.clientId]) ||
-    null;
+  const host = profile.baseUrl?.replace(/^https?:\/\//, '').replace(/\/+$/, '') || null;
   const keyStatus = profile.hasApiKey ? '已配置' : '未配置';
   return host ? `${host} · ${keyStatus}` : keyStatus;
 }

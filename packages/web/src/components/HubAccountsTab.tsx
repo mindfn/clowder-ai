@@ -156,6 +156,7 @@ export function HubAccountsTab() {
       </p>
 
       <UnifiedAuthModal
+        key={editTarget?.id ?? 'create'}
         open={showAuthModal}
         onClose={() => {
           setShowAuthModal(false);

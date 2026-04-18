@@ -207,13 +207,14 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
         <h4 className="mb-4 text-base font-semibold text-[#5C4D42]">{isEdit ? '编辑账户认证' : '添加账户认证'}</h4>
 
         {/* Mode toggle */}
-        <div className="mb-4 flex rounded-lg border border-[#E8DCCF] p-0.5">
+        <div className={`mb-4 flex rounded-lg border border-[#E8DCCF] p-0.5 ${isEdit ? 'opacity-50' : ''}`}>
           <button
             type="button"
             onClick={() => !isEdit && setAuthMode('oauth')}
             className={`flex-1 rounded-md py-1.5 text-xs font-medium transition ${
-              isOAuth ? 'bg-[#D49266] text-white shadow-sm' : 'text-[#8A776B] hover:bg-[#F5EDE6]'
-            } ${isEdit ? 'cursor-default' : ''}`}
+              isOAuth ? 'bg-[#D49266] text-white shadow-sm' : 'text-[#8A776B]'
+            } ${isEdit ? 'cursor-not-allowed' : !isOAuth ? 'hover:bg-[#F5EDE6]' : ''}`}
+            disabled={isEdit}
           >
             OAuth
           </button>
@@ -221,8 +222,9 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
             type="button"
             onClick={() => !isEdit && setAuthMode('api_key')}
             className={`flex-1 rounded-md py-1.5 text-xs font-medium transition ${
-              !isOAuth ? 'bg-[#D49266] text-white shadow-sm' : 'text-[#8A776B] hover:bg-[#F5EDE6]'
-            } ${isEdit ? 'cursor-default' : ''}`}
+              !isOAuth ? 'bg-[#D49266] text-white shadow-sm' : 'text-[#8A776B]'
+            } ${isEdit ? 'cursor-not-allowed' : isOAuth ? 'hover:bg-[#F5EDE6]' : ''}`}
+            disabled={isEdit}
           >
             API Key
           </button>
@@ -242,7 +244,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
 
           {/* OAuth mode: Client dropdown */}
           {isOAuth && (
-            <div className="rounded-lg border border-[#E8DCCF] bg-[#FAF7F4] p-3">
+            <div>
               <label className="mb-1 block text-xs font-medium text-[#8A776B]">Client</label>
               {initialClientId ? (
                 <p className="text-sm text-[#5C4D42]">{builtinClientLabel(initialClientId)}</p>

@@ -80,7 +80,10 @@ const bootcampStateSchema = z
     leadCat: catIdSchema().optional(),
     selectedTaskId: z.string().max(50).optional(),
     /** F140: sub-step for add-teammate console guide overlay */
-    guideStep: z.enum(['open-hub', 'click-add-member', 'fill-form', 'done']).nullable().optional(),
+    guideStep: z
+      .enum(['open-hub', 'click-add-member', 'fill-form', 'mention-teammate', 'return-to-chat', 'done'])
+      .nullable()
+      .optional(),
     envCheck: z
       .record(z.object({ ok: z.boolean(), version: z.string().optional(), note: z.string().optional() }))
       .optional(),
