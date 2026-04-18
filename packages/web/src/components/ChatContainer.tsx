@@ -360,8 +360,6 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   }, [cats.length, storeThreads, threadId]);
 
   // ── Bootcamp add-teammate: trigger guide engine when user interacts with input ──
-  const guideSessionPhase = useGuideStore((s) => s.session?.phase);
-  const guideFlowId = useGuideStore((s) => s.session?.flow.id);
   useEffect(() => {
     if (currentBootcampPhase !== 'phase-7.5-add-teammate') return;
     const { session } = useGuideStore.getState();
@@ -393,28 +391,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     };
   }, [currentBootcampPhase, threadId]);
 
-  // ── Bootcamp add-teammate: advance to phase-8 on guide completion ──
-  const guideCompletionAdvancedRef = useRef(false);
-  useEffect(() => {
-    if (guideFlowId === 'bootcamp-add-teammate' && guideSessionPhase === 'complete') {
-      if (guideCompletionAdvancedRef.current) return;
-      guideCompletionAdvancedRef.current = true;
-      const bt = useChatStore.getState().threads.find((t) => t.id === threadId);
-      const raw = bt?.bootcampState;
-      if (!raw || raw.phase !== 'phase-7.5-add-teammate') return;
-      const next: NonNullable<Thread['bootcampState']> = { ...raw, phase: 'phase-8-collab' };
-      apiFetch(`/api/threads/${threadId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bootcampState: next }),
-      }).then((res) => {
-        if (res.ok) syncLocalBootcampState(threadId, next);
-        return res;
-      });
-    } else {
-      guideCompletionAdvancedRef.current = false;
-    }
-  }, [guideFlowId, guideSessionPhase, threadId]);
+
 
   const prevThreadRef = useRef(threadId);
   useEffect(() => {
