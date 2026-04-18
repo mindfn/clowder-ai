@@ -143,8 +143,8 @@ export function buildAccountQuotaGroups(
   const groups: AccountQuotaPoolGroup[] = [
     {
       id: 'builtin',
-      title: '内置账号额度（按账号配置）',
-      description: '固定内置账号包括 Claude / Codex / Gemini / Kimi / Dare / OpenCode，每个账号下方反向显示绑定成员。',
+      title: 'OAuth 账号额度（按账号配置）',
+      description: 'OAuth 账号包括 Claude / Codex / Gemini / Kimi / Dare / OpenCode，每个账号下方反向显示绑定成员。',
       pools: builtinPools,
     },
     {

@@ -117,14 +117,14 @@ describe('CatOverviewTab', () => {
     expect(html).toContain('/avatars/owner-custom.png');
     expect(html.indexOf('Co-worker')).toBeLessThan(html.indexOf('布偶猫 · 宪宪'));
     expect(html).toContain('全部');
-    expect(html).toContain('CLI（内置）');
+    expect(html).toContain('CLI（OAuth）');
     expect(html).toContain('CLI（配置）');
     expect(html).toContain('未启用');
     expect(html.indexOf('+ 添加成员')).toBeLessThan(html.indexOf('布偶猫 · 宪宪'));
     expect(html).toContain('布偶猫 · 宪宪');
     expect(html).toContain('缅因猫 · 砚砚');
     expect(html).toContain('孟加拉猫 · 阿吉');
-    expect(html).toContain('CLI（内置）账号');
+    expect(html).toContain('CLI（OAuth）账号');
     expect(html).toContain('CLI（配置） · sponsor1');
     expect(html).toContain('已启用');
     expect(html).toContain('@布偶猫');

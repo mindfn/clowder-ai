@@ -42,7 +42,7 @@ function accountSummary(cat: CatData) {
     accountRef === 'dare' ||
     accountRef === 'opencode'
   ) {
-    return 'CLI（内置）账号';
+    return 'CLI（OAuth）账号';
   }
   return `CLI（配置） · ${accountRef}`;
 }
@@ -136,7 +136,7 @@ export function HubCoCreatorOverviewCard({ coCreator, onEdit }: { coCreator: CoC
 export function HubOverviewToolbar({ onAddMember }: { onAddMember?: () => void }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <p className="text-[13px] text-[#8F8075]">全部 · CLI（内置） · CLI（配置） · 未启用</p>
+      <p className="text-[13px] text-[#8F8075]">全部 · CLI（OAuth） · CLI（配置） · 未启用</p>
       <button
         type="button"
         onClick={onAddMember}
