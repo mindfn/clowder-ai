@@ -439,8 +439,8 @@ function useAutoAdvance(step: OrchestrationStep | null, advance: () => void) {
       }
 
       if (advanceType === 'input') {
-        const handler = () => {
-          const val = (el as HTMLInputElement).value;
+        const handler = (e: Event) => {
+          const val = (e.target as HTMLInputElement).value;
           if (val && val.trim()) {
             scheduleAdvance(500);
           }
