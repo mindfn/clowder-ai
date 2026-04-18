@@ -41,5 +41,5 @@ steps:
 
   - id: mention-teammate
     target: chat.input
-    tips: 试试 @新猫名 来评价下刚才的工作，看看怎么继续优化
+    tips: 在输入框输入 @ 加上新猫猫的名字，邀请它来评价第一个项目的成果吧
     advance: input

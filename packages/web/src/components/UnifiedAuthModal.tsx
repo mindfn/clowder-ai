@@ -247,7 +247,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
             <div>
               <label className="mb-1 block text-xs font-medium text-[#8A776B]">Client</label>
               {initialClientId ? (
-                <p className="text-sm text-[#5C4D42]">{builtinClientLabel(initialClientId)}</p>
+                <p className="w-full rounded-lg border border-[#E8DCCF] bg-[#FAF7F4] px-3 py-2 text-sm text-[#5C4D42]">{builtinClientLabel(initialClientId)}</p>
               ) : (
                 <select
                   value={clientId}
