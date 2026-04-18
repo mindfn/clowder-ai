@@ -55,6 +55,13 @@ export function useGuideEngine() {
           return;
         }
         if (!isActiveThread() || hasActiveSession()) return;
+        // Ensure server-side guide session exists — client-triggered guides
+        // (e.g. bootcamp) skip /api/guide-actions/start, so register here.
+        apiFetch('/api/guide-actions/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ threadId, guideId }),
+        }).catch(() => {}); // best-effort, don't block guide start
         startGuide(flow, threadId);
       } catch (err) {
         console.error(`[Guide] Failed to fetch flow "${guideId}":`, err);
