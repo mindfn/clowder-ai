@@ -6,7 +6,7 @@
  * 环境变量 CAT_{CATID}_MODEL 可 override，用于调试。
  */
 
-import { CAT_CONFIGS, catRegistry } from '@cat-cafe/shared';
+import { catRegistry } from '@cat-cafe/shared';
 
 /**
  * F32-b: Generate dynamic env key from catId.
@@ -28,16 +28,10 @@ export function getCatModel(catName: string): string {
     return envValue;
   }
 
-  // 2. catRegistry (populated from the resolved runtime cat config at startup)
+  // 2. catRegistry (populated from .cat-cafe/cat-catalog.json at startup)
   const entry = catRegistry.tryGet(catName);
   if (entry) {
     return entry.config.defaultModel;
-  }
-
-  // 3. 硬编码默认值 (legacy fallback)
-  const config = CAT_CONFIGS[catName];
-  if (config) {
-    return config.defaultModel;
   }
 
   throw new Error(`No model configured for cat "${catName}"`);
@@ -48,7 +42,7 @@ export function getCatModel(catName: string): string {
  */
 export function getAllCatModels(): Record<string, string> {
   const result: Record<string, string> = {};
-  const allIds = catRegistry.getAllIds().length > 0 ? catRegistry.getAllIds().map(String) : Object.keys(CAT_CONFIGS);
+  const allIds = catRegistry.getAllIds().map(String);
   for (const catName of allIds) {
     result[catName] = getCatModel(catName);
   }

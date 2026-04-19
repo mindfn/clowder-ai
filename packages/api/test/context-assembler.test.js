@@ -281,7 +281,7 @@ describe('formatMessage — head+tail truncation (#91 regression)', () => {
 describe('cross-post sender variant: distinguish same-family cats', () => {
   before(async () => {
     const { catRegistry } = await import('../node_modules/@cat-cafe/shared/dist/index.js');
-    // Register variant cats that exist in the runtime cat config but not in static CAT_CONFIGS
+    // Register variant cats that may not yet be in catRegistry
     if (!catRegistry.has('sonnet')) {
       catRegistry.register('sonnet', {
         id: 'sonnet',

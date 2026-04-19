@@ -7,19 +7,22 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-import { CAT_CONFIGS, catRegistry, createCatId } from '@cat-cafe/shared';
+import { catRegistry, createCatId } from '@cat-cafe/shared';
+import './helpers/setup-cat-registry.js';
 
 const { parseA2AMentions } = await import('../dist/domains/cats/services/agents/routing/a2a-mentions.js');
 const { _clearRuntimeOverrides, getRuntimeOverride, setRuntimeOverride } = await import(
   '../dist/config/session-strategy-overrides.js'
 );
+const { loadCatConfig, toAllCatConfigs } = await import('../dist/config/cat-config-loader.js');
 
 const tempDirs = [];
 let savedTemplatePath;
 
 function resetRegistryToBuiltins() {
   catRegistry.reset();
-  for (const [id, config] of Object.entries(CAT_CONFIGS)) {
+  const allConfigs = toAllCatConfigs(loadCatConfig());
+  for (const [id, config] of Object.entries(allConfigs)) {
     catRegistry.register(id, config);
   }
 }

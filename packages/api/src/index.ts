@@ -840,12 +840,8 @@ async function main(): Promise<void> {
     }
     app.log.info(`[api] CatRegistry initialized: ${catRegistry.getAllIds().join(', ')}`);
   } catch (err) {
-    app.log.warn(`[api] Failed to load cat template/catalog, falling back to built-in CAT_CONFIGS: ${String(err)}`);
-    // Fallback: register from static CAT_CONFIGS
-    const { CAT_CONFIGS } = await import('@cat-cafe/shared');
-    for (const [id, config] of Object.entries(CAT_CONFIGS)) {
-      if (!catRegistry.has(id)) catRegistry.register(id, config);
-    }
+    app.log.error(`[api] Failed to load cat catalog — .cat-cafe/cat-catalog.json is required: ${String(err)}`);
+    throw err;
   }
 
   // ── F149 Phase C: ACP process pool registry (variantId → AcpProcessPool) ──

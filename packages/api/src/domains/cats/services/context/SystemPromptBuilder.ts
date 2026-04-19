@@ -2,11 +2,11 @@
  * System Prompt Builder
  * 为每次 CLI 调用构建身份注入 prompt（~150-200 tokens）
  *
- * 纯函数，无副作用。读取 CAT_CONFIGS 生成身份上下文。
+ * 纯函数，无副作用。读取 catRegistry 生成身份上下文。
  */
 
 import type { CatConfig, CatId, CompiledPackBlocks } from '@cat-cafe/shared';
-import { CAT_CONFIGS, catRegistry } from '@cat-cafe/shared';
+import { catRegistry } from '@cat-cafe/shared';
 import {
   catHasRole,
   getCoCreatorConfig,
@@ -146,17 +146,14 @@ export interface InvocationContext {
   alwaysOnDocs?: readonly { anchor: string; title: string; summary: string }[];
 }
 
-/** Get all cat configs — registry first, fallback to static CAT_CONFIGS */
+/** Get all cat configs from catRegistry (.cat-cafe/cat-catalog.json) */
 function getAllConfigs(): Record<string, CatConfig> {
-  const registryConfigs = catRegistry.getAllConfigs();
-  return Object.keys(registryConfigs).length > 0 ? registryConfigs : CAT_CONFIGS;
+  return catRegistry.getAllConfigs();
 }
 
 /** Get a single cat config by ID */
 function getConfig(catId: string): CatConfig | undefined {
-  const entry = catRegistry.tryGet(catId);
-  if (entry) return entry.config;
-  return CAT_CONFIGS[catId];
+  return catRegistry.tryGet(catId)?.config;
 }
 
 interface CallableCatEntry {

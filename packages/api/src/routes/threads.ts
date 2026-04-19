@@ -79,21 +79,9 @@ const bootcampStateSchema = z
     phase: bootcampPhaseSchema,
     leadCat: catIdSchema().optional(),
     selectedTaskId: z.string().max(50).optional(),
-    /** F140: sub-step for add-teammate console guide overlay */
-    guideStep: z
-      .enum([
-        'open-hub',
-        'click-add-member',
-        'fill-form',
-        'mention-teammate',
-        'return-to-chat',
-        'done',
-        'farewell-new-thread',
-        'farewell-bootcamp',
-        'farewell-input-tips',
-      ])
-      .nullable()
-      .optional(),
+    /** F140: sub-step for add-teammate / farewell console guide overlay.
+     *  Free-form string — guide flows evolve and rigid enums cause silent PATCH failures. */
+    guideStep: z.string().max(50).nullable().optional(),
     envCheck: z
       .record(z.object({ ok: z.boolean(), version: z.string().optional(), note: z.string().optional() }))
       .optional(),

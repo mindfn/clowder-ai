@@ -14,7 +14,7 @@
  */
 
 import type { ContextHealthConfig, SessionStrategyConfig, StrategyAction } from '@cat-cafe/shared';
-import { CAT_CONFIGS, catRegistry } from '@cat-cafe/shared';
+import { catRegistry } from '@cat-cafe/shared';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import { resolveBreedId } from './breed-resolver.js';
 import { getConfigSessionStrategy } from './cat-config-loader.js';
@@ -152,7 +152,7 @@ function resolveFallbackStrategy(catName: string): {
   }
 
   // Provider default or global default
-  const provider = catRegistry.tryGet(catName)?.config.clientId ?? CAT_CONFIGS[catName]?.clientId;
+  const provider = catRegistry.tryGet(catName)?.config.clientId;
   if (provider && DEFAULT_STRATEGY_BY_PROVIDER[provider]) {
     return { effective: base, source: 'provider_default' };
   }
@@ -179,8 +179,8 @@ export function mergeStrategyConfig(
 }
 
 function getBaseStrategy(catName: string): SessionStrategyConfig {
-  // Try catRegistry first (runtime, includes variants), then static CAT_CONFIGS fallback
-  const provider = catRegistry.tryGet(catName)?.config.clientId ?? CAT_CONFIGS[catName]?.clientId;
+  // Read from catRegistry (.cat-cafe/cat-catalog.json)
+  const provider = catRegistry.tryGet(catName)?.config.clientId;
   if (provider) {
     const providerDefault = DEFAULT_STRATEGY_BY_PROVIDER[provider];
     if (providerDefault) return providerDefault;

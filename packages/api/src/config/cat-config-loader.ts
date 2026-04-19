@@ -1,7 +1,7 @@
 /**
  * Cat Config Loader
  * 从 cat-template.json / .cat-cafe/cat-catalog.json 加载 Breed+Variant 配置。
- * Node-only — 前端继续用 shared 包的 CAT_CONFIGS 常量。
+ * Node-only — 前端通过 /api/cats 获取猫数据。
  */
 
 import { readFileSync } from 'node:fs';

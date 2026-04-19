@@ -27,12 +27,14 @@ function ensureTestGlobalConfigRoot() {
 }
 
 /**
- * Ensure catRegistry has the three built-in cats registered.
+ * Ensure catRegistry has all runtime cats registered.
  * Safe to call multiple times (skips if already registered).
  */
 export async function ensureCatRegistryPopulated() {
-  const { catRegistry, CAT_CONFIGS } = await import('@cat-cafe/shared');
-  for (const [id, config] of Object.entries(CAT_CONFIGS)) {
+  const { catRegistry } = await import('@cat-cafe/shared');
+  const { loadCatConfig, toAllCatConfigs } = await import('../../dist/config/cat-config-loader.js');
+  const allConfigs = toAllCatConfigs(loadCatConfig());
+  for (const [id, config] of Object.entries(allConfigs)) {
     if (!catRegistry.has(id)) {
       catRegistry.register(id, config);
     }

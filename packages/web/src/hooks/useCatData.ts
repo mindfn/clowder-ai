@@ -3,10 +3,8 @@
 /**
  * F32-b Phase 3: Central hook for dynamic cat data from /api/cats.
  * Fetches once per session, caches module-level. All consumers share same data.
- * Falls back to static CAT_CONFIGS from @cat-cafe/shared during initial load.
  */
 
-import { CAT_CONFIGS } from '@cat-cafe/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { refreshMentionData } from '@/lib/mention-highlight';
 import { sortCatsByOrder } from '@/lib/sort-cats-by-order';
@@ -82,28 +80,6 @@ function notifyListeners(cats: CatData[]): void {
   }
 }
 
-function buildFallbackCats(): CatData[] {
-  return Object.values(CAT_CONFIGS).map((c) => ({
-    id: c.id as string,
-    displayName: c.displayName,
-    nickname: c.nickname,
-    color: { primary: c.color.primary, secondary: c.color.secondary },
-    mentionPatterns: [...c.mentionPatterns],
-    breedId: undefined,
-    clientId: c.clientId,
-    defaultModel: c.defaultModel,
-    avatar: c.avatar,
-    roleDescription: c.roleDescription,
-    personality: c.personality,
-    teamStrengths: c.teamStrengths,
-    caution: c.caution,
-    strengths: c.strengths ? [...c.strengths] : undefined,
-    sessionChain: c.sessionChain,
-    roster: null,
-    source: 'seed',
-  }));
-}
-
 interface FetchResult {
   cats: CatData[];
   fromApi: boolean;
@@ -125,13 +101,12 @@ async function fetchCats(): Promise<FetchResult> {
   try {
     const [catsRes, orderIds] = await Promise.all([apiFetch('/api/cats'), fetchCatOrder()]);
     _catOrder = orderIds;
-    if (!catsRes.ok) return { cats: sortCatsByOrder(buildFallbackCats(), _catOrder), fromApi: false };
+    if (!catsRes.ok) return { cats: [], fromApi: false };
     const data = await catsRes.json();
     const normalized = Array.isArray(data?.cats) ? normalizeCats(data.cats) : null;
-    const cats = normalized ?? buildFallbackCats();
-    return { cats: sortCatsByOrder(cats, _catOrder), fromApi: normalized !== null };
+    return { cats: normalized ? sortCatsByOrder(normalized, _catOrder) : [], fromApi: normalized !== null };
   } catch {
-    return { cats: sortCatsByOrder(buildFallbackCats(), _catOrder), fromApi: false };
+    return { cats: [], fromApi: false };
   }
 }
 
@@ -179,7 +154,7 @@ async function refreshCatsNow(): Promise<FetchResult> {
 // ── Hook ────────────────────────────────────────────────
 
 export function useCatData() {
-  const [cats, setCats] = useState<CatData[]>(() => _cached ?? buildFallbackCats());
+  const [cats, setCats] = useState<CatData[]>(() => _cached ?? []);
   const [isLoading, setIsLoading] = useState(!_cached);
   const [retryCount, setRetryCount] = useState(0);
 
@@ -270,7 +245,7 @@ export function formatCatName(cat: { displayName: string; variantLabel?: string 
 
 /** Get cached cats synchronously (for non-hook contexts). Returns empty if not loaded. */
 export function getCachedCats(): CatData[] {
-  return _cached ?? buildFallbackCats();
+  return _cached ?? [];
 }
 
 /** Reset module-level cache (for testing) */

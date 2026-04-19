@@ -131,36 +131,45 @@ export function registerCallbackBootcampRoutes(
     if (updates.phase !== undefined) {
       const rawPhase = existing.phase as string;
       const currentPhase = (LEGACY_PHASE_MAP[rawPhase] ?? rawPhase) as (typeof PHASE_ORDER)[number];
-      const currentIdx = PHASE_INDEX.get(currentPhase) ?? 0;
+      const currentIdx = PHASE_INDEX.get(currentPhase);
       const targetIdx = PHASE_INDEX.get(updates.phase);
-      request.log.info(
-        { threadId, currentPhase, targetPhase: updates.phase, currentIdx, targetIdx, catId: record.catId },
-        '[bootcamp] phase transition attempt',
-      );
-      if (targetIdx === undefined || targetIdx <= currentIdx) {
+      if (currentIdx === undefined) {
+        // Unmapped legacy phase — allow any forward transition (don't block users on upgrade)
         request.log.warn(
-          { threadId, currentPhase, targetPhase: updates.phase, reason: 'not-forward' },
-          '[bootcamp] phase transition REJECTED',
+          { threadId, rawPhase, targetPhase: updates.phase },
+          '[bootcamp] unmapped legacy phase — allowing transition',
         );
-        reply.status(400);
-        return { error: `Invalid phase transition: ${existing.phase} → ${updates.phase} (must advance forward)` };
-      }
-      // Only allow advancing by 1 step, with defined skip exceptions:
-      // - phase-2-env-check → phase-4-task-select (skip phase-3 when env is OK)
-      // - phase-9-complete → phase-11-farewell (skip retro when farewell guide handles it)
-      const gap = targetIdx - currentIdx;
-      const allowedSkip =
-        (existing.phase === 'phase-2-env-check' && updates.phase === 'phase-4-task-select') ||
-        (existing.phase === 'phase-9-complete' && updates.phase === 'phase-11-farewell');
-      if (gap > 1 && !allowedSkip) {
-        request.log.warn(
-          { threadId, currentPhase, targetPhase: updates.phase, gap, reason: 'skip-not-allowed' },
-          '[bootcamp] phase transition REJECTED',
+        validTransition = true;
+      } else {
+        request.log.info(
+          { threadId, currentPhase, targetPhase: updates.phase, currentIdx, targetIdx, catId: record.catId },
+          '[bootcamp] phase transition attempt',
         );
-        reply.status(400);
-        return { error: `Phase skip not allowed: ${existing.phase} → ${updates.phase} (max 1 step forward)` };
+        if (targetIdx === undefined || targetIdx <= currentIdx) {
+          request.log.warn(
+            { threadId, currentPhase, targetPhase: updates.phase, reason: 'not-forward' },
+            '[bootcamp] phase transition REJECTED',
+          );
+          reply.status(400);
+          return { error: `Invalid phase transition: ${existing.phase} → ${updates.phase} (must advance forward)` };
+        }
+        // Only allow advancing by 1 step, with defined skip exceptions:
+        // - phase-2-env-check → phase-4-task-select (skip phase-3 when env is OK)
+        // - phase-9-complete → phase-11-farewell (skip retro when farewell guide handles it)
+        const gap = targetIdx - currentIdx;
+        const allowedSkip =
+          (existing.phase === 'phase-2-env-check' && updates.phase === 'phase-4-task-select') ||
+          (existing.phase === 'phase-9-complete' && updates.phase === 'phase-11-farewell');
+        if (gap > 1 && !allowedSkip) {
+          request.log.warn(
+            { threadId, currentPhase, targetPhase: updates.phase, gap, reason: 'skip-not-allowed' },
+            '[bootcamp] phase transition REJECTED',
+          );
+          reply.status(400);
+          return { error: `Phase skip not allowed: ${existing.phase} → ${updates.phase} (max 1 step forward)` };
+        }
+        validTransition = true;
       }
-      validTransition = true;
     }
 
     // Build merged state — spreads preserve existing fields, updates override

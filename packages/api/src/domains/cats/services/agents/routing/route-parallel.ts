@@ -4,7 +4,7 @@
  */
 
 import type { CatConfig, CatId } from '@cat-cafe/shared';
-import { CAT_CONFIGS, catRegistry } from '@cat-cafe/shared';
+import { catRegistry } from '@cat-cafe/shared';
 import { getCatContextBudget } from '../../../../../config/cat-budgets.js';
 import { getConfigSessionStrategy, isSessionChainEnabled } from '../../../../../config/cat-config-loader.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
@@ -145,8 +145,7 @@ export async function* routeParallel(
 
   const streams = await Promise.all(
     targetCats.map(async (catId) => {
-      const catConfig: CatConfig | undefined =
-        catRegistry.tryGet(catId as string)?.config ?? CAT_CONFIGS[catId as string];
+      const catConfig: CatConfig | undefined = catRegistry.tryGet(catId as string)?.config;
       const teammates = targetCats.filter((id) => id !== catId);
       // Build identity: static goes in -p content (+ systemPrompt as defense-in-depth), dynamic in -p only.
       // Non-Claude HTTP callback instructions → per-message (session history may be lost on compress).
