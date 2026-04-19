@@ -8,7 +8,7 @@
  * Usage: import './helpers/setup-cat-registry.js';
  */
 
-import { resolve, dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { catRegistry } from '@cat-cafe/shared';
 
