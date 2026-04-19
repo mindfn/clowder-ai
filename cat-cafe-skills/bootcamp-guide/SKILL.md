@@ -161,28 +161,25 @@ MSG 5（用户完成 overlay 后发消息）
 
 ---
 
-## MSG 4+: 多猫协作 + 完成 + 毕业引导（Phase 8→9→10）
+## MSG 4+: 多猫协作 + 完成（Phase 8→9→10）
 
 用户 @mention 了第二只猫。**自然协作，不需要 UI 引导**：
 - 第二只猫评价 Phase 7 的产出，提出改进建议
-- 两只猫协作优化
+- 两只猫协作修复发现的问题
 - 让用户感受真实的多猫协作
 
-协作完成后：
-> "看吧！有人帮忙看一眼就是不一样~ 第一个项目圆满完成！"
+协作完成后（所有问题修复完毕）：
+1. `cat_cafe_update_bootcamp_state(threadId, phase='phase-9-complete')`
+2. 用 `cat_cafe_post_message` 发送完成消息（**不要**用普通 agent 消息，会被折叠）：
+   - 自然地告知所有问题已修复完毕，第一个项目顺利完成
+   - 告诉用户可以继续优化当前项目，也可以开始新的训练营尝试不同的项目
+   - **不要**刻意强调"多猫协作的好处"——用户刚亲身体验过，不用你总结
+   - 末尾附猫猫签名
+3. `cat_cafe_update_bootcamp_state(threadId, phase='phase-10-retro')`
 
-`cat_cafe_update_bootcamp_state(threadId, phase='phase-9-complete')`
+前端自动弹出训练营项目列表（BootcampListModal），让用户看到可以继续当前项目或开始新项目。
 
-> "🎉 第一个项目全部完成了！你刚刚体验了完整的多猫协作流程——从独立开发到互相 review。"
-
-`cat_cafe_update_bootcamp_state(threadId, phase='phase-10-retro')`
-
-前端 guide overlay 自动展示 3 步高亮：
-1. 新会话按钮 — "点击「新会话」可以随时创建新的任务"
-2. 训练营入口 — "回到训练营可以继续探索新项目"
-3. 输入框 — "@猫A @猫B 会触发对立采样；有疑问直接问猫猫"
-
-**📨 发送后 → ⛔ STOP — 等用户完成 overlay 后发下一条消息**
+**📨 发送后 → ⛔ STOP — 等用户下一条消息**
 
 ---
 

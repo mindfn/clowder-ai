@@ -388,7 +388,16 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     };
   }, [currentBootcampPhase, threadId]);
 
-
+  // ── Bootcamp phase-9: auto-open project list when first project completes ──
+  const prevBootcampPhaseRef = useRef(currentBootcampPhase);
+  useEffect(() => {
+    const prev = prevBootcampPhaseRef.current;
+    prevBootcampPhaseRef.current = currentBootcampPhase;
+    // Only trigger on transition INTO phase-9, not on mount with phase-9 already set
+    if (currentBootcampPhase === 'phase-9-complete' && prev && prev !== 'phase-9-complete') {
+      setShowBootcampList(true);
+    }
+  }, [currentBootcampPhase]);
 
   const prevThreadRef = useRef(threadId);
   useEffect(() => {
