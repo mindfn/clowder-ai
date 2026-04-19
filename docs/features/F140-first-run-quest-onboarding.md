@@ -89,7 +89,8 @@ CVO 明确拍板（2026-03-26）：
 - `BootcampGuideOverlay` 组件已创建，支持 spotlight/tips/floating 三种模式
 - Phase 7.5 分步遮罩引导（open-hub → click-add-member → fill-form → done）已落地，并能在 reload / Hub 已开场景下自动对齐 guideStep
 - Phase 7 新输出结束后会自动查找当前线程可安全判定的 preview 端口，并 auto-open Browser panel
-- 毕业后通过 `bootcamp-task-select` card-grid 让用户选正式项目
+- **Phase 9 完成内容**：改用 `post_message` 自然消息 + `create_rich_block` interactive card-grid（16 个项目选项，3 级难度），替代原来的 BootcampListModal
+- **数据同步安全网**：invocation 结束时 re-fetch thread bootcampState，应对 WebSocket `thread_updated` 未到达前端（worktree 端口隔离等）
 - **Phase 7.5 WebSocket 链路修复**：`callback-bootcamp-routes` 推进 phase 后通过 `thread_updated` 事件广播 `bootcampState`，前端 `useChatSocketCallbacks` 实时更新 store，ChatInput 的 `disabled` 检查生效
 - **guideStep 初始化**：SKILL.md 的 phase-7.5 转换显式设置 `guideStep='open-hub'`，确保前端立即阻断输入并拉起 overlay
 - **首条回复改用 `post_message`**：避免 agent message（CLI output）默认折叠导致新用户迷茫
@@ -201,12 +202,13 @@ CVO 明确拍板（2026-03-26）：
 | 2026-04-06 | 修复 BootcampGuideOverlay 事件链：phase-4 tip 延迟门控 + 自动推进到 4.5 + late-mounted target click delegation |
 | 2026-04-06 | Phase 4 preview 自动串联：新输出结束后自动选择安全 preview 端口并 auto-open Browser panel；preview auto-open 增加 thread 过滤 |
 | 2026-04-06 | Phase 4.5 reload 恢复：Hub 已开或下一步目标已出现时，遮罩自动推进到正确 guideStep |
+| 2026-04-19 | Phase 9 完成内容修复：post_message + card-grid 替代 BootcampListModal；invocation-end data sync 安全网 |
 
 ## Branch Status
 
 - **Branch**: `feat/f140-first-run-quest`
-- **Relative to main**: 11 commits ahead, 0 behind (rebased 2026-04-03)
-- **Uncommitted**: 9 files (SKILL.md, first-run-quest.ts, CatCafeHub.tsx, ChatContainer.tsx, HubAddMemberWizard.tsx, BootcampGuideOverlay.tsx, hub-add-member-wizard.parts.tsx, dev-reset-cats.sh, pnpm-lock.yaml)
+- **PR**: zts212653/clowder-ai#520
+- **Relative to main**: 25 commits ahead (rebased 2026-04-03)
 
 ## Review Gate
 
