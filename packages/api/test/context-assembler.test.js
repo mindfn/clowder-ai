@@ -3,6 +3,7 @@
  * 测试历史 context 组装和消息格式化
  */
 
+import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 

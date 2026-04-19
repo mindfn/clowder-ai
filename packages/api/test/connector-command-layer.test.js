@@ -1,3 +1,4 @@
+import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 

@@ -1,3 +1,4 @@
+import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';

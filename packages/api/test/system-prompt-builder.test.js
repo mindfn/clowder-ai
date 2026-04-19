@@ -3,6 +3,7 @@
  * 测试身份注入 prompt 生成
  */
 
+import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
 import { dirname, resolve } from 'node:path';
 import { describe, test } from 'node:test';

@@ -3,6 +3,7 @@
  * 验证 routeSerial / routeParallel 纯函数的基本行为 + A2A worklist
  */
 
+import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 

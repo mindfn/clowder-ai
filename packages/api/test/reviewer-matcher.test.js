@@ -3,6 +3,7 @@
  * F032: Dynamic reviewer selection
  */
 
+import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 
