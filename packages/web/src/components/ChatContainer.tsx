@@ -371,7 +371,11 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     apiFetch(`/api/threads/${threadId}`)
       .then((res) => (res.ok ? (res.json() as Promise<{ bootcampState?: Thread['bootcampState'] }>) : null))
       .then((thread) => {
-        if (thread?.bootcampState) {
+        if (!thread) return;
+        // Sync even when bootcampState is absent/null — clears stale local state
+        // when the backend has removed it.
+        const local = useChatStore.getState().threads.find((t) => t.id === threadId);
+        if (thread.bootcampState || local?.bootcampState) {
           syncLocalBootcampState(threadId, thread.bootcampState);
         }
       })

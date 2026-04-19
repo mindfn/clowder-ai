@@ -185,7 +185,7 @@ CVO 明确拍板（2026-03-26）：
 | KD-5 | ~~跳过=永久(localStorage)~~ → session-only skip | 后端检测 `cats.length + bootcamp threads`，前端无持久 skip 状态 | 2026-03-26 → 04-03 更正 |
 | KD-6 | Phase 4 改为"用户描述风格→猫猫执行→故意犯错" | 比任务池更自然，用户参与感强 | 2026-04-03 |
 | KD-7 | HubAddMemberWizard 统一普通/bootcamp 模式 | 避免两套流程、提高模板复用 | 2026-04-03 |
-| KD-8 | Phase 4.5 guideStep 可从界面状态自动恢复 | reload 或 Hub 已开时自动跳过已完成步骤，避免遮罩卡死 | 2026-04-06 |
+| KD-8 | Phase 7.5 guideStep 可从界面状态自动恢复 | reload 或 Hub 已开时自动跳过已完成步骤，避免遮罩卡死 | 2026-04-06 |
 
 ## Timeline
 
@@ -199,9 +199,9 @@ CVO 明确拍板（2026-03-26）：
 | 2026-03-29 | 故意犯错 + delayed tip 机制 |
 | 2026-03-30 | template-based 建猫 + HubAddMemberWizard 统一模板选择 |
 | 2026-04-03 | Rebase onto main, SKILL.md 重写 (435→201 行), feature doc 刷新 |
-| 2026-04-06 | 修复 BootcampGuideOverlay 事件链：phase-4 tip 延迟门控 + 自动推进到 4.5 + late-mounted target click delegation |
-| 2026-04-06 | Phase 4 preview 自动串联：新输出结束后自动选择安全 preview 端口并 auto-open Browser panel；preview auto-open 增加 thread 过滤 |
-| 2026-04-06 | Phase 4.5 reload 恢复：Hub 已开或下一步目标已出现时，遮罩自动推进到正确 guideStep |
+| 2026-04-06 | 修复 BootcampGuideOverlay 事件链：phase-7-dev tip 延迟门控 + 自动推进到 phase-7.5 + late-mounted target click delegation |
+| 2026-04-06 | Phase 7 preview 自动串联：新输出结束后自动选择安全 preview 端口并 auto-open Browser panel；preview auto-open 增加 thread 过滤 |
+| 2026-04-06 | Phase 7.5 reload 恢复：Hub 已开或下一步目标已出现时，遮罩自动推进到正确 guideStep |
 | 2026-04-19 | Phase 9 完成内容修复：post_message + card-grid 替代 BootcampListModal；invocation-end data sync 安全网 |
 
 ## Branch Status
