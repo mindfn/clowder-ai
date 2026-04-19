@@ -387,7 +387,10 @@ export function AccountSection({
                   })
                   .map((profile) => ({
                     value: profile.id,
-                    label: profile.authType === 'oauth' ? `${profile.displayName}（OAuth）` : `${profile.displayName}（API Key）`,
+                    label:
+                      profile.authType === 'oauth'
+                        ? `${profile.displayName}（OAuth）`
+                        : `${profile.displayName}（API Key）`,
                   })),
               ]}
               onChange={(value) => onChange({ accountRef: value, defaultModel: '', provider: '' })}

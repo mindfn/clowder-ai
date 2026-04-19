@@ -193,7 +193,6 @@ function ensureOwnerInRoster(catalogPath: string): boolean {
   return true;
 }
 
-
 export function resolveCatCatalogPath(projectRoot: string): string {
   return safePath(projectRoot, CONFIG_SUBDIR, CAT_CATALOG_FILENAME);
 }

@@ -146,7 +146,14 @@ describe('FirstRunQuestWizard', () => {
       if (url.includes('/api/first-run/available-clients')) {
         return jsonResponse({
           clients: [
-            { client: 'claude', provider: 'anthropic', label: 'Claude', cli: 'claude', installed: true, hasApiKey: false },
+            {
+              client: 'claude',
+              provider: 'anthropic',
+              label: 'Claude',
+              cli: 'claude',
+              installed: true,
+              hasApiKey: false,
+            },
           ],
         });
       }
@@ -200,9 +207,7 @@ describe('FirstRunQuestWizard', () => {
     await flushEffects();
 
     // Step 2: select client
-    const clientButton = Array.from(document.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('Claude'),
-    );
+    const clientButton = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.includes('Claude'));
     expect(clientButton).toBeTruthy();
     await act(async () => {
       clientButton!.click();
@@ -211,9 +216,7 @@ describe('FirstRunQuestWizard', () => {
 
     // Step 3: profile auto-selected, select model, test, then create
     // Click test button
-    const testButton = Array.from(document.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('测试连接'),
-    );
+    const testButton = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.includes('测试连接'));
     if (testButton) {
       await act(async () => {
         testButton.click();

@@ -19,7 +19,14 @@ async function seedTemplate(projectRoot, mutateTemplate) {
  * Populate breeds from the template into the catalog, stamping default
  * accountRef and source values that the old bootstrap used to do.
  */
-const BUILTIN_ACCOUNT_IDS = { anthropic: 'claude', openai: 'codex', google: 'gemini', kimi: 'kimi', dare: 'dare', opencode: 'opencode' };
+const BUILTIN_ACCOUNT_IDS = {
+  anthropic: 'claude',
+  openai: 'codex',
+  google: 'gemini',
+  kimi: 'kimi',
+  dare: 'dare',
+  opencode: 'opencode',
+};
 
 async function seedCatalogBreeds(projectRoot) {
   const template = JSON.parse(await readFile(join(projectRoot, 'cat-template.json'), 'utf-8'));
@@ -103,8 +110,11 @@ describe('cat account binding', () => {
       await seedTemplate(projectRoot, (template) => {
         const codexBreed = template.breeds.find((breed) => breed.catId === 'codex');
         codexBreed.variants.push({
-          id: 'codex-spark', catId: 'spark', clientId: 'openai',
-          defaultModel: 'gpt-5.4-spark', mcpSupport: false,
+          id: 'codex-spark',
+          catId: 'spark',
+          clientId: 'openai',
+          defaultModel: 'gpt-5.4-spark',
+          mcpSupport: false,
           cli: { command: 'codex', outputFormat: 'json' },
         });
       });
@@ -161,8 +171,11 @@ describe('cat account binding', () => {
       await seedTemplate(projectRoot, (template) => {
         const codexBreed = template.breeds.find((breed) => breed.catId === 'codex');
         codexBreed.variants.push({
-          id: 'codex-spark', catId: 'spark', clientId: 'openai',
-          defaultModel: 'gpt-5.4-spark', mcpSupport: false,
+          id: 'codex-spark',
+          catId: 'spark',
+          clientId: 'openai',
+          defaultModel: 'gpt-5.4-spark',
+          mcpSupport: false,
           cli: { command: 'codex', outputFormat: 'json' },
         });
       });

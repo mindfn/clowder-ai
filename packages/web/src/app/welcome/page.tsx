@@ -50,7 +50,7 @@ export default function WelcomePage() {
         animationDelay: `${i * 0.4}s`,
         animationDuration: `${2 + (i % 3)}s`,
       },
-    }))
+    })),
   );
 
   useEffect(() => {
@@ -93,9 +93,7 @@ export default function WelcomePage() {
 
         <h1 className="text-5xl md:text-6xl font-extrabold mb-5 leading-tight">
           欢迎来到{' '}
-          <span className="bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">
-            猫猫咖啡馆
-          </span>
+          <span className="bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">猫猫咖啡馆</span>
         </h1>
 
         <p className="text-lg text-purple-200 max-w-xl leading-relaxed mb-12">

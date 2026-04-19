@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 interface Todo {
   id: number;
@@ -42,53 +42,61 @@ export default function TodoPage() {
   };
 
   const toggle = (id: number) => {
-    setTodos(todos.map(t => t.id === id ? { ...t, done: !t.done } : t));
+    setTodos(todos.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
   };
 
   const remove = (id: number) => {
-    setTodos(todos.filter(t => t.id !== id));
+    setTodos(todos.filter((t) => t.id !== id));
   };
 
-  const doneCount = todos.filter(t => t.done).length;
+  const doneCount = todos.filter((t) => t.done).length;
   const totalCount = todos.length;
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: 'linear-gradient(160deg, #fef9f0 0%, #fde8f5 100%)',
-      display: 'flex',
-      alignItems: 'flex-start',
-      justifyContent: 'center',
-      paddingTop: '80px',
-      paddingBottom: '80px',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    }}>
-      <div style={{
-        background: '#ffffff',
-        borderRadius: '20px',
-        padding: '36px',
-        width: '480px',
-        boxShadow: '0 8px 32px rgba(180, 120, 180, 0.15)',
-        border: '1px solid #f0d8f0',
-      }}>
+    <div
+      style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(160deg, #fef9f0 0%, #fde8f5 100%)',
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+        paddingTop: '80px',
+        paddingBottom: '80px',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }}
+    >
+      <div
+        style={{
+          background: '#ffffff',
+          borderRadius: '20px',
+          padding: '36px',
+          width: '480px',
+          boxShadow: '0 8px 32px rgba(180, 120, 180, 0.15)',
+          border: '1px solid #f0d8f0',
+        }}
+      >
         {/* Header */}
         <div style={{ marginBottom: '28px', textAlign: 'center' }}>
           <div style={{ fontSize: '40px', marginBottom: '8px' }}>🐾</div>
-          <h1 style={{
-            fontSize: '22px',
-            fontWeight: '700',
-            color: '#5c3d6e',
-            margin: 0,
-            letterSpacing: '0.5px',
-          }}>
+          <h1
+            style={{
+              fontSize: '22px',
+              fontWeight: '700',
+              color: '#5c3d6e',
+              margin: 0,
+              letterSpacing: '0.5px',
+            }}
+          >
             猫猫待办清单
           </h1>
           {totalCount > 0 && (
-            <p style={{
-              margin: '8px 0 0',
-              fontSize: '13px',
-              color: '#b09ac0',
-            }}>
+            <p
+              style={{
+                margin: '8px 0 0',
+                fontSize: '13px',
+                color: '#b09ac0',
+              }}
+            >
               {doneCount} / {totalCount} 完成
               {doneCount === totalCount && totalCount > 0 && ' · 全部搞定了！🎉'}
             </p>
@@ -99,8 +107,8 @@ export default function TodoPage() {
         <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
           <input
             value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && addTodo()}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && addTodo()}
             placeholder="添加新任务..."
             style={{
               flex: 1,
@@ -113,8 +121,12 @@ export default function TodoPage() {
               outline: 'none',
               transition: 'border-color 0.2s',
             }}
-            onFocus={e => { e.currentTarget.style.borderColor = '#b07fd8'; }}
-            onBlur={e => { e.currentTarget.style.borderColor = '#e8d5f0'; }}
+            onFocus={(e) => {
+              e.currentTarget.style.borderColor = '#b07fd8';
+            }}
+            onBlur={(e) => {
+              e.currentTarget.style.borderColor = '#e8d5f0';
+            }}
           />
           <button
             onClick={addTodo}
@@ -129,8 +141,12 @@ export default function TodoPage() {
               lineHeight: 1,
               transition: 'opacity 0.2s',
             }}
-            onMouseEnter={e => { e.currentTarget.style.opacity = '0.85'; }}
-            onMouseLeave={e => { e.currentTarget.style.opacity = '1'; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.opacity = '0.85';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.opacity = '1';
+            }}
             title="添加"
           >
             +
@@ -140,16 +156,18 @@ export default function TodoPage() {
         {/* Todo list */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {todos.length === 0 && (
-            <div style={{
-              textAlign: 'center',
-              padding: '32px',
-              color: '#c5a8d8',
-              fontSize: '14px',
-            }}>
+            <div
+              style={{
+                textAlign: 'center',
+                padding: '32px',
+                color: '#c5a8d8',
+                fontSize: '14px',
+              }}
+            >
               还没有任务，添加一个试试 🐱
             </div>
           )}
-          {todos.map(todo => (
+          {todos.map((todo) => (
             <div
               key={todo.id}
               style={{
@@ -187,13 +205,15 @@ export default function TodoPage() {
               </button>
 
               {/* Text */}
-              <span style={{
-                flex: 1,
-                color: todo.done ? '#b09ac0' : '#3d2a4e',
-                textDecoration: todo.done ? 'line-through' : 'none',
-                fontSize: '15px',
-                lineHeight: '1.4',
-              }}>
+              <span
+                style={{
+                  flex: 1,
+                  color: todo.done ? '#b09ac0' : '#3d2a4e',
+                  textDecoration: todo.done ? 'line-through' : 'none',
+                  fontSize: '15px',
+                  lineHeight: '1.4',
+                }}
+              >
                 {todo.text}
               </span>
 
@@ -212,8 +232,12 @@ export default function TodoPage() {
                   transition: 'color 0.15s',
                   flexShrink: 0,
                 }}
-                onMouseEnter={e => { e.currentTarget.style.color = '#e07070'; }}
-                onMouseLeave={e => { e.currentTarget.style.color = '#d4b8e8'; }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = '#e07070';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = '#d4b8e8';
+                }}
                 title="删除"
               >
                 ×
@@ -223,9 +247,9 @@ export default function TodoPage() {
         </div>
 
         {/* Footer */}
-        {todos.some(t => t.done) && (
+        {todos.some((t) => t.done) && (
           <button
-            onClick={() => setTodos(todos.filter(t => !t.done))}
+            onClick={() => setTodos(todos.filter((t) => !t.done))}
             style={{
               marginTop: '16px',
               width: '100%',
@@ -238,11 +262,11 @@ export default function TodoPage() {
               cursor: 'pointer',
               transition: 'all 0.15s',
             }}
-            onMouseEnter={e => {
+            onMouseEnter={(e) => {
               e.currentTarget.style.borderColor = '#e07070';
               e.currentTarget.style.color = '#e07070';
             }}
-            onMouseLeave={e => {
+            onMouseLeave={(e) => {
               e.currentTarget.style.borderColor = '#e8d5f0';
               e.currentTarget.style.color = '#c5a8d8';
             }}

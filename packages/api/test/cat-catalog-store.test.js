@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 
-const { bootstrapCatCatalog, resolveCatCatalogPath, writeCatCatalog } = await import('../dist/config/cat-catalog-store.js');
+const { bootstrapCatCatalog, resolveCatCatalogPath, writeCatCatalog } = await import(
+  '../dist/config/cat-catalog-store.js'
+);
 const { createRuntimeCat, deleteRuntimeCat, readRuntimeCatCatalog, updateRuntimeCat } = await import(
   '../dist/config/runtime-cat-catalog.js'
 );

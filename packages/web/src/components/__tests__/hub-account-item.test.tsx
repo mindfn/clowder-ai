@@ -63,7 +63,13 @@ describe('HubAccountItem', () => {
 
     await act(async () => {
       root.render(
-        <HubAccountItem profile={profile} busy={false} onSave={vi.fn(async () => {})} onDelete={() => {}} onEdit={onEdit} />,
+        <HubAccountItem
+          profile={profile}
+          busy={false}
+          onSave={vi.fn(async () => {})}
+          onDelete={() => {}}
+          onEdit={onEdit}
+        />,
       );
     });
 

@@ -77,7 +77,14 @@ function makeTemplate() {
  * Pre-write a catalog with breeds from the template so tests that operate on
  * seed cats still find them. Stamps default accountRef and source: 'seed'.
  */
-const BUILTIN_ACCOUNT_IDS = { anthropic: 'claude', openai: 'codex', google: 'gemini', kimi: 'kimi', dare: 'dare', opencode: 'opencode' };
+const BUILTIN_ACCOUNT_IDS = {
+  anthropic: 'claude',
+  openai: 'codex',
+  google: 'gemini',
+  kimi: 'kimi',
+  dare: 'dare',
+  opencode: 'opencode',
+};
 
 function seedCatalogFromTemplate(projectRoot, templatePath) {
   const tpl = templatePath || join(projectRoot, 'cat-template.json');

@@ -66,9 +66,7 @@ describe('useFirstProjectPreviewAutoOpen', () => {
 
   it('does not auto-open merely because phase-4 already has history', async () => {
     await act(async () => {
-      root.render(
-        <Probe phase="phase-7-dev" messageCount={2} hasActiveInvocation={false} worktreeId="wt-1" />,
-      );
+      root.render(<Probe phase="phase-7-dev" messageCount={2} hasActiveInvocation={false} worktreeId="wt-1" />);
     });
     await flushEffects();
 
@@ -90,23 +88,17 @@ describe('useFirstProjectPreviewAutoOpen', () => {
       } as Response);
 
     await act(async () => {
-      root.render(
-        <Probe phase="phase-7-dev" messageCount={2} hasActiveInvocation={true} worktreeId="wt-1" />,
-      );
+      root.render(<Probe phase="phase-7-dev" messageCount={2} hasActiveInvocation={true} worktreeId="wt-1" />);
     });
     await flushEffects();
 
     await act(async () => {
-      root.render(
-        <Probe phase="phase-7-dev" messageCount={3} hasActiveInvocation={true} worktreeId="wt-1" />,
-      );
+      root.render(<Probe phase="phase-7-dev" messageCount={3} hasActiveInvocation={true} worktreeId="wt-1" />);
     });
     await flushEffects();
 
     await act(async () => {
-      root.render(
-        <Probe phase="phase-7-dev" messageCount={3} hasActiveInvocation={false} worktreeId="wt-1" />,
-      );
+      root.render(<Probe phase="phase-7-dev" messageCount={3} hasActiveInvocation={false} worktreeId="wt-1" />);
     });
     await flushEffects();
 
@@ -135,26 +127,14 @@ describe('useFirstProjectPreviewAutoOpen', () => {
 
     await act(async () => {
       root.render(
-        <Probe
-          phase="phase-7-dev"
-          messageCount={1}
-          hasActiveInvocation={true}
-          worktreeId={null}
-          threadId="thread-7"
-        />,
+        <Probe phase="phase-7-dev" messageCount={1} hasActiveInvocation={true} worktreeId={null} threadId="thread-7" />,
       );
     });
     await flushEffects();
 
     await act(async () => {
       root.render(
-        <Probe
-          phase="phase-7-dev"
-          messageCount={2}
-          hasActiveInvocation={true}
-          worktreeId={null}
-          threadId="thread-7"
-        />,
+        <Probe phase="phase-7-dev" messageCount={2} hasActiveInvocation={true} worktreeId={null} threadId="thread-7" />,
       );
     });
     await flushEffects();

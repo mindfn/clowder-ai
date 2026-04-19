@@ -59,9 +59,15 @@ const updateBootcampStateCallbackSchema = callbackAuthSchema.extend({
   /** F140: sub-step for bootcamp guide overlay */
   guideStep: z
     .enum([
-      'open-hub', 'click-add-member', 'fill-form', 'done',
-      'return-to-chat', 'mention-teammate',
-      'farewell-new-thread', 'farewell-bootcamp', 'farewell-input-tips',
+      'open-hub',
+      'click-add-member',
+      'fill-form',
+      'done',
+      'return-to-chat',
+      'mention-teammate',
+      'farewell-new-thread',
+      'farewell-bootcamp',
+      'farewell-input-tips',
     ])
     .nullable()
     .optional(),

@@ -359,6 +359,25 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     setShowFirstRunQuestPrompt(true);
   }, [cats.length, storeThreads, threadId]);
 
+  // ── Data sync: re-fetch thread bootcampState on invocation end ──
+  // MCP callbacks update Redis directly; the companion WebSocket `thread_updated`
+  // may not reach this frontend (e.g. worktree port isolation). Re-fetching the
+  // thread when an invocation finishes ensures the store stays in sync.
+  const prevInvocationRef = useRef(hasActiveInvocation);
+  useEffect(() => {
+    const wasActive = prevInvocationRef.current;
+    prevInvocationRef.current = hasActiveInvocation;
+    if (!wasActive || hasActiveInvocation) return;
+    apiFetch(`/api/threads/${threadId}`)
+      .then((res) => (res.ok ? (res.json() as Promise<{ bootcampState?: Thread['bootcampState'] }>) : null))
+      .then((thread) => {
+        if (thread?.bootcampState) {
+          syncLocalBootcampState(threadId, thread.bootcampState);
+        }
+      })
+      .catch(() => {});
+  }, [hasActiveInvocation, threadId]);
+
   // ── Bootcamp add-teammate: trigger guide engine when user interacts with input ──
   useEffect(() => {
     if (currentBootcampPhase !== 'phase-7.5-add-teammate') return;
@@ -1008,13 +1027,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
         const leadCat = cats.find((c) => c.id === raw.leadCat) ?? cats[0];
         const catName = leadCat?.displayName ?? leadCat?.nickname ?? leadCat?.name;
         if (!catName) return null;
-        return (
-          <BootcampGuideOverlay
-            phase={phase}
-            catName={catName}
-            hasMessages={messages.length > 0}
-          />
-        );
+        return <BootcampGuideOverlay phase={phase} catName={catName} hasMessages={messages.length > 0} />;
       })()}
     </div>
   );

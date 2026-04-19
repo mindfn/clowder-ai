@@ -24,11 +24,7 @@ const LIFECYCLE_TIPS: Record<string, LifecycleTipConfig> = {
   'phase-11-farewell': { icon: '\u{1F393}', text: '恭喜完成训练营！你已经掌握了多猫协作的基本流程', variant: 'green' },
 };
 
-export function BootcampGuideOverlay({
-  catName,
-  phase,
-  hasMessages,
-}: BootcampGuideOverlayProps) {
+export function BootcampGuideOverlay({ catName, phase, hasMessages }: BootcampGuideOverlayProps) {
   const lifecycleTip = LIFECYCLE_TIPS[phase];
   if (lifecycleTip) {
     return <LifecyclePhaseTip phase={phase} config={lifecycleTip} />;

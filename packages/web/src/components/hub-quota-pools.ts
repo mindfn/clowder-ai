@@ -29,7 +29,6 @@ const BUILTIN_CLIENT_LABELS: Record<BuiltinAccountClient, string> = {
   opencode: 'OpenCode',
 };
 
-
 function uniqueTags(tags: string[]): string[] {
   return [...new Set(tags.filter(Boolean))];
 }

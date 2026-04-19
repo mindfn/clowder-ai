@@ -74,9 +74,7 @@ export function ChatMessage({ message, getCatById }: ChatMessageProps) {
   const catStyle = catData
     ? (() => {
         const breed = BREED_STYLES[catData.breedId ?? ''] ?? DEFAULT_BREED_STYLE;
-        const label = catData.variantLabel
-          ? `${catData.displayName}（${catData.variantLabel}）`
-          : catData.displayName;
+        const label = catData.variantLabel ? `${catData.displayName}（${catData.variantLabel}）` : catData.displayName;
         const isCallback = message.origin === 'callback';
         return {
           label,
