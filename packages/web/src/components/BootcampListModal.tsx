@@ -101,7 +101,7 @@ export function BootcampListModal({ open, onClose, currentThreadId }: BootcampLi
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: '猫猫训练营',
-          bootcampState: { v: 1, phase: 'phase-0-select-cat', startedAt: Date.now() },
+          bootcampState: { v: 1, phase: 'phase-1-intro', startedAt: Date.now() },
         }),
       });
       if (!res.ok) return;
