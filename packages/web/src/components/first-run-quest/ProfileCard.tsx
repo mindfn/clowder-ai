@@ -165,7 +165,6 @@ export function ProfileCard({
               {addingModel ? (
                 <span className="flex items-center gap-1">
                   <input
-                    autoFocus
                     value={newModel}
                     onChange={(e) => setNewModel(e.target.value)}
                     onKeyDown={(e) => {

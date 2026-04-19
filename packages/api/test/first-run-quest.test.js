@@ -161,7 +161,11 @@ describe('First-Run Quest Routes', () => {
     const updateRes = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-quest-state',
-      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken, 'content-type': 'application/json' },
+      headers: {
+        'x-invocation-id': invocationId,
+        'x-callback-token': callbackToken,
+        'content-type': 'application/json',
+      },
       payload: {
         threadId: quest.threadId,
         phase: 'quest-3-task-select',
@@ -183,7 +187,11 @@ describe('First-Run Quest Routes', () => {
     });
     const { quest } = JSON.parse(createRes.body);
     const { invocationId, callbackToken } = registry.create('test-user', 'opus', quest.threadId);
-    const cbHeaders = { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken, 'content-type': 'application/json' };
+    const cbHeaders = {
+      'x-invocation-id': invocationId,
+      'x-callback-token': callbackToken,
+      'content-type': 'application/json',
+    };
 
     // Advance to task-select (quest starts at quest-2)
     await app.inject({
@@ -220,7 +228,11 @@ describe('First-Run Quest Routes', () => {
     await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-quest-state',
-      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken, 'content-type': 'application/json' },
+      headers: {
+        'x-invocation-id': invocationId,
+        'x-callback-token': callbackToken,
+        'content-type': 'application/json',
+      },
       payload: {
         threadId: quest.threadId,
         phase: 'quest-3-task-select',
