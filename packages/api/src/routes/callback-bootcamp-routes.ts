@@ -13,6 +13,7 @@ import type { BootcampStateV1, IThreadStore } from '../domains/cats/services/sto
 import { BOOTCAMP_PHASE_ACHIEVEMENTS } from '../domains/leaderboard/achievement-defs.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
 import { requireCallbackAuth } from './callback-auth-prehandler.js';
+import { deriveCallbackActor, resolveBoundThreadScope } from './callback-scope-helpers.js';
 
 /**
  * Ordered phase list — index determines valid transitions (forward-only).
@@ -91,6 +92,7 @@ export function registerCallbackBootcampRoutes(
   app.post('/api/callbacks/update-bootcamp-state', async (request, reply) => {
     const record = requireCallbackAuth(request, reply);
     if (!record) return;
+    const actor = deriveCallbackActor(record);
 
     const parsed = updateBootcampStateCallbackSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -101,14 +103,14 @@ export function registerCallbackBootcampRoutes(
     const { threadId, ...updates } = parsed.data;
 
     // P2: Stale invocation guard — ignore if superseded by newer invocation
-    if (!registry.isLatest(record.invocationId)) {
+    if (!registry.isLatest(actor.invocationId)) {
       return { status: 'stale_ignored' };
     }
 
-    // P1: Cross-thread binding check — reject if invocation is bound to a different thread
-    if (record.threadId !== threadId) {
-      reply.status(403);
-      return { error: 'Cross-thread write rejected' };
+    const bound = resolveBoundThreadScope(actor, threadId);
+    if (!bound.ok) {
+      reply.status(bound.statusCode);
+      return { error: bound.error };
     }
 
     const thread = await threadStore.get(threadId);
@@ -190,15 +192,15 @@ export function registerCallbackBootcampRoutes(
       const achievementId = BOOTCAMP_PHASE_ACHIEVEMENTS.get(updates.phase);
       if (achievementId) {
         const nonce = Math.random().toString(36).slice(2, 10);
-        const eventId = `bootcamp:${record.userId}:achievement_unlocked:${Date.now()}:${nonce}`;
+        const eventId = `bootcamp:${actor.userId}:achievement_unlocked:${Date.now()}:${nonce}`;
         const eventRes = await app.inject({
           method: 'POST',
           url: '/api/leaderboard/events',
-          headers: { 'x-cat-cafe-user': record.userId },
+          headers: { 'x-cat-cafe-user': actor.userId },
           payload: {
             eventId,
             source: 'bootcamp',
-            catId: record.catId ?? 'system',
+            catId: actor.catId ?? 'system',
             eventType: 'achievement_unlocked',
             payload: { achievementId },
             timestamp: new Date().toISOString(),
@@ -226,6 +228,7 @@ export function registerCallbackBootcampRoutes(
   app.post('/api/callbacks/bootcamp-env-check', async (request, reply) => {
     const record = requireCallbackAuth(request, reply);
     if (!record) return;
+    const actor = deriveCallbackActor(record);
 
     const parsed = envCheckCallbackSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -236,14 +239,14 @@ export function registerCallbackBootcampRoutes(
     const { threadId } = parsed.data;
 
     // P2: Stale invocation guard
-    if (!registry.isLatest(record.invocationId)) {
+    if (!registry.isLatest(actor.invocationId)) {
       return { status: 'stale_ignored' };
     }
 
-    // P1: Cross-thread binding check
-    if (record.threadId !== threadId) {
-      reply.status(403);
-      return { error: 'Cross-thread write rejected' };
+    const bound = resolveBoundThreadScope(actor, threadId);
+    if (!bound.ok) {
+      reply.status(bound.statusCode);
+      return { error: bound.error };
     }
 
     const thread = await threadStore.get(threadId);

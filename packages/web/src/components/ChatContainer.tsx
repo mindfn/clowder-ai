@@ -7,6 +7,7 @@ import { useAuthorization } from '@/hooks/useAuthorization';
 import { useCatData } from '@/hooks/useCatData';
 import { useChatHistory } from '@/hooks/useChatHistory';
 import { useChatSocketCallbacks } from '@/hooks/useChatSocketCallbacks';
+import { useConnectionStatus } from '@/hooks/useConnectionStatus';
 import { godAction, submitAction } from '@/hooks/useGameApi';
 import { reconnectGame } from '@/hooks/useGameReconnect';
 import { useGovernanceStatus } from '@/hooks/useGovernanceStatus';
@@ -34,6 +35,7 @@ import { CatCafeHub } from './CatCafeHub';
 import { ChatContainerHeader } from './ChatContainerHeader';
 import { ChatInput } from './ChatInput';
 import { ChatMessage } from './ChatMessage';
+import { ConnectionStatusBar } from './ConnectionStatusBar';
 import { FirstRunQuestWizard } from './FirstRunQuestWizard';
 import { BootcampGuideOverlay } from './first-run-quest/BootcampGuideOverlay';
 import { QuestBanner } from './first-run-quest/QuestBanner';
@@ -56,6 +58,7 @@ import { SplitPaneView } from './SplitPaneView';
 import { ThinkingIndicator } from './ThinkingIndicator';
 import { ThreadExecutionBar } from './ThreadExecutionBar';
 import { ThreadSidebar } from './ThreadSidebar';
+import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 import { VoteActiveBar } from './VoteActiveBar';
 import { type VoteConfig, VoteConfigModal } from './VoteConfigModal';
 import { WorkspacePanel } from './WorkspacePanel';
@@ -85,7 +88,11 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     armUnreadSuppression,
     rightPanelMode,
   } = useChatStore();
+  const navigateToThread = useCallback((tid: string) => {
+    pushThreadRouteWithHistory(tid, typeof window !== 'undefined' ? window : undefined);
+  }, []);
   const uiThinkingExpandedByDefault = useChatStore((s) => s.uiThinkingExpandedByDefault);
+  const isOfflineSnapshot = useChatStore((s) => s.isOfflineSnapshot);
 
   // F101: Game state from Zustand store
   const gameView = useGameStore((s) => s.gameView);
@@ -452,15 +459,16 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     (govStatus?.needsBootstrap || govStatus?.needsConfirmation || setupDone) &&
     messages.length === 0
   );
-  // Reset setupDone + refetch governance on thread switch (same project may have stale status)
+  // Reset setupDone on thread switch. Governance status already auto-refetches
+  // when projectPath changes inside useGovernanceStatus; same-project thread switches
+  // should not trigger an extra network round-trip.
   const prevThreadSetup = useRef(threadId);
   useEffect(() => {
     if (prevThreadSetup.current !== threadId) {
       prevThreadSetup.current = threadId;
       setSetupDone(false);
-      govRefetch();
     }
-  }, [threadId, govRefetch]);
+  }, [threadId]);
 
   // F152 Phase B: memory bootstrap state
   const {
@@ -482,7 +490,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     clearDoneTimeout,
     handleAuthRequest,
     handleAuthResponse,
-    onNavigateToThread: (tid) => router.push(`/thread/${tid}`),
+    onNavigateToThread: navigateToThread,
     onIndexEvent: handleIndexSocketEvent,
   });
 
@@ -495,7 +503,8 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     [threadId, getCatById],
   );
 
-  const { cancelInvocation, syncRooms } = useSocket(socketCallbacks, threadId);
+  const { cancelInvocation, syncRooms, socketConnected } = useSocket(socketCallbacks, threadId);
+  const connectionStatus = useConnectionStatus(socketConnected);
 
   useVoiceAutoPlay();
   useVoiceStream();
@@ -579,6 +588,8 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     armUnreadSuppression(threadId);
     apiFetch(`/api/threads/${encodeURIComponent(threadId)}/read/latest`, {
       method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
     })
       .then((res) => {
         if (res.ok) {
@@ -603,9 +614,9 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   const handleZoomToThread = useCallback(
     (tid: string) => {
       setViewMode('single');
-      router.push(`/thread/${tid}`);
+      navigateToThread(tid);
     },
-    [setViewMode, router],
+    [setViewMode, navigateToThread],
   );
 
   const handleQuestCreated = useCallback(
@@ -719,6 +730,14 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
             data-chat-container
           >
             {isLoadingHistory && <div className="text-center py-3 text-sm text-cafe-muted">加载历史消息...</div>}
+            <ConnectionStatusBar
+              api={connectionStatus.api}
+              socket={connectionStatus.socket}
+              upstream={connectionStatus.upstream}
+              isReadonly={connectionStatus.isReadonly}
+              checkedAt={connectionStatus.checkedAt}
+              isOfflineSnapshot={isOfflineSnapshot}
+            />
             {!hasMore && messages.length > 0 && (
               <div className="text-center py-3 text-xs text-cafe-muted">没有更多消息了</div>
             )}
@@ -871,6 +890,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
                 handleSend(content, images, undefined, whisper, deliveryMode)
               }
               onStop={handleStop}
+              disabled={connectionStatus.isReadonly}
               hasActiveInvocation={hasActiveInvocation}
               uploadStatus={uploadStatus}
               uploadError={uploadError}

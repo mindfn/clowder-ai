@@ -84,7 +84,7 @@ describe('useGuideEngine duplicate start protection', () => {
   beforeEach(() => {
     apiFetchMock.mockReset();
     useChatStore.setState({ currentThreadId: 'thread-1' });
-    useGuideStore.setState({ session: null, pendingStart: null, completionPersisted: false, completionFailed: false });
+    useGuideStore.setState({ session: null, completionPersisted: false, completionFailed: false, pendingStart: null });
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -96,7 +96,7 @@ describe('useGuideEngine duplicate start protection', () => {
     });
     container.remove();
     useChatStore.setState({ currentThreadId: 'default' });
-    useGuideStore.setState({ session: null, pendingStart: null, completionPersisted: false, completionFailed: false });
+    useGuideStore.setState({ session: null, completionPersisted: false, completionFailed: false, pendingStart: null });
   });
 
   it('does not fetch the same flow twice while the first start is still in flight', async () => {
@@ -124,7 +124,7 @@ describe('useGuideEngine duplicate start protection', () => {
     expect(useGuideStore.getState().session?.flow.id).toBe('add-member');
   });
 
-  it('retries a duplicate guide:start after the in-flight fetch fails', async () => {
+  it('retries only after a new guide:start arrives when the in-flight fetch fails', async () => {
     const firstFetch = deferred<{ ok: boolean; json: () => Promise<OrchestrationFlow> }>();
     apiFetchMock.mockReturnValueOnce(firstFetch.promise).mockResolvedValueOnce({ ok: true, json: async () => FLOW });
 
@@ -147,6 +147,12 @@ describe('useGuideEngine duplicate start protection', () => {
     await act(async () => {
       firstFetch.reject(new Error('temporary failure'));
       await Promise.resolve();
+    });
+
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      dispatchGuideStart('add-member');
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -200,6 +206,29 @@ describe('useGuideEngine duplicate start protection', () => {
     await act(async () => {
       pending.resolve({ ok: true, json: async () => FLOW });
       await pending.promise;
+      await Promise.resolve();
+    });
+
+    expect(useGuideStore.getState().session).toBeNull();
+  });
+
+  it('exits an active thread-bound guide when the current thread changes away', async () => {
+    apiFetchMock.mockResolvedValue({ ok: true, json: async () => FLOW });
+
+    act(() => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      dispatchGuideStart('add-member', 'thread-1');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(useGuideStore.getState().session?.flow.id).toBe('add-member');
+
+    await act(async () => {
+      useChatStore.setState({ currentThreadId: 'thread-2' });
       await Promise.resolve();
     });
 
