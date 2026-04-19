@@ -172,14 +172,18 @@ MSG 5（用户完成 overlay 后发消息）
 1. `cat_cafe_update_bootcamp_state(threadId, phase='phase-9-complete')`
 2. 用 `cat_cafe_post_message` 发送完成消息（**不要**用普通 agent 消息，会被折叠）：
    - 自然地告知所有问题已修复完毕，第一个项目顺利完成
-   - 告诉用户可以继续优化当前项目，也可以开始新的训练营尝试不同的项目
    - **不要**刻意强调"多猫协作的好处"——用户刚亲身体验过，不用你总结
    - 末尾附猫猫签名
-3. `cat_cafe_update_bootcamp_state(threadId, phase='phase-10-retro')`
+3. 用 `cat_cafe_create_rich_block` 发送项目选择卡片（先调 `get_rich_block_rules` 确认字段要求）：
+   - `kind: 'interactive'`, `interactiveType: 'card-grid'`
+   - `id: 'bootcamp-next-project'`
+   - `title: '第一个项目完成了！想继续挑战什么？'`
+   - 16 个选项按难度分三层（⭐/⭐⭐/⭐⭐⭐），`allowRandom: true`
+   - 涵盖前端页面、工具脚本、小游戏、数据可视化等方向
+   - 让用户选一个感兴趣的，或者随机挑一个
+4. `cat_cafe_update_bootcamp_state(threadId, phase='phase-10-retro')`
 
-前端自动弹出训练营项目列表（BootcampListModal），让用户看到可以继续当前项目或开始新项目。
-
-**📨 发送后 → ⛔ STOP — 等用户下一条消息**
+**📨 发送后 → ⛔ STOP — 等用户选择下一个项目**
 
 ---
 
