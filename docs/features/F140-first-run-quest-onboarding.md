@@ -208,7 +208,7 @@ CVO 明确拍板（2026-03-26）：
 
 - **Branch**: `feat/f140-first-run-quest`
 - **PR**: zts212653/clowder-ai#520
-- **Relative to main**: 25 commits ahead (rebased 2026-04-03)
+- **Relative to main**: 44 commits ahead, 0 behind (merged upstream/main 2026-04-19)
 
 ## Review Gate
 
