@@ -6,7 +6,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, test } from 'node:test';
@@ -268,15 +268,13 @@ describe('POST /api/first-run/connectivity-test', () => {
     else process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = savedGlobalRoot;
   }
 
-  async function createTestApp(fetchMock) {
+  async function createTestApp() {
     const { firstRunQuestRoutes } = await import('../dist/routes/first-run-quest.js');
     const { accountsRoutes } = await import('../dist/routes/accounts.js');
     const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
     const app = Fastify();
     await app.register(firstRunQuestRoutes, { threadStore: new ThreadStore() });
     await app.register(accountsRoutes);
-    /* probeApiKey uses global fetch — mock it for test control */
-    if (fetchMock) global.fetch = fetchMock;
     return app;
   }
 
@@ -325,168 +323,51 @@ describe('POST /api/first-run/connectivity-test', () => {
       await rm(projectDir, { recursive: true, force: true });
     }
   });
+});
 
-  test('probes anthropic protocol and returns ok on success', async () => {
-    const calls = [];
-    const savedFetch = global.fetch;
-    const projectDir = await mkdtemp(join(homedir(), '.cat-cafe-frq-test-'));
-    setGlobalRoot(projectDir);
-    try {
-      const fetchMock = async (url, init) => {
-        calls.push({ url: String(url), method: init?.method });
-        return new Response('{"id":"msg_test"}', { status: 200 });
-      };
-      const app = await createTestApp(fetchMock);
-      const createRes = await app.inject({
-        method: 'POST',
-        url: '/api/accounts',
-        headers: { ...AUTH_HEADERS, 'content-type': 'application/json' },
-        payload: {
-          displayName: 'test-key',
-          authType: 'api_key',
-          baseUrl: 'https://api.anthropic.test',
-          apiKey: 'sk-test-123',
-        },
-      });
-      const profileId = createRes.json().profile.id;
-      assert.ok(profileId, 'profile should be created');
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/first-run/connectivity-test',
-        headers: { ...AUTH_HEADERS, 'content-type': 'application/json' },
-        payload: { profileId, clientId: 'anthropic', model: 'claude-sonnet-4-6' },
-      });
-      assert.equal(res.statusCode, 200);
-      const body = res.json();
-      assert.equal(body.ok, true);
-      assert.ok(calls.some((c) => c.url.includes('/v1/messages')));
-      await app.close();
-    } finally {
-      global.fetch = savedFetch;
-      restoreGlobalRoot();
-      await rm(projectDir, { recursive: true, force: true });
-    }
+describe('buildProbeEnv (unit)', () => {
+  test('anthropic: sets ANTHROPIC_API_KEY and strips /v1 from base URL', async () => {
+    const { buildProbeEnv } = await import('../dist/routes/first-run-quest.js');
+    const env = buildProbeEnv('anthropic', 'sk-test', 'https://api.anthropic.com/v1');
+    assert.equal(env.ANTHROPIC_API_KEY, 'sk-test');
+    assert.equal(env.ANTHROPIC_BASE_URL, 'https://api.anthropic.com');
   });
 
-  test('probes openai protocol with selected model via chat/completions', async () => {
-    const calls = [];
-    const savedFetch = global.fetch;
-    const projectDir = await mkdtemp(join(homedir(), '.cat-cafe-frq-test-'));
-    setGlobalRoot(projectDir);
-    try {
-      const fetchMock = async (url, init) => {
-        calls.push({ url: String(url), method: init?.method });
-        return new Response('{"id":"chatcmpl-test"}', { status: 200 });
-      };
-      const app = await createTestApp(fetchMock);
-      const createRes = await app.inject({
-        method: 'POST',
-        url: '/api/accounts',
-        headers: { ...AUTH_HEADERS, 'content-type': 'application/json' },
-        payload: {
-          displayName: 'openai-test',
-          authType: 'api_key',
-          baseUrl: 'https://api.openai.test',
-          apiKey: 'sk-openai-test',
-        },
-      });
-      const profileId = createRes.json().profile.id;
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/first-run/connectivity-test',
-        headers: { ...AUTH_HEADERS, 'content-type': 'application/json' },
-        payload: { profileId, clientId: 'openai', model: 'gpt-4o' },
-      });
-      assert.equal(res.statusCode, 200);
-      assert.equal(res.json().ok, true);
-      assert.ok(calls.some((c) => c.url.includes('/v1/chat/completions')));
-      await app.close();
-    } finally {
-      global.fetch = savedFetch;
-      restoreGlobalRoot();
-      await rm(projectDir, { recursive: true, force: true });
-    }
+  test('openai: sets OPENAI_API_KEY and both URL vars', async () => {
+    const { buildProbeEnv } = await import('../dist/routes/first-run-quest.js');
+    const env = buildProbeEnv('openai', 'sk-openai', 'https://api.openai.com');
+    assert.equal(env.OPENAI_API_KEY, 'sk-openai');
+    assert.equal(env.OPENAI_BASE_URL, 'https://api.openai.com');
+    assert.equal(env.OPENAI_API_BASE, 'https://api.openai.com');
   });
 
-  test('works with custom provider (openrouter) without 400 selector error', async () => {
-    const calls = [];
-    const savedFetch = global.fetch;
-    const projectDir = await mkdtemp(join(homedir(), '.cat-cafe-frq-test-'));
-    setGlobalRoot(projectDir);
-    try {
-      const fetchMock = async (url, init) => {
-        calls.push({ url: String(url), method: init?.method });
-        return new Response('{"id":"chatcmpl-or"}', { status: 200 });
-      };
-      const app = await createTestApp(fetchMock);
-      const createRes = await app.inject({
-        method: 'POST',
-        url: '/api/accounts',
-        headers: { ...AUTH_HEADERS, 'content-type': 'application/json' },
-        payload: {
-          displayName: 'openrouter-key',
-          authType: 'api_key',
-          baseUrl: 'https://openrouter.ai/api/v1',
-          apiKey: 'sk-or-test',
-        },
-      });
-      const profileId = createRes.json().profile.id;
-      assert.ok(profileId, 'openrouter profile should be created');
-
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/first-run/connectivity-test',
-        headers: { ...AUTH_HEADERS, 'content-type': 'application/json' },
-        payload: { profileId, clientId: 'openrouter' },
-      });
-      assert.notEqual(res.statusCode, 400, 'custom provider should not trigger selector error');
-      assert.equal(res.statusCode, 200);
-      assert.equal(res.json().ok, true);
-      await app.close();
-    } finally {
-      global.fetch = savedFetch;
-      restoreGlobalRoot();
-      await rm(projectDir, { recursive: true, force: true });
-    }
+  test('google: sets GEMINI_API_KEY and GOOGLE_API_KEY', async () => {
+    const { buildProbeEnv } = await import('../dist/routes/first-run-quest.js');
+    const env = buildProbeEnv('google', 'goog-key', 'https://generativelanguage.googleapis.com');
+    assert.equal(env.GEMINI_API_KEY, 'goog-key');
+    assert.equal(env.GOOGLE_API_KEY, 'goog-key');
+    assert.equal(env.GEMINI_BASE_URL, 'https://generativelanguage.googleapis.com');
   });
 
-  test('returns error on 401 from api-key probe', async () => {
-    const savedFetch = global.fetch;
-    const projectDir = await mkdtemp(join(homedir(), '.cat-cafe-frq-test-'));
-    setGlobalRoot(projectDir);
-    try {
-      const fetchMock = async () => new Response('Unauthorized', { status: 401 });
-      const app = await createTestApp(fetchMock);
-      const createRes = await app.inject({
-        method: 'POST',
-        url: '/api/accounts',
-        headers: { ...AUTH_HEADERS, 'content-type': 'application/json' },
-        payload: {
-          displayName: 'bad-key',
-          authType: 'api_key',
-          baseUrl: 'https://api.anthropic.test',
-          apiKey: 'sk-bad',
-        },
-      });
-      const profileId = createRes.json().profile.id;
+  test('kimi: sets MOONSHOT_API_KEY', async () => {
+    const { buildProbeEnv } = await import('../dist/routes/first-run-quest.js');
+    const env = buildProbeEnv('kimi', 'moon-key', 'https://api.moonshot.cn');
+    assert.equal(env.MOONSHOT_API_KEY, 'moon-key');
+    assert.equal(env.CAT_CAFE_KIMI_BASE_URL, 'https://api.moonshot.cn');
+  });
 
-      const res = await app.inject({
-        method: 'POST',
-        url: '/api/first-run/connectivity-test',
-        headers: { ...AUTH_HEADERS, 'content-type': 'application/json' },
-        payload: { profileId, clientId: 'anthropic' },
-      });
-      assert.equal(res.statusCode, 200);
-      assert.equal(res.json().ok, false);
-      assert.equal(res.json().status, 401);
-      await app.close();
-    } finally {
-      global.fetch = savedFetch;
-      restoreGlobalRoot();
-      await rm(projectDir, { recursive: true, force: true });
-    }
+  test('unknown protocol: falls back to generic API_KEY', async () => {
+    const { buildProbeEnv } = await import('../dist/routes/first-run-quest.js');
+    const env = buildProbeEnv('unknown-provider', 'some-key', 'https://custom.api');
+    assert.equal(env.API_KEY, 'some-key');
+    assert.equal(env.API_BASE_URL, 'https://custom.api');
+  });
+
+  test('omits URL vars when baseUrl is undefined', async () => {
+    const { buildProbeEnv } = await import('../dist/routes/first-run-quest.js');
+    const env = buildProbeEnv('anthropic', 'sk-test');
+    assert.equal(env.ANTHROPIC_API_KEY, 'sk-test');
+    assert.equal(env.ANTHROPIC_BASE_URL, undefined);
   });
 });
 
@@ -580,5 +461,48 @@ describe('tryCliProbe (unit)', () => {
     assert.ok(result);
     assert.equal(result.ok, false);
     assert.ok(result.message.includes('调用失败'));
+  });
+
+  test('forwards env vars to CLI subprocess', async () => {
+    const { tryCliProbe } = await import('../dist/routes/first-run-quest.js');
+    let capturedOpts;
+    const exec = async (cmd, opts) => {
+      capturedOpts = opts;
+      return { stdout: 'pong' };
+    };
+    await tryCliProbe('claude', {
+      env: { ANTHROPIC_API_KEY: 'sk-test', ANTHROPIC_BASE_URL: 'https://proxy.test' },
+      execFn: exec,
+    });
+    assert.ok(capturedOpts.env, 'env should be passed to exec');
+    assert.equal(capturedOpts.env.ANTHROPIC_API_KEY, 'sk-test');
+    assert.equal(capturedOpts.env.ANTHROPIC_BASE_URL, 'https://proxy.test');
+    // process.env vars should also be present (merged)
+    assert.equal(capturedOpts.env.PATH, process.env.PATH);
+  });
+
+  test('does not set env when no env vars provided', async () => {
+    const { tryCliProbe } = await import('../dist/routes/first-run-quest.js');
+    let capturedOpts;
+    const exec = async (cmd, opts) => {
+      capturedOpts = opts;
+      return { stdout: 'pong' };
+    };
+    await tryCliProbe('claude', { execFn: exec });
+    assert.equal(capturedOpts.env, undefined, 'env should not be set when empty');
+  });
+
+  test('kimi CLI probe command is registered', async () => {
+    const { tryCliProbe } = await import('../dist/routes/first-run-quest.js');
+    let capturedCmd = '';
+    const exec = async (cmd) => {
+      capturedCmd = cmd;
+      return { stdout: 'pong' };
+    };
+    const result = await tryCliProbe('kimi', { execFn: exec });
+    assert.ok(result);
+    assert.equal(result.ok, true);
+    assert.ok(capturedCmd.includes('kimi --print'));
+    assert.ok(capturedCmd.includes('--prompt'));
   });
 });

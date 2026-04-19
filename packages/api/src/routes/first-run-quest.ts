@@ -8,13 +8,13 @@
 
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
+import { builtinAccountIdForClient, type ClientId, protocolForClient } from '@cat-cafe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { resolveByAccountRef } from '../config/account-resolver.js';
 import { detectAvailableClients } from '../domains/cats/services/first-run-quest/client-detection.js';
 import type { FirstRunQuestStateV1, IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
-import { probeApiKey } from '../utils/api-key-probe.js';
 import { resolveUserId } from '../utils/request-identity.js';
 
 const execAsync = promisify(exec);
@@ -47,6 +47,7 @@ const CLI_PROBE_CMD: Record<string, (model?: string) => string> = {
   claude: (m) => `echo "reply pong" | claude -p${m ? ` --model ${m}` : ''} --max-budget-usd 0.05`,
   codex: (m) => `codex exec${m ? ` --model ${m}` : ''} "reply pong"`,
   gemini: (m) => `gemini -p "reply pong"${m ? ` --model ${m}` : ''}`,
+  kimi: (m) => `kimi --print${m ? ` --model ${m}` : ''} --prompt "reply pong"`,
   opencode: (m) => `opencode run${m ? ` --model ${m}` : ''} "reply pong"`,
 };
 
@@ -67,10 +68,12 @@ const STDOUT_ERROR_PATTERNS = [/^error/i, /exception/i, /frozen/i, /unauthorized
 /** Model names must be safe for shell interpolation. */
 const SAFE_MODEL_RE = /^[\w.\-/]+$/;
 
-type ExecFn = (cmd: string, opts: { timeout: number }) => Promise<{ stdout: string }>;
+type ExecFn = (cmd: string, opts: { timeout: number; env?: NodeJS.ProcessEnv }) => Promise<{ stdout: string }>;
 
 export interface CliProbeOptions {
   model?: string;
+  /** Extra env vars injected into the CLI subprocess (e.g. API key credentials). */
+  env?: Record<string, string>;
   execFn?: ExecFn;
 }
 
@@ -78,15 +81,19 @@ export async function tryCliProbe(
   client: string,
   opts: CliProbeOptions = {},
 ): Promise<{ ok: boolean; message: string } | null> {
-  const { model, execFn = execAsync } = opts;
+  const { model, env, execFn = execAsync } = opts;
   if (!Object.hasOwn(CLI_PROBE_CMD, client)) return null;
   const buildCmd = CLI_PROBE_CMD[client];
   if (model && !SAFE_MODEL_RE.test(model)) {
     return { ok: false, message: '模型名称包含非法字符' };
   }
   const cmd = buildCmd(model);
+  const execOpts: { timeout: number; env?: NodeJS.ProcessEnv } = { timeout: 30_000 };
+  if (env && Object.keys(env).length > 0) {
+    execOpts.env = { ...process.env, ...env };
+  }
   try {
-    const { stdout } = await execFn(cmd, { timeout: 30_000 });
+    const { stdout } = await execFn(cmd, execOpts);
     const trimmed = stdout.trim();
     if (trimmed.length === 0) {
       return { ok: false, message: `${client} CLI 无响应` };
@@ -190,8 +197,8 @@ export const firstRunQuestRoutes: FastifyPluginAsync<FirstRunQuestRoutesOptions>
 
   /**
    * Probe provider API connectivity for a given profile.
-   * - Builtin/OAuth profiles → CLI probe (tryCliProbe)
-   * - API-key profiles → direct probe via api-key-probe utility
+   * Unified path: both OAuth and API-key accounts go through the real CLI,
+   * so the probe tests the same path production traffic uses.
    */
   app.post('/api/first-run/connectivity-test', async (request, reply) => {
     const userId = resolveUserId(request);
@@ -215,19 +222,62 @@ export const firstRunQuestRoutes: FastifyPluginAsync<FirstRunQuestRoutesOptions>
       return { ok: false, error: '未找到该账号配置，请刷新后重试' };
     }
 
-    /* Builtin/OAuth profiles: use CLI probe — the CLI handles its own auth */
-    if (runtime.authType === 'oauth') {
-      if (clientName) {
-        const cliResult = await tryCliProbe(clientName, { model });
-        if (cliResult) return cliResult;
-      }
-      return { ok: false, message: '内置认证需要通过 CLI 验证，请确认 CLI 已登录' };
+    /* Resolve CLI tool name: explicit `client` field > derived from clientId */
+    const cliName = clientName ?? builtinAccountIdForClient(clientId as ClientId);
+    if (!cliName) {
+      return { ok: false, error: `未知的 client: ${clientId}` };
     }
 
-    /* API-key profiles: direct probe using resolved runtime credentials */
-    if (!runtime.baseUrl || !runtime.apiKey) {
-      return { ok: false, error: 'API Key 账号缺少 baseUrl 或 apiKey，请编辑补全' };
-    }
-    return probeApiKey(runtime.baseUrl, runtime.apiKey, { model, clientId });
+    /* Build env vars for API-key accounts so the CLI picks up credentials */
+    const probeEnv =
+      runtime.authType === 'api_key' && runtime.apiKey
+        ? buildProbeEnv(clientId, runtime.apiKey, runtime.baseUrl)
+        : undefined;
+
+    const result = await tryCliProbe(cliName, { model, env: probeEnv });
+    if (result) return result;
+
+    return { ok: false, message: `${cliName} CLI 未安装或不支持探测` };
   });
 };
+
+/** @internal Exported for testing only. */
+export { buildProbeEnv };
+
+/**
+ * Build env vars that mirror production credential injection for each provider.
+ * These are the env vars that the actual CLI reads, matching the paths in
+ * ClaudeAgentService.buildClaudeEnvOverrides / invoke-single-cat.ts.
+ */
+function buildProbeEnv(clientId: string, apiKey: string, baseUrl?: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  const protocol = protocolForClient(clientId as ClientId);
+
+  switch (protocol) {
+    case 'anthropic':
+      env.ANTHROPIC_API_KEY = apiKey;
+      if (baseUrl) env.ANTHROPIC_BASE_URL = baseUrl.replace(/\/v1\/?$/, '');
+      break;
+    case 'openai':
+      env.OPENAI_API_KEY = apiKey;
+      if (baseUrl) {
+        env.OPENAI_BASE_URL = baseUrl;
+        env.OPENAI_API_BASE = baseUrl;
+      }
+      break;
+    case 'google':
+      env.GEMINI_API_KEY = apiKey;
+      env.GOOGLE_API_KEY = apiKey;
+      if (baseUrl) env.GEMINI_BASE_URL = baseUrl;
+      break;
+    case 'kimi':
+      env.MOONSHOT_API_KEY = apiKey;
+      if (baseUrl) env.CAT_CAFE_KIMI_BASE_URL = baseUrl;
+      break;
+    default:
+      // Unknown protocol — pass generic keys, let CLI figure it out
+      env.API_KEY = apiKey;
+      if (baseUrl) env.API_BASE_URL = baseUrl;
+  }
+  return env;
+}

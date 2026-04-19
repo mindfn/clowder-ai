@@ -2,15 +2,8 @@
  * Cat Model Configuration
  * F32-b: Dynamic env key resolution — CAT_{CATID}_MODEL (uppercased, hyphens → underscores)
  *
- * 优先级: 环境变量 > catRegistry（from resolved runtime cat config） > CAT_CONFIGS 硬编码
- *
- * 环境变量 examples:
- *   CAT_OPUS_MODEL      → 布偶猫模型
- *   CAT_OPUS_45_MODEL   → 布偶猫 4.5 模型 (F32-b variant)
- *   CAT_CODEX_MODEL     → 缅因猫模型
- *   CAT_GEMINI_MODEL    → 暹罗猫模型
- *
- * 或修改 repo 根 `cat-template.json` / 运行时 `.cat-cafe/cat-catalog.json`
+ * 运行时来源: .cat-cafe/cat-catalog.json（唯一配置源）
+ * 环境变量 CAT_{CATID}_MODEL 可 override，用于调试。
  */
 
 import { CAT_CONFIGS, catRegistry } from '@cat-cafe/shared';
@@ -24,9 +17,8 @@ function getCatModelEnvKey(catId: string): string {
 }
 
 /**
- * 获取猫的实际模型
- * F32-b: Dynamic env key + catRegistry as primary source
- * 优先级: 环境变量 > catRegistry（from resolved runtime cat config） > CAT_CONFIGS 硬编码
+ * 获取猫的实际模型。
+ * 运行时读 catRegistry（.cat-cafe/cat-catalog.json），环境变量可 override。
  */
 export function getCatModel(catName: string): string {
   // 1. 环境变量最高优先 (dynamic key: CAT_{CATID}_MODEL)

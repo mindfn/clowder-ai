@@ -47,6 +47,7 @@ created: 2026-02-26
 | F138 | Cat Café Video Studio — AI 视频制作管线 | spec | 金渐层 | internal | [F138](features/F138-video-studio.md) |
 | F139 | MediaHub — AI Media Generation Gateway | spec | 布偶猫 | internal | [F139](features/F139-mediahub.md) |
 | F140 | First-Run Quest — 首次安装零成员 + 游戏化新手引导 | spec | 缅因猫 + 布偶猫 | internal | [F140](features/F140-first-run-quest-onboarding.md) |
+| F150 | Add-Member Internal Guide UI — 添加成员引导 UI | spec | 缅因猫/砚砚 | internal | [F150](features/F150-add-member-guide-ui-spec.md) |
 | F143 | Hostable Agent Runtime — 统一宿主抽象 | spec | Ragdoll | internal | [F143](features/F143-hostable-agent-runtime.md) |
 | F144 | PPT Forge — AI 演示文稿生成引擎 | in-progress | 三猫 | internal | [F144](features/F144-ppt-forge.md) |
 | F146 | MCP Marketplace Control Plane — 一键接入 + 多生态聚合 | in-progress | Maine Coon + Ragdoll | internal | [F146](features/F146-mcp-marketplace-control-plane.md) |

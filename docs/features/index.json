@@ -381,7 +381,7 @@
     {
       "id": "F062",
       "name": "Ragdoll账号配置中枢（订阅 / 赞助 API 切换）",
-      "status": "done | **Owner**: 三猫",
+      "status": "done → **superseded by F136/F340** | **Owner**: 三猫",
       "file": "F062-ragdoll-provider-profile-hub.md"
     },
     {
@@ -848,15 +848,21 @@
     },
     {
       "id": "F139",
+      "name": "MediaHub — AI Media Generation Gateway",
+      "status": "spec | **Owner**: 布偶猫 | **Priority**: P1",
+      "file": "F139-mediahub.md"
+    },
+    {
+      "id": "F139",
       "name": "Unified Schedule Abstraction — 统一调度抽象",
       "status": "done | **Owner**: Ragdoll | **Priority**: P1 | **Completed**: 2026-03-28",
       "file": "F139-unified-schedule-abstraction.md"
     },
     {
-      "id": "F139b",
-      "name": "MediaHub — AI Media Generation Gateway",
-      "status": "spec | **Owner**: 布偶猫 | **Priority**: P1",
-      "file": "F139-mediahub.md"
+      "id": "F140",
+      "name": "First-Run Quest — 首次安装零成员 + 游戏化新手引导",
+      "status": "in-progress (Phase A-B done, C mostly done, D mostly done, E partial)",
+      "file": "F140-first-run-quest-onboarding.md"
     },
     {
       "id": "F140",
@@ -917,6 +923,24 @@
       "name": "ACP Runtime Operations — 项目级进程池 + Session Lease",
       "status": "done | **Owner**: Maine Coon/gpt52 | **Priority**: P1",
       "file": "F149-acp-runtime-operations.md"
+    },
+    {
+      "id": "F150",
+      "name": "Add-Member Internal Guide UI Spec (Phase A)",
+      "status": "unknown",
+      "file": "F150-add-member-guide-ui-spec.md"
+    },
+    {
+      "id": "F150",
+      "name": "引导场景清单",
+      "status": "unknown",
+      "file": "F150-scene-catalog.md"
+    },
+    {
+      "id": "F150",
+      "name": "Scene-Based Bidirectional Guidance Engine",
+      "status": "spec | **Owner**: 布偶猫/宪宪 | **Priority**: P1",
+      "file": "F150-scene-guidance-engine.md"
     },
     {
       "id": "F150",
@@ -1045,5 +1069,5 @@
       "file": "F168-community-ops-board.md"
     }
   ],
-  "generated_at": "2026-04-19T13:01:16.922Z"
+  "generated_at": "2026-04-19T15:48:53.095Z"
 }
