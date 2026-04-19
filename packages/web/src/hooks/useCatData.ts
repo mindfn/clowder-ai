@@ -156,6 +156,7 @@ async function refreshCatsNow(): Promise<FetchResult> {
 export function useCatData() {
   const [cats, setCats] = useState<CatData[]>(() => _cached ?? []);
   const [isLoading, setIsLoading] = useState(!_cached);
+  const [hasFetched, setHasFetched] = useState(!!_cached);
   const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
@@ -198,6 +199,7 @@ export function useCatData() {
       if (!cancelled) {
         setCats(result);
         setIsLoading(false);
+        if (fromApi) setHasFetched(true);
       }
     });
     return () => {
@@ -235,7 +237,7 @@ export function useCatData() {
     };
   }, [cats]);
 
-  return { cats, isLoading, getCatById, getCatsByBreed, refresh };
+  return { cats, isLoading, hasFetched, getCatById, getCatsByBreed, refresh };
 }
 
 /** Format cat name with optional variant label for multi-variant disambiguation */

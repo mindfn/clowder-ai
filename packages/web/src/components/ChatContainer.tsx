@@ -119,7 +119,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   // AC-6: research=multi hint from Signal study "多猫研究" button
   const isResearchMode = searchParams?.get('research') === 'multi';
   const { clearTasks } = useTaskStore();
-  const { cats, getCatById, isLoading } = useCatData();
+  const { cats, getCatById, isLoading, hasFetched } = useCatData();
   const workspaceWorktreeId = useChatStore((s) => s.workspaceWorktreeId);
   usePreviewAutoOpen(workspaceWorktreeId, threadId);
   useWorkspaceNavigate(workspaceWorktreeId, threadId);
@@ -364,8 +364,11 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     }
     // Wait for thread store to populate before deciding — prevents flash on page refresh
     if (storeThreads.length === 0) return;
+    // Only show first-run prompt after a successful cat fetch — prevents false
+    // positives when /api/cats fails transiently (returns [] on network error).
+    if (!hasFetched) return;
     setShowFirstRunQuestPrompt(true);
-  }, [cats.length, isLoading, storeThreads, threadId]);
+  }, [cats.length, isLoading, hasFetched, storeThreads, threadId]);
 
   // ── Data sync: re-fetch thread bootcampState on invocation end ──
   // MCP callbacks update Redis directly; the companion WebSocket `thread_updated`
