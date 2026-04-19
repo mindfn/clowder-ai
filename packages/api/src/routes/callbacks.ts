@@ -1299,7 +1299,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
   // F140: First-Run Quest state transition callbacks
   if (opts.threadStore) {
-    registerCallbackQuestRoutes(app, { threadStore: opts.threadStore });
+    registerCallbackQuestRoutes(app, { registry, threadStore: opts.threadStore });
   }
 
   // Thread cats discovery for MCP
