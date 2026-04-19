@@ -96,7 +96,7 @@ export function getMentionColor(): Record<string, string> {
 }
 
 export function resetMentionDataForTest(): void {
-  _cats = staticCats;
+  _cats = [];
   _coCreatorMentionPatterns = [...DEFAULT_CO_CREATOR_MENTION_PATTERNS];
   rebuildMentionCache();
 }
