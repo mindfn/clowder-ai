@@ -133,6 +133,7 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
     const models = profile?.models?.filter(Boolean) ?? [];
     if (selectedModel && !models.includes(selectedModel)) {
       setSelectedModel(models[0] ?? '');
+      setTestResult(null);
     }
   }, [fetchProfiles, selectedProfileId, selectedModel]);
 

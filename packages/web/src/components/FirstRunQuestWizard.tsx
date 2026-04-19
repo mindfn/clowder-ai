@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useCatData } from '@/hooks/useCatData';
 import { apiFetch } from '@/utils/api-client';
 import { ClientStep, type DetectedClient } from './first-run-quest/ClientStep';
@@ -29,6 +29,16 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateCard | null>(null);
   const [selectedClient, setSelectedClient] = useState<DetectedClient | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Reset wizard state when reopening modal
+  useEffect(() => {
+    if (open) {
+      setStep('template');
+      setSelectedTemplate(null);
+      setSelectedClient(null);
+      setError(null);
+    }
+  }, [open]);
 
   const handleTemplateSelect = useCallback((template: TemplateCard) => {
     setSelectedTemplate(template);
