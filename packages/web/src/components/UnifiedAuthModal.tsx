@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import type { BuiltinAccountClient, ProfileAuthType } from './hub-accounts.types';
 import { builtinClientLabel } from './hub-accounts.view';
@@ -62,6 +62,26 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Rehydrate form state when modal re-opens (same key but stale data)
+  const prevOpenRef = useRef(open);
+  useEffect(() => {
+    if (open && !prevOpenRef.current) {
+      const cid = editProfile?.clientId ?? initialClientId ?? 'anthropic';
+      setClientId(cid);
+      setAuthMode(editProfile?.authType === 'api_key' ? 'api_key' : 'oauth');
+      setDisplayName(editProfile?.displayName ?? '');
+      setBaseUrl(editProfile?.baseUrl ?? '');
+      setModels(editProfile?.models ?? []);
+      setApiKey('');
+      setError(null);
+      setEnvEntries(
+        editProfile?.envVars ? Object.entries(editProfile.envVars).map(([key, value]) => ({ key, value })) : [],
+      );
+      setAdvancedOpen(Boolean(editProfile?.envVars && Object.keys(editProfile.envVars).length > 0));
+    }
+    prevOpenRef.current = open;
+  }, [open, editProfile, initialClientId]);
+
   if (!open) return null;
 
   const isOAuth = authMode === 'oauth';
@@ -111,10 +131,13 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
         const envVars = buildEnvVars();
         const patch: Record<string, unknown> = {
           displayName: displayName.trim(),
-          clientId,
           models,
           envVars: envVars ?? {},
         };
+        // Only send clientId if the original profile had one (avoid forcing 'anthropic' on API-key accounts)
+        if (editProfile?.clientId || isOAuth) {
+          patch.clientId = clientId;
+        }
         if (baseUrl.trim()) patch.baseUrl = baseUrl.trim();
         if (apiKey.trim()) patch.apiKey = apiKey.trim();
         const res = await apiFetch(`/api/accounts/${encodeURIComponent(editProfile!.id)}`, {

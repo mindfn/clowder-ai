@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { QUEST_PHASES, validateQuestTransition } from '../domains/cats/services/first-run-quest/quest-state.js';
 import type { FirstRunQuestPhase, IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
+import { requireCallbackAuth } from './callback-auth-prehandler.js';
 
 const questPhaseSchema = z.enum([...QUEST_PHASES]);
 
@@ -26,6 +27,9 @@ export function registerCallbackQuestRoutes(app: FastifyInstance, deps: { thread
   const { threadStore } = deps;
 
   app.post('/api/callbacks/update-quest-state', async (request, reply) => {
+    const record = requireCallbackAuth(request, reply);
+    if (!record) return;
+
     const parsed = updateQuestStateSchema.safeParse(request.body);
     if (!parsed.success) {
       reply.status(400);
@@ -33,6 +37,12 @@ export function registerCallbackQuestRoutes(app: FastifyInstance, deps: { thread
     }
 
     const { threadId, ...updates } = parsed.data;
+
+    // P1: Cross-thread binding check — reject if invocation is bound to a different thread
+    if (record.threadId !== threadId) {
+      reply.status(403);
+      return { error: 'Cross-thread write rejected' };
+    }
     const thread = await threadStore.get(threadId);
     if (!thread) {
       reply.status(404);

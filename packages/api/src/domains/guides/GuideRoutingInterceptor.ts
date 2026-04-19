@@ -257,11 +257,19 @@ async function resolveBootcampGuide(
   thread: GuideThread | null | undefined,
   targetCats: readonly string[],
   ctx: GuideRoutingContext,
+  dismissTracker?: import('./GuideDismissTracker.js').IGuideDismissTracker,
 ): Promise<void> {
   const phase = thread?.bootcampState?.phase;
   if (!phase) return;
   const guideId = BOOTCAMP_PHASE_GUIDE_MAP[phase];
   if (!guideId) return;
+
+  // Respect user dismissal — don't re-offer guides the user explicitly dismissed
+  if (dismissTracker && thread) {
+    const userId = thread.createdBy ?? 'default-user';
+    const counts = await dismissTracker.getDismissCounts(userId, [guideId]).catch((): Record<string, number> => ({}));
+    if ((counts[guideId] ?? 0) > 0) return;
+  }
 
   const entry = await resolveRegistryEntry(guideId);
   if (!entry) return;
@@ -321,7 +329,7 @@ export async function prepareGuideContext(params: {
 
   // F140: Bootcamp phase → guide bridge (auto-offer before keyword matching)
   if (!ctx.candidate && !ctx.hiddenForeign) {
-    await resolveBootcampGuide(thread, targetCats, ctx);
+    await resolveBootcampGuide(thread, targetCats, ctx, dismissTracker);
   }
 
   if (!ctx.candidate && !ctx.hiddenForeign) {

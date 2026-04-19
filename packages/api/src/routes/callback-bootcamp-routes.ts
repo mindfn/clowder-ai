@@ -38,6 +38,13 @@ const PHASE_ORDER = [
 
 const PHASE_INDEX = new Map(PHASE_ORDER.map((p, i) => [p, i]));
 
+/** Map legacy phase names (pre-F140-v2) to their nearest current equivalent. */
+const LEGACY_PHASE_MAP: Record<string, (typeof PHASE_ORDER)[number]> = {
+  'phase-0-select-cat': 'phase-1-intro',
+  'phase-3.5-advanced': 'phase-3-config-help',
+  'phase-8-review': 'phase-8-collab',
+};
+
 const bootcampPhaseSchema = z.enum([...PHASE_ORDER]);
 
 const updateBootcampStateCallbackSchema = z.object({
@@ -118,7 +125,8 @@ export function registerCallbackBootcampRoutes(
     // P1 fix: Phase transition must be forward-only (no skipping)
     let validTransition = false;
     if (updates.phase !== undefined) {
-      const currentPhase = existing.phase as (typeof PHASE_ORDER)[number];
+      const rawPhase = existing.phase as string;
+      const currentPhase = (LEGACY_PHASE_MAP[rawPhase] ?? rawPhase) as (typeof PHASE_ORDER)[number];
       const currentIdx = PHASE_INDEX.get(currentPhase) ?? 0;
       const targetIdx = PHASE_INDEX.get(updates.phase);
       request.log.info(

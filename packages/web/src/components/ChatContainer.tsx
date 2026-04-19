@@ -351,14 +351,14 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     // Pure backend-driven: show prompt only when no cats AND no bootcamp thread
     const isCurrentBootcamp = Boolean(storeThreads.find((thread) => thread.id === threadId)?.bootcampState);
     const hasAnyBootcamp = storeThreads.some((t) => t.bootcampState);
-    if (isCurrentBootcamp || hasAnyBootcamp || cats.length > 0) {
+    if (isCurrentBootcamp || hasAnyBootcamp || cats.length > 0 || isLoading) {
       setShowFirstRunQuestPrompt(false);
       return;
     }
     // Wait for thread store to populate before deciding — prevents flash on page refresh
     if (storeThreads.length === 0) return;
     setShowFirstRunQuestPrompt(true);
-  }, [cats.length, storeThreads, threadId]);
+  }, [cats.length, isLoading, storeThreads, threadId]);
 
   // ── Data sync: re-fetch thread bootcampState on invocation end ──
   // MCP callbacks update Redis directly; the companion WebSocket `thread_updated`

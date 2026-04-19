@@ -40,9 +40,11 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
 
   const fetchProfiles = useCallback(async () => {
     const res = await apiFetch('/api/accounts');
+    if (!res.ok) return [];
     const body = (await res.json()) as AccountsResponse;
-    setProfiles(body.providers);
-    return body.providers;
+    const providers = body.providers ?? [];
+    setProfiles(providers);
+    return providers;
   }, []);
 
   useEffect(() => {

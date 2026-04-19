@@ -30,7 +30,7 @@ function buildHeaders(protocol: ProbeProtocol, apiKey: string): Record<string, s
 }
 
 function normalizeBaseUrl(url: string): string {
-  return url.replace(/\/+$/, '');
+  return url.replace(/\/+$/, '').replace(/\/v1(?:beta)?$/, '');
 }
 
 function inferProtocolFromUrl(baseUrl: string): ProbeProtocol {

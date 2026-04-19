@@ -79,8 +79,8 @@ export async function tryCliProbe(
   opts: CliProbeOptions = {},
 ): Promise<{ ok: boolean; message: string } | null> {
   const { model, execFn = execAsync } = opts;
+  if (!Object.hasOwn(CLI_PROBE_CMD, client)) return null;
   const buildCmd = CLI_PROBE_CMD[client];
-  if (!buildCmd) return null;
   if (model && !SAFE_MODEL_RE.test(model)) {
     return { ok: false, message: '模型名称包含非法字符' };
   }
@@ -107,9 +107,9 @@ export async function tryCliProbe(
     if (CLI_OK_PATTERNS.some((re) => re.test(msg) || re.test(stderr))) {
       return { ok: true, message: `${client} CLI 连接正常（受限响应）` };
     }
-    /* Process killed (timeout) but stderr shows CLI was running — likely slow but alive */
-    if ((err as { code?: number | null }).code === null && stderr.length > 0) {
-      return { ok: true, message: `${client} CLI 连接正常（响应较慢）` };
+    /* Process killed (timeout) — treat as failure unless stderr proved connectivity above */
+    if ((err as { code?: number | null }).code === null) {
+      return { ok: false, message: `${client} CLI 响应超时` };
     }
     if (msg.includes('authentication') || msg.includes('login') || msg.includes('OAuth')) {
       return { ok: false, message: '需要先完成 OAuth 登录，请在终端运行一次 CLI' };
@@ -122,7 +122,12 @@ export const firstRunQuestRoutes: FastifyPluginAsync<FirstRunQuestRoutesOptions>
   const { threadStore } = opts;
 
   /** Detect installed CLI clients on this machine. */
-  app.get('/api/first-run/available-clients', async () => {
+  app.get('/api/first-run/available-clients', async (request, reply) => {
+    const userId = resolveUserId(request);
+    if (!userId) {
+      reply.status(401);
+      return { error: 'Identity required' };
+    }
     const clients = await detectAvailableClients();
     return { clients };
   });
