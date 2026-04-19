@@ -42,6 +42,8 @@ const PHASE_INDEX = new Map(PHASE_ORDER.map((p, i) => [p, i]));
 const LEGACY_PHASE_MAP: Record<string, (typeof PHASE_ORDER)[number]> = {
   'phase-0-select-cat': 'phase-1-intro',
   'phase-3.5-advanced': 'phase-3-config-help',
+  'phase-4-first-project': 'phase-7-dev',
+  'phase-4.5-add-teammate': 'phase-7.5-add-teammate',
   'phase-8-review': 'phase-8-collab',
 };
 

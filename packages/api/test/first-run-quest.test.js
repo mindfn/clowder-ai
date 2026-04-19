@@ -17,24 +17,26 @@ const AUTH_HEADERS = { 'x-cat-cafe-user': 'test-user' };
 
 describe('First-Run Quest Routes', () => {
   let threadStore;
+  let registry;
 
   beforeEach(async () => {
     const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const { InvocationRegistry } = await import(
+      '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js'
+    );
     threadStore = new ThreadStore();
+    registry = new InvocationRegistry();
   });
 
   async function createApp() {
     const { firstRunQuestRoutes } = await import('../dist/routes/first-run-quest.js');
     const { callbacksRoutes } = await import('../dist/routes/callbacks.js');
-    const { InvocationRegistry } = await import(
-      '../dist/domains/cats/services/agents/invocation/InvocationRegistry.js'
-    );
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
 
     const app = Fastify();
     await app.register(firstRunQuestRoutes, { threadStore });
     await app.register(callbacksRoutes, {
-      registry: new InvocationRegistry(),
+      registry,
       messageStore: new MessageStore(),
       socketManager: {
         broadcastAgentMessage() {},
@@ -48,9 +50,15 @@ describe('First-Run Quest Routes', () => {
     return app;
   }
 
-  test('GET /api/first-run/available-clients returns client list', async () => {
+  test('GET /api/first-run/available-clients returns 401 without identity', async () => {
     const app = await createApp();
     const res = await app.inject({ method: 'GET', url: '/api/first-run/available-clients' });
+    assert.equal(res.statusCode, 401);
+  });
+
+  test('GET /api/first-run/available-clients returns client list', async () => {
+    const app = await createApp();
+    const res = await app.inject({ method: 'GET', url: '/api/first-run/available-clients', headers: AUTH_HEADERS });
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
     assert.ok(Array.isArray(body.clients));
@@ -119,6 +127,24 @@ describe('First-Run Quest Routes', () => {
     assert.equal(body.quest.state.firstCatId, 'opus');
   });
 
+  test('POST /api/callbacks/update-quest-state returns 401 without callback auth', async () => {
+    const app = await createApp();
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/first-run/quest',
+      headers: { 'x-cat-cafe-user': 'test-user', 'content-type': 'application/json' },
+      payload: { firstCatId: 'opus' },
+    });
+    const { quest } = JSON.parse(createRes.body);
+    const updateRes = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/update-quest-state',
+      headers: { 'content-type': 'application/json' },
+      payload: { threadId: quest.threadId, phase: 'quest-3-task-select' },
+    });
+    assert.equal(updateRes.statusCode, 401);
+  });
+
   test('POST /api/callbacks/update-quest-state advances phase', async () => {
     const app = await createApp();
     // Create quest thread
@@ -129,12 +155,13 @@ describe('First-Run Quest Routes', () => {
       payload: { firstCatId: 'opus' },
     });
     const { quest } = JSON.parse(createRes.body);
+    const { invocationId, callbackToken } = registry.create('test-user', 'opus', quest.threadId);
 
     // Advance to task-select (quest starts at quest-2, so go forward to quest-3)
     const updateRes = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-quest-state',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken, 'content-type': 'application/json' },
       payload: {
         threadId: quest.threadId,
         phase: 'quest-3-task-select',
@@ -155,12 +182,14 @@ describe('First-Run Quest Routes', () => {
       payload: {},
     });
     const { quest } = JSON.parse(createRes.body);
+    const { invocationId, callbackToken } = registry.create('test-user', 'opus', quest.threadId);
+    const cbHeaders = { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken, 'content-type': 'application/json' };
 
     // Advance to task-select (quest starts at quest-2)
     await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-quest-state',
-      headers: { 'content-type': 'application/json' },
+      headers: cbHeaders,
       payload: { threadId: quest.threadId, phase: 'quest-3-task-select' },
     });
 
@@ -168,7 +197,7 @@ describe('First-Run Quest Routes', () => {
     const backRes = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-quest-state',
-      headers: { 'content-type': 'application/json' },
+      headers: cbHeaders,
       payload: { threadId: quest.threadId, phase: 'quest-2-cat-intro' },
     });
     assert.equal(backRes.statusCode, 400);
@@ -185,12 +214,13 @@ describe('First-Run Quest Routes', () => {
       payload: { firstCatId: 'opus', firstCatName: '宪宪' },
     });
     const { quest } = JSON.parse(createRes.body);
+    const { invocationId, callbackToken } = registry.create('test-user', 'opus', quest.threadId);
 
     // Update with second cat info (must advance forward from quest-2)
     await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-quest-state',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken, 'content-type': 'application/json' },
       payload: {
         threadId: quest.threadId,
         phase: 'quest-3-task-select',
