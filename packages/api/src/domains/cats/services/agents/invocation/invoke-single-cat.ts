@@ -1568,7 +1568,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           forceReinjection,
           workingDirectory: workingDirectory ?? null,
           promptLength: effectivePrompt.length,
-          promptPreview: effectivePrompt.slice(0, 200),
           systemPromptLength: params.systemPrompt?.length ?? 0,
           callbackEnv: safeCallbackEnv,
         },
