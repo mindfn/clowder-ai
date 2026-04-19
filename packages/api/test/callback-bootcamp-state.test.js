@@ -65,9 +65,8 @@ describe('Callback Bootcamp State', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-bootcamp-state',
+      headers: { 'x-invocation-id': 'fake-id', 'x-callback-token': 'fake-token' },
       payload: {
-        invocationId: 'fake-id',
-        callbackToken: 'fake-token',
         threadId: 'thread-1',
         phase: 'phase-1-intro',
       },
@@ -91,9 +90,8 @@ describe('Callback Bootcamp State', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-bootcamp-state',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
       payload: {
-        invocationId,
-        callbackToken,
         threadId: thread.id,
         phase: 'phase-2-env-check',
         leadCat: 'opus',
@@ -123,9 +121,8 @@ describe('Callback Bootcamp State', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-bootcamp-state',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
       payload: {
-        invocationId,
-        callbackToken,
         threadId: thread.id,
         phase: 'phase-4-task-select',
       },
@@ -145,9 +142,8 @@ describe('Callback Bootcamp State', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-bootcamp-state',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
       payload: {
-        invocationId,
-        callbackToken,
         threadId: 'nonexistent',
         phase: 'phase-1-intro',
       },
@@ -165,9 +161,8 @@ describe('Callback Bootcamp State', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-bootcamp-state',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
       payload: {
-        invocationId,
-        callbackToken,
         threadId: thread.id,
         phase: 'phase-99-invalid',
       },
@@ -193,9 +188,8 @@ describe('Callback Bootcamp State', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-bootcamp-state',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
       payload: {
-        invocationId,
-        callbackToken,
         threadId: threadB.id,
         phase: 'phase-11-farewell',
       },
@@ -224,9 +218,8 @@ describe('Callback Bootcamp State', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-bootcamp-state',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
       payload: {
-        invocationId,
-        callbackToken,
         threadId: threadB.id,
         phase: 'phase-11-farewell',
       },
@@ -255,9 +248,8 @@ describe('Callback Bootcamp State', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-bootcamp-state',
+      headers: { 'x-invocation-id': old.invocationId, 'x-callback-token': old.callbackToken },
       payload: {
-        invocationId: old.invocationId,
-        callbackToken: old.callbackToken,
         threadId: thread.id,
         phase: 'phase-11-farewell',
       },
@@ -285,7 +277,8 @@ describe('Callback Bootcamp State', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-bootcamp-state',
-      payload: { invocationId, callbackToken, threadId: thread.id, phase: 'phase-11-farewell' },
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: { threadId: thread.id, phase: 'phase-11-farewell' },
     });
 
     assert.equal(response.statusCode, 400);
@@ -314,7 +307,8 @@ describe('Callback Bootcamp State', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-bootcamp-state',
-      payload: { invocationId, callbackToken, threadId: thread.id, phase: 'phase-2-env-check' },
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: { threadId: thread.id, phase: 'phase-2-env-check' },
     });
 
     assert.equal(response.statusCode, 400);
@@ -384,7 +378,8 @@ describe('Callback Bootcamp State', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-bootcamp-state',
-      payload: { invocationId, callbackToken, threadId: thread.id, phase: 'phase-4-task-select' },
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: { threadId: thread.id, phase: 'phase-4-task-select' },
     });
 
     assert.equal(response.statusCode, 200);
@@ -413,9 +408,8 @@ describe('Callback Bootcamp State', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-bootcamp-state',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
       payload: {
-        invocationId,
-        callbackToken,
         threadId: thread.id,
         phase: 'phase-11-farewell',
         completedAt: Date.now(),
@@ -445,7 +439,8 @@ describe('Callback Bootcamp State', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-bootcamp-state',
-      payload: { invocationId, callbackToken, threadId: thread.id, phase: 'phase-2-env-check' },
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: { threadId: thread.id, phase: 'phase-2-env-check' },
     });
 
     assert.equal(response.statusCode, 200);
@@ -477,7 +472,8 @@ describe('Callback Bootcamp State', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-bootcamp-state',
-      payload: { invocationId, callbackToken, threadId: thread.id, phase: 'phase-3-config-help' },
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: { threadId: thread.id, phase: 'phase-3-config-help' },
     });
 
     assert.equal(response.statusCode, 200);
@@ -502,7 +498,8 @@ describe('Callback Bootcamp State', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-bootcamp-state',
-      payload: { invocationId, callbackToken, threadId: thread.id, phase: 'phase-1-intro' },
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: { threadId: thread.id, phase: 'phase-1-intro' },
     });
 
     assert.equal(response.statusCode, 400);
@@ -524,9 +521,8 @@ describe('Callback Bootcamp State', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/callbacks/update-bootcamp-state',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
       payload: {
-        invocationId,
-        callbackToken,
         threadId: thread.id,
         phase: 'phase-11-farewell',
         completedAt: Date.now(),

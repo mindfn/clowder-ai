@@ -1,10 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { HubAccountItem, type ProfileEditPayload } from './HubAccountItem';
 import type { AccountsResponse, ProfileItem } from './hub-accounts.types';
-import { resolveAccountActionId } from './hub-accounts.view';
+import { normalizeBuiltinClientIds, resolveAccountActionId } from './hub-accounts.view';
 import { type UnifiedAuthEditData, UnifiedAuthModal } from './UnifiedAuthModal';
 
 export function HubAccountsTab() {
@@ -110,7 +110,10 @@ export function HubAccountsTab() {
     [callApi, fetchAccounts],
   );
 
-  const displayCards = data?.providers ?? [];
+  const displayAccounts = useMemo(() => normalizeBuiltinClientIds(data?.providers ?? []), [data?.providers]);
+  const builtinAccounts = useMemo(() => displayAccounts.filter((a) => a.builtin), [displayAccounts]);
+  const customAccounts = useMemo(() => displayAccounts.filter((a) => !a.builtin), [displayAccounts]);
+  const displayCards = useMemo(() => [...builtinAccounts, ...customAccounts], [builtinAccounts, customAccounts]);
 
   if (loading) return <p className="text-sm text-cafe-muted">加载中...</p>;
   if (!data) return <p className="text-sm text-cafe-muted">暂无数据</p>;

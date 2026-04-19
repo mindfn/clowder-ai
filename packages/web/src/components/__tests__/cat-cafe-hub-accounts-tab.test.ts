@@ -651,7 +651,7 @@ describe('CatCafeHub provider profiles tab', () => {
     expect((createPayload as unknown as Record<string, unknown>)?.authType).toBe('api_key');
   });
 
-  it('shows built-in and custom provider cards together without the old filter tabs', async () => {
+  it('shows only configured provider cards without synthesizing unconfigured builtins', async () => {
     mockApiFetch.mockImplementation((path: string) => {
       if (path.startsWith('/api/accounts')) {
         return Promise.resolve(
@@ -730,6 +730,7 @@ describe('CatCafeHub provider profiles tab', () => {
     expect(profileList?.textContent).toContain('Gemini (OAuth)');
     expect(profileList?.textContent).toContain('Codex Sponsor');
     // F140: no synthetic builtin accounts — only API-returned providers are shown
+    expect(profileList?.textContent).not.toContain('Kimi (OAuth)');
     expect(profileList?.textContent).not.toContain('OpenCode (client-auth)');
     expect(profileList?.textContent).not.toContain('Dare (client-auth)');
     expect(container.textContent).not.toContain('全部');

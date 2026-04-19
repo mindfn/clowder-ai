@@ -313,8 +313,7 @@ function buildCallHint(
   const fullUrl = `${effectiveBase}${info.pathSuffix}`;
   let warning = '';
   if (client === 'google') {
-    warning =
-      '\n注意: Gemini CLI 不支持自定义 API 端点，只能调用 Google 官方 API。如需使用第三方代理（如 OpenRouter），请改用 OpenCode 或 Claude 作为 Client';
+    warning = '\n注意: Google 官方 endpoint 仍要求 builtin OAuth；第三方 gateway 会走这里展示的 baseUrl。';
   }
   return { label: `${info.cli} CLI 实际调用: `, url: fullUrl, warning };
 }
@@ -387,8 +386,9 @@ export function AccountSection({
                   })
                   .map((profile) => ({
                     value: profile.id,
-                    label:
-                      profile.authType === 'oauth'
+                    label: profile.builtin
+                      ? `${profile.displayName}（内置）`
+                      : profile.authType === 'oauth'
                         ? `${profile.displayName}（OAuth）`
                         : `${profile.displayName}（API Key）`,
                   })),

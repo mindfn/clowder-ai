@@ -1,5 +1,26 @@
 import type { BuiltinAccountClient, ProfileItem } from './hub-accounts.types';
 
+function inferBuiltinClient(profile: ProfileItem): BuiltinAccountClient | undefined {
+  if (profile.clientId) return profile.clientId;
+  if (profile.oauthLikeClient === 'dare' || profile.oauthLikeClient === 'opencode') return profile.oauthLikeClient;
+  const normalizedId = `${profile.id} ${profile.provider ?? ''} ${profile.displayName} ${profile.name}`.toLowerCase();
+  if (normalizedId.includes('claude')) return 'anthropic';
+  if (normalizedId.includes('codex')) return 'openai';
+  if (normalizedId.includes('gemini')) return 'google';
+  if (normalizedId.includes('kimi') || normalizedId.includes('moonshot')) return 'kimi';
+  if (normalizedId.includes('dare')) return 'dare';
+  if (normalizedId.includes('opencode')) return 'opencode';
+  return undefined;
+}
+
+export function normalizeBuiltinClientIds(profiles: ProfileItem[]): ProfileItem[] {
+  return profiles.map((profile) => {
+    if (!profile.builtin) return profile;
+    const builtinClient = inferBuiltinClient(profile);
+    return builtinClient ? { ...profile, clientId: builtinClient } : profile;
+  });
+}
+
 export function builtinClientLabel(client?: BuiltinAccountClient): string {
   switch (client) {
     case 'anthropic':
