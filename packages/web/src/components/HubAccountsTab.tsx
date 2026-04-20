@@ -141,7 +141,7 @@ export function HubAccountsTab() {
         </button>
       </div>
 
-      <div role="group" aria-label="Account List" className="space-y-4">
+      <div role="group" aria-label="Account List" className="space-y-4" data-guide-id="accounts.account-list">
         {displayCards.map((account) => (
           <HubAccountItem
             key={account.id}
