@@ -262,7 +262,7 @@ export function validateRuntimeProviderBinding(
   _defaultModel?: string | null,
 ): string | null {
   // Allow api_key accounts for google only when using third-party gateways.
-  if (clientId === 'google' && profile.kind !== 'builtin') {
+  if (clientId === 'google' && profile.authType !== 'oauth') {
     const trimmedBaseUrl = profile.baseUrl?.trim();
     if (!trimmedBaseUrl) {
       return 'client "google" only supports builtin Gemini auth (or third-party with baseUrl)';

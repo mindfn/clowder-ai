@@ -213,6 +213,7 @@ export function useCatData() {
       setIsLoading(true);
       const result = await refreshCatsNow();
       setCats(result.cats);
+      setHasFetched(true);
       setIsLoading(false);
       return result.cats;
     },
