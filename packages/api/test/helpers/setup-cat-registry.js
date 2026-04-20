@@ -10,6 +10,8 @@
  * etc.) never picks up catalog artifacts from other test files.
  *
  * Usage: import './helpers/setup-cat-registry.js';
+ *
+ * See also: packages/api/package.json `--import $(pwd)/...` for Node loader usage.
  */
 
 import { cpSync, mkdirSync } from 'node:fs';
