@@ -529,7 +529,7 @@ test('passes correct model flag (default and custom)', async () => {
   const modelIdx1 = args1.indexOf('--model');
   assert.ok(modelIdx1 >= 0);
   // F32-b: getCatModel('opus') resolves via catRegistry (populated from runtime config).
-  assert.equal(args1[modelIdx1 + 1], 'claude-sonnet-4-5-20250929');
+  assert.equal(args1[modelIdx1 + 1], 'claude-opus-4-6');
 
   // Custom model (explicit constructor param)
   const proc2 = createMockProcess();

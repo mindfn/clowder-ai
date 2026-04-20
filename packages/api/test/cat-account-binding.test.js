@@ -107,11 +107,13 @@ describe('cat account binding', () => {
     const previousGlobalRoot = process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT;
 
     try {
+      // Use 'test-spark' (not 'spark') to avoid collision with the global template's
+      // existing 'spark' variant catId registered by setup-cat-registry.js.
       await seedTemplate(projectRoot, (template) => {
         const codexBreed = template.breeds.find((breed) => breed.catId === 'codex');
         codexBreed.variants.push({
-          id: 'codex-spark',
-          catId: 'spark',
+          id: 'codex-test-spark',
+          catId: 'test-spark',
           clientId: 'openai',
           defaultModel: 'gpt-5.4-spark',
           mcpSupport: false,
@@ -126,7 +128,7 @@ describe('cat account binding', () => {
       const catalogPath = resolveCatCatalogPath(projectRoot);
       const runtimeCatalog = JSON.parse(await readFile(catalogPath, 'utf-8'));
       const codexBreed = runtimeCatalog.breeds.find((breed) => breed.catId === 'codex');
-      const sparkVariant = codexBreed?.variants.find((variant) => variant.catId === 'spark');
+      const sparkVariant = codexBreed?.variants.find((variant) => variant.catId === 'test-spark');
       if (!codexBreed || !codexBreed.variants[0] || !sparkVariant) {
         throw new Error('codex seed variants missing from bootstrapped runtime catalog');
       }
@@ -143,7 +145,7 @@ describe('cat account binding', () => {
 
       const migratedRaw = JSON.parse(await readFile(catalogPath, 'utf-8'));
       const migratedCodexBreed = migratedRaw.breeds.find((breed) => breed.catId === 'codex');
-      const migratedSparkVariant = migratedCodexBreed?.variants.find((variant) => variant.catId === 'spark');
+      const migratedSparkVariant = migratedCodexBreed?.variants.find((variant) => variant.catId === 'test-spark');
       assert.equal(migratedCodexBreed?.variants[0]?.accountRef, 'codex-sponsor');
       assert.equal(migratedSparkVariant?.accountRef, 'codex');
     } finally {
@@ -168,11 +170,13 @@ describe('cat account binding', () => {
     process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = projectRoot;
 
     try {
+      // Use 'test-spark' (not 'spark') to avoid collision with the global template's
+      // existing 'spark' variant catId registered by setup-cat-registry.js.
       await seedTemplate(projectRoot, (template) => {
         const codexBreed = template.breeds.find((breed) => breed.catId === 'codex');
         codexBreed.variants.push({
-          id: 'codex-spark',
-          catId: 'spark',
+          id: 'codex-test-spark',
+          catId: 'test-spark',
           clientId: 'openai',
           defaultModel: 'gpt-5.4-spark',
           mcpSupport: false,
@@ -186,7 +190,7 @@ describe('cat account binding', () => {
       const catalogPath = resolveCatCatalogPath(projectRoot);
       const runtimeCatalog = JSON.parse(await readFile(catalogPath, 'utf-8'));
       const codexBreed = runtimeCatalog.breeds.find((breed) => breed.catId === 'codex');
-      const sparkVariant = codexBreed?.variants.find((variant) => variant.catId === 'spark');
+      const sparkVariant = codexBreed?.variants.find((variant) => variant.catId === 'test-spark');
       if (!codexBreed || !codexBreed.variants[0] || !sparkVariant) {
         throw new Error('codex seed variants missing from bootstrapped runtime catalog');
       }
@@ -210,8 +214,8 @@ describe('cat account binding', () => {
       const migratedCatalog = readCatCatalog(projectRoot);
       const allCats = toAllCatConfigs(migratedCatalog);
       assert.equal(resolveBoundAccountRefForCat(projectRoot, 'codex', allCats.codex), 'codex-sponsor');
-      // Authoritative model: spark's explicit 'codex' binding is returned directly
-      assert.equal(resolveBoundAccountRefForCat(projectRoot, 'spark', allCats.spark), 'codex');
+      // Authoritative model: test-spark's explicit 'codex' binding is returned directly
+      assert.equal(resolveBoundAccountRefForCat(projectRoot, 'test-spark', allCats['test-spark']), 'codex');
     } finally {
       if (previousGlobalRoot === undefined) delete process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT;
       else process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = previousGlobalRoot;

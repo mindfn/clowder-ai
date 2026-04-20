@@ -36,6 +36,56 @@ async function rmWithRetry(path, attempts = 5) {
   }
 }
 
+/**
+ * F140: bootstrapCatCatalog() now creates empty catalogs (first-run quest).
+ * Tests that call bootstrapCatCatalog() and then read catalog breeds must call
+ * seedCatalogBreeds() afterwards to populate the catalog from the template.
+ */
+const BUILTIN_ACCOUNT_IDS = {
+  anthropic: 'claude',
+  openai: 'codex',
+  google: 'gemini',
+  kimi: 'kimi',
+  dare: 'dare',
+  opencode: 'opencode',
+};
+
+async function seedCatalogBreeds(projectRoot) {
+  const templatePath = join(projectRoot, 'cat-template.json');
+  const template = JSON.parse(await readFile(templatePath, 'utf-8'));
+  const catalogPath = join(projectRoot, '.cat-cafe', 'cat-catalog.json');
+  let catalog;
+  try {
+    catalog = JSON.parse(await readFile(catalogPath, 'utf-8'));
+  } catch {
+    catalog = {};
+  }
+  const version = template.version ?? catalog.version ?? 1;
+  const breeds = JSON.parse(JSON.stringify(template.breeds || []));
+  for (const breed of breeds) {
+    for (const variant of breed.variants || []) {
+      if (!variant.accountRef && variant.clientId && BUILTIN_ACCOUNT_IDS[variant.clientId]) {
+        variant.accountRef = BUILTIN_ACCOUNT_IDS[variant.clientId];
+      }
+      if (!variant.source) variant.source = 'seed';
+    }
+  }
+  const roster = template.roster ?? catalog.roster ?? {};
+  const reviewPolicy = template.reviewPolicy ??
+    catalog.reviewPolicy ?? {
+      requireDifferentFamily: true,
+      preferActiveInThread: true,
+      preferLead: true,
+      excludeUnavailable: true,
+    };
+  const seeded =
+    version >= 2
+      ? { version, breeds, roster, reviewPolicy, ...(template.coCreator ? { coCreator: template.coCreator } : {}) }
+      : { version, breeds };
+  await mkdir(join(projectRoot, '.cat-cafe'), { recursive: true });
+  await writeFile(catalogPath, `${JSON.stringify(seeded, null, 2)}\n`, 'utf-8');
+}
+
 // Shared temp dir — singleton EventAuditLog only initializes once
 let tempDir;
 let invokeSingleCat;
@@ -2915,6 +2965,8 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     });
 
     bootstrapCatCatalog(root, join(root, 'cat-template.json'));
+    // F140: bootstrapCatCatalog now creates empty catalogs; seed breeds from template.
+    await seedCatalogBreeds(root);
     const catalogPath = resolveCatCatalogPath(root);
     const runtimeCatalog = JSON.parse(await readFile(catalogPath, 'utf-8'));
     const codexBreed = runtimeCatalog.breeds.find((breed) => breed.catId === 'codex');
@@ -3015,6 +3067,8 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = root;
     process.env.HOME = root;
     bootstrapCatCatalog(root, join(root, 'cat-template.json'));
+    // F140: bootstrapCatCatalog now creates empty catalogs; seed breeds from template.
+    await seedCatalogBreeds(root);
 
     const registrySnapshot = catRegistry.getAllConfigs();
     catRegistry.reset();
