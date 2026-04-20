@@ -46,13 +46,14 @@ const BUILTIN_CLIENT_FOR_ID: Record<string, string> = {
 function accountToView(id: string, account: AccountConfig, apiKeyPresent: boolean) {
   const isBuiltin = account.authType === 'oauth';
   const builtinClient = BUILTIN_CLIENT_FOR_ID[id];
+  const clientId = account.clientId ?? (isBuiltin ? builtinClient : undefined);
   return {
     id,
     name: account.displayName ?? id,
     displayName: account.displayName ?? id,
     authType: account.authType,
     builtin: isBuiltin,
-    ...(isBuiltin && builtinClient ? { clientId: builtinClient } : {}),
+    ...(clientId ? { clientId } : {}),
     ...(account.baseUrl ? { baseUrl: account.baseUrl } : {}),
     models: account.models ? [...account.models] : [],
     hasApiKey: apiKeyPresent,

@@ -326,7 +326,6 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
 
     const key = `${threadId}:${String(raw.startedAt ?? 'unknown')}:phase-4`;
     if (mistakeTipAdvanceKeyRef.current === key) return;
-    mistakeTipAdvanceKeyRef.current = key;
     const nextBootcampState: NonNullable<Thread['bootcampState']> = {
       ...raw,
       phase: 'phase-7.5-add-teammate',
@@ -339,7 +338,10 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
         bootcampState: nextBootcampState,
       }),
     }).then((res) => {
-      if (res.ok) syncLocalBootcampState(threadId, nextBootcampState);
+      if (res.ok) {
+        mistakeTipAdvanceKeyRef.current = key;
+        syncLocalBootcampState(threadId, nextBootcampState);
+      }
       return res;
     });
   }, [threadId]);
