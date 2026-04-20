@@ -82,18 +82,14 @@ export async function* spawnCli(
   // Default timeout is configurable via CLI_TIMEOUT_MS env var; 0 disables timeout.
   const timeoutMs = resolveCliTimeoutMs(options.timeoutMs);
 
-  // Redact prompt content from args (-p value) but show all other args for diagnosability.
-  const redactedArgs = options.args.map((arg, i) => {
-    const prev = i > 0 ? options.args[i - 1] : '';
-    if (prev === '-p' || prev === '--append-system-prompt') {
-      return `[${arg.length} chars]`;
-    }
-    return arg;
-  });
+  // Log only flag names (--foo) and arg count — never raw values.
+  // Multiple providers pass prompt text via different shapes (positional,
+  // --prompt, -p, after --) so pattern-based redaction is unreliable.
+  const flagNames = options.args.filter((a) => a.startsWith('-'));
   log.debug(
     {
       command: options.command,
-      args: redactedArgs,
+      flagNames,
       argCount: options.args.length,
       cwd: options.cwd,
       timeoutMs,
