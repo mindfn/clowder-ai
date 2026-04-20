@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useCatData } from '@/hooks/useCatData';
 import { apiFetch } from '@/utils/api-client';
 import { ClientStep, type DetectedClient } from './first-run-quest/ClientStep';
@@ -29,6 +29,8 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateCard | null>(null);
   const [selectedClient, setSelectedClient] = useState<DetectedClient | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Track created cat to avoid orphans on thread-creation retry
+  const createdCatRef = useRef<{ id: string; name: string } | null>(null);
 
   // Reset wizard state when reopening modal
   useEffect(() => {
@@ -37,6 +39,7 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
       setSelectedTemplate(null);
       setSelectedClient(null);
       setError(null);
+      createdCatRef.current = null;
     }
   }, [open]);
 
@@ -56,47 +59,54 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
       setStep('creating');
       setError(null);
       try {
-        // Build a unique catId from template + timestamp suffix
-        const suffix = Date.now().toString(36).slice(-4);
-        const catId = `${selectedTemplate.id}-${suffix}`;
-        const catName = selectedTemplate.nickname ?? selectedTemplate.name;
+        // Reuse previously created cat if thread creation failed on a prior attempt
+        let createdCatId: string;
+        let createdCatName: string;
 
-        // Create cat via POST /api/cats — must include all required fields from template
-        const createRes = await apiFetch('/api/cats', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            catId,
-            name: selectedTemplate.name,
-            displayName: selectedTemplate.name,
-            nickname: selectedTemplate.nickname,
-            avatar: selectedTemplate.avatar,
-            color: selectedTemplate.color,
-            mentionPatterns: [
-              `@${selectedTemplate.name}`,
-              ...(selectedTemplate.nickname ? [`@${selectedTemplate.nickname}`] : []),
-              `@${catId}`,
-            ],
-            roleDescription: selectedTemplate.roleDescription,
-            personality: selectedTemplate.personality,
-            teamStrengths: selectedTemplate.teamStrengths,
-            clientId: selectedClient.provider,
-            accountRef: config.accountRef,
-            defaultModel: config.model,
-          }),
-        });
+        if (createdCatRef.current) {
+          createdCatId = createdCatRef.current.id;
+          createdCatName = createdCatRef.current.name;
+        } else {
+          const suffix = Date.now().toString(36).slice(-4);
+          const catId = `${selectedTemplate.id}-${suffix}`;
+          const catName = selectedTemplate.nickname ?? selectedTemplate.name;
 
-        if (!createRes.ok) {
-          const body = (await createRes.json().catch(() => ({}))) as { error?: string };
-          throw new Error(body.error ?? `创建失败 (${createRes.status})`);
+          const createRes = await apiFetch('/api/cats', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              catId,
+              name: selectedTemplate.name,
+              displayName: selectedTemplate.name,
+              nickname: selectedTemplate.nickname,
+              avatar: selectedTemplate.avatar,
+              color: selectedTemplate.color,
+              mentionPatterns: [
+                `@${selectedTemplate.name}`,
+                ...(selectedTemplate.nickname ? [`@${selectedTemplate.nickname}`] : []),
+                `@${catId}`,
+              ],
+              roleDescription: selectedTemplate.roleDescription,
+              personality: selectedTemplate.personality,
+              teamStrengths: selectedTemplate.teamStrengths,
+              clientId: selectedClient.provider,
+              accountRef: config.accountRef,
+              defaultModel: config.model,
+            }),
+          });
+
+          if (!createRes.ok) {
+            const body = (await createRes.json().catch(() => ({}))) as { error?: string };
+            throw new Error(body.error ?? `创建失败 (${createRes.status})`);
+          }
+
+          const catBody = (await createRes.json()) as { cat?: { id: string; displayName: string } };
+          createdCatId = catBody.cat?.id ?? catId;
+          createdCatName = catBody.cat?.displayName ?? catName;
+          createdCatRef.current = { id: createdCatId, name: createdCatName };
+
+          await refresh();
         }
-
-        const catBody = (await createRes.json()) as { cat?: { id: string; displayName: string } };
-        const createdCatId = catBody.cat?.id ?? catId;
-        const createdCatName = catBody.cat?.displayName ?? catName;
-
-        // Refresh cat data
-        await refresh();
 
         // Create bootcamp thread at phase-1-intro (wizard already handled cat selection).
         const bootcampRes = await apiFetch('/api/threads', {

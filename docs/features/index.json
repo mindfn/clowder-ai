@@ -859,12 +859,6 @@
       "file": "F140-first-run-quest-onboarding.md"
     },
     {
-      "id": "F140",
-      "name": "GitHub PR Signals — 冲突检测 + Review Feedback 全来源感知",
-      "status": "done | **Owner**: Ragdoll | **Priority**: P1 | **Completed**: 2026-03-27",
-      "file": "F140-github-pr-automation.md"
-    },
-    {
       "id": "F141",
       "name": "GitHub Repo Inbox — 仓库事件自动发现",
       "status": "done | **Owner**: Ragdoll | **Priority**: P1 | **Completed**: 2026-03-27",
@@ -1043,7 +1037,13 @@
       "name": "Community Operations Board — 社区事务编排引擎",
       "status": "in-progress | **Owner**: Ragdoll | **Priority**: P1",
       "file": "F168-community-ops-board.md"
+    },
+    {
+      "id": "F169",
+      "name": "GitHub PR Signals — 冲突检测 + Review Feedback 全来源感知",
+      "status": "done | **Owner**: Ragdoll | **Priority**: P1 | **Completed**: 2026-03-27",
+      "file": "F169-github-pr-automation.md"
     }
   ],
-  "generated_at": "2026-04-20T08:52:38.211Z"
+  "generated_at": "2026-04-20T14:17:40.015Z"
 }

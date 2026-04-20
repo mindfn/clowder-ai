@@ -228,7 +228,13 @@ export const firstRunQuestRoutes: FastifyPluginAsync<FirstRunQuestRoutesOptions>
       return { ok: false, error: `未知的 client: ${clientId}` };
     }
 
-    /* Build env vars for API-key accounts so the CLI picks up credentials */
+    /* Build env vars for API-key accounts so the CLI picks up credentials.
+     * Reject explicitly if api_key account has no stored key — do NOT fall
+     * through to ambient host auth, as that conflates "machine works" with
+     * "this account binding is valid". */
+    if (runtime.authType === 'api_key' && !runtime.apiKey) {
+      return { ok: false, error: '该账号未配置 API Key，请先填写密钥' };
+    }
     const probeEnv =
       runtime.authType === 'api_key' && runtime.apiKey
         ? buildProbeEnv(clientId, runtime.apiKey, runtime.baseUrl)

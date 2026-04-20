@@ -1,12 +1,12 @@
 ---
-feature_ids: [F140]
+feature_ids: [F169]
 related_features: [F133, F139, F141]
 topics: [github, conflict-detection, review-feedback, pr-signals, automation]
 doc_kind: spec
 created: 2026-03-26
 ---
 
-# F140: GitHub PR Signals — 冲突检测 + Review Feedback 全来源感知
+# F169: GitHub PR Signals — 冲突检测 + Review Feedback 全来源感知
 
 > **Status**: done | **Owner**: Ragdoll | **Priority**: P1 | **Completed**: 2026-03-27
 
