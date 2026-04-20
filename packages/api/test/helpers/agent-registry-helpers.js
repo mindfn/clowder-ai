@@ -29,11 +29,19 @@ function ensureTestGlobalConfigRoot() {
 /**
  * Ensure catRegistry has all runtime cats registered.
  * Safe to call multiple times (skips if already registered).
+ *
+ * When the --import setup-cat-registry.js hook has already populated the
+ * registry, this is a no-op.  Otherwise falls back to loadCatConfig() using
+ * the explicit CAT_TEMPLATE_PATH set by the hook (resolves via dirname to
+ * avoid stale catalog overlays).
  */
 export async function ensureCatRegistryPopulated() {
   const { catRegistry } = await import('@cat-cafe/shared');
+  // setup-cat-registry.js (--import hook) already registered all cats
+  if (catRegistry.has('opus')) return;
   const { loadCatConfig, toAllCatConfigs } = await import('../../dist/config/cat-config-loader.js');
-  const allConfigs = toAllCatConfigs(loadCatConfig());
+  const templatePath = process.env.CAT_TEMPLATE_PATH;
+  const allConfigs = toAllCatConfigs(loadCatConfig(templatePath));
   for (const [id, config] of Object.entries(allConfigs)) {
     if (!catRegistry.has(id)) {
       catRegistry.register(id, config);
