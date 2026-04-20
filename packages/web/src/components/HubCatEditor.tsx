@@ -5,15 +5,12 @@ import type { CatData } from '@/hooks/useCatData';
 import { apiFetch } from '@/utils/api-client';
 import type { ConfigData } from './config-viewer-types';
 import type { AccountsResponse, ProfileItem } from './hub-accounts.types';
-import { type SeedTemplate, TemplatePicker } from './hub-add-member-wizard.parts';
 import { buildEditorLoadingNote, uploadAvatarAsset } from './hub-cat-editor.client';
 import {
-  autoSlug,
   buildCatPayload,
   buildCodexConfigPatches,
   buildStrategyPayload,
   builtinAccountIdForClient,
-  type ClientId,
   type CodexRuntimeSettings,
   DEFAULT_ANTIGRAVITY_COMMAND_ARGS,
   filterAccounts,
@@ -58,8 +55,6 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
   const [strategyBaselineHasOverride, setStrategyBaselineHasOverride] = useState(false);
   const [codexSettings, setCodexSettings] = useState<CodexRuntimeSettings | null>(null);
   const [codexSettingsBaseline, setCodexSettingsBaseline] = useState<CodexRuntimeSettings | null>(null);
-  const [templates, setTemplates] = useState<SeedTemplate[]>([]);
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>('custom');
 
   const availableProfiles = useMemo(() => filterAccounts(form.clientId, profiles), [form.clientId, profiles]);
   const selectedProfile = useMemo(
@@ -82,7 +77,6 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
     setCodexSettingsError(null);
     setStrategyBaselineHasOverride(false);
     setCodexSettingsBaseline(null);
-    setSelectedTemplateId('custom');
     setHasUnsavedChanges(false);
   }, [open, cat, draft]);
 
@@ -116,26 +110,6 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
       cancelled = true;
     };
   }, [open, profilesVersion]);
-
-  useEffect(() => {
-    if (!open || cat) {
-      setTemplates([]);
-      return;
-    }
-    let cancelled = false;
-    apiFetch('/api/cat-templates')
-      .then(async (res) => {
-        if (!res.ok) return;
-        return (await res.json()) as { templates?: SeedTemplate[] };
-      })
-      .then((body) => {
-        if (!cancelled && body) setTemplates(Array.isArray(body.templates) ? body.templates : []);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [open, cat]);
 
   useEffect(() => {
     if (!open || !cat) {
@@ -277,35 +251,6 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
       ...(prev ?? toCodexRuntimeSettings()),
       ...patch,
     }));
-  };
-
-  const handleTemplateSelect = (t: SeedTemplate | null) => {
-    if (!t || t.id === 'custom') {
-      setSelectedTemplateId('custom');
-      setForm(initialState(null, null));
-      setHasUnsavedChanges(false);
-      return;
-    }
-    setSelectedTemplateId(t.id ?? null);
-    const name = t.name ?? '';
-    const catId = name ? autoSlug(name) : '';
-    patchForm({
-      name,
-      displayName: name,
-      nickname: t.nickname ?? '',
-      avatar: t.avatar ?? '',
-      colorPrimary: t.color?.primary ?? '#9B7EBD',
-      colorSecondary: t.color?.secondary ?? '#E8DFF5',
-      roleDescription: t.roleDescription ?? '',
-      personality: t.personality ?? '',
-      teamStrengths: t.teamStrengths ?? '',
-      clientId: (t.provider as ClientId) ?? 'anthropic',
-      accountRef: builtinAccountIdForClient((t.provider as ClientId) ?? 'anthropic') ?? '',
-      defaultModel: t.defaultModel ?? '',
-      catId,
-      mentionPatterns: '',
-      commandArgs: t.commandArgs?.join(' ') ?? '',
-    });
   };
 
   const requestClose = async () => {
@@ -570,13 +515,6 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-7 py-5">
-          {!cat && templates.length > 0 && (
-            <TemplatePicker
-              templates={[{ id: 'custom', name: '自定义', provider: 'anthropic' } as SeedTemplate, ...templates]}
-              selectedId={selectedTemplateId ?? undefined}
-              onSelect={handleTemplateSelect}
-            />
-          )}
           <IdentitySection
             cat={cat}
             form={form}

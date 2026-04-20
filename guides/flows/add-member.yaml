@@ -23,11 +23,6 @@ steps:
     tips: 点击这里开始添加新成员
     advance: click
 
-  - id: select-template
-    target: add-member.template-picker
-    tips: 选择一个模板快速创建，或直接跳到下一步手动配置
-    advance: click
-
   - id: done
     target: member-editor.profile
     tips: 在同一个成员编辑器里完成 Client、认证账号、默认模型和基本资料填写，然后点击保存；保存成功后会自动完成本次引导
