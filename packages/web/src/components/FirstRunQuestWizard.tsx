@@ -45,11 +45,13 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
 
   const handleTemplateSelect = useCallback((template: TemplateCard) => {
     setSelectedTemplate(template);
+    createdCatRef.current = null; // invalidate — inputs changed
     setStep('client');
   }, []);
 
   const handleClientSelect = useCallback((client: DetectedClient) => {
     setSelectedClient(client);
+    createdCatRef.current = null; // invalidate — inputs changed
     setStep('config');
   }, []);
 
