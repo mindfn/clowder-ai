@@ -29,6 +29,11 @@ const BUILTIN_CLIENT_FOR_ID: Record<string, string> = {
   kimi: 'kimi',
   dare: 'dare',
   opencode: 'opencode',
+  // Canonical OAuth IDs (reachable via deriveAccountId slugging display names)
+  anthropic: 'anthropic',
+  openai: 'openai',
+  google: 'google',
+  // builtin_* prefixed (explicit reserved form):
   builtin_anthropic: 'anthropic',
   builtin_openai: 'openai',
   builtin_google: 'google',
@@ -39,13 +44,15 @@ const BUILTIN_CLIENT_FOR_ID: Record<string, string> = {
 
 /** Synthesize a ProviderProfileView-compatible object from AccountConfig. */
 function accountToView(id: string, account: AccountConfig, apiKeyPresent: boolean) {
-  const clientId = account.clientId ?? BUILTIN_CLIENT_FOR_ID[id];
+  const isBuiltin = account.authType === 'oauth';
+  const builtinClient = BUILTIN_CLIENT_FOR_ID[id];
   return {
     id,
     name: account.displayName ?? id,
     displayName: account.displayName ?? id,
     authType: account.authType,
-    ...(clientId ? { clientId } : {}),
+    builtin: isBuiltin,
+    ...(isBuiltin && builtinClient ? { clientId: builtinClient } : {}),
     ...(account.baseUrl ? { baseUrl: account.baseUrl } : {}),
     models: account.models ? [...account.models] : [],
     hasApiKey: apiKeyPresent,
