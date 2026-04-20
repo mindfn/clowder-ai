@@ -88,7 +88,7 @@ export function collectConfigSnapshot(): ConfigSnapshot {
 
   // A2A
   const a2aMaxDepth = Number(env.MAX_A2A_DEPTH) || 15;
-  const defaultCodexModel = getCatModel('codex');
+  const defaultCodexModel = catRegistry.has('codex') ? getCatModel('codex') : 'codex';
   const codexExecutionModel = env.CAT_CODEX_EXEC_MODEL?.trim() || defaultCodexModel;
   const codexExecutionAuthMode = parseEnum<CodexAuthMode>(env.CODEX_AUTH_MODE, ['oauth', 'api_key', 'auto'], 'oauth');
   const codexExecutionPassModelArg = parseBoolean(env.CAT_CODEX_PASS_MODEL_ARG, true);

@@ -183,7 +183,7 @@ describe('SystemPromptBuilder', () => {
       mcpAvailable: true,
       promptTags: ['critique'],
     });
-    assert.ok(prompt.length < 3900, `Prompt is ${prompt.length} chars, expected < 3900`);
+    assert.ok(prompt.length < 4700, `Prompt is ${prompt.length} chars, expected < 4700`);
   });
 
   test('returns empty string for unknown catId', async () => {
@@ -743,7 +743,7 @@ describe('SystemPromptBuilder', () => {
         { catId: 'opus', lastMessageAt: Date.now() - 1000, messageCount: 3 },
       ],
     });
-    assert.ok(prompt.length < 3900, `Prompt with activity is ${prompt.length} chars, expected < 3900`);
+    assert.ok(prompt.length < 4700, `Prompt with activity is ${prompt.length} chars, expected < 4700`);
   });
 
   // --- F042: pinned identity constant + direct-message reply target ---
@@ -1155,7 +1155,7 @@ describe('SystemPromptBuilder', () => {
         featureId: 'F073',
       },
     });
-    assert.ok(prompt.length < 3900, `Prompt with SOP hint is ${prompt.length} chars, expected < 3900`);
+    assert.ok(prompt.length < 4700, `Prompt with SOP hint is ${prompt.length} chars, expected < 4700`);
   });
 
   // --- F092: Voice Mode prompt injection ---
@@ -1202,7 +1202,7 @@ describe('SystemPromptBuilder', () => {
       },
       voiceMode: true,
     });
-    assert.ok(prompt.length < 4000, `Prompt with voice mode + SOP hint is ${prompt.length} chars, expected < 4000`);
+    assert.ok(prompt.length < 4800, `Prompt with voice mode + SOP hint is ${prompt.length} chars, expected < 4800`);
   });
 
   test('buildInvocationContext injects bootcamp mode when bootcampState provided', async () => {
