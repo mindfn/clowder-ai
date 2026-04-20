@@ -15,12 +15,12 @@ created: 2026-03-26
 ```
 ① F141 发现层 (Repo Inbox) → "仓库里来了新东西"（webhook 被动推送）
 ② 认领层 (Triage)           → "谁来跟？"（register_pr_tracking）
-③ F140 追踪层 (PR Signals)  → "这个 PR 现在怎么样了？"（F139 轮询）
+③ F169 追踪层 (PR Signals)  → "这个 PR 现在怎么样了？"（F139 轮询）
      └─ F133: CI Signals (done)
-     └─ F140: Conflict + Review Feedback Signals (本 Feature)
+     └─ F169: Conflict + Review Feedback Signals (本 Feature)
 ```
 
-**产品域命名**：GitHub Automation > GitHub PR Signals > F140
+**产品域命名**：GitHub Automation > GitHub PR Signals > F169
 
 ## Why
 
@@ -167,7 +167,7 @@ team lead补充：
 | Fork PR 的 comments 权限差异 | `gh api` fallback 到公开 API |
 | ~~🔴 回声过滤缺失~~ | ✅ 已修 PR #761 — `isEchoComment` 谓词：author（selfGitHubLogin）+ body（trigger 模板）双重判定，外部 reviewer 不受影响 |
 | **🔴 ConnectorIcon 遗漏** | `github-conflict` / `github-review-feedback` 未加入 ConnectorIcon switch，渲染成文字 fallback（✅ 已修 PR #757 后 hotfix） |
-| ~~🔴 Review 双重消费~~ | ✅ 已修 PR #764 — 统一 `createGitHubFeedbackFilter()` 工厂：Rule A 自身过滤（两通道）+ Rule B 权威 bot 过滤（仅 F140 API polling），email 通道用 `isSelfAuthored` 保留 bot review 的权威消费权 |
+| ~~🔴 Review 双重消费~~ | ✅ 已修 PR #764 — 统一 `createGitHubFeedbackFilter()` 工厂：Rule A 自身过滤（两通道）+ Rule B 权威 bot 过滤（仅 F169 API polling），email 通道用 `isSelfAuthored` 保留 bot review 的权威消费权 |
 
 ## Key Decisions
 
@@ -179,7 +179,7 @@ team lead补充：
 | KD-4 | ReviewFeedbackRouter（非 ReviewCommentsRouter）| Maine Coon指出：contributor 在乎的不是"有没有 comment"，而是"review feedback 有没有改变 PR 的下一步动作"。只追 comments 不追 decision，信息不完整 | 2026-03-26 |
 | KD-5 | review decision state（approved/requested changes/dismissed）进 Phase A | 比 label/assignee 更有行动价值：contributor 看到 requested changes 才知道"现在该改"，maintainer 看到 approved 才知道"可能 ready" | 2026-03-26 |
 | KD-6 | Skill/SOP 更新是 Phase A 必须组件 | team lead指出：技术管道建了没有行为引导 = 通知发了猫不知道怎么处理 = 等于没做。F133 Phase B 就是做这件事 | 2026-03-26 |
-| KD-7 | F140 定位为追踪层（PR Signals），发现层（Repo Inbox）独立为 F141 | team lead确认分开立项，可并发开发 | 2026-03-26 |
+| KD-7 | F169 定位为追踪层（PR Signals），发现层（Repo Inbox）独立为 F141 | team lead确认分开立项，可并发开发 | 2026-03-26 |
 | KD-8 | PrComment → PrFeedbackComment（richer model：+author/filePath/line/commentType） | Maine Coon P1：现有 PrComment 只有 id/body/createdAt，支撑不了分区展示的消息格式 | 2026-03-26 |
 | KD-9 | Conflict fingerprint 在 MERGEABLE 时清除 | Maine Coon P2：同一 headSha 因 base 变化再次冲突会被误 dedupe。检测到 MERGEABLE → 清 lastConflictFingerprint，下次 CONFLICTING 重新通知 | 2026-03-26 |
 | KD-10 | Cursor commit 在 delivery 成功后，trigger 是 best-effort | Maine Coon P3：delivery 成功 = 主 side-effect 完成 → 立即 commitCursor。trigger() 失败不阻塞 cursor 推进，避免重发已投递消息 | 2026-03-26 |
