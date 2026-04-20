@@ -134,6 +134,7 @@ export async function* routeParallel(
     userId,
     threadId,
     log,
+    dismissTracker: deps.invocationDeps.dismissTracker,
   });
 
   // F148 OQ-2: briefing→invocation link per cat (must be before Promise.all — TDZ fix)

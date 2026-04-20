@@ -170,6 +170,7 @@ export async function* routeSerial(
     userId,
     threadId,
     log,
+    dismissTracker: deps.invocationDeps.dismissTracker,
   });
 
   try {

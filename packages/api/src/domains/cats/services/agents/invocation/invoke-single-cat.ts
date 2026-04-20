@@ -1549,7 +1549,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     {
       const safeCallbackEnv: Record<string, string> = {};
       for (const [k, v] of Object.entries(callbackEnv)) {
-        safeCallbackEnv[k] = /key|secret|token|password/i.test(k) ? v.slice(0, 6) + '***' : v;
+        // Mask ALL env values — user-defined envVars may contain credentials
+        // with non-standard key names that wouldn't match a pattern allowlist.
+        safeCallbackEnv[k] = v.length > 6 ? v.slice(0, 6) + '***' : '***';
       }
       log.debug(
         {
