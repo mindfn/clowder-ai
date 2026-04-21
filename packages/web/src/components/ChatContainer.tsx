@@ -633,9 +633,9 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
         const data = (await res.json()) as { threads: Thread[] };
         setThreads(data.threads);
       }
-      router.push(`/thread/${questThreadId}`);
+      navigateToThread(questThreadId);
     },
-    [router, setThreads],
+    [navigateToThread, setThreads],
   );
 
   const handleSearchKnowledge = useCallback(() => {

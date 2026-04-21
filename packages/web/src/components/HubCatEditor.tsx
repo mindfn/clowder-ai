@@ -4,13 +4,16 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CatData } from '@/hooks/useCatData';
 import { apiFetch } from '@/utils/api-client';
 import type { ConfigData } from './config-viewer-types';
+import type { TemplateCard } from './first-run-quest/TemplateStep';
 import type { AccountsResponse, ProfileItem } from './hub-accounts.types';
 import { buildEditorLoadingNote, uploadAvatarAsset } from './hub-cat-editor.client';
 import {
+  autoSlug,
   buildCatPayload,
   buildCodexConfigPatches,
   buildStrategyPayload,
   builtinAccountIdForClient,
+  canonicalMentionPattern,
   type CodexRuntimeSettings,
   DEFAULT_ANTIGRAVITY_COMMAND_ARGS,
   filterAccounts,
@@ -55,6 +58,8 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
   const [strategyBaselineHasOverride, setStrategyBaselineHasOverride] = useState(false);
   const [codexSettings, setCodexSettings] = useState<CodexRuntimeSettings | null>(null);
   const [codexSettingsBaseline, setCodexSettingsBaseline] = useState<CodexRuntimeSettings | null>(null);
+  const [templates, setTemplates] = useState<TemplateCard[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>('custom');
 
   const availableProfiles = useMemo(() => filterAccounts(form.clientId, profiles), [form.clientId, profiles]);
   const selectedProfile = useMemo(
@@ -77,6 +82,7 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
     setCodexSettingsError(null);
     setStrategyBaselineHasOverride(false);
     setCodexSettingsBaseline(null);
+    setSelectedTemplateId('custom');
     setHasUnsavedChanges(false);
   }, [open, cat, draft]);
 
@@ -87,6 +93,28 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
     window.addEventListener('accounts-changed', handler);
     return () => window.removeEventListener('accounts-changed', handler);
   }, []);
+
+  useEffect(() => {
+    if (!open || cat) {
+      setTemplates([]);
+      return;
+    }
+    let cancelled = false;
+    apiFetch('/api/cat-templates')
+      .then(async (res) => {
+        if (!res.ok) throw new Error('load failed');
+        return (await res.json()) as { templates?: TemplateCard[] };
+      })
+      .then((body) => {
+        if (!cancelled) setTemplates(body.templates ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setTemplates([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, cat]);
 
   useEffect(() => {
     if (!open) return;
@@ -251,6 +279,31 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
       ...(prev ?? toCodexRuntimeSettings()),
       ...patch,
     }));
+  };
+
+  const handleTemplateSelect = (t: TemplateCard | null) => {
+    if (!t) {
+      setSelectedTemplateId('custom');
+      setForm(initialState(null, null));
+      setHasUnsavedChanges(false);
+      return;
+    }
+    setSelectedTemplateId(t.id);
+    const name = t.name;
+    const catId = autoSlug(name);
+    patchForm({
+      name,
+      displayName: name,
+      nickname: t.nickname ?? '',
+      avatar: t.avatar ?? '',
+      colorPrimary: t.color.primary,
+      colorSecondary: t.color.secondary,
+      roleDescription: t.roleDescription,
+      personality: t.personality,
+      teamStrengths: t.teamStrengths ?? '',
+      catId,
+      mentionPatterns: catId ? canonicalMentionPattern(catId) : '',
+    });
   };
 
   const requestClose = async () => {
@@ -515,6 +568,38 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-7 py-5">
+          {!cat && templates.length > 0 && (
+            <section className="space-y-2 rounded-[20px] border border-[#F1E7DF] bg-[#FFFDFC] p-[18px]">
+              <h4 className="text-[15px] font-bold text-[#2D2118]">模板快选（可选）</h4>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleTemplateSelect(null)}
+                  className={`rounded-full px-3 py-1.5 text-sm transition ${
+                    selectedTemplateId === 'custom'
+                      ? 'bg-[#D49266] text-white'
+                      : 'bg-[#F7EEE6] text-[#5C4B42] hover:bg-[#EDE0D5]'
+                  }`}
+                >
+                  自定义
+                </button>
+                {templates.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => handleTemplateSelect(selectedTemplateId === t.id ? null : t)}
+                    className={`rounded-full px-3 py-1.5 text-sm transition ${
+                      selectedTemplateId === t.id
+                        ? 'bg-[#D49266] text-white'
+                        : 'bg-[#F7EEE6] text-[#5C4B42] hover:bg-[#EDE0D5]'
+                    }`}
+                  >
+                    {t.nickname ?? t.name}
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
           <IdentitySection
             cat={cat}
             form={form}
