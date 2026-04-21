@@ -68,6 +68,16 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
         if (createdCatRef.current) {
           createdCatId = createdCatRef.current.id;
           createdCatName = createdCatRef.current.name;
+          // Reconcile config: if user changed accountRef/model since the cat was
+          // created, PATCH the existing cat so the bound config stays in sync.
+          await apiFetch(`/api/cats/${encodeURIComponent(createdCatId)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              accountRef: config.accountRef,
+              defaultModel: config.model,
+            }),
+          });
         } else {
           const suffix = Date.now().toString(36).slice(-4);
           const catId = `${selectedTemplate.id}-${suffix}`;
