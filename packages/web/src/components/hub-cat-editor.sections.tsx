@@ -456,14 +456,26 @@ export function AccountSection({
 export function RoutingSection({
   form,
   hasError,
+  reservedPatterns,
   onChange,
 }: {
   cat?: CatData | null;
   form: HubCatEditorFormState;
   hasError?: boolean;
+  /** Lowercase alias set already taken by other cats. */
+  reservedPatterns?: ReadonlySet<string>;
   onChange: (patch: FormPatch) => void;
 }) {
   const aliases = currentAliasTags(form);
+  const validateAlias = useMemo(() => {
+    if (!reservedPatterns?.size) return undefined;
+    return (tag: string) => {
+      if (reservedPatterns.has(tag.toLowerCase())) {
+        return `别名 "${tag}" 已被其他成员使用`;
+      }
+      return null;
+    };
+  }, [reservedPatterns]);
   return (
     <SectionCard title="别名与 @ 路由" tone={hasError ? 'error' : 'neutral'}>
       <TagEditor
@@ -472,6 +484,7 @@ export function RoutingSection({
         addLabel="+ 添加"
         placeholder="砚砚"
         emptyLabel="(至少添加 1 个别名，否则无法 @)"
+        validate={validateAlias}
         minCount={1}
       />
       <textarea

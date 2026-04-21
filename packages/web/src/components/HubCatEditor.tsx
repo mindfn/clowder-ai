@@ -35,12 +35,14 @@ import { useConfirm } from './useConfirm';
 interface HubCatEditorProps {
   cat?: CatData | null;
   draft?: HubCatEditorDraft | null;
+  /** All cats — used for alias uniqueness validation. */
+  existingCats?: CatData[];
   open: boolean;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
 }
 
-export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEditorProps) {
+export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved }: HubCatEditorProps) {
   const confirm = useConfirm();
   const [profiles, setProfiles] = useState<ProfileItem[]>([]);
   const [loadingProfiles, setLoadingProfiles] = useState(false);
@@ -73,6 +75,18 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
   }, [form.clientId, selectedProfile]);
   const showCodexSettings = form.clientId === 'openai';
   const codexSettingsEditable = !showCodexSettings || codexSettingsBaseline !== null;
+
+  // Alias uniqueness: collect all patterns from OTHER cats (lowercase for comparison)
+  const reservedPatterns = useMemo(() => {
+    if (!existingCats?.length) return new Set<string>();
+    const editingId = cat?.id;
+    const set = new Set<string>();
+    for (const c of existingCats) {
+      if (c.id === editingId) continue;
+      for (const p of c.mentionPatterns) set.add(p.toLowerCase());
+    }
+    return set;
+  }, [existingCats, cat?.id]);
 
   useEffect(() => {
     if (!open) return;
@@ -292,6 +306,17 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
     setSelectedTemplateId(t.id);
     const name = t.name;
     const catId = autoSlug(name);
+    // Auto-suffix aliases that conflict with existing cats
+    const rawAliases = [name, t.nickname].filter((s): s is string => Boolean(s));
+    const deduped = rawAliases.map((alias) => {
+      const normalized = normalizeMentionPattern(alias);
+      if (!reservedPatterns.has(normalized.toLowerCase())) return normalized;
+      for (let i = 2; i <= 99; i++) {
+        const candidate = normalizeMentionPattern(`${alias}${i}`);
+        if (!reservedPatterns.has(candidate.toLowerCase())) return candidate;
+      }
+      return normalized; // fallback — backend will catch it
+    });
     patchForm({
       name,
       displayName: name,
@@ -303,9 +328,7 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
       personality: t.personality,
       teamStrengths: t.teamStrengths ?? '',
       catId,
-      mentionPatterns: joinTags(
-        [name, t.nickname].filter((s): s is string => Boolean(s)).map(normalizeMentionPattern),
-      ),
+      mentionPatterns: joinTags(deduped),
     });
   };
 
@@ -622,7 +645,12 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
             loadingProfiles={loadingProfiles}
             onChange={patchForm}
           />
-          <RoutingSection form={form} hasError={fieldErrors.routing} onChange={patchForm} />
+          <RoutingSection
+            form={form}
+            hasError={fieldErrors.routing}
+            reservedPatterns={reservedPatterns}
+            onChange={patchForm}
+          />
           <AdvancedRuntimeSection
             cat={cat}
             form={form}

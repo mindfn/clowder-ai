@@ -281,6 +281,7 @@ export function CatCafeHub() {
           open={editorOpen}
           cat={editingCat}
           draft={createDraft}
+          existingCats={cats}
           onClose={closeEditor}
           onSaved={handleEditorSaved}
         />
