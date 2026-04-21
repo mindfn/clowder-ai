@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useSyncExternalStore } from 'react';
 import { useParams } from 'next/navigation';
+import { useCallback, useSyncExternalStore } from 'react';
 import { ChatContainer } from '@/components/ChatContainer';
 import { CHAT_THREAD_ROUTE_EVENT, getThreadIdFromPathname } from '@/components/ThreadSidebar/thread-navigation';
 
