@@ -137,18 +137,22 @@ function normalizeCats(rawCats: unknown[]): CatData[] {
 }
 
 async function refreshCatsNow(): Promise<FetchResult> {
+  const prev = _cached;
   _cached = null;
   _fetchPromise = fetchCats();
   const result = await _fetchPromise;
   if (result.fromApi) {
     _cached = result.cats;
   } else {
+    // Preserve previous cache on failure — avoids false-empty states during transient outages
+    _cached = prev;
     _fetchPromise = null;
   }
-  refreshMentionData(result.cats);
-  refreshSpeechAliases(result.cats);
-  notifyListeners(result.cats);
-  return result;
+  const effective = result.fromApi ? result.cats : (_cached ?? []);
+  refreshMentionData(effective);
+  refreshSpeechAliases(effective);
+  notifyListeners(effective);
+  return { cats: effective, fromApi: result.fromApi };
 }
 
 // ── Hook ────────────────────────────────────────────────
