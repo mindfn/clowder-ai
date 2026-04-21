@@ -157,6 +157,7 @@ export function HubMemberOverviewCard({
   configCat,
   onEdit,
   onToggleAvailability,
+  onDelete,
   togglingAvailability = false,
   draggable = false,
   onDragStart,
@@ -170,6 +171,7 @@ export function HubMemberOverviewCard({
   configCat?: CatConfig;
   onEdit?: (cat: CatData) => void;
   onToggleAvailability?: (cat: CatData) => void;
+  onDelete?: (cat: CatData) => void;
   togglingAvailability?: boolean;
   draggable?: boolean;
   onDragStart?: (cat: CatData, event: ReactDragEvent<HTMLElement>) => void;
@@ -239,18 +241,40 @@ export function HubMemberOverviewCard({
             <p className="mt-2 text-[13px] text-[#9D7BC7]">{formatMentionPreview(cat.mentionPatterns)}</p>
           </button>
         </div>
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onToggleAvailability?.(cat);
-          }}
-          disabled={!onToggleAvailability || togglingAvailability}
-          aria-pressed={status.enabled}
-          className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${status.className} disabled:cursor-default`}
-        >
-          {togglingAvailability ? '切换中...' : status.label}
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleAvailability?.(cat);
+            }}
+            disabled={!onToggleAvailability || togglingAvailability}
+            aria-pressed={status.enabled}
+            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${status.className} disabled:cursor-default`}
+          >
+            {togglingAvailability ? '切换中...' : status.label}
+          </button>
+          {onDelete && cat.source !== 'seed' ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete(cat);
+              }}
+              className="rounded-full bg-red-50 p-1.5 text-red-600 transition hover:bg-red-100"
+              aria-label="删除成员"
+            >
+              <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 fill-none stroke-current" aria-hidden="true">
+                <path
+                  d="M3.5 4.5h9m-7.5 0V3.25h5V4.5m-5.5 0 .5 8h5l.5-8m-4 2v4m2-4v4"
+                  strokeWidth="1.25"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          ) : null}
+        </div>
       </div>
     </section>
   );

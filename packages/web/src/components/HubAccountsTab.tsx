@@ -154,8 +154,9 @@ export function HubAccountsTab() {
         ))}
       </div>
 
+      <p className="text-[13px] text-[#B59A88]">点击卡片进入编辑 →</p>
       <p className="text-xs leading-5 text-[#B59A88]">
-        secrets 存储在 `~/.cat-cafe/credentials.json`（全局），Git 忽略。
+        secrets 存储在启动目录下 `.cat-cafe/credentials.json`，Git 忽略。
       </p>
 
       <UnifiedAuthModal

@@ -72,10 +72,10 @@ export function HubAccountItem({ profile, busy, onSave, onDelete, onEdit }: HubA
             />
           </div>
         </div>
-        <div className="flex shrink-0 flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
           <button
             type="button"
-            className="rounded-full bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600"
+            className="rounded-full bg-red-50 p-2 text-red-600 transition hover:bg-red-100 disabled:opacity-50"
             onClick={async () => {
               if (
                 await confirm({
@@ -89,8 +89,16 @@ export function HubAccountItem({ profile, busy, onSave, onDelete, onEdit }: HubA
               }
             }}
             disabled={busy}
+            aria-label="删除账号"
           >
-            删除
+            <svg viewBox="0 0 16 16" className="h-4 w-4 fill-none stroke-current" aria-hidden="true">
+              <path
+                d="M3.5 4.5h9m-7.5 0V3.25h5V4.5m-5.5 0 .5 8h5l.5-8m-4 2v4m2-4v4"
+                strokeWidth="1.25"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           </button>
         </div>
       </div>
