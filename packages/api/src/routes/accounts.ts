@@ -192,7 +192,7 @@ const updateBodySchema = z.object({
     )
     .optional(),
   /** F140: User-defined env vars injected into agent subprocess. */
-  envVars: z.record(z.string(), z.string()).optional(),
+  envVars: envVarsSchema,
 });
 
 const deleteBodySchema = z.object({

@@ -569,7 +569,10 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-7 py-5">
           {!cat && templates.length > 0 && (
-            <section className="space-y-2 rounded-[20px] border border-[#F1E7DF] bg-[#FFFDFC] p-[18px]">
+            <section
+              data-guide-id="add-member.template-picker"
+              className="space-y-2 rounded-[20px] border border-[#F1E7DF] bg-[#FFFDFC] p-[18px]"
+            >
               <h4 className="text-[15px] font-bold text-[#2D2118]">模板快选（可选）</h4>
               <div className="flex flex-wrap gap-2">
                 <button

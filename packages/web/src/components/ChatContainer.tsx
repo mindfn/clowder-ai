@@ -372,7 +372,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     setShowFirstRunQuestPrompt(true);
   }, [cats.length, isLoading, hasFetched, storeThreads, threadId]);
 
-  // ── Data sync: re-fetch thread bootcampState on invocation end ──
+  // ── Data sync: re-fetch thread state on invocation end ──
   // MCP callbacks update Redis directly; the companion WebSocket `thread_updated`
   // may not reach this frontend (e.g. worktree port isolation). Re-fetching the
   // thread when an invocation finishes ensures the store stays in sync.
@@ -382,14 +382,30 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     prevInvocationRef.current = hasActiveInvocation;
     if (!wasActive || hasActiveInvocation) return;
     apiFetch(`/api/threads/${threadId}`)
-      .then((res) => (res.ok ? (res.json() as Promise<{ bootcampState?: Thread['bootcampState'] }>) : null))
+      .then((res) =>
+        res.ok
+          ? (res.json() as Promise<{
+              bootcampState?: Thread['bootcampState'];
+              firstRunQuestState?: { phase: string; firstCatName?: string };
+            }>)
+          : null,
+      )
       .then((thread) => {
         if (!thread) return;
-        // Sync even when bootcampState is absent/null — clears stale local state
+        // Sync bootcampState — even when absent/null — clears stale local state
         // when the backend has removed it.
         const local = useChatStore.getState().threads.find((t) => t.id === threadId);
         if (thread.bootcampState || local?.bootcampState) {
           syncLocalBootcampState(threadId, thread.bootcampState);
+        }
+        // Sync firstRunQuestState so QuestBanner reflects latest phase
+        const localQuest = (local as Record<string, unknown> | undefined)?.firstRunQuestState;
+        if (thread.firstRunQuestState || localQuest) {
+          useChatStore.setState((state) => ({
+            threads: state.threads.map((t) =>
+              t.id === threadId ? { ...t, firstRunQuestState: thread.firstRunQuestState } : t,
+            ),
+          }));
         }
       })
       .catch(() => {});

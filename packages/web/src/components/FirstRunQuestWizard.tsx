@@ -70,7 +70,7 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
           createdCatName = createdCatRef.current.name;
           // Reconcile config: if user changed accountRef/model since the cat was
           // created, PATCH the existing cat so the bound config stays in sync.
-          await apiFetch(`/api/cats/${encodeURIComponent(createdCatId)}`, {
+          const patchRes = await apiFetch(`/api/cats/${encodeURIComponent(createdCatId)}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -78,6 +78,7 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
               defaultModel: config.model,
             }),
           });
+          if (!patchRes.ok) throw new Error('猫猫配置更新失败');
         } else {
           const suffix = Date.now().toString(36).slice(-4);
           const catId = `${selectedTemplate.id}-${suffix}`;
