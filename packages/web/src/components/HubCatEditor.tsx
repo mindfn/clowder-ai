@@ -303,7 +303,9 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
       personality: t.personality,
       teamStrengths: t.teamStrengths ?? '',
       catId,
-      mentionPatterns: joinTags([name, t.nickname].filter(Boolean).map(normalizeMentionPattern)),
+      mentionPatterns: joinTags(
+        [name, t.nickname].filter((s): s is string => Boolean(s)).map(normalizeMentionPattern),
+      ),
     });
   };
 
