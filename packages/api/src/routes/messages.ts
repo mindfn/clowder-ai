@@ -386,6 +386,10 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       whisperVisibility === 'whisper' && whisperRecipients?.length
         ? [...new Set(whisperRecipients)]
         : [...resolvedTargetCats];
+    if (targetCats.length === 0) {
+      reply.status(400);
+      return { error: '没有可用的猫猫成员，请先在设置中添加一只猫猫', code: 'NO_TARGETS' };
+    }
     const primaryCat = targetCats[0] ?? 'unknown';
 
     // Server-generated idempotency key if client didn't provide one
