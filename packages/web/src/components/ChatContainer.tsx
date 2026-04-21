@@ -627,15 +627,22 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   const handleQuestCreated = useCallback(
     async (questThreadId: string) => {
       setShowQuestWizard(false);
-      // Refresh thread list so bootcamp thread is in store before navigation
-      const res = await apiFetch('/api/threads');
-      if (res.ok) {
-        const data = (await res.json()) as { threads: Thread[] };
-        setThreads(data.threads);
+      try {
+        const res = await apiFetch('/api/threads');
+        if (res.ok) {
+          const data = (await res.json()) as { threads: Thread[] };
+          setThreads(data.threads);
+        }
+      } catch {
+        // Ignore refresh errors — navigation is the priority
       }
+      // Belt-and-suspenders: custom event for useSyncExternalStore + Next.js
+      // router for App Router layout re-render. Either alone should suffice,
+      // but the first-run path is critical enough to use both.
       navigateToThread(questThreadId);
+      router.push(`/thread/${questThreadId}`);
     },
-    [navigateToThread, setThreads],
+    [navigateToThread, setThreads, router],
   );
 
   const handleSearchKnowledge = useCallback(() => {
