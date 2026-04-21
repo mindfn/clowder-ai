@@ -97,7 +97,6 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
               mentionPatterns: [
                 `@${selectedTemplate.name}`,
                 ...(selectedTemplate.nickname ? [`@${selectedTemplate.nickname}`] : []),
-                `@${catId}`,
               ],
               roleDescription: selectedTemplate.roleDescription,
               personality: selectedTemplate.personality,

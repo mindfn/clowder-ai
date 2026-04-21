@@ -470,7 +470,7 @@ export function RoutingSection({
         tags={aliases}
         onChange={(tags) => onChange({ mentionPatterns: joinTags(tags) })}
         addLabel="+ 添加"
-        placeholder="@砚砚"
+        placeholder="砚砚"
         emptyLabel="(至少添加 1 个别名，否则无法 @)"
         minCount={1}
       />

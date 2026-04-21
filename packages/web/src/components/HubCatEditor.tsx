@@ -14,12 +14,13 @@ import {
   buildStrategyPayload,
   builtinAccountIdForClient,
   type CodexRuntimeSettings,
-  canonicalMentionPattern,
   DEFAULT_ANTIGRAVITY_COMMAND_ARGS,
   filterAccounts,
   type HubCatEditorDraft,
   type HubCatEditorFormState,
   initialState,
+  joinTags,
+  normalizeMentionPattern,
   type StrategyFormState,
   splitMentionPatterns,
   toCodexRuntimeSettings,
@@ -302,7 +303,7 @@ export function HubCatEditor({ cat, draft, open, onClose, onSaved }: HubCatEdito
       personality: t.personality,
       teamStrengths: t.teamStrengths ?? '',
       catId,
-      mentionPatterns: catId ? canonicalMentionPattern(catId) : '',
+      mentionPatterns: joinTags([name, t.nickname].filter(Boolean).map(normalizeMentionPattern)),
     });
   };
 
