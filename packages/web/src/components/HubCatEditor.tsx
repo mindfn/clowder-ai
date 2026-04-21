@@ -518,33 +518,6 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
     }
   };
 
-  const handleDelete = async () => {
-    if (!cat) return;
-    const ok = await confirm({
-      title: '删除确认',
-      message: `确认删除成员「${cat.displayName}」吗？此操作不可撤销。`,
-      variant: 'danger',
-      confirmLabel: '删除',
-    });
-    if (!ok) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const res = await apiFetch(`/api/cats/${cat.id}`, { method: 'DELETE' });
-      if (!res.ok) {
-        const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-        setError((payload.error as string) ?? `删除失败 (${res.status})`);
-        return;
-      }
-      await onSaved();
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '删除失败');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   return (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4"
