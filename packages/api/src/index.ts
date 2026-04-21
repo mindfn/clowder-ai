@@ -1589,8 +1589,14 @@ async function main(): Promise<void> {
     `[api] F142-B: CommandRegistry loaded (${commandRegistry.getAll().length} commands, ${skillCommandMap.size} skills)`,
   );
 
-  // Commands route needs opus service for task extraction
-  const opusService = new ClaudeAgentService();
+  // Commands route needs opus service for task extraction.
+  // Lazy-init: empty catalog (first-run) has no opus entry yet — defer until first use.
+  let _opusService: ClaudeAgentService | undefined;
+  const opusService: AgentService = {
+    invoke(...args: Parameters<AgentService['invoke']>) {
+      return (_opusService ??= new ClaudeAgentService()).invoke(...args);
+    },
+  };
   await app.register(commandsRoutes, {
     messageStore,
     taskStore,
