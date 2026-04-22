@@ -119,6 +119,120 @@ describe('Dynamic Task Hydration', () => {
     assert.equal(runner.unregister('nonexistent'), false);
   });
 
+  test('hydrateDynamic + start does NOT immediately fire recent run_now_once interval task with no history', async () => {
+    let executed = 0;
+    store.insert({
+      id: 'dyn-recent-run-now-once',
+      templateId: 'interval-template',
+      trigger: { type: 'interval', ms: 60_000, misfirePolicy: 'run_now_once' },
+      params: {},
+      display: { label: 'Recent catch-up', category: 'system' },
+      deliveryThreadId: null,
+      enabled: true,
+      createdBy: 'opus',
+      createdAt: new Date(Date.now() - 30_000).toISOString(),
+    });
+
+    const templateGetter = {
+      get: (id) => {
+        if (id !== 'interval-template') return null;
+        return {
+          templateId: 'interval-template',
+          label: 'Interval template',
+          category: 'system',
+          description: 'test',
+          subjectKind: 'none',
+          defaultTrigger: { type: 'interval', ms: 60_000 },
+          paramSchema: {},
+          createSpec: (instanceId, params) => ({
+            id: instanceId,
+            profile: 'awareness',
+            trigger: params.trigger,
+            admission: {
+              gate: async () => ({ run: true, workItems: [{ subjectKey: 'subject', signal: 'go' }] }),
+            },
+            run: {
+              overlap: 'skip',
+              timeoutMs: 5000,
+              execute: async () => {
+                executed++;
+              },
+            },
+            state: { runLedger: 'sqlite' },
+            outcome: { whenNoSignal: 'drop' },
+            enabled: () => true,
+          }),
+        };
+      },
+    };
+
+    const loaded = runner.hydrateDynamic(store, templateGetter);
+    assert.equal(loaded, 1);
+
+    runner.start();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.equal(executed, 0, 'recently created task should wait until its first interval elapses');
+    runner.stop();
+  });
+
+  test('hydrateDynamic + start immediately fires overdue run_now_once interval task with no history', async () => {
+    let executed = 0;
+    store.insert({
+      id: 'dyn-overdue-run-now-once',
+      templateId: 'interval-template',
+      trigger: { type: 'interval', ms: 60_000, misfirePolicy: 'run_now_once' },
+      params: {},
+      display: { label: 'Overdue catch-up', category: 'system' },
+      deliveryThreadId: null,
+      enabled: true,
+      createdBy: 'opus',
+      createdAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+    });
+
+    const templateGetter = {
+      get: (id) => {
+        if (id !== 'interval-template') return null;
+        return {
+          templateId: 'interval-template',
+          label: 'Interval template',
+          category: 'system',
+          description: 'test',
+          subjectKind: 'none',
+          defaultTrigger: { type: 'interval', ms: 60_000 },
+          paramSchema: {},
+          createSpec: (instanceId, params) => ({
+            id: instanceId,
+            profile: 'awareness',
+            trigger: params.trigger,
+            admission: {
+              gate: async () => ({ run: true, workItems: [{ subjectKey: 'subject', signal: 'go' }] }),
+            },
+            run: {
+              overlap: 'skip',
+              timeoutMs: 5000,
+              execute: async () => {
+                executed++;
+              },
+            },
+            state: { runLedger: 'sqlite' },
+            outcome: { whenNoSignal: 'drop' },
+            enabled: () => true,
+          }),
+        };
+      },
+    };
+
+    const loaded = runner.hydrateDynamic(store, templateGetter);
+    assert.equal(loaded, 1);
+
+    runner.start();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.equal(executed, 1, 'overdue task should catch up once on startup');
+    runner.stop();
+  });
+
   test('registerDynamic after start() schedules timer and executes task', async () => {
     // Start runner with no tasks
     runner.start();

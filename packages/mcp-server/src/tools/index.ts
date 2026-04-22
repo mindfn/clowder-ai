@@ -82,10 +82,12 @@ export {
   handleListScheduleTemplates,
   handlePreviewScheduledTask,
   handleRegisterScheduledTask,
+  handleUpdateScheduledTask,
   handleRemoveScheduledTask,
   listScheduleTemplatesInputSchema,
   previewScheduledTaskInputSchema,
   registerScheduledTaskInputSchema,
+  updateScheduledTaskInputSchema,
   removeScheduledTaskInputSchema,
   scheduleTools,
 } from './schedule-tools.js';

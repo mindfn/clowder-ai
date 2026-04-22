@@ -417,7 +417,7 @@ describe('TaskRunnerV2 — dynamic task first-tick deferral', () => {
     runner.stop();
   });
 
-  it('start() still fires built-in tasks immediately (backwards compat)', async () => {
+  it('start() does NOT fire built-in interval tasks immediately by default', async () => {
     const { TaskRunnerV2 } = await import('../../dist/infrastructure/scheduler/TaskRunnerV2.js');
     const runner = new TaskRunnerV2({ logger: silentLogger, ledger });
     let executeCount = 0;
@@ -444,11 +444,163 @@ describe('TaskRunnerV2 — dynamic task first-tick deferral', () => {
 
     runner.start();
 
-    // Wait for setTimeout(0) to fire
+    // Wait long enough for any accidental immediate tick to fire
     await new Promise((r) => setTimeout(r, 50));
 
-    assert.equal(executeCount, 1, 'built-in task should fire immediately on start()');
+    assert.equal(executeCount, 0, 'built-in interval task should start counting from startup, not fire at t=0');
     runner.stop();
+  });
+
+  it('start() does NOT fire run_now_once interval task when latest run is still within interval', async () => {
+    const { TaskRunnerV2 } = await import('../../dist/infrastructure/scheduler/TaskRunnerV2.js');
+    const runner = new TaskRunnerV2({ logger: silentLogger, ledger });
+    let executeCount = 0;
+
+    ledger.record({
+      task_id: 'fresh-run-now-once',
+      subject_key: 'k',
+      outcome: 'RUN_DELIVERED',
+      signal_summary: null,
+      duration_ms: 5,
+      started_at: new Date(Date.now() - 30_000).toISOString(),
+      assigned_cat_id: null,
+      error_summary: null,
+    });
+
+    runner.register({
+      id: 'fresh-run-now-once',
+      profile: 'poller',
+      trigger: { type: 'interval', ms: 60_000, misfirePolicy: 'run_now_once' },
+      admission: {
+        gate: async () => ({ run: true, workItems: [{ signal: 'go', subjectKey: 'k' }] }),
+      },
+      run: {
+        overlap: 'skip',
+        timeoutMs: 5000,
+        execute: async () => {
+          executeCount++;
+        },
+      },
+      state: { runLedger: 'sqlite' },
+      outcome: { whenNoSignal: 'drop' },
+      enabled: () => true,
+    });
+
+    runner.start();
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.equal(executeCount, 0, 'fresh interval task should not misfire-run on startup');
+    runner.stop();
+  });
+
+  it('start() fires overdue run_now_once interval task once after startup reconciliation', async () => {
+    const { TaskRunnerV2 } = await import('../../dist/infrastructure/scheduler/TaskRunnerV2.js');
+    const runner = new TaskRunnerV2({ logger: silentLogger, ledger });
+    let executeCount = 0;
+
+    ledger.record({
+      task_id: 'stale-run-now-once',
+      subject_key: 'k',
+      outcome: 'RUN_DELIVERED',
+      signal_summary: null,
+      duration_ms: 5,
+      started_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+      assigned_cat_id: null,
+      error_summary: null,
+    });
+
+    runner.register({
+      id: 'stale-run-now-once',
+      profile: 'poller',
+      trigger: { type: 'interval', ms: 60_000, misfirePolicy: 'run_now_once' },
+      admission: {
+        gate: async () => ({ run: true, workItems: [{ signal: 'go', subjectKey: 'k' }] }),
+      },
+      run: {
+        overlap: 'skip',
+        timeoutMs: 5000,
+        execute: async () => {
+          executeCount++;
+        },
+      },
+      state: { runLedger: 'sqlite' },
+      outcome: { whenNoSignal: 'drop' },
+      enabled: () => true,
+    });
+
+    runner.start();
+    await new Promise((r) => setTimeout(r, 50));
+
+    assert.equal(executeCount, 1, 'overdue interval task should catch up exactly once on startup');
+    runner.stop();
+  });
+
+  it('startup reconciliation isolates bad task misfire checks and still catches later tasks', async () => {
+    const errors = [];
+    const logger = {
+      info: noop,
+      error: (msg, err) => errors.push({ msg, err }),
+    };
+    const { TaskRunnerV2 } = await import('../../dist/infrastructure/scheduler/TaskRunnerV2.js');
+    const runner = new TaskRunnerV2({ logger, ledger });
+    let executeCount = 0;
+
+    ledger.record({
+      task_id: 'good-run-now-once',
+      subject_key: 'k',
+      outcome: 'RUN_DELIVERED',
+      signal_summary: null,
+      duration_ms: 5,
+      started_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+      assigned_cat_id: null,
+      error_summary: null,
+    });
+    ledger.record({
+      task_id: 'bad-cron-run-now-once',
+      subject_key: 'k',
+      outcome: 'RUN_DELIVERED',
+      signal_summary: null,
+      duration_ms: 5,
+      started_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+      assigned_cat_id: null,
+      error_summary: null,
+    });
+
+    runner.register({
+      id: 'bad-cron-run-now-once',
+      profile: 'poller',
+      trigger: { type: 'cron', expression: 'not a cron', misfirePolicy: 'run_now_once' },
+      admission: { gate: async () => ({ run: false, reason: 'unused' }) },
+      run: { overlap: 'skip', timeoutMs: 5000, execute: async () => {} },
+      state: { runLedger: 'sqlite' },
+      outcome: { whenNoSignal: 'drop' },
+      enabled: () => true,
+    });
+
+    runner.register({
+      id: 'good-run-now-once',
+      profile: 'poller',
+      trigger: { type: 'interval', ms: 60_000, misfirePolicy: 'run_now_once' },
+      admission: {
+        gate: async () => ({ run: true, workItems: [{ signal: 'go', subjectKey: 'k' }] }),
+      },
+      run: {
+        overlap: 'skip',
+        timeoutMs: 5000,
+        execute: async () => {
+          executeCount++;
+        },
+      },
+      state: { runLedger: 'sqlite' },
+      outcome: { whenNoSignal: 'drop' },
+      enabled: () => true,
+    });
+
+    await runner.reconcileStartupMisfires();
+
+    assert.equal(executeCount, 1, 'later overdue tasks should still catch up');
+    assert.equal(errors.length, 1, 'bad task should be isolated and logged once');
+    assert.match(errors[0].msg, /bad-cron-run-now-once: startup misfire check failed/);
   });
 });
 
@@ -1041,6 +1193,60 @@ describe('TaskRunnerV2 — once trigger (#415)', () => {
 
     // Execute should never have been called
     assert.ok(!executed, 'past-due once task should NOT execute');
+    runner.stop();
+  });
+
+  it('hydrated once trigger with past fireAt and misfirePolicy=run_now_once executes immediately', async () => {
+    const { TaskRunnerV2 } = await import('../../dist/infrastructure/scheduler/TaskRunnerV2.js');
+    const runner = new TaskRunnerV2({ logger: silentLogger, ledger, dynamicTaskStore });
+    let executed = false;
+
+    const pastFireAt = Date.now() - 60_000;
+    dynamicTaskStore.insert({
+      id: 'dyn-catchup-once-1',
+      templateId: 'reminder',
+      trigger: { type: 'once', fireAt: pastFireAt, misfirePolicy: 'run_now_once' },
+      params: { message: 'should fire once' },
+      display: { label: '补跑的一次性任务', category: 'system' },
+      deliveryThreadId: null,
+      enabled: true,
+      createdBy: 'test',
+      createdAt: new Date(pastFireAt - 60_000).toISOString(),
+    });
+
+    const templateGetter = {
+      get: (id) => {
+        if (id !== 'reminder') return null;
+        return {
+          templateId: 'reminder',
+          label: 'Reminder',
+          category: 'system',
+          description: 'test',
+          subjectKind: 'none',
+          defaultTrigger: { type: 'cron', expression: '0 9 * * *' },
+          paramSchema: {},
+          createSpec: (instanceId, params) =>
+            makeOnceTask(instanceId, params.trigger.fireAt, {
+              run: {
+                overlap: 'skip',
+                timeoutMs: 5000,
+                execute: async () => {
+                  executed = true;
+                },
+              },
+            }),
+        };
+      },
+    };
+
+    const loaded = runner.hydrateDynamic(dynamicTaskStore, templateGetter);
+    assert.equal(loaded, 1, 'past-due once task should stay registered when catch-up is enabled');
+
+    runner.start();
+    await new Promise((r) => setTimeout(r, 100));
+
+    assert.ok(executed, 'past-due once task should execute immediately on startup');
+    assert.equal(dynamicTaskStore.getById('dyn-catchup-once-1'), null, 'once task should retire after catch-up run');
     runner.stop();
   });
 

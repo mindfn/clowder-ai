@@ -487,6 +487,22 @@ describe('Schedule Routes', () => {
       const body = res.json();
       assert.ok(body.error.includes('expired'), 'preHandler rejects invalid creds before route handler');
     });
+
+    it('echoes misfirePolicy in preview draft trigger', async () => {
+      const res = await appDyn.inject({
+        method: 'POST',
+        url: '/api/schedule/tasks/preview',
+        payload: {
+          templateId: 'reminder',
+          trigger: { type: 'interval', ms: 60_000, misfirePolicy: 'run_now_once' },
+          params: { message: 'preview-misfire' },
+        },
+      });
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.payload);
+      assert.equal(body.draft.trigger.type, 'interval');
+      assert.equal(body.draft.trigger.misfirePolicy, 'run_now_once');
+    });
   });
 
   describe('POST /api/schedule/tasks — targetCatId flows through to reminder execute', () => {
@@ -791,6 +807,47 @@ describe('Schedule Routes', () => {
     });
   });
 
+  describe('POST /api/schedule/tasks — trigger strategy persistence', () => {
+    let appDyn, store;
+
+    beforeEach(async () => {
+      const { DynamicTaskStore } = await import('../dist/infrastructure/scheduler/DynamicTaskStore.js');
+      const { templateRegistry } = await import('../dist/infrastructure/scheduler/templates/registry.js');
+      const { scheduleRoutes: sr } = await import('../dist/routes/schedule.js');
+      store = new DynamicTaskStore(db);
+      appDyn = Fastify({ logger: false });
+      await appDyn.register(sr, { taskRunner: runner, dynamicTaskStore: store, templateRegistry });
+      await appDyn.ready();
+    });
+
+    afterEach(async () => {
+      runner.stop();
+      await appDyn.close();
+    });
+
+    it('persists interval misfirePolicy in store and runtime summary', async () => {
+      const createRes = await appDyn.inject({
+        method: 'POST',
+        url: '/api/schedule/tasks',
+        payload: {
+          templateId: 'reminder',
+          trigger: { type: 'interval', ms: 60_000, misfirePolicy: 'run_now_once' },
+          params: { message: 'persist-misfire' },
+        },
+      });
+      assert.equal(createRes.statusCode, 200);
+
+      const stored = store.getAll().find((d) => d.params?.message === 'persist-misfire');
+      assert.ok(stored, 'task should be persisted');
+      assert.equal(stored.trigger.misfirePolicy, 'run_now_once');
+
+      const listRes = await appDyn.inject({ method: 'GET', url: '/api/schedule/tasks' });
+      const dynTask = JSON.parse(listRes.payload).tasks.find((t) => t.dynamicTaskId === stored.id);
+      assert.ok(dynTask, 'task should be registered in runtime');
+      assert.equal(dynTask.trigger.misfirePolicy, 'run_now_once');
+    });
+  });
+
   describe('PATCH /api/schedule/tasks/:id (P1-2: runtime pause/resume)', () => {
     let appDyn, store;
 
@@ -862,6 +919,30 @@ describe('Schedule Routes', () => {
       const tasks = JSON.parse(listRes2.payload).tasks;
       const found = tasks.find((t) => t.dynamicTaskId === dynTask.dynamicTaskId);
       assert.ok(found, 'resumed task should be re-registered in runtime');
+    });
+
+    it('PATCH trigger updates misfirePolicy in store and runtime', async () => {
+      const listRes = await appDyn.inject({ method: 'GET', url: '/api/schedule/tasks' });
+      const dynTask = JSON.parse(listRes.payload).tasks.find((t) => t.source === 'dynamic');
+      assert.ok(dynTask, 'dynamic task should exist');
+
+      const patchRes = await appDyn.inject({
+        method: 'PATCH',
+        url: `/api/schedule/tasks/${dynTask.dynamicTaskId}`,
+        payload: {
+          trigger: { type: 'interval', ms: 60_000, misfirePolicy: 'run_now_once' },
+        },
+      });
+      assert.equal(patchRes.statusCode, 200);
+
+      const stored = store.getById(dynTask.dynamicTaskId);
+      assert.ok(stored, 'task should remain persisted');
+      assert.equal(stored.trigger.misfirePolicy, 'run_now_once');
+
+      const listRes2 = await appDyn.inject({ method: 'GET', url: '/api/schedule/tasks' });
+      const updated = JSON.parse(listRes2.payload).tasks.find((t) => t.dynamicTaskId === dynTask.dynamicTaskId);
+      assert.ok(updated, 'task should remain registered in runtime');
+      assert.equal(updated.trigger.misfirePolicy, 'run_now_once');
     });
   });
 });

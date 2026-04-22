@@ -1,14 +1,15 @@
 /**
  * F139 Phase 3A: Schedule MCP Tools (AC-G2)
- * Tests for cat_cafe_list_schedule_templates, cat_cafe_register_scheduled_task, cat_cafe_remove_scheduled_task
+ * Tests for cat_cafe_list_schedule_templates, cat_cafe_register_scheduled_task,
+ * cat_cafe_update_scheduled_task, cat_cafe_remove_scheduled_task
  */
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 describe('Schedule MCP Tools — module exports', () => {
-  test('scheduleTools array exports 4 tools', async () => {
+  test('scheduleTools array exports 5 tools', async () => {
     const { scheduleTools } = await import('../dist/tools/schedule-tools.js');
-    assert.equal(scheduleTools.length, 4);
+    assert.equal(scheduleTools.length, 5);
   });
 
   test('cat_cafe_preview_scheduled_task exists with templateId + trigger (P1-1: draft step)', async () => {
@@ -38,6 +39,15 @@ describe('Schedule MCP Tools — module exports', () => {
     assert.ok(registerScheduledTaskInputSchema.trigger, 'trigger schema required');
   });
 
+  test('cat_cafe_update_scheduled_task has taskId and optional enabled/trigger', async () => {
+    const { scheduleTools, updateScheduledTaskInputSchema } = await import('../dist/tools/schedule-tools.js');
+    const tool = scheduleTools.find((t) => t.name === 'cat_cafe_update_scheduled_task');
+    assert.ok(tool, 'tool should exist');
+    assert.ok(updateScheduledTaskInputSchema.taskId, 'taskId schema required');
+    assert.ok(updateScheduledTaskInputSchema.enabled, 'enabled schema should exist');
+    assert.ok(updateScheduledTaskInputSchema.trigger, 'trigger schema should exist');
+  });
+
   test('cat_cafe_remove_scheduled_task has taskId required', async () => {
     const { scheduleTools, removeScheduledTaskInputSchema } = await import('../dist/tools/schedule-tools.js');
     const tool = scheduleTools.find((t) => t.name === 'cat_cafe_remove_scheduled_task');
@@ -55,9 +65,8 @@ describe('Schedule MCP Tools — module exports', () => {
     delete process.env['CAT_CAFE_CALLBACK_TOKEN'];
 
     try {
-      const { handleListScheduleTemplates, handleRegisterScheduledTask, handleRemoveScheduledTask } = await import(
-        '../dist/tools/schedule-tools.js'
-      );
+      const { handleListScheduleTemplates, handleRegisterScheduledTask, handleUpdateScheduledTask, handleRemoveScheduledTask } =
+        await import('../dist/tools/schedule-tools.js');
 
       const listResult = await handleListScheduleTemplates({});
       assert.equal(listResult.isError, true);
@@ -67,6 +76,12 @@ describe('Schedule MCP Tools — module exports', () => {
         trigger: JSON.stringify({ type: 'cron', expression: '0 9 * * *' }),
       });
       assert.equal(regResult.isError, true);
+
+      const updateResult = await handleUpdateScheduledTask({
+        taskId: 'dyn-001',
+        trigger: JSON.stringify({ type: 'interval', ms: 3600000, misfirePolicy: 'run_now_once' }),
+      });
+      assert.equal(updateResult.isError, true);
 
       const rmResult = await handleRemoveScheduledTask({ taskId: 'dyn-001' });
       assert.equal(rmResult.isError, true);
@@ -92,6 +107,10 @@ describe('Schedule tools in registration', () => {
     assert.ok(
       registered.includes('cat_cafe_register_scheduled_task'),
       'register_scheduled_task should be registered in collab surface',
+    );
+    assert.ok(
+      registered.includes('cat_cafe_update_scheduled_task'),
+      'update_scheduled_task should be registered in collab surface',
     );
     assert.ok(
       registered.includes('cat_cafe_remove_scheduled_task'),

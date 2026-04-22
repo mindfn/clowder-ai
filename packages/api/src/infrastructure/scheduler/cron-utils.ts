@@ -8,9 +8,13 @@ import { CronExpressionParser } from 'cron-parser';
  * @throws If the expression is invalid
  */
 export function getNextCronMs(expression: string, timezone?: string): number {
-  const options: Record<string, unknown> = { currentDate: new Date() };
+  const next = getNextCronOccurrence(expression, Date.now(), timezone);
+  return Math.max(1, next.getTime() - Date.now());
+}
+
+export function getNextCronOccurrence(expression: string, currentDateMs: number, timezone?: string): Date {
+  const options: Record<string, unknown> = { currentDate: new Date(currentDateMs) };
   if (timezone) options.tz = timezone;
   const parsed = CronExpressionParser.parse(expression, options);
-  const next = parsed.next().toDate();
-  return Math.max(1, next.getTime() - Date.now());
+  return parsed.next().toDate();
 }

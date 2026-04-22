@@ -95,6 +95,27 @@ export async function callbackGet(path: string, params?: Record<string, string>)
   }
 }
 
+export async function callbackPatch(path: string, body: Record<string, unknown>): Promise<ToolResult> {
+  const config = getCallbackConfig();
+  if (!config) return errorResult(NO_CONFIG_ERROR);
+
+  try {
+    const response = await fetch(`${config.apiUrl}${path}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...buildAuthHeaders(config) },
+      body: JSON.stringify(withLegacyAuthBody(config, body)),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      return errorResult(`Callback failed (${response.status}): ${text}`);
+    }
+    return successResult(JSON.stringify(await response.json()));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return errorResult(`Callback request failed: ${message}`);
+  }
+}
+
 export const postMessageInputSchema = {
   content: z.string().min(1).describe('The message content to post'),
   replyTo: z.string().optional().describe('Optional message ID to reply to'),

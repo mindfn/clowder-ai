@@ -56,6 +56,13 @@ export class DynamicTaskStore {
     const result = this.db.prepare('UPDATE dynamic_task_defs SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, id);
     return result.changes > 0;
   }
+
+  updateTrigger(id: string, trigger: TriggerSpec): boolean {
+    const result = this.db
+      .prepare('UPDATE dynamic_task_defs SET trigger_json = ? WHERE id = ?')
+      .run(JSON.stringify(trigger), id);
+    return result.changes > 0;
+  }
 }
 
 interface RawRow {

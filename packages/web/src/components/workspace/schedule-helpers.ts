@@ -24,6 +24,7 @@ export interface TriggerSpec {
   expression?: string;
   /** #415: epoch ms — when the once trigger will fire */
   fireAt?: number;
+  misfirePolicy?: 'skip' | 'cancel' | 'run_now_once';
 }
 
 export interface TaskDisplayMeta {

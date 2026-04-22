@@ -2,12 +2,14 @@
  * F139 Phase 3A: Schedule MCP Tools (AC-G2)
  *
  * cat_cafe_list_schedule_templates  — list available task templates
+ * cat_cafe_preview_scheduled_task   — dry-run a task registration
  * cat_cafe_register_scheduled_task  — create a dynamic scheduled task from template
+ * cat_cafe_update_scheduled_task    — update an existing dynamic scheduled task
  * cat_cafe_remove_scheduled_task    — delete a dynamic scheduled task
  */
 
 import { z } from 'zod';
-import { callbackGet, callbackPost } from './callback-tools.js';
+import { callbackGet, callbackPatch, callbackPost } from './callback-tools.js';
 import type { ToolResult } from './file-tools.js';
 import { errorResult } from './file-tools.js';
 
@@ -171,6 +173,49 @@ export async function handlePreviewScheduledTask(input: {
   return callbackPost('/api/schedule/tasks/preview', body);
 }
 
+// ─── Update scheduled task ──────────────────────────────────
+
+export const updateScheduledTaskInputSchema = {
+  taskId: z.string().min(1).describe('The dynamic task ID to update (e.g. "dyn-1711504800000-abc123")'),
+  enabled: z
+    .boolean()
+    .optional()
+    .describe('Optional enabled flag. When omitted, the current enabled state is preserved.'),
+  trigger: z
+    .string()
+    .optional()
+    .describe(
+      'Optional trigger config as JSON string. Supports the same shapes as register_scheduled_task, including misfirePolicy.',
+    ),
+};
+
+export async function handleUpdateScheduledTask(input: {
+  taskId: string;
+  enabled?: boolean;
+  trigger?: string;
+}): Promise<ToolResult> {
+  if (typeof input.enabled !== 'boolean' && !input.trigger) {
+    return errorResult('Update requires enabled and/or trigger');
+  }
+
+  const body: Record<string, unknown> = {};
+  if (typeof input.enabled === 'boolean') body.enabled = input.enabled;
+
+  if (input.trigger) {
+    try {
+      const parsed: unknown = JSON.parse(input.trigger);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        return errorResult('Invalid trigger JSON — must be a JSON object (not null, array, or primitive)');
+      }
+      body.trigger = parsed;
+    } catch {
+      return errorResult('Invalid trigger JSON — must be a valid JSON object');
+    }
+  }
+
+  return callbackPatch(`/api/schedule/tasks/${encodeURIComponent(input.taskId)}`, body);
+}
+
 // ─── Remove scheduled task ──────────────────────────────────
 
 export const removeScheduledTaskInputSchema = {
@@ -212,6 +257,15 @@ export const scheduleTools = [
       'trigger and params must be JSON strings, not objects.',
     inputSchema: registerScheduledTaskInputSchema,
     handler: handleRegisterScheduledTask,
+  },
+  {
+    name: 'cat_cafe_update_scheduled_task',
+    description:
+      'Update an existing dynamic scheduled task by task ID. Supports changing enabled state and/or replacing the trigger. ' +
+      'Use this to adjust interval/cron/once settings such as misfirePolicy without deleting and recreating the task. ' +
+      'trigger must be passed as a JSON string when provided.',
+    inputSchema: updateScheduledTaskInputSchema,
+    handler: handleUpdateScheduledTask,
   },
   {
     name: 'cat_cafe_remove_scheduled_task',

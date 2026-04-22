@@ -27,10 +27,13 @@ export interface GateCtx {
 export type TaskProfile = 'awareness' | 'poller';
 
 /** Phase 2: Trigger spec — interval, cron, or once (#415) */
+export type PeriodicMisfirePolicy = 'skip' | 'run_now_once';
+export type OnceMisfirePolicy = 'cancel' | 'run_now_once';
+
 export type TriggerSpec =
-  | { type: 'interval'; ms: number }
-  | { type: 'cron'; expression: string; timezone?: string }
-  | { type: 'once'; fireAt: number };
+  | { type: 'interval'; ms: number; misfirePolicy?: PeriodicMisfirePolicy }
+  | { type: 'cron'; expression: string; timezone?: string; misfirePolicy?: PeriodicMisfirePolicy }
+  | { type: 'once'; fireAt: number; misfirePolicy?: OnceMisfirePolicy };
 
 /** Phase 2: Context dimension — session × materialization */
 export interface ContextSpec {

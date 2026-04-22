@@ -84,6 +84,7 @@ const EXPECTED_TOOLS = [
   'cat_cafe_list_schedule_templates',
   'cat_cafe_preview_scheduled_task',
   'cat_cafe_register_scheduled_task',
+  'cat_cafe_update_scheduled_task',
   'cat_cafe_remove_scheduled_task',
 ];
 
@@ -119,6 +120,7 @@ const EXPECTED_COLLAB_TOOLS = [
   'cat_cafe_list_schedule_templates',
   'cat_cafe_preview_scheduled_task',
   'cat_cafe_register_scheduled_task',
+  'cat_cafe_update_scheduled_task',
   'cat_cafe_remove_scheduled_task',
 ];
 
@@ -295,6 +297,7 @@ const KNOWN_WRITE_TOOLS = [
   'cat_cafe_review_distillation', // POST approve/reject → writes global knowledge
   'cat_cafe_submit_game_action',
   'cat_cafe_register_scheduled_task',
+  'cat_cafe_update_scheduled_task',
   'cat_cafe_remove_scheduled_task',
   'cat_cafe_feat_index', // requires callback credentials unavailable in readonly
   'signal_mark_read',

@@ -30,26 +30,80 @@ import {
   notifyTaskResumed,
 } from '../infrastructure/scheduler/schedule-notify.js';
 import type { TaskRunnerV2 } from '../infrastructure/scheduler/TaskRunnerV2.js';
-import type { ScheduleLifecycleNotifier, TriggerSpec } from '../infrastructure/scheduler/types.js';
+import type {
+  OnceMisfirePolicy,
+  PeriodicMisfirePolicy,
+  ScheduleLifecycleNotifier,
+  TriggerSpec,
+} from '../infrastructure/scheduler/types.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
 import { registerCallbackAuthHook } from './callback-auth-prehandler.js';
 import { deriveCallbackActor } from './callback-scope-helpers.js';
 import { governanceRoutes } from './schedule-governance.js';
 
-/** #415: Normalize once-trigger input — accepts delayMs (relative) or fireAt (absolute) */
-function normalizeOnceTrigger(trigger: Record<string, unknown>): TriggerSpec | { error: string } {
-  if (trigger.type !== 'once') return trigger as TriggerSpec;
+function normalizePeriodicMisfirePolicy(value: unknown): PeriodicMisfirePolicy | null {
+  return value === 'skip' || value === 'run_now_once' ? value : null;
+}
+
+function normalizeOnceMisfirePolicy(value: unknown): OnceMisfirePolicy | null {
+  return value === 'cancel' || value === 'run_now_once' ? value : null;
+}
+
+/** #415: Normalize trigger input — accepts once.delayMs and validates misfirePolicy */
+function normalizeTrigger(trigger: Record<string, unknown>): TriggerSpec | { error: string } {
+  if (trigger.type === 'interval') {
+    const ms = typeof trigger.ms === 'number' ? trigger.ms : undefined;
+    if (!Number.isFinite(ms) || ms == null || ms <= 0) {
+      return { error: 'interval trigger ms must be a finite number > 0' };
+    }
+    if (typeof trigger.misfirePolicy !== 'undefined') {
+      const misfirePolicy = normalizePeriodicMisfirePolicy(trigger.misfirePolicy);
+      if (!misfirePolicy) {
+        return { error: 'interval misfirePolicy must be "skip" or "run_now_once"' };
+      }
+      return { type: 'interval', ms, misfirePolicy };
+    }
+    return { type: 'interval', ms };
+  }
+
+  if (trigger.type === 'cron') {
+    const expression = typeof trigger.expression === 'string' ? trigger.expression.trim() : '';
+    if (!expression) return { error: 'cron trigger expression is required' };
+    const timezone = typeof trigger.timezone === 'string' ? trigger.timezone : undefined;
+    if (typeof trigger.misfirePolicy !== 'undefined') {
+      const misfirePolicy = normalizePeriodicMisfirePolicy(trigger.misfirePolicy);
+      if (!misfirePolicy) {
+        return { error: 'cron misfirePolicy must be "skip" or "run_now_once"' };
+      }
+      return timezone ? { type: 'cron', expression, timezone, misfirePolicy } : { type: 'cron', expression, misfirePolicy };
+    }
+    return timezone ? { type: 'cron', expression, timezone } : { type: 'cron', expression };
+  }
+
+  if (trigger.type !== 'once') {
+    return { error: 'Unsupported trigger type' };
+  }
+
   const delayMs = typeof trigger.delayMs === 'number' ? trigger.delayMs : undefined;
   const fireAt = typeof trigger.fireAt === 'number' ? trigger.fireAt : undefined;
+  let misfirePolicy: OnceMisfirePolicy | undefined;
+  if (typeof trigger.misfirePolicy !== 'undefined') {
+    misfirePolicy = normalizeOnceMisfirePolicy(trigger.misfirePolicy) ?? undefined;
+    if (!misfirePolicy) {
+      return { error: 'once misfirePolicy must be "cancel" or "run_now_once"' };
+    }
+  }
   if (delayMs != null) {
     if (!Number.isFinite(delayMs) || delayMs < 0) return { error: 'once trigger delayMs must be a finite number >= 0' };
-    return { type: 'once', fireAt: Date.now() + delayMs };
+    return misfirePolicy
+      ? { type: 'once', fireAt: Date.now() + delayMs, misfirePolicy }
+      : { type: 'once', fireAt: Date.now() + delayMs };
   }
   if (fireAt != null) {
     if (!Number.isFinite(fireAt) || fireAt < 0) {
       return { error: 'once trigger fireAt must be a finite positive epoch ms' };
     }
-    return { type: 'once', fireAt };
+    return misfirePolicy ? { type: 'once', fireAt, misfirePolicy } : { type: 'once', fireAt };
   }
   return { error: 'once trigger requires either delayMs or fireAt' };
 }
@@ -291,10 +345,9 @@ export const scheduleRoutes: FastifyPluginAsync<ScheduleRoutesOptions> = async (
       return { error: `Unknown template: ${body.templateId}` };
     }
 
-    // #415: normalize once trigger (delayMs → fireAt)
     let trigger: TriggerSpec;
-    if (body.trigger && (body.trigger as Record<string, unknown>).type === 'once') {
-      const result = normalizeOnceTrigger(body.trigger as Record<string, unknown>);
+    if (body.trigger) {
+      const result = normalizeTrigger(body.trigger as Record<string, unknown>);
       if ('error' in result) {
         reply.status(400);
         return { error: result.error };
@@ -363,10 +416,9 @@ export const scheduleRoutes: FastifyPluginAsync<ScheduleRoutesOptions> = async (
       return { error: `Unknown template: ${body.templateId}` };
     }
 
-    // #415: normalize once trigger (delayMs → fireAt)
     let trigger: TriggerSpec;
-    if (body.trigger && (body.trigger as Record<string, unknown>).type === 'once') {
-      const result = normalizeOnceTrigger(body.trigger as Record<string, unknown>);
+    if (body.trigger) {
+      const result = normalizeTrigger(body.trigger as Record<string, unknown>);
       if ('error' in result) {
         reply.status(400);
         return { error: result.error };
@@ -454,7 +506,7 @@ export const scheduleRoutes: FastifyPluginAsync<ScheduleRoutesOptions> = async (
     return { success: true };
   });
 
-  // PATCH /api/schedule/tasks/:id (AC-G4: toggle enabled — affects runtime)
+  // PATCH /api/schedule/tasks/:id (AC-G4: toggle enabled and/or update trigger — affects runtime)
   app.patch('/api/schedule/tasks/:id', async (request, reply) => {
     if (!dynamicTaskStore || !templateRegistry) {
       reply.status(501);
@@ -462,50 +514,61 @@ export const scheduleRoutes: FastifyPluginAsync<ScheduleRoutesOptions> = async (
     }
 
     const { id } = request.params as { id: string };
-    const body = (request.body ?? {}) as { enabled?: boolean };
-
-    if (typeof body.enabled !== 'boolean') {
+    const body = (request.body ?? {}) as { enabled?: boolean; trigger?: TriggerSpec };
+    if (typeof body.enabled !== 'boolean' && !body.trigger) {
       reply.status(400);
-      return { error: 'Missing enabled field' };
+      return { error: 'PATCH requires enabled and/or trigger' };
     }
 
-    const updated = dynamicTaskStore.setEnabled(id, body.enabled);
-    if (!updated) {
+    const currentDef = dynamicTaskStore.getById(id);
+    if (!currentDef) {
       reply.status(404);
       return { error: 'Dynamic task not found' };
     }
 
-    const def = dynamicTaskStore.getById(id);
-    if (!body.enabled) {
-      // Pause: unregister from runtime
-      taskRunner.unregister(id);
-      if (def) notifyTaskPaused(notifyLifecycle, def);
-    } else {
-      // Resume: re-register in runtime
-      if (def) {
-        const template = templateRegistry.get(def.templateId);
-        if (template) {
-          const spec = template.createSpec(def.id, {
-            trigger: def.trigger,
-            params: def.params,
-            deliveryThreadId: def.deliveryThreadId,
-          });
-          spec.display = def.display;
-          try {
-            taskRunner.registerDynamic(spec, def.id);
-          } catch {
-            // Already registered — ignore
-          }
-          notifyTaskResumed(notifyLifecycle, def);
-        } else {
-          dynamicTaskStore.setEnabled(id, false); // roll back — resume failed
-          reply.status(500);
-          return { error: `Template ${def.templateId} not found — task cannot resume` };
-        }
+    let normalizedTrigger = currentDef.trigger;
+    if (body.trigger) {
+      const result = normalizeTrigger(body.trigger as Record<string, unknown>);
+      if ('error' in result) {
+        reply.status(400);
+        return { error: result.error };
       }
+      normalizedTrigger = result;
     }
 
-    return { success: true, enabled: body.enabled };
+    const template = templateRegistry.get(currentDef.templateId);
+    const finalEnabled = typeof body.enabled === 'boolean' ? body.enabled : currentDef.enabled;
+    if (finalEnabled && !template) {
+      reply.status(500);
+      return { error: `Template ${currentDef.templateId} not found — task cannot resume` };
+    }
+
+    if (body.trigger) dynamicTaskStore.updateTrigger(id, normalizedTrigger);
+    if (typeof body.enabled === 'boolean' && body.enabled !== currentDef.enabled) {
+      dynamicTaskStore.setEnabled(id, body.enabled);
+    }
+
+    const def = dynamicTaskStore.getById(id);
+    taskRunner.unregister(id);
+
+    if (def?.enabled && template) {
+      const spec = template.createSpec(def.id, {
+        trigger: def.trigger,
+        params: def.params,
+        deliveryThreadId: def.deliveryThreadId,
+      });
+      spec.display = def.display;
+      taskRunner.registerDynamic(spec, def.id);
+    }
+
+    if (typeof body.enabled === 'boolean' && !body.enabled && currentDef.enabled && def) {
+      notifyTaskPaused(notifyLifecycle, def);
+    }
+    if (typeof body.enabled === 'boolean' && body.enabled && !currentDef.enabled && def) {
+      notifyTaskResumed(notifyLifecycle, def);
+    }
+
+    return { success: true, enabled: def?.enabled ?? finalEnabled, trigger: def?.trigger ?? normalizedTrigger };
   });
 
   // ─── Governance + Pack Templates (AC-D1/D3) — extracted for file size ──

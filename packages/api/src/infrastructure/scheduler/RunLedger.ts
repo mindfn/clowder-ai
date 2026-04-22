@@ -35,6 +35,10 @@ export class RunLedger {
       .all(taskId, limit) as RunLedgerRow[];
   }
 
+  latest(taskId: string): RunLedgerRow | null {
+    return this.query(taskId, 1)[0] ?? null;
+  }
+
   /** Phase 2: query runs filtered by exact subject_key */
   queryBySubject(taskId: string, subjectKey: string, limit: number): RunLedgerRow[] {
     return this.db

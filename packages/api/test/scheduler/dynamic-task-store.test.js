@@ -123,4 +123,20 @@ describe('DynamicTaskStore', () => {
     assert.equal(loaded.trigger.type, 'once');
     assert.equal(loaded.trigger.fireAt, fireAt);
   });
+
+  test('updateTrigger rewrites persisted trigger JSON including misfirePolicy', () => {
+    store.insert(SAMPLE_DEF);
+    store.updateTrigger('dyn-001', {
+      type: 'interval',
+      ms: 3_600_000,
+      misfirePolicy: 'run_now_once',
+    });
+
+    const loaded = store.getById('dyn-001');
+    assert.deepEqual(loaded.trigger, {
+      type: 'interval',
+      ms: 3_600_000,
+      misfirePolicy: 'run_now_once',
+    });
+  });
 });

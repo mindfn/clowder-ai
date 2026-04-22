@@ -1,4 +1,4 @@
-import { getNextCronMs } from './cron-utils.js';
+import { getNextCronMs, getNextCronOccurrence } from './cron-utils.js';
 import type { DynamicTaskDef, DynamicTaskStore } from './DynamicTaskStore.js';
 import { executeTaskPipeline } from './execute-pipeline.js';
 import type { RunLedger } from './RunLedger.js';
@@ -161,11 +161,17 @@ export class TaskRunnerV2 {
 
   /** Phase 3A: hydrate dynamic tasks from persistent store (AC-G3) */
   hydrateDynamic(store: DynamicTaskStore, templateGetter: { get: (id: string) => TaskTemplate | null }): number {
+    this.dynamicTaskStore = store;
     const defs = store.getAll().filter((d) => d.enabled);
     let loaded = 0;
     for (const def of defs) {
-      // #415: once tasks with past fireAt → missed window, cancel + notify + retire
-      if (def.trigger.type === 'once' && def.trigger.fireAt < Date.now()) {
+      // #415: once tasks with past fireAt default to cancel-on-miss, unless the
+      // task explicitly opts into one-time catch-up on restart.
+      if (
+        def.trigger.type === 'once' &&
+        def.trigger.fireAt < Date.now() &&
+        def.trigger.misfirePolicy !== 'run_now_once'
+      ) {
         this.handleMissedOnceTask(def, store);
         continue;
       }
@@ -197,13 +203,92 @@ export class TaskRunnerV2 {
     for (const task of this.tasks) {
       this.scheduleTask(task);
     }
+    void this.reconcileStartupMisfires();
+  }
+
+  private async reconcileStartupMisfires(): Promise<void> {
+    const startupNowMs = Date.now();
+    for (const task of this.tasks) {
+      try {
+        if (!this.isStartupCatchupCandidate(task)) continue;
+        if (!this.shouldCatchUpNow(task, startupNowMs)) continue;
+
+        const beforeLatest = this.ledger.latest(task.id);
+        const catchupStartedAtMs = Date.now();
+
+        try {
+          await this.triggerNow(task.id);
+        } catch (err) {
+          this.logger.error(`[scheduler] ${task.id}: startup catch-up failed`, err);
+          continue;
+        }
+
+        const afterLatest = this.ledger.latest(task.id);
+        if (!afterLatest || afterLatest.started_at === beforeLatest?.started_at) {
+          this.ledger.record({
+            task_id: task.id,
+            subject_key: task.id,
+            outcome: 'SKIP_NO_SIGNAL',
+            signal_summary: 'Startup catch-up: missed window consumed',
+            duration_ms: 0,
+            started_at: new Date(catchupStartedAtMs).toISOString(),
+            assigned_cat_id: null,
+            error_summary: null,
+          });
+        }
+      } catch (err) {
+        this.logger.error(`[scheduler] ${task.id}: startup misfire check failed`, err);
+      }
+    }
+  }
+
+  private isStartupCatchupCandidate(task: AnyTaskSpec): boolean {
+    if (task.trigger.type === 'once') return false;
+    if (task.trigger.misfirePolicy !== 'run_now_once') return false;
+    if (!task.enabled()) return false;
+    if (this.globalControlStore) {
+      if (!this.globalControlStore.getGlobalEnabled()) return false;
+      const override = this.globalControlStore.getTaskOverride(task.id);
+      if (override && !override.enabled) return false;
+    }
+    return true;
+  }
+
+  private shouldCatchUpNow(task: AnyTaskSpec, nowMs: number): boolean {
+    const anchorMs = this.getStartupAnchorMs(task, nowMs);
+    if (anchorMs >= nowMs) return false;
+
+    if (task.trigger.type === 'interval') {
+      return nowMs - anchorMs >= task.trigger.ms;
+    }
+
+    if (task.trigger.type === 'cron') {
+      const nextAtMs = getNextCronOccurrence(task.trigger.expression, anchorMs, task.trigger.timezone).getTime();
+      return nextAtMs <= nowMs;
+    }
+
+    return false;
+  }
+
+  private getStartupAnchorMs(task: AnyTaskSpec, nowMs: number): number {
+    const lastRun = this.ledger.latest(task.id);
+    const lastStartedAtMs = lastRun ? Date.parse(lastRun.started_at) : Number.NaN;
+    if (Number.isFinite(lastStartedAtMs)) return lastStartedAtMs;
+
+    const dynamicDefId = this.dynamicTaskIds.get(task.id);
+    const createdAt =
+      dynamicDefId && this.dynamicTaskStore ? this.dynamicTaskStore.getById(dynamicDefId)?.createdAt : null;
+    const createdAtMs = createdAt ? Date.parse(createdAt) : Number.NaN;
+    if (Number.isFinite(createdAtMs)) return createdAtMs;
+
+    return nowMs;
   }
 
   /**
    * Initialize tracking state and set up timer for a single task.
-   * @param deferFirstTick - when true, skip the immediate first tick (for live-registered dynamic tasks)
+   * @param deferFirstTick - retained for backwards-compatible call sites; interval tasks now always start from now
    */
-  private scheduleTask(task: AnyTaskSpec, deferFirstTick = false): void {
+  private scheduleTask(task: AnyTaskSpec, _deferFirstTick = false): void {
     if (this.timers.has(task.id)) return;
     this.running.set(task.id, false);
     this.tickCounts.set(task.id, 0);
@@ -221,10 +306,6 @@ export class TaskRunnerV2 {
           this.logger.error(`[scheduler] ${task.id}: pipeline error`, err);
         });
       };
-      if (!deferFirstTick) {
-        // Boot: fire first tick immediately for pollers that need to check pending work
-        setTimeout(runTick, 0);
-      }
       const timer = setInterval(runTick, task.trigger.ms);
       if (typeof timer === 'object' && 'unref' in timer) timer.unref();
       this.timers.set(task.id, timer);
