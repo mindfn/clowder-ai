@@ -1,23 +1,23 @@
 'use client';
 
-import { useParams } from 'next/navigation';
-import { useCallback, useSyncExternalStore } from 'react';
+import { usePathname } from 'next/navigation';
+import { useLayoutEffect, useState } from 'react';
 import { ChatContainer } from '@/components/ChatContainer';
 import { CHAT_THREAD_ROUTE_EVENT, getThreadIdFromPathname } from '@/components/ThreadSidebar/thread-navigation';
-
-function subscribeToThreadRoute(onStoreChange: () => void): () => void {
-  if (typeof window === 'undefined') return () => {};
-  window.addEventListener('popstate', onStoreChange);
-  window.addEventListener(CHAT_THREAD_ROUTE_EVENT, onStoreChange);
-  return () => {
-    window.removeEventListener('popstate', onStoreChange);
-    window.removeEventListener(CHAT_THREAD_ROUTE_EVENT, onStoreChange);
-  };
-}
 
 function getThreadRouteSnapshot(): string {
   if (typeof window === 'undefined') return 'default';
   return getThreadIdFromPathname(window.location.pathname);
+}
+
+export function resolveLayoutThreadId(
+  pathnameThreadId: string,
+  browserThreadId: string | null,
+  immediateBrowserThreadId: string | null = null,
+): string {
+  if (browserThreadId !== null) return browserThreadId;
+  if (immediateBrowserThreadId !== null) return immediateBrowserThreadId;
+  return pathnameThreadId;
 }
 
 /**
@@ -28,13 +28,23 @@ function getThreadRouteSnapshot(): string {
  * loss, and socket/state survives navigation.
  */
 export default function ChatLayout({ children }: { children: React.ReactNode }) {
-  // Derive server snapshot from route params to avoid hydration mismatch
-  // (React error #418). Without this, SSR renders with 'default' while the
-  // client reads the real URL, causing a mismatch on /thread/[threadId] pages.
-  const params = useParams();
-  const paramThreadId = typeof params?.threadId === 'string' ? params.threadId : 'default';
-  const getServerSnapshot = useCallback(() => paramThreadId, [paramThreadId]);
-  const threadId = useSyncExternalStore(subscribeToThreadRoute, getThreadRouteSnapshot, getServerSnapshot);
+  const pathname = usePathname();
+  const pathnameThreadId = getThreadIdFromPathname(pathname ?? '');
+  // Parent layouts can briefly see the default route during hard refresh; the
+  // address bar is the authority before chat history effects are allowed to run.
+  const immediateBrowserThreadId = typeof window !== 'undefined' ? getThreadRouteSnapshot() : null;
+  const [browserThreadId, setBrowserThreadId] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    const syncBrowserRoute = () => setBrowserThreadId(getThreadRouteSnapshot());
+    syncBrowserRoute();
+    window.addEventListener('popstate', syncBrowserRoute);
+    window.addEventListener(CHAT_THREAD_ROUTE_EVENT, syncBrowserRoute);
+    return () => {
+      window.removeEventListener('popstate', syncBrowserRoute);
+      window.removeEventListener(CHAT_THREAD_ROUTE_EVENT, syncBrowserRoute);
+    };
+  }, []);
+  const threadId = resolveLayoutThreadId(pathnameThreadId, browserThreadId, immediateBrowserThreadId);
 
   return (
     <>
