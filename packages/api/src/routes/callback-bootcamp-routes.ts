@@ -48,7 +48,10 @@ const LEGACY_PHASE_MAP: Record<string, (typeof PHASE_ORDER)[number]> = {
   'phase-8-review': 'phase-8-collab',
 };
 
-const bootcampPhaseSchema = z.enum([...PHASE_ORDER]);
+const bootcampPhaseSchema = z.enum([
+  ...PHASE_ORDER,
+  ...(Object.keys(LEGACY_PHASE_MAP) as (typeof PHASE_ORDER)[number][]),
+]);
 
 const updateBootcampStateCallbackSchema = z.object({
   threadId: z.string().min(1),

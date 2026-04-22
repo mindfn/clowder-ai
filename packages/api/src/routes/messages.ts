@@ -289,6 +289,10 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       const sanitized = parsedGame.catIds ? sanitizeCatIds(parsedGame.catIds, allCatIds) : [];
       // Fallback to all cats if sanitize filtered everything out (or no catIds provided)
       const catIds = sanitized.length > 0 ? sanitized : [...allCatIds];
+      if (catIds.length === 0) {
+        reply.status(400);
+        return { error: '没有可用的猫猫成员，请先在设置中添加一只猫猫', code: 'NO_TARGETS' };
+      }
       const playerCount = parsedGame.playerCount ?? DEFAULT_PLAYER_COUNT;
       const seats = buildGameSeats({
         humanRole: parsedGame.humanRole,
