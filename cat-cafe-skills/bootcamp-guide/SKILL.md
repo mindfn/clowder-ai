@@ -30,6 +30,15 @@ triggers:
 6. **⛔ STOP 标记**：看到 `⛔ STOP` 时，发完当前消息后**立即停止**，等用户下一条消息。
 7. **Phase 推进必须逐步**：每次只能推进 1 步（如 phase-4 → phase-5），禁止跳步（如 phase-3 → phase-5）。唯一例外：核心工具全 OK 时 phase-2 → phase-4（跳过 phase-3）。
 
+## 检查训练营上下文（所有猫必读）
+
+系统提示中如果有 `🎓 Bootcamp Mode:` 行，说明你在训练营会话中。**无论你是哪只猫，都必须检查并遵循训练营流程。**
+
+1. 读取 `phase=` 确认当前阶段
+2. 读取 `leadCat=` 判断自己是**主角猫**（catId === leadCat）还是**队友猫**
+3. 读取 `members=` 了解当前团队规模
+4. 按下方对应阶段 + 角色的指令执行
+
 ## Phase 名称（唯一合法值）
 
 ```
@@ -154,8 +163,8 @@ MSG 5（用户完成 overlay 后发消息）
 **你不需要说任何关于"添加队友"的话**——引入第二只猫是前端 overlay 自然推进的。
 你不需要手动推进 guideStep。
 
-当用户完成 @mention（guide 全部完成）后：
-`cat_cafe_update_bootcamp_state(threadId, phase='phase-8-collab', guideStep=null)`
+当用户完成 @mention（guide 全部完成）后，前端引导引擎会自动推进到 phase-8-collab。
+你不需要手动推进阶段。
 
 **📨 ⛔ STOP — 前端 overlay 接管，不要继续说话**
 
@@ -163,10 +172,21 @@ MSG 5（用户完成 overlay 后发消息）
 
 ## MSG 4+: 多猫协作 + 完成（Phase 8→9→10）
 
-用户 @mention 了第二只猫。**自然协作，不需要 UI 引导**：
-- 第二只猫评价 Phase 7 的产出，提出改进建议
-- 两只猫协作修复发现的问题
-- 让用户感受真实的多猫协作
+用户 @mention 了第二只猫，Phase 已由前端引导引擎自动推进到 phase-8-collab。
+
+### 队友猫（非 leadCat）的行为
+
+如果你不是 leadCat（你的 catId ≠ system prompt 中的 `leadCat` 值）：
+1. 你是被新用户邀请来评价项目的队友
+2. 认真评价 Phase 7 的项目成果，给出具体、有建设性的改进建议
+3. **必须**在队友名册中找到 leadCat 对应的 @mention 句柄，用行首 @ 把球传给主角猫，让它来修复你发现的问题
+4. 不要自己动手修代码——你的角色是 reviewer，修复由主角猫完成
+
+### 主角猫（leadCat）的行为
+
+收到队友猫的 review 后：
+- 根据建议修复问题
+- 两只猫自然协作，让用户感受真实的多猫协作
 
 协作完成后（所有问题修复完毕）：
 1. `cat_cafe_update_bootcamp_state(threadId, phase='phase-9-complete')`

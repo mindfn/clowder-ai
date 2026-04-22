@@ -307,7 +307,7 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
     const name = t.name;
     const catId = autoSlug(name);
     // Auto-suffix aliases that conflict with existing cats
-    const rawAliases = [name, t.nickname].filter((s): s is string => Boolean(s));
+    const rawAliases = [t.nickname, name].filter((s): s is string => Boolean(s));
     const deduped = rawAliases.map((alias) => {
       const normalized = normalizeMentionPattern(alias);
       if (!reservedPatterns.has(normalized.toLowerCase())) return normalized;

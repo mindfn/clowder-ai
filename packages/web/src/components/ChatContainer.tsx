@@ -411,14 +411,19 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   }, [hasActiveInvocation, threadId]);
 
   // ── Bootcamp add-teammate: trigger guide engine when user interacts with input ──
+  // Subscribe reactively so the effect re-runs when guide exits (session cleared).
+  const activeGuideFlowId = useGuideStore((s) => s.session?.flow.id ?? null);
   useEffect(() => {
     if (currentBootcampPhase !== 'phase-7.5-add-teammate') return;
-    const { session } = useGuideStore.getState();
-    if (session?.flow.id === 'bootcamp-add-teammate') return;
+    // Guide already running — don't re-register
+    if (activeGuideFlowId === 'bootcamp-add-teammate') return;
+    // Prevent re-triggering a guide that already completed for this thread
+    if (useGuideStore.getState().completedGuides.has(`${threadId}::bootcamp-add-teammate`)) return;
 
     const startGuide = () => {
-      const { session: s } = useGuideStore.getState();
+      const { session: s, completedGuides: cg } = useGuideStore.getState();
       if (s?.flow.id === 'bootcamp-add-teammate') return;
+      if (cg.has(`${threadId}::bootcamp-add-teammate`)) return;
       useGuideStore.getState().reduceServerEvent({
         action: 'start',
         guideId: 'bootcamp-add-teammate',
@@ -437,7 +442,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     return () => {
       document.removeEventListener('input', handler, true);
     };
-  }, [currentBootcampPhase, threadId]);
+  }, [currentBootcampPhase, threadId, activeGuideFlowId]);
 
   const prevThreadRef = useRef(threadId);
   useEffect(() => {

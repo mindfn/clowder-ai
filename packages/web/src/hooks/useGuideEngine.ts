@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { syncLocalBootcampState } from '@/components/first-run-quest/syncLocalBootcampState';
 import { useChatStore } from '@/stores/chatStore';
 import type { OrchestrationFlow } from '@/stores/guideStore';
 import { useGuideStore } from '@/stores/guideStore';
@@ -11,8 +12,15 @@ import { apiFetch } from '@/utils/api-client';
  *
  * Subscribes to guideStore.pendingStart (set by Socket.io → reduceServerEvent).
  * Fetches flow definition from API, then calls startGuide().
- * On completion, notifies backend to transition guideState active → completed.
+ * On completion, notifies backend to transition guideState active → completed,
+ * and auto-advances bootcamp phase when the guide is bootcamp-bound.
  */
+
+/** Maps bootcamp-bound guide IDs to the next bootcamp phase on completion. */
+const GUIDE_PHASE_ADVANCE: Record<string, string> = {
+  'bootcamp-add-teammate': 'phase-8-collab',
+  'bootcamp-farewell': 'phase-11-farewell',
+};
 export function useGuideEngine() {
   const currentThreadId = useChatStore((s) => s.currentThreadId);
   const startGuide = useGuideStore((s) => s.startGuide);
@@ -124,6 +132,11 @@ export function useGuideEngine() {
         });
         if (res.ok) {
           markCompletionPersisted(sessionId);
+          // Auto-advance bootcamp phase when a bootcamp-bound guide completes
+          const nextPhase = GUIDE_PHASE_ADVANCE[guideId];
+          if (nextPhase) {
+            advanceBootcampPhase(threadId, nextPhase, guideId);
+          }
           return;
         }
         if (attempt < 3) {
@@ -153,4 +166,42 @@ export function useGuideEngine() {
     markCompletionPersisted,
     markCompletionFailed,
   ]);
+}
+
+/**
+ * PATCH to advance bootcamp phase after guide completion.
+ * On success: syncs local store. On failure: rolls back completedGuides
+ * so the guide can be re-triggered (prevents dead-state lockout).
+ */
+function advanceBootcampPhase(threadId: string, nextPhase: string, guideId: string): void {
+  const thread = useChatStore.getState().threads.find((t) => t.id === threadId);
+  const existing = thread?.bootcampState;
+  if (!existing) return;
+
+  const nextState = { ...existing, phase: nextPhase, guideStep: null };
+  apiFetch(`/api/threads/${threadId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bootcampState: nextState }),
+  })
+    .then((res) => {
+      if (res.ok) {
+        syncLocalBootcampState(threadId, nextState);
+      } else {
+        rollbackCompletedGuide(threadId, guideId);
+      }
+    })
+    .catch(() => {
+      rollbackCompletedGuide(threadId, guideId);
+    });
+}
+
+/** Remove a completedGuides entry so the guide can be re-triggered on failure. */
+function rollbackCompletedGuide(threadId: string, guideId: string): void {
+  const key = `${threadId}::${guideId}`;
+  const { completedGuides } = useGuideStore.getState();
+  if (!completedGuides.has(key)) return;
+  const next = new Set(completedGuides);
+  next.delete(key);
+  useGuideStore.setState({ completedGuides: next });
 }
