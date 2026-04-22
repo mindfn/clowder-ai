@@ -280,6 +280,10 @@ export class ClaudeAgentService implements AgentService {
 
       let sawResultError = false;
       const envOverrides = buildClaudeEnvOverrides(options?.callbackEnv);
+      // F140: Account env vars applied LAST — user overrides provider-injected values
+      if (options?.accountEnv) {
+        for (const [k, v] of Object.entries(options.accountEnv)) envOverrides[k] = v;
+      }
 
       // Debug: log full invocation details (env values redacted by pino redact paths)
       const safeEnvSummary: Record<string, string> = {};

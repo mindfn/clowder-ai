@@ -125,8 +125,8 @@ export class KimiAgentService implements AgentService {
         command: kimiCommand,
         args,
         ...(options?.workingDirectory ? { cwd: options.workingDirectory } : {}),
-        ...(options?.callbackEnv || apiKeyEnv
-          ? { env: { ...(options?.callbackEnv ?? {}), ...(apiKeyEnv ?? {}) } }
+        ...(options?.callbackEnv || apiKeyEnv || options?.accountEnv
+          ? { env: { ...(options?.callbackEnv ?? {}), ...(apiKeyEnv ?? {}), ...(options?.accountEnv ?? {}) } }
           : {}),
         ...(options?.signal ? { signal: options.signal } : {}),
         ...(options?.invocationId ? { invocationId: options.invocationId } : {}),

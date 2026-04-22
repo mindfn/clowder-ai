@@ -363,6 +363,10 @@ export class CodexAgentService implements AgentService {
         }
       }
       const codexEnv = applyAuthMode(rawEnv, authMode);
+      // F140: Account env vars applied LAST — user overrides provider-injected values
+      if (options?.accountEnv) {
+        for (const [k, v] of Object.entries(options.accountEnv)) codexEnv[k] = v;
+      }
 
       const semanticCompletionController = new AbortController();
 

@@ -874,14 +874,19 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       if (resolvedAccount.baseUrl) callbackEnv.DARE_ENDPOINT = resolvedAccount.baseUrl;
     }
 
-    // F140: Inject user-defined env vars from account config.
-    // Key format: [A-Z_][A-Za-z0-9_]* (POSIX). CAT_CAFE_ prefix reserved.
+    // F140: User-defined env vars from account config.
+    // Passed separately via accountEnv — NOT injected into callbackEnv.
+    // callbackEnv is for MCP callback routing; accountEnv is applied LAST
+    // in subprocess env so user vars override provider-injected values.
+    let accountEnv: Record<string, string> | undefined;
     if (resolvedAccount?.envVars) {
       const validEnvKey = /^[A-Z_][A-Za-z0-9_]*$/;
+      const filtered: Record<string, string> = {};
       for (const [k, v] of Object.entries(resolvedAccount.envVars)) {
         if (!validEnvKey.test(k) || k.startsWith('CAT_CAFE_')) continue;
-        callbackEnv[k] = v;
+        filtered[k] = v;
       }
+      if (Object.keys(filtered).length > 0) accountEnv = filtered;
     }
 
     const trimmedDefaultModel = typeof defaultModel === 'string' ? defaultModel.trim() : undefined;
@@ -1049,6 +1054,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
 
     const baseOptions: AgentServiceOptions = {
       callbackEnv,
+      ...(accountEnv ? { accountEnv } : {}),
       auditContext: {
         invocationId,
         threadId,
@@ -1547,12 +1553,15 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     // This is provider-agnostic — every cat (Claude, Codex, Gemini, OpenCode, etc.)
     // passes through here before service.invoke() is called.
     {
-      const safeCallbackEnv: Record<string, string> = {};
-      for (const [k, v] of Object.entries(callbackEnv)) {
-        // Mask ALL env values — user-defined envVars may contain credentials
-        // with non-standard key names that wouldn't match a pattern allowlist.
-        safeCallbackEnv[k] = v.length > 6 ? v.slice(0, 6) + '***' : '***';
-      }
+      const maskEnv = (env: Record<string, string>): Record<string, string> => {
+        const masked: Record<string, string> = {};
+        for (const [k, v] of Object.entries(env)) {
+          masked[k] = /key|secret|token|password/i.test(k)
+            ? (v.length > 6 ? v.slice(0, 6) + '***' : '***')
+            : v;
+        }
+        return masked;
+      };
       log.debug(
         {
           invocationId,
@@ -1571,7 +1580,8 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           workingDirectory: workingDirectory ?? null,
           promptLength: effectivePrompt.length,
           systemPromptLength: params.systemPrompt?.length ?? 0,
-          callbackEnv: safeCallbackEnv,
+          callbackEnv: maskEnv(callbackEnv),
+          ...(accountEnv ? { accountEnv: maskEnv(accountEnv) } : {}),
         },
         '[invocation] service.invoke() — full context before subprocess launch',
       );

@@ -231,7 +231,9 @@ export class GeminiAgentService implements AgentService {
         command: geminiCommand,
         args,
         ...(options?.workingDirectory ? { cwd: options.workingDirectory } : {}),
-        ...(options?.callbackEnv ? { env: options.callbackEnv } : {}),
+        ...(options?.callbackEnv || options?.accountEnv
+          ? { env: { ...(options?.callbackEnv ?? {}), ...(options?.accountEnv ?? {}) } }
+          : {}),
         ...(options?.signal ? { signal: options.signal } : {}),
         ...(options?.invocationId ? { invocationId: options.invocationId } : {}),
         ...(options?.cliSessionId ? { cliSessionId: options.cliSessionId } : {}),
