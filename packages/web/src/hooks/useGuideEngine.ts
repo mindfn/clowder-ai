@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { syncLocalBootcampState } from '@/components/first-run-quest/syncLocalBootcampState';
 import { useChatStore } from '@/stores/chatStore';
+import type { Thread } from '@/stores/chat-types';
 import type { OrchestrationFlow } from '@/stores/guideStore';
 import { useGuideStore } from '@/stores/guideStore';
 import { apiFetch } from '@/utils/api-client';
@@ -182,9 +183,7 @@ function advanceBootcampPhase(threadId: string, nextPhase: string, guideId: stri
         return;
       }
 
-      const freshThread = (await freshThreadRes.json()) as {
-        bootcampState?: Record<string, unknown>;
-      };
+      const freshThread = (await freshThreadRes.json()) as Pick<Thread, 'bootcampState'>;
       const existing = freshThread.bootcampState;
       if (!existing) {
         rollbackCompletedGuide(threadId, guideId);
@@ -202,10 +201,8 @@ function advanceBootcampPhase(threadId: string, nextPhase: string, guideId: stri
         return;
       }
 
-      const patchedThread = (await patchRes.json()) as {
-        bootcampState?: Record<string, unknown>;
-      };
-      syncLocalBootcampState(threadId, patchedThread.bootcampState ?? nextState);
+      const patchedThread = (await patchRes.json()) as Pick<Thread, 'bootcampState'>;
+      syncLocalBootcampState(threadId, patchedThread.bootcampState ?? (nextState as Thread['bootcampState']));
     } catch {
       rollbackCompletedGuide(threadId, guideId);
     }
