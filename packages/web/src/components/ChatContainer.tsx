@@ -883,7 +883,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
                   firstCatName={questState.firstCatName}
                   onAddSecondCat={() => setShowQuestWizard(true)}
                   onStartBootcamp={() => setShowBootcampList(true)}
-                  onComplete={() => router.push('/hub')}
+                  onComplete={() => assignDocumentRoute('/hub', typeof window !== 'undefined' ? window : undefined)}
                 />
               );
             })()}
