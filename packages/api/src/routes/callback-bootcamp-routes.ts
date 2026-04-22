@@ -39,6 +39,23 @@ const PHASE_ORDER = [
 
 const PHASE_INDEX = new Map(PHASE_ORDER.map((p, i) => [p, i]));
 
+/**
+ * Allowed legacy skip pairs: "currentPhase→normalizedTarget".
+ * Legacy phase names map to phases multiple steps ahead in the new flow.
+ * Only specific source→target combinations are valid — prevents arbitrary
+ * phase skipping by sending a legacy name from an early phase.
+ */
+const ALLOWED_LEGACY_SKIPS: ReadonlySet<string> = new Set([
+  // phase-4-first-project → phase-7-dev: old flow came after config/task phases
+  'phase-3-config-help→phase-7-dev',
+  'phase-4-task-select→phase-7-dev',
+  'phase-5-kickoff→phase-7-dev',
+  'phase-6-design→phase-7-dev',
+  // phase-3.5-advanced → phase-3-config-help: old flow came after intro/env-check
+  'phase-1-intro→phase-3-config-help',
+  'phase-2-env-check→phase-3-config-help',
+]);
+
 /** Map legacy phase names (pre-F140-v2) to their nearest current equivalent. */
 const LEGACY_PHASE_MAP: Record<string, (typeof PHASE_ORDER)[number]> = {
   'phase-0-select-cat': 'phase-1-intro',
@@ -175,7 +192,8 @@ export function registerCallbackBootcampRoutes(
         const allowedSkip =
           (existing.phase === 'phase-2-env-check' && updates.phase === 'phase-4-task-select') ||
           (existing.phase === 'phase-9-complete' && updates.phase === 'phase-11-farewell');
-        if (gap > 1 && !allowedSkip && !phaseWasLegacy) {
+        const allowedLegacySkip = phaseWasLegacy && ALLOWED_LEGACY_SKIPS.has(`${currentPhase}→${updates.phase}`);
+        if (gap > 1 && !allowedSkip && !allowedLegacySkip) {
           request.log.warn(
             { threadId, currentPhase, targetPhase: updates.phase, gap, reason: 'skip-not-allowed' },
             '[bootcamp] phase transition REJECTED',

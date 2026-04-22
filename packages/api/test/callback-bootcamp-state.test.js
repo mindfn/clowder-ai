@@ -581,6 +581,30 @@ describe('Callback Bootcamp State', () => {
     assert.equal(body.bootcampState.phase, 'phase-7.5-add-teammate');
   });
 
+  test('legacy phase-4-first-project from phase-1 is rejected (too-wide skip)', async () => {
+    const app = await createApp();
+    const thread = await threadStore.create('user-1', '🎓 训练营');
+    const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
+    await threadStore.updateBootcampState(thread.id, {
+      v: 1,
+      phase: 'phase-1-intro',
+      startedAt: 1000,
+    });
+
+    // Old callback sends phase-4-first-project from phase-1 — should be rejected
+    // because phase-1→phase-7-dev is not in the allowed legacy skip pairs
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/update-bootcamp-state',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: { threadId: thread.id, phase: 'phase-4-first-project' },
+    });
+
+    assert.equal(response.statusCode, 400);
+    const body = JSON.parse(response.body);
+    assert.ok(body.error.includes('Phase skip not allowed'));
+  });
+
   test('legacy phase normalization still rejects backward transitions', async () => {
     const app = await createApp();
     const thread = await threadStore.create('user-1', '🎓 训练营');
