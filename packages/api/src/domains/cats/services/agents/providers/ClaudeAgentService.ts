@@ -291,7 +291,7 @@ export class ClaudeAgentService implements AgentService {
       for (const [k, v] of Object.entries(envOverrides)) {
         if (v === null) {
           safeEnvSummary[k] = '(cleared)';
-        } else if (/key|secret|token|password/i.test(k)) {
+        } else if (/key|secret|token|password|cookie|auth|session|bearer|credential/i.test(k)) {
           safeEnvSummary[k] = v.slice(0, 6) + '***';
         } else {
           safeEnvSummary[k] = v;

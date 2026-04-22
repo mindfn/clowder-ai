@@ -85,12 +85,11 @@ const baseCatSchema = z.object({
   sessionChain: z.boolean().optional(),
 });
 
-/** Strip trailing slashes from model names — prevents "MiniMax-M2.7/" artifacts. */
-const modelSchema = z
-  .string()
-  .min(1)
-  .transform((v) => v.replace(/\/+$/, ''))
-  .pipe(z.string().min(1));
+/** Strip trailing slashes from model names — prevents "MiniMax-M2.7/" artifacts.
+ *  Empty string is allowed: OAuth/subscription accounts may omit model and
+ *  let the CLI use its built-in default. api_key accounts are validated at
+ *  runtime in validateAccountBindingOrThrow where authType is available. */
+const modelSchema = z.string().transform((v) => v.replace(/\/+$/, ''));
 
 const createNormalCatSchema = baseCatSchema.extend({
   clientId: clientSchema.exclude(['antigravity']),
@@ -299,6 +298,10 @@ async function validateAccountBindingOrThrow(
   const runtimeProfile = resolveByAccountRef(projectRoot, trimmedAccountRef);
   if (!runtimeProfile) {
     throw new Error(`provider "${trimmedAccountRef}" not found`);
+  }
+  // api_key accounts require an explicit model; OAuth/subscription CLIs have defaults
+  if (runtimeProfile.authType === 'api_key' && !defaultModel?.trim()) {
+    throw new Error('API Key 认证类型需要指定 Model');
   }
   const compatibilityError = validateRuntimeProviderBinding(client, runtimeProfile, defaultModel);
   if (compatibilityError) {
