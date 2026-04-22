@@ -534,4 +534,73 @@ describe('Callback Bootcamp State', () => {
     assert.equal(after.bootcampState.phase, 'phase-11-farewell');
     assert.equal(after.pinned, true, 'Thread should be auto-pinned on farewell');
   });
+
+  test('legacy phase-4-first-project normalizes to phase-7-dev and allows multi-step gap', async () => {
+    const app = await createApp();
+    const thread = await threadStore.create('user-1', '🎓 训练营');
+    const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
+    await threadStore.updateBootcampState(thread.id, {
+      v: 1,
+      phase: 'phase-4-task-select',
+      startedAt: 1000,
+    });
+
+    // Old callback sends legacy phase name — should normalize and allow the gap
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/update-bootcamp-state',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: { threadId: thread.id, phase: 'phase-4-first-project' },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    // Must persist the normalized name, not the legacy one
+    assert.equal(body.bootcampState.phase, 'phase-7-dev');
+  });
+
+  test('legacy phase-4.5-add-teammate normalizes to phase-7.5-add-teammate', async () => {
+    const app = await createApp();
+    const thread = await threadStore.create('user-1', '🎓 训练营');
+    const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
+    await threadStore.updateBootcampState(thread.id, {
+      v: 1,
+      phase: 'phase-7-dev',
+      startedAt: 1000,
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/update-bootcamp-state',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: { threadId: thread.id, phase: 'phase-4.5-add-teammate' },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.bootcampState.phase, 'phase-7.5-add-teammate');
+  });
+
+  test('legacy phase normalization still rejects backward transitions', async () => {
+    const app = await createApp();
+    const thread = await threadStore.create('user-1', '🎓 训练营');
+    const { invocationId, callbackToken } = registry.create('user-1', 'opus', thread.id);
+    await threadStore.updateBootcampState(thread.id, {
+      v: 1,
+      phase: 'phase-8-collab',
+      startedAt: 1000,
+    });
+
+    // phase-4-first-project normalizes to phase-7-dev which is backward from phase-8-collab
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/update-bootcamp-state',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: { threadId: thread.id, phase: 'phase-4-first-project' },
+    });
+
+    assert.equal(response.statusCode, 400);
+    const body = JSON.parse(response.body);
+    assert.ok(body.error.includes('must advance forward'));
+  });
 });

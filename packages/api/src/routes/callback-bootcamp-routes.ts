@@ -108,7 +108,12 @@ export function registerCallbackBootcampRoutes(
     // Normalize legacy phase names before any downstream logic (PHASE_INDEX lookup,
     // persistence, achievements). Without this, legacy names pass schema validation
     // but get rejected by the forward-only transition check or persist stale names.
+    // Track whether normalization occurred — legacy-originated transitions inherently
+    // span multiple phases (e.g. phase-4-first-project → phase-7-dev) so the gap
+    // check must be relaxed while still enforcing forward-only.
+    let phaseWasLegacy = false;
     if (updates.phase && updates.phase in LEGACY_PHASE_MAP) {
+      phaseWasLegacy = true;
       updates.phase = LEGACY_PHASE_MAP[updates.phase];
     }
 
@@ -170,7 +175,7 @@ export function registerCallbackBootcampRoutes(
         const allowedSkip =
           (existing.phase === 'phase-2-env-check' && updates.phase === 'phase-4-task-select') ||
           (existing.phase === 'phase-9-complete' && updates.phase === 'phase-11-farewell');
-        if (gap > 1 && !allowedSkip) {
+        if (gap > 1 && !allowedSkip && !phaseWasLegacy) {
           request.log.warn(
             { threadId, currentPhase, targetPhase: updates.phase, gap, reason: 'skip-not-allowed' },
             '[bootcamp] phase transition REJECTED',
