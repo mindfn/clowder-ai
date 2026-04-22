@@ -365,7 +365,7 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
         errors.identity = true;
         errorMessages.push('角色描述');
       }
-      if (!form.defaultModel.trim()) {
+      if (!form.defaultModel.trim() && selectedProfile?.authType === 'api_key') {
         errors.account = true;
         errorMessages.push('Model');
       } else if (

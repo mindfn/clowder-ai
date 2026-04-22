@@ -99,7 +99,7 @@ export class KimiAgentService implements AgentService {
     for (const dir of imageAccessDirs) {
       args.push('--add-dir', dir);
     }
-    if (!apiKeyEnv) {
+    if (!apiKeyEnv && effectiveModel) {
       args.push('--model', effectiveModel);
     }
     args.push('--prompt', effectivePrompt);

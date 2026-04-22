@@ -207,7 +207,8 @@ export class ClaudeAgentService implements AgentService {
     // Only pass --model for known Anthropic models. For third-party models
     // (e.g. glm-5 via BigModel/DashScope), ANTHROPIC_MODEL env var is set in
     // buildClaudeEnvOverrides() and --model must be omitted so the CLI honours it.
-    if (!useEnvModelOverride) {
+    // Empty model (OAuth without explicit model) → let CLI use its default.
+    if (!useEnvModelOverride && effectiveModel) {
       args.splice(6, 0, '--model', effectiveModel);
     }
 

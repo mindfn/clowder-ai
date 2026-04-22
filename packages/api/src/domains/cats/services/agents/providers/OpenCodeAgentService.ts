@@ -292,7 +292,7 @@ export class OpenCodeAgentService implements AgentService {
     // Do not silently prepend provider prefixes (e.g. anthropic/, openrouter/).
     // The user-configured model string is the source of truth.
     const effectiveModel = model ?? this.model;
-    args.push('-m', effectiveModel);
+    if (effectiveModel) args.push('-m', effectiveModel);
 
     // JSON event stream output
     args.push('--format', 'json');

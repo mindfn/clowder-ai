@@ -235,7 +235,7 @@ export class DareAgentService implements AgentService {
     const effectiveModel = model ?? this.model;
 
     args.push('--adapter', this.adapter);
-    args.push('--model', effectiveModel);
+    if (effectiveModel) args.push('--model', effectiveModel);
     if (endpoint) {
       args.push('--endpoint', endpoint);
     }

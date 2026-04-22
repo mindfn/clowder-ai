@@ -291,7 +291,11 @@ export class CodexAgentService implements AgentService {
     // Use --config model=... instead of --model to bypass the CLI's built-in metadata lookup
     // for custom providers (non-builtin models trigger a cosmetic warning via --model).
     const cliModel = effectiveModel;
-    const modelArgs: string[] = customBaseUrl ? ['--config', `model=${toTomlString(cliModel)}`] : ['--model', cliModel];
+    const modelArgs: string[] = !cliModel
+      ? []
+      : customBaseUrl
+        ? ['--config', `model=${toTomlString(cliModel)}`]
+        : ['--model', cliModel];
 
     // resume 子命令不接受 --sandbox（sandbox 在创建时已锁定）
     // --add-dir .git: 允许写入 .git/ 目录（index.lock、objects、refs），解锁 git commit
