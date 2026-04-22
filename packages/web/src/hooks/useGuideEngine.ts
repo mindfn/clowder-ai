@@ -2,8 +2,8 @@
 
 import { useEffect, useRef } from 'react';
 import { syncLocalBootcampState } from '@/components/first-run-quest/syncLocalBootcampState';
-import { useChatStore } from '@/stores/chatStore';
 import type { Thread } from '@/stores/chat-types';
+import { useChatStore } from '@/stores/chatStore';
 import type { OrchestrationFlow } from '@/stores/guideStore';
 import { useGuideStore } from '@/stores/guideStore';
 import { apiFetch } from '@/utils/api-client';
