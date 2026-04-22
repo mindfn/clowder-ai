@@ -105,6 +105,13 @@ export function registerCallbackBootcampRoutes(
 
     const { threadId, ...updates } = parsed.data;
 
+    // Normalize legacy phase names before any downstream logic (PHASE_INDEX lookup,
+    // persistence, achievements). Without this, legacy names pass schema validation
+    // but get rejected by the forward-only transition check or persist stale names.
+    if (updates.phase && updates.phase in LEGACY_PHASE_MAP) {
+      updates.phase = LEGACY_PHASE_MAP[updates.phase];
+    }
+
     // P2: Stale invocation guard — ignore if superseded by newer invocation
     if (!registry.isLatest(actor.invocationId)) {
       return { status: 'stale_ignored' };
