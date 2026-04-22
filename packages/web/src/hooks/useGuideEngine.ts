@@ -174,26 +174,42 @@ export function useGuideEngine() {
  * so the guide can be re-triggered (prevents dead-state lockout).
  */
 function advanceBootcampPhase(threadId: string, nextPhase: string, guideId: string): void {
-  const thread = useChatStore.getState().threads.find((t) => t.id === threadId);
-  const existing = thread?.bootcampState;
-  if (!existing) return;
-
-  const nextState = { ...existing, phase: nextPhase, guideStep: null };
-  apiFetch(`/api/threads/${threadId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ bootcampState: nextState }),
-  })
-    .then((res) => {
-      if (res.ok) {
-        syncLocalBootcampState(threadId, nextState);
-      } else {
+  void (async () => {
+    try {
+      const freshThreadRes = await apiFetch(`/api/threads/${threadId}`);
+      if (!freshThreadRes.ok) {
         rollbackCompletedGuide(threadId, guideId);
+        return;
       }
-    })
-    .catch(() => {
+
+      const freshThread = (await freshThreadRes.json()) as {
+        bootcampState?: Record<string, unknown>;
+      };
+      const existing = freshThread.bootcampState;
+      if (!existing) {
+        rollbackCompletedGuide(threadId, guideId);
+        return;
+      }
+
+      const nextState = { ...existing, phase: nextPhase, guideStep: null };
+      const patchRes = await apiFetch(`/api/threads/${threadId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bootcampState: nextState }),
+      });
+      if (!patchRes.ok) {
+        rollbackCompletedGuide(threadId, guideId);
+        return;
+      }
+
+      const patchedThread = (await patchRes.json()) as {
+        bootcampState?: Record<string, unknown>;
+      };
+      syncLocalBootcampState(threadId, patchedThread.bootcampState ?? nextState);
+    } catch {
       rollbackCompletedGuide(threadId, guideId);
-    });
+    }
+  })();
 }
 
 /** Remove a completedGuides entry so the guide can be re-triggered on failure. */

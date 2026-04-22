@@ -41,6 +41,7 @@ import {
   createLeakedToolCallStreamStripper,
   detectContextDegradation,
   getService,
+  getThreadBootcampMemberCount,
   isUserFacingSystemInfoContent,
   routeContentBlocksForCat,
   sanitizeInjectedContent,
@@ -124,6 +125,7 @@ export async function* routeParallel(
       /* best-effort */
     }
   }
+  const bootcampMemberCount = getThreadBootcampMemberCount(routeThread);
 
   // F155: Guide interceptor — resume existing guide state only
   const guideCtx = await prepareGuideContext({
@@ -221,9 +223,7 @@ export async function* routeParallel(
         ...(sopStageHint ? { sopStageHint } : {}),
         ...(activeSignals ? { activeSignals } : {}),
         ...(voiceMode ? { voiceMode } : {}),
-        ...(bootcampState
-          ? { bootcampState, threadId, bootcampMemberCount: Object.keys(catRegistry.getAllConfigs()).length }
-          : {}),
+        ...(bootcampState ? { bootcampState, threadId, bootcampMemberCount } : {}),
         ...(alwaysOnDocs && alwaysOnInjectionMode === 'on' ? { alwaysOnDocs } : {}),
         ...guideContextForCat(guideCtx, catId, targetCatIds, threadId),
       });
