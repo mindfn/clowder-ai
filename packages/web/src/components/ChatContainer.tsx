@@ -649,13 +649,9 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
       } catch {
         // Ignore refresh errors — navigation is the priority
       }
-      // Belt-and-suspenders: custom event for useSyncExternalStore + Next.js
-      // router for App Router layout re-render. Either alone should suffice,
-      // but the first-run path is critical enough to use both.
       navigateToThread(questThreadId);
-      router.push(`/thread/${questThreadId}`);
     },
-    [navigateToThread, setThreads, router],
+    [navigateToThread, setThreads],
   );
 
   const handleSearchKnowledge = useCallback(() => {
