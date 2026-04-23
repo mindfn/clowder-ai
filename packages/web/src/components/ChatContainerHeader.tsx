@@ -1,3 +1,4 @@
+import { useVoiceServicesAvailable } from '@/hooks/useVoiceServicesAvailable';
 import { useChatStore } from '@/stores/chatStore';
 import { ExportButton } from './ExportButton';
 import { CatCafeLogo } from './icons/CatCafeLogo';
@@ -34,6 +35,8 @@ export function ChatContainerHeader({
   onToggleStatusPanel,
   defaultCatId,
 }: ChatContainerHeaderProps) {
+  const voiceAvailable = useVoiceServicesAvailable();
+
   return (
     <header className="border-b border-cocreator-light bg-cocreator-bg safe-area-top">
       <div className="px-5 py-3 flex items-center gap-2">
@@ -63,7 +66,7 @@ export function ChatContainerHeader({
           </div>
         </div>
         <ExportButton threadId={threadId} />
-        <VoiceCompanionButton threadId={threadId} defaultCatId={defaultCatId} />
+        {voiceAvailable && <VoiceCompanionButton threadId={threadId} defaultCatId={defaultCatId} />}
         {authPendingCount > 0 && (
           <span
             className="inline-flex items-center justify-center h-5 min-w-[20px] px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold animate-pulse-subtle"

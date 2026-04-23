@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { detectRoutePrefix, getThreadHref } from '@/components/ThreadSidebar/thread-navigation';
 import { fetchStudyTimeline, type TimelineEntry } from '@/utils/signals-api';
 import { HubIcon } from '../hub-icons';
 
@@ -128,7 +129,7 @@ export function StudyTimeline({ days = 7 }: StudyTimelineProps) {
                     {entry.threads.map((t) => (
                       <a
                         key={t.threadId}
-                        href={`/thread/${encodeURIComponent(t.threadId)}`}
+                        href={getThreadHref(t.threadId, detectRoutePrefix())}
                         className="rounded-full bg-opus-bg px-1.5 py-0.5 text-[10px] text-opus-dark hover:underline"
                       >
                         <HubIcon name="message-circle" className="inline h-3 w-3" /> {t.threadId.slice(0, 12)}...
