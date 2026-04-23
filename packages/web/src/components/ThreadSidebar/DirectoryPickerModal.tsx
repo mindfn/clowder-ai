@@ -20,6 +20,7 @@ export interface NewThreadOptions {
   title?: string;
   pinned?: boolean;
   backlogItemId?: string;
+  bootcamp?: boolean;
 }
 
 interface BacklogItemSummary {
@@ -50,7 +51,8 @@ export function DirectoryPickerModal({
 
   // F068-R7: Two-step flow — select project first, then confirm
   // 'lobby' sentinel means user explicitly chose "大厅 (无项目)"
-  const [selectedPath, setSelectedPath] = useState<string | 'lobby' | null>(null);
+  // 'bootcamp' sentinel means user chose the bootcamp onboarding flow
+  const [selectedPath, setSelectedPath] = useState<string | 'lobby' | 'bootcamp' | null>(null);
   // P2 fix: clear stale pathError whenever user selects a project
   const handleSelectPath = useCallback((path: string | 'lobby') => {
     setPathError(null);
@@ -82,7 +84,7 @@ export function DirectoryPickerModal({
   }, []);
 
   const selectWithOptions = useCallback(
-    (projectPath: string | undefined) => {
+    (projectPath: string | undefined, bootcamp?: boolean) => {
       const bindings: SessionBinding[] = [];
       for (const [catId, sid] of Object.entries(sessionInputs)) {
         const trimmed = sid.trim();
@@ -97,6 +99,7 @@ export function DirectoryPickerModal({
         title: threadTitle.trim() || undefined,
         pinned: pinOnCreate || undefined,
         backlogItemId: selectedBacklogItemId || undefined,
+        bootcamp: bootcamp || undefined,
       });
     },
     [onSelect, selectedCats, sessionInputs, threadTitle, pinOnCreate, selectedBacklogItemId],
@@ -107,6 +110,10 @@ export function DirectoryPickerModal({
     console.log('[DirectoryPicker] confirmCreate called, selectedPath=', selectedPath);
     if (selectedPath === null) {
       console.warn('[DirectoryPicker] selectedPath is null — button should be disabled');
+      return;
+    }
+    if (selectedPath === 'bootcamp') {
+      selectWithOptions(undefined, true);
       return;
     }
     selectWithOptions(selectedPath === 'lobby' ? undefined : selectedPath);
@@ -277,6 +284,16 @@ export function DirectoryPickerModal({
           >
             <span className="text-base">🏠</span>
             <span>大厅 (无项目)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleSelectPath('bootcamp')}
+            className={`w-full text-left px-3 py-2.5 text-sm text-cafe-secondary hover:bg-cocreator-bg rounded-lg transition-colors flex items-center gap-2 ${selectedPath === 'bootcamp' ? 'ring-2 ring-amber-400 bg-amber-50' : ''}`}
+            data-testid="picker-bootcamp"
+          >
+            <span className="text-base">🎓</span>
+            <span>猫猫训练营</span>
           </button>
         </div>
 
