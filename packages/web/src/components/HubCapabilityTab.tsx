@@ -282,7 +282,11 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
         />
       )}
 
-      {filtered.length === 0 && (
+      {(section === 'mcp'
+        ? mcpItems.length === 0
+        : section === 'skills'
+          ? catCafeSkillGroups.length === 0 && externalSkills.length === 0
+          : filtered.length === 0) && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-4">
             <svg
