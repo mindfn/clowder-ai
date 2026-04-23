@@ -27,7 +27,7 @@ interface SettingsContentProps {
 }
 
 export function SettingsContent({ section }: SettingsContentProps) {
-  const { cats, getCatById, refresh } = useCatData();
+  const { cats, refresh } = useCatData();
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
