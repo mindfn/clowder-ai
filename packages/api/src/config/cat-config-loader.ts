@@ -67,7 +67,7 @@ const catVariantSchema = z.object({
   accountRef: z.string().min(1).optional(), // F127: concrete account binding
   clientId: z.string().min(1), // #252: accept unknown providers to avoid full config crash
 
-  defaultModel: z.string().min(1),
+  defaultModel: z.string(), // OAuth/subscription CLIs have built-in defaults; api_key validated at route level
   mcpSupport: z.boolean(),
   cli: cliConfigSchema.optional(),
   commandArgs: z.array(z.string().min(1)).optional(), // F127: explicit bridge args (e.g. Antigravity)
