@@ -517,7 +517,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   }
 
   return (
-    <div ref={containerRef} className="flex h-screen h-dvh">
+    <div ref={containerRef} className="flex h-full">
       {sidebarOpen && (
         <>
           {/* Backdrop — mobile only */}
