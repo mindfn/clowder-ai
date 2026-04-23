@@ -153,7 +153,7 @@ async function resolveExistingCandidate(
 /** Maps bootcamp phases to guide IDs that should be auto-offered. */
 const BOOTCAMP_PHASE_GUIDE_MAP: Record<string, string> = {
   'phase-7.5-add-teammate': 'bootcamp-add-teammate',
-  'phase-10-retro': 'bootcamp-farewell',
+  'phase-11-farewell': 'bootcamp-farewell',
 };
 
 async function resolveBootcampGuide(
