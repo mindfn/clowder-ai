@@ -80,12 +80,13 @@ const KNOWN_SERVICES: ServiceManifest[] = [
   },
 ];
 
-function resolveHealthUrl(manifest: ServiceManifest): string | null {
+export function resolveHealthUrl(manifest: ServiceManifest): string | null {
   if (!manifest.port || !manifest.healthEndpoint) return null;
-  const envUrlVar = manifest.configVars[0];
-  if (envUrlVar) {
-    const envUrl = process.env[envUrlVar];
-    if (envUrl) return `${envUrl}${manifest.healthEndpoint}`;
+  for (const envVar of manifest.configVars) {
+    const val = process.env[envVar];
+    if (!val) continue;
+    if (val.startsWith('http')) return `${val}${manifest.healthEndpoint}`;
+    if (/^\d+$/.test(val)) return `http://127.0.0.1:${val}${manifest.healthEndpoint}`;
   }
   return `http://127.0.0.1:${manifest.port}${manifest.healthEndpoint}`;
 }
