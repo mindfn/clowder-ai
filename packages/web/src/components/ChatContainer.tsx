@@ -444,9 +444,9 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     };
   }, [currentBootcampPhase, threadId, activeGuideFlowId]);
 
-  // ── Bootcamp farewell: auto-trigger guide when phase becomes phase-11-farewell ──
+  // ── Bootcamp farewell: auto-trigger guide when phase becomes phase-10-retro ──
   useEffect(() => {
-    if (currentBootcampPhase !== 'phase-11-farewell') return;
+    if (currentBootcampPhase !== 'phase-10-retro') return;
     if (activeGuideFlowId === 'bootcamp-farewell') return;
     if (useGuideStore.getState().completedGuides.has(`${threadId}::bootcamp-farewell`)) return;
 
@@ -1088,8 +1088,8 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
         const raw = bt?.bootcampState;
         if (!raw) return null;
         const phase = raw.phase;
-        // Guide engine handles phase-7.5 and phase-11 — no custom overlay needed
-        if (phase === 'phase-7.5-add-teammate' || phase === 'phase-11-farewell') return null;
+        // Guide engine handles phase-7.5 and phase-10 — no custom overlay needed
+        if (phase === 'phase-7.5-add-teammate' || phase === 'phase-10-retro') return null;
         const isLifecyclePhase = /^phase-(5|6|7|8|9|10|11)-/.test(phase);
         if (!isLifecyclePhase && messages.length > 0) return null;
         const leadCat = cats.find((c) => c.id === raw.leadCat) ?? cats[0];
