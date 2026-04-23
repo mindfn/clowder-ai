@@ -9,7 +9,7 @@ interface ServiceState {
 const VOICE_FEATURES = ['voice-input', 'voice-output', 'voice-companion'];
 
 export function useVoiceServicesAvailable(): boolean {
-  const [available, setAvailable] = useState(true);
+  const [available, setAvailable] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -24,7 +24,7 @@ export function useVoiceServicesAvailable(): boolean {
         const anyRunning = voiceServices.some((s) => s.status === 'running');
         if (!cancelled) setAvailable(anyRunning);
       } catch {
-        /* network error — keep visible as fallback */
+        /* network error — stay hidden */
       }
     })();
     return () => {

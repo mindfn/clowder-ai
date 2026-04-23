@@ -719,6 +719,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Telegram Bot Token',
     category: 'connector',
     sensitive: true,
+    restartRequired: true,
   },
   {
     name: 'FEISHU_APP_ID',
@@ -726,6 +727,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '飞书应用 App ID',
     category: 'connector',
     sensitive: false,
+    restartRequired: true,
   },
   {
     name: 'FEISHU_APP_SECRET',
@@ -733,6 +735,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '飞书应用 App Secret',
     category: 'connector',
     sensitive: true,
+    restartRequired: true,
   },
   {
     name: 'FEISHU_VERIFICATION_TOKEN',
@@ -740,6 +743,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '飞书 webhook 验证 token（仅 webhook 模式需要）',
     category: 'connector',
     sensitive: true,
+    restartRequired: true,
   },
   {
     name: 'FEISHU_CONNECTION_MODE',
@@ -747,6 +751,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '飞书连接模式：webhook（需公网 URL）或 websocket（长连接，无需公网）',
     category: 'connector',
     sensitive: false,
+    restartRequired: true,
   },
   {
     name: 'DINGTALK_APP_KEY',
@@ -754,6 +759,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '钉钉应用 AppKey',
     category: 'connector',
     sensitive: false,
+    restartRequired: true,
   },
   {
     name: 'DINGTALK_APP_SECRET',
@@ -761,6 +767,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '钉钉应用 AppSecret',
     category: 'connector',
     sensitive: true,
+    restartRequired: true,
   },
   {
     name: 'XIAOYI_AK',
@@ -768,6 +775,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '华为小艺 OpenClaw Access Key',
     category: 'connector',
     sensitive: false,
+    restartRequired: true,
   },
   {
     name: 'XIAOYI_SK',
@@ -775,6 +783,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '华为小艺 OpenClaw Secret Key',
     category: 'connector',
     sensitive: true,
+    restartRequired: true,
   },
   {
     name: 'XIAOYI_AGENT_ID',
@@ -782,6 +791,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '华为小艺 Agent ID',
     category: 'connector',
     sensitive: false,
+    restartRequired: true,
   },
   {
     name: 'FEISHU_BOT_OPEN_ID',
@@ -789,6 +799,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '飞书机器人 Open ID（接收消息的 bot 身份标识）',
     category: 'connector',
     sensitive: false,
+    restartRequired: true,
   },
   {
     name: 'FEISHU_ADMIN_OPEN_IDS',
@@ -796,6 +807,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '飞书管理员 Open ID 列表（逗号分隔）',
     category: 'connector',
     sensitive: false,
+    restartRequired: true,
   },
   {
     name: 'WEIXIN_VOICE_ITEM_MODE',
@@ -804,6 +816,7 @@ export const ENV_VARS: EnvDefinition[] = [
       '微信语音消息 voice_item 模式（minimal/playtime/playtime-sec，危险实验模式见 WEIXIN_ENABLE_UNSAFE_VOICE_MODES）',
     category: 'connector',
     sensitive: false,
+    restartRequired: true,
   },
   {
     name: 'WEIXIN_ENABLE_UNSAFE_VOICE_MODES',
@@ -812,6 +825,7 @@ export const ENV_VARS: EnvDefinition[] = [
       '是否允许危险语音实验模式（1=允许 playtime-encode/metadata，0=自动回退 playtime，避免“语音完全收不到”）',
     category: 'connector',
     sensitive: false,
+    restartRequired: true,
   },
   {
     name: 'WEIXIN_CAPTURE_INBOUND_VOICE_MEDIA',
@@ -819,6 +833,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '是否抓取入站微信语音媒体（1=把 voice media 当文件附件落盘，便于 SILK 二进制对比；0=保持当前行为）',
     category: 'connector',
     sensitive: false,
+    restartRequired: true,
   },
   {
     name: 'WEIXIN_BOT_TOKEN',
@@ -826,6 +841,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '微信机器人 Token（F137 微信个人网关）',
     category: 'connector',
     sensitive: true,
+    restartRequired: true,
   },
   {
     name: 'WECOM_BOT_ID',
@@ -834,6 +850,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: false,
     exampleRecommended: true,
+    restartRequired: true,
   },
   {
     name: 'WECOM_BOT_SECRET',
@@ -842,6 +859,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: true,
     exampleRecommended: true,
+    restartRequired: true,
   },
   {
     name: 'WECOM_CORP_ID',
@@ -850,6 +868,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: false,
     exampleRecommended: true,
+    restartRequired: true,
   },
   {
     name: 'WECOM_AGENT_ID',
@@ -858,6 +877,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: false,
     exampleRecommended: true,
+    restartRequired: true,
   },
   {
     name: 'WECOM_AGENT_SECRET',
@@ -866,6 +886,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: true,
     exampleRecommended: true,
+    restartRequired: true,
   },
   {
     name: 'WECOM_TOKEN',
@@ -874,6 +895,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: true,
     exampleRecommended: true,
+    restartRequired: true,
   },
   {
     name: 'WECOM_ENCODING_AES_KEY',
@@ -882,6 +904,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: true,
     exampleRecommended: true,
+    restartRequired: true,
   },
 
   // --- GitHub Repo Inbox (F141) ---
@@ -891,6 +914,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'GitHub webhook HMAC-SHA256 shared secret（F141 Repo Inbox）',
     category: 'connector',
     sensitive: true,
+    restartRequired: true,
   },
   {
     name: 'GITHUB_REPO_ALLOWLIST',
@@ -898,6 +922,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '允许的仓库列表，逗号分隔（如 zts212653/clowder-ai）',
     category: 'connector',
     sensitive: false,
+    restartRequired: true,
   },
   {
     name: 'GITHUB_REPO_INBOX_CAT_ID',
@@ -905,6 +930,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '接收 Repo Inbox 事件的猫 ID',
     category: 'connector',
     sensitive: false,
+    restartRequired: true,
   },
   {
     name: 'GITHUB_AUTHORITATIVE_REVIEW_LOGINS',
@@ -913,6 +939,7 @@ export const ENV_VARS: EnvDefinition[] = [
       'Comma-separated GitHub logins whose review feedback is handled by the email channel (authoritative source). F140 API polling skips these to avoid double-delivery.',
     category: 'connector',
     sensitive: false,
+    restartRequired: true,
   },
   {
     name: 'GITHUB_TOKEN',
@@ -920,6 +947,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'GitHub Personal Access Token（Scheduler 仓库活跃度模板 HTTP 请求鉴权）',
     category: 'connector',
     sensitive: true,
+    restartRequired: true,
   },
 
   // --- codex ---
@@ -1063,6 +1091,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '连接器媒体下载目录',
     category: 'connector',
     sensitive: false,
+    restartRequired: true,
   },
 
   // --- frontend ---
