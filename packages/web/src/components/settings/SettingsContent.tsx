@@ -12,7 +12,9 @@ import { HubConnectorConfigTab } from '../HubConnectorConfigTab';
 import { MarketplacePanel } from '../marketplace/marketplace-panel';
 import { PushSettingsPanel } from '../PushSettingsPanel';
 import { VoiceSettingsPanel } from '../VoiceSettingsPanel';
+import { CallbackEnvPanel } from './CallbackEnvPanel';
 import { OpsContent } from './OpsContent';
+import { PluginsContent } from './PluginsContent';
 import { RulesPromptsContent } from './RulesPromptsContent';
 import { ServiceStatusPanel } from './ServiceStatusPanel';
 import { SettingsPlaceholder } from './SettingsPlaceholder';
@@ -150,17 +152,15 @@ export function SettingsContent({ section }: SettingsContentProps) {
         <>
           <HubCapabilityTab section="mcp" />
           <div className="mt-4">
+            <CallbackEnvPanel />
+          </div>
+          <div className="mt-4">
             <ServiceStatusPanel filterFeatures={['browser-automation-mcp']} title="相关服务状态" />
           </div>
         </>
       );
     case 'plugins':
-      return (
-        <SettingsPlaceholder
-          section="插件/集成"
-          description="GitHub PR Tracking、Email Watcher、Calendar 同步等第三方集成的启用/禁用、配置和连接状态管理"
-        />
-      );
+      return <PluginsContent />;
     case 'voice':
       return (
         <>
