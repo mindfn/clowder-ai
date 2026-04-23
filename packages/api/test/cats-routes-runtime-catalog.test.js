@@ -225,7 +225,7 @@ describe('cats routes read runtime catalog', { concurrency: false }, () => {
     await app.close();
   });
 
-  it('GET /api/cats annotates seed/runtime source and roster metadata', async () => {
+  it('GET /api/cats returns roster metadata without source field', async () => {
     const templateConfig = makeVersion2Config('template-cat', '模板猫', {
       family: 'ragdoll',
       roles: ['architect', 'peer-reviewer'],
@@ -251,10 +251,10 @@ describe('cats routes read runtime catalog', { concurrency: false }, () => {
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.body);
 
-    const seedCat = body.cats.find((cat) => cat.id === 'template-cat');
-    assert.ok(seedCat, 'template-cat should be listed');
-    assert.equal(seedCat.source, 'seed');
-    assert.deepEqual(seedCat.roster, {
+    const templateCat = body.cats.find((cat) => cat.id === 'template-cat');
+    assert.ok(templateCat, 'template-cat should be listed');
+    assert.equal(templateCat.source, undefined);
+    assert.deepEqual(templateCat.roster, {
       family: 'ragdoll',
       roles: ['architect', 'peer-reviewer'],
       lead: true,
@@ -264,7 +264,7 @@ describe('cats routes read runtime catalog', { concurrency: false }, () => {
 
     const runtimeCat = body.cats.find((cat) => cat.id === 'runtime-cat');
     assert.ok(runtimeCat, 'runtime-cat should be listed');
-    assert.equal(runtimeCat.source, 'runtime');
+    assert.equal(runtimeCat.source, undefined);
     assert.equal(runtimeCat.roster, null);
   });
 
@@ -336,7 +336,7 @@ describe('cats routes read runtime catalog', { concurrency: false }, () => {
         localTemplateCat,
         'GET /api/cats should read the local project template when CAT_TEMPLATE_PATH is stale',
       );
-      assert.equal(localTemplateCat.source, 'seed');
+      assert.equal(localTemplateCat.source, undefined);
       assert.equal(
         readFileSync(join(projectRoot, '.cat-cafe', 'cat-catalog.json'), 'utf-8').includes('local-template'),
         true,
@@ -380,7 +380,7 @@ describe('cats routes read runtime catalog', { concurrency: false }, () => {
     const body = JSON.parse(res.body);
     const codex = body.cats.find((cat) => cat.id === 'codex');
     assert.ok(codex, 'codex should be listed');
-    assert.equal(codex.source, 'seed');
+    assert.equal(codex.source, undefined);
     assert.equal(codex.accountRef, 'codex');
 
     await app.close();
