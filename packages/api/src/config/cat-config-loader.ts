@@ -425,7 +425,6 @@ export function toAllCatConfigs(config: CatCafeConfig): Record<string, CatConfig
         avatar: variant.avatar ?? breed.avatar, // F32-b P4c: variant can override
         color: variant.color ?? breed.color, // F32-b P4c: variant can override
         mentionPatterns,
-        ...(variant.source != null ? { source: variant.source } : {}),
         ...(variant.accountRef != null ? { accountRef: variant.accountRef } : {}),
         clientId: variant.clientId as ClientId, // #252: Zod now accepts any string; downstream switch/case has default branches
         defaultModel: variant.defaultModel,

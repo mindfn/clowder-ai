@@ -148,8 +148,6 @@ function resolveProjectRoot(): string {
   return resolveActiveProjectRoot();
 }
 
-type CatSource = 'runtime' | 'template';
-
 interface CatResponseMetadata {
   roster: RosterEntry | null;
 }
@@ -357,7 +355,6 @@ async function toCatResponse(
           evaluation: metadata.roster.evaluation,
         }
       : null,
-    source: (cat.source ?? 'runtime') as CatSource,
     adapterMode: cat.clientId === 'google' ? (getAcpConfig(cat.id as string) ? 'acp' : 'cli') : undefined,
   };
 }
