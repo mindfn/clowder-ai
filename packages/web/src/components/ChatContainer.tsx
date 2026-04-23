@@ -452,17 +452,34 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   }, [currentBootcampPhase, threadId, activeGuideFlowId]);
 
   // ── Bootcamp farewell: auto-trigger guide after agent finishes at phase-10-retro ──
+  // Debounce: phase-10-retro may arrive via WebSocket before onIntentMode sets
+  // hasActiveInvocation=true. The 800ms delay lets the invocation signal settle.
+  const farewellTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
+    if (farewellTimerRef.current) {
+      clearTimeout(farewellTimerRef.current);
+      farewellTimerRef.current = null;
+    }
     if (currentBootcampPhase !== 'phase-10-retro') return;
     if (hasActiveInvocation) return;
     if (activeGuideFlowId === 'bootcamp-farewell') return;
     if (useGuideStore.getState().completedGuides.has(`${threadId}::bootcamp-farewell`)) return;
 
-    useGuideStore.getState().reduceServerEvent({
-      action: 'start',
-      guideId: 'bootcamp-farewell',
-      threadId,
-    });
+    farewellTimerRef.current = setTimeout(() => {
+      farewellTimerRef.current = null;
+      if (useChatStore.getState().hasActiveInvocation) return;
+      useGuideStore.getState().reduceServerEvent({
+        action: 'start',
+        guideId: 'bootcamp-farewell',
+        threadId,
+      });
+    }, 800);
+    return () => {
+      if (farewellTimerRef.current) {
+        clearTimeout(farewellTimerRef.current);
+        farewellTimerRef.current = null;
+      }
+    };
   }, [currentBootcampPhase, threadId, activeGuideFlowId, hasActiveInvocation]);
 
   const prevThreadRef = useRef(threadId);
