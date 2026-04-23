@@ -605,7 +605,6 @@ describe('HubCatEditor', () => {
             avatar: '',
             roleDescription: '',
             personality: '',
-            source: 'seed',
           },
           onClose: vi.fn(),
           onSaved: vi.fn(),
@@ -679,7 +678,6 @@ describe('HubCatEditor', () => {
             avatar: '',
             roleDescription: '',
             personality: '',
-            source: 'runtime',
           } as CatData,
           onClose: vi.fn(),
           onSaved: vi.fn(),
@@ -1013,7 +1011,6 @@ describe('HubCatEditor', () => {
       mentionPatterns: ['@runtime-codex'],
       avatar: '/avatars/codex.png',
       roleDescription: 'review',
-      source: 'runtime',
     } as CatData;
 
     mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
@@ -1089,7 +1086,6 @@ describe('HubCatEditor', () => {
       mentionPatterns: ['@runtime-codex'],
       avatar: '/avatars/codex.png',
       roleDescription: 'review',
-      source: 'runtime',
     } as CatData;
 
     mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
@@ -1180,7 +1176,6 @@ describe('HubCatEditor', () => {
       mentionPatterns: ['@runtime-opencode'],
       avatar: '/avatars/opencode.png',
       roleDescription: 'review',
-      source: 'runtime',
     } as CatData;
 
     mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
@@ -1268,7 +1263,6 @@ describe('HubCatEditor', () => {
       mentionPatterns: ['@runtime-opencode'],
       avatar: '/avatars/opencode.png',
       roleDescription: 'review',
-      source: 'runtime',
     } as CatData;
 
     let resolveProfiles!: (value: Response) => void;
@@ -1366,7 +1360,6 @@ describe('HubCatEditor', () => {
       mentionPatterns: ['@runtime-codex'],
       avatar: '/avatars/codex.png',
       roleDescription: 'review',
-      source: 'runtime',
     } as CatData;
 
     mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
@@ -1445,7 +1438,6 @@ describe('HubCatEditor', () => {
       mentionPatterns: ['@runtime-codex'],
       avatar: '/avatars/codex.png',
       roleDescription: 'review',
-      source: 'runtime',
     } as CatData;
 
     mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
@@ -1528,7 +1520,6 @@ describe('HubCatEditor', () => {
       mentionPatterns: ['@runtime-codex'],
       avatar: '/avatars/codex.png',
       roleDescription: 'review',
-      source: 'runtime',
       contextBudget: {
         maxPromptTokens: 32000,
         maxContextTokens: 24000,
@@ -1678,7 +1669,6 @@ describe('HubCatEditor', () => {
       avatar: '/avatars/antigravity.png',
       roleDescription: '桥接通道',
       personality: '稳定',
-      source: 'runtime',
     };
     const onSaved = vi.fn(() => Promise.resolve());
     mockApiFetch.mockImplementation((path: string) => {
@@ -1769,7 +1759,7 @@ describe('HubCatEditor', () => {
     mockConfirm.mockResolvedValue(true);
   });
 
-  it('hides delete action for seed members', async () => {
+  it('shows delete action for all members', async () => {
     const existingCat: CatData = {
       id: 'codex',
       name: '缅因猫',
@@ -1781,7 +1771,6 @@ describe('HubCatEditor', () => {
       avatar: '/avatars/codex.png',
       roleDescription: 'review',
       personality: 'rigorous',
-      source: 'seed',
     };
 
     mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
@@ -1807,7 +1796,7 @@ describe('HubCatEditor', () => {
     });
     await flushEffects();
 
-    expect(container.querySelector('button[aria-label="删除成员"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="删除成员"]')).not.toBeNull();
   });
 
   it('loads runtime controls for an existing member and saves strategy separately', async () => {
@@ -2263,7 +2252,6 @@ describe('HubCatEditor', () => {
       mentionPatterns: ['@codex'],
       avatar: '/avatars/codex.png',
       roleDescription: 'review',
-      source: 'runtime',
     } as CatData;
 
     mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
@@ -2353,7 +2341,6 @@ describe('HubCatEditor', () => {
       mentionPatterns: ['@codex'],
       avatar: '/avatars/codex.png',
       roleDescription: 'review',
-      source: 'runtime',
     } as CatData;
 
     mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
@@ -2445,7 +2432,6 @@ describe('HubCatEditor', () => {
       mentionPatterns: ['@codex'],
       avatar: '/avatars/codex.png',
       roleDescription: 'review',
-      source: 'runtime',
     } as CatData;
 
     mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
@@ -2548,7 +2534,6 @@ describe('HubCatEditor', () => {
       mentionPatterns: ['@codex'],
       avatar: '/avatars/codex.png',
       roleDescription: 'review',
-      source: 'runtime',
     } as CatData;
 
     let configPatchCount = 0;
@@ -2698,7 +2683,6 @@ describe('HubCatEditor', () => {
       mentionPatterns: ['@codex'],
       avatar: '/avatars/codex.png',
       roleDescription: 'review',
-      source: 'runtime',
     } as CatData;
 
     mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {

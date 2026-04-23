@@ -25,7 +25,6 @@ const MOCK_CATS = [
     avatar: '/avatars/opus.png',
     roleDescription: '架构',
     personality: '稳重',
-    source: 'seed',
   },
   {
     id: 'codex',
@@ -39,7 +38,6 @@ const MOCK_CATS = [
     avatar: '/avatars/codex.png',
     roleDescription: 'review',
     personality: 'rigorous',
-    source: 'seed',
   },
   {
     id: 'spark',
@@ -53,7 +51,6 @@ const MOCK_CATS = [
     avatar: '/avatars/spark.png',
     roleDescription: 'fast coding',
     personality: 'sharp',
-    source: 'runtime',
   },
   {
     id: 'gemini25',
@@ -67,7 +64,6 @@ const MOCK_CATS = [
     avatar: '/avatars/gemini25.png',
     roleDescription: 'design',
     personality: 'bold',
-    source: 'seed',
   },
   {
     id: 'antigravity',
@@ -80,7 +76,6 @@ const MOCK_CATS = [
     avatar: '/avatars/antigravity.png',
     roleDescription: 'bridge',
     personality: 'curious',
-    source: 'seed',
   },
 ];
 

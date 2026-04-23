@@ -28,7 +28,7 @@ function clientRuntimeLabel(cat: CatData, configCat?: CatConfig) {
   if (accountRef.includes('opencode')) return 'OpenCode';
   if (accountRef.includes('dare')) return 'Dare';
   if (cat.clientId === 'antigravity') return 'Antigravity';
-  if (cat.source === 'runtime' && cat.clientId === 'openai') return 'OpenAI-Compatible';
+  if (cat.clientId === 'openai') return 'OpenAI-Compatible';
   return humanizeClientId(configCat?.clientId ?? cat.clientId);
 }
 
@@ -195,7 +195,7 @@ export function HubMemberOverviewCard({
       onDragEnd={draggable ? (event) => onDragEnd?.(cat, event) : undefined}
       onClick={editCard}
       className={`rounded-[20px] px-[18px] py-[18px] shadow-sm transition hover:shadow-md ${isDragging ? 'opacity-40' : ''}`}
-      style={{ backgroundColor: '#FFFDFC', border: `1px solid ${cat.source === 'runtime' ? '#D9C7EA' : '#F1E7DF'}` }}
+      style={{ backgroundColor: '#FFFDFC', border: '1px solid #D9C7EA' }}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-2">

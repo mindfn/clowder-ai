@@ -46,7 +46,6 @@ const CATS: CatData[] = [
     avatar: '',
     roleDescription: '',
     personality: '',
-    source: 'seed',
     roster: {
       family: 'ragdoll',
       roles: ['architect', 'peer-reviewer'],
@@ -68,7 +67,6 @@ const CATS: CatData[] = [
     avatar: '',
     roleDescription: '',
     personality: '',
-    source: 'seed',
     roster: {
       family: 'maine-coon',
       roles: ['peer-reviewer', 'security'],
@@ -90,7 +88,6 @@ const CATS: CatData[] = [
     avatar: '',
     roleDescription: '',
     personality: '',
-    source: 'runtime',
     roster: {
       family: 'bengal',
       roles: ['creative', 'visual', 'browser-agent'],
