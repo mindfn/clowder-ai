@@ -134,8 +134,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
           models,
           envVars: envVars ?? {},
         };
-        // Only send clientId if the original profile had one (avoid forcing 'anthropic' on API-key accounts)
-        if (editProfile?.clientId || isOAuth) {
+        if (editProfile?.clientId) {
           patch.clientId = clientId;
         }
         if (baseUrl.trim()) patch.baseUrl = baseUrl.trim();
