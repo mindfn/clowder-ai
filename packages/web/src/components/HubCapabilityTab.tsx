@@ -32,7 +32,11 @@ import { getProjectPaths, projectDisplayName } from './ThreadSidebar/thread-util
 
 type FilterSource = 'all' | 'cat-cafe' | 'external';
 
-export function HubCapabilityTab() {
+interface HubCapabilityTabProps {
+  section?: 'all' | 'mcp' | 'skills';
+}
+
+export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
   const [items, setItems] = useState<CapabilityBoardItem[]>([]);
   const [catFamilies, setCatFamilies] = useState<CatFamily[]>([]);
   const [skillHealth, setSkillHealth] = useState<SkillHealthSummary | null>(null);
@@ -210,68 +214,73 @@ export function HubCapabilityTab() {
       {skillHealth && <SkillHealthBanner health={skillHealth} items={items} />}
 
       {/* MCP Section */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2" />
-          <button
-            type="button"
-            onClick={() => setShowAddMcp(!showAddMcp)}
-            className="text-xs px-2 py-1 rounded border border-cafe text-cafe-accent
-                       hover:bg-cafe-accent/5 transition-colors"
-          >
-            {showAddMcp ? '取消' : '+ 添加 MCP'}
-          </button>
-        </div>
-
-        {showAddMcp && (
-          <div className="rounded-lg border border-cafe-accent/20 bg-cafe-surface p-3">
-            <McpInstallForm
-              projectPath={projectPath ?? undefined}
-              onInstalled={() => {
-                fetchCapabilities(projectPath ?? undefined);
-              }}
-              onClose={() => setShowAddMcp(false)}
-            />
+      {(section === 'all' || section === 'mcp') && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2" />
+            <button
+              type="button"
+              onClick={() => setShowAddMcp(!showAddMcp)}
+              className="text-xs px-2 py-1 rounded border border-cafe text-cafe-accent
+                         hover:bg-cafe-accent/5 transition-colors"
+            >
+              {showAddMcp ? '取消' : '+ 添加 MCP'}
+            </button>
           </div>
-        )}
 
-        <CapabilitySection
-          icon={<SectionIconMcp />}
-          title="MCP"
-          subtitle="工具服务"
-          items={mcpItems}
-          catFamilies={catFamilies}
-          toggling={toggling}
-          onToggle={handleToggle}
-          onDeleteMcp={handleDeleteMcp}
-          deletingMcp={deleting}
-        />
-      </div>
+          {showAddMcp && (
+            <div className="rounded-lg border border-cafe-accent/20 bg-cafe-surface p-3">
+              <McpInstallForm
+                projectPath={projectPath ?? undefined}
+                onInstalled={() => {
+                  fetchCapabilities(projectPath ?? undefined);
+                }}
+                onClose={() => setShowAddMcp(false)}
+              />
+            </div>
+          )}
+
+          <CapabilitySection
+            icon={<SectionIconMcp />}
+            title="MCP"
+            subtitle="工具服务"
+            items={mcpItems}
+            catFamilies={catFamilies}
+            toggling={toggling}
+            onToggle={handleToggle}
+            onDeleteMcp={handleDeleteMcp}
+            deletingMcp={deleting}
+          />
+        </div>
+      )}
 
       {/* Clowder AI Skills by Category */}
-      {catCafeSkillGroups.map((group) => (
+      {(section === 'all' || section === 'skills') &&
+        catCafeSkillGroups.map((group) => (
+          <CapabilitySection
+            key={group.category}
+            icon={<SectionIconSkill />}
+            title={group.category}
+            subtitle="Clowder AI Skills"
+            items={group.items}
+            catFamilies={catFamilies}
+            toggling={toggling}
+            onToggle={handleToggle}
+          />
+        ))}
+
+      {/* External Skills Section */}
+      {(section === 'all' || section === 'skills') && (
         <CapabilitySection
-          key={group.category}
-          icon={<SectionIconSkill />}
-          title={group.category}
-          subtitle="Clowder AI Skills"
-          items={group.items}
+          icon={<SectionIconExtension />}
+          title="Extensions"
+          subtitle="外部扩展 Skills"
+          items={externalSkills}
           catFamilies={catFamilies}
           toggling={toggling}
           onToggle={handleToggle}
         />
-      ))}
-
-      {/* External Skills Section */}
-      <CapabilitySection
-        icon={<SectionIconExtension />}
-        title="Extensions"
-        subtitle="外部扩展 Skills"
-        items={externalSkills}
-        catFamilies={catFamilies}
-        toggling={toggling}
-        onToggle={handleToggle}
-      />
+      )}
 
       {filtered.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 text-center">

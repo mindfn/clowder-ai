@@ -11,7 +11,7 @@ import { HubCatEditor } from '../HubCatEditor';
 import { HubClaudeRescueSection } from '../HubClaudeRescueSection';
 import { HubCoCreatorEditor } from '../HubCoCreatorEditor';
 import { HubCommandsTab } from '../HubCommandsTab';
-import { HubEnvFilesTab } from '../HubEnvFilesTab';
+import { HubConnectorConfigTab } from '../HubConnectorConfigTab';
 import { HubGovernanceTab } from '../HubGovernanceTab';
 import { HubLeaderboardTab } from '../HubLeaderboardTab';
 import { HubMemoryTab } from '../HubMemoryTab';
@@ -84,12 +84,13 @@ export function SettingsContent({ section }: SettingsContentProps) {
     [fetchData, refresh],
   );
 
-  if (fetchError) {
-    return <p className="text-sm text-red-500 bg-red-50 rounded-lg px-3 py-2">{fetchError}</p>;
-  }
+  const configError = fetchError ? (
+    <p className="text-sm text-red-500 bg-red-50 rounded-lg px-3 py-2">{fetchError}</p>
+  ) : null;
 
   switch (section) {
     case 'members':
+      if (configError) return configError;
       return (
         <>
           {config ? (
@@ -135,23 +136,24 @@ export function SettingsContent({ section }: SettingsContentProps) {
     case 'accounts':
       return <HubAccountsTab />;
     case 'im':
-      return <HubEnvFilesTab />;
+      return <HubConnectorConfigTab />;
     case 'skills':
       return (
         <>
-          <HubCapabilityTab />
+          <HubCapabilityTab section="skills" />
           <div className="mt-4">
             <MarketplacePanel />
           </div>
         </>
       );
     case 'mcp':
-      return <SettingsPlaceholder section="MCP 管理" description="MCP 连接配置（STDIO/HTTP 模式）、市场、健康监控" />;
+      return <HubCapabilityTab section="mcp" />;
     case 'plugins':
       return <SettingsPlaceholder section="插件/集成" description="GitHub PR Tracking、Email、Calendar 等第三方集成" />;
     case 'voice':
       return <VoiceSettingsPanel />;
     case 'system':
+      if (configError) return configError;
       return config ? (
         <SystemTab config={config} onConfigChange={fetchData} />
       ) : (
