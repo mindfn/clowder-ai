@@ -3,23 +3,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useCatData } from '@/hooks/useCatData';
 import { apiFetch } from '@/utils/api-client';
-import { BrakeSettingsPanel } from '../BrakeSettingsPanel';
 import { CatOverviewTab, type ConfigData, SystemTab } from '../config-viewer-tabs';
 import { HubAccountsTab } from '../HubAccountsTab';
 import { HubCapabilityTab } from '../HubCapabilityTab';
 import { HubCatEditor } from '../HubCatEditor';
-import { HubClaudeRescueSection } from '../HubClaudeRescueSection';
 import { HubCoCreatorEditor } from '../HubCoCreatorEditor';
-import { HubCommandsTab } from '../HubCommandsTab';
 import { HubConnectorConfigTab } from '../HubConnectorConfigTab';
-import { HubGovernanceTab } from '../HubGovernanceTab';
-import { HubLeaderboardTab } from '../HubLeaderboardTab';
-import { HubMemoryTab } from '../HubMemoryTab';
-import { HubRoutingPolicyTab } from '../HubRoutingPolicyTab';
-import { HubToolUsageTab } from '../HubToolUsageTab';
 import { MarketplacePanel } from '../marketplace/marketplace-panel';
 import { PushSettingsPanel } from '../PushSettingsPanel';
 import { VoiceSettingsPanel } from '../VoiceSettingsPanel';
+import { OpsContent } from './OpsContent';
 import { SettingsPlaceholder } from './SettingsPlaceholder';
 
 interface SettingsContentProps {
@@ -162,18 +155,7 @@ export function SettingsContent({ section }: SettingsContentProps) {
     case 'notify':
       return <PushSettingsPanel />;
     case 'ops':
-      return (
-        <div className="space-y-6">
-          <HubRoutingPolicyTab />
-          <HubLeaderboardTab />
-          <HubMemoryTab />
-          <HubGovernanceTab />
-          <BrakeSettingsPanel />
-          <HubClaudeRescueSection />
-          <HubCommandsTab />
-          <HubToolUsageTab />
-        </div>
-      );
+      return <OpsContent />;
     default:
       return <SettingsPlaceholder section={section} description="此分区即将上线" />;
   }
