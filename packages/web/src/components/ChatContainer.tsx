@@ -35,7 +35,6 @@ import { ChatInput } from './ChatInput';
 import { ChatMessage } from './ChatMessage';
 import { ConnectionStatusBar } from './ConnectionStatusBar';
 import { GameOverlayConnector } from './game/GameOverlayConnector';
-import { HubListModal } from './HubListModal';
 import { BootcampIcon } from './icons/BootcampIcon';
 import { PawIcon } from './icons/PawIcon';
 import { MessageActions } from './MessageActions';
@@ -119,7 +118,6 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   const [statusPanelOpen, setStatusPanelOpen] = useState(true);
   const [mobileStatusOpen, setMobileStatusOpen] = useState(false);
   const [showBootcampList, setShowBootcampList] = useState(false);
-  const [showHubList, setShowHubList] = useState(false);
   // F106: fetch bootcamp count independently of sidebar lifecycle
   // refreshKey increments only on modal close → avoids duplicate fetch on open
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -533,8 +531,6 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
             <ThreadSidebar
               onClose={() => setSidebarOpen(false)}
               className="w-full"
-              onBootcampClick={() => setShowBootcampList(true)}
-              onHubClick={() => setShowHubList(true)}
             />
           </div>
           <div className="hidden md:flex items-center">
@@ -813,7 +809,6 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
       />
       <CatCafeHub />
       <BootcampListModal open={showBootcampList} onClose={handleBootcampModalClose} currentThreadId={threadId} />
-      <HubListModal open={showHubList} onClose={() => setShowHubList(false)} currentThreadId={threadId} />
       {showVoteModal && <VoteConfigModal onSubmit={handleVoteSubmit} onCancel={() => setShowVoteModal(false)} />}
     </div>
   );
