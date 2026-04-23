@@ -90,10 +90,8 @@ MSG 3（用户尝试输入 → 前端拦截 typing → 拉起 guide overlay）
 │
 MSG 4+（用户 @mention 了新队友）
 │  Phase 8 多猫协作
-│  Phase 9 完成庆祝 + 展示项目卡
-│  Phase 10 等用户选择
-│  ├─ 用户选了新项目 → 回到 Phase 5（循环）
-│  └─ 用户没选 → 前端 overlay 毕业引导 → Phase 11
+│  Phase 9 完成庆祝 + 展示项目卡（让用户知道训练营还有什么）
+│  Phase 10 前端 overlay 毕业引导 → Phase 11
 │  ⛔ STOP
 │
 MSG 5（毕业引导完成 / 用户发消息）
@@ -205,27 +203,20 @@ MSG 5（毕业引导完成 / 用户发消息）
    - 用户可以当场选一个，也可以不选（前端会触发毕业引导 overlay）
 4. `cat_cafe_update_bootcamp_state(threadId, phase='phase-10-retro')`
 
-**📨 发送后 → ⛔ STOP — 等用户选择项目，或前端 overlay 自动触发毕业引导**
+**📨 发送后 → ⛔ STOP — 前端 overlay 自动触发毕业引导**
 
 ---
 
-## Phase 10: 用户选择 / 毕业引导（phase-10-retro）
-
-Phase 10 有两条路径，取决于用户行为：
-
-### 路径 A — 用户选了项目（用户消息包含项目名）
-
-1. 从消息文本识别选了哪个任务
-2. `cat_cafe_update_bootcamp_state(threadId, phase='phase-5-kickoff', selectedTaskId='{taskId}')`
-3. **回到 Phase 5 愿景 Kickoff**，用新项目重新走 Phase 5→6→7→8→9 流程
-4. 回到 Phase 9 时会再次出现展示卡，用户可以继续挑战或等毕业引导
-
-### 路径 B — 前端 overlay 毕业引导（用户没选项目）
+## Phase 10: 毕业引导（phase-10-retro — 前端 overlay 接管）
 
 1. 前端检测到 phase-10-retro → 自动触发 bootcamp-farewell 引导 overlay
 2. overlay 展示毕业引导（训练营入口位置、如何开始新训练营等）
 3. overlay 完成后，前端引导引擎自动推进到 phase-11-farewell
-4. **你不需要说任何关于毕业的话**——毕业引导是前端 overlay 自然推进的
+
+**你不需要说任何关于毕业的话**——毕业引导是前端 overlay 自然推进的。
+
+如果用户在 overlay 之前/期间选了展示卡里的项目，不要回到 Phase 5 循环——
+当前 session 继续走毕业流程，用户可以开新训练营来做选的项目。
 
 ---
 
