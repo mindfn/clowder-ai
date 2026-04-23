@@ -46,6 +46,7 @@ export { quotaRoutes } from './quota.js';
 export { reflectRoutes } from './reflect.js';
 export { refluxRoutes } from './reflux-routes.js';
 export { resolutionRoutes } from './resolution-routes.js';
+export { servicesRoutes } from './services.js';
 export { sessionChainRoutes } from './session-chain.js';
 export { sessionHooksRoutes } from './session-hooks.js';
 export { sessionStrategyConfigRoutes } from './session-strategy-config.js';

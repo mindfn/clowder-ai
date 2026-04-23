@@ -159,6 +159,7 @@ import {
   refluxRoutes,
   registerCallbackDocsRoutes,
   resolutionRoutes,
+  servicesRoutes,
   sessionChainRoutes,
   sessionHooksRoutes,
   sessionStrategyConfigRoutes,
@@ -1533,6 +1534,7 @@ async function main(): Promise<void> {
     },
   });
   await app.register(skillsRoutes);
+  await app.register(servicesRoutes);
   await app.register(memoryRoutes, { memoryStore, threadStore });
 
   // Session chain (F24)
