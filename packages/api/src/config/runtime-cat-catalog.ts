@@ -489,10 +489,6 @@ export function deleteRuntimeCat(projectRoot: string, catId: string): CatCafeCon
   if (!located) {
     throw new Error(`Cat "${catId}" not found in runtime catalog`);
   }
-  if (located.variant.source === 'seed') {
-    throw new Error(`Cannot delete seed cat "${catId}" from runtime catalog`);
-  }
-
   const breed = catalog.breeds[located.breedIndex] as Record<string, any>;
   if (breed.variants.length === 1) {
     catalog.breeds = catalog.breeds.filter((_: unknown, index: number) => index !== located.breedIndex);

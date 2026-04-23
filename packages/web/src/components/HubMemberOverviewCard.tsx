@@ -247,7 +247,7 @@ export function HubMemberOverviewCard({
           >
             {togglingAvailability ? '切换中...' : status.label}
           </button>
-          {onDelete && cat.source !== 'seed' ? (
+          {onDelete ? (
             <button
               type="button"
               onClick={(event) => {
