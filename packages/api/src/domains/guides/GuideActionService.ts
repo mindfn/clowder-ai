@@ -13,8 +13,8 @@ import type { GuideStateV1 } from '../cats/services/stores/ports/ThreadStore.js'
 import type { GuideLifecycleDeps, LifecycleResult } from './GuideLifecycleService.js';
 import type { GuideStateBridge } from './GuideSessionRepository.js';
 import {
-  isTerminal,
   createOfferedState,
+  isTerminal,
   transitionToActive,
   transitionToAwaitingChoice,
   transitionToCancelled,
@@ -85,7 +85,10 @@ export class GuideActionService {
         await this.guideStore.set(threadId, replaced);
         this.socket.emitToUser(userId, 'guide_start', { guideId, threadId, timestamp: Date.now() });
         guideTransitions.add(1, { 'operation.name': 'guide_start', status: 'success' });
-        this.log.info({ guideId, threadId, userId, replacedGuideId: gs.guideId }, '[F155] guide started (replaced terminal guide state)');
+        this.log.info(
+          { guideId, threadId, userId, replacedGuideId: gs.guideId },
+          '[F155] guide started (replaced terminal guide state)',
+        );
         return { ok: true, guideState: replaced };
       }
       return {

@@ -375,36 +375,33 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   // MCP callbacks update Redis directly; the companion WebSocket `thread_updated`
   // may not reach this frontend (e.g. worktree port isolation). Re-fetching the
   // thread ensures the store stays in sync.
-  const syncThreadState = useCallback(
-    () => {
-      apiFetch(`/api/threads/${threadId}`)
-        .then((res) =>
-          res.ok
-            ? (res.json() as Promise<{
-                bootcampState?: Thread['bootcampState'];
-                firstRunQuestState?: { phase: string; firstCatName?: string };
-              }>)
-            : null,
-        )
-        .then((thread) => {
-          if (!thread) return;
-          const local = useChatStore.getState().threads.find((t) => t.id === threadId);
-          if (thread.bootcampState || local?.bootcampState) {
-            syncLocalBootcampState(threadId, thread.bootcampState);
-          }
-          const localQuest = (local as Record<string, unknown> | undefined)?.firstRunQuestState;
-          if (thread.firstRunQuestState || localQuest) {
-            useChatStore.setState((state) => ({
-              threads: state.threads.map((t) =>
-                t.id === threadId ? { ...t, firstRunQuestState: thread.firstRunQuestState } : t,
-              ),
-            }));
-          }
-        })
-        .catch(() => {});
-    },
-    [threadId],
-  );
+  const syncThreadState = useCallback(() => {
+    apiFetch(`/api/threads/${threadId}`)
+      .then((res) =>
+        res.ok
+          ? (res.json() as Promise<{
+              bootcampState?: Thread['bootcampState'];
+              firstRunQuestState?: { phase: string; firstCatName?: string };
+            }>)
+          : null,
+      )
+      .then((thread) => {
+        if (!thread) return;
+        const local = useChatStore.getState().threads.find((t) => t.id === threadId);
+        if (thread.bootcampState || local?.bootcampState) {
+          syncLocalBootcampState(threadId, thread.bootcampState);
+        }
+        const localQuest = (local as Record<string, unknown> | undefined)?.firstRunQuestState;
+        if (thread.firstRunQuestState || localQuest) {
+          useChatStore.setState((state) => ({
+            threads: state.threads.map((t) =>
+              t.id === threadId ? { ...t, firstRunQuestState: thread.firstRunQuestState } : t,
+            ),
+          }));
+        }
+      })
+      .catch(() => {});
+  }, [threadId]);
 
   // Sync on invocation end (active → inactive transition)
   const prevInvocationRef = useRef(hasActiveInvocation);
