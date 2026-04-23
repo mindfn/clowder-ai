@@ -142,7 +142,12 @@ export function SettingsContent({ section }: SettingsContentProps) {
     case 'mcp':
       return <HubCapabilityTab section="mcp" />;
     case 'plugins':
-      return <SettingsPlaceholder section="插件/集成" description="GitHub PR Tracking、Email、Calendar 等第三方集成" />;
+      return (
+        <SettingsPlaceholder
+          section="插件/集成"
+          description="GitHub PR Tracking、Email Watcher、Calendar 同步等第三方集成的启用/禁用、配置和连接状态管理"
+        />
+      );
     case 'voice':
       return <VoiceSettingsPanel />;
     case 'system':
