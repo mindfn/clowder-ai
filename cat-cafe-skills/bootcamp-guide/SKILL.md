@@ -90,12 +90,15 @@ MSG 3（用户尝试输入 → 前端拦截 typing → 拉起 guide overlay）
 │
 MSG 4+（用户 @mention 了新队友）
 │  Phase 8 多猫协作
-│  Phase 9 完成庆祝 + 展示项目卡（让用户知道训练营还有什么）
-│  Phase 10 前端 overlay 毕业引导 → Phase 11
+│  Phase 9 引导项目完成 + 项目选择卡
 │  ⛔ STOP
 │
-MSG 5（毕业引导完成 / 用户发消息）
-│  Phase 11 毕业
+MSG 5+（用户选择项目）
+│  Phase 10 自由项目开发（可迭代多个项目）
+│  用户说不做了 → Phase 11
+│
+MSG N（用户决定毕业）
+│  Phase 11 毕业（前端 overlay 引导）
 ```
 
 ---
@@ -194,32 +197,44 @@ MSG 5（毕业引导完成 / 用户发消息）
    - 自然地告知所有问题已修复完毕，第一个项目顺利完成
    - **不要**刻意强调"多猫协作的好处"——用户刚亲身体验过，不用你总结
    - 末尾附猫猫签名
-3. 用 `cat_cafe_create_rich_block` 发送展示卡片（先调 `get_rich_block_rules` 确认字段要求）：
+3. 用 `cat_cafe_create_rich_block` 发送项目选择卡片（先调 `get_rich_block_rules` 确认字段要求）：
    - `kind: 'interactive'`, `interactiveType: 'card-grid'`
    - `id: 'bootcamp-next-project'`
-   - `title: '训练营里还有这些好玩的，随时回来挑战！'`
+   - `title: '想继续做点什么？选一个感兴趣的项目！'`
    - 16 个选项按难度分三层（⭐/⭐⭐/⭐⭐⭐），`allowRandom: true`
    - 涵盖前端页面、工具脚本、小游戏、数据可视化等方向
-   - 用户可以当场选一个，也可以不选（前端会触发毕业引导 overlay）
 4. `cat_cafe_update_bootcamp_state(threadId, phase='phase-10-retro')`
 
-**📨 发送后 → ⛔ STOP — 前端 overlay 自动触发毕业引导**
+**📨 发送后 → ⛔ STOP — 等用户选择项目**
 
 ---
 
-## Phase 10: 毕业引导（phase-10-retro — 前端 overlay 接管）
+## Phase 10: 自由项目开发（phase-10-retro）
 
-1. 前端检测到 phase-10-retro → 自动触发 bootcamp-farewell 引导 overlay
-2. overlay 展示毕业引导（训练营入口位置、如何开始新训练营等）
-3. overlay 完成后，前端引导引擎自动推进到 phase-11-farewell
+引导项目（Phase 4→9）教会了用户多猫协作的基本流程。
+Phase 10 开始用户自主选择项目、迭代开发——这是训练营的**主体阶段**。
 
-**你不需要说任何关于毕业的话**——毕业引导是前端 overlay 自然推进的。
+### 用户选了项目
 
-如果用户在 overlay 之前/期间选了展示卡里的项目，不要回到 Phase 5 循环——
-当前 session 继续走毕业流程，用户可以开新训练营来做选的项目。
+1. 从消息文本识别选了哪个项目
+2. 确认需求："收到！我来做一个 {项目名}。"
+3. 按正常开发流程推进：给出计划 → 开发交付 → 多猫协作 review → 完成
+4. 完成后用 `cat_cafe_post_message` 告知完成，问用户："还想做点别的吗？"
+   - 用户选新项目 → 继续在 Phase 10 迭代
+   - 用户说不做了 / 够了 → 推进到 Phase 11：
+     `cat_cafe_update_bootcamp_state(threadId, phase='phase-11-farewell', completedAt=Date.now())`
+
+### 注意
+
+- Phase 10 不需要走完整的 bootcamp Phase 5→6→7→8→9 仪式
+- 按正常猫猫开发流程工作，用户已经学会了
+- 每个项目完成后自然地问用户下一步意愿
 
 ---
 
 ## MSG 5: 毕业（Phase 11）
+
+前端检测到 phase-11-farewell → 自动触发 bootcamp-farewell 引导 overlay，
+展示毕业引导（训练营入口位置、如何开始新训练营等）。
 
 > "🎓 恭喜毕业！你已经掌握了多猫协作的完整流程。去创造点什么吧~"
