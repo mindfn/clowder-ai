@@ -120,6 +120,7 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
     for (const key of testCacheRef.current.keys()) {
       if (key.startsWith(`${profileId}:`)) testCacheRef.current.delete(key);
     }
+    if (testSigRef.current.startsWith(`${profileId}:`)) testSigRef.current = '';
   }, []);
 
   const handleProfileCreated = useCallback(
