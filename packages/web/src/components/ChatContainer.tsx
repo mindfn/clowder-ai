@@ -371,44 +371,54 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     setShowFirstRunQuestPrompt(true);
   }, [cats.length, isLoading, hasFetched, storeThreads, threadId]);
 
-  // ── Data sync: re-fetch thread state on invocation end ──
+  // ── Data sync: re-fetch thread state ──
   // MCP callbacks update Redis directly; the companion WebSocket `thread_updated`
   // may not reach this frontend (e.g. worktree port isolation). Re-fetching the
-  // thread when an invocation finishes ensures the store stays in sync.
+  // thread ensures the store stays in sync.
+  const syncThreadState = useCallback(
+    (reason: string) => {
+      apiFetch(`/api/threads/${threadId}`)
+        .then((res) =>
+          res.ok
+            ? (res.json() as Promise<{
+                bootcampState?: Thread['bootcampState'];
+                firstRunQuestState?: { phase: string; firstCatName?: string };
+              }>)
+            : null,
+        )
+        .then((thread) => {
+          if (!thread) return;
+          const local = useChatStore.getState().threads.find((t) => t.id === threadId);
+          if (thread.bootcampState || local?.bootcampState) {
+            syncLocalBootcampState(threadId, thread.bootcampState);
+          }
+          const localQuest = (local as Record<string, unknown> | undefined)?.firstRunQuestState;
+          if (thread.firstRunQuestState || localQuest) {
+            useChatStore.setState((state) => ({
+              threads: state.threads.map((t) =>
+                t.id === threadId ? { ...t, firstRunQuestState: thread.firstRunQuestState } : t,
+              ),
+            }));
+          }
+        })
+        .catch(() => {});
+    },
+    [threadId],
+  );
+
+  // Sync on invocation end (active → inactive transition)
   const prevInvocationRef = useRef(hasActiveInvocation);
   useEffect(() => {
     const wasActive = prevInvocationRef.current;
     prevInvocationRef.current = hasActiveInvocation;
     if (!wasActive || hasActiveInvocation) return;
-    apiFetch(`/api/threads/${threadId}`)
-      .then((res) =>
-        res.ok
-          ? (res.json() as Promise<{
-              bootcampState?: Thread['bootcampState'];
-              firstRunQuestState?: { phase: string; firstCatName?: string };
-            }>)
-          : null,
-      )
-      .then((thread) => {
-        if (!thread) return;
-        // Sync bootcampState — even when absent/null — clears stale local state
-        // when the backend has removed it.
-        const local = useChatStore.getState().threads.find((t) => t.id === threadId);
-        if (thread.bootcampState || local?.bootcampState) {
-          syncLocalBootcampState(threadId, thread.bootcampState);
-        }
-        // Sync firstRunQuestState so QuestBanner reflects latest phase
-        const localQuest = (local as Record<string, unknown> | undefined)?.firstRunQuestState;
-        if (thread.firstRunQuestState || localQuest) {
-          useChatStore.setState((state) => ({
-            threads: state.threads.map((t) =>
-              t.id === threadId ? { ...t, firstRunQuestState: thread.firstRunQuestState } : t,
-            ),
-          }));
-        }
-      })
-      .catch(() => {});
-  }, [hasActiveInvocation, threadId]);
+    syncThreadState('invocation-end');
+  }, [hasActiveInvocation, syncThreadState]);
+
+  // Sync on mount / thread switch — sidebar may not have loaded yet
+  useEffect(() => {
+    syncThreadState('mount');
+  }, [syncThreadState]);
 
   // ── Bootcamp add-teammate: trigger guide engine when user interacts with input ──
   // Subscribe reactively so the effect re-runs when guide exits (session cleared).
