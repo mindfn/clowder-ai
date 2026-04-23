@@ -243,7 +243,7 @@ export const firstRunQuestRoutes: FastifyPluginAsync<FirstRunQuestRoutesOptions>
     const result = await tryCliProbe(cliName, { model, env: probeEnv });
     if (result) return result;
 
-    return { ok: false, message: `${cliName} CLI 未安装或不支持探测` };
+    return { ok: true, skipped: true, message: `${cliName} 不支持连接探测，已跳过检测` };
   });
 };
 
