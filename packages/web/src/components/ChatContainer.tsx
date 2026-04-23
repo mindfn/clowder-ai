@@ -376,7 +376,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   // may not reach this frontend (e.g. worktree port isolation). Re-fetching the
   // thread ensures the store stays in sync.
   const syncThreadState = useCallback(
-    (reason: string) => {
+    () => {
       apiFetch(`/api/threads/${threadId}`)
         .then((res) =>
           res.ok
@@ -412,12 +412,12 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     const wasActive = prevInvocationRef.current;
     prevInvocationRef.current = hasActiveInvocation;
     if (!wasActive || hasActiveInvocation) return;
-    syncThreadState('invocation-end');
+    syncThreadState();
   }, [hasActiveInvocation, syncThreadState]);
 
   // Sync on mount / thread switch — sidebar may not have loaded yet
   useEffect(() => {
-    syncThreadState('mount');
+    syncThreadState();
   }, [syncThreadState]);
 
   // ── Bootcamp add-teammate: trigger guide engine when user interacts with input ──
