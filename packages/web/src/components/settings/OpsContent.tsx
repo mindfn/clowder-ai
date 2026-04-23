@@ -10,6 +10,7 @@ import { HubMemoryTab } from '../HubMemoryTab';
 import { HubRoutingPolicyTab } from '../HubRoutingPolicyTab';
 import { HubToolUsageTab } from '../HubToolUsageTab';
 import { DEFAULT_OPS_SUBSECTION, OPS_SUBSECTIONS } from './ops-nav-config';
+import { ServiceStatusPanel } from './ServiceStatusPanel';
 
 export function OpsContent() {
   const [activeTab, setActiveTab] = useState(DEFAULT_OPS_SUBSECTION);
@@ -49,10 +50,18 @@ function OpsSubsectionContent({ subsection }: { subsection: string }) {
     case 'leaderboard':
       return <HubLeaderboardTab />;
     case 'memory':
-      return <HubMemoryTab />;
+      return (
+        <>
+          <ServiceStatusPanel filterFeatures={['memory-semantic-search']} title="语义搜索服务" />
+          <div className="mt-4">
+            <HubMemoryTab />
+          </div>
+        </>
+      );
     case 'health':
       return (
         <div className="space-y-6">
+          <ServiceStatusPanel title="外部服务总览" />
           <HubGovernanceTab />
           <BrakeSettingsPanel />
         </div>

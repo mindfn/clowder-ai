@@ -275,6 +275,7 @@ function EnvVarsSection({
   variables,
   drafts,
   isDirty,
+  pendingRestartCount,
   saveState,
   onDraftChange,
   onSave,
@@ -283,6 +284,7 @@ function EnvVarsSection({
   variables: EnvVar[];
   drafts: Record<string, string>;
   isDirty: boolean;
+  pendingRestartCount: number;
   saveState: { saving: boolean; error: string | null; success: string | null };
   onDraftChange: (name: string, value: string) => void;
   onSave: () => void;
@@ -514,6 +516,7 @@ export function HubEnvFilesTab() {
         variables={data.variables}
         drafts={drafts}
         isDirty={isDirty}
+        pendingRestartCount={pendingRestartCount}
         saveState={saveState}
         onDraftChange={handleDraftChange}
         onSave={handleSave}

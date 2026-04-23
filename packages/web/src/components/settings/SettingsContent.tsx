@@ -13,6 +13,7 @@ import { MarketplacePanel } from '../marketplace/marketplace-panel';
 import { PushSettingsPanel } from '../PushSettingsPanel';
 import { VoiceSettingsPanel } from '../VoiceSettingsPanel';
 import { OpsContent } from './OpsContent';
+import { ServiceStatusPanel } from './ServiceStatusPanel';
 import { SettingsPlaceholder } from './SettingsPlaceholder';
 
 interface SettingsContentProps {
@@ -140,7 +141,14 @@ export function SettingsContent({ section }: SettingsContentProps) {
         </>
       );
     case 'mcp':
-      return <HubCapabilityTab section="mcp" />;
+      return (
+        <>
+          <HubCapabilityTab section="mcp" />
+          <div className="mt-4">
+            <ServiceStatusPanel filterFeatures={['browser-automation-mcp']} title="相关服务状态" />
+          </div>
+        </>
+      );
     case 'plugins':
       return (
         <SettingsPlaceholder
@@ -149,7 +157,17 @@ export function SettingsContent({ section }: SettingsContentProps) {
         />
       );
     case 'voice':
-      return <VoiceSettingsPanel />;
+      return (
+        <>
+          <ServiceStatusPanel
+            filterFeatures={['voice-input', 'voice-output', 'voice-companion', 'voice-postprocess']}
+            title="语音服务状态"
+          />
+          <div className="mt-4">
+            <VoiceSettingsPanel />
+          </div>
+        </>
+      );
     case 'system':
       if (configError) return configError;
       return config ? (
