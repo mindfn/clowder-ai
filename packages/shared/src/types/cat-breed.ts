@@ -64,8 +64,6 @@ export interface CatVariant {
   /** Independent mention patterns for this variant (F32-b).
    *  Default variant inherits breed mentionPatterns; non-default variants fallback to @catId when unspecified. */
   readonly mentionPatterns?: readonly string[];
-  /** Origin marker — all runtime catalog members are 'runtime'. */
-  readonly source?: 'runtime';
   /** F127: member-side binding to a concrete account config (built-in or API key). */
   readonly accountRef?: string;
   /** clowder-ai#340 P5: CLI client identity (renamed from `provider`). */

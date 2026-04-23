@@ -99,10 +99,9 @@ function migrateCatalogVariants(catalog: CatCafeConfig): { catalog: CatCafeConfi
   return { catalog: next, dirty };
 }
 
-/** One-time migration: stamp `source` on variants written before #441. Idempotent.
- *  All catalog members are 'runtime' — template is a separate data source (menu only).
- *  Only stamps source — does NOT touch accountRef (existing unbound variants stay unbound). */
-function backfillVariantSource(catalogPath: string): void {
+/** One-time migration: strip legacy `source` field from variants. Idempotent.
+ *  Template and runtime catalog are independent data sources — source field is obsolete. */
+function stripLegacySourceField(catalogPath: string): void {
   let raw: string;
   try {
     raw = readFileSync(catalogPath, 'utf-8');
@@ -115,8 +114,8 @@ function backfillVariantSource(catalogPath: string): void {
   for (const breed of next.breeds as unknown as Record<string, unknown>[]) {
     const variants = Array.isArray(breed.variants) ? (breed.variants as Record<string, unknown>[]) : [];
     for (const variant of variants) {
-      if (variant.source !== 'runtime') {
-        variant.source = 'runtime';
+      if ('source' in variant) {
+        delete variant.source;
         dirty = true;
       }
     }
@@ -208,8 +207,8 @@ export function bootstrapCatCatalog(projectRoot: string, templatePath: string): 
   const catalogPath = resolveCatCatalogPath(projectRoot);
   if (existsSync(catalogPath)) {
     readCatCatalogRaw(projectRoot);
-    // Backfill source on existing catalogs written before #441.
-    backfillVariantSource(catalogPath);
+    // Strip legacy source field from variants (obsolete after F140).
+    stripLegacySourceField(catalogPath);
     // Ensure owner is always present in roster.
     ensureOwnerInRoster(catalogPath);
     return catalogPath;

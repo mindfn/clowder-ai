@@ -54,8 +54,6 @@ export interface CatData {
   breedDisplayName?: string;
   /** F149: Adapter mode for Google provider cats (ACP vs legacy CLI) */
   adapterMode?: 'acp' | 'cli';
-  /** F127: Seed cats come from cat-template.json; runtime cats are added later */
-  source: 'seed' | 'runtime';
   /** F127: Roster metadata used by Hub ownership/lead markers */
   roster?: {
     family: string;
@@ -131,7 +129,6 @@ function normalizeCats(rawCats: unknown[]): CatData[] {
       strengths: Array.isArray(cat.strengths) ? cat.strengths : undefined,
       sessionChain: cat.sessionChain,
       roster: cat.roster ?? null,
-      source: cat.source ?? 'runtime',
     };
   });
 }

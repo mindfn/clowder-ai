@@ -206,7 +206,6 @@ function createBreedFromInput(input: RuntimeCatInput): CatBreed {
     variants: [
       {
         id: variantId,
-        source: 'runtime',
         clientId: input.clientId,
         defaultModel: input.defaultModel,
         mcpSupport: input.mcpSupport,

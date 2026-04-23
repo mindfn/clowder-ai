@@ -50,7 +50,6 @@ export interface CatConfig {
   readonly avatar: string;
   readonly color: CatColor;
   readonly mentionPatterns: readonly string[];
-  readonly source?: 'runtime';
   readonly accountRef?: string;
   /** clowder-ai#340 P5: CLI client identity (renamed from `provider`). */
   readonly clientId: ClientId;
