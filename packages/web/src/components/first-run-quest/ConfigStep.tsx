@@ -116,26 +116,34 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
     }
   };
 
+  const invalidateCacheForProfile = useCallback((profileId: string) => {
+    for (const key of testCacheRef.current.keys()) {
+      if (key.startsWith(`${profileId}:`)) testCacheRef.current.delete(key);
+    }
+  }, []);
+
   const handleProfileCreated = useCallback(
     async (newProfileId: string) => {
       const updated = await fetchProfiles();
+      invalidateCacheForProfile(newProfileId);
       setSelectedProfileId(newProfileId);
       setExpandedId(newProfileId);
       setTestResult(null);
       setSelectedModel(firstModel(updated.find((p) => p.id === newProfileId)));
     },
-    [fetchProfiles],
+    [fetchProfiles, invalidateCacheForProfile],
   );
 
   const handleProfileRefresh = useCallback(async () => {
     const updated = await fetchProfiles();
+    invalidateCacheForProfile(selectedProfileId);
     const profile = updated.find((p) => p.id === selectedProfileId);
     const models = profile?.models?.filter(Boolean) ?? [];
     setTestResult(null);
     if (selectedModel && !models.includes(selectedModel)) {
       setSelectedModel(models[0] ?? '');
     }
-  }, [fetchProfiles, selectedProfileId, selectedModel]);
+  }, [fetchProfiles, invalidateCacheForProfile, selectedProfileId, selectedModel]);
 
   if (loading) {
     return <p className="py-8 text-center text-sm text-gray-400">加载认证配置...</p>;
