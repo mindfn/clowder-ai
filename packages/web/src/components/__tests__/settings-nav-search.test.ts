@@ -38,12 +38,12 @@ describe('SettingsNav search filtering', () => {
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   });
 
-  it('renders all 10 sections when no search query', () => {
+  it('renders all 11 sections when no search query', () => {
     act(() => {
       root.render(React.createElement(SettingsNav, { activeSection: 'members', onSelect: vi.fn() }));
     });
     const buttons = Array.from(container.querySelectorAll('button'));
-    expect(buttons).toHaveLength(10);
+    expect(buttons).toHaveLength(11);
   });
 
   it('filters sections by label match', () => {

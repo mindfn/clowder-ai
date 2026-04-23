@@ -13,6 +13,7 @@ import { MarketplacePanel } from '../marketplace/marketplace-panel';
 import { PushSettingsPanel } from '../PushSettingsPanel';
 import { VoiceSettingsPanel } from '../VoiceSettingsPanel';
 import { OpsContent } from './OpsContent';
+import { RulesPromptsContent } from './RulesPromptsContent';
 import { ServiceStatusPanel } from './ServiceStatusPanel';
 import { SettingsPlaceholder } from './SettingsPlaceholder';
 
@@ -168,6 +169,8 @@ export function SettingsContent({ section }: SettingsContentProps) {
           </div>
         </>
       );
+    case 'rules':
+      return <RulesPromptsContent />;
     case 'system':
       if (configError) return configError;
       return config ? (

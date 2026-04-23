@@ -13,6 +13,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: 'mcp', label: 'MCP 管理', icon: 'box', color: '#E29578' },
   { id: 'plugins', label: '插件/集成', icon: 'puzzle', color: '#E29578' },
   { id: 'voice', label: '语音管理', icon: 'mic', color: '#5B9BD5' },
+  { id: 'rules', label: '规则与提示词', icon: 'shield', color: '#9B7EBD' },
   { id: 'system', label: '系统配置', icon: 'settings', color: '#5B9BD5' },
   { id: 'notify', label: '通知', icon: 'bell', color: '#5B9BD5' },
   { id: 'ops', label: '运维监控', icon: 'activity', color: '#5B9BD5' },

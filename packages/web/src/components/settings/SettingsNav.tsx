@@ -37,6 +37,7 @@ const SECTION_KEYWORDS: Record<string, string> = {
   mcp: 'MCP tool 工具',
   plugins: '插件 集成 GitHub PR email calendar',
   voice: '语音 TTS STT whisper',
+  rules: '规则 家规 提示词 system prompt SOP 协作 governance',
   system: '配置 环境 .env bubble A2A codex',
   notify: '推送 通知 push web',
   ops: '运维 监控 排行 记忆 健康 命令 救援 usage',
