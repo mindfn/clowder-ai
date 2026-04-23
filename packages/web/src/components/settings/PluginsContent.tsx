@@ -73,6 +73,32 @@ const SERVICE_FEATURE_MAP: Record<string, string[]> = {
   'browser-automation': ['browser-automation-mcp'],
 };
 
+export function resolvePluginStatuses(services: ServiceState[], apiReachable: boolean): PluginDef[] {
+  const runningFeatures = new Set<string>();
+  const knownFeatures = new Set<string>();
+  for (const svc of services) {
+    for (const f of svc.manifest.enablesFeatures) {
+      knownFeatures.add(f);
+      if (svc.status === 'running') runningFeatures.add(f);
+    }
+  }
+
+  return PLUGIN_CATALOG.map((p) => {
+    if (p.source === 'platform') {
+      if (apiReachable) return { ...p, status: 'active' as const, statusLabel: '内置运行中' };
+      return { ...p, status: 'available' as const, statusLabel: 'API 不可达' };
+    }
+
+    const features = SERVICE_FEATURE_MAP[p.id] ?? [];
+    const hasRunning = features.some((f) => runningFeatures.has(f));
+    const hasKnown = features.some((f) => knownFeatures.has(f));
+
+    if (hasRunning) return { ...p, status: 'active' as const, statusLabel: '运行中' };
+    if (hasKnown) return { ...p, status: 'configured' as const, statusLabel: '已配置' };
+    return { ...p, status: 'available' as const, statusLabel: '可用' };
+  });
+}
+
 export function PluginsContent() {
   const [plugins, setPlugins] = useState<PluginDef[]>([]);
   const [loading, setLoading] = useState(true);
@@ -91,31 +117,7 @@ export function PluginsContent() {
       /* unavailable */
     }
 
-    const runningFeatures = new Set<string>();
-    const knownFeatures = new Set<string>();
-    for (const svc of services) {
-      for (const f of svc.manifest.enablesFeatures) {
-        knownFeatures.add(f);
-        if (svc.status === 'running') runningFeatures.add(f);
-      }
-    }
-
-    const resolved: PluginDef[] = PLUGIN_CATALOG.map((p) => {
-      if (p.source === 'platform') {
-        if (apiReachable) return { ...p, status: 'active' as const, statusLabel: '内置运行中' };
-        return { ...p, status: 'available' as const, statusLabel: 'API 不可达' };
-      }
-
-      const features = SERVICE_FEATURE_MAP[p.id] ?? [];
-      const hasRunning = features.some((f) => runningFeatures.has(f));
-      const hasKnown = features.some((f) => knownFeatures.has(f));
-
-      if (hasRunning) return { ...p, status: 'active' as const, statusLabel: '运行中' };
-      if (hasKnown) return { ...p, status: 'configured' as const, statusLabel: '已配置' };
-      return { ...p, status: 'available' as const, statusLabel: '可用' };
-    });
-
-    setPlugins(resolved);
+    setPlugins(resolvePluginStatuses(services, apiReachable));
     setLoading(false);
   }, []);
 

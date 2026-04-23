@@ -1,81 +1,92 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-const mockApiFetch = vi.fn();
 vi.mock('@/utils/api-client', () => ({
-  apiFetch: (...args: unknown[]) => mockApiFetch(...args),
+  apiFetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
   API_URL: 'http://localhost:3102',
 }));
 
-describe('PluginsContent status resolution', () => {
-  beforeEach(() => {
-    mockApiFetch.mockReset();
-  });
+import { resolvePluginStatuses } from '../settings/PluginsContent';
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+describe('resolvePluginStatuses', () => {
+  it('platform plugins are active when API is reachable', () => {
+    const result = resolvePluginStatuses([], true);
+    const platform = result.filter((p) => p.source === 'platform');
 
-  it('platform-source plugins are always active when API responds', async () => {
-    mockApiFetch.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ services: [] }),
-    });
-
-    const mod = await import('../settings/PluginsContent');
-    const catalog = (mod as Record<string, unknown[]>).PLUGIN_CATALOG ?? [];
-
-    expect(catalog).toBeDefined();
-  });
-
-  it('PLUGIN_CATALOG has correct source fields', async () => {
-    const { readFileSync } = await import('node:fs');
-    const src = readFileSync(
-      new URL('../settings/PluginsContent.tsx', import.meta.url).pathname.replace('__tests__/', ''),
-      'utf-8',
-    );
-
-    const platformEntries = ['pr-tracking', 'review-router', 'ci-cd-monitor'];
-    const serviceEntries = ['voice-companion', 'browser-automation'];
-
-    for (const id of platformEntries) {
-      const idPos = src.indexOf(`id: '${id}'`);
-      expect(idPos, `${id} should exist in source`).toBeGreaterThan(-1);
-      const sourceAfter = src.slice(idPos, idPos + 200);
-      expect(sourceAfter, `${id} should have source: 'platform'`).toContain("source: 'platform'");
-    }
-
-    for (const id of serviceEntries) {
-      const idPos = src.indexOf(`id: '${id}'`);
-      expect(idPos, `${id} should exist in source`).toBeGreaterThan(-1);
-      const sourceAfter = src.slice(idPos, idPos + 200);
-      expect(sourceAfter, `${id} should have source: 'service'`).toContain("source: 'service'");
+    expect(platform.length).toBe(3);
+    for (const p of platform) {
+      expect(p.status).toBe('active');
+      expect(p.statusLabel).toBe('内置运行中');
     }
   });
 
-  it('SERVICE_FEATURE_MAP only maps service-backed plugins', async () => {
-    const { readFileSync } = await import('node:fs');
-    const src = readFileSync(
-      new URL('../settings/PluginsContent.tsx', import.meta.url).pathname.replace('__tests__/', ''),
-      'utf-8',
-    );
+  it('platform plugins show unreachable when API is down', () => {
+    const result = resolvePluginStatuses([], false);
+    const platform = result.filter((p) => p.source === 'platform');
 
-    expect(src).not.toContain("'pr-tracking': [");
-    expect(src).not.toContain("'review-router': [");
-    expect(src).not.toContain("'ci-cd-monitor': [");
-
-    expect(src).toContain("'voice-companion': [");
-    expect(src).toContain("'browser-automation': [");
+    for (const p of platform) {
+      expect(p.status).toBe('available');
+      expect(p.statusLabel).toBe('API 不可达');
+    }
   });
 
-  it('platform plugins resolve to active when API reachable', async () => {
-    const { readFileSync } = await import('node:fs');
-    const src = readFileSync(
-      new URL('../settings/PluginsContent.tsx', import.meta.url).pathname.replace('__tests__/', ''),
-      'utf-8',
-    );
+  it('service plugins show active when their features are running', () => {
+    const services = [
+      {
+        manifest: { id: 'whisper-stt', enablesFeatures: ['voice-input', 'connector-stt'] },
+        status: 'running' as const,
+      },
+      {
+        manifest: { id: 'mlx-tts', enablesFeatures: ['voice-output', 'voice-companion'] },
+        status: 'running' as const,
+      },
+    ];
+    const result = resolvePluginStatuses(services, true);
+    const voice = result.find((p) => p.id === 'voice-companion');
 
-    expect(src).toContain("p.source === 'platform'");
-    expect(src).toContain("apiReachable");
-    expect(src).toContain("statusLabel: '内置运行中'");
+    expect(voice?.status).toBe('active');
+    expect(voice?.statusLabel).toBe('运行中');
+  });
+
+  it('service plugins show configured when features known but not running', () => {
+    const services = [
+      {
+        manifest: { id: 'whisper-stt', enablesFeatures: ['voice-input', 'connector-stt'] },
+        status: 'stopped' as const,
+      },
+    ];
+    const result = resolvePluginStatuses(services, true);
+    const voice = result.find((p) => p.id === 'voice-companion');
+
+    expect(voice?.status).toBe('configured');
+    expect(voice?.statusLabel).toBe('已配置');
+  });
+
+  it('service plugins show available when no matching features exist', () => {
+    const result = resolvePluginStatuses([], true);
+    const voice = result.find((p) => p.id === 'voice-companion');
+    const browser = result.find((p) => p.id === 'browser-automation');
+
+    expect(voice?.status).toBe('available');
+    expect(voice?.statusLabel).toBe('可用');
+    expect(browser?.status).toBe('available');
+    expect(browser?.statusLabel).toBe('可用');
+  });
+
+  it('platform status is independent of service registry contents', () => {
+    const services = [
+      {
+        manifest: { id: 'whisper-stt', enablesFeatures: ['voice-input'] },
+        status: 'running' as const,
+      },
+    ];
+    const result = resolvePluginStatuses(services, true);
+
+    const prTracking = result.find((p) => p.id === 'pr-tracking');
+    const reviewRouter = result.find((p) => p.id === 'review-router');
+    const ciCd = result.find((p) => p.id === 'ci-cd-monitor');
+
+    expect(prTracking?.status).toBe('active');
+    expect(reviewRouter?.status).toBe('active');
+    expect(ciCd?.status).toBe('active');
   });
 });
