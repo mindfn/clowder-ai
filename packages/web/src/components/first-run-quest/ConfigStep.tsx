@@ -131,9 +131,9 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
     const updated = await fetchProfiles();
     const profile = updated.find((p) => p.id === selectedProfileId);
     const models = profile?.models?.filter(Boolean) ?? [];
+    setTestResult(null);
     if (selectedModel && !models.includes(selectedModel)) {
       setSelectedModel(models[0] ?? '');
-      setTestResult(null);
     }
   }, [fetchProfiles, selectedProfileId, selectedModel]);
 
