@@ -180,9 +180,10 @@ export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
           body: JSON.stringify({
             ...(opts.projectPath ? { projectPath: opts.projectPath } : {}),
             ...(opts.preferredCats?.length ? { preferredCats: opts.preferredCats } : {}),
-            ...(opts.title ? { title: opts.title } : {}),
+            ...(opts.title || opts.bootcamp ? { title: opts.bootcamp ? '🎓 猫猫训练营' : opts.title } : {}),
             ...(opts.pinned ? { pinned: opts.pinned } : {}),
             ...(opts.backlogItemId ? { backlogItemId: opts.backlogItemId } : {}),
+            ...(opts.bootcamp ? { bootcampState: { v: 1, phase: 'phase-0-select-cat', startedAt: Date.now() } } : {}),
           }),
         });
         if (!res.ok) {
@@ -556,6 +557,37 @@ export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
             {bindWarning}
           </div>
         )}
+
+        <div className="px-2 py-1.5 border-b border-cocreator-light">
+          <button
+            type="button"
+            onClick={() => {
+              const fromParam = currentThreadId ? `?from=${encodeURIComponent(currentThreadId)}` : '';
+              window.location.assign(`/mission-hub${fromParam}`);
+              if (typeof window !== 'undefined' && window.innerWidth < 768) {
+                onClose?.();
+              }
+            }}
+            className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-[11px] text-cafe-muted hover:text-cafe-secondary hover:bg-cocreator-bg transition-colors"
+            data-testid="sidebar-mission-hub"
+          >
+            <svg
+              className="h-3.5 w-3.5 shrink-0"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="3" y="3" width="7" height="7" />
+              <rect x="14" y="3" width="7" height="7" />
+              <rect x="14" y="14" width="7" height="7" />
+              <rect x="3" y="14" width="7" height="7" />
+            </svg>
+            Mission Hub
+          </button>
+        </div>
 
         <div className="px-3 py-2 border-b border-cocreator-light">
           <input
