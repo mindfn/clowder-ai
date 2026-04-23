@@ -522,12 +522,13 @@ describe('cat-catalog-store', () => {
     const catalogPath = resolveCatCatalogPath(projectRoot);
     const beforeRaw = readFileSync(catalogPath, 'utf-8');
 
-    assert.throws(() => {
-      updateRuntimeCat(projectRoot, 'opus', { defaultModel: '' });
-    }, /Invalid cat config/i);
-
+    // Empty defaultModel is now allowed (OAuth/subscription CLIs use built-in defaults;
+    // api_key accounts are validated at the route level in validateAccountBindingOrThrow).
+    updateRuntimeCat(projectRoot, 'opus', { defaultModel: '' });
     const afterRaw = readFileSync(catalogPath, 'utf-8');
-    assert.equal(afterRaw, beforeRaw, 'failed update must not corrupt persisted runtime catalog');
+    const afterConfig = JSON.parse(afterRaw);
+    const variant = afterConfig.breeds[0].variants[0];
+    assert.equal(variant.defaultModel, '', 'empty defaultModel should persist for OAuth accounts');
   });
 
   it('rejects runtime members that reuse an alias from another cat', () => {
