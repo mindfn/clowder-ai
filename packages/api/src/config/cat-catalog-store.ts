@@ -34,27 +34,8 @@ function writeFileAtomic(filePath: string, content: string): void {
 /** clowder-ai#340 P5: ClientId values — used to detect old `provider` field holding a clientId. */
 const CLIENT_ID_VALUES = new Set(['anthropic', 'openai', 'google', 'kimi', 'dare', 'antigravity', 'opencode', 'a2a']);
 
-function collectCatIds(config: CatCafeConfig): Set<string> {
-  const catIds = new Set<string>();
-  for (const breed of config.breeds as unknown as Record<string, unknown>[]) {
-    const breedCatId = typeof breed.catId === 'string' ? breed.catId : '';
-    const variants = Array.isArray(breed.variants) ? (breed.variants as Record<string, unknown>[]) : [];
-    for (const variant of variants) {
-      const catId = typeof variant.catId === 'string' ? variant.catId : breedCatId;
-      if (catId) catIds.add(catId);
-    }
-  }
-  return catIds;
-}
 
-function readSeedCatIds(templatePath: string): Set<string> {
-  try {
-    const parsed = JSON.parse(readFileSync(templatePath, 'utf-8')) as CatCafeConfig;
-    return collectCatIds(migrateCatalogVariants(parsed).catalog);
-  } catch {
-    return new Set();
-  }
-}
+
 
 /**
  * clowder-ai#340: One-time catalog variant migration — rewrites file on disk then never runs again.
@@ -122,8 +103,9 @@ function migrateCatalogVariants(catalog: CatCafeConfig): { catalog: CatCafeConfi
 }
 
 /** One-time migration: stamp `source` on variants written before #441. Idempotent.
+ *  All catalog members are 'runtime' — template is a separate data source (menu only).
  *  Only stamps source — does NOT touch accountRef (existing unbound variants stay unbound). */
-function backfillVariantSource(catalogPath: string, templatePath: string): void {
+function backfillVariantSource(catalogPath: string): void {
   let raw: string;
   try {
     raw = readFileSync(catalogPath, 'utf-8');
@@ -133,14 +115,11 @@ function backfillVariantSource(catalogPath: string, templatePath: string): void 
   const catalog = JSON.parse(raw) as CatCafeConfig;
   const next = structuredClone(catalog) as CatCafeConfig;
   let dirty = false;
-  const seedCatIds = readSeedCatIds(templatePath);
   for (const breed of next.breeds as unknown as Record<string, unknown>[]) {
-    const breedCatId = typeof breed.catId === 'string' ? breed.catId : '';
     const variants = Array.isArray(breed.variants) ? (breed.variants as Record<string, unknown>[]) : [];
     for (const variant of variants) {
-      if (variant.source !== 'seed' && variant.source !== 'runtime') {
-        const catId = typeof variant.catId === 'string' ? variant.catId : breedCatId;
-        variant.source = catId && seedCatIds.has(catId) ? 'seed' : 'runtime';
+      if (variant.source !== 'runtime') {
+        variant.source = 'runtime';
         dirty = true;
       }
     }
@@ -233,7 +212,7 @@ export function bootstrapCatCatalog(projectRoot: string, templatePath: string): 
   if (existsSync(catalogPath)) {
     readCatCatalogRaw(projectRoot);
     // Backfill source on existing catalogs written before #441.
-    backfillVariantSource(catalogPath, templatePath);
+    backfillVariantSource(catalogPath);
     // Ensure owner is always present in roster.
     ensureOwnerInRoster(catalogPath);
     return catalogPath;

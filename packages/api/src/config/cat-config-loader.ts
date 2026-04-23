@@ -63,7 +63,7 @@ const catVariantSchema = z.object({
   displayName: z.string().min(1).optional(), // F32-b: variant-level displayName
   variantLabel: z.string().min(1).optional(), // F32-b P4: disambiguation label
   mentionPatterns: z.array(mentionPatternSchema).optional(), // F32-b: variant-level mentions
-  source: z.enum(['seed', 'runtime']).optional(), // #441: bootstrap-stamped origin
+  source: z.enum(['seed', 'runtime']).optional(), // #441: legacy compat — 'seed' accepted for old catalogs, new cats always 'runtime'
   accountRef: z.string().min(1).optional(), // F127: concrete account binding
   clientId: z.string().min(1), // #252: accept unknown providers to avoid full config crash
 
