@@ -98,7 +98,7 @@ function loadRepoTemplate() {
 /**
  * F140: bootstrapCatCatalog() now creates empty catalogs (first-run quest).
  * Pre-write a catalog with breeds from the template so tests that operate on
- * seed cats still find them. Stamps default accountRef and source: 'seed'.
+ * template cats still find them. Stamps default accountRef.
  */
 const BUILTIN_ACCOUNT_IDS = {
   anthropic: 'claude',
@@ -126,7 +126,6 @@ function seedCatalogFromTemplate(projectRoot, templateObj) {
       if (!variant.accountRef && variant.clientId && BUILTIN_ACCOUNT_IDS[variant.clientId]) {
         variant.accountRef = BUILTIN_ACCOUNT_IDS[variant.clientId];
       }
-      if (!variant.source) variant.source = 'seed';
     }
   }
   const roster = template.roster ?? catalog.roster ?? {};

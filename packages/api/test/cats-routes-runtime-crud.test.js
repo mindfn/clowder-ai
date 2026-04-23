@@ -78,7 +78,7 @@ function makeTemplate() {
 /**
  * F140: bootstrapCatCatalog() now creates empty catalogs (first-run quest).
  * Pre-write a catalog with breeds from the template so tests that operate on
- * seed cats still find them. Stamps default accountRef and source: 'seed'.
+ * template cats still find them. Stamps default accountRef.
  */
 const BUILTIN_ACCOUNT_IDS = {
   anthropic: 'claude',
@@ -97,7 +97,6 @@ function seedCatalogFromTemplate(projectRoot, templatePath) {
       if (!variant.accountRef && variant.clientId && BUILTIN_ACCOUNT_IDS[variant.clientId]) {
         variant.accountRef = BUILTIN_ACCOUNT_IDS[variant.clientId];
       }
-      if (!variant.source) variant.source = 'seed';
     }
   }
   const catCafeDir = join(projectRoot, '.cat-cafe');
@@ -1888,7 +1887,7 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     );
   });
 
-  it('DELETE /api/cats/:id blocks deletion for seed members', async () => {
+  it('DELETE /api/cats/:id allows deletion of any member', async () => {
     const projectRoot = createProjectRoot();
     process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
 
@@ -1905,16 +1904,16 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
         'x-cat-cafe-user': 'codex',
       },
     });
-    assert.equal(deleteRes.statusCode, 409);
+    assert.equal(deleteRes.statusCode, 200);
     const deleteBody = JSON.parse(deleteRes.body);
-    assert.match(deleteBody.error, /cannot delete seed cat/i);
+    assert.equal(deleteBody.deleted, true);
 
     const listRes = await app.inject({ method: 'GET', url: '/api/cats' });
     assert.equal(listRes.statusCode, 200);
     const listBody = JSON.parse(listRes.body);
     assert.equal(
       listBody.cats.some((cat) => cat.id === 'opus'),
-      true,
+      false,
     );
   });
 });

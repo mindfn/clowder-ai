@@ -31,7 +31,6 @@ function buildSeededCatalog(templatePath) {
       if (!variant.accountRef && variant.clientId && BUILTIN_ACCOUNT_IDS[variant.clientId]) {
         variant.accountRef = BUILTIN_ACCOUNT_IDS[variant.clientId];
       }
-      if (!variant.source) variant.source = 'seed';
     }
   }
   const roster = template.roster ?? {};
