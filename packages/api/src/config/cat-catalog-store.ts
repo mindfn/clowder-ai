@@ -34,9 +34,6 @@ function writeFileAtomic(filePath: string, content: string): void {
 /** clowder-ai#340 P5: ClientId values — used to detect old `provider` field holding a clientId. */
 const CLIENT_ID_VALUES = new Set(['anthropic', 'openai', 'google', 'kimi', 'dare', 'antigravity', 'opencode', 'a2a']);
 
-
-
-
 /**
  * clowder-ai#340: One-time catalog variant migration — rewrites file on disk then never runs again.
  *   1. old `provider` (clientId value) → `clientId` (P5 field rename)
