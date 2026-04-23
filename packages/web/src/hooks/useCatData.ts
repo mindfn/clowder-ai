@@ -131,7 +131,7 @@ function normalizeCats(rawCats: unknown[]): CatData[] {
       strengths: Array.isArray(cat.strengths) ? cat.strengths : undefined,
       sessionChain: cat.sessionChain,
       roster: cat.roster ?? null,
-      source: cat.source ?? 'seed',
+      source: cat.source ?? 'runtime',
     };
   });
 }

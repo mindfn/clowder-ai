@@ -148,7 +148,7 @@ function resolveProjectRoot(): string {
   return resolveActiveProjectRoot();
 }
 
-type CatSource = 'seed' | 'runtime' | 'template';
+type CatSource = 'runtime' | 'template';
 
 interface CatResponseMetadata {
   roster: RosterEntry | null;
