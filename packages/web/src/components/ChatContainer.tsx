@@ -444,9 +444,10 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     };
   }, [currentBootcampPhase, threadId, activeGuideFlowId]);
 
-  // ── Bootcamp farewell: auto-trigger guide when phase becomes phase-10-retro ──
+  // ── Bootcamp farewell: auto-trigger guide after agent finishes at phase-10-retro ──
   useEffect(() => {
     if (currentBootcampPhase !== 'phase-10-retro') return;
+    if (hasActiveInvocation) return;
     if (activeGuideFlowId === 'bootcamp-farewell') return;
     if (useGuideStore.getState().completedGuides.has(`${threadId}::bootcamp-farewell`)) return;
 
@@ -455,7 +456,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
       guideId: 'bootcamp-farewell',
       threadId,
     });
-  }, [currentBootcampPhase, threadId, activeGuideFlowId]);
+  }, [currentBootcampPhase, threadId, activeGuideFlowId, hasActiveInvocation]);
 
   const prevThreadRef = useRef(threadId);
   useEffect(() => {
