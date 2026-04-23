@@ -82,6 +82,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
     setCurrentThread,
     viewMode,
     setViewMode,
+    isLoading: chatIsLoading,
     clearUnread,
     confirmUnreadAck,
     armUnreadSuppression,
@@ -452,8 +453,9 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   }, [currentBootcampPhase, threadId, activeGuideFlowId]);
 
   // ── Bootcamp farewell: auto-trigger guide after agent finishes at phase-10-retro ──
-  // Debounce: phase-10-retro may arrive via WebSocket before onIntentMode sets
-  // hasActiveInvocation=true. The 800ms delay lets the invocation signal settle.
+  // Guard with both hasActiveInvocation AND chatIsLoading:
+  // - hasActiveInvocation tracks per-slot presence (can briefly go false during A2A handoff)
+  // - chatIsLoading stays true for the entire serial chain (cleared only on isFinal=true)
   const farewellTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (farewellTimerRef.current) {
@@ -461,13 +463,14 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
       farewellTimerRef.current = null;
     }
     if (currentBootcampPhase !== 'phase-10-retro') return;
-    if (hasActiveInvocation) return;
+    if (hasActiveInvocation || chatIsLoading) return;
     if (activeGuideFlowId === 'bootcamp-farewell') return;
     if (useGuideStore.getState().completedGuides.has(`${threadId}::bootcamp-farewell`)) return;
 
     farewellTimerRef.current = setTimeout(() => {
       farewellTimerRef.current = null;
-      if (useChatStore.getState().hasActiveInvocation) return;
+      const s = useChatStore.getState();
+      if (s.hasActiveInvocation || s.isLoading) return;
       useGuideStore.getState().reduceServerEvent({
         action: 'start',
         guideId: 'bootcamp-farewell',
@@ -480,7 +483,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
         farewellTimerRef.current = null;
       }
     };
-  }, [currentBootcampPhase, threadId, activeGuideFlowId, hasActiveInvocation]);
+  }, [currentBootcampPhase, threadId, activeGuideFlowId, hasActiveInvocation, chatIsLoading]);
 
   const prevThreadRef = useRef(threadId);
   useEffect(() => {
