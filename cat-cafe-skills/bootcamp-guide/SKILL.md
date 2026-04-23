@@ -191,18 +191,20 @@ MSG 5+（毕业引导完成，用户选择项目）
 协作完成后（所有问题修复完毕）：
 1. `cat_cafe_update_bootcamp_state(threadId, phase='phase-9-complete')`
 2. 用 `cat_cafe_post_message` 发送完成消息（**不要**用普通 agent 消息，会被折叠）：
-   - 自然地告知所有问题已修复完毕，第一个项目顺利完成
+   - 自然地告知项目圆满开发结束
+   - **⛔ 禁止**说"合入主分支"/"merge"——训练营项目不合入主干
    - **不要**刻意强调"多猫协作的好处"——用户刚亲身体验过，不用你总结
+   - **不要**提及 overlay、引导引擎等实现细节——用户不需要知道
    - 末尾附猫猫签名
 3. 用 `cat_cafe_create_rich_block` 发送项目选择卡片（先调 `get_rich_block_rules` 确认字段要求）：
    - `kind: 'interactive'`, `interactiveType: 'card-grid'`
    - `id: 'bootcamp-next-project'`
-   - `title: '毕业了！想继续做点什么？选一个感兴趣的项目！'`
+   - `title: '想继续做点什么？选一个感兴趣的项目！'`
    - 16 个选项按难度分三层（⭐/⭐⭐/⭐⭐⭐），`allowRandom: true`
    - 涵盖前端页面、工具脚本、小游戏、数据可视化等方向
 4. `cat_cafe_update_bootcamp_state(threadId, phase='phase-10-retro')`
 
-**📨 发送后 → ⛔ STOP — 前端检测 phase-10-retro → 自动触发 bootcamp-farewell 引导 overlay**
+**📨 发送后 → ⛔ STOP — 前端自动触发毕业引导**
 
 ---
 
