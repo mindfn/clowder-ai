@@ -16,6 +16,7 @@ import { OpsContent } from './OpsContent';
 import { RulesPromptsContent } from './RulesPromptsContent';
 import { ServiceStatusPanel } from './ServiceStatusPanel';
 import { SettingsPlaceholder } from './SettingsPlaceholder';
+import { SkillPreviewPanel } from './SkillPreviewPanel';
 
 interface SettingsContentProps {
   section: string;
@@ -138,6 +139,9 @@ export function SettingsContent({ section }: SettingsContentProps) {
           <HubCapabilityTab section="skills" />
           <div className="mt-4">
             <MarketplacePanel />
+          </div>
+          <div className="mt-4">
+            <SkillPreviewPanel />
           </div>
         </>
       );
