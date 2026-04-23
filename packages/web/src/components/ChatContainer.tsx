@@ -749,10 +749,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
             className="fixed inset-y-0 left-0 z-30 md:static md:z-auto flex-shrink-0"
             style={{ width: sidebarWidth }}
           >
-            <ThreadSidebar
-              onClose={() => setSidebarOpen(false)}
-              className="w-full"
-            />
+            <ThreadSidebar onClose={() => setSidebarOpen(false)} className="w-full" />
           </div>
           <div className="hidden md:flex items-center">
             <ResizeHandle direction="horizontal" onResize={handleSidebarResize} onDoubleClick={resetSidebarWidth} />

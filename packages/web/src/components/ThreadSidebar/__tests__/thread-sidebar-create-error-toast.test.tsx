@@ -50,5 +50,4 @@ describe('ThreadSidebar create error feedback', () => {
       title: '创建线程失败',
     });
   });
-
 });
