@@ -8,6 +8,7 @@ interface PluginDef {
   name: string;
   description: string;
   category: 'devops' | 'communication' | 'productivity';
+  source: 'platform' | 'service';
   status: 'active' | 'configured' | 'available';
   statusLabel: string;
 }
@@ -23,30 +24,35 @@ const PLUGIN_CATALOG: Omit<PluginDef, 'status' | 'statusLabel'>[] = [
     name: 'GitHub PR Tracking',
     description: 'PR 生命周期追踪：创建、Review 状态、CI 结果自动同步到对话线程',
     category: 'devops',
+    source: 'platform',
   },
   {
     id: 'review-router',
     name: 'Review Feedback Router',
     description: 'GitHub review decisions 和 inline comments 自动投递到对应猫的工作线程',
     category: 'devops',
+    source: 'platform',
   },
   {
     id: 'ci-cd-monitor',
     name: 'CI/CD Monitor',
     description: 'GitHub Actions 运行状态监控，失败时自动通知相关猫排查',
     category: 'devops',
+    source: 'platform',
   },
   {
     id: 'voice-companion',
     name: '语音陪伴',
     description: '语音输入/输出和实时陪伴对话模式',
     category: 'communication',
+    source: 'service',
   },
   {
     id: 'browser-automation',
     name: 'Browser Automation',
     description: '通过 Chrome MCP 进行浏览器自动化操作和 UI 验证',
     category: 'productivity',
+    source: 'service',
   },
 ];
 
@@ -62,10 +68,7 @@ const STATUS_STYLES: Record<string, { dot: string; bg: string; text: string }> =
   available: { dot: 'bg-gray-300', bg: 'bg-gray-50', text: 'text-gray-500' },
 };
 
-const FEATURE_MAP: Record<string, string[]> = {
-  'pr-tracking': ['pr-tracking', 'github-review-feedback'],
-  'review-router': ['github-review-feedback'],
-  'ci-cd-monitor': ['ci-cd-check'],
+const SERVICE_FEATURE_MAP: Record<string, string[]> = {
   'voice-companion': ['voice-input', 'voice-output', 'voice-companion'],
   'browser-automation': ['browser-automation-mcp'],
 };
@@ -76,8 +79,10 @@ export function PluginsContent() {
 
   const resolveStatus = useCallback(async () => {
     let services: ServiceState[] = [];
+    let apiReachable = false;
     try {
       const res = await apiFetch('/api/services');
+      apiReachable = true;
       if (res.ok) {
         const data = (await res.json()) as { services: ServiceState[] };
         services = data.services;
@@ -96,7 +101,12 @@ export function PluginsContent() {
     }
 
     const resolved: PluginDef[] = PLUGIN_CATALOG.map((p) => {
-      const features = FEATURE_MAP[p.id] ?? [];
+      if (p.source === 'platform') {
+        if (apiReachable) return { ...p, status: 'active' as const, statusLabel: '内置运行中' };
+        return { ...p, status: 'available' as const, statusLabel: 'API 不可达' };
+      }
+
+      const features = SERVICE_FEATURE_MAP[p.id] ?? [];
       const hasRunning = features.some((f) => runningFeatures.has(f));
       const hasKnown = features.some((f) => knownFeatures.has(f));
 

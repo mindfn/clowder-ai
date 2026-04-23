@@ -47,7 +47,9 @@ export function CallbackEnvPanel() {
   return (
     <div>
       <h3 className="text-sm font-semibold text-cafe-black mb-1">Callback 环境变量</h3>
-      <p className="text-xs text-cafe-muted mb-3">以下变量在 MCP Server 子进程启动时自动注入，用于回调鉴权和消息投递</p>
+      <p className="text-xs text-cafe-muted mb-3">
+        回调鉴权和 outbox 投递相关配置（其中 TOKEN 注入 MCP 子进程，OUTBOX_* 为宿主进程参数）
+      </p>
       <div className="rounded-lg border border-cafe-border overflow-hidden">
         <table className="w-full text-xs">
           <thead>

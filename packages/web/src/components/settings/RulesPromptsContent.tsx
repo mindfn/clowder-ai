@@ -61,7 +61,10 @@ export function RulesPromptsContent() {
 
   return (
     <div className="space-y-6">
-      <Section title="共享规则" description="全部成员遵循的协作规则和流程规范，注入每只猫的系统提示词">
+      <Section
+        title="共享规则"
+        description="全部成员遵循的协作规则和流程规范（shared-rules.md 摘要注入系统提示词，SOP.md 为参考文档）"
+      >
         {data.sharedRules.map((file) => (
           <RuleFileCard
             key={file.path}
