@@ -1556,11 +1556,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       const maskEnv = (env: Record<string, string>): Record<string, string> => {
         const masked: Record<string, string> = {};
         for (const [k, v] of Object.entries(env)) {
-          masked[k] = /key|secret|token|password|cookie|auth|session|bearer|credential/i.test(k)
-            ? v.length > 6
-              ? v.slice(0, 6) + '***'
-              : '***'
-            : v;
+          masked[k] = v.length > 6 ? v.slice(0, 6) + '***' : '***';
         }
         return masked;
       };
