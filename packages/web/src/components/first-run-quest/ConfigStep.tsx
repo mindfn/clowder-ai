@@ -125,22 +125,22 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
 
   const handleProfileCreated = useCallback(
     async (newProfileId: string) => {
-      const updated = await fetchProfiles();
       invalidateCacheForProfile(newProfileId);
+      setTestResult(null);
+      const updated = await fetchProfiles();
       setSelectedProfileId(newProfileId);
       setExpandedId(newProfileId);
-      setTestResult(null);
       setSelectedModel(firstModel(updated.find((p) => p.id === newProfileId)));
     },
     [fetchProfiles, invalidateCacheForProfile],
   );
 
   const handleProfileRefresh = useCallback(async () => {
-    const updated = await fetchProfiles();
     invalidateCacheForProfile(selectedProfileId);
+    setTestResult(null);
+    const updated = await fetchProfiles();
     const profile = updated.find((p) => p.id === selectedProfileId);
     const models = profile?.models?.filter(Boolean) ?? [];
-    setTestResult(null);
     if (selectedModel && !models.includes(selectedModel)) {
       setSelectedModel(models[0] ?? '');
     }
