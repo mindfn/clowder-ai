@@ -194,34 +194,31 @@ MSG 5（用户完成 overlay 后发消息）
    - 自然地告知所有问题已修复完毕，第一个项目顺利完成
    - **不要**刻意强调"多猫协作的好处"——用户刚亲身体验过，不用你总结
    - 末尾附猫猫签名
-3. 用 `cat_cafe_create_rich_block` 发送选择卡片（先调 `get_rich_block_rules` 确认字段要求）：
+3. 用 `cat_cafe_create_rich_block` 发送展示卡片（先调 `get_rich_block_rules` 确认字段要求）：
    - `kind: 'interactive'`, `interactiveType: 'card-grid'`
    - `id: 'bootcamp-next-project'`
-   - `title: '第一个项目完成了！想继续挑战什么？'`
+   - `title: '训练营里还有这些好玩的，随时回来挑战！'`
    - 16 个选项按难度分三层（⭐/⭐⭐/⭐⭐⭐），`allowRandom: true`
    - 涵盖前端页面、工具脚本、小游戏、数据可视化等方向
-   - **最后一个选项**：`🎓 我学够了，直接毕业！`（id: `graduate`）
+   - 这是**展示卡**，让用户知道训练营入口和可选项目，不需要当场选择
 4. `cat_cafe_update_bootcamp_state(threadId, phase='phase-10-retro')`
 
-**📨 发送后 → ⛔ STOP — 等用户选择**
+**📨 发送后 → ⛔ STOP — 前端检测 phase-10-retro → 自动触发 bootcamp-farewell 引导 overlay（和 phase-7.5 一样，前端接管）**
 
 ---
 
-## Phase 10: 用户选择处理（phase-10-retro）
+## Phase 10: 毕业引导（phase-10-retro — 前端 overlay 接管）
 
-用户下一条消息进来后，**判断选择**：
+**触发方式**：
+1. Phase 9 结束时 state 已推进到 `phase-10-retro`
+2. 前端检测到 phase-10-retro → 触发 bootcamp-farewell 引导 overlay
+3. overlay 展示毕业引导（训练营入口位置、如何开始新训练营等）
 
-### 选了新项目（非 graduate）
+**你不需要说任何关于毕业的话**——毕业引导是前端 overlay 自然推进的。
 
-1. 从消息文本识别选了哪个任务
-2. `cat_cafe_update_bootcamp_state(threadId, phase='phase-5-kickoff', selectedTaskId='{taskId}')`
-3. **回到 Phase 5 愿景 Kickoff**，用新项目重新走 Phase 5→6→7→8→9 流程
-4. 回到 Phase 9 时会再次出现选择卡片，用户可以继续挑战或选择毕业
+当用户完成 overlay 后，前端引导引擎会自动推进到 phase-11-farewell。
 
-### 选了毕业（graduate）
-
-1. `cat_cafe_update_bootcamp_state(threadId, phase='phase-11-farewell', completedAt=Date.now())`
-2. 进入 MSG 5 毕业流程
+**📨 ⛔ STOP — 前端 overlay 接管，不要继续说话**
 
 ---
 
