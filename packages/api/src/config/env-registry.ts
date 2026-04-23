@@ -53,6 +53,8 @@ export interface EnvDefinition {
   hubVisible?: boolean;
   /** If false, value is bootstrap-only and cannot be edited at runtime from Hub */
   runtimeEditable?: boolean;
+  /** If true, changes take effect only after service restart */
+  restartRequired?: boolean;
   /** If true, this var should appear in .env.example (enforced by check:env-example) */
   exampleRecommended?: boolean;
 }
@@ -98,6 +100,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'server',
     sensitive: false,
     runtimeEditable: true,
+    restartRequired: true,
   },
   {
     name: 'API_SERVER_HOST',
@@ -105,6 +108,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'API 监听地址（改为 0.0.0.0 可让手机/平板通过局域网或 Tailscale 访问）',
     category: 'server',
     sensitive: false,
+    restartRequired: true,
   },
   {
     name: 'CORS_ALLOW_PRIVATE_NETWORK',
@@ -116,7 +120,14 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
     exampleRecommended: true,
   },
-  { name: 'UPLOAD_DIR', defaultValue: './uploads', description: '文件上传目录', category: 'server', sensitive: false },
+  {
+    name: 'UPLOAD_DIR',
+    defaultValue: './uploads',
+    description: '文件上传目录',
+    category: 'server',
+    sensitive: false,
+    restartRequired: true,
+  },
   {
     name: 'PROJECT_ALLOWED_ROOTS',
     defaultValue: '(未设置 — 使用 denylist 模式，仅拦截系统目录)',
@@ -147,6 +158,7 @@ export const ENV_VARS: EnvDefinition[] = [
       '前端固定地址（有反向代理或固定域名时设置，如 https://cafe.example.com）。本机和局域网直连通常不需要改',
     category: 'server',
     sensitive: false,
+    restartRequired: true,
   },
   {
     name: 'FRONTEND_PORT',
@@ -154,6 +166,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '前端端口',
     category: 'server',
     sensitive: false,
+    restartRequired: true,
   },
   {
     name: 'DEFAULT_OWNER_USER_ID',

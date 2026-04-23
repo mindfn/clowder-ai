@@ -12,6 +12,7 @@ interface EnvVar {
   sensitive: boolean;
   maskMode?: 'url';
   runtimeEditable?: boolean;
+  restartRequired?: boolean;
   currentValue: string | null;
 }
 
@@ -194,11 +195,13 @@ function buildConfigFiles(projectRoot: string) {
   ];
 }
 
-const RESTART_REQUIRED_ENV_VARS = new Set(['API_SERVER_PORT', 'PREVIEW_GATEWAY_PORT']);
+function needsRestart(variable: EnvVar): boolean {
+  return variable.restartRequired === true || variable.runtimeEditable === false;
+}
 
 function buildVariableHint(variable: EnvVar): string | null {
   const hints: string[] = [];
-  if (RESTART_REQUIRED_ENV_VARS.has(variable.name)) {
+  if (needsRestart(variable) && isEditableVariable(variable)) {
     hints.push('写回 .env 后需重启相关服务生效。');
   }
   if (variable.maskMode === 'url') {
@@ -311,6 +314,12 @@ function EnvVarsSection({
                   <div className="min-w-0 space-y-1">
                     <div className="flex items-baseline gap-1.5 min-w-0">
                       <code className="shrink-0 font-mono text-[#6A5A50]">{v.name}</code>
+                      <span
+                        className={`shrink-0 text-[10px] ${needsRestart(v) ? 'text-amber-500' : 'text-emerald-500'}`}
+                        title={needsRestart(v) ? '需重启生效' : '即时生效'}
+                      >
+                        {needsRestart(v) ? '🟡' : '🟢'}
+                      </span>
                       <span className="truncate text-[#B59A88]">{v.description}</span>
                     </div>
                     <div className="text-[11px] text-[#B59A88]">默认: {v.defaultValue}</div>
@@ -354,6 +363,11 @@ function EnvVarsSection({
           </div>
         ))}
       </div>
+      {pendingRestartCount > 0 && (
+        <div className="mt-3 rounded-[12px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
+          {pendingRestartCount} 项变更需要重启生效
+        </div>
+      )}
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <button
           type="button"
@@ -438,6 +452,10 @@ export function HubEnvFilesTab() {
     .map(({ name, value }) => ({ name, value }));
 
   const isDirty = changedUpdates.length > 0;
+  const pendingRestartCount = changedUpdates.filter((u) => {
+    const v = data.variables.find((item) => item.name === u.name);
+    return v && needsRestart(v);
+  }).length;
 
   const handleDraftChange = (name: string, value: string) => {
     setDrafts((prev) => ({ ...prev, [name]: value }));
