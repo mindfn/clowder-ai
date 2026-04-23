@@ -5,13 +5,20 @@
 
 import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { catRegistry } from '@cat-cafe/shared';
 
-const CAT_TEMPLATE_PATH =
-  process.env.CAT_TEMPLATE_PATH ?? resolve(dirname(fileURLToPath(import.meta.url)), '../../..', 'cat-template.json');
+// Prefer env var (set by setup-cat-registry to an isolated temp dir) but fall
+// back to the repo root template if the temp copy was cleaned up (CI flake).
+const REPO_ROOT_TEMPLATE = resolve(dirname(fileURLToPath(import.meta.url)), '../../..', 'cat-template.json');
+const CAT_TEMPLATE_PATH = (() => {
+  const envPath = process.env.CAT_TEMPLATE_PATH;
+  if (envPath && existsSync(envPath)) return envPath;
+  return REPO_ROOT_TEMPLATE;
+})();
 
 describe('SystemPromptBuilder', () => {
   // Dynamic import after build

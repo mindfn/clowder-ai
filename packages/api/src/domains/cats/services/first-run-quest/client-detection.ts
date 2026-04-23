@@ -9,10 +9,10 @@ import { promisify } from 'node:util';
 const execAsync = promisify(exec);
 
 export interface DetectedClient {
-  /** Client ID — the CLI tool identity (claude, codex, gemini, opencode, dare) */
-  client: 'claude' | 'codex' | 'gemini' | 'opencode' | 'dare';
+  /** Client ID — the CLI tool identity (claude, codex, gemini, opencode, dare, kimi) */
+  client: 'claude' | 'codex' | 'gemini' | 'opencode' | 'dare' | 'kimi';
   /** Provider key matching ClientValue in hub-cat-editor (anthropic, openai, etc.) */
-  provider: 'anthropic' | 'openai' | 'google' | 'opencode' | 'dare';
+  provider: 'anthropic' | 'openai' | 'google' | 'opencode' | 'dare' | 'kimi';
   /** Human-readable label */
   label: string;
   /** CLI binary name */
@@ -68,6 +68,14 @@ const CLI_SPECS: CliSpec[] = [
     envKey: 'GOOGLE_API_KEY',
   },
   { client: 'dare', provider: 'dare', label: 'Dare', cli: 'dare', versionCmd: 'dare --version', envKey: '' },
+  {
+    client: 'kimi',
+    provider: 'kimi',
+    label: 'Kimi',
+    cli: 'kimi',
+    versionCmd: 'kimi --version',
+    envKey: 'MOONSHOT_API_KEY',
+  },
 ];
 
 async function checkCli(spec: CliSpec): Promise<DetectedClient> {
