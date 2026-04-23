@@ -5,9 +5,6 @@ import { type Thread, useChatStore } from '@/stores/chatStore';
 import { useToastStore } from '@/stores/toastStore';
 import { apiFetch } from '@/utils/api-client';
 import { loadThreads as loadCachedThreads } from '@/utils/offline-store';
-import { BootcampIcon } from '../icons/BootcampIcon';
-import { HubIcon } from '../icons/HubIcon';
-import { MemoryIcon } from '../icons/MemoryIcon';
 
 import { readProjectNames, writeProjectNames } from './active-workspace';
 import { DirectoryPickerModal, type NewThreadOptions } from './DirectoryPickerModal';
@@ -28,8 +25,6 @@ import { useScrollAnchor } from './use-scroll-anchor';
 interface ThreadSidebarProps {
   onClose?: () => void;
   className?: string;
-  onBootcampClick?: () => void;
-  onHubClick?: () => void;
 }
 
 function notifyThreadCreateFailure(message: string) {
@@ -41,7 +36,7 @@ function notifyThreadCreateFailure(message: string) {
   });
 }
 
-export function ThreadSidebar({ onClose, className, onBootcampClick, onHubClick }: ThreadSidebarProps) {
+export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
   const {
     threads,
     currentThreadId,
@@ -305,7 +300,6 @@ export function ThreadSidebar({ onClose, className, onBootcampClick, onHubClick 
       setIsCreating(false);
     }
   }, [navigateToThread, loadThreads, onClose]);
-
   // I-1: Show confirmation dialog instead of deleting immediately
   const handleDeleteRequest = useCallback(
     (threadId: string) => {
@@ -511,7 +505,7 @@ export function ThreadSidebar({ onClose, className, onBootcampClick, onHubClick 
               type="button"
               onClick={onBootcampClick ?? createBootcampThread}
               disabled={!onBootcampClick && isCreating}
-              className="text-xs px-2 py-1 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-40 transition-colors"
+              className="text-xs px-2 py-1 rounded-lg border border-conn-amber-ring bg-conn-amber-bg text-conn-amber-text hover:opacity-80 disabled:opacity-40 transition-colors"
               title="猫猫训练营"
               data-testid="sidebar-bootcamp"
               data-guide-id="sidebar.bootcamp"
@@ -527,7 +521,7 @@ export function ThreadSidebar({ onClose, className, onBootcampClick, onHubClick 
                   onClose?.();
                 }
               }}
-              className="text-xs px-2 py-1 rounded-lg border border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors"
+              className="text-xs px-2 py-1 rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-card-soft-bg)] text-cafe-secondary hover:opacity-80 transition-colors"
               title="Memory Hub"
               data-testid="sidebar-memory"
             >
@@ -537,7 +531,7 @@ export function ThreadSidebar({ onClose, className, onBootcampClick, onHubClick 
               <button
                 type="button"
                 onClick={onHubClick}
-                className="text-xs px-2 py-1 rounded-lg border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+                className="text-xs px-2 py-1 rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-card-soft-bg)] text-cafe-secondary hover:opacity-80 transition-colors"
                 title="IM Hub"
                 data-testid="sidebar-hub"
                 data-guide-id="im-hub.trigger"
@@ -555,37 +549,6 @@ export function ThreadSidebar({ onClose, className, onBootcampClick, onHubClick 
               {isCreating ? '...' : '+ 新对话'}
             </button>
           </div>
-        </div>
-
-        <div className="px-3 py-2 border-b border-cocreator-light">
-          <button
-            type="button"
-            onClick={() => {
-              const fromParam = currentThreadId ? `?from=${encodeURIComponent(currentThreadId)}` : '';
-              window.location.assign(`/mission-hub${fromParam}`);
-              if (typeof window !== 'undefined' && window.innerWidth < 768) {
-                onClose?.();
-              }
-            }}
-            className="flex w-full items-center gap-2 rounded-lg border border-[#D8C6AD] bg-[#FCF7EE] px-2.5 py-1.5 text-left text-xs font-medium text-[#6C563F] transition-colors hover:bg-[#F7EEDB]"
-            data-testid="sidebar-mission-control"
-          >
-            <svg
-              className="h-4 w-4 shrink-0 text-[#9A866F]"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <rect x="3" y="3" width="7" height="7" />
-              <rect x="14" y="3" width="7" height="7" />
-              <rect x="14" y="14" width="7" height="7" />
-              <rect x="3" y="14" width="7" height="7" />
-            </svg>
-            Mission Hub
-          </button>
         </div>
 
         {bindWarning && (

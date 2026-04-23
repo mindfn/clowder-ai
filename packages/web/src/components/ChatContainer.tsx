@@ -42,7 +42,6 @@ import { syncLocalBootcampState } from './first-run-quest/syncLocalBootcampState
 import { useFirstProjectMistakeTipGate } from './first-run-quest/useFirstProjectMistakeTipGate';
 import { useFirstProjectPreviewAutoOpen } from './first-run-quest/useFirstProjectPreviewAutoOpen';
 import { GameOverlayConnector } from './game/GameOverlayConnector';
-import { HubListModal } from './HubListModal';
 import { BootcampIcon } from './icons/BootcampIcon';
 import { PawIcon } from './icons/PawIcon';
 import { MessageActions } from './MessageActions';
@@ -753,8 +752,6 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
             <ThreadSidebar
               onClose={() => setSidebarOpen(false)}
               className="w-full"
-              onBootcampClick={() => setShowBootcampList(true)}
-              onHubClick={() => setShowHubList(true)}
             />
           </div>
           <div className="hidden md:flex items-center">
@@ -1107,7 +1104,6 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
         onCreated={handleQuestCreated}
       />
       <BootcampListModal open={showBootcampList} onClose={handleBootcampModalClose} currentThreadId={threadId} />
-      <HubListModal open={showHubList} onClose={() => setShowHubList(false)} currentThreadId={threadId} />
       {showVoteModal && <VoteConfigModal onSubmit={handleVoteSubmit} onCancel={() => setShowVoteModal(false)} />}
       {/* Bootcamp guide overlay: intro phase tips + lifecycle tips (phase-7.5 uses guide engine) */}
       {(() => {
