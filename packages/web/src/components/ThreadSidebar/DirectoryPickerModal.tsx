@@ -244,6 +244,7 @@ export function DirectoryPickerModal({
           {/* Browsed path not in existing list — show as highlighted entry (pinned to top) */}
           {selectedPath &&
             selectedPath !== 'lobby' &&
+            selectedPath !== 'bootcamp' &&
             selectedPath !== cwdPath &&
             !existingProjects.includes(selectedPath) && (
               <button

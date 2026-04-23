@@ -99,4 +99,26 @@ describe('DirectoryPickerModal bootcamp entry', () => {
       bootcamp: true,
     });
   });
+
+  it('does not render bootcamp sentinel as a browsed-path directory entry', async () => {
+    act(() => {
+      root.render(
+        React.createElement(DirectoryPickerModal, {
+          existingProjects: [],
+          onSelect: vi.fn(),
+          onCancel: vi.fn(),
+        }),
+      );
+    });
+    await flush();
+
+    const bootcampBtn = container.querySelector('[data-testid="picker-bootcamp"]') as HTMLButtonElement;
+    await act(async () => {
+      bootcampBtn.click();
+    });
+
+    const allButtons = Array.from(container.querySelectorAll('button'));
+    const folderButtons = allButtons.filter((b) => b.getAttribute('title') === 'bootcamp');
+    expect(folderButtons).toHaveLength(0);
+  });
 });
