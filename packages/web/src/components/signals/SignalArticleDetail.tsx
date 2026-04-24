@@ -5,6 +5,7 @@ import { useIMEGuard } from '@/hooks/useIMEGuard';
 import { apiFetch } from '@/utils/api-client';
 import type { SignalArticleDetail } from '@/utils/signals-api';
 import { fetchStudyMeta, linkSignalThread, unlinkSignalThread } from '@/utils/signals-api';
+import { getThreadHref } from '../ThreadSidebar/thread-navigation';
 import { SignalTierBadge } from './SignalTierBadge';
 import { StudyFoldArea } from './StudyFoldArea';
 
@@ -153,7 +154,7 @@ export function SignalArticleDetail({
       if (!res.ok) return;
       const data = (await res.json()) as { threadId: string };
       const query = new URLSearchParams({ signal: article.id, source: article.source });
-      window.location.href = `/thread/${encodeURIComponent(data.threadId)}?${query.toString()}`;
+      window.location.href = `${getThreadHref(data.threadId)}?${query.toString()}`;
     } finally {
       setDiscussLoading(false);
     }
@@ -213,7 +214,7 @@ export function SignalArticleDetail({
           href={article.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="rounded-md border border-cocreator-light px-3 py-1.5 text-xs text-cocreator-dark hover:bg-cocreator-bg"
+          className="console-button-ghost text-xs px-3 py-1.5"
         >
           打开原文 ↗
         </a>
@@ -227,8 +228,8 @@ export function SignalArticleDetail({
         </button>
       </div>
       {article.summary && (
-        <section className="mt-4 rounded-lg border border-cocreator-light bg-cocreator-bg p-3">
-          <h3 className="text-xs font-semibold text-cocreator-dark">AI 摘要</h3>
+        <section className="console-card mt-4 rounded-lg p-3">
+          <h3 className="text-xs font-semibold text-cafe-secondary">AI 摘要</h3>
           <p className="mt-1 whitespace-pre-wrap text-sm text-cafe-black">{article.summary}</p>
         </section>
       )}
@@ -339,7 +340,7 @@ export function SignalArticleDetail({
         <button
           type="button"
           onClick={() => void onStatusChange(article.id, 'inbox')}
-          className="rounded-md border border-cocreator-light px-3 py-1.5 text-xs text-cocreator-dark hover:bg-cocreator-bg"
+          className="console-button-ghost text-xs px-3 py-1.5"
         >
           设为 Inbox
         </button>

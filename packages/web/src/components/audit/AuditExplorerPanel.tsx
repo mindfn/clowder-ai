@@ -54,12 +54,12 @@ export function AuditExplorerPanel({
   }, [onCloseSession]);
 
   return (
-    <section className="rounded-lg border border-cafe bg-cafe-surface-elevated/70 p-3">
+    <section className="console-card rounded-[24px] p-4" data-console-card="true">
       <button
         type="button"
         data-testid="audit-explorer-header"
         onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-center justify-between text-xs font-semibold text-cafe-secondary hover:text-cafe"
+        className="flex w-full items-center justify-between text-xs font-semibold text-cafe-secondary hover:text-cafe"
       >
         <span>审计 & Session</span>
         <span className="text-[10px] text-cafe-muted">{expanded ? '▲' : '▼'}</span>
@@ -68,14 +68,14 @@ export function AuditExplorerPanel({
       {expanded && (
         <div className="mt-2">
           {/* Tab bar */}
-          <div className="flex border-b border-cafe mb-2">
+          <div className="mb-2 flex border-b border-cafe">
             {(['events', 'session', 'search'] as const).map((t) => (
               <button
                 type="button"
                 key={t}
                 onClick={() => setTab(t)}
                 className={`flex-1 py-1 text-[10px] font-semibold transition-colors
-                  ${tab === t ? 'text-blue-600 border-b-2 border-blue-600' : 'text-cafe-muted hover:text-cafe-secondary'}`}
+                  ${tab === t ? 'border-b-2 border-cafe-accent text-cafe-accent' : 'text-cafe-muted hover:text-cafe-secondary'}`}
               >
                 {TAB_LABELS[t]}
               </button>

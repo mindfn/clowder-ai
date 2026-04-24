@@ -54,16 +54,26 @@ export function RulesPromptsContent() {
     };
   }, []);
 
-  if (error) return <p className="text-sm text-red-500 bg-red-50 rounded-lg px-3 py-2">{error}</p>;
+  if (error) {
+    return (
+      <p
+        className="console-card rounded-[22px] px-4 py-3 text-sm"
+        style={{ borderColor: 'var(--notice-error-border)', color: 'var(--notice-error-label)' }}
+      >
+        {error}
+      </p>
+    );
+  }
   if (!data) return <p className="text-sm text-cafe-muted">加载中...</p>;
 
   const toggle = (path: string) => setExpandedFile((prev) => (prev === path ? null : path));
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <Section
         title="共享规则"
         description="全部成员遵循的协作规则和流程规范（shared-rules.md 摘要注入系统提示词，SOP.md 为参考文档）"
+        badge={`${data.sharedRules.length} files`}
       >
         {data.sharedRules.map((file) => (
           <RuleFileCard
@@ -75,7 +85,7 @@ export function RulesPromptsContent() {
         ))}
       </Section>
 
-      <Section title="模型指南" description="每只猫的角色定义和模型特定约束">
+      <Section title="模型指南" description="每只猫的角色定义和模型特定约束" badge={`${data.providerGuides.length} guides`}>
         {data.providerGuides.map((guide) => (
           <RuleFileCard
             key={guide.path}
@@ -90,13 +100,31 @@ export function RulesPromptsContent() {
   );
 }
 
-function Section({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+function Section({
+  title,
+  description,
+  badge,
+  children,
+}: {
+  title: string;
+  description: string;
+  badge: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div>
-      <h3 className="text-sm font-semibold text-cafe-black mb-1">{title}</h3>
-      <p className="text-xs text-cafe-muted mb-3">{description}</p>
-      <div className="space-y-2">{children}</div>
-    </div>
+    <section className="console-section-shell rounded-[28px] p-5 md:p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1.5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">Governance</p>
+          <h3 className="text-lg font-semibold tracking-[-0.03em] text-cafe">{title}</h3>
+          <p className="max-w-2xl text-sm leading-6 text-cafe-secondary">{description}</p>
+        </div>
+        <span className="console-pill inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold text-cafe-secondary">
+          {badge}
+        </span>
+      </div>
+      <div className="mt-4 space-y-3">{children}</div>
+    </section>
   );
 }
 
@@ -115,8 +143,14 @@ function RuleFileCard({
 
   if (!file.exists) {
     return (
-      <div className="rounded-lg border border-cafe-border p-3">
-        <p className="text-sm text-cafe-muted">{displayLabel}: 文件不存在</p>
+      <div className="console-list-card rounded-[22px] px-4 py-4">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-medium text-cafe">{displayLabel}</p>
+          <span className="console-status-chip" data-status="error">
+            文件不存在
+          </span>
+        </div>
+        <p className="mt-2 text-xs text-cafe-muted">{file.path}</p>
       </div>
     );
   }
@@ -124,32 +158,39 @@ function RuleFileCard({
   const lineCount = file.content.split('\n').length;
 
   return (
-    <div className="rounded-lg border border-cafe-border overflow-hidden">
+    <div className="console-list-card rounded-[22px] overflow-hidden" data-active={expanded ? 'true' : 'false'}>
       <button
         onClick={onToggle}
-        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-cafe-surface-elevated transition-colors"
+        className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left"
       >
-        <div>
-          <p className="text-sm font-medium text-cafe-black">{displayLabel}</p>
-          <p className="text-xs text-cafe-muted mt-0.5">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-medium text-cafe">{displayLabel}</p>
+            <span className="console-status-chip" data-status="info">
+              {expanded ? '已展开' : '可预览'}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-cafe-muted">
             {file.path} · {lineCount} 行
           </p>
         </div>
-        <svg
-          className={`w-4 h-4 text-cafe-muted transition-transform flex-shrink-0 ${expanded ? 'rotate-180' : ''}`}
-          viewBox="0 0 20 20"
-          fill="currentColor"
-        >
-          <path
-            fillRule="evenodd"
-            d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-            clipRule="evenodd"
-          />
-        </svg>
+        <span className="console-pill flex h-10 w-10 items-center justify-center rounded-full text-cafe-secondary">
+          <svg
+            className={`h-4 w-4 flex-shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`}
+            viewBox="0 0 20 20"
+            fill="currentColor"
+          >
+            <path
+              fillRule="evenodd"
+              d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+              clipRule="evenodd"
+            />
+          </svg>
+        </span>
       </button>
       {expanded && (
-        <div className="border-t border-cafe-border">
-          <pre className="p-4 text-xs leading-relaxed font-mono text-cafe-secondary overflow-x-auto max-h-[500px] overflow-y-auto bg-cafe-bg whitespace-pre-wrap">
+        <div className="console-code-pane">
+          <pre className="max-h-[32rem] overflow-x-auto overflow-y-auto px-4 py-4 text-[12px] leading-6 text-cafe-secondary whitespace-pre-wrap">
             {file.content}
           </pre>
         </div>

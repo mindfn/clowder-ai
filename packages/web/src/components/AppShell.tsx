@@ -15,7 +15,7 @@ export function AppShell({ children }: AppShellProps) {
     return <>{children}</>;
   }
   return (
-    <div className="flex h-screen h-dvh">
+    <div className="console-shell flex h-screen h-dvh overflow-hidden">
       <ActivityBar />
       <div className="flex-1 min-w-0">{children}</div>
     </div>

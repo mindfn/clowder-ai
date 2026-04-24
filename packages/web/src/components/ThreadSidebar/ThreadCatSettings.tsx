@@ -77,8 +77,8 @@ export function ThreadCatSettings({ threadId, currentCats, onSave }: ThreadCatSe
         }}
         className={`p-0.5 rounded transition-all ${
           currentCats.length > 0
-            ? 'text-cocreator-primary'
-            : 'opacity-0 group-hover:opacity-100 text-cafe-muted hover:text-cocreator-primary'
+            ? 'text-cafe-accent'
+            : 'opacity-0 group-hover:opacity-100 text-cafe-muted hover:text-cafe-accent'
         }`}
         title="设置默认猫猫"
       >
@@ -89,7 +89,7 @@ export function ThreadCatSettings({ threadId, currentCats, onSave }: ThreadCatSe
       {isOpen && (
         <div
           style={getPopoverStyle()}
-          className="bg-cafe-surface rounded-lg shadow-lg border border-cafe z-50 flex flex-col"
+          className="z-50 flex flex-col rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-panel-bg)] shadow-[var(--console-shadow-soft)]"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="p-3 overflow-y-auto max-h-[50vh]">
@@ -115,7 +115,7 @@ export function ThreadCatSettings({ threadId, currentCats, onSave }: ThreadCatSe
               <button
                 onClick={() => void handleSave()}
                 disabled={!hasChanged || isSaving}
-                className="text-xs px-2 py-0.5 rounded bg-cocreator-primary text-white hover:bg-cocreator-dark disabled:opacity-40"
+                className="console-button-primary rounded px-2 py-0.5 text-xs disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {isSaving ? '...' : '保存'}
               </button>

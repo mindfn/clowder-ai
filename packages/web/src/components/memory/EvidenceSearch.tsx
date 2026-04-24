@@ -170,14 +170,14 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
           placeholder="搜索项目知识..."
-          className="flex-1 rounded-lg border border-cafe bg-white px-3 py-2 text-sm text-cafe-black placeholder:text-cafe-secondary focus:border-cocreator-primary focus:outline-none"
+          className="console-form-input flex-1 text-sm"
           data-testid="evidence-search-input"
         />
         <button
           type="button"
           onClick={handleSearch}
           disabled={isSearching || !query.trim()}
-          className="rounded-lg bg-cocreator-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-cocreator-dark disabled:opacity-40"
+          className="console-button-primary px-4 py-2 text-sm font-medium disabled:opacity-40"
           data-testid="evidence-search-button"
         >
           {isSearching ? '...' : '搜索'}
@@ -283,7 +283,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
               className="mt-1 text-xs text-cafe-secondary"
             />
             {item.passages && item.passages.length > 0 && (
-              <div className="mt-2 space-y-1 border-l-2 border-cocreator-light pl-2">
+              <div className="mt-2 space-y-1 border-l-2 border-[var(--console-border-soft)] pl-2">
                 {item.passages.map((p) => (
                   <div key={p.passageId} className="text-xs text-cafe-secondary">
                     {p.speaker && <span className="font-medium text-cafe-black">{p.speaker}: </span>}

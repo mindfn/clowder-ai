@@ -1,25 +1,52 @@
 'use client';
 
+import type { CSSProperties } from 'react';
 import { usePathname } from 'next/navigation';
 import { MemoryIcon } from './icons/MemoryIcon';
-import { assignDocumentRoute } from './ThreadSidebar/thread-navigation';
+import { assignDocumentRoute, getWorldSwitchHref } from './ThreadSidebar/thread-navigation';
 
 const NAV_ITEMS = [
-  { id: 'chat', path: '/', label: '对话', match: (p: string) => p === '/' || p.startsWith('/thread/') },
-  { id: 'signals', path: '/signals', label: '信号', match: (p: string) => p.startsWith('/signals') },
-  { id: 'memory', path: '/memory', label: '记忆', match: (p: string) => p.startsWith('/memory') },
-  { id: 'settings', path: '/settings', label: '设置', match: (p: string) => p.startsWith('/settings') },
+  {
+    id: 'home',
+    path: '/',
+    label: '首页',
+    accent: 'var(--color-cafe-accent)',
+    glow: 'var(--color-cafe-accent)',
+    match: (p: string) => p === '/' || p.startsWith('/thread/'),
+  },
+  {
+    id: 'signals',
+    path: '/signals',
+    label: '信号',
+    accent: 'var(--color-gemini-primary)',
+    glow: 'var(--color-gemini-bg)',
+    match: (p: string) => p.startsWith('/signals'),
+  },
+  {
+    id: 'memory',
+    path: '/memory',
+    label: '记忆',
+    accent: 'var(--color-codex-primary)',
+    glow: 'var(--color-codex-bg)',
+    match: (p: string) => p.startsWith('/memory'),
+  },
+  {
+    id: 'settings',
+    path: '/settings',
+    label: '设置',
+    accent: 'var(--color-kimi-dark)',
+    glow: 'var(--color-kimi-bg)',
+    match: (p: string) => p.startsWith('/settings'),
+  },
 ] as const;
 
-function ChatIcon({ className = 'w-5 h-5' }: { className?: string }) {
+function HomeIcon({ className = 'w-5 h-5' }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
-      <title>对话</title>
-      <path
-        d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <title>首页</title>
+      <path d="M3 10.5 12 3l9 7.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M5.25 9.75V21h13.5V9.75" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10 21v-5.25h4V21" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -52,8 +79,19 @@ function SettingsIcon({ className = 'w-5 h-5' }: { className?: string }) {
   );
 }
 
-const ICON_MAP: Record<string, React.FC<{ className?: string }>> = {
-  chat: ChatIcon,
+function ClassicWorldIcon({ className = 'w-5 h-5' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <title>经典世界</title>
+      <path d="M12 3v18" strokeLinecap="round" />
+      <path d="M4 7h8a4 4 0 1 1 0 8H4Z" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M20 17h-8a4 4 0 1 1 0-8h8Z" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+const ICON_MAP: Record<string, ({ className }: { className?: string }) => JSX.Element> = {
+  home: HomeIcon,
   signals: SignalIcon,
   memory: MemoryIcon,
   settings: SettingsIcon,
@@ -65,35 +103,62 @@ interface ActivityBarProps {
 
 export function ActivityBar({ className }: ActivityBarProps) {
   const pathname = usePathname() ?? '/';
+  const inClassicWorld = pathname.startsWith('/classic');
+  const classicPath = getWorldSwitchHref(pathname);
+  const classicTitle = inClassicWorld ? '返回新世界' : '切换到经典世界';
 
   return (
     <nav
-      className={`flex flex-col items-center w-12 flex-shrink-0 py-3 gap-1
-        bg-cafe-surface-sunken border-r border-cafe-border ${className ?? ''}`}
+      className={`console-activity-rail flex w-16 flex-shrink-0 flex-col items-center gap-2 px-2 py-4 ${className ?? ''}`}
       aria-label="主导航"
     >
+      <div className="flex flex-col items-center gap-1 pb-2">
+        <div className="flex h-9 w-9 items-center justify-center rounded-[12px] text-[11px] font-semibold text-cafe-secondary">
+          CC
+        </div>
+      </div>
       {NAV_ITEMS.map((item) => {
         const Icon = ICON_MAP[item.id];
         const active = item.match(pathname);
+        const toneStyle = {
+          ['--item-accent' as string]: item.accent,
+          ['--item-glow' as string]: item.glow,
+        } as CSSProperties;
         return (
           <button
             key={item.id}
+            type="button"
             onClick={() => assignDocumentRoute(item.path, typeof window !== 'undefined' ? window : undefined)}
-            className={`relative w-10 h-10 flex items-center justify-center rounded-lg
-              transition-colors duration-150
-              ${
-                active
-                  ? 'text-cocreator bg-cafe-surface'
-                  : 'text-cafe-muted hover:text-cafe-secondary hover:bg-cafe-surface-elevated'
-              }`}
+            data-active={active ? 'true' : 'false'}
+            className="console-activity-button relative flex h-10 w-10 items-center justify-center rounded-[10px]"
+            style={toneStyle}
             title={item.label}
             aria-current={active ? 'page' : undefined}
           >
-            {active && <span className="absolute left-0 top-2 bottom-2 w-0.5 rounded-r bg-cocreator" />}
-            <Icon className="w-5 h-5" />
+            {active && <span className="console-activity-indicator absolute -left-1.5 h-5 w-0.5 rounded-full" />}
+            <Icon className="h-[18px] w-[18px]" />
           </button>
         );
       })}
+      <div className="mt-auto flex flex-col items-center pt-3">
+        <button
+          type="button"
+          onClick={() => assignDocumentRoute(classicPath, typeof window !== 'undefined' ? window : undefined)}
+          data-active={inClassicWorld ? 'true' : 'false'}
+          className="console-activity-button relative flex h-10 w-10 items-center justify-center rounded-[10px]"
+          style={
+            {
+              ['--item-accent' as string]: 'var(--color-opus-primary)',
+              ['--item-glow' as string]: 'var(--color-opus-bg)',
+            } as CSSProperties
+          }
+          title={classicTitle}
+          aria-label={classicTitle}
+        >
+          {inClassicWorld && <span className="console-activity-indicator absolute -left-1.5 h-5 w-0.5 rounded-full" />}
+          <ClassicWorldIcon className="h-[18px] w-[18px]" />
+        </button>
+      </div>
     </nav>
   );
 }

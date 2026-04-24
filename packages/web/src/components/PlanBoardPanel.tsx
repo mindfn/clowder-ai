@@ -163,9 +163,9 @@ export function PlanBoardPanel({ threadId, catInvocations }: PlanBoardPanelProps
   if (totalCats === 0) return null;
 
   return (
-    <section className="rounded-lg border border-cafe bg-cafe-surface-elevated/70 p-3">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-semibold text-cafe-secondary">猫猫祟祟 ({totalCats})</h3>
+    <section className="console-card rounded-[24px] p-4" data-console-card="true">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">猫猫祟祟 ({totalCats})</h3>
       </div>
 
       {/* Running cats */}
@@ -183,7 +183,7 @@ export function PlanBoardPanel({ threadId, catInvocations }: PlanBoardPanelProps
         <div className="mt-2 border-t border-cafe pt-2">
           <button
             onClick={() => setCompletedOpen((v) => !v)}
-            className="w-full flex items-center justify-between text-[10px] text-cafe-secondary hover:text-cafe-secondary"
+            className="flex w-full items-center justify-between text-[10px] text-cafe-secondary hover:text-cafe"
           >
             <span>已完成 ({completedCats.length})</span>
             <span>{completedOpen ? '▲' : '▼'}</span>

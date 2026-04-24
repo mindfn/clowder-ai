@@ -126,9 +126,14 @@ describe('DefaultCatSelector (#543: dropdown)', () => {
         }),
       );
     });
-    const dot = container.querySelector<HTMLElement>('[data-testid="current-color-dot"]');
-    expect(dot).not.toBeNull();
-    expect(dot!.style.backgroundColor).toBe('rgb(255, 171, 145)'); // #FFAB91
+    expect(container.textContent).toContain('默认');
+    // Only one badge
+    const badges = container.querySelectorAll('[data-testid="default-badge"]');
+    expect(badges.length).toBe(1);
+    const cards = container.querySelectorAll('[data-testid="default-cat-card"]');
+    const defaultCard = [...cards].find((card) => card.textContent?.includes('opus'));
+    expect(defaultCard?.className).toContain('bg-[var(--console-active-bg)]');
+    expect(defaultCard?.className).not.toContain('ring-cocreator-primary');
   });
 
   it('shows scope description', () => {

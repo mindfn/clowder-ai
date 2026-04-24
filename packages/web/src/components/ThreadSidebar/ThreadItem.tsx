@@ -104,8 +104,8 @@ export function ThreadItem({
   return (
     <div
       data-thread-id={id}
-      className={`group relative ${indented ? 'pl-7 pr-3' : 'px-3'} py-2.5 border-b border-gray-50 transition-colors cursor-pointer ${
-        isActive ? 'bg-cocreator-light' : 'hover:bg-cafe-surface-elevated'
+      className={`group relative ${indented ? 'pl-7 pr-3' : 'px-3'} py-2.5 transition-colors cursor-pointer ${
+        isActive ? 'bg-[var(--console-active-bg)]' : 'hover:bg-[var(--console-hover-bg)]'
       }`}
       onClick={() => onSelect(id)}
       title={tooltip}
@@ -136,14 +136,14 @@ export function ThreadItem({
             }}
             disabled={isSaving}
             maxLength={200}
-            className="text-sm px-1.5 py-0.5 rounded border border-cocreator-light focus:outline-none focus:border-cocreator-primary w-full mr-2 disabled:opacity-70"
+            className="console-form-input text-sm px-1.5 py-0.5 w-full mr-2 disabled:opacity-70"
           />
         ) : (
           <span
             className={`text-sm leading-snug line-clamp-2 flex-1 min-w-0 ${isActive ? 'font-semibold text-cafe-black' : 'text-cafe-secondary'}`}
           >
             {isHubThread && (
-              <HubIcon className="w-3.5 h-3.5 inline-block mr-1 text-cocreator-primary align-text-bottom" />
+              <HubIcon className="w-3.5 h-3.5 inline-block mr-1 text-cafe-accent align-text-bottom" />
             )}
             {title ?? (id === 'default' ? '大厅' : '未命名对话')}
           </span>
@@ -158,8 +158,8 @@ export function ThreadItem({
               }}
               className={`p-0.5 rounded transition-all ${
                 isPinned
-                  ? 'text-cocreator-primary'
-                  : 'opacity-0 group-hover:opacity-100 text-cafe-muted hover:text-cocreator-primary'
+                  ? 'text-cafe-accent'
+                  : 'opacity-0 group-hover:opacity-100 text-cafe-muted hover:text-cafe-accent'
               }`}
               title={isPinned ? '取消置顶' : '置顶'}
             >
@@ -197,11 +197,11 @@ export function ThreadItem({
                 e.stopPropagation();
                 setIsEditing(true);
               }}
-              className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-cocreator-bg transition-all"
+              className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[var(--console-hover-bg)] transition-all"
               title="重命名对话"
             >
               <svg
-                className="w-3 h-3 text-cafe-muted hover:text-cocreator-primary"
+                className="w-3 h-3 text-cafe-muted hover:text-cafe-accent"
                 viewBox="0 0 16 16"
                 fill="currentColor"
               >
@@ -217,7 +217,7 @@ export function ThreadItem({
                 e.stopPropagation();
                 window.open(`${API_URL}/api/export/thread/${id}?format=md`);
               }}
-              className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-blue-50 transition-all"
+              className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[var(--console-hover-bg)] transition-all"
               title="导出对话"
             >
               <svg className="w-3 h-3 text-cafe-muted hover:text-blue-400" viewBox="0 0 16 16" fill="currentColor">
@@ -233,7 +233,7 @@ export function ThreadItem({
                 e.stopPropagation();
                 onDelete(id);
               }}
-              className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-50 transition-all"
+              className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[var(--console-hover-bg)] transition-all"
               title="删除对话"
             >
               <svg className="w-3 h-3 text-cafe-muted hover:text-red-400" viewBox="0 0 16 16" fill="currentColor">

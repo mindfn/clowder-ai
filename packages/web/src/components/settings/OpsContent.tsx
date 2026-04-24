@@ -25,8 +25,8 @@ export function OpsContent() {
             onClick={() => setActiveTab(sub.id)}
             className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
               activeTab === sub.id
-                ? 'bg-cocreator-primary text-white'
-                : 'bg-cafe-surface-elevated text-cafe-secondary hover:bg-cocreator-bg'
+                ? 'bg-cafe-accent text-white'
+                : 'bg-cafe-surface-elevated text-cafe-secondary hover:bg-[var(--console-hover-bg)]'
             }`}
           >
             {sub.label}

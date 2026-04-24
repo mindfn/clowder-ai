@@ -182,9 +182,9 @@ export function SessionChainPanel({ threadId, catInvocations, onViewSession }: S
   };
 
   return (
-    <section className="rounded-lg border border-cafe bg-cafe-surface-elevated/70 p-3">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-semibold text-cafe-secondary">Session Chain</h3>
+    <section className="console-card rounded-[24px] p-4" data-console-card="true">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">Session Chain</h3>
         <span className="text-[10px] text-cafe-muted">
           {sessions.length} session{sessions.length !== 1 ? 's' : ''}
         </span>

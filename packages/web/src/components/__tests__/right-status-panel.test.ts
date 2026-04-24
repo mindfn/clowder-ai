@@ -37,6 +37,28 @@ describe('RightStatusPanel', () => {
     expect(html).toContain('12');
   });
 
+  it('exposes shared shell hooks for the refreshed status panel chrome', () => {
+    const html = render({
+      intentMode: 'execute',
+      targetCats: ['opus'],
+      catStatuses: {
+        opus: 'streaming',
+      },
+      catInvocations: {},
+      threadId: 'test-thread',
+      messageSummary: {
+        total: 2,
+        assistant: 1,
+        system: 1,
+        evidence: 0,
+        followup: 0,
+      },
+    });
+
+    expect(html).toContain('data-console-panel="status"');
+    expect(html).toContain('data-console-card="true"');
+  });
+
   it('prefers activeInvocations over stale targetCats when provided by ChatContainer', () => {
     const html = render({
       intentMode: 'execute',

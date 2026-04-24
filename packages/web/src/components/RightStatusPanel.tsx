@@ -125,7 +125,7 @@ function ThinkingModeToggle({ threadId }: { threadId: string }) {
       </span>
       <button
         onClick={toggle}
-        className="text-[11px] px-2 py-0.5 rounded-full border border-cafe hover:border-gray-400 hover:bg-cafe-surface-elevated transition-colors"
+        className="console-pill rounded-full px-3 py-1 text-[11px] transition-colors hover:text-cafe"
         title={isDebug ? '切换到游戏模式（猫猫互相看不到心里话）' : '切换到调试模式（猫猫互相分享心里话）'}
       >
         {isDebug ? '切换游戏' : '切换调试'}
@@ -207,7 +207,7 @@ function BubbleDisplayToggle({
       <button
         onClick={cycle}
         disabled={bubbleRestorePending}
-        className="text-[11px] px-2 py-0.5 rounded-full border border-cafe hover:border-gray-400 hover:bg-cafe-surface-elevated transition-colors"
+        className="console-pill rounded-full px-3 py-1 text-[11px] transition-colors hover:text-cafe"
       >
         {bubbleRestorePending ? '恢复中...' : BUBBLE_LABELS[next as keyof typeof BUBBLE_LABELS]}
       </button>
@@ -269,7 +269,7 @@ function RevealWhispersButton({ threadId }: { threadId: string }) {
         <button
           onClick={handleReveal}
           disabled={status === 'pending'}
-          className="text-[11px] px-2 py-0.5 rounded-full border border-amber-300 text-amber-600 hover:border-amber-400 hover:bg-amber-50 transition-colors disabled:opacity-50"
+          className="console-pill rounded-full px-3 py-1 text-[11px] text-amber-600 transition-colors hover:text-amber-700 disabled:opacity-50"
           title="揭晓本线程所有悄悄话"
         >
           {status === 'pending' ? '揭秘中...' : '揭秘全部'}
@@ -280,6 +280,7 @@ function RevealWhispersButton({ threadId }: { threadId: string }) {
 }
 
 const LOGS_DIR = 'packages/api/data/logs/api';
+const STATUS_CARD_CLASS = 'console-card rounded-[24px] p-4';
 
 function parseLogFilename(name: string): { date: string; seq: number } | null {
   const m = name.match(/^api\.(\d{4}-\d{2}-\d{2})\.(\d+)\.log$/);
@@ -331,12 +332,12 @@ function RuntimeLogsButton() {
   }, [setRevealPath, setOpenFile]);
 
   return (
-    <section className="rounded-lg border border-cafe bg-cafe-surface-elevated/70 p-3">
+    <section className={STATUS_CARD_CLASS} data-console-card="true">
       <div className="flex items-center justify-between">
-        <h3 className="text-xs font-semibold text-cafe-secondary">运行日志</h3>
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">运行日志</h3>
         <button
           onClick={handleClick}
-          className="text-[11px] px-2 py-0.5 rounded-full border border-cafe hover:border-gray-400 hover:bg-cafe-surface-elevated transition-colors"
+          className="console-pill rounded-full px-3 py-1 text-[11px] text-cafe-secondary transition-colors hover:text-cafe"
           title="在 Workspace 面板中打开运行日志目录"
         >
           查看日志
@@ -384,25 +385,27 @@ export function RightStatusPanel({
 
   return (
     <aside
-      className="hidden lg:flex border-l border-cocreator-light bg-cafe-surface/90 px-4 py-4 flex-col gap-4 overflow-y-auto"
+      className="console-status-panel hidden lg:flex flex-col gap-4 overflow-y-auto px-4 py-4"
+      data-console-panel="status"
       style={{ width: width ?? 288, flexShrink: 0 }}
     >
-      <div>
-        <h2 className="text-sm font-bold text-cafe-black">状态栏</h2>
-        <p className="text-xs text-cafe-secondary mt-1">
+      <div className="console-shell-panel-soft rounded-[24px] px-4 py-4">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-cafe-muted">Inspector</p>
+        <h2 className="mt-2 text-base font-semibold tracking-[-0.03em] text-cafe">状态栏</h2>
+        <p className="mt-1 text-xs text-cafe-secondary">
           当前模式: <span className="font-medium">{modeLabel(intentMode)}</span>
         </p>
       </div>
 
       {/* ── Active cats: currently working ──────────────── */}
-      <section className="rounded-lg border border-cafe bg-cafe-surface-elevated/70 p-3">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-xs font-semibold text-cafe-secondary">
+      <section className={STATUS_CARD_CLASS} data-console-card="true">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">
             {activeCats.length > 0 ? '当前调用' : '猫猫状态'}
           </h3>
           <button
             onClick={() => openHub()}
-            className="text-base text-cafe-muted hover:text-blue-600 hover:rotate-45 transition-all duration-200"
+            className="console-pill flex h-9 w-9 items-center justify-center rounded-full text-base text-cafe-secondary transition-all duration-200 hover:-rotate-12 hover:text-cafe"
             title="Clowder AI Hub"
           >
             &#9881;
@@ -436,10 +439,10 @@ export function RightStatusPanel({
 
       {/* ── History cats: appeared before but not in current round ── */}
       {historyCats.length > 0 && (
-        <section className="rounded-lg border border-cafe bg-cafe-surface-elevated/70 p-3">
+        <section className={STATUS_CARD_CLASS} data-console-card="true">
           <button
             onClick={() => setHistoryOpen((v) => !v)}
-            className="w-full flex items-center justify-between text-xs font-semibold text-cafe-secondary hover:text-cafe-secondary"
+            className="flex w-full items-center justify-between text-xs font-semibold text-cafe-secondary hover:text-cafe"
           >
             <span>历史参与 ({historyCats.length})</span>
             <span className="text-[10px]">{historyOpen ? '▲' : '▼'}</span>
@@ -468,8 +471,8 @@ export function RightStatusPanel({
       )}
 
       {/* ── Message stats (collapsible) ───────────────── */}
-      <section className="rounded-lg border border-cafe bg-cafe-surface-elevated/70 p-3">
-        <h3 className="text-xs font-semibold text-cafe-secondary mb-2">消息统计</h3>
+      <section className={STATUS_CARD_CLASS} data-console-card="true">
+        <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">消息统计</h3>
         <div className="grid grid-cols-2 gap-2 text-xs text-cafe-secondary">
           <div>总数</div>
           <div className="text-right font-medium">{messageSummary.total}</div>
@@ -492,8 +495,8 @@ export function RightStatusPanel({
         onViewSession={(id, catId) => setViewSession({ id, catId })}
       />
 
-      <section className="rounded-lg border border-cafe bg-cafe-surface-elevated/70 p-3">
-        <h3 className="text-xs font-semibold text-cafe-secondary mb-2">对话信息</h3>
+      <section className={STATUS_CARD_CLASS} data-console-card="true">
+        <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">对话信息</h3>
         <div className="text-xs text-cafe-secondary space-y-2">
           <div>
             Thread:{' '}

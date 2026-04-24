@@ -38,6 +38,13 @@ const STATUS_CONFIG: Record<ServiceStatus, { dot: string; label: string }> = {
   unknown: { dot: 'bg-gray-300', label: '未知' },
 };
 
+const STATUS_TONE: Record<ServiceStatus, 'active' | 'available' | 'error' | 'info'> = {
+  running: 'active',
+  stopped: 'available',
+  error: 'error',
+  unknown: 'info',
+};
+
 interface ServiceStatusPanelProps {
   filterFeatures?: string[];
   title?: string;
@@ -96,53 +103,66 @@ export function ServiceStatusPanel({ filterFeatures, title, expandable }: Servic
   const showDetail = expandable ?? !filterFeatures;
 
   return (
-    <div className="rounded-xl border border-cafe-border bg-cafe-surface p-3">
-      <div className="flex items-center justify-between mb-2">
-        {title && <p className="text-xs font-medium text-cafe-secondary">{title}</p>}
+    <div className="console-card rounded-[26px] p-4 md:p-5">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="space-y-1">
+          {title && <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">{title}</p>}
+          <p className="text-sm text-cafe-secondary">把相关服务的运行状态、依赖和启动信息集中到一张系统卡片里。</p>
+        </div>
         <button
           type="button"
           onClick={handleRefresh}
           disabled={refreshing}
-          className="text-xs text-cafe-muted hover:text-cafe-secondary transition-colors disabled:opacity-40"
+          className="console-button-secondary shrink-0 disabled:opacity-40"
         >
           {refreshing ? '刷新中...' : '刷新'}
         </button>
       </div>
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         {services.map((s) => {
           const cfg = STATUS_CONFIG[s.status];
           const isExpanded = expanded === s.manifest.id;
           return (
-            <div key={s.manifest.id}>
-              <div className="flex items-center justify-between text-xs">
+            <div key={s.manifest.id} className="console-list-card rounded-[22px] px-4 py-4" data-active={isExpanded ? 'true' : 'false'}>
+              <div className="flex items-center justify-between gap-3 text-xs">
                 <button
                   type="button"
                   onClick={() => showDetail && setExpanded(isExpanded ? null : s.manifest.id)}
-                  className={`text-cafe-primary text-left ${showDetail ? 'hover:text-cafe-accent cursor-pointer' : ''}`}
+                  className={`min-w-0 text-left text-cafe ${showDetail ? 'cursor-pointer' : ''}`}
                 >
-                  {showDetail && (
-                    <svg
-                      className={`inline-block w-3 h-3 mr-1 text-cafe-muted transition-transform ${isExpanded ? 'rotate-90' : ''}`}
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
-                  )}
-                  {s.manifest.name}
+                  <div className="flex items-center gap-3">
+                    {showDetail && (
+                      <span className="console-pill flex h-8 w-8 items-center justify-center rounded-full text-cafe-secondary">
+                        <svg
+                          className={`h-3.5 w-3.5 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                          viewBox="0 0 20 20"
+                          fill="currentColor"
+                        >
+                          <path
+                            fillRule="evenodd"
+                            d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z"
+                            clipRule="evenodd"
+                          />
+                        </svg>
+                      </span>
+                    )}
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-cafe">{s.manifest.name}</p>
+                      <p className="mt-1 text-xs text-cafe-muted">
+                        {s.manifest.type}
+                        {s.manifest.port ? ` · :${s.manifest.port}` : ''}
+                        {s.manifest.enablesFeatures.length > 0 ? ` · ${s.manifest.enablesFeatures.length} features` : ''}
+                      </p>
+                    </div>
+                  </div>
                 </button>
-                <span className="flex items-center gap-1.5 text-cafe-muted">
-                  <span className={`inline-block h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
-                  {cfg.label}
-                  {s.manifest.port && s.status === 'running' && (
-                    <span className="text-cafe-muted/60">:{s.manifest.port}</span>
-                  )}
-                  {s.error && <span className="text-red-500 truncate max-w-[120px]">{s.error}</span>}
-                </span>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <span className="console-status-chip" data-status={STATUS_TONE[s.status]}>
+                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
+                    {cfg.label}
+                  </span>
+                  {s.error && <span className="console-status-chip" data-status="error">{s.error}</span>}
+                </div>
               </div>
               {showDetail && isExpanded && (
                 <ServiceDetail service={s} onHealthCheck={() => handleHealthCheck(s.manifest.id)} />
@@ -158,61 +178,81 @@ export function ServiceStatusPanel({ filterFeatures, title, expandable }: Servic
 function ServiceDetail({ service, onHealthCheck }: { service: ServiceState; onHealthCheck: () => void }) {
   const m = service.manifest;
   return (
-    <div className="ml-4 mt-1.5 mb-2 pl-3 border-l-2 border-cafe-border space-y-1.5 text-xs text-cafe-muted">
-      <div className="flex gap-4">
-        <span>
-          类型: <span className="text-cafe-secondary">{m.type}</span>
-        </span>
-        {m.port && (
-          <span>
-            端口: <span className="text-cafe-secondary">{m.port}</span>
-          </span>
-        )}
+    <div className="console-card-soft mt-4 space-y-3 rounded-[20px] px-4 py-4 text-xs text-cafe-muted">
+      <div className="console-data-grid">
+        <DetailTile label="类型" value={m.type} />
+        {m.port ? <DetailTile label="端口" value={String(m.port)} /> : null}
+        {m.prerequisites?.runtime ? <DetailTile label="运行环境" value={m.prerequisites.runtime} /> : null}
       </div>
 
       {m.enablesFeatures.length > 0 && (
         <div>
-          <span>功能: </span>
-          <span className="text-cafe-secondary">{m.enablesFeatures.join(', ')}</span>
-        </div>
-      )}
-
-      {m.prerequisites?.runtime && (
-        <div>
-          <span>运行环境: </span>
-          <span className="text-cafe-secondary">{m.prerequisites.runtime}</span>
+          <p className="console-data-tile-label">功能</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {m.enablesFeatures.map((feature) => (
+              <span key={feature} className="console-pill inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold text-cafe-secondary">
+                {feature}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 
       {m.prerequisites?.packages && m.prerequisites.packages.length > 0 && (
         <div>
-          <span>依赖: </span>
-          <span className="font-mono text-cafe-secondary">{m.prerequisites.packages.join(', ')}</span>
+          <p className="console-data-tile-label">依赖</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {m.prerequisites.packages.map((pkg) => (
+              <span key={pkg} className="console-pill inline-flex items-center rounded-full px-2.5 py-1 font-mono text-[11px] text-cafe-secondary">
+                {pkg}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 
       {m.scripts?.start && (
-        <div>
-          <span>启动: </span>
-          <code className="text-cafe-secondary bg-cafe-surface-elevated px-1 py-0.5 rounded">{m.scripts.start}</code>
-        </div>
+        <DetailBlock label="启动命令" value={m.scripts.start} mono />
       )}
 
       {m.configVars && m.configVars.length > 0 && (
         <div>
-          <span>配置变量: </span>
-          <span className="font-mono text-cafe-secondary">{m.configVars.join(', ')}</span>
+          <p className="console-data-tile-label">配置变量</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {m.configVars.map((name) => (
+              <span key={name} className="console-pill inline-flex items-center rounded-full px-2.5 py-1 font-mono text-[11px] text-cafe-secondary">
+                {name}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 
       <button
         type="button"
         onClick={onHealthCheck}
-        className="mt-1 px-2 py-0.5 rounded border border-cafe-border text-cafe-secondary
-                   hover:bg-cafe-surface-elevated transition-colors"
+        className="console-button-secondary"
       >
         检查健康
       </button>
+    </div>
+  );
+}
+
+function DetailTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="console-data-tile">
+      <p className="console-data-tile-label">{label}</p>
+      <p className="console-data-tile-value">{value}</p>
+    </div>
+  );
+}
+
+function DetailBlock({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="console-data-tile">
+      <p className="console-data-tile-label">{label}</p>
+      <p className={`console-data-tile-value ${mono ? 'font-mono text-[12px]' : ''}`}>{value}</p>
     </div>
   );
 }

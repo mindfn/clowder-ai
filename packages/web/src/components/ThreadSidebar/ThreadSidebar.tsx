@@ -25,6 +25,7 @@ import { useScrollAnchor } from './use-scroll-anchor';
 interface ThreadSidebarProps {
   onClose?: () => void;
   className?: string;
+  routePrefix?: string;
 }
 
 function notifyThreadCreateFailure(message: string) {
@@ -36,7 +37,7 @@ function notifyThreadCreateFailure(message: string) {
   });
 }
 
-export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
+export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSidebarProps) {
   const {
     threads,
     currentThreadId,
@@ -165,8 +166,8 @@ export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
   }, []);
 
   const navigateToThread = useCallback((threadId: string) => {
-    pushThreadRouteWithHistory(threadId, typeof window !== 'undefined' ? window : undefined);
-  }, []);
+    pushThreadRouteWithHistory(threadId, typeof window !== 'undefined' ? window : undefined, routePrefix);
+  }, [routePrefix]);
 
   const createInProject = useCallback(
     async (opts: NewThreadOptions) => {
@@ -498,8 +499,8 @@ export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
 
   return (
     <>
-      <aside className={`${className ?? 'w-60'} border-r border-cocreator-light bg-cafe-surface flex flex-col h-full`}>
-        <div className="p-3 border-b border-cocreator-light flex items-center justify-between">
+      <aside className={`${className ?? 'w-60'} border-r border-[var(--console-border-soft)] flex flex-col h-full`}>
+        <div className="p-3 flex items-center justify-between">
           <span className="text-sm font-semibold text-cafe-black">对话</span>
           <div className="flex items-center gap-1.5">
             <button
@@ -544,7 +545,7 @@ export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
               type="button"
               onClick={() => setShowPicker(true)}
               disabled={isCreating}
-              className="text-xs px-2 py-1 rounded-lg bg-cocreator-primary text-white hover:bg-cocreator-dark disabled:opacity-40 transition-colors"
+              className="console-button-primary text-xs px-2 py-1 disabled:opacity-40"
               data-guide-id="sidebar.new-thread"
             >
               {isCreating ? '...' : '+ 新对话'}
@@ -553,12 +554,12 @@ export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
         </div>
 
         {bindWarning && (
-          <div className="px-3 py-1.5 bg-yellow-50 border-b border-yellow-200 text-[10px] text-yellow-700">
+          <div className="px-3 py-1.5 bg-yellow-50/60 text-[10px] text-yellow-700">
             {bindWarning}
           </div>
         )}
 
-        <div className="px-2 py-1.5 border-b border-cocreator-light">
+        <div className="px-2 py-1.5">
           <button
             type="button"
             onClick={() => {
@@ -568,7 +569,7 @@ export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
                 onClose?.();
               }
             }}
-            className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-[11px] text-cafe-muted hover:text-cafe-secondary hover:bg-cocreator-bg transition-colors"
+            className="flex w-full items-center gap-1.5 rounded px-2 py-1 text-[11px] text-cafe-muted hover:text-cafe-secondary hover:bg-[var(--console-hover-bg)] transition-colors"
             data-testid="sidebar-mission-hub"
           >
             <svg
@@ -589,19 +590,19 @@ export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
           </button>
         </div>
 
-        <div className="px-3 py-2 border-b border-cocreator-light">
+        <div className="px-3 py-2">
           <input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="搜索对话、项目或 ID..."
-            className="w-full rounded-lg border border-cocreator-light px-2.5 py-1.5 text-xs text-cafe-secondary placeholder:text-gray-400 focus:outline-none focus:border-cocreator-primary"
+            className="console-form-input w-full text-xs"
           />
           {unreadIds.size > 0 && (
             <button
               type="button"
               onClick={handleMarkAllRead}
               disabled={isMarkingAllRead}
-              className="mt-1.5 text-[10px] text-cafe-muted hover:text-cocreator-primary disabled:opacity-40 transition-colors"
+              className="mt-1.5 text-[10px] text-cafe-muted hover:text-cafe-accent disabled:opacity-40 transition-colors"
               data-testid="mark-all-read-btn"
             >
               {isMarkingAllRead ? '清理中...' : '全部已读'}
@@ -631,7 +632,7 @@ export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
               <button
                 type="button"
                 onClick={expandAll}
-                className="text-[10px] text-cafe-muted hover:text-cocreator-primary transition-colors"
+                className="text-[10px] text-cafe-muted hover:text-cafe-accent transition-colors"
                 data-testid="expand-all-btn"
               >
                 全部展开
@@ -640,7 +641,7 @@ export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
               <button
                 type="button"
                 onClick={collapseAll}
-                className="text-[10px] text-cafe-muted hover:text-cocreator-primary transition-colors"
+                className="text-[10px] text-cafe-muted hover:text-cafe-accent transition-colors"
                 data-testid="collapse-all-btn"
               >
                 全部折叠
@@ -797,7 +798,7 @@ export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
         </div>
 
         {/* F095 Phase D: Trash bin section */}
-        <div className="border-t border-cocreator-light">
+        <div className="border-t border-[var(--console-border-soft)]">
           <button
             type="button"
             onClick={handleToggleTrash}
@@ -833,7 +834,7 @@ export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
                   <button
                     type="button"
                     onClick={() => handleRestore(t.id)}
-                    className="sm:opacity-0 sm:group-hover:opacity-100 text-[10px] text-cocreator-primary hover:text-cocreator-dark transition-all shrink-0"
+                    className="sm:opacity-0 sm:group-hover:opacity-100 text-[10px] text-cafe-accent hover:text-cafe-accent/80 transition-all shrink-0"
                     data-testid={`restore-btn-${t.id}`}
                   >
                     恢复

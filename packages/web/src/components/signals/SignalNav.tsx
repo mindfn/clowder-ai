@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
+import { getThreadHref } from '../ThreadSidebar/thread-navigation';
 
 export type SignalNavItem = 'chat' | 'signals' | 'sources';
 
@@ -43,13 +44,13 @@ export function SignalNav({ active }: SignalNavProps) {
     [fromSuffix],
   );
 
-  const backHref = referrerThread && referrerThread !== 'default' ? `/thread/${referrerThread}` : '/';
+  const backHref = getThreadHref(referrerThread ?? 'default');
 
   return (
     <nav aria-label="Signal navigation" className="flex items-center gap-2">
       <a
         href={backHref}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-[#D8C6AD] bg-[#FCF7EE] px-3 py-1.5 text-xs font-medium text-[#8B6F47] transition-colors hover:bg-[#F7EEDB]"
+        className="console-button-ghost text-xs"
         data-testid="signal-back-to-chat"
       >
         <svg
@@ -65,24 +66,22 @@ export function SignalNav({ active }: SignalNavProps) {
         </svg>
         返回线程
       </a>
-      {items.map((item) => {
-        const isActive = item.id === active;
-        return (
-          <Link
-            key={item.id}
-            href={item.href}
-            aria-current={isActive ? 'page' : undefined}
-            className={[
-              'inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold transition-colors',
-              isActive
-                ? 'border-cocreator-primary bg-cocreator-light text-cocreator-dark'
-                : 'border-cafe bg-cafe-surface text-cafe-secondary hover:border-cocreator-light hover:text-cocreator-dark',
-            ].join(' ')}
-          >
-            {item.label}
-          </Link>
-        );
-      })}
+      <div className="console-segmented">
+        {items.map((item) => {
+          const isActive = item.id === active;
+          return (
+            <Link
+              key={item.id}
+              href={item.href}
+              aria-current={isActive ? 'page' : undefined}
+              data-active={isActive ? 'true' : 'false'}
+              className="console-segmented-button text-xs"
+            >
+              {item.label}
+            </Link>
+          );
+        })}
+      </div>
     </nav>
   );
 }

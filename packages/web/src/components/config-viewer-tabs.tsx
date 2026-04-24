@@ -27,8 +27,8 @@ export type { Capabilities, CatConfig, ConfigData, ContextBudget } from './confi
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="rounded-lg border border-cafe bg-cafe-surface-elevated/70 p-3">
-      <h3 className="text-xs font-semibold text-cafe-secondary mb-2">{title}</h3>
+    <section className="console-card rounded-[24px] p-4 md:p-5">
+      <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">{title}</h3>
       {children}
     </section>
   );
@@ -163,7 +163,7 @@ export function CatOverviewTab({
   );
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <HubOverviewToolbar onAddMember={onAddMember} />
       {/* F154 Phase B: Global default cat selector (AC-B2: always visible, even on error) */}
       <DefaultCatSelector
@@ -201,7 +201,7 @@ export function CatOverviewTab({
           />
         ))}
       </div>
-      <p className="text-[13px] text-[#B59A88]">按住 ⠿ 拖动卡片可自由排序；点击卡片进入成员配置 →</p>
+      <p className="px-2 text-[13px] text-[#B59A88]">按住 ⠿ 拖动卡片可自由排序；点击卡片进入成员配置 →</p>
       {cats.length === 0 && <p className="text-sm text-cafe-muted">未找到成员配置数据</p>}
     </div>
   );
@@ -252,7 +252,7 @@ function BubbleToggle({
       <span>{label}</span>
       <button
         onClick={toggle}
-        className="text-[11px] px-2 py-0.5 rounded-full border border-cafe hover:border-gray-400 hover:bg-cafe-surface-elevated transition-colors"
+        className="console-pill rounded-full px-3 py-1 text-[11px] transition-colors hover:text-cafe"
       >
         {display === 'expanded' ? '展开' : '折叠'}
       </button>

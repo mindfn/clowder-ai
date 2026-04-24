@@ -22,7 +22,7 @@ const ICON_PATHS: Record<string, string> = {
 };
 
 const ICON_COLORS: Record<string, string> = {
-  pin: 'text-cocreator-primary',
+  pin: 'text-cafe-accent',
   star: 'text-yellow-500',
   clock: 'text-cafe-muted',
   archive: 'text-cafe-muted',
@@ -164,7 +164,7 @@ export function SectionGroup({
             }}
             onBlur={submitRename}
             maxLength={100}
-            className="text-xs font-medium px-1 py-0 rounded border border-cocreator-light focus:outline-none focus:border-cocreator-primary flex-1 min-w-0"
+            className="console-form-input text-xs font-medium px-1 py-0 flex-1 min-w-0"
           />
         ) : (
           <span className="text-xs font-medium text-cafe-secondary truncate">{label}</span>
@@ -215,7 +215,7 @@ export function SectionGroup({
             }}
             title={isProjectPinned ? '取消固定项目' : '固定项目到活跃区'}
             testId="project-pin-btn"
-            className={isProjectPinned ? 'text-cocreator-primary' : 'text-cafe-muted hover:text-cafe-muted'}
+            className={isProjectPinned ? 'text-cafe-accent' : 'text-cafe-muted hover:text-cafe-muted'}
           >
             <path d={ICON_PATHS.pin} />
           </ActionButton>
@@ -302,7 +302,7 @@ function MenuItem({ onClick, danger, children }: { onClick: () => void; danger?:
       type="button"
       onClick={onClick}
       className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
-        danger ? 'text-red-500 hover:bg-red-50' : 'text-cafe-secondary hover:bg-cafe-surface-elevated'
+        danger ? 'text-red-500 hover:bg-[var(--console-hover-bg)]' : 'text-cafe-secondary hover:bg-[var(--console-hover-bg)]'
       }`}
     >
       {children}

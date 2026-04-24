@@ -13,6 +13,7 @@ import { MarketplacePanel } from '../marketplace/marketplace-panel';
 import { PushSettingsPanel } from '../PushSettingsPanel';
 import { VoiceSettingsPanel } from '../VoiceSettingsPanel';
 import { CallbackEnvPanel } from './CallbackEnvPanel';
+import { ConsoleSetupState, resolveConsoleSetupState } from './console-setup-state';
 import { OpsContent } from './OpsContent';
 import { PluginsContent } from './PluginsContent';
 import { RulesPromptsContent } from './RulesPromptsContent';
@@ -82,13 +83,11 @@ export function SettingsContent({ section }: SettingsContentProps) {
     [fetchData, refresh],
   );
 
-  const configError = fetchError ? (
-    <p className="text-sm text-red-500 bg-red-50 rounded-lg px-3 py-2">{fetchError}</p>
-  ) : null;
+  const setupState = resolveConsoleSetupState(section, fetchError);
 
   switch (section) {
     case 'members':
-      if (configError) return configError;
+      if (setupState) return <ConsoleSetupState {...setupState} />;
       return (
         <>
           {config ? (
@@ -137,46 +136,36 @@ export function SettingsContent({ section }: SettingsContentProps) {
       return <HubConnectorConfigTab />;
     case 'skills':
       return (
-        <>
+        <div className="space-y-5">
           <HubCapabilityTab section="skills" />
-          <div className="mt-4">
-            <MarketplacePanel />
-          </div>
-          <div className="mt-4">
-            <SkillPreviewPanel />
-          </div>
-        </>
+          <MarketplacePanel />
+          <SkillPreviewPanel />
+        </div>
       );
     case 'mcp':
       return (
-        <>
+        <div className="space-y-5">
           <HubCapabilityTab section="mcp" />
-          <div className="mt-4">
-            <CallbackEnvPanel />
-          </div>
-          <div className="mt-4">
-            <ServiceStatusPanel filterFeatures={['browser-automation-mcp']} title="相关服务状态" />
-          </div>
-        </>
+          <CallbackEnvPanel />
+          <ServiceStatusPanel filterFeatures={['browser-automation-mcp']} title="相关服务状态" />
+        </div>
       );
     case 'plugins':
       return <PluginsContent />;
     case 'voice':
       return (
-        <>
+        <div className="space-y-5">
           <ServiceStatusPanel
             filterFeatures={['voice-input', 'voice-output', 'voice-companion', 'voice-postprocess']}
             title="语音服务状态"
           />
-          <div className="mt-4">
-            <VoiceSettingsPanel />
-          </div>
-        </>
+          <VoiceSettingsPanel />
+        </div>
       );
     case 'rules':
       return <RulesPromptsContent />;
     case 'system':
-      if (configError) return configError;
+      if (setupState) return <ConsoleSetupState {...setupState} />;
       return config ? (
         <SystemTab config={config} onConfigChange={fetchData} />
       ) : (

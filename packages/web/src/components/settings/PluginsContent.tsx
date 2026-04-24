@@ -62,6 +62,12 @@ const CATEGORY_LABELS: Record<string, string> = {
   productivity: '效率工具',
 };
 
+const CATEGORY_META: Record<PluginDef['category'], { eyebrow: string; accent: string }> = {
+  devops: { eyebrow: 'Platform', accent: 'var(--color-gemini-primary)' },
+  communication: { eyebrow: 'Experience', accent: 'var(--color-cafe-accent)' },
+  productivity: { eyebrow: 'Tools', accent: 'var(--color-codex-primary)' },
+};
+
 const STATUS_STYLES: Record<string, { dot: string; bg: string; text: string }> = {
   active: { dot: 'bg-emerald-500', bg: 'bg-emerald-50', text: 'text-emerald-700' },
   configured: { dot: 'bg-amber-500', bg: 'bg-amber-50', text: 'text-amber-700' },
@@ -136,33 +142,58 @@ export function PluginsContent() {
     .filter((g) => g.items.length > 0);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {grouped.map((group) => (
-        <div key={group.category}>
-          <h3 className="text-sm font-semibold text-cafe-black mb-1">{group.label}</h3>
-          <div className="space-y-2">
+        <section key={group.category} className="console-section-shell rounded-[28px] p-5 md:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">
+                {CATEGORY_META[group.category as PluginDef['category']].eyebrow}
+              </p>
+              <h3 className="text-lg font-semibold tracking-[-0.03em] text-cafe">{group.label}</h3>
+              <p className="text-sm leading-6 text-cafe-secondary">把 Console 的内置能力和依赖服务统一放到一个可读的状态视图里。</p>
+            </div>
+            <span
+              className="console-pill inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold"
+              style={{ color: CATEGORY_META[group.category as PluginDef['category']].accent }}
+            >
+              {group.items.length} integrations
+            </span>
+          </div>
+          <div className="mt-4 grid gap-3 xl:grid-cols-2">
             {group.items.map((plugin) => {
               const style = STATUS_STYLES[plugin.status];
               return (
-                <div
-                  key={plugin.id}
-                  className="rounded-lg border border-cafe-border p-3 flex items-start justify-between gap-3"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-cafe-black">{plugin.name}</p>
-                    <p className="text-xs text-cafe-muted mt-0.5">{plugin.description}</p>
+                <article key={plugin.id} className="console-list-card rounded-[22px] p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-medium text-cafe">{plugin.name}</p>
+                        <span className="console-pill inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold text-cafe-secondary">
+                          {plugin.source === 'platform' ? '内置能力' : '依赖服务'}
+                        </span>
+                      </div>
+                      <p className="mt-1.5 text-sm leading-6 text-cafe-secondary">{plugin.description}</p>
+                    </div>
+                    <span className="console-status-chip" data-status={plugin.status}>
+                      <span className={`inline-block h-1.5 w-1.5 rounded-full ${style.dot}`} />
+                      {plugin.statusLabel}
+                    </span>
                   </div>
-                  <span
-                    className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs whitespace-nowrap ${style.bg} ${style.text}`}
-                  >
-                    <span className={`w-1.5 h-1.5 rounded-full ${style.dot}`} />
-                    {plugin.statusLabel}
-                  </span>
-                </div>
+                  <div className="mt-4 flex flex-wrap gap-2 text-[11px]">
+                    <span className="console-pill inline-flex items-center rounded-full px-2.5 py-1 text-cafe-secondary">
+                      {plugin.id}
+                    </span>
+                    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 ${style.bg} ${style.text}`}>
+                      <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
+                      status
+                    </span>
+                  </div>
+                </article>
               );
             })}
           </div>
-        </div>
+        </section>
       ))}
     </div>
   );

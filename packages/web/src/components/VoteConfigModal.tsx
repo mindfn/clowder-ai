@@ -109,7 +109,7 @@ export function VoteConfigModal({
               onChange={(e) => setQuestion(e.target.value)}
               placeholder="例：谁最绿茶？"
               maxLength={500}
-              className="w-full text-sm px-3 py-2 rounded-lg border border-cafe bg-cafe-surface focus:outline-none focus:ring-1 focus:ring-cocreator-primary"
+              className="w-full text-sm px-3 py-2 rounded-lg border border-cafe bg-cafe-surface focus:outline-none focus:ring-1 focus:ring-cafe-accent"
             />
           </div>
 
@@ -125,7 +125,7 @@ export function VoteConfigModal({
                     onChange={(e) => updateOption(i, e.target.value)}
                     placeholder={`选项 ${i + 1}`}
                     maxLength={100}
-                    className="flex-1 text-sm px-3 py-2 rounded-lg border border-cafe bg-cafe-surface focus:outline-none focus:ring-1 focus:ring-cocreator-primary"
+                    className="flex-1 text-sm px-3 py-2 rounded-lg border border-cafe bg-cafe-surface focus:outline-none focus:ring-1 focus:ring-cafe-accent"
                     onCompositionStart={ime.onCompositionStart}
                     onCompositionEnd={ime.onCompositionEnd}
                     onKeyDown={(e) => {
@@ -160,7 +160,7 @@ export function VoteConfigModal({
               <button
                 type="button"
                 onClick={addOption}
-                className="mt-2 text-xs text-cocreator-primary hover:text-cocreator-dark transition-colors"
+                className="mt-2 text-xs text-cafe-accent hover:text-cafe-accent/80 transition-colors"
               >
                 + 添加选项
               </button>
@@ -180,7 +180,7 @@ export function VoteConfigModal({
                 type="checkbox"
                 checked={anonymous}
                 onChange={(e) => setAnonymous(e.target.checked)}
-                className="rounded border-cafe text-cocreator-primary focus:ring-cocreator-primary"
+                className="rounded border-cafe text-cafe-accent focus:ring-cafe-accent"
               />
               匿名投票
             </label>
@@ -191,7 +191,7 @@ export function VoteConfigModal({
                 id="vote-timeout"
                 value={timeoutSec}
                 onChange={(e) => setTimeoutSec(Number(e.target.value))}
-                className="text-sm px-2 py-1 rounded border border-cafe bg-cafe-surface focus:outline-none focus:ring-1 focus:ring-cocreator-primary"
+                className="text-sm px-2 py-1 rounded border border-cafe bg-cafe-surface focus:outline-none focus:ring-1 focus:ring-cafe-accent"
               >
                 <option value={60}>1 分钟</option>
                 <option value={120}>2 分钟</option>
@@ -215,7 +215,7 @@ export function VoteConfigModal({
             type="button"
             onClick={handleSubmit}
             disabled={!canSubmit}
-            className="px-4 py-2 text-sm font-semibold rounded-lg bg-cocreator-primary text-white hover:bg-cocreator-dark transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="px-4 py-2 text-sm font-semibold rounded-lg bg-cafe-accent text-white hover:bg-cafe-accent/80 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             开始投票
           </button>

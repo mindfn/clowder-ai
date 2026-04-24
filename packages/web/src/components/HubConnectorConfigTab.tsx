@@ -146,17 +146,18 @@ export function HubConnectorConfigTab() {
         return (
           <div
             key={platform.id}
-            className="border border-cafe rounded-2xl overflow-hidden"
+            className="console-list-card rounded-[24px] overflow-hidden"
             data-testid={`platform-card-${platform.id}`}
             data-guide-id={`connector.${platform.id}`}
+            data-active={isExpanded ? 'true' : 'false'}
           >
             <button
               type="button"
               onClick={() => handleExpand(platform.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3.5 transition-colors ${isExpanded ? 'bg-sky-50' : 'hover:bg-cafe-surface-elevated'}`}
+              className="flex w-full items-center gap-3 px-4 py-4 transition-colors"
             >
               <span
-                className="flex items-center justify-center w-9 h-9 rounded-[10px] shrink-0"
+                className="console-pill flex h-10 w-10 items-center justify-center rounded-[14px] shrink-0"
                 style={{ backgroundColor: v.iconBg, color: v.iconColor }}
               >
                 {v.icon}
@@ -172,12 +173,14 @@ export function HubConnectorConfigTab() {
                   {platform.configured ? '已配置' : '未配置'}
                 </span>
               </span>
-              <span className="text-cafe-muted shrink-0">{isExpanded ? <ChevronDown /> : <ChevronRight />}</span>
+              <span className="console-pill flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-cafe-muted">
+                {isExpanded ? <ChevronDown /> : <ChevronRight />}
+              </span>
             </button>
 
             {/* F132 Phase E: WeCom Bot guided setup — dedicated panel with validate+connect */}
             {isExpanded && platform.id === 'wecom-bot' && (
-              <div className="border-t border-cafe-subtle px-4 py-4 space-y-3.5">
+              <div className="console-code-pane space-y-3.5 px-4 py-4">
                 {guideSteps.map((step, idx) => (
                   <div key={idx} className="space-y-1.5">
                     <div className="flex items-center gap-1.5">
@@ -190,7 +193,7 @@ export function HubConnectorConfigTab() {
                           href={platform.docsUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="flex items-center gap-1.5 text-xs text-blue-600 bg-sky-50 rounded-lg px-3 py-2 hover:bg-sky-100 transition-colors"
+                          className="console-inline-link"
                         >
                           <ExternalLinkIcon />
                           <span>developer.work.weixin.qq.com → WeCom AI Bot docs</span>
@@ -212,7 +215,7 @@ export function HubConnectorConfigTab() {
             )}
 
             {isExpanded && platform.id === 'weixin' && (
-              <div className="border-t border-cafe-subtle px-4 py-4 space-y-3.5">
+              <div className="console-code-pane space-y-3.5 px-4 py-4">
                 {filteredSteps.map((step, idx) => (
                   <div key={idx} className="space-y-1.5">
                     <div className="flex items-center gap-1.5">
@@ -232,7 +235,7 @@ export function HubConnectorConfigTab() {
             )}
 
             {isExpanded && platform.id !== 'weixin' && platform.id !== 'wecom-bot' && (
-              <div className="border-t border-cafe-subtle px-4 py-4 space-y-3.5">
+              <div className="console-code-pane space-y-3.5 px-4 py-4">
                 {guideSteps.map((step, idx) => (
                   <div key={idx} className="space-y-1.5">
                     <div className="flex items-center gap-1.5">
@@ -245,7 +248,7 @@ export function HubConnectorConfigTab() {
                           href={platform.docsUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="flex items-center gap-1.5 text-xs text-blue-600 bg-sky-50 rounded-lg px-3 py-2 hover:bg-sky-100 transition-colors"
+                          className="console-inline-link"
                         >
                           <ExternalLinkIcon />
                           <span>{new URL(platform.docsUrl).hostname} → 查看官方文档</span>
@@ -286,7 +289,7 @@ export function HubConnectorConfigTab() {
                             id={`config-${field.envName}`}
                             value={fieldValues[field.envName] ?? field.currentValue ?? 'webhook'}
                             onChange={(e) => setFieldValues((prev) => ({ ...prev, [field.envName]: e.target.value }))}
-                            className="w-full h-9 px-3 text-[13px] bg-cafe-surface-elevated border border-cafe rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-colors"
+                            className="console-form-input py-2.5 text-[13px]"
                             data-testid={`field-${field.envName}`}
                           >
                             <option value="webhook">Webhook（需公网 URL）</option>
@@ -305,7 +308,7 @@ export function HubConnectorConfigTab() {
                             }
                             value={fieldValues[field.envName] ?? ''}
                             onChange={(e) => setFieldValues((prev) => ({ ...prev, [field.envName]: e.target.value }))}
-                            className="w-full h-9 px-3 text-[13px] bg-cafe-surface-elevated border border-cafe rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-colors"
+                            className="console-form-input py-2.5 text-[13px]"
                             data-testid={`field-${field.envName}`}
                           />
                         )}
@@ -321,7 +324,7 @@ export function HubConnectorConfigTab() {
                   </div>
                   {saveResult && (
                     <div
-                      className={`text-xs px-3 py-2 rounded-lg ml-[26px] ${
+                      className={`ml-[26px] rounded-[16px] px-3 py-2 text-xs ${
                         saveResult.type === 'success'
                           ? 'bg-green-50 text-green-700 border border-green-200'
                           : 'bg-red-50 text-red-700 border border-red-200'
@@ -334,7 +337,7 @@ export function HubConnectorConfigTab() {
                   <div className="flex items-center gap-2 ml-[26px]">
                     <button
                       type="button"
-                      className="flex items-center gap-1.5 px-4 py-2 text-[13px] font-medium text-cafe-secondary bg-cafe-surface border border-cafe rounded-lg hover:bg-cafe-surface-elevated transition-colors"
+                      className="console-button-secondary text-[13px]"
                       onClick={() => setSaveResult({ type: 'success', message: '连接测试功能即将上线' })}
                     >
                       <WifiIcon />
@@ -344,7 +347,7 @@ export function HubConnectorConfigTab() {
                       type="button"
                       onClick={() => handleSave(platform)}
                       disabled={saving}
-                      className="px-4 py-2 text-[13px] font-semibold text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors disabled:opacity-50"
+                      className="console-button-primary text-[13px] disabled:opacity-50"
                       data-testid={`save-${platform.id}`}
                     >
                       {saving ? '保存中...' : '保存配置'}
@@ -357,7 +360,7 @@ export function HubConnectorConfigTab() {
         );
       })}
 
-      <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-[10px] px-3.5 py-2.5">
+      <div className="console-card-soft flex items-center gap-2 rounded-[18px] px-3.5 py-3">
         <StatusDotConnected />
         <span className="text-xs font-medium text-green-700">配置保存后自动生效，无需重启</span>
       </div>

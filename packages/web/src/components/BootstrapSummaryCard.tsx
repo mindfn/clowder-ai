@@ -11,7 +11,7 @@ const TIER_LABELS: Record<string, string> = {
 };
 
 const TIER_COLORS: Record<string, string> = {
-  authoritative: 'bg-cocreator-primary/10 text-cocreator-dark',
+  authoritative: 'bg-[var(--console-active-bg)] text-cafe-accent',
   derived: 'bg-blue-100 text-blue-700',
   soft_clue: 'bg-green-100 text-green-700',
 };

@@ -2,6 +2,7 @@ import type { StudyMeta } from '@cat-cafe/shared';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useIMEGuard } from '@/hooks/useIMEGuard';
 import { apiFetch } from '@/utils/api-client';
+import { getThreadHref } from '../ThreadSidebar/thread-navigation';
 import { PodcastPlayer } from './PodcastPlayer';
 
 interface StudyFoldAreaProps {
@@ -87,7 +88,7 @@ export function StudyFoldArea({
 
   // Use linked thread instead of hardcoded /thread/default
   const discussThread = resolveDiscussThread(studyMeta);
-  const discussLink = `/thread/${encodeURIComponent(discussThread)}?signal=${encodeURIComponent(articleId)}`;
+  const discussLink = `${getThreadHref(discussThread)}?signal=${encodeURIComponent(articleId)}`;
 
   // Note expansion state
   const [expandedNote, setExpandedNote] = useState<string | null>(null);
@@ -155,8 +156,8 @@ export function StudyFoldArea({
               {discussLoading ? '正在创建讨论...' : '在对话中讨论'}
             </button>
             {/* AC-6: 多猫研究派发 — signal param binds article context via activeSignals */}
-            <a
-              href={`${discussLink}&research=multi`}
+                    <a
+                      href={`${discussLink}&research=multi`}
               className="rounded-md border border-emerald-300 px-3 py-1.5 text-xs text-emerald-700 hover:bg-emerald-50"
             >
               多猫研究
@@ -170,7 +171,7 @@ export function StudyFoldArea({
                 {threads.map((t) => (
                   <li key={t.threadId} className="flex items-center gap-1">
                     <a
-                      href={`/thread/${encodeURIComponent(t.threadId)}`}
+                      href={getThreadHref(t.threadId)}
                       className="flex flex-1 items-center justify-between rounded-md border border-cafe bg-cafe-surface px-3 py-1.5 text-xs text-opus-dark hover:bg-opus-bg"
                     >
                       <span className="truncate">{t.threadId}</span>

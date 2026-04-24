@@ -146,8 +146,8 @@ export function ThreadCatPill({ threadId }: ThreadCatPillProps) {
         onClick={() => setIsOpen(!isOpen)}
         className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border transition-colors text-xs ${
           cat
-            ? 'border-cocreator-light hover:bg-cocreator-light'
-            : 'border-dashed border-cafe-muted hover:border-cocreator-light hover:bg-cocreator-light'
+            ? 'border-[var(--console-border-soft)] hover:bg-[var(--console-hover-bg)]'
+            : 'border-dashed border-cafe-muted hover:border-[var(--console-border-soft)] hover:bg-[var(--console-hover-bg)]'
         }`}
         data-testid="thread-cat-pill"
       >
@@ -195,7 +195,7 @@ export function ThreadCatPill({ threadId }: ThreadCatPillProps) {
               <button
                 onClick={() => void handleSave()}
                 disabled={!hasChanged || isSaving}
-                className="text-xs px-2 py-0.5 rounded bg-cocreator-primary text-white hover:bg-cocreator-dark disabled:opacity-40"
+                className="console-button-primary text-xs px-2 py-0.5 disabled:opacity-40"
               >
                 {isSaving ? '...' : '保存'}
               </button>

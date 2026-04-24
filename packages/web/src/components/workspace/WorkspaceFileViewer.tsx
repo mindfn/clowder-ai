@@ -305,7 +305,7 @@ function ToolbarBtn({
   onClick: () => void;
   title: string;
 }) {
-  const ac = activeClass ?? 'bg-cocreator-primary/80 text-white hover:bg-cocreator-primary';
+  const ac = activeClass ?? 'bg-cafe-accent text-white hover:bg-cafe-accent/90';
   return (
     <button
       type="button"

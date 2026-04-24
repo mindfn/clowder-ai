@@ -276,20 +276,20 @@ export function SignalInboxView() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-cocreator-bg via-cafe-white to-cafe-white">
+    <div className="h-full overflow-y-auto">
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6">
-        <header className="rounded-2xl border border-cocreator-light bg-cafe-surface p-4 shadow-sm">
+        <header className="console-shell-panel rounded-2xl p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h1 className="text-xl font-bold text-cafe-black">Signal Inbox</h1>
+              <h1 className="text-xl font-bold text-cafe">Signal Inbox</h1>
               <p className="text-sm text-cafe-secondary">浏览、筛选和管理 F21 信号文章</p>
             </div>
             <SignalNav active="signals" />
           </div>
         </header>
 
-        <div className="rounded-2xl border border-cafe bg-cafe-surface p-4 shadow-sm space-y-3">
-          <div className="flex gap-1">
+        <div className="console-card rounded-2xl p-4 space-y-3">
+          <div className="console-segmented inline-flex">
             {(
               [
                 ['inbox', 'Inbox'],
@@ -303,11 +303,8 @@ export function SignalInboxView() {
                 key={key}
                 type="button"
                 onClick={() => handleStatusTab(key)}
-                className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                  filters.status === key
-                    ? 'bg-cocreator-primary text-white'
-                    : 'text-cafe-secondary hover:bg-cafe-surface-elevated'
-                }`}
+                data-active={filters.status === key ? 'true' : 'false'}
+                className="console-segmented-button"
               >
                 {label}
               </button>
@@ -323,7 +320,7 @@ export function SignalInboxView() {
                 if (event.key === 'Enter' && ime.isComposing()) event.preventDefault();
               }}
               placeholder="搜索标题、来源、标签..."
-              className="rounded-lg border border-cafe px-3 py-2 text-sm md:col-span-2"
+              className="console-form-input md:col-span-2"
             />
             <select
               value={filters.tier}
@@ -331,7 +328,7 @@ export function SignalInboxView() {
                 setFilters((current) => ({ ...current, tier: event.target.value as SignalArticleFilters['tier'] }))
               }
               name="tier"
-              className="rounded-lg border border-cafe px-3 py-2 text-sm"
+              className="console-form-input"
             >
               <option value="all">Tier: 全部</option>
               <option value="1">Tier 1</option>
@@ -343,7 +340,7 @@ export function SignalInboxView() {
               value={filters.source}
               onChange={(event) => setFilters((current) => ({ ...current, source: event.target.value }))}
               name="source"
-              className="rounded-lg border border-cafe px-3 py-2 text-sm"
+              className="console-form-input"
             >
               <option value="all">来源: 全部</option>
               {sources.map((source) => (
@@ -354,7 +351,7 @@ export function SignalInboxView() {
             </select>
             <button
               type="submit"
-              className="rounded-lg bg-cocreator-primary px-3 py-2 text-sm font-semibold text-white hover:bg-cocreator-dark md:col-span-4"
+              className="console-button-primary md:col-span-4"
             >
               搜索
             </button>
@@ -364,7 +361,7 @@ export function SignalInboxView() {
         <SignalStatsCards stats={stats} />
 
         {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div className="console-status-chip" data-status="error">
             请求失败: {error}
           </div>
         )}

@@ -3,6 +3,7 @@
 import type { BacklogItem, CatId, ExternalProject, MissionHubSelfClaimScope, ThreadPhase } from '@cat-cafe/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
+import { getThreadHref } from '@/components/ThreadSidebar/thread-navigation';
 import { useExternalProjectStore } from '@/stores/externalProjectStore';
 import { useMissionControlStore } from '@/stores/missionControlStore';
 import { apiFetch } from '@/utils/api-client';
@@ -445,6 +446,8 @@ export function MissionControlPage() {
     return storeThreadId && storeThreadId !== 'default' ? storeThreadId : null;
   }, [mcFromParam, storeThreadId]);
 
+  const backHref = getThreadHref(referrerThread ?? 'default');
+
   return (
     <div className="flex h-screen bg-[#F4EFE7]">
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -452,7 +455,7 @@ export function MissionControlPage() {
         <header className="flex items-center justify-between border-b border-[#E7DAC7] bg-[#FFFDF8] px-6 py-3">
           <div className="flex items-center gap-3">
             <a
-              href={referrerThread && referrerThread !== 'default' ? `/thread/${referrerThread}` : '/'}
+              href={backHref}
               className="inline-flex items-center gap-1.5 rounded-lg border border-[#D8C6AD] bg-[#FCF7EE] px-3 py-1.5 text-xs font-medium text-[#8B6F47] transition-colors hover:bg-[#F7EEDB]"
               data-testid="mc-back-to-chat"
             >

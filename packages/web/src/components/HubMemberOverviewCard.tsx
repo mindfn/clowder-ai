@@ -94,7 +94,7 @@ export function HubCoCreatorOverviewCard({ coCreator, onEdit }: { coCreator: CoC
           onEdit();
         }
       }}
-      className="rounded-[20px] px-[18px] py-[18px] shadow-sm"
+      className="console-card rounded-[24px] px-[20px] py-[20px]"
       style={{ backgroundColor: secondary, border: `2px solid ${primary}` }}
     >
       <div className="flex items-center justify-between gap-3">
@@ -113,7 +113,7 @@ export function HubCoCreatorOverviewCard({ coCreator, onEdit }: { coCreator: CoC
           </div>
           <h3 className="text-base font-bold text-[#2D2118]">{coCreator.name}</h3>
         </div>
-        <span className="rounded-full bg-[#FFF3E0] px-2.5 py-1 text-[11px] font-semibold text-[#E65100] flex items-center gap-1">
+        <span className="console-pill flex items-center gap-1 rounded-full bg-[#FFF3E0] px-2.5 py-1 text-[11px] font-semibold text-[#E65100]">
           <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path
               strokeLinecap="round"
@@ -136,18 +136,23 @@ export function HubCoCreatorOverviewCard({ coCreator, onEdit }: { coCreator: CoC
 
 export function HubOverviewToolbar({ onAddMember }: { onAddMember?: () => void }) {
   return (
-    <div className="flex items-center justify-between gap-3">
-      <p className="text-[13px] text-[#8F8075]">全部 · CLI（OAuth） · CLI（配置） · 未启用</p>
-      <button
-        type="button"
-        onClick={onAddMember}
-        className="rounded-full px-4 py-2 text-sm font-bold text-white"
-        style={{ backgroundColor: '#D49266' }}
-        data-bootcamp-step="add-member-button"
-        data-guide-id="cats.add-member"
-      >
-        + 添加成员
-      </button>
+    <div className="console-card rounded-[24px] px-4 py-4 md:px-5">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">Roster</p>
+          <p className="mt-1 text-[13px] text-[#8F8075]">全部 · CLI（内置） · CLI（配置） · 未启用</p>
+        </div>
+        <button
+          type="button"
+          onClick={onAddMember}
+          className="rounded-full px-4 py-2 text-sm font-semibold text-white shadow-sm transition-transform hover:-translate-y-0.5"
+          style={{ backgroundColor: '#D49266' }}
+          data-bootcamp-step="add-member-button"
+          data-guide-id="cats.add-member"
+        >
+          + 添加成员
+        </button>
+      </div>
     </div>
   );
 }
@@ -194,8 +199,8 @@ export function HubMemberOverviewCard({
       onDrop={draggable ? (event) => onDrop?.(cat, event) : undefined}
       onDragEnd={draggable ? (event) => onDragEnd?.(cat, event) : undefined}
       onClick={editCard}
-      className={`rounded-[20px] px-[18px] py-[18px] shadow-sm transition hover:shadow-md ${isDragging ? 'opacity-40' : ''}`}
-      style={{ backgroundColor: '#FFFDFC', border: '1px solid #D9C7EA' }}
+      className={`console-card rounded-[24px] px-[20px] py-[20px] transition hover:-translate-y-0.5 ${isDragging ? 'opacity-40' : ''}`}
+      style={{ backgroundColor: '#FFFDFC', border: `1px solid ${cat.source === 'runtime' ? '#D9C7EA' : '#F1E7DF'}` }}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-2">

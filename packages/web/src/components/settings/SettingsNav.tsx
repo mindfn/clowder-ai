@@ -1,5 +1,6 @@
 'use client';
 
+import type { CSSProperties } from 'react';
 import { HubIcon } from '../hub-icons';
 import { SETTINGS_SECTIONS, type SettingsSection } from './settings-nav-config';
 
@@ -12,19 +13,32 @@ interface SettingsNavProps {
 function NavItem({ section, active, onSelect }: { section: SettingsSection; active: boolean; onSelect: () => void }) {
   return (
     <button
+      type="button"
       onClick={onSelect}
-      className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors
-        ${
-          active
-            ? 'bg-cafe-surface font-medium shadow-sm'
-            : 'text-cafe-secondary hover:bg-cafe-surface-elevated hover:text-cafe'
-        }`}
-      style={active ? { color: section.color } : undefined}
+      data-active={active ? 'true' : 'false'}
+      className="console-nav-item flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left"
+      style={
+        {
+          ['--settings-accent' as string]: section.color,
+          ...(active
+            ? {
+                ['--console-active-bg' as string]: `color-mix(in srgb, ${section.color} 10%, var(--console-card-bg) 90%)`,
+              }
+            : {}),
+        } as CSSProperties
+      }
     >
-      <span style={active ? { color: section.color } : { color: '#9ca3af' }}>
+      <span
+        data-settings-nav-icon="true"
+        className="console-nav-icon flex h-10 w-10 items-center justify-center rounded-[14px]"
+        style={active ? { color: section.color } : undefined}
+      >
         <HubIcon name={section.icon} className="h-4 w-4" />
       </span>
-      <span>{section.label}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium">{section.label}</span>
+        <span className="mt-0.5 block truncate text-[12px] text-cafe-muted">{section.description}</span>
+      </span>
     </button>
   );
 }
@@ -55,9 +69,9 @@ export function SettingsNav({ activeSection, onSelect, searchQuery }: SettingsNa
     : SETTINGS_SECTIONS;
 
   return (
-    <nav className="flex flex-col gap-0.5 px-2 py-3" aria-label="设置导航">
+    <nav className="flex flex-col gap-1.5 px-1 py-2" aria-label="设置导航">
       {filtered.length === 0 && q ? (
-        <p className="px-3 py-2 text-xs text-cafe-muted">没有匹配的设置分区</p>
+        <p className="console-card-soft rounded-[20px] px-4 py-3 text-xs text-cafe-muted">没有匹配的设置分区</p>
       ) : (
         filtered.map((section) => (
           <NavItem

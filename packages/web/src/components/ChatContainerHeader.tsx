@@ -38,11 +38,11 @@ export function ChatContainerHeader({
   const voiceAvailable = useVoiceServicesAvailable();
 
   return (
-    <header className="border-b border-cocreator-light bg-cocreator-bg safe-area-top">
+    <header className="border-b border-[var(--console-border-soft)] safe-area-top">
       <div className="px-5 py-3 flex items-center gap-2">
         <button
           onClick={onToggleSidebar}
-          className="p-1 rounded-lg hover:bg-cocreator-light transition-colors mr-1"
+          className="p-1 rounded-lg hover:bg-[var(--console-hover-bg)] transition-colors mr-1"
           title={sidebarOpen ? '收起侧栏' : '展开侧栏'}
           aria-label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
         >
@@ -80,7 +80,7 @@ export function ChatContainerHeader({
         {/* Mobile/tablet: status sheet trigger */}
         <button
           onClick={onOpenMobileStatus}
-          className="p-1 rounded-lg hover:bg-cocreator-light transition-colors ml-1 lg:hidden"
+          className="p-1 rounded-lg hover:bg-[var(--console-hover-bg)] transition-colors ml-1 lg:hidden"
           title="打开状态面板"
           aria-label="打开状态面板"
         >
@@ -175,7 +175,7 @@ function RightPanelToggle({
   return (
     <button
       onClick={handleClick}
-      className={`p-1 rounded-lg hover:bg-cocreator-light transition-colors ml-1 hidden lg:block ${
+      className={`p-1 rounded-lg hover:bg-[var(--console-hover-bg)] transition-colors ml-1 hidden lg:block ${
         statusPanelOpen ? (isWorkspace ? 'bg-blue-50 text-blue-600' : 'bg-cafe-surface-elevated') : ''
       }`}
       aria-label={label}

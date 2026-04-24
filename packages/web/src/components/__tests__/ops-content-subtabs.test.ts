@@ -62,7 +62,7 @@ describe('OpsContent sub-tabs', () => {
     });
     const buttons = Array.from(container.querySelectorAll('button'));
     const usageBtn = buttons.find((b) => b.textContent === '使用统计');
-    expect(usageBtn?.className).toContain('bg-cocreator-primary');
+    expect(usageBtn?.className).toContain('bg-cafe-accent');
   });
 
   it('switches active tab on click', () => {
@@ -77,8 +77,8 @@ describe('OpsContent sub-tabs', () => {
       rescueBtn!.click();
     });
 
-    expect(rescueBtn!.className).toContain('bg-cocreator-primary');
+    expect(rescueBtn!.className).toContain('bg-cafe-accent');
     const usageBtn = buttons.find((b) => b.textContent === '使用统计');
-    expect(usageBtn!.className).not.toContain('bg-cocreator-primary');
+    expect(usageBtn!.className).not.toContain('bg-cafe-accent');
   });
 });

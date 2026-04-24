@@ -54,10 +54,10 @@ describe('CapabilitySection description expansion', () => {
       );
     });
 
-    expect(container.textContent).not.toContain('描述:');
+    expect(container.querySelector('.console-code-pane')).toBeNull();
     const expandButton = container.querySelector('button');
     act(() => expandButton?.click());
-    expect(container.textContent).toContain('描述:');
+    expect(container.querySelector('.console-code-pane')).toBeTruthy();
     expect(container.textContent).toContain(description);
   });
 });

@@ -78,4 +78,18 @@ describe('SettingsNav search filtering', () => {
     expect(buttons).toHaveLength(0);
     expect(container.textContent).toContain('没有匹配的设置分区');
   });
+
+  it('marks the active item with explicit selection hooks for shell styling', () => {
+    act(() => {
+      root.render(React.createElement(SettingsNav, { activeSection: 'voice', onSelect: vi.fn() }));
+    });
+
+    const active = container.querySelector('button[data-active="true"]');
+    const inactive = container.querySelector('button[data-active="false"]');
+    const activeIcon = active?.querySelector('[data-settings-nav-icon="true"]');
+
+    expect(active?.textContent).toContain('语音管理');
+    expect(inactive).toBeTruthy();
+    expect(activeIcon).toBeTruthy();
+  });
 });

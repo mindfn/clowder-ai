@@ -11,7 +11,7 @@ interface SignalArticleListProps {
 }
 
 const statusClassMap: Record<SignalArticleStatus, string> = {
-  inbox: 'text-cocreator-dark bg-cocreator-bg',
+  inbox: 'text-cafe-secondary bg-[var(--console-hover-bg)]',
   read: 'text-cafe-secondary bg-cafe-surface-elevated',
   archived: 'text-cafe-secondary bg-cafe-surface-elevated',
   starred: 'text-amber-800 bg-amber-100',
@@ -66,8 +66,8 @@ export function SignalArticleList({
               className={[
                 'w-full rounded-xl border bg-cafe-surface p-4 text-left shadow-sm transition-colors',
                 selected
-                  ? 'border-cocreator-primary ring-1 ring-cocreator-primary/40'
-                  : 'border-cafe hover:border-cocreator-light',
+                  ? 'border-cafe-accent ring-1 ring-cafe-accent/40'
+                  : 'border-cafe hover:border-[var(--console-border-soft)]',
               ].join(' ')}
             >
               <div className="flex items-start gap-3">

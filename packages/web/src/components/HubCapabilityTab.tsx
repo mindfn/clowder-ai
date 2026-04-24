@@ -188,26 +188,35 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
 
   return (
     <div className="space-y-4">
-      {error && <p className="text-sm text-red-500 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+      {error && (
+        <p
+          className="console-card rounded-[22px] px-4 py-3 text-sm"
+          style={{ borderColor: 'var(--notice-error-border)', color: 'var(--notice-error-label)' }}
+        >
+          {error}
+        </p>
+      )}
 
       {/* Header: project + filters */}
-      <div className="flex flex-wrap items-center gap-3">
-        <ProjectSelector
-          resolvedPath={resolvedProjectPath}
-          knownProjects={knownProjects}
-          currentSelection={projectPath}
-          onSwitch={switchProject}
-        />
-        <FilterChips
-          label="来源"
-          value={filterSource}
-          options={[
-            { value: 'all', label: '全部' },
-            { value: 'cat-cafe', label: 'Clowder AI' },
-            { value: 'external', label: '外部' },
-          ]}
-          onChange={(v) => setFilterSource(v as FilterSource)}
-        />
+      <div className="console-card rounded-[24px] p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <ProjectSelector
+            resolvedPath={resolvedProjectPath}
+            knownProjects={knownProjects}
+            currentSelection={projectPath}
+            onSwitch={switchProject}
+          />
+          <FilterChips
+            label="来源"
+            value={filterSource}
+            options={[
+              { value: 'all', label: '全部' },
+              { value: 'cat-cafe', label: 'Clowder AI' },
+              { value: 'external', label: '外部' },
+            ]}
+            onChange={(v) => setFilterSource(v as FilterSource)}
+          />
+        </div>
       </div>
 
       {/* Skill health banner */}
@@ -221,15 +230,14 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
             <button
               type="button"
               onClick={() => setShowAddMcp(!showAddMcp)}
-              className="text-xs px-2 py-1 rounded border border-cafe text-cafe-accent
-                         hover:bg-cafe-accent/5 transition-colors"
+              className="console-button-secondary"
             >
               {showAddMcp ? '取消' : '+ 添加 MCP'}
             </button>
           </div>
 
           {showAddMcp && (
-            <div className="rounded-lg border border-cafe-accent/20 bg-cafe-surface p-3">
+            <div className="console-card rounded-[24px] p-4">
               <McpInstallForm
                 projectPath={projectPath ?? undefined}
                 onInstalled={() => {
@@ -287,10 +295,10 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
         : section === 'skills'
           ? catCafeSkillGroups.length === 0 && externalSkills.length === 0
           : filtered.length === 0) && (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-4">
+        <div className="console-card flex flex-col items-center justify-center rounded-[28px] py-16 text-center">
+          <div className="console-card-soft mb-4 flex h-20 w-20 items-center justify-center rounded-full">
             <svg
-              className="w-8 h-8 text-slate-300"
+              className="h-8 w-8 text-cafe-muted"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -301,8 +309,8 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
               <path d="m21 21-4.35-4.35" />
             </svg>
           </div>
-          <h3 className="text-sm font-semibold text-slate-600">没有找到匹配的能力</h3>
-          <p className="text-xs text-slate-400 mt-1 max-w-[220px]">试着切换来源筛选，或检查 MCP/Skills 配置</p>
+          <h3 className="text-sm font-semibold text-cafe-secondary">没有找到匹配的能力</h3>
+          <p className="mt-1 max-w-[220px] text-xs text-cafe-muted">试着切换来源筛选，或检查 MCP/Skills 配置</p>
         </div>
       )}
 
@@ -310,8 +318,8 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
       <CapabilityAuditLog projectPath={projectPath ?? undefined} />
 
       {/* Summary */}
-      <div className="pt-4 border-t border-slate-100/60 mt-4">
-        <div className="flex items-center justify-between text-xs text-slate-400">
+      <div className="console-card-soft mt-4 rounded-[24px] px-4 py-3">
+        <div className="flex items-center justify-between text-xs text-cafe-muted">
           <span>共 {items.length} 项</span>
           <span className="flex gap-3">
             <span className="flex items-center gap-1.5">
@@ -319,11 +327,11 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
             </span>
             <span>
               MCP:{' '}
-              <strong className="text-slate-500 font-medium">{items.filter((i) => i.type === 'mcp').length}</strong>
+              <strong className="font-medium text-cafe-secondary">{items.filter((i) => i.type === 'mcp').length}</strong>
             </span>
             <span>
               Skill:{' '}
-              <strong className="text-slate-500 font-medium">{items.filter((i) => i.type === 'skill').length}</strong>
+              <strong className="font-medium text-cafe-secondary">{items.filter((i) => i.type === 'skill').length}</strong>
             </span>
           </span>
         </div>
@@ -354,9 +362,11 @@ function ProjectSelector({
 
   if (allPaths.length <= 1) {
     return (
-      <div className="text-xs text-cafe-muted flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 text-xs text-cafe-muted">
         <span>项目:</span>
-        <span className="text-cafe-secondary font-medium">{projectDisplayName(resolvedPath)}</span>
+        <span className="console-pill rounded-full px-3 py-1 font-medium text-cafe-secondary">
+          {projectDisplayName(resolvedPath)}
+        </span>
       </div>
     );
   }
@@ -370,7 +380,7 @@ function ProjectSelector({
         id="project-select"
         value={currentSelection ?? ''}
         onChange={(e) => onSwitch(e.target.value || null)}
-        className="flex-1 min-w-0 px-2 py-1 rounded border border-cafe bg-cafe-surface text-cafe-secondary text-xs truncate"
+        className="console-form-input min-w-0 flex-1 truncate py-2 text-xs"
       >
         <option value="">{projectDisplayName(resolvedPath)}</option>
         {allPaths

@@ -126,7 +126,7 @@ export function ProjectSetupCard({
 
   return (
     <div data-testid="project-setup-card" className="flex justify-center mb-3">
-      <div className="max-w-[85%] w-full rounded-lg border border-cocreator-primary/20 bg-cocreator-bg/30 p-5">
+      <div className="max-w-[85%] w-full rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-card-soft-bg)] p-5">
         {/* Header */}
         <div className="flex items-center gap-4 mb-4">
           <Image
@@ -139,7 +139,7 @@ export function ProjectSetupCard({
           <div>
             <p className="text-sm font-medium text-cafe-black">发现了一片新大陆！</p>
             <p className="text-xs text-gray-500 mt-0.5">
-              项目 <code className="px-1 py-0.5 bg-cocreator-bg rounded text-[10px]">{dirName}</code>{' '}
+              项目 <code className="px-1 py-0.5 bg-[var(--console-hover-bg)] rounded text-[10px]">{dirName}</code>{' '}
               {isEmptyDir ? '是空目录，' : ''}需要初始化后猫猫才能工作。
             </p>
           </div>
@@ -160,12 +160,12 @@ export function ProjectSetupCard({
 
             {/* Option 1: Clone (recommended) */}
             {isEmptyDir && gitAvailable && !isGitRepo && (
-              <div className="rounded-xl ring-1 ring-cocreator-primary/30 p-4 hover:bg-cocreator-primary/[0.03] transition-colors">
+              <div className="rounded-xl ring-1 ring-cafe-accent/30 p-4 hover:bg-[var(--console-hover-bg)] transition-colors">
                 <div className="flex items-center gap-3 mb-2.5">
-                  <HubIcon name="folder" className="h-5 w-5 text-cocreator-primary" />
+                  <HubIcon name="folder" className="h-5 w-5 text-cafe-accent" />
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-semibold text-cafe-black">克隆 Git 仓库</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cocreator-primary/10 text-cocreator-primary font-medium">
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cafe-accent/10 text-cafe-accent font-medium">
                       推荐
                     </span>
                   </div>
@@ -179,7 +179,7 @@ export function ProjectSetupCard({
                     onCompositionStart={ime.onCompositionStart}
                     onCompositionEnd={ime.onCompositionEnd}
                     placeholder="https:// 或 git@..."
-                    className="flex-1 text-xs px-3 py-2 rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-1 focus:ring-cocreator-primary"
+                    className="flex-1 text-xs px-3 py-2 rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-1 focus:ring-cafe-accent"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && ime.isComposing()) {
                         e.preventDefault();
@@ -192,7 +192,7 @@ export function ProjectSetupCard({
                     type="button"
                     onClick={() => handleSetup('clone')}
                     disabled={!cloneUrl.trim()}
-                    className="min-w-[6.5rem] px-4 py-2 rounded-lg bg-cocreator-primary hover:bg-cocreator-dark text-white text-xs font-medium transition-colors disabled:opacity-40"
+                    className="min-w-[6.5rem] px-4 py-2 rounded-lg bg-cafe-accent hover:bg-cafe-accent/80 text-white text-xs font-medium transition-colors disabled:opacity-40"
                   >
                     立即拉取
                   </button>
@@ -202,9 +202,9 @@ export function ProjectSetupCard({
 
             {/* Option 2: Git init */}
             {gitAvailable && !isGitRepo && (
-              <div className="rounded-xl ring-1 ring-cocreator-primary/30 p-4 hover:bg-cocreator-primary/[0.03] transition-colors">
+              <div className="rounded-xl ring-1 ring-cafe-accent/30 p-4 hover:bg-[var(--console-hover-bg)] transition-colors">
                 <div className="flex items-center gap-3">
-                  <HubIcon name="terminal" className="h-5 w-5 text-cocreator-primary" />
+                  <HubIcon name="terminal" className="h-5 w-5 text-cafe-accent" />
                   <div className="flex-1">
                     <span className="text-sm font-semibold text-cafe-black">初始化全新项目</span>
                     <p className="text-[11px] text-gray-500 mt-0.5">从零开始，为你铺设标准的协作规则和猫砂盆。</p>
@@ -212,7 +212,7 @@ export function ProjectSetupCard({
                   <button
                     type="button"
                     onClick={() => handleSetup('init')}
-                    className="min-w-[6.5rem] px-4 py-2 rounded-lg bg-cocreator-primary hover:bg-cocreator-dark text-white text-xs font-medium transition-colors"
+                    className="min-w-[6.5rem] px-4 py-2 rounded-lg bg-cafe-accent hover:bg-cafe-accent/80 text-white text-xs font-medium transition-colors"
                   >
                     初始化
                   </button>
@@ -221,9 +221,9 @@ export function ProjectSetupCard({
             )}
 
             {/* Option 3: Skip git */}
-            <div className="rounded-xl ring-1 ring-cocreator-primary/30 p-4 hover:bg-cocreator-primary/[0.03] transition-colors">
+            <div className="rounded-xl ring-1 ring-cafe-accent/30 p-4 hover:bg-[var(--console-hover-bg)] transition-colors">
               <div className="flex items-center gap-3">
-                <HubIcon name="settings" className="h-5 w-5 text-cocreator-primary" />
+                <HubIcon name="settings" className="h-5 w-5 text-cafe-accent" />
                 <div className="flex-1">
                   <span className="text-sm font-semibold text-cafe-black">
                     {isGitRepo ? '初始化协作配置' : '跳过 Git，仅初始化协作'}
@@ -235,7 +235,7 @@ export function ProjectSetupCard({
                 <button
                   type="button"
                   onClick={() => handleSetup('skip')}
-                  className="min-w-[6.5rem] px-4 py-2 rounded-lg bg-cocreator-primary hover:bg-cocreator-dark text-white text-xs font-medium transition-colors"
+                  className="min-w-[6.5rem] px-4 py-2 rounded-lg bg-cafe-accent hover:bg-cafe-accent/80 text-white text-xs font-medium transition-colors"
                 >
                   {isGitRepo ? '初始化' : '跳过'}
                 </button>

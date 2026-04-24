@@ -193,7 +193,7 @@ export function MessageNavigator({ messages, scrollContainerRef }: MessageNaviga
           const isAssistant = msg.type === 'assistant' || (msg.type === 'user' && !!msg.catId);
           const cat = isAssistant && msg.catId ? resolveCat(msg.catId) : undefined;
           const fallback = isAssistant && msg.catId ? resolveFallbackCatMeta(msg.catId) : undefined;
-          const className = isOwner ? 'bg-cocreator-primary' : cat || fallback ? '' : 'bg-gray-400';
+          const className = isOwner ? 'bg-cafe-accent' : cat || fallback ? '' : 'bg-gray-400';
           const style = isOwner
             ? undefined
             : cat
