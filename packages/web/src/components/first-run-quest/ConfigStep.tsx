@@ -73,11 +73,15 @@ export function ConfigStep({ client, clientId, onComplete }: ConfigStepProps) {
     setExpandedId(collapse ? '' : id);
     const model = firstModel(available.find((p) => p.id === id));
     setSelectedModel(model);
+    testSigRef.current = '';
+    setTesting(false);
     setTestResult(testCacheRef.current.get(`${id}:${model}`) ?? null);
   };
 
   const handleModelSelect = (m: string) => {
     setSelectedModel(m);
+    testSigRef.current = '';
+    setTesting(false);
     setTestResult(testCacheRef.current.get(`${selectedProfileId}:${m}`) ?? null);
   };
 
