@@ -24,7 +24,7 @@ import { RichBlocks } from './rich/RichBlocks';
 import { SummaryCard } from './SummaryCard';
 import { SystemNoticeBar } from './SystemNoticeBar';
 import { ThinkingContent } from './ThinkingContent';
-import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
+import { getThreadHref, pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 import { TimeoutDiagnosticsPanel } from './TimeoutDiagnosticsPanel';
 import { TtsPlayButton } from './TtsPlayButton';
 
@@ -344,13 +344,16 @@ export function ChatMessage({ message, getCatById }: ChatMessageProps) {
                 const senderLabel = catStyle?.label;
                 return (
                   <a
-                    href={`/thread/${sourceId}`}
+                    href={getThreadHref(sourceId)}
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      pushThreadRouteWithHistory(sourceId, typeof window !== 'undefined' ? window : undefined);
+                      pushThreadRouteWithHistory(
+                        sourceId,
+                        typeof window !== 'undefined' ? window : undefined,
+                      );
                     }}
-                    className="inline-flex items-center gap-1.5 border px-3 py-1 rounded-full bg-[#FDF6ED] border-[#E8DCCF] text-[#8D6E63] hover:bg-[#F5EDE0] transition-colors cursor-pointer w-fit max-w-full"
+                    className="inline-flex items-center gap-1.5 border px-3 py-1 rounded-full bg-[var(--console-card-soft-bg)] border-[var(--console-border-soft)] text-cafe-secondary hover:bg-[var(--console-hover-bg)] transition-colors cursor-pointer w-fit max-w-full"
                     title={sourceId}
                     aria-label={`跳转到来源 thread ${sourceId}`}
                   >

@@ -256,7 +256,7 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
       />
 
       {/* Stats */}
-      <div className="flex items-center gap-3 px-3 py-1.5 text-[10px] text-cafe-muted border-b border-cocreator-light/20">
+      <div className="flex items-center gap-3 px-3 py-1.5 text-[10px] text-cafe-muted border-b border-[var(--console-border-soft)]">
         <span>Issues: {totalIssues}</span>
         <span>PRs: {totalPrs}</span>
         {loading && <span className="text-cafe-crosspost">同步中...</span>}
@@ -274,7 +274,7 @@ export function CommunityPanel({ threadId }: { threadId?: string }) {
         ) : (
           <>
             {/* Issues */}
-            <div className="border-b border-cocreator-light/20">
+            <div className="border-b border-[var(--console-border-soft)]">
               <div className="px-3 py-1.5 text-[10px] font-bold text-cafe-muted uppercase tracking-wider">Issues</div>
               {ISSUE_SECTIONS.map((sec) => {
                 const items = issuesByState(sec.key);

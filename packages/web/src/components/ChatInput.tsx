@@ -208,7 +208,10 @@ export function ChatInput({
         }
         // Success — dismiss lobby and navigate
         setLobbyMode(null);
-        pushThreadRouteWithHistory(data.gameThreadId, typeof window !== 'undefined' ? window : undefined);
+        pushThreadRouteWithHistory(
+          data.gameThreadId,
+          typeof window !== 'undefined' ? window : undefined,
+        );
         // Hydrate game state immediately (socket reconnect won't fire for same connection)
         reconnectGame(data.gameThreadId).catch(() => {});
       } catch (err) {
@@ -551,7 +554,7 @@ export function ChatInput({
   }, [activeMenu, closeMenus]);
 
   return (
-    <div className="border-t border-cocreator-light bg-cocreator-bg relative safe-area-bottom">
+    <div className="relative border-t border-[var(--console-border-soft)] bg-[var(--console-panel-bg)] safe-area-bottom">
       {/* F39: Queue status bar — visible when cat is running */}
       {hasActiveInvocation && (
         <div className="px-4 pt-2 flex items-center gap-2">
@@ -656,8 +659,8 @@ export function ChatInput({
           onClick={() => setMobileToolbar((v) => !v)}
           className={`p-3 rounded-xl transition-all md:hidden ${
             mobileToolbar
-              ? 'text-cocreator-primary bg-cocreator-light rotate-45'
-              : 'text-cafe-muted hover:text-cocreator-primary hover:bg-cafe-surface'
+              ? 'rotate-45 bg-[var(--console-active-bg)] text-cafe-accent'
+              : 'text-cafe-muted hover:bg-[var(--console-hover-bg)] hover:text-cafe-accent'
           }`}
           aria-label="展开工具栏"
         >
@@ -674,7 +677,7 @@ export function ChatInput({
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={disabled || sendTemporarilyDisabled || images.length >= 5}
-          className="hidden md:block p-3 rounded-xl text-cafe-muted hover:text-cocreator-primary hover:bg-cafe-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          className="hidden rounded-xl p-3 text-cafe-muted transition-colors hover:bg-[var(--console-hover-bg)] hover:text-cafe-accent disabled:cursor-not-allowed disabled:opacity-30 md:block"
           aria-label="Attach images"
         >
           <AttachIcon className="w-5 h-5" />
@@ -732,7 +735,7 @@ export function ChatInput({
             className={`w-full resize-none rounded-xl border p-3 text-sm focus:outline-none focus:ring-2 placeholder:text-gray-400 ${
               whisperMode
                 ? 'border-amber-300 bg-amber-50/50 focus:ring-amber-400'
-                : 'border-cocreator-light bg-cafe-surface focus:ring-cocreator-primary'
+                : 'border-[var(--console-border-soft)] bg-cafe-surface focus:ring-cafe-accent'
             }`}
             rows={1}
             disabled={disabled}
