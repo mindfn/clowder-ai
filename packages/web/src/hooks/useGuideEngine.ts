@@ -89,7 +89,7 @@ export function useGuideEngine() {
       }
     };
     trigger();
-  }, [pendingStart, startGuide, clearPendingStart]);
+  }, [pendingStart, startGuide, clearPendingStart, currentThreadId]);
 
   // Dev testing helper
   useEffect(() => {
