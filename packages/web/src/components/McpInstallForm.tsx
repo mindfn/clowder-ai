@@ -103,12 +103,17 @@ export function McpInstallForm({ projectPath, onInstalled, onClose }: McpInstall
         <div className="console-card-soft rounded-[24px] px-4 py-4">
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="font-medium text-conn-green-text">MCP &ldquo;{id}&rdquo; 已安装</span>
-            <span className="console-status-chip" data-status={result.probe?.connectionStatus === 'connected' ? 'active' : 'warning'}>
+            <span
+              className="console-status-chip"
+              data-status={result.probe?.connectionStatus === 'connected' ? 'active' : 'warning'}
+            >
               {result.probe?.connectionStatus ?? 'pending'}
             </span>
           </div>
           {result.probe && (
-            <p className="mt-2 text-xs leading-6 text-cafe-secondary">安装后已返回探测状态，可直接回到能力列表继续管理。</p>
+            <p className="mt-2 text-xs leading-6 text-cafe-secondary">
+              安装后已返回探测状态，可直接回到能力列表继续管理。
+            </p>
           )}
         </div>
         <button type="button" onClick={onClose} className="console-button-secondary">
@@ -123,7 +128,9 @@ export function McpInstallForm({ projectPath, onInstalled, onClose }: McpInstall
       <div className="space-y-1.5">
         <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">MCP Install</p>
         <h3 className="text-lg font-semibold tracking-[-0.03em] text-cafe">添加 MCP</h3>
-        <p className="text-sm leading-6 text-cafe-secondary">通过本地命令或远程 URL 注册新的 MCP 服务，先预览影响范围，再确认安装。</p>
+        <p className="text-sm leading-6 text-cafe-secondary">
+          通过本地命令或远程 URL 注册新的 MCP 服务，先预览影响范围，再确认安装。
+        </p>
       </div>
 
       {error && (
@@ -255,11 +262,7 @@ export function McpInstallForm({ projectPath, onInstalled, onClose }: McpInstall
         >
           预览
         </button>
-        <button
-          type="button"
-          onClick={onClose}
-          className="console-button-ghost"
-        >
+        <button type="button" onClick={onClose} className="console-button-ghost">
           取消
         </button>
       </div>

@@ -66,7 +66,9 @@ export function SkillPreviewPanel() {
         <div className="space-y-1.5">
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">Skills</p>
           <h3 className="text-lg font-semibold tracking-[-0.03em] text-cafe">Skill 内容预览</h3>
-          <p className="text-sm leading-6 text-cafe-secondary">查看各 Skill 的定义文件（SKILL.md），快速核对触发方式和边界。</p>
+          <p className="text-sm leading-6 text-cafe-secondary">
+            查看各 Skill 的定义文件（SKILL.md），快速核对触发方式和边界。
+          </p>
         </div>
         <span className="console-pill inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold text-cafe-secondary">
           {skills.length} skills

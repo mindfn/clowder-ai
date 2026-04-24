@@ -69,7 +69,7 @@ export function CallbackEnvPanel() {
       </div>
       <div className="mt-4 grid gap-3">
         {vars.map((v) => {
-          const displayValue = v.sensitive ? '***' : ((v.currentValue ?? v.defaultValue) || '未设置');
+          const displayValue = v.sensitive ? '***' : (v.currentValue ?? v.defaultValue) || '未设置';
           const scopeLabel = v.name === 'CAT_CAFE_CALLBACK_TOKEN' ? '子进程 + 宿主' : '宿主进程';
           return (
             <article key={v.name} className="console-list-card rounded-[22px] p-4">

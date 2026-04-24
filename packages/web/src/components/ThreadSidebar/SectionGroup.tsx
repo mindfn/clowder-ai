@@ -302,7 +302,9 @@ function MenuItem({ onClick, danger, children }: { onClick: () => void; danger?:
       type="button"
       onClick={onClick}
       className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
-        danger ? 'text-red-500 hover:bg-[var(--console-hover-bg)]' : 'text-cafe-secondary hover:bg-[var(--console-hover-bg)]'
+        danger
+          ? 'text-red-500 hover:bg-[var(--console-hover-bg)]'
+          : 'text-cafe-secondary hover:bg-[var(--console-hover-bg)]'
       }`}
     >
       {children}

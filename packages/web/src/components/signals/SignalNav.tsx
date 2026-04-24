@@ -48,11 +48,7 @@ export function SignalNav({ active }: SignalNavProps) {
 
   return (
     <nav aria-label="Signal navigation" className="flex items-center gap-2">
-      <a
-        href={backHref}
-        className="console-button-ghost text-xs"
-        data-testid="signal-back-to-chat"
-      >
+      <a href={backHref} className="console-button-ghost text-xs" data-testid="signal-back-to-chat">
         <svg
           className="h-4 w-4"
           viewBox="0 0 24 24"

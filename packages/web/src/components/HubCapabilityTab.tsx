@@ -227,11 +227,7 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2" />
-            <button
-              type="button"
-              onClick={() => setShowAddMcp(!showAddMcp)}
-              className="console-button-secondary"
-            >
+            <button type="button" onClick={() => setShowAddMcp(!showAddMcp)} className="console-button-secondary">
               {showAddMcp ? '取消' : '+ 添加 MCP'}
             </button>
           </div>
@@ -327,11 +323,15 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
             </span>
             <span>
               MCP:{' '}
-              <strong className="font-medium text-cafe-secondary">{items.filter((i) => i.type === 'mcp').length}</strong>
+              <strong className="font-medium text-cafe-secondary">
+                {items.filter((i) => i.type === 'mcp').length}
+              </strong>
             </span>
             <span>
               Skill:{' '}
-              <strong className="font-medium text-cafe-secondary">{items.filter((i) => i.type === 'skill').length}</strong>
+              <strong className="font-medium text-cafe-secondary">
+                {items.filter((i) => i.type === 'skill').length}
+              </strong>
             </span>
           </span>
         </div>

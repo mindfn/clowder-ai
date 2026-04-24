@@ -45,7 +45,9 @@ export function BootstrapProgressPill({ progress, expanded: defaultExpanded }: B
                   >
                     {isDone ? '\u2713' : i + 1}
                   </span>
-                  <span className={isDone ? 'text-cafe-black' : isActive ? 'font-medium text-cafe-black' : 'text-gray-400'}>
+                  <span
+                    className={isDone ? 'text-cafe-black' : isActive ? 'font-medium text-cafe-black' : 'text-gray-400'}
+                  >
                     {label}
                   </span>
                   {isActive && <span className="text-gray-400 animate-pulse">…</span>}

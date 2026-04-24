@@ -85,7 +85,11 @@ export function RulesPromptsContent() {
         ))}
       </Section>
 
-      <Section title="模型指南" description="每只猫的角色定义和模型特定约束" badge={`${data.providerGuides.length} guides`}>
+      <Section
+        title="模型指南"
+        description="每只猫的角色定义和模型特定约束"
+        badge={`${data.providerGuides.length} guides`}
+      >
         {data.providerGuides.map((guide) => (
           <RuleFileCard
             key={guide.path}
@@ -159,10 +163,7 @@ function RuleFileCard({
 
   return (
     <div className="console-list-card rounded-[22px] overflow-hidden" data-active={expanded ? 'true' : 'false'}>
-      <button
-        onClick={onToggle}
-        className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left"
-      >
+      <button onClick={onToggle} className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-medium text-cafe">{displayLabel}</p>

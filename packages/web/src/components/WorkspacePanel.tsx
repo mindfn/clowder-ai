@@ -5,7 +5,6 @@ import { useFileEditing } from '@/hooks/useFileEditing';
 import { useFileManagement } from '@/hooks/useFileManagement';
 import { usePersistedState } from '@/hooks/usePersistedState';
 import { useTreeNavigation } from '@/hooks/useTreeNavigation';
-import type { TreeNode } from '@/hooks/useWorkspace';
 import { useWorkspace } from '@/hooks/useWorkspace';
 import { useWorkspaceSearch } from '@/hooks/useWorkspaceSearch';
 import { useChatStore } from '@/stores/chatStore';
@@ -93,12 +92,7 @@ const CloseIcon = () => (
 );
 
 const SearchIcon = () => (
-  <svg
-    className="w-3.5 h-3.5 text-cafe-muted flex-shrink-0"
-    viewBox="0 0 16 16"
-    fill="currentColor"
-    aria-hidden="true"
-  >
+  <svg className="w-3.5 h-3.5 text-cafe-muted flex-shrink-0" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
     <path
       fillRule="evenodd"
       d="M9.965 11.026a5 5 0 1 1 1.06-1.06l2.755 2.754a.75.75 0 1 1-1.06 1.06l-2.755-2.754ZM10.5 7a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0Z"
@@ -108,12 +102,7 @@ const SearchIcon = () => (
 );
 
 const MenuIcon = () => (
-  <svg
-    className="w-4 h-4 text-cafe-accent flex-shrink-0"
-    viewBox="0 0 20 20"
-    fill="currentColor"
-    aria-hidden="true"
-  >
+  <svg className="w-4 h-4 text-cafe-accent flex-shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
     <path
       fillRule="evenodd"
       d="M2 4.75A.75.75 0 012.75 4h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 4.75zM2 10a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 10zm0 5.25a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75a.75.75 0 01-.75-.75z"
@@ -157,22 +146,14 @@ export function WorkspacePanel() {
   const consumePreviewAutoOpen = useChatStore((s) => s.consumePreviewAutoOpen);
   const { createFile, createDir, deleteItem, renameItem, uploadFile } = useFileManagement();
 
-  const { expandedPaths, setExpandedPaths, toggleExpand, revealInTree } = useTreeNavigation({
+  const { expandedPaths, toggleExpand, revealInTree } = useTreeNavigation({
     tree,
     currentThreadId,
     fetchSubtree,
   });
 
-  const {
-    editMode,
-    setEditMode,
-    saveError,
-    setSaveError,
-    isTokenValid,
-    canEdit,
-    handleToggleEdit,
-    handleSave,
-  } = useFileEditing({ worktreeId, openFilePath, file, fetchFile });
+  const { editMode, setEditMode, saveError, canEdit, handleToggleEdit, handleSave } =
+    useFileEditing({ worktreeId, openFilePath, file, fetchFile });
 
   const [viewMode, setViewMode] = useState<'files' | 'changes' | 'git' | 'terminal' | 'browser'>('files');
   // Phase H: Workspace mode switcher (dev tools vs knowledge feed)
@@ -445,9 +426,7 @@ export function WorkspacePanel() {
           {worktreeId ? (
             <TerminalTab worktreeId={worktreeId} />
           ) : (
-            <div className="flex items-center justify-center h-full text-sm text-cafe-muted">
-              请先选择一个 Worktree
-            </div>
+            <div className="flex items-center justify-center h-full text-sm text-cafe-muted">请先选择一个 Worktree</div>
           )}
         </WorkspaceFocusShell>
       ) : (

@@ -165,9 +165,12 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
     })();
   }, []);
 
-  const navigateToThread = useCallback((threadId: string) => {
-    pushThreadRouteWithHistory(threadId, typeof window !== 'undefined' ? window : undefined, routePrefix);
-  }, [routePrefix]);
+  const navigateToThread = useCallback(
+    (threadId: string) => {
+      pushThreadRouteWithHistory(threadId, typeof window !== 'undefined' ? window : undefined, routePrefix);
+    },
+    [routePrefix],
+  );
 
   const createInProject = useCallback(
     async (opts: NewThreadOptions) => {
@@ -553,11 +556,7 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
           </div>
         </div>
 
-        {bindWarning && (
-          <div className="px-3 py-1.5 bg-yellow-50/60 text-[10px] text-yellow-700">
-            {bindWarning}
-          </div>
-        )}
+        {bindWarning && <div className="px-3 py-1.5 bg-yellow-50/60 text-[10px] text-yellow-700">{bindWarning}</div>}
 
         <div className="px-2 py-1.5">
           <button

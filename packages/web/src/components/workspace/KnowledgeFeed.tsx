@@ -104,9 +104,7 @@ export function KnowledgeFeed() {
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center text-cafe-muted text-xs">
-        Loading knowledge feed...
-      </div>
+      <div className="flex-1 flex items-center justify-center text-cafe-muted text-xs">Loading knowledge feed...</div>
     );
   }
 
@@ -139,9 +137,7 @@ export function KnowledgeFeed() {
             {tab.count != null && tab.count > 0 && (
               <span
                 className={`text-[9px] rounded-full px-1.5 py-0.5 ${
-                  activeTab === tab.key
-                    ? 'bg-cafe-accent text-white'
-                    : 'bg-[var(--console-hover-bg)] text-cafe-muted'
+                  activeTab === tab.key ? 'bg-cafe-accent text-white' : 'bg-[var(--console-hover-bg)] text-cafe-muted'
                 }`}
               >
                 {tab.count}

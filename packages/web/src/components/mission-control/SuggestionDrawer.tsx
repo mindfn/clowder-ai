@@ -2,8 +2,8 @@
 
 import type { BacklogItem, MissionHubSelfClaimScope, ThreadPhase } from '@cat-cafe/shared';
 import Link from 'next/link';
-import { getThreadHref } from '@/components/ThreadSidebar/thread-navigation';
 import { useEffect, useMemo, useState } from 'react';
+import { getThreadHref } from '@/components/ThreadSidebar/thread-navigation';
 import { formatCatName, useCatData } from '@/hooks/useCatData';
 import { SuggestionDecisionPanel } from './SuggestionDecisionPanel';
 import { SuggestionOpenForm } from './SuggestionOpenForm';

@@ -151,7 +151,9 @@ export function PluginsContent() {
                 {CATEGORY_META[group.category as PluginDef['category']].eyebrow}
               </p>
               <h3 className="text-lg font-semibold tracking-[-0.03em] text-cafe">{group.label}</h3>
-              <p className="text-sm leading-6 text-cafe-secondary">把 Console 的内置能力和依赖服务统一放到一个可读的状态视图里。</p>
+              <p className="text-sm leading-6 text-cafe-secondary">
+                把 Console 的内置能力和依赖服务统一放到一个可读的状态视图里。
+              </p>
             </div>
             <span
               className="console-pill inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold"
@@ -184,7 +186,9 @@ export function PluginsContent() {
                     <span className="console-pill inline-flex items-center rounded-full px-2.5 py-1 text-cafe-secondary">
                       {plugin.id}
                     </span>
-                    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 ${style.bg} ${style.text}`}>
+                    <span
+                      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 ${style.bg} ${style.text}`}
+                    >
                       <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
                       status
                     </span>

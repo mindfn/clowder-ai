@@ -65,11 +65,7 @@ export function MemoryNav({ active }: MemoryNavProps) {
 
   return (
     <nav aria-label="Memory navigation" className="flex items-center gap-2">
-      <a
-        href={backHref}
-        className="console-button-ghost text-xs"
-        data-testid="memory-back-to-chat"
-      >
+      <a href={backHref} className="console-button-ghost text-xs" data-testid="memory-back-to-chat">
         <svg
           className="h-4 w-4"
           viewBox="0 0 24 24"

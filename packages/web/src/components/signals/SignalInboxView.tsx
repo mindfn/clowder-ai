@@ -349,10 +349,7 @@ export function SignalInboxView() {
                 </option>
               ))}
             </select>
-            <button
-              type="submit"
-              className="console-button-primary md:col-span-4"
-            >
+            <button type="submit" className="console-button-primary md:col-span-4">
               搜索
             </button>
           </form>

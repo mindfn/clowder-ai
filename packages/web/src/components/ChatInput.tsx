@@ -208,10 +208,7 @@ export function ChatInput({
         }
         // Success — dismiss lobby and navigate
         setLobbyMode(null);
-        pushThreadRouteWithHistory(
-          data.gameThreadId,
-          typeof window !== 'undefined' ? window : undefined,
-        );
+        pushThreadRouteWithHistory(data.gameThreadId, typeof window !== 'undefined' ? window : undefined);
         // Hydrate game state immediately (socket reconnect won't fire for same connection)
         reconnectGame(data.gameThreadId).catch(() => {});
       } catch (err) {

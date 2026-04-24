@@ -3,10 +3,7 @@
 import { usePathname } from 'next/navigation';
 import { useLayoutEffect, useState } from 'react';
 import { ChatContainer } from '@/components/ChatContainer';
-import {
-  CHAT_THREAD_ROUTE_EVENT,
-  getThreadIdFromPathname,
-} from '@/components/ThreadSidebar/thread-navigation';
+import { CHAT_THREAD_ROUTE_EVENT, getThreadIdFromPathname } from '@/components/ThreadSidebar/thread-navigation';
 
 function getThreadRouteSnapshot(): string {
   if (typeof window === 'undefined') return 'default';

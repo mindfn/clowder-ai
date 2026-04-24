@@ -1,9 +1,9 @@
 'use client';
 
-import type { CSSProperties } from 'react';
 import { usePathname } from 'next/navigation';
+import type { CSSProperties } from 'react';
 import { MemoryIcon } from './icons/MemoryIcon';
-import { assignDocumentRoute, getWorldSwitchHref } from './ThreadSidebar/thread-navigation';
+import { assignDocumentRoute, getThreadIdFromPathname, getWorldSwitchHref } from './ThreadSidebar/thread-navigation';
 
 const NAV_ITEMS = [
   {
@@ -128,7 +128,13 @@ export function ActivityBar({ className }: ActivityBarProps) {
           <button
             key={item.id}
             type="button"
-            onClick={() => assignDocumentRoute(item.path, typeof window !== 'undefined' ? window : undefined)}
+            onClick={() => {
+              const threadId = getThreadIdFromPathname(pathname);
+              const from = threadId !== 'default' && item.id !== 'home'
+                ? `?from=${encodeURIComponent(threadId)}`
+                : '';
+              assignDocumentRoute(`${item.path}${from}`, typeof window !== 'undefined' ? window : undefined);
+            }}
             data-active={active ? 'true' : 'false'}
             className="console-activity-button relative flex h-10 w-10 items-center justify-center rounded-[10px]"
             style={toneStyle}

@@ -1,9 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { resolveLayoutThreadId } from '../../classic/route-state';
-import Home from '../page';
 import ClassicHome from '../../classic/page';
+import { resolveLayoutThreadId } from '../../classic/route-state';
 import ClassicThreadPage from '../../classic/thread/[threadId]/page';
+import Home from '../page';
 
 describe('console and classic route markers', () => {
   it('renders a stable marker for the console default route', () => {

@@ -12,12 +12,7 @@ interface UseChatThreadSyncParams {
   resetRefs: () => void;
 }
 
-export function useChatThreadSync({
-  threadId,
-  routePrefix = '',
-  messageCount,
-  resetRefs,
-}: UseChatThreadSyncParams) {
+export function useChatThreadSync({ threadId, routePrefix = '', messageCount, resetRefs }: UseChatThreadSyncParams) {
   const { clearTasks } = useTaskStore();
   const setCurrentThread = useChatStore((s) => s.setCurrentThread);
   const clearUnread = useChatStore((s) => s.clearUnread);

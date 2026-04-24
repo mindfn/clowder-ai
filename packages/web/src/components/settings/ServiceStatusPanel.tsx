@@ -123,7 +123,11 @@ export function ServiceStatusPanel({ filterFeatures, title, expandable }: Servic
           const cfg = STATUS_CONFIG[s.status];
           const isExpanded = expanded === s.manifest.id;
           return (
-            <div key={s.manifest.id} className="console-list-card rounded-[22px] px-4 py-4" data-active={isExpanded ? 'true' : 'false'}>
+            <div
+              key={s.manifest.id}
+              className="console-list-card rounded-[22px] px-4 py-4"
+              data-active={isExpanded ? 'true' : 'false'}
+            >
               <div className="flex items-center justify-between gap-3 text-xs">
                 <button
                   type="button"
@@ -151,7 +155,9 @@ export function ServiceStatusPanel({ filterFeatures, title, expandable }: Servic
                       <p className="mt-1 text-xs text-cafe-muted">
                         {s.manifest.type}
                         {s.manifest.port ? ` · :${s.manifest.port}` : ''}
-                        {s.manifest.enablesFeatures.length > 0 ? ` · ${s.manifest.enablesFeatures.length} features` : ''}
+                        {s.manifest.enablesFeatures.length > 0
+                          ? ` · ${s.manifest.enablesFeatures.length} features`
+                          : ''}
                       </p>
                     </div>
                   </div>
@@ -161,7 +167,11 @@ export function ServiceStatusPanel({ filterFeatures, title, expandable }: Servic
                     <span className={`inline-block h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
                     {cfg.label}
                   </span>
-                  {s.error && <span className="console-status-chip" data-status="error">{s.error}</span>}
+                  {s.error && (
+                    <span className="console-status-chip" data-status="error">
+                      {s.error}
+                    </span>
+                  )}
                 </div>
               </div>
               {showDetail && isExpanded && (
@@ -190,7 +200,10 @@ function ServiceDetail({ service, onHealthCheck }: { service: ServiceState; onHe
           <p className="console-data-tile-label">功能</p>
           <div className="mt-2 flex flex-wrap gap-2">
             {m.enablesFeatures.map((feature) => (
-              <span key={feature} className="console-pill inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold text-cafe-secondary">
+              <span
+                key={feature}
+                className="console-pill inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold text-cafe-secondary"
+              >
                 {feature}
               </span>
             ))}
@@ -203,7 +216,10 @@ function ServiceDetail({ service, onHealthCheck }: { service: ServiceState; onHe
           <p className="console-data-tile-label">依赖</p>
           <div className="mt-2 flex flex-wrap gap-2">
             {m.prerequisites.packages.map((pkg) => (
-              <span key={pkg} className="console-pill inline-flex items-center rounded-full px-2.5 py-1 font-mono text-[11px] text-cafe-secondary">
+              <span
+                key={pkg}
+                className="console-pill inline-flex items-center rounded-full px-2.5 py-1 font-mono text-[11px] text-cafe-secondary"
+              >
                 {pkg}
               </span>
             ))}
@@ -211,16 +227,17 @@ function ServiceDetail({ service, onHealthCheck }: { service: ServiceState; onHe
         </div>
       )}
 
-      {m.scripts?.start && (
-        <DetailBlock label="启动命令" value={m.scripts.start} mono />
-      )}
+      {m.scripts?.start && <DetailBlock label="启动命令" value={m.scripts.start} mono />}
 
       {m.configVars && m.configVars.length > 0 && (
         <div>
           <p className="console-data-tile-label">配置变量</p>
           <div className="mt-2 flex flex-wrap gap-2">
             {m.configVars.map((name) => (
-              <span key={name} className="console-pill inline-flex items-center rounded-full px-2.5 py-1 font-mono text-[11px] text-cafe-secondary">
+              <span
+                key={name}
+                className="console-pill inline-flex items-center rounded-full px-2.5 py-1 font-mono text-[11px] text-cafe-secondary"
+              >
                 {name}
               </span>
             ))}
@@ -228,11 +245,7 @@ function ServiceDetail({ service, onHealthCheck }: { service: ServiceState; onHe
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={onHealthCheck}
-        className="console-button-secondary"
-      >
+      <button type="button" onClick={onHealthCheck} className="console-button-secondary">
         检查健康
       </button>
     </div>

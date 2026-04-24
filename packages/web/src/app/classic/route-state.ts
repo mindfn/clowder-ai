@@ -1,7 +1,4 @@
-import {
-  CLASSIC_WORLD_PREFIX,
-  getThreadIdFromPathname,
-} from '@/components/ThreadSidebar/thread-navigation';
+import { CLASSIC_WORLD_PREFIX, getThreadIdFromPathname } from '@/components/ThreadSidebar/thread-navigation';
 
 function getThreadRouteSnapshot(): string {
   if (typeof window === 'undefined') return 'default';

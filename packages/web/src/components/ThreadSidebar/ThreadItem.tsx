@@ -142,9 +142,7 @@ export function ThreadItem({
           <span
             className={`text-sm leading-snug line-clamp-2 flex-1 min-w-0 ${isActive ? 'font-semibold text-cafe-black' : 'text-cafe-secondary'}`}
           >
-            {isHubThread && (
-              <HubIcon className="w-3.5 h-3.5 inline-block mr-1 text-cafe-accent align-text-bottom" />
-            )}
+            {isHubThread && <HubIcon className="w-3.5 h-3.5 inline-block mr-1 text-cafe-accent align-text-bottom" />}
             {title ?? (id === 'default' ? '大厅' : '未命名对话')}
           </span>
         )}
@@ -200,11 +198,7 @@ export function ThreadItem({
               className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[var(--console-hover-bg)] transition-all"
               title="重命名对话"
             >
-              <svg
-                className="w-3 h-3 text-cafe-muted hover:text-cafe-accent"
-                viewBox="0 0 16 16"
-                fill="currentColor"
-              >
+              <svg className="w-3 h-3 text-cafe-muted hover:text-cafe-accent" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M11.013 1.427a1.75 1.75 0 112.474 2.474l-7.2 7.2a2 2 0 01-.84.49l-2.22.634a.75.75 0 01-.926-.926l.634-2.22a2 2 0 01.49-.84l7.588-7.588zm1.414 1.06a.25.25 0 00-.353 0L11.2 3.36l1.44 1.44.874-.874a.25.25 0 000-.353l-1.086-1.086zM11.58 5.86l-1.44-1.44-6.072 6.072a.5.5 0 00-.123.21l-.303 1.06 1.06-.303a.5.5 0 00.21-.123l6.668-6.668z" />
                 <path d="M2.25 13A.75.75 0 013 12.25v-.5a.75.75 0 011.5 0v.5c0 .138.112.25.25.25h8a.75.75 0 010 1.5h-8A1.75 1.75 0 012.25 13z" />
               </svg>

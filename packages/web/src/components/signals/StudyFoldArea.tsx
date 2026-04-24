@@ -156,8 +156,8 @@ export function StudyFoldArea({
               {discussLoading ? '正在创建讨论...' : '在对话中讨论'}
             </button>
             {/* AC-6: 多猫研究派发 — signal param binds article context via activeSignals */}
-                    <a
-                      href={`${discussLink}&research=multi`}
+            <a
+              href={`${discussLink}&research=multi`}
               className="rounded-md border border-emerald-300 px-3 py-1.5 text-xs text-emerald-700 hover:bg-emerald-50"
             >
               多猫研究

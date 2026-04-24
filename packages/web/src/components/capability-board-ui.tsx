@@ -187,10 +187,7 @@ function CapabilityCard({
     catFamilies.length > 0;
 
   return (
-    <div
-      className="console-list-card rounded-[24px]"
-      data-active={expanded ? 'true' : 'false'}
-    >
+    <div className="console-list-card rounded-[24px]" data-active={expanded ? 'true' : 'false'}>
       {/* Header */}
       <div className={`flex items-center gap-3 px-4 transition-all duration-300 ${expanded ? 'py-4' : 'py-3.5'}`}>
         <button
@@ -280,9 +277,9 @@ function CapabilityCard({
                       <li key={tool.name} className="console-card-soft rounded-[16px] px-3 py-3">
                         <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:gap-2">
                           <code className="font-mono text-[11px] text-conn-indigo-text">{tool.name}</code>
-                        {tool.description && (
+                          {tool.description && (
                             <span className="leading-6 break-words text-cafe-muted">{tool.description}</span>
-                        )}
+                          )}
                         </div>
                       </li>
                     ))}
@@ -512,7 +509,9 @@ function MountStatusBadges({ mounts }: { mounts: Record<string, boolean> }) {
             <span
               key={key}
               className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium border ${
-                ok ? 'border-conn-emerald-ring bg-conn-emerald-bg text-conn-emerald-text' : 'border-conn-red-ring bg-conn-red-bg text-conn-red-text'
+                ok
+                  ? 'border-conn-emerald-ring bg-conn-emerald-bg text-conn-emerald-text'
+                  : 'border-conn-red-ring bg-conn-red-bg text-conn-red-text'
               }`}
             >
               {ok ? (
@@ -612,7 +611,7 @@ export function FilterChips({
           onClick={() => onChange(opt.value)}
           className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
             value === opt.value
-                ? 'border border-conn-blue-ring bg-conn-blue-bg text-conn-blue-text'
+              ? 'border border-conn-blue-ring bg-conn-blue-bg text-conn-blue-text'
               : 'console-pill text-cafe-secondary hover:text-cafe'
           }`}
         >

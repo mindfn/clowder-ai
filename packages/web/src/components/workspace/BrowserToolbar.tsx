@@ -74,11 +74,7 @@ export function BrowserToolbar({
         />
       </div>
 
-      <button
-        type="button"
-        onClick={onNavigate}
-        className="console-button-primary px-2.5 py-1 text-xs"
-      >
+      <button type="button" onClick={onNavigate} className="console-button-primary px-2.5 py-1 text-xs">
         Go
       </button>
 
@@ -96,7 +92,9 @@ export function BrowserToolbar({
         type="button"
         onClick={onConsoleToggle}
         className={`p-1 rounded text-sm transition-colors ${
-          consoleOpen ? 'bg-[var(--console-active-bg)] text-cafe-accent' : 'hover:bg-[var(--console-hover-bg)] text-cafe-muted'
+          consoleOpen
+            ? 'bg-[var(--console-active-bg)] text-cafe-accent'
+            : 'hover:bg-[var(--console-hover-bg)] text-cafe-muted'
         }`}
         title="Toggle Console"
       >

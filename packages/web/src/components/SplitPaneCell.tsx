@@ -58,7 +58,9 @@ export function SplitPaneCell({
   return (
     <div
       className={`flex flex-col rounded-lg border-2 transition-colors cursor-pointer overflow-hidden ${
-        isSelected ? 'border-cafe-accent shadow-[var(--console-shadow-soft)]' : 'border-[var(--console-border-soft)] hover:border-cafe'
+        isSelected
+          ? 'border-cafe-accent shadow-[var(--console-shadow-soft)]'
+          : 'border-[var(--console-border-soft)] hover:border-cafe'
       }`}
       onClick={() => onSelect(threadId)}
       onDoubleClick={() => onDoubleClick(threadId)}

@@ -362,11 +362,7 @@ export function DirectoryBrowser({ initialPath, activeProjectPath, onSelect, onC
               {browseResult.current}
             </span>
           )}
-          <button
-            type="button"
-            onClick={onCancel}
-            className="console-button-secondary px-4 py-2 text-xs"
-          >
+          <button type="button" onClick={onCancel} className="console-button-secondary px-4 py-2 text-xs">
             取消
           </button>
           <button

@@ -18,8 +18,7 @@ export function resolveConsoleSetupState(section: string, fetchError: string | n
 
   return {
     title: 'Console 还没连上运行时',
-    description:
-      `当前分区“${sectionLabel}”依赖运行时 API。先启动 API，再回到这里继续配置；如果你需要参考旧交互，可以打开 Classic 参考世界。`,
+    description: `当前分区“${sectionLabel}”依赖运行时 API。先启动 API，再回到这里继续配置；如果你需要参考旧交互，可以打开 Classic 参考世界。`,
     href: '/classic',
     ctaLabel: '查看 Classic 参考',
   };
@@ -43,7 +42,8 @@ export function ConsoleSetupState({ title, description, href, ctaLabel }: Consol
       <div className="mt-4 console-card-soft rounded-[22px] px-4 py-4 text-sm text-cafe-secondary">
         <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">Why</p>
         <p className="mt-2 leading-6">
-          新世界是默认目标，Classic 只保留为旧交互参考。API 没起时不要直接把用户扔到“网络错误”，应该明确告诉用户当前缺的是运行时，而不是让界面继续混用两套世界语义。
+          新世界是默认目标，Classic 只保留为旧交互参考。API
+          没起时不要直接把用户扔到“网络错误”，应该明确告诉用户当前缺的是运行时，而不是让界面继续混用两套世界语义。
         </p>
       </div>
     </section>

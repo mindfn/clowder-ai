@@ -160,7 +160,11 @@ function TreeItem({
           {depth > 0 && (
             <span className="absolute left-0 top-0 bottom-0 pointer-events-none" aria-hidden>
               {Array.from({ length: depth }, (_, i) => `${i * 16 + 14}px`).map((left) => (
-                <span key={left} className="absolute top-0 bottom-0 w-px bg-[var(--console-border-soft)]" style={{ left }} />
+                <span
+                  key={left}
+                  className="absolute top-0 bottom-0 w-px bg-[var(--console-border-soft)]"
+                  style={{ left }}
+                />
               ))}
             </span>
           )}
