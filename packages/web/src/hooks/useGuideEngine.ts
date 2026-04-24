@@ -147,6 +147,7 @@ export function useGuideEngine() {
         }
         console.error(`[Guide] Completion failed after ${attempt} attempts: ${res.status}`);
         markCompletionFailed(sessionId);
+        rollbackCompletedGuide(threadId, guideId);
       } catch (err) {
         if (attempt < 3) {
           console.warn('[Guide] Completion callback error, retrying…', err);
@@ -155,6 +156,7 @@ export function useGuideEngine() {
         }
         console.error('[Guide] Completion callback failed after retries:', err);
         markCompletionFailed(sessionId);
+        rollbackCompletedGuide(threadId, guideId);
       }
     };
     notify();

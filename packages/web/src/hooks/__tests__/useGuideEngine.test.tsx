@@ -447,6 +447,52 @@ describe('useGuideEngine duplicate start protection', () => {
     expect(useGuideStore.getState().completionFailed).toBe(true);
   });
 
+  it('rolls back completedGuides when completion POST fails after advanceStep reaches the end', async () => {
+    apiFetchMock.mockImplementation((url: string) => {
+      if (url === '/api/guide-flows/add-member') {
+        return Promise.resolve({ ok: true, json: async () => FLOW });
+      }
+      if (url === '/api/guide-actions/start') {
+        return Promise.resolve({ ok: true });
+      }
+      if (url === '/api/guide-actions/complete') {
+        return Promise.resolve({ ok: false, status: 500 });
+      }
+      throw new Error(`Unexpected apiFetch call: ${url}`);
+    });
+
+    act(() => {
+      root.render(React.createElement(Harness));
+    });
+
+    await act(async () => {
+      dispatchGuideStart('add-member');
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    act(() => {
+      useGuideStore.getState().advanceStep();
+    });
+    expect(useGuideStore.getState().session?.currentStepIndex).toBe(1);
+
+    act(() => {
+      useGuideStore.getState().advanceStep();
+    });
+    expect(useGuideStore.getState().session?.phase).toBe('complete');
+    expect(useGuideStore.getState().completedGuides.has('thread-1::add-member')).toBe(true);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(useGuideStore.getState().completionFailed).toBe(true);
+    expect(useGuideStore.getState().completedGuides.has('thread-1::add-member')).toBe(false);
+  });
+
   it('merges bootcamp phase advance against fresh server state before PATCH', async () => {
     const staleState = {
       v: 1,
