@@ -1,5 +1,5 @@
 /**
- * F140: First-Run Quest routes.
+ * F171: First-Run Quest routes.
  * GET  /api/first-run/available-clients  — detect installed CLI clients
  * GET  /api/first-run/quest              — get current quest thread
  * POST /api/first-run/quest              — create quest thread

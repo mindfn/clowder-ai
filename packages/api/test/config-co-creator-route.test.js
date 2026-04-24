@@ -63,7 +63,7 @@ function createProjectRoot() {
   tempDirs.push(projectRoot);
   const template = makeTemplate();
   writeFileSync(join(projectRoot, 'cat-template.json'), JSON.stringify(template, null, 2));
-  // F140: bootstrapCatCatalog now creates empty catalogs. Pre-seed the catalog with
+  // F171: bootstrapCatCatalog now creates empty catalogs. Pre-seed the catalog with
   // template breeds so conflict detection in assertUniqueMentionAliases finds cat aliases.
   mkdirSync(join(projectRoot, '.cat-cafe'), { recursive: true });
   writeFileSync(join(projectRoot, '.cat-cafe', 'cat-catalog.json'), JSON.stringify(template, null, 2), 'utf-8');

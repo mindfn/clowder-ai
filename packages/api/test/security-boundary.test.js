@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// F140: bootstrapCatCatalog now creates empty catalogs. To start the API server in tests,
+// F171: bootstrapCatCatalog now creates empty catalogs. To start the API server in tests,
 // we must provide a pre-seeded cat-catalog.json with breeds so getCatModel('opus') succeeds.
 const BUILTIN_ACCOUNT_IDS = {
   anthropic: 'claude',
@@ -107,7 +107,7 @@ test('API binds to 127.0.0.1 by default', async (t) => {
 
   const apiDir = path.resolve(process.cwd());
   const tempRoot = mkdtempSync(path.join(tmpdir(), 'security-boundary-'));
-  // F140: provide a seeded catalog so the spawned API server can resolve cat models.
+  // F171: provide a seeded catalog so the spawned API server can resolve cat models.
   // The template lives 3 levels up from this test file (packages/api/test → repo root).
   const repoTemplatePath = path.resolve(__dirname, '..', '..', '..', 'cat-template.json');
   const templateForServer = path.join(tempRoot, 'cat-template.json');

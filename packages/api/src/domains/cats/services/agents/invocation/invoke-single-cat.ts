@@ -893,7 +893,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       if (resolvedAccount.baseUrl) callbackEnv.DARE_ENDPOINT = resolvedAccount.baseUrl;
     }
 
-    // F140: User-defined env vars from account config.
+    // F171: User-defined env vars from account config.
     // Passed separately via accountEnv — NOT injected into callbackEnv.
     // callbackEnv is for MCP callback routing; accountEnv is applied LAST
     // in subprocess env so user vars override provider-injected values.

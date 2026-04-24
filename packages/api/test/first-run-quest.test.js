@@ -1,5 +1,5 @@
 /**
- * F140: First-Run Quest Integration Tests
+ * F171: First-Run Quest Integration Tests
  * - Client detection endpoint
  * - Quest thread creation and state management
  * - Quest state transitions (forward-only)

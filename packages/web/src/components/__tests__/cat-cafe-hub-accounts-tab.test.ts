@@ -250,7 +250,7 @@ describe('CatCafeHub provider profiles tab', () => {
     expect(container.textContent).toContain('Codex Sponsor');
     expect(container.textContent).not.toContain('【');
     expect(container.textContent).not.toContain('非 UI 直出');
-    // F140: no synthetic builtin accounts — only API-returned providers
+    // F171: no synthetic builtin accounts — only API-returned providers
     expect(container.textContent).not.toContain('OpenCode (client-auth)');
     expect(container.textContent).not.toContain('Dare (client-auth)');
     expect(container.textContent).not.toContain('OAuth-like');
@@ -828,7 +828,7 @@ describe('CatCafeHub provider profiles tab', () => {
     // Global profiles: no projectPath in POST body
     expect(createPayload).not.toBeNull();
     expect((createPayload as unknown as Record<string, unknown>)?.projectPath).toBeUndefined();
-    // F140: Hub API Key mode (no initialClientId) omits clientId
+    // F171: Hub API Key mode (no initialClientId) omits clientId
     expect((createPayload as unknown as Record<string, unknown>)?.clientId).toBeUndefined();
     expect((createPayload as unknown as Record<string, unknown>)?.authType).toBe('api_key');
   });
@@ -911,13 +911,13 @@ describe('CatCafeHub provider profiles tab', () => {
     expect(profileList?.textContent).toContain('Codex (OAuth)');
     expect(profileList?.textContent).toContain('Gemini (OAuth)');
     expect(profileList?.textContent).toContain('Codex Sponsor');
-    // F140: no synthetic builtin accounts — only API-returned providers are shown
+    // F171: no synthetic builtin accounts — only API-returned providers are shown
     expect(profileList?.textContent).not.toContain('Kimi (OAuth)');
     expect(profileList?.textContent).not.toContain('OpenCode (client-auth)');
     expect(profileList?.textContent).not.toContain('Dare (client-auth)');
     expect(container.textContent).not.toContain('全部');
     expect(container.textContent).not.toContain('内置认证');
-    // F140: cards are clickable for edit — no separate edit buttons
+    // F171: cards are clickable for edit — no separate edit buttons
     expect(
       Array.from(container.querySelectorAll('button')).filter((button) => button.textContent?.includes('编辑')),
     ).toHaveLength(0);

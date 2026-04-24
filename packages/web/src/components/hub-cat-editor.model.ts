@@ -52,7 +52,7 @@ export interface HubCatEditorDraft {
   accountRef?: string;
   defaultModel: string;
   commandArgs?: string;
-  /** F140: template identity fields for bootcamp-guided cat creation */
+  /** F171: template identity fields for bootcamp-guided cat creation */
   templateName?: string;
   templateNickname?: string;
   templateAvatar?: string;

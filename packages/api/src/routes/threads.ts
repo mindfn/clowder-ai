@@ -58,7 +58,7 @@ export interface ThreadsRoutesOptions {
   guideSessionStore?: import('../domains/guides/GuideSessionRepository.js').IGuideSessionStore;
 }
 
-/** F087: Bootcamp state Zod schema (F140 v2 flow) */
+/** F087: Bootcamp state Zod schema (F171 v2 flow) */
 const bootcampPhaseSchema = z.enum([
   'phase-1-intro',
   'phase-2-env-check',
@@ -79,7 +79,7 @@ const bootcampStateSchema = z
     phase: bootcampPhaseSchema,
     leadCat: catIdSchema().optional(),
     selectedTaskId: z.string().max(50).optional(),
-    /** F140: sub-step for add-teammate / farewell console guide overlay.
+    /** F171: sub-step for add-teammate / farewell console guide overlay.
      *  Free-form string — guide flows evolve and rigid enums cause silent PATCH failures. */
     guideStep: z.string().max(50).nullable().optional(),
     envCheck: z

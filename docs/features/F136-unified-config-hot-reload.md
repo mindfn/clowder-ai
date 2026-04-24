@@ -59,7 +59,7 @@ created: 2026-03-23
 │  ...其他需要的模块                          │
 └────────────────────────────────────────────┘
 
-Phase 4 终态（2026-03-28 决策，F140 校准后的实际落地）:
+Phase 4 终态（2026-03-28 决策，F171 校准后的实际落地）:
 ┌── 模板（进 git）──────────────────────────┐
 │  cat-template.json                         │
 │    roleTemplates: 品种模板（soul/model）   │
@@ -78,7 +78,7 @@ Phase 4 终态（2026-03-28 决策，F140 校准后的实际落地）:
 └────────────────────────────────────────────┘
 > **设计 vs 实现差异**：原设计用 `cat-config.yaml` 作为统一真相源，
 > 实现中演变为 `cat-template.json`（模板）+ `cat-catalog.json`（猫状态）+ `accounts.json`（账户元数据）三文件分离。
-> 账号类型由 `authType: 'oauth' | 'api_key'` 唯一决定（F140 移除了冗余的 `builtin` 标记和 `ProfileKind` 类型）。
+> 账号类型由 `authType: 'oauth' | 'api_key'` 唯一决定（F171 移除了冗余的 `builtin` 标记和 `ProfileKind` 类型）。
 ```
 
 **核心原则**：
@@ -251,7 +251,7 @@ Phase 4 终态（2026-03-28 决策，F140 校准后的实际落地）:
 - `accountStartupHook()`: legacy source present + empty accounts → hard throw `F136 LL-043`
 - `index.ts`: LL-043 errors propagated alongside HC-5 (not swallowed by best-effort catch)
 - `accountToView()`: non-standard builtins (dare/opencode) emit correct `client` field (fixes duplicate accounts on Hub UI)
-- **F140 简化**：`accountToView()` 不再返回 `builtin` 和 `kind` 字段——前端统一用 `authType: 'oauth' | 'api_key'` 判别账号类型，`ProfileKind` 类型和 `ensureBuiltinAccounts()` fallback 逻辑已移除
+- **F171 简化**：`accountToView()` 不再返回 `builtin` 和 `kind` 字段——前端统一用 `authType: 'oauth' | 'api_key'` 判别账号类型，`ProfileKind` 类型和 `ensureBuiltinAccounts()` fallback 逻辑已移除
 - 3 regression tests (empty providers, corrupt file, legacy+no-accounts) + 1 client field test
 - Cloud review: 3 rounds (P1 → P1 → clean)
 

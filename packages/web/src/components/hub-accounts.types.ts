@@ -17,7 +17,7 @@ export interface ProfileItem {
   models?: string[];
   modelOverride?: string | null;
   oauthLikeClient?: string;
-  /** F140: User-defined env vars injected into agent subprocess. */
+  /** F171: User-defined env vars injected into agent subprocess. */
   envVars?: Record<string, string>;
   hasApiKey: boolean;
   createdAt: string;

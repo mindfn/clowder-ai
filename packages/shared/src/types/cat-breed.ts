@@ -206,12 +206,12 @@ export type AccountProtocol = 'anthropic' | 'openai' | 'openai-responses' | 'goo
  */
 export interface AccountConfig {
   readonly authType: 'oauth' | 'api_key';
-  /** F140: Explicit client identity for API key accounts (e.g. 'anthropic', 'openai'). */
+  /** F171: Explicit client identity for API key accounts (e.g. 'anthropic', 'openai'). */
   readonly clientId?: string;
   readonly baseUrl?: string;
   readonly models?: readonly string[];
   readonly displayName?: string;
-  /** F140: User-defined env vars injected into agent subprocess.
+  /** F171: User-defined env vars injected into agent subprocess.
    *  Keys starting with CAT_CAFE_ are reserved and cannot be overridden. */
   readonly envVars?: Readonly<Record<string, string>>;
 }

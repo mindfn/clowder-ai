@@ -19,7 +19,7 @@ import { deriveCallbackActor, resolveBoundThreadScope } from './callback-scope-h
  * Ordered phase list — index determines valid transitions (forward-only).
  * Wizard creates thread at phase-1-intro directly (Phase 0 handled by UI).
  *
- * F140 v2 flow: first cat develops solo (phases 4-7) → add teammate (7.5) →
+ * F171 v2 flow: first cat develops solo (phases 4-7) → add teammate (7.5) →
  * collaboration (8) → project complete (9) → farewell guidance (10-11).
  */
 const PHASE_ORDER = [
@@ -56,7 +56,7 @@ const ALLOWED_LEGACY_SKIPS: ReadonlySet<string> = new Set([
   'phase-2-env-check→phase-3-config-help',
 ]);
 
-/** Map legacy phase names (pre-F140-v2) to their nearest current equivalent. */
+/** Map legacy phase names (pre-F171-v2) to their nearest current equivalent. */
 const LEGACY_PHASE_MAP: Record<string, (typeof PHASE_ORDER)[number]> = {
   'phase-0-select-cat': 'phase-1-intro',
   'phase-3.5-advanced': 'phase-3-config-help',
@@ -85,7 +85,7 @@ const updateBootcampStateCallbackSchema = z.object({
     )
     .optional(),
   advancedFeatures: z.record(z.enum(['available', 'unavailable', 'skipped'])).optional(),
-  /** F140: sub-step for bootcamp guide overlay */
+  /** F171: sub-step for bootcamp guide overlay */
   guideStep: z
     .enum([
       'open-hub',

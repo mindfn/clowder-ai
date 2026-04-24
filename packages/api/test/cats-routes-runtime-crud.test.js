@@ -76,7 +76,7 @@ function makeTemplate() {
 }
 
 /**
- * F140: bootstrapCatCatalog() now creates empty catalogs (first-run quest).
+ * F171: bootstrapCatCatalog() now creates empty catalogs (first-run quest).
  * Pre-write a catalog with breeds from the template so tests that operate on
  * template cats still find them. Stamps default accountRef.
  */

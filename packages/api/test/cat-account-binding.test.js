@@ -15,7 +15,7 @@ async function seedTemplate(projectRoot, mutateTemplate) {
 }
 
 /**
- * F140: bootstrapCatCatalog() now creates empty catalogs (first-run quest).
+ * F171: bootstrapCatCatalog() now creates empty catalogs (first-run quest).
  * Populate breeds from the template into the catalog, stamping default
  * accountRef and source values that the old bootstrap used to do.
  */

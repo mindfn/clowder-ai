@@ -269,7 +269,7 @@ export class CodexAgentService implements AgentService {
     //   - env_key: env var name for the API key
     //   - base_url: API endpoint
     //   - wire_api: "responses" (HTTP, the only supported value)
-    // Check both callbackEnv and accountEnv — after F140 env separation,
+    // Check both callbackEnv and accountEnv — after F171 env separation,
     // user-configured OPENAI_BASE_URL lives in accountEnv, not callbackEnv.
     const customBaseUrl =
       options?.callbackEnv?.OPENAI_BASE_URL ??
@@ -373,7 +373,7 @@ export class CodexAgentService implements AgentService {
         }
       }
       const codexEnv = applyAuthMode(rawEnv, authMode);
-      // F140: Account env vars applied LAST — user overrides provider-injected values.
+      // F171: Account env vars applied LAST — user overrides provider-injected values.
       // Strip OPENAI_BASE_URL/OPENAI_API_BASE if already consumed via --config model_providers
       // to prevent the deprecated env var from conflicting with the CLI config.
       if (options?.accountEnv) {

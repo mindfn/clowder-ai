@@ -96,7 +96,7 @@ function loadRepoTemplate() {
 }
 
 /**
- * F140: bootstrapCatCatalog() now creates empty catalogs (first-run quest).
+ * F171: bootstrapCatCatalog() now creates empty catalogs (first-run quest).
  * Pre-write a catalog with breeds from the template so tests that operate on
  * template cats still find them. Stamps default accountRef.
  */
@@ -301,7 +301,7 @@ describe('cats routes read runtime catalog', { concurrency: false }, () => {
       assert.ok(catIds.includes(expected), `first read should include bootstrapped cat "${expected}"`);
     }
 
-    // F140: bootstrapCatCatalog now creates an EMPTY catalog (first-run quest).
+    // F171: bootstrapCatCatalog now creates an EMPTY catalog (first-run quest).
     // The catalog file has breeds: [] — cats are served from catRegistry + lazy first-run setup.
     const runtimeCatalog = JSON.parse(readFileSync(join(projectRoot, '.cat-cafe', 'cat-catalog.json'), 'utf-8'));
     assert.ok(Array.isArray(runtimeCatalog.breeds), 'bootstrapped runtime catalog should have a breeds array');
@@ -312,7 +312,7 @@ describe('cats routes read runtime catalog', { concurrency: false }, () => {
   it('GET /api/cats falls back to the readable active project root when CAT_TEMPLATE_PATH is stale', async () => {
     const localTemplate = makeCatalog('local-template', '本地模板猫');
     const projectRoot = createMonorepoTemplateOnlyProject(localTemplate);
-    // F140: bootstrap now creates empty catalogs — pre-seed so the local cat is visible.
+    // F171: bootstrap now creates empty catalogs — pre-seed so the local cat is visible.
     seedCatalogFromTemplate(projectRoot, localTemplate);
     const staleRoot = mkdtempSync(join(tmpdir(), 'cats-route-catalog-stale-'));
     tempDirs.push(staleRoot);
@@ -356,7 +356,7 @@ describe('cats routes read runtime catalog', { concurrency: false }, () => {
     const { writeCatalogAccount } = await import('../dist/config/catalog-accounts.js');
     const { writeCredential } = await import('../dist/config/credentials.js');
     bootstrapCatCatalog(projectRoot, process.env.CAT_TEMPLATE_PATH);
-    // F140: bootstrap creates empty catalog — seed breeds so codex appears as 'seed'.
+    // F171: bootstrap creates empty catalog — seed breeds so codex appears as 'seed'.
     seedCatalogFromTemplate(projectRoot, repoTemplate);
     // clowder-ai#340: Custom accounts require well-known ID or explicit accountRef binding.
     // Overwrite the 'codex' well-known account with an api_key sponsor account.

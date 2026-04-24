@@ -352,7 +352,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
               )}
           </div>
 
-          {/* F140: 高级配置 — collapsible env var injection */}
+          {/* F171: 高级配置 — collapsible env var injection */}
           <div className="rounded-lg border border-[#E8DCCF]">
             <button
               type="button"

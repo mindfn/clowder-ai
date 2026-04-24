@@ -207,7 +207,7 @@ export function bootstrapCatCatalog(projectRoot: string, templatePath: string): 
   const catalogPath = resolveCatCatalogPath(projectRoot);
   if (existsSync(catalogPath)) {
     readCatCatalogRaw(projectRoot);
-    // Strip legacy source field from variants (obsolete after F140).
+    // Strip legacy source field from variants (obsolete after F171).
     stripLegacySourceField(catalogPath);
     // Ensure owner is always present in roster.
     ensureOwnerInRoster(catalogPath);

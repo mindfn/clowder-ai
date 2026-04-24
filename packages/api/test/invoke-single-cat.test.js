@@ -37,7 +37,7 @@ async function rmWithRetry(path, attempts = 5) {
 }
 
 /**
- * F140: bootstrapCatCatalog() now creates empty catalogs (first-run quest).
+ * F171: bootstrapCatCatalog() now creates empty catalogs (first-run quest).
  * Tests that call bootstrapCatCatalog() and then read catalog breeds must call
  * seedCatalogBreeds() afterwards to populate the catalog from the template.
  */
@@ -2964,7 +2964,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     });
 
     bootstrapCatCatalog(root, join(root, 'cat-template.json'));
-    // F140: bootstrapCatCatalog now creates empty catalogs; seed breeds from template.
+    // F171: bootstrapCatCatalog now creates empty catalogs; seed breeds from template.
     await seedCatalogBreeds(root);
     const catalogPath = resolveCatCatalogPath(root);
     const runtimeCatalog = JSON.parse(await readFile(catalogPath, 'utf-8'));
@@ -3066,7 +3066,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = root;
     process.env.HOME = root;
     bootstrapCatCatalog(root, join(root, 'cat-template.json'));
-    // F140: bootstrapCatCatalog now creates empty catalogs; seed breeds from template.
+    // F171: bootstrapCatCatalog now creates empty catalogs; seed breeds from template.
     await seedCatalogBreeds(root);
 
     const registrySnapshot = catRegistry.getAllConfigs();

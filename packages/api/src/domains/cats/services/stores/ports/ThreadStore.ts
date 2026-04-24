@@ -130,7 +130,7 @@ export interface Thread {
   deletedAt?: number | null;
   /** F087: CVO Bootcamp onboarding state. */
   bootcampState?: BootcampStateV1;
-  /** F140: First-Run Quest onboarding state. */
+  /** F171: First-Run Quest onboarding state. */
   firstRunQuestState?: FirstRunQuestStateV1;
   /** F088 Phase G: Connector Hub thread state — marks this thread as an IM Hub for command isolation. */
   connectorHubState?: ConnectorHubStateV1;
@@ -151,7 +151,7 @@ export interface ConnectorHubStateV1 {
   lastCommandAt?: number;
 }
 
-/** F087: Bootcamp phase for CVO onboarding (F140 v2 flow) */
+/** F087: Bootcamp phase for CVO onboarding (F171 v2 flow) */
 export type BootcampPhase =
   | 'phase-1-intro'
   | 'phase-2-env-check'
@@ -166,7 +166,7 @@ export type BootcampPhase =
   | 'phase-10-retro'
   | 'phase-11-farewell';
 
-/** F140: Sub-step for add-teammate console guide overlay */
+/** F171: Sub-step for add-teammate console guide overlay */
 export type BootcampGuideStep = 'preview-result' | 'open-hub' | 'click-add-member' | 'fill-form' | 'done';
 
 export interface BootcampStateV1 {
@@ -174,7 +174,7 @@ export interface BootcampStateV1 {
   phase: BootcampPhase;
   leadCat?: CatId;
   selectedTaskId?: string;
-  /** F140: sub-step for add-teammate console guide overlay */
+  /** F171: sub-step for add-teammate console guide overlay */
   guideStep?: BootcampGuideStep | null;
   envCheck?: Record<string, { ok: boolean; version?: string; note?: string }>;
   advancedFeatures?: Record<string, 'available' | 'unavailable' | 'skipped'>;
@@ -182,7 +182,7 @@ export interface BootcampStateV1 {
   completedAt?: number;
 }
 
-/** F140: First-Run Quest phase */
+/** F171: First-Run Quest phase */
 export type FirstRunQuestPhase =
   | 'quest-0-welcome'
   | 'quest-1-create-first-cat'
@@ -195,7 +195,7 @@ export type FirstRunQuestPhase =
   | 'quest-8-collaboration-demo'
   | 'quest-9-completion';
 
-/** F140: First-Run Quest state stored in thread metadata */
+/** F171: First-Run Quest state stored in thread metadata */
 export interface FirstRunQuestStateV1 {
   v: 1;
   phase: FirstRunQuestPhase;
@@ -301,7 +301,7 @@ export interface IThreadStore {
   updateVoiceMode(threadId: string, voiceMode: boolean): void | Promise<void>;
   /** F087: Get/update bootcamp state. */
   updateBootcampState(threadId: string, state: BootcampStateV1 | null): void | Promise<void>;
-  /** F140: Get/update first-run quest state. */
+  /** F171: Get/update first-run quest state. */
   updateFirstRunQuestState(threadId: string, state: FirstRunQuestStateV1 | null): void | Promise<void>;
   /** F088 Phase G: Get/update connector hub state. */
   updateConnectorHubState(threadId: string, state: ConnectorHubStateV1 | null): void | Promise<void>;

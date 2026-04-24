@@ -1,4 +1,4 @@
-# F140 Guide Flow: Bootcamp Add Teammate
+# F171 Guide Flow: Bootcamp Add Teammate
 # First-run quest — after cat delivers first project, guide user to add a second cat.
 # Auto-triggered when bootcamp transitions to phase-7.5-add-teammate.
 # Schema: OrchestrationFlow v2 (tag-based engine)

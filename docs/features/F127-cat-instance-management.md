@@ -42,7 +42,7 @@ community_issue: "#109"
 | `oauth` — Gemini | CLI 内部 auth | — |
 | `api_key` — 自定义 | apiKey + baseUrl + provider hint | 兼容 OpenAI 协议的任意端点 |
 
-账号类型由 `authType: 'oauth' | 'api_key'` 唯一决定（F140 移除了冗余的 `builtin` 标记）。这层是 F062（done）的泛化扩展。
+账号类型由 `authType: 'oauth' | 'api_key'` 唯一决定（F171 移除了冗余的 `builtin` 标记）。这层是 F062（done）的泛化扩展。
 
 #### 第二层：猫猫实例管理（Cat Instances）
 
@@ -146,7 +146,7 @@ community_issue: "#109"
 | `.cat-cafe/cat-catalog.json` | — | 运行时猫实例状态（breeds + roster），支持 CRUD |
 | `.cat-cafe/accounts.json` | — | 运行时账户元数据（authType/clientId/models） |
 | `CatRegistry` | 启动时一次性加载 | 支持运行时增删改 |
-| `provider-profiles` | Anthropic-only | 已被 `accounts.json` + `credentials.json` 取代（F136/F340） |
+| `provider-profiles` | Anthropic-only | 已被 `accounts.json` + `credentials.json` 取代（F136/clowder-ai#340） |
 | `mention-parser.ts` | 从静态 config 读 patterns | 从动态 registry 读 aliases |
 | `a2a-mentions.ts` | 同上 | 同上 |
 | Hub 猫猫总览 | 只读展示 | 可管理（CRUD） |

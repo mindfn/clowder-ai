@@ -110,7 +110,7 @@ function findBoundCatIds(projectRoot: string, accountRef: string): string[] | Er
 
 const MONOREPO_ROOT = findMonorepoRoot();
 
-/** F140: POSIX env key — must start with uppercase or _, rest alphanumeric + _. CAT_CAFE_ reserved. */
+/** F171: POSIX env key — must start with uppercase or _, rest alphanumeric + _. CAT_CAFE_ reserved. */
 const envKeySchema = z.string().regex(/^[A-Z_][A-Za-z0-9_]*$/, 'env key must match [A-Z_][A-Za-z0-9_]*');
 const envVarsSchema = z
   .record(envKeySchema, z.string())
@@ -127,7 +127,7 @@ const envVarsSchema = z
 
 const authTypeEnum = z.enum(['oauth', 'api_key']);
 const modeEnum = z.enum(['subscription', 'api_key']);
-/** F140: restrict clientId to known clients — prevents silent data rot when frontend truststhis as enum. */
+/** F171: restrict clientId to known clients — prevents silent data rot when frontend truststhis as enum. */
 const accountClientEnum = z.enum(['anthropic', 'openai', 'google', 'kimi', 'dare', 'opencode']);
 
 const projectQuerySchema = z.object({
@@ -138,7 +138,7 @@ const createBodySchema = z
   .object({
     projectPath: z.string().optional(),
     provider: z.string().trim().min(1).optional(),
-    /** F140: Explicit client identity for API key accounts. */
+    /** F171: Explicit client identity for API key accounts. */
     clientId: accountClientEnum.optional(),
     name: z.string().trim().min(1).optional(),
     displayName: z.string().trim().min(1).optional(),
@@ -157,7 +157,7 @@ const createBodySchema = z
           .pipe(z.string().min(1)),
       )
       .optional(),
-    /** F140: User-defined env vars injected into agent subprocess. */
+    /** F171: User-defined env vars injected into agent subprocess. */
     envVars: envVarsSchema,
   })
   .superRefine((value, ctx) => {
@@ -191,7 +191,7 @@ const updateBodySchema = z.object({
         .pipe(z.string().min(1)),
     )
     .optional(),
-  /** F140: User-defined env vars injected into agent subprocess. */
+  /** F171: User-defined env vars injected into agent subprocess. */
   envVars: envVarsSchema,
 });
 

@@ -229,7 +229,7 @@ export async function prepareGuideContext(params: {
     await resolveExistingCandidate(guideState, message, targetCats, targetCatIds, ctx);
   }
 
-  // F140: Bootcamp phase → guide bridge (auto-offer before keyword matching)
+  // F171: Bootcamp phase → guide bridge (auto-offer before keyword matching)
   if (!ctx.candidate && !ctx.hiddenForeign) {
     await resolveBootcampGuide(thread, targetCats, ctx, dismissTracker);
   }

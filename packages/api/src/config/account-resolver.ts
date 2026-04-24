@@ -29,7 +29,7 @@ export interface RuntimeProviderProfile {
   baseUrl?: string;
   apiKey?: string;
   models?: string[];
-  /** F140: User-defined env vars for agent subprocess injection. */
+  /** F171: User-defined env vars for agent subprocess injection. */
   envVars?: Record<string, string>;
 }
 

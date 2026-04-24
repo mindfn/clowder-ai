@@ -1301,7 +1301,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     registerCallbackBootcampRoutes(app, { registry, threadStore: opts.threadStore, socketManager });
   }
 
-  // F140: First-Run Quest state transition callbacks
+  // F171: First-Run Quest state transition callbacks
   if (opts.threadStore) {
     registerCallbackQuestRoutes(app, { registry, threadStore: opts.threadStore });
   }
