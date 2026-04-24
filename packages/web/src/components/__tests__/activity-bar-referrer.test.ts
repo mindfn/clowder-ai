@@ -22,8 +22,7 @@ vi.mock('@/components/ThreadSidebar/thread-navigation', () => ({
 }));
 
 vi.mock('@/components/icons/MemoryIcon', () => ({
-  MemoryIcon: ({ className }: { className?: string }) =>
-    React.createElement('span', { className }, 'M'),
+  MemoryIcon: ({ className }: { className?: string }) => React.createElement('span', { className }, 'M'),
 }));
 
 import { ActivityBar } from '@/components/ActivityBar';
@@ -56,10 +55,7 @@ describe('ActivityBar referrer forwarding (P2 fix)', () => {
       signalsBtn.click();
     });
 
-    expect(assignDocumentRoute).toHaveBeenCalledWith(
-      '/signals?from=thread-abc',
-      expect.anything(),
-    );
+    expect(assignDocumentRoute).toHaveBeenCalledWith('/signals?from=thread-abc', expect.anything());
   });
 
   it('appends ?from=threadId when navigating to memory', () => {
@@ -74,10 +70,7 @@ describe('ActivityBar referrer forwarding (P2 fix)', () => {
       memoryBtn.click();
     });
 
-    expect(assignDocumentRoute).toHaveBeenCalledWith(
-      '/memory?from=thread-abc',
-      expect.anything(),
-    );
+    expect(assignDocumentRoute).toHaveBeenCalledWith('/memory?from=thread-abc', expect.anything());
   });
 
   it('does NOT append ?from= when clicking the home button', () => {
@@ -108,5 +101,34 @@ describe('ActivityBar referrer forwarding (P2 fix)', () => {
     });
 
     expect(assignDocumentRoute).toHaveBeenCalledWith('/signals', expect.anything());
+  });
+
+  it('forwards existing ?from= when cross-hopping between non-thread pages', () => {
+    getThreadIdFromPathname.mockReturnValueOnce('default');
+    const originalSearch = window.location.search;
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, search: '?from=thread-abc' },
+      writable: true,
+      configurable: true,
+    });
+
+    React.act(() => {
+      root.render(React.createElement(ActivityBar));
+    });
+
+    const memoryBtn = container.querySelector('button[title="记忆"]') as HTMLElement;
+    expect(memoryBtn).toBeTruthy();
+
+    React.act(() => {
+      memoryBtn.click();
+    });
+
+    expect(assignDocumentRoute).toHaveBeenCalledWith('/memory?from=thread-abc', expect.anything());
+
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, search: originalSearch },
+      writable: true,
+      configurable: true,
+    });
   });
 });

@@ -130,9 +130,12 @@ export function ActivityBar({ className }: ActivityBarProps) {
             type="button"
             onClick={() => {
               const threadId = getThreadIdFromPathname(pathname);
-              const from = threadId !== 'default' && item.id !== 'home'
-                ? `?from=${encodeURIComponent(threadId)}`
-                : '';
+              let referrer = threadId !== 'default' ? threadId : null;
+              if (!referrer && typeof window !== 'undefined') {
+                referrer = new URLSearchParams(window.location.search).get('from');
+              }
+              const from =
+                referrer && item.id !== 'home' ? `?from=${encodeURIComponent(referrer)}` : '';
               assignDocumentRoute(`${item.path}${from}`, typeof window !== 'undefined' ? window : undefined);
             }}
             data-active={active ? 'true' : 'false'}
