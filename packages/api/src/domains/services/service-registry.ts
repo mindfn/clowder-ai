@@ -106,8 +106,15 @@ async function probeHealth(
     const detail = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     return { status: 'running', detail };
   } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      return { status: 'error', error: 'health probe timeout' };
+    }
+    const cause = err instanceof Error ? (err as Error & { cause?: { code?: string } }).cause : undefined;
+    if (cause?.code === 'ECONNREFUSED') {
+      return { status: 'stopped' };
+    }
     const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('ECONNREFUSED') || msg.includes('abort')) {
+    if (msg.includes('ECONNREFUSED')) {
       return { status: 'stopped' };
     }
     return { status: 'error', error: msg };

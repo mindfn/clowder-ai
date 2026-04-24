@@ -3,7 +3,12 @@
 import { usePathname } from 'next/navigation';
 import type { CSSProperties } from 'react';
 import { MemoryIcon } from './icons/MemoryIcon';
-import { assignDocumentRoute, getThreadIdFromPathname, getWorldSwitchHref } from './ThreadSidebar/thread-navigation';
+import {
+  assignDocumentRoute,
+  CLASSIC_WORLD_PREFIX,
+  getThreadIdFromPathname,
+  getWorldSwitchHref,
+} from './ThreadSidebar/thread-navigation';
 
 const NAV_ITEMS = [
   {
@@ -129,13 +134,13 @@ export function ActivityBar({ className }: ActivityBarProps) {
             key={item.id}
             type="button"
             onClick={() => {
-              const threadId = getThreadIdFromPathname(pathname);
+              const prefix = pathname.startsWith(CLASSIC_WORLD_PREFIX) ? CLASSIC_WORLD_PREFIX : '';
+              const threadId = getThreadIdFromPathname(pathname, prefix);
               let referrer = threadId !== 'default' ? threadId : null;
               if (!referrer && typeof window !== 'undefined') {
                 referrer = new URLSearchParams(window.location.search).get('from');
               }
-              const from =
-                referrer && item.id !== 'home' ? `?from=${encodeURIComponent(referrer)}` : '';
+              const from = referrer && item.id !== 'home' ? `?from=${encodeURIComponent(referrer)}` : '';
               assignDocumentRoute(`${item.path}${from}`, typeof window !== 'undefined' ? window : undefined);
             }}
             data-active={active ? 'true' : 'false'}

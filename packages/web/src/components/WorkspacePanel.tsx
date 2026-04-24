@@ -152,8 +152,12 @@ export function WorkspacePanel() {
     fetchSubtree,
   });
 
-  const { editMode, setEditMode, saveError, canEdit, handleToggleEdit, handleSave } =
-    useFileEditing({ worktreeId, openFilePath, file, fetchFile });
+  const { editMode, setEditMode, saveError, canEdit, handleToggleEdit, handleSave } = useFileEditing({
+    worktreeId,
+    openFilePath,
+    file,
+    fetchFile,
+  });
 
   const [viewMode, setViewMode] = useState<'files' | 'changes' | 'git' | 'terminal' | 'browser'>('files');
   // Phase H: Workspace mode switcher (dev tools vs knowledge feed)
@@ -182,6 +186,11 @@ export function WorkspacePanel() {
     }
     if (focusedPane !== 'file' && viewMode !== focusedPane) setFocusedPane(null);
   }, [file, focusedPane, viewMode, workspaceMode]);
+
+  const storeRevealPath = useChatStore((s) => s.workspaceRevealPath);
+  useEffect(() => {
+    if (storeRevealPath) setViewMode('files');
+  }, [storeRevealPath]);
 
   // F120: Consume pending auto-open from always-mounted listener (ChatContainer)
   useEffect(() => {

@@ -16,6 +16,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 vi.mock('@/components/ThreadSidebar/thread-navigation', () => ({
+  CLASSIC_WORLD_PREFIX: '/classic',
   assignDocumentRoute,
   getThreadIdFromPathname,
   getWorldSwitchHref,

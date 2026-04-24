@@ -914,6 +914,24 @@
     },
     {
       "id": "F150",
+      "name": "Add-Member Internal Guide UI Spec (Phase A)",
+      "status": "unknown",
+      "file": "F150-add-member-guide-ui-spec.md"
+    },
+    {
+      "id": "F150",
+      "name": "引导场景清单",
+      "status": "unknown",
+      "file": "F150-scene-catalog.md"
+    },
+    {
+      "id": "F150",
+      "name": "Scene-Based Bidirectional Guidance Engine",
+      "status": "spec | **Owner**: 布偶猫/宪宪 | **Priority**: P1",
+      "file": "F150-scene-guidance-engine.md"
+    },
+    {
+      "id": "F150",
       "name": "Tool/Skill/MCP Usage Statistics — 工具使用可观测看板",
       "status": "done | **Owner**: Community (bouillipx) + Ragdoll | **Priority**: P2",
       "file": "F150-tool-usage-stats.md"
