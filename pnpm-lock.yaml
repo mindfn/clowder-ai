@@ -112,7 +112,7 @@ importers:
         version: 4.29.1
       grammy:
         specifier: ^1.41.1
-        version: 1.41.1
+        version: 1.41.1(encoding@0.1.13)
       http-proxy:
         specifier: ^1.18.1
         version: 1.18.1
@@ -275,6 +275,9 @@ importers:
       '@dagrejs/dagre':
         specifier: ^2.0.4
         version: 2.0.4
+      '@ducanh2912/next-pwa':
+        specifier: ^10.2.9
+        version: 10.2.9(next@14.2.35(@babel/core@7.29.0)(@opentelemetry/api@1.9.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(webpack@5.105.2)
       '@ricky0123/vad-web':
         specifier: ^0.0.30
         version: 0.0.30
@@ -333,9 +336,6 @@ importers:
         specifier: ^4.5.0
         version: 4.5.7(@types/react@18.3.27)(react@18.3.1)
     devDependencies:
-      '@ducanh2912/next-pwa':
-        specifier: ^10.2.9
-        version: 10.2.9(next@14.2.35(@babel/core@7.29.0)(@opentelemetry/api@1.9.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(webpack@5.105.2)
       '@types/dagre':
         specifier: ^0.7.54
         version: 0.7.54
@@ -3226,6 +3226,9 @@ packages:
 
   encoding-sniffer@0.2.1:
     resolution: {integrity: sha512-5gvq20T6vfpekVtqrYQsSCFZ1wEg5+wW0/QaZMWkFr6BqD3NfKs0rLCx4rrVlSWJeZb5NBJgVLswK/w2MWU+Gw==}
+
+  encoding@0.1.13:
+    resolution: {integrity: sha512-ETBauow1T35Y/WZMkio9jiM0Z5xjHHmJ4XmjZOq1l/dXz3lr2sRn87nJy20RupqSh1F2m3HHPSp8ShIPQJrJ3A==}
 
   end-of-stream@1.4.5:
     resolution: {integrity: sha512-ooEGc6HP26xXq/N+GCGOT0JKCLDGrq2bQUZrQ7gyrJiZANJ/8YDTxTpQBXGMn+WbIQXNVpyWymm7KYVICQnyOg==}
@@ -9316,6 +9319,11 @@ snapshots:
       iconv-lite: 0.6.3
       whatwg-encoding: 3.1.1
 
+  encoding@0.1.13:
+    dependencies:
+      iconv-lite: 0.6.3
+    optional: true
+
   end-of-stream@1.4.5:
     dependencies:
       once: 1.4.0
@@ -10121,12 +10129,12 @@ snapshots:
 
   graceful-fs@4.2.11: {}
 
-  grammy@1.41.1:
+  grammy@1.41.1(encoding@0.1.13):
     dependencies:
       '@grammyjs/types': 3.25.0
       abort-controller: 3.0.0
       debug: 4.4.3
-      node-fetch: 2.7.0
+      node-fetch: 2.7.0(encoding@0.1.13)
     transitivePeerDependencies:
       - encoding
       - supports-color
@@ -11177,9 +11185,11 @@ snapshots:
 
   node-addon-api@7.1.1: {}
 
-  node-fetch@2.7.0:
+  node-fetch@2.7.0(encoding@0.1.13):
     dependencies:
       whatwg-url: 5.0.0
+    optionalDependencies:
+      encoding: 0.1.13
 
   node-pty@1.2.0-beta.12:
     dependencies:
