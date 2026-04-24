@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 
 interface SkillEntry {
@@ -38,23 +38,29 @@ export function SkillPreviewPanel() {
     };
   }, []);
 
+  const latestRequestRef = useRef(0);
+
   const loadContent = useCallback(async (name: string) => {
+    const requestId = ++latestRequestRef.current;
     setSelectedSkill(name);
     setContent(null);
     setError(null);
     setLoading(true);
     try {
       const res = await apiFetch(`/api/rules/skill/${encodeURIComponent(name)}`);
+      if (requestId !== latestRequestRef.current) return;
       if (!res.ok) {
         setError(res.status === 404 ? 'SKILL.md 不存在' : '加载失败');
         return;
       }
       const data = (await res.json()) as { content: string };
+      if (requestId !== latestRequestRef.current) return;
       setContent(data.content);
     } catch {
+      if (requestId !== latestRequestRef.current) return;
       setError('网络错误');
     } finally {
-      setLoading(false);
+      if (requestId === latestRequestRef.current) setLoading(false);
     }
   }, []);
 
