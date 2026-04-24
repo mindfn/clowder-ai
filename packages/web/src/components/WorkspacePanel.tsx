@@ -1,11 +1,13 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useFileEditing } from '@/hooks/useFileEditing';
 import { useFileManagement } from '@/hooks/useFileManagement';
-import { useIMEGuard } from '@/hooks/useIMEGuard';
 import { usePersistedState } from '@/hooks/usePersistedState';
+import { useTreeNavigation } from '@/hooks/useTreeNavigation';
 import type { TreeNode } from '@/hooks/useWorkspace';
 import { useWorkspace } from '@/hooks/useWorkspace';
+import { useWorkspaceSearch } from '@/hooks/useWorkspaceSearch';
 import { useChatStore } from '@/stores/chatStore';
 import { API_URL, apiFetch } from '@/utils/api-client';
 import { CommunityPanel } from './CommunityPanel';
@@ -25,18 +27,6 @@ import { WorkspaceFileViewer } from './workspace/WorkspaceFileViewer';
 import { WorkspaceFocusShell } from './workspace/WorkspaceFocusShell';
 import { WorkspacePreviewOnly } from './workspace/WorkspacePreviewOnly';
 import { WorkspaceTree } from './workspace/WorkspaceTree';
-
-/** Find a node in a tree by path (DFS) */
-function findNode(nodes: TreeNode[], path: string): TreeNode | undefined {
-  for (const n of nodes) {
-    if (n.path === path) return n;
-    if (n.children && path.startsWith(`${n.path}/`)) {
-      const found = findNode(n.children, path);
-      if (found) return found;
-    }
-  }
-  return undefined;
-}
 
 /* ── Search result item ──────────────────────── */
 function SearchResultItem({
@@ -162,15 +152,27 @@ export function WorkspacePanel() {
   const setRightPanelMode = useChatStore((s) => s.setRightPanelMode);
   const setPendingChatInsert = useChatStore((s) => s.setPendingChatInsert);
   const currentThreadId = useChatStore((s) => s.currentThreadId);
-  const editToken = useChatStore((s) => s.workspaceEditToken);
-  const editTokenExpiry = useChatStore((s) => s.workspaceEditTokenExpiry);
-  const setEditToken = useChatStore((s) => s.setWorkspaceEditToken);
 
   const pendingPreviewAutoOpen = useChatStore((s) => s.pendingPreviewAutoOpen);
   const consumePreviewAutoOpen = useChatStore((s) => s.consumePreviewAutoOpen);
-  const storeRevealPath = useChatStore((s) => s.workspaceRevealPath);
-  const setStoreRevealPath = useChatStore((s) => s.setWorkspaceRevealPath);
   const { createFile, createDir, deleteItem, renameItem, uploadFile } = useFileManagement();
+
+  const { expandedPaths, setExpandedPaths, toggleExpand, revealInTree } = useTreeNavigation({
+    tree,
+    currentThreadId,
+    fetchSubtree,
+  });
+
+  const {
+    editMode,
+    setEditMode,
+    saveError,
+    setSaveError,
+    isTokenValid,
+    canEdit,
+    handleToggleEdit,
+    handleSave,
+  } = useFileEditing({ worktreeId, openFilePath, file, fetchFile });
 
   const [viewMode, setViewMode] = useState<'files' | 'changes' | 'git' | 'terminal' | 'browser'>('files');
   // Phase H: Workspace mode switcher (dev tools vs knowledge feed)
@@ -211,37 +213,34 @@ export function WorkspacePanel() {
     }
   }, [pendingPreviewAutoOpen, consumePreviewAutoOpen]);
   const [portDiscoveryToast, setPortDiscoveryToast] = useState<{ port: number; framework?: string } | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchMode, setSearchMode] = useState<'content' | 'filename' | 'all'>('all');
-  const [didSearch, setDidSearch] = useState(false);
-  const searchIme = useIMEGuard();
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
-  /** Progressive reveal: store target path, expand ancestors as tree loads deeper. */
-  const [pendingRevealPath, setPendingRevealPath] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!storeRevealPath) return;
-    setPendingRevealPath(storeRevealPath);
-    setViewMode('files');
-    setStoreRevealPath(null);
-  }, [storeRevealPath, setStoreRevealPath]);
+  const handleFileSelect = useCallback(
+    (path: string) => {
+      setOpenFile(path);
+      setSearchResults([]);
+      setEditMode(false);
+    },
+    [setOpenFile, setSearchResults, setEditMode],
+  );
 
-  // G7-2: Per-thread expandedPaths cache — tabs/openFile are now in store-level ThreadState
-  // (snapshotActive/flattenThread handle save/restore automatically on setCurrentThread)
-  const expandedPathsCache = useRef<Map<string, Set<string>>>(new Map());
-  const prevThreadRef = useRef<string | null>(null);
-  useEffect(() => {
-    const prevThread = prevThreadRef.current;
-    if (prevThread && prevThread !== currentThreadId) {
-      expandedPathsCache.current.set(prevThread, new Set(expandedPaths));
-    }
-    if (currentThreadId && currentThreadId !== prevThread) {
-      const cached = expandedPathsCache.current.get(currentThreadId);
-      setExpandedPaths(cached ?? new Set());
-      setPendingRevealPath(null);
-    }
-    prevThreadRef.current = currentThreadId;
-  }, [currentThreadId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const {
+    searchQuery,
+    setSearchQuery,
+    searchMode,
+    setSearchMode,
+    didSearch,
+    setDidSearch,
+    searchIme,
+    handleSearchSubmit,
+    handleSearchResultClick,
+  } = useWorkspaceSearch({
+    search,
+    setSearchResults,
+    setOpenFile,
+    revealInTree,
+    onFileSelect: () => setEditMode(false),
+  });
+
   // F168: Auto-switch workspace mode based on thread's preferredWorkspaceMode
   useEffect(() => {
     if (!currentThreadId) return;
@@ -289,11 +288,9 @@ export function WorkspacePanel() {
     };
   }, [worktreeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const [editMode, setEditMode] = useState(false);
   const [markdownRendered, setMarkdownRendered] = useState(true);
   const [htmlPreview, setHtmlPreview] = useState(false);
   const [jsxPreview, setJsxPreview] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
   // F063: vertical resize — treeBasis as percentage (20-80), persisted
   const [treeBasis, setTreeBasis, resetTreeBasis] = usePersistedState('cat-cafe:treeBasis', 40);
   const panelRef = useRef<HTMLElement>(null);
@@ -306,98 +303,6 @@ export function WorkspacePanel() {
       setTreeBasis((prev) => Math.min(80, Math.max(20, prev + pct)));
     },
     [setTreeBasis],
-  );
-
-  const toggleExpand = useCallback(
-    (path: string) => {
-      setExpandedPaths((prev) => {
-        const next = new Set(prev);
-        if (next.has(path)) {
-          next.delete(path);
-        } else {
-          next.add(path);
-          // Lazy-load: if the directory has no children loaded, fetch subtree
-          const node = findNode(tree, path);
-          if (node && node.type === 'directory' && node.children === undefined) {
-            void fetchSubtree(path);
-          }
-        }
-        return next;
-      });
-    },
-    [tree, fetchSubtree],
-  );
-
-  const handleFileSelect = useCallback(
-    (path: string) => {
-      setOpenFile(path);
-      setSearchResults([]);
-      setDidSearch(false);
-      setEditMode(false);
-    },
-    [setOpenFile, setSearchResults],
-  );
-
-  const handleSearchSubmit = useCallback(
-    (e: React.FormEvent) => {
-      e.preventDefault();
-      const trimmedQuery = searchQuery.trim();
-      if (!trimmedQuery) {
-        setDidSearch(false);
-        setSearchResults([]);
-        return;
-      }
-      setDidSearch(true);
-      void search(trimmedQuery, searchMode);
-    },
-    [searchQuery, searchMode, search, setSearchResults],
-  );
-
-  const revealInTree = useCallback((filePath: string) => {
-    setPendingRevealPath(filePath);
-  }, []);
-
-  // Progressively expand ancestors each time the tree updates with new nodes.
-  useEffect(() => {
-    if (!pendingRevealPath) return;
-    const parts = pendingRevealPath.split('/');
-    const ancestors: string[] = [];
-    for (let i = 1; i < parts.length; i++) {
-      ancestors.push(parts.slice(0, i).join('/'));
-    }
-    let needsFetch = false;
-    setExpandedPaths((prev) => {
-      const next = new Set(prev);
-      for (const dir of ancestors) {
-        next.add(dir);
-        const node = findNode(tree, dir);
-        if (node && node.type === 'directory' && node.children === undefined) {
-          void fetchSubtree(dir);
-          needsFetch = true;
-        }
-        if (!node) {
-          // Node not yet in tree — parent needs to load first, wait for next tree update
-          needsFetch = true;
-          break;
-        }
-      }
-      return next;
-    });
-    // All ancestors are in the tree and expanded — reveal complete
-    if (!needsFetch) {
-      setPendingRevealPath(null);
-    }
-  }, [pendingRevealPath, tree, fetchSubtree]);
-
-  const handleSearchResultClick = useCallback(
-    (path: string, line: number) => {
-      setOpenFile(path, line);
-      setSearchResults([]);
-      setDidSearch(false);
-      setEditMode(false);
-      revealInTree(path);
-    },
-    [setOpenFile, setSearchResults, revealInTree],
   );
 
   // Reset markdown rendered mode when file changes (covers all entry points).
@@ -478,87 +383,9 @@ export function WorkspacePanel() {
     [createFile, createDir, deleteItem, renameItem, uploadFile, fetchTree, setOpenFile, closeTab, confirm],
   );
 
-  const isTokenValid = editToken && editTokenExpiry && editTokenExpiry > Date.now();
-  const canEdit = file && !file.binary && !file.truncated;
   const isMarkdown = !!(openFilePath && (openFilePath.endsWith('.md') || openFilePath.endsWith('.mdx')));
   const isHtml = !!(openFilePath && /\.html?$/i.test(openFilePath));
   const isJsx = !!(openFilePath && /\.[jt]sx$/i.test(openFilePath));
-
-  const handleToggleEdit = useCallback(async () => {
-    // If already editing with a valid token, toggle off
-    if (editMode && isTokenValid) {
-      setEditMode(false);
-      return;
-    }
-    if (!worktreeId) return;
-    setSaveError(null);
-
-    // Get or refresh token (also handles expired-token-while-editing case)
-    if (!isTokenValid) {
-      try {
-        const res = await apiFetch('/api/workspace/edit-session', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ worktreeId }),
-        });
-        if (!res.ok) {
-          setSaveError('无法获取编辑权限');
-          return;
-        }
-        const data = await res.json();
-        setEditToken(data.token, data.expiresIn);
-      } catch {
-        setSaveError('网络错误');
-        return;
-      }
-    }
-    setEditMode(true);
-  }, [editMode, worktreeId, isTokenValid, setEditToken]);
-
-  const handleSave = useCallback(
-    async (newContent: string) => {
-      if (!worktreeId || !openFilePath || !file) return;
-      if (!editToken) {
-        setSaveError('编辑会话过期，请点击「编辑」按钮刷新权限后重试保存');
-        return;
-      }
-      setSaveError(null);
-      try {
-        const res = await apiFetch('/api/workspace/file', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            worktreeId,
-            path: openFilePath,
-            content: newContent,
-            baseSha256: file.sha256,
-            editSessionToken: editToken,
-          }),
-        });
-        if (res.status === 409) {
-          setSaveError('冲突：文件已被修改，请重新加载');
-          return;
-        }
-        if (res.status === 401) {
-          setEditToken(null);
-          // Keep editMode=true so unsaved edits aren't lost.
-          // User can click the edit toggle to re-acquire a token and retry.
-          setSaveError('编辑会话过期，请点击「编辑」按钮刷新权限后重试保存');
-          return;
-        }
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({ error: 'Unknown error' }));
-          setSaveError(data.error || '保存失败');
-          return;
-        }
-        // Re-fetch file to get new content + sha256
-        if (openFilePath) await fetchFile(openFilePath);
-      } catch {
-        setSaveError('网络错误');
-      }
-    },
-    [worktreeId, openFilePath, file, editToken, setEditToken, fetchFile],
-  );
 
   return (
     <aside
