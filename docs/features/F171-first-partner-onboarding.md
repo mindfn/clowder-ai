@@ -1,5 +1,5 @@
 ---
-feature_ids: [F140]
+feature_ids: [F171]
 related_features: [F087, F110, F127, F105, F115, F075]
 topics: [onboarding, first-run, gamification, installer, cat-template, roster, bootcamp]
 doc_kind: spec
@@ -7,13 +7,10 @@ created: 2026-03-26
 updated: 2026-04-06
 ---
 
-# F140: First-Run Quest — 首次安装零成员 + 游戏化新手引导
+# F171: First-Run Quest — 首次安装零成员 + 游戏化新手引导
 
 > **Status**: in-progress (Phase A-B done, C mostly done, D mostly done, E partial)
 > **Owner**: Maine Coon + Ragdoll | **Priority**: P1
-
-> **⚠️ ID 冲突**: `F140` 在 `index.json` 中已指向 `F140-github-pr-automation.md`（已完成）。
-> 本文档需在合入前重新编号或与 PR Automation 协调。待铲屎官拍板。
 
 ## Why
 
@@ -146,7 +143,7 @@ CVO 明确拍板（2026-03-26）：
 | 模板自动回填有限 | HubAddMemberWizard 仅在模板带 `provider/defaultModel` 时自动选 client/model | 模板数据不完善时用户仍需手动选 |
 | Legacy quest 残留 | `/api/first-run/quest` 路由、quest state、QuestBanner 代码仍在 | 技术债，与新 bootcamp 流程重复 |
 | CLI 认证环境 | worktree 测试时 codex CLI 无凭据导致 invoke 空返回 | 阻塞 openai/codex 路径的端到端测试 |
-| F140 编号冲突 | index.json 中 F140 已分配给 PR Automation | 合入前必须解决 |
+| F171 编号冲突 | index.json 中 F171 已分配给 PR Automation | 合入前必须解决 |
 
 ## Dependencies
 
@@ -172,7 +169,7 @@ CVO 明确拍板（2026-03-26）：
 |---|------|------|
 | OQ-1 | 用户点击"跳过首训"后，是永久不再弹，还是仅本次跳过？ | ✅ **已更正**: session-only skip（后端检测 `cats + bootcamp threads`，非 localStorage 永久）|
 | OQ-2 | 首训任务池是否复用 F087？ | ✅ 已定: Phase 4 不走任务池，改为用户自述风格 → 猫猫执行 → 故意犯错 |
-| OQ-3 | F140 编号冲突如何解决？ | ❓ 待定: onboarding 先立项(3/26)，PR Automation 后注册(3/27)。需铲屎官拍板谁改号 |
+| OQ-3 | F171 编号冲突如何解决？ | ❓ 待定: onboarding 先立项(3/26)，PR Automation 后注册(3/27)。需铲屎官拍板谁改号 |
 
 ## Key Decisions
 
@@ -191,7 +188,7 @@ CVO 明确拍板（2026-03-26）：
 
 | 日期 | 事件 |
 |------|------|
-| 2026-03-26 | F140 kickoff（独立 Feature）|
+| 2026-03-26 | F171 kickoff（独立 Feature）|
 | 2026-03-26 | Phase A/B 完成: 零成员启动 + 模板分离 + 安装器改造 |
 | 2026-03-26 | Phase C 基础完成: 首启向导 + 客户端检测 + quest 状态机 |
 | 2026-03-27 | 统一 bootcamp overlay + flash guard + dev-reset 脚本 |
