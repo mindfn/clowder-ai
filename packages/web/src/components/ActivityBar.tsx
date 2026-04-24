@@ -1,7 +1,8 @@
 'use client';
 
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { MemoryIcon } from './icons/MemoryIcon';
+import { assignDocumentRoute } from './ThreadSidebar/thread-navigation';
 
 const NAV_ITEMS = [
   { id: 'chat', path: '/', label: '对话', match: (p: string) => p === '/' || p.startsWith('/thread/') },
@@ -64,7 +65,6 @@ interface ActivityBarProps {
 
 export function ActivityBar({ className }: ActivityBarProps) {
   const pathname = usePathname() ?? '/';
-  const router = useRouter();
 
   return (
     <nav
@@ -78,7 +78,7 @@ export function ActivityBar({ className }: ActivityBarProps) {
         return (
           <button
             key={item.id}
-            onClick={() => router.push(item.path)}
+            onClick={() => assignDocumentRoute(item.path, typeof window !== 'undefined' ? window : undefined)}
             className={`relative w-10 h-10 flex items-center justify-center rounded-lg
               transition-colors duration-150
               ${
