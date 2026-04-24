@@ -1577,7 +1577,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       const maskEnv = (env: Record<string, string>): Record<string, string> => {
         const masked: Record<string, string> = {};
         for (const [k, v] of Object.entries(env)) {
-          masked[k] = v.length > 6 ? v.slice(0, 6) + '***' : '***';
+          masked[k] = '***';
         }
         return masked;
       };
