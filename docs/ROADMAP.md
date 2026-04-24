@@ -51,7 +51,6 @@ created: 2026-02-26
 | F146 | MCP Marketplace Control Plane — 一键接入 + 多生态聚合 | in-progress | Maine Coon + Ragdoll | internal | [F146](features/F146-mcp-marketplace-control-plane.md) |
 | F147 | i18n — Hub 界面中英文切换 | idea | 待定 | internal | — |
 | F152 | Expedition Memory — 外部项目记忆冷启动 + 经验回流 | spec | Ragdoll | internal | [F152](features/F152-expedition-memory.md) |
-| F150 | Scene-Based Guidance Engine — 场景式交互引导（引擎 + 场景清单） | spec | Ragdoll | internal | [F150](features/F150-scene-guidance-engine.md) |
 | F153 | Observability Infrastructure — 运行时可观测基础设施 | in-progress | Community + Ragdoll | community [#388](https://github.com/zts212653/clowder-ai/issues/388) | [F153](features/F153-observability-infra.md) |
 | F155 | Scene-Based Guidance Engine — 场景式交互引导 | in-progress | Maine Coon/gpt52 | community [#409](https://github.com/zts212653/clowder-ai/issues/409) [#398](https://github.com/zts212653/clowder-ai/pull/398) | [F155](features/F155-scene-guidance-engine.md) |
 | F156 | Security Hardening — 实时通道 + 本机信任边界加固（Phase E） | spec | Ragdoll | internal | [F156](features/F156-websocket-security-hardening.md) |
