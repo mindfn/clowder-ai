@@ -100,6 +100,7 @@ CVO 明确拍板（2026-03-26）：
 
 > **Scope decision**: PR #520 delivers Phase A-D (new-install first-run quest).
 > Phase E (legacy migration, full regression, docs) is follow-up work.
+> **Tracking**: [clowder-ai#581](https://github.com/zts212653/clowder-ai/issues/581)
 
 - [x] Feature registry 编号冲突已解决（F171 retarget）
 - [ ] 现有项目迁移策略（legacy `cat-config.json` → `cat-catalog.json`）— follow-up
@@ -122,12 +123,12 @@ CVO 明确拍板（2026-03-26）：
 - [x] AC-C1: 无成员首次进入时自动弹出引导对话框
 - [x] AC-C2: 创建第一只猫流程包含：模板选择、client 选择、认证、模型、探测
 - [x] AC-C3: 成员创建成功后，猫猫自动发出自我介绍消息
-- [ ] AC-C4: 普通模式和 bootcamp 模式共用 HubAddMemberWizard（E2E 验证）
+- [ ] AC-C4: 普通模式和 bootcamp 模式共用 HubAddMemberWizard（E2E 验证） *(follow-up: wizard 已统一，E2E 验证需运行态环境)*
 
 ### Phase D（故意犯错 + 协作）
 - [x] AC-D1: Phase 7 猫猫独立开发，前端 overlay 弹 tip，且可安全判定时自动把 preview 端上桌
 - [x] AC-D2: Phase 7.5 分步遮罩引导添加第二只猫（WebSocket 链路 + guideStep 初始化 + 前端阻断）
-- [ ] AC-D3: 完成首训后明确提示 Console 管理入口
+- [ ] AC-D3: 完成首训后明确提示 Console 管理入口 *(follow-up: farewell phase 已有毕业提示，Console 入口提示待 UX 设计)*
 
 ### Phase E（迁移与质量）— out-of-scope for PR #520
 - [ ] AC-E1: 现有已配置项目升级后不丢成员、不破坏原有路由 *(follow-up)*
@@ -142,7 +143,7 @@ CVO 明确拍板（2026-03-26）：
 | 模板自动回填有限 | HubAddMemberWizard 仅在模板带 `provider/defaultModel` 时自动选 client/model | 模板数据不完善时用户仍需手动选 |
 | Legacy quest 残留 | `/api/first-run/quest` 路由、quest state、QuestBanner 代码仍在 | 技术债，与新 bootcamp 流程重复 |
 | CLI 认证环境 | worktree 测试时 codex CLI 无凭据导致 invoke 空返回 | 阻塞 openai/codex 路径的端到端测试 |
-| F171 编号冲突 | index.json 中 F171 已分配给 PR Automation | 合入前必须解决 |
+| ~~F140 编号冲突~~ | ~~index.json 中 F140 已分配给 PR Automation~~ | ✅ 已解决：onboarding retarget 到 F171，F140 保留为 PR Signals |
 
 ## Dependencies
 
@@ -168,7 +169,7 @@ CVO 明确拍板（2026-03-26）：
 |---|------|------|
 | OQ-1 | 用户点击"跳过首训"后，是永久不再弹，还是仅本次跳过？ | ✅ **已更正**: session-only skip（后端检测 `cats + bootcamp threads`，非 localStorage 永久）|
 | OQ-2 | 首训任务池是否复用 F087？ | ✅ 已定: Phase 4 不走任务池，改为用户自述风格 → 猫猫执行 → 故意犯错 |
-| OQ-3 | F171 编号冲突如何解决？ | ❓ 待定: onboarding 先立项(3/26)，PR Automation 后注册(3/27)。需铲屎官拍板谁改号 |
+| OQ-3 | F140 编号冲突如何解决？ | ✅ 已解决: onboarding retarget 到 F171（铲屎官拍板 2026-04-24），F140 保留为 GitHub PR Signals |
 
 ## Key Decisions
 

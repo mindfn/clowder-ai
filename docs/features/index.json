@@ -853,6 +853,12 @@
       "file": "F139-unified-schedule-abstraction.md"
     },
     {
+      "id": "F140",
+      "name": "GitHub PR Signals — 冲突检测 + Review Feedback 全来源感知",
+      "status": "done | **Owner**: Ragdoll | **Priority**: P1 | **Completed**: 2026-03-27",
+      "file": "F140-github-pr-automation.md"
+    },
+    {
       "id": "F141",
       "name": "GitHub Repo Inbox — 仓库事件自动发现",
       "status": "done | **Owner**: Ragdoll | **Priority**: P1 | **Completed**: 2026-03-27",
@@ -1039,5 +1045,5 @@
       "file": "F171-first-partner-onboarding.md"
     }
   ],
-  "generated_at": "2026-04-24T07:50:35.848Z"
+  "generated_at": "2026-04-24T19:13:55.656Z"
 }
