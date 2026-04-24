@@ -913,6 +913,12 @@
       "file": "F149-acp-runtime-operations.md"
     },
     {
+      "id": "F150",
+      "name": "Tool/Skill/MCP Usage Statistics — 工具使用可观测看板",
+      "status": "done | **Owner**: Community (bouillipx) + Ragdoll | **Priority**: P2",
+      "file": "F150-tool-usage-stats.md"
+    },
+    {
       "id": "F151",
       "name": "XiaoYi Channel Gateway — 小艺渠道接入",
       "status": "done | **Owner**: Ragdoll | **Priority**: P1",
@@ -1033,5 +1039,5 @@
       "file": "F168-community-ops-board.md"
     }
   ],
-  "generated_at": "2026-04-24T17:59:31.814Z"
+  "generated_at": "2026-04-24T18:04:16.279Z"
 }
