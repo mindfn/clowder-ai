@@ -853,12 +853,6 @@
       "file": "F139-unified-schedule-abstraction.md"
     },
     {
-      "id": "F171",
-      "name": "First Partner Onboarding — 首次安装零成员 + 游戏化新手引导",
-      "status": "in-progress (Phase A-B done, C mostly done, D mostly done, E partial)",
-      "file": "F171-first-partner-onboarding.md"
-    },
-    {
       "id": "F141",
       "name": "GitHub Repo Inbox — 仓库事件自动发现",
       "status": "done | **Owner**: Ragdoll | **Priority**: P1 | **Completed**: 2026-03-27",
@@ -1037,7 +1031,13 @@
       "name": "Community Operations Board — 社区事务编排引擎",
       "status": "in-progress | **Owner**: Ragdoll | **Priority**: P1",
       "file": "F168-community-ops-board.md"
+    },
+    {
+      "id": "F171",
+      "name": "First-Run Quest — 首次安装零成员 + 游戏化新手引导",
+      "status": "in-progress (Phase A-B done, C mostly done, D mostly done, E partial)",
+      "file": "F171-first-partner-onboarding.md"
     }
   ],
-  "generated_at": "2026-04-20T14:47:29.065Z"
+  "generated_at": "2026-04-24T07:50:35.848Z"
 }
