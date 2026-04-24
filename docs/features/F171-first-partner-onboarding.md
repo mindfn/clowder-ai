@@ -96,16 +96,15 @@ CVO 明确拍板（2026-03-26）：
 **未闭环**：
 - 端到端流程未完成验收
 
-### Phase E: 迁移、回归与文档 ⚠️ partial
+### Phase E: 迁移、回归与文档 📋 out-of-scope for PR #520
 
-- 已有部分路由测试和 overlay 组件代码
-- `dev-reset-cats.sh` 脚本已补强（循环验证清理到零态）
+> **Scope decision**: PR #520 delivers Phase A-D (new-install first-run quest).
+> Phase E (legacy migration, full regression, docs) is follow-up work.
 
-**未完成**：
-- 现有项目迁移策略未实现
-- 完整回归测试未覆盖
-- README/SETUP 文档未更新
-- Feature registry（index.json）编号冲突未解决
+- [x] Feature registry 编号冲突已解决（F171 retarget）
+- [ ] 现有项目迁移策略（legacy `cat-config.json` → `cat-catalog.json`）— follow-up
+- [ ] 完整回归测试覆盖 — follow-up
+- [ ] README/SETUP 文档更新 — follow-up
 
 ## Acceptance Criteria
 
@@ -130,11 +129,11 @@ CVO 明确拍板（2026-03-26）：
 - [x] AC-D2: Phase 7.5 分步遮罩引导添加第二只猫（WebSocket 链路 + guideStep 初始化 + 前端阻断）
 - [ ] AC-D3: 完成首训后明确提示 Console 管理入口
 
-### Phase E（迁移与质量）
-- [ ] AC-E1: 现有已配置项目升级后不丢成员、不破坏原有路由
-- [ ] AC-E2: 后端/前端/安装关键路径测试通过
-- [ ] AC-E3: SETUP/README 文档完成更新
-- [ ] AC-E4: Feature registry 编号冲突解决
+### Phase E（迁移与质量）— out-of-scope for PR #520
+- [ ] AC-E1: 现有已配置项目升级后不丢成员、不破坏原有路由 *(follow-up)*
+- [x] AC-E2: 后端/前端/安装关键路径测试通过 *(CI green)*
+- [ ] AC-E3: SETUP/README 文档完成更新 *(follow-up)*
+- [x] AC-E4: Feature registry 编号冲突解决 *(F171 retarget, `39ccb1b1`)*
 
 ## Known Gaps
 
