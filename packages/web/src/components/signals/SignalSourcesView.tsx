@@ -108,7 +108,7 @@ export function SignalSourcesView() {
           <button
             type="button"
             onClick={() => void setAllEnabled(false)}
-            className="rounded-lg border border-cafe px-3 py-2 text-sm text-cafe-secondary hover:bg-cafe-surface-elevated"
+            className="rounded-lg border border-[var(--console-border-soft)] px-3 py-2 text-sm text-cafe-secondary hover:bg-cafe-surface-elevated"
           >
             全部关闭
           </button>
@@ -140,10 +140,7 @@ export function SignalSourcesView() {
 
         <section className="space-y-4">
           {groupedSources.map((group) => (
-            <div
-              key={`${group.tier}-${group.category}`}
-              className="rounded-2xl border border-cafe bg-cafe-surface p-4 shadow-sm"
-            >
+            <div key={`${group.tier}-${group.category}`} className="rounded-2xl bg-cafe-surface p-4 shadow-sm">
               <div className="mb-3 flex items-center gap-2">
                 <SignalTierBadge tier={group.tier} />
                 <h2 className="text-sm font-semibold text-cafe-black">{group.category}</h2>
@@ -151,7 +148,7 @@ export function SignalSourcesView() {
               </div>
               <ul className="space-y-2">
                 {group.sources.map((source) => (
-                  <li key={source.id} className="rounded-xl border border-cafe p-3">
+                  <li key={source.id} className="rounded-xl border border-[var(--console-border-soft)] p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-sm font-semibold text-cafe-black">{source.name}</p>
@@ -194,7 +191,7 @@ export function SignalSourcesView() {
                             'rounded-full border px-3 py-1 text-xs font-semibold transition-colors',
                             source.enabled
                               ? 'border-codex-light bg-codex-bg text-codex-dark'
-                              : 'border-cafe bg-cafe-surface-elevated text-cafe-secondary',
+                              : 'border-[var(--console-border-soft)] bg-cafe-surface-elevated text-cafe-secondary',
                           ].join(' ')}
                         >
                           {updatingId === source.id ? '更新中...' : source.enabled ? 'ON' : 'OFF'}

@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
-import { getThreadHref } from '../ThreadSidebar/thread-navigation';
+import { detectRoutePrefix, getThreadHref } from '../ThreadSidebar/thread-navigation';
 
 export type SignalNavItem = 'chat' | 'signals' | 'sources';
 
@@ -44,7 +44,7 @@ export function SignalNav({ active }: SignalNavProps) {
     [fromSuffix],
   );
 
-  const backHref = getThreadHref(referrerThread ?? 'default');
+  const backHref = getThreadHref(referrerThread ?? 'default', detectRoutePrefix());
 
   return (
     <nav aria-label="Signal navigation" className="flex items-center gap-2">

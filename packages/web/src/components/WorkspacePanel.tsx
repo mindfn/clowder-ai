@@ -204,15 +204,6 @@ export function WorkspacePanel() {
   }, [pendingPreviewAutoOpen, consumePreviewAutoOpen]);
   const [portDiscoveryToast, setPortDiscoveryToast] = useState<{ port: number; framework?: string } | null>(null);
 
-  const handleFileSelect = useCallback(
-    (path: string) => {
-      setOpenFile(path);
-      setSearchResults([]);
-      setEditMode(false);
-    },
-    [setOpenFile, setSearchResults, setEditMode],
-  );
-
   const {
     searchQuery,
     setSearchQuery,
@@ -230,6 +221,16 @@ export function WorkspacePanel() {
     revealInTree,
     onFileSelect: () => setEditMode(false),
   });
+
+  const handleFileSelect = useCallback(
+    (path: string) => {
+      setOpenFile(path);
+      setSearchResults([]);
+      setDidSearch(false);
+      setEditMode(false);
+    },
+    [setOpenFile, setSearchResults, setDidSearch, setEditMode],
+  );
 
   // F168: Auto-switch workspace mode based on thread's preferredWorkspaceMode
   useEffect(() => {
