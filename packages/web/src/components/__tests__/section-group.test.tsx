@@ -154,8 +154,8 @@ describe('SectionGroup toggle button accessibility', () => {
       </SectionGroup>,
     );
     const toggleBtn = container.querySelector('button[aria-expanded]')!;
-    const nestedButtons = toggleBtn.querySelectorAll('[role="button"], button');
-    expect(nestedButtons.length).toBe(0);
+    const nestedInteractive = toggleBtn.querySelectorAll('[role="button"], button, input, select, textarea');
+    expect(nestedInteractive.length).toBe(0);
   });
 
   it('quick-create click does not trigger onToggle', () => {

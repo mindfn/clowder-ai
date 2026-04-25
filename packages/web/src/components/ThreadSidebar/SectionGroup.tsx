@@ -107,8 +107,6 @@ export function SectionGroup({
     setShowMenu(false);
   }, [label]);
 
-  const stopButton = useCallback((e: React.MouseEvent) => e.stopPropagation(), []);
-
   const iconPath = icon ? ICON_PATHS[icon] : undefined;
   const iconColor = icon ? ICON_COLORS[icon] : undefined;
   const govDot = governanceStatus ? GOV_STATUS_DOT[governanceStatus] : undefined;
@@ -117,39 +115,69 @@ export function SectionGroup({
     <div className="mt-1 relative group/section">
       <div className="w-full flex items-center gap-1.5 px-3 py-1.5 hover:bg-cafe-surface-elevated transition-colors">
         {/* Toggle button — keyboard-focusable, Enter/Space to toggle */}
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={!isCollapsed}
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus:outline-none"
-          title={projectPath && projectPath !== 'default' ? projectPath : undefined}
-        >
-          <svg
-            aria-hidden="true"
-            className={`w-3 h-3 text-cafe-muted transition-transform flex-shrink-0 ${isCollapsed ? '' : 'rotate-90'}`}
-            viewBox="0 0 12 12"
-            fill="currentColor"
+        {!isRenaming && (
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={!isCollapsed}
+            className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus:outline-none"
+            title={projectPath && projectPath !== 'default' ? projectPath : undefined}
           >
-            <path d="M4 2l4 4-4 4V2z" />
-          </svg>
-
-          {iconPath && (
             <svg
               aria-hidden="true"
-              className={`w-3 h-3 flex-shrink-0 ${iconColor}`}
-              viewBox="0 0 16 16"
+              className={`w-3 h-3 text-cafe-muted transition-transform flex-shrink-0 ${isCollapsed ? '' : 'rotate-90'}`}
+              viewBox="0 0 12 12"
               fill="currentColor"
             >
-              <path d={iconPath} />
+              <path d="M4 2l4 4-4 4V2z" />
             </svg>
-          )}
 
-          {isRenaming ? (
+            {iconPath && (
+              <svg
+                aria-hidden="true"
+                className={`w-3 h-3 flex-shrink-0 ${iconColor}`}
+                viewBox="0 0 16 16"
+                fill="currentColor"
+              >
+                <path d={iconPath} />
+              </svg>
+            )}
+
+            <span className="text-xs font-medium text-cafe-secondary truncate">{label}</span>
+
+            {govDot && <span className={`w-2 h-2 rounded-full flex-shrink-0 ${govDot.color}`} title={govDot.title} />}
+
+            <span className="text-[10px] text-cafe-muted flex-shrink-0 ml-auto">{count}</span>
+          </button>
+        )}
+
+        {/* Rename input — sibling of toggle button, never nested inside it */}
+        {isRenaming && (
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            <svg
+              aria-hidden="true"
+              className={`w-3 h-3 text-cafe-muted transition-transform flex-shrink-0 ${isCollapsed ? '' : 'rotate-90'}`}
+              viewBox="0 0 12 12"
+              fill="currentColor"
+            >
+              <path d="M4 2l4 4-4 4V2z" />
+            </svg>
+
+            {iconPath && (
+              <svg
+                aria-hidden="true"
+                className={`w-3 h-3 flex-shrink-0 ${iconColor}`}
+                viewBox="0 0 16 16"
+                fill="currentColor"
+              >
+                <path d={iconPath} />
+              </svg>
+            )}
+
             <input
               ref={inputRef}
               value={draftName}
               onChange={(e) => setDraftName(e.target.value)}
-              onClick={stopButton}
               onCompositionStart={ime.onCompositionStart}
               onCompositionEnd={ime.onCompositionEnd}
               onKeyDown={(e) => {
@@ -166,14 +194,8 @@ export function SectionGroup({
               maxLength={100}
               className="console-form-input text-xs font-medium px-1 py-0 flex-1 min-w-0"
             />
-          ) : (
-            <span className="text-xs font-medium text-cafe-secondary truncate">{label}</span>
-          )}
-
-          {govDot && <span className={`w-2 h-2 rounded-full flex-shrink-0 ${govDot.color}`} title={govDot.title} />}
-
-          <span className="text-[10px] text-cafe-muted flex-shrink-0 ml-auto">{count}</span>
-        </button>
+          </div>
+        )}
 
         {/* Action buttons — siblings of the toggle, not children */}
         {onQuickCreate && (
