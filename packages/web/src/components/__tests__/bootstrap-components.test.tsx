@@ -291,8 +291,8 @@ describe('BootstrapSummaryCard', () => {
       tierCoverage: { authoritative: 5, derived: 3, soft_clue: 1 },
     };
     const html = renderToStaticMarkup(<BootstrapSummaryCard summary={externalSummary} docsIndexed={10} />);
-    expect(html).toContain('green-200');
-    expect(html).toContain('green-50');
+    expect(html).toContain('conn-emerald-ring');
+    expect(html).toContain('conn-emerald-bg');
     expect(html).toContain('console-active-bg');
   });
 
@@ -346,6 +346,6 @@ describe('BootstrapAutoNotice', () => {
     expect(html).toContain('bootstrap-auto-notice');
     expect(html).toContain('正在自动建立记忆索引');
     expect(html).toContain('治理初始化完成');
-    expect(html).toContain('amber');
+    expect(html).toContain('warning');
   });
 });

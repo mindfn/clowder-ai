@@ -184,7 +184,7 @@ vi.mock('@/hooks/useAuthorization', () => ({
 
 vi.mock('@/hooks/useSplitPaneKeys', () => ({ useSplitPaneKeys: vi.fn() }));
 vi.mock('@/hooks/useChatSocketCallbacks', () => ({ useChatSocketCallbacks: () => ({}) }));
-vi.mock('@/hooks/useCatData', () => ({ useCatData: () => ({ getCatById: () => undefined, isLoading: false }) }));
+vi.mock('@/hooks/useCatData', () => ({ useCatData: () => ({ cats: [], getCatById: () => undefined, isLoading: false, hasFetched: true }) }));
 vi.mock('@/hooks/usePreviewAutoOpen', () => ({ usePreviewAutoOpen: vi.fn() }));
 vi.mock('@/hooks/useWorkspaceNavigate', () => ({ useWorkspaceNavigate: vi.fn() }));
 vi.mock('@/hooks/useGovernanceStatus', () => ({
@@ -293,10 +293,11 @@ describe('ChatContainer bottom chrome observer', () => {
       root.render(React.createElement(ChatContainer, { threadId: 'thread-1' }));
     });
 
-    const firstBottomChrome = container.querySelector('[data-testid="chat-input"]')?.parentElement;
-    expect(firstBottomChrome).toBeTruthy();
+    // The bottom chrome ref is attached to an ancestor of chat-input
+    const firstObservedElement = resizeObserverInstances[0]?.observe.mock.calls[0]?.[0] as HTMLElement;
+    expect(firstObservedElement).toBeTruthy();
+    expect(firstObservedElement.querySelector('[data-testid="chat-input"]')).toBeTruthy();
     expect(resizeObserverInstances).toHaveLength(1);
-    expect(resizeObserverInstances[0]?.observe.mock.calls[0]?.[0]).toBe(firstBottomChrome);
 
     storeState = { ...storeState, viewMode: 'split' };
     await act(async () => {
@@ -310,10 +311,10 @@ describe('ChatContainer bottom chrome observer', () => {
       root.render(React.createElement(ChatContainer, { threadId: 'thread-1' }));
     });
 
-    const secondBottomChrome = container.querySelector('[data-testid="chat-input"]')?.parentElement;
-    expect(secondBottomChrome).toBeTruthy();
-    expect(secondBottomChrome).not.toBe(firstBottomChrome);
+    const secondObservedElement = resizeObserverInstances[1]?.observe.mock.calls[0]?.[0] as HTMLElement;
+    expect(secondObservedElement).toBeTruthy();
+    expect(secondObservedElement.querySelector('[data-testid="chat-input"]')).toBeTruthy();
+    expect(secondObservedElement).not.toBe(firstObservedElement);
     expect(resizeObserverInstances).toHaveLength(2);
-    expect(resizeObserverInstances[1]?.observe.mock.calls[0]?.[0]).toBe(secondBottomChrome);
   });
 });

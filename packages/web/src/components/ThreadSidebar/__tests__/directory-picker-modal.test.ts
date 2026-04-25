@@ -9,6 +9,47 @@ vi.mock('@/utils/api-client', () => ({
   apiFetch: (...args: unknown[]) => mockApiFetch(...args),
 }));
 
+// ── Mock useCatData so CatSelector renders cat chips ──────────
+vi.mock('@/hooks/useCatData', () => ({
+  useCatData: () => ({
+    cats: [
+      {
+        id: 'opus',
+        displayName: '布偶猫',
+        nickname: '宪宪',
+        color: { primary: '#9B7EBD', secondary: '#E8D5F5' },
+        mentionPatterns: ['@opus'],
+        clientId: 'anthropic',
+        defaultModel: 'claude-opus-4-6',
+        avatar: '/avatars/opus.png',
+        roleDescription: '架构',
+        personality: '稳重',
+      },
+    ],
+    isLoading: false,
+    getCatById: () => undefined,
+    getCatsByBreed: () =>
+      new Map([
+        [
+          'ragdoll',
+          [
+            {
+              id: 'opus',
+              displayName: '布偶猫',
+              nickname: '宪宪',
+              breedDisplayName: '布偶猫',
+              color: { primary: '#9B7EBD', secondary: '#E8D5F5' },
+              clientId: 'anthropic',
+            },
+          ],
+        ],
+      ]),
+    refresh: () => Promise.resolve([]),
+  }),
+  formatCatName: (cat: { displayName: string; variantLabel?: string }) =>
+    cat.variantLabel ? `${cat.displayName}（${cat.variantLabel}）` : cat.displayName,
+}));
+
 // ── Helpers ────────────────────────────────────────────────────
 function jsonOk(data: unknown) {
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(data) });

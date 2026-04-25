@@ -13,6 +13,42 @@ vi.mock('@/utils/api-client', () => ({
   API_URL: 'http://localhost:3003',
 }));
 
+// ── Mock useCatData so CatSelector renders cat chips ──────────
+vi.mock('@/hooks/useCatData', () => ({
+  useCatData: () => ({
+    cats: [
+      {
+        id: 'opus',
+        displayName: '布偶猫',
+        nickname: '宪宪',
+        color: { primary: '#9B7EBD', secondary: '#E8D5F5' },
+        clientId: 'anthropic',
+      },
+    ],
+    isLoading: false,
+    getCatById: () => undefined,
+    getCatsByBreed: () =>
+      new Map([
+        [
+          'ragdoll',
+          [
+            {
+              id: 'opus',
+              displayName: '布偶猫',
+              nickname: '宪宪',
+              breedDisplayName: '布偶猫',
+              color: { primary: '#9B7EBD', secondary: '#E8D5F5' },
+              clientId: 'anthropic',
+            },
+          ],
+        ],
+      ]),
+    refresh: () => Promise.resolve([]),
+  }),
+  formatCatName: (cat: { displayName: string; variantLabel?: string }) =>
+    cat.variantLabel ? `${cat.displayName}（${cat.variantLabel}）` : cat.displayName,
+}));
+
 describe('ThreadCatSettings', () => {
   let container: HTMLDivElement;
   let root: Root;
