@@ -237,6 +237,33 @@
 - 描述：`text-sm text-cafe-secondary`
 - 可选操作按钮：次要按钮样式
 
+### 3.13 系统通知（对话内嵌）
+
+对话流中偶尔出现的系统级提示，与常规消息气泡不同：居中显示、无头像、带语义色。
+
+**三种 tone：**
+
+| Tone | 场景 | 标签色 | 图标色 | 边框色 | 背景色 |
+|------|------|-------|-------|-------|-------|
+| info | 功能提示、状态变更 | `--notice-info-label` | `--notice-info-icon` | `--notice-info-border` | `cafe-surface 90%` |
+| warning | 降级、配额接近 | `--notice-warning-label` | `--notice-warning-icon` | `--notice-warning-border` | `cafe-surface 90%` |
+| error | 失败、中断 | `--notice-error-label` | `--notice-error-icon` | `--notice-error-border` | `--notice-error-surface 90%` |
+
+**布局结构：**
+
+```
+          ┌─ 来源标签  时间戳 ──────────────────┐
+          │  🔔  通知正文 (Markdown)             │
+          └──────────────────────────────────────┘
+```
+
+- 居中对齐 `flex justify-center`，`max-w-[85%]`
+- 标签行：来源名 `notice-label` 色 + 时间 `text-cafe-muted`
+- 主体：`rounded-2xl` + `border notice-border` + `bg notice-surface 90%`
+- 图标 + 正文水平排列，图标 `4.5×4.5`
+- 入场动画：slide-up + fade-in（respects `prefers-reduced-motion`）
+- 特化通知（如自动索引）应复用同一 notice token，不硬编码色值
+
 ---
 
 ## 4. 页面布局模式
