@@ -190,7 +190,10 @@ export function SessionEventsViewer({ sessionId, catId, onClose }: SessionEvents
         {!error && view === 'handoff' && (
           <div className="space-y-1.5">
             {(data as HandoffSummary[]).map((inv) => (
-              <div key={inv.invocationId} className="rounded border border-[var(--console-border-soft)] px-2 py-1.5 text-[11px]">
+              <div
+                key={inv.invocationId}
+                className="rounded border border-[var(--console-border-soft)] px-2 py-1.5 text-[11px]"
+              >
                 <div className="flex items-center gap-1.5">
                   <span className="font-mono text-cafe-secondary">{inv.invocationId}</span>
                   <span className="text-cafe-muted">{fmtDuration(inv.durationMs)}</span>

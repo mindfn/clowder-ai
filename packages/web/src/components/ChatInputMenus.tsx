@@ -159,7 +159,9 @@ export function ChatInputMenus({
           ref={menuRef}
           className="absolute bottom-full left-4 mb-2 bg-cafe-surface rounded-xl shadow-lg border border-[var(--console-border-soft)] overflow-hidden w-72 z-10"
         >
-          <div className="px-4 py-2 text-xs text-cafe-muted font-medium border-b border-[var(--console-border-soft)]">选择游戏</div>
+          <div className="px-4 py-2 text-xs text-cafe-muted font-medium border-b border-[var(--console-border-soft)]">
+            选择游戏
+          </div>
           {GAME_LIST.map((game, i) => (
             <button
               key={game.id}
@@ -185,7 +187,9 @@ export function ChatInputMenus({
               </svg>
             </button>
           ))}
-          <div className="px-4 py-1.5 text-xs text-cafe-muted border-t border-[var(--console-border-soft)]">Enter 选择 · Esc 关闭</div>
+          <div className="px-4 py-1.5 text-xs text-cafe-muted border-t border-[var(--console-border-soft)]">
+            Enter 选择 · Esc 关闭
+          </div>
         </div>
       )}
 

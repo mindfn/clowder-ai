@@ -47,7 +47,9 @@ export function WhisperCatSelector({ cats, selected, activeCatIds, onToggle }: W
         </div>
       )}
       {selected.size === 0 && (
-        <div className="px-4 py-1.5 text-xs text-red-400 border-t border-[var(--console-border-soft)] shrink-0">请至少选一只猫猫</div>
+        <div className="px-4 py-1.5 text-xs text-red-400 border-t border-[var(--console-border-soft)] shrink-0">
+          请至少选一只猫猫
+        </div>
       )}
     </div>
   );
