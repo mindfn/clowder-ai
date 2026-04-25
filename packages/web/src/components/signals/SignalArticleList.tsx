@@ -65,9 +65,7 @@ export function SignalArticleList({
               }}
               className={[
                 'w-full px-4 py-3 text-left transition-colors cursor-pointer',
-                selected
-                  ? 'bg-[var(--console-active-bg)]'
-                  : 'hover:bg-[var(--console-hover-bg)]',
+                selected ? 'bg-[var(--console-active-bg)]' : 'hover:bg-[var(--console-hover-bg)]',
               ].join(' ')}
             >
               <div className="flex items-start gap-3">

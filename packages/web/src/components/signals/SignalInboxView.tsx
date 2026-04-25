@@ -297,9 +297,7 @@ export function SignalInboxView() {
           />
           <select
             value={filters.status}
-            onChange={(event) =>
-              handleStatusTab(event.target.value as SignalArticleFilters['status'])
-            }
+            onChange={(event) => handleStatusTab(event.target.value as SignalArticleFilters['status'])}
             className="console-form-input w-auto"
           >
             <option value="inbox">Inbox</option>

@@ -232,11 +232,7 @@ export function IndexStatus() {
       )}
 
       {/* Refresh button */}
-      <button
-        type="button"
-        onClick={fetchAll}
-        className="console-button-ghost text-xs px-3 py-1.5"
-      >
+      <button type="button" onClick={fetchAll} className="console-button-ghost text-xs px-3 py-1.5">
         刷新状态
       </button>
     </div>

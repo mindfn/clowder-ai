@@ -72,7 +72,10 @@ export function CallbackEnvPanel() {
           const displayValue = v.sensitive ? '***' : (v.currentValue ?? v.defaultValue) || '未设置';
           const scopeLabel = v.name === 'CAT_CAFE_CALLBACK_TOKEN' ? '子进程 + 宿主' : '宿主进程';
           return (
-            <div key={v.name} className="flex items-start justify-between gap-3 border-b border-[var(--console-border-soft)] py-3 last:border-b-0">
+            <div
+              key={v.name}
+              className="flex items-start justify-between gap-3 border-b border-[var(--console-border-soft)] py-3 last:border-b-0"
+            >
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono text-xs font-semibold text-cafe">{v.name}</span>
