@@ -177,7 +177,7 @@ export function CatOverviewTab({
       />
       {config.coCreator ? <HubCoCreatorOverviewCard coCreator={config.coCreator} onEdit={onEditCoCreator} /> : null}
       {dragError ? (
-        <p className="text-[13px] text-[#C14E4E]" role="alert">
+        <p className="text-[13px]" role="alert" style={{ color: 'var(--notice-error-label)' }}>
           {dragError}
         </p>
       ) : null}
@@ -201,7 +201,7 @@ export function CatOverviewTab({
           />
         ))}
       </div>
-      <p className="px-2 text-[13px] text-[#B59A88]">按住 ⠿ 拖动卡片可自由排序；点击卡片进入成员配置 →</p>
+      <p className="px-2 text-[13px] text-cafe-muted">按住 ⠿ 拖动卡片可自由排序；点击卡片进入成员配置 →</p>
       {cats.length === 0 && <p className="text-sm text-cafe-muted">未找到成员配置数据</p>}
     </div>
   );
