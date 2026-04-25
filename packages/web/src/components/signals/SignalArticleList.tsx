@@ -47,7 +47,7 @@ export function SignalArticleList({
   }
 
   return (
-    <ul className="space-y-2">
+    <ul className="divide-y divide-[var(--console-border-soft)]">
       {items.map((article) => {
         const selected = selectedArticleId === article.id;
         return (
@@ -64,10 +64,10 @@ export function SignalArticleList({
                 }
               }}
               className={[
-                'w-full rounded-xl border bg-cafe-surface p-4 text-left shadow-sm transition-colors',
+                'w-full px-4 py-3 text-left transition-colors cursor-pointer',
                 selected
-                  ? 'border-cafe-accent ring-1 ring-cafe-accent/40'
-                  : 'border-[var(--console-border-soft)] hover:border-[var(--console-border-soft)]',
+                  ? 'bg-[var(--console-active-bg)]'
+                  : 'hover:bg-[var(--console-hover-bg)]',
               ].join(' ')}
             >
               <div className="flex items-start gap-3">

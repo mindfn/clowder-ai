@@ -183,7 +183,7 @@ export function SignalArticleDetail({
 
   if (isLoading) {
     return (
-      <aside className="rounded-xl border border-[var(--console-border-soft)] bg-cafe-surface p-6 text-sm text-cafe-secondary shadow-sm">
+      <aside className="rounded-xl bg-[var(--console-panel-bg)] p-6 text-sm text-cafe-secondary">
         正在加载文章详情...
       </aside>
     );
@@ -191,14 +191,14 @@ export function SignalArticleDetail({
 
   if (!article) {
     return (
-      <aside className="rounded-xl border border-dashed border-[var(--console-border-soft)] bg-cafe-surface p-6 text-sm text-cafe-secondary">
+      <aside className="rounded-xl bg-[var(--console-panel-bg)] p-6 text-sm text-cafe-secondary">
         选择一篇文章查看详情。
       </aside>
     );
   }
 
   return (
-    <aside className="rounded-xl border border-[var(--console-border-soft)] bg-cafe-surface p-5 shadow-sm">
+    <aside className="rounded-xl bg-[var(--console-panel-bg)] p-5">
       <div className="flex flex-wrap items-center gap-2">
         <SignalTierBadge tier={article.tier} />
         <span className="rounded bg-cafe-surface-elevated px-2 py-0.5 text-xs font-medium text-cafe-secondary">

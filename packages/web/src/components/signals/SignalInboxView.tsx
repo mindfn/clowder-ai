@@ -278,82 +278,64 @@ export function SignalInboxView() {
   return (
     <div className="h-full overflow-y-auto">
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6">
-        <header className="console-shell-panel rounded-2xl p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h1 className="text-xl font-bold text-cafe">Signal Inbox</h1>
-              <p className="text-sm text-cafe-secondary">浏览、筛选和管理 F21 信号文章</p>
-            </div>
-            <SignalNav active="signals" />
-          </div>
+        <header className="flex items-center justify-between">
+          <h1 className="text-xl font-bold text-cafe">Signal Inbox</h1>
+          <SignalNav active="signals" />
         </header>
 
-        <div className="console-card rounded-2xl p-4 space-y-3">
-          <div className="console-segmented inline-flex">
-            {(
-              [
-                ['inbox', 'Inbox'],
-                ['starred', '收藏'],
-                ['read', '已读'],
-                ['archived', '归档'],
-                ['all', '全部'],
-              ] as const
-            ).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => handleStatusTab(key)}
-                data-active={filters.status === key ? 'true' : 'false'}
-                className="console-segmented-button"
-              >
-                {label}
-              </button>
+        <form onSubmit={handleSearchSubmit} className="flex flex-wrap items-center gap-2">
+          <input
+            value={filters.query}
+            onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))}
+            onCompositionStart={ime.onCompositionStart}
+            onCompositionEnd={ime.onCompositionEnd}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && ime.isComposing()) event.preventDefault();
+            }}
+            placeholder="搜索标题、来源、标签..."
+            className="console-form-input max-w-[240px]"
+          />
+          <select
+            value={filters.status}
+            onChange={(event) =>
+              handleStatusTab(event.target.value as SignalArticleFilters['status'])
+            }
+            className="console-form-input w-auto"
+          >
+            <option value="inbox">Inbox</option>
+            <option value="starred">收藏</option>
+            <option value="read">已读</option>
+            <option value="archived">归档</option>
+            <option value="all">全部</option>
+          </select>
+          <select
+            value={filters.tier}
+            onChange={(event) =>
+              setFilters((current) => ({ ...current, tier: event.target.value as SignalArticleFilters['tier'] }))
+            }
+            name="tier"
+            className="console-form-input w-auto"
+          >
+            <option value="all">Tier: 全部</option>
+            <option value="1">Tier 1</option>
+            <option value="2">Tier 2</option>
+            <option value="3">Tier 3</option>
+            <option value="4">Tier 4</option>
+          </select>
+          <select
+            value={filters.source}
+            onChange={(event) => setFilters((current) => ({ ...current, source: event.target.value }))}
+            name="source"
+            className="console-form-input w-auto"
+          >
+            <option value="all">来源: 全部</option>
+            {sources.map((source) => (
+              <option key={source} value={source}>
+                {source}
+              </option>
             ))}
-          </div>
-          <form onSubmit={handleSearchSubmit} className="grid gap-2 md:grid-cols-4">
-            <input
-              value={filters.query}
-              onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))}
-              onCompositionStart={ime.onCompositionStart}
-              onCompositionEnd={ime.onCompositionEnd}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && ime.isComposing()) event.preventDefault();
-              }}
-              placeholder="搜索标题、来源、标签..."
-              className="console-form-input md:col-span-2"
-            />
-            <select
-              value={filters.tier}
-              onChange={(event) =>
-                setFilters((current) => ({ ...current, tier: event.target.value as SignalArticleFilters['tier'] }))
-              }
-              name="tier"
-              className="console-form-input"
-            >
-              <option value="all">Tier: 全部</option>
-              <option value="1">Tier 1</option>
-              <option value="2">Tier 2</option>
-              <option value="3">Tier 3</option>
-              <option value="4">Tier 4</option>
-            </select>
-            <select
-              value={filters.source}
-              onChange={(event) => setFilters((current) => ({ ...current, source: event.target.value }))}
-              name="source"
-              className="console-form-input"
-            >
-              <option value="all">来源: 全部</option>
-              {sources.map((source) => (
-                <option key={source} value={source}>
-                  {source}
-                </option>
-              ))}
-            </select>
-            <button type="submit" className="console-button-primary md:col-span-4">
-              搜索
-            </button>
-          </form>
-        </div>
+          </select>
+        </form>
 
         <SignalStatsCards stats={stats} />
 
