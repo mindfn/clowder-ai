@@ -18,6 +18,7 @@ interface HubAccountItemProps {
   busy: boolean;
   onSave: (profileId: string, payload: ProfileEditPayload) => Promise<void>;
   onDelete: (profileId: string) => void;
+  onEdit?: (profile: ProfileItem) => void;
 }
 
 function summaryText(profile: ProfileItem): string | null {
@@ -26,7 +27,7 @@ function summaryText(profile: ProfileItem): string | null {
   return `${host} · ${profile.hasApiKey ? '已配置' : '未配置'}`;
 }
 
-export function HubAccountItem({ profile, busy, onSave, onDelete }: HubAccountItemProps) {
+export function HubAccountItem({ profile, busy, onSave, onDelete, onEdit }: HubAccountItemProps) {
   const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
   const [editDisplayName, setEditDisplayName] = useState(profile.displayName);
@@ -125,7 +126,10 @@ export function HubAccountItem({ profile, busy, onSave, onDelete }: HubAccountIt
   }
 
   return (
-    <div className="rounded-[20px] border border-[#F1E7DF] bg-[#FFFDFC] p-[18px]">
+    <div
+      className={`rounded-[20px] border border-[#F1E7DF] bg-[#FFFDFC] p-[18px] transition ${onEdit ? 'cursor-pointer hover:border-[#D49266]/40' : ''}`}
+      onClick={() => onEdit?.(profile)}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 space-y-2">
           <div className="flex items-center gap-2 flex-wrap">

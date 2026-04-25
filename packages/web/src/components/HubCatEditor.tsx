@@ -537,24 +537,6 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {cat && cat.source !== 'seed' ? (
-              <button
-                type="button"
-                onClick={handleDelete}
-                disabled={saving}
-                className="rounded-full bg-conn-red-bg p-2 text-conn-red-text transition hover:opacity-90 disabled:opacity-50"
-                aria-label="删除成员"
-              >
-                <svg viewBox="0 0 16 16" className="h-4 w-4 fill-none stroke-current" aria-hidden="true">
-                  <path
-                    d="M3.5 4.5h9m-7.5 0V3.25h5V4.5m-5.5 0 .5 8h5l.5-8m-4 2v4m2-4v4"
-                    strokeWidth="1.25"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </button>
-            ) : null}
             <button
               type="button"
               onClick={requestClose}

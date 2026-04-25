@@ -200,7 +200,7 @@ export function HubMemberOverviewCard({
       onDragEnd={draggable ? (event) => onDragEnd?.(cat, event) : undefined}
       onClick={editCard}
       className={`console-card rounded-[24px] px-[20px] py-[20px] transition hover:-translate-y-0.5 ${isDragging ? 'opacity-40' : ''}`}
-      style={{ backgroundColor: '#FFFDFC', border: `1px solid ${cat.source === 'runtime' ? '#D9C7EA' : '#F1E7DF'}` }}
+      style={{ backgroundColor: '#FFFDFC', border: '1px solid #D9C7EA' }}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-2">
