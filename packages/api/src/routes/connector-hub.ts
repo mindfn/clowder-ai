@@ -328,12 +328,6 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
       return { ok: false, error: `Unknown platform: ${platform}` };
     }
 
-    const status = buildConnectorStatus();
-    const platformStatus = status.find((p) => p.id === platform);
-    if (!platformStatus?.configured) {
-      return { ok: false, error: '平台尚未配置，请先填写凭证并保存' };
-    }
-
     if (platform === 'weixin') {
       const adapter = opts.weixinAdapter;
       const ok = adapter != null && adapter.hasBotToken() && adapter.isPolling();
@@ -346,6 +340,12 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
         ok: state === 'connected',
         message: state === 'connected' ? '企微机器人 WebSocket 已连接' : `当前状态: ${state}`,
       };
+    }
+
+    const status = buildConnectorStatus();
+    const platformStatus = status.find((p) => p.id === platform);
+    if (!platformStatus?.configured) {
+      return { ok: false, error: '平台尚未配置，请先填写凭证并保存' };
     }
 
     return { ok: true, message: `${def.name} 凭证已配置，连接器将在下次启动时自动连接` };

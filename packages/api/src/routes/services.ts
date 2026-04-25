@@ -12,8 +12,7 @@ import {
 import { resolveUserId } from '../utils/request-identity.js';
 
 function resolveScriptPath(script: string): string {
-  const configRoot = process.env['CAT_CAFE_CONFIG_ROOT'] ?? process.cwd();
-  return resolve(configRoot, script);
+  return resolve(process.cwd(), script);
 }
 
 function readLogTail(serviceId: string, lines = 100): string[] {
