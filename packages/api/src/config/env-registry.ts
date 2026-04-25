@@ -57,6 +57,8 @@ export interface EnvDefinition {
   restartRequired?: boolean;
   /** If true, this var should appear in .env.example (enforced by check:env-example) */
   exampleRecommended?: boolean;
+  /** If set, this var is deprecated — value explains the replacement */
+  deprecated?: string;
 }
 
 export const ENV_CATEGORIES: Record<EnvCategory, string> = {
@@ -1066,6 +1068,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'GPT-SoVITS 角色模型目录',
     category: 'tts',
     sensitive: false,
+    deprecated: '使用 CHARACTER_VOICE_DIR 替代（优先级更高，支持多角色目录）',
   },
   {
     name: 'CHARACTER_VOICE_DIR',

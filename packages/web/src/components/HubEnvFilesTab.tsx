@@ -13,6 +13,7 @@ interface EnvVar {
   maskMode?: 'url';
   runtimeEditable?: boolean;
   restartRequired?: boolean;
+  deprecated?: string;
   currentValue: string | null;
 }
 
@@ -320,8 +321,13 @@ function EnvVarsSection({
                         className={`shrink-0 text-[10px] ${needsRestart(v) ? 'text-conn-amber-text' : 'text-conn-emerald-text'}`}
                         title={needsRestart(v) ? '需重启生效' : '即时生效'}
                       >
-                        {needsRestart(v) ? '🟡' : '🟢'}
+                        {v.deprecated ? '⛔' : needsRestart(v) ? '🟡' : '🟢'}
                       </span>
+                      {v.deprecated && (
+                        <span className="shrink-0 rounded bg-conn-red-bg px-1 py-0.5 text-[10px] font-semibold text-conn-red-text" title={v.deprecated}>
+                          已废弃
+                        </span>
+                      )}
                       <span className="truncate text-[#B59A88]">{v.description}</span>
                     </div>
                     <div className="text-[11px] text-[#B59A88]">默认: {v.defaultValue}</div>
