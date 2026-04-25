@@ -17,7 +17,6 @@ import {
   withCapabilityLock,
   writeCapabilitiesConfig,
 } from '../config/capabilities/capability-orchestrator.js';
-import { getOwnerUserId } from '../config/cat-config-loader.js';
 import { validateProjectPath } from '../utils/project-path.js';
 import { resolveUserId } from '../utils/request-identity.js';
 import { type McpProbeResult, probeMcpCapability } from './mcp-probe.js';
@@ -151,21 +150,27 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
   // ── PATCH /api/capabilities/mcp/:id/env — update env vars after install ──
   app.patch('/api/capabilities/mcp/:id/env', async (request, reply) => {
     const userId = resolveUserId(request);
-    if (!userId || userId !== getOwnerUserId()) {
+    const ownerId = process.env['DEFAULT_OWNER_USER_ID']?.trim();
+    if (!ownerId) {
+      reply.status(403);
+      return { error: 'MCP env write requires DEFAULT_OWNER_USER_ID to be configured' };
+    }
+    if (!userId || userId !== ownerId) {
       reply.status(403);
       return { error: 'Only the owner can modify MCP env vars' };
     }
 
     const { id } = request.params as { id: string };
     const body = request.body as { env?: Record<string, string>; projectPath?: string } | undefined;
-    if (!body?.env || typeof body.env !== 'object') {
+    if (!body?.env || typeof body.env !== 'object' || Array.isArray(body.env)) {
       reply.status(400);
-      return { error: 'Required: env (object with key-value pairs)' };
+      return { error: 'Required: env (plain object with key-value pairs)' };
     }
+    const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
     for (const [k, v] of Object.entries(body.env)) {
-      if (typeof k !== 'string' || typeof v !== 'string') {
+      if (!ENV_KEY_RE.test(k) || typeof v !== 'string') {
         reply.status(400);
-        return { error: 'All env keys and values must be strings' };
+        return { error: `Invalid env entry: key must match [A-Za-z_][A-Za-z0-9_]*, value must be string (got key="${k}")` };
       }
     }
 

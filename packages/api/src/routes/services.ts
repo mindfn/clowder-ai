@@ -2,7 +2,6 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { FastifyPluginAsync } from 'fastify';
-import { getOwnerUserId } from '../config/cat-config-loader.js';
 import {
   getAllServiceStates,
   getCachedServiceState,
@@ -54,7 +53,12 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
   app.post<{ Params: { id: string } }>('/api/services/:id/start', async (request, reply) => {
     const userId = resolveUserId(request);
-    if (!userId || userId !== getOwnerUserId()) {
+    const ownerId = process.env['DEFAULT_OWNER_USER_ID']?.trim();
+    if (!ownerId) {
+      reply.status(403);
+      return { error: 'Service management requires DEFAULT_OWNER_USER_ID to be configured' };
+    }
+    if (!userId || userId !== ownerId) {
       reply.status(403);
       return { error: 'Only the owner can manage services' };
     }
@@ -92,7 +96,12 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
   app.post<{ Params: { id: string } }>('/api/services/:id/stop', async (request, reply) => {
     const userId = resolveUserId(request);
-    if (!userId || userId !== getOwnerUserId()) {
+    const ownerId = process.env['DEFAULT_OWNER_USER_ID']?.trim();
+    if (!ownerId) {
+      reply.status(403);
+      return { error: 'Service management requires DEFAULT_OWNER_USER_ID to be configured' };
+    }
+    if (!userId || userId !== ownerId) {
       reply.status(403);
       return { error: 'Only the owner can manage services' };
     }
@@ -143,7 +152,12 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
   app.post<{ Params: { id: string } }>('/api/services/:id/install', async (request, reply) => {
     const userId = resolveUserId(request);
-    if (!userId || userId !== getOwnerUserId()) {
+    const ownerId = process.env['DEFAULT_OWNER_USER_ID']?.trim();
+    if (!ownerId) {
+      reply.status(403);
+      return { error: 'Service management requires DEFAULT_OWNER_USER_ID to be configured' };
+    }
+    if (!userId || userId !== ownerId) {
       reply.status(403);
       return { error: 'Only the owner can manage services' };
     }
