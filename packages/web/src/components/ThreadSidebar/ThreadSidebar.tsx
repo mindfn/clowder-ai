@@ -6,6 +6,8 @@ import { useToastStore } from '@/stores/toastStore';
 import { apiFetch } from '@/utils/api-client';
 import { loadThreads as loadCachedThreads } from '@/utils/offline-store';
 
+import { BootcampIcon } from '../icons/BootcampIcon';
+import { MemoryIcon } from '../icons/MemoryIcon';
 import { readProjectNames, writeProjectNames } from './active-workspace';
 import { DirectoryPickerModal, type NewThreadOptions } from './DirectoryPickerModal';
 import { SectionGroup } from './SectionGroup';
@@ -508,8 +510,8 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
           <div className="flex items-center gap-1.5">
             <button
               type="button"
-              onClick={onBootcampClick ?? createBootcampThread}
-              disabled={!onBootcampClick && isCreating}
+              onClick={createBootcampThread}
+              disabled={isCreating}
               className="text-xs px-2 py-1 rounded-lg border border-conn-amber-ring bg-conn-amber-bg text-conn-amber-text hover:opacity-80 disabled:opacity-40 transition-colors"
               title="猫猫训练营"
               data-testid="sidebar-bootcamp"
@@ -532,18 +534,6 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
             >
               <MemoryIcon className="w-3.5 h-3.5 inline-block -mt-0.5" />
             </button>
-            {onHubClick && (
-              <button
-                type="button"
-                onClick={onHubClick}
-                className="text-xs px-2 py-1 rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-card-soft-bg)] text-cafe-secondary hover:opacity-80 transition-colors"
-                title="IM Hub"
-                data-testid="sidebar-hub"
-                data-guide-id="im-hub.trigger"
-              >
-                <HubIcon className="w-3.5 h-3.5 inline-block -mt-0.5" />
-              </button>
-            )}
             <button
               type="button"
               onClick={() => setShowPicker(true)}
