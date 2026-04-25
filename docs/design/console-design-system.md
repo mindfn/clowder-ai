@@ -330,7 +330,7 @@
 - 卡片 `console-card-bg` + `rounded-xl` + `console-shadow`
 - 标题 `text-lg font-semibold`
 - 底部按钮右对齐：取消(Secondary) + 确认(Primary)
-- 危险弹窗：标题红色 + 红色图标 + 红色确认按钮 + 影响说明
+- 危险弹窗：红色图标 + 红色标题 + 影响说明 + 红色确认按钮 + Enter 快捷确认（无需输入名称）
 
 ### 5.3 全页表单规范
 
