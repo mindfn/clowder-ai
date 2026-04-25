@@ -134,7 +134,7 @@ export function SessionEventsViewer({ sessionId, catId, onClose }: SessionEvents
   return (
     <div className="rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface">
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--console-border-soft)]">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-cafe-subtle">
         <span className="text-xs font-semibold text-cafe-secondary">Session 事件</span>
         <button
           type="button"
@@ -147,7 +147,7 @@ export function SessionEventsViewer({ sessionId, catId, onClose }: SessionEvents
       </div>
 
       {/* View mode tabs */}
-      <div className="flex border-b border-[var(--console-border-soft)]">
+      <div className="flex border-b border-cafe-subtle">
         {(['chat', 'handoff', 'raw'] as const).map((m) => (
           <button
             type="button"
@@ -190,7 +190,7 @@ export function SessionEventsViewer({ sessionId, catId, onClose }: SessionEvents
         {!error && view === 'handoff' && (
           <div className="space-y-1.5">
             {(data as HandoffSummary[]).map((inv) => (
-              <div key={inv.invocationId} className="rounded border border-[var(--console-border-soft)] px-2 py-1.5 text-[11px]">
+              <div key={inv.invocationId} className="rounded border border-cafe-subtle px-2 py-1.5 text-[11px]">
                 <div className="flex items-center gap-1.5">
                   <span className="font-mono text-cafe-secondary">{inv.invocationId}</span>
                   <span className="text-cafe-muted">{fmtDuration(inv.durationMs)}</span>
@@ -227,7 +227,7 @@ export function SessionEventsViewer({ sessionId, catId, onClose }: SessionEvents
       </div>
 
       {/* Pagination */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-t border-[var(--console-border-soft)] text-[10px] text-cafe-muted">
+      <div className="flex items-center justify-between px-3 py-1.5 border-t border-cafe-subtle text-[10px] text-cafe-muted">
         <span>{total} 条事件</span>
         <div className="flex gap-2">
           {cursorHistory.length > 0 && (

@@ -98,7 +98,7 @@ export function HubListModal({ open, onClose, currentThreadId }: HubListModalPro
       data-testid="hub-list-modal"
     >
       <div className="bg-cafe-surface rounded-2xl shadow-xl w-[520px] max-h-[80vh] flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--console-border-soft)]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-cafe-subtle">
           <div className="flex items-center gap-2.5">
             <HubIcon className="w-5 h-5 text-blue-600" />
             <span className="text-lg font-semibold text-cafe">IM Hub</span>
@@ -115,7 +115,7 @@ export function HubListModal({ open, onClose, currentThreadId }: HubListModalPro
           </button>
         </div>
 
-        <div className="flex border-b border-[var(--console-border-soft)] px-6" data-testid="hub-tabs">
+        <div className="flex border-b border-cafe-subtle px-6" data-testid="hub-tabs">
           <button
             type="button"
             onClick={() => setActiveTab('threads')}

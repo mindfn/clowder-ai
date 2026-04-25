@@ -242,7 +242,7 @@ export function StudyFoldArea({
                       </span>
                     </button>
                     {expandedNote === n.id && (
-                      <div className="mt-1 rounded-md border border-[var(--console-border-soft)] bg-cafe-surface-elevated px-3 py-2 text-xs text-cafe-secondary">
+                      <div className="mt-1 rounded-md border border-cafe-subtle bg-cafe-surface-elevated px-3 py-2 text-xs text-cafe-secondary">
                         {loadingNote === n.id ? (
                           <span className="text-cafe-muted">加载中...</span>
                         ) : (

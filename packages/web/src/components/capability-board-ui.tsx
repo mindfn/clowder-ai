@@ -471,7 +471,7 @@ function ToggleSwitch({
       } ${enabled ? 'bg-cafe-accent' : 'bg-cafe-surface-elevated'} ${isSm ? 'h-3.5 w-7' : 'h-5 w-10'}`}
     >
       <span
-        className={`absolute top-0 flex items-center justify-center rounded-full border border-[var(--console-border-soft)] bg-cafe-surface shadow-sm transition-transform duration-300 ease-in-out ${isSm ? 'h-3.5 w-3.5' : 'h-5 w-5'} ${
+        className={`absolute top-0 flex items-center justify-center rounded-full border border-cafe-subtle bg-cafe-surface shadow-sm transition-transform duration-300 ease-in-out ${isSm ? 'h-3.5 w-3.5' : 'h-5 w-5'} ${
           enabled ? (isSm ? 'translate-x-[14px]' : 'translate-x-[20px]') : 'translate-x-0'
         }`}
       >

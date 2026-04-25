@@ -149,7 +149,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
               </div>
               <button
                 onClick={() => saveConfig({ whitelistEnabled: !config.whitelistEnabled })}
-                className={`relative w-10 h-5 rounded-full transition-colors ${config.whitelistEnabled ? 'bg-blue-500' : 'bg-cafe-surface-sunken dark:bg-gray-600'}`}
+                className={`relative w-10 h-5 rounded-full transition-colors ${config.whitelistEnabled ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
                 disabled={saving}
               >
                 <div
@@ -213,7 +213,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
             )}
           </div>
 
-          <hr className="border-[var(--console-border-soft)]" />
+          <hr className="border-cafe-subtle dark:border-gray-800" />
 
           {/* Section 2: Admin List */}
           <div className="space-y-2">
@@ -270,7 +270,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
             </div>
           </div>
 
-          <hr className="border-[var(--console-border-soft)]" />
+          <hr className="border-cafe-subtle dark:border-gray-800" />
 
           {/* Section 3: Command Admin Only */}
           <div className="space-y-2">
@@ -283,7 +283,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
               </div>
               <button
                 onClick={() => saveConfig({ commandAdminOnly: !config.commandAdminOnly })}
-                className={`relative w-10 h-5 rounded-full transition-colors ${config.commandAdminOnly ? 'bg-blue-500' : 'bg-cafe-surface-sunken dark:bg-gray-600'}`}
+                className={`relative w-10 h-5 rounded-full transition-colors ${config.commandAdminOnly ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
                 disabled={saving}
               >
                 <div

@@ -96,7 +96,11 @@ const CAT_SESSION_COLORS: Record<string, { border: string; badgeBg: string; badg
   sonnet: { border: 'border-[#B39DDB66]', badgeBg: 'bg-[#EDE7F6]', badgeText: 'text-[#6A1B9A]' },
 };
 
-const DEFAULT_SESSION_COLORS = { border: 'border-[var(--console-border-soft)]', badgeBg: 'bg-[var(--console-pill-bg)]', badgeText: 'text-cafe-secondary' };
+const DEFAULT_SESSION_COLORS = {
+  border: 'border-[var(--console-border-soft)]',
+  badgeBg: 'bg-[var(--console-pill-bg)]',
+  badgeText: 'text-cafe-secondary',
+};
 
 export function SessionChainPanel({ threadId, catInvocations, onViewSession }: SessionChainPanelProps) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);

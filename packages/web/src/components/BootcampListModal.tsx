@@ -124,7 +124,7 @@ export function BootcampListModal({ open, onClose, currentThreadId }: BootcampLi
     >
       <div className="bg-cafe-surface rounded-2xl shadow-xl w-[480px] max-h-[80vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--console-border-soft)]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-cafe-subtle">
           <div className="flex items-center gap-2.5">
             <BootcampIcon className="w-6 h-6 text-amber-600" />
             <span className="text-lg font-semibold text-cafe">我的训练营</span>
@@ -216,7 +216,7 @@ export function BootcampListModal({ open, onClose, currentThreadId }: BootcampLi
         </div>
 
         {/* Footer: create new */}
-        <div className="px-6 py-4 border-t border-[var(--console-border-soft)] flex justify-center">
+        <div className="px-6 py-4 border-t border-cafe-subtle flex justify-center">
           <button
             type="button"
             onClick={handleCreate}

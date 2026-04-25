@@ -79,7 +79,7 @@ function CategoryGroup({ category, skills }: { category: string; skills: SkillEn
           </thead>
           <tbody>
             {skills.map((skill) => (
-              <tr key={skill.name} className="border-t border-[var(--console-border-soft)]">
+              <tr key={skill.name} className="border-t border-cafe-subtle">
                 <td className="py-1.5 pr-3">
                   <code className="font-mono text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-[11px]">
                     {skill.name}

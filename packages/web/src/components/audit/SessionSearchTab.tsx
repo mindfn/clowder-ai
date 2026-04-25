@@ -112,7 +112,7 @@ export function SessionSearchTab({ threadId, onViewSession }: SessionSearchTabPr
               return (
                 <div
                   key={`${hit.sessionId}-${hit.kind}-${i}`}
-                  className="rounded border border-[var(--console-border-soft)] px-2 py-1.5 hover:bg-cafe-surface-elevated transition-colors"
+                  className="rounded border border-cafe-subtle px-2 py-1.5 hover:bg-cafe-surface-elevated transition-colors"
                 >
                   <div className="flex items-center gap-1.5 text-[11px]">
                     <span className={`px-1 py-0.5 rounded text-[9px] font-medium ${badge.bg} ${badge.text}`}>

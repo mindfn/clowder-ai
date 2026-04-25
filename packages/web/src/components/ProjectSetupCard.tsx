@@ -170,7 +170,9 @@ export function ProjectSetupCard({
                     </span>
                   </div>
                 </div>
-                <p className="text-[11px] text-cafe-secondary mb-3 ml-8">将现有的代码宝藏搬到新营地，包含完整历史记录。</p>
+                <p className="text-[11px] text-cafe-secondary mb-3 ml-8">
+                  将现有的代码宝藏搬到新营地，包含完整历史记录。
+                </p>
                 <div className="flex gap-2 ml-8">
                   <input
                     type="text"

@@ -48,7 +48,11 @@ const STATUS_CONFIG: Record<
     badge: 'bg-amber-100 text-amber-700 border-amber-200 animate-pulse',
   },
   published: { label: '正式', className: '', badge: '' },
-  archived: { label: '归档', className: 'grayscale-[0.5] opacity-60', badge: 'bg-[var(--console-pill-bg)] text-cafe-secondary' },
+  archived: {
+    label: '归档',
+    className: 'grayscale-[0.5] opacity-60',
+    badge: 'bg-[var(--console-pill-bg)] text-cafe-secondary',
+  },
 };
 
 const CONFIDENCE_STYLES: Record<

@@ -77,7 +77,7 @@ export function VoteConfigModal({
         className="bg-cafe-surface rounded-xl shadow-2xl w-full max-w-[480px] mx-4 max-h-[80vh] flex flex-col overflow-hidden"
       >
         {/* Header */}
-        <div className="px-5 py-4 border-b border-[var(--console-border-soft)] flex items-center justify-between">
+        <div className="px-5 py-4 border-b border-cafe-subtle flex items-center justify-between">
           <h2 className="text-base font-semibold text-cafe-black">发起投票</h2>
           <button
             type="button"
@@ -203,7 +203,7 @@ export function VoteConfigModal({
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-4 border-t border-[var(--console-border-soft)] flex justify-end gap-3">
+        <div className="px-5 py-4 border-t border-cafe-subtle flex justify-end gap-3">
           <button
             type="button"
             onClick={onCancel}

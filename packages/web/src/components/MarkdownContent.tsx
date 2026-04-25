@@ -237,7 +237,9 @@ const mdComponents: Components = {
     ),
 
   blockquote: ({ children }) => (
-    <blockquote className="border-l-[3px] border-[var(--console-border-soft)] pl-3 my-2 italic opacity-80">{children}</blockquote>
+    <blockquote className="border-l-[3px] border-[var(--console-border-soft)] pl-3 my-2 italic opacity-80">
+      {children}
+    </blockquote>
   ),
   a: ({ href, children }) => (
     <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline break-all">
@@ -249,7 +251,9 @@ const mdComponents: Components = {
   /* Code blocks with copy button */
   pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
   code: ({ className, children }) => (
-    <code className={`${className ?? ''} bg-[var(--console-pill-bg)]/50 rounded px-1 py-0.5 text-[0.85em] font-mono`}>{children}</code>
+    <code className={`${className ?? ''} bg-[var(--console-pill-bg)]/50 rounded px-1 py-0.5 text-[0.85em] font-mono`}>
+      {children}
+    </code>
   ),
 
   /* Tables (GFM) */
@@ -260,9 +264,13 @@ const mdComponents: Components = {
   ),
   thead: ({ children }) => <thead className="bg-cafe-surface-elevated">{children}</thead>,
   th: ({ children }) => (
-    <th className="border border-[var(--console-border-soft)] px-2 py-1 text-left font-semibold text-xs">{withMentions(children)}</th>
+    <th className="border border-[var(--console-border-soft)] px-2 py-1 text-left font-semibold text-xs">
+      {withMentions(children)}
+    </th>
   ),
-  td: ({ children }) => <td className="border border-[var(--console-border-soft)] px-2 py-1">{withMentions(children)}</td>,
+  td: ({ children }) => (
+    <td className="border border-[var(--console-border-soft)] px-2 py-1">{withMentions(children)}</td>
+  ),
 };
 
 /* ── Exported component ────────────────────────────────────── */

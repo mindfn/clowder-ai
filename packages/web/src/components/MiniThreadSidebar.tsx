@@ -80,7 +80,9 @@ export function MiniThreadSidebar({ onAssignToPane }: MiniThreadSidebarProps) {
           <MiniThreadRow key={t.id} thread={t} isInPane isCollapsed={isCollapsed} getThreadState={getThreadState} />
         ))}
 
-        {assigned.length > 0 && available.length > 0 && <div className="mx-1 border-t border-[var(--console-border-soft)] my-1.5" />}
+        {assigned.length > 0 && available.length > 0 && (
+          <div className="mx-1 border-t border-[var(--console-border-soft)] my-1.5" />
+        )}
 
         {available.length > 0 && (
           <div className="px-1 mb-1">

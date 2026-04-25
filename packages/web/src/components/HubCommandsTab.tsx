@@ -44,7 +44,9 @@ export function HubCommandsTab() {
         <div className="space-y-1.5">
           {SHORTCUTS.map((s) => (
             <div key={s.keys} className="flex items-baseline gap-3 text-xs">
-              <kbd className="font-mono text-cafe-secondary bg-[var(--console-pill-bg)] px-1.5 py-0.5 rounded shrink-0">{s.keys}</kbd>
+              <kbd className="font-mono text-cafe-secondary bg-[var(--console-pill-bg)] px-1.5 py-0.5 rounded shrink-0">
+                {s.keys}
+              </kbd>
               <span className="text-cafe-secondary">{s.description}</span>
               {s.context !== '全局' && <span className="text-[10px] text-cafe-muted ml-auto">({s.context})</span>}
             </div>
