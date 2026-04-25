@@ -31,7 +31,7 @@ export default function ClassicLayout({ children }: { children: React.ReactNode 
 
   return (
     <>
-      <ChatContainer threadId={threadId} routePrefix={CLASSIC_WORLD_PREFIX} />
+      <ChatContainer threadId={threadId} />
       {children}
     </>
   );
