@@ -81,14 +81,23 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       return { error: `Start script not found: ${scriptPath}` };
     }
 
-    const child = spawn('bash', [scriptPath], {
-      detached: true,
-      stdio: 'ignore',
-      env: { ...process.env },
-    });
-    child.unref();
-
-    return { ok: true, message: `${manifest.name} start initiated (pid: ${child.pid})` };
+    try {
+      const child = spawn('bash', [scriptPath], {
+        detached: true,
+        stdio: 'ignore',
+        env: { ...process.env },
+      });
+      child.on('error', () => {});
+      if (!child.pid) {
+        reply.status(500);
+        return { error: `Failed to spawn start script for ${manifest.name}` };
+      }
+      child.unref();
+      return { ok: true, message: `${manifest.name} start initiated (pid: ${child.pid})` };
+    } catch {
+      reply.status(500);
+      return { error: `Failed to start ${manifest.name}: spawn error` };
+    }
   });
 
   app.post<{ Params: { id: string } }>('/api/services/:id/stop', async (request, reply) => {
@@ -112,9 +121,16 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     if (manifest.scripts.stop) {
       const scriptPath = resolveScriptPath(manifest.scripts.stop);
       if (existsSync(scriptPath)) {
-        const child = spawn('bash', [scriptPath], { stdio: 'ignore' });
-        await new Promise<void>((res) => child.on('close', () => res()));
-        return { ok: true, message: `${manifest.name} stopped via script` };
+        try {
+          const child = spawn('bash', [scriptPath], { stdio: 'ignore' });
+          await new Promise<void>((res, rej) => {
+            child.on('error', rej);
+            child.on('close', () => res());
+          });
+          return { ok: true, message: `${manifest.name} stopped via script` };
+        } catch {
+          return { ok: false, error: `Failed to run stop script for ${manifest.name}` };
+        }
       }
     }
 
@@ -174,23 +190,31 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       return { error: `Install script not found: ${scriptPath}` };
     }
 
-    const child = spawn('bash', [scriptPath], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env },
-    });
-    let output = '';
-    child.stdout?.on('data', (d: Buffer) => {
-      output += d.toString();
-    });
-    child.stderr?.on('data', (d: Buffer) => {
-      output += d.toString();
-    });
-    const code = await new Promise<number | null>((res) => child.on('close', (c) => res(c)));
+    try {
+      const child = spawn('bash', [scriptPath], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env },
+      });
+      let output = '';
+      child.stdout?.on('data', (d: Buffer) => {
+        output += d.toString();
+      });
+      child.stderr?.on('data', (d: Buffer) => {
+        output += d.toString();
+      });
+      const code = await new Promise<number | null>((res, rej) => {
+        child.on('error', rej);
+        child.on('close', (c) => res(c));
+      });
 
-    if (code !== 0) {
-      return { ok: false, error: `Install failed (exit ${code})`, output: output.slice(-2000) };
+      if (code !== 0) {
+        return { ok: false, error: `Install failed (exit ${code})`, output: output.slice(-2000) };
+      }
+      return { ok: true, message: `${manifest.name} installed successfully` };
+    } catch {
+      reply.status(500);
+      return { ok: false, error: `Failed to run install script for ${manifest.name}` };
     }
-    return { ok: true, message: `${manifest.name} installed successfully` };
   });
 
   app.get<{ Params: { id: string } }>('/api/services/:id/logs', async (request, reply) => {
