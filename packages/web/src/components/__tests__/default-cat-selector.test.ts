@@ -1,5 +1,5 @@
 /**
- * F154 Phase B / #543 — DefaultCatSelector: dropdown for choosing the global default cat.
+ * F154 Phase B / #543 — DefaultCatSelector: card grid for choosing the global default cat.
  * AC-B2: Member overview has global default cat selector.
  */
 import React, { act } from 'react';
@@ -75,7 +75,7 @@ vi.mock('@/hooks/useCatData', () => ({
 // Lazy import after mocks
 const { DefaultCatSelector } = await import('@/components/DefaultCatSelector');
 
-describe('DefaultCatSelector (#543: dropdown)', () => {
+describe('DefaultCatSelector (#543: card grid)', () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -100,7 +100,7 @@ describe('DefaultCatSelector (#543: dropdown)', () => {
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   });
 
-  it('renders a <select> with options for all cats', () => {
+  it('renders a card for each cat with the default highlighted', () => {
     act(() => {
       root.render(
         React.createElement(DefaultCatSelector, {
@@ -110,10 +110,10 @@ describe('DefaultCatSelector (#543: dropdown)', () => {
         }),
       );
     });
-    const select = container.querySelector<HTMLSelectElement>('[data-testid="default-cat-select"]');
-    expect(select).not.toBeNull();
-    expect(select!.options.length).toBe(3);
-    expect(select!.value).toBe('opus');
+    const cards = container.querySelectorAll('[data-testid="default-cat-card"]');
+    expect(cards.length).toBe(3);
+    const defaultCard = [...cards].find((c) => c.textContent?.includes('opus'));
+    expect(defaultCard?.className).toContain('bg-[var(--console-active-bg)]');
   });
 
   it('shows current cat color dot', () => {
@@ -149,7 +149,7 @@ describe('DefaultCatSelector (#543: dropdown)', () => {
     expect(container.textContent).toContain('新 thread');
   });
 
-  it('calls onSelect when changing dropdown value', () => {
+  it('calls onSelect when clicking a cat card', () => {
     const onSelect = vi.fn();
     act(() => {
       root.render(
@@ -160,13 +160,11 @@ describe('DefaultCatSelector (#543: dropdown)', () => {
         }),
       );
     });
-    const select = container.querySelector<HTMLSelectElement>('[data-testid="default-cat-select"]');
-    expect(select).not.toBeNull();
+    const cards = container.querySelectorAll('[data-testid="default-cat-card"]');
+    const codexCard = [...cards].find((c) => c.textContent?.includes('codex'));
+    expect(codexCard).not.toBeUndefined();
     act(() => {
-      // Simulate selecting codex
-      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
-      nativeInputValueSetter.call(select!, 'codex');
-      select!.dispatchEvent(new Event('change', { bubbles: true }));
+      (codexCard as HTMLButtonElement).click();
     });
     expect(onSelect).toHaveBeenCalledWith('codex');
   });
@@ -184,12 +182,9 @@ describe('DefaultCatSelector (#543: dropdown)', () => {
         }),
       );
     });
-    // Should still render the select
-    const select = container.querySelector('[data-testid="default-cat-select"]');
-    expect(select).not.toBeNull();
-    // Should show error hint
+    const cards = container.querySelectorAll('[data-testid="default-cat-card"]');
+    expect(cards.length).toBe(3);
     expect(container.textContent).toContain('加载失败');
-    // Should have retry button
     const retryBtn = container.querySelector('[data-testid="retry-fetch"]');
     expect(retryBtn).not.toBeNull();
     act(() => {
@@ -212,7 +207,7 @@ describe('DefaultCatSelector (#543: dropdown)', () => {
     expect(container.textContent).toContain('保存失败');
   });
 
-  it('disables select when loading', () => {
+  it('disables card buttons when loading', () => {
     act(() => {
       root.render(
         React.createElement(DefaultCatSelector, {
@@ -223,7 +218,9 @@ describe('DefaultCatSelector (#543: dropdown)', () => {
         }),
       );
     });
-    const select = container.querySelector<HTMLSelectElement>('[data-testid="default-cat-select"]');
-    expect(select!.disabled).toBe(true);
+    const cards = container.querySelectorAll<HTMLButtonElement>('[data-testid="default-cat-card"]');
+    for (const card of cards) {
+      expect(card.disabled).toBe(true);
+    }
   });
 });
