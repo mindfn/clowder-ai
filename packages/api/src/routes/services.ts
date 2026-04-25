@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { FastifyPluginAsync } from 'fastify';
 import {
   getAllServiceStates,
@@ -11,19 +12,35 @@ import {
 } from '../domains/services/service-registry.js';
 import { resolveUserId } from '../utils/request-identity.js';
 
+// cwd is packages/api in standard startup — resolve from file location instead
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
+
 function resolveScriptPath(script: string): string {
-  return resolve(process.cwd(), script);
+  return resolve(REPO_ROOT, script);
+}
+
+function resolveLogDir(): string {
+  return process.env['LOG_DIR'] ?? resolve(REPO_ROOT, 'data/logs/api');
 }
 
 function readLogTail(serviceId: string, lines = 100): string[] {
-  const logDir = process.env['LOG_DIR'] ?? './data/logs/api';
-  const logPath = resolve(logDir, `${serviceId}.log`);
+  const logPath = resolve(resolveLogDir(), `${serviceId}.log`);
   if (!existsSync(logPath)) return [];
   try {
     const content = readFileSync(logPath, 'utf-8');
     return content.split('\n').slice(-lines).filter(Boolean);
   } catch {
     return [];
+  }
+}
+
+function openLogFd(serviceId: string): number | null {
+  try {
+    const logDir = resolveLogDir();
+    mkdirSync(logDir, { recursive: true });
+    return openSync(resolve(logDir, `${serviceId}.log`), 'a');
+  } catch {
+    return null;
   }
 }
 
@@ -80,10 +97,11 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       return { error: `Start script not found: ${scriptPath}` };
     }
 
+    const logFd = openLogFd(id);
     try {
       const child = spawn('bash', [scriptPath], {
         detached: true,
-        stdio: 'ignore',
+        stdio: logFd != null ? ['ignore', logFd, logFd] : 'ignore',
         env: { ...process.env },
       });
       child.on('error', () => {});
@@ -96,6 +114,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     } catch {
       reply.status(500);
       return { error: `Failed to start ${manifest.name}: spawn error` };
+    } finally {
+      if (logFd != null) closeSync(logFd);
     }
   });
 
