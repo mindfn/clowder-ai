@@ -116,7 +116,26 @@ export function HubAccountsTab() {
   const displayCards = useMemo(() => [...builtinAccounts, ...customAccounts], [builtinAccounts, customAccounts]);
 
   if (loading) return <p className="text-sm text-cafe-muted">加载中...</p>;
-  if (!data) return <p className="text-sm text-cafe-muted">暂无数据</p>;
+  if (!data)
+    return (
+      <div className="flex flex-col items-center justify-center rounded-[28px] bg-[var(--console-card-bg)] py-16 text-center">
+        <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-[var(--console-card-soft-bg)]">
+          <svg
+            className="h-8 w-8 text-cafe-muted"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          >
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.35-4.35" />
+          </svg>
+        </div>
+        <h3 className="text-sm font-semibold text-cafe-secondary">暂无账号数据</h3>
+        <p className="mt-1 max-w-[220px] text-xs text-cafe-muted">无法加载账号列表，请检查服务连接后刷新重试</p>
+      </div>
+    );
 
   return (
     <div className="space-y-4">

@@ -122,15 +122,15 @@ export function SignalSourcesView() {
         </section>
 
         {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div className="rounded-[20px] border border-conn-red-ring bg-conn-red-bg px-3 py-2 text-sm text-conn-red-text">
             请求失败: {error}
           </div>
         )}
         {fetchResult && (
           <div
             className={[
-              'rounded-lg border px-3 py-2 text-sm',
-              fetchResult.ok ? 'border-green-200 bg-green-50 text-green-700' : 'border-red-200 bg-red-50 text-red-700',
+              'rounded-[20px] border px-3 py-2 text-sm',
+              fetchResult.ok ? 'border-conn-emerald-ring bg-conn-emerald-bg text-conn-emerald-text' : 'border-conn-red-ring bg-conn-red-bg text-conn-red-text',
             ].join(' ')}
           >
             <span className="font-semibold">{fetchResult.sourceId}</span>: {fetchResult.message}

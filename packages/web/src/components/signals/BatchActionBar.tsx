@@ -71,7 +71,7 @@ export function BatchActionBar({ selectedIds, onClear, onComplete }: BatchAction
         type="button"
         disabled={busy}
         onClick={() => void doBatch('delete')}
-        className="rounded border border-red-200 px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-50"
+        className="rounded border border-conn-red-ring px-2 py-1 text-conn-red-text hover:bg-conn-red-bg disabled:opacity-50"
       >
         删除
       </button>

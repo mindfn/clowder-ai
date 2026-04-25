@@ -181,7 +181,7 @@ export function StudyFoldArea({
                       <button
                         type="button"
                         onClick={() => void onUnlinkThread(t.threadId)}
-                        className="shrink-0 rounded border border-red-200 px-1.5 py-1 text-[10px] text-red-500 hover:bg-red-50"
+                        className="shrink-0 rounded border border-conn-red-ring px-1.5 py-1 text-[10px] text-conn-red-text hover:bg-conn-red-bg"
                         title="取消关联"
                       >
                         ×

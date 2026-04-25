@@ -89,7 +89,7 @@ export function StudyTimeline({ days = 7 }: StudyTimelineProps) {
       </div>
 
       {loading && <p className="text-xs text-cafe-muted">加载中...</p>}
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p className="text-xs text-conn-red-text">{error}</p>}
 
       {!loading && entries.length === 0 && (
         <p className="text-xs text-cafe-muted">最近 {selectedDays} 天没有学习活动。</p>

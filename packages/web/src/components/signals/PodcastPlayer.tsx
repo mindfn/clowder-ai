@@ -263,7 +263,7 @@ export function PodcastPlayer({ articleId, podcasts, onArtifactCreated }: Podcas
         </div>
       )}
 
-      {error && <p className="mt-1 text-[10px] text-red-500">{error}</p>}
+      {error && <p className="mt-1 text-[10px] text-conn-red-text">{error}</p>}
       {loading && <p className="mt-1 text-[10px] text-cafe-muted">加载中...</p>}
 
       {script && (

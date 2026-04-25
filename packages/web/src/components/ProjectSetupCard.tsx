@@ -146,9 +146,9 @@ export function ProjectSetupCard({
         </div>
 
         {state === 'error' && (
-          <div className="mb-3 px-3 py-2 rounded bg-red-50 border border-red-200">
-            <p className="text-xs text-red-600">{errorMsg}</p>
-            <button type="button" onClick={() => setState('idle')} className="text-xs text-red-500 underline mt-1">
+          <div className="mb-3 px-3 py-2 rounded-[20px] bg-conn-red-bg border border-conn-red-ring">
+            <p className="text-xs text-conn-red-text">{errorMsg}</p>
+            <button type="button" onClick={() => setState('idle')} className="text-xs text-conn-red-text underline mt-1">
               重试
             </button>
           </div>

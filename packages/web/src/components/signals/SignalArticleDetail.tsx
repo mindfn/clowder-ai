@@ -361,11 +361,11 @@ export function SignalArticleDetail({
         {onDelete &&
           (confirmDelete ? (
             <div className="flex items-center gap-2">
-              <span className="text-xs text-red-600">确认删除？</span>
+              <span className="text-xs text-conn-red-text">确认删除？</span>
               <button
                 type="button"
                 onClick={() => void handleDelete()}
-                className="rounded-md border border-red-300 px-3 py-1.5 text-xs text-red-700 hover:bg-red-50"
+                className="rounded-md border border-conn-red-ring px-3 py-1.5 text-xs text-conn-red-text hover:bg-conn-red-bg"
               >
                 删除
               </button>
@@ -381,7 +381,7 @@ export function SignalArticleDetail({
             <button
               type="button"
               onClick={() => setConfirmDelete(true)}
-              className="rounded-md border border-red-200 px-3 py-1.5 text-xs text-red-500 hover:bg-red-50"
+              className="rounded-md border border-conn-red-ring px-3 py-1.5 text-xs text-conn-red-text hover:bg-conn-red-bg"
             >
               删除
             </button>

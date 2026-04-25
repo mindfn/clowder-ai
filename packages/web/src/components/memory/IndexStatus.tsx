@@ -133,9 +133,9 @@ export function IndexStatus() {
 
   if (error) {
     return (
-      <div data-testid="index-status" className="rounded-lg border border-red-200 bg-red-50 p-4">
-        <p className="text-sm text-red-600">{error}</p>
-        <button type="button" onClick={fetchAll} className="mt-2 text-xs text-red-700 underline">
+      <div data-testid="index-status" className="rounded-[20px] border border-conn-red-ring bg-conn-red-bg p-4">
+        <p className="text-sm text-conn-red-text">{error}</p>
+        <button type="button" onClick={fetchAll} className="mt-2 text-xs text-conn-red-text underline">
           重试
         </button>
       </div>
@@ -154,7 +154,7 @@ export function IndexStatus() {
     <div data-testid="index-status" className="space-y-4">
       {/* Health badge */}
       <div className="flex items-center gap-2">
-        <span className={`inline-block h-2.5 w-2.5 rounded-full ${status.healthy ? 'bg-green-500' : 'bg-red-500'}`} />
+        <span className={`inline-block h-2.5 w-2.5 rounded-full ${status.healthy ? 'bg-conn-emerald-text' : 'bg-conn-red-text'}`} />
         <span className="text-sm font-medium text-cafe-black">{status.healthy ? 'Healthy' : 'Unhealthy'}</span>
         {status.reason && <span className="text-xs text-cafe-secondary">({status.reason})</span>}
       </div>

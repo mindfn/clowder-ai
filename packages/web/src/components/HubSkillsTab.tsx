@@ -54,7 +54,7 @@ function MountBadge({ mounted }: { mounted: boolean }) {
       <HubIcon name="check" className="h-3 w-3" />
     </span>
   ) : (
-    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-100 text-red-500">
+    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-conn-red-bg text-conn-red-text">
       <HubIcon name="x" className="h-3 w-3" />
     </span>
   );
@@ -280,7 +280,7 @@ export function HubSkillsTab() {
   }, [fetchSkills]);
 
   if (error) {
-    return <p className="text-sm text-red-500 bg-red-50 rounded-lg px-3 py-2">{error}</p>;
+    return <p className="text-sm text-conn-red-text bg-conn-red-bg border border-conn-red-ring rounded-[20px] px-3 py-2">{error}</p>;
   }
   if (!data) {
     return <p className="text-sm text-cafe-muted">加载中...</p>;

@@ -105,7 +105,7 @@ export function HubRoutingPolicyTab() {
           默认是猫猫自治路由；这里只放你明确要求的硬约束（比如预算/猫粮）。显式 @ 指名永远优先。
         </p>
 
-        {error && <p className="text-sm text-red-500 bg-red-50 rounded-lg px-3 py-2 mb-3">{error}</p>}
+        {error && <p className="text-sm text-conn-red-text bg-conn-red-bg border border-conn-red-ring rounded-[20px] px-3 py-2 mb-3">{error}</p>}
 
         <div className="space-y-3">
           <div className="flex items-start justify-between gap-3">

@@ -201,9 +201,9 @@ export function HealthReport() {
 
   if (error) {
     return (
-      <div data-testid="health-report" className="rounded-lg border border-red-200 bg-red-50 p-4">
-        <p className="text-sm text-red-600">{error}</p>
-        <button type="button" onClick={fetchReport} className="mt-2 text-xs text-red-700 underline">
+      <div data-testid="health-report" className="rounded-[20px] border border-conn-red-ring bg-conn-red-bg p-4">
+        <p className="text-sm text-conn-red-text">{error}</p>
+        <button type="button" onClick={fetchReport} className="mt-2 text-xs text-conn-red-text underline">
           重试
         </button>
       </div>

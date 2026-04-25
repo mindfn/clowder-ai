@@ -676,7 +676,7 @@ export function WorkspacePanel() {
 
               {/* Error */}
               {error && (
-                <div className="px-3 py-2 text-xs text-red-600 bg-red-50/80 border-b border-red-100">{error}</div>
+                <div className="px-3 py-2 text-xs text-conn-red-text bg-conn-red-bg border-b border-conn-red-ring">{error}</div>
               )}
 
               {/* F120: Port Discovery Toast — matches design Scene 2 */}
