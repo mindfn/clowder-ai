@@ -139,7 +139,7 @@ export function HubAccountsTab() {
 
   return (
     <div className="space-y-4">
-      {error && <p className="text-sm text-red-500 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+      {error && <p className="text-sm text-conn-red-text bg-conn-red-bg rounded-lg px-3 py-2">{error}</p>}
 
       <div className="flex items-start justify-between gap-3 px-1">
         <div>

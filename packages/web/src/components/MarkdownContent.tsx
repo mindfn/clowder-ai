@@ -130,7 +130,7 @@ function linkifyFilePaths(text: string): ReactNode[] {
           worktreeId={worktreeId}
         />
       ) : (
-        <span key={`fp${m.index}`} className="text-blue-400 font-mono text-[0.85em]">
+        <span key={`fp${m.index}`} className="text-[var(--color-cafe-accent)] font-mono text-[0.85em]">
           {display}
         </span>
       ),
@@ -178,7 +178,7 @@ function FilePathLink({
     <a
       href={href}
       onClick={handleClick}
-      className="text-blue-400 hover:text-blue-300 hover:underline font-mono text-[0.85em] cursor-pointer"
+      className="text-[var(--color-cafe-accent)] hover:opacity-80 hover:underline font-mono text-[0.85em] cursor-pointer"
       title={`点击在工作区中查看 · Cmd+Click 打开 VSCode\n${display}`}
     >
       {display}
@@ -230,7 +230,7 @@ const mdComponents: Components = {
         type="checkbox"
         checked={checked}
         readOnly
-        className="mt-1 h-3.5 w-3.5 rounded border-gray-300 text-blue-500 pointer-events-none"
+        className="mt-1 h-3.5 w-3.5 rounded border-[var(--console-border-soft)] text-[var(--color-cafe-accent)] pointer-events-none"
       />
     ) : (
       <input type={type} />
@@ -242,7 +242,7 @@ const mdComponents: Components = {
     </blockquote>
   ),
   a: ({ href, children }) => (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline break-all">
+    <a href={href} target="_blank" rel="noopener noreferrer" className="text-[var(--color-cafe-accent)] hover:underline break-all">
       {withMentions(children)}
     </a>
   ),
