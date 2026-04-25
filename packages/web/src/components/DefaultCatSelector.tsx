@@ -23,7 +23,6 @@ export function DefaultCatSelector({
   saveError,
   onRetry,
 }: DefaultCatSelectorProps) {
-
   return (
     <div className="rounded-xl border border-[var(--console-border-soft)] bg-cafe-surface p-4">
       <div className="flex items-center justify-between mb-3">
