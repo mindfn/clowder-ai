@@ -18,7 +18,7 @@ function FieldShell({
     <label className="flex flex-col gap-1.5 text-cafe sm:flex-row sm:items-center sm:gap-3">
       <span className={`text-[13px] font-semibold ${labelColor} sm:w-[140px] sm:shrink-0`}>
         {label}
-        {required && <span className="ml-0.5 text-red-400">*</span>}
+        {required && <span className="ml-0.5 text-conn-red-text">*</span>}
       </span>
       <div className="min-w-0 flex-1">{children}</div>
     </label>
@@ -40,7 +40,7 @@ export function SectionCard({
   const toneClasses: Record<string, string> = {
     neutral: 'border-[var(--console-border-soft)] bg-[var(--console-card-bg)]',
     success: 'border-[#CFE5D5] bg-[#F2FAF4]',
-    error: 'border-red-400 bg-red-50 animate-[shake_0.3s_ease-in-out]',
+    error: 'border-conn-red-ring bg-conn-red-bg animate-[shake_0.3s_ease-in-out]',
   };
   const toneClass = toneClasses[tone] ?? toneClasses.neutral;
   return (

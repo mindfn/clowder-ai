@@ -48,8 +48,8 @@ export function MobileInputToolbar({
         disabled={disabled || sendDisabled}
         className={`${btnBase} ${
           whisperMode
-            ? 'text-amber-600 bg-amber-50 border-amber-300'
-            : 'text-cafe-secondary bg-cafe-surface border-[var(--console-border-soft)] hover:border-amber-400 hover:text-amber-500'
+            ? 'text-conn-amber-text bg-conn-amber-bg border-conn-amber-ring'
+            : 'text-cafe-secondary bg-cafe-surface border-[var(--console-border-soft)] hover:border-conn-amber-ring hover:text-conn-amber-text'
         }`}
       >
         <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">

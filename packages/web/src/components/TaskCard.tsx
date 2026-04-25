@@ -37,9 +37,9 @@ const STATUS_STYLES: Record<TaskStatus, { text: string; border: string; pillBg: 
     pillBg: 'bg-cafe-surface-elevated text-cafe-muted',
   },
   done: {
-    text: 'text-green-600',
+    text: 'text-conn-emerald-text',
     border: 'border-l-green-600',
-    pillBg: 'bg-green-50 text-green-600 dark:bg-green-950/20',
+    pillBg: 'bg-conn-emerald-bg text-conn-emerald-text',
   },
 };
 

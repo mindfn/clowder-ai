@@ -140,7 +140,7 @@ export function VoteConfigModal({
                     <button
                       type="button"
                       onClick={() => removeOption(i)}
-                      className="text-cafe-muted hover:text-red-500 transition-colors px-1"
+                      className="text-cafe-muted hover:text-conn-red-text transition-colors px-1"
                       title={`删除选项 ${i + 1}`}
                       aria-label={`删除选项 ${i + 1}`}
                     >

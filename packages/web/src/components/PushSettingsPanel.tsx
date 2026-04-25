@@ -77,9 +77,9 @@ export function PushSettingsPanel() {
     return (
       <div className="space-y-3">
         <h3 className="text-base font-semibold text-cafe">推送通知</h3>
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 space-y-2">
-          <p className="text-sm text-amber-900 font-medium">{environmentHint ?? '当前浏览器不支持推送通知。'}</p>
-          <p className="text-xs text-amber-700">
+        <div className="rounded-xl border border-conn-amber-ring bg-conn-amber-bg px-4 py-4 space-y-2">
+          <p className="text-sm text-conn-amber-text font-medium">{environmentHint ?? '当前浏览器不支持推送通知。'}</p>
+          <p className="text-xs text-conn-amber-text">
             iPhone 用户请将 Clowder AI 添加到主屏幕后再开启推送（Safari 普通标签页不支持 Web Push）。
           </p>
         </div>
@@ -105,7 +105,7 @@ export function PushSettingsPanel() {
         <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
           <div className="rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface-elevated px-3 py-2">
             <div className="text-cafe-secondary">浏览器支持</div>
-            <div className="font-semibold text-emerald-700">已支持</div>
+            <div className="font-semibold text-conn-emerald-text">已支持</div>
           </div>
           <div className="rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface-elevated px-3 py-2">
             <div className="text-cafe-secondary">权限状态</div>

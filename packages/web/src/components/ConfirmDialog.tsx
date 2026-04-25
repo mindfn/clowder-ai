@@ -81,7 +81,7 @@ export function ConfirmDialog({
             onClick={onConfirm}
             disabled={!canConfirm}
             className={`px-4 py-2 text-sm text-white rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-              isDanger ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-500 hover:bg-blue-600'
+              isDanger ? 'bg-[var(--color-conn-red-text)] hover:opacity-90' : 'bg-[var(--color-cafe-accent)] hover:opacity-90'
             }`}
           >
             {confirmLabel}

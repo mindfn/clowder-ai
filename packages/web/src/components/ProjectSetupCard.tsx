@@ -88,7 +88,7 @@ export function ProjectSetupCard({
     return (
       <div data-testid="project-setup-card" className="flex justify-center mb-3">
         <div
-          className={`max-w-[85%] w-full rounded-lg border p-4 ${state === 'done' ? 'border-green-200 bg-green-50' : 'border-amber-200 bg-amber-50'}`}
+          className={`max-w-[85%] w-full rounded-lg border p-4 ${state === 'done' ? 'border-conn-emerald-ring bg-conn-emerald-bg' : 'border-conn-amber-ring bg-conn-amber-bg'}`}
         >
           <div className="flex items-center gap-4">
             <Image
@@ -99,23 +99,23 @@ export function ProjectSetupCard({
               className="flex-shrink-0 object-contain"
             />
             <div className="flex-1 min-w-0">
-              <p className={`text-sm font-medium ${state === 'done' ? 'text-green-800' : 'text-amber-800'}`}>
+              <p className={`text-sm font-medium ${state === 'done' ? 'text-conn-emerald-text' : 'text-conn-amber-text'}`}>
                 项目{' '}
-                <code className={`px-1 py-0.5 rounded text-xs ${state === 'done' ? 'bg-green-100' : 'bg-amber-100'}`}>
+                <code className={`px-1 py-0.5 rounded text-xs ${state === 'done' ? 'bg-conn-emerald-bg' : 'bg-conn-amber-bg'}`}>
                   {dirName}
                 </code>{' '}
                 {state === 'done' ? '初始化完成' : '正在初始化'}
               </p>
-              <p className={`text-xs mt-1 ${state === 'done' ? 'text-green-600' : 'text-amber-600'}`}>
+              <p className={`text-xs mt-1 ${state === 'done' ? 'text-conn-emerald-text' : 'text-conn-amber-text'}`}>
                 {state === 'done'
                   ? '协作规则（CLAUDE.md 等）、Skills 链接和方法论模板已就绪。'
                   : '正在写入协作规则（CLAUDE.md 等）、Skills 链接和方法论模板...'}
               </p>
               <div className="mt-2">
                 {state === 'processing' && (
-                  <span className="text-sm text-amber-700 animate-pulse">正在初始化治理...</span>
+                  <span className="text-sm text-conn-amber-text animate-pulse">正在初始化治理...</span>
                 )}
-                {state === 'done' && <span className="text-sm text-green-700">治理初始化完成，猫猫已就绪</span>}
+                {state === 'done' && <span className="text-sm text-conn-emerald-text">治理初始化完成，猫猫已就绪</span>}
               </div>
             </div>
           </div>

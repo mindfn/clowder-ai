@@ -245,7 +245,7 @@ function ComboField({
     <label className="flex flex-col gap-1.5 text-cafe sm:flex-row sm:items-center sm:gap-3">
       <span className="text-[13px] font-semibold text-cafe-secondary sm:w-[140px] sm:shrink-0">
         {label}
-        {required && <span className="ml-0.5 text-red-400">*</span>}
+        {required && <span className="ml-0.5 text-conn-red-text">*</span>}
       </span>
       <div className="min-w-0 flex-1">
         <input

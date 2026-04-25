@@ -53,7 +53,7 @@ export function BrakeSettingsPanel() {
             aria-checked={settingsEnabled}
             onClick={handleToggle}
             className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ${
-              settingsEnabled ? 'bg-blue-600' : 'bg-[var(--console-pill-bg)]'
+              settingsEnabled ? 'bg-[var(--color-cafe-accent)]' : 'bg-[var(--console-pill-bg)]'
             }`}
           >
             <span

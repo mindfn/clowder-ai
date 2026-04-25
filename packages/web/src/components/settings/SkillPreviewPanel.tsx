@@ -108,7 +108,7 @@ export function SkillPreviewPanel() {
           </div>
           <div className="console-code-pane">
             {loading && <p className="p-4 text-xs text-cafe-muted">加载中...</p>}
-            {error && <p className="p-4 text-xs text-red-500">{error}</p>}
+            {error && <p className="p-4 text-xs text-conn-red-text">{error}</p>}
             {content && (
               <pre className="max-h-[26rem] overflow-x-auto overflow-y-auto px-4 py-4 text-[12px] leading-6 text-cafe-secondary whitespace-pre-wrap">
                 {content}

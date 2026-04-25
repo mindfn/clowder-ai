@@ -32,9 +32,9 @@ interface ServiceState {
 }
 
 const STATUS_CONFIG: Record<ServiceStatus, { dot: string; label: string }> = {
-  running: { dot: 'bg-emerald-500', label: '运行中' },
+  running: { dot: 'bg-conn-emerald-text', label: '运行中' },
   stopped: { dot: 'bg-cafe-surface-sunken', label: '未启动' },
-  error: { dot: 'bg-red-500', label: '异常' },
+  error: { dot: 'bg-conn-red-text', label: '异常' },
   unknown: { dot: 'bg-cafe-surface-sunken', label: '未知' },
 };
 
