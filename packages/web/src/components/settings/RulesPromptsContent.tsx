@@ -66,7 +66,7 @@ export function RulesPromptsContent() {
   const toggle = (path: string) => setExpandedFile((prev) => (prev === path ? null : path));
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <Section
         title="共享规则"
         description="全部成员遵循的协作规则和流程规范（shared-rules.md 摘要注入系统提示词，SOP.md 为参考文档）"

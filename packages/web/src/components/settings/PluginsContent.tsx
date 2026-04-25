@@ -142,7 +142,7 @@ export function PluginsContent() {
     .filter((g) => g.items.length > 0);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {grouped.map((group) => (
         <section key={group.category} className="console-section-shell rounded-[28px] p-5 md:p-6">
           <div className="flex flex-wrap items-start justify-between gap-3">

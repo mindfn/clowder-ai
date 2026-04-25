@@ -17,16 +17,16 @@ export function OpsContent() {
 
   return (
     <div>
-      <div className="flex gap-1 mb-4 flex-wrap">
+      <div className="flex gap-1.5 mb-5 flex-wrap">
         {OPS_SUBSECTIONS.map((sub) => (
           <button
             key={sub.id}
             type="button"
             onClick={() => setActiveTab(sub.id)}
-            className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
+            className={`px-3.5 py-1.5 text-xs font-medium rounded-full transition-colors ${
               activeTab === sub.id
                 ? 'bg-cafe-accent text-white'
-                : 'bg-cafe-surface-elevated text-cafe-secondary hover:bg-[var(--console-hover-bg)]'
+                : 'console-pill text-cafe-secondary hover:text-cafe'
             }`}
           >
             {sub.label}
@@ -51,12 +51,10 @@ function OpsSubsectionContent({ subsection }: { subsection: string }) {
       return <HubLeaderboardTab />;
     case 'memory':
       return (
-        <>
+        <div className="space-y-6">
           <ServiceStatusPanel filterFeatures={['memory-semantic-search']} title="语义搜索服务" />
-          <div className="mt-4">
-            <HubMemoryTab />
-          </div>
-        </>
+          <HubMemoryTab />
+        </div>
       );
     case 'health':
       return (
