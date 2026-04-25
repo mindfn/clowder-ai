@@ -2,7 +2,7 @@ import type { StudyMeta } from '@cat-cafe/shared';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useIMEGuard } from '@/hooks/useIMEGuard';
 import { apiFetch } from '@/utils/api-client';
-import { getThreadHref } from '../ThreadSidebar/thread-navigation';
+import { detectRoutePrefix, getThreadHref } from '../ThreadSidebar/thread-navigation';
 import { PodcastPlayer } from './PodcastPlayer';
 
 interface StudyFoldAreaProps {
@@ -88,7 +88,7 @@ export function StudyFoldArea({
 
   // Use linked thread instead of hardcoded /thread/default
   const discussThread = resolveDiscussThread(studyMeta);
-  const discussLink = `${getThreadHref(discussThread)}?signal=${encodeURIComponent(articleId)}`;
+  const discussLink = `${getThreadHref(discussThread, detectRoutePrefix())}?signal=${encodeURIComponent(articleId)}`;
 
   // Note expansion state
   const [expandedNote, setExpandedNote] = useState<string | null>(null);
@@ -171,7 +171,7 @@ export function StudyFoldArea({
                 {threads.map((t) => (
                   <li key={t.threadId} className="flex items-center gap-1">
                     <a
-                      href={getThreadHref(t.threadId)}
+                      href={getThreadHref(t.threadId, detectRoutePrefix())}
                       className="flex flex-1 items-center justify-between rounded-md border border-[var(--console-border-soft)] bg-cafe-surface px-3 py-1.5 text-xs text-opus-dark hover:bg-opus-bg"
                     >
                       <span className="truncate">{t.threadId}</span>
