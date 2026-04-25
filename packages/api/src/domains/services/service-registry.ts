@@ -97,11 +97,10 @@ async function probeHealth(
   const url = resolveHealthUrl(manifest);
   if (!url) return { status: 'unknown' };
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
     const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeout);
     if (!res.ok) return { status: 'error', error: `HTTP ${res.status}` };
     const detail = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     return { status: 'running', detail };
@@ -118,6 +117,8 @@ async function probeHealth(
       return { status: 'stopped' };
     }
     return { status: 'error', error: msg };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
