@@ -73,9 +73,12 @@
   backdrop-filter: blur(18px);
 }
 
-.console-card,
+.console-card {
+  border: 1px solid var(--console-border-soft);
+}
+
 .console-list-card {
-  border: 1px solid transparent;
+  border: 1px solid color-mix(in srgb, var(--console-border-soft) 60%, transparent);
 }
 
 .console-shell-panel,
