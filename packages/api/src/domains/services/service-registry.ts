@@ -144,3 +144,30 @@ export async function getServiceState(manifest: ServiceManifest): Promise<Servic
 export async function getAllServiceStates(): Promise<ServiceState[]> {
   return Promise.all(KNOWN_SERVICES.map(getServiceState));
 }
+
+const cachedStates = new Map<string, ServiceState>();
+let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+
+export function startHealthHeartbeat(intervalMs = 60_000): void {
+  if (heartbeatInterval) return;
+  heartbeatInterval = setInterval(async () => {
+    for (const manifest of KNOWN_SERVICES) {
+      const state = await getServiceState(manifest);
+      cachedStates.set(manifest.id, state);
+    }
+  }, intervalMs);
+  if (typeof heartbeatInterval === 'object' && 'unref' in heartbeatInterval) {
+    heartbeatInterval.unref();
+  }
+}
+
+export function stopHealthHeartbeat(): void {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
+}
+
+export function getCachedServiceState(id: string): ServiceState | undefined {
+  return cachedStates.get(id);
+}

@@ -147,6 +147,68 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
     });
   });
 
+  // ── PATCH /api/capabilities/mcp/:id/env — update env vars after install ──
+  app.patch('/api/capabilities/mcp/:id/env', async (request, reply) => {
+    const userId = resolveUserId(request);
+    if (!userId) {
+      reply.status(401);
+      return { error: 'Identity required' };
+    }
+
+    const { id } = request.params as { id: string };
+    const body = request.body as { env?: Record<string, string>; projectPath?: string } | undefined;
+    if (!body?.env || typeof body.env !== 'object') {
+      reply.status(400);
+      return { error: 'Required: env (object with key-value pairs)' };
+    }
+
+    let projectRoot = getProjectRoot();
+    if (body.projectPath) {
+      const validated = await validateProjectPath(body.projectPath);
+      if (!validated) {
+        reply.status(400);
+        return { error: 'Invalid project path' };
+      }
+      projectRoot = validated;
+    }
+
+    return withCapabilityLock(projectRoot, async () => {
+      const config = await readCapabilitiesConfig(projectRoot);
+      if (!config) {
+        reply.status(404);
+        return { error: 'capabilities.json not found' };
+      }
+
+      const idx = config.capabilities.findIndex((c) => c.id === id && c.type === 'mcp');
+      if (idx === -1) {
+        reply.status(404);
+        return { error: `MCP "${id}" not found` };
+      }
+
+      const before = structuredClone(config.capabilities[idx]);
+      const cap = config.capabilities[idx];
+      if (!cap.mcpServer) {
+        reply.status(400);
+        return { error: `Capability "${id}" is not an MCP server` };
+      }
+      cap.mcpServer.env = { ...cap.mcpServer.env, ...body.env };
+
+      await writeCapabilitiesConfig(projectRoot, config);
+      await generateCliConfigs(config, getCliConfigPaths(projectRoot));
+
+      await appendAuditEntry(projectRoot, {
+        timestamp: new Date().toISOString(),
+        userId,
+        action: 'update',
+        capabilityId: id,
+        before,
+        after: config.capabilities[idx],
+      });
+
+      return { ok: true, capability: config.capabilities[idx] };
+    });
+  });
+
   // ── DELETE /api/capabilities/mcp/:id — soft/hard delete ──
   app.delete('/api/capabilities/mcp/:id', async (request, reply) => {
     const userId = resolveUserId(request);
