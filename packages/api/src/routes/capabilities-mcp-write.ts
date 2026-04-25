@@ -170,7 +170,9 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
     for (const [k, v] of Object.entries(body.env)) {
       if (!ENV_KEY_RE.test(k) || typeof v !== 'string') {
         reply.status(400);
-        return { error: `Invalid env entry: key must match [A-Za-z_][A-Za-z0-9_]*, value must be string (got key="${k}")` };
+        return {
+          error: `Invalid env entry: key must match [A-Za-z_][A-Za-z0-9_]*, value must be string (got key="${k}")`,
+        };
       }
     }
 
