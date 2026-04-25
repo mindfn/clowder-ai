@@ -142,7 +142,9 @@ function CatRow({
         <div className="text-xs text-cafe-muted truncate">{cat.roleDescription}</div>
       </div>
       {isActive && (
-        <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--console-pill-bg)] text-cafe-muted shrink-0">执行中</span>
+        <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--console-pill-bg)] text-cafe-muted shrink-0">
+          执行中
+        </span>
       )}
     </button>
   );
