@@ -160,7 +160,7 @@ export function IndexStatus() {
       </div>
 
       {/* Stats */}
-      <div className="rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] p-3">
+      <div className="rounded-lg bg-[var(--console-card-bg)] p-3">
         <StatusRow label="Backend" value={status.backend} />
         <StatusRow label="Documents" value={status.docsCount} />
         <StatusRow label="Threads" value={status.threadsCount} />
@@ -175,7 +175,7 @@ export function IndexStatus() {
 
       {/* Feature flags */}
       {evidenceVars.length > 0 && (
-        <div className="rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] p-3">
+        <div className="rounded-lg bg-[var(--console-card-bg)] p-3">
           <h3 className="mb-2 text-xs font-semibold text-cafe-black">功能开关</h3>
           {evidenceVars.map((v) => {
             const isOn = v.currentValue === 'on';
@@ -214,7 +214,7 @@ export function IndexStatus() {
 
       {/* Config reference — all non-toggle evidence env vars */}
       {configVars.length > 0 && (
-        <div className="rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] p-3">
+        <div className="rounded-lg bg-[var(--console-card-bg)] p-3">
           <h3 className="mb-2 text-xs font-semibold text-cafe-black">配置参考</h3>
           <p className="mb-2 text-[10px] text-cafe-secondary">以下配置需在 .env 中设置，修改后重启生效。</p>
           {configVars.map((v) => (
@@ -235,7 +235,7 @@ export function IndexStatus() {
       <button
         type="button"
         onClick={fetchAll}
-        className="rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-3 py-1.5 text-xs text-cafe-secondary transition-colors hover:bg-cafe-surface"
+        className="console-button-ghost text-xs px-3 py-1.5"
       >
         刷新状态
       </button>

@@ -27,7 +27,7 @@ export type { Capabilities, CatConfig, ConfigData, ContextBudget } from './confi
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="console-card rounded-[24px] p-4 md:p-5">
+    <section className="rounded-[24px] bg-[var(--console-card-bg)] p-4 md:p-5">
       <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">{title}</h3>
       {children}
     </section>
@@ -37,7 +37,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 function KV({ label, value }: { label: string; value: string | number | boolean }) {
   const display = typeof value === 'boolean' ? (value ? '是' : '否') : String(value);
   return (
-    <div className="flex justify-between text-xs text-cafe-secondary">
+    <div className="flex justify-between border-b border-[var(--console-border-soft)] py-2 text-xs text-cafe-secondary last:border-b-0">
       <span>{label}</span>
       <span className="font-medium text-right">{display}</span>
     </div>
@@ -248,7 +248,7 @@ function BubbleToggle({
   }, [display, configKey, onChanged]);
 
   return (
-    <div className="flex items-center justify-between text-xs text-cafe-secondary">
+    <div className="flex items-center justify-between border-b border-[var(--console-border-soft)] py-2 text-xs text-cafe-secondary last:border-b-0">
       <span>{label}</span>
       <button
         onClick={toggle}
@@ -266,48 +266,38 @@ export function SystemTab({ config, onConfigChange }: { config: ConfigData; onCo
   return (
     <>
       <Section title="气泡显示">
-        <div className="space-y-1.5">
-          <BubbleToggle
-            label="Thinking 默认"
-            value={config.ui?.bubbleDefaults?.thinking ?? 'collapsed'}
-            configKey="ui.bubble.thinking"
-            onChanged={handleChanged}
-          />
-          <BubbleToggle
-            label="CLI 气泡默认"
-            value={config.ui?.bubbleDefaults?.cliOutput ?? 'collapsed'}
-            configKey="ui.bubble.cliOutput"
-            onChanged={handleChanged}
-          />
-        </div>
+        <BubbleToggle
+          label="Thinking 默认"
+          value={config.ui?.bubbleDefaults?.thinking ?? 'collapsed'}
+          configKey="ui.bubble.thinking"
+          onChanged={handleChanged}
+        />
+        <BubbleToggle
+          label="CLI 气泡默认"
+          value={config.ui?.bubbleDefaults?.cliOutput ?? 'collapsed'}
+          configKey="ui.bubble.cliOutput"
+          onChanged={handleChanged}
+        />
       </Section>
       <Section title="A2A 猫猫互调">
-        <div className="space-y-1.5">
-          <KV label="启用" value={config.a2a.enabled} />
-          <KV label="最大深度" value={config.a2a.maxDepth} />
-        </div>
+        <KV label="启用" value={config.a2a.enabled} />
+        <KV label="最大深度" value={config.a2a.maxDepth} />
       </Section>
       <Section title="记忆 (F3-lite)">
-        <div className="space-y-1.5">
-          <KV label="启用" value={config.memory.enabled} />
-          <KV label="每线程最大 key 数" value={config.memory.maxKeysPerThread} />
-        </div>
+        <KV label="启用" value={config.memory.enabled} />
+        <KV label="每线程最大 key 数" value={config.memory.maxKeysPerThread} />
       </Section>
       {config.codexExecution ? (
         <Section title="Codex 推理执行">
-          <div className="space-y-1.5">
-            <KV label="Model" value={config.codexExecution.model} />
-            <KV label="Auth Mode" value={config.codexExecution.authMode} />
-            <KV label="Pass --model Arg" value={config.codexExecution.passModelArg} />
-          </div>
+          <KV label="Model" value={config.codexExecution.model} />
+          <KV label="Auth Mode" value={config.codexExecution.authMode} />
+          <KV label="Pass --model Arg" value={config.codexExecution.passModelArg} />
         </Section>
       ) : null}
       <Section title="治理 & 降级">
-        <div className="space-y-1.5">
-          <KV label="降级策略启用" value={config.governance.degradationEnabled} />
-          <KV label="Done 超时" value={`${config.governance.doneTimeoutMs / 1000}s`} />
-          <KV label="Heartbeat 间隔" value={`${config.governance.heartbeatIntervalMs / 1000}s`} />
-        </div>
+        <KV label="降级策略启用" value={config.governance.degradationEnabled} />
+        <KV label="Done 超时" value={`${config.governance.doneTimeoutMs / 1000}s`} />
+        <KV label="Heartbeat 间隔" value={`${config.governance.heartbeatIntervalMs / 1000}s`} />
       </Section>
     </>
   );
