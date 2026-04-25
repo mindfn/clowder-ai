@@ -43,12 +43,9 @@ export function CallbackEnvPanel() {
 
   if (error) {
     return (
-      <p
-        className="console-card rounded-[22px] px-4 py-3 text-xs"
-        style={{ borderColor: 'var(--notice-error-border)', color: 'var(--notice-error-label)' }}
-      >
+      <div className="console-status-chip" data-status="error">
         {error}
-      </p>
+      </div>
     );
   }
   if (vars.length === 0) return null;

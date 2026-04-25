@@ -134,12 +134,9 @@ export function McpInstallForm({ projectPath, onInstalled, onClose }: McpInstall
       </div>
 
       {error && (
-        <p
-          className="console-card rounded-[18px] px-3 py-2 text-xs"
-          style={{ borderColor: 'var(--notice-error-border)', color: 'var(--notice-error-label)' }}
-        >
+        <div className="console-status-chip" data-status="error">
           {error}
-        </p>
+        </div>
       )}
 
       <div className="console-section-shell rounded-[24px] p-4">

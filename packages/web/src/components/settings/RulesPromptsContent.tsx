@@ -56,12 +56,9 @@ export function RulesPromptsContent() {
 
   if (error) {
     return (
-      <p
-        className="console-card rounded-[22px] px-4 py-3 text-sm"
-        style={{ borderColor: 'var(--notice-error-border)', color: 'var(--notice-error-label)' }}
-      >
+      <div className="console-status-chip" data-status="error">
         {error}
-      </p>
+      </div>
     );
   }
   if (!data) return <p className="text-sm text-cafe-muted">加载中...</p>;

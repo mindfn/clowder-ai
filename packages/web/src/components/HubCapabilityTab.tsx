@@ -189,34 +189,29 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
   return (
     <div className="space-y-4">
       {error && (
-        <p
-          className="console-card rounded-[22px] px-4 py-3 text-sm"
-          style={{ borderColor: 'var(--notice-error-border)', color: 'var(--notice-error-label)' }}
-        >
+        <div className="console-status-chip" data-status="error">
           {error}
-        </p>
+        </div>
       )}
 
       {/* Header: project + filters */}
-      <div className="console-card rounded-[24px] p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <ProjectSelector
-            resolvedPath={resolvedProjectPath}
-            knownProjects={knownProjects}
-            currentSelection={projectPath}
-            onSwitch={switchProject}
-          />
-          <FilterChips
-            label="来源"
-            value={filterSource}
-            options={[
-              { value: 'all', label: '全部' },
-              { value: 'cat-cafe', label: 'Clowder AI' },
-              { value: 'external', label: '外部' },
-            ]}
-            onChange={(v) => setFilterSource(v as FilterSource)}
-          />
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <ProjectSelector
+          resolvedPath={resolvedProjectPath}
+          knownProjects={knownProjects}
+          currentSelection={projectPath}
+          onSwitch={switchProject}
+        />
+        <FilterChips
+          label="来源"
+          value={filterSource}
+          options={[
+            { value: 'all', label: '全部' },
+            { value: 'cat-cafe', label: 'Clowder AI' },
+            { value: 'external', label: '外部' },
+          ]}
+          onChange={(v) => setFilterSource(v as FilterSource)}
+        />
       </div>
 
       {/* Skill health banner */}
@@ -233,15 +228,13 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
           </div>
 
           {showAddMcp && (
-            <div className="console-card rounded-[24px] p-4">
-              <McpInstallForm
-                projectPath={projectPath ?? undefined}
-                onInstalled={() => {
-                  fetchCapabilities(projectPath ?? undefined);
-                }}
-                onClose={() => setShowAddMcp(false)}
-              />
-            </div>
+            <McpInstallForm
+              projectPath={projectPath ?? undefined}
+              onInstalled={() => {
+                fetchCapabilities(projectPath ?? undefined);
+              }}
+              onClose={() => setShowAddMcp(false)}
+            />
           )}
 
           <CapabilitySection
@@ -291,8 +284,8 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
         : section === 'skills'
           ? catCafeSkillGroups.length === 0 && externalSkills.length === 0
           : filtered.length === 0) && (
-        <div className="console-card flex flex-col items-center justify-center rounded-[28px] py-16 text-center">
-          <div className="console-card-soft mb-4 flex h-20 w-20 items-center justify-center rounded-full">
+        <div className="flex flex-col items-center justify-center rounded-[28px] bg-[var(--console-card-bg)] py-16 text-center">
+          <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-[var(--console-card-soft-bg)]">
             <svg
               className="h-8 w-8 text-cafe-muted"
               viewBox="0 0 24 24"
