@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
-import { getThreadHref } from '../ThreadSidebar/thread-navigation';
+import { detectRoutePrefix, getThreadHref } from '../ThreadSidebar/thread-navigation';
 
 export type MemoryTab = 'feed' | 'search' | 'status' | 'health';
 
@@ -28,8 +28,8 @@ export function resolveReferrerThread(urlSearch: string, storeThreadId: string |
 /**
  * Pure: build back href from referrer thread.
  */
-export function buildBackHref(referrerThread: string | null): string {
-  return getThreadHref(referrerThread ?? 'default');
+export function buildBackHref(referrerThread: string | null, prefix = ''): string {
+  return getThreadHref(referrerThread ?? 'default', prefix);
 }
 
 /**
@@ -61,7 +61,7 @@ export function MemoryNav({ active }: MemoryNavProps) {
   const fromSuffix = referrerThread ? `?from=${encodeURIComponent(referrerThread)}` : '';
 
   const items = useMemo(() => buildMemoryTabItems(fromSuffix), [fromSuffix]);
-  const backHref = buildBackHref(referrerThread);
+  const backHref = buildBackHref(referrerThread, detectRoutePrefix());
 
   return (
     <nav aria-label="Memory navigation" className="flex items-center gap-2">
