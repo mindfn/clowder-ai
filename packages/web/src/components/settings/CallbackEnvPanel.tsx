@@ -51,7 +51,7 @@ export function CallbackEnvPanel() {
   if (vars.length === 0) return null;
 
   return (
-    <section className="console-section-shell rounded-[28px] p-5 md:p-6">
+    <section className="console-section-shell rounded-xl p-5 md:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1.5">
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">MCP Callback</p>

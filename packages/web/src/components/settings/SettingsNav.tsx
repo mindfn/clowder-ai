@@ -16,7 +16,7 @@ function NavItem({ section, active, onSelect }: { section: SettingsSection; acti
       type="button"
       onClick={onSelect}
       data-active={active ? 'true' : 'false'}
-      className="console-nav-item flex w-full items-center gap-3 rounded-[20px] px-3.5 py-3 text-left"
+      className="console-nav-item flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-left"
       style={
         {
           ['--settings-accent' as string]: section.color,
@@ -71,7 +71,7 @@ export function SettingsNav({ activeSection, onSelect, searchQuery }: SettingsNa
   return (
     <nav className="flex flex-col gap-1.5 px-1 py-2" aria-label="设置导航">
       {filtered.length === 0 && q ? (
-        <p className="console-card-soft rounded-[20px] px-4 py-3 text-xs text-cafe-muted">没有匹配的设置分区</p>
+        <p className="console-card-soft rounded-xl px-4 py-3 text-xs text-cafe-muted">没有匹配的设置分区</p>
       ) : (
         filtered.map((section) => (
           <NavItem

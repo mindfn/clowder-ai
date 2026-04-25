@@ -67,7 +67,7 @@ export function SkillPreviewPanel() {
   if (skills.length === 0) return null;
 
   return (
-    <section className="console-section-shell rounded-[28px] p-5 md:p-6">
+    <section className="console-section-shell rounded-xl p-5 md:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1.5">
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">Skills</p>
@@ -96,7 +96,7 @@ export function SkillPreviewPanel() {
         ))}
       </div>
       {selectedSkill && (
-        <div className="console-table-shell mt-4 rounded-[24px] overflow-hidden">
+        <div className="console-table-shell mt-4 rounded-xl overflow-hidden">
           <div className="flex items-center justify-between gap-3 px-4 py-3">
             <p className="text-sm font-medium text-cafe-black">
               {selectedSkill}

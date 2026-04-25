@@ -74,7 +74,7 @@ export function VoteConfigModal({
     >
       <div
         ref={modalRef}
-        className="bg-cafe-surface rounded-xl shadow-2xl w-full max-w-[480px] mx-4 max-h-[80vh] flex flex-col overflow-hidden"
+        className="bg-cafe-surface rounded-xl border border-[var(--cafe-border)] shadow-2xl w-full max-w-[480px] mx-4 max-h-[80vh] flex flex-col overflow-hidden"
       >
         {/* Header */}
         <div className="px-5 py-4 border-b border-[var(--console-border-soft)] flex items-center justify-between">

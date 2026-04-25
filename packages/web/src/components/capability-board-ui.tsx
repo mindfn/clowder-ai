@@ -134,7 +134,7 @@ export function CapabilitySection({
 }) {
   if (items.length === 0) return null;
   return (
-    <section className="console-section-shell rounded-[28px] p-5 md:p-6">
+    <section className="console-section-shell rounded-xl p-5 md:p-6">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           {icon}
@@ -190,7 +190,7 @@ function CapabilityCard({
     catFamilies.length > 0;
 
   return (
-    <div className="console-list-card rounded-[24px]" data-active={expanded ? 'true' : 'false'}>
+    <div className="console-list-card rounded-xl" data-active={expanded ? 'true' : 'false'}>
       {/* Header */}
       <div className={`flex items-center gap-3 px-4 transition-all duration-300 ${expanded ? 'py-4' : 'py-3.5'}`}>
         <button
@@ -558,7 +558,7 @@ export function SkillHealthBanner({ health, items }: { health: SkillHealthSummar
 
   return (
     <div
-      className={`flex items-start gap-2.5 rounded-[20px] px-4 py-3 text-xs border ${
+      className={`flex items-start gap-2.5 rounded-xl px-4 py-3 text-xs border ${
         allGood
           ? 'border-conn-emerald-ring bg-conn-emerald-bg text-conn-emerald-text'
           : 'border-conn-amber-ring bg-conn-amber-bg text-conn-amber-text'

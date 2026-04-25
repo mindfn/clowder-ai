@@ -11,7 +11,7 @@ const BUILT_IN_ENTRIES = Object.entries(builtInTerms as Record<string, string>).
 
 function Section({ eyebrow, title, children }: { eyebrow: string; title: string; children: React.ReactNode }) {
   return (
-    <section className="console-section-shell rounded-[28px] p-5 md:p-6">
+    <section className="console-section-shell rounded-xl p-5 md:p-6">
       <div className="space-y-1.5 mb-3">
         <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">{eyebrow}</p>
         <h3 className="text-sm font-semibold text-cafe-secondary">{title}</h3>
@@ -234,7 +234,7 @@ export function VoiceSettingsPanel() {
           <select
             value={settings.language}
             onChange={(e) => setLanguage(e.target.value as typeof settings.language)}
-            className="text-xs border border-[var(--console-border-soft)] rounded px-2 py-1.5 focus:outline-none focus:border-cafe-accent"
+            className="console-form-input text-xs"
           >
             <option value="zh">中文</option>
             <option value="en">English</option>

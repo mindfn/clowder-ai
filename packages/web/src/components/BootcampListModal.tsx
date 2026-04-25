@@ -116,13 +116,13 @@ export function BootcampListModal({ open, onClose, currentThreadId }: BootcampLi
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
       data-testid="bootcamp-list-modal"
     >
-      <div className="bg-cafe-surface rounded-2xl shadow-xl w-[480px] max-h-[80vh] flex flex-col overflow-hidden">
+      <div className="bg-cafe-surface rounded-xl border border-[var(--cafe-border)] shadow-xl w-[480px] max-h-[80vh] flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--console-border-soft)]">
           <div className="flex items-center gap-2.5">

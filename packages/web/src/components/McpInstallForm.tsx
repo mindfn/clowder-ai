@@ -100,7 +100,7 @@ export function McpInstallForm({ projectPath, onInstalled, onClose }: McpInstall
   if (result) {
     return (
       <div className="space-y-4">
-        <div className="console-card-soft rounded-[24px] px-4 py-4">
+        <div className="console-card-soft rounded-xl px-4 py-4">
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="font-medium text-conn-green-text">MCP &ldquo;{id}&rdquo; 已安装</span>
             <span
@@ -139,7 +139,7 @@ export function McpInstallForm({ projectPath, onInstalled, onClose }: McpInstall
         </div>
       )}
 
-      <div className="console-section-shell rounded-[24px] p-4">
+      <div className="console-section-shell rounded-xl p-4">
         <div className="space-y-3">
           <Field label="ID" required>
             <input
@@ -175,7 +175,7 @@ export function McpInstallForm({ projectPath, onInstalled, onClose }: McpInstall
       </div>
 
       {transport === 'stdio' && (
-        <div className="console-section-shell rounded-[24px] p-4">
+        <div className="console-section-shell rounded-xl p-4">
           <div className="space-y-1.5">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cafe-muted">Local Command</p>
             <p className="text-sm text-cafe-secondary">为本地启动的 MCP Server 指定命令和参数。</p>
@@ -204,7 +204,7 @@ export function McpInstallForm({ projectPath, onInstalled, onClose }: McpInstall
       )}
 
       {transport === 'streamableHttp' && (
-        <div className="console-section-shell rounded-[24px] p-4">
+        <div className="console-section-shell rounded-xl p-4">
           <div className="space-y-1.5">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cafe-muted">Remote Endpoint</p>
             <p className="text-sm text-cafe-secondary">把远程 MCP Server 挂进当前项目，适合已有托管服务的场景。</p>
@@ -223,7 +223,7 @@ export function McpInstallForm({ projectPath, onInstalled, onClose }: McpInstall
         </div>
       )}
 
-      <div className="console-section-shell rounded-[24px] p-4">
+      <div className="console-section-shell rounded-xl p-4">
         <div className="space-y-1.5">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cafe-muted">Advanced</p>
           <p className="text-sm text-cafe-secondary">高级配置只在需要定制 resolver 或临时注入环境变量时填写。</p>
@@ -265,7 +265,7 @@ export function McpInstallForm({ projectPath, onInstalled, onClose }: McpInstall
       </div>
 
       {preview && (
-        <div className="console-card-soft rounded-[24px] p-4 space-y-3">
+        <div className="console-card-soft rounded-xl p-4 space-y-3">
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cafe-muted">Install Preview</p>

@@ -196,7 +196,7 @@ export function HubConnectorConfigTab() {
         return (
           <div
             key={platform.id}
-            className="console-list-card rounded-[24px] overflow-hidden"
+            className="console-list-card rounded-xl overflow-hidden"
             data-testid={`platform-card-${platform.id}`}
             data-guide-id={`connector.${platform.id}`}
             data-active={isExpanded ? 'true' : 'false'}

@@ -72,7 +72,7 @@ function SettingsShellInner() {
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[68rem] space-y-4 pb-5">
-          <section className="console-shell-panel rounded-[32px] px-5 py-5 md:px-7 md:py-6">
+          <section className="console-shell-panel rounded-2xl px-5 py-5 md:px-7 md:py-6">
             <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
               <div className="space-y-2">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-cafe-muted">Settings</p>

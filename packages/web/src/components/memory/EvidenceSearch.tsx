@@ -192,7 +192,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
             value={depth === 'raw' ? 'lexical' : mode}
             onChange={(e) => setMode(e.target.value as EvidenceSearchParams['mode'])}
             disabled={depth === 'raw'}
-            className="rounded border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-1.5 py-0.5 text-xs disabled:opacity-50"
+            className="console-form-input text-xs"
           >
             <option value="hybrid">混合</option>
             <option value="lexical">精确</option>
@@ -207,7 +207,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
             onChange={(e) =>
               setScope(e.target.value === 'all' ? undefined : (e.target.value as EvidenceSearchParams['scope']))
             }
-            className="rounded border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-1.5 py-0.5 text-xs"
+            className="console-form-input text-xs"
           >
             <option value="all">全部</option>
             <option value="docs">文档</option>
@@ -223,7 +223,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
             onChange={(e) =>
               setDepth(e.target.value === 'summary' ? undefined : (e.target.value as EvidenceSearchParams['depth']))
             }
-            className="rounded border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-1.5 py-0.5 text-xs"
+            className="console-form-input text-xs"
           >
             {DEPTH_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -239,7 +239,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
             onChange={(e) =>
               setDimension(e.target.value === 'all' ? undefined : (e.target.value as EvidenceSearchParams['dimension']))
             }
-            className="rounded border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-1.5 py-0.5 text-xs"
+            className="console-form-input text-xs"
             data-testid="evidence-dimension-select"
           >
             <option value="all">全部</option>

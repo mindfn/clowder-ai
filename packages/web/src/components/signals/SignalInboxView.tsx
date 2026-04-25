@@ -298,7 +298,7 @@ export function SignalInboxView() {
           <select
             value={filters.status}
             onChange={(event) => handleStatusTab(event.target.value as SignalArticleFilters['status'])}
-            className="console-form-input !w-auto"
+            className="console-form-input"
           >
             <option value="inbox">Inbox</option>
             <option value="starred">收藏</option>
@@ -312,7 +312,7 @@ export function SignalInboxView() {
               setFilters((current) => ({ ...current, tier: event.target.value as SignalArticleFilters['tier'] }))
             }
             name="tier"
-            className="console-form-input !w-auto"
+            className="console-form-input"
           >
             <option value="all">Tier: 全部</option>
             <option value="1">Tier 1</option>
@@ -324,7 +324,7 @@ export function SignalInboxView() {
             value={filters.source}
             onChange={(event) => setFilters((current) => ({ ...current, source: event.target.value }))}
             name="source"
-            className="console-form-input !w-auto"
+            className="console-form-input"
           >
             <option value="all">来源: 全部</option>
             {sources.map((source) => (

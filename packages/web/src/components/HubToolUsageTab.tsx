@@ -91,7 +91,7 @@ export function HubToolUsageTab() {
           <select
             value={catFilter}
             onChange={(e) => setCatFilter(e.target.value)}
-            className="rounded-lg border border-[#E8DDD2] bg-[var(--console-card-bg)] px-2 py-1 text-xs text-[#5C4A3A]"
+            className="console-form-input text-xs"
           >
             <option value="">全部猫猫</option>
             {Object.entries(CAT_LABELS).map(([id, label]) => (
@@ -103,7 +103,7 @@ export function HubToolUsageTab() {
           <select
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            className="rounded-lg border border-[#E8DDD2] bg-[var(--console-card-bg)] px-2 py-1 text-xs text-[#5C4A3A]"
+            className="console-form-input text-xs"
           >
             <option value="">全部类型</option>
             {CATEGORIES.map((cat) => (
@@ -112,11 +112,7 @@ export function HubToolUsageTab() {
               </option>
             ))}
           </select>
-          <select
-            value={days}
-            onChange={(e) => setDays(Number(e.target.value))}
-            className="rounded-lg border border-[#E8DDD2] bg-[var(--console-card-bg)] px-2 py-1 text-xs text-[#5C4A3A]"
-          >
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="console-form-input text-xs">
             <option value={7}>近 7 天</option>
             <option value={14}>近 14 天</option>
             <option value={30}>近 30 天</option>

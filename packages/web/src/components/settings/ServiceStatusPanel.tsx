@@ -103,7 +103,7 @@ export function ServiceStatusPanel({ filterFeatures, title, expandable }: Servic
   const showDetail = expandable ?? !filterFeatures;
 
   return (
-    <div className="console-card rounded-[26px] p-4 md:p-5">
+    <div className="console-card rounded-xl p-4 md:p-5">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div className="space-y-1">
           {title && <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">{title}</p>}
@@ -125,7 +125,7 @@ export function ServiceStatusPanel({ filterFeatures, title, expandable }: Servic
           return (
             <div
               key={s.manifest.id}
-              className="console-list-card rounded-[22px] px-4 py-4"
+              className="console-list-card rounded-xl px-4 py-4"
               data-active={isExpanded ? 'true' : 'false'}
             >
               <div className="flex items-center justify-between gap-3 text-xs">
@@ -188,7 +188,7 @@ export function ServiceStatusPanel({ filterFeatures, title, expandable }: Servic
 function ServiceDetail({ service, onHealthCheck }: { service: ServiceState; onHealthCheck: () => void }) {
   const m = service.manifest;
   return (
-    <div className="console-card-soft mt-4 space-y-3 rounded-[20px] px-4 py-4 text-xs text-cafe-muted">
+    <div className="console-card-soft mt-4 space-y-3 rounded-xl px-4 py-4 text-xs text-cafe-muted">
       <div className="console-data-grid">
         <DetailTile label="类型" value={m.type} />
         {m.port ? <DetailTile label="端口" value={String(m.port)} /> : null}

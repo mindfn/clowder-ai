@@ -15,7 +15,7 @@ describe('resolvePluginStatuses', () => {
     expect(platform.length).toBe(3);
     for (const p of platform) {
       expect(p.status).toBe('active');
-      expect(p.statusLabel).toBe('内置运行中');
+      expect(p.statusLabel).toBe('已连接');
     }
   });
 
@@ -44,7 +44,7 @@ describe('resolvePluginStatuses', () => {
     const voice = result.find((p) => p.id === 'voice-companion');
 
     expect(voice?.status).toBe('active');
-    expect(voice?.statusLabel).toBe('运行中');
+    expect(voice?.statusLabel).toBe('已连接');
   });
 
   it('service plugins show configured when features known but not running', () => {
@@ -67,9 +67,9 @@ describe('resolvePluginStatuses', () => {
     const browser = result.find((p) => p.id === 'browser-automation');
 
     expect(voice?.status).toBe('available');
-    expect(voice?.statusLabel).toBe('可用');
+    expect(voice?.statusLabel).toBe('未连接');
     expect(browser?.status).toBe('available');
-    expect(browser?.statusLabel).toBe('可用');
+    expect(browser?.statusLabel).toBe('未连接');
   });
 
   it('platform status is independent of service registry contents', () => {

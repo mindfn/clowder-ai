@@ -115,11 +115,11 @@ export function SectionGroup({
 
   return (
     <div className="mt-1 relative group/section">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 hover:bg-cafe-surface-elevated transition-colors"
+      <div
+        role="group"
+        className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 hover:bg-cafe-surface-elevated transition-colors cursor-pointer"
         title={projectPath && projectPath !== 'default' ? projectPath : undefined}
+        onClick={onToggle}
       >
         {/* Chevron */}
         <svg
@@ -220,7 +220,7 @@ export function SectionGroup({
             <path d={ICON_PATHS.pin} />
           </ActionButton>
         )}
-      </button>
+      </div>
 
       {/* F095 Phase F: Context menu dropdown */}
       {showMenu && (

@@ -227,7 +227,7 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
           </div>
 
           {showAddMcp && (
-            <div className="console-section-shell rounded-[28px] p-5 md:p-6">
+            <div className="console-section-shell rounded-xl p-5 md:p-6">
               <McpInstallForm
                 projectPath={projectPath ?? undefined}
                 onInstalled={() => {
@@ -285,7 +285,7 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
         : section === 'skills'
           ? catCafeSkillGroups.length === 0 && externalSkills.length === 0
           : filtered.length === 0) && (
-        <div className="flex flex-col items-center justify-center rounded-[28px] bg-[var(--console-card-bg)] py-16 text-center">
+        <div className="flex flex-col items-center justify-center rounded-xl bg-[var(--console-card-bg)] py-16 text-center">
           <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-[var(--console-card-soft-bg)]">
             <svg
               className="h-8 w-8 text-cafe-muted"
@@ -308,7 +308,7 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
       <CapabilityAuditLog projectPath={projectPath ?? undefined} />
 
       {/* Summary */}
-      <div className="console-card-soft mt-4 rounded-[24px] px-4 py-3">
+      <div className="console-card-soft mt-4 rounded-xl px-4 py-3">
         <div className="flex items-center justify-between text-xs text-cafe-muted">
           <span>共 {items.length} 项</span>
           <span className="flex gap-3">

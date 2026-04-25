@@ -74,11 +74,11 @@
 }
 
 .console-card {
-  border: 1px solid var(--console-border-soft);
+  /* border already set in combined rule above */
 }
 
 .console-list-card {
-  border: 1px solid color-mix(in srgb, var(--console-border-soft) 60%, transparent);
+  border: 1px solid var(--console-border-soft);
 }
 
 .console-shell-panel,
@@ -93,6 +93,7 @@
 
 .console-card,
 .console-section-shell {
+  border: 1px solid var(--console-border-soft);
   background: color-mix(in srgb, var(--console-card-bg) 94%, transparent);
 }
 

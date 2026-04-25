@@ -191,7 +191,7 @@ export function DirectoryPickerModal({
     >
       <div
         ref={modalRef}
-        className="bg-cafe-surface rounded-xl shadow-2xl w-full max-w-[640px] mx-4 max-h-[85vh] flex flex-col overflow-hidden"
+        className="bg-cafe-surface rounded-xl border border-[var(--cafe-border)] shadow-2xl w-full max-w-[640px] mx-4 max-h-[85vh] flex flex-col overflow-hidden"
       >
         {/* ── Header + Title ── */}
         <div className="px-5 pt-4 pb-3 border-b border-[var(--console-border-soft)]">

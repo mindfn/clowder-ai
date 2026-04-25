@@ -113,7 +113,7 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="console-section-shell rounded-[28px] p-5 md:p-6">
+    <section className="console-section-shell rounded-xl p-5 md:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1.5">
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">Governance</p>
@@ -144,7 +144,7 @@ function RuleFileCard({
 
   if (!file.exists) {
     return (
-      <div className="console-list-card rounded-[22px] px-4 py-4">
+      <div className="console-list-card rounded-xl px-4 py-4">
         <div className="flex items-center justify-between gap-3">
           <p className="text-sm font-medium text-cafe">{displayLabel}</p>
           <span className="console-status-chip" data-status="error">
@@ -159,7 +159,7 @@ function RuleFileCard({
   const lineCount = file.content.split('\n').length;
 
   return (
-    <div className="console-list-card rounded-[22px] overflow-hidden" data-active={expanded ? 'true' : 'false'}>
+    <div className="console-list-card rounded-xl overflow-hidden" data-active={expanded ? 'true' : 'false'}>
       <button onClick={onToggle} className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">

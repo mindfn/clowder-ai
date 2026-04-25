@@ -26,7 +26,7 @@ export function resolveConsoleSetupState(section: string, fetchError: string | n
 
 export function ConsoleSetupState({ title, description, href, ctaLabel }: ConsoleSetupStateConfig) {
   return (
-    <section className="console-section-shell rounded-[28px] p-5 md:p-6">
+    <section className="console-section-shell rounded-xl p-5 md:p-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div className="space-y-2">
           <span className="console-pill inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold text-cafe-secondary">
@@ -39,7 +39,7 @@ export function ConsoleSetupState({ title, description, href, ctaLabel }: Consol
           {ctaLabel}
         </Link>
       </div>
-      <div className="mt-4 console-card-soft rounded-[22px] px-4 py-4 text-sm text-cafe-secondary">
+      <div className="mt-4 console-card-soft rounded-xl px-4 py-4 text-sm text-cafe-secondary">
         <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">Why</p>
         <p className="mt-2 leading-6">
           新世界是默认目标，Classic 只保留为旧交互参考。API
