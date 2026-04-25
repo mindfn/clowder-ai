@@ -10,7 +10,7 @@ import { readProjectNames, writeProjectNames } from './active-workspace';
 import { DirectoryPickerModal, type NewThreadOptions } from './DirectoryPickerModal';
 import { SectionGroup } from './SectionGroup';
 import { ThreadItem } from './ThreadItem';
-import { pushThreadRouteWithHistory } from './thread-navigation';
+import { detectRoutePrefix, pushThreadRouteWithHistory } from './thread-navigation';
 import {
   getProjectPaths,
   mergeLiveActivityIntoThreads,
@@ -563,7 +563,8 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
             type="button"
             onClick={() => {
               const fromParam = currentThreadId ? `?from=${encodeURIComponent(currentThreadId)}` : '';
-              window.location.assign(`/mission-hub${fromParam}`);
+              const prefix = detectRoutePrefix();
+              window.location.assign(`${prefix}/mission-hub${fromParam}`);
               if (typeof window !== 'undefined' && window.innerWidth < 768) {
                 onClose?.();
               }
