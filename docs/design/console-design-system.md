@@ -215,13 +215,19 @@
 
 ### 3.11 输入表单
 
-- 容器：`console-card-bg` + `rounded-xl` + padding 20px
-- 表单项：label（`text-sm font-medium`） + 输入控件，垂直排列 `gap-4`
+**基础控件**：
 - 输入框：`console-code-bg` + `border border-[var(--console-border-soft)]` + `rounded-lg`
 - Focus 态：`border-[var(--console-border-strong)]`
 - 下拉选择：同输入框样式 + chevron-down 图标
 - 多行文本：同输入框，高度按内容
+- 标签输入：`console-pill-bg` + `border-soft` 药丸 + "添加" 文字按钮
 - 底部操作栏：右对齐，取消(Secondary) + 确认(Primary)
+
+**动态列表**（参数/环境变量等可增删项）：
+- 每项一行：输入框 + 🗑 删除图标
+- Key-Value 对：两个等宽输入框并排 + 🗑 删除
+- 添加按钮：`console-card-soft-bg` + 满宽 + "+ 添加xxx" 居中
+- 删除图标：`text-cafe-muted`，hover 变 `text-error`
 
 ### 3.12 空状态
 
