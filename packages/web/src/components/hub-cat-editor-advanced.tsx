@@ -148,7 +148,9 @@ export function AdvancedRuntimeSection({
         <div className="space-y-3 rounded-2xl border border-[#DCE9E0] bg-cafe-surface/80 p-4">
           {loadingStrategy ? <p className="text-sm text-[#7F7168]">Session 策略加载中...</p> : null}
           {strategyError ? (
-            <p className="rounded-[20px] border border-conn-red-ring bg-conn-red-bg px-3 py-2 text-sm text-conn-red-text">{strategyError}</p>
+            <p className="rounded-[20px] border border-conn-red-ring bg-conn-red-bg px-3 py-2 text-sm text-conn-red-text">
+              {strategyError}
+            </p>
           ) : null}
           {strategyForm ? (
             <div className="space-y-4">
@@ -208,7 +210,9 @@ export function AdvancedRuntimeSection({
         <div className="space-y-3 rounded-2xl border border-[#DCE9E0] bg-cafe-surface/80 p-4">
           {loadingCodexSettings ? <p className="text-sm text-[#7F7168]">Codex 运行参数加载中...</p> : null}
           {codexSettingsError ? (
-            <p className="rounded-[20px] border border-conn-red-ring bg-conn-red-bg px-3 py-2 text-sm text-conn-red-text">{codexSettingsError}</p>
+            <p className="rounded-[20px] border border-conn-red-ring bg-conn-red-bg px-3 py-2 text-sm text-conn-red-text">
+              {codexSettingsError}
+            </p>
           ) : null}
           {!loadingCodexSettings && !codexSettingsEditable ? (
             <p className="rounded-xl border border-[#F5D2B8] bg-[#FFF4EC] px-3 py-2 text-xs leading-5 text-[#C27D52]">

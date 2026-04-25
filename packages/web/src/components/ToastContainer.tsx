@@ -26,7 +26,12 @@ function ToastCard({ toast }: { toast: ToastItem }) {
         ? 'border-l-green-400'
         : 'border-l-amber-400';
 
-  const icon = toast.type === 'error' ? 'text-conn-red-text' : toast.type === 'success' ? 'text-conn-emerald-text' : 'text-conn-amber-text';
+  const icon =
+    toast.type === 'error'
+      ? 'text-conn-red-text'
+      : toast.type === 'success'
+        ? 'text-conn-emerald-text'
+        : 'text-conn-amber-text';
 
   return (
     <div

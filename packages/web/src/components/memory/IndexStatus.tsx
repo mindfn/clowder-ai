@@ -154,7 +154,9 @@ export function IndexStatus() {
     <div data-testid="index-status" className="space-y-4">
       {/* Health badge */}
       <div className="flex items-center gap-2">
-        <span className={`inline-block h-2.5 w-2.5 rounded-full ${status.healthy ? 'bg-conn-emerald-text' : 'bg-conn-red-text'}`} />
+        <span
+          className={`inline-block h-2.5 w-2.5 rounded-full ${status.healthy ? 'bg-conn-emerald-text' : 'bg-conn-red-text'}`}
+        />
         <span className="text-sm font-medium text-cafe-black">{status.healthy ? 'Healthy' : 'Unhealthy'}</span>
         {status.reason && <span className="text-xs text-cafe-secondary">({status.reason})</span>}
       </div>

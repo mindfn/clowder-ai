@@ -97,7 +97,9 @@ export function GovernanceBlockedCard({ projectPath, reasonKind, invocationId }:
               {state === 'confirming' && <span className="text-sm text-conn-amber-text">正在初始化治理...</span>}
               {state === 'retrying' && <span className="text-sm text-conn-amber-text">治理已就绪，正在重试...</span>}
               {state === 'done' && (
-                <span className="text-sm text-conn-emerald-text">治理初始化完成{invocationId ? '，已自动重试' : ''}</span>
+                <span className="text-sm text-conn-emerald-text">
+                  治理初始化完成{invocationId ? '，已自动重试' : ''}
+                </span>
               )}
               {state === 'error' && (
                 <div className="space-y-2">

@@ -230,7 +230,9 @@ export function ChatMessage({ message, getCatById }: ChatMessageProps) {
           </div>
           <div
             className={`rounded-2xl rounded-br-sm px-4 py-3 transition-transform hover:-translate-y-0.5 ${
-              isWhisper && !isRevealed ? 'bg-conn-amber-bg text-conn-amber-text border border-dashed border-conn-amber-text/30' : ''
+              isWhisper && !isRevealed
+                ? 'bg-conn-amber-bg text-conn-amber-text border border-dashed border-conn-amber-text/30'
+                : ''
             }`}
             style={
               !isWhisper || isRevealed
@@ -372,15 +374,9 @@ export function ChatMessage({ message, getCatById }: ChatMessageProps) {
         )}
         <div
           className={`px-4 py-3 transition-transform hover:-translate-y-0.5 overflow-hidden ${
-            catStyle
-              ? `${catStyle.radius} ${catStyle.font ?? ''}`
-              : 'bg-cafe-surface rounded-2xl'
+            catStyle ? `${catStyle.radius} ${catStyle.font ?? ''}` : 'bg-cafe-surface rounded-2xl'
           } ${showSchedulerAccent ? SCHEDULER_ACCENT_BUBBLE_CLASS : ''}`}
-          style={
-            catStyle
-              ? { backgroundColor: catStyle.bgColor }
-              : undefined
-          }
+          style={catStyle ? { backgroundColor: catStyle.bgColor } : undefined}
         >
           {hasCliBlock && isStreamOrigin ? null : !isStreamOrigin && hasBlocks ? (
             <ContentBlocks blocks={message.contentBlocks!} />

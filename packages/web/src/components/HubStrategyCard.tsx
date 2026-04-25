@@ -10,7 +10,9 @@ function SourceBadge({ source }: { source: string }) {
   return (
     <span
       className={`inline-block text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-        isOverride ? 'bg-[var(--color-cafe-accent)]/10 text-[var(--color-cafe-accent)]' : 'bg-cafe-surface-elevated text-cafe-secondary'
+        isOverride
+          ? 'bg-[var(--color-cafe-accent)]/10 text-[var(--color-cafe-accent)]'
+          : 'bg-cafe-surface-elevated text-cafe-secondary'
       }`}
     >
       {SOURCE_LABELS[source] ?? source}
@@ -233,7 +235,9 @@ export function CatStrategyCard({ entry, onSaved }: { entry: CatStrategyEntry; o
             </div>
           )}
 
-          {warnThreshold >= actionThreshold && <p className="text-[10px] text-conn-red-text">警告阈值必须小于行动阈值</p>}
+          {warnThreshold >= actionThreshold && (
+            <p className="text-[10px] text-conn-red-text">警告阈值必须小于行动阈值</p>
+          )}
 
           {error && <p className="text-xs text-conn-red-text bg-conn-red-bg rounded px-2 py-1">{error}</p>}
 

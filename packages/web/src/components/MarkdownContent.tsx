@@ -242,7 +242,12 @@ const mdComponents: Components = {
     </blockquote>
   ),
   a: ({ href, children }) => (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="text-[var(--color-cafe-accent)] hover:underline break-all">
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-[var(--color-cafe-accent)] hover:underline break-all"
+    >
       {withMentions(children)}
     </a>
   ),

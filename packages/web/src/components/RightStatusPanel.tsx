@@ -66,7 +66,9 @@ function CatInvocationCard({
         {inv.sessionSeq !== undefined && (
           <span
             className={`text-[10px] px-1 py-0.5 rounded ${
-              inv.sessionSealed ? 'bg-conn-amber-bg text-conn-amber-text' : 'bg-cafe-surface-elevated text-cafe-secondary'
+              inv.sessionSealed
+                ? 'bg-conn-amber-bg text-conn-amber-text'
+                : 'bg-cafe-surface-elevated text-cafe-secondary'
             }`}
             title={inv.sessionSealed ? `会话 #${inv.sessionSeq} 已封存` : `会话 #${inv.sessionSeq}`}
           >

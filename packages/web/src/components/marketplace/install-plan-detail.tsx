@@ -63,7 +63,10 @@ export function InstallPlanDetail({
     }
   })();
 
-  const trustColor = result.trustLevel === 'community' ? 'bg-conn-amber-bg text-conn-amber-text' : 'bg-conn-emerald-bg text-conn-emerald-text';
+  const trustColor =
+    result.trustLevel === 'community'
+      ? 'bg-conn-amber-bg text-conn-amber-text'
+      : 'bg-conn-emerald-bg text-conn-emerald-text';
 
   return (
     <div className="space-y-4">

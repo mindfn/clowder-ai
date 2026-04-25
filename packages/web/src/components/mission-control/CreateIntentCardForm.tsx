@@ -193,7 +193,9 @@ export function CreateIntentCardForm({ projectId, onCreated, onCancel }: CreateI
       </div>
 
       {error && (
-        <div className="rounded-lg border border-conn-red-ring bg-conn-red-bg px-3 py-1.5 text-xs text-conn-red-text">{error}</div>
+        <div className="rounded-lg border border-conn-red-ring bg-conn-red-bg px-3 py-1.5 text-xs text-conn-red-text">
+          {error}
+        </div>
       )}
 
       <div className="flex justify-end gap-2">

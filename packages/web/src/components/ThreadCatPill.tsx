@@ -178,7 +178,10 @@ export function ThreadCatPill({ threadId }: ThreadCatPillProps) {
           <div className="flex items-center justify-between px-3 pb-3 pt-2 border-t border-[var(--console-border-soft)] flex-shrink-0">
             {saveError && <span className="text-[10px] text-conn-red-text">保存失败</span>}
             {!saveError && selectedCats.length > 0 && (
-              <button onClick={() => setSelectedCats([])} className="text-[10px] text-cafe-muted hover:text-conn-red-text">
+              <button
+                onClick={() => setSelectedCats([])}
+                className="text-[10px] text-cafe-muted hover:text-conn-red-text"
+              >
                 清除
               </button>
             )}

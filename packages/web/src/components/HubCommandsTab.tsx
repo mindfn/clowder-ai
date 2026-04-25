@@ -20,7 +20,9 @@ function CommandGroup({ category, label }: { category: CommandCategory; label: s
       <div className="space-y-1">
         {cmds.map((cmd) => (
           <div key={cmd.name + cmd.usage} className="flex items-baseline gap-3 text-xs">
-            <code className="font-mono text-[var(--color-cafe-accent)] bg-[var(--color-cafe-accent)]/10 px-1.5 py-0.5 rounded shrink-0">{cmd.usage}</code>
+            <code className="font-mono text-[var(--color-cafe-accent)] bg-[var(--color-cafe-accent)]/10 px-1.5 py-0.5 rounded shrink-0">
+              {cmd.usage}
+            </code>
             <span className="text-cafe-secondary">{cmd.description}</span>
           </div>
         ))}

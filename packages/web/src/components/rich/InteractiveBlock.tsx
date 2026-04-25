@@ -62,8 +62,7 @@ function dispatchInteractiveSend(text: string) {
 
 /** Render option icon: prefer SVG icon over emoji */
 function OptionIcon({ opt, className = 'w-5 h-5' }: { opt: InteractiveOption; className?: string }) {
-  if (opt.icon)
-    return <CafeIcon name={opt.icon} className={`${className} text-conn-amber-text shrink-0`} />;
+  if (opt.icon) return <CafeIcon name={opt.icon} className={`${className} text-conn-amber-text shrink-0`} />;
   if (opt.emoji) return <span className="text-base shrink-0 leading-none">{opt.emoji}</span>;
   return null;
 }
@@ -129,9 +128,7 @@ function SelectInteraction({
           >
             <OptionIcon opt={opt} />
             <div className="flex-1 min-w-0">
-              <span className={`font-semibold ${isSelected ? 'text-conn-amber-text' : ''}`}>
-                {opt.label}
-              </span>
+              <span className={`font-semibold ${isSelected ? 'text-conn-amber-text' : ''}`}>{opt.label}</span>
               {opt.description && (
                 <span className="block text-xs text-cafe-secondary dark:text-cafe-muted mt-0.5">{opt.description}</span>
               )}
@@ -259,9 +256,7 @@ function MultiSelectInteraction({
               )}
             </span>
             <OptionIcon opt={opt} />
-            <span className={`font-semibold ${isChecked ? 'text-conn-amber-text' : ''}`}>
-              {opt.label}
-            </span>
+            <span className={`font-semibold ${isChecked ? 'text-conn-amber-text' : ''}`}>{opt.label}</span>
           </button>
         );
       })}
@@ -382,9 +377,7 @@ function CardGridInteraction({
                       <OptionIcon opt={opt} className="w-7 h-7" />
                     </div>
                   )}
-                  <div
-                    className={`font-semibold ${isSelected || isPending ? 'text-conn-amber-text' : ''}`}
-                  >
+                  <div className={`font-semibold ${isSelected || isPending ? 'text-conn-amber-text' : ''}`}>
                     {opt.label}
                   </div>
                   {opt.description && (

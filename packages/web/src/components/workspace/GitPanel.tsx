@@ -117,7 +117,11 @@ export function GitPanel() {
         </button>
       </div>
 
-      {error && <div className="px-3 py-2 text-xs text-conn-red-text bg-conn-red-bg/80 border-b border-conn-red-ring">{error}</div>}
+      {error && (
+        <div className="px-3 py-2 text-xs text-conn-red-text bg-conn-red-bg/80 border-b border-conn-red-ring">
+          {error}
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto">
         {/* Git Status Section */}

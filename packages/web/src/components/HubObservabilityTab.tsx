@@ -33,7 +33,9 @@ export function HubObservabilityTab() {
             key={t}
             onClick={() => setSubTab(t)}
             className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-              subTab === t ? 'bg-[var(--color-cafe-accent)]/10 text-[var(--color-cafe-accent)]' : 'text-cafe-secondary hover:bg-cafe-surface-elevated'
+              subTab === t
+                ? 'bg-[var(--color-cafe-accent)]/10 text-[var(--color-cafe-accent)]'
+                : 'text-cafe-secondary hover:bg-cafe-surface-elevated'
             }`}
           >
             {{ overview: '总览', traces: 'Traces', health: '健康' }[t]}

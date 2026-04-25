@@ -255,7 +255,9 @@ export function WorkspaceFileViewer({
       </div>
 
       {saveError && (
-        <div className="px-3 py-1.5 text-[10px] text-conn-red-text bg-conn-red-bg/20 border-b border-conn-red-ring/30">{saveError}</div>
+        <div className="px-3 py-1.5 text-[10px] text-conn-red-text bg-conn-red-bg/20 border-b border-conn-red-ring/30">
+          {saveError}
+        </div>
       )}
 
       {/* File content */}

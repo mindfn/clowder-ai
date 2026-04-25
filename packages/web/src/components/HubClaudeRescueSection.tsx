@@ -132,7 +132,9 @@ export function HubClaudeRescueSection() {
       </div>
 
       {error && (
-        <div className="rounded-[20px] border border-conn-red-ring bg-conn-red-bg px-3 py-2 text-xs text-conn-red-text">{error}</div>
+        <div className="rounded-[20px] border border-conn-red-ring bg-conn-red-bg px-3 py-2 text-xs text-conn-red-text">
+          {error}
+        </div>
       )}
 
       {lastRun && (
@@ -151,7 +153,9 @@ export function HubClaudeRescueSection() {
       ) : (
         <div className="space-y-3">
           <div className="space-y-1">
-            <p className="text-xs font-medium text-conn-amber-text">检测到 {sessions.length} 只布偶猫 session 需要救援</p>
+            <p className="text-xs font-medium text-conn-amber-text">
+              检测到 {sessions.length} 只布偶猫 session 需要救援
+            </p>
             <p className="text-[11px] text-conn-amber-text">先勾选要动刀的 session，再执行一键救活。</p>
           </div>
           <div className="space-y-2">
@@ -170,7 +174,9 @@ export function HubClaudeRescueSection() {
                   />
                   <span className="space-y-0.5">
                     <span className="block font-medium text-cafe">{session.sessionId}</span>
-                    <span className="block text-conn-amber-text">纯 thinking turn：{session.removableThinkingTurns} 条</span>
+                    <span className="block text-conn-amber-text">
+                      纯 thinking turn：{session.removableThinkingTurns} 条
+                    </span>
                     <span className="block break-all text-cafe-secondary">{session.transcriptPath}</span>
                     <span className="block text-cafe-secondary">{describeDetection(session)}</span>
                   </span>

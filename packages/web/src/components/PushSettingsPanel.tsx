@@ -117,13 +117,17 @@ export function PushSettingsPanel() {
           </div>
           <div className="rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface-elevated px-3 py-2">
             <div className="text-cafe-secondary">推送服务</div>
-            <div className={`font-semibold ${status?.capability.enabled ? 'text-conn-emerald-text' : 'text-conn-amber-text'}`}>
+            <div
+              className={`font-semibold ${status?.capability.enabled ? 'text-conn-emerald-text' : 'text-conn-amber-text'}`}
+            >
               {status?.capability.enabled ? '已启用' : '未启用'}
             </div>
           </div>
           <div className="rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface-elevated px-3 py-2">
             <div className="text-cafe-secondary">设备订阅</div>
-            <div className={`font-semibold ${status?.subscription.count ? 'text-conn-emerald-text' : 'text-conn-amber-text'}`}>
+            <div
+              className={`font-semibold ${status?.subscription.count ? 'text-conn-emerald-text' : 'text-conn-amber-text'}`}
+            >
               {status?.subscription.count ?? 0} 台
             </div>
           </div>

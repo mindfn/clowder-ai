@@ -214,7 +214,9 @@ export function SchedulePanel() {
               }`}
             />
           </button>
-          <span className={`text-[10px] font-medium ${globalControl.enabled ? 'text-conn-emerald-text' : 'text-conn-red-text'}`}>
+          <span
+            className={`text-[10px] font-medium ${globalControl.enabled ? 'text-conn-emerald-text' : 'text-conn-red-text'}`}
+          >
             {globalControl.enabled ? 'Scheduler active' : 'Scheduler paused'}
           </span>
           {!globalControl.enabled && globalControl.reason && (

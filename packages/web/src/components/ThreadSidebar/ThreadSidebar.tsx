@@ -546,7 +546,9 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
           </div>
         </div>
 
-        {bindWarning && <div className="px-3 py-1.5 bg-conn-amber-bg/60 text-[10px] text-conn-amber-text">{bindWarning}</div>}
+        {bindWarning && (
+          <div className="px-3 py-1.5 bg-conn-amber-bg/60 text-[10px] text-conn-amber-text">{bindWarning}</div>
+        )}
 
         <div className="px-2 py-1.5">
           <button
@@ -888,7 +890,9 @@ function DeleteConfirmDialog({
         <p className="text-sm text-cafe-secondary mb-1">即将删除「{title}」</p>
         {isSystem ? (
           <>
-            <p className="text-xs text-conn-red-text mb-2">这是系统级对话（IM Hub 连接器）。删除可能影响平台消息路由。</p>
+            <p className="text-xs text-conn-red-text mb-2">
+              这是系统级对话（IM Hub 连接器）。删除可能影响平台消息路由。
+            </p>
             <p className="text-xs text-cafe-secondary mb-2">请输入对话名称以确认删除：</p>
             <input
               ref={confirmInputRef}

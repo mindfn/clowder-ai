@@ -183,7 +183,10 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
                       {g.label || g.externalChatId}{' '}
                       {g.label ? <span className="text-cafe-muted">{g.externalChatId.slice(-8)}</span> : null}
                     </span>
-                    <button onClick={() => removeGroup(g.externalChatId)} className="text-conn-red-text hover:opacity-90">
+                    <button
+                      onClick={() => removeGroup(g.externalChatId)}
+                      className="text-conn-red-text hover:opacity-90"
+                    >
                       ✕
                     </button>
                   </div>

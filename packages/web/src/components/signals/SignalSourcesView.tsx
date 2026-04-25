@@ -130,7 +130,9 @@ export function SignalSourcesView() {
           <div
             className={[
               'rounded-[20px] border px-3 py-2 text-sm',
-              fetchResult.ok ? 'border-conn-emerald-ring bg-conn-emerald-bg text-conn-emerald-text' : 'border-conn-red-ring bg-conn-red-bg text-conn-red-text',
+              fetchResult.ok
+                ? 'border-conn-emerald-ring bg-conn-emerald-bg text-conn-emerald-text'
+                : 'border-conn-red-ring bg-conn-red-bg text-conn-red-text',
             ].join(' ')}
           >
             <span className="font-semibold">{fetchResult.sourceId}</span>: {fetchResult.message}

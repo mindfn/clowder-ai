@@ -99,9 +99,13 @@ export function ProjectSetupCard({
               className="flex-shrink-0 object-contain"
             />
             <div className="flex-1 min-w-0">
-              <p className={`text-sm font-medium ${state === 'done' ? 'text-conn-emerald-text' : 'text-conn-amber-text'}`}>
+              <p
+                className={`text-sm font-medium ${state === 'done' ? 'text-conn-emerald-text' : 'text-conn-amber-text'}`}
+              >
                 项目{' '}
-                <code className={`px-1 py-0.5 rounded text-xs ${state === 'done' ? 'bg-conn-emerald-bg' : 'bg-conn-amber-bg'}`}>
+                <code
+                  className={`px-1 py-0.5 rounded text-xs ${state === 'done' ? 'bg-conn-emerald-bg' : 'bg-conn-amber-bg'}`}
+                >
                   {dirName}
                 </code>{' '}
                 {state === 'done' ? '初始化完成' : '正在初始化'}
@@ -148,7 +152,11 @@ export function ProjectSetupCard({
         {state === 'error' && (
           <div className="mb-3 px-3 py-2 rounded-[20px] bg-conn-red-bg border border-conn-red-ring">
             <p className="text-xs text-conn-red-text">{errorMsg}</p>
-            <button type="button" onClick={() => setState('idle')} className="text-xs text-conn-red-text underline mt-1">
+            <button
+              type="button"
+              onClick={() => setState('idle')}
+              className="text-xs text-conn-red-text underline mt-1"
+            >
               重试
             </button>
           </div>

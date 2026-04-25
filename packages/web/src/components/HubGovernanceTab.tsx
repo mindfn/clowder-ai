@@ -125,7 +125,11 @@ export function HubGovernanceTab() {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-cafe-secondary">外部项目治理状态</h3>
-        <button type="button" onClick={fetchHealth} className="text-xs text-[var(--color-cafe-accent)] hover:opacity-90">
+        <button
+          type="button"
+          onClick={fetchHealth}
+          className="text-xs text-[var(--color-cafe-accent)] hover:opacity-90"
+        >
           刷新
         </button>
       </div>

@@ -176,7 +176,9 @@ export function KnowledgeFeed() {
       {/* Stats bar */}
       {data?.stats && (
         <div className="flex items-center justify-center gap-3 px-3 py-1.5 border-t border-[var(--console-border-soft)] bg-[var(--console-card-soft-bg)]">
-          <span className="text-[10px] font-semibold text-[var(--color-cafe-accent)]">{data.stats.decisions} decisions</span>
+          <span className="text-[10px] font-semibold text-[var(--color-cafe-accent)]">
+            {data.stats.decisions} decisions
+          </span>
           <span className="text-[10px] font-semibold text-conn-amber-text">{data.stats.lessons} lessons</span>
           <span className="text-[10px] font-semibold text-conn-emerald-text">{data.stats.methods} methods</span>
         </div>

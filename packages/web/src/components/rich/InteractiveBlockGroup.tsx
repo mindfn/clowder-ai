@@ -145,9 +145,7 @@ export function InteractiveBlockGroup({ blocks, messageId }: { blocks: RichInter
           全部提交
           <span
             className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-              allSelected
-                ? 'bg-cafe-surface/20 text-white'
-                : 'bg-conn-amber-bg text-conn-amber-text'
+              allSelected ? 'bg-cafe-surface/20 text-white' : 'bg-conn-amber-bg text-conn-amber-text'
             }`}
           >
             {selections.size}/{blocks.length}

@@ -120,7 +120,9 @@ export function HubListModal({ open, onClose, currentThreadId }: HubListModalPro
             type="button"
             onClick={() => setActiveTab('threads')}
             className={`px-4 py-2.5 text-sm font-medium transition-colors relative ${
-              activeTab === 'threads' ? 'text-[var(--color-cafe-accent)]' : 'text-cafe-secondary hover:text-cafe-secondary'
+              activeTab === 'threads'
+                ? 'text-[var(--color-cafe-accent)]'
+                : 'text-cafe-secondary hover:text-cafe-secondary'
             }`}
             data-testid="hub-tab-threads"
           >
@@ -133,7 +135,9 @@ export function HubListModal({ open, onClose, currentThreadId }: HubListModalPro
             type="button"
             onClick={() => setActiveTab('config')}
             className={`px-4 py-2.5 text-sm font-medium transition-colors relative ${
-              activeTab === 'config' ? 'text-[var(--color-cafe-accent)]' : 'text-cafe-secondary hover:text-cafe-secondary'
+              activeTab === 'config'
+                ? 'text-[var(--color-cafe-accent)]'
+                : 'text-cafe-secondary hover:text-cafe-secondary'
             }`}
             data-testid="hub-tab-config"
             data-guide-id="im-hub.config-tab"
@@ -147,7 +151,9 @@ export function HubListModal({ open, onClose, currentThreadId }: HubListModalPro
             type="button"
             onClick={() => setActiveTab('permissions')}
             className={`px-4 py-2.5 text-sm font-medium transition-colors relative ${
-              activeTab === 'permissions' ? 'text-[var(--color-cafe-accent)]' : 'text-cafe-secondary hover:text-cafe-secondary'
+              activeTab === 'permissions'
+                ? 'text-[var(--color-cafe-accent)]'
+                : 'text-cafe-secondary hover:text-cafe-secondary'
             }`}
             data-testid="hub-tab-permissions"
           >

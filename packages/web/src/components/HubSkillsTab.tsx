@@ -280,7 +280,11 @@ export function HubSkillsTab() {
   }, [fetchSkills]);
 
   if (error) {
-    return <p className="text-sm text-conn-red-text bg-conn-red-bg border border-conn-red-ring rounded-[20px] px-3 py-2">{error}</p>;
+    return (
+      <p className="text-sm text-conn-red-text bg-conn-red-bg border border-conn-red-ring rounded-[20px] px-3 py-2">
+        {error}
+      </p>
+    );
   }
   if (!data) {
     return <p className="text-sm text-cafe-muted">加载中...</p>;

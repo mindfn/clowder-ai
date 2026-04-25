@@ -134,7 +134,11 @@ export function HubToolUsageTab() {
         </div>
       </div>
 
-      {error && <div className="rounded-[20px] border border-conn-red-ring bg-conn-red-bg px-3 py-2 text-xs text-conn-red-text">{error}</div>}
+      {error && (
+        <div className="rounded-[20px] border border-conn-red-ring bg-conn-red-bg px-3 py-2 text-xs text-conn-red-text">
+          {error}
+        </div>
+      )}
 
       {!error && total === 0 && !loading && (
         <div className="rounded-xl border border-dashed border-[#E8DDD2] bg-[#FDF8F3] py-10 text-center">

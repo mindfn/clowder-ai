@@ -287,9 +287,15 @@ export function BrowserPanel({ initialPort, initialPath, previewOnly, onNavigate
         </div>
       )}
 
-      {error && <div className="px-3 py-1.5 text-xs text-conn-red-text bg-conn-red-bg/80 border-b border-conn-red-ring">{error}</div>}
+      {error && (
+        <div className="px-3 py-1.5 text-xs text-conn-red-text bg-conn-red-bg/80 border-b border-conn-red-ring">
+          {error}
+        </div>
+      )}
       {warning && !error && (
-        <div className="px-3 py-1.5 text-xs text-conn-amber-text bg-conn-amber-bg/80 border-b border-conn-amber-ring">{warning}</div>
+        <div className="px-3 py-1.5 text-xs text-conn-amber-text bg-conn-amber-bg/80 border-b border-conn-amber-ring">
+          {warning}
+        </div>
       )}
       {screenshotUrl && (
         <div className="px-3 py-1.5 text-xs text-conn-emerald-text bg-conn-emerald-bg/80 border-b border-conn-emerald-ring">

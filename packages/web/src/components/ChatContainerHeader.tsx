@@ -176,7 +176,11 @@ function RightPanelToggle({
     <button
       onClick={handleClick}
       className={`p-1 rounded-lg hover:bg-[var(--console-hover-bg)] transition-colors ml-1 hidden lg:block ${
-        statusPanelOpen ? (isWorkspace ? 'bg-[var(--color-cafe-accent)]/5 text-[var(--color-cafe-accent)]' : 'bg-cafe-surface-elevated') : ''
+        statusPanelOpen
+          ? isWorkspace
+            ? 'bg-[var(--color-cafe-accent)]/5 text-[var(--color-cafe-accent)]'
+            : 'bg-cafe-surface-elevated'
+          : ''
       }`}
       aria-label={label}
       title={label}

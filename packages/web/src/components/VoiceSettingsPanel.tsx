@@ -160,7 +160,11 @@ function CustomTermRow({
       <span className="text-cafe-muted">&rarr;</span>
       <code className="bg-cafe-surface-elevated text-cafe-secondary px-1.5 py-0.5 rounded">{term.to}</code>
       <div className="ml-auto flex items-center gap-1">
-        <button onClick={startEdit} className="text-cafe-muted hover:text-cafe-interactive transition-colors" title="编辑">
+        <button
+          onClick={startEdit}
+          className="text-cafe-muted hover:text-cafe-interactive transition-colors"
+          title="编辑"
+        >
           &#9998;
         </button>
         <button

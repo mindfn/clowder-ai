@@ -165,7 +165,9 @@ export function ResolutionQueue({ projectId, resolutions, cards, onUpdate }: Res
                 {item.recommendation && (
                   <div className="mb-1 text-[10px] text-[#9A866F]">建议: {item.recommendation}</div>
                 )}
-                {item.answer && <div className="rounded bg-conn-emerald-bg px-2 py-1 text-[#2B2118]">{item.answer}</div>}
+                {item.answer && (
+                  <div className="rounded bg-conn-emerald-bg px-2 py-1 text-[#2B2118]">{item.answer}</div>
+                )}
                 {item.status === 'open' && (
                   <div className="mt-2 flex gap-2">
                     <input
