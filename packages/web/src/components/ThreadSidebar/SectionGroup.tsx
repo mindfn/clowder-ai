@@ -115,68 +115,67 @@ export function SectionGroup({
 
   return (
     <div className="mt-1 relative group/section">
-      <div
-        role="group"
-        className="w-full text-left px-3 py-1.5 flex items-center gap-1.5 hover:bg-cafe-surface-elevated transition-colors cursor-pointer"
-        title={projectPath && projectPath !== 'default' ? projectPath : undefined}
-        onClick={onToggle}
-      >
-        {/* Chevron */}
-        <svg
-          aria-hidden="true"
-          className={`w-3 h-3 text-cafe-muted transition-transform flex-shrink-0 ${isCollapsed ? '' : 'rotate-90'}`}
-          viewBox="0 0 12 12"
-          fill="currentColor"
+      <div className="w-full flex items-center gap-1.5 px-3 py-1.5 hover:bg-cafe-surface-elevated transition-colors">
+        {/* Toggle button — keyboard-focusable, Enter/Space to toggle */}
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={!isCollapsed}
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus:outline-none"
+          title={projectPath && projectPath !== 'default' ? projectPath : undefined}
         >
-          <path d="M4 2l4 4-4 4V2z" />
-        </svg>
-
-        {/* Section icon */}
-        {iconPath && (
           <svg
             aria-hidden="true"
-            className={`w-3 h-3 flex-shrink-0 ${iconColor}`}
-            viewBox="0 0 16 16"
+            className={`w-3 h-3 text-cafe-muted transition-transform flex-shrink-0 ${isCollapsed ? '' : 'rotate-90'}`}
+            viewBox="0 0 12 12"
             fill="currentColor"
           >
-            <path d={iconPath} />
+            <path d="M4 2l4 4-4 4V2z" />
           </svg>
-        )}
 
-        {/* Label (inline rename or static) */}
-        {isRenaming ? (
-          <input
-            ref={inputRef}
-            value={draftName}
-            onChange={(e) => setDraftName(e.target.value)}
-            onClick={stopButton}
-            onCompositionStart={ime.onCompositionStart}
-            onCompositionEnd={ime.onCompositionEnd}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !ime.isComposing()) {
-                e.preventDefault();
-                submitRename();
-              }
-              if (e.key === 'Escape') {
-                e.preventDefault();
-                setIsRenaming(false);
-              }
-            }}
-            onBlur={submitRename}
-            maxLength={100}
-            className="console-form-input text-xs font-medium px-1 py-0 flex-1 min-w-0"
-          />
-        ) : (
-          <span className="text-xs font-medium text-cafe-secondary truncate">{label}</span>
-        )}
+          {iconPath && (
+            <svg
+              aria-hidden="true"
+              className={`w-3 h-3 flex-shrink-0 ${iconColor}`}
+              viewBox="0 0 16 16"
+              fill="currentColor"
+            >
+              <path d={iconPath} />
+            </svg>
+          )}
 
-        {/* Governance dot */}
-        {govDot && <span className={`w-2 h-2 rounded-full flex-shrink-0 ${govDot.color}`} title={govDot.title} />}
+          {isRenaming ? (
+            <input
+              ref={inputRef}
+              value={draftName}
+              onChange={(e) => setDraftName(e.target.value)}
+              onClick={stopButton}
+              onCompositionStart={ime.onCompositionStart}
+              onCompositionEnd={ime.onCompositionEnd}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !ime.isComposing()) {
+                  e.preventDefault();
+                  submitRename();
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setIsRenaming(false);
+                }
+              }}
+              onBlur={submitRename}
+              maxLength={100}
+              className="console-form-input text-xs font-medium px-1 py-0 flex-1 min-w-0"
+            />
+          ) : (
+            <span className="text-xs font-medium text-cafe-secondary truncate">{label}</span>
+          )}
 
-        {/* Count */}
-        <span className="text-[10px] text-cafe-muted flex-shrink-0 ml-auto">{count}</span>
+          {govDot && <span className={`w-2 h-2 rounded-full flex-shrink-0 ${govDot.color}`} title={govDot.title} />}
 
-        {/* F095 Phase F: Quick create button */}
+          <span className="text-[10px] text-cafe-muted flex-shrink-0 ml-auto">{count}</span>
+        </button>
+
+        {/* Action buttons — siblings of the toggle, not children */}
         {onQuickCreate && (
           <ActionButton
             onClick={(e) => {
@@ -191,7 +190,6 @@ export function SectionGroup({
           </ActionButton>
         )}
 
-        {/* Context menu trigger */}
         {hasContextMenu && (
           <ActionButton
             onClick={(e) => {
@@ -206,7 +204,6 @@ export function SectionGroup({
           </ActionButton>
         )}
 
-        {/* Project pin button */}
         {onToggleProjectPin && (
           <ActionButton
             onClick={(e) => {

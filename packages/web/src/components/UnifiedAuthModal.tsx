@@ -262,7 +262,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               placeholder="例如: my-claude-account"
-              className="w-full rounded-lg border border-[var(--console-border-soft)] bg-white px-3 py-2 text-sm placeholder:text-cafe-muted"
+              className="w-full rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface px-3 py-2 text-sm placeholder:text-cafe-muted"
             />
           </div>
 
@@ -278,7 +278,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                 <select
                   value={clientId}
                   onChange={(e) => setClientId(e.target.value as BuiltinAccountClient)}
-                  className="w-full rounded-lg border border-[var(--console-border-soft)] bg-white px-3 py-2 text-sm text-cafe"
+                  className="w-full rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface px-3 py-2 text-sm text-cafe"
                 >
                   {CLIENT_OPTIONS.map((c) => (
                     <option key={c} value={c}>
@@ -299,7 +299,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                   value={baseUrl}
                   onChange={(e) => setBaseUrl(e.target.value)}
                   placeholder="https://api.openai.com/v1"
-                  className="w-full rounded-lg border border-[var(--console-border-soft)] bg-white px-3 py-2 text-sm placeholder:text-cafe-muted"
+                  className="w-full rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface px-3 py-2 text-sm placeholder:text-cafe-muted"
                 />
               </div>
               <div>
@@ -315,7 +315,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                     setError(null);
                   }}
                   placeholder={isEdit ? '••••••••••••' : 'sk-...'}
-                  className="w-full rounded-lg border border-[var(--console-border-soft)] bg-white px-3 py-2 text-sm placeholder:text-cafe-muted"
+                  className="w-full rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface px-3 py-2 text-sm placeholder:text-cafe-muted"
                 />
               </div>
             </>
@@ -383,7 +383,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                         className={`w-[38%] rounded border px-2 py-1 font-mono text-xs placeholder:text-cafe-muted ${
                           entry.key.trim() && !isValidEnvKey(entry.key.trim())
                             ? 'border-red-300 bg-red-50 text-red-600'
-                            : 'border-[var(--console-border-soft)] bg-white text-cafe'
+                            : 'border-[var(--console-border-soft)] bg-cafe-surface text-cafe'
                         }`}
                       />
                       <span className="text-[10px] text-cafe-muted">=</span>
@@ -395,7 +395,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                           setEnvEntries(next);
                         }}
                         placeholder="value"
-                        className="flex-1 rounded border border-[var(--console-border-soft)] bg-white px-2 py-1 font-mono text-xs text-cafe placeholder:text-cafe-muted"
+                        className="flex-1 rounded border border-[var(--console-border-soft)] bg-cafe-surface px-2 py-1 font-mono text-xs text-cafe placeholder:text-cafe-muted"
                       />
                       <button
                         type="button"
@@ -417,7 +417,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                 <button
                   type="button"
                   onClick={() => setEnvEntries([...envEntries, { key: '', value: '' }])}
-                  className="mt-2 text-[10px] font-medium text-cafe-accent hover:text-[#c47f52]"
+                  className="mt-2 text-[10px] font-medium text-cafe-accent hover:opacity-80"
                 >
                   + 添加变量
                 </button>
