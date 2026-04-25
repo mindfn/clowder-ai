@@ -36,9 +36,40 @@ interface PlatformStatus {
   name: string;
   nameEn: string;
   configured: boolean;
+  connectionState?: 'connected' | 'disconnected' | 'reconnecting' | 'unknown';
+  lastHeartbeat?: number | null;
   fields: PlatformFieldStatus[];
   docsUrl: string;
   steps: PlatformStepStatus[];
+}
+
+function connStateColor(p: PlatformStatus): string {
+  if (p.connectionState === 'connected') return 'text-conn-emerald-text';
+  if (p.connectionState === 'reconnecting') return 'text-conn-amber-text';
+  if (p.configured) return 'text-conn-emerald-text';
+  return 'text-cafe-muted';
+}
+
+function connStateIcon(p: PlatformStatus) {
+  if (p.connectionState === 'connected') return <StatusDotConnected />;
+  if (p.connectionState === 'reconnecting') return <StatusDotIdle />;
+  if (p.configured) return <StatusDotConnected />;
+  return <StatusDotIdle />;
+}
+
+function connStateLabel(p: PlatformStatus): string {
+  if (p.connectionState === 'connected') return '已连接';
+  if (p.connectionState === 'reconnecting') return '重连中';
+  if (p.connectionState === 'disconnected' && p.configured) return '已配置 · 未连接';
+  if (p.configured) return '已配置';
+  return '未配置';
+}
+
+function formatHeartbeat(ts: number): string {
+  const ago = Math.floor((Date.now() - ts) / 1000);
+  if (ago < 60) return `${ago}s ago`;
+  if (ago < 3600) return `${Math.floor(ago / 60)}m ago`;
+  return `${Math.floor(ago / 3600)}h ago`;
 }
 
 export function HubConnectorConfigTab() {
@@ -52,6 +83,7 @@ export function HubConnectorConfigTab() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [saveResult, setSaveResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const fetchStatus = useCallback(async () => {
@@ -122,6 +154,24 @@ export function HubConnectorConfigTab() {
     }
   };
 
+  const handleTestConnection = async (platformId: string) => {
+    setTesting(true);
+    setSaveResult(null);
+    try {
+      const res = await apiFetch(`/api/connector/${platformId}/test`, { method: 'POST' });
+      const data = await res.json();
+      setSaveResult({
+        type: data.ok ? 'success' : 'error',
+        message: data.message ?? (data.ok ? '连接正常' : data.error ?? '测试失败'),
+      });
+      await fetchStatus();
+    } catch {
+      setSaveResult({ type: 'error', message: '网络错误' });
+    } finally {
+      setTesting(false);
+    }
+  };
+
   if (isLoading) {
     return <p className="text-center text-cafe-muted py-8 text-sm">加载中...</p>;
   }
@@ -167,10 +217,15 @@ export function HubConnectorConfigTab() {
                   {platform.name} {platform.nameEn !== platform.name ? platform.nameEn : ''}
                 </span>
                 <span
-                  className={`flex items-center gap-1 text-xs ${platform.configured ? 'text-conn-emerald-text' : 'text-cafe-muted'}`}
+                  className={`flex items-center gap-1 text-xs ${connStateColor(platform)}`}
                 >
-                  {platform.configured ? <StatusDotConnected /> : <StatusDotIdle />}
-                  {platform.configured ? '已配置' : '未配置'}
+                  {connStateIcon(platform)}
+                  {connStateLabel(platform)}
+                  {platform.lastHeartbeat && (
+                    <span className="text-cafe-muted ml-1">
+                      · {formatHeartbeat(platform.lastHeartbeat)}
+                    </span>
+                  )}
                 </span>
               </span>
               <span className="console-pill flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-cafe-muted">
@@ -338,10 +393,11 @@ export function HubConnectorConfigTab() {
                     <button
                       type="button"
                       className="console-button-secondary text-[13px]"
-                      onClick={() => setSaveResult({ type: 'success', message: '连接测试功能即将上线' })}
+                      disabled={testing}
+                      onClick={() => handleTestConnection(platform.id)}
                     >
                       <WifiIcon />
-                      测试连接
+                      {testing ? '测试中...' : '测试连接'}
                     </button>
                     <button
                       type="button"
