@@ -27,7 +27,7 @@ export function WhisperCatSelector({ cats, selected, activeCatIds, onToggle }: W
 
   return (
     <div className="absolute bottom-full left-4 mb-2 bg-cafe-surface rounded-xl shadow-lg border border-[var(--console-border-soft)] overflow-hidden w-64 z-10 max-h-80 flex flex-col">
-      <div className="px-4 py-1.5 text-xs text-amber-600 font-medium border-b border-cafe-subtle shrink-0">
+      <div className="px-4 py-1.5 text-xs text-amber-600 font-medium border-b border-[var(--console-border-soft)] shrink-0">
         悄悄话目标 · 可多选
       </div>
       <div ref={scrollRef} className="overflow-y-auto flex-1">
@@ -42,12 +42,12 @@ export function WhisperCatSelector({ cats, selected, activeCatIds, onToggle }: W
         ))}
       </div>
       {canScrollDown && (
-        <div className="px-4 py-1 text-[10px] text-cafe-muted text-center border-t border-cafe-subtle bg-gradient-to-t from-white shrink-0">
+        <div className="px-4 py-1 text-[10px] text-cafe-muted text-center border-t border-[var(--console-border-soft)] bg-gradient-to-t from-white shrink-0">
           ↓ 还有更多猫猫
         </div>
       )}
       {selected.size === 0 && (
-        <div className="px-4 py-1.5 text-xs text-red-400 border-t border-cafe-subtle shrink-0">请至少选一只猫猫</div>
+        <div className="px-4 py-1.5 text-xs text-red-400 border-t border-[var(--console-border-soft)] shrink-0">请至少选一只猫猫</div>
       )}
     </div>
   );

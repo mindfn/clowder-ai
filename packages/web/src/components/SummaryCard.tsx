@@ -79,7 +79,7 @@ export function SummaryCard({ topic, conclusions, openQuestions, createdBy, time
         )}
 
         {/* Footer: creator + time */}
-        <div className="flex items-center gap-2 pt-2 border-t border-cafe-subtle">
+        <div className="flex items-center gap-2 pt-2 border-t border-[var(--console-border-soft)]">
           {createdBy === 'system' ? (
             <HubIcon name="bot" className="h-3.5 w-3.5 text-cafe-secondary" />
           ) : catData ? (

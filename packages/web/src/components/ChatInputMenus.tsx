@@ -143,12 +143,12 @@ export function ChatInputMenus({
             ))}
           </div>
           {canScrollDown && (
-            <div className="px-4 py-1 text-[10px] text-cafe-muted text-center border-t border-cafe-subtle bg-gradient-to-t from-white shrink-0">
+            <div className="px-4 py-1 text-[10px] text-cafe-muted text-center border-t border-[var(--console-border-soft)] bg-gradient-to-t from-white shrink-0">
               ↓ 还有更多猫猫
             </div>
           )}
           {catOptions.length === 0 && <div className="px-4 py-2.5 text-xs text-cafe-muted">无匹配猫猫</div>}
-          <div className="px-4 py-1.5 text-xs text-cafe-muted border-t border-cafe-subtle shrink-0">
+          <div className="px-4 py-1.5 text-xs text-cafe-muted border-t border-[var(--console-border-soft)] shrink-0">
             {'\u2191\u2193 \u9009\u62E9 \u00B7 Enter \u786E\u8BA4 \u00B7 Esc \u5173\u95ED'}
           </div>
         </div>
@@ -159,7 +159,7 @@ export function ChatInputMenus({
           ref={menuRef}
           className="absolute bottom-full left-4 mb-2 bg-cafe-surface rounded-xl shadow-lg border border-[var(--console-border-soft)] overflow-hidden w-72 z-10"
         >
-          <div className="px-4 py-2 text-xs text-cafe-muted font-medium border-b border-cafe-subtle">选择游戏</div>
+          <div className="px-4 py-2 text-xs text-cafe-muted font-medium border-b border-[var(--console-border-soft)]">选择游戏</div>
           {GAME_LIST.map((game, i) => (
             <button
               key={game.id}
@@ -185,7 +185,7 @@ export function ChatInputMenus({
               </svg>
             </button>
           ))}
-          <div className="px-4 py-1.5 text-xs text-cafe-muted border-t border-cafe-subtle">Enter 选择 · Esc 关闭</div>
+          <div className="px-4 py-1.5 text-xs text-cafe-muted border-t border-[var(--console-border-soft)]">Enter 选择 · Esc 关闭</div>
         </div>
       )}
 
@@ -195,7 +195,7 @@ export function ChatInputMenus({
           className="absolute bottom-full left-4 mb-2 bg-cafe-surface rounded-xl shadow-lg border border-[var(--console-border-soft)] overflow-hidden w-72 z-10"
         >
           <button
-            className="w-full text-left px-4 py-2 text-xs text-indigo-500 font-medium border-b border-cafe-subtle hover:bg-indigo-50 transition-colors flex items-center gap-1"
+            className="w-full text-left px-4 py-2 text-xs text-indigo-500 font-medium border-b border-[var(--console-border-soft)] hover:bg-indigo-50 transition-colors flex items-center gap-1"
             onMouseDown={(e) => {
               e.preventDefault();
               onGameStepChange('list');
@@ -232,7 +232,7 @@ export function ChatInputMenus({
               </button>
             );
           })}
-          <div className="px-4 py-1.5 text-xs text-cafe-muted border-t border-cafe-subtle">
+          <div className="px-4 py-1.5 text-xs text-cafe-muted border-t border-[var(--console-border-soft)]">
             {'\u2191\u2193 \u9009\u62E9 \u00B7 Enter \u786E\u8BA4 \u00B7 Esc \u5173\u95ED'}
           </div>
         </div>

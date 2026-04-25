@@ -213,7 +213,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
             )}
           </div>
 
-          <hr className="border-cafe-subtle dark:border-gray-800" />
+          <hr className="border-[var(--console-border-soft)] dark:border-gray-800" />
 
           {/* Section 2: Admin List */}
           <div className="space-y-2">
@@ -270,7 +270,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
             </div>
           </div>
 
-          <hr className="border-cafe-subtle dark:border-gray-800" />
+          <hr className="border-[var(--console-border-soft)] dark:border-gray-800" />
 
           {/* Section 3: Command Admin Only */}
           <div className="space-y-2">

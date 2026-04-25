@@ -268,7 +268,7 @@ export function PodcastPlayer({ articleId, podcasts, onArtifactCreated }: Podcas
 
       {script && (
         <div className="mt-2 rounded-md border border-[var(--console-border-soft)] bg-cafe-surface">
-          <div className="flex items-center justify-between border-b border-cafe-subtle px-3 py-1.5">
+          <div className="flex items-center justify-between border-b border-[var(--console-border-soft)] px-3 py-1.5">
             <span className="text-[10px] text-cafe-muted">
               {script.mode === 'deep' ? '深度版' : '精华版'} · {script.segments.length} 段
             </span>

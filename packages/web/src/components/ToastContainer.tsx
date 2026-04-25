@@ -31,7 +31,7 @@ function ToastCard({ toast }: { toast: ToastItem }) {
   return (
     <div
       className={`
-        bg-cafe-surface rounded-lg shadow-lg border border-cafe-subtle border-l-4 ${borderColor}
+        bg-cafe-surface rounded-lg shadow-lg border border-[var(--console-border-soft)] border-l-4 ${borderColor}
         px-4 py-3 max-w-xs pointer-events-auto
         ${toast.exiting ? 'animate-toast-out' : 'animate-toast-in'}
       `}

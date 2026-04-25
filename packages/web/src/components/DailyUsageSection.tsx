@@ -109,7 +109,7 @@ export function DailyUsageSection() {
           (a, b) => b[1].inputTokens + b[1].outputTokens - (a[1].inputTokens + a[1].outputTokens),
         );
         return (
-          <div key={day.date} className="border-t border-cafe-subtle pt-2 space-y-1">
+          <div key={day.date} className="border-t border-[var(--console-border-soft)] pt-2 space-y-1">
             <div className="flex items-center justify-between text-xs">
               <span className="font-semibold text-cafe-secondary">{day.date}</span>
               <span className="text-cafe-muted">{day.total.invocations} 次调用</span>
