@@ -28,7 +28,8 @@ triggers:
 ## SOP 位置
 
 ```
-需求确认 → **console-dev** → tdd → quality-gate → request-review
+有视觉变化的前端改动：需求确认 → **console-dev** → worktree → tdd → quality-gate → request-review
+无视觉变化的前端逻辑改动：需求确认 → worktree → tdd（跳过 console-dev）
 ```
 
 ## 流程
@@ -45,7 +46,7 @@ triggers:
 1. 读 `docs/design/console-design-system.md` 确认适用的页面布局模式（§4）
 2. 用 Pencil 出效果图，标注使用的 Token 和组件模式
 3. 铲屎官确认效果图 → 再动手写代码
-4. 如果铲屎官不在线，至少截图发到 thread 留存
+4. 如果铲屎官不在线，截图发到 thread 留存并**等待确认，不得继续进入实现**
 
 **小幅修改/Bug 修复**：
 1. 确认改动符合 Design System 中的哪条规则

@@ -257,24 +257,24 @@
 | Feature ID 出现在 UI 上（如 "F127"） | 用用户可理解的功能名 |
 | 同一页面混用框线卡片和无框线卡片 | 全部统一为无框线 |
 | `border-cafe` / `border-cafe-subtle` 在新组件中使用 | 用 `border-[var(--console-border-soft)]` |
-| 术语不一致（"会话" vs "对话" vs "thread"） | 统一用"对话" |
+| 术语不一致（混用"会话"/"对话"/"thread"指代同一概念） | 按 §6 术语表：thread="对话"，session="会话"，不混用 |
 
 ---
 
 ## 6. 术语规范
 
-| 内部术语 | 用户面展示 |
-|---------|----------|
-| thread | 对话 |
-| signal | 信号 |
-| memory / knowledge | 记忆 |
-| settings | 设置 |
-| session | 会话 |
-| connector | 连接器 |
-| worktree | 工作区 |
-| MCP | MCP 服务 |
-| skill | 技能 |
-| cat / agent | 猫猫 / 助手 |
+| 内部术语 | 用户面展示 | 说明 |
+|---------|----------|------|
+| thread | 对话 | 持久化的对话上下文，用户日常交互的主单元 |
+| session | 会话 | 猫的一次唤醒周期，技术概念，用户面少用 |
+| signal | 信号 | — |
+| memory / knowledge | 记忆 | — |
+| settings | 设置 | — |
+| connector | 连接器 | — |
+| worktree | 工作区 | — |
+| MCP | MCP 服务 | — |
+| skill | 技能 | — |
+| cat / agent | 猫猫 / 助手 | — |
 
 ---
 
