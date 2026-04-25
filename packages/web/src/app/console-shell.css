@@ -69,10 +69,13 @@
 .console-table-shell,
 .console-status-panel,
 .console-activity-rail {
-  border: 1px solid var(--console-border-soft);
   background: color-mix(in srgb, var(--console-panel-bg) 88%, transparent);
-  box-shadow: var(--console-shadow-soft);
   backdrop-filter: blur(18px);
+}
+
+.console-card,
+.console-list-card {
+  border: 1px solid transparent;
 }
 
 .console-shell-panel,
@@ -82,15 +85,12 @@
 
 .console-shell-panel-soft,
 .console-card-soft {
-  border: 1px solid color-mix(in srgb, var(--console-border-soft) 78%, transparent);
   background: color-mix(in srgb, var(--console-card-soft-bg) 90%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.26);
 }
 
 .console-card,
 .console-section-shell {
   background: color-mix(in srgb, var(--console-card-bg) 94%, transparent);
-  box-shadow: var(--console-shadow);
 }
 
 .console-list-card {
@@ -200,7 +200,6 @@
 
 .console-activity-rail {
   background: var(--console-panel-bg);
-  border-right: 1px solid var(--console-border-soft);
   box-shadow: none;
   backdrop-filter: none;
 }
