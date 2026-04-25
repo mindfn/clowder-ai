@@ -11,7 +11,9 @@ interface AppShellProps {
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname() ?? '/';
-  if (CHROMELESS_ROUTES.some((r) => pathname.startsWith(r))) {
+  const isExport =
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('export') === 'true';
+  if (isExport || CHROMELESS_ROUTES.some((r) => pathname.startsWith(r))) {
     return <>{children}</>;
   }
   return (

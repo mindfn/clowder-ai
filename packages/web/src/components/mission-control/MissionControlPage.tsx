@@ -2,7 +2,7 @@
 
 import type { BacklogItem, CatId, ExternalProject, MissionHubSelfClaimScope, ThreadPhase } from '@cat-cafe/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getThreadHref } from '@/components/ThreadSidebar/thread-navigation';
+import { detectRoutePrefix, getThreadHref } from '@/components/ThreadSidebar/thread-navigation';
 import { useChatStore } from '@/stores/chatStore';
 import { useExternalProjectStore } from '@/stores/externalProjectStore';
 import { useMissionControlStore } from '@/stores/missionControlStore';
@@ -446,7 +446,7 @@ export function MissionControlPage() {
     return storeThreadId && storeThreadId !== 'default' ? storeThreadId : null;
   }, [mcFromParam, storeThreadId]);
 
-  const backHref = getThreadHref(referrerThread ?? 'default');
+  const backHref = getThreadHref(referrerThread ?? 'default', detectRoutePrefix());
 
   return (
     <div className="flex h-screen bg-[#F4EFE7]">
