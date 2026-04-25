@@ -94,19 +94,6 @@ const SETTINGS_GUIDE_FLOW = {
   steps: [{ id: 'expand-settings', target: 'settings.group', tips: '展开系统配置分组', advance: 'click' as const }],
 };
 
-const CREATE_FORM_GUIDE_FLOW = {
-  id: 'add-api-key-account',
-  name: '新建 API Key 账号',
-  steps: [
-    {
-      id: 'open-create-form',
-      target: 'accounts.create-form',
-      tips: '展开新建 API Key 账号表单',
-      advance: 'click' as const,
-    },
-  ],
-};
-
 describe('CatCafeHub provider profiles tab', () => {
   let container: HTMLDivElement;
   let root: Root;
