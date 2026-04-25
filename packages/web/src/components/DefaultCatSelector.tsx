@@ -14,15 +14,6 @@ interface DefaultCatSelectorProps {
   onRetry?: () => void;
 }
 
-function catLabel(cat: CatData): string {
-  const name = formatCatName(cat);
-  return cat.nickname ? `${name}（${cat.nickname}）` : name;
-}
-
-/**
- * F154 Phase B (AC-B2): Dropdown selector for the global default responder cat.
- * Replaces the card grid (#543) to save vertical space as cat count grows.
- */
 export function DefaultCatSelector({
   cats,
   currentDefaultCatId,
@@ -32,7 +23,6 @@ export function DefaultCatSelector({
   saveError,
   onRetry,
 }: DefaultCatSelectorProps) {
-  const currentCat = cats.find((c) => c.id === currentDefaultCatId);
 
   return (
     <div className="rounded-xl border border-[var(--console-border-soft)] bg-cafe-surface p-4">
