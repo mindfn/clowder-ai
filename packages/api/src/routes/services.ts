@@ -96,11 +96,17 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     try {
       const child = spawn('lsof', ['-ti', `:${manifest.port}`], { stdio: ['pipe', 'pipe', 'pipe'] });
       let stdout = '';
-      child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
+      child.stdout?.on('data', (d: Buffer) => {
+        stdout += d.toString();
+      });
       await new Promise<void>((res) => child.on('close', () => res()));
       const pids = stdout.trim().split('\n').filter(Boolean);
       for (const pid of pids) {
-        try { process.kill(Number(pid), 'SIGTERM'); } catch { /* already gone */ }
+        try {
+          process.kill(Number(pid), 'SIGTERM');
+        } catch {
+          /* already gone */
+        }
       }
       return { ok: true, message: `${manifest.name} stopped (${pids.length} process(es))` };
     } catch {
@@ -130,8 +136,12 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       env: { ...process.env },
     });
     let output = '';
-    child.stdout?.on('data', (d: Buffer) => { output += d.toString(); });
-    child.stderr?.on('data', (d: Buffer) => { output += d.toString(); });
+    child.stdout?.on('data', (d: Buffer) => {
+      output += d.toString();
+    });
+    child.stderr?.on('data', (d: Buffer) => {
+      output += d.toString();
+    });
     const code = await new Promise<number | null>((res) => child.on('close', (c) => res(c)));
 
     if (code !== 0) {

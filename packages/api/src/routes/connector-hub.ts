@@ -317,39 +317,39 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
     return { platforms: status };
   });
 
-  app.post<{ Params: { platform: string } }>(
-    '/api/connector/:platform/test',
-    async (request, reply) => {
-      const userId = requireTrustedHubIdentity(request, reply);
-      if (!userId) return { error: 'Identity required' };
+  app.post<{ Params: { platform: string } }>('/api/connector/:platform/test', async (request, reply) => {
+    const userId = requireTrustedHubIdentity(request, reply);
+    if (!userId) return { error: 'Identity required' };
 
-      const { platform } = request.params;
-      const def = CONNECTOR_PLATFORMS.find((p) => p.id === platform);
-      if (!def) {
-        reply.status(404);
-        return { ok: false, error: `Unknown platform: ${platform}` };
-      }
+    const { platform } = request.params;
+    const def = CONNECTOR_PLATFORMS.find((p) => p.id === platform);
+    if (!def) {
+      reply.status(404);
+      return { ok: false, error: `Unknown platform: ${platform}` };
+    }
 
-      const status = buildConnectorStatus();
-      const platformStatus = status.find((p) => p.id === platform);
-      if (!platformStatus?.configured) {
-        return { ok: false, error: '平台尚未配置，请先填写凭证并保存' };
-      }
+    const status = buildConnectorStatus();
+    const platformStatus = status.find((p) => p.id === platform);
+    if (!platformStatus?.configured) {
+      return { ok: false, error: '平台尚未配置，请先填写凭证并保存' };
+    }
 
-      if (platform === 'weixin') {
-        const adapter = opts.weixinAdapter;
-        const ok = adapter != null && adapter.hasBotToken() && adapter.isPolling();
-        return { ok, message: ok ? '微信网关连接正常' : '微信网关未连接，请扫码登录' };
-      }
-      if (platform === 'wecom-bot') {
-        const adapter = opts.getWeComBotAdapter?.();
-        const state = adapter?.getConnectionState() ?? 'disconnected';
-        return { ok: state === 'connected', message: state === 'connected' ? '企微机器人 WebSocket 已连接' : `当前状态: ${state}` };
-      }
+    if (platform === 'weixin') {
+      const adapter = opts.weixinAdapter;
+      const ok = adapter != null && adapter.hasBotToken() && adapter.isPolling();
+      return { ok, message: ok ? '微信网关连接正常' : '微信网关未连接，请扫码登录' };
+    }
+    if (platform === 'wecom-bot') {
+      const adapter = opts.getWeComBotAdapter?.();
+      const state = adapter?.getConnectionState() ?? 'disconnected';
+      return {
+        ok: state === 'connected',
+        message: state === 'connected' ? '企微机器人 WebSocket 已连接' : `当前状态: ${state}`,
+      };
+    }
 
-      return { ok: true, message: `${def.name} 凭证已配置，连接器将在下次启动时自动连接` };
-    },
-  );
+    return { ok: true, message: `${def.name} 凭证已配置，连接器将在下次启动时自动连接` };
+  });
 
   app.post('/api/connector/feishu/qrcode', async (request, reply) => {
     const userId = requireTrustedHubIdentity(request, reply);

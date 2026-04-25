@@ -324,7 +324,10 @@ function EnvVarsSection({
                         {v.deprecated ? '⛔' : needsRestart(v) ? '🟡' : '🟢'}
                       </span>
                       {v.deprecated && (
-                        <span className="shrink-0 rounded bg-conn-red-bg px-1 py-0.5 text-[10px] font-semibold text-conn-red-text" title={v.deprecated}>
+                        <span
+                          className="shrink-0 rounded bg-conn-red-bg px-1 py-0.5 text-[10px] font-semibold text-conn-red-text"
+                          title={v.deprecated}
+                        >
                           已废弃
                         </span>
                       )}

@@ -162,7 +162,7 @@ export function HubConnectorConfigTab() {
       const data = await res.json();
       setSaveResult({
         type: data.ok ? 'success' : 'error',
-        message: data.message ?? (data.ok ? '连接正常' : data.error ?? '测试失败'),
+        message: data.message ?? (data.ok ? '连接正常' : (data.error ?? '测试失败')),
       });
       await fetchStatus();
     } catch {
@@ -216,15 +216,11 @@ export function HubConnectorConfigTab() {
                 <span className="block text-[15px] font-semibold text-cafe">
                   {platform.name} {platform.nameEn !== platform.name ? platform.nameEn : ''}
                 </span>
-                <span
-                  className={`flex items-center gap-1 text-xs ${connStateColor(platform)}`}
-                >
+                <span className={`flex items-center gap-1 text-xs ${connStateColor(platform)}`}>
                   {connStateIcon(platform)}
                   {connStateLabel(platform)}
                   {platform.lastHeartbeat && (
-                    <span className="text-cafe-muted ml-1">
-                      · {formatHeartbeat(platform.lastHeartbeat)}
-                    </span>
+                    <span className="text-cafe-muted ml-1">· {formatHeartbeat(platform.lastHeartbeat)}</span>
                   )}
                 </span>
               </span>
