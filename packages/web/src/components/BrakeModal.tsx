@@ -130,7 +130,7 @@ export function BrakeModal() {
             <div key={msg.catId} className="flex items-start gap-3">
               <div className="relative shrink-0">
                 <CatAvatar catId={msg.catId} size={48} />
-                <span className="absolute -bottom-1 -right-1 text-[10px] px-1 py-0.5 rounded bg-cafe-surface/90 border border-cafe">
+                <span className="absolute -bottom-1 -right-1 text-[10px] px-1 py-0.5 rounded bg-cafe-surface/90 border border-[var(--console-border-soft)]">
                   {alertBadge}
                 </span>
               </div>
@@ -164,7 +164,7 @@ export function BrakeModal() {
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="例：正在修复线上 P0 故障"
-              className="w-full border border-cafe rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
+              className="w-full border border-[var(--console-border-soft)] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-300"
               onCompositionStart={ime.onCompositionStart}
               onCompositionEnd={ime.onCompositionEnd}
               onKeyDown={(e) => {

@@ -7,7 +7,7 @@ export interface ConsoleEntry {
 }
 
 const LEVEL_STYLES: Record<ConsoleEntry['level'], string> = {
-  log: 'text-cafe-secondary dark:text-gray-400',
+  log: 'text-cafe-secondary dark:text-cafe-muted',
   info: 'text-blue-600 dark:text-blue-400',
   warn: 'text-amber-600 dark:text-amber-400',
   error: 'text-red-600 dark:text-red-400',

@@ -57,8 +57,8 @@ export const SOURCE_TYPE_COLORS: Record<string, string> = {
   lesson: 'bg-green-100 text-green-800',
   research: 'bg-cyan-100 text-cyan-800',
   knowledge: 'bg-pink-100 text-pink-800',
-  discussion: 'bg-gray-100 text-gray-700',
-  commit: 'bg-gray-100 text-gray-600',
+  discussion: 'bg-[var(--console-card-soft-bg)] text-cafe',
+  commit: 'bg-[var(--console-card-soft-bg)] text-cafe-secondary',
 };
 
 export const SOURCE_TYPE_LABELS: Record<string, string> = {
@@ -192,7 +192,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
             value={depth === 'raw' ? 'lexical' : mode}
             onChange={(e) => setMode(e.target.value as EvidenceSearchParams['mode'])}
             disabled={depth === 'raw'}
-            className="rounded border border-cafe bg-white px-1.5 py-0.5 text-xs disabled:opacity-50"
+            className="rounded border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-1.5 py-0.5 text-xs disabled:opacity-50"
           >
             <option value="hybrid">混合</option>
             <option value="lexical">精确</option>
@@ -207,7 +207,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
             onChange={(e) =>
               setScope(e.target.value === 'all' ? undefined : (e.target.value as EvidenceSearchParams['scope']))
             }
-            className="rounded border border-cafe bg-white px-1.5 py-0.5 text-xs"
+            className="rounded border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-1.5 py-0.5 text-xs"
           >
             <option value="all">全部</option>
             <option value="docs">文档</option>
@@ -223,7 +223,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
             onChange={(e) =>
               setDepth(e.target.value === 'summary' ? undefined : (e.target.value as EvidenceSearchParams['depth']))
             }
-            className="rounded border border-cafe bg-white px-1.5 py-0.5 text-xs"
+            className="rounded border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-1.5 py-0.5 text-xs"
           >
             {DEPTH_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -239,7 +239,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
             onChange={(e) =>
               setDimension(e.target.value === 'all' ? undefined : (e.target.value as EvidenceSearchParams['dimension']))
             }
-            className="rounded border border-cafe bg-white px-1.5 py-0.5 text-xs"
+            className="rounded border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-1.5 py-0.5 text-xs"
             data-testid="evidence-dimension-select"
           >
             <option value="all">全部</option>
@@ -255,7 +255,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
       {/* Results */}
       <div className="space-y-2">
         {results.map((item) => (
-          <div key={item.anchor} className="rounded-lg border border-cafe bg-white p-3">
+          <div key={item.anchor} className="rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] p-3">
             <div className="flex items-center gap-2 min-w-0">
               <span
                 className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${SOURCE_TYPE_COLORS[item.sourceType] ?? SOURCE_TYPE_COLORS.commit}`}
@@ -299,7 +299,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
                       </span>
                     )}
                     {p.context && p.context.length > 0 && (
-                      <div className="ml-3 mt-0.5 space-y-0.5 border-l border-cafe/30 pl-2">
+                      <div className="ml-3 mt-0.5 space-y-0.5 border-l border-[var(--console-border-soft)] pl-2">
                         {p.context.map((ctx) => (
                           <div key={ctx.passageId} className="text-[11px] text-cafe-secondary/70">
                             {ctx.speaker && <span className="font-medium">{ctx.speaker}: </span>}

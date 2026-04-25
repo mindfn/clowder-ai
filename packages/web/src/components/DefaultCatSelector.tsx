@@ -35,7 +35,7 @@ export function DefaultCatSelector({
   const currentCat = cats.find((c) => c.id === currentDefaultCatId);
 
   return (
-    <div className="rounded-xl border border-cafe bg-cafe-surface p-4">
+    <div className="rounded-xl border border-[var(--console-border-soft)] bg-cafe-surface p-4">
       <div className="flex items-center justify-between mb-3">
         <div>
           <h3 className="text-sm font-bold text-cafe-black">全局默认猫</h3>

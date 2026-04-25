@@ -31,7 +31,7 @@ export function SummaryCard({ topic, conclusions, openQuestions, createdBy, time
 
   return (
     <div className="flex justify-center mb-4">
-      <div className="bg-cafe-surface border-2 border-cafe rounded-lg shadow-md px-5 pt-4 pb-5 max-w-md w-full rotate-[-0.5deg] hover:rotate-0 transition-transform">
+      <div className="bg-cafe-surface border-2 border-[var(--console-border-soft)] rounded-lg shadow-md px-5 pt-4 pb-5 max-w-md w-full rotate-[-0.5deg] hover:rotate-0 transition-transform">
         {/* Topic header */}
         <div className="text-sm font-bold text-cafe-secondary mb-3 flex items-center gap-1.5">
           <HubIcon name="camera" className="h-3.5 w-3.5" />
@@ -79,7 +79,7 @@ export function SummaryCard({ topic, conclusions, openQuestions, createdBy, time
         )}
 
         {/* Footer: creator + time */}
-        <div className="flex items-center gap-2 pt-2 border-t border-cafe-subtle">
+        <div className="flex items-center gap-2 pt-2 border-t border-[var(--console-border-soft)]">
           {createdBy === 'system' ? (
             <HubIcon name="bot" className="h-3.5 w-3.5 text-cafe-secondary" />
           ) : catData ? (

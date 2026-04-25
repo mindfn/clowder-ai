@@ -68,7 +68,7 @@ export function AuditExplorerPanel({
       {expanded && (
         <div className="mt-2">
           {/* Tab bar */}
-          <div className="mb-2 flex border-b border-cafe">
+          <div className="mb-2 flex border-b border-[var(--console-border-soft)]">
             {(['events', 'session', 'search'] as const).map((t) => (
               <button
                 type="button"

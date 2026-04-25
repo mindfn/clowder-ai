@@ -119,7 +119,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
         <span>群聊权限</span>
       </div>
 
-      <div className="border border-cafe dark:border-gray-700 rounded-xl overflow-hidden">
+      <div className="border border-[var(--console-border-soft)] rounded-xl overflow-hidden">
         {/* Header */}
         <div className="bg-green-50 dark:bg-green-900/20 px-4 py-3 flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-green-200 dark:bg-green-800 flex items-center justify-center text-green-600 dark:text-green-400">
@@ -149,7 +149,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
               </div>
               <button
                 onClick={() => saveConfig({ whitelistEnabled: !config.whitelistEnabled })}
-                className={`relative w-10 h-5 rounded-full transition-colors ${config.whitelistEnabled ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                className={`relative w-10 h-5 rounded-full transition-colors ${config.whitelistEnabled ? 'bg-blue-500' : 'bg-cafe-surface-sunken dark:bg-gray-600'}`}
                 disabled={saving}
               >
                 <div
@@ -193,13 +193,13 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
                     value={newGroupId}
                     onChange={(e) => setNewGroupId(e.target.value)}
                     placeholder="chat_id"
-                    className="flex-1 px-2 py-1.5 text-xs border border-cafe dark:border-gray-700 rounded-lg bg-transparent"
+                    className="flex-1 px-2 py-1.5 text-xs border border-[var(--console-border-soft)] rounded-lg bg-transparent"
                   />
                   <input
                     value={newGroupLabel}
                     onChange={(e) => setNewGroupLabel(e.target.value)}
                     placeholder="群名（可选）"
-                    className="flex-1 px-2 py-1.5 text-xs border border-cafe dark:border-gray-700 rounded-lg bg-transparent"
+                    className="flex-1 px-2 py-1.5 text-xs border border-[var(--console-border-soft)] rounded-lg bg-transparent"
                   />
                   <button
                     onClick={addGroup}
@@ -213,7 +213,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
             )}
           </div>
 
-          <hr className="border-cafe-subtle dark:border-gray-800" />
+          <hr className="border-[var(--console-border-soft)]" />
 
           {/* Section 2: Admin List */}
           <div className="space-y-2">
@@ -254,7 +254,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
                   value={newAdminId}
                   onChange={(e) => setNewAdminId(e.target.value)}
                   placeholder="open_id (ou_xxxx...)"
-                  className="flex-1 px-2 py-1.5 text-xs border border-cafe dark:border-gray-700 rounded-lg bg-transparent"
+                  className="flex-1 px-2 py-1.5 text-xs border border-[var(--console-border-soft)] rounded-lg bg-transparent"
                   onCompositionStart={ime.onCompositionStart}
                   onCompositionEnd={ime.onCompositionEnd}
                   onKeyDown={(e) => e.key === 'Enter' && !ime.isComposing() && addAdmin()}
@@ -270,7 +270,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
             </div>
           </div>
 
-          <hr className="border-cafe-subtle dark:border-gray-800" />
+          <hr className="border-[var(--console-border-soft)]" />
 
           {/* Section 3: Command Admin Only */}
           <div className="space-y-2">
@@ -283,7 +283,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
               </div>
               <button
                 onClick={() => saveConfig({ commandAdminOnly: !config.commandAdminOnly })}
-                className={`relative w-10 h-5 rounded-full transition-colors ${config.commandAdminOnly ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                className={`relative w-10 h-5 rounded-full transition-colors ${config.commandAdminOnly ? 'bg-blue-500' : 'bg-cafe-surface-sunken dark:bg-gray-600'}`}
                 disabled={saving}
               >
                 <div

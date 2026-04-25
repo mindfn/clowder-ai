@@ -71,7 +71,7 @@ const CATEGORY_META: Record<PluginDef['category'], { eyebrow: string; accent: st
 const STATUS_STYLES: Record<string, { dot: string; bg: string; text: string }> = {
   active: { dot: 'bg-emerald-500', bg: 'bg-emerald-50', text: 'text-emerald-700' },
   configured: { dot: 'bg-amber-500', bg: 'bg-amber-50', text: 'text-amber-700' },
-  available: { dot: 'bg-gray-300', bg: 'bg-gray-50', text: 'text-gray-500' },
+  available: { dot: 'bg-cafe-surface-sunken', bg: 'bg-[var(--console-card-soft-bg)]', text: 'text-cafe-secondary' },
 };
 
 const SERVICE_FEATURE_MAP: Record<string, string[]> = {

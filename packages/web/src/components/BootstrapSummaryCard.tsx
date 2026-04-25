@@ -99,18 +99,18 @@ export function BootstrapSummaryCard({
           </div>
         </div>
 
-        <div className="ml-16 space-y-1.5 text-xs text-gray-600">
+        <div className="ml-16 space-y-1.5 text-xs text-cafe-secondary">
           <p className="inline-flex items-center gap-1.5">
-            <HubIcon name="folder" className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+            <HubIcon name="folder" className="w-3.5 h-3.5 text-cafe-muted flex-shrink-0" />
             项目 &nbsp;<strong>{summary.projectName}</strong>
           </p>
           <p className="inline-flex items-center gap-1.5">
-            <FileTextIcon className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+            <FileTextIcon className="w-3.5 h-3.5 text-cafe-muted flex-shrink-0" />
             已索引 {docsIndexed} 个文档
           </p>
           {durationSec !== null && (
             <p className="inline-flex items-center gap-1.5">
-              <HubIcon name="timer" className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+              <HubIcon name="timer" className="w-3.5 h-3.5 text-cafe-muted flex-shrink-0" />
               耗时 {durationSec} 秒
             </p>
           )}
@@ -118,12 +118,12 @@ export function BootstrapSummaryCard({
 
         {summary.kindCoverage && Object.keys(summary.kindCoverage).length > 0 ? (
           <div className="ml-16 mt-3">
-            <p className="text-[10px] text-gray-400 mb-1.5">知识覆盖</p>
+            <p className="text-[10px] text-cafe-muted mb-1.5">知识覆盖</p>
             <div className="flex flex-wrap gap-1.5">
               {Object.entries(summary.kindCoverage).map(([kind, count]) => (
                 <span
                   key={kind}
-                  className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${SOURCE_TYPE_COLORS[kind] ?? 'bg-gray-100 text-gray-600'}`}
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${SOURCE_TYPE_COLORS[kind] ?? 'bg-[var(--console-card-soft-bg)] text-cafe-secondary'}`}
                 >
                   {SOURCE_TYPE_LABELS[kind] ?? kind} · {count}
                 </span>
@@ -132,12 +132,12 @@ export function BootstrapSummaryCard({
           </div>
         ) : Object.keys(summary.tierCoverage).length > 0 ? (
           <div className="ml-16 mt-3">
-            <p className="text-[10px] text-gray-400 mb-1.5">覆盖分层</p>
+            <p className="text-[10px] text-cafe-muted mb-1.5">覆盖分层</p>
             <div className="flex flex-wrap gap-1.5">
               {Object.entries(summary.tierCoverage).map(([tier, count]) => (
                 <span
                   key={tier}
-                  className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${TIER_COLORS[tier] ?? 'bg-gray-100 text-gray-600'}`}
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${TIER_COLORS[tier] ?? 'bg-[var(--console-card-soft-bg)] text-cafe-secondary'}`}
                 >
                   {TIER_LABELS[tier] ?? tier} · {count}
                 </span>
@@ -151,7 +151,7 @@ export function BootstrapSummaryCard({
             <button
               type="button"
               onClick={onDismiss}
-              className="px-3 py-1.5 rounded-lg text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+              className="px-3 py-1.5 rounded-lg text-xs text-cafe-secondary hover:text-cafe hover:bg-[var(--console-card-soft-bg)] transition-colors"
             >
               关闭
             </button>
@@ -162,8 +162,8 @@ export function BootstrapSummaryCard({
             onClick={onSearchKnowledge}
             className={
               onSearchKnowledge
-                ? 'px-3 py-1.5 rounded-lg text-xs text-gray-600 hover:text-gray-800 hover:bg-gray-100 transition-colors inline-flex items-center gap-1'
-                : 'px-3 py-1.5 rounded-lg text-xs text-gray-400 cursor-not-allowed inline-flex items-center gap-1'
+                ? 'px-3 py-1.5 rounded-lg text-xs text-cafe-secondary hover:text-gray-800 hover:bg-[var(--console-card-soft-bg)] transition-colors inline-flex items-center gap-1'
+                : 'px-3 py-1.5 rounded-lg text-xs text-cafe-muted cursor-not-allowed inline-flex items-center gap-1'
             }
           >
             <SearchIcon className="w-3.5 h-3.5" />

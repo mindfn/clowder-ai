@@ -93,7 +93,7 @@ export function InstallPlanDetail({
 
       <p className="text-xs leading-relaxed text-cafe-secondary">{result.componentSummary}</p>
 
-      <div className="rounded-lg border border-cafe-border bg-white p-3">
+      <div className="rounded-lg border border-cafe-border bg-[var(--console-card-bg)] p-3">
         <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-cafe">
           <HubIcon name="settings" className="h-3.5 w-3.5" /> 安装配置
         </p>
@@ -115,7 +115,7 @@ export function InstallPlanDetail({
       </div>
 
       {plan.mcpEntry?.env && Object.keys(plan.mcpEntry.env).length > 0 && (
-        <div className="rounded-lg border border-cafe-border bg-white p-3">
+        <div className="rounded-lg border border-cafe-border bg-[var(--console-card-bg)] p-3">
           <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-cafe">
             <HubIcon name="key" className="h-3.5 w-3.5" /> 环境变量 (可选)
           </p>
@@ -126,7 +126,7 @@ export function InstallPlanDetail({
       )}
 
       {plan.manualSteps && plan.manualSteps.length > 0 && (
-        <div className="rounded-lg border border-cafe-border bg-white p-3">
+        <div className="rounded-lg border border-cafe-border bg-[var(--console-card-bg)] p-3">
           <p className="mb-2 text-xs font-medium text-cafe">手动步骤</p>
           <ol className="list-inside list-decimal space-y-1 text-xs text-cafe-secondary">
             {plan.manualSteps.map((step, i) => (

@@ -29,7 +29,7 @@ const BUCKET_COLORS: Record<TriageBucket, string> = {
   clarify_first: 'bg-yellow-400',
   validate_first: 'bg-orange-400',
   challenge: 'bg-red-400',
-  later: 'bg-gray-300',
+  later: 'bg-cafe-surface-sunken',
 };
 
 const SOURCE_TAGS: SourceTag[] = ['Q', 'O', 'D', 'R', 'A'];

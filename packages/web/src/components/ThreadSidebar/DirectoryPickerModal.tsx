@@ -194,7 +194,7 @@ export function DirectoryPickerModal({
         className="bg-cafe-surface rounded-xl shadow-2xl w-full max-w-[640px] mx-4 max-h-[85vh] flex flex-col overflow-hidden"
       >
         {/* ── Header + Title ── */}
-        <div className="px-5 pt-4 pb-3 border-b border-cafe-subtle">
+        <div className="px-5 pt-4 pb-3 border-b border-[var(--console-border-soft)]">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-base font-semibold text-cafe-black">新建对话</h2>
             <button
@@ -217,7 +217,7 @@ export function DirectoryPickerModal({
             onChange={(e) => setThreadTitle(e.target.value)}
             placeholder="对话标题（可选）"
             maxLength={200}
-            className="w-full rounded-lg border border-cafe bg-cafe-surface px-3 py-2 text-sm focus:border-cafe-accent focus:outline-none focus:ring-1 focus:ring-cafe-accent/20"
+            className="w-full rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface px-3 py-2 text-sm focus:border-cafe-accent focus:outline-none focus:ring-1 focus:ring-cafe-accent/20"
           />
         </div>
 
@@ -308,14 +308,14 @@ export function DirectoryPickerModal({
 
         {/* ── Options bar: feat + pin + cats toggle (hidden when browser is open) ── */}
         <div
-          className={`px-5 py-2 border-t border-cafe-subtle flex items-center gap-3 flex-wrap ${showBrowser ? 'hidden' : ''}`}
+          className={`px-5 py-2 border-t border-[var(--console-border-soft)] flex items-center gap-3 flex-wrap ${showBrowser ? 'hidden' : ''}`}
         >
           {backlogItems.length > 0 && (
             <div className="flex-1 min-w-[140px]">
               <select
                 value={selectedBacklogItemId}
                 onChange={(e) => setSelectedBacklogItemId(e.target.value)}
-                className="w-full rounded border border-cafe bg-cafe-surface px-2 py-1.5 text-xs text-cafe-secondary focus:border-cafe-accent focus:outline-none focus:ring-1 focus:ring-cafe-accent/20"
+                className="w-full rounded border border-[var(--console-border-soft)] bg-cafe-surface px-2 py-1.5 text-xs text-cafe-secondary focus:border-cafe-accent focus:outline-none focus:ring-1 focus:ring-cafe-accent/20"
               >
                 <option value="">关联 Feature（可选）</option>
                 {backlogItems.map((item) => (
@@ -331,7 +331,7 @@ export function DirectoryPickerModal({
               type="checkbox"
               checked={pinOnCreate}
               onChange={(e) => setPinOnCreate(e.target.checked)}
-              className="rounded border-cafe text-cafe-accent focus:ring-cafe-accent/20"
+              className="rounded border-[var(--console-border-soft)] text-cafe-accent focus:ring-cafe-accent/20"
             />
             <span>创建后置顶</span>
           </label>
@@ -359,7 +359,7 @@ export function DirectoryPickerModal({
 
         {/* ── Cat selector (collapsed by default, hidden when browser is open) ── */}
         {catsExpanded && !showBrowser && (
-          <div className="px-5 py-2 border-t border-cafe-subtle overflow-y-auto max-h-[40vh]">
+          <div className="px-5 py-2 border-t border-[var(--console-border-soft)] overflow-y-auto max-h-[40vh]">
             <CatSelector selectedCats={selectedCats} onSelectionChange={setSelectedCats} />
             {/* F33: Session binding */}
             {selectedCats.length > 0 && (
@@ -401,7 +401,7 @@ export function DirectoryPickerModal({
                             onChange={(e) => setSessionInputs((prev) => ({ ...prev, [catId]: e.target.value }))}
                             placeholder="CLI Session ID"
                             maxLength={500}
-                            className="flex-1 rounded border border-cafe bg-cafe-surface-elevated px-2 py-1 text-[11px] font-mono focus:border-cafe-accent focus:outline-none focus:ring-1 focus:ring-cafe-accent/20"
+                            className="flex-1 rounded border border-[var(--console-border-soft)] bg-cafe-surface-elevated px-2 py-1 text-[11px] font-mono focus:border-cafe-accent focus:outline-none focus:ring-1 focus:ring-cafe-accent/20"
                           />
                         </div>
                       );
@@ -415,7 +415,7 @@ export function DirectoryPickerModal({
 
         {/* ── F113: Inline directory browser (replaces osascript picker) ── */}
         {showBrowser && (
-          <div className="border-t border-cafe-subtle flex-1 min-h-0 flex flex-col overflow-hidden">
+          <div className="border-t border-[var(--console-border-soft)] flex-1 min-h-0 flex flex-col overflow-hidden">
             <DirectoryBrowser
               initialPath={cwdPath ?? undefined}
               activeProjectPath={cwdPath ?? undefined}
@@ -426,7 +426,7 @@ export function DirectoryPickerModal({
         )}
 
         {/* ── Bottom: browse button + path input + confirm ── */}
-        <div className="px-5 py-3 border-t border-cafe-subtle space-y-2 flex-shrink-0">
+        <div className="px-5 py-3 border-t border-[var(--console-border-soft)] space-y-2 flex-shrink-0">
           <div className="flex gap-2">
             <button
               type="button"
@@ -448,7 +448,7 @@ export function DirectoryPickerModal({
                 if (e.key === 'Enter' && !ime.isComposing()) handlePathSubmit();
               }}
               placeholder="或输入路径..."
-              className="flex-1 rounded-lg border border-cafe bg-cafe-surface px-3 py-2 text-xs focus:border-cafe-accent focus:outline-none focus:ring-1 focus:ring-cafe-accent/20"
+              className="flex-1 rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface px-3 py-2 text-xs focus:border-cafe-accent focus:outline-none focus:ring-1 focus:ring-cafe-accent/20"
             />
             {pathInput.trim() && (
               <button

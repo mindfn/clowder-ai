@@ -40,7 +40,7 @@ const STATUS_CONFIG: Record<
   draft: {
     label: '草稿',
     className: 'border-dashed opacity-80',
-    badge: 'bg-cafe-surface-elevated text-cafe-secondary border-cafe',
+    badge: 'bg-cafe-surface-elevated text-cafe-secondary border-[var(--console-border-soft)]',
   },
   pending: {
     label: '待审',
@@ -48,7 +48,7 @@ const STATUS_CONFIG: Record<
     badge: 'bg-amber-100 text-amber-700 border-amber-200 animate-pulse',
   },
   published: { label: '正式', className: '', badge: '' },
-  archived: { label: '归档', className: 'grayscale-[0.5] opacity-60', badge: 'bg-gray-200 text-cafe-secondary' },
+  archived: { label: '归档', className: 'grayscale-[0.5] opacity-60', badge: 'bg-[var(--console-pill-bg)] text-cafe-secondary' },
 };
 
 const CONFIDENCE_STYLES: Record<

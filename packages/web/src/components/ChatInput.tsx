@@ -729,7 +729,7 @@ export function ChatInput({
                   ? '继续输入，消息会排队...'
                   : '输入消息... (@ 召唤猫猫)'
             }
-            className={`w-full resize-none rounded-xl border p-3 text-sm focus:outline-none focus:ring-2 placeholder:text-gray-400 ${
+            className={`w-full resize-none rounded-xl border p-3 text-sm focus:outline-none focus:ring-2 placeholder:text-cafe-muted ${
               whisperMode
                 ? 'border-amber-300 bg-amber-50/50 focus:ring-amber-400'
                 : 'border-[var(--console-border-soft)] bg-cafe-surface focus:ring-cafe-accent'

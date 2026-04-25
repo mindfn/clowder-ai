@@ -31,7 +31,7 @@ function RichBlockRenderer({ block, catId, messageId }: { block: RichBlock; catI
       return <FileBlock block={block} />;
     default:
       return (
-        <div className="rounded-lg border border-cafe dark:border-gray-700 px-3 py-2 text-xs text-cafe-muted">
+        <div className="rounded-lg border border-[var(--console-border-soft)] px-3 py-2 text-xs text-cafe-muted">
           未知富块类型: {(block as { kind: string }).kind}
         </div>
       );

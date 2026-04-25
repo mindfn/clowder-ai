@@ -11,7 +11,7 @@ import { deriveActiveCats, formatCost, formatDuration, formatTokenCount } from '
 function StatusDot({ status }: { status: string }) {
   switch (status) {
     case 'pending':
-      return <span className="inline-block w-2 h-2 rounded-full bg-gray-300 animate-pulse" />;
+      return <span className="inline-block w-2 h-2 rounded-full bg-cafe-surface-sunken animate-pulse" />;
     case 'streaming':
       return <span className="inline-block w-2 h-2 rounded-full bg-green-400 animate-pulse" />;
     case 'done':
@@ -109,7 +109,7 @@ export function ParallelStatusBar({ onStop }: { onStop?: () => void }) {
   const agg = aggregateUsage(catInvocations, activeCats);
 
   return (
-    <div className="px-5 py-2.5 bg-gradient-to-r from-opus-bg via-codex-bg to-gemini-bg border-b border-cafe">
+    <div className="px-5 py-2.5 bg-gradient-to-r from-opus-bg via-codex-bg to-gemini-bg border-b border-[var(--console-border-soft)]">
       <div className="flex items-center gap-4">
         <span className="text-sm font-medium text-cafe-secondary">独立观点采样中</span>
         {activeCats.map((catId) => (

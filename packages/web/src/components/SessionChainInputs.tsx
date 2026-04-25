@@ -90,7 +90,7 @@ export function BindSessionInput({
         type="button"
         onClick={() => void handleBind()}
         disabled={status === 'saving' || !value.trim() || disabled}
-        className="text-[9px] px-1.5 py-0.5 rounded bg-gray-200 hover:bg-gray-300 disabled:opacity-40 transition-colors"
+        className="text-[9px] px-1.5 py-0.5 rounded bg-[var(--console-pill-bg)] hover:bg-[var(--console-hover-bg)] disabled:opacity-40 transition-colors"
       >
         {status === 'saving' ? '...' : status === 'ok' ? 'ok' : status === 'error' ? 'err' : 'bind'}
       </button>

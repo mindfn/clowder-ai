@@ -95,7 +95,7 @@ export function IdentitySection({
           onClick={() => fileInputRef.current?.click()}
           className="flex items-center gap-2 rounded-lg border border-[#E8DCCF] bg-[#F7F3F0] px-3 py-1.5 text-sm text-[#5C4B42] transition hover:border-[#D49266]"
         >
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#E8DCCF] bg-white text-[10px] text-[#8A776B]">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#E8DCCF] bg-[var(--console-card-bg)] text-[10px] text-[#8A776B]">
             {avatarSrc ? (
               // biome-ignore lint/performance/noImgElement: avatar path may be runtime upload URL
               // eslint-disable-next-line @next/next/no-img-element

@@ -140,7 +140,7 @@ export function ChatInputActionButton({
       ) : voice.state === 'transcribing' ? (
         <button
           disabled
-          className="p-3 rounded-xl bg-gray-300 text-white cursor-wait"
+          className="p-3 rounded-xl bg-cafe-surface-sunken text-white cursor-wait"
           title="转写中"
           aria-label="Transcribing"
         >

@@ -168,7 +168,7 @@ export function WeixinQrPanel({ configured }: { configured: boolean }) {
       )}
 
       {(qrState === 'waiting' || qrState === 'scanned') && qrUrl && (
-        <div className="flex flex-col items-center gap-3 bg-cafe-surface-elevated border border-cafe rounded-xl p-4">
+        <div className="flex flex-col items-center gap-3 bg-cafe-surface-elevated border border-[var(--console-border-soft)] rounded-xl p-4">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={qrUrl} alt="WeChat login QR code" className="w-48 h-48 rounded-lg" data-testid="weixin-qr-image" />
           {qrState === 'waiting' && (

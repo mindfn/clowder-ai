@@ -169,13 +169,13 @@ export function ThreadCatPill({ threadId }: ThreadCatPillProps) {
         <div
           ref={popoverRef}
           style={getPopoverStyle()}
-          className="bg-cafe-surface rounded-lg shadow-lg border border-cafe z-50 flex flex-col"
+          className="bg-cafe-surface rounded-lg shadow-lg border border-[var(--console-border-soft)] z-50 flex flex-col"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="p-3 overflow-y-auto max-h-[50vh]">
             <CatSelector selectedCats={selectedCats} onSelectionChange={handleSelectionChange} />
           </div>
-          <div className="flex items-center justify-between px-3 pb-3 pt-2 border-t border-cafe-subtle flex-shrink-0">
+          <div className="flex items-center justify-between px-3 pb-3 pt-2 border-t border-[var(--console-border-soft)] flex-shrink-0">
             {saveError && <span className="text-[10px] text-red-400">保存失败</span>}
             {!saveError && selectedCats.length > 0 && (
               <button onClick={() => setSelectedCats([])} className="text-[10px] text-cafe-muted hover:text-red-400">

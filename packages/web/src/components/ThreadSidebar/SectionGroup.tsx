@@ -6,7 +6,7 @@ const GOV_STATUS_DOT: Record<string, { color: string; title: string }> = {
   healthy: { color: 'bg-green-400', title: '治理正常' },
   stale: { color: 'bg-yellow-400', title: '治理过期' },
   missing: { color: 'bg-red-400', title: '治理缺失' },
-  'never-synced': { color: 'bg-gray-300', title: '未同步治理' },
+  'never-synced': { color: 'bg-cafe-surface-sunken', title: '未同步治理' },
 };
 
 /** Section icon SVG paths (extracted to reduce JSX noise) */
@@ -226,7 +226,7 @@ export function SectionGroup({
       {showMenu && (
         <div
           ref={menuRef}
-          className="absolute right-2 top-8 z-50 bg-cafe-surface rounded-lg shadow-lg border border-cafe py-1 min-w-[140px]"
+          className="absolute right-2 top-8 z-50 bg-cafe-surface rounded-lg shadow-lg border border-[var(--console-border-soft)] py-1 min-w-[140px]"
         >
           {onOpenInFinder && (
             <MenuItem

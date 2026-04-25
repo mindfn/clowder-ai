@@ -183,7 +183,7 @@ export function SignalArticleDetail({
 
   if (isLoading) {
     return (
-      <aside className="rounded-xl border border-cafe bg-cafe-surface p-6 text-sm text-cafe-secondary shadow-sm">
+      <aside className="rounded-xl border border-[var(--console-border-soft)] bg-cafe-surface p-6 text-sm text-cafe-secondary shadow-sm">
         正在加载文章详情...
       </aside>
     );
@@ -191,14 +191,14 @@ export function SignalArticleDetail({
 
   if (!article) {
     return (
-      <aside className="rounded-xl border border-dashed border-cafe bg-cafe-surface p-6 text-sm text-cafe-secondary">
+      <aside className="rounded-xl border border-dashed border-[var(--console-border-soft)] bg-cafe-surface p-6 text-sm text-cafe-secondary">
         选择一篇文章查看详情。
       </aside>
     );
   }
 
   return (
-    <aside className="rounded-xl border border-cafe bg-cafe-surface p-5 shadow-sm">
+    <aside className="rounded-xl border border-[var(--console-border-soft)] bg-cafe-surface p-5 shadow-sm">
       <div className="flex flex-wrap items-center gap-2">
         <SignalTierBadge tier={article.tier} />
         <span className="rounded bg-cafe-surface-elevated px-2 py-0.5 text-xs font-medium text-cafe-secondary">
@@ -258,7 +258,7 @@ export function SignalArticleDetail({
           </button>
         </div>
         <div
-          className={`mt-1 overflow-y-auto rounded-lg border border-cafe bg-cafe-surface-elevated p-3 text-sm text-cafe-black ${expandContent ? '' : 'max-h-[300px]'}`}
+          className={`mt-1 overflow-y-auto rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface-elevated p-3 text-sm text-cafe-black ${expandContent ? '' : 'max-h-[300px]'}`}
         >
           <MarkdownContent content={article.content || '（无正文）'} />
         </div>
@@ -294,7 +294,7 @@ export function SignalArticleDetail({
               }
             }}
             placeholder="添加标签"
-            className="flex-1 rounded-md border border-cafe px-2 py-1.5 text-xs"
+            className="flex-1 rounded-md border border-[var(--console-border-soft)] px-2 py-1.5 text-xs"
           />
           <button
             type="button"
@@ -323,7 +323,7 @@ export function SignalArticleDetail({
                 onBlur={() => void saveNote()}
                 placeholder="写下你的笔记..."
                 rows={3}
-                className="w-full rounded-md border border-cafe px-3 py-2 text-sm"
+                className="w-full rounded-md border border-[var(--console-border-soft)] px-3 py-2 text-sm"
               />
               <button
                 type="button"
@@ -347,7 +347,7 @@ export function SignalArticleDetail({
         <button
           type="button"
           onClick={() => void onStatusChange(article.id, 'read')}
-          className="rounded-md border border-cafe px-3 py-1.5 text-xs text-cafe-secondary hover:bg-cafe-surface-elevated"
+          className="rounded-md border border-[var(--console-border-soft)] px-3 py-1.5 text-xs text-cafe-secondary hover:bg-cafe-surface-elevated"
         >
           标记已读
         </button>
@@ -372,7 +372,7 @@ export function SignalArticleDetail({
               <button
                 type="button"
                 onClick={() => setConfirmDelete(false)}
-                className="rounded-md border border-cafe px-3 py-1.5 text-xs text-cafe-secondary hover:bg-cafe-surface-elevated"
+                className="rounded-md border border-[var(--console-border-soft)] px-3 py-1.5 text-xs text-cafe-secondary hover:bg-cafe-surface-elevated"
               >
                 取消
               </button>

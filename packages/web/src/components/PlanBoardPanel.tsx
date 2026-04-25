@@ -93,7 +93,7 @@ function PlanCard({ catId, threadId, inv }: { catId: string; threadId: string; i
         </div>
         {status === 'interrupted' && (
           <button
-            className="text-[10px] px-2 py-0.5 rounded-full border border-cafe hover:border-gray-400 hover:bg-cafe-surface-elevated transition-colors"
+            className="text-[10px] px-2 py-0.5 rounded-full border border-[var(--console-border-soft)] hover:border-gray-400 hover:bg-cafe-surface-elevated transition-colors"
             onClick={async () => {
               if (await confirm({ title: '继续任务', message: '确认继续上次任务？' })) {
                 void handleSend(buildContinueMessage(catId, tp), undefined, threadId);
@@ -120,7 +120,7 @@ function PlanCard({ catId, threadId, inv }: { catId: string; threadId: string; i
           );
         })}
       </div>
-      <div className="mt-1 ml-3.5 h-1 bg-gray-200 rounded-full overflow-hidden">
+      <div className="mt-1 ml-3.5 h-1 bg-[var(--console-pill-bg)] rounded-full overflow-hidden">
         <div
           className="h-full bg-green-500 rounded-full transition-all duration-300"
           style={{ width: `${Math.round((completed / tasks.length) * 100)}%` }}
@@ -182,7 +182,7 @@ export function PlanBoardPanel({ threadId, catInvocations }: PlanBoardPanelProps
 
       {/* Completed cats — folded */}
       {completedCats.length > 0 && (
-        <div className="mt-2 border-t border-cafe pt-2">
+        <div className="mt-2 border-t border-[var(--console-border-soft)] pt-2">
           <button
             onClick={() => setCompletedOpen((v) => !v)}
             className="flex w-full items-center justify-between text-[10px] text-cafe-secondary hover:text-cafe"

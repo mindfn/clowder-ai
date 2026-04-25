@@ -70,7 +70,7 @@ function CodeBlock({ children }: { children: ReactNode }) {
     <div className="relative group my-2">
       <button
         onClick={handleCopy}
-        className="absolute top-2 right-2 z-10 px-1.5 py-0.5 rounded text-[10px] bg-gray-700 text-cafe-muted md:opacity-0 md:group-hover:opacity-100 hover:bg-gray-600 transition-opacity"
+        className="absolute top-2 right-2 z-10 px-1.5 py-0.5 rounded text-[10px] bg-gray-700 text-cafe-muted md:opacity-0 md:group-hover:opacity-100 hover:bg-[var(--console-hover-bg)] transition-opacity"
       >
         {copied ? '已复制' : '复制'}
       </button>
@@ -214,7 +214,7 @@ const mdComponents: Components = {
     <h5 className="text-xs font-semibold mb-1 mt-1.5 first:mt-0 uppercase tracking-wide">{withMentions(children)}</h5>
   ),
   h6: ({ children }) => (
-    <h6 className="text-xs font-medium mb-1 mt-1.5 first:mt-0 text-gray-500">{withMentions(children)}</h6>
+    <h6 className="text-xs font-medium mb-1 mt-1.5 first:mt-0 text-cafe-secondary">{withMentions(children)}</h6>
   ),
 
   ul: ({ children }) => <ul className="list-disc pl-5 mb-2 space-y-0.5">{children}</ul>,
@@ -237,19 +237,19 @@ const mdComponents: Components = {
     ),
 
   blockquote: ({ children }) => (
-    <blockquote className="border-l-[3px] border-cafe pl-3 my-2 italic opacity-80">{children}</blockquote>
+    <blockquote className="border-l-[3px] border-[var(--console-border-soft)] pl-3 my-2 italic opacity-80">{children}</blockquote>
   ),
   a: ({ href, children }) => (
     <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline break-all">
       {withMentions(children)}
     </a>
   ),
-  hr: () => <hr className="my-3 border-cafe" />,
+  hr: () => <hr className="my-3 border-[var(--console-border-soft)]" />,
 
   /* Code blocks with copy button */
   pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
   code: ({ className, children }) => (
-    <code className={`${className ?? ''} bg-gray-200/50 rounded px-1 py-0.5 text-[0.85em] font-mono`}>{children}</code>
+    <code className={`${className ?? ''} bg-[var(--console-pill-bg)]/50 rounded px-1 py-0.5 text-[0.85em] font-mono`}>{children}</code>
   ),
 
   /* Tables (GFM) */
@@ -260,9 +260,9 @@ const mdComponents: Components = {
   ),
   thead: ({ children }) => <thead className="bg-cafe-surface-elevated">{children}</thead>,
   th: ({ children }) => (
-    <th className="border border-cafe px-2 py-1 text-left font-semibold text-xs">{withMentions(children)}</th>
+    <th className="border border-[var(--console-border-soft)] px-2 py-1 text-left font-semibold text-xs">{withMentions(children)}</th>
   ),
-  td: ({ children }) => <td className="border border-cafe px-2 py-1">{withMentions(children)}</td>,
+  td: ({ children }) => <td className="border border-[var(--console-border-soft)] px-2 py-1">{withMentions(children)}</td>,
 };
 
 /* ── Exported component ────────────────────────────────────── */

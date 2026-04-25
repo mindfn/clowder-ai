@@ -372,7 +372,7 @@ export function ChatMessage({ message, getCatById }: ChatMessageProps) {
         )}
         <div
           className={`border px-4 py-3 transition-transform hover:-translate-y-0.5 overflow-hidden ${
-            catStyle ? `${catStyle.radius} ${catStyle.font ?? ''}` : 'bg-cafe-surface border-cafe rounded-2xl'
+            catStyle ? `${catStyle.radius} ${catStyle.font ?? ''}` : 'bg-cafe-surface border-[var(--console-border-soft)] rounded-2xl'
           } ${showSchedulerAccent ? SCHEDULER_ACCENT_BUBBLE_CLASS : ''}`}
           style={
             catStyle

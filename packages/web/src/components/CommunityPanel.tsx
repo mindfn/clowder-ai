@@ -56,7 +56,7 @@ const ISSUE_STATE_COLORS: Record<string, string> = {
   'pending-decision': 'text-amber-600',
   accepted: 'text-green-600',
   declined: 'text-cafe-muted',
-  closed: 'text-gray-400',
+  closed: 'text-cafe-muted',
 };
 
 const PR_GROUP_COLORS: Record<string, string> = {

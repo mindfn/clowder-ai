@@ -96,7 +96,7 @@ const CAT_SESSION_COLORS: Record<string, { border: string; badgeBg: string; badg
   sonnet: { border: 'border-[#B39DDB66]', badgeBg: 'bg-[#EDE7F6]', badgeText: 'text-[#6A1B9A]' },
 };
 
-const DEFAULT_SESSION_COLORS = { border: 'border-cafe/40', badgeBg: 'bg-gray-200', badgeText: 'text-cafe-secondary' };
+const DEFAULT_SESSION_COLORS = { border: 'border-[var(--console-border-soft)]', badgeBg: 'bg-[var(--console-pill-bg)]', badgeText: 'text-cafe-secondary' };
 
 export function SessionChainPanel({ threadId, catInvocations, onViewSession }: SessionChainPanelProps) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -336,7 +336,7 @@ export function SessionChainPanel({ threadId, catInvocations, onViewSession }: S
                       {onViewSession && (
                         <button
                           type="button"
-                          className="text-[10px] px-2 py-0.5 rounded border border-cafe text-cafe-secondary hover:bg-cafe-surface-elevated"
+                          className="text-[10px] px-2 py-0.5 rounded border border-[var(--console-border-soft)] text-cafe-secondary hover:bg-cafe-surface-elevated"
                           onClick={() => onViewSession(session.id, session.catId)}
                         >
                           查看

@@ -173,7 +173,7 @@ function ProgressBar({ percent, utilization }: { percent: number; utilization: n
   const clamped = Math.max(0, Math.min(100, percent));
   const color = barColor(utilization);
   return (
-    <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
+    <div className="w-full h-1.5 bg-[var(--console-pill-bg)] rounded-full overflow-hidden">
       <div className={`h-full rounded-full ${color}`} style={{ width: `${clamped}%` }} />
     </div>
   );

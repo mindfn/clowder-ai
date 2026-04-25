@@ -9,7 +9,7 @@ import { HubQuotaBoardTab } from './HubQuotaBoardTab';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border border-cafe bg-cafe-surface-elevated/70 p-3">
+    <section className="rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface-elevated/70 p-3">
       <h3 className="text-xs font-semibold text-cafe-secondary mb-2">{title}</h3>
       {children}
     </section>

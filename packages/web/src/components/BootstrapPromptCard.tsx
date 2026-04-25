@@ -53,7 +53,7 @@ export function BootstrapPromptCard({
             <p className="text-sm font-medium text-cafe-black">
               {isFailed ? '记忆索引构建失败' : isStale ? '记忆索引已过期' : '这个项目还没有记忆索引'}
             </p>
-            <p className="text-xs text-gray-500 mt-0.5">
+            <p className="text-xs text-cafe-secondary mt-0.5">
               {isFailed
                 ? `项目 ${dirName} 上次扫描出错：${indexState.error_message ?? '未知错误'}`
                 : isStale
@@ -64,7 +64,7 @@ export function BootstrapPromptCard({
         </div>
 
         {!isFailed && (
-          <div className="ml-16 mb-4 space-y-1.5 text-xs text-gray-500">
+          <div className="ml-16 mb-4 space-y-1.5 text-xs text-cafe-secondary">
             <p className="inline-flex items-center gap-1.5">
               <HubIcon name="folder" className="w-3.5 h-3.5 text-cafe-accent flex-shrink-0" />
               扫描范围 &nbsp;docs/ 下文档（specs · ADRs · plans · lessons）
@@ -84,7 +84,7 @@ export function BootstrapPromptCard({
           <button
             type="button"
             onClick={onSnooze}
-            className="px-4 py-2 rounded-lg text-xs font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+            className="px-4 py-2 rounded-lg text-xs font-medium text-cafe-secondary hover:text-cafe hover:bg-[var(--console-card-soft-bg)] transition-colors"
           >
             稍后再说
           </button>
@@ -98,7 +98,7 @@ export function BootstrapPromptCard({
           </button>
         </div>
 
-        <p className="text-[10px] text-gray-400 mt-3 ml-16">
+        <p className="text-[10px] text-cafe-muted mt-3 ml-16">
           {isFailed
             ? '扫描仅读取项目文件结构和文档，不会执行代码或修改任何文件。'
             : '选择「稍后再说」将在 7 天后再次提醒。你也可以在记忆中心手动触发扫描。'}

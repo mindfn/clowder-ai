@@ -44,7 +44,7 @@ export function AuthorizationCard({ request, onRespond }: AuthorizationCardProps
             </button>
             <button
               onClick={() => setExpanded(true)}
-              className="px-3 py-1 text-xs bg-gray-200 text-cafe-secondary rounded-md hover:bg-gray-300 transition-colors"
+              className="px-3 py-1 text-xs bg-[var(--console-pill-bg)] text-cafe-secondary rounded-md hover:bg-[var(--console-hover-bg)] transition-colors"
             >
               更多选项...
             </button>

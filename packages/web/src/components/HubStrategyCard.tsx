@@ -96,7 +96,7 @@ export function CatStrategyCard({ entry, onSaved }: { entry: CatStrategyEntry; o
   };
 
   return (
-    <div className="rounded-lg border border-cafe bg-cafe-surface p-3 space-y-2">
+    <div className="rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface p-3 space-y-2">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold">{entry.displayName}</span>
@@ -139,7 +139,7 @@ export function CatStrategyCard({ entry, onSaved }: { entry: CatStrategyEntry; o
           <div className="flex gap-2 pt-1">
             <button
               onClick={() => setEditing(true)}
-              className="text-xs px-2 py-1 rounded bg-cafe-surface-elevated hover:bg-gray-200 text-cafe-secondary transition-colors"
+              className="text-xs px-2 py-1 rounded bg-cafe-surface-elevated hover:bg-[var(--console-hover-bg)] text-cafe-secondary transition-colors"
             >
               编辑
             </button>
@@ -163,7 +163,7 @@ export function CatStrategyCard({ entry, onSaved }: { entry: CatStrategyEntry; o
             <select
               value={strategy}
               onChange={(e) => setStrategy(e.target.value as StrategyType)}
-              className="w-full text-xs border border-cafe rounded px-2 py-1.5 focus:outline-none focus:border-blue-400"
+              className="w-full text-xs border border-[var(--console-border-soft)] rounded px-2 py-1.5 focus:outline-none focus:border-blue-400"
             >
               <option value="handoff">{STRATEGY_LABELS.handoff}</option>
               <option value="compress">{STRATEGY_LABELS.compress}</option>
@@ -248,7 +248,7 @@ export function CatStrategyCard({ entry, onSaved }: { entry: CatStrategyEntry; o
             <button
               onClick={handleCancel}
               disabled={saving}
-              className="text-xs px-3 py-1.5 rounded bg-cafe-surface-elevated hover:bg-gray-200 text-cafe-secondary transition-colors disabled:opacity-40"
+              className="text-xs px-3 py-1.5 rounded bg-cafe-surface-elevated hover:bg-[var(--console-hover-bg)] text-cafe-secondary transition-colors disabled:opacity-40"
             >
               取消
             </button>

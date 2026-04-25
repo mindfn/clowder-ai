@@ -233,7 +233,7 @@ export function PodcastPlayer({ articleId, podcasts, onArtifactCreated }: Podcas
             type="button"
             disabled={generating}
             onClick={() => void handleGenerate('deep')}
-            className="rounded border border-cafe px-2 py-0.5 text-[10px] text-cafe-secondary hover:bg-cafe-surface-elevated disabled:opacity-50"
+            className="rounded border border-[var(--console-border-soft)] px-2 py-0.5 text-[10px] text-cafe-secondary hover:bg-cafe-surface-elevated disabled:opacity-50"
           >
             深度版
           </button>
@@ -254,7 +254,7 @@ export function PodcastPlayer({ articleId, podcasts, onArtifactCreated }: Podcas
               className={`rounded px-2 py-0.5 text-[10px] ${
                 selectedId === p.id
                   ? 'bg-opus-primary text-white'
-                  : 'border border-cafe text-cafe-secondary hover:bg-cafe-surface-elevated'
+                  : 'border border-[var(--console-border-soft)] text-cafe-secondary hover:bg-cafe-surface-elevated'
               }`}
             >
               {p.id.slice(0, 8)}
@@ -267,8 +267,8 @@ export function PodcastPlayer({ articleId, podcasts, onArtifactCreated }: Podcas
       {loading && <p className="mt-1 text-[10px] text-cafe-muted">加载中...</p>}
 
       {script && (
-        <div className="mt-2 rounded-md border border-cafe bg-cafe-surface">
-          <div className="flex items-center justify-between border-b border-cafe-subtle px-3 py-1.5">
+        <div className="mt-2 rounded-md border border-[var(--console-border-soft)] bg-cafe-surface">
+          <div className="flex items-center justify-between border-b border-[var(--console-border-soft)] px-3 py-1.5">
             <span className="text-[10px] text-cafe-muted">
               {script.mode === 'deep' ? '深度版' : '精华版'} · {script.segments.length} 段
             </span>

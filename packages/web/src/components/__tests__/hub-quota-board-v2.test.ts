@@ -249,11 +249,11 @@ describe('HubQuotaBoardTab v2 — glanceable quota board', () => {
     expect(html).toContain('刷新全部');
   });
 
-  it('renders F127 group headings on static render', () => {
+  it('renders group headings on static render', () => {
     const html = renderToStaticMarkup(React.createElement(HubQuotaBoardTab));
     expect(html).toContain('OAuth 账号额度（按账号配置）');
     expect(html).toContain('API Key 额度（按账号配置）');
-    expect(html).toContain('F127 变化说明');
+    expect(html).toContain('更新说明');
   });
 
   it('does NOT contain old ops UI elements', () => {

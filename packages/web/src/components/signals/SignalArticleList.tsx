@@ -40,7 +40,7 @@ export function SignalArticleList({
 }: SignalArticleListProps) {
   if (items.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-cafe bg-cafe-surface p-8 text-center text-sm text-cafe-secondary">
+      <div className="rounded-xl border border-dashed border-[var(--console-border-soft)] bg-cafe-surface p-8 text-center text-sm text-cafe-secondary">
         当前筛选条件下没有文章。
       </div>
     );
@@ -67,7 +67,7 @@ export function SignalArticleList({
                 'w-full rounded-xl border bg-cafe-surface p-4 text-left shadow-sm transition-colors',
                 selected
                   ? 'border-cafe-accent ring-1 ring-cafe-accent/40'
-                  : 'border-cafe hover:border-[var(--console-border-soft)]',
+                  : 'border-[var(--console-border-soft)] hover:border-[var(--console-border-soft)]',
               ].join(' ')}
             >
               <div className="flex items-start gap-3">
@@ -120,7 +120,7 @@ export function SignalArticleList({
                       event.stopPropagation();
                       void onStatusChange(article.id, 'read');
                     }}
-                    className="rounded-md border border-cafe px-2 py-1 text-xs text-cafe-secondary hover:border-codex-light hover:text-codex-dark"
+                    className="rounded-md border border-[var(--console-border-soft)] px-2 py-1 text-xs text-cafe-secondary hover:border-codex-light hover:text-codex-dark"
                   >
                     已读
                   </button>

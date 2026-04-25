@@ -60,13 +60,13 @@ export function SplitPaneCell({
       className={`flex flex-col rounded-lg border-2 transition-colors cursor-pointer overflow-hidden ${
         isSelected
           ? 'border-cafe-accent shadow-[var(--console-shadow-soft)]'
-          : 'border-[var(--console-border-soft)] hover:border-cafe'
+          : 'border-[var(--console-border-soft)] hover:border-[var(--console-border-soft)]'
       }`}
       onClick={() => onSelect(threadId)}
       onDoubleClick={() => onDoubleClick(threadId)}
     >
       {/* Pane header */}
-      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-cafe-surface-elevated border-b border-cafe-subtle flex-shrink-0">
+      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-cafe-surface-elevated border-b border-[var(--console-border-soft)] flex-shrink-0">
         <span className={`text-xs ${statusColor}`}>{catStatus !== 'idle' ? 'ᓚᘏᗢ' : ''}</span>
         <span className="text-xs font-medium text-cafe-secondary truncate flex-1">{threadTitle}</span>
         {threadState.isLoading && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />}
@@ -94,7 +94,7 @@ export function SplitPaneCell({
 /** Empty pane placeholder */
 export function SplitPanePlaceholder({ index }: { index: number }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-cafe transition-colors">
+    <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-[var(--console-border-soft)] transition-colors">
       <span className="text-2xl text-gray-200 mb-1">+</span>
       <span className="text-xs text-cafe-muted">窗格 {index + 1}</span>
       <span className="text-[10px] text-cafe-muted mt-0.5">点击左侧 thread 分配到此处</span>

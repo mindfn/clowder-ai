@@ -130,7 +130,7 @@ export function TaskBoardPanel() {
   return (
     <div className="flex flex-col h-full bg-cafe-surface">
       {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-cafe">
+      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-[var(--console-border-soft)]">
         <span className="text-xs font-semibold text-cafe-secondary">
           毛线球 · {tasks.length === 0 ? '暂无任务' : '当前对话任务'}
         </span>
@@ -144,7 +144,7 @@ export function TaskBoardPanel() {
       </div>
       {/* Stats bar */}
       {tasks.length > 0 && (
-        <div className="flex items-center gap-3 px-3 py-1.5 text-[10px] text-cafe-muted border-b border-cafe">
+        <div className="flex items-center gap-3 px-3 py-1.5 text-[10px] text-cafe-muted border-b border-[var(--console-border-soft)]">
           <span>{tasks.length} 总任务</span>
           {grouped.map(({ section, tasks: st }) =>
             st.length > 0 ? (

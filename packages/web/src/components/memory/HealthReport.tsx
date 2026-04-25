@@ -79,7 +79,7 @@ const AUTHORITY_COLORS: Record<string, string> = {
 
 function StatCard({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
-    <div className="flex-1 rounded-xl border border-cafe bg-white p-4">
+    <div className="flex-1 rounded-xl border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] p-4">
       <div className="text-xs text-cafe-secondary">{label}</div>
       <div className="mt-1 text-2xl font-semibold text-cafe-black">{value}</div>
       <div className="mt-0.5 text-[10px] text-cafe-muted">{sub}</div>
@@ -93,7 +93,7 @@ function DonutRing({ byAuthority, total }: { byAuthority: Record<string, number>
   const hasMultiple = AUTHORITY_LEVELS.some((l) => l !== 'observed' && (byAuthority[l] ?? 0) > 0);
 
   return (
-    <div className="flex items-center gap-6 rounded-xl border border-cafe bg-white p-5">
+    <div className="flex items-center gap-6 rounded-xl border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] p-5">
       <div className="relative flex h-[100px] w-[100px] items-center justify-center">
         <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
           <circle cx="50" cy="50" r="40" fill="none" stroke="#F0EDE6" strokeWidth="16" />
@@ -142,7 +142,7 @@ function KindBarChart({ byKind }: { byKind: Record<string, number> }) {
   const max = entries[0][1];
 
   return (
-    <div className="rounded-xl border border-cafe bg-white p-5">
+    <div className="rounded-xl border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] p-5">
       <h3 className="mb-3 text-sm font-semibold text-cafe-black">Knowledge Distribution</h3>
       <div className="flex flex-col gap-2">
         {entries.map(([kind, count]) => (
@@ -251,7 +251,7 @@ export function HealthReport() {
         <button
           type="button"
           onClick={fetchReport}
-          className="rounded-lg border border-cafe bg-white px-3 py-1.5 text-xs text-cafe-secondary transition-colors hover:bg-cafe-surface"
+          className="rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-3 py-1.5 text-xs text-cafe-secondary transition-colors hover:bg-cafe-surface"
         >
           刷新
         </button>

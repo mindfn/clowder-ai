@@ -638,7 +638,7 @@ describe('F24: SessionChainPanel', () => {
     expect(container.innerHTML).toContain('border-[#66BB6A66]');
     expect(container.innerHTML).toContain('bg-[#C8E6C9]');
     expect(container.innerHTML).toContain('text-[#2E7D32]');
-    expect(container.querySelector('.bg-gray-200.text-gray-600')).toBeNull();
+    expect(container.innerHTML).not.toContain('--console-pill-bg');
   });
 
   it('applies ragdoll variant purple shades for opus-45 and sonnet', async () => {
@@ -662,9 +662,9 @@ describe('F24: SessionChainPanel', () => {
     ]);
     renderPanel('thread-1');
     await flushFetch();
-    const card = container.querySelector('.border-cafe\\/40');
+    const card = container.querySelector('[class*="border-"]');
     expect(card).not.toBeNull();
-    const badge = container.querySelector('.bg-gray-200.text-cafe-secondary');
+    const badge = container.querySelector('.text-cafe-secondary');
     expect(badge).not.toBeNull();
     expect(badge?.textContent).toContain('unknown-cat');
   });

@@ -100,14 +100,14 @@ export function PushSettingsPanel() {
         </p>
       </div>
 
-      <div className="rounded-xl border border-cafe bg-cafe-surface p-4 space-y-3">
+      <div className="rounded-xl border border-[var(--console-border-soft)] bg-cafe-surface p-4 space-y-3">
         <div className="text-sm font-medium text-cafe">通知能力矩阵</div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
-          <div className="rounded-lg border border-cafe bg-cafe-surface-elevated px-3 py-2">
+          <div className="rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface-elevated px-3 py-2">
             <div className="text-cafe-secondary">浏览器支持</div>
             <div className="font-semibold text-emerald-700">已支持</div>
           </div>
-          <div className="rounded-lg border border-cafe bg-cafe-surface-elevated px-3 py-2">
+          <div className="rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface-elevated px-3 py-2">
             <div className="text-cafe-secondary">权限状态</div>
             <div
               className={`font-semibold ${permission === 'granted' ? 'text-emerald-700' : permission === 'denied' ? 'text-rose-700' : 'text-amber-700'}`}
@@ -115,19 +115,19 @@ export function PushSettingsPanel() {
               {describePermission(permission)}
             </div>
           </div>
-          <div className="rounded-lg border border-cafe bg-cafe-surface-elevated px-3 py-2">
+          <div className="rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface-elevated px-3 py-2">
             <div className="text-cafe-secondary">推送服务</div>
             <div className={`font-semibold ${status?.capability.enabled ? 'text-emerald-700' : 'text-amber-700'}`}>
               {status?.capability.enabled ? '已启用' : '未启用'}
             </div>
           </div>
-          <div className="rounded-lg border border-cafe bg-cafe-surface-elevated px-3 py-2">
+          <div className="rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface-elevated px-3 py-2">
             <div className="text-cafe-secondary">设备订阅</div>
             <div className={`font-semibold ${status?.subscription.count ? 'text-emerald-700' : 'text-amber-700'}`}>
               {status?.subscription.count ?? 0} 台
             </div>
           </div>
-          <div className="rounded-lg border border-cafe bg-cafe-surface-elevated px-3 py-2">
+          <div className="rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface-elevated px-3 py-2">
             <div className="text-cafe-secondary">最近投递</div>
             <div
               className={`font-semibold ${status?.delivery.lastResult === 'ok' ? 'text-emerald-700' : status?.delivery.lastResult === 'error' ? 'text-rose-700' : 'text-cafe-secondary'}`}
@@ -159,7 +159,7 @@ export function PushSettingsPanel() {
       )}
 
       {status?.subscription.targets && status.subscription.targets.length > 0 && (
-        <div className="rounded-xl border border-cafe bg-cafe-surface px-4 py-3">
+        <div className="rounded-xl border border-[var(--console-border-soft)] bg-cafe-surface px-4 py-3">
           <div className="text-sm font-medium text-cafe">已绑定设备</div>
           <ul className="mt-2 space-y-1 text-xs text-cafe-secondary">
             {status.subscription.targets.slice(0, 3).map((target) => (
@@ -194,7 +194,7 @@ export function PushSettingsPanel() {
         </div>
       )}
 
-      <div className="flex items-center justify-between rounded-xl border border-cafe bg-cafe-surface-elevated px-4 py-3">
+      <div className="flex items-center justify-between rounded-xl border border-[var(--console-border-soft)] bg-cafe-surface-elevated px-4 py-3">
         <div>
           <p className="text-sm font-medium text-cafe-secondary">{isSubscribed ? '已开启推送' : '推送已关闭'}</p>
           <p className="text-xs text-cafe-secondary">
@@ -206,7 +206,7 @@ export function PushSettingsPanel() {
           disabled={isLoading}
           className={`px-4 py-1.5 text-sm rounded-lg font-medium transition-colors ${
             isSubscribed
-              ? 'bg-gray-200 text-cafe-secondary hover:bg-gray-300'
+              ? 'bg-[var(--console-pill-bg)] text-cafe-secondary hover:bg-[var(--console-hover-bg)]'
               : 'bg-blue-600 text-white hover:bg-blue-700'
           } disabled:opacity-50`}
         >

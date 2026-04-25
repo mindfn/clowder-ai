@@ -87,7 +87,7 @@ export function MarketplaceSearch() {
           onChange={handleInput}
           onKeyDown={handleKeyDown}
           placeholder="搜索能力..."
-          className="w-full rounded-lg border border-cafe-border bg-white py-2 pl-9 pr-3 text-sm text-cafe placeholder:text-cafe-muted focus:border-purple-300 focus:outline-none focus:ring-1 focus:ring-purple-200"
+          className="w-full rounded-lg border border-cafe-border bg-[var(--console-card-bg)] py-2 pl-9 pr-3 text-sm text-cafe placeholder:text-cafe-muted focus:border-purple-300 focus:outline-none focus:ring-1 focus:ring-purple-200"
         />
       </div>
 

@@ -62,7 +62,7 @@ function MountBadge({ mounted }: { mounted: boolean }) {
 
 function CategoryGroup({ category, skills }: { category: string; skills: SkillEntry[] }) {
   return (
-    <section className="rounded-lg border border-cafe bg-cafe-surface-elevated/70 p-3">
+    <section className="rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface-elevated/70 p-3">
       <h3 className="text-xs font-semibold text-cafe-secondary mb-2">{category}</h3>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
@@ -79,7 +79,7 @@ function CategoryGroup({ category, skills }: { category: string; skills: SkillEn
           </thead>
           <tbody>
             {skills.map((skill) => (
-              <tr key={skill.name} className="border-t border-cafe-subtle">
+              <tr key={skill.name} className="border-t border-[var(--console-border-soft)]">
                 <td className="py-1.5 pr-3">
                   <code className="font-mono text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded text-[11px]">
                     {skill.name}
@@ -316,7 +316,7 @@ export function HubSkillsTab() {
         <CategoryGroup key={cat} category={cat} skills={grouped.get(cat)!} />
       ))}
 
-      <div className="rounded-lg border border-cafe bg-cafe-surface-elevated/70 p-3">
+      <div className="rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface-elevated/70 p-3">
         <div className="flex items-center gap-4 text-xs">
           <span className="font-semibold text-cafe-secondary">{data.summary.total} skills</span>
           <span className={data.summary.allMounted ? 'text-green-600' : 'text-amber-600'}>

@@ -91,7 +91,7 @@ export function HubToolUsageTab() {
           <select
             value={catFilter}
             onChange={(e) => setCatFilter(e.target.value)}
-            className="rounded-lg border border-[#E8DDD2] bg-white px-2 py-1 text-xs text-[#5C4A3A]"
+            className="rounded-lg border border-[#E8DDD2] bg-[var(--console-card-bg)] px-2 py-1 text-xs text-[#5C4A3A]"
           >
             <option value="">全部猫猫</option>
             {Object.entries(CAT_LABELS).map(([id, label]) => (
@@ -103,7 +103,7 @@ export function HubToolUsageTab() {
           <select
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            className="rounded-lg border border-[#E8DDD2] bg-white px-2 py-1 text-xs text-[#5C4A3A]"
+            className="rounded-lg border border-[#E8DDD2] bg-[var(--console-card-bg)] px-2 py-1 text-xs text-[#5C4A3A]"
           >
             <option value="">全部类型</option>
             {CATEGORIES.map((cat) => (
@@ -115,7 +115,7 @@ export function HubToolUsageTab() {
           <select
             value={days}
             onChange={(e) => setDays(Number(e.target.value))}
-            className="rounded-lg border border-[#E8DDD2] bg-white px-2 py-1 text-xs text-[#5C4A3A]"
+            className="rounded-lg border border-[#E8DDD2] bg-[var(--console-card-bg)] px-2 py-1 text-xs text-[#5C4A3A]"
           >
             <option value={7}>近 7 天</option>
             <option value={14}>近 14 天</option>
@@ -267,7 +267,7 @@ function TopToolsTable({ tools }: { tools: ToolUsageReport['topTools'] }) {
       {grouped.map(({ cat, style, items }) => {
         const maxCount = items[0]?.count ?? 1;
         return (
-          <section key={cat} className="space-y-2 rounded-xl border border-[#E8DDD2] bg-white p-3">
+          <section key={cat} className="space-y-2 rounded-xl border border-[#E8DDD2] bg-[var(--console-card-bg)] p-3">
             <h4 className="flex items-center gap-1.5 text-xs font-semibold" style={{ color: style.color }}>
               <HubIcon name={style.iconName} className="h-3.5 w-3.5" />
               {style.label}
@@ -280,7 +280,7 @@ function TopToolsTable({ tools }: { tools: ToolUsageReport['topTools'] }) {
                     {tool.name}
                   </span>
                   <div className="flex w-16 items-center">
-                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100">
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--console-card-soft-bg)]">
                       <div
                         className="h-full rounded-full"
                         style={{
@@ -310,7 +310,7 @@ function ByCatSection({ byCat }: { byCat: Record<string, Record<string, number>>
   if (entries.length === 0) return null;
 
   return (
-    <section className="space-y-3 rounded-xl border border-[#E8DDD2] bg-white p-4">
+    <section className="space-y-3 rounded-xl border border-[#E8DDD2] bg-[var(--console-card-bg)] p-4">
       <h4 className="text-xs font-semibold text-[#5C4A3A]">猫猫工具使用分布</h4>
       <div className="space-y-2">
         {entries.map(([catId, cats]) => {

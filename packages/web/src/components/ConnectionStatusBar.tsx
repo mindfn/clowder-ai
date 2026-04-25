@@ -20,7 +20,7 @@ const LEVEL_LABEL: Record<ConnectionLevel, string> = {
 const LEVEL_CLASS: Record<ConnectionLevel, string> = {
   online: 'border-codex-light bg-codex-bg text-codex-dark',
   degraded: 'border-[var(--console-border-soft)] bg-[var(--console-hover-bg)] text-cafe-secondary',
-  offline: 'border-cafe bg-cafe-surface-sunken text-cafe-muted',
+  offline: 'border-[var(--console-border-soft)] bg-cafe-surface-sunken text-cafe-muted',
 };
 
 const LEVEL_DOT_COLOR: Record<ConnectionLevel, string> = {
@@ -64,7 +64,7 @@ export function ConnectionStatusBar({
 
   return (
     <section
-      className="mx-auto mb-3 w-full max-w-3xl rounded-2xl border border-cafe-subtle bg-cafe-surface p-3 shadow-sm backdrop-blur"
+      className="mx-auto mb-3 w-full max-w-3xl rounded-2xl border border-[var(--console-border-soft)] bg-cafe-surface p-3 shadow-sm backdrop-blur"
       data-testid="connection-status-bar"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">

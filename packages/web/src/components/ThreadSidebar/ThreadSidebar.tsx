@@ -905,7 +905,7 @@ function DeleteConfirmDialog({
               value={typedName}
               onChange={(e) => setTypedName(e.target.value)}
               placeholder={title}
-              className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-cafe focus:outline-none focus:border-red-400 mb-4"
+              className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-[var(--console-border-soft)] focus:outline-none focus:border-red-400 mb-4"
             />
           </>
         ) : (
@@ -916,7 +916,7 @@ function DeleteConfirmDialog({
         <div className="flex gap-2 justify-end">
           <button
             onClick={onCancel}
-            className="px-3 py-1.5 text-sm rounded-lg border border-cafe hover:bg-cafe-surface-elevated transition-colors"
+            className="px-3 py-1.5 text-sm rounded-lg border border-[var(--console-border-soft)] hover:bg-cafe-surface-elevated transition-colors"
           >
             取消
           </button>

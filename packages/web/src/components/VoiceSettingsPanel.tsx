@@ -11,7 +11,7 @@ const BUILT_IN_ENTRIES = Object.entries(builtInTerms as Record<string, string>).
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border border-cafe bg-cafe-surface-elevated/70 p-3">
+    <section className="rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface-elevated/70 p-3">
       <h3 className="text-xs font-semibold text-cafe-secondary mb-2">{title}</h3>
       {children}
     </section>
@@ -50,7 +50,7 @@ function AddTermRow({ onAdd }: { onAdd: (from: string, to: string) => void }) {
         value={from}
         onChange={(e) => setFrom(e.target.value)}
         placeholder="误识别词"
-        className="flex-1 text-xs border border-cafe rounded px-2 py-1.5 focus:outline-none focus:border-blue-400"
+        className="flex-1 text-xs border border-[var(--console-border-soft)] rounded px-2 py-1.5 focus:outline-none focus:border-blue-400"
         onCompositionStart={ime.onCompositionStart}
         onCompositionEnd={ime.onCompositionEnd}
         onKeyDown={handleFromKeyDown}
@@ -62,7 +62,7 @@ function AddTermRow({ onAdd }: { onAdd: (from: string, to: string) => void }) {
         value={to}
         onChange={(e) => setTo(e.target.value)}
         placeholder="正确词"
-        className="flex-1 text-xs border border-cafe rounded px-2 py-1.5 focus:outline-none focus:border-blue-400"
+        className="flex-1 text-xs border border-[var(--console-border-soft)] rounded px-2 py-1.5 focus:outline-none focus:border-blue-400"
         onCompositionStart={ime.onCompositionStart}
         onCompositionEnd={ime.onCompositionEnd}
         onKeyDown={handleKeyDown}
@@ -227,7 +227,7 @@ export function VoiceSettingsPanel() {
           <select
             value={settings.language}
             onChange={(e) => setLanguage(e.target.value as typeof settings.language)}
-            className="text-xs border border-cafe rounded px-2 py-1.5 focus:outline-none focus:border-blue-400"
+            className="text-xs border border-[var(--console-border-soft)] rounded px-2 py-1.5 focus:outline-none focus:border-blue-400"
           >
             <option value="zh">中文</option>
             <option value="en">English</option>
@@ -246,7 +246,7 @@ export function VoiceSettingsPanel() {
           onChange={(e) => setCustomPrompt(e.target.value || null)}
           placeholder="使用默认提示词"
           rows={3}
-          className="w-full text-xs border border-cafe rounded px-2 py-1.5 focus:outline-none focus:border-blue-400 resize-vertical font-mono"
+          className="w-full text-xs border border-[var(--console-border-soft)] rounded px-2 py-1.5 focus:outline-none focus:border-blue-400 resize-vertical font-mono"
         />
       </Section>
 

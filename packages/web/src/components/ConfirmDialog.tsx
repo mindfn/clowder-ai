@@ -67,7 +67,7 @@ export function ConfirmDialog({
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             placeholder={inputPlaceholder}
-            className="w-full border border-cafe rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-blue-300"
+            className="w-full border border-[var(--console-border-soft)] rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-blue-300"
           />
         )}
         <div className="flex justify-end gap-2">

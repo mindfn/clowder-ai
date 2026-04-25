@@ -243,7 +243,7 @@ export function SchedulePanel() {
               const preview = task.subjectPreview ?? task.display?.description ?? null;
               // Status dot: green=healthy, red=last run failed, gray=never run
               const statusDot = !task.lastRun
-                ? 'bg-gray-300'
+                ? 'bg-cafe-surface-sunken'
                 : task.lastRun.outcome === 'RUN_FAILED'
                   ? 'bg-red-400'
                   : 'bg-emerald-400';

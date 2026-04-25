@@ -33,7 +33,7 @@ export function ImagePreview({ files, onRemove }: ImagePreviewProps) {
             <img
               src={urls[i]}
               alt={file.name}
-              className="w-16 h-16 object-cover rounded-lg border border-cafe cursor-pointer hover:opacity-90 transition-opacity"
+              className="w-16 h-16 object-cover rounded-lg border border-[var(--console-border-soft)] cursor-pointer hover:opacity-90 transition-opacity"
               onClick={() => setLightboxIdx(i)}
             />
             <button

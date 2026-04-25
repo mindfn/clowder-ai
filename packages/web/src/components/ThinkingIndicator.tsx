@@ -102,7 +102,7 @@ export function ThinkingIndicator({ onCancel }: ThinkingIndicatorProps = {}) {
   // F118 D2: spawning — CLI not yet connected, earliest signal
   if (status === 'spawning') {
     return (
-      <div className="px-5 py-2 border-b border-cafe bg-cafe-surface-elevated">
+      <div className="px-5 py-2 border-b border-[var(--console-border-soft)] bg-cafe-surface-elevated">
         <div className="flex items-center gap-2">
           <span className="leading-none animate-pulse">
             <PawIcon className="h-4 w-4 text-cafe-secondary" />
@@ -181,7 +181,7 @@ export function ThinkingIndicator({ onCancel }: ThinkingIndicatorProps = {}) {
 
   // Default: normal thinking/streaming indicator
   return (
-    <div className="px-5 py-2 border-b border-cafe bg-cafe-surface-elevated">
+    <div className="px-5 py-2 border-b border-[var(--console-border-soft)] bg-cafe-surface-elevated">
       <div className="flex items-center gap-2">
         <span className="leading-none animate-pulse">
           <PawIcon className="h-4 w-4 text-cafe-secondary" />

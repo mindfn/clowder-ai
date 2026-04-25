@@ -10,7 +10,7 @@ export function MediaGalleryBlock({ block }: { block: RichMediaGalleryBlock }) {
 
   return (
     <>
-      <div className="rounded-lg border border-cafe dark:border-gray-700 p-3">
+      <div className="rounded-lg border border-[var(--console-border-soft)] p-3">
         {block.title && <div className="font-medium text-sm mb-2">{block.title}</div>}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {items.map((item, i) => (
@@ -32,7 +32,7 @@ export function MediaGalleryBlock({ block }: { block: RichMediaGalleryBlock }) {
               </button>
               <CopyButton url={item.url} />
               {item.caption && (
-                <figcaption className="text-xs text-cafe-secondary dark:text-gray-400">{item.caption}</figcaption>
+                <figcaption className="text-xs text-cafe-secondary dark:text-cafe-muted">{item.caption}</figcaption>
               )}
             </figure>
           ))}

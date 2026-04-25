@@ -38,20 +38,20 @@ export function TaskComposer({ threadId, onClose }: { threadId: string; onClose:
   };
 
   return (
-    <div className="mx-3 mb-2 p-3 bg-cafe-surface-elevated border border-cafe rounded-xl">
+    <div className="mx-3 mb-2 p-3 bg-cafe-surface-elevated border border-[var(--console-border-soft)] rounded-xl">
       <input
         type="text"
         placeholder="任务标题"
         value={title}
         onChange={(e) => setTitle(e.target.value.slice(0, 200))}
-        className="w-full text-sm bg-transparent border-b border-cafe pb-2 mb-2 text-cafe-secondary placeholder:text-cafe-muted focus:outline-none focus:border-cafe-crosspost"
+        className="w-full text-sm bg-transparent border-b border-[var(--console-border-soft)] pb-2 mb-2 text-cafe-secondary placeholder:text-cafe-muted focus:outline-none focus:border-cafe-crosspost"
       />
       <textarea
         placeholder="为什么需要这个任务？（可选）"
         value={why}
         onChange={(e) => setWhy(e.target.value.slice(0, 1000))}
         rows={2}
-        className="w-full text-xs bg-transparent border border-cafe rounded-lg p-2 mb-2 text-cafe-secondary placeholder:text-cafe-muted focus:outline-none focus:border-cafe-crosspost resize-none"
+        className="w-full text-xs bg-transparent border border-[var(--console-border-soft)] rounded-lg p-2 mb-2 text-cafe-secondary placeholder:text-cafe-muted focus:outline-none focus:border-cafe-crosspost resize-none"
       />
       {error && <p className="text-xs text-cafe-accent mb-2">{error}</p>}
       <div className="flex justify-end gap-2">

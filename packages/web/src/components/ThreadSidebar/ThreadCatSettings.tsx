@@ -96,7 +96,7 @@ export function ThreadCatSettings({ threadId, currentCats, onSave }: ThreadCatSe
             <CatSelector selectedCats={selectedCats} onSelectionChange={setSelectedCats} />
           </div>
           {saveError && <p className="text-[10px] text-red-500 px-3 mt-1">保存失败，请重试</p>}
-          <div className="flex items-center justify-between px-3 pb-3 pt-2 border-t border-cafe-subtle flex-shrink-0">
+          <div className="flex items-center justify-between px-3 pb-3 pt-2 border-t border-[var(--console-border-soft)] flex-shrink-0">
             {selectedCats.length > 0 && (
               <button onClick={() => setSelectedCats([])} className="text-[10px] text-cafe-muted hover:text-red-400">
                 清除

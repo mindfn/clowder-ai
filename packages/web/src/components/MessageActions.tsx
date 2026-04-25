@@ -163,7 +163,7 @@ export function MessageActions({ message, threadId, children }: MessageActionsPr
 
       {canAct && (
         <div
-          className={`opacity-0 group-hover:opacity-100 absolute ${toolbarPositionClass} right-1 flex gap-0.5 transition-opacity bg-cafe-surface/90 rounded-lg shadow-sm border border-cafe px-1 py-0.5`}
+          className={`opacity-0 group-hover:opacity-100 absolute ${toolbarPositionClass} right-1 flex gap-0.5 transition-opacity bg-cafe-surface/90 rounded-lg shadow-sm border border-[var(--console-border-soft)] px-1 py-0.5`}
         >
           <button
             onClick={handleSoftDelete}
@@ -256,7 +256,7 @@ export function MessageActions({ message, threadId, children }: MessageActionsPr
             <textarea
               value={dialog.editedContent}
               onChange={(e) => setDialog({ ...dialog, editedContent: e.target.value })}
-              className="w-full border border-cafe rounded-lg px-3 py-2 text-sm mb-4 h-32 resize-y focus:outline-none focus:ring-2 focus:ring-blue-300"
+              className="w-full border border-[var(--console-border-soft)] rounded-lg px-3 py-2 text-sm mb-4 h-32 resize-y focus:outline-none focus:ring-2 focus:ring-blue-300"
             />
             <div className="flex justify-end gap-2">
               <button
