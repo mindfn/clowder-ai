@@ -22,10 +22,10 @@ const SECTION_STYLES: Record<SectionKey, { text: string; border: string; section
   blocked: {
     text: 'text-cafe-accent',
     border: 'border-l-cafe-accent',
-    sectionBg: 'bg-red-50 dark:bg-red-950/20',
+    sectionBg: 'bg-conn-red-bg dark:bg-conn-red-bg/20',
   },
   todo: { text: 'text-cafe-muted', border: 'border-l-cafe-muted', sectionBg: '' },
-  done: { text: 'text-green-600', border: 'border-l-green-600', sectionBg: '' },
+  done: { text: 'text-conn-emerald-text', border: 'border-l-[var(--color-conn-emerald-text)]', sectionBg: '' },
 };
 
 function getDefaultCollapsed(): Record<SectionKey, boolean> {

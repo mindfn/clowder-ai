@@ -114,7 +114,7 @@ function HubFileLink({ relPath, label }: { relPath: string; label: string }) {
     <button
       type="button"
       onClick={handleClick}
-      className="text-blue-600 hover:text-blue-800 text-xs shrink-0 underline underline-offset-2 decoration-blue-300/60 hover:decoration-blue-600 transition-colors"
+      className="text-[var(--color-cafe-accent)] hover:opacity-90 text-xs shrink-0 underline underline-offset-2 decoration-[var(--color-cafe-accent)]/60 hover:decoration-[var(--color-cafe-accent)] transition-colors"
       title={`在 Hub 工作区中查看\n${relPath}`}
     >
       {label}
@@ -137,7 +137,7 @@ function HubDirLink({ relPath, label }: { relPath: string; label: string }) {
     <button
       type="button"
       onClick={handleClick}
-      className="text-blue-600 hover:text-blue-800 text-xs shrink-0 underline underline-offset-2 decoration-blue-300/60 hover:decoration-blue-600 transition-colors"
+      className="text-[var(--color-cafe-accent)] hover:opacity-90 text-xs shrink-0 underline underline-offset-2 decoration-[var(--color-cafe-accent)]/60 hover:decoration-[var(--color-cafe-accent)] transition-colors"
       title={`打开工作区面板，在文件树中找到:\n${relPath}`}
     >
       {label}
@@ -317,7 +317,7 @@ function EnvVarsSection({
                     <div className="flex items-baseline gap-1.5 min-w-0">
                       <code className="shrink-0 font-mono text-[#6A5A50]">{v.name}</code>
                       <span
-                        className={`shrink-0 text-[10px] ${needsRestart(v) ? 'text-amber-500' : 'text-emerald-500'}`}
+                        className={`shrink-0 text-[10px] ${needsRestart(v) ? 'text-conn-amber-text' : 'text-conn-emerald-text'}`}
                         title={needsRestart(v) ? '需重启生效' : '即时生效'}
                       >
                         {needsRestart(v) ? '🟡' : '🟢'}
@@ -366,7 +366,7 @@ function EnvVarsSection({
         ))}
       </div>
       {pendingRestartCount > 0 && (
-        <div className="mt-3 rounded-[12px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-700">
+        <div className="mt-3 rounded-[12px] border border-conn-amber-ring bg-conn-amber-bg px-3 py-2 text-xs leading-5 text-conn-amber-text">
           {pendingRestartCount} 项变更需要重启生效
         </div>
       )}
@@ -379,8 +379,8 @@ function EnvVarsSection({
         >
           {saveState.saving ? '保存中...' : '保存到 .env'}
         </button>
-        {saveState.error && <span className="text-xs text-red-600">{saveState.error}</span>}
-        {saveState.success && <span className="text-xs text-green-600">{saveState.success}</span>}
+        {saveState.error && <span className="text-xs text-conn-red-text">{saveState.error}</span>}
+        {saveState.success && <span className="text-xs text-conn-emerald-text">{saveState.success}</span>}
       </div>
     </Section>
   );
@@ -438,7 +438,7 @@ export function HubEnvFilesTab() {
       .catch(() => setError('环境信息加载失败'));
   }, []);
 
-  if (error) return <p className="text-sm text-red-500 bg-red-50 rounded-lg px-3 py-2">{error}</p>;
+  if (error) return <p className="text-sm text-conn-red-text bg-conn-red-bg rounded-lg px-3 py-2">{error}</p>;
   if (!data) return <p className="text-sm text-cafe-muted">加载中...</p>;
 
   const editableVariables = data.variables.filter(isEditableVariable);

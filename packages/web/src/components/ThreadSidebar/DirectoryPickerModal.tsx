@@ -467,7 +467,7 @@ export function DirectoryPickerModal({
               </button>
             )}
           </div>
-          {pathError && <p className="text-[10px] text-red-500">{pathError}</p>}
+          {pathError && <p className="text-[10px] text-conn-red-text">{pathError}</p>}
           {/* F068-R7: Selected path hint + confirm button */}
           <div className="flex items-center gap-2 pt-1">
             {selectedPath && (

@@ -33,7 +33,7 @@ export function HubObservabilityTab() {
             key={t}
             onClick={() => setSubTab(t)}
             className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-              subTab === t ? 'bg-blue-50 text-blue-700' : 'text-cafe-secondary hover:bg-cafe-surface-elevated'
+              subTab === t ? 'bg-[var(--color-cafe-accent)]/10 text-[var(--color-cafe-accent)]' : 'text-cafe-secondary hover:bg-cafe-surface-elevated'
             }`}
           >
             {{ overview: '总览', traces: 'Traces', health: '健康' }[t]}
@@ -182,10 +182,10 @@ function HealthPanel() {
           <div className="mb-1 text-xs font-medium text-cafe-muted">Readiness Checks</div>
           {Object.entries(health.readiness.checks).map(([name, check]) => (
             <div key={name} className="flex items-center gap-2 text-xs">
-              <span className={check.ok ? 'text-green-600' : 'text-red-500'}>{check.ok ? '✓' : '✗'}</span>
+              <span className={check.ok ? 'text-conn-emerald-text' : 'text-conn-red-text'}>{check.ok ? '✓' : '✗'}</span>
               <span className="text-cafe">{name}</span>
               <span className="text-cafe-muted">{check.ms}ms</span>
-              {check.error && <span className="text-red-500">{check.error}</span>}
+              {check.error && <span className="text-conn-red-text">{check.error}</span>}
             </div>
           ))}
         </div>

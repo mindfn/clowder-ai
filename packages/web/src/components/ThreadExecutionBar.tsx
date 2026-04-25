@@ -83,7 +83,7 @@ export function ThreadExecutionBar() {
         <button
           type="button"
           onClick={handleStopAll}
-          className="ml-auto text-xs text-cafe-muted hover:text-red-500 transition-colors shrink-0"
+          className="ml-auto text-xs text-cafe-muted hover:text-conn-red-text transition-colors shrink-0"
         >
           全部停止
         </button>
@@ -118,7 +118,7 @@ function CatStatusChip({
       <button
         type="button"
         onClick={() => onStop(catId)}
-        className="ml-0.5 text-cafe-muted hover:text-red-500 transition-colors"
+        className="ml-0.5 text-cafe-muted hover:text-conn-red-text transition-colors"
         aria-label={`Stop ${catId}`}
       >
         <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">

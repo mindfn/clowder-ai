@@ -6,9 +6,9 @@ import { useGitHealth } from '../../hooks/useGitHealth';
 
 function Badge({ label, variant }: { label: string; variant: 'danger' | 'warning' | 'success' | 'muted' }) {
   const colors = {
-    danger: 'bg-red-100 text-red-700',
-    warning: 'bg-amber-100 text-amber-700',
-    success: 'bg-green-100 text-green-700',
+    danger: 'bg-conn-red-bg text-conn-red-text',
+    warning: 'bg-conn-amber-bg text-conn-amber-text',
+    success: 'bg-conn-emerald-bg text-conn-emerald-text',
     muted: 'bg-cafe-surface-elevated text-cafe-secondary',
   };
   return (
@@ -124,10 +124,10 @@ export function HealthDashboard() {
       {!collapsed && (
         <div className="px-3 pb-2 space-y-2">
           {loading && <div className="text-[10px] text-cafe-muted">Loading...</div>}
-          {error && <div className="text-xs text-red-600">{error}</div>}
+          {error && <div className="text-xs text-conn-red-text">{error}</div>}
 
           {health && totalIssues === 0 && !health.runtimeDrift && (
-            <div className="text-xs text-green-600">All clean!</div>
+            <div className="text-xs text-conn-emerald-text">All clean!</div>
           )}
 
           {staleCount > 0 && (

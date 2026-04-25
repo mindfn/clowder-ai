@@ -63,7 +63,7 @@ export function InstallPlanDetail({
     }
   })();
 
-  const trustColor = result.trustLevel === 'community' ? 'bg-amber-50 text-amber-700' : 'bg-green-50 text-green-700';
+  const trustColor = result.trustLevel === 'community' ? 'bg-conn-amber-bg text-conn-amber-text' : 'bg-conn-emerald-bg text-conn-emerald-text';
 
   return (
     <div className="space-y-4">
@@ -152,7 +152,7 @@ export function InstallPlanDetail({
         <button
           onClick={handleAction}
           disabled={!canAct}
-          className="flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+          className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--color-cafe-accent)] py-2.5 text-sm font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
         >
           <HubIcon name={action.icon} className="h-4 w-4" />
           {copied ? '已复制!' : action.label}

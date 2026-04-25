@@ -3,9 +3,9 @@ import { useIMEGuard } from '@/hooks/useIMEGuard';
 
 /** F070: governance status dot colors */
 const GOV_STATUS_DOT: Record<string, { color: string; title: string }> = {
-  healthy: { color: 'bg-green-400', title: '治理正常' },
-  stale: { color: 'bg-yellow-400', title: '治理过期' },
-  missing: { color: 'bg-red-400', title: '治理缺失' },
+  healthy: { color: 'bg-conn-emerald-bg', title: '治理正常' },
+  stale: { color: 'bg-conn-amber-bg', title: '治理过期' },
+  missing: { color: 'bg-conn-red-bg', title: '治理缺失' },
   'never-synced': { color: 'bg-cafe-surface-sunken', title: '未同步治理' },
 };
 
@@ -23,10 +23,10 @@ const ICON_PATHS: Record<string, string> = {
 
 const ICON_COLORS: Record<string, string> = {
   pin: 'text-cafe-accent',
-  star: 'text-yellow-500',
+  star: 'text-conn-amber-text',
   clock: 'text-cafe-muted',
   archive: 'text-cafe-muted',
-  system: 'text-blue-500',
+  system: 'text-[var(--color-cafe-accent)]',
 };
 
 interface SectionGroupProps {
@@ -303,7 +303,7 @@ function MenuItem({ onClick, danger, children }: { onClick: () => void; danger?:
       onClick={onClick}
       className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
         danger
-          ? 'text-red-500 hover:bg-[var(--console-hover-bg)]'
+          ? 'text-conn-red-text hover:bg-[var(--console-hover-bg)]'
           : 'text-cafe-secondary hover:bg-[var(--console-hover-bg)]'
       }`}
     >

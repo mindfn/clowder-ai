@@ -25,20 +25,20 @@ const BUCKET_LABELS: Record<TriageBucket, string> = {
   later: 'Later',
 };
 const BUCKET_COLORS: Record<TriageBucket, string> = {
-  build_now: 'bg-green-400',
-  clarify_first: 'bg-yellow-400',
-  validate_first: 'bg-orange-400',
-  challenge: 'bg-red-400',
+  build_now: 'bg-conn-emerald-text',
+  clarify_first: 'bg-conn-amber-text',
+  validate_first: 'bg-conn-amber-text',
+  challenge: 'bg-conn-red-text',
   later: 'bg-cafe-surface-sunken',
 };
 
 const SOURCE_TAGS: SourceTag[] = ['Q', 'O', 'D', 'R', 'A'];
 const SOURCE_COLORS: Record<SourceTag, string> = {
-  Q: 'bg-blue-400',
-  O: 'bg-green-400',
+  Q: 'bg-[var(--color-cafe-accent)]',
+  O: 'bg-conn-emerald-text',
   D: 'bg-purple-400',
   R: 'bg-teal-400',
-  A: 'bg-red-400',
+  A: 'bg-conn-red-text',
 };
 
 export function GovernanceHealth({ cards, digests = [], resolutions = [], slices = [] }: GovernanceHealthProps) {
@@ -135,7 +135,7 @@ export function GovernanceHealth({ cards, digests = [], resolutions = [], slices
             {topRisks.map(([signal, count]) => (
               <div key={signal} className="flex items-center justify-between text-xs">
                 <span className="text-[#6B5D4F]">{signal.replace(/_/g, ' ')}</span>
-                <span className="font-medium text-red-600">{count}</span>
+                <span className="font-medium text-conn-red-text">{count}</span>
               </div>
             ))}
           </div>

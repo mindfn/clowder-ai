@@ -129,14 +129,14 @@ export function toUtilization(item: CodexUsageItem): number {
 
 export function riskDotClass(utilization: number): string {
   if (utilization >= 80) return 'text-rose-500';
-  if (utilization >= 50) return 'text-amber-500';
-  return 'text-emerald-500';
+  if (utilization >= 50) return 'text-conn-amber-text';
+  return 'text-conn-emerald-text';
 }
 
 function barColor(utilization: number): string {
   if (utilization >= 80) return 'bg-rose-500';
-  if (utilization >= 50) return 'bg-amber-400';
-  return 'bg-emerald-500';
+  if (utilization >= 50) return 'bg-conn-amber-text';
+  return 'bg-conn-emerald-text';
 }
 
 function formatPercent(item: CodexUsageItem): string {
@@ -209,7 +209,7 @@ export function QuotaPoolRow({ item }: { item: CodexUsageItem }) {
           {item.resetsText ?? `resets ${new Date(item.resetsAt!).toLocaleString()}`}
         </div>
       )}
-      {hint && <div className="mt-0.5 ml-5 text-xs text-amber-600">{hint}</div>}
+      {hint && <div className="mt-0.5 ml-5 text-xs text-conn-amber-text">{hint}</div>}
     </div>
   );
 }

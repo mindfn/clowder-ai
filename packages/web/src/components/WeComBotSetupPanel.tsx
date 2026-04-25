@@ -113,7 +113,7 @@ export function WeComBotSetupPanel({ configured, onConnected, onDisconnected }: 
             placeholder="e.g. xianxian_bot"
             value={botId}
             onChange={(e) => setBotId(e.target.value)}
-            className="w-full h-9 px-3 text-[13px] bg-cafe-surface-elevated border border-[var(--console-border-soft)] rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-colors"
+            className="w-full h-9 px-3 text-[13px] bg-cafe-surface-elevated border border-[var(--console-border-soft)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-cafe-accent)]/30 focus:border-[var(--color-cafe-accent)] transition-colors"
             data-testid="wecom-bot-id-input"
           />
         </div>
@@ -127,7 +127,7 @@ export function WeComBotSetupPanel({ configured, onConnected, onDisconnected }: 
             placeholder="Paste secret here"
             value={secret}
             onChange={(e) => setSecret(e.target.value)}
-            className="w-full h-9 px-3 text-[13px] bg-cafe-surface-elevated border border-[var(--console-border-soft)] rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition-colors"
+            className="w-full h-9 px-3 text-[13px] bg-cafe-surface-elevated border border-[var(--console-border-soft)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-cafe-accent)]/30 focus:border-[var(--color-cafe-accent)] transition-colors"
             data-testid="wecom-bot-secret-input"
           />
         </div>

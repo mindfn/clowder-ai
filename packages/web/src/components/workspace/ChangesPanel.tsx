@@ -16,10 +16,10 @@ interface DiffData {
 }
 
 const statusLabels: Record<string, { label: string; color: string }> = {
-  M: { label: 'M', color: 'text-amber-400' },
-  A: { label: 'A', color: 'text-green-400' },
-  D: { label: 'D', color: 'text-red-400' },
-  R: { label: 'R', color: 'text-blue-400' },
+  M: { label: 'M', color: 'text-conn-amber-text' },
+  A: { label: 'A', color: 'text-conn-emerald-text' },
+  D: { label: 'D', color: 'text-conn-red-text' },
+  R: { label: 'R', color: 'text-[var(--color-cafe-accent)]' },
   '?': { label: 'U', color: 'text-cafe-muted' },
   '??': { label: 'U', color: 'text-cafe-muted' },
 };
@@ -87,7 +87,7 @@ export function ChangesPanel({ worktreeId, basisPct }: ChangesPanelProps) {
             {loading ? '...' : '↻'}
           </button>
         </div>
-        {error && <div className="px-3 py-1.5 text-[10px] text-red-500">{error}</div>}
+        {error && <div className="px-3 py-1.5 text-[10px] text-conn-red-text">{error}</div>}
         {data?.changedFiles.map((f) => {
           const info = getStatusInfo(f.status);
           return (

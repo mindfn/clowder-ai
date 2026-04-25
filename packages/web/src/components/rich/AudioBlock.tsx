@@ -183,7 +183,7 @@ export function AudioBlock({ block, catId }: { block: RichAudioBlock; catId?: st
     <div className="flex items-center gap-3 rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-3 py-2">
       <button
         onClick={toggle}
-        className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-500 hover:bg-blue-600 text-white flex items-center justify-center transition-colors"
+        className="flex-shrink-0 w-8 h-8 rounded-full bg-[var(--color-cafe-accent)] hover:opacity-90 text-white flex items-center justify-center transition-colors"
         title={playing ? '暂停' : '播放'}
         aria-label={playing ? 'Pause' : 'Play'}
       >
@@ -201,11 +201,11 @@ export function AudioBlock({ block, catId }: { block: RichAudioBlock; catId?: st
 
       <div className="flex-1 min-w-0">
         {block.title && (
-          <div className="text-xs font-medium text-cafe-secondary dark:text-gray-300 truncate">{block.title}</div>
+          <div className="text-xs font-medium text-cafe-secondary dark:text-cafe-muted truncate">{block.title}</div>
         )}
         <div className="mt-1 h-1 bg-[var(--console-pill-bg)] rounded-full overflow-hidden">
           <div
-            className="h-full bg-blue-400 rounded-full transition-[width] duration-200"
+            className="h-full bg-[var(--color-cafe-accent)]/70 rounded-full transition-[width] duration-200"
             style={{ width: `${progress * 100}%` }}
           />
         </div>

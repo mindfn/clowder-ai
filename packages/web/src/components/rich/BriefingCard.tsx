@@ -16,21 +16,21 @@ export function BriefingCard({ block: raw }: { block: RichBlock; messageId?: str
   const block = raw as RichCardBlock;
 
   return (
-    <div className="border-l-4 border-l-blue-400 bg-blue-50 dark:bg-blue-950/30 rounded-r-lg overflow-hidden">
+    <div className="border-l-4 border-l-[var(--color-cafe-accent)]/60 bg-[var(--color-cafe-accent)]/5 dark:bg-[var(--color-cafe-accent)]/10 rounded-r-lg overflow-hidden">
       {/* Source label row */}
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-center gap-1.5 px-3 py-2 text-left hover:bg-blue-100/50 dark:hover:bg-blue-900/30 transition-colors"
+        className="w-full flex items-center gap-1.5 px-3 py-2 text-left hover:bg-[var(--color-cafe-accent)]/10 dark:hover:bg-[var(--color-cafe-accent)]/15 transition-colors"
       >
-        <CafeIcon name="search" className="w-3.5 h-3.5 text-blue-500 dark:text-blue-400 shrink-0" />
-        <span className="text-[11px] font-medium text-blue-600 dark:text-blue-300 uppercase tracking-wide">
+        <CafeIcon name="search" className="w-3.5 h-3.5 text-[var(--color-cafe-accent)] shrink-0" />
+        <span className="text-[11px] font-medium text-[var(--color-cafe-accent)] uppercase tracking-wide">
           Context Briefing
         </span>
-        <span className="mx-1.5 text-blue-300 dark:text-blue-600">·</span>
-        <span className="text-sm text-cafe-secondary dark:text-gray-300 truncate flex-1">{block.title}</span>
+        <span className="mx-1.5 text-[var(--color-cafe-accent)]/40">·</span>
+        <span className="text-sm text-cafe-secondary dark:text-cafe-muted truncate flex-1">{block.title}</span>
         <svg
-          className={`w-3.5 h-3.5 text-blue-400 shrink-0 transition-transform duration-150 ${expanded ? 'rotate-180' : ''}`}
+          className={`w-3.5 h-3.5 text-[var(--color-cafe-accent)]/60 shrink-0 transition-transform duration-150 ${expanded ? 'rotate-180' : ''}`}
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
@@ -45,9 +45,9 @@ export function BriefingCard({ block: raw }: { block: RichBlock; messageId?: str
 
       {/* Expanded content */}
       {expanded && (
-        <div className="px-3 pb-3 pt-1 border-t border-blue-200/50 dark:border-blue-800/50">
+        <div className="px-3 pb-3 pt-1 border-t border-[var(--color-cafe-accent)]/20">
           {block.bodyMarkdown && (
-            <div className="text-xs text-cafe-secondary dark:text-gray-300 [&_.markdown-content]:text-xs [&_p]:mb-1 [&_p:last-child]:mb-0">
+            <div className="text-xs text-cafe-secondary dark:text-cafe-muted [&_.markdown-content]:text-xs [&_p]:mb-1 [&_p:last-child]:mb-0">
               <MarkdownContent content={block.bodyMarkdown} className="!text-xs" disableCommandPrefix />
             </div>
           )}

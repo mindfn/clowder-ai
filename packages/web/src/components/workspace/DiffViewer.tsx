@@ -115,17 +115,17 @@ function pairLines(lines: DiffLine[]): SidePair[] {
 /* ── Line coloring ───────────────────────────────────── */
 
 const lineStyles: Record<DiffLine['type'], string> = {
-  add: 'bg-green-900/30 text-green-300',
-  remove: 'bg-red-900/30 text-red-300',
+  add: 'bg-conn-emerald-bg/30 text-conn-emerald-text',
+  remove: 'bg-conn-red-bg/30 text-conn-red-text',
   context: 'text-cafe-muted',
-  header: 'bg-blue-900/20 text-blue-400 italic',
+  header: 'bg-[var(--color-cafe-accent)]/20 text-[var(--color-cafe-accent)] italic',
 };
 
 const gutterStyles: Record<DiffLine['type'], string> = {
-  add: 'bg-green-900/40 text-green-500',
-  remove: 'bg-red-900/40 text-red-500',
+  add: 'bg-conn-emerald-bg/40 text-conn-emerald-text',
+  remove: 'bg-conn-red-bg/40 text-conn-red-text',
   context: 'text-cafe-secondary',
-  header: 'bg-blue-900/20 text-blue-500',
+  header: 'bg-[var(--color-cafe-accent)]/20 text-[var(--color-cafe-accent)]',
 };
 
 const prefixMap: Record<DiffLine['type'], string> = {

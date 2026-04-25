@@ -616,7 +616,7 @@ export function ChatInput({
         </div>
       )}
       {imageLifecycleStatus === 'failed' && uploadError && (
-        <div className="px-4 pt-2 text-xs text-red-500" role="alert">
+        <div className="px-4 pt-2 text-xs text-conn-red-text" role="alert">
           图片发送失败：{uploadError}
         </div>
       )}
@@ -685,8 +685,8 @@ export function ChatInput({
           disabled={disabled || sendTemporarilyDisabled}
           className={`hidden md:block p-3 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
             whisperMode
-              ? 'text-amber-500 bg-amber-50 ring-1 ring-amber-300'
-              : 'text-cafe-muted hover:text-amber-500 hover:bg-cafe-surface'
+              ? 'text-conn-amber-text bg-conn-amber-bg ring-1 ring-conn-amber-text/30'
+              : 'text-cafe-muted hover:text-conn-amber-text hover:bg-cafe-surface'
           }`}
           aria-label="Whisper mode"
           title="悄悄话模式"
@@ -731,7 +731,7 @@ export function ChatInput({
             }
             className={`w-full resize-none rounded-xl border p-3 text-sm focus:outline-none focus:ring-2 placeholder:text-cafe-muted ${
               whisperMode
-                ? 'border-amber-300 bg-amber-50/50 focus:ring-amber-400'
+                ? 'border-conn-amber-text/30 bg-conn-amber-bg/50 focus:ring-conn-amber-text'
                 : 'border-[var(--console-border-soft)] bg-cafe-surface focus:ring-cafe-accent'
             }`}
             rows={1}

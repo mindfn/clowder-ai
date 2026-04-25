@@ -66,7 +66,7 @@ function CatInvocationCard({
         {inv.sessionSeq !== undefined && (
           <span
             className={`text-[10px] px-1 py-0.5 rounded ${
-              inv.sessionSealed ? 'bg-amber-100 text-amber-600' : 'bg-cafe-surface-elevated text-cafe-secondary'
+              inv.sessionSealed ? 'bg-conn-amber-bg text-conn-amber-text' : 'bg-cafe-surface-elevated text-cafe-secondary'
             }`}
             title={inv.sessionSealed ? `会话 #${inv.sessionSeq} 已封存` : `会话 #${inv.sessionSeq}`}
           >
@@ -264,12 +264,12 @@ function RevealWhispersButton({ threadId }: { threadId: string }) {
     <div className="flex items-center justify-between">
       <span>悄悄话:</span>
       {status === 'done' ? (
-        <span className="text-[11px] text-green-600">已揭秘 {revealedCount} 条</span>
+        <span className="text-[11px] text-conn-emerald-text">已揭秘 {revealedCount} 条</span>
       ) : (
         <button
           onClick={handleReveal}
           disabled={status === 'pending'}
-          className="console-pill rounded-full px-3 py-1 text-[11px] text-amber-600 transition-colors hover:text-amber-700 disabled:opacity-50"
+          className="console-pill rounded-full px-3 py-1 text-[11px] text-conn-amber-text transition-colors hover:opacity-90 disabled:opacity-50"
           title="揭晓本线程所有悄悄话"
         >
           {status === 'pending' ? '揭秘中...' : '揭秘全部'}

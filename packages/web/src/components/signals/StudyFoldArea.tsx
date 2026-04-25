@@ -158,7 +158,7 @@ export function StudyFoldArea({
             {/* AC-6: 多猫研究派发 — signal param binds article context via activeSignals */}
             <a
               href={`${discussLink}&research=multi`}
-              className="rounded-md border border-emerald-300 px-3 py-1.5 text-xs text-emerald-700 hover:bg-emerald-50"
+              className="rounded-md border border-conn-emerald-ring px-3 py-1.5 text-xs text-conn-emerald-text hover:bg-conn-emerald-bg"
             >
               多猫研究
             </a>

@@ -12,8 +12,8 @@ const TIER_LABELS: Record<string, string> = {
 
 const TIER_COLORS: Record<string, string> = {
   authoritative: 'bg-[var(--console-active-bg)] text-cafe-accent',
-  derived: 'bg-blue-100 text-blue-700',
-  soft_clue: 'bg-green-100 text-green-700',
+  derived: 'bg-[var(--color-cafe-accent)]/10 text-[var(--color-cafe-accent)]',
+  soft_clue: 'bg-conn-emerald-bg text-conn-emerald-text',
 };
 
 interface BootstrapSummaryCardProps {
@@ -88,14 +88,14 @@ export function BootstrapSummaryCard({
 
   return (
     <div data-testid="bootstrap-summary-card" className="flex justify-center mb-3">
-      <div className="max-w-[85%] w-full rounded-lg border border-green-200 bg-green-50/50 p-5">
+      <div className="max-w-[85%] w-full rounded-lg border border-conn-emerald-ring bg-conn-emerald-bg/50 p-5">
         <div className="flex items-center gap-4 mb-3">
-          <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
-            <CheckCircleIcon className="w-6 h-6 text-green-600" />
+          <div className="w-12 h-12 rounded-full bg-conn-emerald-bg flex items-center justify-center flex-shrink-0">
+            <CheckCircleIcon className="w-6 h-6 text-conn-emerald-text" />
           </div>
           <div>
-            <p className="text-sm font-medium text-green-800">记忆索引构建完成</p>
-            <p className="text-xs text-green-600 mt-0.5">猫猫现在可以搜索这个项目的历史知识了</p>
+            <p className="text-sm font-medium text-conn-emerald-text">记忆索引构建完成</p>
+            <p className="text-xs text-conn-emerald-text mt-0.5">猫猫现在可以搜索这个项目的历史知识了</p>
           </div>
         </div>
 
@@ -175,8 +175,8 @@ export function BootstrapSummaryCard({
             onClick={onGoToMemoryHub}
             className={
               onGoToMemoryHub
-                ? 'px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-medium transition-colors inline-flex items-center gap-1'
-                : 'px-3 py-1.5 rounded-lg bg-green-600/50 text-white/70 text-xs font-medium cursor-not-allowed inline-flex items-center gap-1'
+                ? 'px-3 py-1.5 rounded-lg bg-[var(--color-conn-emerald-text)] hover:opacity-90 text-white text-xs font-medium transition-colors inline-flex items-center gap-1'
+                : 'px-3 py-1.5 rounded-lg bg-[var(--color-conn-emerald-text)]/50 text-white/70 text-xs font-medium cursor-not-allowed inline-flex items-center gap-1'
             }
           >
             <MemoryIcon className="w-3.5 h-3.5" />

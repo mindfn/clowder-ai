@@ -183,7 +183,7 @@ export function HubAccountItem({ profile, busy, onSave, onDelete }: HubAccountIt
           {!profile.builtin ? (
             <button
               type="button"
-              className="rounded-full bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600"
+              className="rounded-full bg-conn-red-bg px-3 py-1.5 text-xs font-semibold text-conn-red-text"
               onClick={async () => {
                 if (
                   await confirm({

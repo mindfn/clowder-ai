@@ -176,9 +176,9 @@ export function KnowledgeFeed() {
       {/* Stats bar */}
       {data?.stats && (
         <div className="flex items-center justify-center gap-3 px-3 py-1.5 border-t border-[var(--console-border-soft)] bg-[var(--console-card-soft-bg)]">
-          <span className="text-[10px] font-semibold text-blue-600">{data.stats.decisions} decisions</span>
-          <span className="text-[10px] font-semibold text-amber-600">{data.stats.lessons} lessons</span>
-          <span className="text-[10px] font-semibold text-green-600">{data.stats.methods} methods</span>
+          <span className="text-[10px] font-semibold text-[var(--color-cafe-accent)]">{data.stats.decisions} decisions</span>
+          <span className="text-[10px] font-semibold text-conn-amber-text">{data.stats.lessons} lessons</span>
+          <span className="text-[10px] font-semibold text-conn-emerald-text">{data.stats.methods} methods</span>
         </div>
       )}
     </div>
@@ -205,9 +205,9 @@ function KnowledgeCard({
   const title = marker.content.replace(/^\[(decision|lesson|method)\]\s*/i, '');
 
   const kindColors: Record<string, { bg: string; text: string }> = {
-    decision: { bg: 'bg-blue-50', text: 'text-blue-700' },
-    lesson: { bg: 'bg-amber-50', text: 'text-amber-700' },
-    method: { bg: 'bg-green-50', text: 'text-green-700' },
+    decision: { bg: 'bg-[var(--color-cafe-accent)]/10', text: 'text-[var(--color-cafe-accent)]' },
+    lesson: { bg: 'bg-conn-amber-bg', text: 'text-conn-amber-text' },
+    method: { bg: 'bg-conn-emerald-bg', text: 'text-conn-emerald-text' },
   };
   const colors = kindColors[kind] ?? kindColors.lesson!;
 
@@ -219,7 +219,7 @@ function KnowledgeCard({
           {kind}
         </span>
         {tab === 'settled' && (
-          <span className="text-[9px] font-medium text-green-600 bg-green-50 px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
+          <span className="text-[9px] font-medium text-conn-emerald-text bg-conn-emerald-bg px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
             <span>&#10003;</span> 已确认
           </span>
         )}

@@ -258,7 +258,7 @@ export function DirectoryBrowser({ initialPath, activeProjectPath, onSelect, onC
                 取消
               </button>
             </div>
-            {mkdirError && <p className="text-[10px] text-red-500 mt-1 ml-6">{mkdirError}</p>}
+            {mkdirError && <p className="text-[10px] text-conn-red-text mt-1 ml-6">{mkdirError}</p>}
           </div>
         )}
 
@@ -276,7 +276,7 @@ export function DirectoryBrowser({ initialPath, activeProjectPath, onSelect, onC
 
         {error && (
           <div className="px-3 py-1.5 mb-1">
-            <p className="text-xs text-red-500">{error}</p>
+            <p className="text-xs text-conn-red-text">{error}</p>
           </div>
         )}
 

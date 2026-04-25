@@ -195,14 +195,14 @@ export function IndexStatus() {
                     type="button"
                     disabled={isUpdating}
                     onClick={() => toggleEnvVar(v.name, v.currentValue)}
-                    className={`relative h-5 w-9 rounded-full transition-colors ${isOn ? 'bg-green-500' : 'bg-cafe-surface-sunken'} ${isUpdating ? 'opacity-50' : ''}`}
+                    className={`relative h-5 w-9 rounded-full transition-colors ${isOn ? 'bg-conn-emerald-text' : 'bg-cafe-surface-sunken'} ${isUpdating ? 'opacity-50' : ''}`}
                   >
                     <span
                       className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${isOn ? 'translate-x-4' : ''}`}
                     />
                   </button>
                 ) : (
-                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                  <span className="rounded bg-conn-amber-bg px-1.5 py-0.5 text-[10px] font-medium text-conn-amber-text">
                     {v.currentValue}
                   </span>
                 )}

@@ -50,7 +50,7 @@ const CopyPathIcon = () => (
 const hoverBtn =
   'opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center rounded text-cafe-muted hover:text-cafe-accent hover:bg-[var(--console-hover-bg)] transition-all';
 const hoverBtnDanger =
-  'opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center rounded text-cafe-muted hover:text-red-500 hover:bg-[var(--console-hover-bg)] transition-all';
+  'opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center rounded text-cafe-muted hover:text-conn-red-text hover:bg-[var(--console-hover-bg)] transition-all';
 
 export interface PendingAction {
   type: 'new-file' | 'new-dir' | 'rename';

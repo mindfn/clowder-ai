@@ -86,7 +86,7 @@ export function AchievementWall({ achievements }: { achievements: Achievement[] 
           style={{ background: 'rgba(139,111,71,0.08)' }}
           title={a.description}
         >
-          <span className="text-amber-700" aria-hidden="true">
+          <span className="text-conn-amber-text" aria-hidden="true">
             {a.icon ? (
               <CafeIcon name={a.icon} className="w-4 h-4" />
             ) : a.emoji ? (

@@ -69,7 +69,7 @@ export function LinkedRootsManager({ onRootsChanged }: LinkedRootsManagerProps) 
         onChange={(e) => setPath(e.target.value)}
         className="w-full rounded px-2 py-1 text-[10px] border border-[var(--console-border-soft)] bg-cafe-surface/80 text-cafe-black focus:border-cafe-accent focus:outline-none"
       />
-      {error && <div className="text-[10px] text-red-500">{error}</div>}
+      {error && <div className="text-[10px] text-conn-red-text">{error}</div>}
       <div className="flex gap-1.5">
         <button
           type="button"
@@ -112,7 +112,7 @@ export function LinkedRootRemoveButton({ id, onRemoved }: { id: string; onRemove
       type="button"
       onClick={handleRemove}
       title="Unlink this folder"
-      className="ml-1 text-[8px] text-red-400/60 hover:text-red-500 transition-colors"
+      className="ml-1 text-[8px] text-conn-red-text/60 hover:text-conn-red-text transition-colors"
     >
       x
     </button>

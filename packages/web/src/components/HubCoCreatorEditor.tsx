@@ -257,7 +257,7 @@ export function HubCoCreatorEditor({ open, coCreator, onClose, onSaved }: HubCoC
             </div>
           </SectionCard>
 
-          {error ? <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p> : null}
+          {error ? <p className="rounded-2xl bg-conn-red-bg px-4 py-3 text-sm text-conn-red-text">{error}</p> : null}
         </div>
 
         <div className="flex shrink-0 items-center justify-between border-t border-[#F0DDCD] bg-[#FFF3EA] px-6 py-4">

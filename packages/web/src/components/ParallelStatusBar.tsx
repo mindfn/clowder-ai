@@ -13,13 +13,13 @@ function StatusDot({ status }: { status: string }) {
     case 'pending':
       return <span className="inline-block w-2 h-2 rounded-full bg-cafe-surface-sunken animate-pulse" />;
     case 'streaming':
-      return <span className="inline-block w-2 h-2 rounded-full bg-green-400 animate-pulse" />;
+      return <span className="inline-block w-2 h-2 rounded-full bg-conn-emerald-bg animate-pulse" />;
     case 'done':
-      return <span className="text-green-500 text-xs">&#10003;</span>;
+      return <span className="text-conn-emerald-text text-xs">&#10003;</span>;
     case 'error':
-      return <span className="text-red-500 text-xs">&#10007;</span>;
+      return <span className="text-conn-red-text text-xs">&#10007;</span>;
     case 'alive_but_silent':
-      return <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />;
+      return <span className="inline-block w-2 h-2 rounded-full bg-conn-amber-bg animate-pulse" />;
     case 'suspected_stall':
       return <span className="inline-block w-2 h-2 rounded-full bg-orange-500 animate-pulse" />;
     default:
@@ -123,7 +123,7 @@ export function ParallelStatusBar({ onStop }: { onStop?: () => void }) {
         {onStop && (
           <button
             onClick={() => onStop()}
-            className="ml-auto flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600 transition-colors text-xs font-medium"
+            className="ml-auto flex items-center gap-1 px-2.5 py-1 rounded-full bg-conn-red-bg text-conn-red-text hover:opacity-90 transition-colors text-xs font-medium"
             title="停止所有猫猫"
             aria-label="Stop all cats"
             data-testid="parallel-stop-button"
@@ -152,7 +152,7 @@ export function ParallelStatusBar({ onStop }: { onStop?: () => void }) {
           )}
           {agg.costUsd != null && (
             <span>
-              Cost: <span className="font-medium text-amber-600">{formatCost(agg.costUsd)}</span>
+              Cost: <span className="font-medium text-conn-amber-text">{formatCost(agg.costUsd)}</span>
             </span>
           )}
         </div>

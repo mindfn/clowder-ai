@@ -537,6 +537,24 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
             </p>
           </div>
           <div className="flex items-center gap-2">
+            {cat && cat.source !== 'seed' ? (
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={saving}
+                className="rounded-full bg-conn-red-bg p-2 text-conn-red-text transition hover:opacity-90 disabled:opacity-50"
+                aria-label="删除成员"
+              >
+                <svg viewBox="0 0 16 16" className="h-4 w-4 fill-none stroke-current" aria-hidden="true">
+                  <path
+                    d="M3.5 4.5h9m-7.5 0V3.25h5V4.5m-5.5 0 .5 8h5l.5-8m-4 2v4m2-4v4"
+                    strokeWidth="1.25"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={requestClose}
@@ -622,7 +640,7 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
             onCodexChange={patchCodex}
           />
           <PersistenceBanner />
-          {error ? <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p> : null}
+          {error ? <p className="rounded-2xl bg-conn-red-bg px-4 py-3 text-sm text-conn-red-text">{error}</p> : null}
         </div>
 
         <div className="flex shrink-0 items-center justify-between border-t border-[#F0DDCD] bg-[#FFF3EA] px-7 py-4">

@@ -461,7 +461,7 @@ export function WorkspacePanel() {
           {currentWorktree && (
             <div className="px-3 py-2 border-b border-[var(--console-border-soft)] bg-[var(--console-card-soft-bg)]">
               <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" />
+                <span className="w-2 h-2 rounded-full bg-conn-emerald-text flex-shrink-0" />
                 <span className="text-xs font-medium text-cafe-black truncate">{currentWorktree.branch}</span>
                 <span className="text-[10px] font-mono text-cafe-muted">{currentWorktree.head}</span>
               </div>

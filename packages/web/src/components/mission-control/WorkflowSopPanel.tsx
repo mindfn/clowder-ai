@@ -133,7 +133,7 @@ export function WorkflowSopPanel({ backlogItemId }: WorkflowSopPanelProps) {
   if (fetchError) {
     return (
       <section className="rounded-2xl border border-[#E7DAC7] bg-[#FFFDF8] p-3" data-testid="mc-workflow-sop">
-        <p className="text-[11px] text-red-600">{fetchError}</p>
+        <p className="text-[11px] text-conn-red-text">{fetchError}</p>
       </section>
     );
   }

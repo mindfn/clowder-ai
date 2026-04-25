@@ -347,9 +347,9 @@ export function ExternalProjectTab({ project }: ExternalProjectTabProps) {
                       <span
                         className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
                           item.status === 'done'
-                            ? 'bg-green-100 text-green-800'
+                            ? 'bg-conn-emerald-bg text-conn-emerald-text'
                             : item.status === 'dispatched'
-                              ? 'bg-blue-100 text-blue-800'
+                              ? 'bg-[var(--color-cafe-accent)]/10 text-[var(--color-cafe-accent)]'
                               : 'bg-[#F4EFE7] text-[#8B6F47]'
                         }`}
                       >

@@ -13,10 +13,10 @@ interface AuditEntry {
 }
 
 const ACTION_LABELS: Record<string, { text: string; color: string }> = {
-  install: { text: '安装', color: 'text-green-600 bg-green-50' },
-  delete: { text: '删除', color: 'text-red-600 bg-red-50' },
-  update: { text: '更新', color: 'text-blue-600 bg-blue-50' },
-  toggle: { text: '开关', color: 'text-amber-600 bg-amber-50' },
+  install: { text: '安装', color: 'text-conn-emerald-text bg-conn-emerald-bg' },
+  delete: { text: '删除', color: 'text-conn-red-text bg-conn-red-bg' },
+  update: { text: '更新', color: 'text-[var(--color-cafe-accent)] bg-[var(--color-cafe-accent)]/10' },
+  toggle: { text: '开关', color: 'text-conn-amber-text bg-conn-amber-bg' },
 };
 
 export function CapabilityAuditLog({ projectPath }: { projectPath?: string }) {

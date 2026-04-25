@@ -48,11 +48,11 @@ export function SplitPaneCell({
 
   const statusColor =
     catStatus === 'error'
-      ? 'text-red-500'
+      ? 'text-conn-red-text'
       : catStatus === 'working'
-        ? 'text-amber-500'
+        ? 'text-conn-amber-text'
         : catStatus === 'done'
-          ? 'text-green-500'
+          ? 'text-conn-emerald-text'
           : 'text-cafe-muted';
 
   return (
@@ -69,9 +69,9 @@ export function SplitPaneCell({
       <div className="flex items-center gap-1.5 px-3 py-1.5 bg-cafe-surface-elevated border-b border-[var(--console-border-soft)] flex-shrink-0">
         <span className={`text-xs ${statusColor}`}>{catStatus !== 'idle' ? 'ᓚᘏᗢ' : ''}</span>
         <span className="text-xs font-medium text-cafe-secondary truncate flex-1">{threadTitle}</span>
-        {threadState.isLoading && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />}
+        {threadState.isLoading && <span className="w-1.5 h-1.5 rounded-full bg-conn-amber-bg animate-pulse" />}
         {threadState.unreadCount > 0 && (
-          <span className="text-[9px] bg-amber-500 text-white rounded-full px-1 min-w-[14px] text-center">
+          <span className="text-[9px] bg-conn-amber-bg text-white rounded-full px-1 min-w-[14px] text-center">
             {threadState.unreadCount > 99 ? '99+' : threadState.unreadCount}
           </span>
         )}

@@ -135,7 +135,7 @@ export function FileContentRenderer({
   if (isHtml && htmlPreview && !editMode)
     return (
       <div className="flex-1 min-h-0 flex flex-col">
-        <div className="px-2 py-1 bg-amber-900/20 text-amber-400 text-[10px] border-b border-amber-900/30 flex-shrink-0">
+        <div className="px-2 py-1 bg-conn-amber-bg/20 text-conn-amber-text text-[10px] border-b border-conn-amber-ring/30 flex-shrink-0">
           预览模式 — 相对资源路径（图片/CSS/JS）可能无法加载
         </div>
         <div className="flex-1 min-h-0 bg-cafe-surface">

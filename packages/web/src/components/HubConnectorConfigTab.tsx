@@ -167,7 +167,7 @@ export function HubConnectorConfigTab() {
                   {platform.name} {platform.nameEn !== platform.name ? platform.nameEn : ''}
                 </span>
                 <span
-                  className={`flex items-center gap-1 text-xs ${platform.configured ? 'text-green-600' : 'text-cafe-muted'}`}
+                  className={`flex items-center gap-1 text-xs ${platform.configured ? 'text-conn-emerald-text' : 'text-cafe-muted'}`}
                 >
                   {platform.configured ? <StatusDotConnected /> : <StatusDotIdle />}
                   {platform.configured ? '已配置' : '未配置'}
@@ -279,7 +279,7 @@ export function HubConnectorConfigTab() {
                         >
                           {field.label}
                           {field.sensitive && (
-                            <span className="text-amber-500 ml-1 inline-flex align-middle">
+                            <span className="text-conn-amber-text ml-1 inline-flex align-middle">
                               <LockIcon />
                             </span>
                           )}
@@ -326,8 +326,8 @@ export function HubConnectorConfigTab() {
                     <div
                       className={`ml-[26px] rounded-[16px] px-3 py-2 text-xs ${
                         saveResult.type === 'success'
-                          ? 'bg-green-50 text-green-700 border border-green-200'
-                          : 'bg-red-50 text-red-700 border border-red-200'
+                          ? 'bg-conn-emerald-bg text-conn-emerald-text border border-conn-emerald-ring'
+                          : 'bg-conn-red-bg text-conn-red-text border border-conn-red-ring'
                       }`}
                       data-testid="save-result"
                     >
@@ -362,7 +362,7 @@ export function HubConnectorConfigTab() {
 
       <div className="console-card-soft flex items-center gap-2 rounded-[18px] px-3.5 py-3">
         <StatusDotConnected />
-        <span className="text-xs font-medium text-green-700">配置保存后自动生效，无需重启</span>
+        <span className="text-xs font-medium text-conn-emerald-text">配置保存后自动生效，无需重启</span>
       </div>
     </div>
   );

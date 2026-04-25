@@ -38,7 +38,7 @@ export function HubStrategyTab() {
   }, [fetchData]);
 
   if (error) {
-    return <p className="text-sm text-red-500 bg-red-50 rounded-lg px-3 py-2">{error}</p>;
+    return <p className="text-sm text-conn-red-text bg-conn-red-bg rounded-lg px-3 py-2">{error}</p>;
   }
   if (!cats) {
     return <p className="text-sm text-cafe-muted">加载中...</p>;

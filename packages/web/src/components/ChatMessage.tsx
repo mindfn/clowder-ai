@@ -36,9 +36,9 @@ const BREED_STYLES: Record<string, { radius: string; font?: string }> = {
 };
 const DEFAULT_BREED_STYLE = { radius: 'rounded-2xl' };
 const SCHEDULER_ACCENT_BADGE_CLASS =
-  'inline-flex w-fit items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800 shadow-sm';
+  'inline-flex w-fit items-center gap-1.5 rounded-full border border-conn-amber-text/30 bg-conn-amber-bg px-2.5 py-1 text-[11px] font-semibold text-conn-amber-text shadow-sm';
 const SCHEDULER_ACCENT_BUBBLE_CLASS =
-  'border-amber-300 bg-amber-50/70 ring-1 ring-amber-200 shadow-[0_10px_24px_rgba(217,119,6,0.16)] bg-gradient-to-b from-amber-50/60 to-transparent';
+  'border-conn-amber-text/30 bg-conn-amber-bg/70 ring-1 ring-conn-amber-text/20 shadow-[0_10px_24px_rgba(217,119,6,0.16)] bg-gradient-to-b from-conn-amber-bg/60 to-transparent';
 
 function formatTime(ts: number): string {
   const d = new Date(ts);
@@ -185,8 +185,8 @@ export function ChatMessage({ message, getCatById }: ChatMessageProps) {
       : isFollowup
         ? 'text-purple-700 bg-purple-50 border border-purple-200'
         : isError
-          ? 'text-red-500 bg-red-50 rounded-full'
-          : 'text-blue-700 bg-blue-50';
+          ? 'text-conn-red-text bg-conn-red-bg rounded-full'
+          : 'text-[var(--color-cafe-accent)] bg-[var(--color-cafe-accent)]/5';
     return (
       <div data-message-id={message.id} className={`flex justify-center ${isTool ? 'mb-1' : 'mb-3'}`}>
         <div className={`text-sm px-4 py-2 rounded-lg whitespace-pre-wrap text-left max-w-[85%] ${toneClass}`}>
@@ -214,7 +214,7 @@ export function ChatMessage({ message, getCatById }: ChatMessageProps) {
           <div className="flex justify-end items-center gap-2 mb-1">
             {isWhisper && (
               <span
-                className={`text-xs px-1.5 py-0.5 rounded ${isRevealed ? 'bg-cafe-surface-elevated text-cafe-secondary' : 'bg-amber-100 text-amber-600'}`}
+                className={`text-xs px-1.5 py-0.5 rounded ${isRevealed ? 'bg-cafe-surface-elevated text-cafe-secondary' : 'bg-conn-amber-bg text-conn-amber-text'}`}
               >
                 {isRevealed ? '已揭秘' : `悄悄话 → ${message.whisperTo?.join(', ') ?? ''}`}
               </span>
@@ -230,7 +230,7 @@ export function ChatMessage({ message, getCatById }: ChatMessageProps) {
           </div>
           <div
             className={`rounded-2xl rounded-br-sm px-4 py-3 transition-transform hover:-translate-y-0.5 ${
-              isWhisper && !isRevealed ? 'bg-amber-50 text-amber-900 border border-dashed border-amber-300' : ''
+              isWhisper && !isRevealed ? 'bg-conn-amber-bg text-conn-amber-text border border-dashed border-conn-amber-text/30' : ''
             }`}
             style={
               !isWhisper || isRevealed
@@ -301,7 +301,7 @@ export function ChatMessage({ message, getCatById }: ChatMessageProps) {
               <CopyIdButton messageId={message.id} />
               {isWhisper && (
                 <span
-                  className={`text-xs px-1.5 py-0.5 rounded ${isRevealed ? 'bg-cafe-surface-elevated text-cafe-secondary' : 'bg-amber-100 text-amber-600'}`}
+                  className={`text-xs px-1.5 py-0.5 rounded ${isRevealed ? 'bg-cafe-surface-elevated text-cafe-secondary' : 'bg-conn-amber-bg text-conn-amber-text'}`}
                 >
                   {isRevealed
                     ? '已揭秘'

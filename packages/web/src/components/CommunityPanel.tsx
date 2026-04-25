@@ -53,17 +53,17 @@ const PR_SECTIONS = [
 const ISSUE_STATE_COLORS: Record<string, string> = {
   unreplied: 'text-cafe-accent',
   discussing: 'text-cafe-crosspost',
-  'pending-decision': 'text-amber-600',
-  accepted: 'text-green-600',
+  'pending-decision': 'text-conn-amber-text',
+  accepted: 'text-conn-emerald-text',
   declined: 'text-cafe-muted',
   closed: 'text-cafe-muted',
 };
 
 const PR_GROUP_COLORS: Record<string, string> = {
   'in-review': 'text-cafe-crosspost',
-  're-review-needed': 'text-amber-600',
+  're-review-needed': 'text-conn-amber-text',
   'has-conflict': 'text-cafe-accent',
-  completed: 'text-green-600',
+  completed: 'text-conn-emerald-text',
 };
 
 const AUTO_REFRESH_MS = 5 * 60 * 1000;

@@ -556,7 +556,7 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
           </div>
         </div>
 
-        {bindWarning && <div className="px-3 py-1.5 bg-yellow-50/60 text-[10px] text-yellow-700">{bindWarning}</div>}
+        {bindWarning && <div className="px-3 py-1.5 bg-conn-amber-bg/60 text-[10px] text-conn-amber-text">{bindWarning}</div>}
 
         <div className="px-2 py-1.5">
           <button
@@ -898,14 +898,14 @@ function DeleteConfirmDialog({
         <p className="text-sm text-cafe-secondary mb-1">即将删除「{title}」</p>
         {isSystem ? (
           <>
-            <p className="text-xs text-red-500 mb-2">这是系统级对话（IM Hub 连接器）。删除可能影响平台消息路由。</p>
+            <p className="text-xs text-conn-red-text mb-2">这是系统级对话（IM Hub 连接器）。删除可能影响平台消息路由。</p>
             <p className="text-xs text-cafe-secondary mb-2">请输入对话名称以确认删除：</p>
             <input
               ref={confirmInputRef}
               value={typedName}
               onChange={(e) => setTypedName(e.target.value)}
               placeholder={title}
-              className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-[var(--console-border-soft)] focus:outline-none focus:border-red-400 mb-4"
+              className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-[var(--console-border-soft)] focus:outline-none focus:border-conn-red-ring mb-4"
             />
           </>
         ) : (
@@ -925,7 +925,7 @@ function DeleteConfirmDialog({
             disabled={!confirmed}
             className={`px-3 py-1.5 text-sm rounded-lg text-white transition-colors ${
               isSystem
-                ? 'bg-red-500 hover:bg-red-600 disabled:bg-red-300 disabled:cursor-not-allowed'
+                ? 'bg-conn-red-bg hover:bg-conn-red-ring disabled:bg-conn-red-bg/60 disabled:cursor-not-allowed'
                 : 'bg-orange-500 hover:bg-orange-600'
             }`}
           >

@@ -173,8 +173,8 @@ export function ThreadItem({
               }}
               className={`p-0.5 rounded transition-all ${
                 isFavorited
-                  ? 'text-yellow-500'
-                  : 'opacity-0 group-hover:opacity-100 text-cafe-muted hover:text-yellow-400'
+                  ? 'text-conn-amber-text'
+                  : 'opacity-0 group-hover:opacity-100 text-cafe-muted hover:text-conn-amber-text'
               }`}
               title={isFavorited ? '取消收藏' : '收藏'}
             >
@@ -214,7 +214,7 @@ export function ThreadItem({
               className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[var(--console-hover-bg)] transition-all"
               title="导出对话"
             >
-              <svg className="w-3 h-3 text-cafe-muted hover:text-blue-400" viewBox="0 0 16 16" fill="currentColor">
+              <svg className="w-3 h-3 text-cafe-muted hover:text-[var(--color-cafe-accent)]" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M2.75 14A1.75 1.75 0 011 12.25v-2.5a.75.75 0 011.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 00.25-.25v-2.5a.75.75 0 011.5 0v2.5A1.75 1.75 0 0113.25 14H2.75z" />
                 <path d="M7.25 7.689V2a.75.75 0 011.5 0v5.689l1.97-1.969a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 6.78a.749.749 0 111.06-1.06l1.97 1.969z" />
               </svg>
@@ -230,7 +230,7 @@ export function ThreadItem({
               className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-[var(--console-hover-bg)] transition-all"
               title="删除对话"
             >
-              <svg className="w-3 h-3 text-cafe-muted hover:text-red-400" viewBox="0 0 16 16" fill="currentColor">
+              <svg className="w-3 h-3 text-cafe-muted hover:text-conn-red-text" viewBox="0 0 16 16" fill="currentColor">
                 <path
                   fillRule="evenodd"
                   d="M5 3.25V4H2.75a.75.75 0 000 1.5h.3l.815 8.15A1.5 1.5 0 005.357 15h5.285a1.5 1.5 0 001.493-1.35l.815-8.15h.3a.75.75 0 000-1.5H11v-.75A2.25 2.25 0 008.75 1h-1.5A2.25 2.25 0 005 3.25zm2.25-.75a.75.75 0 00-.75.75V4h3v-.75a.75.75 0 00-.75-.75h-1.5z"
@@ -286,7 +286,7 @@ export function ThreadItem({
           )}
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          {hasDraft && <span className="text-[10px] font-medium text-red-500">[草稿]</span>}
+          {hasDraft && <span className="text-[10px] font-medium text-conn-red-text">[草稿]</span>}
           <span className="text-[10px] text-cafe-muted">{formatRelativeTime(lastActiveAt, true)}</span>
         </div>
       </div>

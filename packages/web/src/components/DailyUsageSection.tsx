@@ -100,7 +100,7 @@ export function DailyUsageSection() {
         </button>
       </div>
 
-      {error && <div className="text-xs text-red-500 bg-red-50 rounded px-2 py-1">{error}</div>}
+      {error && <div className="text-xs text-conn-red-text bg-conn-red-bg rounded px-2 py-1">{error}</div>}
 
       {!error && days.length === 0 && !loading && <div className="text-xs text-cafe-muted py-2">暂无消耗记录</div>}
 
@@ -131,7 +131,7 @@ export function DailyUsageSection() {
             <span>入 {formatTokens(grandTotal.inputTokens)}</span>
             <span>出 {formatTokens(grandTotal.outputTokens)}</span>
             {grandTotal.costUsd > 0 && (
-              <span className="text-amber-600 font-semibold">${grandTotal.costUsd.toFixed(2)}</span>
+              <span className="text-conn-amber-text font-semibold">${grandTotal.costUsd.toFixed(2)}</span>
             )}
           </span>
         </div>

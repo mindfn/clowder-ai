@@ -157,7 +157,7 @@ export function SignalSourcesView() {
                             href={source.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="break-all text-xs text-blue-600 hover:underline"
+                            className="break-all text-xs text-[var(--color-cafe-accent)] hover:underline"
                           >
                             {source.url}
                           </a>

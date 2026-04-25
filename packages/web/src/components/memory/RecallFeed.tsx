@@ -96,7 +96,7 @@ export function RecallFeed() {
   return (
     <div data-testid="recall-feed" className="space-y-2 p-3">
       <div className="flex items-center gap-2">
-        <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-green-500" />
+        <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-conn-emerald-text" />
         <span className="text-xs font-semibold text-cafe-black">LIVE</span>
         <span className="text-xs text-cafe-secondary">{events.length} recall(s)</span>
       </div>

@@ -8,16 +8,16 @@ export interface ConsoleEntry {
 
 const LEVEL_STYLES: Record<ConsoleEntry['level'], string> = {
   log: 'text-cafe-secondary dark:text-cafe-muted',
-  info: 'text-blue-600 dark:text-blue-400',
-  warn: 'text-amber-600 dark:text-amber-400',
-  error: 'text-red-600 dark:text-red-400',
+  info: 'text-[var(--color-cafe-accent)]',
+  warn: 'text-conn-amber-text',
+  error: 'text-conn-red-text',
 };
 
 const LEVEL_BG: Record<ConsoleEntry['level'], string> = {
   log: '',
   info: '',
-  warn: 'bg-amber-50/50 dark:bg-amber-900/10',
-  error: 'bg-red-50/50 dark:bg-red-900/10',
+  warn: 'bg-conn-amber-bg/50',
+  error: 'bg-conn-red-bg/50',
 };
 
 interface ConsolePanelProps {

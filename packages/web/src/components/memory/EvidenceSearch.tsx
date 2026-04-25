@@ -51,10 +51,10 @@ export const DEPTH_OPTIONS = [
 ] as const;
 
 export const SOURCE_TYPE_COLORS: Record<string, string> = {
-  decision: 'bg-amber-100 text-amber-800',
-  phase: 'bg-blue-100 text-blue-800',
+  decision: 'bg-conn-amber-bg text-conn-amber-text',
+  phase: 'bg-[var(--color-cafe-accent)]/10 text-[var(--color-cafe-accent)]',
   feature: 'bg-purple-100 text-purple-800',
-  lesson: 'bg-green-100 text-green-800',
+  lesson: 'bg-conn-emerald-bg text-conn-emerald-text',
   research: 'bg-cyan-100 text-cyan-800',
   knowledge: 'bg-pink-100 text-pink-800',
   discussion: 'bg-[var(--console-card-soft-bg)] text-cafe',
@@ -198,7 +198,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
             <option value="lexical">精确</option>
             <option value="semantic">语义</option>
           </select>
-          {depth === 'raw' && <span className="text-[10px] text-amber-600">消息级仅支持精确匹配</span>}
+          {depth === 'raw' && <span className="text-[10px] text-conn-amber-text">消息级仅支持精确匹配</span>}
         </label>
         <label className="flex items-center gap-1 text-cafe-secondary">
           范围:
@@ -250,7 +250,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
       </div>
 
       {/* Error */}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-conn-red-text">{error}</p>}
 
       {/* Results */}
       <div className="space-y-2">

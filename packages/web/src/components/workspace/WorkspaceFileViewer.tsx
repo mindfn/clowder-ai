@@ -195,7 +195,7 @@ export function WorkspaceFileViewer({
               active={jsxPreview}
               onClick={onToggleJsxPreview}
               title={jsxPreview ? '\u5207\u6362\u5230\u6E90\u7801' : '\u9884\u89C8 JSX/TSX'}
-              activeClass="bg-blue-600/80 text-white hover:bg-blue-500"
+              activeClass="bg-[var(--color-cafe-accent)]/80 text-white hover:bg-[var(--color-cafe-accent)]"
             >
               {jsxPreview ? 'Preview' : 'Code'}
             </ToolbarBtn>
@@ -233,7 +233,7 @@ export function WorkspaceFileViewer({
               active={editMode}
               onClick={onToggleEdit}
               title={editMode ? '\u9000\u51FA\u7F16\u8F91' : '\u7F16\u8F91\u6587\u4EF6'}
-              activeClass="bg-green-600/80 text-white hover:bg-green-500"
+              activeClass="bg-conn-emerald-bg/80 text-white hover:bg-conn-emerald-bg"
             >
               {editMode ? '\u7F16\u8F91\u4E2D' : '\u7F16\u8F91'}
             </ToolbarBtn>
@@ -255,7 +255,7 @@ export function WorkspaceFileViewer({
       </div>
 
       {saveError && (
-        <div className="px-3 py-1.5 text-[10px] text-red-400 bg-red-900/20 border-b border-red-900/30">{saveError}</div>
+        <div className="px-3 py-1.5 text-[10px] text-conn-red-text bg-conn-red-bg/20 border-b border-conn-red-ring/30">{saveError}</div>
       )}
 
       {/* File content */}
@@ -281,7 +281,7 @@ export function WorkspaceFileViewer({
       />
 
       {file.truncated && (
-        <div className="px-3 py-1.5 text-[10px] text-amber-400 bg-[#1E1E24] border-t border-amber-900/30">
+        <div className="px-3 py-1.5 text-[10px] text-conn-amber-text bg-[#1E1E24] border-t border-conn-amber-ring/30">
           \u6587\u4EF6\u5DF2\u622A\u65AD (超过 1MB)
         </div>
       )}

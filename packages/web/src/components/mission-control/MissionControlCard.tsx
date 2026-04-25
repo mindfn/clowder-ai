@@ -9,9 +9,9 @@ interface MissionControlCardProps {
 }
 
 const PRIORITY_CLASS: Record<BacklogItem['priority'], string> = {
-  p0: 'bg-red-100 text-red-700',
-  p1: 'bg-orange-100 text-orange-700',
-  p2: 'bg-amber-100 text-amber-700',
+  p0: 'bg-conn-red-bg text-conn-red-text',
+  p1: 'bg-conn-amber-bg text-conn-amber-text',
+  p2: 'bg-conn-amber-bg text-conn-amber-text',
   p3: 'bg-slate-200 text-slate-600',
 };
 
@@ -53,7 +53,7 @@ export function MissionControlCard({ item, selected, onSelect }: MissionControlC
           {item.dependencies.evolvedFrom?.map((id) => (
             <span
               key={`ef-${id}`}
-              className="inline-block rounded-md border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700"
+              className="inline-block rounded-md border border-[var(--color-cafe-accent)]/30 bg-[var(--color-cafe-accent)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-cafe-accent)]"
             >
               ← {id.toUpperCase()}
             </span>
@@ -61,7 +61,7 @@ export function MissionControlCard({ item, selected, onSelect }: MissionControlC
           {item.dependencies.blockedBy?.map((id) => (
             <span
               key={`bb-${id}`}
-              className="inline-block rounded-md border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-700"
+              className="inline-block rounded-md border border-conn-red-ring bg-conn-red-bg px-1.5 py-0.5 text-[10px] font-medium text-conn-red-text"
             >
               ⊘ {id.toUpperCase()}
             </span>

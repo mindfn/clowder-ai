@@ -7,9 +7,9 @@ interface DispatchProgressProps {
 }
 
 const STATUS_STYLES: Record<DispatchExecutionDigest['status'], { bg: string; text: string; label: string }> = {
-  completed: { bg: 'bg-green-100', text: 'text-green-800', label: '完成' },
-  partial: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: '部分完成' },
-  blocked: { bg: 'bg-red-100', text: 'text-red-800', label: '受阻' },
+  completed: { bg: 'bg-conn-emerald-bg', text: 'text-conn-emerald-text', label: '完成' },
+  partial: { bg: 'bg-conn-amber-bg', text: 'text-conn-amber-text', label: '部分完成' },
+  blocked: { bg: 'bg-conn-red-bg', text: 'text-conn-red-text', label: '受阻' },
 };
 
 export function DispatchProgress({ digests }: DispatchProgressProps) {
@@ -71,7 +71,7 @@ export function DispatchProgress({ digests }: DispatchProgressProps) {
                       strokeWidth="3"
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      className={`h-3 w-3 shrink-0 ${r.met ? 'text-green-600' : 'text-red-500'}`}
+                      className={`h-3 w-3 shrink-0 ${r.met ? 'text-conn-emerald-text' : 'text-conn-red-text'}`}
                     >
                       <path d={r.met ? 'M20 6L9 17l-5-5' : 'M18 6L6 18M6 6l12 12'} />
                     </svg>

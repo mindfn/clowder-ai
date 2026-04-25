@@ -167,7 +167,7 @@ export function CodeViewer({
           type="button"
           onClick={handleSave}
           disabled={saving}
-          className="absolute bottom-3 right-3 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 text-white text-[11px] font-medium shadow-lg hover:bg-green-500 disabled:opacity-50 transition-colors z-10 animate-fade-in"
+          className="absolute bottom-3 right-3 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-conn-emerald-bg text-white text-[11px] font-medium shadow-lg hover:bg-conn-emerald-bg/80 disabled:opacity-50 transition-colors z-10 animate-fade-in"
           title="保存 (Cmd+S)"
         >
           {saving ? '保存中...' : '保存'}

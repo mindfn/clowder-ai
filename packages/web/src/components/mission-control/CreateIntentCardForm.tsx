@@ -183,7 +183,7 @@ export function CreateIntentCardForm({ projectId, onCreated, onCancel }: CreateI
               type="button"
               onClick={() => toggleRisk(s.value)}
               className={`rounded-full px-2 py-0.5 text-[10px] ${
-                riskSignals.includes(s.value) ? 'bg-red-100 text-red-800' : 'bg-[#F4EFE7] text-[#6B5D4F]'
+                riskSignals.includes(s.value) ? 'bg-conn-red-bg text-conn-red-text' : 'bg-[#F4EFE7] text-[#6B5D4F]'
               }`}
             >
               {s.label}
@@ -193,7 +193,7 @@ export function CreateIntentCardForm({ projectId, onCreated, onCancel }: CreateI
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700">{error}</div>
+        <div className="rounded-lg border border-conn-red-ring bg-conn-red-bg px-3 py-1.5 text-xs text-conn-red-text">{error}</div>
       )}
 
       <div className="flex justify-end gap-2">

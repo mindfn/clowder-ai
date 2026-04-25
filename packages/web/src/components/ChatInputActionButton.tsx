@@ -90,13 +90,13 @@ export function ChatInputActionButton({
               {voice.partialTranscript}
             </div>
           )}
-          <div className="px-2 py-0.5 bg-red-500 text-white text-xs rounded-full animate-pulse whitespace-nowrap">
+          <div className="px-2 py-0.5 bg-conn-red-bg text-conn-red-text text-xs rounded-full animate-pulse whitespace-nowrap">
             REC {Math.floor(voice.duration / 60)}:{String(voice.duration % 60).padStart(2, '0')}
           </div>
         </div>
       )}
       {voice.error && (
-        <div className="absolute top-0 left-4 -mt-6 px-3 py-1 bg-red-100 text-red-600 text-xs rounded-lg">
+        <div className="absolute top-0 left-4 -mt-6 px-3 py-1 bg-conn-red-bg text-conn-red-text text-xs rounded-lg">
           {voice.error}
         </div>
       )}
@@ -105,7 +105,7 @@ export function ChatInputActionButton({
       {hasActiveInvocation && !disabled && onStop && (
         <button
           onClick={() => onStop()}
-          className="p-2 rounded-lg bg-red-500/80 text-white hover:bg-red-600 transition-colors"
+          className="p-2 rounded-lg bg-conn-red-bg/80 text-white hover:bg-conn-red-ring transition-colors"
           title="停止生成"
           aria-label="Stop generation"
         >
@@ -120,7 +120,7 @@ export function ChatInputActionButton({
         /* Backward compat: when explicitly disabled during active invocation, Stop is the only primary action */
         <button
           onClick={() => onStop()}
-          className="p-3 rounded-xl bg-red-500 text-white hover:bg-red-600 transition-colors"
+          className="p-3 rounded-xl bg-conn-red-bg text-white hover:bg-conn-red-ring transition-colors"
           title="停止生成"
           aria-label="Stop generation"
         >
@@ -131,7 +131,7 @@ export function ChatInputActionButton({
       ) : voice.state === 'recording' ? (
         <button
           onClick={voice.stopRecording}
-          className="p-3 rounded-xl bg-red-500 text-white hover:bg-red-600 transition-colors animate-pulse"
+          className="p-3 rounded-xl bg-conn-red-bg text-white hover:bg-conn-red-ring transition-colors animate-pulse"
           title="停止录音"
           aria-label="Stop recording"
         >
@@ -162,7 +162,7 @@ export function ChatInputActionButton({
             <button
               onClick={onForceSend}
               disabled={isSendDisabled}
-              className="p-2 rounded-lg text-xs text-red-500 hover:bg-red-50 disabled:opacity-40 transition-colors"
+              className="p-2 rounded-lg text-xs text-conn-red-text hover:bg-conn-red-bg disabled:opacity-40 transition-colors"
               aria-label="强制发送"
               title="强制发送 — 中断当前猫猫"
             >

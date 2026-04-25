@@ -124,7 +124,7 @@ export function StreamingAudioBlock({ request, catId, autoPlay = true }: Props) 
         </div>
       )}
 
-      {state.status === 'error' && <div className="text-[11px] text-red-400 pl-1">{state.error}</div>}
+      {state.status === 'error' && <div className="text-[11px] text-conn-red-text pl-1">{state.error}</div>}
 
       <audio ref={audioRef} preload="none" />
     </div>

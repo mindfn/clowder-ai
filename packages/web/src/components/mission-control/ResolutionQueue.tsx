@@ -5,9 +5,9 @@ import { useCallback, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 
 const STATUS_STYLES: Record<string, { bg: string; text: string }> = {
-  open: { bg: 'bg-yellow-100', text: 'text-yellow-800' },
-  answered: { bg: 'bg-green-100', text: 'text-green-800' },
-  escalated: { bg: 'bg-red-100', text: 'text-red-800' },
+  open: { bg: 'bg-conn-amber-bg', text: 'text-conn-amber-text' },
+  answered: { bg: 'bg-conn-emerald-bg', text: 'text-conn-emerald-text' },
+  escalated: { bg: 'bg-conn-red-bg', text: 'text-conn-red-text' },
 };
 
 type NonNullPath = 'confirmation' | 'evidence' | 'artifact' | 'prototype' | 'escalation';
@@ -165,7 +165,7 @@ export function ResolutionQueue({ projectId, resolutions, cards, onUpdate }: Res
                 {item.recommendation && (
                   <div className="mb-1 text-[10px] text-[#9A866F]">建议: {item.recommendation}</div>
                 )}
-                {item.answer && <div className="rounded bg-green-50 px-2 py-1 text-[#2B2118]">{item.answer}</div>}
+                {item.answer && <div className="rounded bg-conn-emerald-bg px-2 py-1 text-[#2B2118]">{item.answer}</div>}
                 {item.status === 'open' && (
                   <div className="mt-2 flex gap-2">
                     <input
@@ -177,14 +177,14 @@ export function ResolutionQueue({ projectId, resolutions, cards, onUpdate }: Res
                     <button
                       type="button"
                       onClick={() => void handleAnswer(item.id)}
-                      className="rounded bg-green-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-green-700"
+                      className="rounded bg-[var(--color-conn-emerald-text)] px-2 py-1 text-[10px] font-medium text-white hover:opacity-90"
                     >
                       Answer
                     </button>
                     <button
                       type="button"
                       onClick={() => void handleEscalate(item.id)}
-                      className="rounded bg-red-600 px-2 py-1 text-[10px] font-medium text-white hover:bg-red-700"
+                      className="rounded bg-[var(--color-conn-red-text)] px-2 py-1 text-[10px] font-medium text-white hover:opacity-90"
                     >
                       Escalate
                     </button>

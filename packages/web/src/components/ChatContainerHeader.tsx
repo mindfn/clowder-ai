@@ -69,7 +69,7 @@ export function ChatContainerHeader({
         {voiceAvailable && <VoiceCompanionButton threadId={threadId} defaultCatId={defaultCatId} />}
         {authPendingCount > 0 && (
           <span
-            className="inline-flex items-center justify-center h-5 min-w-[20px] px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold animate-pulse-subtle"
+            className="inline-flex items-center justify-center h-5 min-w-[20px] px-1 rounded-full bg-conn-amber-bg text-conn-amber-text text-[10px] font-bold animate-pulse-subtle"
             title={`${authPendingCount} 个授权请求等待处理`}
           >
             🔐 {authPendingCount}
@@ -176,7 +176,7 @@ function RightPanelToggle({
     <button
       onClick={handleClick}
       className={`p-1 rounded-lg hover:bg-[var(--console-hover-bg)] transition-colors ml-1 hidden lg:block ${
-        statusPanelOpen ? (isWorkspace ? 'bg-blue-50 text-blue-600' : 'bg-cafe-surface-elevated') : ''
+        statusPanelOpen ? (isWorkspace ? 'bg-[var(--color-cafe-accent)]/5 text-[var(--color-cafe-accent)]' : 'bg-cafe-surface-elevated') : ''
       }`}
       aria-label={label}
       title={label}

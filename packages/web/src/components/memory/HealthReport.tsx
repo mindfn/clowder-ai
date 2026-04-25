@@ -165,12 +165,12 @@ function KindBarChart({ byKind }: { byKind: Record<string, number> }) {
 function ActionItems({ items }: { items: string[] }) {
   if (items.length === 0) return null;
   return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
-      <h3 className="mb-2 text-xs font-semibold text-amber-800">Action Needed</h3>
+    <div className="rounded-xl border border-conn-amber-ring bg-conn-amber-bg p-4">
+      <h3 className="mb-2 text-xs font-semibold text-conn-amber-text">Action Needed</h3>
       <ul className="space-y-1">
         {items.map((item) => (
-          <li key={item} className="flex items-start gap-2 text-xs text-amber-700">
-            <span className="mt-0.5 inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />
+          <li key={item} className="flex items-start gap-2 text-xs text-conn-amber-text">
+            <span className="mt-0.5 inline-block h-1.5 w-1.5 rounded-full bg-conn-amber-text" />
             {item}
           </li>
         ))}

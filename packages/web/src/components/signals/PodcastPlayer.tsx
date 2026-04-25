@@ -12,9 +12,9 @@ interface PodcastPlayerProps {
 
 const SPEAKER_COLORS: Record<string, string> = {
   宪宪: 'text-opus-dark bg-opus-bg',
-  砚砚: 'text-emerald-700 bg-emerald-50',
+  砚砚: 'text-conn-emerald-text bg-conn-emerald-bg',
   host: 'text-opus-dark bg-opus-bg',
-  guest: 'text-emerald-700 bg-emerald-50',
+  guest: 'text-conn-emerald-text bg-conn-emerald-bg',
 };
 
 function speakerStyle(speaker: string): string {
@@ -241,7 +241,7 @@ export function PodcastPlayer({ articleId, podcasts, onArtifactCreated }: Podcas
       </div>
 
       {pendingPodcasts.length > 0 && (
-        <p className="mt-1 text-[10px] text-amber-600">{pendingPodcasts.length} 个播客正在生成中...</p>
+        <p className="mt-1 text-[10px] text-conn-amber-text">{pendingPodcasts.length} 个播客正在生成中...</p>
       )}
 
       {readyPodcasts.length > 1 && (

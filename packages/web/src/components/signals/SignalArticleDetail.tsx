@@ -354,7 +354,7 @@ export function SignalArticleDetail({
         <button
           type="button"
           onClick={() => void onStatusChange(article.id, 'starred')}
-          className="rounded-md border border-amber-200 px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-50"
+          className="rounded-md border border-conn-amber-ring px-3 py-1.5 text-xs text-conn-amber-text hover:bg-conn-amber-bg"
         >
           收藏
         </button>

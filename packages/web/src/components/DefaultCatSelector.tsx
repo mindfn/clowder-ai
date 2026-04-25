@@ -43,21 +43,21 @@ export function DefaultCatSelector({
         </div>
       </div>
       {fetchError && (
-        <div className="flex items-center gap-2 mb-3 text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
+        <div className="flex items-center gap-2 mb-3 text-xs text-conn-amber-text bg-conn-amber-bg rounded-lg px-3 py-2">
           <span>加载失败，当前默认猫未知</span>
           {onRetry && (
             <button
               type="button"
               data-testid="retry-fetch"
               onClick={onRetry}
-              className="text-amber-700 font-medium underline hover:text-amber-800"
+              className="text-conn-amber-text font-medium underline hover:opacity-90"
             >
               重试
             </button>
           )}
         </div>
       )}
-      {saveError && <div className="mb-3 text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{saveError}</div>}
+      {saveError && <div className="mb-3 text-xs text-conn-red-text bg-conn-red-bg rounded-lg px-3 py-2">{saveError}</div>}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         {cats.map((cat) => {
           const isDefault = cat.id === currentDefaultCatId;

@@ -79,7 +79,7 @@ export function IntentCardDetail({ card, onTriaged }: IntentCardDetailProps) {
           <div className="text-[10px] font-semibold uppercase text-[#9A866F]">Risk Signals</div>
           <div className="flex flex-wrap gap-1">
             {card.riskSignals.map((signal) => (
-              <span key={signal} className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] text-red-700">
+              <span key={signal} className="rounded-full bg-conn-red-bg px-2 py-0.5 text-[10px] text-conn-red-text">
                 {RISK_LABELS[signal]}
               </span>
             ))}

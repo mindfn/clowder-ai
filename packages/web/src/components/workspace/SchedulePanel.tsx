@@ -197,14 +197,14 @@ export function SchedulePanel() {
       {globalControl && (
         <div
           className={`flex items-center gap-2 px-4 py-1.5 border-b border-[#E8DFD4] ${
-            globalControl.enabled ? 'bg-[#FDFAF6]' : 'bg-red-50'
+            globalControl.enabled ? 'bg-[#FDFAF6]' : 'bg-conn-red-bg'
           }`}
         >
           <button
             type="button"
             onClick={handleGlobalToggle}
             className={`relative w-7 h-4 rounded-full transition-colors ${
-              globalControl.enabled ? 'bg-emerald-400' : 'bg-red-300'
+              globalControl.enabled ? 'bg-conn-emerald-bg' : 'bg-conn-red-bg'
             }`}
             title={globalControl.enabled ? 'Scheduler active — click to pause' : 'Scheduler paused — click to resume'}
           >
@@ -214,11 +214,11 @@ export function SchedulePanel() {
               }`}
             />
           </button>
-          <span className={`text-[10px] font-medium ${globalControl.enabled ? 'text-emerald-700' : 'text-red-600'}`}>
+          <span className={`text-[10px] font-medium ${globalControl.enabled ? 'text-conn-emerald-text' : 'text-conn-red-text'}`}>
             {globalControl.enabled ? 'Scheduler active' : 'Scheduler paused'}
           </span>
           {!globalControl.enabled && globalControl.reason && (
-            <span className="text-[10px] text-red-400 truncate max-w-[160px]">{globalControl.reason}</span>
+            <span className="text-[10px] text-conn-red-text truncate max-w-[160px]">{globalControl.reason}</span>
           )}
         </div>
       )}
@@ -245,8 +245,8 @@ export function SchedulePanel() {
               const statusDot = !task.lastRun
                 ? 'bg-cafe-surface-sunken'
                 : task.lastRun.outcome === 'RUN_FAILED'
-                  ? 'bg-red-400'
-                  : 'bg-emerald-400';
+                  ? 'bg-conn-red-bg'
+                  : 'bg-conn-emerald-bg';
               const isExpanded = expandedId === task.id;
               return (
                 <div key={task.id}>
@@ -285,7 +285,7 @@ export function SchedulePanel() {
                           <span className="text-[10px] text-[#9A866F]">{timeAgo(task.lastRun.started_at)}</span>
                           {task.lastRun.outcome === 'RUN_FAILED' && task.lastRun.error_summary && (
                             <span
-                              className="text-[10px] text-red-400 truncate max-w-[160px]"
+                              className="text-[10px] text-conn-red-text truncate max-w-[160px]"
                               title={task.lastRun.error_summary}
                             >
                               {task.lastRun.error_summary}
@@ -299,12 +299,12 @@ export function SchedulePanel() {
                         <span className="text-[10px] text-[#9A866F] italic">never run</span>
                       )}
                       {task.runStats.delivered > 0 && (
-                        <span className="ml-auto text-[10px] text-emerald-600">
+                        <span className="ml-auto text-[10px] text-conn-emerald-text">
                           {task.runStats.delivered} delivered
                         </span>
                       )}
                       {!(task.effectiveEnabled ?? task.enabled) && (
-                        <span className="ml-auto text-[9px] text-red-400 font-medium">PAUSED</span>
+                        <span className="ml-auto text-[9px] text-conn-red-text font-medium">PAUSED</span>
                       )}
                     </div>
                   </div>
@@ -330,7 +330,7 @@ export function SchedulePanel() {
                               e.stopPropagation();
                               handleDeleteDynamic(task.dynamicTaskId!);
                             }}
-                            className="text-[10px] text-[#9A866F] hover:text-red-500 transition-colors"
+                            className="text-[10px] text-[#9A866F] hover:text-conn-red-text transition-colors"
                           >
                             Delete
                           </button>
@@ -348,7 +348,7 @@ export function SchedulePanel() {
                               <span className="text-[#9A866F]">{timeAgo(r.started_at)}</span>
                               <span className="text-[#9A866F]">{r.duration_ms}ms</span>
                               {r.error_summary && (
-                                <span className="text-red-400 truncate max-w-[200px]">{r.error_summary}</span>
+                                <span className="text-conn-red-text truncate max-w-[200px]">{r.error_summary}</span>
                               )}
                             </div>
                           ))}
@@ -368,7 +368,7 @@ export function SchedulePanel() {
         <span>
           {tasks.length} tasks · {activeCount} active{pausedCount > 0 ? ` · ${pausedCount} paused` : ''}
         </span>
-        <span className={`ml-auto font-medium ${hasAttention ? 'text-red-500' : 'text-emerald-600'}`}>
+        <span className={`ml-auto font-medium ${hasAttention ? 'text-conn-red-text' : 'text-conn-emerald-text'}`}>
           {hasAttention ? 'Attention needed' : 'All healthy'}
         </span>
       </div>

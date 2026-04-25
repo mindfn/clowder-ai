@@ -85,7 +85,7 @@ export function NeedAuditFrame({ projectId, frame, onSaved }: NeedAuditFrameProp
         ))}
       </div>
       {error && (
-        <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700">{error}</div>
+        <div className="mt-2 rounded-lg border border-conn-red-ring bg-conn-red-bg px-3 py-1.5 text-xs text-conn-red-text">{error}</div>
       )}
       <button
         type="button"

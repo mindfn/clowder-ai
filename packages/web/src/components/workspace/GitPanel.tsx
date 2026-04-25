@@ -7,8 +7,8 @@ import { HealthDashboard } from './HealthDashboard';
 
 function StatusBadge({ status, variant }: { status: string; variant: 'staged' | 'unstaged' | 'untracked' }) {
   const colors = {
-    staged: 'bg-green-100 text-green-700',
-    unstaged: 'bg-amber-100 text-amber-700',
+    staged: 'bg-conn-emerald-bg text-conn-emerald-text',
+    unstaged: 'bg-conn-amber-bg text-conn-amber-text',
     untracked: 'bg-cafe-surface-elevated text-cafe-secondary',
   };
   return (
@@ -117,7 +117,7 @@ export function GitPanel() {
         </button>
       </div>
 
-      {error && <div className="px-3 py-2 text-xs text-red-600 bg-red-50/80 border-b border-red-100">{error}</div>}
+      {error && <div className="px-3 py-2 text-xs text-conn-red-text bg-conn-red-bg/80 border-b border-conn-red-ring">{error}</div>}
 
       <div className="flex-1 overflow-y-auto">
         {/* Git Status Section */}
@@ -144,7 +144,7 @@ export function GitPanel() {
         )}
 
         {status && totalChanges === 0 && (
-          <div className="border-b border-[var(--console-border-soft)] px-3 py-2 text-xs text-green-600">
+          <div className="border-b border-[var(--console-border-soft)] px-3 py-2 text-xs text-conn-emerald-text">
             Working tree clean
           </div>
         )}
