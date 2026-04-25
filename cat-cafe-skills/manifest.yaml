@@ -147,7 +147,7 @@ skills:
       - "纯 hook 重构"
       - "游戏模式 UI"
     output: "Design System compliant frontend code + visual self-check pass"
-    next: ["tdd", "quality-gate"]
+    next: ["worktree", "tdd", "quality-gate"]
     sop_step: null
     merged_from: null
 
