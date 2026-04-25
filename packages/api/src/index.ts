@@ -1868,6 +1868,10 @@ async function main(): Promise<void> {
   }, GLOBAL_REAPER_INTERVAL_MS);
   globalReaperTimer.unref();
 
+  // F170 Phase 3e: Start continuous service health heartbeat (60s interval)
+  const { startHealthHeartbeat } = await import('./domains/services/service-registry.js');
+  startHealthHeartbeat();
+
   // Log server startup to audit log (best-effort: don't crash if audit dir unwritable)
   const auditLog = getEventAuditLog();
   try {

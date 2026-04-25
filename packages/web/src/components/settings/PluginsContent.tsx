@@ -114,8 +114,8 @@ export function PluginsContent() {
     let apiReachable = false;
     try {
       const res = await apiFetch('/api/services');
-      apiReachable = true;
       if (res.ok) {
+        apiReachable = true;
         const data = (await res.json()) as { services: ServiceState[] };
         services = data.services;
       }

@@ -2,7 +2,15 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { FastifyPluginAsync } from 'fastify';
-import { getAllServiceStates, getServiceById, getServiceState } from '../domains/services/service-registry.js';
+import { getOwnerUserId } from '../config/cat-config-loader.js';
+import {
+  getAllServiceStates,
+  getCachedServiceState,
+  getKnownServices,
+  getServiceById,
+  getServiceState,
+} from '../domains/services/service-registry.js';
+import { resolveUserId } from '../utils/request-identity.js';
 
 function resolveScriptPath(script: string): string {
   const configRoot = process.env['CAT_CAFE_CONFIG_ROOT'] ?? process.cwd();
@@ -23,6 +31,10 @@ function readLogTail(serviceId: string, lines = 100): string[] {
 
 export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.get('/api/services', async () => {
+    const cached = getKnownServices()
+      .map((m) => getCachedServiceState(m.id))
+      .filter(Boolean);
+    if (cached.length > 0) return { services: cached };
     const states = await getAllServiceStates();
     return { services: states };
   });
@@ -34,11 +46,18 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       reply.status(404);
       return { error: `Service "${id}" not found` };
     }
+    const cached = getCachedServiceState(id);
+    if (cached) return cached;
     const state = await getServiceState(manifest);
     return state;
   });
 
   app.post<{ Params: { id: string } }>('/api/services/:id/start', async (request, reply) => {
+    const userId = resolveUserId(request);
+    if (!userId || userId !== getOwnerUserId()) {
+      reply.status(403);
+      return { error: 'Only the owner can manage services' };
+    }
     const { id } = request.params;
     const manifest = getServiceById(id);
     if (!manifest) {
@@ -72,6 +91,11 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post<{ Params: { id: string } }>('/api/services/:id/stop', async (request, reply) => {
+    const userId = resolveUserId(request);
+    if (!userId || userId !== getOwnerUserId()) {
+      reply.status(403);
+      return { error: 'Only the owner can manage services' };
+    }
     const { id } = request.params;
     const manifest = getServiceById(id);
     if (!manifest) {
@@ -116,6 +140,11 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post<{ Params: { id: string } }>('/api/services/:id/install', async (request, reply) => {
+    const userId = resolveUserId(request);
+    if (!userId || userId !== getOwnerUserId()) {
+      reply.status(403);
+      return { error: 'Only the owner can manage services' };
+    }
     const { id } = request.params;
     const manifest = getServiceById(id);
     if (!manifest) {
