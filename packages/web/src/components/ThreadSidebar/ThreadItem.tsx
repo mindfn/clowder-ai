@@ -104,7 +104,7 @@ export function ThreadItem({
   return (
     <div
       data-thread-id={id}
-      className={`group relative ${indented ? 'pl-7 pr-3' : 'px-3'} py-2.5 transition-colors cursor-pointer ${
+      className={`group relative mx-2 rounded-[14px] ${indented ? 'pl-5 pr-3' : 'px-3'} py-2.5 transition-colors cursor-pointer ${
         isActive ? 'bg-[var(--console-active-bg)]' : 'hover:bg-[var(--console-hover-bg)]'
       }`}
       onClick={() => onSelect(id)}

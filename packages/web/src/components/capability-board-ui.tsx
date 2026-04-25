@@ -134,15 +134,18 @@ export function CapabilitySection({
 }) {
   if (items.length === 0) return null;
   return (
-    <div className="mb-6">
-      <div className="mb-3 flex items-center gap-3 px-1">
-        {icon}
-        <div>
-          <h3 className="text-[15px] font-semibold tracking-[0.01em] text-cafe">{title}</h3>
-          <p className="mt-0.5 text-xs font-medium text-cafe-muted">
-            {subtitle} · {items.length}
-          </p>
+    <section className="console-section-shell rounded-[28px] p-5 md:p-6">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          {icon}
+          <div>
+            <h3 className="text-[15px] font-semibold tracking-[0.01em] text-cafe">{title}</h3>
+            <p className="mt-0.5 text-xs font-medium text-cafe-muted">{subtitle}</p>
+          </div>
         </div>
+        <span className="console-pill inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold text-cafe-secondary">
+          {items.length} items
+        </span>
       </div>
       <div className="space-y-2.5">
         {items.map((item) => (
@@ -157,7 +160,7 @@ export function CapabilitySection({
           />
         ))}
       </div>
-    </div>
+    </section>
   );
 }
 

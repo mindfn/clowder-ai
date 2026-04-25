@@ -187,7 +187,7 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
   if (loading) return <p className="text-sm text-cafe-muted">加载中...</p>;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {error && (
         <div className="console-status-chip" data-status="error">
           {error}
@@ -219,22 +219,23 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
 
       {/* MCP Section */}
       {(section === 'all' || section === 'mcp') && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2" />
+        <div className="space-y-4">
+          <div className="flex items-center justify-end">
             <button type="button" onClick={() => setShowAddMcp(!showAddMcp)} className="console-button-secondary">
               {showAddMcp ? '取消' : '+ 添加 MCP'}
             </button>
           </div>
 
           {showAddMcp && (
-            <McpInstallForm
-              projectPath={projectPath ?? undefined}
-              onInstalled={() => {
-                fetchCapabilities(projectPath ?? undefined);
-              }}
-              onClose={() => setShowAddMcp(false)}
-            />
+            <div className="console-section-shell rounded-[28px] p-5 md:p-6">
+              <McpInstallForm
+                projectPath={projectPath ?? undefined}
+                onInstalled={() => {
+                  fetchCapabilities(projectPath ?? undefined);
+                }}
+                onClose={() => setShowAddMcp(false)}
+              />
+            </div>
           )}
 
           <CapabilitySection

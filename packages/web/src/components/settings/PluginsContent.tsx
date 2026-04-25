@@ -69,8 +69,8 @@ const CATEGORY_META: Record<PluginDef['category'], { eyebrow: string; accent: st
 };
 
 const STATUS_STYLES: Record<string, { dot: string; bg: string; text: string }> = {
-  active: { dot: 'bg-emerald-500', bg: 'bg-emerald-50', text: 'text-emerald-700' },
-  configured: { dot: 'bg-amber-500', bg: 'bg-amber-50', text: 'text-amber-700' },
+  active: { dot: 'bg-conn-emerald-text', bg: 'bg-conn-emerald-bg', text: 'text-conn-emerald-text' },
+  configured: { dot: 'bg-conn-amber-text', bg: 'bg-conn-amber-bg', text: 'text-conn-amber-text' },
   available: { dot: 'bg-cafe-surface-sunken', bg: 'bg-[var(--console-card-soft-bg)]', text: 'text-cafe-secondary' },
 };
 

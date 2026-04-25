@@ -264,7 +264,7 @@ export function SystemTab({ config, onConfigChange }: { config: ConfigData; onCo
   const handleChanged = useCallback(() => onConfigChange?.(), [onConfigChange]);
 
   return (
-    <>
+    <div className="space-y-6">
       <Section title="气泡显示">
         <BubbleToggle
           label="Thinking 默认"
@@ -299,6 +299,6 @@ export function SystemTab({ config, onConfigChange }: { config: ConfigData; onCo
         <KV label="Done 超时" value={`${config.governance.doneTimeoutMs / 1000}s`} />
         <KV label="Heartbeat 间隔" value={`${config.governance.heartbeatIntervalMs / 1000}s`} />
       </Section>
-    </>
+    </div>
   );
 }

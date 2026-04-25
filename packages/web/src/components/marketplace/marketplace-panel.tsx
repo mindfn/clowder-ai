@@ -11,10 +11,10 @@ function LoadingSkeleton() {
   return (
     <div className="space-y-3">
       {[1, 2, 3].map((i) => (
-        <div key={i} className="animate-pulse rounded-xl border border-cafe-border bg-[var(--console-card-bg)] p-4">
-          <div className="h-4 w-1/3 rounded bg-cafe-border" />
-          <div className="mt-2 h-3 w-2/3 rounded bg-cafe-border/60" />
-          <div className="mt-1.5 h-3 w-1/2 rounded bg-cafe-border/40" />
+        <div key={i} className="animate-pulse rounded-xl bg-[var(--console-card-bg)] p-4">
+          <div className="h-4 w-1/3 rounded bg-[var(--console-border-soft)]" />
+          <div className="mt-2 h-3 w-2/3 rounded bg-[var(--console-border-soft)]" />
+          <div className="mt-1.5 h-3 w-1/2 rounded bg-[var(--console-border-soft)]" />
         </div>
       ))}
     </div>

@@ -136,7 +136,7 @@ export function SettingsContent({ section }: SettingsContentProps) {
       return <HubConnectorConfigTab />;
     case 'skills':
       return (
-        <div className="space-y-5">
+        <div className="space-y-6">
           <HubCapabilityTab section="skills" />
           <MarketplacePanel />
           <SkillPreviewPanel />
@@ -144,7 +144,7 @@ export function SettingsContent({ section }: SettingsContentProps) {
       );
     case 'mcp':
       return (
-        <div className="space-y-5">
+        <div className="space-y-6">
           <HubCapabilityTab section="mcp" />
           <CallbackEnvPanel />
           <ServiceStatusPanel filterFeatures={['browser-automation-mcp']} title="相关服务状态" />
@@ -154,7 +154,7 @@ export function SettingsContent({ section }: SettingsContentProps) {
       return <PluginsContent />;
     case 'voice':
       return (
-        <div className="space-y-5">
+        <div className="space-y-6">
           <ServiceStatusPanel
             filterFeatures={['voice-input', 'voice-output', 'voice-companion', 'voice-postprocess']}
             title="语音服务状态"
