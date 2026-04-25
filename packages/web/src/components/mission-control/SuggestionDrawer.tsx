@@ -3,7 +3,7 @@
 import type { BacklogItem, MissionHubSelfClaimScope, ThreadPhase } from '@cat-cafe/shared';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { getThreadHref } from '@/components/ThreadSidebar/thread-navigation';
+import { detectRoutePrefix, getThreadHref } from '@/components/ThreadSidebar/thread-navigation';
 import { formatCatName, useCatData } from '@/hooks/useCatData';
 import { SuggestionDecisionPanel } from './SuggestionDecisionPanel';
 import { SuggestionOpenForm } from './SuggestionOpenForm';
@@ -264,7 +264,7 @@ export function SuggestionDrawer({
           </div>
           {item.dispatchedThreadId && (
             <Link
-              href={getThreadHref(item.dispatchedThreadId)}
+              href={getThreadHref(item.dispatchedThreadId, detectRoutePrefix())}
               className="mt-2 inline-flex rounded bg-[#1F1A16] px-2 py-1 text-[11px] font-semibold text-white"
               data-testid="mc-open-thread-link"
             >
