@@ -10,7 +10,7 @@ const CAT_VOICE_COLORS: Record<string, { bg: string; bar: string }> = {
   gemini: { bg: 'bg-[var(--color-gemini-bg)]', bar: 'bg-[var(--color-gemini-primary)]' },
   kimi: { bg: 'bg-[var(--color-kimi-bg)]', bar: 'bg-[var(--color-kimi-primary)]' },
 };
-const DEFAULT_VOICE_COLORS = { bg: 'bg-cafe-surface-elevated dark:bg-gray-800', bar: 'bg-cafe-surface-sunken' };
+const DEFAULT_VOICE_COLORS = { bg: 'bg-[var(--console-card-bg)]', bar: 'bg-cafe-surface-sunken' };
 
 interface Props {
   request: TtsStreamRequest;
@@ -106,7 +106,7 @@ export function StreamingAudioBlock({ request, catId, autoPlay = true }: Props) 
           )}
         </span>
 
-        <div className="flex-1 h-1 bg-[var(--console-pill-bg)] dark:bg-gray-700 rounded-full overflow-hidden">
+        <div className="flex-1 h-1 bg-[var(--console-pill-bg)] rounded-full overflow-hidden">
           <div
             className={`h-full rounded-full transition-[width] duration-200 ${colors.bar}`}
             style={{ width: `${Math.min(state.progress * 100, 100)}%` }}

@@ -139,7 +139,7 @@ export function InteractiveBlockGroup({ blocks, messageId }: { blocks: RichInter
             ${
               allSelected
                 ? 'bg-amber-600 text-white hover:bg-amber-700 cursor-pointer'
-                : 'bg-cafe-surface-elevated dark:bg-gray-800 text-cafe-muted cursor-not-allowed'
+                : 'bg-[var(--console-card-bg)] text-cafe-muted cursor-not-allowed'
             }`}
         >
           全部提交

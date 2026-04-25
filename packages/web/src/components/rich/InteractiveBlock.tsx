@@ -177,7 +177,7 @@ function SelectInteraction({
           className={`mt-2 w-full py-2.5 rounded-full text-sm font-semibold transition-colors flex items-center justify-center gap-1.5
             ${
               showCustomInput && !customText.trim()
-                ? 'bg-[var(--console-pill-bg)] dark:bg-gray-700 text-cafe-muted cursor-not-allowed'
+                ? 'bg-[var(--console-pill-bg)] text-cafe-muted cursor-not-allowed'
                 : 'bg-amber-600 text-white hover:bg-amber-700'
             }`}
         >

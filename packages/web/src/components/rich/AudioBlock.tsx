@@ -11,7 +11,7 @@ const CAT_VOICE_COLORS: Record<string, { bg: string; bar: string }> = {
   gemini: { bg: 'bg-[var(--color-gemini-bg)]', bar: 'bg-[var(--color-gemini-primary)]' },
   kimi: { bg: 'bg-[var(--color-kimi-bg)]', bar: 'bg-[var(--color-kimi-primary)]' },
 };
-const DEFAULT_VOICE_COLORS = { bg: 'bg-cafe-surface-elevated dark:bg-gray-800', bar: 'bg-cafe-surface-sunken' };
+const DEFAULT_VOICE_COLORS = { bg: 'bg-[var(--console-card-bg)]', bar: 'bg-cafe-surface-sunken' };
 
 export function AudioBlock({ block, catId }: { block: RichAudioBlock; catId?: string }) {
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -203,7 +203,7 @@ export function AudioBlock({ block, catId }: { block: RichAudioBlock; catId?: st
         {block.title && (
           <div className="text-xs font-medium text-cafe-secondary dark:text-gray-300 truncate">{block.title}</div>
         )}
-        <div className="mt-1 h-1 bg-[var(--console-pill-bg)] dark:bg-gray-700 rounded-full overflow-hidden">
+        <div className="mt-1 h-1 bg-[var(--console-pill-bg)] rounded-full overflow-hidden">
           <div
             className="h-full bg-blue-400 rounded-full transition-[width] duration-200"
             style={{ width: `${progress * 100}%` }}

@@ -64,7 +64,7 @@ export function MobileStatusSheet({
       >
         {/* Handle bar + header */}
         <div className="sticky top-0 bg-cafe-surface rounded-t-2xl pt-3 pb-2 px-4 border-b border-[var(--console-border-soft)] z-10">
-          <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-2" />
+          <div className="w-10 h-1 bg-[var(--console-pill-bg)] rounded-full mx-auto mb-2" />
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-bold text-cafe-black">状态面板</h2>
             <button

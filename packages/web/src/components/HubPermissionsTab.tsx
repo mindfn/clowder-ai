@@ -149,7 +149,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
               </div>
               <button
                 onClick={() => saveConfig({ whitelistEnabled: !config.whitelistEnabled })}
-                className={`relative w-10 h-5 rounded-full transition-colors ${config.whitelistEnabled ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                className={`relative w-10 h-5 rounded-full transition-colors ${config.whitelistEnabled ? 'bg-blue-500' : 'bg-[var(--console-pill-bg)]'}`}
                 disabled={saving}
               >
                 <div
@@ -164,7 +164,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
                 {config.allowedGroups.map((g) => (
                   <div
                     key={g.externalChatId}
-                    className="flex items-center gap-2 px-3 py-2 bg-cafe-surface-elevated dark:bg-gray-800 rounded-lg text-xs"
+                    className="flex items-center gap-2 px-3 py-2 bg-[var(--console-card-bg)] rounded-lg text-xs"
                   >
                     <svg
                       className="w-3.5 h-3.5 text-blue-500"
@@ -229,7 +229,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
               {config.adminOpenIds.map((id, i) => (
                 <div
                   key={id}
-                  className="flex items-center gap-2 px-3 py-2 bg-cafe-surface-elevated dark:bg-gray-800 rounded-lg text-xs"
+                  className="flex items-center gap-2 px-3 py-2 bg-[var(--console-card-bg)] rounded-lg text-xs"
                 >
                   <svg className="w-3.5 h-3.5 text-amber-500" fill="currentColor" viewBox="0 0 20 20">
                     <path
@@ -283,7 +283,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
               </div>
               <button
                 onClick={() => saveConfig({ commandAdminOnly: !config.commandAdminOnly })}
-                className={`relative w-10 h-5 rounded-full transition-colors ${config.commandAdminOnly ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                className={`relative w-10 h-5 rounded-full transition-colors ${config.commandAdminOnly ? 'bg-blue-500' : 'bg-[var(--console-pill-bg)]'}`}
                 disabled={saving}
               >
                 <div
