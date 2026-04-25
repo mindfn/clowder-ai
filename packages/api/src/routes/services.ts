@@ -99,6 +99,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       child.stdout?.on('data', (d: Buffer) => {
         stdout += d.toString();
       });
+      child.on('error', () => {});
       await new Promise<void>((res) => child.on('close', () => res()));
       const pids = stdout.trim().split('\n').filter(Boolean);
       for (const pid of pids) {
