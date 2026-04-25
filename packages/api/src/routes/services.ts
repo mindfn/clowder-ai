@@ -122,10 +122,13 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       if (existsSync(scriptPath)) {
         try {
           const child = spawn('bash', [scriptPath], { stdio: 'ignore' });
-          await new Promise<void>((res, rej) => {
+          const code = await new Promise<number | null>((res, rej) => {
             child.on('error', rej);
-            child.on('close', () => res());
+            child.on('close', (c) => res(c));
           });
+          if (code !== 0) {
+            return { ok: false, error: `Stop script for ${manifest.name} exited with code ${code}` };
+          }
           return { ok: true, message: `${manifest.name} stopped via script` };
         } catch {
           return { ok: false, error: `Failed to run stop script for ${manifest.name}` };
@@ -217,6 +220,16 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get<{ Params: { id: string } }>('/api/services/:id/logs', async (request, reply) => {
+    const userId = resolveUserId(request);
+    const ownerId = process.env['DEFAULT_OWNER_USER_ID']?.trim();
+    if (!ownerId) {
+      reply.status(403);
+      return { error: 'Service management requires DEFAULT_OWNER_USER_ID to be configured' };
+    }
+    if (!userId || userId !== ownerId) {
+      reply.status(403);
+      return { error: 'Only the owner can view service logs' };
+    }
     const { id } = request.params;
     const manifest = getServiceById(id);
     if (!manifest) {
