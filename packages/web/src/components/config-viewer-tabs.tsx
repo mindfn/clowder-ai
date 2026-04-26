@@ -27,7 +27,7 @@ export type { Capabilities, CatConfig, ConfigData, ContextBudget } from './confi
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="rounded-[24px] bg-[var(--console-card-bg)] p-4 md:p-5">
+    <section className="rounded-xl bg-[var(--console-card-bg)] p-4 md:p-5">
       <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">{title}</h3>
       {children}
     </section>

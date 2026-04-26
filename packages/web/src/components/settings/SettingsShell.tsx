@@ -25,11 +25,11 @@ function SettingsShellInner() {
   return (
     <div className="console-shell flex h-full min-h-0 flex-col gap-4 overflow-hidden p-4 md:flex-row md:gap-5 md:p-5">
       <aside
-        className="console-shell-panel flex w-full flex-shrink-0 flex-col overflow-hidden rounded-[30px] md:w-[19.5rem]"
+        className="console-shell-panel flex w-full flex-shrink-0 flex-col overflow-hidden rounded-xl md:w-[19.5rem]"
         data-console-panel="settings-nav"
       >
         <div className="px-4 pb-3 pt-4 md:px-5 md:pb-4 md:pt-5">
-          <div className="console-shell-panel-soft rounded-[24px] px-4 py-4">
+          <div className="console-shell-panel-soft rounded-xl px-4 py-4">
             <div className="flex items-center justify-between gap-3">
               <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-cafe-muted">Console</p>
               <span className="console-pill inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold text-cafe-secondary">
@@ -72,7 +72,7 @@ function SettingsShellInner() {
 
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[68rem] space-y-4 pb-5">
-          <section className="console-shell-panel rounded-2xl px-5 py-5 md:px-7 md:py-6">
+          <section className="console-shell-panel rounded-xl px-5 py-5 md:px-7 md:py-6">
             <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
               <div className="space-y-2">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-cafe-muted">Settings</p>
