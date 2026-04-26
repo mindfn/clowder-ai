@@ -73,6 +73,12 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
       return { error: 'Required: id (string)' };
     }
 
+    const ownerId = process.env['DEFAULT_OWNER_USER_ID']?.trim();
+    if (ownerId && userId !== ownerId) {
+      reply.status(403);
+      return { error: 'Only the owner can install/update MCP servers' };
+    }
+
     let projectRoot = getProjectRoot();
     if (body.projectPath) {
       const validated = await validateProjectPath(body.projectPath);
@@ -113,6 +119,15 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
           existing.mcpServer && entry.mcpServer
             ? { ...existing.mcpServer, ...entry.mcpServer }
             : (entry.mcpServer ?? existing.mcpServer);
+        if (mergedMcpServer) {
+          if (mergedMcpServer.transport === 'streamableHttp') {
+            delete mergedMcpServer.resolver;
+            delete mergedMcpServer.workingDir;
+          } else {
+            delete mergedMcpServer.url;
+            delete mergedMcpServer.headers;
+          }
+        }
         config.capabilities[existingIdx] = {
           ...existing,
           ...entry,
