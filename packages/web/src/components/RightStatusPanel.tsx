@@ -282,7 +282,7 @@ function RevealWhispersButton({ threadId }: { threadId: string }) {
 }
 
 const LOGS_DIR = 'packages/api/data/logs/api';
-const STATUS_CARD_CLASS = 'console-inspector-section';
+const INSPECTOR_ITEM = 'p-4';
 
 function parseLogFilename(name: string): { date: string; seq: number } | null {
   const m = name.match(/^api\.(\d{4}-\d{2}-\d{2})\.(\d+)\.log$/);
@@ -334,7 +334,7 @@ function RuntimeLogsButton() {
   }, [setRevealPath, setOpenFile]);
 
   return (
-    <section className={STATUS_CARD_CLASS} data-console-card="true">
+    <section className={INSPECTOR_ITEM}>
       <div className="flex items-center justify-between">
         <h3 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">运行日志</h3>
         <button
@@ -399,8 +399,12 @@ export function RightStatusPanel({
         </p>
       </div>
 
+      <div
+        className="divide-y divide-[var(--console-border-soft)] overflow-hidden rounded-xl bg-[var(--console-card-bg)]"
+        data-console-card="true"
+      >
       {/* ── Active cats: currently working ──────────────── */}
-      <section className={STATUS_CARD_CLASS} data-console-card="true">
+      <section className={INSPECTOR_ITEM}>
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">
             {activeCats.length > 0 ? '当前调用' : '猫猫状态'}
@@ -441,7 +445,7 @@ export function RightStatusPanel({
 
       {/* ── History cats: appeared before but not in current round ── */}
       {historyCats.length > 0 && (
-        <section className={STATUS_CARD_CLASS} data-console-card="true">
+        <section className={INSPECTOR_ITEM}>
           <button
             onClick={() => setHistoryOpen((v) => !v)}
             className="flex w-full items-center justify-between text-xs font-semibold text-cafe-secondary hover:text-cafe"
@@ -473,7 +477,7 @@ export function RightStatusPanel({
       )}
 
       {/* ── Message stats (collapsible) ───────────────── */}
-      <section className={STATUS_CARD_CLASS} data-console-card="true">
+      <section className={INSPECTOR_ITEM}>
         <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">消息统计</h3>
         <div className="grid grid-cols-2 gap-2 text-xs text-cafe-secondary">
           <div>总数</div>
@@ -497,7 +501,7 @@ export function RightStatusPanel({
         onViewSession={(id, catId) => setViewSession({ id, catId })}
       />
 
-      <section className={STATUS_CARD_CLASS} data-console-card="true">
+      <section className={INSPECTOR_ITEM}>
         <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">对话信息</h3>
         <div className="text-xs text-cafe-secondary space-y-2">
           <div>
@@ -528,6 +532,7 @@ export function RightStatusPanel({
 
       {/* ── F130: Runtime logs quick-access ────────────── */}
       <RuntimeLogsButton />
+      </div>
     </aside>
   );
 }

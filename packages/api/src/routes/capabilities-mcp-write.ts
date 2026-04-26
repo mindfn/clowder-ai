@@ -109,9 +109,14 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
             error: `Cannot overwrite managed MCP "${body.id}" (source=${existing.source}). Only external MCPs can be installed over.`,
           };
         }
+        const mergedMcpServer =
+          existing.mcpServer && entry.mcpServer
+            ? { ...existing.mcpServer, ...entry.mcpServer }
+            : (entry.mcpServer ?? existing.mcpServer);
         config.capabilities[existingIdx] = {
           ...existing,
           ...entry,
+          mcpServer: mergedMcpServer,
           overrides: existing.overrides,
         };
       } else {

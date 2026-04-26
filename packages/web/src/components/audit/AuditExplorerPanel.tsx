@@ -54,7 +54,7 @@ export function AuditExplorerPanel({
   }, [onCloseSession]);
 
   return (
-    <section className="console-inspector-section" data-console-card="true">
+    <section className="p-4">
       <button
         type="button"
         data-testid="audit-explorer-header"
