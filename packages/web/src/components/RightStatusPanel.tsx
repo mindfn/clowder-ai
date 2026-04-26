@@ -282,7 +282,7 @@ function RevealWhispersButton({ threadId }: { threadId: string }) {
 }
 
 const LOGS_DIR = 'packages/api/data/logs/api';
-const STATUS_CARD_CLASS = 'console-card rounded-[24px] p-4';
+const STATUS_CARD_CLASS = 'console-inspector-section';
 
 function parseLogFilename(name: string): { date: string; seq: number } | null {
   const m = name.match(/^api\.(\d{4}-\d{2}-\d{2})\.(\d+)\.log$/);

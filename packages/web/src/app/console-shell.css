@@ -9,7 +9,7 @@
   --console-border-strong: color-mix(in srgb, var(--cafe-border) 92%, transparent);
   --console-shadow: 0 20px 48px rgba(104, 86, 73, 0.14);
   --console-shadow-soft: 0 12px 28px rgba(104, 86, 73, 0.08);
-  --console-active-bg: color-mix(in srgb, var(--cafe-accent) 12%, var(--console-card-bg) 88%);
+  --console-active-bg: color-mix(in srgb, var(--cafe-accent) 22%, var(--console-card-bg) 78%);
   --console-hover-bg: color-mix(in srgb, var(--cafe-crosspost) 10%, var(--console-card-bg) 90%);
 }
 
@@ -24,7 +24,7 @@
   --console-border-strong: color-mix(in srgb, var(--cafe-border) 94%, white 6%);
   --console-shadow: 0 24px 56px rgba(0, 0, 0, 0.34);
   --console-shadow-soft: 0 14px 34px rgba(0, 0, 0, 0.24);
-  --console-active-bg: color-mix(in srgb, var(--cafe-accent) 16%, var(--console-card-bg) 84%);
+  --console-active-bg: color-mix(in srgb, var(--cafe-accent) 26%, var(--console-card-bg) 74%);
   --console-hover-bg: color-mix(in srgb, var(--cafe-crosspost) 14%, var(--console-card-bg) 86%);
 }
 
@@ -231,4 +231,15 @@
 .console-activity-indicator {
   background: var(--item-accent, var(--cafe-accent));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--item-accent, var(--cafe-accent)) 30%, transparent);
+}
+
+.console-inspector-section {
+  background: color-mix(in srgb, var(--console-card-bg) 60%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--console-border-soft) 50%, transparent);
+  padding: 1rem;
+  transition: background-color 180ms ease;
+}
+
+.console-inspector-section:last-child {
+  border-bottom: none;
 }

@@ -12,8 +12,8 @@
   background: color-mix(in srgb, var(--console-card-soft-bg) 92%, transparent);
   color: var(--cafe-text);
   border-radius: 1rem;
-  padding: 0.8rem 0.9rem;
-  font-size: 0.875rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.82rem;
   line-height: 1.4;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
 }
@@ -54,8 +54,8 @@ select.console-form-input {
   gap: 0.45rem;
   border-radius: 999px;
   border: 1px solid transparent;
-  padding: 0.6rem 1rem;
-  font-size: 0.82rem;
+  padding: 0.45rem 0.85rem;
+  font-size: 0.78rem;
   font-weight: 600;
   line-height: 1;
   transition:

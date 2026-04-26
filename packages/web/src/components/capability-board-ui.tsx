@@ -121,6 +121,7 @@ export function CapabilitySection({
   onToggle,
   onDeleteMcp,
   deletingMcp,
+  onEditMcp,
 }: {
   icon: ReactNode;
   title: string;
@@ -131,6 +132,7 @@ export function CapabilitySection({
   onToggle: ToggleHandler;
   onDeleteMcp?: (id: string, hard: boolean) => void;
   deletingMcp?: string | null;
+  onEditMcp?: (id: string) => void;
 }) {
   if (items.length === 0) return null;
   return (
@@ -157,6 +159,7 @@ export function CapabilitySection({
             onToggle={onToggle}
             onDelete={onDeleteMcp && item.type === 'mcp' && item.source === 'external' ? onDeleteMcp : undefined}
             isDeleting={deletingMcp === item.id}
+            onEdit={onEditMcp && item.type === 'mcp' ? onEditMcp : undefined}
           />
         ))}
       </div>
@@ -173,6 +176,7 @@ function CapabilityCard({
   onToggle,
   onDelete,
   isDeleting,
+  onEdit,
 }: {
   item: CapabilityBoardItem;
   catFamilies: CatFamily[];
@@ -180,6 +184,7 @@ function CapabilityCard({
   onToggle: ToggleHandler;
   onDelete?: (id: string, hard: boolean) => void;
   isDeleting?: boolean;
+  onEdit?: (id: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const isToggling = toggling === `${item.type}:${item.id}`;
@@ -227,8 +232,24 @@ function CapabilityCard({
           </div>
         </button>
 
-        {/* Global toggle + delete */}
+        {/* Global toggle + edit + delete */}
         <div className="flex shrink-0 items-center gap-1.5 pl-2">
+          {onEdit && (
+            <button
+              type="button"
+              onClick={() => onEdit(item.id)}
+              title="设置"
+              className="console-button-ghost rounded-full p-2"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                <path
+                  fillRule="evenodd"
+                  d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </button>
+          )}
           <ToggleSwitch
             enabled={item.enabled}
             disabled={isToggling}

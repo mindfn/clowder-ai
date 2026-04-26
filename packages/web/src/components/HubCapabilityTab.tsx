@@ -27,7 +27,7 @@ import {
   SkillHealthBanner,
   StatusDot,
 } from './capability-board-ui';
-import { McpInstallForm } from './McpInstallForm';
+import { McpConfigModal } from './McpConfigModal';
 import { getProjectPaths, projectDisplayName } from './ThreadSidebar/thread-utils';
 
 type FilterSource = 'all' | 'cat-cafe' | 'external';
@@ -44,7 +44,8 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
   const [loading, setLoading] = useState(true);
   const [filterSource, setFilterSource] = useState<FilterSource>('all');
   const [toggling, setToggling] = useState<string | null>(null);
-  const [showAddMcp, setShowAddMcp] = useState(false);
+  const [showMcpModal, setShowMcpModal] = useState(false);
+  const [editMcpId, setEditMcpId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
 
   // Multi-project state
@@ -221,21 +222,21 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
       {(section === 'all' || section === 'mcp') && (
         <div className="space-y-4">
           <div className="flex items-center justify-end">
-            <button type="button" onClick={() => setShowAddMcp(!showAddMcp)} className="console-button-secondary">
-              {showAddMcp ? '取消' : '+ 添加 MCP'}
+            <button type="button" onClick={() => setShowMcpModal(true)} className="console-button-secondary">
+              + 添加 MCP
             </button>
           </div>
 
-          {showAddMcp && (
-            <div className="console-section-shell rounded-xl p-5 md:p-6">
-              <McpInstallForm
-                projectPath={projectPath ?? undefined}
-                onInstalled={() => {
-                  fetchCapabilities(projectPath ?? undefined);
-                }}
-                onClose={() => setShowAddMcp(false)}
-              />
-            </div>
+          {(showMcpModal || editMcpId) && (
+            <McpConfigModal
+              projectPath={projectPath ?? undefined}
+              editId={editMcpId ?? undefined}
+              onSaved={() => fetchCapabilities(projectPath ?? undefined)}
+              onClose={() => {
+                setShowMcpModal(false);
+                setEditMcpId(null);
+              }}
+            />
           )}
 
           <CapabilitySection
@@ -248,6 +249,7 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
             onToggle={handleToggle}
             onDeleteMcp={handleDeleteMcp}
             deletingMcp={deleting}
+            onEditMcp={(id) => setEditMcpId(id)}
           />
         </div>
       )}
