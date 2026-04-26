@@ -643,7 +643,10 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
       };
       const mcpDesc = describeMcpCapability(cap);
       if (mcpDesc) mcpItem.description = mcpDesc;
-      if (cap.mcpServer) mcpItem.mcpServer = cap.mcpServer;
+      if (cap.mcpServer) {
+        const { env, headers, ...safe } = cap.mcpServer;
+        mcpItem.mcpServer = safe;
+      }
       items.push(mcpItem);
     }
 

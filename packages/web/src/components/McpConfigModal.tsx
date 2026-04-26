@@ -19,9 +19,7 @@ export interface McpConfigModalProps {
     args?: string[];
     url?: string;
     env?: Record<string, string>;
-    bearerTokenEnv?: string;
     headers?: Record<string, string>;
-    headerEnvVars?: Record<string, string>;
   };
   onSaved: () => void;
   onClose: () => void;
@@ -37,18 +35,10 @@ export function McpConfigModal({ projectPath, editId, editData, onSaved, onClose
   const [envPairs, setEnvPairs] = useState<KVPair[]>(
     editData?.env ? Object.entries(editData.env).map(([key, value]) => ({ key, value })) : [{ key: '', value: '' }],
   );
-  const [envPassthrough, setEnvPassthrough] = useState<string[]>(['']);
-
   const [url, setUrl] = useState(editData?.url ?? '');
-  const [bearerTokenEnv, setBearerTokenEnv] = useState(editData?.bearerTokenEnv ?? '');
   const [headers, setHeaders] = useState<KVPair[]>(
     editData?.headers
       ? Object.entries(editData.headers).map(([key, value]) => ({ key, value }))
-      : [{ key: '', value: '' }],
-  );
-  const [headerEnvVars, setHeaderEnvVars] = useState<KVPair[]>(
-    editData?.headerEnvVars
-      ? Object.entries(editData.headerEnvVars).map(([key, value]) => ({ key, value }))
       : [{ key: '', value: '' }],
   );
 
@@ -71,24 +61,19 @@ export function McpConfigModal({ projectPath, editId, editData, onSaved, onClose
     if (transport === 'streamableHttp') {
       payload.transport = 'streamableHttp';
       if (url.trim()) payload.url = url.trim();
-      if (bearerTokenEnv.trim()) payload.bearerTokenEnv = bearerTokenEnv.trim();
       const h = kvToObj(headers);
       if (Object.keys(h).length > 0) payload.headers = h;
-      const he = kvToObj(headerEnvVars);
-      if (Object.keys(he).length > 0) payload.headerEnvVars = he;
     } else {
       if (command.trim()) payload.command = command.trim();
       const cleanArgs = args.filter((a) => a.trim());
       if (cleanArgs.length > 0) payload.args = cleanArgs;
-      const ep = envPassthrough.filter((v) => v.trim());
-      if (ep.length > 0) payload.envPassthrough = ep;
     }
 
     const env = kvToObj(envPairs);
     if (Object.keys(env).length > 0) payload.env = env;
 
     return payload;
-  }, [id, transport, command, args, url, bearerTokenEnv, headers, headerEnvVars, envPairs, envPassthrough, projectPath]);
+  }, [id, transport, command, args, url, headers, envPairs, projectPath]);
 
   const handleSave = useCallback(async () => {
     if (!id.trim()) return;
@@ -185,9 +170,6 @@ export function McpConfigModal({ projectPath, editId, editData, onSaved, onClose
               <FormItem label="环境变量">
                 <DynamicKVList pairs={envPairs} onChange={setEnvPairs} addLabel="环境变量" />
               </FormItem>
-              <FormItem label="环境变量传递">
-                <DynamicList values={envPassthrough} placeholder="" onChange={setEnvPassthrough} addLabel="变量" />
-              </FormItem>
             </FormSection>
           )}
 
@@ -202,20 +184,8 @@ export function McpConfigModal({ projectPath, editId, editData, onSaved, onClose
                   className="console-form-input"
                 />
               </FormItem>
-              <FormItem label="Bearer 令牌环境变量">
-                <input
-                  type="text"
-                  value={bearerTokenEnv}
-                  onChange={(e) => setBearerTokenEnv(e.target.value)}
-                  placeholder="MCP_BEARER_TOKEN"
-                  className="console-form-input"
-                />
-              </FormItem>
               <FormItem label="标头">
                 <DynamicKVList pairs={headers} onChange={setHeaders} addLabel="标头" />
-              </FormItem>
-              <FormItem label="来自环境变量的标头">
-                <DynamicKVList pairs={headerEnvVars} onChange={setHeaderEnvVars} addLabel="变量" />
               </FormItem>
             </FormSection>
           )}

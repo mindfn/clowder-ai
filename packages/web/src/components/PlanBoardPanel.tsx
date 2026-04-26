@@ -163,7 +163,7 @@ export function PlanBoardPanel({ threadId, catInvocations }: PlanBoardPanelProps
   if (totalCats === 0) return null;
 
   return (
-    <section className="console-card rounded-[24px] p-4" data-console-card="true">
+    <section className="console-inspector-section" data-console-card="true">
       <div className="mb-3 flex items-center justify-between">
         <h3 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">
           猫猫祟祟 ({totalCats})
