@@ -53,6 +53,13 @@ describe('thread navigation history bridge', () => {
     expect(getWorldSwitchHref('/classic/thread/thread-123')).toBe('/thread/thread-123');
   });
 
+  it('uses referrerThreadId as fallback when pathname has no thread', () => {
+    expect(getWorldSwitchHref('/signals', 'thread-abc')).toBe('/classic/thread/thread-abc');
+    expect(getWorldSwitchHref('/memory', 'thread-xyz')).toBe('/classic/thread/thread-xyz');
+    expect(getWorldSwitchHref('/thread/thread-123', 'ignored')).toBe('/classic/thread/thread-123');
+    expect(getWorldSwitchHref('/', 'thread-abc')).toBe('/classic/thread/thread-abc');
+  });
+
   it('pushes the new thread URL into history and emits a route event inside the classic world', () => {
     const fakeWindow = createFakeWindow('/classic/thread/thread-a');
     const href = pushThreadRouteWithHistory('thread-b', fakeWindow, CLASSIC_WORLD_PREFIX);

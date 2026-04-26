@@ -1,6 +1,6 @@
 'use client';
 
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import type { CSSProperties } from 'react';
 import { MemoryIcon } from './icons/MemoryIcon';
 import {
@@ -108,8 +108,9 @@ interface ActivityBarProps {
 
 export function ActivityBar({ className }: ActivityBarProps) {
   const pathname = usePathname() ?? '/';
+  const searchParams = useSearchParams();
   const inClassicWorld = pathname.startsWith('/classic');
-  const classicPath = getWorldSwitchHref(pathname);
+  const classicPath = getWorldSwitchHref(pathname, searchParams?.get('from') ?? undefined);
   const classicTitle = inClassicWorld ? '返回新世界' : '切换到经典世界';
 
   return (

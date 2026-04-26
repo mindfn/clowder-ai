@@ -13,6 +13,7 @@ const { assignDocumentRoute, getThreadIdFromPathname, getWorldSwitchHref } = vi.
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/thread/thread-abc',
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock('@/components/ThreadSidebar/thread-navigation', () => ({

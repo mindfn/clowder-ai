@@ -36,10 +36,11 @@ export function getClassicThreadHref(threadId: string): string {
   return getThreadHref(threadId, CLASSIC_WORLD_PREFIX);
 }
 
-export function getWorldSwitchHref(pathname: string): string {
+export function getWorldSwitchHref(pathname: string, referrerThreadId?: string): string {
   const inClassicWorld = pathname.startsWith(CLASSIC_WORLD_PREFIX);
-  const currentThreadId = getThreadIdFromPathname(pathname, inClassicWorld ? CLASSIC_WORLD_PREFIX : '');
-  return getThreadHref(currentThreadId, inClassicWorld ? '' : CLASSIC_WORLD_PREFIX);
+  const threadId = getThreadIdFromPathname(pathname, inClassicWorld ? CLASSIC_WORLD_PREFIX : '');
+  const resolvedId = threadId !== 'default' ? threadId : (referrerThreadId ?? 'default');
+  return getThreadHref(resolvedId, inClassicWorld ? '' : CLASSIC_WORLD_PREFIX);
 }
 
 export function getThreadIdFromPathname(pathname: string, prefix = ''): string {
