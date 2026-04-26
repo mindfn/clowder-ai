@@ -25,6 +25,14 @@ export interface CapabilityBoardItem {
   mounts?: Record<string, boolean>;
   tools?: { name: string; description?: string }[];
   connectionStatus?: 'connected' | 'disconnected' | 'unknown';
+  mcpServer?: {
+    transport?: 'stdio' | 'streamableHttp';
+    command?: string;
+    args?: string[];
+    url?: string;
+    headers?: Record<string, string>;
+    env?: Record<string, string>;
+  };
 }
 
 export interface CatFamily {

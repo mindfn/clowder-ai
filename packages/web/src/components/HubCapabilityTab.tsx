@@ -231,6 +231,7 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
             <McpConfigModal
               projectPath={projectPath ?? undefined}
               editId={editMcpId ?? undefined}
+              editData={editMcpId ? mcpItems.find((i) => i.id === editMcpId)?.mcpServer : undefined}
               onSaved={() => fetchCapabilities(projectPath ?? undefined)}
               onClose={() => {
                 setShowMcpModal(false);
