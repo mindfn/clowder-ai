@@ -36,7 +36,7 @@ export const auditRoutes: FastifyPluginAsync<AuditRoutesOptions> = async (app, o
       return { error: 'Thread not found' };
     }
 
-    if (thread.createdBy !== userId) {
+    if (thread.createdBy !== userId && thread.createdBy !== 'system') {
       reply.status(403);
       return { error: 'Access denied' };
     }
