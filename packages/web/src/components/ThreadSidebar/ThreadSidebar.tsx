@@ -467,7 +467,10 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
 
   return (
     <>
-      <aside className={`${className ?? 'w-60'} flex flex-col h-full bg-[var(--console-panel-bg)]`} style={{ boxShadow: '8px 0 24px rgba(43, 33, 26, 0.04)' }}>
+      <aside
+        className={`${className ?? 'w-60'} flex flex-col h-full bg-[var(--console-panel-bg)]`}
+        style={{ boxShadow: '8px 0 24px rgba(43, 33, 26, 0.04)' }}
+      >
         <div className="p-3 flex items-center justify-between">
           <span className="text-sm font-semibold text-cafe-black">对话</span>
           <button
@@ -700,10 +703,18 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
             className="flex w-full items-center gap-2 h-9 px-2.5 rounded-xl bg-[var(--console-code-bg)] text-xs text-cafe-secondary hover:opacity-80 transition-colors"
             data-testid="trash-bin-toggle"
           >
-            <svg className="h-[15px] w-[15px] flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg
+              className="h-[15px] w-[15px] flex-shrink-0"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
               <path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4" />
             </svg>
-            <span className="flex-1 text-left">回收站{trashedThreads.length > 0 ? ` (${trashedThreads.length})` : ''}</span>
+            <span className="flex-1 text-left">
+              回收站{trashedThreads.length > 0 ? ` (${trashedThreads.length})` : ''}
+            </span>
             <svg
               className={`h-3 w-3 flex-shrink-0 transition-transform ${showTrash ? 'rotate-180' : ''}`}
               viewBox="0 0 24 24"
