@@ -13,7 +13,7 @@ describe('statusLabel — liveness states (F118 AC-C1)', () => {
 
 describe('statusTone — liveness states (F118 AC-C1)', () => {
   it('returns amber for alive_but_silent', () => {
-    expect(statusTone('alive_but_silent')).toBe('text-amber-500');
+    expect(statusTone('alive_but_silent')).toBe('text-conn-amber-text');
   });
 
   it('returns orange for suspected_stall', () => {

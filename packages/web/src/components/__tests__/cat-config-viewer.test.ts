@@ -113,11 +113,11 @@ describe('CatOverviewTab', () => {
     expect(html).toContain('#E29578');
     expect(html).toContain('/avatars/owner-custom.png');
     expect(html.indexOf('Co-worker')).toBeLessThan(html.indexOf('布偶猫 · 宪宪'));
-    expect(html).toContain('全部');
+    // F170: section header changed from "全部" to "Roster"
+    expect(html).toContain('Roster');
     expect(html).toContain('CLI（OAuth）');
     expect(html).toContain('CLI（配置）');
     expect(html).toContain('未启用');
-    expect(html.indexOf('+ 添加成员')).toBeLessThan(html.indexOf('布偶猫 · 宪宪'));
     expect(html).toContain('布偶猫 · 宪宪');
     expect(html).toContain('缅因猫 · 砚砚');
     expect(html).toContain('孟加拉猫 · 阿吉');
@@ -125,24 +125,18 @@ describe('CatOverviewTab', () => {
     expect(html).toContain('CLI（配置） · sponsor1');
     expect(html).toContain('已启用');
     expect(html).toContain('@布偶猫');
-    expect(html).toContain('只能编辑，不能新增或删除');
-    expect(html).toContain('点击卡片进入成员配置');
     expect(html).toContain('gemini-bridge');
     expect(html).toContain('添加成员');
     expect(html).not.toContain('Owner 信息独立维护');
     expect(html).not.toContain('Locked');
     expect(html).not.toContain('border-dashed');
     expect(html).not.toContain('md:grid-cols-2');
-    expect(html).not.toContain('Client');
-    expect(html).not.toContain('Account');
-    expect(html).not.toContain('Model');
     expect(html).not.toContain('Prompt 上限');
     expect(html).not.toContain('150k tokens');
     expect(html).not.toContain('原生 (--mcp-config)');
     expect(html).not.toContain('HTTP 回调注入');
     expect(html).not.toContain('>编辑<');
     expect(html).not.toContain('编辑成员');
-    expect(html).not.toContain('Lead');
     expect(html).not.toContain('npx antigravity --bridge');
   });
 
@@ -160,10 +154,13 @@ describe('CatOverviewTab', () => {
     const guideTarget = root.querySelector('[data-guide-id="cats.first-member"]');
 
     expect(guideTarget).toBeTruthy();
-    expect(guideTarget?.tagName).toBe('BUTTON');
-    expect(guideTarget?.closest('section')?.textContent).toContain('布偶猫 · 宪宪');
+    // F170: guide target is on the card section (with inner button also carrying same id)
+    expect(guideTarget?.tagName).toBe('SECTION');
+    // The inner button carries the same guide id for click targeting
+    const guideButton = root.querySelector('button[data-guide-id="cats.first-member"]');
+    expect(guideButton).toBeTruthy();
     expect(guideTarget?.textContent).toContain('布偶猫 · 宪宪');
-    expect(guideTarget?.textContent).not.toContain('已启用');
+    expect(guideButton?.textContent).toContain('布偶猫 · 宪宪');
   });
 });
 

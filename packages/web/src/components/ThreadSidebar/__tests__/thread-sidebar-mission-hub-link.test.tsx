@@ -27,10 +27,10 @@ describe('ThreadSidebar mission-hub compact link', () => {
     resetThreadSidebarGlobals();
   });
 
-  it('renders a compact Mission Hub link above the thread list', async () => {
+  it('no longer renders Mission Hub link in sidebar (F170: moved to ActivityBar)', async () => {
     await harness.render();
+    // F170: Mission Hub link was moved from ThreadSidebar to ActivityBar
     const link = harness.container.querySelector('[data-testid="sidebar-mission-hub"]');
-    expect(link).not.toBeNull();
-    expect(link?.textContent).toContain('Mission Hub');
+    expect(link).toBeNull();
   });
 });

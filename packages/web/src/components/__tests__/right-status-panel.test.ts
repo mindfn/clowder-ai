@@ -69,8 +69,9 @@ describe('RightStatusPanel', () => {
     expect(html).toContain('执行');
     expect(html).toContain('猫猫状态');
     expect(html).toContain('消息统计');
-    expect(html).toContain('opus');
-    expect(html).toContain('codex');
+    // F170: component resolves cat IDs to display names via useCatData
+    expect(html).toContain('布偶猫');
+    expect(html).toContain('缅因猫');
     expect(html).toContain('12');
   });
 
@@ -165,8 +166,8 @@ describe('RightStatusPanel', () => {
     expect(html).toContain('猫猫状态');
     // IDs are now behind a collapsible toggle (default collapsed in SSR)
     expect(html).toContain('▸ IDs');
-    // SSR renders raw catId (no useCatData context)
-    expect(html).toContain('codex');
+    // F170: component resolves cat IDs to display names via useCatData mock
+    expect(html).toContain('缅因猫');
   });
 
   it('shows history cats that are not in current targetCats', () => {
@@ -213,7 +214,8 @@ describe('RightStatusPanel', () => {
     });
 
     expect(html).toContain('历史参与 (1)');
-    expect(html).toContain('codex');
+    // F170: component resolves cat IDs to display names via useCatData mock
+    expect(html).toContain('缅因猫');
   });
 
   it('shows non-target cat in 猫猫状态 when it has task progress', () => {
@@ -276,7 +278,8 @@ describe('RightStatusPanel', () => {
     });
 
     expect(html).toContain('猫猫状态');
-    expect(html).toContain('opus');
+    // F170: component resolves cat IDs to display names via useCatData mock
+    expect(html).toContain('布偶猫');
     // F055: completed plan folds in 猫猫祟祟
     expect(html).toContain('猫猫祟祟');
     expect(html).toContain('已完成 (1)');

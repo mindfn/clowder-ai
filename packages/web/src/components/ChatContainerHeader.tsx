@@ -1,5 +1,7 @@
 import { useChatStore } from '@/stores/chatStore';
 import { ExportButton } from './ExportButton';
+import { HubButton } from './HubButton';
+import { ThemeToggle } from './ThemeToggle';
 import { VoiceCompanionButton } from './VoiceCompanionButton';
 
 interface ChatContainerHeaderProps {

@@ -55,8 +55,10 @@ describe('CapabilitySection description expansion', () => {
     });
 
     expect(container.querySelector('.console-code-pane')).toBeNull();
-    const expandButton = container.querySelector('button');
-    act(() => expandButton?.click());
+    // Expansion is triggered by clicking the card header div, not a button
+    const cardHeader = container.querySelector('[data-active="false"]');
+    const headerDiv = cardHeader?.querySelector('div');
+    act(() => headerDiv?.click());
     expect(container.querySelector('.console-code-pane')).toBeTruthy();
     expect(container.textContent).toContain(description);
   });

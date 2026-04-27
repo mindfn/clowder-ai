@@ -230,7 +230,7 @@ describe('CatCafeHub provider profiles tab', () => {
     });
     await flushEffects();
 
-    expect(container.textContent).toContain('账号配置');
+    expect(container.textContent).toContain('Account / Auth');
     expect(container.textContent).toContain('Claude (OAuth)');
     expect(container.textContent).toContain('Codex (OAuth)');
     expect(container.textContent).toContain('Gemini (OAuth)');
@@ -439,8 +439,9 @@ describe('CatCafeHub provider profiles tab', () => {
     });
     await flushEffects();
 
-    expect(container.textContent).toContain('api_key');
-    expect(container.textContent).toContain('系统配置 > 账号配置');
+    // F170: HubAccountItem cards now show auth type badge (已配置/内置/未配置) instead of raw authType
+    expect(container.textContent).toContain('已配置');
+    expect(container.textContent).toContain('Account / Auth');
     expect(container.textContent).toContain('+ 新增账户认证');
     expect(container.textContent).not.toContain('默认/覆盖模型');
 

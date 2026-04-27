@@ -149,6 +149,7 @@ export function HubMemberOverviewCard({
   configCat,
   onEdit,
   onToggleAvailability,
+  onDelete,
   togglingAvailability = false,
   draggable = false,
   onDragStart,

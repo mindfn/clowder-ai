@@ -80,7 +80,7 @@ describe('ActivityBar referrer forwarding (P2 fix)', () => {
       root.render(React.createElement(ActivityBar));
     });
 
-    const homeBtn = container.querySelector('button[title="首页"]') as HTMLElement;
+    const homeBtn = container.querySelector('button[title="对话"]') as HTMLElement;
     expect(homeBtn).toBeTruthy();
 
     React.act(() => {

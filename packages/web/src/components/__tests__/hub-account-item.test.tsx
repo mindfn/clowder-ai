@@ -72,8 +72,8 @@ describe('HubAccountItem', () => {
       );
     });
 
-    expect(container.textContent).not.toContain('编辑');
-    expect(container.querySelector('button[aria-label="删除账号"]')).toBeTruthy();
+    // F170: card is now a single clickable button with preview/edit label
+    expect(container.textContent).toContain('预览 / 编辑 →');
 
     const card = container.querySelector('button') as HTMLElement;
     await act(async () => {
@@ -82,7 +82,7 @@ describe('HubAccountItem', () => {
     expect(onEdit).toHaveBeenCalledWith(profile);
   });
 
-  it('keeps the + 添加 model entry visible for built-in cards without binding-scope controls', async () => {
+  it('renders builtin card with preview label and no binding-scope controls', async () => {
     const profile = profileItem({
       id: 'codex-oauth',
       provider: 'codex-oauth',
@@ -101,8 +101,9 @@ describe('HubAccountItem', () => {
       root.render(<HubAccountItem profile={profile} busy={false} onSave={vi.fn(async () => {})} onDelete={() => {}} />);
     });
 
-    expect(container.textContent).toContain('+ 添加');
-    expect(container.textContent).not.toContain('编辑');
+    // F170: builtin cards show "预览 →" (preview only), no edit
+    expect(container.textContent).toContain('预览 →');
+    expect(container.textContent).toContain('内置');
     expect(container.textContent).not.toContain('绑定范围');
     expect(container.textContent).not.toContain('设为 Codex 默认');
   });
@@ -128,11 +129,11 @@ describe('HubAccountItem', () => {
     });
 
     expect(container.textContent).not.toContain('测试');
-    expect(container.textContent).toContain('+ 添加');
+    // F170: simplified card layout — no inline "+ 添加" model entry
     expect(container.textContent).toContain('OpenCode (client-auth)');
   });
 
-  it('requires delete confirmation and respects denial', async () => {
+  it('renders api_key card with edit action label', async () => {
     const profile = profileItem({
       id: 'codex-sponsor',
       provider: 'codex-sponsor',
@@ -148,20 +149,24 @@ describe('HubAccountItem', () => {
       createdAt: '2026-03-18T00:00:00.000Z',
       updatedAt: '2026-03-18T00:00:00.000Z',
     });
-    const onDelete = vi.fn();
-    mockConfirm.mockResolvedValue(false);
+    const onEdit = vi.fn();
 
     await act(async () => {
-      root.render(<HubAccountItem profile={profile} busy={false} onSave={vi.fn(async () => {})} onDelete={onDelete} />);
+      root.render(
+        <HubAccountItem
+          profile={profile}
+          busy={false}
+          onSave={vi.fn(async () => {})}
+          onDelete={() => {}}
+          onEdit={onEdit}
+        />,
+      );
     });
 
-    await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>('button[aria-label="删除账号"]')
-        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    expect(mockConfirm).toHaveBeenCalledTimes(1);
-    expect(onDelete).not.toHaveBeenCalled();
+    // F170: simplified card — delete is now handled via edit modal, card shows "预览 / 编辑 →"
+    expect(container.textContent).toContain('Codex Sponsor');
+    expect(container.textContent).toContain('预览 / 编辑 →');
+    expect(container.textContent).toContain('已配置');
   });
 
   it('shows 未配置 status when no API key and not builtin', async () => {
