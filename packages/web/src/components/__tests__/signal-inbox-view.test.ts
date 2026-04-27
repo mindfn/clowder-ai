@@ -141,8 +141,8 @@ describe('SignalInboxView', () => {
     expect(sourceOption).not.toBeNull();
 
     await act(async () => {
-      statusSelect.value = 'read';
-      statusSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      statusSelect!.value = 'read';
+      statusSelect!.dispatchEvent(new Event('change', { bubbles: true }));
       await Promise.resolve();
     });
 
