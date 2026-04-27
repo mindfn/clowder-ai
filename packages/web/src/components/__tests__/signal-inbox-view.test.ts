@@ -38,9 +38,6 @@ vi.mock('@/components/signals/SignalNav', () => ({
   SignalNav: () => React.createElement('div', { 'data-testid': 'signal-nav' }),
 }));
 
-vi.mock('@/components/signals/SignalStatsCards', () => ({
-  SignalStatsCards: () => React.createElement('div', { 'data-testid': 'stats-cards' }),
-}));
 
 function createArticle(overrides: Partial<SignalArticle> = {}): SignalArticle {
   return {
@@ -120,20 +117,18 @@ describe('SignalInboxView', () => {
       await Promise.resolve();
     });
 
-    const queryInput = container.querySelector('input[placeholder="搜索标题、来源、标签..."]');
+    const queryInput = container.querySelector('input[placeholder="搜索信号..."]');
     const selects = container.querySelectorAll('select');
     let statusSelect = selects.item(0) as HTMLSelectElement | null;
-    let tierSelect = selects.item(1) as HTMLSelectElement | null;
-    let sourceSelect = selects.item(2) as HTMLSelectElement | null;
+    let sourceSelect = selects.item(1) as HTMLSelectElement | null;
     let form = container.querySelector('form');
 
     expect(queryInput).not.toBeNull();
     expect(form).not.toBeNull();
     expect(statusSelect).not.toBeNull();
-    expect(tierSelect).not.toBeNull();
     expect(sourceSelect).not.toBeNull();
 
-    if (!queryInput || !form || !statusSelect || !tierSelect || !sourceSelect) {
+    if (!queryInput || !form || !statusSelect || !sourceSelect) {
       return;
     }
 
@@ -155,26 +150,21 @@ describe('SignalInboxView', () => {
 
     const refreshedSelects = container.querySelectorAll('select');
     statusSelect = refreshedSelects.item(0) as HTMLSelectElement | null;
-    tierSelect = refreshedSelects.item(1) as HTMLSelectElement | null;
-    sourceSelect = refreshedSelects.item(2) as HTMLSelectElement | null;
+    sourceSelect = refreshedSelects.item(1) as HTMLSelectElement | null;
     form = container.querySelector('form');
     expect(statusSelect).not.toBeNull();
-    expect(tierSelect).not.toBeNull();
     expect(sourceSelect).not.toBeNull();
     expect(form).not.toBeNull();
-    if (!statusSelect || !tierSelect || !sourceSelect || !form) {
+    if (!statusSelect || !sourceSelect || !form) {
       return;
     }
 
     await act(async () => {
-      tierSelect.value = '1';
-      tierSelect.dispatchEvent(new Event('change', { bubbles: true }));
       sourceSelect.value = 'anthropic-news';
       sourceSelect.dispatchEvent(new Event('change', { bubbles: true }));
       await Promise.resolve();
     });
 
-    expect(tierSelect.value).toBe('1');
     expect(sourceSelect.value).toBe('anthropic-news');
 
     await act(async () => {
@@ -186,7 +176,7 @@ describe('SignalInboxView', () => {
       limit: 80,
       status: 'read',
       source: 'anthropic-news',
-      tier: 1,
+      tier: undefined,
     });
   });
 
@@ -213,7 +203,7 @@ describe('SignalInboxView', () => {
       items: [contentOnlyMatchedArticle],
     });
 
-    const queryInput = container.querySelector('input[placeholder="搜索标题、来源、标签..."]');
+    const queryInput = container.querySelector('input[placeholder="搜索信号..."]');
     let form = container.querySelector('form');
     expect(queryInput).not.toBeNull();
     expect(form).not.toBeNull();
@@ -261,7 +251,7 @@ describe('SignalInboxView', () => {
     });
 
     const queryInput = container.querySelector(
-      'input[placeholder="搜索标题、来源、标签..."]',
+      'input[placeholder="搜索信号..."]',
     ) as HTMLInputElement | null;
     if (!queryInput) throw new Error('Missing query input');
 
