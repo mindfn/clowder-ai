@@ -504,7 +504,7 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
 
   return (
     <>
-      <aside className={`${className ?? 'w-60'} border-r border-[var(--console-border-soft)] flex flex-col h-full`}>
+      <aside className={`${className ?? 'w-60'} flex flex-col h-full`}>
         <div className="p-3 flex items-center justify-between">
           <span className="text-sm font-semibold text-cafe-black">对话</span>
           <div className="flex items-center gap-1.5">

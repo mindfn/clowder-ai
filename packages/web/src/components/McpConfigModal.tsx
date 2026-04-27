@@ -20,6 +20,10 @@ export interface McpConfigModalProps {
     url?: string;
     env?: Record<string, string>;
     headers?: Record<string, string>;
+    resolver?: string;
+    resolvedCommand?: string;
+    resolvedArgs?: string[];
+    envKeys?: string[];
   };
   onSaved: () => void;
   onClose: () => void;
@@ -27,6 +31,7 @@ export interface McpConfigModalProps {
 
 export function McpConfigModal({ projectPath, editId, editData, onSaved, onClose }: McpConfigModalProps) {
   const isEdit = Boolean(editId);
+  const isResolver = Boolean(editData?.resolver);
   const [id, setId] = useState(editId ?? '');
   const [transport, setTransport] = useState<Transport>(editData?.transport ?? 'stdio');
 
@@ -80,16 +85,32 @@ export function McpConfigModal({ projectPath, editId, editData, onSaved, onClose
     setError(null);
     setSaving(true);
     try {
+      const payload = buildPayload();
+
       const res = await apiFetch('/api/capabilities/mcp/install', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildPayload()),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as Record<string, string>;
         setError(data.error ?? `保存失败 (${res.status})`);
         return;
       }
+
+      if (isEdit && payload.env) {
+        const envRes = await apiFetch(`/api/capabilities/mcp/${encodeURIComponent(id.trim())}/env`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ env: payload.env, projectPath }),
+        });
+        if (!envRes.ok) {
+          const data = (await envRes.json().catch(() => ({}))) as Record<string, string>;
+          setError(data.error ?? `环境变量更新失败 (${envRes.status})`);
+          return;
+        }
+      }
+
       onSaved();
       onClose();
     } catch {
@@ -97,7 +118,7 @@ export function McpConfigModal({ projectPath, editId, editData, onSaved, onClose
     } finally {
       setSaving(false);
     }
-  }, [id, buildPayload, onSaved, onClose]);
+  }, [id, isEdit, buildPayload, onSaved, onClose, projectPath]);
 
   return (
     <div
@@ -131,29 +152,56 @@ export function McpConfigModal({ projectPath, editId, editData, onSaved, onClose
                 disabled={isEdit}
               />
             </FormItem>
-            <FormItem label="传输方式">
-              <div className="console-segmented w-full">
-                <button
-                  type="button"
-                  data-active={transport === 'stdio' ? 'true' : 'false'}
-                  className="console-segmented-button flex-1"
-                  onClick={() => setTransport('stdio')}
-                >
-                  STDIO
-                </button>
-                <button
-                  type="button"
-                  data-active={transport === 'streamableHttp' ? 'true' : 'false'}
-                  className="console-segmented-button flex-1"
-                  onClick={() => setTransport('streamableHttp')}
-                >
-                  流式 HTTP
-                </button>
-              </div>
-            </FormItem>
+            {!isResolver && (
+              <FormItem label="传输方式">
+                <div className="console-segmented w-full">
+                  <button
+                    type="button"
+                    data-active={transport === 'stdio' ? 'true' : 'false'}
+                    className="console-segmented-button flex-1"
+                    onClick={() => setTransport('stdio')}
+                  >
+                    STDIO
+                  </button>
+                  <button
+                    type="button"
+                    data-active={transport === 'streamableHttp' ? 'true' : 'false'}
+                    className="console-segmented-button flex-1"
+                    onClick={() => setTransport('streamableHttp')}
+                  >
+                    流式 HTTP
+                  </button>
+                </div>
+              </FormItem>
+            )}
           </FormSection>
 
-          {transport === 'stdio' && (
+          {isResolver && editData?.resolvedCommand && (
+            <FormSection>
+              <FormItem label="Resolver">
+                <div className="console-pill px-3 py-1.5 text-xs text-cafe-secondary">{editData.resolver}</div>
+              </FormItem>
+              <FormItem label="解析后的启动命令（只读）">
+                <div className="rounded-lg bg-[var(--console-code-bg)] px-3 py-2 font-mono text-xs text-cafe-secondary">
+                  {editData.resolvedCommand} {editData.resolvedArgs?.join(' ')}
+                </div>
+              </FormItem>
+              {editData.envKeys && editData.envKeys.length > 0 && (
+                <FormItem label="已配置环境变量">
+                  <div className="flex flex-wrap gap-1.5">
+                    {editData.envKeys.map((k) => (
+                      <span key={k} className="console-pill px-2 py-0.5 text-xs">{k}</span>
+                    ))}
+                  </div>
+                </FormItem>
+              )}
+              <FormItem label="环境变量（可编辑）">
+                <DynamicKVList pairs={envPairs} onChange={setEnvPairs} addLabel="环境变量" />
+              </FormItem>
+            </FormSection>
+          )}
+
+          {!isResolver && transport === 'stdio' && (
             <FormSection>
               <FormItem label="启动命令">
                 <input
@@ -173,7 +221,7 @@ export function McpConfigModal({ projectPath, editId, editData, onSaved, onClose
             </FormSection>
           )}
 
-          {transport === 'streamableHttp' && (
+          {!isResolver && transport === 'streamableHttp' && (
             <FormSection>
               <FormItem label="URL">
                 <input

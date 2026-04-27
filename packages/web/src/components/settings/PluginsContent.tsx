@@ -129,32 +129,30 @@ export function PluginsContent() {
   if (loading) return <p className="text-sm text-cafe-muted">加载中...</p>;
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col gap-3">
-        {plugins.map((plugin) => {
-          const badge = STATUS_BADGE[plugin.status];
-          return (
-            <article
-              key={plugin.id}
-              className="flex items-center gap-3 rounded-xl border border-[var(--cafe-border)] bg-[var(--cafe-surface)] p-4"
+    <div className="space-y-3">
+      {plugins.map((plugin) => {
+        const badge = STATUS_BADGE[plugin.status];
+        return (
+          <article
+            key={plugin.id}
+            className="flex items-center gap-3 rounded-xl border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-4 py-4"
+          >
+            <div
+              className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[10px]"
+              style={{ backgroundColor: plugin.iconBg }}
             >
-              <div
-                className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[10px]"
-                style={{ backgroundColor: plugin.iconBg }}
-              >
-                <HubIcon name={plugin.icon} className="h-5 w-5 text-white" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-cafe">{plugin.name}</p>
-                <p className="mt-0.5 text-xs text-cafe-muted">{plugin.description}</p>
-              </div>
-              <span className={`flex-shrink-0 rounded px-2 py-0.5 text-[11px] font-medium ${badge.bg} ${badge.text}`}>
-                {plugin.statusLabel}
-              </span>
-            </article>
-          );
-        })}
-      </div>
+              <HubIcon name={plugin.icon} className="h-5 w-5 text-white" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-cafe">{plugin.name}</p>
+              <p className="mt-0.5 text-xs text-cafe-muted">{plugin.description}</p>
+            </div>
+            <span className={`flex-shrink-0 rounded px-2 py-0.5 text-[11px] font-medium ${badge.bg} ${badge.text}`}>
+              {plugin.statusLabel}
+            </span>
+          </article>
+        );
+      })}
     </div>
   );
 }

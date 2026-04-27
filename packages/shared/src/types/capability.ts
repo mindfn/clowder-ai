@@ -92,8 +92,12 @@ export interface CapabilityBoardItem {
   tools?: McpToolInfo[];
   /** MCP connection status (only when ?probe=true) */
   connectionStatus?: 'connected' | 'disconnected' | 'unknown';
-  /** MCP server config for edit backfill (only for type: 'mcp') */
-  mcpServer?: Omit<McpServerDescriptor, 'name' | 'enabled' | 'source'>;
+  /** MCP server config for edit backfill (only for type: 'mcp').
+   * env/headers values are stripped for security; envKeys/headerKeys carry key names only. */
+  mcpServer?: Omit<McpServerDescriptor, 'name' | 'enabled' | 'source'> & {
+    envKeys?: string[];
+    headerKeys?: string[];
+  };
 }
 
 /** Lightweight MCP tool info for board display */

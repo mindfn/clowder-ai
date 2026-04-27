@@ -162,92 +162,66 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
 
   return (
     <div data-testid="evidence-search" className="space-y-4">
-      {/* Search bar */}
-      <div className="flex gap-2">
+      {/* Search + filters — unified bar matching Signal Inbox layout */}
+      <form onSubmit={(e) => { e.preventDefault(); handleSearch(); }} className="flex flex-wrap items-center gap-2">
         <input
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
           placeholder="搜索项目知识..."
-          className="console-form-input flex-1 text-sm"
+          className="console-form-input max-w-[240px]"
           data-testid="evidence-search-input"
         />
-        <button
-          type="button"
-          onClick={handleSearch}
-          disabled={isSearching || !query.trim()}
-          className="console-button-primary px-4 py-2 text-sm font-medium disabled:opacity-40"
-          data-testid="evidence-search-button"
+        <select
+          value={depth === 'raw' ? 'lexical' : mode}
+          onChange={(e) => setMode(e.target.value as EvidenceSearchParams['mode'])}
+          disabled={depth === 'raw'}
+          className="console-form-input"
         >
-          {isSearching ? '...' : '搜索'}
-        </button>
-      </div>
-
-      {/* Mode / Scope selectors */}
-      <div className="flex gap-3 text-xs">
-        <label className="flex items-center gap-1 text-cafe-secondary">
-          检索模式:
-          <select
-            value={depth === 'raw' ? 'lexical' : mode}
-            onChange={(e) => setMode(e.target.value as EvidenceSearchParams['mode'])}
-            disabled={depth === 'raw'}
-            className="console-form-input text-xs"
-          >
-            <option value="hybrid">混合</option>
-            <option value="lexical">精确</option>
-            <option value="semantic">语义</option>
-          </select>
-          {depth === 'raw' && <span className="text-[10px] text-conn-amber-text">消息级仅支持精确匹配</span>}
-        </label>
-        <label className="flex items-center gap-1 text-cafe-secondary">
-          范围:
-          <select
-            value={scope ?? 'all'}
-            onChange={(e) =>
-              setScope(e.target.value === 'all' ? undefined : (e.target.value as EvidenceSearchParams['scope']))
-            }
-            className="console-form-input text-xs"
-          >
-            <option value="all">全部</option>
-            <option value="docs">文档</option>
-            <option value="memory">记忆</option>
-            <option value="threads">对话</option>
-            <option value="sessions">会话</option>
-          </select>
-        </label>
-        <label className="flex items-center gap-1 text-cafe-secondary">
-          深度:
-          <select
-            value={depth ?? 'summary'}
-            onChange={(e) =>
-              setDepth(e.target.value === 'summary' ? undefined : (e.target.value as EvidenceSearchParams['depth']))
-            }
-            className="console-form-input text-xs"
-          >
-            {DEPTH_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex items-center gap-1 text-cafe-secondary">
-          维度:
-          <select
-            value={dimension ?? 'all'}
-            onChange={(e) =>
-              setDimension(e.target.value === 'all' ? undefined : (e.target.value as EvidenceSearchParams['dimension']))
-            }
-            className="console-form-input text-xs"
-            data-testid="evidence-dimension-select"
-          >
-            <option value="all">全部</option>
-            <option value="project">项目</option>
-            <option value="global">全局</option>
-          </select>
-        </label>
-      </div>
+          <option value="hybrid">模式: 混合</option>
+          <option value="lexical">模式: 精确</option>
+          <option value="semantic">模式: 语义</option>
+        </select>
+        <select
+          value={scope ?? 'all'}
+          onChange={(e) =>
+            setScope(e.target.value === 'all' ? undefined : (e.target.value as EvidenceSearchParams['scope']))
+          }
+          className="console-form-input"
+        >
+          <option value="all">范围: 全部</option>
+          <option value="docs">范围: 文档</option>
+          <option value="memory">范围: 记忆</option>
+          <option value="threads">范围: 对话</option>
+          <option value="sessions">范围: 会话</option>
+        </select>
+        <select
+          value={depth ?? 'summary'}
+          onChange={(e) =>
+            setDepth(e.target.value === 'summary' ? undefined : (e.target.value as EvidenceSearchParams['depth']))
+          }
+          className="console-form-input"
+        >
+          {DEPTH_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              深度: {opt.label}
+            </option>
+          ))}
+        </select>
+        <select
+          value={dimension ?? 'all'}
+          onChange={(e) =>
+            setDimension(e.target.value === 'all' ? undefined : (e.target.value as EvidenceSearchParams['dimension']))
+          }
+          className="console-form-input"
+          data-testid="evidence-dimension-select"
+        >
+          <option value="all">维度: 全部</option>
+          <option value="project">维度: 项目</option>
+          <option value="global">维度: 全局</option>
+        </select>
+        {depth === 'raw' && <span className="text-[11px] text-conn-amber-text">消息级仅支持精确匹配</span>}
+      </form>
 
       {/* Error */}
       {error && <p className="text-sm text-conn-red-text">{error}</p>}

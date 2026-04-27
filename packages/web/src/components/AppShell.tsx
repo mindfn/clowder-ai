@@ -1,6 +1,7 @@
 'use client';
 
 import { usePathname } from 'next/navigation';
+import { Suspense } from 'react';
 import { ActivityBar } from './ActivityBar';
 
 const CHROMELESS_ROUTES = ['/story-export', '/pixel-brawl', '/showcase'];
@@ -18,7 +19,9 @@ export function AppShell({ children }: AppShellProps) {
   }
   return (
     <div className="console-shell flex h-screen h-dvh overflow-hidden">
-      <ActivityBar />
+      <Suspense fallback={<div className="w-12 flex-shrink-0" aria-hidden="true" />}>
+        <ActivityBar />
+      </Suspense>
       <div className="flex-1 min-w-0">{children}</div>
     </div>
   );

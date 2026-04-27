@@ -27,13 +27,12 @@ describe('RightStatusPanel', () => {
       },
     });
 
-    expect(html).toContain('状态栏');
-    expect(html).toContain('当前模式');
+    expect(html).toContain('Inspector');
     expect(html).toContain('执行');
     expect(html).toContain('当前调用');
     expect(html).toContain('消息统计');
-    expect(html).toContain('布偶猫');
-    expect(html).toContain('缅因猫');
+    expect(html).toContain('opus');
+    expect(html).toContain('codex');
     expect(html).toContain('12');
   });
 

@@ -32,6 +32,8 @@ export interface CapabilityBoardItem {
     url?: string;
     headers?: Record<string, string>;
     env?: Record<string, string>;
+    envKeys?: string[];
+    headerKeys?: string[];
   };
 }
 
@@ -297,6 +299,48 @@ function CapabilityCard({
                 <div>
                   <span className="console-data-tile-label">描述</span>
                   <p className="mt-1 leading-6 break-words text-cafe-secondary">{item.description}</p>
+                </div>
+              )}
+
+              {/* MCP config summary */}
+              {item.type === 'mcp' && item.mcpServer && (
+                <div>
+                  <span className="console-data-tile-label">连接配置</span>
+                  <div className="mt-2 space-y-1 font-mono text-[11px]">
+                    <p>
+                      <span className="text-cafe-muted">传输: </span>
+                      <span className="text-cafe-secondary">{item.mcpServer.transport ?? 'stdio'}</span>
+                    </p>
+                    {item.mcpServer.transport === 'streamableHttp' && item.mcpServer.url && (
+                      <p>
+                        <span className="text-cafe-muted">URL: </span>
+                        <span className="text-cafe-secondary">{item.mcpServer.url}</span>
+                      </p>
+                    )}
+                    {item.mcpServer.transport !== 'streamableHttp' && (
+                      <>
+                        <p>
+                          <span className="text-cafe-muted">命令: </span>
+                          <span className="text-cafe-secondary">
+                            {item.mcpServer.command || '(resolver)'}
+                            {item.mcpServer.args?.length ? ` ${item.mcpServer.args.join(' ')}` : ''}
+                          </span>
+                        </p>
+                      </>
+                    )}
+                    {item.mcpServer.envKeys && item.mcpServer.envKeys.length > 0 && (
+                      <p>
+                        <span className="text-cafe-muted">环境变量: </span>
+                        <span className="text-cafe-secondary">{item.mcpServer.envKeys.join(', ')}</span>
+                      </p>
+                    )}
+                    {item.mcpServer.headerKeys && item.mcpServer.headerKeys.length > 0 && (
+                      <p>
+                        <span className="text-cafe-muted">标头: </span>
+                        <span className="text-cafe-secondary">{item.mcpServer.headerKeys.join(', ')}</span>
+                      </p>
+                    )}
+                  </div>
                 </div>
               )}
 

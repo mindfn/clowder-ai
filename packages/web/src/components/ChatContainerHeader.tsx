@@ -1,7 +1,6 @@
 import { useVoiceServicesAvailable } from '@/hooks/useVoiceServicesAvailable';
 import { useChatStore } from '@/stores/chatStore';
 import { ExportButton } from './ExportButton';
-import { CatCafeLogo } from './icons/CatCafeLogo';
 import { ThemeToggle } from './ThemeToggle';
 import { ThreadCatPill } from './ThreadCatPill';
 import { VoiceCompanionButton } from './VoiceCompanionButton';
@@ -38,15 +37,15 @@ export function ChatContainerHeader({
   const voiceAvailable = useVoiceServicesAvailable();
 
   return (
-    <header className="border-b border-[var(--console-border-soft)] safe-area-top">
-      <div className="px-5 py-3 flex items-center gap-2">
+    <header className="safe-area-top border-b border-[var(--console-border-soft)]">
+      <div className="h-11 px-4 flex items-center gap-3">
         <button
           onClick={onToggleSidebar}
-          className="p-1 rounded-lg hover:bg-[var(--console-hover-bg)] transition-colors mr-1"
+          className="p-1 rounded-md hover:bg-[var(--console-hover-bg)] transition-colors md:hidden"
           title={sidebarOpen ? '收起侧栏' : '展开侧栏'}
           aria-label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
         >
-          <svg className="w-5 h-5 text-cafe-secondary" viewBox="0 0 20 20" fill="currentColor">
+          <svg className="w-4 h-4 text-cafe-secondary" viewBox="0 0 20 20" fill="currentColor">
             <path
               fillRule="evenodd"
               d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z"
@@ -54,16 +53,17 @@ export function ChatContainerHeader({
             />
           </svg>
         </button>
-        <CatCafeLogo className="h-16 w-auto -my-3" />
+        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--cafe-accent)] text-xs text-white font-semibold">
+          🐾
+        </div>
         <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-bold text-cafe-black">Clowder AI</h1>
-          <div className="flex items-center gap-2 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[15px] font-bold text-cafe">Clowder AI</span>
             <ThreadIndicator threadId={threadId} />
-            {/* F154 Phase B: Preferred cat pill — desktop only (KD-10) */}
-            <div className="hidden lg:block flex-shrink-0">
-              <ThreadCatPill threadId={threadId} />
-            </div>
           </div>
+        </div>
+        <div className="hidden lg:block flex-shrink-0">
+          <ThreadCatPill threadId={threadId} />
         </div>
         <ExportButton threadId={threadId} />
         {voiceAvailable && <VoiceCompanionButton threadId={threadId} defaultCatId={defaultCatId} />}

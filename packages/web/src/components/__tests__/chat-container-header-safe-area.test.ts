@@ -54,10 +54,9 @@ describe('ChatContainerHeader safe-area', () => {
     const header = container.querySelector('header');
     expect(header).not.toBeNull();
     expect(header?.className).toContain('safe-area-top');
-    expect(header?.className).not.toContain('py-3');
 
     const innerRow = header?.querySelector('div');
     expect(innerRow).not.toBeNull();
-    expect(innerRow?.className).toContain('py-3');
+    expect(innerRow?.className).toContain('h-11');
   });
 });

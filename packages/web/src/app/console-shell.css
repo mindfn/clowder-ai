@@ -29,7 +29,7 @@
 }
 
 .console-shell {
-  background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.55), transparent 28%), var(--console-shell-bg);
+  background: var(--console-shell-bg);
   color: var(--cafe-text);
 }
 
@@ -69,8 +69,7 @@
 .console-table-shell,
 .console-status-panel,
 .console-activity-rail {
-  background: color-mix(in srgb, var(--console-panel-bg) 88%, transparent);
-  backdrop-filter: blur(18px);
+  background: var(--console-panel-bg);
 }
 
 .console-card {
@@ -78,46 +77,42 @@
 }
 
 .console-list-card {
-  border: 1px solid var(--console-border-soft);
+  /* no border — hierarchy via background color (Design System §1.1) */
 }
 
 .console-shell-panel,
 .console-status-panel {
-  background: color-mix(in srgb, var(--console-panel-bg) 92%, transparent);
+  background: var(--console-panel-bg);
 }
 
 .console-shell-panel-soft,
 .console-card-soft {
-  background: color-mix(in srgb, var(--console-card-soft-bg) 90%, transparent);
+  background: var(--console-card-soft-bg);
 }
 
 .console-card,
 .console-section-shell {
-  border: 1px solid var(--console-border-soft);
-  background: color-mix(in srgb, var(--console-card-bg) 94%, transparent);
+  background: var(--console-card-bg);
 }
 
 .console-list-card {
-  background: color-mix(in srgb, var(--console-card-bg) 96%, transparent);
+  background: var(--console-card-bg);
 }
 
 .console-list-card[data-active="true"],
 .console-card[data-active="true"] {
-  border-color: var(--console-border-strong);
-  box-shadow: var(--console-shadow);
+  background: var(--console-active-bg);
 }
 
 .console-code-pane,
 .console-table-shell {
   border: 1px solid var(--console-border-soft);
-  background: color-mix(in srgb, var(--console-code-bg) 94%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  background: var(--console-code-bg);
 }
 
 .console-pill {
-  border: 1px solid color-mix(in srgb, var(--console-border-soft) 84%, transparent);
-  background: color-mix(in srgb, var(--console-pill-bg) 92%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  background: var(--console-pill-bg);
+  border-radius: 6px;
 }
 
 .console-status-chip {
@@ -167,16 +162,11 @@
 }
 
 .console-nav-item[data-active="true"] {
-  border-color: color-mix(in srgb, var(--settings-accent, var(--cafe-accent)) 22%, var(--console-border-soft) 78%);
   background: var(--console-active-bg);
-  box-shadow: var(--console-shadow-soft);
 }
 
 .console-nav-item[data-active="false"]:hover {
-  transform: translateY(-1px);
   background: var(--console-hover-bg);
-  border-color: color-mix(in srgb, var(--cafe-crosspost) 18%, var(--console-border-soft) 82%);
-  box-shadow: 0 8px 22px rgba(104, 86, 73, 0.1);
 }
 
 .console-nav-icon {
@@ -191,8 +181,7 @@
 
 .console-search-field {
   border: 1px solid var(--console-border-soft);
-  background: color-mix(in srgb, var(--console-card-soft-bg) 92%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  background: var(--console-card-soft-bg);
 }
 
 .console-search-field:focus-within {

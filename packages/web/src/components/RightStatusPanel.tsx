@@ -391,12 +391,11 @@ export function RightStatusPanel({
       data-console-panel="status"
       style={{ width: width ?? 288, flexShrink: 0 }}
     >
-      <div className="rounded-xl bg-[var(--console-card-bg)] px-4 py-4">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-cafe-muted">Inspector</p>
-        <h2 className="mt-2 text-base font-semibold tracking-[-0.03em] text-cafe">状态栏</h2>
-        <p className="mt-1 text-xs text-cafe-secondary">
-          当前模式: <span className="font-medium">{modeLabel(intentMode)}</span>
-        </p>
+      <div className="px-1 py-1">
+        <div className="flex items-center justify-between">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">Inspector</p>
+          <span className="text-[11px] font-medium text-cafe-secondary">{modeLabel(intentMode)}</span>
+        </div>
       </div>
 
       <div

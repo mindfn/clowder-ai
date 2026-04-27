@@ -115,14 +115,9 @@ export function ActivityBar({ className }: ActivityBarProps) {
 
   return (
     <nav
-      className={`console-activity-rail flex w-16 flex-shrink-0 flex-col items-center gap-2 px-2 py-4 ${className ?? ''}`}
+      className={`console-activity-rail flex w-12 flex-shrink-0 flex-col items-center gap-1 px-1 py-2 border-r border-[var(--console-border-soft)] ${className ?? ''}`}
       aria-label="主导航"
     >
-      <div className="flex flex-col items-center gap-1 pb-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-[12px] text-[11px] font-semibold text-cafe-secondary">
-          CC
-        </div>
-      </div>
       {NAV_ITEMS.map((item) => {
         const Icon = ICON_MAP[item.id];
         const active = item.match(pathname);
@@ -145,13 +140,12 @@ export function ActivityBar({ className }: ActivityBarProps) {
               assignDocumentRoute(`${item.path}${from}`, typeof window !== 'undefined' ? window : undefined);
             }}
             data-active={active ? 'true' : 'false'}
-            className="console-activity-button relative flex h-10 w-10 items-center justify-center rounded-[10px]"
+            className={`console-activity-button relative flex h-10 w-10 items-center justify-center rounded-lg ${active ? 'border-l-[3px] border-l-[var(--item-accent,var(--cafe-accent))] bg-[var(--cafe-surface)]' : ''}`}
             style={toneStyle}
             title={item.label}
             aria-current={active ? 'page' : undefined}
           >
-            {active && <span className="console-activity-indicator absolute -left-1.5 h-5 w-0.5 rounded-full" />}
-            <Icon className="h-[18px] w-[18px]" />
+            <Icon className="h-5 w-5" />
           </button>
         );
       })}
@@ -160,7 +154,7 @@ export function ActivityBar({ className }: ActivityBarProps) {
           type="button"
           onClick={() => assignDocumentRoute(classicPath, typeof window !== 'undefined' ? window : undefined)}
           data-active={inClassicWorld ? 'true' : 'false'}
-          className="console-activity-button relative flex h-10 w-10 items-center justify-center rounded-[10px]"
+          className={`console-activity-button relative flex h-10 w-10 items-center justify-center rounded-lg ${inClassicWorld ? 'border-l-[3px] border-l-[var(--item-accent,var(--cafe-accent))] bg-[var(--cafe-surface)]' : ''}`}
           style={
             {
               ['--item-accent' as string]: 'var(--color-opus-primary)',
@@ -170,8 +164,7 @@ export function ActivityBar({ className }: ActivityBarProps) {
           title={classicTitle}
           aria-label={classicTitle}
         >
-          {inClassicWorld && <span className="console-activity-indicator absolute -left-1.5 h-5 w-0.5 rounded-full" />}
-          <ClassicWorldIcon className="h-[18px] w-[18px]" />
+          <ClassicWorldIcon className="h-5 w-5" />
         </button>
       </div>
     </nav>

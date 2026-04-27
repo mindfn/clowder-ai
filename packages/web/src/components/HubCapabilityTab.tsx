@@ -215,8 +215,8 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
         />
       </div>
 
-      {/* Skill health banner */}
-      {skillHealth && <SkillHealthBanner health={skillHealth} items={items} />}
+      {/* Skill health banner — only relevant in skills/all view */}
+      {skillHealth && section !== 'mcp' && <SkillHealthBanner health={skillHealth} items={items} />}
 
       {/* MCP Section */}
       {(section === 'all' || section === 'mcp') && (

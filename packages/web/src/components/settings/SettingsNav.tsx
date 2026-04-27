@@ -16,29 +16,17 @@ function NavItem({ section, active, onSelect }: { section: SettingsSection; acti
       type="button"
       onClick={onSelect}
       data-active={active ? 'true' : 'false'}
-      className="console-nav-item flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-left"
+      className={`flex w-full items-center gap-2 rounded-lg px-2.5 h-9 text-left transition-colors ${active ? 'bg-[var(--console-active-bg)] font-medium' : 'hover:bg-[var(--console-hover-bg)]'}`}
       style={
-        {
-          ['--settings-accent' as string]: section.color,
-          ...(active
-            ? {
-                ['--console-active-bg' as string]: `color-mix(in srgb, ${section.color} 10%, var(--console-card-bg) 90%)`,
-              }
-            : {}),
-        } as CSSProperties
+        active
+          ? ({ ['--console-active-bg' as string]: `color-mix(in srgb, ${section.color} 10%, var(--console-card-bg) 90%)`, color: section.color } as CSSProperties)
+          : undefined
       }
     >
-      <span
-        data-settings-nav-icon="true"
-        className="console-nav-icon flex h-10 w-10 items-center justify-center rounded-[14px]"
-        style={active ? { color: section.color } : undefined}
-      >
+      <span className="flex-shrink-0" style={active ? { color: section.color } : { color: 'var(--cafe-text-secondary)' }}>
         <HubIcon name={section.icon} className="h-4 w-4" />
       </span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-sm font-medium">{section.label}</span>
-        <span className="mt-0.5 block truncate text-[12px] text-cafe-muted">{section.description}</span>
-      </span>
+      <span className={`text-[13px] truncate ${active ? 'font-medium' : 'text-cafe-secondary'}`}>{section.label}</span>
     </button>
   );
 }
@@ -69,7 +57,7 @@ export function SettingsNav({ activeSection, onSelect, searchQuery }: SettingsNa
     : SETTINGS_SECTIONS;
 
   return (
-    <nav className="flex flex-col gap-1.5 px-1 py-2" aria-label="设置导航">
+    <nav className="flex flex-col gap-0.5" aria-label="设置导航">
       {filtered.length === 0 && q ? (
         <p className="console-card-soft rounded-xl px-4 py-3 text-xs text-cafe-muted">没有匹配的设置分区</p>
       ) : (
