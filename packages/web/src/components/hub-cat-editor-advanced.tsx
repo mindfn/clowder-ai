@@ -52,6 +52,7 @@ export function AdvancedRuntimeSection({
     authMode: 'oauth' as const,
   };
   const cliEffortOptions = getCliEffortOptionsForClient(form.clientId);
+  const sessionChainEnabled = form.sessionChain === 'true' && (strategyForm?.sessionChainEnabled ?? true);
 
   return (
     <SectionCard
@@ -152,7 +153,15 @@ export function AdvancedRuntimeSection({
               {strategyError}
             </p>
           ) : null}
-          {strategyForm ? (
+          {strategyForm && !sessionChainEnabled ? (
+            <div className="rounded-2xl border border-[#F5D2B8] bg-[#FFF4EC] px-4 py-3 text-xs leading-5 text-[#C27D52]">
+              <p className="font-semibold">Session Chain 未开启</p>
+              <p>
+                当前成员不会记录或续接 Session Chain，下面的 Session 策略不会生效；先开启 Session Chain 后再配置策略。
+              </p>
+            </div>
+          ) : null}
+          {strategyForm && sessionChainEnabled ? (
             <div className="space-y-4">
               <div className="rounded-2xl border border-[#CFE5D5] bg-[#F5FBF6] px-4 py-3 text-xs leading-5 text-[#6C7A6D]">
                 阈值基于 context 填充率 = 当前 tokens / Max Context Tokens。拖动滑条调节百分比。

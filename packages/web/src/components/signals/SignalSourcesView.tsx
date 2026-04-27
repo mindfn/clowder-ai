@@ -7,7 +7,7 @@ import { groupSignalSourcesByTierAndCategory } from '@/utils/signals-view';
 import { SignalNav } from './SignalNav';
 import { SignalTierBadge } from './SignalTierBadge';
 
-export function SignalSourcesView() {
+export function SignalSourcesView({ initialReferrerThread = null }: { initialReferrerThread?: string | null }) {
   const [sources, setSources] = useState<readonly SignalSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -93,7 +93,7 @@ export function SignalSourcesView() {
               <h1 className="text-xl font-bold text-cafe-black">信号源</h1>
               <p className="text-sm text-cafe-secondary">管理抓取来源、优先级和健康状态</p>
             </div>
-            <SignalNav active="sources" />
+            <SignalNav active="sources" initialReferrerThread={initialReferrerThread} />
           </div>
         </header>
 

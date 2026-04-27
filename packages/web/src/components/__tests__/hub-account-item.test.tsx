@@ -4,6 +4,18 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { HubAccountItem } from '@/components/HubAccountItem';
 import type { ProfileItem } from '@/components/hub-accounts.types';
 
+const mockConfirm = vi.fn().mockResolvedValue(true);
+vi.mock('@/components/useConfirm', () => ({
+  useConfirm: () => mockConfirm,
+}));
+
+function profileItem(
+  input: Omit<ProfileItem, 'kind' | 'builtin'> & Partial<Pick<ProfileItem, 'kind' | 'builtin'>>,
+): ProfileItem {
+  const builtin = input.builtin ?? input.authType === 'oauth';
+  return { ...input, builtin, kind: input.kind ?? (builtin ? 'builtin' : 'api_key') };
+}
+
 describe('HubAccountItem', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -30,8 +42,8 @@ describe('HubAccountItem', () => {
     vi.clearAllMocks();
   });
 
-  it('clicking the card triggers onEdit', async () => {
-    const profile: ProfileItem = {
+  it('clicking the card triggers onEdit for API key accounts', async () => {
+    const profile = profileItem({
       id: 'claude-api',
       provider: 'claude-api',
       displayName: 'Claude API',
@@ -45,7 +57,7 @@ describe('HubAccountItem', () => {
       hasApiKey: true,
       createdAt: '2026-03-18T00:00:00.000Z',
       updatedAt: '2026-03-18T00:00:00.000Z',
-    };
+    });
     const onEdit = vi.fn();
 
     await act(async () => {
@@ -60,9 +72,8 @@ describe('HubAccountItem', () => {
       );
     });
 
-    expect(container.textContent).toContain('Claude API');
-    expect(container.textContent).toContain('已配置');
-    expect(container.textContent).toContain('预览 / 编辑 →');
+    expect(container.textContent).not.toContain('编辑');
+    expect(container.querySelector('button[aria-label="删除账号"]')).toBeTruthy();
 
     const card = container.querySelector('button') as HTMLElement;
     await act(async () => {
@@ -71,8 +82,58 @@ describe('HubAccountItem', () => {
     expect(onEdit).toHaveBeenCalledWith(profile);
   });
 
-  it('shows summary with host and API key status for non-builtin accounts', async () => {
-    const profile: ProfileItem = {
+  it('keeps the + 添加 model entry visible for built-in cards without binding-scope controls', async () => {
+    const profile = profileItem({
+      id: 'codex-oauth',
+      provider: 'codex-oauth',
+      displayName: 'Codex (OAuth)',
+      name: 'Codex (OAuth)',
+      authType: 'oauth',
+
+      mode: 'subscription',
+      models: ['gpt-5.4'],
+      hasApiKey: false,
+      createdAt: '2026-03-18T00:00:00.000Z',
+      updatedAt: '2026-03-18T00:00:00.000Z',
+    });
+
+    await act(async () => {
+      root.render(<HubAccountItem profile={profile} busy={false} onSave={vi.fn(async () => {})} onDelete={() => {}} />);
+    });
+
+    expect(container.textContent).toContain('+ 添加');
+    expect(container.textContent).not.toContain('编辑');
+    expect(container.textContent).not.toContain('绑定范围');
+    expect(container.textContent).not.toContain('设为 Codex 默认');
+  });
+
+  it('hides unsupported 测试 actions for non-api-key profiles', async () => {
+    const profile = profileItem({
+      id: 'opencode-client-auth',
+      provider: 'opencode-client-auth',
+      displayName: 'OpenCode (client-auth)',
+      name: 'OpenCode (client-auth)',
+      authType: 'oauth',
+
+      mode: 'subscription',
+      models: ['claude-sonnet-4'],
+      hasApiKey: false,
+      createdAt: '2026-03-18T00:00:00.000Z',
+      updatedAt: '2026-03-18T00:00:00.000Z',
+      oauthLikeClient: 'opencode',
+    });
+
+    await act(async () => {
+      root.render(<HubAccountItem profile={profile} busy={false} onSave={vi.fn(async () => {})} onDelete={() => {}} />);
+    });
+
+    expect(container.textContent).not.toContain('测试');
+    expect(container.textContent).toContain('+ 添加');
+    expect(container.textContent).toContain('OpenCode (client-auth)');
+  });
+
+  it('requires delete confirmation and respects denial', async () => {
+    const profile = profileItem({
       id: 'codex-sponsor',
       provider: 'codex-sponsor',
       displayName: 'Codex Sponsor',
@@ -86,41 +147,21 @@ describe('HubAccountItem', () => {
       hasApiKey: true,
       createdAt: '2026-03-18T00:00:00.000Z',
       updatedAt: '2026-03-18T00:00:00.000Z',
-    };
+    });
+    const onDelete = vi.fn();
+    mockConfirm.mockResolvedValue(false);
 
     await act(async () => {
-      root.render(<HubAccountItem profile={profile} busy={false} onSave={vi.fn(async () => {})} onDelete={() => {}} />);
+      root.render(<HubAccountItem profile={profile} busy={false} onSave={vi.fn(async () => {})} onDelete={onDelete} />);
     });
-
-    expect(container.textContent).toContain('Codex Sponsor');
-    expect(container.textContent).toContain('proxy.example');
-    expect(container.textContent).toContain('已配置');
-  });
-
-  it('shows 内置 badge and 预览 → for builtin profiles', async () => {
-    const profile: ProfileItem = {
-      id: 'codex-oauth',
-      provider: 'codex-oauth',
-      displayName: 'Codex (OAuth)',
-      name: 'Codex (OAuth)',
-      authType: 'oauth',
-      kind: 'builtin',
-      builtin: true,
-      mode: 'subscription',
-      models: ['gpt-5.4'],
-      hasApiKey: false,
-      createdAt: '2026-03-18T00:00:00.000Z',
-      updatedAt: '2026-03-18T00:00:00.000Z',
-    };
 
     await act(async () => {
-      root.render(<HubAccountItem profile={profile} busy={false} onSave={vi.fn(async () => {})} onDelete={() => {}} />);
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="删除账号"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-
-    expect(container.textContent).toContain('Codex (OAuth)');
-    expect(container.textContent).toContain('内置');
-    expect(container.textContent).toContain('预览 →');
-    expect(container.textContent).not.toContain('预览 / 编辑 →');
+    expect(mockConfirm).toHaveBeenCalledTimes(1);
+    expect(onDelete).not.toHaveBeenCalled();
   });
 
   it('shows 未配置 status when no API key and not builtin', async () => {

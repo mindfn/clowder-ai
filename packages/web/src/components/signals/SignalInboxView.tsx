@@ -45,7 +45,7 @@ function toSignalTier(value: string | undefined): SignalTier | undefined {
   return parsed as SignalTier;
 }
 
-export function SignalInboxView() {
+export function SignalInboxView({ initialReferrerThread = null }: { initialReferrerThread?: string | null }) {
   const ime = useIMEGuard();
   const searchParams = useSearchParams();
   const deepLinkHandled = useRef(false);
@@ -283,7 +283,7 @@ export function SignalInboxView() {
             <h1 className="text-xl font-bold text-cafe">信号</h1>
             <p className="mt-1 text-[13px] text-cafe-secondary">浏览、筛选和研读来自信源的文章</p>
           </div>
-          <SignalNav active="signals" />
+          <SignalNav active="signals" initialReferrerThread={initialReferrerThread} />
         </header>
 
         <form onSubmit={handleSearchSubmit} className="flex flex-wrap items-center gap-2">

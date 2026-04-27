@@ -113,7 +113,14 @@ vi.mock('@/hooks/useAuthorization', () => ({
 
 vi.mock('@/hooks/useSplitPaneKeys', () => ({ useSplitPaneKeys: vi.fn() }));
 vi.mock('@/hooks/useCatData', () => ({
-  useCatData: () => ({ cats: [], getCatById: () => undefined, isLoading: false, hasFetched: true }),
+  useCatData: () => ({
+    cats: [],
+    isLoading: false,
+    hasFetched: true,
+    getCatById: () => undefined,
+    getCatsByBreed: () => new Map(),
+    refresh: async () => [],
+  }),
 }));
 
 vi.mock('../ChatMessage', () => ({ ChatMessage: () => null }));

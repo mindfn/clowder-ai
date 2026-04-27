@@ -61,6 +61,12 @@ export function ChatContainerHeader({
             🔐 {authPendingCount}
           </span>
         )}
+        {/* F056 Phase D: Theme toggle */}
+        <ThemeToggle />
+        {/* F099 P1-2: Hub gear in top bar — always reachable even when right panel shows workspace.
+            F174 D2b-2 (rev2): callback-auth failure badge merges into HubButton itself
+            (no separate top-bar icon — top-bar real estate is scarce). */}
+        <HubButton />
         <button
           onClick={onOpenMobileStatus}
           className="p-1 rounded-lg hover:bg-[var(--console-hover-bg)] transition-colors ml-1 lg:hidden"

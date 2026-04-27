@@ -232,7 +232,25 @@ export function WorkspacePanel() {
     [setOpenFile, setSearchResults, setDidSearch, setEditMode],
   );
 
-  // F168: Auto-switch workspace mode based on thread's preferredWorkspaceMode
+  // G7-2: Per-thread expandedPaths cache — tabs/openFile are now in store-level ThreadState
+  // (snapshotActive/flattenThread handle save/restore automatically on setCurrentThread)
+  const expandedPathsCache = useRef<Map<string, Set<string>>>(new Map());
+  const prevThreadRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prevThread = prevThreadRef.current;
+    if (prevThread && prevThread !== currentThreadId) {
+      expandedPathsCache.current.set(prevThread, new Set(expandedPaths));
+    }
+    if (currentThreadId && currentThreadId !== prevThread) {
+      const cached = expandedPathsCache.current.get(currentThreadId);
+      setExpandedPaths(cached ?? new Set());
+      setPendingRevealPath(null);
+    }
+    prevThreadRef.current = currentThreadId;
+  }, [currentThreadId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // F168: Auto-switch workspace mode based on thread's preferredWorkspaceMode.
+  // Also resets from 'community' when switching to a thread without a preference,
+  // preventing mode leakage across threads.
   useEffect(() => {
     if (!currentThreadId) return;
     let cancelled = false;
@@ -243,6 +261,8 @@ export function WorkspacePanel() {
         const valid = new Set(['dev', 'recall', 'schedule', 'tasks', 'community']);
         if (thread.preferredWorkspaceMode && valid.has(thread.preferredWorkspaceMode)) {
           setWorkspaceMode(thread.preferredWorkspaceMode as typeof workspaceMode);
+        } else if (useChatStore.getState().workspaceMode === 'community') {
+          setWorkspaceMode('dev');
         }
       })
       .catch(() => {});

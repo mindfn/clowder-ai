@@ -254,7 +254,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
           </button>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-3" data-guide-id="accounts.create-details">
           {/* 账号名称 — always shown */}
           <div>
             <label className="mb-1 block text-xs font-medium text-cafe-muted">账号名称</label>
@@ -432,6 +432,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
         <div className="mt-4 flex justify-end">
           <button
             type="button"
+            data-guide-id="accounts.create-submit"
             onClick={handleSubmit}
             disabled={saving || !canSubmit}
             className="rounded-lg bg-[var(--cafe-accent)] px-5 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cafe-accent-hover)] disabled:opacity-50"

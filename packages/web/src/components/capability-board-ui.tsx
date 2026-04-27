@@ -10,6 +10,7 @@
 
 import { type ReactNode, useState } from 'react';
 import { HubIcon } from './hub-icons';
+import { EcosystemBadge } from './marketplace/marketplace-badges';
 
 // ────────── Types ──────────
 
@@ -35,6 +36,9 @@ export interface CapabilityBoardItem {
     envKeys?: string[];
     headerKeys?: string[];
   };
+  layer?: 'L1' | 'L2' | 'L3';
+  ecosystem?: 'claude' | 'codex' | 'openclaw' | 'antigravity';
+  lockVersion?: { source: string; version: string; installedAt: string; installedBy: string };
 }
 
 export interface CatFamily {
@@ -203,6 +207,7 @@ function CapabilityCard({
           <div className="flex flex-wrap items-center gap-2">
             <span className="truncate text-[13px] font-bold text-cafe">{item.id}</span>
             <TypeBadge type={item.type} />
+            {item.ecosystem && <EcosystemBadge ecosystem={item.ecosystem} />}
             {item.connectionStatus && <StatusDot status={item.connectionStatus} />}
           </div>
           {item.description && <p className="mt-1 truncate text-[12px] text-cafe-secondary">{item.description}</p>}

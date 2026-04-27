@@ -145,6 +145,7 @@ export function HubAccountsTab() {
         <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">Account / Auth</p>
         <button
           type="button"
+          data-guide-id="accounts.create-form"
           onClick={() => {
             setEditTarget(undefined);
             setShowAuthModal(true);

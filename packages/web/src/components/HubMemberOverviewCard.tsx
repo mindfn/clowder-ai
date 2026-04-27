@@ -71,6 +71,20 @@ function getStatusBadge(cat: CatData) {
   };
 }
 
+function getSessionChainBadge(cat: CatData) {
+  const enabled = cat.sessionChain !== false;
+  return {
+    label: enabled ? 'Session Chain 已开启' : 'Session Chain 未开启',
+    className: enabled ? 'bg-[#E8F5E9] text-[#4CAF50]' : 'bg-slate-100 text-slate-600',
+  };
+}
+
+function formatMentionPreview(patterns: string[], max = 3) {
+  const visible = patterns.slice(0, max);
+  const rest = patterns.length - visible.length;
+  return rest > 0 ? `${visible.join('  ')}  +${rest}` : visible.join('  ');
+}
+
 export function HubCoCreatorOverviewCard({ coCreator, onEdit }: { coCreator: CoCreatorConfig; onEdit?: () => void }) {
   const primary = coCreator.color?.primary ?? '#D4A76A';
   const avatarSrc = safeAvatarSrc(coCreator.avatar);
@@ -159,6 +173,7 @@ export function HubMemberOverviewCard({
   guideTargetId?: string;
 }) {
   const status = getStatusBadge(cat);
+  const sessionChain = getSessionChainBadge(cat);
   const title = [cat.breedDisplayName ?? cat.displayName, cat.nickname].filter(Boolean).join(' · ');
   const editCard = () => onEdit?.(cat);
 
@@ -174,28 +189,83 @@ export function HubMemberOverviewCard({
       className={`flex h-24 cursor-pointer items-center gap-4 rounded-2xl bg-[var(--console-card-bg)] px-5 py-[18px] shadow-[0_8px_24px_rgba(43,33,26,0.05)] transition hover:shadow-[0_8px_24px_rgba(43,33,26,0.09)] ${isDragging ? 'opacity-40' : ''}`}
       data-guide-id={guideTargetId}
     >
-      {draggable ? (
-        <span aria-hidden="true" title="拖动排序" className="cursor-grab select-none text-[16px] text-cafe-muted">
-          ⠿
-        </span>
-      ) : null}
-      <div className="min-w-0 flex-1">
-        <p className="text-[13px] font-bold text-cafe">{title}</p>
-        <p className="mt-1 text-[12px] text-cafe-secondary truncate">{getMetaSummary(cat, configCat)}</p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-2">
+          {draggable ? (
+            <span
+              aria-hidden="true"
+              title="拖动排序"
+              className="mt-1 cursor-grab select-none text-[18px] leading-none text-cafe-muted"
+            >
+              ⠿
+            </span>
+          ) : null}
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              editCard();
+            }}
+            data-guide-id={guideTargetId}
+            className="min-w-0 flex-1 cursor-pointer text-left"
+          >
+            <h3 className="text-[17px] font-bold text-cafe">{title}</h3>
+            <p className="mt-2.5 text-[13px] text-cafe-secondary">
+              {getMetaSummary(cat, configCat)}
+              {cat.adapterMode ? (
+                <span
+                  className={`ml-1.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                    cat.adapterMode === 'acp' ? 'bg-[#E8F5E9] text-[#4CAF50]' : 'bg-slate-100 text-slate-500'
+                  }`}
+                >
+                  {cat.adapterMode.toUpperCase()}
+                </span>
+              ) : null}
+            </p>
+
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <p className="text-[13px] text-[#9D7BC7]">{formatMentionPreview(cat.mentionPatterns)}</p>
+              <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${sessionChain.className}`}>
+                {sessionChain.label}
+              </span>
+            </div>
+          </button>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleAvailability?.(cat);
+            }}
+            disabled={!onToggleAvailability || togglingAvailability}
+            aria-pressed={status.enabled}
+            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${status.className} disabled:cursor-default`}
+          >
+            {togglingAvailability ? '切换中...' : status.label}
+          </button>
+          {onDelete ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete(cat);
+              }}
+              className="rounded-full bg-conn-red-bg p-1.5 text-conn-red-text transition hover:opacity-80"
+              aria-label="删除成员"
+            >
+              <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 fill-none stroke-current" aria-hidden="true">
+                <path
+                  d="M3.5 4.5h9m-7.5 0V3.25h5V4.5m-5.5 0 .5 8h5l.5-8m-4 2v4m2-4v4"
+                  strokeWidth="1.25"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          ) : null}
+        </div>
       </div>
-      <button
-        type="button"
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggleAvailability?.(cat);
-        }}
-        disabled={!onToggleAvailability || togglingAvailability}
-        aria-pressed={status.enabled}
-        className={`shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold ${status.enabled ? 'bg-[#DFF4E7] text-[#087A3E]' : 'bg-[#F3E1D6] text-cafe-secondary'} disabled:cursor-default`}
-      >
-        {togglingAvailability ? '...' : status.label}
-      </button>
-      <span className="shrink-0 text-[12px] font-bold text-[#6F3A2C]">预览 / 编辑 →</span>
     </section>
   );
 }

@@ -1,6 +1,7 @@
 /**
- * F154 Phase B / #543 — DefaultCatSelector: card grid for choosing the global default cat.
+ * F154 Phase B / #543 — DefaultCatSelector: dropdown for choosing the global default cat.
  * AC-B2: Member overview has global default cat selector.
+ * clowder-ai#543: Migrated from card grid to dropdown.
  */
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -26,6 +27,7 @@ const TEST_CATS = [
     avatar: '',
     roleDescription: '',
     personality: '',
+    roster: { family: 'ragdoll', roles: ['architect'], lead: true, available: true, evaluation: '' },
   },
   {
     id: 'codex',
@@ -41,6 +43,7 @@ const TEST_CATS = [
     avatar: '',
     roleDescription: '',
     personality: '',
+    roster: { family: 'maine-coon', roles: ['reviewer'], lead: false, available: true, evaluation: '' },
   },
   {
     id: 'gemini',
@@ -56,6 +59,7 @@ const TEST_CATS = [
     avatar: '',
     roleDescription: '',
     personality: '',
+    roster: { family: 'siamese', roles: ['designer'], lead: false, available: true, evaluation: '' },
   },
 ];
 
@@ -75,7 +79,7 @@ vi.mock('@/hooks/useCatData', () => ({
 // Lazy import after mocks
 const { DefaultCatSelector } = await import('@/components/DefaultCatSelector');
 
-describe('DefaultCatSelector (#543: card grid)', () => {
+describe('DefaultCatSelector (F154 Phase B, AC-B2)', () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -100,7 +104,7 @@ describe('DefaultCatSelector (#543: card grid)', () => {
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   });
 
-  it('renders a card for each cat with the default highlighted', () => {
+  it('renders a select dropdown with all available cats', () => {
     act(() => {
       root.render(
         React.createElement(DefaultCatSelector, {
@@ -110,30 +114,23 @@ describe('DefaultCatSelector (#543: card grid)', () => {
         }),
       );
     });
-    const cards = container.querySelectorAll('[data-testid="default-cat-card"]');
-    expect(cards.length).toBe(3);
-    const defaultCard = [...cards].find((c) => c.textContent?.includes('opus'));
-    expect(defaultCard?.className).toContain('bg-[var(--console-active-bg)]');
+    const select = container.querySelector('[data-testid="default-cat-select"]') as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    expect(select.options.length).toBe(3);
   });
 
-  it('shows current cat color dot', () => {
+  it('selects the current default cat in the dropdown', () => {
     act(() => {
       root.render(
         React.createElement(DefaultCatSelector, {
           cats: TEST_CATS,
-          currentDefaultCatId: 'opus',
+          currentDefaultCatId: 'codex',
           onSelect: vi.fn(),
         }),
       );
     });
-    expect(container.textContent).toContain('默认');
-    // Only one badge
-    const badges = container.querySelectorAll('[data-testid="default-badge"]');
-    expect(badges.length).toBe(1);
-    const cards = container.querySelectorAll('[data-testid="default-cat-card"]');
-    const defaultCard = [...cards].find((card) => card.textContent?.includes('opus'));
-    expect(defaultCard?.className).toContain('bg-[var(--console-active-bg)]');
-    expect(defaultCard?.className).not.toContain('ring-cocreator-primary');
+    const select = container.querySelector('[data-testid="default-cat-select"]') as HTMLSelectElement;
+    expect(select.value).toBe('codex');
   });
 
   it('shows scope description', () => {
@@ -160,13 +157,27 @@ describe('DefaultCatSelector (#543: card grid)', () => {
         }),
       );
     });
-    const cards = container.querySelectorAll('[data-testid="default-cat-card"]');
-    const codexCard = [...cards].find((c) => c.textContent?.includes('codex'));
-    expect(codexCard).not.toBeUndefined();
+    const select = container.querySelector('[data-testid="default-cat-select"]') as HTMLSelectElement;
     act(() => {
-      (codexCard as HTMLButtonElement).click();
+      select.value = 'codex';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
     });
     expect(onSelect).toHaveBeenCalledWith('codex');
+  });
+
+  it('shows color dot for the current default cat', () => {
+    act(() => {
+      root.render(
+        React.createElement(DefaultCatSelector, {
+          cats: TEST_CATS,
+          currentDefaultCatId: 'opus',
+          onSelect: vi.fn(),
+        }),
+      );
+    });
+    const dot = container.querySelector('[data-testid="selected-color-dot"]') as HTMLElement;
+    expect(dot).not.toBeNull();
+    expect(dot.style.backgroundColor).toBeTruthy();
   });
 
   it('shows error hint and retry button when fetchError is true (P1-2)', () => {
@@ -182,8 +193,8 @@ describe('DefaultCatSelector (#543: card grid)', () => {
         }),
       );
     });
-    const cards = container.querySelectorAll('[data-testid="default-cat-card"]');
-    expect(cards.length).toBe(3);
+    const select = container.querySelector('[data-testid="default-cat-select"]');
+    expect(select).not.toBeNull();
     expect(container.textContent).toContain('加载失败');
     const retryBtn = container.querySelector('[data-testid="retry-fetch"]');
     expect(retryBtn).not.toBeNull();
@@ -207,20 +218,50 @@ describe('DefaultCatSelector (#543: card grid)', () => {
     expect(container.textContent).toContain('保存失败');
   });
 
-  it('disables card buttons when loading', () => {
+  it('includes nickname in option text', () => {
     act(() => {
       root.render(
         React.createElement(DefaultCatSelector, {
           cats: TEST_CATS,
           currentDefaultCatId: 'opus',
           onSelect: vi.fn(),
-          isLoading: true,
         }),
       );
     });
-    const cards = container.querySelectorAll<HTMLButtonElement>('[data-testid="default-cat-card"]');
-    for (const card of cards) {
-      expect(card.disabled).toBe(true);
-    }
+    const select = container.querySelector('[data-testid="default-cat-select"]') as HTMLSelectElement;
+    const opusOption = [...select.options].find((o) => o.value === 'opus');
+    expect(opusOption?.textContent).toContain('宪宪');
+  });
+
+  it('shows placeholder when currentDefaultCatId is empty', () => {
+    act(() => {
+      root.render(
+        React.createElement(DefaultCatSelector, {
+          cats: TEST_CATS,
+          currentDefaultCatId: '',
+          onSelect: vi.fn(),
+        }),
+      );
+    });
+    const select = container.querySelector('[data-testid="default-cat-select"]') as HTMLSelectElement;
+    expect(select.value).toBe('');
+    const placeholder = [...select.options].find((o) => o.value === '');
+    expect(placeholder).not.toBeNull();
+  });
+
+  it('shows placeholder when currentDefaultCatId is not in cats list', () => {
+    act(() => {
+      root.render(
+        React.createElement(DefaultCatSelector, {
+          cats: TEST_CATS,
+          currentDefaultCatId: 'antigravity',
+          onSelect: vi.fn(),
+        }),
+      );
+    });
+    const select = container.querySelector('[data-testid="default-cat-select"]') as HTMLSelectElement;
+    expect(select.value).not.toBe('opus');
+    const placeholder = [...select.options].find((o) => o.value === '' || o.disabled);
+    expect(placeholder).not.toBeNull();
   });
 });

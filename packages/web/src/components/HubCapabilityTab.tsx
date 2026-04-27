@@ -31,6 +31,7 @@ import { McpConfigModal } from './McpConfigModal';
 import { getProjectPaths, projectDisplayName } from './ThreadSidebar/thread-utils';
 
 type FilterSource = 'all' | 'cat-cafe' | 'external';
+type FilterLayer = 'all' | 'L1' | 'L2' | 'L3';
 
 interface HubCapabilityTabProps {
   section?: 'all' | 'mcp' | 'skills';
@@ -43,6 +44,7 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [filterSource, setFilterSource] = useState<FilterSource>('all');
+  const [filterLayer, setFilterLayer] = useState<FilterLayer>('all');
   const [toggling, setToggling] = useState<string | null>(null);
   const [showMcpModal, setShowMcpModal] = useState(false);
   const [editMcpId, setEditMcpId] = useState<string | null>(null);
@@ -153,9 +155,11 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
 
   // Filter + group
   const filtered = useMemo(() => {
-    if (filterSource === 'all') return items;
-    return items.filter((i) => i.source === filterSource);
-  }, [items, filterSource]);
+    let result = items;
+    if (filterSource !== 'all') result = result.filter((i) => i.source === filterSource);
+    if (filterLayer !== 'all') result = result.filter((i) => i.layer === filterLayer);
+    return result;
+  }, [items, filterSource, filterLayer]);
 
   const mcpItems = useMemo(() => filtered.filter((i) => i.type === 'mcp'), [filtered]);
   const externalSkills = useMemo(
@@ -212,6 +216,17 @@ export function HubCapabilityTab({ section = 'all' }: HubCapabilityTabProps) {
             { value: 'external', label: '外部' },
           ]}
           onChange={(v) => setFilterSource(v as FilterSource)}
+        />
+        <FilterChips
+          label="层级"
+          value={filterLayer}
+          options={[
+            { value: 'all', label: '全部' },
+            { value: 'L1', label: 'L1 MCP' },
+            { value: 'L2', label: 'L2 Skill' },
+            { value: 'L3', label: 'L3 扩展' },
+          ]}
+          onChange={(v) => setFilterLayer(v as FilterLayer)}
         />
       </div>
 

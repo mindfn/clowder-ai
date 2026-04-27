@@ -13,40 +13,48 @@ vi.mock('@/utils/api-client', () => ({
   API_URL: 'http://localhost:3003',
 }));
 
-// ── Mock useCatData so CatSelector renders cat chips ──────────
+const TEST_CATS = [
+  {
+    id: 'opus',
+    displayName: '布偶猫',
+    nickname: '宪宪',
+    breedId: 'ragdoll',
+    breedDisplayName: '布偶猫',
+    color: { primary: '#9B7EBD', secondary: '#E8D5F5' },
+    mentionPatterns: ['@opus'],
+    clientId: 'anthropic',
+    defaultModel: 'claude-opus-4-6',
+    avatar: '',
+    roleDescription: '',
+    personality: '',
+  },
+  {
+    id: 'codex',
+    displayName: '缅因猫',
+    nickname: '砚砚',
+    breedId: 'maine-coon',
+    breedDisplayName: '缅因猫',
+    color: { primary: '#5B8C5A', secondary: '#D5E8D4' },
+    mentionPatterns: ['@codex'],
+    clientId: 'openai',
+    defaultModel: 'gpt-5.5',
+    avatar: '',
+    roleDescription: '',
+    personality: '',
+  },
+];
+
 vi.mock('@/hooks/useCatData', () => ({
-  useCatData: () => ({
-    cats: [
-      {
-        id: 'opus',
-        displayName: '布偶猫',
-        nickname: '宪宪',
-        color: { primary: '#9B7EBD', secondary: '#E8D5F5' },
-        clientId: 'anthropic',
-      },
-    ],
-    isLoading: false,
-    getCatById: () => undefined,
-    getCatsByBreed: () =>
-      new Map([
-        [
-          'ragdoll',
-          [
-            {
-              id: 'opus',
-              displayName: '布偶猫',
-              nickname: '宪宪',
-              breedDisplayName: '布偶猫',
-              color: { primary: '#9B7EBD', secondary: '#E8D5F5' },
-              clientId: 'anthropic',
-            },
-          ],
-        ],
-      ]),
-    refresh: () => Promise.resolve([]),
-  }),
   formatCatName: (cat: { displayName: string; variantLabel?: string }) =>
     cat.variantLabel ? `${cat.displayName}（${cat.variantLabel}）` : cat.displayName,
+  useCatData: () => ({
+    cats: TEST_CATS,
+    isLoading: false,
+    hasFetched: true,
+    getCatById: (id: string) => TEST_CATS.find((cat) => cat.id === id),
+    getCatsByBreed: () => new Map(TEST_CATS.map((cat) => [cat.breedId, [cat]])),
+    refresh: async () => TEST_CATS,
+  }),
 }));
 
 describe('ThreadCatSettings', () => {
