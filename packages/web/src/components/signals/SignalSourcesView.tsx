@@ -140,19 +140,9 @@ export function SignalSourcesView({ initialReferrerThread = null }: { initialRef
               </div>
               <span className="flex-1 truncate text-[13px] font-bold text-cafe">{source.name}</span>
               <StatusPill enabled={source.enabled} />
-              <select
-                value={source.tier ?? 1}
-                onChange={(e) => {
-                  void setEnabled(source.id, source.enabled);
-                }}
-                className="rounded-lg bg-[var(--console-active-bg)] px-2.5 py-1 text-xs text-cafe-secondary outline-none"
-                style={{ width: 96 }}
-              >
-                <option value={1}>Tier 1</option>
-                <option value={2}>Tier 2</option>
-                <option value={3}>Tier 3</option>
-                <option value={4}>Tier 4</option>
-              </select>
+              <span className="rounded-lg bg-[var(--console-active-bg)] px-2.5 py-1 text-xs text-cafe-secondary" style={{ width: 96 }}>
+                Tier {source.tier ?? 1}
+              </span>
               <button
                 type="button"
                 disabled={fetchingIds.has(source.id)}

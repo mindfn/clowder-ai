@@ -149,7 +149,9 @@ export function McpConfigModal({ projectPath, editId, editData, onSaved, onClose
             {isHttpEdit && (
               <button
                 type="button"
-                className="flex shrink-0 items-center gap-2 rounded-[14px] bg-[#FCE8E6] px-[18px] text-[15px] font-extrabold text-[#D22F27]"
+                disabled
+                title="卸载功能即将上线"
+                className="flex shrink-0 items-center gap-2 rounded-[14px] bg-[#FCE8E6] px-[18px] text-[15px] font-extrabold text-[#D22F27] opacity-50 cursor-not-allowed"
                 style={{ height: 44 }}
               >
                 <svg className="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

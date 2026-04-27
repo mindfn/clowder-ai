@@ -319,11 +319,9 @@ export function SignalInboxView({ initialReferrerThread = null }: { initialRefer
               selectedArticleId={selectedArticleId}
               onSelect={handleSelectArticle}
               onStatusChange={handleStatusChange}
-              selectedIds={new Set<string>()}
-              onToggleSelect={() => {}}
             />
           </div>
-          <div className="flex flex-1 overflow-y-auto rounded-[20px] bg-[var(--console-card-bg)] p-[22px] shadow-[0_10px_28px_rgba(43,33,26,0.04)]">
+          <div className="min-w-0 flex-1 overflow-y-auto rounded-[20px] bg-[var(--console-card-bg)] p-[22px] shadow-[0_10px_28px_rgba(43,33,26,0.04)]">
             <SignalArticleDetailPanel
               article={selectedArticle}
               isLoading={detailLoading}
