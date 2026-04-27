@@ -6,7 +6,6 @@ import { useToastStore } from '@/stores/toastStore';
 import { apiFetch } from '@/utils/api-client';
 import { loadThreads as loadCachedThreads } from '@/utils/offline-store';
 
-import { BootcampIcon } from '../icons/BootcampIcon';
 import { readProjectNames, writeProjectNames } from './active-workspace';
 import { DirectoryPickerModal, type NewThreadOptions } from './DirectoryPickerModal';
 import { SectionGroup } from './SectionGroup';
@@ -271,41 +270,6 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
     [loadThreads, loadTrash],
   );
 
-  /** F087: Create a bootcamp onboarding thread */
-  const createBootcampThread = useCallback(async () => {
-    setIsCreating(true);
-    try {
-      const res = await apiFetch('/api/threads', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: '🎓 猫猫训练营',
-          bootcampState: {
-            v: 1,
-            phase: 'phase-1-intro',
-            startedAt: Date.now(),
-          },
-        }),
-      });
-      if (!res.ok) {
-        const errBody = await res.text().catch(() => '(no body)');
-        console.error('[createBootcampThread] POST /api/threads failed:', res.status, errBody);
-        notifyThreadCreateFailure('训练营线程没有创建成功，请稍后重试。');
-        return;
-      }
-      const thread: Thread = await res.json();
-      navigateToThread(thread.id);
-      if (typeof window !== 'undefined' && window.innerWidth < 768) {
-        onClose?.();
-      }
-      await loadThreads();
-    } catch (err) {
-      console.error('[createBootcampThread] exception:', err);
-      notifyThreadCreateFailure('训练营线程创建失败，请检查网络后重试。');
-    } finally {
-      setIsCreating(false);
-    }
-  }, [navigateToThread, loadThreads, onClose]);
   // I-1: Show confirmation dialog instead of deleting immediately
   const handleDeleteRequest = useCallback(
     (threadId: string) => {
@@ -506,28 +470,15 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
       <aside className={`${className ?? 'w-60'} flex flex-col h-full bg-[var(--console-panel-bg)]`} style={{ boxShadow: '8px 0 24px rgba(43, 33, 26, 0.04)' }}>
         <div className="p-3 flex items-center justify-between">
           <span className="text-sm font-semibold text-cafe-black">对话</span>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={createBootcampThread}
-              disabled={isCreating}
-              className="text-xs px-2 py-1 rounded-lg border border-conn-amber-ring bg-conn-amber-bg text-conn-amber-text hover:opacity-80 disabled:opacity-40 transition-colors"
-              title="猫猫训练营"
-              data-testid="sidebar-bootcamp"
-              data-guide-id="sidebar.bootcamp"
-            >
-              <BootcampIcon className="w-3.5 h-3.5 inline-block -mt-0.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowPicker(true)}
-              disabled={isCreating}
-              className="console-button-primary text-xs px-2 py-1 disabled:opacity-40"
-              data-guide-id="sidebar.new-thread"
-            >
-              {isCreating ? '...' : '+ 新对话'}
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setShowPicker(true)}
+            disabled={isCreating}
+            className="console-button-primary text-xs px-2 py-1 disabled:opacity-40"
+            data-guide-id="sidebar.new-thread"
+          >
+            {isCreating ? '...' : '+ 新对话'}
+          </button>
         </div>
 
         {bindWarning && (
@@ -741,20 +692,20 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
           )}
         </div>
 
-        {/* F095 Phase D: Trash bin section */}
-        <div className="border-t border-[var(--console-border-soft)]">
+        {/* F095 Phase D: Trash bin section — styled as Pencil Sidebar Utility Row */}
+        <div className="px-3 pb-3">
           <button
             type="button"
             onClick={handleToggleTrash}
-            className="flex w-full items-center gap-1.5 px-3 py-2 text-xs text-cafe-muted hover:text-cafe-secondary transition-colors"
+            className="flex w-full items-center gap-2 h-9 px-2.5 rounded-xl bg-[var(--console-code-bg)] text-xs text-cafe-secondary hover:opacity-80 transition-colors"
             data-testid="trash-bin-toggle"
           >
-            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+            <svg className="h-[15px] w-[15px] flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 8v13H3V8M1 3h22v5H1zM10 12h4" />
             </svg>
-            回收站{trashedThreads.length > 0 ? ` (${trashedThreads.length})` : ''}
+            <span className="flex-1 text-left">回收站{trashedThreads.length > 0 ? ` (${trashedThreads.length})` : ''}</span>
             <svg
-              className={`h-3 w-3 ml-auto transition-transform ${showTrash ? 'rotate-180' : ''}`}
+              className={`h-3 w-3 flex-shrink-0 transition-transform ${showTrash ? 'rotate-180' : ''}`}
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"

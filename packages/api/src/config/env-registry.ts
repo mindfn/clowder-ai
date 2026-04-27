@@ -1007,6 +1007,7 @@ export const ENV_VARS: EnvDefinition[] = [
       '[DEPRECATED] F140 Phase E.2 cutover (2026-04-24): Rule B authoritative-source skip removed; this var now only serves as backward-compat fallback for GITHUB_SETUP_NOISE_BOT_LOGINS. Will be removed in a follow-up release.',
     category: 'connector',
     sensitive: false,
+    restartRequired: true,
   },
   {
     name: 'GITHUB_SETUP_NOISE_BOT_LOGINS',
