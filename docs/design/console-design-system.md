@@ -16,6 +16,12 @@
           └─ 内嵌区域 (--console-card-soft-bg) ← 无边框，靠色差
 ```
 
+**Inset Paper 页面模型**：
+- Chat 使用三层：Activity Rail(L1) → Thread Sidebar(L2) → Chat Workspace(L3)。
+- Mission Hub / Signal / Memory / Settings 不显示 Thread Sidebar，但仍必须保留三层深度：Activity Rail(L1) → 页面基底(L2) → 内容纸张(L3)。
+- 非 Chat L1 页面不能从 Rail 直接跳到最亮的 Workspace 背景；App Body 使用 `--console-panel-bg`，内容 Workspace 使用 `--console-shell-bg` + 圆角 + 极轻阴影。
+- L2 与 L3 之间保留 8-12px 呼吸间隙，靠色块渐变衔接，不加硬边框。
+
 **何时加边框**：
 - 列表项之间的分隔线（仅 `border-b`，用 `--console-border-soft`）
 - 输入框/表单控件的边界
@@ -189,12 +195,14 @@
 - 猫猫头像：28px 圆形，左侧 bottom-aligned
 - 气泡最大宽度 70%
 - 时间戳 `text-[10px]`，用户消息 `rgba(255,255,255,0.7)`，猫猫消息 `text-cafe-muted`
+- Chat 工具入口（下载、语音、发送等）放在底部输入区工具组；Thread Header 只保留 thread 标题和当前猫/上下文切换。
+- 右侧 Inspector 是一个 L2 槽位，不堆叠独立白卡；状态、统计、健康信息使用 soft chips / rows 直接排布。
 
-### 3.8 连接器卡片（网格）
+### 3.8 连接器卡片（纵向列表）
 
 - 图标容器 40×40 + `rounded-[10px]` + 品牌色背景
 - 名称 `text-sm font-medium` + 状态文字（在线/未配置）
-- 水平排列 `gap-4`，无边框，`console-card-bg` 背景
+- 一行一个卡片，水平排列 `gap-4`，无边框，`console-card-bg` 背景
 - 添加卡片：虚线边框 `border-dashed` + `console-border-soft` + `+` 图标
 
 ### 3.9 配置项（统一模式）
@@ -270,36 +278,38 @@
 
 ### 4.0 全局 App Shell
 
-页面分为两类：**工作区页**（Chat / Signal / Memory）和**系统级页**（Settings）。
+页面分为两类：**对话页**（Chat）和**L1 工作页**（Mission Hub / Signal / Memory / Settings）。
 
-工作区页布局（保留 Thread Sidebar）：
+对话页布局（保留 Thread Sidebar）：
 ```
 ┌──────┬──────────────┬────────────────────────────────────────┐
 │ L1   │ Thread       │ 当前工作区                               │
-│ Rail │ Sidebar      │ Chat / Signal / Memory                   │
+│ Rail │ Sidebar      │ Chat                                    │
 └──────┴──────────────┴────────────────────────────────────────┘
 ```
 
-系统级页布局（Settings 覆盖 Thread Sidebar，只保留 L1 Rail）：
+L1 工作页布局（Mission Hub / Signal / Memory / Settings 覆盖 Thread Sidebar，只保留 L1 Rail）：
 ```
 ┌──────┬───────────────────────────────────────────────────────┐
-│ L1   │ Settings Workspace                                     │
-│ Rail │ ┌─Settings Nav─┬─内容区──────────────────────────────┐ │
-│      │ │ 220px        │                                      │ │
-│      │ └──────────────┴──────────────────────────────────────┘ │
+│ L1   │ Mission / Signal / Memory / Settings Workspace          │
+│ Rail │ 任务队列 / 内容区 / tabs / Settings 二级导航              │
 └──────┴───────────────────────────────────────────────────────┘
 ```
 
 **硬约束**：
 - Activity Bar (L1 Rail) 在所有页面常驻，宽度固定，不卸载。
-- 工作区页：Thread Sidebar 常驻，`/signals`、`/memory` 只替换 Thread Sidebar 右侧的 workspace。
-- 系统级页：Settings 覆盖 Thread Sidebar 区域，Settings Nav 直接紧邻 L1 Rail。
-- Signal / Memory 的 tab 与筛选器只存在于 workspace 内。
+- Activity Bar 顺序：Chat / Mission Hub / Signal / Memory / Settings。
+- Mission Hub 是实时任务中心，Activity Bar 中可显示轻量任务 badge；badge 不改变 rail 宽度。
+- 亮/暗色切换属于全局 rail 操作，固定放在 Settings 图标上方；不进入页面内容区。
+- 对话页：Thread Sidebar 常驻，用于 thread / 主会话。
+- L1 工作页：`/mission`、`/signals`、`/memory`、`/settings` 都覆盖 Thread Sidebar 区域，只保留 L1 Rail。
+- Mission Hub 是任务管理一级页，不放在 Thread Sidebar，也不作为 Chat 的子视图。
+- Signal / Memory 的 tab 与筛选器只存在于 workspace 内；Settings 的二级导航直接紧邻 L1 Rail。
 - 面板之间仍遵循 §1：靠背景色和间距建立层级，不加 `border-r` / `border-l`。
 
 **允许变化**：
 - Activity Bar 当前图标的 active 背景可以随 L1 tab 切换，但尺寸、位置和 rail 宽度不能变化。
-- Top Bar 的当前页面标题 / breadcrumb 可以变化。
+- Top Bar 已移除；页面工具入口必须下沉到对应 workspace 内，不能依赖全局横条。
 - Workspace 内部可以根据页面需要使用双栏、列表+详情、设置二级导航或右侧详情面板。
 
 ### 4.1 设置页（双栏，系统级）
@@ -379,7 +389,8 @@
 
 | 场景 | 交互模式 | 判定标准 |
 |------|---------|---------|
-| 简单实体新增/编辑（API Key、MCP） | **弹窗** | 字段 ≤5，无复杂子组件 |
+| 简单实体新增/编辑（API Key、Skill、IM、插件） | **弹窗** | 字段 ≤5，无复杂子组件 |
+| MCP 新增/编辑 | **专用配置弹窗** | 支持 command/http 两种配置形态，含动态参数、环境变量和工作目录 |
 | 复杂实体新增/编辑（成员） | **全页表单** | 字段 >5，含头像/颜色/折叠面板等 |
 | 只读详情展示（MCP 工具列表） | **展开详情** | 不涉及编辑 |
 | 单值切换/单字段编辑 | **直接操作** | Toggle、下拉、行内编辑 |
@@ -393,14 +404,26 @@
 - 底部按钮右对齐：取消(Secondary) + 确认(Primary)
 - 危险弹窗：红色图标 + 红色标题 + 影响说明 + 红色确认按钮 + Enter 快捷确认（无需输入名称）
 
-### 5.3 全页表单规范
+### 5.3 MCP 配置弹窗
+
+MCP 弹窗不是普通 4 字段编辑框，必须按服务类型呈现对应配置面板：
+
+- 顶部：大标题 `更新/新增 {Name} MCP` + 说明文字；右上角危险操作用浅红底 `卸载` 按钮。
+- 新增 MCP 时先选择类型：`stdio` / `httpstream` 可切换。
+- 编辑 MCP 时类型不可切换；同一弹窗根据当前类型展示固定字段。
+- `stdio` 型：启动命令、参数列表、环境变量 Key/Value、环境变量传递、工作目录。
+- `httpstream` 型：URL、Bearer 令牌环境变量、标头 Key/Value、来自环境变量的标头 Key/Value。
+- 动态列表：输入框 + 删除图标；添加按钮使用 `console-card-soft-bg` 满宽居中。
+- 保存按钮位于右下角；无变更时可禁用为灰色。
+
+### 5.4 全页表单规范
 
 - 面包屑导航顶部
 - 分区用标题 + 描述分组（如"身份信息"/"认证与模型"）
 - 罕用设置折叠（Voice Config 等）
 - 底部操作栏固定：取消(Secondary) + 保存(Primary)，右对齐
 
-### 5.4 行内编辑
+### 5.5 行内编辑
 
 - 点击值区域 → 变成输入框（`console-code-bg` + `border-strong`）
 - Enter 保存，Esc 取消
@@ -433,6 +456,7 @@
 | session | 会话 | 猫的一次唤醒周期，技术概念，用户面少用 |
 | signal | 信号 | — |
 | memory / knowledge | 记忆 | — |
+| mission / task hub | Mission Hub / 任务 | 任务管理一级入口 |
 | settings | 设置 | — |
 | connector | 连接器 | — |
 | worktree | 工作区 | — |
@@ -447,7 +471,13 @@
 每次提交前端代码前对照：
 
 - [ ] 没有新增 `border-cafe` / `border-cafe-subtle`（用 console token）
-- [ ] L1 tab 切换时 Activity Bar + Thread Sidebar 不替换、不跳变
+- [ ] Chat 保留 Thread Sidebar；Mission Hub / Signal / Memory / Settings 不显示 Thread Sidebar
+- [ ] 非 Chat L1 页面遵循 Inset Paper：Rail(L1) → 页面基底(L2) → 内容纸张(L3)，不得直接 Rail → L3
+- [ ] Chat 下载、语音等工具入口在 Chat workspace 内可见，不依赖全局 Top Bar
+- [ ] Mission Hub 作为 L1 工作页出现在 Activity Bar，不放入 Thread Sidebar
+- [ ] 亮/暗色切换固定在 Activity Rail 底部、Settings 上方
+- [ ] IM / MCP / Skill / 插件页使用纵向卡片列表（一行一个），点击卡片进入新增/编辑同款弹窗
+- [ ] MCP 弹窗区分 stdio/httpstream 配置形态；新增可切换类型，编辑不可切换类型
 - [ ] 卡片容器用背景色而非边框
 - [ ] 同一视图内视觉元素风格一致
 - [ ] 无 Feature ID / 内部标识暴露给用户
