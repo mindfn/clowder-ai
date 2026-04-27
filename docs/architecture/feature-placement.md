@@ -1,5 +1,5 @@
 ---
-feature_ids: [F170]
+feature_ids: [F179]
 topics: [architecture, console, navigation, sop]
 doc_kind: guide
 created: 2026-04-23
