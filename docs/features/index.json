@@ -1046,12 +1046,6 @@
     },
     {
       "id": "F170",
-      "name": "Console 功能体系重构",
-      "status": "unknown",
-      "file": "F170-console-architecture-restructure.md"
-    },
-    {
-      "id": "F170",
       "name": "Web Chinese Chess — 网页端中国象棋",
       "status": "done (archived — interview demo delivered, implementation kept on feature branch) | **Owner**: Ragdoll | **Priority**: P2 | **Completed**: 2026-04-20",
       "file": "F170-web-chinese-chess.md"
@@ -1103,6 +1097,12 @@
       "name": "Persistent MCP Agent-Key Auth — 跨 invocation 写权限",
       "status": "in-progress | **Owner**: Ragdoll（Ragdoll） | **Reviewer**: Maine Coon（Maine Coon） | **Priority**: P1",
       "file": "F178-persistent-mcp-agent-key-auth.md"
+    },
+    {
+      "id": "F179",
+      "name": "Console 功能体系重构",
+      "status": "spec | Owner: 布偶猫/宪宪",
+      "file": "F179-console-architecture-restructure.md"
     }
   ]
 }

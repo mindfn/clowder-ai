@@ -1,14 +1,14 @@
 ---
-feature_ids: [F170]
+feature_ids: [F179]
 related_features: [F041, F092, F099, F102, F127, F163, F340]
 topics: [console, architecture, settings, service-manifest, navigation]
 doc_kind: spec
 created: 2026-04-23
 ---
 
-# F170: Console 功能体系重构
+# F179: Console 功能体系重构
 
-> Status: spec | Owner: 布偶猫/宪宪
+> **Status**: spec | Owner: 布偶猫/宪宪
 
 ## Why
 
