@@ -60,20 +60,29 @@ function TaskQueueCard({ task, selected, onClick }: { task: TaskItem; selected: 
   );
 }
 
-function MissionInspector({ task }: { task: TaskItem }) {
+function MissionInspector({ task }: { task: TaskItem | null }) {
   return (
     <div className="flex w-80 shrink-0 flex-col gap-3.5 overflow-y-auto rounded-[18px] bg-[var(--console-card-bg)] p-[18px] shadow-[0_8px_22px_rgba(43,33,26,0.04)]">
-      <h3 className="text-lg font-bold text-cafe">当前任务</h3>
-      <p className="text-[13px] leading-[1.35] text-cafe-secondary">{task.title}</p>
-      {task.why && <p className="text-xs text-cafe-secondary">{task.why}</p>}
-      {task.ownerCatId && (
-        <span className="self-start rounded-full bg-[var(--console-pill-bg)] px-3 py-1 text-xs font-bold text-[var(--cafe-interactive,#6F3A2C)]">
-          Owner: {task.ownerCatId}
-        </span>
+      {task ? (
+        <>
+          <h3 className="text-lg font-bold text-cafe">当前任务</h3>
+          <p className="text-[13px] leading-[1.35] text-cafe-secondary">{task.title}</p>
+          {task.why && <p className="text-xs text-cafe-secondary">{task.why}</p>}
+          {task.ownerCatId && (
+            <span className="self-start rounded-full bg-[var(--console-pill-bg)] px-3 py-1 text-xs font-bold text-[var(--cafe-interactive,#6F3A2C)]">
+              Owner: {task.ownerCatId}
+            </span>
+          )}
+          <div className="mt-auto text-[11px] text-cafe-muted">
+            创建于 {new Date(task.createdAt).toLocaleDateString('zh-CN')}
+          </div>
+        </>
+      ) : (
+        <>
+          <h3 className="text-lg font-bold text-cafe">当前任务</h3>
+          <p className="text-[13px] text-cafe-secondary">选择左侧任务查看详情</p>
+        </>
       )}
-      <div className="mt-auto text-[11px] text-cafe-muted">
-        创建于 {new Date(task.createdAt).toLocaleDateString('zh-CN')}
-      </div>
     </div>
   );
 }
@@ -115,6 +124,17 @@ export function MissionHubView() {
             <h1 className="text-2xl font-bold text-cafe">Mission Hub</h1>
             <p className="mt-1 text-[13px] text-cafe-secondary">管理任务、执行队列和交付门禁</p>
           </div>
+          <button
+            type="button"
+            className="flex items-center gap-2 rounded-lg bg-[var(--cafe-accent,#C65F3D)] px-3.5 text-[13px] font-semibold text-white"
+            style={{ height: 36 }}
+          >
+            <svg className="h-[15px] w-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            新建任务
+          </button>
         </header>
 
         <div className="flex gap-3.5">
@@ -146,7 +166,7 @@ export function MissionHubView() {
               ))
             )}
           </div>
-          {selected && <MissionInspector task={selected} />}
+          <MissionInspector task={selected} />
         </div>
       </div>
     </div>

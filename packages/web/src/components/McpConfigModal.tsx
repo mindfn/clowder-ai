@@ -129,9 +129,27 @@ export function McpConfigModal({ projectPath, editId, editData, onSaved, onClose
       }}
       data-testid="mcp-config-modal"
     >
-      <div className="flex max-h-[85vh] w-[520px] flex-col overflow-hidden rounded-xl bg-[var(--console-panel-bg)] shadow-xl">
-        <div className="border-b border-[var(--console-border-soft)] px-6 py-4">
-          <h2 className="text-base font-bold text-cafe">{isEdit ? '编辑 MCP' : '连接至自定义 MCP'}</h2>
+      <div
+        className={[
+          'flex max-h-[85vh] flex-col overflow-hidden shadow-[0_24px_56px_rgba(43,33,26,0.14)]',
+          transport === 'streamableHttp' && isEdit
+            ? 'w-[776px] rounded-[28px] bg-[var(--console-card-bg)]'
+            : 'w-[520px] rounded-xl bg-[var(--console-panel-bg)]',
+        ].join(' ')}
+      >
+        <div className="px-7 pt-7 pb-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-col gap-2">
+              <h2 className="text-[28px] font-extrabold text-cafe">
+                {isEdit ? `更新 ${id}` : '连接至自定义 MCP'}
+              </h2>
+              {isEdit && transport === 'streamableHttp' && (
+                <p className="text-sm text-cafe-secondary">
+                  HTTP Stream 服务类型已固定；如需切换 MCP 服务器类型，请先卸载当前配置。
+                </p>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
