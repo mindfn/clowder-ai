@@ -277,7 +277,7 @@ export function SignalInboxView({ initialReferrerThread = null }: { initialRefer
 
   return (
     <div className="h-full bg-[var(--console-panel-bg)] overflow-y-auto">
-      <main className="mx-auto flex w-full max-w-7xl flex-col gap-4 rounded-2xl bg-[var(--console-card-bg)] shadow-[var(--console-shadow-soft)] m-3 mt-2 px-5 py-5 sm:px-6">
+      <main className="mx-auto flex w-full max-w-7xl flex-col gap-4 rounded-[18px] bg-[var(--console-shell-bg)] shadow-[var(--console-shadow-soft)] m-3 px-9 py-8">
         <header className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold text-cafe">信号</h1>

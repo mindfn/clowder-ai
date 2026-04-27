@@ -57,13 +57,6 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     description: '语音输入输出、术语表和 TTS 服务状态。',
   },
   {
-    id: 'rules',
-    label: '规则与提示词',
-    icon: 'shield',
-    color: 'var(--color-opus-primary)',
-    description: '协作规则、系统提示词和行为护栏。',
-  },
-  {
     id: 'system',
     label: '系统配置',
     icon: 'settings',

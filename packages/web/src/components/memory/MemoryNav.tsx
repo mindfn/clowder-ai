@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { detectRoutePrefix, getThreadHref } from '../ThreadSidebar/thread-navigation';
 
-export type MemoryTab = 'feed' | 'search' | 'status' | 'health';
+export type MemoryTab = 'feed' | 'search' | 'status';
 
 interface MemoryNavProps {
   readonly active: MemoryTab;
@@ -41,7 +41,6 @@ export function buildMemoryTabItems(fromSuffix: string): readonly TabConfig[] {
     { id: 'feed', href: `/memory${fromSuffix}`, label: '涌现 Feed' },
     { id: 'search', href: `/memory/search${fromSuffix}`, label: '知识检索' },
     { id: 'status', href: `/memory/status${fromSuffix}`, label: '索引状态' },
-    { id: 'health', href: `/memory/health${fromSuffix}`, label: '健康报告' },
   ];
 }
 

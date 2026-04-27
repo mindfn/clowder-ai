@@ -1,5 +1,5 @@
-import { MissionControlPage } from '@/components/mission-control/MissionControlPage';
+import { redirect } from 'next/navigation';
 
 export default function MissionPage() {
-  return <MissionControlPage />;
+  redirect('/mission-hub');
 }

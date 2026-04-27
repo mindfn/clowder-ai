@@ -16,7 +16,6 @@ import { CallbackEnvPanel } from './CallbackEnvPanel';
 import { ConsoleSetupState, resolveConsoleSetupState } from './console-setup-state';
 import { OpsContent } from './OpsContent';
 import { PluginsContent } from './PluginsContent';
-import { RulesPromptsContent } from './RulesPromptsContent';
 import { ServiceStatusPanel } from './ServiceStatusPanel';
 import { SettingsPlaceholder } from './SettingsPlaceholder';
 import { SkillPreviewPanel } from './SkillPreviewPanel';
@@ -162,8 +161,6 @@ export function SettingsContent({ section }: SettingsContentProps) {
           <VoiceSettingsPanel />
         </div>
       );
-    case 'rules':
-      return <RulesPromptsContent />;
     case 'system':
       if (setupState) return <ConsoleSetupState {...setupState} />;
       return config ? (

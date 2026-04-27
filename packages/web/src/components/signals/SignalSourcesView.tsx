@@ -85,9 +85,9 @@ export function SignalSourcesView({ initialReferrerThread = null }: { initialRef
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-codex-bg/30 via-cafe-white to-cafe-white">
-      <main className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6">
-        <header className="rounded-2xl border border-codex-light bg-cafe-surface p-4 shadow-sm">
+    <div className="h-full bg-[var(--console-panel-bg)] overflow-y-auto">
+      <main className="mx-auto flex w-full max-w-7xl flex-col gap-4 rounded-[18px] bg-[var(--console-shell-bg)] shadow-[var(--console-shadow-soft)] m-3 px-9 py-8">
+        <header>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h1 className="text-xl font-bold text-cafe-black">信号源</h1>
@@ -101,7 +101,7 @@ export function SignalSourcesView({ initialReferrerThread = null }: { initialRef
           <button
             type="button"
             onClick={() => void setAllEnabled(true)}
-            className="rounded-lg border border-codex-light px-3 py-2 text-sm text-codex-dark hover:bg-codex-bg"
+            className="console-button-ghost rounded-lg px-3 py-2 text-sm"
           >
             全部开启
           </button>
@@ -142,7 +142,7 @@ export function SignalSourcesView({ initialReferrerThread = null }: { initialRef
 
         <section className="space-y-4">
           {groupedSources.map((group) => (
-            <div key={`${group.tier}-${group.category}`} className="rounded-2xl bg-cafe-surface p-4 shadow-sm">
+            <div key={`${group.tier}-${group.category}`} className="rounded-[18px] bg-[var(--console-panel-bg)] p-4">
               <div className="mb-3 flex items-center gap-2">
                 <SignalTierBadge tier={group.tier} />
                 <h2 className="text-sm font-semibold text-cafe-black">{group.category}</h2>

@@ -43,7 +43,7 @@ describe('SettingsNav search filtering', () => {
       root.render(React.createElement(SettingsNav, { activeSection: 'members', onSelect: vi.fn() }));
     });
     const buttons = Array.from(container.querySelectorAll('button'));
-    expect(buttons).toHaveLength(11);
+    expect(buttons).toHaveLength(10);
   });
 
   it('filters sections by label match', () => {
