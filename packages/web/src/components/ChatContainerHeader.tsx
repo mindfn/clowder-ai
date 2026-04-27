@@ -58,7 +58,7 @@ export function ChatContainerHeader({
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-[15px] font-bold text-cafe">Clowder AI</span>
+            <span className="text-[15px] font-bold text-cafe hidden sm:inline">Clowder AI</span>
             <ThreadIndicator threadId={threadId} />
           </div>
         </div>

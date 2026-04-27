@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatCatName, useCatData } from '@/hooks/useCatData';
 import { useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '@/utils/api-client';
@@ -49,7 +49,8 @@ export function ThreadCatPill({ threadId }: ThreadCatPillProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
 
   const thread = threads.find((t) => t.id === threadId);
-  const preferredCats: string[] = thread?.preferredCats ?? [];
+  const rawCats = thread?.preferredCats;
+  const preferredCats = useMemo(() => rawCats ?? [], [rawCats]);
 
   // Sync local selection when prop changes or popover closes; clear stale error on reopen
   useEffect(() => {
