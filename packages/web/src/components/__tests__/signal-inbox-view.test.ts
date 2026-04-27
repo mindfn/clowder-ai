@@ -140,9 +140,10 @@ describe('SignalInboxView', () => {
     const sourceOption = sourceSelect.querySelector('option[value="anthropic-news"]');
     expect(sourceOption).not.toBeNull();
 
+    const statusEl = statusSelect;
     await act(async () => {
-      statusSelect!.value = 'read';
-      statusSelect!.dispatchEvent(new Event('change', { bubbles: true }));
+      statusEl.value = 'read';
+      statusEl.dispatchEvent(new Event('change', { bubbles: true }));
       await Promise.resolve();
     });
 

@@ -163,7 +163,13 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
   return (
     <div data-testid="evidence-search" className="space-y-4">
       {/* Search + filters — unified bar matching Signal Inbox layout */}
-      <form onSubmit={(e) => { e.preventDefault(); handleSearch(); }} className="flex flex-wrap items-center gap-2">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          handleSearch();
+        }}
+        className="flex flex-wrap items-center gap-2"
+      >
         <input
           type="text"
           value={query}
@@ -229,10 +235,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
       {/* Results */}
       <div className="space-y-2">
         {results.map((item) => (
-          <div
-            key={item.anchor}
-            className="rounded-xl bg-[var(--console-card-bg)] p-3"
-          >
+          <div key={item.anchor} className="rounded-xl bg-[var(--console-card-bg)] p-3">
             <div className="flex items-center gap-2 min-w-0">
               <span
                 className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${SOURCE_TYPE_COLORS[item.sourceType] ?? SOURCE_TYPE_COLORS.commit}`}
