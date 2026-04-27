@@ -1,6 +1,6 @@
 'use client';
 
-import type { SignalArticle, SignalArticleStatus, SignalTier } from '@cat-cafe/shared';
+import type { SignalArticle, SignalArticleStatus } from '@cat-cafe/shared';
 import { useSearchParams } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useIMEGuard } from '@/hooks/useIMEGuard';
@@ -33,12 +33,6 @@ function uniqueSources(items: readonly SignalArticle[]): readonly string[] {
   return Array.from(new Set(items.map((item) => item.source))).sort();
 }
 
-function toSignalTier(value: string | undefined): SignalTier | undefined {
-  if (!value || value === 'all') return undefined;
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 4) return undefined;
-  return parsed as SignalTier;
-}
 
 export function SignalInboxView({ initialReferrerThread = null }: { initialReferrerThread?: string | null }) {
   const ime = useIMEGuard();
@@ -151,7 +145,6 @@ export function SignalInboxView({ initialReferrerThread = null }: { initialRefer
       }
       const formData = new FormData(event.currentTarget);
       const selectedSource = formData.get('source');
-      const selectedTier = formData.get('tier');
       const statusForSearch = filters.status === 'all' ? undefined : (filters.status as SignalArticleStatus);
 
       setLoading(true);
@@ -160,7 +153,7 @@ export function SignalInboxView({ initialReferrerThread = null }: { initialRefer
           limit: 80,
           status: statusForSearch,
           source: typeof selectedSource === 'string' && selectedSource !== 'all' ? selectedSource : undefined,
-          tier: typeof selectedTier === 'string' ? toSignalTier(selectedTier) : undefined,
+          tier: undefined,
         });
         setItems(result.items);
         setShowServerSearchResults(true);
@@ -252,7 +245,22 @@ export function SignalInboxView({ initialReferrerThread = null }: { initialRefer
               <h1 className="text-2xl font-bold text-cafe">信号</h1>
               <p className="mt-1 text-[13px] text-cafe-secondary">浏览、筛选和研读来自信源的文章</p>
             </div>
-            <SignalNav active="signals" initialReferrerThread={initialReferrerThread} />
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                disabled
+                title="添加信源功能即将上线"
+                className="flex items-center gap-2 rounded-lg bg-[var(--cafe-accent,#C65F3D)] px-3.5 text-[13px] font-semibold text-white opacity-50 cursor-not-allowed"
+                style={{ height: 36 }}
+              >
+                <svg className="h-[15px] w-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+                添加信源
+              </button>
+              <SignalNav active="signals" initialReferrerThread={initialReferrerThread} />
+            </div>
           </header>
 
           <form onSubmit={handleSearchSubmit} className="flex items-center gap-2">

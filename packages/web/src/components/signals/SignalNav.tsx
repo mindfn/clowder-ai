@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { detectRoutePrefix, getThreadHref } from '../ThreadSidebar/thread-navigation';
 
-export type SignalNavItem = 'chat' | 'signals' | 'sources';
+export type SignalNavItem = 'chat' | 'signals' | 'sources' | 'study';
 
 interface SignalNavProps {
   readonly active: SignalNavItem;
@@ -40,8 +40,9 @@ export function SignalNav({ active, initialReferrerThread = null }: SignalNavPro
 
   const items: readonly ItemConfig[] = useMemo(
     () => [
-      { id: 'signals' as const, href: `/signals${fromSuffix}`, label: 'Signals' },
-      { id: 'sources' as const, href: `/signals/sources${fromSuffix}`, label: 'Sources' },
+      { id: 'signals' as const, href: `/signals${fromSuffix}`, label: '收件箱' },
+      { id: 'sources' as const, href: `/signals/sources${fromSuffix}`, label: '信号源' },
+      { id: 'study' as const, href: '', label: '研读队列' },
     ],
     [fromSuffix],
   );
@@ -67,6 +68,19 @@ export function SignalNav({ active, initialReferrerThread = null }: SignalNavPro
       <div className="console-segmented">
         {items.map((item) => {
           const isActive = item.id === active;
+          const isDisabled = !item.href;
+          if (isDisabled) {
+            return (
+              <span
+                key={item.id}
+                data-active="false"
+                className="console-segmented-button text-xs opacity-50 cursor-not-allowed"
+                title="即将上线"
+              >
+                {item.label}
+              </span>
+            );
+          }
           return (
             <Link
               key={item.id}

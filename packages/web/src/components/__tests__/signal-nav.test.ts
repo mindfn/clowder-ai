@@ -33,15 +33,18 @@ describe('SignalNav', () => {
     delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   });
 
-  it('renders chat/signals/sources links and marks active item', async () => {
+  it('renders back link, tab links with Chinese labels, and disabled study tab', async () => {
     await act(async () => {
       root.render(React.createElement(SignalNav, { active: 'signals' }));
     });
 
     const links = Array.from(container.querySelectorAll('a'));
     expect(links.map((link) => link.getAttribute('href'))).toEqual(['/', '/signals', '/signals/sources']);
-    expect(links.map((link) => link.textContent)).toEqual(['返回线程', 'Signals', 'Sources']);
+    expect(links.map((link) => link.textContent)).toEqual(['返回线程', '收件箱', '信号源']);
     expect(links[1]?.getAttribute('aria-current')).toBe('page');
-    expect(links[0]?.getAttribute('aria-current')).toBeNull();
+
+    const disabledTab = container.querySelector('span.console-segmented-button');
+    expect(disabledTab).not.toBeNull();
+    expect(disabledTab?.textContent).toBe('研读队列');
   });
 });

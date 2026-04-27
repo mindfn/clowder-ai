@@ -104,7 +104,22 @@ export function SignalSourcesView({ initialReferrerThread = null }: { initialRef
             <h1 className="text-2xl font-bold text-cafe">信号源</h1>
             <p className="mt-1 text-[13px] text-cafe-secondary">管理抓取来源、优先级和健康状态</p>
           </div>
-          <SignalNav active="sources" initialReferrerThread={initialReferrerThread} />
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              disabled
+              title="添加信源功能即将上线"
+              className="flex items-center gap-2 rounded-lg bg-[var(--cafe-accent,#C65F3D)] px-3.5 text-[13px] font-semibold text-white opacity-50 cursor-not-allowed"
+              style={{ height: 36 }}
+            >
+              <svg className="h-[15px] w-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              添加信源
+            </button>
+            <SignalNav active="sources" initialReferrerThread={initialReferrerThread} />
+          </div>
         </header>
 
         <div className="flex gap-3.5">
