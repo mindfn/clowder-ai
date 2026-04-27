@@ -190,7 +190,9 @@ export function McpConfigModal({ projectPath, editId, editData, onSaved, onClose
                 <FormItem label="已配置环境变量">
                   <div className="flex flex-wrap gap-1.5">
                     {editData.envKeys.map((k) => (
-                      <span key={k} className="console-pill px-2 py-0.5 text-xs">{k}</span>
+                      <span key={k} className="console-pill px-2 py-0.5 text-xs">
+                        {k}
+                      </span>
                     ))}
                   </div>
                 </FormItem>

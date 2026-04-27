@@ -12,7 +12,7 @@ interface AppShellProps {
   children: React.ReactNode;
 }
 
-const SIDEBAR_HIDDEN_ROUTES = ['/settings', '/signals', '/memory'];
+const SIDEBAR_HIDDEN_ROUTES = ['/settings', '/signals', '/memory', '/mission'];
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname() ?? '/';

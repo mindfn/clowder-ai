@@ -155,17 +155,14 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   // F063: resizable split pane — chatBasis as percentage (20-80), persisted
   const [chatBasis, setChatBasis, resetChatBasis] = usePersistedState('cat-cafe:chatBasis', 50);
   // clowder-ai#28: right status panel width in px, persisted
-  const STATUS_PANEL_DEFAULT = 288; // w-72
+  const STATUS_PANEL_DEFAULT = 304;
   const [statusPanelWidth, setStatusPanelWidth, resetStatusPanelWidth] = usePersistedState(
     'cat-cafe:statusPanelWidth',
     STATUS_PANEL_DEFAULT,
   );
   // F063 Gap 6: sidebar width in px, persisted
   const SIDEBAR_DEFAULT = 240;
-  const [sidebarWidth, setSidebarWidth, resetSidebarWidth] = usePersistedState(
-    'cat-cafe:sidebarWidth',
-    SIDEBAR_DEFAULT,
-  );
+  const [sidebarWidth] = usePersistedState('cat-cafe:sidebarWidth', SIDEBAR_DEFAULT);
   const containerRef = useRef<HTMLDivElement>(null);
   const handleHorizontalResize = useCallback(
     (delta: number) => {
@@ -176,12 +173,6 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
       setChatBasis((prev) => Math.min(80, Math.max(20, prev + pct)));
     },
     [setChatBasis],
-  );
-  const handleSidebarResize = useCallback(
-    (delta: number) => {
-      setSidebarWidth((prev) => Math.min(480, Math.max(180, prev + delta)));
-    },
-    [setSidebarWidth],
   );
   // clowder-ai#28: drag-to-resize for right status panel (negative delta = panel wider)
   const handleStatusPanelResize = useCallback(

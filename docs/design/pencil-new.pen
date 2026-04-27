@@ -6368,7 +6368,7 @@
                               "fill": "$cafe-text-secondary",
                               "textGrowth": "fixed-width",
                               "width": "fill_container",
-                              "content": "管理猫猫团队、排序和默认猫选择",
+                              "content": "成员信息使用独立卡片；点击卡片预览，编辑入口打开弹窗；不使用连体列表分隔线",
                               "fontFamily": "Inter",
                               "fontSize": 13,
                               "fontWeight": "normal"
@@ -6528,40 +6528,45 @@
                     {
                       "type": "frame",
                       "id": "f170r0332_Roster",
-                      "name": "Roster",
+                      "name": "One-column Card List Members — independent preview/edit cards",
                       "width": "fill_container",
-                      "fill": "$console-card-bg",
-                      "cornerRadius": 16,
+                      "fill": "#00000000",
                       "effect": {
                         "type": "shadow",
                         "shadowType": "outer",
-                        "color": "#2B211A0A",
-                        "offset": {
-                          "x": 0,
-                          "y": 8
-                        },
-                        "blur": 22
+                        "enabled": false,
+                        "color": "#000000"
                       },
                       "layout": "vertical",
-                      "gap": 8,
-                      "padding": 8,
+                      "gap": 14,
                       "children": [
                         {
                           "type": "frame",
                           "id": "f170r0319_ConfigOpus",
-                          "name": "Config 布偶猫 Opus",
+                          "name": "Member Card Opus — click preview, edit opens modal",
                           "width": "fill_container",
+                          "height": 96,
+                          "fill": "#FFFDFB",
+                          "cornerRadius": 16,
                           "stroke": {
                             "align": "inside",
-                            "thickness": {
-                              "bottom": 1
-                            },
+                            "thickness": 1,
                             "fill": "#00000000"
                           },
-                          "gap": 12,
+                          "effect": {
+                            "type": "shadow",
+                            "shadowType": "outer",
+                            "color": "#2B211A0D",
+                            "offset": {
+                              "x": 0,
+                              "y": 8
+                            },
+                            "blur": 24
+                          },
+                          "gap": 16,
                           "padding": [
-                            14,
-                            16
+                            18,
+                            20
                           ],
                           "alignItems": "center",
                           "children": [
@@ -6569,7 +6574,7 @@
                               "type": "frame",
                               "id": "f170r0318_ConfigLabel",
                               "name": "Config Label",
-                              "width": "fill_container",
+                              "width": 560,
                               "layout": "vertical",
                               "gap": 4,
                               "children": [
@@ -6601,12 +6606,15 @@
                               "type": "frame",
                               "id": "f170r0315_Pill",
                               "name": "Pill 可用",
+                              "width": 46,
+                              "height": 24,
                               "fill": "#DFF4E7",
                               "cornerRadius": 6,
                               "padding": [
                                 3,
                                 8
                               ],
+                              "justifyContent": "center",
                               "alignItems": "center",
                               "children": [
                                 {
@@ -6620,25 +6628,49 @@
                                   "fontWeight": "600"
                                 }
                               ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "giv0f",
+                              "name": "ma1",
+                              "fill": "#6F3A2C",
+                              "textGrowth": "fixed-width",
+                              "width": 112,
+                              "content": "预览 / 编辑 →",
+                              "textAlign": "right",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "700"
                             }
                           ]
                         },
                         {
                           "type": "frame",
                           "id": "f170r0325_ConfigCodex",
-                          "name": "Config 砚砚 Codex",
+                          "name": "Member Card Codex — click preview, edit opens modal",
                           "width": "fill_container",
+                          "height": 96,
+                          "fill": "#FFFDFB",
+                          "cornerRadius": 16,
                           "stroke": {
                             "align": "inside",
-                            "thickness": {
-                              "bottom": 1
-                            },
+                            "thickness": 1,
                             "fill": "#00000000"
                           },
-                          "gap": 12,
+                          "effect": {
+                            "type": "shadow",
+                            "shadowType": "outer",
+                            "color": "#2B211A0D",
+                            "offset": {
+                              "x": 0,
+                              "y": 8
+                            },
+                            "blur": 24
+                          },
+                          "gap": 16,
                           "padding": [
-                            14,
-                            16
+                            18,
+                            20
                           ],
                           "alignItems": "center",
                           "children": [
@@ -6646,7 +6678,7 @@
                               "type": "frame",
                               "id": "f170r0324_ConfigLabel",
                               "name": "Config Label",
-                              "width": "fill_container",
+                              "width": 560,
                               "layout": "vertical",
                               "gap": 4,
                               "children": [
@@ -6678,12 +6710,15 @@
                               "type": "frame",
                               "id": "f170r0321_Pill",
                               "name": "Pill 审查中",
+                              "width": 56,
+                              "height": 24,
                               "fill": "#F3E1D6",
                               "cornerRadius": 6,
                               "padding": [
                                 3,
                                 8
                               ],
+                              "justifyContent": "center",
                               "alignItems": "center",
                               "children": [
                                 {
@@ -6697,18 +6732,49 @@
                                   "fontWeight": "600"
                                 }
                               ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "Ma5Fo",
+                              "name": "ma2",
+                              "fill": "#6F3A2C",
+                              "textGrowth": "fixed-width",
+                              "width": 112,
+                              "content": "预览 / 编辑 →",
+                              "textAlign": "right",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "700"
                             }
                           ]
                         },
                         {
                           "type": "frame",
                           "id": "f170r0331_ConfigGemini",
-                          "name": "Config Gemini",
+                          "name": "Member Card Gemini — click preview, edit opens modal",
                           "width": "fill_container",
-                          "gap": 12,
+                          "height": 96,
+                          "fill": "#FFFDFB",
+                          "cornerRadius": 16,
+                          "stroke": {
+                            "align": "inside",
+                            "thickness": 1,
+                            "fill": "#00000000"
+                          },
+                          "effect": {
+                            "type": "shadow",
+                            "shadowType": "outer",
+                            "color": "#2B211A0D",
+                            "offset": {
+                              "x": 0,
+                              "y": 8
+                            },
+                            "blur": 24
+                          },
+                          "gap": 16,
                           "padding": [
-                            14,
-                            16
+                            18,
+                            20
                           ],
                           "alignItems": "center",
                           "children": [
@@ -6716,7 +6782,7 @@
                               "type": "frame",
                               "id": "f170r0330_ConfigLabel",
                               "name": "Config Label",
-                              "width": "fill_container",
+                              "width": 560,
                               "layout": "vertical",
                               "gap": 4,
                               "children": [
@@ -6748,12 +6814,15 @@
                               "type": "frame",
                               "id": "f170r0327_Pill",
                               "name": "Pill 待机",
+                              "width": 46,
+                              "height": 24,
                               "fill": "#FFF1CC",
                               "cornerRadius": 6,
                               "padding": [
                                 3,
                                 8
                               ],
+                              "justifyContent": "center",
                               "alignItems": "center",
                               "children": [
                                 {
@@ -6767,6 +6836,19 @@
                                   "fontWeight": "600"
                                 }
                               ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "k0Vno",
+                              "name": "ma3",
+                              "fill": "#6F3A2C",
+                              "textGrowth": "fixed-width",
+                              "width": 112,
+                              "content": "预览 / 编辑 →",
+                              "textAlign": "right",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "700"
                             }
                           ]
                         }
@@ -7469,7 +7551,7 @@
                               "fill": "$cafe-text-secondary",
                               "textGrowth": "fixed-width",
                               "width": "fill_container",
-                              "content": "管理 API key、账号注册表和实际存储路径",
+                              "content": "账户、密钥和路径使用独立卡片；点击卡片预览，编辑入口打开弹窗",
                               "fontFamily": "Inter",
                               "fontSize": 13,
                               "fontWeight": "normal"
@@ -7481,40 +7563,45 @@
                     {
                       "type": "frame",
                       "id": "f170r0618_CredentialGroups",
-                      "name": "Credential Groups",
+                      "name": "One-column Card List Account/Auth — independent preview/edit cards",
                       "width": "fill_container",
-                      "fill": "$console-card-bg",
-                      "cornerRadius": 16,
+                      "fill": "#00000000",
                       "effect": {
                         "type": "shadow",
                         "shadowType": "outer",
-                        "color": "#2B211A0A",
-                        "offset": {
-                          "x": 0,
-                          "y": 8
-                        },
-                        "blur": 22
+                        "enabled": false,
+                        "color": "#000000"
                       },
                       "layout": "vertical",
-                      "gap": 8,
-                      "padding": 8,
+                      "gap": 14,
                       "children": [
                         {
                           "type": "frame",
                           "id": "f170r0605_ConfigOpenAIAPIKey",
-                          "name": "Config OpenAI API Key",
+                          "name": "Account Auth Card OpenAI API Key — click preview, edit opens modal",
                           "width": "fill_container",
+                          "height": 96,
+                          "fill": "#FFFDFB",
+                          "cornerRadius": 16,
                           "stroke": {
                             "align": "inside",
-                            "thickness": {
-                              "bottom": 1
-                            },
+                            "thickness": 1,
                             "fill": "#00000000"
                           },
-                          "gap": 12,
+                          "effect": {
+                            "type": "shadow",
+                            "shadowType": "outer",
+                            "color": "#2B211A0D",
+                            "offset": {
+                              "x": 0,
+                              "y": 8
+                            },
+                            "blur": 24
+                          },
+                          "gap": 16,
                           "padding": [
-                            14,
-                            16
+                            18,
+                            20
                           ],
                           "alignItems": "center",
                           "children": [
@@ -7522,7 +7609,7 @@
                               "type": "frame",
                               "id": "f170r0604_ConfigLabel",
                               "name": "Config Label",
-                              "width": "fill_container",
+                              "width": 560,
                               "layout": "vertical",
                               "gap": 4,
                               "children": [
@@ -7554,12 +7641,15 @@
                               "type": "frame",
                               "id": "f170r0601_Pill",
                               "name": "Pill 已配置",
+                              "width": 58,
+                              "height": 24,
                               "fill": "#DFF4E7",
                               "cornerRadius": 6,
                               "padding": [
                                 3,
                                 8
                               ],
+                              "justifyContent": "center",
                               "alignItems": "center",
                               "children": [
                                 {
@@ -7573,25 +7663,49 @@
                                   "fontWeight": "600"
                                 }
                               ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "1JklP",
+                              "name": "aa1",
+                              "fill": "#6F3A2C",
+                              "textGrowth": "fixed-width",
+                              "width": 112,
+                              "content": "预览 / 编辑 →",
+                              "textAlign": "right",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "700"
                             }
                           ]
                         },
                         {
                           "type": "frame",
                           "id": "f170r0611_ConfigAnthropicOAu",
-                          "name": "Config Anthropic OAuth",
+                          "name": "Account Auth Card Anthropic OAuth — click preview, edit opens modal",
                           "width": "fill_container",
+                          "height": 96,
+                          "fill": "#FFFDFB",
+                          "cornerRadius": 16,
                           "stroke": {
                             "align": "inside",
-                            "thickness": {
-                              "bottom": 1
-                            },
+                            "thickness": 1,
                             "fill": "#00000000"
                           },
-                          "gap": 12,
+                          "effect": {
+                            "type": "shadow",
+                            "shadowType": "outer",
+                            "color": "#2B211A0D",
+                            "offset": {
+                              "x": 0,
+                              "y": 8
+                            },
+                            "blur": 24
+                          },
+                          "gap": 16,
                           "padding": [
-                            14,
-                            16
+                            18,
+                            20
                           ],
                           "alignItems": "center",
                           "children": [
@@ -7599,7 +7713,7 @@
                               "type": "frame",
                               "id": "f170r0610_ConfigLabel",
                               "name": "Config Label",
-                              "width": "fill_container",
+                              "width": 560,
                               "layout": "vertical",
                               "gap": 4,
                               "children": [
@@ -7631,12 +7745,15 @@
                               "type": "frame",
                               "id": "f170r0607_Pill",
                               "name": "Pill 已连接",
+                              "width": 58,
+                              "height": 24,
                               "fill": "#DFF4E7",
                               "cornerRadius": 6,
                               "padding": [
                                 3,
                                 8
                               ],
+                              "justifyContent": "center",
                               "alignItems": "center",
                               "children": [
                                 {
@@ -7650,18 +7767,49 @@
                                   "fontWeight": "600"
                                 }
                               ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "qIuIv",
+                              "name": "aa2",
+                              "fill": "#6F3A2C",
+                              "textGrowth": "fixed-width",
+                              "width": 112,
+                              "content": "预览 / 编辑 →",
+                              "textAlign": "right",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "700"
                             }
                           ]
                         },
                         {
                           "type": "frame",
                           "id": "f170r0617_Config",
-                          "name": "Config 全局配置路径",
+                          "name": "Account Auth Card Global Config Path — readonly preview card",
                           "width": "fill_container",
-                          "gap": 12,
+                          "height": 96,
+                          "fill": "#FFFDFB",
+                          "cornerRadius": 16,
+                          "stroke": {
+                            "align": "inside",
+                            "thickness": 1,
+                            "fill": "#00000000"
+                          },
+                          "effect": {
+                            "type": "shadow",
+                            "shadowType": "outer",
+                            "color": "#2B211A0D",
+                            "offset": {
+                              "x": 0,
+                              "y": 8
+                            },
+                            "blur": 24
+                          },
+                          "gap": 16,
                           "padding": [
-                            14,
-                            16
+                            18,
+                            20
                           ],
                           "alignItems": "center",
                           "children": [
@@ -7669,7 +7817,7 @@
                               "type": "frame",
                               "id": "f170r0616_ConfigLabel",
                               "name": "Config Label",
-                              "width": "fill_container",
+                              "width": 560,
                               "layout": "vertical",
                               "gap": 4,
                               "children": [
@@ -7701,12 +7849,15 @@
                               "type": "frame",
                               "id": "f170r0613_Pill",
                               "name": "Pill 只读",
+                              "width": 46,
+                              "height": 24,
                               "fill": "$console-pill-bg",
                               "cornerRadius": 6,
                               "padding": [
                                 3,
                                 8
                               ],
+                              "justifyContent": "center",
                               "alignItems": "center",
                               "children": [
                                 {
@@ -7720,6 +7871,19 @@
                                   "fontWeight": "600"
                                 }
                               ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "o9PbX",
+                              "name": "aa3",
+                              "fill": "#746B64",
+                              "textGrowth": "fixed-width",
+                              "width": 112,
+                              "content": "预览 →",
+                              "textAlign": "right",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "700"
                             }
                           ]
                         }
@@ -10256,7 +10420,7 @@
                               "fill": "$cafe-text-secondary",
                               "textGrowth": "fixed-width",
                               "width": "fill_container",
-                              "content": "安装、启用和编辑 Skill 都通过纵向卡片进入弹窗完成。",
+                              "content": "Skill 使用独立纵向卡片；点击卡片预览，编辑入口打开配置弹窗。",
                               "lineHeight": 1.25,
                               "fontFamily": "Inter",
                               "fontSize": 13,
@@ -10443,7 +10607,7 @@
                                   "id": "f170v2_9101_text",
                                   "name": "text",
                                   "fill": "$cafe-interactive",
-                                  "content": "编辑 →",
+                                  "content": "预览 / 编辑 →",
                                   "fontFamily": "Inter",
                                   "fontSize": 12,
                                   "fontWeight": "700"
@@ -10593,7 +10757,7 @@
                                   "id": "f170v2_9112_text",
                                   "name": "text",
                                   "fill": "$cafe-interactive",
-                                  "content": "安装并配置 →",
+                                  "content": "预览 / 编辑 →",
                                   "fontFamily": "Inter",
                                   "fontSize": 12,
                                   "fontWeight": "700"
@@ -10743,7 +10907,7 @@
                                   "id": "f170v2_9123_text",
                                   "name": "text",
                                   "fill": "$cafe-interactive",
-                                  "content": "编辑 →",
+                                  "content": "预览 / 编辑 →",
                                   "fontFamily": "Inter",
                                   "fontSize": 12,
                                   "fontWeight": "700"
@@ -11938,7 +12102,7 @@
                               "fill": "$cafe-text-secondary",
                               "textGrowth": "fixed-width",
                               "width": "fill_container",
-                              "content": "MCP 服务一行一个卡片；点击进入配置弹窗，env、命令和外部依赖在弹窗内安装/编辑。",
+                              "content": "MCP 服务一行一个独立卡片；点击卡片预览，编辑入口打开配置弹窗。",
                               "lineHeight": 1.25,
                               "fontFamily": "Inter",
                               "fontSize": 13,
@@ -12125,7 +12289,7 @@
                                   "id": "f170v2_9177_text",
                                   "name": "text",
                                   "fill": "$cafe-interactive",
-                                  "content": "编辑 →",
+                                  "content": "预览 / 编辑 →",
                                   "fontFamily": "Inter",
                                   "fontSize": 12,
                                   "fontWeight": "700"
@@ -12275,7 +12439,7 @@
                                   "id": "f170v2_9188_text",
                                   "name": "text",
                                   "fill": "$cafe-interactive",
-                                  "content": "安装并配置 →",
+                                  "content": "预览 / 编辑 →",
                                   "fontFamily": "Inter",
                                   "fontSize": 12,
                                   "fontWeight": "700"
@@ -12425,7 +12589,7 @@
                                   "id": "f170v2_9199_text",
                                   "name": "text",
                                   "fill": "$cafe-interactive",
-                                  "content": "编辑 →",
+                                  "content": "预览 / 编辑 →",
                                   "fontFamily": "Inter",
                                   "fontSize": 12,
                                   "fontWeight": "700"
@@ -13756,7 +13920,7 @@
                               "fill": "$cafe-text-secondary",
                               "textGrowth": "fixed-width",
                               "width": "fill_container",
-                              "content": "插件市场、已安装插件和连接器配置统一为纵向卡片，编辑入口进入同款弹窗。",
+                              "content": "插件市场、已安装插件和连接器配置统一为独立卡片；点击卡片预览，编辑入口打开弹窗。",
                               "lineHeight": 1.25,
                               "fontFamily": "Inter",
                               "fontSize": 13,
@@ -13943,7 +14107,7 @@
                                   "id": "f170v2_9253_text",
                                   "name": "text",
                                   "fill": "$cafe-interactive",
-                                  "content": "编辑 →",
+                                  "content": "预览 / 编辑 →",
                                   "fontFamily": "Inter",
                                   "fontSize": 12,
                                   "fontWeight": "700"
@@ -14093,7 +14257,7 @@
                                   "id": "f170v2_9264_text",
                                   "name": "text",
                                   "fill": "$cafe-interactive",
-                                  "content": "安装并配置 →",
+                                  "content": "预览 / 编辑 →",
                                   "fontFamily": "Inter",
                                   "fontSize": 12,
                                   "fontWeight": "700"
@@ -14243,7 +14407,7 @@
                                   "id": "f170v2_9275_text",
                                   "name": "text",
                                   "fill": "$cafe-interactive",
-                                  "content": "编辑 →",
+                                  "content": "预览 / 编辑 →",
                                   "fontFamily": "Inter",
                                   "fontSize": 12,
                                   "fontWeight": "700"

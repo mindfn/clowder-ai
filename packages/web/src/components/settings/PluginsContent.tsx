@@ -129,11 +129,14 @@ export function PluginsContent() {
   if (loading) return <p className="text-sm text-cafe-muted">加载中...</p>;
 
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col gap-3.5">
       {plugins.map((plugin) => {
         const badge = STATUS_BADGE[plugin.status];
         return (
-          <article key={plugin.id} className="flex items-center gap-3 rounded-xl bg-[var(--console-card-bg)] px-4 py-4">
+          <article
+            key={plugin.id}
+            className="flex h-24 items-center gap-4 rounded-2xl bg-[var(--console-card-bg)] px-5 py-[18px] shadow-[0_8px_24px_rgba(43,33,26,0.05)]"
+          >
             <div
               className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[10px]"
               style={{ backgroundColor: plugin.iconBg }}

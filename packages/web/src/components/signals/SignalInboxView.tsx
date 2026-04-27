@@ -276,8 +276,8 @@ export function SignalInboxView() {
   }, []);
 
   return (
-    <div className="h-full overflow-y-auto">
-      <main className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6">
+    <div className="h-full bg-[var(--console-panel-bg)] overflow-y-auto">
+      <main className="mx-auto flex w-full max-w-7xl flex-col gap-4 rounded-2xl bg-[var(--console-card-bg)] shadow-[var(--console-shadow-soft)] m-3 mt-2 px-5 py-5 sm:px-6">
         <header className="flex items-center justify-between">
           <h1 className="text-xl font-bold text-cafe">Signal Inbox</h1>
           <SignalNav active="signals" />

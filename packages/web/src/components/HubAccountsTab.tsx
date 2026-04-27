@@ -138,29 +138,29 @@ export function HubAccountsTab() {
     );
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {error && <p className="text-sm text-conn-red-text bg-conn-red-bg rounded-lg px-3 py-2">{error}</p>}
 
-      <div className="flex items-start justify-between gap-3 px-1">
-        <div>
-          <p className="text-[13px] font-semibold text-[#E29578]">系统配置 &gt; 账号配置</p>
-          <p className="mt-1 text-[13px] leading-6 text-[#8A776B]">
-            每个账号可添加或删除模型。账号配置全局共享，所有项目通用。
-          </p>
-        </div>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">Account / Auth</p>
         <button
           type="button"
           onClick={() => {
             setEditTarget(undefined);
             setShowAuthModal(true);
           }}
-          className="shrink-0 rounded-full bg-[#D49266] px-4 py-1.5 text-xs font-semibold text-white hover:bg-[#c47f52] transition"
+          className="flex items-center gap-2 rounded-lg bg-[var(--cafe-accent)] px-3.5 py-2 text-[13px] font-semibold text-[var(--cafe-accent-foreground)] transition-colors hover:opacity-80"
         >
           + 新增账户认证
         </button>
       </div>
 
-      <div role="group" aria-label="Account List" className="space-y-4" data-guide-id="accounts.account-list">
+      <div
+        role="group"
+        aria-label="Account List"
+        className="flex flex-col gap-3.5"
+        data-guide-id="accounts.account-list"
+      >
         {displayCards.map((account) => (
           <HubAccountItem
             key={account.id}
@@ -172,11 +172,6 @@ export function HubAccountsTab() {
           />
         ))}
       </div>
-
-      <p className="text-[13px] text-[#B59A88]">点击卡片进入编辑 →</p>
-      <p className="text-xs leading-5 text-[#B59A88]">
-        secrets 存储在启动目录下 `.cat-cafe/credentials.json`，Git 忽略。
-      </p>
 
       <UnifiedAuthModal
         key={editTarget?.id ?? 'create'}

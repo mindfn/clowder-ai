@@ -60,7 +60,7 @@ export function ExportButton({ threadId }: { threadId: string }) {
       <button
         onClick={() => setMenuOpen((v) => !v)}
         disabled={loading}
-        className="p-1 rounded-lg hover:bg-[var(--console-hover-bg)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--console-pill-bg)] transition-colors hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
         title="导出对话"
         aria-label="导出对话"
       >
@@ -68,7 +68,7 @@ export function ExportButton({ threadId }: { threadId: string }) {
           <svg
             viewBox="0 0 24 24"
             fill="none"
-            className="w-5 h-5 animate-spin text-cafe-secondary"
+            className="w-4 h-4 animate-spin text-cafe-secondary"
             stroke="currentColor"
             strokeWidth="2"
           >
@@ -76,7 +76,7 @@ export function ExportButton({ threadId }: { threadId: string }) {
             <path d="M12 2a10 10 0 019.8 8" />
           </svg>
         ) : (
-          <DownloadIcon className="w-5 h-5 text-cafe-secondary" />
+          <DownloadIcon className="w-4 h-4 text-cafe-secondary" />
         )}
       </button>
 

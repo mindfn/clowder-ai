@@ -122,9 +122,6 @@ export function ExtensionIcon({ className }: { className?: string }) {
 // ────────── Section ──────────
 
 export function CapabilitySection({
-  icon,
-  title,
-  subtitle,
   items,
   catFamilies,
   toggling,
@@ -133,9 +130,9 @@ export function CapabilitySection({
   deletingMcp,
   onEditMcp,
 }: {
-  icon: ReactNode;
-  title: string;
-  subtitle: string;
+  icon?: ReactNode;
+  title?: string;
+  subtitle?: string;
   items: CapabilityBoardItem[];
   catFamilies: CatFamily[];
   toggling: string | null;
@@ -146,20 +143,8 @@ export function CapabilitySection({
 }) {
   if (items.length === 0) return null;
   return (
-    <section className="console-section-shell rounded-xl p-5 md:p-6">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          {icon}
-          <div>
-            <h3 className="text-[15px] font-semibold tracking-[0.01em] text-cafe">{title}</h3>
-            <p className="mt-0.5 text-xs font-medium text-cafe-muted">{subtitle}</p>
-          </div>
-        </div>
-        <span className="console-pill inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold text-cafe-secondary">
-          {items.length} items
-        </span>
-      </div>
-      <div className="space-y-2.5">
+    <section>
+      <div className="flex flex-col gap-3.5">
         {items.map((item) => (
           <CapabilityCard
             key={`${item.type}:${item.id}`}
@@ -205,45 +190,30 @@ function CapabilityCard({
     catFamilies.length > 0;
 
   return (
-    <div className="console-list-card rounded-xl" data-active={expanded ? 'true' : 'false'}>
+    <div
+      className={`rounded-2xl bg-[var(--console-card-bg)] shadow-[0_8px_24px_rgba(43,33,26,0.05)] transition ${expanded ? '' : 'cursor-pointer hover:shadow-[0_8px_24px_rgba(43,33,26,0.09)]'}`}
+      data-active={expanded ? 'true' : 'false'}
+    >
       {/* Header */}
-      <div className={`flex items-center gap-3 px-4 transition-all duration-300 ${expanded ? 'py-4' : 'py-3.5'}`}>
-        <button
-          type="button"
-          onClick={() => hasDetails && setExpanded((v) => !v)}
-          className={`flex-1 min-w-0 flex items-center gap-3 text-left ${hasDetails ? 'cursor-pointer group' : 'cursor-default'}`}
-        >
-          {hasDetails && (
-            <div className="console-pill shrink-0 flex h-8 w-8 items-center justify-center rounded-full text-cafe-secondary transition-colors group-hover:text-cafe">
-              <svg
-                className={`h-3.5 w-3.5 transition-transform duration-300 ${expanded ? 'rotate-90' : ''}`}
-                viewBox="0 0 20 20"
-                fill="currentColor"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
-                  clipRule="evenodd"
-                />
-              </svg>
-            </div>
-          )}
-          {!hasDetails && <span className="w-6 shrink-0" />}
-
-          <div className="flex-1 min-w-0 py-0.5">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="truncate text-sm font-semibold text-cafe">{item.id}</span>
-              <TypeBadge type={item.type} />
-              {item.connectionStatus && <StatusDot status={item.connectionStatus} />}
-            </div>
-            {item.description && (
-              <p className="mt-1 truncate pr-4 text-xs font-medium text-cafe-muted">{item.description}</p>
-            )}
+      <div
+        className={`flex items-center gap-4 px-5 ${expanded ? 'py-4' : 'h-24 py-[18px]'} transition-all duration-300`}
+        onClick={() => !expanded && hasDetails && setExpanded(true)}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="truncate text-[13px] font-bold text-cafe">{item.id}</span>
+            <TypeBadge type={item.type} />
+            {item.connectionStatus && <StatusDot status={item.connectionStatus} />}
           </div>
-        </button>
+          {item.description && <p className="mt-1 truncate text-[12px] text-cafe-secondary">{item.description}</p>}
+        </div>
+
+        {!expanded && hasDetails && (
+          <span className="shrink-0 text-[12px] font-bold text-[#6F3A2C]">预览 / 编辑 →</span>
+        )}
 
         {/* Global toggle + edit + delete */}
-        <div className="flex shrink-0 items-center gap-1.5 pl-2">
+        <div className="flex shrink-0 items-center gap-1.5">
           {onEdit && (
             <button
               type="button"

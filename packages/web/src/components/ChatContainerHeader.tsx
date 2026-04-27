@@ -1,8 +1,5 @@
-import { useVoiceServicesAvailable } from '@/hooks/useVoiceServicesAvailable';
 import { useChatStore } from '@/stores/chatStore';
 import { ExportButton } from './ExportButton';
-import { ThemeToggle } from './ThemeToggle';
-import { ThreadCatPill } from './ThreadCatPill';
 import { VoiceCompanionButton } from './VoiceCompanionButton';
 
 interface ChatContainerHeaderProps {
@@ -34,8 +31,6 @@ export function ChatContainerHeader({
   onToggleStatusPanel,
   defaultCatId,
 }: ChatContainerHeaderProps) {
-  const voiceAvailable = useVoiceServicesAvailable();
-
   return (
     <header className="safe-area-top border-b border-[var(--console-border-soft)]">
       <div className="h-11 px-4 flex items-center gap-3">
@@ -62,11 +57,8 @@ export function ChatContainerHeader({
             <ThreadIndicator threadId={threadId} />
           </div>
         </div>
-        <div className="hidden lg:block flex-shrink-0">
-          <ThreadCatPill threadId={threadId} />
-        </div>
         <ExportButton threadId={threadId} />
-        {voiceAvailable && <VoiceCompanionButton threadId={threadId} defaultCatId={defaultCatId} />}
+        <VoiceCompanionButton threadId={threadId} defaultCatId={defaultCatId} />
         {authPendingCount > 0 && (
           <span
             className="inline-flex items-center justify-center h-5 min-w-[20px] px-1 rounded-full bg-conn-amber-bg text-conn-amber-text text-[10px] font-bold animate-pulse-subtle"
@@ -75,8 +67,6 @@ export function ChatContainerHeader({
             🔐 {authPendingCount}
           </span>
         )}
-        {/* F056 Phase D: Theme toggle */}
-        <ThemeToggle />
         {/* Mobile/tablet: status sheet trigger */}
         <button
           onClick={onOpenMobileStatus}

@@ -1,26 +1,26 @@
 :root {
-  --cat-cream-white: #fdf8f3;
+  --cat-cream-white: #fcfaf7;
   --cat-soft-blue: #81d4fa;
   --cat-warm-brown: #8d6e63;
-  --cat-paw-pink: #ffab91;
-  --cat-deep-ink: #1e1e24;
-  --cat-muted-stone: #666666;
-  --cat-light-sand: #f5ede3;
-  --cat-border-tan: #e0d5c7;
+  --cat-paw-pink: #c96442;
+  --cat-deep-ink: #241f1b;
+  --cat-muted-stone: #746b64;
+  --cat-light-sand: #f2e9e0;
+  --cat-border-tan: #e2d5ca;
 
   --cafe-surface: var(--cat-cream-white);
   --cafe-surface-elevated: var(--cat-light-sand);
-  --cafe-surface-sunken: #f0e8dd;
+  --cafe-surface-sunken: #eee4da;
   --cafe-text: var(--cat-deep-ink);
   --cafe-text-secondary: var(--cat-muted-stone);
-  --cafe-text-muted: #888888;
+  --cafe-text-muted: #9a918a;
   --cafe-border: var(--cat-border-tan);
-  --cafe-border-subtle: #ebe3d9;
+  --cafe-border-subtle: #ede6de;
   --cafe-accent: var(--cat-paw-pink);
-  --cafe-accent-hover: #ff9a7a;
-  --cafe-accent-foreground: #2b251f;
+  --cafe-accent-hover: #b55838;
+  --cafe-accent-foreground: #fffdfb;
   --cafe-crosspost: var(--cat-soft-blue);
-  --cafe-interactive: #85655a;
+  --cafe-interactive: #6f6259;
 
   --color-base-white: var(--cat-cream-white);
   --color-base-black: var(--cat-deep-ink);

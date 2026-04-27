@@ -165,7 +165,6 @@ export function CatOverviewTab({
   return (
     <div className="space-y-5">
       <HubOverviewToolbar onAddMember={onAddMember} />
-      {/* F154 Phase B: Global default cat selector (AC-B2: always visible, even on error) */}
       <DefaultCatSelector
         cats={cats.filter((c) => c.roster?.available !== false)}
         currentDefaultCatId={defaultCatId ?? ''}
@@ -175,13 +174,13 @@ export function CatOverviewTab({
         saveError={defaultCatSaveError}
         onRetry={fetchDefaultCat}
       />
-      {config.coCreator ? <HubCoCreatorOverviewCard coCreator={config.coCreator} onEdit={onEditCoCreator} /> : null}
       {dragError ? (
         <p className="text-[13px]" role="alert" style={{ color: 'var(--notice-error-label)' }}>
           {dragError}
         </p>
       ) : null}
-      <div className="space-y-3">
+      <div className="flex flex-col gap-3.5">
+        {config.coCreator ? <HubCoCreatorOverviewCard coCreator={config.coCreator} onEdit={onEditCoCreator} /> : null}
         {displayCats.map((catData, idx) => (
           <HubMemberOverviewCard
             key={catData.id}
@@ -201,7 +200,6 @@ export function CatOverviewTab({
           />
         ))}
       </div>
-      <p className="px-2 text-[13px] text-cafe-muted">按住 ⠿ 拖动卡片可自由排序；点击卡片进入成员配置 →</p>
       {cats.length === 0 && <p className="text-sm text-cafe-muted">未找到成员配置数据</p>}
     </div>
   );

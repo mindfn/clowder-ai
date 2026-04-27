@@ -19,11 +19,17 @@ function NavItem({ section, active, onSelect }: { section: SettingsSection; acti
       className={`flex w-full items-center gap-2 rounded-lg px-2.5 h-9 text-left transition-colors ${active ? 'bg-[var(--console-active-bg)] font-medium' : 'hover:bg-[var(--console-hover-bg)]'}`}
       style={
         active
-          ? ({ ['--console-active-bg' as string]: `color-mix(in srgb, ${section.color} 10%, var(--console-card-bg) 90%)`, color: section.color } as CSSProperties)
+          ? ({
+              ['--console-active-bg' as string]: `color-mix(in srgb, ${section.color} 10%, var(--console-card-bg) 90%)`,
+              color: section.color,
+            } as CSSProperties)
           : undefined
       }
     >
-      <span className="flex-shrink-0" style={active ? { color: section.color } : { color: 'var(--cafe-text-secondary)' }}>
+      <span
+        className="flex-shrink-0"
+        style={active ? { color: section.color } : { color: 'var(--cafe-text-secondary)' }}
+      >
         <HubIcon name={section.icon} className="h-4 w-4" />
       </span>
       <span className={`text-[13px] truncate ${active ? 'font-medium' : 'text-cafe-secondary'}`}>{section.label}</span>

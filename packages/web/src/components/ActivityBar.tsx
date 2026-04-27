@@ -1,57 +1,41 @@
 'use client';
 
-import { usePathname, useSearchParams } from 'next/navigation';
-import type { CSSProperties } from 'react';
+import { usePathname } from 'next/navigation';
 import { MemoryIcon } from './icons/MemoryIcon';
-import {
-  assignDocumentRoute,
-  CLASSIC_WORLD_PREFIX,
-  getThreadIdFromPathname,
-  getWorldSwitchHref,
-} from './ThreadSidebar/thread-navigation';
+import { assignDocumentRoute, CLASSIC_WORLD_PREFIX, getThreadIdFromPathname } from './ThreadSidebar/thread-navigation';
 
 const NAV_ITEMS = [
-  {
-    id: 'home',
-    path: '/',
-    label: '首页',
-    accent: 'var(--color-cafe-accent)',
-    glow: 'var(--color-cafe-accent)',
-    match: (p: string) => p === '/' || p.startsWith('/thread/'),
-  },
-  {
-    id: 'signals',
-    path: '/signals',
-    label: '信号',
-    accent: 'var(--color-gemini-primary)',
-    glow: 'var(--color-gemini-bg)',
-    match: (p: string) => p.startsWith('/signals'),
-  },
-  {
-    id: 'memory',
-    path: '/memory',
-    label: '记忆',
-    accent: 'var(--color-codex-primary)',
-    glow: 'var(--color-codex-bg)',
-    match: (p: string) => p.startsWith('/memory'),
-  },
-  {
-    id: 'settings',
-    path: '/settings',
-    label: '设置',
-    accent: 'var(--color-kimi-dark)',
-    glow: 'var(--color-kimi-bg)',
-    match: (p: string) => p.startsWith('/settings'),
-  },
+  { id: 'home', path: '/', label: '对话', match: (p: string) => p === '/' || p.startsWith('/thread/') },
+  { id: 'memory', path: '/memory', label: '记忆', match: (p: string) => p.startsWith('/memory') },
+  { id: 'mission', path: '/mission', label: 'Mission Hub', match: (p: string) => p.startsWith('/mission') },
+  { id: 'signals', path: '/signals', label: '信号', match: (p: string) => p.startsWith('/signals') },
 ] as const;
 
-function HomeIcon({ className = 'w-5 h-5' }: { className?: string }) {
+function ChatIcon({ className = 'w-5 h-5' }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
-      <title>首页</title>
-      <path d="M3 10.5 12 3l9 7.5" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M5.25 9.75V21h13.5V9.75" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M10 21v-5.25h4V21" strokeLinecap="round" strokeLinejoin="round" />
+      <title>对话</title>
+      <path
+        d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function MissionIcon({ className = 'w-5 h-5' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <title>Mission Hub</title>
+      <path
+        d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8Z"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M15 3v4a1 1 0 0 0 1 1h4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M9 13h6" strokeLinecap="round" />
+      <path d="M9 17h3" strokeLinecap="round" />
     </svg>
   );
 }
@@ -70,6 +54,15 @@ function SignalIcon({ className = 'w-5 h-5' }: { className?: string }) {
   );
 }
 
+function ThemeIcon({ className = 'w-5 h-5' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
+      <title>主题</title>
+      <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function SettingsIcon({ className = 'w-5 h-5' }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
@@ -84,21 +77,11 @@ function SettingsIcon({ className = 'w-5 h-5' }: { className?: string }) {
   );
 }
 
-function ClassicWorldIcon({ className = 'w-5 h-5' }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
-      <title>经典世界</title>
-      <path d="M12 3v18" strokeLinecap="round" />
-      <path d="M4 7h8a4 4 0 1 1 0 8H4Z" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M20 17h-8a4 4 0 1 1 0-8h8Z" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 const ICON_MAP: Record<string, ({ className }: { className?: string }) => JSX.Element> = {
-  home: HomeIcon,
+  home: ChatIcon,
   signals: SignalIcon,
   memory: MemoryIcon,
+  mission: MissionIcon,
   settings: SettingsIcon,
 };
 
@@ -108,40 +91,38 @@ interface ActivityBarProps {
 
 export function ActivityBar({ className }: ActivityBarProps) {
   const pathname = usePathname() ?? '/';
-  const searchParams = useSearchParams();
-  const inClassicWorld = pathname.startsWith('/classic');
-  const classicPath = getWorldSwitchHref(pathname, searchParams?.get('from') ?? undefined);
-  const classicTitle = inClassicWorld ? '返回新世界' : '切换到经典世界';
+
+  const handleNav = (path: string) => {
+    const prefix = pathname.startsWith(CLASSIC_WORLD_PREFIX) ? CLASSIC_WORLD_PREFIX : '';
+    const threadId = getThreadIdFromPathname(pathname, prefix);
+    let referrer = threadId !== 'default' ? threadId : null;
+    if (!referrer && typeof window !== 'undefined') {
+      referrer = new URLSearchParams(window.location.search).get('from');
+    }
+    const from = referrer && path !== '/' ? `?from=${encodeURIComponent(referrer)}` : '';
+    assignDocumentRoute(`${path}${from}`, typeof window !== 'undefined' ? window : undefined);
+  };
+
+  const isSettings = pathname.startsWith('/settings');
 
   return (
     <nav
-      className={`console-activity-rail flex w-12 flex-shrink-0 flex-col items-center gap-1 px-1 py-2 ${className ?? ''}`}
+      className={`flex w-[52px] flex-shrink-0 flex-col items-center gap-1.5 py-2.5 px-[6px] bg-[var(--console-rail-bg)] ${className ?? ''}`}
       aria-label="主导航"
     >
       {NAV_ITEMS.map((item) => {
         const Icon = ICON_MAP[item.id];
         const active = item.match(pathname);
-        const toneStyle = {
-          ['--item-accent' as string]: item.accent,
-          ['--item-glow' as string]: item.glow,
-        } as CSSProperties;
         return (
           <button
             key={item.id}
             type="button"
-            onClick={() => {
-              const prefix = pathname.startsWith(CLASSIC_WORLD_PREFIX) ? CLASSIC_WORLD_PREFIX : '';
-              const threadId = getThreadIdFromPathname(pathname, prefix);
-              let referrer = threadId !== 'default' ? threadId : null;
-              if (!referrer && typeof window !== 'undefined') {
-                referrer = new URLSearchParams(window.location.search).get('from');
-              }
-              const from = referrer && item.id !== 'home' ? `?from=${encodeURIComponent(referrer)}` : '';
-              assignDocumentRoute(`${item.path}${from}`, typeof window !== 'undefined' ? window : undefined);
-            }}
-            data-active={active ? 'true' : 'false'}
-            className={`console-activity-button relative flex h-10 w-10 items-center justify-center rounded-lg ${active ? 'border-l-[3px] border-l-[var(--item-accent,var(--cafe-accent))] bg-[var(--cafe-surface)]' : ''}`}
-            style={toneStyle}
+            onClick={() => handleNav(item.path)}
+            className={`flex h-10 w-10 items-center justify-center rounded-[9px] transition-all ${
+              active
+                ? 'bg-[var(--console-rail-active)] shadow-[0_5px_14px_rgba(43,37,32,0.07)]'
+                : 'bg-[var(--console-rail-item)] hover:bg-[var(--console-hover-bg)]'
+            }`}
             title={item.label}
             aria-current={active ? 'page' : undefined}
           >
@@ -149,22 +130,30 @@ export function ActivityBar({ className }: ActivityBarProps) {
           </button>
         );
       })}
-      <div className="mt-auto flex flex-col items-center pt-3">
+      <div className="mt-auto flex flex-col items-center gap-1.5">
         <button
           type="button"
-          onClick={() => assignDocumentRoute(classicPath, typeof window !== 'undefined' ? window : undefined)}
-          data-active={inClassicWorld ? 'true' : 'false'}
-          className={`console-activity-button relative flex h-10 w-10 items-center justify-center rounded-lg ${inClassicWorld ? 'border-l-[3px] border-l-[var(--item-accent,var(--cafe-accent))] bg-[var(--cafe-surface)]' : ''}`}
-          style={
-            {
-              ['--item-accent' as string]: 'var(--color-opus-primary)',
-              ['--item-glow' as string]: 'var(--color-opus-bg)',
-            } as CSSProperties
-          }
-          title={classicTitle}
-          aria-label={classicTitle}
+          onClick={() => {
+            const html = document.documentElement;
+            html.setAttribute('data-theme', html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+          }}
+          className="flex h-10 w-10 items-center justify-center rounded-[9px] bg-[var(--console-rail-item)] hover:bg-[var(--console-hover-bg)] transition-all"
+          title="切换主题"
         >
-          <ClassicWorldIcon className="h-5 w-5" />
+          <ThemeIcon className="h-5 w-5" />
+        </button>
+        <button
+          type="button"
+          onClick={() => handleNav('/settings')}
+          className={`flex h-10 w-10 items-center justify-center rounded-[9px] transition-all ${
+            isSettings
+              ? 'bg-[var(--console-rail-active)] shadow-[0_5px_14px_rgba(43,37,32,0.07)]'
+              : 'bg-[var(--console-rail-item)] hover:bg-[var(--console-hover-bg)]'
+          }`}
+          title="设置"
+          aria-current={isSettings ? 'page' : undefined}
+        >
+          <SettingsIcon className="h-5 w-5" />
         </button>
       </div>
     </nav>

@@ -144,7 +144,6 @@ const MAX_BLOB_MESSAGES = 200;
 const UI_THINKING_EXPANDED_KEY = 'catcafe.ui.thinkingExpandedByDefault';
 const THINKING_CHUNK_SEPARATOR = '\n\n---\n\n';
 
-
 function persistUiThinkingExpandedByDefault(next: boolean) {
   if (typeof window === 'undefined') return;
   try {
