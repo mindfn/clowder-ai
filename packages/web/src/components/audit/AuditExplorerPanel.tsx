@@ -62,7 +62,13 @@ export function AuditExplorerPanel({
         className="flex w-full items-center justify-between text-[11px] font-bold text-cafe-secondary hover:text-cafe"
       >
         <span>审计 & Session</span>
-        <svg className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <svg
+          className={`w-3 h-3 transition-transform ${expanded ? 'rotate-180' : ''}`}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
           <path d="M6 9l6 6 6-6" />
         </svg>
       </button>

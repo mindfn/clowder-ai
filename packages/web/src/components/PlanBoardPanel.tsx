@@ -165,9 +165,7 @@ export function PlanBoardPanel({ threadId, catInvocations }: PlanBoardPanelProps
   return (
     <section className="rounded-[10px] bg-[var(--console-card-bg)] border border-[var(--console-border-soft)] p-2.5">
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-[11px] font-bold text-cafe-secondary">
-          猫猫端点 ({totalCats})
-        </h3>
+        <h3 className="text-[11px] font-bold text-cafe-secondary">猫猫祟祟 ({totalCats})</h3>
       </div>
 
       {/* Running cats */}

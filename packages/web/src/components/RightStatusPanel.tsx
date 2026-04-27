@@ -282,8 +282,10 @@ function RevealWhispersButton({ threadId }: { threadId: string }) {
 }
 
 const LOGS_DIR = 'packages/api/data/logs/api';
-const INSPECTOR_CARD = 'rounded-[10px] bg-[var(--console-card-bg)] border border-[var(--console-border-soft)] p-2.5 gap-2';
-const INSPECTOR_CARD_COLLAPSED = 'rounded-lg bg-[var(--console-card-bg)] border border-[var(--console-border-soft)] h-9 px-2.5 flex items-center';
+const INSPECTOR_CARD =
+  'rounded-[10px] bg-[var(--console-card-bg)] border border-[var(--console-border-soft)] p-2.5 gap-2';
+const INSPECTOR_CARD_COLLAPSED =
+  'rounded-lg bg-[var(--console-card-bg)] border border-[var(--console-border-soft)] h-9 px-2.5 flex items-center';
 
 function parseLogFilename(name: string): { date: string; seq: number } | null {
   const m = name.match(/^api\.(\d{4}-\d{2}-\d{2})\.(\d+)\.log$/);
@@ -444,7 +446,13 @@ export function RightStatusPanel({
             className="flex w-full items-center justify-between text-[11px] font-bold text-cafe-secondary hover:text-cafe"
           >
             <span>历史参与 ({historyCats.length})</span>
-            <svg className={`w-3 h-3 transition-transform ${historyOpen ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg
+              className={`w-3 h-3 transition-transform ${historyOpen ? 'rotate-180' : ''}`}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
               <path d="M6 9l6 6 6-6" />
             </svg>
           </button>
@@ -474,8 +482,12 @@ export function RightStatusPanel({
       <section className={INSPECTOR_CARD}>
         <h3 className="text-[11px] font-bold text-cafe-secondary">消息统计</h3>
         <div className="text-[9px] text-cafe-secondary space-y-0.5">
-          <div>总数 {messageSummary.total}   猫猫消息 {messageSummary.assistant}</div>
-          <div>系统消息 {messageSummary.system}   Evidence {messageSummary.evidence}</div>
+          <div>
+            总数 {messageSummary.total} 猫猫消息 {messageSummary.assistant}
+          </div>
+          <div>
+            系统消息 {messageSummary.system} Evidence {messageSummary.evidence}
+          </div>
           <div>Follow-up {messageSummary.followup}</div>
         </div>
       </section>
