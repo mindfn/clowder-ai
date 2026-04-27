@@ -121,30 +121,28 @@ describe('SignalInboxView', () => {
     });
 
     const queryInput = container.querySelector('input[placeholder="搜索标题、来源、标签..."]');
-    // Component uses tab buttons for status, so only 2 <select> elements: tier + source
     const selects = container.querySelectorAll('select');
-    let tierSelect = selects.item(0) as HTMLSelectElement | null;
-    let sourceSelect = selects.item(1) as HTMLSelectElement | null;
+    let statusSelect = selects.item(0) as HTMLSelectElement | null;
+    let tierSelect = selects.item(1) as HTMLSelectElement | null;
+    let sourceSelect = selects.item(2) as HTMLSelectElement | null;
     let form = container.querySelector('form');
 
     expect(queryInput).not.toBeNull();
     expect(form).not.toBeNull();
+    expect(statusSelect).not.toBeNull();
     expect(tierSelect).not.toBeNull();
     expect(sourceSelect).not.toBeNull();
 
-    if (!queryInput || !form || !tierSelect || !sourceSelect) {
+    if (!queryInput || !form || !statusSelect || !tierSelect || !sourceSelect) {
       return;
     }
 
     const sourceOption = sourceSelect.querySelector('option[value="anthropic-news"]');
     expect(sourceOption).not.toBeNull();
 
-    // Switch status to "已读" via tab button
-    const readTabButton = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === '已读');
-    expect(readTabButton).toBeTruthy();
     await act(async () => {
-      readTabButton!.click();
-      await Promise.resolve();
+      statusSelect.value = 'read';
+      statusSelect.dispatchEvent(new Event('change', { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -155,13 +153,15 @@ describe('SignalInboxView', () => {
     });
 
     const refreshedSelects = container.querySelectorAll('select');
-    tierSelect = refreshedSelects.item(0) as HTMLSelectElement | null;
-    sourceSelect = refreshedSelects.item(1) as HTMLSelectElement | null;
+    statusSelect = refreshedSelects.item(0) as HTMLSelectElement | null;
+    tierSelect = refreshedSelects.item(1) as HTMLSelectElement | null;
+    sourceSelect = refreshedSelects.item(2) as HTMLSelectElement | null;
     form = container.querySelector('form');
+    expect(statusSelect).not.toBeNull();
     expect(tierSelect).not.toBeNull();
     expect(sourceSelect).not.toBeNull();
     expect(form).not.toBeNull();
-    if (!tierSelect || !sourceSelect || !form) {
+    if (!statusSelect || !tierSelect || !sourceSelect || !form) {
       return;
     }
 
