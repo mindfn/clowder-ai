@@ -105,7 +105,7 @@ function ThreadIndicator({ threadId }: { threadId: string }) {
   const currentThread = threads.find((t) => t.id === threadId);
 
   if (threadId === 'default') {
-    return <p className="text-xs text-cafe-secondary">大厅 · Your AI team collaboration space</p>;
+    return <p className="text-xs text-cafe-secondary truncate min-w-0">大厅 · Your AI team collaboration space</p>;
   }
 
   const title = currentThread?.title ?? '未命名对话';
