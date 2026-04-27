@@ -7,7 +7,6 @@ import { apiFetch } from '@/utils/api-client';
 import { loadThreads as loadCachedThreads } from '@/utils/offline-store';
 
 import { BootcampIcon } from '../icons/BootcampIcon';
-import { MemoryIcon } from '../icons/MemoryIcon';
 import { readProjectNames, writeProjectNames } from './active-workspace';
 import { DirectoryPickerModal, type NewThreadOptions } from './DirectoryPickerModal';
 import { SectionGroup } from './SectionGroup';
@@ -504,7 +503,7 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
 
   return (
     <>
-      <aside className={`${className ?? 'w-60'} flex flex-col h-full`}>
+      <aside className={`${className ?? 'w-60'} flex flex-col h-full bg-[var(--console-panel-bg)]`} style={{ boxShadow: '8px 0 24px rgba(43, 33, 26, 0.04)' }}>
         <div className="p-3 flex items-center justify-between">
           <span className="text-sm font-semibold text-cafe-black">对话</span>
           <div className="flex items-center gap-1.5">
@@ -518,21 +517,6 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
               data-guide-id="sidebar.bootcamp"
             >
               <BootcampIcon className="w-3.5 h-3.5 inline-block -mt-0.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const fromParam = currentThreadId ? `?from=${encodeURIComponent(currentThreadId)}` : '';
-                window.location.assign(`/memory${fromParam}`);
-                if (typeof window !== 'undefined' && window.innerWidth < 768) {
-                  onClose?.();
-                }
-              }}
-              className="text-xs px-2 py-1 rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-card-soft-bg)] text-cafe-secondary hover:opacity-80 transition-colors"
-              title="Memory Hub"
-              data-testid="sidebar-memory"
-            >
-              <MemoryIcon className="w-3.5 h-3.5 inline-block -mt-0.5" />
             </button>
             <button
               type="button"

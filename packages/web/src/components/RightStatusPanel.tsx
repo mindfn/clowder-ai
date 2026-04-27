@@ -284,10 +284,9 @@ function RevealWhispersButton({ threadId }: { threadId: string }) {
 }
 
 const LOGS_DIR = 'packages/api/data/logs/api';
-const INSPECTOR_CARD =
-  'rounded-[10px] bg-[var(--console-card-bg)] border border-[var(--console-border-soft)] p-2.5 gap-2';
+const INSPECTOR_CARD = 'rounded-[10px] bg-[var(--console-card-bg)] p-2.5';
 const INSPECTOR_CARD_COLLAPSED =
-  'rounded-lg bg-[var(--console-card-bg)] border border-[var(--console-border-soft)] h-9 px-2.5 flex items-center';
+  'rounded-[10px] bg-[var(--console-card-bg)] h-9 px-2.5 flex items-center';
 
 function parseLogFilename(name: string): { date: string; seq: number } | null {
   const m = name.match(/^api\.(\d{4}-\d{2}-\d{2})\.(\d+)\.log$/);
@@ -391,7 +390,7 @@ export function RightStatusPanel({
 
   return (
     <aside
-      className="console-status-panel hidden lg:flex flex-col gap-2 overflow-y-auto px-4 py-[18px]"
+      className="hidden lg:flex flex-col gap-2 overflow-y-auto px-4 py-[18px]"
       data-console-panel="status"
       style={{ width: width ?? 304, flexShrink: 0, background: 'var(--console-inspector-bg, #F4ECE4)' }}
     >
@@ -400,7 +399,7 @@ export function RightStatusPanel({
         <span className="text-[10px] text-cafe-secondary">当前模式：{modeLabel(intentMode)}</span>
       </div>
 
-      <section className={INSPECTOR_CARD}>
+      <section className={`${INSPECTOR_CARD} flex flex-col gap-2`}>
         <div className="flex items-center justify-between">
           <h3 className="text-[11px] font-bold text-cafe-secondary">
             {activeCats.length > 0 ? '猫猫状态' : '猫猫状态'}
@@ -482,7 +481,7 @@ export function RightStatusPanel({
         </section>
       )}
 
-      <section className={INSPECTOR_CARD}>
+      <section className={`${INSPECTOR_CARD} flex flex-col gap-1 p-[9px]`}>
         <h3 className="text-[11px] font-bold text-cafe-secondary">消息统计</h3>
         <div className="text-[9px] text-cafe-secondary space-y-0.5">
           <div>
@@ -503,9 +502,9 @@ export function RightStatusPanel({
         onViewSession={(id, catId) => setViewSession({ id, catId })}
       />
 
-      <section className={INSPECTOR_CARD}>
+      <section className={`${INSPECTOR_CARD} flex flex-col gap-1 p-[9px]`}>
         <h3 className="text-[11px] font-bold text-cafe-secondary">对话信息</h3>
-        <div className="text-[8px] text-cafe-secondary space-y-1">
+        <div className="text-[8px] text-cafe-secondary space-y-0.5">
           <div>
             Thread:{' '}
             <button

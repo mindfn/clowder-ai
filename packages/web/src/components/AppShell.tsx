@@ -28,8 +28,8 @@ export function AppShell({ children }: AppShellProps) {
         <ActivityBar />
       </Suspense>
       {!hideThreadSidebar && (
-        <Suspense fallback={<div className="hidden md:block w-60 flex-shrink-0" aria-hidden="true" />}>
-          <div className="hidden md:block w-60 flex-shrink-0">
+        <Suspense fallback={<div className="hidden md:block w-[260px] flex-shrink-0" aria-hidden="true" />}>
+          <div className="hidden md:block w-[260px] flex-shrink-0">
             <ThreadSidebar className="w-full h-full" routePrefix={detectRoutePrefix()} />
           </div>
         </Suspense>
