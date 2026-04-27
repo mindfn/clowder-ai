@@ -37,6 +37,8 @@ describe('HubAccountItem', () => {
       displayName: 'Claude API',
       name: 'Claude API',
       authType: 'api_key',
+      kind: 'api_key',
+      builtin: false,
       mode: 'api_key',
       baseUrl: 'https://api.anthropic.com',
       models: ['claude-opus-4-1'],
@@ -62,9 +64,9 @@ describe('HubAccountItem', () => {
     expect(container.textContent).toContain('已配置');
     expect(container.textContent).toContain('预览 / 编辑 →');
 
-    const card = container.querySelector('[class*="rounded-"]') as HTMLElement;
+    const card = container.querySelector('button') as HTMLElement;
     await act(async () => {
-      card.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      card.click();
     });
     expect(onEdit).toHaveBeenCalledWith(profile);
   });
@@ -76,6 +78,8 @@ describe('HubAccountItem', () => {
       displayName: 'Codex Sponsor',
       name: 'Codex Sponsor',
       authType: 'api_key',
+      kind: 'api_key',
+      builtin: false,
       mode: 'api_key',
       baseUrl: 'https://proxy.example',
       models: ['gpt-5.4'],
@@ -100,10 +104,11 @@ describe('HubAccountItem', () => {
       displayName: 'Codex (OAuth)',
       name: 'Codex (OAuth)',
       authType: 'oauth',
+      kind: 'builtin',
+      builtin: true,
       mode: 'subscription',
       models: ['gpt-5.4'],
       hasApiKey: false,
-      builtin: true,
       createdAt: '2026-03-18T00:00:00.000Z',
       updatedAt: '2026-03-18T00:00:00.000Z',
     };
@@ -125,6 +130,8 @@ describe('HubAccountItem', () => {
       displayName: 'OpenCode (client-auth)',
       name: 'OpenCode (client-auth)',
       authType: 'api_key',
+      kind: 'api_key',
+      builtin: false,
       mode: 'api_key',
       models: [],
       hasApiKey: false,

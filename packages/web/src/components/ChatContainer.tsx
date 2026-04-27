@@ -123,7 +123,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
   usePreviewAutoOpen(workspaceWorktreeId, threadId);
   useWorkspaceNavigate(workspaceWorktreeId, threadId);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [statusPanelOpen, setStatusPanelOpen] = useState(true);
+  const [statusPanelOpen, setStatusPanelOpen] = useState(false);
   const [mobileStatusOpen, setMobileStatusOpen] = useState(false);
   const [showBootcampList, setShowBootcampList] = useState(false);
   const [showFirstRunQuestPrompt, setShowFirstRunQuestPrompt] = useState(false);

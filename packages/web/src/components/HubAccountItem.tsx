@@ -32,8 +32,9 @@ export function HubAccountItem({ profile, onEdit }: HubAccountItemProps) {
   const actionColor = profile.builtin ? 'text-cafe-secondary' : 'text-[#6F3A2C]';
 
   return (
-    <div
-      className={`flex h-24 items-center gap-4 rounded-2xl bg-[var(--console-card-bg)] px-5 py-[18px] shadow-[0_8px_24px_rgba(43,33,26,0.05)] transition ${onEdit ? 'cursor-pointer hover:shadow-[0_8px_24px_rgba(43,33,26,0.09)]' : ''}`}
+    <button
+      type="button"
+      className={`flex h-24 w-full items-center gap-4 rounded-2xl bg-[var(--console-card-bg)] px-5 py-[18px] text-left shadow-[0_8px_24px_rgba(43,33,26,0.05)] transition ${onEdit ? 'cursor-pointer hover:shadow-[0_8px_24px_rgba(43,33,26,0.09)]' : ''}`}
       onClick={() => onEdit?.(profile)}
     >
       <div className="min-w-0 flex-1">
@@ -44,6 +45,6 @@ export function HubAccountItem({ profile, onEdit }: HubAccountItemProps) {
       </div>
       <span className={`shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold ${statusClass}`}>{statusLabel}</span>
       <span className={`shrink-0 text-[12px] font-bold ${actionColor}`}>{actionLabel}</span>
-    </div>
+    </button>
   );
 }
