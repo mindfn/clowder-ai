@@ -12,7 +12,7 @@ interface AppShellProps {
   children: React.ReactNode;
 }
 
-const SYSTEM_LEVEL_ROUTES = ['/settings'];
+const SIDEBAR_HIDDEN_ROUTES = ['/settings', '/signals', '/memory'];
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname() ?? '/';
@@ -21,7 +21,7 @@ export function AppShell({ children }: AppShellProps) {
   if (isExport || CHROMELESS_ROUTES.some((r) => pathname.startsWith(r))) {
     return <>{children}</>;
   }
-  const hideThreadSidebar = SYSTEM_LEVEL_ROUTES.some((r) => pathname.startsWith(r));
+  const hideThreadSidebar = SIDEBAR_HIDDEN_ROUTES.some((r) => pathname.startsWith(r));
   return (
     <div className="console-shell flex h-screen h-dvh overflow-hidden">
       <Suspense fallback={<div className="w-12 flex-shrink-0" aria-hidden="true" />}>
