@@ -17,6 +17,7 @@
   --console-input-stroke: #e49a7d;
   --console-voice-companion: #8e72b8;
   --console-stop: #f26767;
+  --console-inspector-bg: #f4ece4;
 }
 
 [data-theme="dark"] {
@@ -32,6 +33,7 @@
   --console-shadow-soft: 0 14px 34px rgba(0, 0, 0, 0.24);
   --console-active-bg: color-mix(in srgb, var(--cafe-accent) 26%, var(--console-card-bg) 74%);
   --console-hover-bg: color-mix(in srgb, var(--cafe-crosspost) 14%, var(--console-card-bg) 86%);
+  --console-inspector-bg: color-mix(in srgb, var(--console-panel-bg) 92%, black 8%);
 }
 
 .console-shell {

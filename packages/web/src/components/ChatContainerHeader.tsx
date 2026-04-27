@@ -32,8 +32,8 @@ export function ChatContainerHeader({
   defaultCatId,
 }: ChatContainerHeaderProps) {
   return (
-    <header className="safe-area-top border-b border-[var(--console-border-soft)]">
-      <div className="h-11 px-4 flex items-center gap-3">
+    <header className="safe-area-top">
+      <div className="h-[54px] px-6 flex items-center gap-2.5">
         <button
           onClick={onToggleSidebar}
           className="p-1 rounded-md hover:bg-[var(--console-hover-bg)] transition-colors md:hidden"
@@ -48,14 +48,8 @@ export function ChatContainerHeader({
             />
           </svg>
         </button>
-        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--cafe-accent)] text-xs text-white font-semibold">
-          🐾
-        </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-[15px] font-bold text-cafe hidden sm:inline">Clowder AI</span>
-            <ThreadIndicator threadId={threadId} />
-          </div>
+          <ThreadIndicator threadId={threadId} />
         </div>
         <ExportButton threadId={threadId} />
         <VoiceCompanionButton threadId={threadId} defaultCatId={defaultCatId} />
@@ -67,7 +61,6 @@ export function ChatContainerHeader({
             🔐 {authPendingCount}
           </span>
         )}
-        {/* Mobile/tablet: status sheet trigger */}
         <button
           onClick={onOpenMobileStatus}
           className="p-1 rounded-lg hover:bg-[var(--console-hover-bg)] transition-colors ml-1 lg:hidden"
@@ -82,7 +75,6 @@ export function ChatContainerHeader({
             />
           </svg>
         </button>
-        {/* F099: Unified right panel toggle (merged workspace + status panel) */}
         <RightPanelToggle onToggleStatusPanel={onToggleStatusPanel} statusPanelOpen={statusPanelOpen} />
       </div>
     </header>
@@ -95,25 +87,14 @@ function ThreadIndicator({ threadId }: { threadId: string }) {
   const currentThread = threads.find((t) => t.id === threadId);
 
   if (threadId === 'default') {
-    return <p className="text-xs text-cafe-secondary truncate min-w-0">大厅 · Your AI team collaboration space</p>;
+    return <p className="text-base font-bold text-cafe truncate min-w-0">大厅</p>;
   }
 
   const title = currentThread?.title ?? '未命名对话';
-  const rawPath = currentThread?.projectPath ?? '';
-  // 'default' is a sentinel for threads without a real projectPath — match exact value, not basename
-  const rawBasename = rawPath === 'default' ? '' : (rawPath.split(/[/\\]/).pop() ?? '');
-  // Map known internal repo basenames to brand name; preserve real project paths for multi-workspace
-  const INTERNAL_BASENAMES = ['cat-cafe', 'cat-cafe-runtime', 'clowder-ai'];
-  const brandName = process.env.NEXT_PUBLIC_BRAND_NAME ?? '';
-  const projectName = INTERNAL_BASENAMES.includes(rawBasename) && brandName ? brandName : rawBasename;
 
   return (
-    <p
-      className="text-xs text-cafe-secondary truncate min-w-0"
-      title={`${title}${projectName ? ` · ${projectName}` : ''}`}
-    >
-      <span className="font-medium text-cafe-secondary">{title}</span>
-      {projectName && <span className="text-cafe-muted"> · {projectName}</span>}
+    <p className="text-base font-bold text-cafe truncate min-w-0" title={title}>
+      {title}
     </p>
   );
 }

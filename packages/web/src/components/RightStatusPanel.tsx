@@ -282,7 +282,8 @@ function RevealWhispersButton({ threadId }: { threadId: string }) {
 }
 
 const LOGS_DIR = 'packages/api/data/logs/api';
-const INSPECTOR_ITEM = 'p-4';
+const INSPECTOR_CARD = 'rounded-[10px] bg-[var(--console-card-bg)] border border-[var(--console-border-soft)] p-2.5 gap-2';
+const INSPECTOR_CARD_COLLAPSED = 'rounded-lg bg-[var(--console-card-bg)] border border-[var(--console-border-soft)] h-9 px-2.5 flex items-center';
 
 function parseLogFilename(name: string): { date: string; seq: number } | null {
   const m = name.match(/^api\.(\d{4}-\d{2}-\d{2})\.(\d+)\.log$/);
@@ -334,17 +335,15 @@ function RuntimeLogsButton() {
   }, [setRevealPath, setOpenFile]);
 
   return (
-    <section className={INSPECTOR_ITEM}>
-      <div className="flex items-center justify-between">
-        <h3 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">运行日志</h3>
-        <button
-          onClick={handleClick}
-          className="console-pill rounded-full px-3 py-1 text-[11px] text-cafe-secondary transition-colors hover:text-cafe"
-          title="在 Workspace 面板中打开运行日志目录"
-        >
-          查看日志
-        </button>
-      </div>
+    <section className={`${INSPECTOR_CARD_COLLAPSED} justify-between`}>
+      <h3 className="text-[11px] font-bold text-cafe-secondary">运行日志</h3>
+      <button
+        onClick={handleClick}
+        className="text-[9px] font-bold text-cafe-secondary transition-colors hover:text-cafe"
+        title="在 Workspace 面板中打开运行日志目录"
+      >
+        查看日志
+      </button>
     </section>
   );
 }
@@ -387,151 +386,137 @@ export function RightStatusPanel({
 
   return (
     <aside
-      className="console-status-panel hidden lg:flex flex-col gap-4 overflow-y-auto px-4 py-4"
+      className="console-status-panel hidden lg:flex flex-col gap-2 overflow-y-auto px-4 py-[18px]"
       data-console-panel="status"
-      style={{ width: width ?? 288, flexShrink: 0 }}
+      style={{ width: width ?? 304, flexShrink: 0, background: 'var(--console-inspector-bg, #F4ECE4)' }}
     >
-      <div className="px-1 py-1">
-        <div className="flex items-center justify-between">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">Inspector</p>
-          <span className="text-[11px] font-medium text-cafe-secondary">{modeLabel(intentMode)}</span>
-        </div>
+      <div className="px-0.5 pb-1">
+        <p className="text-[15px] font-bold text-cafe">状态栏</p>
+        <span className="text-[10px] text-cafe-secondary">当前模式：{modeLabel(intentMode)}</span>
       </div>
 
-      <div
-        className="divide-y divide-[var(--console-border-soft)] overflow-hidden rounded-xl bg-[var(--console-card-bg)]"
-        data-console-card="true"
-      >
-        {/* ── Active cats: currently working ──────────────── */}
-        <section className={INSPECTOR_ITEM}>
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">
-              {activeCats.length > 0 ? '当前调用' : '猫猫状态'}
-            </h3>
-            <button
-              onClick={() => openHub()}
-              className="console-pill flex h-9 w-9 items-center justify-center rounded-full text-base text-cafe-secondary transition-all duration-200 hover:-rotate-12 hover:text-cafe"
-              title="Clowder AI Hub"
-            >
-              &#9881;
-            </button>
-          </div>
-          {activeCats.length > 0 ? (
-            <div className="space-y-3">
-              {activeCats.map((catId) => {
-                const cat = getCatById(catId);
-                const dotColor = cat?.color.primary ?? '#9CA3AF';
-                const status = catStatuses[catId] ?? 'pending';
-                const inv = catInvocations[catId];
-                return (
-                  <div key={catId}>
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center gap-2">
-                        <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: dotColor }} />
-                        <span className="text-xs text-cafe-secondary">{cat ? formatCatName(cat) : catId}</span>
-                      </div>
-                      <span className={`text-xs font-medium ${statusTone(status)}`}>{statusLabel(status)}</span>
+      <section className={INSPECTOR_CARD}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-[11px] font-bold text-cafe-secondary">
+            {activeCats.length > 0 ? '猫猫状态' : '猫猫状态'}
+          </h3>
+          <button
+            onClick={() => openHub()}
+            className="flex h-3 w-3 items-center justify-center text-cafe-secondary hover:text-cafe transition-colors"
+            title="Clowder AI Hub"
+          >
+            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+        </div>
+        {activeCats.length > 0 ? (
+          <div className="space-y-2">
+            {activeCats.map((catId) => {
+              const cat = getCatById(catId);
+              const dotColor = cat?.color.primary ?? '#9CA3AF';
+              const status = catStatuses[catId] ?? 'pending';
+              const inv = catInvocations[catId];
+              return (
+                <div key={catId}>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: dotColor }} />
+                      <span className="text-xs text-cafe-secondary">{cat ? formatCatName(cat) : catId}</span>
                     </div>
-                    {inv && <CatInvocationCard catId={catId} inv={inv} onCopy={copyText} isActive />}
+                    <span className={`text-xs font-medium ${statusTone(status)}`}>{statusLabel(status)}</span>
                   </div>
-                );
+                  {inv && <CatInvocationCard catId={catId} inv={inv} onCopy={copyText} isActive />}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-[11px] text-cafe-secondary">空闲</div>
+        )}
+      </section>
+
+      {historyCats.length > 0 && (
+        <section className={historyOpen ? INSPECTOR_CARD : INSPECTOR_CARD_COLLAPSED}>
+          <button
+            onClick={() => setHistoryOpen((v) => !v)}
+            className="flex w-full items-center justify-between text-[11px] font-bold text-cafe-secondary hover:text-cafe"
+          >
+            <span>历史参与 ({historyCats.length})</span>
+            <svg className={`w-3 h-3 transition-transform ${historyOpen ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+          {historyOpen && (
+            <div className="mt-2 space-y-2">
+              {historyCats.map((catId) => {
+                const inv = catInvocations[catId];
+                if (!inv) {
+                  const cat = getCatById(catId);
+                  return (
+                    <div key={catId} className="flex items-center gap-2 text-xs text-cafe-muted">
+                      <span
+                        className="inline-block h-2 w-2 rounded-full opacity-50"
+                        style={{ backgroundColor: cat?.color.primary ?? '#9CA3AF' }}
+                      />
+                      {cat ? formatCatName(cat) : catId}
+                    </div>
+                  );
+                }
+                return <CatInvocationCard key={catId} catId={catId} inv={inv} onCopy={copyText} isActive={false} />;
               })}
             </div>
-          ) : (
-            <div className="text-xs text-cafe-muted">空闲</div>
           )}
         </section>
+      )}
 
-        {/* ── History cats: appeared before but not in current round ── */}
-        {historyCats.length > 0 && (
-          <section className={INSPECTOR_ITEM}>
+      <section className={INSPECTOR_CARD}>
+        <h3 className="text-[11px] font-bold text-cafe-secondary">消息统计</h3>
+        <div className="text-[9px] text-cafe-secondary space-y-0.5">
+          <div>总数 {messageSummary.total}   猫猫消息 {messageSummary.assistant}</div>
+          <div>系统消息 {messageSummary.system}   Evidence {messageSummary.evidence}</div>
+          <div>Follow-up {messageSummary.followup}</div>
+        </div>
+      </section>
+
+      <PlanBoardPanel threadId={threadId} catInvocations={catInvocations} />
+
+      <SessionChainPanel
+        threadId={threadId}
+        catInvocations={catInvocations}
+        onViewSession={(id, catId) => setViewSession({ id, catId })}
+      />
+
+      <section className={INSPECTOR_CARD}>
+        <h3 className="text-[11px] font-bold text-cafe-secondary">对话信息</h3>
+        <div className="text-[8px] text-cafe-secondary space-y-1">
+          <div>
+            Thread:{' '}
             <button
-              onClick={() => setHistoryOpen((v) => !v)}
-              className="flex w-full items-center justify-between text-xs font-semibold text-cafe-secondary hover:text-cafe"
+              className="text-cafe-secondary font-mono hover:text-cafe cursor-pointer transition-colors"
+              title={`点击复制: ${threadId}`}
+              onClick={() => copyText(threadId)}
             >
-              <span>历史参与 ({historyCats.length})</span>
-              <span className="text-[10px]">{historyOpen ? '▲' : '▼'}</span>
+              {truncateId(threadId, 12)}
             </button>
-            {historyOpen && (
-              <div className="mt-2 space-y-2">
-                {historyCats.map((catId) => {
-                  const inv = catInvocations[catId];
-                  if (!inv) {
-                    const cat = getCatById(catId);
-                    return (
-                      <div key={catId} className="flex items-center gap-2 text-xs text-cafe-muted">
-                        <span
-                          className="inline-block h-2 w-2 rounded-full opacity-50"
-                          style={{ backgroundColor: cat?.color.primary ?? '#9CA3AF' }}
-                        />
-                        {cat ? formatCatName(cat) : catId}
-                      </div>
-                    );
-                  }
-                  return <CatInvocationCard key={catId} catId={catId} inv={inv} onCopy={copyText} isActive={false} />;
-                })}
-              </div>
-            )}
-          </section>
-        )}
-
-        {/* ── Message stats (collapsible) ───────────────── */}
-        <section className={INSPECTOR_ITEM}>
-          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">消息统计</h3>
-          <div className="grid grid-cols-2 gap-2 text-xs text-cafe-secondary">
-            <div>总数</div>
-            <div className="text-right font-medium">{messageSummary.total}</div>
-            <div>猫猫消息</div>
-            <div className="text-right font-medium">{messageSummary.assistant}</div>
-            <div>系统消息</div>
-            <div className="text-right font-medium">{messageSummary.system}</div>
-            <div>Evidence</div>
-            <div className="text-right font-medium">{messageSummary.evidence}</div>
-            <div>Follow-up</div>
-            <div className="text-right font-medium">{messageSummary.followup}</div>
           </div>
-        </section>
+          <BubbleDisplayToggle threadId={threadId} label="Thinking" field="bubbleThinking" />
+          <BubbleDisplayToggle threadId={threadId} label="CLI 气泡" field="bubbleCli" />
+          <ThinkingModeToggle threadId={threadId} />
+          <RevealWhispersButton threadId={threadId} />
+        </div>
+      </section>
 
-        <PlanBoardPanel threadId={threadId} catInvocations={catInvocations} />
+      <AuditExplorerPanel
+        key={threadId}
+        threadId={threadId}
+        externalSessionId={viewSession?.id ?? null}
+        externalSessionCatId={viewSession?.catId}
+        onCloseSession={() => setViewSession(null)}
+      />
 
-        <SessionChainPanel
-          threadId={threadId}
-          catInvocations={catInvocations}
-          onViewSession={(id, catId) => setViewSession({ id, catId })}
-        />
-
-        <section className={INSPECTOR_ITEM}>
-          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">对话信息</h3>
-          <div className="text-xs text-cafe-secondary space-y-2">
-            <div>
-              Thread:{' '}
-              <button
-                className="text-cafe-secondary font-mono hover:text-cafe cursor-pointer transition-colors"
-                title={`点击复制: ${threadId}`}
-                onClick={() => copyText(threadId)}
-              >
-                {truncateId(threadId, 12)}
-              </button>
-            </div>
-            <BubbleDisplayToggle threadId={threadId} label="Thinking" field="bubbleThinking" />
-            <BubbleDisplayToggle threadId={threadId} label="CLI 气泡" field="bubbleCli" />
-            <ThinkingModeToggle threadId={threadId} />
-
-            <RevealWhispersButton threadId={threadId} />
-          </div>
-        </section>
-
-        <AuditExplorerPanel
-          key={threadId}
-          threadId={threadId}
-          externalSessionId={viewSession?.id ?? null}
-          externalSessionCatId={viewSession?.catId}
-          onCloseSession={() => setViewSession(null)}
-        />
-
-        {/* ── F130: Runtime logs quick-access ────────────── */}
-        <RuntimeLogsButton />
-      </div>
+      <RuntimeLogsButton />
     </aside>
   );
 }

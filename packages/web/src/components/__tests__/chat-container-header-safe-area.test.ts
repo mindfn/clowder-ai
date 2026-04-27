@@ -57,6 +57,6 @@ describe('ChatContainerHeader safe-area', () => {
 
     const innerRow = header?.querySelector('div');
     expect(innerRow).not.toBeNull();
-    expect(innerRow?.className).toContain('h-11');
+    expect(innerRow?.className).toContain('h-[54px]');
   });
 });
