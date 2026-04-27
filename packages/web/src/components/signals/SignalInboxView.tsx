@@ -293,7 +293,7 @@ export function SignalInboxView() {
               if (event.key === 'Enter' && ime.isComposing()) event.preventDefault();
             }}
             placeholder="搜索标题、来源、标签..."
-            className="console-form-input max-w-[240px]"
+            className="console-form-input max-w-[400px]"
           />
           <select
             value={filters.status}

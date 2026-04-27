@@ -135,7 +135,7 @@ export function PluginsContent() {
         return (
           <article
             key={plugin.id}
-            className="flex items-center gap-3 rounded-xl border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-4 py-4"
+            className="flex items-center gap-3 rounded-xl bg-[var(--console-card-bg)] px-4 py-4"
           >
             <div
               className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[10px]"

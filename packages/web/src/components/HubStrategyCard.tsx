@@ -98,7 +98,7 @@ export function CatStrategyCard({ entry, onSaved }: { entry: CatStrategyEntry; o
   };
 
   return (
-    <div className="rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface p-3 space-y-2">
+    <div className="rounded-xl bg-[var(--console-card-bg)] p-3 space-y-2">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold">{entry.displayName}</span>

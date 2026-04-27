@@ -736,24 +736,21 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
 
   return (
     <div ref={containerRef} className="flex h-full">
+      {/* Mobile-only sidebar overlay — desktop sidebar is in AppShell */}
       {sidebarOpen && (
-        <>
-          {/* Backdrop — mobile only */}
+        <div className="md:hidden">
           <div
-            className="fixed inset-0 bg-black/30 z-20 md:hidden"
+            className="fixed inset-0 bg-black/30 z-20"
             onClick={() => setSidebarOpen(false)}
             aria-hidden="true"
           />
           <div
-            className="fixed inset-y-0 left-0 z-30 md:static md:z-auto flex-shrink-0"
+            className="fixed inset-y-0 left-0 z-30 flex-shrink-0"
             style={{ width: sidebarWidth }}
           >
             <ThreadSidebar onClose={() => setSidebarOpen(false)} className="w-full" routePrefix={detectRoutePrefix()} />
           </div>
-          <div className="hidden md:flex items-center">
-            <ResizeHandle direction="horizontal" onResize={handleSidebarResize} onDoubleClick={resetSidebarWidth} />
-          </div>
-        </>
+        </div>
       )}
 
       <div
@@ -961,7 +958,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
           {isGameActive && overlayMinimized && gameView?.threadId === threadId && (
             <button
               onClick={() => useGameStore.getState().restoreOverlay()}
-              className="mx-4 mb-2 flex items-center justify-center gap-2 rounded-lg border border-purple-300 bg-purple-50 px-3 py-2 text-sm text-purple-700 hover:bg-purple-100 transition-colors"
+              className="mx-4 mb-2 flex items-center justify-center gap-2 rounded-lg bg-[var(--console-active-bg)] px-3 py-2 text-sm text-cafe hover:bg-[var(--console-hover-bg)] transition-colors"
             >
               🎮 返回游戏
             </button>
@@ -1067,25 +1064,25 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
       {showFirstRunQuestPrompt && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4">
           <div
-            className="w-full max-w-md rounded-2xl border border-amber-200 bg-white p-6 shadow-2xl"
+            className="w-full max-w-md rounded-2xl bg-[var(--console-card-bg)] p-6 shadow-[var(--console-shadow)]"
             onClick={(event) => event.stopPropagation()}
           >
-            <h3 className="text-lg font-semibold text-gray-900">开始猫猫新手教程？</h3>
-            <p className="mt-2 text-sm text-gray-600">
+            <h3 className="text-lg font-semibold text-cafe">开始猫猫新手教程？</h3>
+            <p className="mt-2 text-sm text-cafe-secondary">
               当前还没有可用成员。我们可以先带你创建第一只猫猫，再开始首个协作任务。
             </p>
             <div className="mt-5 flex justify-end gap-3">
               <button
                 type="button"
                 onClick={handleSkipFirstRunQuest}
-                className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                className="rounded-lg bg-[var(--console-card-soft-bg)] px-3 py-2 text-sm text-cafe-secondary hover:bg-[var(--console-hover-bg)]"
               >
                 跳过
               </button>
               <button
                 type="button"
                 onClick={handleStartFirstRunQuest}
-                className="rounded-lg bg-amber-500 px-3 py-2 text-sm font-medium text-white hover:bg-amber-600"
+                className="console-button-primary rounded-lg px-3 py-2 text-sm font-medium"
               >
                 开始教程
               </button>

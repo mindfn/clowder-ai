@@ -214,7 +214,7 @@ function KnowledgeCard({
   const colors = kindColors[kind] ?? kindColors.lesson!;
 
   return (
-    <div className="bg-cafe-surface rounded-lg border border-[var(--console-border-soft)] p-2.5 space-y-1.5">
+    <div className="rounded-xl bg-[var(--console-card-bg)] p-2.5 space-y-1.5">
       {/* Top row: kind badge + status */}
       <div className="flex items-center justify-between">
         <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${colors.bg} ${colors.text}`}>

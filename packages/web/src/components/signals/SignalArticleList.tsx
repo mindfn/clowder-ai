@@ -40,7 +40,7 @@ export function SignalArticleList({
 }: SignalArticleListProps) {
   if (items.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-[var(--console-border-soft)] bg-cafe-surface p-8 text-center text-sm text-cafe-secondary">
+      <div className="rounded-xl bg-[var(--console-card-bg)] p-8 text-center text-sm text-cafe-secondary">
         当前筛选条件下没有文章。
       </div>
     );

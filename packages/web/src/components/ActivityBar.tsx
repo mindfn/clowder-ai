@@ -115,7 +115,7 @@ export function ActivityBar({ className }: ActivityBarProps) {
 
   return (
     <nav
-      className={`console-activity-rail flex w-12 flex-shrink-0 flex-col items-center gap-1 px-1 py-2 border-r border-[var(--console-border-soft)] ${className ?? ''}`}
+      className={`console-activity-rail flex w-12 flex-shrink-0 flex-col items-center gap-1 px-1 py-2 ${className ?? ''}`}
       aria-label="主导航"
     >
       {NAV_ITEMS.map((item) => {

@@ -21,9 +21,9 @@ function SettingsShellInner() {
   const sectionMeta = SETTINGS_SECTIONS.find((s) => s.id === activeSection) ?? SETTINGS_SECTIONS[0];
 
   return (
-    <div className="flex h-full min-h-0 overflow-hidden">
+    <div className="console-shell flex h-full min-h-0 overflow-hidden">
       <aside
-        className="flex w-[200px] flex-shrink-0 flex-col overflow-hidden bg-[var(--console-panel-bg)] border-r border-[var(--console-border-soft)]"
+        className="flex w-[220px] flex-shrink-0 flex-col overflow-hidden bg-[var(--console-panel-bg)]"
         data-console-panel="settings-nav"
       >
         <div className="px-4 pt-4 pb-2">
@@ -34,7 +34,7 @@ function SettingsShellInner() {
         </div>
       </aside>
 
-      <div className="min-w-0 flex-1 overflow-y-auto bg-[var(--cafe-surface)]">
+      <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="max-w-[60rem] space-y-5 px-8 py-6">
           <div>
             <h2 className="text-xl font-bold text-cafe">{sectionMeta.label}</h2>

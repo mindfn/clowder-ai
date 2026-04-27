@@ -53,10 +53,10 @@ export const DEPTH_OPTIONS = [
 export const SOURCE_TYPE_COLORS: Record<string, string> = {
   decision: 'bg-conn-amber-bg text-conn-amber-text',
   phase: 'bg-[var(--color-cafe-accent)]/10 text-[var(--color-cafe-accent)]',
-  feature: 'bg-purple-100 text-purple-800',
+  feature: 'bg-[var(--console-pill-bg)] text-cafe',
   lesson: 'bg-conn-emerald-bg text-conn-emerald-text',
-  research: 'bg-cyan-100 text-cyan-800',
-  knowledge: 'bg-pink-100 text-pink-800',
+  research: 'bg-conn-sky-bg text-conn-sky-text',
+  knowledge: 'bg-[var(--console-pill-bg)] text-cafe-secondary',
   discussion: 'bg-[var(--console-card-soft-bg)] text-cafe',
   commit: 'bg-[var(--console-card-soft-bg)] text-cafe-secondary',
 };
@@ -169,7 +169,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="搜索项目知识..."
-          className="console-form-input max-w-[240px]"
+          className="console-form-input max-w-[400px]"
           data-testid="evidence-search-input"
         />
         <select
@@ -231,7 +231,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
         {results.map((item) => (
           <div
             key={item.anchor}
-            className="rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] p-3"
+            className="rounded-xl bg-[var(--console-card-bg)] p-3"
           >
             <div className="flex items-center gap-2 min-w-0">
               <span
@@ -241,7 +241,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
               </span>
               {item.source && (
                 <span
-                  className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${item.source === 'project' ? 'bg-indigo-100 text-indigo-800' : 'bg-teal-100 text-teal-800'}`}
+                  className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${item.source === 'project' ? 'bg-[var(--console-active-bg)] text-cafe' : 'bg-conn-emerald-bg text-conn-emerald-text'}`}
                 >
                   {item.source === 'project' ? '项目' : '全局'}
                 </span>
