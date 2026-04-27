@@ -1178,7 +1178,7 @@
                 {
                   "type": "frame",
                   "id": "f170r0053_RightStatusPanelba",
-                  "name": "Right Status Panel - background hierarchy, no border-left",
+                  "name": "Right Status Panel - background hierarchy, no card borders",
                   "clip": true,
                   "width": 304,
                   "height": "fill_container",
@@ -1227,8 +1227,8 @@
                       "cornerRadius": 10,
                       "stroke": {
                         "align": "inside",
-                        "thickness": 1,
-                        "fill": "#E2D5CA"
+                        "thickness": 0,
+                        "fill": "#00000000"
                       },
                       "layout": "vertical",
                       "gap": 8,
@@ -1284,8 +1284,8 @@
                       "cornerRadius": 8,
                       "stroke": {
                         "align": "inside",
-                        "thickness": 1,
-                        "fill": "#E2D5CA"
+                        "thickness": 0,
+                        "fill": "#00000000"
                       },
                       "padding": [
                         0,
@@ -1325,8 +1325,8 @@
                       "cornerRadius": 10,
                       "stroke": {
                         "align": "inside",
-                        "thickness": 1,
-                        "fill": "#E2D5CA"
+                        "thickness": 0,
+                        "fill": "#00000000"
                       },
                       "layout": "vertical",
                       "gap": 4,
@@ -1379,8 +1379,8 @@
                       "cornerRadius": 10,
                       "stroke": {
                         "align": "inside",
-                        "thickness": 1,
-                        "fill": "#E2D5CA"
+                        "thickness": 0,
+                        "fill": "#00000000"
                       },
                       "layout": "vertical",
                       "gap": 7,
@@ -1436,8 +1436,8 @@
                       "cornerRadius": 10,
                       "stroke": {
                         "align": "inside",
-                        "thickness": 1,
-                        "fill": "#E2D5CA"
+                        "thickness": 0,
+                        "fill": "#00000000"
                       },
                       "layout": "vertical",
                       "gap": 5,
@@ -1565,8 +1565,8 @@
                       "cornerRadius": 10,
                       "stroke": {
                         "align": "inside",
-                        "thickness": 1,
-                        "fill": "#E2D5CA"
+                        "thickness": 0,
+                        "fill": "#00000000"
                       },
                       "layout": "vertical",
                       "gap": 4,
@@ -1620,8 +1620,8 @@
                       "cornerRadius": 10,
                       "stroke": {
                         "align": "inside",
-                        "thickness": 1,
-                        "fill": "#E2D5CA"
+                        "thickness": 0,
+                        "fill": "#00000000"
                       },
                       "layout": "vertical",
                       "gap": 5,
@@ -1684,8 +1684,8 @@
                       "cornerRadius": 10,
                       "stroke": {
                         "align": "inside",
-                        "thickness": 1,
-                        "fill": "#E2D5CA"
+                        "thickness": 0,
+                        "fill": "#00000000"
                       },
                       "padding": [
                         0,
