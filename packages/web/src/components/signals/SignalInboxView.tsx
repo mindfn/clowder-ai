@@ -279,7 +279,10 @@ export function SignalInboxView() {
     <div className="h-full bg-[var(--console-panel-bg)] overflow-y-auto">
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-4 rounded-2xl bg-[var(--console-card-bg)] shadow-[var(--console-shadow-soft)] m-3 mt-2 px-5 py-5 sm:px-6">
         <header className="flex items-center justify-between">
-          <h1 className="text-xl font-bold text-cafe">Signal Inbox</h1>
+          <div>
+            <h1 className="text-xl font-bold text-cafe">信号</h1>
+            <p className="mt-1 text-[13px] text-cafe-secondary">浏览、筛选和研读来自信源的文章</p>
+          </div>
           <SignalNav active="signals" />
         </header>
 

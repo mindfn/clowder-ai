@@ -90,8 +90,8 @@ export function SignalSourcesView() {
         <header className="rounded-2xl border border-codex-light bg-cafe-surface p-4 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h1 className="text-xl font-bold text-cafe-black">Signal Sources</h1>
-              <p className="text-sm text-cafe-secondary">集中管理信号源开关，无需手改 yaml。</p>
+              <h1 className="text-xl font-bold text-cafe-black">信号源</h1>
+              <p className="text-sm text-cafe-secondary">管理抓取来源、优先级和健康状态</p>
             </div>
             <SignalNav active="sources" />
           </div>

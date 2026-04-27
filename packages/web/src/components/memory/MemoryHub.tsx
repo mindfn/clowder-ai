@@ -16,7 +16,11 @@ export function MemoryHub({ activeTab = 'feed', initialQuery }: MemoryHubProps) 
   return (
     <div className="flex h-full flex-col bg-[var(--console-panel-bg)]" data-testid="memory-hub">
       <div className="flex flex-1 flex-col m-3 mt-2 rounded-2xl bg-[var(--console-card-bg)] shadow-[var(--console-shadow-soft)] overflow-hidden">
-        <header className="flex items-center gap-3 border-b border-[var(--console-border-soft)] px-5 py-3">
+        <header className="space-y-3 border-b border-[var(--console-border-soft)] px-5 py-4">
+          <div>
+            <h1 className="text-2xl font-bold text-cafe">记忆</h1>
+            <p className="mt-1 text-[13px] text-cafe-secondary">查看知识涌现、检索证据和索引健康状态</p>
+          </div>
           <MemoryNav active={activeTab} />
         </header>
 

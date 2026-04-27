@@ -74,7 +74,7 @@ describe('buildMemoryTabItems', () => {
 
   it('has correct labels', () => {
     const items = buildMemoryTabItems('');
-    expect(items.map((i) => i.label)).toEqual(['Knowledge Feed', 'Search', 'Index Status', 'Health']);
+    expect(items.map((i) => i.label)).toEqual(['涌现 Feed', '知识检索', '索引状态', '健康报告']);
   });
 
   it('MemoryTab type covers all tabs', () => {

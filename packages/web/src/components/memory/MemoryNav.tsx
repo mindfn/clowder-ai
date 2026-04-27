@@ -37,10 +37,10 @@ export function buildBackHref(referrerThread: string | null, prefix = ''): strin
  */
 export function buildMemoryTabItems(fromSuffix: string): readonly TabConfig[] {
   return [
-    { id: 'feed', href: `/memory${fromSuffix}`, label: 'Knowledge Feed' },
-    { id: 'search', href: `/memory/search${fromSuffix}`, label: 'Search' },
-    { id: 'status', href: `/memory/status${fromSuffix}`, label: 'Index Status' },
-    { id: 'health', href: `/memory/health${fromSuffix}`, label: 'Health' },
+    { id: 'feed', href: `/memory${fromSuffix}`, label: '涌现 Feed' },
+    { id: 'search', href: `/memory/search${fromSuffix}`, label: '知识检索' },
+    { id: 'status', href: `/memory/status${fromSuffix}`, label: '索引状态' },
+    { id: 'health', href: `/memory/health${fromSuffix}`, label: '健康报告' },
   ];
 }
 
