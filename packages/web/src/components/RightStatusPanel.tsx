@@ -36,8 +36,10 @@ export interface RightStatusPanelProps {
     evidence: number;
     followup: number;
   };
-  /** Panel width in px (clowder-ai#28: drag-to-resize). Falls back to 288 (w-72). */
+  /** Panel width in px (clowder-ai#28: drag-to-resize). Falls back to 304. */
   width?: number;
+  /** Allow tests to render history section expanded (SSR default: collapsed). */
+  initialHistoryOpen?: boolean;
 }
 
 /* ── Cat invocation card (shared between active/history) ──── */
@@ -360,6 +362,7 @@ export function RightStatusPanel({
   threadId,
   messageSummary,
   width,
+  initialHistoryOpen = false,
 }: RightStatusPanelProps) {
   // F26: Split into active (working now) vs history (appeared before)
   const { activeCats, historyCats } = useMemo(() => {
@@ -371,7 +374,7 @@ export function RightStatusPanel({
   }, [targetCats, catInvocations, activeInvocations, hasActiveInvocation]);
 
   const { getCatById } = useCatData();
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(initialHistoryOpen);
   const [viewSession, setViewSession] = useState<{ id: string; catId?: string } | null>(null);
 
   // Clear session viewer when switching threads

@@ -151,8 +151,31 @@ describe('RightStatusPanel', () => {
     });
 
     expect(html).toContain('猫猫状态');
-    expect(html).toContain('历史参与');
-    expect(html).toContain('opus');
+    expect(html).toContain('历史参与 (1)');
+  });
+
+  it('shows history cat content when history section is expanded', () => {
+    const html = render({
+      intentMode: 'execute',
+      targetCats: ['opus'],
+      catStatuses: { opus: 'streaming' },
+      catInvocations: {
+        opus: { startedAt: Date.now() },
+        codex: { startedAt: Date.now() - 60000, durationMs: 5000 },
+      },
+      threadId: 'thread-456-expanded',
+      messageSummary: {
+        total: 5,
+        assistant: 3,
+        system: 2,
+        evidence: 0,
+        followup: 0,
+      },
+      initialHistoryOpen: true,
+    });
+
+    expect(html).toContain('历史参与 (1)');
+    expect(html).toContain('codex');
   });
 
   it('shows non-target cat in 猫猫状态 when it has task progress', () => {
