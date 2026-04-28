@@ -19,6 +19,7 @@ export function SkillsContent() {
   const [items, setItems] = useState<CapabilityBoardItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [previewItem, setPreviewItem] = useState<CapabilityBoardItem | null>(null);
+  const [toggling, setToggling] = useState<string | null>(null);
 
   const fetchItems = useCallback(async () => {
     try {
@@ -36,6 +37,31 @@ export function SkillsContent() {
   useEffect(() => {
     fetchItems();
   }, [fetchItems]);
+
+  const handleToggle = useCallback(
+    async (item: CapabilityBoardItem, e: React.MouseEvent) => {
+      e.stopPropagation();
+      setToggling(item.id);
+      try {
+        const res = await apiFetch('/api/capabilities', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            capabilityId: item.id,
+            capabilityType: 'skill',
+            scope: 'global',
+            enabled: !item.enabled,
+          }),
+        });
+        if (res.ok) await fetchItems();
+      } catch {
+        /* ignore */
+      } finally {
+        setToggling(null);
+      }
+    },
+    [fetchItems],
+  );
 
   return (
     <div className="flex gap-6">
@@ -72,34 +98,51 @@ export function SkillsContent() {
         <div className="space-y-3">
           {items.map((item) => {
             const color = avatarColor(item.id);
+            const busy = toggling === item.id;
             return (
-              <button
+              <div
                 key={item.id}
-                type="button"
-                onClick={() => setPreviewItem(item)}
-                className="flex w-full items-center gap-4 rounded-xl bg-[var(--console-card-bg)] p-4 text-left transition-colors hover:bg-[var(--console-card-soft-bg)]"
+                className="flex w-full items-center gap-4 rounded-xl bg-[var(--console-card-bg)] p-4 transition-colors hover:bg-[var(--console-card-soft-bg)]"
               >
-                <div
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white"
-                  style={{ backgroundColor: color }}
+                <button
+                  type="button"
+                  onClick={() => setPreviewItem(item)}
+                  className="flex min-w-0 flex-1 items-center gap-4 text-left"
                 >
-                  {item.id.charAt(0).toUpperCase()}
+                  <div
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white"
+                    style={{ backgroundColor: color }}
+                  >
+                    {item.id.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-cafe">{item.id}</p>
+                    <p className="mt-0.5 truncate text-xs text-cafe-secondary">{item.description || '—'}</p>
+                    {item.category && <p className="mt-0.5 text-[11px] text-cafe-muted">{item.category}</p>}
+                  </div>
+                </button>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPreviewItem(item)}
+                    className="rounded-md p-1.5 text-cafe-muted hover:bg-[var(--console-card-soft-bg)] hover:text-cafe-secondary transition-colors"
+                    title="预览"
+                  >
+                    <HubIcon name="eye" className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={(e) => handleToggle(item, e)}
+                    className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${busy ? 'opacity-50' : 'cursor-pointer'} ${item.enabled ? 'bg-[var(--cafe-accent,#C65F3D)]' : 'bg-[var(--console-border-soft)]'}`}
+                    title={item.enabled ? '禁用' : '启用'}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${item.enabled ? 'translate-x-[18px]' : 'translate-x-[2px]'} mt-[2px]`}
+                    />
+                  </button>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-cafe">{item.id}</p>
-                  <p className="mt-0.5 truncate text-xs text-cafe-secondary">{item.description || '—'}</p>
-                  {item.category && <p className="mt-0.5 text-[11px] text-cafe-muted">{item.category}</p>}
-                </div>
-                <span
-                  className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium ${
-                    item.enabled
-                      ? 'bg-[var(--color-conn-emerald-bg,#ecfdf5)] text-[var(--color-conn-emerald-text,#065f46)]'
-                      : 'bg-[var(--console-card-soft-bg)] text-cafe-muted'
-                  }`}
-                >
-                  {item.enabled ? '已启用' : '已禁用'}
-                </span>
-              </button>
+              </div>
             );
           })}
         </div>

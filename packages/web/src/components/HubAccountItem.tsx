@@ -1,6 +1,7 @@
 'use client';
 
 import type { ProfileItem } from './hub-accounts.types';
+import { HubIcon } from './hub-icons';
 
 export interface ProfileEditPayload {
   displayName: string;
@@ -26,16 +27,21 @@ function summaryText(profile: ProfileItem): string | null {
 
 export function HubAccountItem({ profile, onEdit }: HubAccountItemProps) {
   return (
-    <button
-      type="button"
-      className={`flex w-full items-center gap-4 rounded-xl bg-[var(--console-card-bg)] p-4 text-left transition-colors ${onEdit ? 'cursor-pointer hover:bg-[var(--console-card-soft-bg)]' : ''}`}
-      onClick={() => onEdit?.(profile)}
-    >
+    <div className="flex w-full items-center gap-4 rounded-xl bg-[var(--console-card-bg)] p-4 transition-colors hover:bg-[var(--console-card-soft-bg)]">
       <div className="min-w-0 flex-1">
         <p className="text-[13px] font-bold text-cafe">{profile.displayName}</p>
         <p className="mt-1 text-[12px] text-cafe-secondary truncate">{summaryText(profile)}</p>
       </div>
-      {onEdit && <span className="shrink-0 text-xs text-cafe-muted">编辑 →</span>}
-    </button>
+      {onEdit && (
+        <button
+          type="button"
+          onClick={() => onEdit(profile)}
+          className="shrink-0 rounded-md p-1.5 text-cafe-muted hover:bg-[var(--console-card-soft-bg)] hover:text-cafe-secondary transition-colors"
+          title="编辑"
+        >
+          <HubIcon name="pencil" className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
   );
 }

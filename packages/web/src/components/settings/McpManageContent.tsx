@@ -24,6 +24,8 @@ export function McpManageContent() {
   const [items, setItems] = useState<CapabilityBoardItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<ModalState | null>(null);
+  const [toggling, setToggling] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const fetchItems = useCallback(async () => {
     try {
@@ -59,6 +61,49 @@ export function McpManageContent() {
         : undefined,
     });
   }, []);
+
+  const handleToggle = useCallback(
+    async (item: CapabilityBoardItem, e: React.MouseEvent) => {
+      e.stopPropagation();
+      setToggling(item.id);
+      try {
+        const res = await apiFetch('/api/capabilities', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            capabilityId: item.id,
+            capabilityType: 'mcp',
+            scope: 'global',
+            enabled: !item.enabled,
+          }),
+        });
+        if (res.ok) await fetchItems();
+      } catch {
+        /* ignore */
+      } finally {
+        setToggling(null);
+      }
+    },
+    [fetchItems],
+  );
+
+  const handleDelete = useCallback(
+    async (item: CapabilityBoardItem, e: React.MouseEvent) => {
+      e.stopPropagation();
+      setDeleting(item.id);
+      try {
+        const res = await apiFetch(`/api/capabilities/mcp/${encodeURIComponent(item.id)}?hard=true`, {
+          method: 'DELETE',
+        });
+        if (res.ok) await fetchItems();
+      } catch {
+        /* ignore */
+      } finally {
+        setDeleting(null);
+      }
+    },
+    [fetchItems],
+  );
 
   const handleCreate = useCallback(() => setModal({}), []);
 
@@ -102,6 +147,8 @@ export function McpManageContent() {
           {items.map((item) => {
             const color = avatarColor(item.id);
             const editable = item.source === 'external';
+            const busy = toggling === item.id;
+            const removing = deleting === item.id;
             const subInfo =
               item.mcpServer?.transport === 'streamableHttp'
                 ? item.mcpServer.url
@@ -109,36 +156,63 @@ export function McpManageContent() {
                   ? `${item.mcpServer.command}${item.mcpServer.args?.length ? ` ${item.mcpServer.args.join(' ')}` : ''}`
                   : undefined;
             return (
-              <button
+              <div
                 key={item.id}
-                type="button"
-                onClick={() => handleCardClick(item)}
-                disabled={!editable}
-                className={`flex w-full items-center gap-4 rounded-xl bg-[var(--console-card-bg)] p-4 text-left transition-colors ${
-                  editable ? 'hover:bg-[var(--console-card-soft-bg)] cursor-pointer' : 'cursor-default'
-                }`}
+                className="flex w-full items-center gap-4 rounded-xl bg-[var(--console-card-bg)] p-4 transition-colors hover:bg-[var(--console-card-soft-bg)]"
               >
-                <div
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white"
-                  style={{ backgroundColor: color }}
+                <button
+                  type="button"
+                  onClick={() => handleCardClick(item)}
+                  disabled={!editable}
+                  className={`flex min-w-0 flex-1 items-center gap-4 text-left ${editable ? 'cursor-pointer' : 'cursor-default'}`}
                 >
-                  {item.id.charAt(0).toUpperCase()}
+                  <div
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white"
+                    style={{ backgroundColor: color }}
+                  >
+                    {item.id.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-cafe">{item.id}</p>
+                    <p className="mt-0.5 truncate text-xs text-cafe-secondary">{item.description || '—'}</p>
+                    {subInfo && <p className="mt-0.5 truncate text-[11px] font-mono text-cafe-muted">{subInfo}</p>}
+                  </div>
+                </button>
+                <div className="flex shrink-0 items-center gap-2">
+                  {editable && (
+                    <button
+                      type="button"
+                      onClick={() => handleCardClick(item)}
+                      className="rounded-md p-1.5 text-cafe-muted hover:bg-[var(--console-card-soft-bg)] hover:text-cafe-secondary transition-colors"
+                      title="编辑配置"
+                    >
+                      <HubIcon name="settings" className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  {editable && (
+                    <button
+                      type="button"
+                      disabled={removing}
+                      onClick={(e) => handleDelete(item, e)}
+                      className={`rounded-md p-1.5 text-cafe-muted hover:bg-[var(--console-card-soft-bg)] hover:text-[var(--console-stop,#f26767)] transition-colors ${removing ? 'opacity-50' : ''}`}
+                      title="删除"
+                    >
+                      <HubIcon name="trash" className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={(e) => handleToggle(item, e)}
+                    className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${busy ? 'opacity-50' : 'cursor-pointer'} ${item.enabled ? 'bg-[var(--cafe-accent,#C65F3D)]' : 'bg-[var(--console-border-soft)]'}`}
+                    title={item.enabled ? '禁用' : '启用'}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${item.enabled ? 'translate-x-[18px]' : 'translate-x-[2px]'} mt-[2px]`}
+                    />
+                  </button>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-cafe">{item.id}</p>
-                  <p className="mt-0.5 truncate text-xs text-cafe-secondary">{item.description || '—'}</p>
-                  {subInfo && <p className="mt-0.5 truncate text-[11px] font-mono text-cafe-muted">{subInfo}</p>}
-                </div>
-                <span
-                  className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium ${
-                    item.enabled
-                      ? 'bg-[var(--color-conn-emerald-bg,#ecfdf5)] text-[var(--color-conn-emerald-text,#065f46)]'
-                      : 'bg-[var(--console-card-soft-bg)] text-cafe-muted'
-                  }`}
-                >
-                  {item.enabled ? '已启用' : '已禁用'}
-                </span>
-              </button>
+              </div>
             );
           })}
         </div>
