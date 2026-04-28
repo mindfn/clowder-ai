@@ -38,7 +38,6 @@ vi.mock('@/components/signals/SignalNav', () => ({
   SignalNav: () => React.createElement('div', { 'data-testid': 'signal-nav' }),
 }));
 
-
 function createArticle(overrides: Partial<SignalArticle> = {}): SignalArticle {
   return {
     id: 'signal_1',
@@ -250,9 +249,7 @@ describe('SignalInboxView', () => {
       await Promise.resolve();
     });
 
-    const queryInput = container.querySelector(
-      'input[placeholder="搜索信号..."]',
-    ) as HTMLInputElement | null;
+    const queryInput = container.querySelector('input[placeholder="搜索信号..."]') as HTMLInputElement | null;
     if (!queryInput) throw new Error('Missing query input');
 
     await act(async () => {

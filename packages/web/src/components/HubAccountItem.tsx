@@ -28,9 +28,6 @@ export function HubAccountItem({ profile, onEdit }: HubAccountItemProps) {
   const statusLabel = profile.hasApiKey ? '已配置' : profile.builtin ? '内置' : '未配置';
   const statusClass =
     profile.hasApiKey || profile.builtin ? 'bg-[#DFF4E7] text-[#087A3E]' : 'bg-[#F3E1D6] text-cafe-secondary';
-  const actionLabel = profile.builtin ? '预览 →' : '预览 / 编辑 →';
-  const actionColor = profile.builtin ? 'text-cafe-secondary' : 'text-[#6F3A2C]';
-
   return (
     <button
       type="button"
@@ -44,7 +41,6 @@ export function HubAccountItem({ profile, onEdit }: HubAccountItemProps) {
         </p>
       </div>
       <span className={`shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold ${statusClass}`}>{statusLabel}</span>
-      <span className={`shrink-0 text-[12px] font-bold ${actionColor}`}>{actionLabel}</span>
     </button>
   );
 }

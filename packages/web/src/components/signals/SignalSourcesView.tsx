@@ -3,11 +3,15 @@
 import type { SignalSource } from '@cat-cafe/shared';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchSignalSources, triggerSourceFetch, updateSignalSource } from '@/utils/signals-api';
+import { SignalAddSourceButton } from './SignalAddSourceButton';
 import { SignalNav } from './SignalNav';
 
 function SourceStatCard({ label, value, warning }: { label: string; value: number; warning?: boolean }) {
   return (
-    <div className="flex flex-1 flex-col gap-1 rounded-2xl bg-[var(--console-card-bg)] p-4 shadow-[0_8px_22px_rgba(43,33,26,0.04)]" style={{ height: 92 }}>
+    <div
+      className="flex flex-1 flex-col gap-1 rounded-2xl bg-[var(--console-card-bg)] p-4 shadow-[0_8px_22px_rgba(43,33,26,0.04)]"
+      style={{ height: 92 }}
+    >
       <span className={`text-[22px] font-bold ${warning ? 'text-[#D99028]' : 'text-cafe'}`}>{value}</span>
       <span className="text-xs text-cafe-secondary">{label}</span>
     </div>
@@ -105,19 +109,7 @@ export function SignalSourcesView({ initialReferrerThread = null }: { initialRef
             <p className="mt-1 text-[13px] text-cafe-secondary">管理抓取来源、优先级和健康状态</p>
           </div>
           <div className="flex items-center gap-3">
-            <button
-              type="button"
-              disabled
-              title="添加信源功能即将上线"
-              className="flex items-center gap-2 rounded-lg bg-[var(--cafe-accent,#C65F3D)] px-3.5 text-[13px] font-semibold text-white opacity-50 cursor-not-allowed"
-              style={{ height: 36 }}
-            >
-              <svg className="h-[15px] w-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-              添加信源
-            </button>
+            <SignalAddSourceButton />
             <SignalNav active="sources" initialReferrerThread={initialReferrerThread} />
           </div>
         </header>
@@ -134,7 +126,10 @@ export function SignalSourcesView({ initialReferrerThread = null }: { initialRef
           </div>
         )}
         {fetchResult && (
-          <div className={`console-status-chip ${fetchResult.ok ? '' : ''}`} data-status={fetchResult.ok ? 'success' : 'error'}>
+          <div
+            className={`console-status-chip ${fetchResult.ok ? '' : ''}`}
+            data-status={fetchResult.ok ? 'success' : 'error'}
+          >
             <span className="font-semibold">{fetchResult.sourceId}</span>: {fetchResult.message}
           </div>
         )}
@@ -155,7 +150,10 @@ export function SignalSourcesView({ initialReferrerThread = null }: { initialRef
               </div>
               <span className="flex-1 truncate text-[13px] font-bold text-cafe">{source.name}</span>
               <StatusPill enabled={source.enabled} />
-              <span className="rounded-lg bg-[var(--console-active-bg)] px-2.5 py-1 text-xs text-cafe-secondary" style={{ width: 96 }}>
+              <span
+                className="rounded-lg bg-[var(--console-active-bg)] px-2.5 py-1 text-xs text-cafe-secondary"
+                style={{ width: 96 }}
+              >
                 Tier {source.tier ?? 1}
               </span>
               <button
@@ -172,9 +170,7 @@ export function SignalSourcesView({ initialReferrerThread = null }: { initialRef
                 onClick={() => void setEnabled(source.id, !source.enabled)}
                 className={[
                   'rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors',
-                  source.enabled
-                    ? 'bg-[#DFF4E7] text-[#2D6A4F]'
-                    : 'bg-[var(--console-active-bg)] text-cafe-secondary',
+                  source.enabled ? 'bg-[#DFF4E7] text-[#2D6A4F]' : 'bg-[var(--console-active-bg)] text-cafe-secondary',
                 ].join(' ')}
               >
                 {updatingId === source.id ? '...' : source.enabled ? 'ON' : 'OFF'}

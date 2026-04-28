@@ -16,6 +16,7 @@ import { CallbackEnvPanel } from './CallbackEnvPanel';
 import { ConsoleSetupState, resolveConsoleSetupState } from './console-setup-state';
 import { OpsContent } from './OpsContent';
 import { PluginsContent } from './PluginsContent';
+import { RulesPromptsContent } from './RulesPromptsContent';
 import { ServiceStatusPanel } from './ServiceStatusPanel';
 import { SettingsPlaceholder } from './SettingsPlaceholder';
 import { SkillPreviewPanel } from './SkillPreviewPanel';
@@ -168,6 +169,8 @@ export function SettingsContent({ section }: SettingsContentProps) {
       ) : (
         <p className="text-sm text-cafe-muted">加载中...</p>
       );
+    case 'rules':
+      return <RulesPromptsContent />;
     case 'notify':
       return <PushSettingsPanel />;
     case 'ops':

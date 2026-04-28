@@ -29,8 +29,8 @@ export function MemoryHub({ activeTab = 'feed', initialQuery, initialReferrerThr
   const isFeed = activeTab === 'feed';
   return (
     <div className="flex h-full flex-col bg-[var(--console-panel-bg)]" data-testid="memory-hub">
-      <div className="flex flex-1 flex-col overflow-hidden rounded-[18px] bg-[var(--console-shell-bg)] shadow-[var(--console-shadow-soft)] m-3">
-        <header className="space-y-3 px-9 pt-8 pb-4">
+      <div className="flex flex-1 flex-col overflow-hidden rounded-[18px] bg-[var(--console-shell-bg)] shadow-[var(--console-shadow-soft)] m-3 gap-5 px-9 py-8">
+        <header className="flex items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-cafe">记忆</h1>
             <p className="mt-1 text-[13px] text-cafe-secondary">查看知识涌现、检索证据和索引健康状态</p>
@@ -38,7 +38,7 @@ export function MemoryHub({ activeTab = 'feed', initialQuery, initialReferrerThr
           <MemoryNav active={activeTab} initialReferrerThread={initialReferrerThread} />
         </header>
 
-        <main className={`flex-1 px-9 pb-8 ${isFeed ? 'flex min-h-0 gap-[18px]' : 'overflow-y-auto'}`}>
+        <main className={`flex-1 ${isFeed ? 'flex min-h-0 gap-[18px]' : 'overflow-y-auto'}`}>
           {isFeed && (
             <>
               <div

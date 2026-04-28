@@ -18,6 +18,7 @@ import {
   updateSignalArticle,
 } from '@/utils/signals-api';
 import { filterSignalArticles, type SignalArticleFilters } from '@/utils/signals-view';
+import { SignalAddSourceButton } from './SignalAddSourceButton';
 import { SignalArticleDetail as SignalArticleDetailPanel } from './SignalArticleDetail';
 import { SignalArticleList } from './SignalArticleList';
 import { SignalNav } from './SignalNav';
@@ -32,7 +33,6 @@ const initialFilters: SignalArticleFilters = {
 function uniqueSources(items: readonly SignalArticle[]): readonly string[] {
   return Array.from(new Set(items.map((item) => item.source))).sort();
 }
-
 
 export function SignalInboxView({ initialReferrerThread = null }: { initialReferrerThread?: string | null }) {
   const ime = useIMEGuard();
@@ -238,84 +238,76 @@ export function SignalInboxView({ initialReferrerThread = null }: { initialRefer
 
   return (
     <div className="flex h-full flex-col bg-[var(--console-panel-bg)]">
-      <div className="flex flex-1 flex-col overflow-hidden rounded-[18px] bg-[var(--console-shell-bg)] shadow-[var(--console-shadow-soft)] m-3">
-        <div className="space-y-[18px] px-9 pt-8 pb-4">
-          <header className="flex items-center justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-bold text-cafe">信号</h1>
-              <p className="mt-1 text-[13px] text-cafe-secondary">浏览、筛选和研读来自信源的文章</p>
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                disabled
-                title="添加信源功能即将上线"
-                className="flex items-center gap-2 rounded-lg bg-[var(--cafe-accent,#C65F3D)] px-3.5 text-[13px] font-semibold text-white opacity-50 cursor-not-allowed"
-                style={{ height: 36 }}
-              >
-                <svg className="h-[15px] w-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-                添加信源
-              </button>
-              <SignalNav active="signals" initialReferrerThread={initialReferrerThread} />
-            </div>
-          </header>
+      <div className="flex flex-1 flex-col overflow-hidden rounded-[18px] bg-[var(--console-shell-bg)] shadow-[var(--console-shadow-soft)] m-3 gap-5 px-9 py-8">
+        <header className="flex items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-cafe">信号</h1>
+            <p className="mt-1 text-[13px] text-cafe-secondary">浏览、筛选和研读来自信源的文章</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <SignalAddSourceButton />
+            <SignalNav active="signals" initialReferrerThread={initialReferrerThread} />
+          </div>
+        </header>
 
-          <form onSubmit={handleSearchSubmit} className="flex items-center gap-2">
-            <div className="flex items-center gap-2 rounded-lg bg-[var(--console-active-bg)] px-3 py-1.5">
-              <svg className="h-[15px] w-[15px] text-cafe-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
-              <input
-                value={filters.query}
-                onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))}
-                onCompositionStart={ime.onCompositionStart}
-                onCompositionEnd={ime.onCompositionEnd}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && ime.isComposing()) event.preventDefault();
-                }}
-                placeholder="搜索信号..."
-                className="w-[280px] bg-transparent text-xs text-cafe outline-none placeholder:text-cafe-muted"
-              />
-            </div>
-            <select
-              value={filters.status}
-              onChange={(event) => handleStatusTab(event.target.value as SignalArticleFilters['status'])}
-              className="rounded-lg bg-[var(--console-active-bg)] px-2.5 py-1.5 text-xs text-cafe-secondary outline-none"
-              name="status"
+        <form onSubmit={handleSearchSubmit} className="flex items-center gap-2">
+          <div className="flex items-center gap-2 rounded-lg bg-[var(--console-active-bg)] px-3 py-1.5">
+            <svg
+              className="h-[15px] w-[15px] text-cafe-muted"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
             >
-              <option value="inbox">Inbox</option>
-              <option value="starred">收藏</option>
-              <option value="read">已读</option>
-              <option value="archived">归档</option>
-              <option value="all">全部状态</option>
-            </select>
-            <select
-              value={filters.source}
-              onChange={(event) => setFilters((current) => ({ ...current, source: event.target.value }))}
-              name="source"
-              className="rounded-lg bg-[var(--console-active-bg)] px-2.5 py-1.5 text-xs text-cafe-secondary outline-none"
-            >
-              <option value="all">全部来源</option>
-              {sources.map((source) => (
-                <option key={source} value={source}>
-                  {source}
-                </option>
-              ))}
-            </select>
-          </form>
-        </div>
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              value={filters.query}
+              onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))}
+              onCompositionStart={ime.onCompositionStart}
+              onCompositionEnd={ime.onCompositionEnd}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && ime.isComposing()) event.preventDefault();
+              }}
+              placeholder="搜索信号..."
+              className="w-[280px] bg-transparent text-xs text-cafe outline-none placeholder:text-cafe-muted"
+            />
+          </div>
+          <select
+            value={filters.status}
+            onChange={(event) => handleStatusTab(event.target.value as SignalArticleFilters['status'])}
+            className="rounded-lg bg-[var(--console-active-bg)] px-2.5 py-1.5 text-xs text-cafe-secondary outline-none"
+            name="status"
+          >
+            <option value="inbox">Inbox</option>
+            <option value="starred">收藏</option>
+            <option value="read">已读</option>
+            <option value="archived">归档</option>
+            <option value="all">全部状态</option>
+          </select>
+          <select
+            value={filters.source}
+            onChange={(event) => setFilters((current) => ({ ...current, source: event.target.value }))}
+            name="source"
+            className="rounded-lg bg-[var(--console-active-bg)] px-2.5 py-1.5 text-xs text-cafe-secondary outline-none"
+          >
+            <option value="all">全部来源</option>
+            {sources.map((source) => (
+              <option key={source} value={source}>
+                {source}
+              </option>
+            ))}
+          </select>
+        </form>
 
         {error && (
-          <div className="mx-9 console-status-chip" data-status="error">
+          <div className="console-status-chip" data-status="error">
             请求失败: {error}
           </div>
         )}
 
-        <div className="flex min-h-0 flex-1 gap-[18px] px-9 pb-8">
+        <div className="flex min-h-0 flex-1 gap-[18px]">
           <div className="flex w-[420px] shrink-0 flex-col gap-2 overflow-y-auto rounded-[18px] bg-[var(--console-panel-bg)] p-2">
             <div className="flex h-[42px] items-center justify-between px-2">
               <span className="text-sm font-semibold text-cafe">

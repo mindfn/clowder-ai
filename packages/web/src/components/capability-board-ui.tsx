@@ -213,10 +213,6 @@ function CapabilityCard({
           {item.description && <p className="mt-1 truncate text-[12px] text-cafe-secondary">{item.description}</p>}
         </div>
 
-        {!expanded && hasDetails && (
-          <span className="shrink-0 text-[12px] font-bold text-[#6F3A2C]">预览 / 编辑 →</span>
-        )}
-
         {/* Global toggle + edit + delete */}
         <div className="flex shrink-0 items-center gap-1.5">
           {onEdit && (

@@ -50,6 +50,10 @@ const nextConfig = {
     ];
   },
   webpack: (config) => {
+    // Keep pnpm symlink paths inside packages/web so Next's CSS handling sees
+    // node_modules styles (for example @xterm/xterm/css/xterm.css) as in-root
+    // dependencies during next dev.
+    config.resolve.symlinks = false;
     // Suppress onnxruntime-web "Critical dependency" warnings — dynamic require() in
     // minified bundle is expected and cannot be statically analyzed by webpack.
     config.ignoreWarnings = [{ module: /onnxruntime-web/ }];

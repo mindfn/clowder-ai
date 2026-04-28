@@ -43,7 +43,8 @@ describe('SettingsNav search filtering', () => {
       root.render(React.createElement(SettingsNav, { activeSection: 'members', onSelect: vi.fn() }));
     });
     const buttons = Array.from(container.querySelectorAll('button'));
-    expect(buttons).toHaveLength(10);
+    expect(buttons).toHaveLength(11);
+    expect(container.textContent).toContain('规则与 SOP');
   });
 
   it('filters sections by label match', () => {
@@ -66,6 +67,17 @@ describe('SettingsNav search filtering', () => {
     const buttons = Array.from(container.querySelectorAll('button'));
     expect(buttons).toHaveLength(1);
     expect(buttons[0].textContent).toContain('IM 对接');
+  });
+
+  it('filters governance keywords to the rules and SOP section', () => {
+    act(() => {
+      root.render(
+        React.createElement(SettingsNav, { activeSection: 'members', onSelect: vi.fn(), searchQuery: '家规' }),
+      );
+    });
+    const buttons = Array.from(container.querySelectorAll('button'));
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].textContent).toContain('规则与 SOP');
   });
 
   it('shows empty message when no match', () => {

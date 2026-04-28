@@ -6,6 +6,8 @@ import { useToastStore } from '@/stores/toastStore';
 import { apiFetch } from '@/utils/api-client';
 import { loadThreads as loadCachedThreads } from '@/utils/offline-store';
 
+import { BootcampListModal } from '../BootcampListModal';
+import { BootcampIcon } from '../icons/BootcampIcon';
 import { readProjectNames, writeProjectNames } from './active-workspace';
 import { DirectoryPickerModal, type NewThreadOptions } from './DirectoryPickerModal';
 import { SectionGroup } from './SectionGroup';
@@ -51,6 +53,7 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
   } = useChatStore();
   const [isCreating, setIsCreating] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
+  const [showBootcampList, setShowBootcampList] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [bindWarning, setBindWarning] = useState<string | null>(null);
   // I-1: Thread to confirm deletion (null = no dialog)
@@ -464,6 +467,7 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
     searchQuery: normalizedQuery,
     currentThreadId,
   });
+  const bootcampCount = useMemo(() => threads.filter((thread) => thread.bootcampState).length, [threads]);
 
   return (
     <>
@@ -471,17 +475,34 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
         className={`${className ?? 'w-60'} flex flex-col h-full bg-[var(--console-panel-bg)]`}
         style={{ boxShadow: '8px 0 24px rgba(43, 33, 26, 0.04)' }}
       >
-        <div className="p-3 flex items-center justify-between">
+        <div className="p-3 flex items-center justify-between gap-2">
           <span className="text-sm font-semibold text-cafe-black">对话</span>
-          <button
-            type="button"
-            onClick={() => setShowPicker(true)}
-            disabled={isCreating}
-            className="console-button-primary text-xs px-2 py-1 disabled:opacity-40"
-            data-guide-id="sidebar.new-thread"
-          >
-            {isCreating ? '...' : '+ 新对话'}
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setShowBootcampList(true)}
+              className="relative flex h-8 w-8 items-center justify-center rounded-lg text-conn-amber-text transition-colors hover:bg-conn-amber-bg/60"
+              data-testid="sidebar-bootcamp"
+              title={bootcampCount > 0 ? `我的训练营（${bootcampCount}）` : '开始训练营'}
+              aria-label={bootcampCount > 0 ? `我的训练营（${bootcampCount}）` : '开始训练营'}
+            >
+              <BootcampIcon className="h-4 w-4" />
+              {bootcampCount > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-conn-amber-bg px-1 text-[9px] font-bold text-white">
+                  {bootcampCount > 9 ? '9+' : bootcampCount}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowPicker(true)}
+              disabled={isCreating}
+              className="console-button-primary text-xs px-2 py-1 disabled:opacity-40"
+              data-guide-id="sidebar.new-thread"
+            >
+              {isCreating ? '...' : '+ 新对话'}
+            </button>
+          </div>
         </div>
 
         {bindWarning && (
@@ -759,6 +780,11 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
           onCancel={() => setShowPicker(false)}
         />
       )}
+      <BootcampListModal
+        open={showBootcampList}
+        onClose={() => setShowBootcampList(false)}
+        currentThreadId={currentThreadId}
+      />
 
       {/* I-1: Delete confirmation dialog (F095-G: typed confirmation for system threads) */}
       {deleteTarget && (

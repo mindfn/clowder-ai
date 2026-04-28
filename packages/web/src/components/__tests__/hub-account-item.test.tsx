@@ -72,8 +72,8 @@ describe('HubAccountItem', () => {
       );
     });
 
-    // F170: card is now a single clickable button with preview/edit label
-    expect(container.textContent).toContain('预览 / 编辑 →');
+    expect(container.textContent).not.toContain('预览 / 编辑');
+    expect(container.textContent).not.toContain('预览 →');
 
     const card = container.querySelector('button') as HTMLElement;
     await act(async () => {
@@ -82,7 +82,7 @@ describe('HubAccountItem', () => {
     expect(onEdit).toHaveBeenCalledWith(profile);
   });
 
-  it('renders builtin card with preview label and no binding-scope controls', async () => {
+  it('renders builtin card without redundant preview text or binding-scope controls', async () => {
     const profile = profileItem({
       id: 'codex-oauth',
       provider: 'codex-oauth',
@@ -101,8 +101,7 @@ describe('HubAccountItem', () => {
       root.render(<HubAccountItem profile={profile} busy={false} onSave={vi.fn(async () => {})} onDelete={() => {}} />);
     });
 
-    // F170: builtin cards show "预览 →" (preview only), no edit
-    expect(container.textContent).toContain('预览 →');
+    expect(container.textContent).not.toContain('预览');
     expect(container.textContent).toContain('内置');
     expect(container.textContent).not.toContain('绑定范围');
     expect(container.textContent).not.toContain('设为 Codex 默认');
@@ -133,7 +132,7 @@ describe('HubAccountItem', () => {
     expect(container.textContent).toContain('OpenCode (client-auth)');
   });
 
-  it('renders api_key card with edit action label', async () => {
+  it('renders api_key card without redundant preview/edit action text', async () => {
     const profile = profileItem({
       id: 'codex-sponsor',
       provider: 'codex-sponsor',
@@ -163,9 +162,9 @@ describe('HubAccountItem', () => {
       );
     });
 
-    // F170: simplified card — delete is now handled via edit modal, card shows "预览 / 编辑 →"
     expect(container.textContent).toContain('Codex Sponsor');
-    expect(container.textContent).toContain('预览 / 编辑 →');
+    expect(container.textContent).not.toContain('预览 / 编辑');
+    expect(container.textContent).not.toContain('预览 →');
     expect(container.textContent).toContain('已配置');
   });
 

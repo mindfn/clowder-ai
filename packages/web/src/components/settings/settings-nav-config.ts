@@ -64,6 +64,13 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     description: '环境选项、默认行为和运行时总开关。',
   },
   {
+    id: 'rules',
+    label: '规则与 SOP',
+    icon: 'file-text',
+    color: 'var(--color-gemini-primary)',
+    description: '家规、协作 SOP 和模型提示词入口。',
+  },
+  {
     id: 'notify',
     label: '通知',
     icon: 'bell',

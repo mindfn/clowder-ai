@@ -120,7 +120,6 @@ export function HubCoCreatorOverviewCard({ coCreator, onEdit }: { coCreator: CoC
         <p className="mt-1 text-[12px] text-cafe-secondary truncate">别名: {coCreator.aliases.join(' · ') || '无'}</p>
       </div>
       <span className="shrink-0 rounded-md bg-[#F3E1D6] px-2 py-1 text-[11px] font-semibold text-[#6F3A2C]">Owner</span>
-      <span className="shrink-0 text-[12px] font-bold text-[#6F3A2C]">预览 / 编辑 →</span>
     </section>
   );
 }

@@ -381,8 +381,6 @@ export function RightStatusPanel({
     setViewSession(null);
   }, [threadId]);
 
-  const openHub = useChatStore((s) => s.openHub);
-
   const copyText = useCallback((value: string) => {
     void navigator.clipboard.writeText(value);
   }, []);
@@ -399,21 +397,7 @@ export function RightStatusPanel({
       </div>
 
       <section className={`${INSPECTOR_CARD} flex flex-col gap-2`}>
-        <div className="flex items-center justify-between">
-          <h3 className="text-[11px] font-bold text-cafe-secondary">
-            {activeCats.length > 0 ? '猫猫状态' : '猫猫状态'}
-          </h3>
-          <button
-            onClick={() => openHub()}
-            className="flex h-3 w-3 items-center justify-center text-cafe-secondary hover:text-cafe transition-colors"
-            title="Clowder AI Hub"
-          >
-            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-          </button>
-        </div>
+        <h3 className="text-[11px] font-bold text-cafe-secondary">猫猫状态</h3>
         {activeCats.length > 0 ? (
           <div className="space-y-2">
             {activeCats.map((catId) => {

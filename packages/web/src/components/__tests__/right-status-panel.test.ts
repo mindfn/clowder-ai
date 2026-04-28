@@ -69,6 +69,7 @@ describe('RightStatusPanel', () => {
     expect(html).toContain('执行');
     expect(html).toContain('猫猫状态');
     expect(html).toContain('消息统计');
+    expect(html).not.toContain('Clowder AI Hub');
     // F170: component resolves cat IDs to display names via useCatData
     expect(html).toContain('布偶猫');
     expect(html).toContain('缅因猫');

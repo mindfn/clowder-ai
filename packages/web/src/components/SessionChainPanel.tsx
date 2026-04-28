@@ -228,8 +228,8 @@ export function SessionChainPanel({ threadId, catInvocations, onViewSession }: S
             <div
               data-testid="session-card-active"
               data-cat-id={session.catId}
-              className="rounded-md border-[1.5px] bg-cafe-surface p-2.5 shadow-sm"
-              style={{ borderColor: colors.border }}
+              className="rounded-md bg-[var(--console-card-soft-bg)] p-2.5"
+              style={{ boxShadow: `inset 3px 0 0 ${colors.border}` }}
             >
               <div className="flex items-center justify-between mb-1">
                 <div className="flex items-center gap-1.5">
@@ -300,8 +300,8 @@ export function SessionChainPanel({ threadId, catInvocations, onViewSession }: S
                   key={session.id}
                   data-testid="session-card-sealed"
                   data-cat-id={session.catId}
-                  className="flex items-center gap-2 rounded border bg-cafe-surface px-2.5 py-1.5"
-                  style={{ borderColor: sealedColors.border }}
+                  className="flex items-center gap-2 rounded bg-[var(--console-card-soft-bg)] px-2.5 py-1.5"
+                  style={{ boxShadow: `inset 2px 0 0 ${sealedColors.border}` }}
                 >
                   <div
                     className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${

@@ -301,6 +301,30 @@
                     },
                     {
                       "type": "frame",
+                      "id": "GKLrZ",
+                      "name": "Bootcamp Shortcut",
+                      "width": 36,
+                      "height": 36,
+                      "fill": "#F2E9E0",
+                      "cornerRadius": 8,
+                      "layout": "vertical",
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "1ZwE8",
+                          "name": "bootcampIcon",
+                          "width": 18,
+                          "height": 18,
+                          "iconFontName": "graduation-cap",
+                          "iconFontFamily": "lucide",
+                          "fill": "#6F3A2C"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
                       "id": "f170r2973_Button",
                       "name": "Button 新对话",
                       "height": 36,
@@ -1251,15 +1275,6 @@
                               "fontFamily": "Inter",
                               "fontSize": 11,
                               "fontWeight": "700"
-                            },
-                            {
-                              "type": "icon_font",
-                              "id": "XwU2T",
-                              "width": 12,
-                              "height": 12,
-                              "iconFontName": "settings",
-                              "iconFontFamily": "lucide",
-                              "fill": "#746B64"
                             }
                           ]
                         },
@@ -6317,6 +6332,42 @@
                           "fontWeight": "500"
                         }
                       ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "6bBr0",
+                      "name": "Settings Nav 规则与 SOP",
+                      "width": "fill_container",
+                      "height": 36,
+                      "cornerRadius": 8,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "xXRao",
+                          "name": "rulesIconA",
+                          "width": 16,
+                          "height": 16,
+                          "iconFontName": "file-text",
+                          "iconFontFamily": "lucide",
+                          "fill": "#746B64"
+                        },
+                        {
+                          "type": "text",
+                          "id": "Z1YeH",
+                          "name": "rulesTextA",
+                          "fill": "#746B64",
+                          "content": "规则与 SOP",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        }
+                      ]
                     }
                   ]
                 },
@@ -6416,31 +6467,34 @@
                     {
                       "type": "frame",
                       "id": "f170r0313_DefaultCatGroup",
-                      "name": "Default Cat Group",
+                      "name": "Default Cat Group - compact inline selector",
                       "width": "fill_container",
-                      "fill": "$console-card-bg",
+                      "fill": "#00000000",
                       "cornerRadius": 16,
                       "effect": {
                         "type": "shadow",
                         "shadowType": "outer",
-                        "color": "#2B211A0A",
-                        "offset": {
-                          "x": 0,
-                          "y": 8
-                        },
-                        "blur": 22
+                        "enabled": false,
+                        "color": "#000000"
                       },
                       "layout": "vertical",
-                      "padding": 18,
                       "children": [
                         {
                           "type": "frame",
                           "id": "f170r0312_Config",
                           "name": "Config 默认猫猫",
                           "width": "fill_container",
+                          "height": 72,
+                          "fill": "#FFFDFB",
+                          "cornerRadius": 14,
+                          "stroke": {
+                            "align": "inside",
+                            "thickness": 0,
+                            "fill": "#00000000"
+                          },
                           "gap": 12,
                           "padding": [
-                            14,
+                            12,
                             16
                           ],
                           "alignItems": "center",
@@ -6458,7 +6512,7 @@
                                   "id": "f170r0309_text",
                                   "name": "text",
                                   "fill": "#241F1B",
-                                  "content": "默认猫猫",
+                                  "content": "全局默认猫",
                                   "fontFamily": "Inter",
                                   "fontSize": 13,
                                   "fontWeight": "700"
@@ -6470,7 +6524,7 @@
                                   "fill": "$cafe-text-secondary",
                                   "textGrowth": "fixed-width",
                                   "width": "fill_container",
-                                  "content": "新对话默认召唤对象",
+                                  "content": "新 thread 没有历史时默认由这只猫回复",
                                   "fontFamily": "Inter",
                                   "fontSize": 12,
                                   "fontWeight": "normal"
@@ -6481,9 +6535,9 @@
                               "type": "frame",
                               "id": "f170r0308_Control",
                               "name": "Control 布偶猫",
-                              "width": 160,
+                              "width": 220,
                               "height": 34,
-                              "fill": "$console-card-soft-bg",
+                              "fill": "#FCFAF7",
                               "cornerRadius": 8,
                               "stroke": {
                                 "align": "inside",
@@ -6574,7 +6628,7 @@
                               "type": "frame",
                               "id": "f170r0318_ConfigLabel",
                               "name": "Config Label",
-                              "width": 560,
+                              "width": "fill_container",
                               "layout": "vertical",
                               "gap": 4,
                               "children": [
@@ -6628,19 +6682,6 @@
                                   "fontWeight": "600"
                                 }
                               ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "giv0f",
-                              "name": "ma1",
-                              "fill": "#6F3A2C",
-                              "textGrowth": "fixed-width",
-                              "width": 112,
-                              "content": "预览 / 编辑 →",
-                              "textAlign": "right",
-                              "fontFamily": "Inter",
-                              "fontSize": 12,
-                              "fontWeight": "700"
                             }
                           ]
                         },
@@ -6678,7 +6719,7 @@
                               "type": "frame",
                               "id": "f170r0324_ConfigLabel",
                               "name": "Config Label",
-                              "width": 560,
+                              "width": "fill_container",
                               "layout": "vertical",
                               "gap": 4,
                               "children": [
@@ -6732,19 +6773,6 @@
                                   "fontWeight": "600"
                                 }
                               ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "Ma5Fo",
-                              "name": "ma2",
-                              "fill": "#6F3A2C",
-                              "textGrowth": "fixed-width",
-                              "width": 112,
-                              "content": "预览 / 编辑 →",
-                              "textAlign": "right",
-                              "fontFamily": "Inter",
-                              "fontSize": 12,
-                              "fontWeight": "700"
                             }
                           ]
                         },
@@ -6782,7 +6810,7 @@
                               "type": "frame",
                               "id": "f170r0330_ConfigLabel",
                               "name": "Config Label",
-                              "width": 560,
+                              "width": "fill_container",
                               "layout": "vertical",
                               "gap": 4,
                               "children": [
@@ -6836,19 +6864,6 @@
                                   "fontWeight": "600"
                                 }
                               ]
-                            },
-                            {
-                              "type": "text",
-                              "id": "k0Vno",
-                              "name": "ma3",
-                              "fill": "#6F3A2C",
-                              "textGrowth": "fixed-width",
-                              "width": 112,
-                              "content": "预览 / 编辑 →",
-                              "textAlign": "right",
-                              "fontFamily": "Inter",
-                              "fontSize": 12,
-                              "fontWeight": "700"
                             }
                           ]
                         }
@@ -7495,6 +7510,42 @@
                           "name": "text",
                           "fill": "$cafe-text-secondary",
                           "content": "运维监控",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "av5lR",
+                      "name": "Settings Nav 规则与 SOP",
+                      "width": "fill_container",
+                      "height": 36,
+                      "cornerRadius": 8,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "Z2HF5",
+                          "name": "rulesIconB",
+                          "width": 16,
+                          "height": 16,
+                          "iconFontName": "file-text",
+                          "iconFontFamily": "lucide",
+                          "fill": "#746B64"
+                        },
+                        {
+                          "type": "text",
+                          "id": "UjqYD",
+                          "name": "rulesTextB",
+                          "fill": "#746B64",
+                          "content": "规则与 SOP",
                           "fontFamily": "Inter",
                           "fontSize": 13,
                           "fontWeight": "500"
@@ -8530,6 +8581,42 @@
                           "name": "text",
                           "fill": "$cafe-text-secondary",
                           "content": "运维监控",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "K4ILv",
+                      "name": "Settings Nav 规则与 SOP",
+                      "width": "fill_container",
+                      "height": 36,
+                      "cornerRadius": 8,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "JTRJU",
+                          "name": "rulesIconC",
+                          "width": 16,
+                          "height": 16,
+                          "iconFontName": "file-text",
+                          "iconFontFamily": "lucide",
+                          "fill": "#746B64"
+                        },
+                        {
+                          "type": "text",
+                          "id": "proWV",
+                          "name": "rulesTextC",
+                          "fill": "#746B64",
+                          "content": "规则与 SOP",
                           "fontFamily": "Inter",
                           "fontSize": 13,
                           "fontWeight": "500"
@@ -10367,6 +10454,42 @@
                           "fontWeight": "500"
                         }
                       ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "OfREX",
+                      "name": "Settings Nav 规则与 SOP",
+                      "width": "fill_container",
+                      "height": 36,
+                      "cornerRadius": 8,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "BI4DJ",
+                          "name": "rulesIconD",
+                          "width": 16,
+                          "height": 16,
+                          "iconFontName": "file-text",
+                          "iconFontFamily": "lucide",
+                          "fill": "#746B64"
+                        },
+                        {
+                          "type": "text",
+                          "id": "gmIm6",
+                          "name": "rulesTextD",
+                          "fill": "#746B64",
+                          "content": "规则与 SOP",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        }
+                      ]
                     }
                   ]
                 },
@@ -12044,6 +12167,42 @@
                           "name": "text",
                           "fill": "$cafe-text-secondary",
                           "content": "运维监控",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "JXLq4",
+                      "name": "Settings Nav 规则与 SOP",
+                      "width": "fill_container",
+                      "height": 36,
+                      "cornerRadius": 8,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "i1AN9",
+                          "name": "rulesIconE",
+                          "width": 16,
+                          "height": 16,
+                          "iconFontName": "file-text",
+                          "iconFontFamily": "lucide",
+                          "fill": "#746B64"
+                        },
+                        {
+                          "type": "text",
+                          "id": "3CKFC",
+                          "name": "rulesTextE",
+                          "fill": "#746B64",
+                          "content": "规则与 SOP",
                           "fontFamily": "Inter",
                           "fontSize": 13,
                           "fontWeight": "500"
@@ -13867,6 +14026,42 @@
                           "fontWeight": "500"
                         }
                       ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "9f0FU",
+                      "name": "Settings Nav 规则与 SOP",
+                      "width": "fill_container",
+                      "height": 36,
+                      "cornerRadius": 8,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "ThDgE",
+                          "name": "rulesIconF",
+                          "width": 16,
+                          "height": 16,
+                          "iconFontName": "file-text",
+                          "iconFontFamily": "lucide",
+                          "fill": "#746B64"
+                        },
+                        {
+                          "type": "text",
+                          "id": "eI3WW",
+                          "name": "rulesTextF",
+                          "fill": "#746B64",
+                          "content": "规则与 SOP",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        }
+                      ]
                     }
                   ]
                 },
@@ -15549,6 +15744,42 @@
                           "fontWeight": "500"
                         }
                       ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "CNkyW",
+                      "name": "Settings Nav 规则与 SOP",
+                      "width": "fill_container",
+                      "height": 36,
+                      "cornerRadius": 8,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "MxsEC",
+                          "name": "rulesIconG",
+                          "width": 16,
+                          "height": 16,
+                          "iconFontName": "file-text",
+                          "iconFontFamily": "lucide",
+                          "fill": "#746B64"
+                        },
+                        {
+                          "type": "text",
+                          "id": "aGFfp",
+                          "name": "rulesTextG",
+                          "fill": "#746B64",
+                          "content": "规则与 SOP",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        }
+                      ]
                     }
                   ]
                 },
@@ -16586,6 +16817,42 @@
                           "fontWeight": "500"
                         }
                       ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "MjQQw",
+                      "name": "Settings Nav 规则与 SOP",
+                      "width": "fill_container",
+                      "height": 36,
+                      "cornerRadius": 8,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "sWV5V",
+                          "name": "rulesIconH",
+                          "width": 16,
+                          "height": 16,
+                          "iconFontName": "file-text",
+                          "iconFontFamily": "lucide",
+                          "fill": "#746B64"
+                        },
+                        {
+                          "type": "text",
+                          "id": "Wwv6D",
+                          "name": "rulesTextH",
+                          "fill": "#746B64",
+                          "content": "规则与 SOP",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        }
+                      ]
                     }
                   ]
                 },
@@ -17559,6 +17826,42 @@
                           "fontWeight": "500"
                         }
                       ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "dxLdc",
+                      "name": "Settings Nav 规则与 SOP",
+                      "width": "fill_container",
+                      "height": 36,
+                      "cornerRadius": 8,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "Hr7fD",
+                          "name": "rulesIconI",
+                          "width": 16,
+                          "height": 16,
+                          "iconFontName": "file-text",
+                          "iconFontFamily": "lucide",
+                          "fill": "#746B64"
+                        },
+                        {
+                          "type": "text",
+                          "id": "iYVjA",
+                          "name": "rulesTextI",
+                          "fill": "#746B64",
+                          "content": "规则与 SOP",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        }
+                      ]
                     }
                   ]
                 },
@@ -18453,6 +18756,42 @@
                           "fontFamily": "Inter",
                           "fontSize": 13,
                           "fontWeight": "700"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "BcOyi",
+                      "name": "Settings Nav 规则与 SOP",
+                      "width": "fill_container",
+                      "height": 36,
+                      "cornerRadius": 8,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "LsAhn",
+                          "name": "rulesIconJ",
+                          "width": 16,
+                          "height": 16,
+                          "iconFontName": "file-text",
+                          "iconFontFamily": "lucide",
+                          "fill": "#746B64"
+                        },
+                        {
+                          "type": "text",
+                          "id": "yxErW",
+                          "name": "rulesTextJ",
+                          "fill": "#746B64",
+                          "content": "规则与 SOP",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "500"
                         }
                       ]
                     }
@@ -27827,6 +28166,42 @@
                           "name": "text",
                           "fill": "$cafe-text-secondary",
                           "content": "运维监控",
+                          "fontFamily": "Inter",
+                          "fontSize": 13,
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "c0yuw",
+                      "name": "Settings Nav 规则与 SOP",
+                      "width": "fill_container",
+                      "height": 36,
+                      "cornerRadius": 8,
+                      "gap": 8,
+                      "padding": [
+                        0,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon_font",
+                          "id": "ynq0B",
+                          "name": "rulesIconK",
+                          "width": 16,
+                          "height": 16,
+                          "iconFontName": "file-text",
+                          "iconFontFamily": "lucide",
+                          "fill": "#746B64"
+                        },
+                        {
+                          "type": "text",
+                          "id": "WzDMZ",
+                          "name": "rulesTextK",
+                          "fill": "#746B64",
+                          "content": "规则与 SOP",
                           "fontFamily": "Inter",
                           "fontSize": 13,
                           "fontWeight": "500"

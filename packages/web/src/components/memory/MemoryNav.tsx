@@ -78,7 +78,7 @@ export function MemoryNav({ active, initialReferrerThread = null }: MemoryNavPro
         >
           <polyline points="15 18 9 12 15 6" />
         </svg>
-        返回对话
+        返回线程
       </a>
       <div className="console-segmented">
         {items.map((item) => {
