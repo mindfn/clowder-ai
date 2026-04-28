@@ -5,21 +5,19 @@ import { useCatData } from '@/hooks/useCatData';
 import { apiFetch } from '@/utils/api-client';
 import { CatOverviewTab, type ConfigData, SystemTab } from '../config-viewer-tabs';
 import { HubAccountsTab } from '../HubAccountsTab';
-import { HubCapabilityTab } from '../HubCapabilityTab';
 import { HubCatEditor } from '../HubCatEditor';
 import { HubCoCreatorEditor } from '../HubCoCreatorEditor';
 import { HubConnectorConfigTab } from '../HubConnectorConfigTab';
-import { MarketplacePanel } from '../marketplace/marketplace-panel';
 import { PushSettingsPanel } from '../PushSettingsPanel';
 import { VoiceSettingsPanel } from '../VoiceSettingsPanel';
-import { CallbackEnvPanel } from './CallbackEnvPanel';
 import { ConsoleSetupState, resolveConsoleSetupState } from './console-setup-state';
+import { McpManageContent } from './McpManageContent';
 import { OpsContent } from './OpsContent';
 import { PluginsContent } from './PluginsContent';
 import { RulesPromptsContent } from './RulesPromptsContent';
 import { ServiceStatusPanel } from './ServiceStatusPanel';
 import { SettingsPlaceholder } from './SettingsPlaceholder';
-import { SkillPreviewPanel } from './SkillPreviewPanel';
+import { SkillsContent } from './SkillsContent';
 
 interface SettingsContentProps {
   section: string;
@@ -135,21 +133,9 @@ export function SettingsContent({ section }: SettingsContentProps) {
     case 'im':
       return <HubConnectorConfigTab />;
     case 'skills':
-      return (
-        <div className="space-y-6">
-          <HubCapabilityTab section="skills" />
-          <MarketplacePanel />
-          <SkillPreviewPanel />
-        </div>
-      );
+      return <SkillsContent />;
     case 'mcp':
-      return (
-        <div className="space-y-6">
-          <HubCapabilityTab section="mcp" />
-          <CallbackEnvPanel />
-          <ServiceStatusPanel filterFeatures={['browser-automation-mcp']} title="相关服务状态" />
-        </div>
-      );
+      return <McpManageContent />;
     case 'plugins':
       return <PluginsContent />;
     case 'voice':
