@@ -389,7 +389,11 @@ export function RightStatusPanel({
     <aside
       className="hidden lg:flex flex-col gap-2 overflow-y-auto px-4 py-[18px]"
       data-console-panel="status"
-      style={{ width: width ?? 304, flexShrink: 0, background: 'var(--console-inspector-bg, #F4ECE4)' }}
+      style={{
+        width: width ?? 304,
+        flexShrink: 0,
+        background: 'var(--console-inspector-gradient, var(--console-inspector-bg, #F4ECE4))',
+      }}
     >
       <div className="px-0.5 pb-1">
         <p className="text-[15px] font-bold text-cafe">状态栏</p>

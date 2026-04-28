@@ -26,12 +26,12 @@ const MESSAGES: Record<1 | 2 | 3, { catId: string; nickname: string; text: strin
 };
 
 const LEVEL_STYLE: Record<1 | 2 | 3, { border: string; bg: string; title: string }> = {
-  1: { border: 'border-conn-amber-ring', bg: 'bg-conn-amber-bg', title: '休息时间到啦！' },
-  2: { border: 'border-orange-400', bg: 'bg-orange-50', title: '猫猫们有点担心你了！' },
-  3: { border: 'border-conn-red-ring', bg: 'bg-conn-red-bg', title: '三猫紧急拦截！' },
+  1: { border: 'border-conn-amber-ring', bg: 'bg-[var(--console-card-bg,#fffdfb)]', title: '休息时间到啦！' },
+  2: { border: 'border-orange-400', bg: 'bg-[var(--console-card-bg,#fffdfb)]', title: '猫猫们有点担心你了！' },
+  3: { border: 'border-conn-red-ring', bg: 'bg-[var(--console-card-bg,#fffdfb)]', title: '三猫紧急拦截！' },
 };
 
-const NIGHT_STYLE = { border: 'border-indigo-300', bg: 'bg-indigo-50/80' };
+const NIGHT_STYLE = { border: 'border-indigo-300', bg: 'bg-[var(--console-card-bg,#fffdfb)]' };
 
 /** Compact urgency badge for avatar corner (emoji-free) */
 const CAT_ALERT_BADGE: Record<1 | 2 | 3, string> = {

@@ -18,6 +18,7 @@
   --console-voice-companion: #8e72b8;
   --console-stop: #f26767;
   --console-inspector-bg: #f4ece4;
+  --console-inspector-gradient: linear-gradient(180deg, #faf4ee 0%, #f6efe7 50%, #eee6dc 100%);
 }
 
 [data-theme="dark"] {
@@ -37,6 +38,7 @@
   --console-rail-item: #241f1b;
   --console-rail-active: #302722;
   --console-inspector-bg: color-mix(in srgb, var(--console-panel-bg) 92%, black 8%);
+  --console-inspector-gradient: linear-gradient(180deg, #1e1915 0%, #1a1512 50%, #14110f 100%);
 }
 
 .console-shell {

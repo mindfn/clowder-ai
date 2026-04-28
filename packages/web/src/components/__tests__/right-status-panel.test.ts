@@ -380,4 +380,18 @@ describe('RightStatusPanel', () => {
 
     expect(html).toContain('width:304px');
   });
+
+  it('uses monotonic warm gradient instead of flat inspector-bg', () => {
+    const html = render({
+      intentMode: 'execute',
+      targetCats: [],
+      catStatuses: {},
+      catInvocations: {},
+      threadId: 'test-thread',
+      messageSummary: { total: 0, assistant: 0, system: 0, evidence: 0, followup: 0 },
+    });
+
+    expect(html).toContain('--console-inspector-gradient');
+    expect(html).not.toMatch(/background:var\(--console-inspector-bg[^)]*\)(?!.*gradient)/);
+  });
 });
