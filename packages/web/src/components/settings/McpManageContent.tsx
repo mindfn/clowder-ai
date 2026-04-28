@@ -70,13 +70,7 @@ export function McpManageContent() {
   return (
     <div className="flex gap-6">
       <div className="min-w-0 flex-1">
-        <div className="mb-5 flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-xl font-bold tracking-tight text-cafe">MCP 管理</h2>
-            <p className="mt-1 text-sm text-cafe-secondary">
-              MCP 服务一行一个独立卡片；点击卡片进入配置弹窗；右侧查询和安装可用 MCP。
-            </p>
-          </div>
+        <div className="mb-5 flex justify-end">
           <button
             type="button"
             onClick={handleCreate}

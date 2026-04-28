@@ -35,11 +35,7 @@ export function HubAccountItem({ profile, onEdit }: HubAccountItemProps) {
         <p className="text-[13px] font-bold text-cafe">{profile.displayName}</p>
         <p className="mt-1 text-[12px] text-cafe-secondary truncate">{summaryText(profile)}</p>
       </div>
-      {onEdit && (
-        <span className="shrink-0 text-xs text-cafe-muted">
-          编辑 →
-        </span>
-      )}
+      {onEdit && <span className="shrink-0 text-xs text-cafe-muted">编辑 →</span>}
     </button>
   );
 }

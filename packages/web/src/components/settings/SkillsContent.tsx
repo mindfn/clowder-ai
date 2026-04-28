@@ -40,13 +40,7 @@ export function SkillsContent() {
   return (
     <div className="flex gap-6">
       <div className="min-w-0 flex-1">
-        <div className="mb-5 flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-xl font-bold tracking-tight text-cafe">Skill 管理</h2>
-            <p className="mt-1 text-sm text-cafe-secondary">
-              Skill 使用独立纵向卡片；点击卡片打开内容预览弹窗；右侧查询和安装可用 Skill。
-            </p>
-          </div>
+        <div className="mb-5 flex justify-end">
           <button
             type="button"
             disabled
