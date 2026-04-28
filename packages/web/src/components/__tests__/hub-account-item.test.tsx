@@ -102,7 +102,7 @@ describe('HubAccountItem', () => {
     });
 
     expect(container.textContent).not.toContain('预览');
-    expect(container.textContent).toContain('内置');
+    expect(container.textContent).toContain('OAuth');
     expect(container.textContent).not.toContain('绑定范围');
     expect(container.textContent).not.toContain('设为 Codex 默认');
   });
@@ -165,10 +165,10 @@ describe('HubAccountItem', () => {
     expect(container.textContent).toContain('Codex Sponsor');
     expect(container.textContent).not.toContain('预览 / 编辑');
     expect(container.textContent).not.toContain('预览 →');
-    expect(container.textContent).toContain('已配置');
+    expect(container.textContent).toContain('API Key');
   });
 
-  it('shows 未配置 status when no API key and not builtin', async () => {
+  it('shows host placeholder when no baseUrl and not builtin', async () => {
     const profile: ProfileItem = {
       id: 'opencode-client-auth',
       provider: 'opencode-client-auth',
@@ -189,6 +189,7 @@ describe('HubAccountItem', () => {
     });
 
     expect(container.textContent).toContain('OpenCode (client-auth)');
-    expect(container.textContent).toContain('未配置');
+    expect(container.textContent).toContain('(未设置)');
+    expect(container.textContent).toContain('API Key');
   });
 });

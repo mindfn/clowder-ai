@@ -439,8 +439,8 @@ describe('CatCafeHub provider profiles tab', () => {
     });
     await flushEffects();
 
-    // F170: HubAccountItem cards now show auth type badge (已配置/内置/未配置) instead of raw authType
-    expect(container.textContent).toContain('已配置');
+    // F179: HubAccountItem cards show host + auth type (OAuth / API Key) instead of status badges
+    expect(container.textContent).toContain('API Key');
     expect(container.textContent).toContain('Account / Auth');
     expect(container.textContent).toContain('+ 新增账户认证');
     expect(container.textContent).not.toContain('默认/覆盖模型');

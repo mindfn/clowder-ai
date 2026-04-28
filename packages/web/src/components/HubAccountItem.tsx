@@ -19,28 +19,27 @@ interface HubAccountItemProps {
 }
 
 function summaryText(profile: ProfileItem): string | null {
-  if (profile.builtin) return null;
+  if (profile.builtin) return profile.authType === 'oauth' ? 'OAuth' : '内置';
   const host = profile.baseUrl?.replace(/^https?:\/\//, '') ?? '(未设置)';
-  return `${host} · ${profile.hasApiKey ? '已配置' : '未配置'}`;
+  return `${host} · ${profile.authType === 'oauth' ? 'OAuth' : 'API Key'}`;
 }
 
 export function HubAccountItem({ profile, onEdit }: HubAccountItemProps) {
-  const statusLabel = profile.hasApiKey ? '已配置' : profile.builtin ? '内置' : '未配置';
-  const statusClass =
-    profile.hasApiKey || profile.builtin ? 'bg-[#DFF4E7] text-[#087A3E]' : 'bg-[#F3E1D6] text-cafe-secondary';
   return (
     <button
       type="button"
-      className={`flex h-24 w-full items-center gap-4 rounded-2xl bg-[var(--console-card-bg)] px-5 py-[18px] text-left shadow-[0_8px_24px_rgba(43,33,26,0.05)] transition ${onEdit ? 'cursor-pointer hover:shadow-[0_8px_24px_rgba(43,33,26,0.09)]' : ''}`}
+      className={`flex w-full items-center gap-4 rounded-xl bg-[var(--console-card-bg)] p-4 text-left transition-colors ${onEdit ? 'cursor-pointer hover:bg-[var(--console-card-soft-bg)]' : ''}`}
       onClick={() => onEdit?.(profile)}
     >
       <div className="min-w-0 flex-1">
         <p className="text-[13px] font-bold text-cafe">{profile.displayName}</p>
-        <p className="mt-1 text-[12px] text-cafe-secondary truncate">
-          {summaryText(profile) ?? (profile.authType === 'oauth' ? 'OAuth' : 'API Key')}
-        </p>
+        <p className="mt-1 text-[12px] text-cafe-secondary truncate">{summaryText(profile)}</p>
       </div>
-      <span className={`shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold ${statusClass}`}>{statusLabel}</span>
+      {onEdit && (
+        <span className="shrink-0 text-xs text-cafe-muted">
+          编辑 →
+        </span>
+      )}
     </button>
   );
 }
