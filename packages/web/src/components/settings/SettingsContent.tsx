@@ -141,11 +141,11 @@ export function SettingsContent({ section }: SettingsContentProps) {
     case 'voice':
       return (
         <div className="space-y-6">
+          <VoiceSettingsPanel />
           <ServiceStatusPanel
             filterFeatures={['voice-input', 'voice-output', 'voice-companion', 'voice-postprocess']}
             title="语音服务状态"
           />
-          <VoiceSettingsPanel />
         </div>
       );
     case 'system':
