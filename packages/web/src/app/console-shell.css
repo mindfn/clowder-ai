@@ -33,6 +33,9 @@
   --console-shadow-soft: 0 14px 34px rgba(0, 0, 0, 0.24);
   --console-active-bg: color-mix(in srgb, var(--cafe-accent) 26%, var(--console-card-bg) 74%);
   --console-hover-bg: color-mix(in srgb, var(--cafe-crosspost) 14%, var(--console-card-bg) 86%);
+  --console-rail-bg: #14110f;
+  --console-rail-item: #241f1b;
+  --console-rail-active: #302722;
   --console-inspector-bg: color-mix(in srgb, var(--console-panel-bg) 92%, black 8%);
 }
 
