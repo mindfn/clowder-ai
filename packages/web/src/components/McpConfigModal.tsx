@@ -28,7 +28,7 @@ export interface McpConfigModalProps {
 export function McpConfigModal({ projectPath, editId, editData, onSaved, onClose }: McpConfigModalProps) {
   const isEdit = Boolean(editId);
   const isResolver = Boolean(editData?.resolver);
-  const isHttpEdit = isEdit && (editData?.transport === 'streamableHttp');
+  const isHttpEdit = isEdit && editData?.transport === 'streamableHttp';
   const [id, setId] = useState(editId ?? '');
   const [transport, setTransport] = useState<Transport>(editData?.transport ?? 'stdio');
 
@@ -137,9 +137,7 @@ export function McpConfigModal({ projectPath, editId, editData, onSaved, onClose
         <div className={isHttpEdit ? 'px-[34px] pt-7 pb-4' : 'px-7 pt-7 pb-4'}>
           <div className="flex items-center justify-between gap-4">
             <div className="flex flex-col gap-2">
-              <h2 className="text-[28px] font-extrabold text-cafe">
-                {isEdit ? `更新 ${id}` : '连接至自定义 MCP'}
-              </h2>
+              <h2 className="text-[28px] font-extrabold text-cafe">{isEdit ? `更新 ${id}` : '连接至自定义 MCP'}</h2>
               {isHttpEdit && (
                 <p className="text-sm text-cafe-secondary">
                   HTTP Stream 服务类型已固定；如需切换 MCP 服务器类型，请先卸载当前配置。
@@ -154,7 +152,13 @@ export function McpConfigModal({ projectPath, editId, editData, onSaved, onClose
                 className="flex shrink-0 items-center gap-2 rounded-[14px] bg-[#FCE8E6] px-[18px] text-[15px] font-extrabold text-[#D22F27] opacity-50 cursor-not-allowed"
                 style={{ height: 44 }}
               >
-                <svg className="h-[18px] w-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <svg
+                  className="h-[18px] w-[18px]"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
                   <polyline points="3 6 5 6 21 6" />
                   <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
                 </svg>
@@ -315,13 +319,7 @@ function HttpEndpointCard({
   );
 }
 
-function HttpHeadersCard({
-  headers,
-  onChange,
-}: {
-  headers: KVPair[];
-  onChange: (p: KVPair[]) => void;
-}) {
+function HttpHeadersCard({ headers, onChange }: { headers: KVPair[]; onChange: (p: KVPair[]) => void }) {
   return (
     <div className="rounded-[18px] border border-[#E8DED4] bg-[var(--console-card-bg)] p-4 space-y-2.5">
       <p className="text-[15px] font-extrabold text-cafe">标头</p>
