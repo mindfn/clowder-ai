@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '@/utils/api-client';
-import type { CapabilityBoardItem, CapabilityBoardResponse, CatFamily, SkillHealth } from '../capability-board-ui';
+import type {
+  CapabilityBoardItem,
+  CapabilityBoardResponse,
+  CatFamily,
+  SkillHealthSummary,
+} from '../capability-board-ui';
 import { getProjectPaths, projectDisplayName } from '../ThreadSidebar/thread-utils';
 
 export { projectDisplayName };
@@ -9,7 +14,7 @@ export { projectDisplayName };
 export function useCapabilityState(filterType: 'skill' | 'mcp') {
   const [items, setItems] = useState<CapabilityBoardItem[]>([]);
   const [catFamilies, setCatFamilies] = useState<CatFamily[]>([]);
-  const [skillHealth, setSkillHealth] = useState<SkillHealth | null>(null);
+  const [skillHealth, setSkillHealth] = useState<SkillHealthSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [projectPath, setProjectPath] = useState<string | null>(null);
   const [resolvedProjectPath, setResolvedProjectPath] = useState('');

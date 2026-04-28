@@ -28,7 +28,7 @@ vi.mock('@/stores/chatStore', () => ({
 }));
 
 vi.mock('@/utils/api-client', () => ({
-  apiFetch: vi.fn(async (url: string, opts?: { method?: string }) => {
+  apiFetch: vi.fn(async (_url: string, opts?: { method?: string }) => {
     if (opts?.method === 'DELETE') {
       return { ok: true, json: async () => ({}) };
     }
@@ -52,8 +52,8 @@ vi.mock('@/components/McpConfigModal', () => ({
   McpConfigModal: () => null,
 }));
 
-import { apiFetch } from '@/utils/api-client';
 import { McpManageContent } from '@/components/settings/McpManageContent';
+import { apiFetch } from '@/utils/api-client';
 
 describe('McpManageContent', () => {
   it('renders MCP cards with marketplace rail', () => {
@@ -71,10 +71,10 @@ describe('McpManageContent', () => {
   it('MCP disable uses soft delete (no hard=true)', () => {
     const mockFetch = apiFetch as ReturnType<typeof vi.fn>;
     const deleteCalls = mockFetch.mock.calls.filter(
-      ([url, opts]: [string, { method?: string }?]) => opts?.method === 'DELETE',
+      (args: unknown[]) => (args[1] as { method?: string } | undefined)?.method === 'DELETE',
     );
-    for (const [url] of deleteCalls) {
-      expect(url).not.toContain('hard=true');
+    for (const call of deleteCalls) {
+      expect(call[0]).not.toContain('hard=true');
     }
   });
 });
