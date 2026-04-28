@@ -1,19 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { apiFetch } from '@/utils/api-client';
-import type { CapabilityBoardItem, CapabilityBoardResponse } from '../capability-board-ui';
+import { useCallback, useState } from 'react';
+import type { CapabilityBoardItem } from '../capability-board-ui';
 import { HubIcon } from '../hub-icons';
 import { McpConfigModal, type McpConfigModalProps } from '../McpConfigModal';
 import { MarketplacePanel } from '../marketplace/marketplace-panel';
-
-const AVATAR_COLORS = ['#C65F3D', '#8B6E5A', '#A0522D', '#7B6B63', '#9B7653', '#6F5946'];
-
-function avatarColor(name: string) {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
-  return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
-}
+import { avatarColor, PerCatToggles, ProjectSelector, ToggleSwitch } from './capability-settings-ui';
+import { useCapabilityState } from './useCapabilityState';
 
 interface ModalState {
   editId?: string;
@@ -21,28 +14,9 @@ interface ModalState {
 }
 
 export function McpManageContent() {
-  const [items, setItems] = useState<CapabilityBoardItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cap = useCapabilityState('mcp');
   const [modal, setModal] = useState<ModalState | null>(null);
-  const [toggling, setToggling] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState<string | null>(null);
-
-  const fetchItems = useCallback(async () => {
-    try {
-      const res = await apiFetch('/api/capabilities?probe=true');
-      if (!res.ok) return;
-      const data = (await res.json()) as CapabilityBoardResponse;
-      setItems(data.items.filter((i) => i.type === 'mcp'));
-    } catch {
-      /* ignore */
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchItems();
-  }, [fetchItems]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const handleCardClick = useCallback((item: CapabilityBoardItem) => {
     if (item.source !== 'external') return;
@@ -62,60 +36,23 @@ export function McpManageContent() {
     });
   }, []);
 
-  const handleToggle = useCallback(
-    async (item: CapabilityBoardItem, e: React.MouseEvent) => {
-      e.stopPropagation();
-      setToggling(item.id);
-      try {
-        const res = await apiFetch('/api/capabilities', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            capabilityId: item.id,
-            capabilityType: 'mcp',
-            scope: 'global',
-            enabled: !item.enabled,
-          }),
-        });
-        if (res.ok) await fetchItems();
-      } catch {
-        /* ignore */
-      } finally {
-        setToggling(null);
-      }
-    },
-    [fetchItems],
-  );
-
-  const handleDelete = useCallback(
-    async (item: CapabilityBoardItem, e: React.MouseEvent) => {
-      e.stopPropagation();
-      setDeleting(item.id);
-      try {
-        const res = await apiFetch(`/api/capabilities/mcp/${encodeURIComponent(item.id)}?hard=true`, {
-          method: 'DELETE',
-        });
-        if (res.ok) await fetchItems();
-      } catch {
-        /* ignore */
-      } finally {
-        setDeleting(null);
-      }
-    },
-    [fetchItems],
-  );
-
   const handleCreate = useCallback(() => setModal({}), []);
 
   const handleSaved = useCallback(() => {
     setModal(null);
-    fetchItems();
-  }, [fetchItems]);
+    cap.refetch();
+  }, [cap]);
 
   return (
     <div className="flex gap-6">
       <div className="min-w-0 flex-1">
-        <div className="mb-5 flex justify-end">
+        <div className="mb-5 flex items-center justify-between">
+          <ProjectSelector
+            resolvedPath={cap.resolvedProjectPath}
+            knownProjects={cap.knownProjects}
+            currentSelection={cap.projectPath}
+            onSwitch={cap.switchProject}
+          />
           <button
             type="button"
             onClick={handleCreate}
@@ -126,7 +63,7 @@ export function McpManageContent() {
           </button>
         </div>
 
-        {loading && (
+        {cap.loading && (
           <div className="space-y-3">
             {[1, 2, 3].map((i) => (
               <div key={i} className="animate-pulse rounded-xl bg-[var(--console-card-bg)] p-4">
@@ -137,18 +74,19 @@ export function McpManageContent() {
           </div>
         )}
 
-        {!loading && items.length === 0 && (
+        {!cap.loading && cap.items.length === 0 && (
           <div className="rounded-xl bg-[var(--console-card-bg)] p-8 text-center text-sm text-cafe-muted">
             暂无已安装的 MCP
           </div>
         )}
 
         <div className="space-y-3">
-          {items.map((item) => {
+          {cap.items.map((item) => {
             const color = avatarColor(item.id);
             const editable = item.source === 'external';
-            const busy = toggling === item.id;
-            const removing = deleting === item.id;
+            const busy = cap.toggling === item.id;
+            const removing = cap.disabling === item.id;
+            const expanded = expandedId === item.id;
             const subInfo =
               item.mcpServer?.transport === 'streamableHttp'
                 ? item.mcpServer.url
@@ -156,62 +94,79 @@ export function McpManageContent() {
                   ? `${item.mcpServer.command}${item.mcpServer.args?.length ? ` ${item.mcpServer.args.join(' ')}` : ''}`
                   : undefined;
             return (
-              <div
-                key={item.id}
-                className="flex w-full items-center gap-4 rounded-xl bg-[var(--console-card-bg)] p-4 transition-colors hover:bg-[var(--console-card-soft-bg)]"
-              >
-                <button
-                  type="button"
-                  onClick={() => handleCardClick(item)}
-                  disabled={!editable}
-                  className={`flex min-w-0 flex-1 items-center gap-4 text-left ${editable ? 'cursor-pointer' : 'cursor-default'}`}
-                >
-                  <div
-                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white"
-                    style={{ backgroundColor: color }}
-                  >
-                    {item.id.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-cafe">{item.id}</p>
-                    <p className="mt-0.5 truncate text-xs text-cafe-secondary">{item.description || '—'}</p>
-                    {subInfo && <p className="mt-0.5 truncate text-[11px] font-mono text-cafe-muted">{subInfo}</p>}
-                  </div>
-                </button>
-                <div className="flex shrink-0 items-center gap-2">
-                  {editable && (
-                    <button
-                      type="button"
-                      onClick={() => handleCardClick(item)}
-                      className="rounded-md p-1.5 text-cafe-muted hover:bg-[var(--console-card-soft-bg)] hover:text-cafe-secondary transition-colors"
-                      title="编辑配置"
-                    >
-                      <HubIcon name="settings" className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                  {editable && (
-                    <button
-                      type="button"
-                      disabled={removing}
-                      onClick={(e) => handleDelete(item, e)}
-                      className={`rounded-md p-1.5 text-cafe-muted hover:bg-[var(--console-card-soft-bg)] hover:text-[var(--console-stop,#f26767)] transition-colors ${removing ? 'opacity-50' : ''}`}
-                      title="删除"
-                    >
-                      <HubIcon name="trash" className="h-3.5 w-3.5" />
-                    </button>
-                  )}
+              <div key={item.id} className="rounded-xl bg-[var(--console-card-bg)] p-4 transition-colors">
+                <div className="flex w-full items-center gap-4">
                   <button
                     type="button"
-                    disabled={busy}
-                    onClick={(e) => handleToggle(item, e)}
-                    className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${busy ? 'opacity-50' : 'cursor-pointer'} ${item.enabled ? 'bg-[var(--cafe-accent,#C65F3D)]' : 'bg-[var(--console-border-soft)]'}`}
-                    title={item.enabled ? '禁用' : '启用'}
+                    onClick={() => handleCardClick(item)}
+                    disabled={!editable}
+                    className={`flex min-w-0 flex-1 items-center gap-4 text-left ${editable ? 'cursor-pointer' : 'cursor-default'}`}
                   >
-                    <span
-                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${item.enabled ? 'translate-x-[18px]' : 'translate-x-[2px]'} mt-[2px]`}
-                    />
+                    <div
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white"
+                      style={{ backgroundColor: color }}
+                    >
+                      {item.id.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-cafe">{item.id}</p>
+                      <p className="mt-0.5 truncate text-xs text-cafe-secondary">{item.description || '—'}</p>
+                      {subInfo && <p className="mt-0.5 truncate text-[11px] font-mono text-cafe-muted">{subInfo}</p>}
+                    </div>
                   </button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {editable && (
+                      <button
+                        type="button"
+                        onClick={() => handleCardClick(item)}
+                        className="rounded-md p-1.5 text-cafe-muted hover:bg-[var(--console-card-soft-bg)] hover:text-cafe-secondary transition-colors"
+                        title="编辑配置"
+                      >
+                        <HubIcon name="settings" className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    {editable && (
+                      <button
+                        type="button"
+                        disabled={removing}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          cap.handleDisableMcp(item);
+                        }}
+                        className={`rounded-md p-1.5 text-cafe-muted hover:bg-[var(--console-card-soft-bg)] hover:text-[var(--console-stop,#f26767)] transition-colors ${removing ? 'opacity-50' : ''}`}
+                        title="禁用此 MCP"
+                      >
+                        <HubIcon name="trash" className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    {cap.catFamilies.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setExpandedId(expanded ? null : item.id)}
+                        className="rounded-md p-1.5 text-cafe-muted hover:bg-[var(--console-card-soft-bg)] hover:text-cafe-secondary transition-colors"
+                        title="按猫开关"
+                      >
+                        <HubIcon name="users" className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    <ToggleSwitch
+                      enabled={item.enabled}
+                      busy={busy}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        cap.handleToggle(item, !item.enabled);
+                      }}
+                    />
+                  </div>
                 </div>
+                {expanded && (
+                  <PerCatToggles
+                    item={item}
+                    catFamilies={cap.catFamilies}
+                    toggling={cap.toggling}
+                    onToggle={cap.handleToggle}
+                  />
+                )}
               </div>
             );
           })}
