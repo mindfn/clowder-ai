@@ -190,7 +190,7 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
             ...(opts.title || opts.bootcamp ? { title: opts.bootcamp ? '🎓 猫猫训练营' : opts.title } : {}),
             ...(opts.pinned ? { pinned: opts.pinned } : {}),
             ...(opts.backlogItemId ? { backlogItemId: opts.backlogItemId } : {}),
-            ...(opts.bootcamp ? { bootcampState: { v: 1, phase: 'phase-0-select-cat', startedAt: Date.now() } } : {}),
+            ...(opts.bootcamp ? { bootcampState: { v: 1, phase: 'phase-1-intro', startedAt: Date.now() } } : {}),
           }),
         });
         if (!res.ok) {
