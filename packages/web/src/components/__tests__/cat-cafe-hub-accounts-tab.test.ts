@@ -889,10 +889,9 @@ describe('CatCafeHub provider profiles tab', () => {
     expect(profileList?.textContent).not.toContain('Dare (client-auth)');
     expect(container.textContent).not.toContain('全部');
     expect(container.textContent).not.toContain('内置认证');
-    // Non-builtin accounts have edit buttons
-    expect(
-      Array.from(container.querySelectorAll('button')).filter((button) => button.textContent?.includes('编辑')),
-    ).toHaveLength(4);
+    // F170: "预览/编辑" label removed — cards themselves are clickable buttons
+    expect(container.textContent).not.toContain('预览 / 编辑');
+    expect(container.textContent).not.toContain('预览 →');
   });
 
   it('does not expose 测试 buttons on provider cards', async () => {
