@@ -185,6 +185,7 @@ export function McpManageContent() {
 
       {modal && (
         <McpConfigModal
+          projectPath={cap.projectPath ?? undefined}
           editId={modal.editId}
           editData={modal.editData}
           onSaved={handleSaved}
