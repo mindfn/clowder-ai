@@ -192,4 +192,69 @@ describe('HubAccountItem', () => {
     expect(container.textContent).toContain('(未设置)');
     expect(container.textContent).toContain('API Key');
   });
+
+  it('trash button triggers confirm before calling onDelete', async () => {
+    const profile = profileItem({
+      id: 'deletable',
+      provider: 'custom',
+      displayName: 'Deletable Account',
+      name: 'Deletable',
+      authType: 'api_key',
+      kind: 'api_key',
+      builtin: false,
+      mode: 'api_key',
+      baseUrl: 'https://custom.api',
+      models: [],
+      hasApiKey: true,
+      createdAt: '2026-04-01T00:00:00.000Z',
+      updatedAt: '2026-04-01T00:00:00.000Z',
+    });
+    const onDelete = vi.fn();
+
+    await act(async () => {
+      root.render(<HubAccountItem profile={profile} busy={false} onSave={vi.fn(async () => {})} onDelete={onDelete} />);
+    });
+
+    const trashBtn = container.querySelector('button[title="删除"]') as HTMLButtonElement;
+    expect(trashBtn).toBeTruthy();
+
+    await act(async () => {
+      trashBtn.click();
+    });
+
+    expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ variant: 'danger', title: '删除账号' }));
+    expect(onDelete).toHaveBeenCalledWith('deletable');
+  });
+
+  it('trash button does NOT call onDelete when confirm is cancelled', async () => {
+    mockConfirm.mockResolvedValueOnce(false);
+
+    const profile = profileItem({
+      id: 'keep-me',
+      provider: 'custom',
+      displayName: 'Keep Me',
+      name: 'Keep Me',
+      authType: 'api_key',
+      kind: 'api_key',
+      builtin: false,
+      mode: 'api_key',
+      models: [],
+      hasApiKey: true,
+      createdAt: '2026-04-01T00:00:00.000Z',
+      updatedAt: '2026-04-01T00:00:00.000Z',
+    });
+    const onDelete = vi.fn();
+
+    await act(async () => {
+      root.render(<HubAccountItem profile={profile} busy={false} onSave={vi.fn(async () => {})} onDelete={onDelete} />);
+    });
+
+    const trashBtn = container.querySelector('button[title="删除"]') as HTMLButtonElement;
+    await act(async () => {
+      trashBtn.click();
+    });
+
+    expect(mockConfirm).toHaveBeenCalled();
+    expect(onDelete).not.toHaveBeenCalled();
+  });
 });

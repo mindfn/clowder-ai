@@ -1,6 +1,6 @@
-import React from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
+import React, { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const MOCK_ITEMS = [
   {
@@ -16,32 +16,29 @@ const MOCK_ITEMS = [
     id: 'custom-mcp',
     type: 'mcp' as const,
     source: 'external' as const,
-    enabled: false,
+    enabled: true,
     cats: { opus: true },
     description: 'External MCP',
     mcpServer: { transport: 'streamableHttp', url: 'https://example.com/mcp' },
   },
 ];
 
+const ITEMS_RESPONSE = {
+  ok: true,
+  json: async () => ({
+    items: MOCK_ITEMS,
+    catFamilies: [{ id: 'ragdoll', name: 'Ragdoll', catIds: ['opus'] }],
+    projectPath: '/test/project',
+    skillHealth: null,
+  }),
+};
+
 vi.mock('@/stores/chatStore', () => ({
   useChatStore: (sel: (s: Record<string, unknown>) => unknown) => sel({ threads: [] }),
 }));
 
 vi.mock('@/utils/api-client', () => ({
-  apiFetch: vi.fn(async (_url: string, opts?: { method?: string }) => {
-    if (opts?.method === 'DELETE') {
-      return { ok: true, json: async () => ({}) };
-    }
-    return {
-      ok: true,
-      json: async () => ({
-        items: MOCK_ITEMS,
-        catFamilies: [{ id: 'ragdoll', name: 'Ragdoll', catIds: ['opus'] }],
-        projectPath: '/test/project',
-        skillHealth: null,
-      }),
-    };
-  }),
+  apiFetch: vi.fn(),
 }));
 
 vi.mock('@/components/marketplace/marketplace-panel', () => ({
@@ -49,32 +46,85 @@ vi.mock('@/components/marketplace/marketplace-panel', () => ({
 }));
 
 vi.mock('@/components/McpConfigModal', () => ({
-  McpConfigModal: () => null,
+  McpConfigModal: (props: Record<string, unknown>) =>
+    React.createElement('div', { 'data-testid': 'mock-modal', 'data-project-path': props.projectPath ?? '' }),
 }));
 
 import { McpManageContent } from '@/components/settings/McpManageContent';
 import { apiFetch } from '@/utils/api-client';
 
 describe('McpManageContent', () => {
-  it('renders MCP cards with marketplace rail', () => {
-    const html = renderToStaticMarkup(React.createElement(McpManageContent));
-    expect(html).toContain('新增 MCP');
-    expect(html).toContain('MCP 市场');
-    expect(html).toContain('marketplace');
+  let container: HTMLDivElement;
+  let root: Root;
+  const mockFetch = apiFetch as ReturnType<typeof vi.fn>;
+
+  beforeAll(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   });
 
-  it('renders loading skeleton initially', () => {
-    const html = renderToStaticMarkup(React.createElement(McpManageContent));
-    expect(html).toContain('animate-pulse');
+  afterAll(() => {
+    delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
   });
 
-  it('MCP disable uses soft delete (no hard=true)', () => {
-    const mockFetch = apiFetch as ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValue(ITEMS_RESPONSE);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it('renders MCP cards after loading', async () => {
+    await act(async () => {
+      root.render(React.createElement(McpManageContent));
+    });
+    expect(container.textContent).toContain('pencil');
+    expect(container.textContent).toContain('custom-mcp');
+    expect(container.textContent).toContain('marketplace');
+  });
+
+  it('clicking trash on external MCP calls soft DELETE (no hard=true)', async () => {
+    await act(async () => {
+      root.render(React.createElement(McpManageContent));
+    });
+
+    const trashButtons = container.querySelectorAll('button[title="禁用此 MCP"]');
+    expect(trashButtons.length).toBeGreaterThan(0);
+
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({}) });
+
+    await act(async () => {
+      (trashButtons[0] as HTMLButtonElement).click();
+    });
+
     const deleteCalls = mockFetch.mock.calls.filter(
       (args: unknown[]) => (args[1] as { method?: string } | undefined)?.method === 'DELETE',
     );
-    for (const call of deleteCalls) {
-      expect(call[0]).not.toContain('hard=true');
-    }
+    expect(deleteCalls.length).toBe(1);
+    expect(deleteCalls[0][0]).toContain('/api/capabilities/mcp/');
+    expect(deleteCalls[0][0]).not.toContain('hard=true');
+  });
+
+  it('opening modal for external MCP renders the config modal', async () => {
+    await act(async () => {
+      root.render(React.createElement(McpManageContent));
+    });
+
+    const settingsBtn = Array.from(container.querySelectorAll('button')).find(
+      (btn) => btn.getAttribute('title') === '编辑配置',
+    ) as HTMLButtonElement | undefined;
+    expect(settingsBtn).toBeTruthy();
+
+    await act(async () => {
+      settingsBtn!.click();
+    });
+
+    const modal = container.querySelector('[data-testid="mock-modal"]');
+    expect(modal).toBeTruthy();
   });
 });
