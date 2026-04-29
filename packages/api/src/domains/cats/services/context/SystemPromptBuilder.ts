@@ -315,7 +315,7 @@ export async function initGovernanceOverlay(): Promise<void> {
   }
 }
 
-function getGovernanceDigest(): string {
+export function getGovernanceDigest(): string {
   return _governanceDigestResolved;
 }
 

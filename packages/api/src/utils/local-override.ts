@@ -30,8 +30,9 @@ function localPaths(basePath: string) {
 async function tryRead(path: string): Promise<string | null> {
   try {
     return await readFile(path, 'utf-8');
-  } catch {
-    return null;
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
   }
 }
 

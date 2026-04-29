@@ -76,4 +76,14 @@ describe('resolveWithLocalOverlay (#603)', () => {
     assert.ok(result.content.includes('extra rules'));
     assert.equal(result.source, 'local');
   });
+
+  it('throws on non-ENOENT errors instead of silently falling back', async () => {
+    const dirPath = join(TMP, 'is-a-dir.md');
+    await mkdir(dirPath, { recursive: true });
+
+    await assert.rejects(
+      () => resolveWithLocalOverlay(dirPath),
+      (err) => err.code !== 'ENOENT',
+    );
+  });
 });

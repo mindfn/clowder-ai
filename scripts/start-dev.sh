@@ -84,8 +84,12 @@ done
 
 # 加载环境变量 (放最前面，后续函数需要端口号)
 # 优先级 (#603 .local convention):
-#   默认模式: CLI env > .env.local > .env
-#   RESPECT_DOTENV_PORTS 模式: .env.local > .env (CLI port env 不恢复)
+#   .env.local source 后覆盖 .env 同名键。
+#   对于 managed startup keys（端口等）：
+#     默认模式: CLI env > .env.local > .env（CLI 值在 source 后恢复）
+#     RESPECT_DOTENV_PORTS 模式: .env.local > .env（CLI 端口值不恢复）
+#   对于其他键: .env.local > .env（无 CLI 恢复机制）
+#   安全注意: .env.local 全量 source，不再限于 DARE 白名单。
 CLI_FRONTEND_PORT_OVERRIDE="${FRONTEND_PORT-}"
 CLI_API_SERVER_PORT_OVERRIDE="${API_SERVER_PORT-}"
 CLI_REDIS_PORT_OVERRIDE="${REDIS_PORT-}"
