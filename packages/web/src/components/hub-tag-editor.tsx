@@ -12,10 +12,10 @@ function mergeTags(tags: string[], nextTag: string): string[] {
 }
 
 function pillClass(tone: 'purple' | 'green' | 'orange') {
-  if (tone === 'green') return 'border-conn-emerald-ring bg-[#E8F5E9] text-[#4F7B50]';
+  if (tone === 'green') return 'border-conn-emerald-ring bg-conn-emerald-bg text-conn-emerald-text';
   if (tone === 'orange')
     return 'border-[var(--console-border-soft)] bg-[var(--console-pill-bg)] text-[var(--cafe-accent)]';
-  return 'border-[#D9C5EF] bg-conn-purple-bg text-[var(--color-opus-primary)]';
+  return 'border-conn-purple-ring bg-conn-purple-bg text-[var(--color-opus-primary)]';
 }
 
 export function TagPillList({

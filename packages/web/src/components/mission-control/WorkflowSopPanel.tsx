@@ -59,7 +59,7 @@ function StagePills({ current }: { current: SopStage }) {
         if (isCurrent) {
           className += ' bg-[var(--cafe-accent)] text-[var(--cafe-surface)]';
         } else if (isPast) {
-          className += ' bg-[#D4C4A8] text-cafe-secondary';
+          className += ' bg-[var(--console-pill-bg)] text-cafe-secondary';
         } else {
           className += ' bg-[var(--console-pill-bg)] text-cafe-muted';
         }

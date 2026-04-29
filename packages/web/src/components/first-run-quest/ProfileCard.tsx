@@ -45,10 +45,10 @@ export function ProfileCard({
   const borderClass = !isSelected
     ? 'border-[var(--console-border-soft)] hover:border-conn-amber-ring'
     : testResult?.ok
-      ? 'border-conn-emerald-ring bg-green-50/40 shadow-sm'
+      ? 'border-conn-emerald-ring bg-conn-emerald-bg/40 shadow-sm'
       : testResult && !testResult.ok
-        ? 'border-conn-red-ring bg-red-50/30 shadow-sm'
-        : 'border-conn-amber-ring bg-amber-50/60 shadow-sm';
+        ? 'border-conn-red-ring bg-conn-red-bg/30 shadow-sm'
+        : 'border-conn-amber-ring bg-conn-amber-bg/60 shadow-sm';
 
   const [modelError, setModelError] = useState('');
 

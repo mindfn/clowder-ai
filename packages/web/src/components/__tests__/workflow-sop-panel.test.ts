@@ -114,7 +114,7 @@ describe('WorkflowSopPanel', () => {
 
     // Past stage should have muted color
     const kickoffPill = container.querySelector('[data-testid="sop-stage-kickoff"]');
-    expect(kickoffPill?.className).toContain('bg-[#D4C4A8]');
+    expect(kickoffPill?.className).toContain('bg-[var(--console-pill-bg)]');
 
     // Future stage should be lightest
     const reviewPill = container.querySelector('[data-testid="sop-stage-review"]');
@@ -172,7 +172,7 @@ describe('WorkflowSopPanel', () => {
     expect(completionPill?.className).toContain('bg-[var(--cafe-accent)]');
     // All prior stages should be past
     const mergePill = container.querySelector('[data-testid="sop-stage-merge"]');
-    expect(mergePill?.className).toContain('bg-[#D4C4A8]');
+    expect(mergePill?.className).toContain('bg-[var(--console-pill-bg)]');
   });
 
   it('hides next skill when null', async () => {

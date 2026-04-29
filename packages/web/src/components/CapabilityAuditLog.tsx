@@ -71,7 +71,7 @@ export function CapabilityAuditLog({ projectPath }: { projectPath?: string }) {
           {loading && <p className="text-xs text-cafe-muted">加载中...</p>}
           {!loading && entries.length === 0 && <p className="text-xs text-cafe-muted">暂无记录</p>}
           {entries.map((e, i) => {
-            const label = ACTION_LABELS[e.action] ?? { text: e.action, color: 'text-cafe-muted bg-slate-50' };
+            const label = ACTION_LABELS[e.action] ?? { text: e.action, color: 'text-cafe-muted bg-conn-slate-bg' };
             return (
               <div key={`${e.timestamp}-${i}`} className="flex items-center gap-2 py-1 text-xs">
                 <span className="text-cafe-muted w-28 shrink-0 tabular-nums">

@@ -50,8 +50,8 @@ function PhaseRow({ phase, expanded, onToggle }: { phase: FeatureDocPhase; expan
   const total = phase.acs.length;
   const done = phase.acs.filter((ac) => ac.done).length;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-  const barColor = pct === 100 ? 'bg-[#7CB87C]' : pct > 0 ? 'bg-[#5B9BD5]' : 'bg-[#C4B5A0]';
-  const pctColor = pct === 100 ? 'text-conn-emerald-text' : pct > 0 ? 'text-[#5B9BD5]' : 'text-cafe-muted';
+  const barColor = pct === 100 ? 'bg-conn-emerald-text' : pct > 0 ? 'bg-conn-blue-text' : 'bg-conn-gray-bg';
+  const pctColor = pct === 100 ? 'text-conn-emerald-text' : pct > 0 ? 'text-conn-blue-text' : 'text-cafe-muted';
 
   return (
     <div data-testid={`mc-phase-${phase.id}`}>

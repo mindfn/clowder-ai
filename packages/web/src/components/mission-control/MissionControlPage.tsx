@@ -563,9 +563,9 @@ export function MissionControlPage({ initialReferrerThread = null }: { initialRe
 
         {/* Status summary bar */}
         <div className="flex items-center gap-5 border-b border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-6 py-2.5">
-          <StatusDot color="bg-[#E4A853]" label={`${pendingCount} 待审批`} textColor="text-[#9A7B3D]" />
-          <StatusDot color="bg-[#5B9BD5]" label={`${activeCount} 执行中`} textColor="text-[#4A7FB5]" />
-          <StatusDot color="bg-[#7CB87C]" label={`${doneCount} 已完成`} textColor="text-[#5A9A5A]" />
+          <StatusDot color="bg-conn-amber-text" label={`${pendingCount} 待审批`} textColor="text-conn-amber-text" />
+          <StatusDot color="bg-conn-blue-text" label={`${activeCount} 执行中`} textColor="text-conn-blue-text" />
+          <StatusDot color="bg-conn-emerald-text" label={`${doneCount} 已完成`} textColor="text-conn-emerald-text" />
         </div>
 
         {error && (

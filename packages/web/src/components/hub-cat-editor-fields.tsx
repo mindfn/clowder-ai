@@ -75,7 +75,7 @@ export function TextField({
 }) {
   const inputColors =
     tone === 'success'
-      ? 'border-conn-emerald-ring bg-[#E8F5E9] focus:border-[#77A777] focus:ring-[#CFE5D5]'
+      ? 'border-conn-emerald-ring bg-conn-emerald-bg focus:border-conn-emerald-ring focus:ring-conn-emerald-ring'
       : 'border-[var(--console-border-soft)] bg-[var(--console-card-soft-bg)] focus:border-cafe-accent focus:ring-cafe-accent/30';
   return (
     <FieldShell label={label} required={required} tone={tone}>
@@ -109,7 +109,7 @@ export function TextAreaField({
 }) {
   const inputColors =
     tone === 'success'
-      ? 'border-conn-emerald-ring bg-[#E8F5E9] focus:border-[#77A777] focus:ring-[#CFE5D5]'
+      ? 'border-conn-emerald-ring bg-conn-emerald-bg focus:border-conn-emerald-ring focus:ring-conn-emerald-ring'
       : 'border-[var(--console-border-soft)] bg-[var(--console-card-soft-bg)] focus:border-cafe-accent focus:ring-cafe-accent/30';
   return (
     <FieldShell label={label} tone={tone}>
@@ -145,7 +145,7 @@ export function SelectField({
 }) {
   const inputColors =
     tone === 'success'
-      ? 'border-conn-emerald-ring bg-[#E8F5E9] focus:border-[#77A777] focus:ring-[#CFE5D5]'
+      ? 'border-conn-emerald-ring bg-conn-emerald-bg focus:border-conn-emerald-ring focus:ring-conn-emerald-ring'
       : 'border-[var(--console-border-soft)] bg-[var(--console-card-soft-bg)] focus:border-cafe-accent focus:ring-cafe-accent/30';
   return (
     <FieldShell label={label} required={required} tone={tone}>

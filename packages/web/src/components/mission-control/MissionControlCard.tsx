@@ -12,7 +12,7 @@ const PRIORITY_CLASS: Record<BacklogItem['priority'], string> = {
   p0: 'bg-conn-red-bg text-conn-red-text',
   p1: 'bg-conn-amber-bg text-conn-amber-text',
   p2: 'bg-conn-amber-bg text-conn-amber-text',
-  p3: 'bg-slate-200 text-cafe-secondary',
+  p3: 'bg-conn-slate-bg text-cafe-secondary',
 };
 
 export function MissionControlCard({ item, selected, onSelect }: MissionControlCardProps) {
@@ -23,8 +23,8 @@ export function MissionControlCard({ item, selected, onSelect }: MissionControlC
       className={[
         'w-full rounded-xl border p-3 text-left transition-all',
         selected
-          ? 'border-[#5F4B37] bg-[#FFF7EA] shadow-sm'
-          : 'border-[var(--console-border-soft)] bg-[var(--console-card-bg)] hover:border-[#CAB396] hover:bg-[#FFF8EE]',
+          ? 'border-cafe bg-[var(--console-card-bg)] shadow-sm'
+          : 'border-[var(--console-border-soft)] bg-[var(--console-card-bg)] hover:border-cafe-subtle hover:bg-cafe-surface',
       ].join(' ')}
     >
       <div className="mb-2 flex items-center gap-2">

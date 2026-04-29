@@ -57,9 +57,9 @@ const ASSISTANT_STYLE_BY_CAT: Record<string, string> = {
   gemini: 'bg-gemini-light text-gemini-dark',
   kimi: 'bg-kimi-light text-kimi-dark',
   dare: 'bg-dare-light text-dare-dark',
-  gpt52: 'bg-[#C8E6C9] text-[#2E7D32]',
-  'opus-45': 'bg-[#E1D5F0] text-[#5E35B1]',
-  sonnet: 'bg-[#EDE7F6] text-[#6A1B9A]',
+  gpt52: 'bg-conn-emerald-bg text-conn-emerald-text',
+  'opus-45': 'bg-conn-purple-bg text-[var(--color-opus-primary)]',
+  sonnet: 'bg-conn-purple-bg text-[var(--color-opus-primary)]',
 };
 
 function assistantRoleStyle(catId?: string): string {

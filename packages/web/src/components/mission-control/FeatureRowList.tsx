@@ -25,18 +25,18 @@ interface FeatureRowListProps {
 }
 
 const STATUS_DOT: Record<BacklogStatus, string> = {
-  open: 'bg-[#C4B5A0]',
-  suggested: 'bg-[#E4A853]',
-  approved: 'bg-[#E4A853]',
-  dispatched: 'bg-[#5B9BD5]',
-  done: 'bg-[#7CB87C]',
+  open: 'bg-conn-gray-bg',
+  suggested: 'bg-conn-amber-text',
+  approved: 'bg-conn-amber-text',
+  dispatched: 'bg-conn-blue-text',
+  done: 'bg-conn-emerald-text',
 };
 
 const STATUS_BADGE: Record<BacklogStatus, { bg: string; text: string; label: string }> = {
-  open: { bg: 'bg-[#F0EAE0]', text: 'text-cafe-secondary', label: '待建议' },
-  suggested: { bg: 'bg-[#FFF3E0]', text: 'text-[#C48A2A]', label: '待审批' },
-  approved: { bg: 'bg-[#FFF3E0]', text: 'text-[#C48A2A]', label: '已批准' },
-  dispatched: { bg: 'bg-[#E3F0FC]', text: 'text-[#4A7FB5]', label: '执行中' },
+  open: { bg: 'bg-[var(--console-pill-bg)]', text: 'text-cafe-secondary', label: '待建议' },
+  suggested: { bg: 'bg-conn-amber-bg', text: 'text-conn-amber-text', label: '待审批' },
+  approved: { bg: 'bg-conn-amber-bg', text: 'text-conn-amber-text', label: '已批准' },
+  dispatched: { bg: 'bg-conn-blue-bg', text: 'text-conn-blue-text', label: '执行中' },
   done: { bg: 'bg-conn-emerald-bg', text: 'text-conn-emerald-text', label: '已完成' },
 };
 

@@ -27,11 +27,11 @@ const STATUS_LABELS: Record<BacklogStatus, string> = {
 };
 
 const STATUS_COLORS: Record<BacklogStatus, string> = {
-  open: 'bg-[#E8E0D5] text-cafe-secondary',
-  suggested: 'bg-[#FFF0D4] text-[#8B6914]',
-  approved: 'bg-[#DDEEFF] text-[#1A5FA0]',
-  dispatched: 'bg-[#FDE8D0] text-[#A85E00]',
-  done: 'bg-[#D4E8D0] text-conn-emerald-text',
+  open: 'bg-[var(--console-pill-bg)] text-cafe-secondary',
+  suggested: 'bg-conn-amber-bg text-conn-amber-text',
+  approved: 'bg-conn-blue-bg text-conn-blue-text',
+  dispatched: 'bg-conn-amber-bg text-conn-amber-text',
+  done: 'bg-conn-emerald-bg text-conn-emerald-text',
 };
 
 /** Extract feature ID from tags. Supports `feature:f058` (import format) and bare `F058`. */
