@@ -82,7 +82,8 @@ function formatHits(hits: Hit[]): string {
 
 describe('F056 hardcoded color audit (variable-stored)', () => {
   it('no arbitrary hex colors in Tailwind classes (bg-[#...], text-[#...], accent-[#...], etc.)', () => {
-    const pattern = /(?:hover:|focus:|active:)?(?:bg|text|border|ring|from|to|via|outline|shadow|accent|fill|stroke)-\[#/;
+    const pattern =
+      /(?:hover:|focus:|active:)?(?:bg|text|border|ring|from|to|via|outline|shadow|accent|fill|stroke)-\[#/;
     const hits = scanFiles(pattern, (token) => token.includes('var(--'));
     expect(hits, `Found hardcoded hex in Tailwind classes:\n${formatHits(hits)}`).toEqual([]);
   });

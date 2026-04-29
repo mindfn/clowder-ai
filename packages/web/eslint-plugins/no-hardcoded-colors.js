@@ -82,10 +82,7 @@ const SEMANTIC_PREFIXES = ['opus', 'codex', 'gemini', 'dare', 'cocreator', 'cafe
 const semanticPattern = new RegExp(`\\b(?:${TW_PREFIXES.join('|')})-(?:${SEMANTIC_PREFIXES.join('|')})-`);
 
 // Structural patterns allowed without semantic tokens
-const STRUCTURAL_ALLOWLIST = [
-  /\bbg-black\/\d+\b/,
-  /\bhover:bg-black\/\d+\b/,
-];
+const STRUCTURAL_ALLOWLIST = [/\bbg-black\/\d+\b/, /\bhover:bg-black\/\d+\b/];
 
 /** @type {import('eslint').Rule.RuleModule} */
 const rule = {
