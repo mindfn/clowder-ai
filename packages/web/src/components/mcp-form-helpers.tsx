@@ -14,11 +14,7 @@ export function kvToObj(pairs: KVPair[]): Record<string, string> {
 }
 
 export function FormSection({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="divide-y divide-[var(--console-border-soft)] overflow-hidden rounded-xl bg-[var(--console-card-bg)]">
-      {children}
-    </div>
-  );
+  return <div className="overflow-hidden rounded-xl bg-[var(--console-card-bg)]">{children}</div>;
 }
 
 export function FormItem({ label, children }: { label: string; children: React.ReactNode }) {

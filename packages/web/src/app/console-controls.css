@@ -8,8 +8,8 @@
 
 .console-form-input {
   width: 100%;
-  border: 1px solid var(--console-border-soft);
-  background: var(--console-card-soft-bg);
+  border: none;
+  background: var(--console-active-bg);
   color: var(--cafe-text);
   border-radius: 0.5rem;
   padding: 0.5rem 0.75rem;
@@ -39,7 +39,7 @@ select.console-form-input {
 
 .console-form-input:focus {
   outline: none;
-  border-color: var(--console-border-strong);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cafe-accent) 24%, transparent);
 }
 
 .console-button-primary,
@@ -93,7 +93,7 @@ select.console-form-input {
 .console-segmented {
   display: inline-flex;
   gap: 0.35rem;
-  border: 1px solid var(--console-border-soft);
+  border: none;
   background: color-mix(in srgb, var(--console-card-soft-bg) 94%, transparent);
   border-radius: 0.5rem;
   padding: 0.25rem;
