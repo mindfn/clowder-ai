@@ -112,13 +112,23 @@ printf '%s' "$CAT_CAFE_MCP_SERVER_PATH"
   assert.equal(output, explicitPath);
 });
 
-test('.env.local overrides same-name keys from .env (#603)', () => {
-  const scriptPath = resolve(process.cwd(), '../../scripts/start-dev.sh');
-  const projectDir = resolve(process.cwd(), '../..');
-  const envLocalPath = join(projectDir, '.env.local');
+function createTempProject() {
+  const tmp = mkdtempSync(join(tmpdir(), 'env-local-'));
+  const scriptsDir = join(tmp, 'scripts');
+  mkdirSync(scriptsDir);
+  const realScriptsDir = resolve(process.cwd(), '../../scripts');
+  cpSync(join(realScriptsDir, 'start-dev.sh'), join(scriptsDir, 'start-dev.sh'));
+  cpSync(join(realScriptsDir, 'download-source-overrides.sh'), join(scriptsDir, 'download-source-overrides.sh'));
+  chmodSync(join(scriptsDir, 'start-dev.sh'), 0o755);
+  return tmp;
+}
 
+test('.env.local overrides same-name keys from .env (#603)', () => {
+  const tmp = createTempProject();
   try {
-    writeFileSync(envLocalPath, 'FRONTEND_PORT=3013\nPREVIEW_GATEWAY_PORT=4199\n');
+    writeFileSync(join(tmp, '.env'), 'FRONTEND_PORT=3003\nPREVIEW_GATEWAY_PORT=4099\n');
+    writeFileSync(join(tmp, '.env.local'), 'FRONTEND_PORT=3013\nPREVIEW_GATEWAY_PORT=4199\n');
+    const scriptPath = join(tmp, 'scripts', 'start-dev.sh');
 
     const result = spawnSync(
       'bash',
@@ -135,17 +145,16 @@ test('.env.local overrides same-name keys from .env (#603)', () => {
     assert.equal(result.status, 0, `snippet failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
     assert.equal(result.stdout.trim(), '3013|4199');
   } finally {
-    rmSync(envLocalPath, { force: true });
+    rmSync(tmp, { recursive: true, force: true });
   }
 });
 
-test('CLI env vars beat .env.local for port keys (#603)', () => {
-  const scriptPath = resolve(process.cwd(), '../../scripts/start-dev.sh');
-  const projectDir = resolve(process.cwd(), '../..');
-  const envLocalPath = join(projectDir, '.env.local');
-
+test('CLI env vars beat .env.local for port keys in default mode (#603)', () => {
+  const tmp = createTempProject();
   try {
-    writeFileSync(envLocalPath, 'FRONTEND_PORT=3013\nAPI_SERVER_PORT=3014\n');
+    writeFileSync(join(tmp, '.env'), 'FRONTEND_PORT=3003\nAPI_SERVER_PORT=3004\n');
+    writeFileSync(join(tmp, '.env.local'), 'FRONTEND_PORT=3013\nAPI_SERVER_PORT=3014\n');
+    const scriptPath = join(tmp, 'scripts', 'start-dev.sh');
 
     const result = spawnSync(
       'bash',
@@ -162,7 +171,33 @@ test('CLI env vars beat .env.local for port keys (#603)', () => {
     assert.equal(result.status, 0, `snippet failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
     assert.equal(result.stdout.trim(), '3099|3098');
   } finally {
-    rmSync(envLocalPath, { force: true });
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('.env.local beats CLI env in respect-dotenv-ports mode (#603)', () => {
+  const tmp = createTempProject();
+  try {
+    writeFileSync(join(tmp, '.env'), 'FRONTEND_PORT=3003\n');
+    writeFileSync(join(tmp, '.env.local'), 'FRONTEND_PORT=3013\n');
+    const scriptPath = join(tmp, 'scripts', 'start-dev.sh');
+
+    const result = spawnSync(
+      'bash',
+      [
+        '-lc',
+        `set -e\nsource "${scriptPath}" --source-only >/dev/null 2>&1\ntrap - EXIT INT TERM\nprintf '%s' "$FRONTEND_PORT"`,
+      ],
+      {
+        encoding: 'utf8',
+        env: baseShellEnv({ FRONTEND_PORT: '3099', CAT_CAFE_RESPECT_DOTENV_PORTS: '1' }),
+      },
+    );
+
+    assert.equal(result.status, 0, `snippet failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    assert.equal(result.stdout.trim(), '3013');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
   }
 });
 

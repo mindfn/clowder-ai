@@ -83,7 +83,9 @@ for arg in "$@"; do
 done
 
 # 加载环境变量 (放最前面，后续函数需要端口号)
-# 优先级: CLI env > .env.local > .env (#603 .local convention)
+# 优先级 (#603 .local convention):
+#   默认模式: CLI env > .env.local > .env
+#   RESPECT_DOTENV_PORTS 模式: .env.local > .env (CLI port env 不恢复)
 CLI_FRONTEND_PORT_OVERRIDE="${FRONTEND_PORT-}"
 CLI_API_SERVER_PORT_OVERRIDE="${API_SERVER_PORT-}"
 CLI_REDIS_PORT_OVERRIDE="${REDIS_PORT-}"

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 
-const { resolveWithLocalOverlay } = await import('../src/utils/local-override.js');
+const { resolveWithLocalOverlay } = await import('../dist/utils/local-override.js');
 
 const TMP = join(tmpdir(), `local-override-test-${Date.now()}`);
 
