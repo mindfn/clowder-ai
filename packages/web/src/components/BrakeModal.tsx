@@ -181,7 +181,7 @@ export function BrakeModal() {
             type="button"
             onClick={() => checkin('rest')}
             disabled={submitting}
-            className="w-full py-2.5 rounded-xl text-sm font-medium text-white bg-conn-emerald-text hover:opacity-90 transition-colors disabled:opacity-50"
+            className="w-full py-2.5 rounded-xl text-sm font-medium text-[var(--cafe-surface)] bg-conn-emerald-text hover:opacity-90 transition-colors disabled:opacity-50"
           >
             立刻休息（5 分钟）
           </button>

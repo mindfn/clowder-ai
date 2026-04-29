@@ -204,7 +204,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
           {queuePaused && (
             <button
               onClick={handleContinue}
-              className="text-xs px-2 py-1 rounded-md bg-conn-emerald-text text-white hover:opacity-90 transition-colors"
+              className="text-xs px-2 py-1 rounded-md bg-conn-emerald-text text-[var(--cafe-surface)] hover:opacity-90 transition-colors"
             >
               继续
             </button>
