@@ -36,8 +36,8 @@ const SOURCE_TAGS: SourceTag[] = ['Q', 'O', 'D', 'R', 'A'];
 const SOURCE_COLORS: Record<SourceTag, string> = {
   Q: 'bg-[var(--color-cafe-accent)]',
   O: 'bg-conn-emerald-text',
-  D: 'bg-purple-400',
-  R: 'bg-teal-400',
+  D: 'bg-conn-purple-text',
+  R: 'bg-conn-emerald-text',
   A: 'bg-conn-red-text',
 };
 

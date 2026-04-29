@@ -183,7 +183,7 @@ export function ChatMessage({ message, getCatById }: ChatMessageProps) {
     const toneClass = isTool
       ? 'text-cafe-muted bg-cafe-surface-elevated/50 font-mono text-xs py-1'
       : isFollowup
-        ? 'text-conn-purple-text bg-conn-purple-bg border border-purple-200'
+        ? 'text-conn-purple-text bg-conn-purple-bg border border-conn-purple-ring'
         : isError
           ? 'text-conn-red-text bg-conn-red-bg rounded-full'
           : 'text-[var(--color-cafe-accent)] bg-[var(--color-cafe-accent)]/5';

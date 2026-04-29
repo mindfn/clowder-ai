@@ -13,8 +13,8 @@ const BUCKET_STYLES: Record<TriageBucket, { bg: string; text: string; label: str
 const SOURCE_STYLES: Record<SourceTag, { bg: string; text: string }> = {
   Q: { bg: 'bg-[var(--color-cafe-accent)]/10', text: 'text-[var(--color-cafe-accent)]' },
   O: { bg: 'bg-conn-emerald-bg', text: 'text-conn-emerald-text' },
-  D: { bg: 'bg-purple-100', text: 'text-purple-800' },
-  R: { bg: 'bg-teal-100', text: 'text-teal-800' },
+  D: { bg: 'bg-conn-purple-bg', text: 'text-conn-purple-text' },
+  R: { bg: 'bg-conn-emerald-bg', text: 'text-conn-emerald-text' },
   A: { bg: 'bg-conn-red-bg', text: 'text-conn-red-text' },
 };
 

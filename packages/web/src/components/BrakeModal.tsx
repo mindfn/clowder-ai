@@ -31,7 +31,7 @@ const LEVEL_STYLE: Record<1 | 2 | 3, { border: string; bg: string; title: string
   3: { border: 'border-conn-red-ring', bg: 'bg-[var(--console-card-bg,#fffdfb)]', title: '三猫紧急拦截！' },
 };
 
-const NIGHT_STYLE = { border: 'border-indigo-300', bg: 'bg-[var(--console-card-bg,#fffdfb)]' };
+const NIGHT_STYLE = { border: 'border-conn-purple-ring', bg: 'bg-[var(--console-card-bg)]' };
 
 /** Compact urgency badge for avatar corner (emoji-free) */
 const CAT_ALERT_BADGE: Record<1 | 2 | 3, string> = {

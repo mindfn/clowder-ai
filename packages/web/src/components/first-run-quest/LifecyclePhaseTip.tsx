@@ -38,7 +38,7 @@ export function LifecyclePhaseTip({ phase, config }: LifecyclePhaseTipProps) {
   }[config.variant];
   const textColor = {
     blue: 'text-conn-blue-text',
-    purple: 'text-purple-800',
+    purple: 'text-conn-purple-text',
     amber: 'text-conn-amber-text',
     green: 'text-conn-emerald-text',
   }[config.variant];

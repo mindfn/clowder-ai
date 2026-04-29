@@ -17,7 +17,7 @@ describe('statusTone — liveness states (F118 AC-C1)', () => {
   });
 
   it('returns orange for suspected_stall', () => {
-    expect(statusTone('suspected_stall')).toBe('text-orange-600');
+    expect(statusTone('suspected_stall')).toBe('text-conn-amber-text');
   });
 });
 

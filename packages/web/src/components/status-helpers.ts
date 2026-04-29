@@ -111,7 +111,7 @@ export function statusTone(status: CatStatus): string {
     case 'alive_but_silent':
       return 'text-conn-amber-text';
     case 'suspected_stall':
-      return 'text-orange-600';
+      return 'text-conn-amber-text';
     default:
       return 'text-cafe-secondary';
   }
