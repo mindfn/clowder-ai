@@ -110,21 +110,30 @@ describe('McpManageContent', () => {
     expect(deleteCalls[0][0]).not.toContain('hard=true');
   });
 
-  it('opening modal for external MCP renders the config modal', async () => {
+  it('clicking external MCP card opens config modal', async () => {
     await act(async () => {
       root.render(React.createElement(McpManageContent));
     });
 
-    const settingsBtn = Array.from(container.querySelectorAll('button')).find(
-      (btn) => btn.getAttribute('title') === '编辑配置',
-    ) as HTMLButtonElement | undefined;
-    expect(settingsBtn).toBeTruthy();
+    const cardButtons = Array.from(container.querySelectorAll('button')).filter((btn) =>
+      btn.textContent?.includes('custom-mcp'),
+    );
+    expect(cardButtons.length).toBeGreaterThan(0);
 
     await act(async () => {
-      settingsBtn!.click();
+      cardButtons[0].click();
     });
 
     const modal = container.querySelector('[data-testid="mock-modal"]');
     expect(modal).toBeTruthy();
+  });
+
+  it('no gear/settings icon button exists', async () => {
+    await act(async () => {
+      root.render(React.createElement(McpManageContent));
+    });
+
+    const settingsBtn = container.querySelector('button[title="编辑配置"]');
+    expect(settingsBtn).toBeNull();
   });
 });

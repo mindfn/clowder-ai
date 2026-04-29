@@ -77,14 +77,6 @@ export function SkillsContent() {
                     </div>
                   </button>
                   <div className="flex shrink-0 items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setPreviewItem(item)}
-                      className="rounded-md p-1.5 text-cafe-muted hover:bg-[var(--console-card-soft-bg)] hover:text-cafe-secondary transition-colors"
-                      title="预览"
-                    >
-                      <HubIcon name="eye" className="h-3.5 w-3.5" />
-                    </button>
                     {cap.catFamilies.length > 0 && (
                       <button
                         type="button"

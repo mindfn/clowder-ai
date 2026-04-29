@@ -12,7 +12,7 @@ function SourceStatCard({ label, value, warning }: { label: string; value: numbe
       className="flex flex-1 flex-col gap-1 rounded-2xl bg-[var(--console-card-bg)] p-4 shadow-[0_8px_22px_rgba(43,33,26,0.04)]"
       style={{ height: 92 }}
     >
-      <span className={`text-[22px] font-bold ${warning ? 'text-[#D99028]' : 'text-cafe'}`}>{value}</span>
+      <span className={`text-[22px] font-bold ${warning ? 'text-conn-amber-text' : 'text-cafe'}`}>{value}</span>
       <span className="text-xs text-cafe-secondary">{label}</span>
     </div>
   );
@@ -21,8 +21,7 @@ function SourceStatCard({ label, value, warning }: { label: string; value: numbe
 function StatusPill({ enabled }: { enabled: boolean }) {
   return (
     <span
-      className="rounded-md px-2 py-0.5 text-[11px] font-medium"
-      style={{ backgroundColor: enabled ? '#DFF4E7' : '#FFF1CC' }}
+      className={`rounded-md px-2 py-0.5 text-[11px] font-medium ${enabled ? 'bg-conn-emerald-bg text-conn-emerald-text' : 'bg-conn-amber-bg text-conn-amber-text'}`}
     >
       {enabled ? '正常' : '需检查'}
     </span>
@@ -170,7 +169,9 @@ export function SignalSourcesView({ initialReferrerThread = null }: { initialRef
                 onClick={() => void setEnabled(source.id, !source.enabled)}
                 className={[
                   'rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors',
-                  source.enabled ? 'bg-[#DFF4E7] text-[#2D6A4F]' : 'bg-[var(--console-active-bg)] text-cafe-secondary',
+                  source.enabled
+                    ? 'bg-conn-emerald-bg text-conn-emerald-text'
+                    : 'bg-[var(--console-active-bg)] text-cafe-secondary',
                 ].join(' ')}
               >
                 {updatingId === source.id ? '...' : source.enabled ? 'ON' : 'OFF'}

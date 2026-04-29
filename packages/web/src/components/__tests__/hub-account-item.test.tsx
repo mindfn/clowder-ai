@@ -42,7 +42,7 @@ describe('HubAccountItem', () => {
     vi.clearAllMocks();
   });
 
-  it('clicking the card triggers onEdit for API key accounts', async () => {
+  it('non-builtin card shows only trash icon, no pencil', async () => {
     const profile = profileItem({
       id: 'claude-api',
       provider: 'claude-api',
@@ -58,38 +58,22 @@ describe('HubAccountItem', () => {
       createdAt: '2026-03-18T00:00:00.000Z',
       updatedAt: '2026-03-18T00:00:00.000Z',
     });
-    const onEdit = vi.fn();
 
     await act(async () => {
-      root.render(
-        <HubAccountItem
-          profile={profile}
-          busy={false}
-          onSave={vi.fn(async () => {})}
-          onDelete={() => {}}
-          onEdit={onEdit}
-        />,
-      );
+      root.render(<HubAccountItem profile={profile} busy={false} onSave={vi.fn(async () => {})} onDelete={() => {}} />);
     });
 
-    expect(container.textContent).not.toContain('预览 / 编辑');
-    expect(container.textContent).not.toContain('预览 →');
-
-    const card = container.querySelector('button') as HTMLElement;
-    await act(async () => {
-      card.click();
-    });
-    expect(onEdit).toHaveBeenCalledWith(profile);
+    expect(container.querySelector('button[title="删除"]')).toBeTruthy();
+    expect(container.querySelector('button[title="编辑"]')).toBeNull();
   });
 
-  it('renders builtin card without redundant preview text or binding-scope controls', async () => {
+  it('builtin card shows no action buttons', async () => {
     const profile = profileItem({
       id: 'codex-oauth',
       provider: 'codex-oauth',
       displayName: 'Codex (OAuth)',
       name: 'Codex (OAuth)',
       authType: 'oauth',
-
       mode: 'subscription',
       models: ['gpt-5.4'],
       hasApiKey: false,
@@ -101,38 +85,12 @@ describe('HubAccountItem', () => {
       root.render(<HubAccountItem profile={profile} busy={false} onSave={vi.fn(async () => {})} onDelete={() => {}} />);
     });
 
-    expect(container.textContent).not.toContain('预览');
     expect(container.textContent).toContain('OAuth');
-    expect(container.textContent).not.toContain('绑定范围');
-    expect(container.textContent).not.toContain('设为 Codex 默认');
+    expect(container.querySelector('button[title="删除"]')).toBeNull();
+    expect(container.querySelector('button[title="编辑"]')).toBeNull();
   });
 
-  it('hides unsupported 测试 actions for non-api-key profiles', async () => {
-    const profile = profileItem({
-      id: 'opencode-client-auth',
-      provider: 'opencode-client-auth',
-      displayName: 'OpenCode (client-auth)',
-      name: 'OpenCode (client-auth)',
-      authType: 'oauth',
-
-      mode: 'subscription',
-      models: ['claude-sonnet-4'],
-      hasApiKey: false,
-      createdAt: '2026-03-18T00:00:00.000Z',
-      updatedAt: '2026-03-18T00:00:00.000Z',
-      oauthLikeClient: 'opencode',
-    });
-
-    await act(async () => {
-      root.render(<HubAccountItem profile={profile} busy={false} onSave={vi.fn(async () => {})} onDelete={() => {}} />);
-    });
-
-    expect(container.textContent).not.toContain('测试');
-    // F170: simplified card layout — no inline "+ 添加" model entry
-    expect(container.textContent).toContain('OpenCode (client-auth)');
-  });
-
-  it('renders api_key card without redundant preview/edit action text', async () => {
+  it('shows host + auth type summary for non-builtin', async () => {
     const profile = profileItem({
       id: 'codex-sponsor',
       provider: 'codex-sponsor',
@@ -148,32 +106,21 @@ describe('HubAccountItem', () => {
       createdAt: '2026-03-18T00:00:00.000Z',
       updatedAt: '2026-03-18T00:00:00.000Z',
     });
-    const onEdit = vi.fn();
 
     await act(async () => {
-      root.render(
-        <HubAccountItem
-          profile={profile}
-          busy={false}
-          onSave={vi.fn(async () => {})}
-          onDelete={() => {}}
-          onEdit={onEdit}
-        />,
-      );
+      root.render(<HubAccountItem profile={profile} busy={false} onSave={vi.fn(async () => {})} onDelete={() => {}} />);
     });
 
     expect(container.textContent).toContain('Codex Sponsor');
-    expect(container.textContent).not.toContain('预览 / 编辑');
-    expect(container.textContent).not.toContain('预览 →');
     expect(container.textContent).toContain('API Key');
   });
 
-  it('shows host placeholder when no baseUrl and not builtin', async () => {
+  it('shows host placeholder when no baseUrl', async () => {
     const profile: ProfileItem = {
-      id: 'opencode-client-auth',
-      provider: 'opencode-client-auth',
-      displayName: 'OpenCode (client-auth)',
-      name: 'OpenCode (client-auth)',
+      id: 'no-url',
+      provider: 'custom',
+      displayName: 'No URL',
+      name: 'No URL',
       authType: 'api_key',
       kind: 'api_key',
       builtin: false,
@@ -188,7 +135,6 @@ describe('HubAccountItem', () => {
       root.render(<HubAccountItem profile={profile} busy={false} onSave={vi.fn(async () => {})} onDelete={() => {}} />);
     });
 
-    expect(container.textContent).toContain('OpenCode (client-auth)');
     expect(container.textContent).toContain('(未设置)');
     expect(container.textContent).toContain('API Key');
   });

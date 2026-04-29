@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { HubAccountItem, type ProfileEditPayload } from './HubAccountItem';
-import type { AccountsResponse, ProfileItem } from './hub-accounts.types';
+import type { AccountsResponse } from './hub-accounts.types';
 import { normalizeBuiltinClientIds, resolveAccountActionId } from './hub-accounts.view';
 import { type UnifiedAuthEditData, UnifiedAuthModal } from './UnifiedAuthModal';
 
@@ -59,19 +59,6 @@ export function HubAccountsTab() {
     await fetchAccounts();
     window.dispatchEvent(new CustomEvent('accounts-changed'));
   }, [fetchAccounts]);
-
-  const handleEdit = useCallback((profile: ProfileItem) => {
-    setEditTarget({
-      id: resolveAccountActionId(profile),
-      displayName: profile.displayName,
-      baseUrl: profile.baseUrl,
-      clientId: profile.clientId,
-      authType: profile.authType,
-      models: profile.models,
-      envVars: profile.envVars,
-    });
-    setShowAuthModal(true);
-  }, []);
 
   const deleteAccount = useCallback(
     async (accountId: string) => {
@@ -169,7 +156,6 @@ export function HubAccountsTab() {
             busy={busyId === resolveAccountActionId(account)}
             onSave={(_id, payload) => saveAccount(resolveAccountActionId(account), payload)}
             onDelete={() => deleteAccount(resolveAccountActionId(account))}
-            onEdit={handleEdit}
           />
         ))}
       </div>

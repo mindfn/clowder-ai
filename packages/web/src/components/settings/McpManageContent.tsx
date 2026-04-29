@@ -118,16 +118,6 @@ export function McpManageContent() {
                     {editable && (
                       <button
                         type="button"
-                        onClick={() => handleCardClick(item)}
-                        className="rounded-md p-1.5 text-cafe-muted hover:bg-[var(--console-card-soft-bg)] hover:text-cafe-secondary transition-colors"
-                        title="编辑配置"
-                      >
-                        <HubIcon name="settings" className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                    {editable && (
-                      <button
-                        type="button"
                         disabled={removing}
                         onClick={(e) => {
                           e.stopPropagation();

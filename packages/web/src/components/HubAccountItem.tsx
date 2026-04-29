@@ -17,7 +17,6 @@ interface HubAccountItemProps {
   busy: boolean;
   onSave: (profileId: string, payload: ProfileEditPayload) => Promise<void>;
   onDelete: (profileId: string) => void;
-  onEdit?: (profile: ProfileItem) => void;
 }
 
 function summaryText(profile: ProfileItem): string | null {
@@ -26,7 +25,7 @@ function summaryText(profile: ProfileItem): string | null {
   return `${host} · ${profile.authType === 'oauth' ? 'OAuth' : 'API Key'}`;
 }
 
-export function HubAccountItem({ profile, busy, onDelete, onEdit }: HubAccountItemProps) {
+export function HubAccountItem({ profile, busy, onDelete }: HubAccountItemProps) {
   const confirm = useConfirm();
 
   const handleDelete = async () => {
@@ -45,29 +44,17 @@ export function HubAccountItem({ profile, busy, onDelete, onEdit }: HubAccountIt
         <p className="text-[13px] font-bold text-cafe">{profile.displayName}</p>
         <p className="mt-1 text-[12px] text-cafe-secondary truncate">{summaryText(profile)}</p>
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
-        {onEdit && (
-          <button
-            type="button"
-            onClick={() => onEdit(profile)}
-            className="rounded-md p-1.5 text-cafe-muted hover:bg-[var(--console-card-soft-bg)] hover:text-cafe-secondary transition-colors"
-            title="编辑"
-          >
-            <HubIcon name="pencil" className="h-3.5 w-3.5" />
-          </button>
-        )}
-        {!profile.builtin && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={handleDelete}
-            className={`rounded-md p-1.5 text-cafe-muted hover:bg-[var(--console-card-soft-bg)] hover:text-[var(--console-stop,#f26767)] transition-colors ${busy ? 'opacity-50' : ''}`}
-            title="删除"
-          >
-            <HubIcon name="trash" className="h-3.5 w-3.5" />
-          </button>
-        )}
-      </div>
+      {!profile.builtin && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={handleDelete}
+          className={`shrink-0 rounded-md p-1.5 text-cafe-muted hover:bg-[var(--console-card-soft-bg)] hover:text-[var(--console-stop,#f26767)] transition-colors ${busy ? 'opacity-50' : ''}`}
+          title="删除"
+        >
+          <HubIcon name="trash" className="h-3.5 w-3.5" />
+        </button>
+      )}
     </div>
   );
 }
