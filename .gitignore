@@ -160,3 +160,7 @@ __pycache__/
 # Design exports (generated from .pen, regeneratable)
 designs/exports/
 packages/api/test/__b1_parent_a__/
+
+# Local rule overrides (fork-specific, never sync to upstream)
+*.local.md
+*.local-override.md
