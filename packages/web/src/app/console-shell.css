@@ -19,6 +19,8 @@
   --console-stop: #f26767;
   --console-inspector-bg: #f4ece4;
   --console-inspector-gradient: linear-gradient(180deg, #faf4ee 0%, #f6efe7 50%, #eee6dc 100%);
+  --console-button-emphasis: #4a3d33;
+  --console-button-emphasis-hover: #5e4f43;
   --terminal-bg: #1e1e24;
   --terminal-bg-deep: #16161c;
   --terminal-border: #2a2a32;
@@ -42,6 +44,8 @@
   --console-rail-active: #302722;
   --console-inspector-bg: color-mix(in srgb, var(--console-panel-bg) 92%, black 8%);
   --console-inspector-gradient: linear-gradient(180deg, #1e1915 0%, #1a1512 50%, #14110f 100%);
+  --console-button-emphasis: #a08977;
+  --console-button-emphasis-hover: #b8a495;
 }
 
 .console-shell {

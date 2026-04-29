@@ -209,8 +209,7 @@ export function HubQuotaBoardTab() {
             type="button"
             onClick={onRefresh}
             disabled={refreshing}
-            // eslint-disable-next-line cafe/no-hardcoded-colors -- dark emphasis button
-            className="rounded-full bg-[#2D3947] px-3 py-1.5 text-xs font-semibold text-[var(--cafe-surface)] transition hover:bg-[#24303D] disabled:opacity-50"
+            className="rounded-full bg-[var(--console-button-emphasis)] px-3 py-1.5 text-xs font-semibold text-[var(--cafe-surface)] transition hover:bg-[var(--console-button-emphasis-hover)] disabled:opacity-50"
           >
             {refreshing ? '刷新中...' : '刷新全部'}
           </button>

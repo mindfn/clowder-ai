@@ -123,8 +123,7 @@ export function HubToolUsageTab() {
             type="button"
             onClick={() => fetchData(true)}
             disabled={loading}
-            // eslint-disable-next-line cafe/no-hardcoded-colors -- dark emphasis button
-            className="rounded-lg bg-[#5C4A3A] px-3 py-1 text-xs text-[var(--cafe-surface)] hover:bg-[#7A6555] disabled:opacity-50"
+            className="rounded-lg bg-[var(--console-button-emphasis)] px-3 py-1 text-xs text-[var(--cafe-surface)] hover:bg-[var(--console-button-emphasis-hover)] disabled:opacity-50"
           >
             {loading ? '冲泡中...' : '刷新'}
           </button>
