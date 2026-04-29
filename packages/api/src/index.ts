@@ -1931,6 +1931,10 @@ async function main(): Promise<void> {
     f101RecoveryPlayer?.stopAllLoops();
   });
 
+  // #603: Preload governance overlay (.local / .local-override)
+  const { initGovernanceOverlay } = await import('./domains/cats/services/context/SystemPromptBuilder.js');
+  await initGovernanceOverlay();
+
   // Start listening
   let address: string;
   try {
