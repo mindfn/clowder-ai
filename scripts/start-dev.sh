@@ -83,7 +83,7 @@ for arg in "$@"; do
 done
 
 # 加载环境变量 (放最前面，后续函数需要端口号)
-# 默认读取 .env；.env.local 仅用于 DARE 相关白名单键，避免全量覆盖引发配置漂移。
+# 优先级: CLI env > .env.local > .env (#603 .local convention)
 CLI_FRONTEND_PORT_OVERRIDE="${FRONTEND_PORT-}"
 CLI_API_SERVER_PORT_OVERRIDE="${API_SERVER_PORT-}"
 CLI_REDIS_PORT_OVERRIDE="${REDIS_PORT-}"
@@ -116,6 +116,12 @@ if [ -f .env ]; then
     set +a
 fi
 
+if [ -f .env.local ]; then
+    set -a
+    source .env.local
+    set +a
+fi
+
 restore_cli_override() {
     local name="$1"
     local value="$2"
@@ -137,33 +143,6 @@ if [ "$PREFER_DOTENV_PORTS" != "1" ]; then
     restore_cli_override "LLM_POSTPROCESS_PORT" "$CLI_LLM_POSTPROCESS_PORT_OVERRIDE"
 fi
 
-load_dare_env_from_local() {
-    local env_file=".env.local"
-    [ -f "$env_file" ] || return 0
-
-    local key raw value
-    for key in \
-        DARE_PATH \
-        DARE_ADAPTER \
-        DARE_API_KEY \
-        DARE_ENDPOINT \
-        OPENROUTER_API_KEY \
-        OPENROUTER_BASE_URL \
-        OPENAI_API_KEY \
-        OPENAI_BASE_URL \
-        ANTHROPIC_API_KEY \
-        ANTHROPIC_BASE_URL; do
-        raw=$(grep -E "^${key}=" "$env_file" | tail -n1 || true)
-        [ -n "$raw" ] || continue
-        value="${raw#*=}"
-        # 去掉包裹引号（兼容 key="value" / key='value'）
-        value="${value%\"}"; value="${value#\"}"
-        value="${value%\'}"; value="${value#\'}"
-        export "$key=$value"
-    done
-}
-
-load_dare_env_from_local
 apply_manual_download_source_overrides
 
 default_redis_port() {
