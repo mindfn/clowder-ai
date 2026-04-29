@@ -149,7 +149,7 @@ export function McpConfigModal({ projectPath, editId, editData, onSaved, onClose
                 type="button"
                 disabled
                 title="卸载功能即将上线"
-                className="flex shrink-0 items-center gap-2 rounded-[14px] bg-[#FCE8E6] px-[18px] text-[15px] font-extrabold text-[#D22F27] opacity-50 cursor-not-allowed"
+                className="flex shrink-0 items-center gap-2 rounded-[14px] bg-conn-red-bg px-[18px] text-[15px] font-extrabold text-conn-red-text opacity-50 cursor-not-allowed"
                 style={{ height: 44 }}
               >
                 <svg
@@ -300,7 +300,7 @@ function HttpEndpointCard({
   onEnvChange: (p: KVPair[]) => void;
 }) {
   return (
-    <div className="rounded-[18px] border border-[#E8DED4] bg-[var(--console-card-bg)] p-4 space-y-3">
+    <div className="rounded-[18px] border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] p-4 space-y-3">
       <div className="space-y-2">
         <p className="text-[15px] font-extrabold text-cafe">URL</p>
         <input
@@ -308,7 +308,7 @@ function HttpEndpointCard({
           value={url}
           onChange={(e) => onUrlChange(e.target.value)}
           placeholder="https://mcp.example.com/mcp"
-          className="h-[46px] w-full rounded-xl border border-[#E7DED5] bg-[var(--console-card-bg)] px-3.5 text-sm text-cafe outline-none focus:border-[var(--cafe-accent,#C65F3D)]"
+          className="h-[46px] w-full rounded-xl border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-3.5 text-sm text-cafe outline-none focus:border-[var(--cafe-accent,#C65F3D)]"
         />
       </div>
       <div className="space-y-2">
@@ -321,7 +321,7 @@ function HttpEndpointCard({
 
 function HttpHeadersCard({ headers, onChange }: { headers: KVPair[]; onChange: (p: KVPair[]) => void }) {
   return (
-    <div className="rounded-[18px] border border-[#E8DED4] bg-[var(--console-card-bg)] p-4 space-y-2.5">
+    <div className="rounded-[18px] border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] p-4 space-y-2.5">
       <p className="text-[15px] font-extrabold text-cafe">标头</p>
       <DynamicKVList pairs={headers} onChange={onChange} addLabel="标头" />
     </div>

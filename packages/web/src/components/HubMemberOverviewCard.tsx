@@ -62,13 +62,13 @@ function getStatusBadge(cat: CatData) {
     return {
       enabled: false,
       label: '未启用',
-      className: 'bg-slate-100 text-slate-600',
+      className: 'bg-conn-gray-bg text-conn-gray-text',
     };
   }
   return {
     enabled: true,
     label: '已启用',
-    className: 'bg-[#E8F5E9] text-[#4CAF50]',
+    className: 'bg-conn-emerald-bg text-conn-emerald-text',
   };
 }
 
@@ -76,7 +76,7 @@ function getSessionChainBadge(cat: CatData) {
   const enabled = cat.sessionChain !== false;
   return {
     label: enabled ? 'Session Chain 已开启' : 'Session Chain 未开启',
-    className: enabled ? 'bg-[#E8F5E9] text-[#4CAF50]' : 'bg-slate-100 text-slate-600',
+    className: enabled ? 'bg-conn-emerald-bg text-conn-emerald-text' : 'bg-conn-gray-bg text-conn-gray-text',
   };
 }
 
@@ -122,7 +122,9 @@ export function HubCoCreatorOverviewCard({ coCreator, onEdit }: { coCreator: CoC
         <p className="text-[13px] font-bold text-cafe">{coCreator.name}</p>
         <p className="mt-1 text-[12px] text-cafe-secondary truncate">别名: {coCreator.aliases.join(' · ') || '无'}</p>
       </div>
-      <span className="shrink-0 rounded-md bg-[#F3E1D6] px-2 py-1 text-[11px] font-semibold text-[#6F3A2C]">Owner</span>
+      <span className="shrink-0 rounded-md bg-[var(--console-pill-bg)] px-2 py-1 text-[11px] font-semibold text-[var(--cafe-interactive)]">
+        Owner
+      </span>
     </section>
   );
 }
@@ -218,7 +220,9 @@ export function HubMemberOverviewCard({
               {cat.adapterMode ? (
                 <span
                   className={`ml-1.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                    cat.adapterMode === 'acp' ? 'bg-[#E8F5E9] text-[#4CAF50]' : 'bg-slate-100 text-slate-500'
+                    cat.adapterMode === 'acp'
+                      ? 'bg-conn-emerald-bg text-conn-emerald-text'
+                      : 'bg-conn-gray-bg text-conn-gray-text'
                   }`}
                 >
                   {cat.adapterMode.toUpperCase()}
@@ -227,7 +231,7 @@ export function HubMemberOverviewCard({
             </p>
 
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <p className="text-[13px] text-[#9D7BC7]">{formatMentionPreview(cat.mentionPatterns)}</p>
+              <p className="text-[13px] text-conn-purple-text">{formatMentionPreview(cat.mentionPatterns)}</p>
               <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${sessionChain.className}`}>
                 {sessionChain.label}
               </span>

@@ -10,7 +10,7 @@ function StatCard({ label, value, warning }: { label: string; value: number; war
       className="flex flex-1 flex-col gap-1 rounded-2xl bg-[var(--console-card-bg)] p-4 shadow-[0_8px_22px_rgba(43,33,26,0.04)]"
       style={{ height: 92 }}
     >
-      <span className={`text-[22px] font-bold ${warning ? 'text-[#D99028]' : 'text-cafe'}`}>{value}</span>
+      <span className={`text-[22px] font-bold ${warning ? 'text-conn-amber-text' : 'text-cafe'}`}>{value}</span>
       <span className="text-xs text-cafe-secondary">{label}</span>
     </div>
   );
@@ -22,11 +22,11 @@ const STATUS_LABEL: Record<TaskStatus, string> = {
   blocked: '阻塞',
   done: '已完成',
 };
-const STATUS_BG: Record<TaskStatus, string> = {
-  todo: '#F3E1D6',
-  doing: '#F3E1D6',
-  blocked: '#FFF1CC',
-  done: '#D4EDDA',
+const STATUS_BG_CLASS: Record<TaskStatus, string> = {
+  todo: 'bg-[var(--console-pill-bg)]',
+  doing: 'bg-[var(--console-pill-bg)]',
+  blocked: 'bg-conn-amber-bg',
+  done: 'bg-conn-emerald-bg',
 };
 
 function TaskQueueCard({ task, selected, onClick }: { task: TaskItem; selected: boolean; onClick: () => void }) {
@@ -50,10 +50,7 @@ function TaskQueueCard({ task, selected, onClick }: { task: TaskItem; selected: 
         <p className="truncate text-sm font-semibold text-cafe">{task.title}</p>
         <p className="mt-0.5 truncate text-xs text-cafe-secondary">{task.why || '—'}</p>
       </div>
-      <span
-        className="shrink-0 rounded-xl px-2.5 py-0.5 text-[11px] font-medium"
-        style={{ backgroundColor: STATUS_BG[task.status] }}
-      >
+      <span className={`shrink-0 rounded-xl px-2.5 py-0.5 text-[11px] font-medium ${STATUS_BG_CLASS[task.status]}`}>
         {STATUS_LABEL[task.status]}
       </span>
     </button>
