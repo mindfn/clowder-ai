@@ -195,7 +195,7 @@ export function CatStrategyCard({ entry, onSaved }: { entry: CatStrategyEntry; o
                   setWarnThreshold(v);
                   if (v >= actionThreshold) setActionThreshold(Math.min(v + 0.05, 0.99));
                 }}
-                className="w-full accent-yellow-500"
+                className="w-full accent-[var(--conn-amber-text)]"
               />
             </div>
             <div>
@@ -213,7 +213,7 @@ export function CatStrategyCard({ entry, onSaved }: { entry: CatStrategyEntry; o
                   setActionThreshold(v);
                   if (v <= warnThreshold) setWarnThreshold(Math.max(v - 0.05, 0.1));
                 }}
-                className="w-full accent-red-500"
+                className="w-full accent-[var(--conn-red-text)]"
               />
             </div>
           </div>
@@ -230,7 +230,7 @@ export function CatStrategyCard({ entry, onSaved }: { entry: CatStrategyEntry; o
                 step="1"
                 value={maxCompressions}
                 onChange={(e) => setMaxCompressions(parseInt(e.target.value, 10))}
-                className="w-full accent-purple-500"
+                className="w-full accent-[var(--conn-purple-text)]"
               />
             </div>
           )}

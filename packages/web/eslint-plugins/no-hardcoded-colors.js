@@ -85,12 +85,6 @@ const semanticPattern = new RegExp(`\\b(?:${TW_PREFIXES.join('|')})-(?:${SEMANTI
 const STRUCTURAL_ALLOWLIST = [
   /\bbg-black\/\d+\b/,
   /\bhover:bg-black\/\d+\b/,
-  /\baccent-/,
-  /\bfocus:outline-/,
-  /\bfrom-/,
-  /\bto-/,
-  /\bhover:from-/,
-  /\bhover:to-/,
 ];
 
 /** @type {import('eslint').Rule.RuleModule} */

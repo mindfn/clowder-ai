@@ -200,7 +200,7 @@ export function RangeField({
           step="0.01"
           value={safeValue}
           onChange={(event) => onChange(event.target.value)}
-          className="w-full accent-[#77A777]"
+          className="w-full accent-[var(--conn-emerald-text)]"
         />
         <p className="text-xs leading-5 text-conn-emerald-text">{hint}</p>
       </div>

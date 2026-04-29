@@ -66,16 +66,17 @@ function formatHits(hits: Hit[]): string {
 }
 
 describe('F056 hardcoded color audit (variable-stored)', () => {
-  it('no arbitrary hex colors in Tailwind classes (bg-[#...], text-[#...], etc.)', () => {
-    const pattern = /(?:bg|text|border|ring|from|to|via|outline|shadow|fill|stroke)-\[#/;
+  it('no arbitrary hex colors in Tailwind classes (bg-[#...], text-[#...], accent-[#...], etc.)', () => {
+    const pattern = /(?:bg|text|border|ring|from|to|via|outline|shadow|accent|fill|stroke)-\[#/;
     const hits = scanFiles(pattern).filter((h) => !h.text.includes('var(--'));
     expect(hits, `Found hardcoded hex in Tailwind classes:\n${formatHits(hits)}`).toEqual([]);
   });
 
-  it('no non-semantic Tailwind color utilities (bg-red-*, text-blue-*, etc.)', () => {
+  it('no non-semantic Tailwind color utilities (bg-red-*, accent-yellow-*, from-amber-*, etc.)', () => {
     const rawColors =
       'green|red|amber|blue|yellow|gray|slate|indigo|purple|teal|violet|pink|rose|orange|cyan|lime|fuchsia';
-    const pattern = new RegExp(`(?:bg|text|border)-(?:${rawColors})-\\d`);
+    const prefixes = 'bg|text|border|ring|from|to|via|outline|accent|fill|stroke';
+    const pattern = new RegExp(`(?:${prefixes})-(?:${rawColors})-\\d`);
     const hits = scanFiles(pattern);
     expect(hits, `Found non-semantic Tailwind colors:\n${formatHits(hits)}`).toEqual([]);
   });

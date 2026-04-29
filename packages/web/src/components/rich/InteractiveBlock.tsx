@@ -395,7 +395,7 @@ function CardGridInteraction({
             <button
               type="button"
               onClick={handleRandom}
-              className="px-4 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 text-[var(--cafe-surface)] rounded-lg text-sm hover:from-amber-600 hover:to-orange-600 transition-all"
+              className="px-4 py-1.5 bg-gradient-to-r from-[var(--cafe-accent)] to-[var(--cafe-accent-hover)] text-[var(--cafe-surface)] rounded-lg text-sm hover:from-[var(--cafe-accent-hover)] hover:to-[var(--cafe-accent)] transition-all"
             >
               <CafeIcon name="shuffle" className="w-4 h-4 inline-block" /> 随机抽
             </button>

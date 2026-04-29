@@ -77,7 +77,7 @@ export function BrakeSettingsPanel() {
             step={15}
             value={settingsThreshold}
             onChange={handleThresholdChange}
-            className="w-full accent-blue-600"
+            className="w-full accent-[var(--conn-blue-text)]"
           />
           <div className="flex justify-between text-xs text-cafe-muted mt-0.5">
             <span>30 min</span>

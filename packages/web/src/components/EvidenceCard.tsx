@@ -45,7 +45,7 @@ const STATUS_CONFIG: Record<
   },
   pending: {
     label: '待审',
-    className: 'ring-1 ring-amber-400/30',
+    className: 'ring-1 ring-conn-amber-ring/30',
     badge: 'bg-conn-amber-bg text-conn-amber-text border-conn-amber-ring animate-pulse',
   },
   published: { label: '正式', className: '', badge: '' },
