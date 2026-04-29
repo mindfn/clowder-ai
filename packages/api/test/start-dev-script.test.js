@@ -201,6 +201,32 @@ test('.env.local beats CLI env in respect-dotenv-ports mode (#603)', () => {
   }
 });
 
+test('.env.local can activate respect-dotenv-ports mode (#603)', () => {
+  const tmp = createTempProject();
+  try {
+    writeFileSync(join(tmp, '.env'), 'FRONTEND_PORT=3003\n');
+    writeFileSync(join(tmp, '.env.local'), 'CAT_CAFE_RESPECT_DOTENV_PORTS=1\nFRONTEND_PORT=3013\n');
+    const scriptPath = join(tmp, 'scripts', 'start-dev.sh');
+
+    const result = spawnSync(
+      'bash',
+      [
+        '-lc',
+        `set -e\nsource "${scriptPath}" --source-only >/dev/null 2>&1\ntrap - EXIT INT TERM\nprintf '%s' "$FRONTEND_PORT"`,
+      ],
+      {
+        encoding: 'utf8',
+        env: baseShellEnv({ FRONTEND_PORT: '3099' }),
+      },
+    );
+
+    assert.equal(result.status, 0, `snippet failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    assert.equal(result.stdout.trim(), '3013');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('explicit port env vars override .env values for direct startup', () => {
   const scriptPath = resolve(process.cwd(), '../../scripts/start-dev.sh');
   const result = spawnSync(

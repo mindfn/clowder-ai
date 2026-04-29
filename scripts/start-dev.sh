@@ -101,7 +101,6 @@ CLI_ANTHROPIC_PROXY_PORT_OVERRIDE="${ANTHROPIC_PROXY_PORT-}"
 CLI_WHISPER_PORT_OVERRIDE="${WHISPER_PORT-}"
 CLI_TTS_PORT_OVERRIDE="${TTS_PORT-}"
 CLI_LLM_POSTPROCESS_PORT_OVERRIDE="${LLM_POSTPROCESS_PORT-}"
-PREFER_DOTENV_PORTS="${CAT_CAFE_RESPECT_DOTENV_PORTS:-0}"
 
 clear_inherited_profile_env() {
     [ "${CAT_CAFE_STRICT_PROFILE_DEFAULTS:-0}" = "1" ] || return 0
@@ -127,6 +126,8 @@ if [ -f .env.local ]; then
     source .env.local
     set +a
 fi
+
+PREFER_DOTENV_PORTS="${CAT_CAFE_RESPECT_DOTENV_PORTS:-0}"
 
 restore_cli_override() {
     local name="$1"
