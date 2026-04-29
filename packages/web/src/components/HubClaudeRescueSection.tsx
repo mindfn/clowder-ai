@@ -190,7 +190,7 @@ export function HubClaudeRescueSection() {
               void rescueSelected();
             }}
             disabled={rescuing || selectedTargets.length === 0}
-            className="px-3 py-1.5 rounded bg-conn-amber-text text-white text-xs hover:opacity-90 disabled:opacity-50"
+            className="px-3 py-1.5 rounded bg-conn-amber-text text-[var(--cafe-surface)] text-xs hover:opacity-90 disabled:opacity-50"
           >
             {rescuing ? '救援中...' : `一键救活 ${selectedTargets.length} 只布偶猫`}
           </button>

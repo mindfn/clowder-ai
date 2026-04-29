@@ -84,7 +84,7 @@ export function SteerQueuedEntryModal({
             type="button"
             data-testid="steer-confirm"
             onClick={onConfirm}
-            className="text-sm px-4 py-2 rounded-full bg-[var(--color-opus-primary)] text-white hover:bg-[var(--color-opus-dark)] transition-colors"
+            className="text-sm px-4 py-2 rounded-full bg-[var(--color-opus-primary)] text-[var(--cafe-surface)] hover:bg-[var(--color-opus-dark)] transition-colors"
           >
             确认
           </button>

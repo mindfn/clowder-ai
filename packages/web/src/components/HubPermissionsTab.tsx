@@ -142,7 +142,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="w-[18px] h-[18px] rounded-full bg-[var(--color-cafe-accent)] text-white text-[10px] font-bold flex items-center justify-center">
+                <span className="w-[18px] h-[18px] rounded-full bg-[var(--color-cafe-accent)] text-[var(--cafe-surface)] text-[10px] font-bold flex items-center justify-center">
                   1
                 </span>
                 <span className="font-semibold text-sm">群白名单</span>
@@ -179,7 +179,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
                         d="M18 18.72a9.094 9.094 0 0 0 3.741-.479 3 3 0 0 0-4.682-2.72m.94 3.198.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0 1 12 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 0 1 6 18.719m12 0a5.971 5.971 0 0 0-.941-3.197m0 0A5.995 5.995 0 0 0 12 12.75a5.995 5.995 0 0 0-5.058 2.772m0 0a3 3 0 0 0-4.681 2.72 8.986 8.986 0 0 0 3.74.477m.94-3.197a5.971 5.971 0 0 0-.94 3.197M15 6.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm6 3a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Zm-13.5 0a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Z"
                       />
                     </svg>
-                    <span className="flex-1 truncate text-cafe-secondary dark:text-gray-300">
+                    <span className="flex-1 truncate text-cafe-secondary dark:text-cafe-muted">
                       {g.label || g.externalChatId}{' '}
                       {g.label ? <span className="text-cafe-muted">{g.externalChatId.slice(-8)}</span> : null}
                     </span>
@@ -207,7 +207,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
                   <button
                     onClick={addGroup}
                     disabled={!newGroupId.trim()}
-                    className="px-3 py-1.5 text-xs bg-[var(--color-cafe-accent)] text-white rounded-lg disabled:opacity-40"
+                    className="px-3 py-1.5 text-xs bg-[var(--color-cafe-accent)] text-[var(--cafe-surface)] rounded-lg disabled:opacity-40"
                   >
                     添加
                   </button>
@@ -216,12 +216,12 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
             )}
           </div>
 
-          <hr className="border-[var(--console-border-soft)] dark:border-gray-800" />
+          <hr className="border-[var(--console-border-soft)] dark:border-cafe" />
 
           {/* Section 2: Admin List */}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <span className="w-[18px] h-[18px] rounded-full bg-[var(--color-cafe-accent)] text-white text-[10px] font-bold flex items-center justify-center">
+              <span className="w-[18px] h-[18px] rounded-full bg-[var(--color-cafe-accent)] text-[var(--cafe-surface)] text-[10px] font-bold flex items-center justify-center">
                 2
               </span>
               <span className="font-semibold text-sm">管理员</span>
@@ -241,7 +241,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
                       clipRule="evenodd"
                     />
                   </svg>
-                  <span className="flex-1 truncate text-cafe-secondary dark:text-gray-300">{id}</span>
+                  <span className="flex-1 truncate text-cafe-secondary dark:text-cafe-muted">{id}</span>
                   {i === 0 && (
                     <span className="px-1.5 py-0.5 bg-conn-amber-bg text-conn-amber-text rounded text-[10px] font-semibold">
                       Owner
@@ -265,7 +265,7 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
                 <button
                   onClick={addAdmin}
                   disabled={!newAdminId.trim()}
-                  className="px-3 py-1.5 text-xs bg-[var(--color-cafe-accent)] text-white rounded-lg disabled:opacity-40"
+                  className="px-3 py-1.5 text-xs bg-[var(--color-cafe-accent)] text-[var(--cafe-surface)] rounded-lg disabled:opacity-40"
                 >
                   添加
                 </button>
@@ -273,13 +273,13 @@ export default function HubPermissionsTab({ connectorId, connectorLabel }: HubPe
             </div>
           </div>
 
-          <hr className="border-[var(--console-border-soft)] dark:border-gray-800" />
+          <hr className="border-[var(--console-border-soft)] dark:border-cafe" />
 
           {/* Section 3: Command Admin Only */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="w-[18px] h-[18px] rounded-full bg-[var(--color-cafe-accent)] text-white text-[10px] font-bold flex items-center justify-center">
+                <span className="w-[18px] h-[18px] rounded-full bg-[var(--color-cafe-accent)] text-[var(--cafe-surface)] text-[10px] font-bold flex items-center justify-center">
                   3
                 </span>
                 <span className="font-semibold text-sm">群聊命令仅管理员</span>

@@ -488,7 +488,7 @@ export function ThreadSidebar({ onClose, className, routePrefix = '' }: ThreadSi
             >
               <BootcampIcon className="h-4 w-4" />
               {bootcampCount > 0 && (
-                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-conn-amber-bg px-1 text-[9px] font-bold text-white">
+                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-conn-amber-bg px-1 text-[9px] font-bold text-[var(--cafe-surface)]">
                   {bootcampCount > 9 ? '9+' : bootcampCount}
                 </span>
               )}
@@ -858,10 +858,10 @@ function DeleteConfirmDialog({
           <button
             onClick={onConfirm}
             disabled={!confirmed}
-            className={`px-3 py-1.5 text-sm rounded-lg text-white transition-colors ${
+            className={`px-3 py-1.5 text-sm rounded-lg text-[var(--cafe-surface)] transition-colors ${
               isSystem
                 ? 'bg-conn-red-bg hover:bg-conn-red-ring disabled:bg-conn-red-bg/60 disabled:cursor-not-allowed'
-                : 'bg-orange-500 hover:bg-orange-600'
+                : 'bg-conn-amber-bg hover:bg-conn-amber-bg'
             }`}
           >
             {isSystem ? '确认删除' : '移入回收站'}

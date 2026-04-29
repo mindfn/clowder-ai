@@ -271,7 +271,7 @@ export function SchedulePanel() {
                       </span>
                       <span className="text-xs font-medium text-cafe-secondary truncate flex-1">{label}</span>
                       {task.source === 'dynamic' && (
-                        <span className="px-1 py-0.5 rounded text-[8px] font-medium bg-violet-50 text-violet-500">
+                        <span className="px-1 py-0.5 rounded text-[8px] font-medium bg-conn-purple-bg text-conn-purple-text">
                           user
                         </span>
                       )}

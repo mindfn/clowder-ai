@@ -841,7 +841,7 @@ describe('F24: SessionChainPanel', () => {
       expect(html).not.toContain('border-[#B39DDB66]');
       // Legacy gray fallback class
       expect(html).not.toContain('border-cafe/40');
-      expect(html).not.toContain('bg-gray-200');
+      expect(html).not.toContain('bg-cafe-surface-elevated');
     });
   });
 

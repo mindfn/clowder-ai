@@ -151,7 +151,8 @@ export function WeComBotSetupPanel({ configured, onConnected, onDisconnected }: 
         <button
           type="button"
           onClick={handleValidate}
-          className="flex items-center gap-1.5 rounded-lg bg-[#7B68EE] px-4 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-[#6A5ACD]"
+          // eslint-disable-next-line cafe/no-hardcoded-colors -- WeCom brand purple
+          className="flex items-center gap-1.5 rounded-lg bg-[#7B68EE] px-4 py-2 text-[13px] font-semibold text-[var(--cafe-surface)] transition-colors hover:bg-[#6A5ACD]"
           data-testid="wecom-bot-validate"
         >
           <WifiIcon />

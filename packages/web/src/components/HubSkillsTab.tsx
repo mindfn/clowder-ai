@@ -186,7 +186,7 @@ function StaleBanner({
           type="button"
           onClick={onSync}
           disabled={syncing}
-          className="rounded-md bg-[var(--color-cafe-accent)] px-3 py-1 text-white text-xs font-medium hover:opacity-90 disabled:opacity-50"
+          className="rounded-md bg-[var(--color-cafe-accent)] px-3 py-1 text-[var(--cafe-surface)] text-xs font-medium hover:opacity-90 disabled:opacity-50"
         >
           {syncing ? '同步中...' : '立即同步'}
         </button>
@@ -226,7 +226,7 @@ function ConflictCard({
             type="button"
             onClick={() => onResolve('official')}
             disabled={resolving}
-            className="rounded-md bg-[var(--color-cafe-accent)] px-2.5 py-1 text-white text-xs font-medium hover:opacity-90 disabled:opacity-50"
+            className="rounded-md bg-[var(--color-cafe-accent)] px-2.5 py-1 text-[var(--cafe-surface)] text-xs font-medium hover:opacity-90 disabled:opacity-50"
           >
             用官方版本
           </button>

@@ -74,7 +74,7 @@ export const CATEGORY_STYLES: Record<DisplayCategory, string> = {
   repo: 'bg-conn-emerald-bg text-conn-emerald-text',
   thread: 'bg-violet-100 text-violet-700',
   system: 'bg-conn-amber-bg text-conn-amber-text',
-  external: 'bg-purple-100 text-purple-700',
+  external: 'bg-purple-100 text-conn-purple-text',
 };
 
 export const CATEGORY_LABELS: Record<DisplayCategory, string> = {

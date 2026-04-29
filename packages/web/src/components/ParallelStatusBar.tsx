@@ -21,7 +21,7 @@ function StatusDot({ status }: { status: string }) {
     case 'alive_but_silent':
       return <span className="inline-block w-2 h-2 rounded-full bg-conn-amber-bg animate-pulse" />;
     case 'suspected_stall':
-      return <span className="inline-block w-2 h-2 rounded-full bg-orange-500 animate-pulse" />;
+      return <span className="inline-block w-2 h-2 rounded-full bg-conn-amber-bg animate-pulse" />;
     default:
       return null;
   }

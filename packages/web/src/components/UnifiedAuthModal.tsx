@@ -236,7 +236,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
             type="button"
             onClick={() => !isEdit && setAuthMode('oauth')}
             className={`flex-1 rounded-md py-1.5 text-xs font-medium transition ${
-              isOAuth ? 'bg-[var(--cafe-accent)] text-white shadow-sm' : 'text-cafe-muted'
+              isOAuth ? 'bg-[var(--cafe-accent)] text-[var(--cafe-surface)] shadow-sm' : 'text-cafe-muted'
             } ${isEdit ? 'cursor-not-allowed' : !isOAuth ? 'hover:bg-cafe-surface-elevated' : ''}`}
             disabled={isEdit}
           >
@@ -246,7 +246,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
             type="button"
             onClick={() => !isEdit && setAuthMode('api_key')}
             className={`flex-1 rounded-md py-1.5 text-xs font-medium transition ${
-              !isOAuth ? 'bg-[var(--cafe-accent)] text-white shadow-sm' : 'text-cafe-muted'
+              !isOAuth ? 'bg-[var(--cafe-accent)] text-[var(--cafe-surface)] shadow-sm' : 'text-cafe-muted'
             } ${isEdit ? 'cursor-not-allowed' : isOAuth ? 'hover:bg-cafe-surface-elevated' : ''}`}
             disabled={isEdit}
           >
@@ -382,7 +382,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                         placeholder="KEY"
                         className={`w-[38%] rounded border px-2 py-1 font-mono text-xs placeholder:text-cafe-muted ${
                           entry.key.trim() && !isValidEnvKey(entry.key.trim())
-                            ? 'border-red-300 bg-red-50 text-red-600'
+                            ? 'border-conn-red-ring bg-conn-red-bg text-conn-red-text'
                             : 'border-[var(--console-border-soft)] bg-cafe-surface text-cafe'
                         }`}
                       />
@@ -400,7 +400,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                       <button
                         type="button"
                         onClick={() => setEnvEntries(envEntries.filter((_, j) => j !== i))}
-                        className="text-xs text-cafe-muted hover:text-red-400"
+                        className="text-xs text-cafe-muted hover:text-conn-red-text"
                         title="删除"
                       >
                         &times;
@@ -408,7 +408,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                     </div>
                   ))}
                   {envEntries.some((e) => e.key.trim() && !isValidEnvKey(e.key.trim())) && (
-                    <p className="text-[10px] text-red-500">
+                    <p className="text-[10px] text-conn-red-text">
                       {envEntries.some((e) => e.key.trim().startsWith('CAT_CAFE_')) ? 'CAT_CAFE_ 前缀为系统保留；' : ''}
                       变量名须以大写字母或下划线开头，仅含 A-Z、0-9、_
                     </p>
@@ -426,7 +426,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
           </div>
         </div>
 
-        {error && <p className="mt-3 text-xs text-red-500">{error}</p>}
+        {error && <p className="mt-3 text-xs text-conn-red-text">{error}</p>}
 
         {/* Save button — bottom right */}
         <div className="mt-4 flex justify-end">
@@ -435,7 +435,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
             data-guide-id="accounts.create-submit"
             onClick={handleSubmit}
             disabled={saving || !canSubmit}
-            className="rounded-lg bg-[var(--cafe-accent)] px-5 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cafe-accent-hover)] disabled:opacity-50"
+            className="rounded-lg bg-[var(--cafe-accent)] px-5 py-2 text-sm font-semibold text-[var(--cafe-surface)] transition hover:bg-[var(--cafe-accent-hover)] disabled:opacity-50"
           >
             {saving ? '保存中...' : '保存'}
           </button>

@@ -38,7 +38,7 @@ export function FileBlock({ block }: { block: RichFileBlock }) {
     >
       <HubIcon name={iconName} className="h-6 w-6 flex-shrink-0 text-cafe-muted" />
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-cafe-black dark:text-gray-200 truncate">{block.fileName}</div>
+        <div className="text-sm font-medium text-cafe-black dark:text-cafe-muted truncate">{block.fileName}</div>
         {block.fileSize != null && <div className="text-xs text-cafe-muted">{formatFileSize(block.fileSize)}</div>}
       </div>
     </a>

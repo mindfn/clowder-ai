@@ -138,14 +138,14 @@ export function InteractiveBlockGroup({ blocks, messageId }: { blocks: RichInter
           className={`w-full py-2.5 rounded-full text-sm font-semibold transition-all flex items-center justify-center gap-2
             ${
               allSelected
-                ? 'bg-conn-amber-text text-white hover:opacity-90 cursor-pointer'
+                ? 'bg-conn-amber-text text-[var(--cafe-surface)] hover:opacity-90 cursor-pointer'
                 : 'bg-[var(--console-card-bg)] text-cafe-muted cursor-not-allowed'
             }`}
         >
           全部提交
           <span
             className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-              allSelected ? 'bg-cafe-surface/20 text-white' : 'bg-conn-amber-bg text-conn-amber-text'
+              allSelected ? 'bg-cafe-surface/20 text-[var(--cafe-surface)]' : 'bg-conn-amber-bg text-conn-amber-text'
             }`}
           >
             {selections.size}/{blocks.length}

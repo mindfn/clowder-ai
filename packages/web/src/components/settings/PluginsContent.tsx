@@ -141,7 +141,7 @@ export function PluginsContent() {
               className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[10px]"
               style={{ backgroundColor: plugin.iconBg }}
             >
-              <HubIcon name={plugin.icon} className="h-5 w-5 text-white" />
+              <HubIcon name={plugin.icon} className="h-5 w-5 text-[var(--cafe-surface)]" />
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-cafe">{plugin.name}</p>

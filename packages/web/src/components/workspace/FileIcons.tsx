@@ -28,7 +28,7 @@ export function FileIcon({ name }: { name: string }) {
   }
   return (
     <span
-      className="w-4 h-4 rounded text-[8px] font-bold flex items-center justify-center flex-shrink-0 text-white"
+      className="w-4 h-4 rounded text-[8px] font-bold flex items-center justify-center flex-shrink-0 text-[var(--cafe-surface)]"
       style={{ backgroundColor: icon.color }}
     >
       {icon.label}

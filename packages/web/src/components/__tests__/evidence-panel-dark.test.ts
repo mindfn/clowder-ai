@@ -44,7 +44,7 @@ describe('Evidence Panel dark theme (F098-B1)', () => {
     });
 
     const html = container.innerHTML;
-    expect(html).toContain('bg-slate-800');
+    expect(html).toContain('bg-cafe-surface-sunken');
     expect(html).not.toContain('--color-cocreator-bg');
   });
 
@@ -63,7 +63,7 @@ describe('Evidence Panel dark theme (F098-B1)', () => {
 
     const html = container.innerHTML;
     // Dark card background
-    expect(html).toContain('bg-slate-900');
+    expect(html).toContain('bg-cafe-surface-sunken');
     // Should NOT use old light-mode CSS vars
     expect(html).not.toContain('--color-base-white');
     expect(html).not.toContain('--color-gemini-bg');

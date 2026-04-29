@@ -78,7 +78,7 @@ function EmptyState({ onCreateFirst }: { onCreateFirst: () => void }) {
       <button
         type="button"
         onClick={onCreateFirst}
-        className="text-xs font-semibold bg-cafe-crosspost text-white px-4 py-2 rounded-lg transition-colors hover:bg-cafe-crosspost/90"
+        className="text-xs font-semibold bg-cafe-crosspost text-[var(--cafe-surface)] px-4 py-2 rounded-lg transition-colors hover:bg-cafe-crosspost/90"
       >
         创建第一颗毛线球
       </button>
@@ -137,7 +137,7 @@ export function TaskBoardPanel() {
         <button
           type="button"
           onClick={() => setComposerOpen(true)}
-          className="ml-auto text-[10px] font-semibold bg-cafe-crosspost/80 text-white px-2.5 py-1 rounded-full transition-colors hover:bg-cafe-crosspost"
+          className="ml-auto text-[10px] font-semibold bg-cafe-crosspost/80 text-[var(--cafe-surface)] px-2.5 py-1 rounded-full transition-colors hover:bg-cafe-crosspost"
         >
           + 新任务
         </button>

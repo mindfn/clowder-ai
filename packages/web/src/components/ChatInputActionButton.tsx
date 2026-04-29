@@ -86,7 +86,7 @@ export function ChatInputActionButton({
       {voice.state === 'recording' && (
         <div className="absolute top-0 right-4 -mt-6 flex items-center gap-2">
           {voice.partialTranscript && (
-            <div className="px-2 py-0.5 bg-gray-800 text-white text-xs rounded-lg max-w-[240px] truncate opacity-80">
+            <div className="px-2 py-0.5 bg-cafe-surface-sunken text-[var(--cafe-surface)] text-xs rounded-lg max-w-[240px] truncate opacity-80">
               {voice.partialTranscript}
             </div>
           )}
@@ -105,7 +105,7 @@ export function ChatInputActionButton({
       {hasActiveInvocation && !disabled && onStop && (
         <button
           onClick={() => onStop()}
-          className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-[var(--console-stop)] text-white hover:opacity-80 transition-colors"
+          className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-[var(--console-stop)] text-[var(--cafe-surface)] hover:opacity-80 transition-colors"
           title="停止生成"
           aria-label="Stop generation"
         >
@@ -123,7 +123,7 @@ export function ChatInputActionButton({
       {disabled && onStop && hasActiveInvocation ? (
         <button
           onClick={() => onStop()}
-          className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-[var(--console-stop)] text-white hover:opacity-80 transition-colors"
+          className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-[var(--console-stop)] text-[var(--cafe-surface)] hover:opacity-80 transition-colors"
           title="停止生成"
           aria-label="Stop generation"
         >
@@ -134,7 +134,7 @@ export function ChatInputActionButton({
       ) : voice.state === 'recording' ? (
         <button
           onClick={voice.stopRecording}
-          className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-[var(--console-stop)] text-white hover:opacity-80 transition-colors animate-pulse"
+          className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-[var(--console-stop)] text-[var(--cafe-surface)] hover:opacity-80 transition-colors animate-pulse"
           title="停止录音"
           aria-label="Stop recording"
         >
@@ -143,7 +143,7 @@ export function ChatInputActionButton({
       ) : voice.state === 'transcribing' ? (
         <button
           disabled
-          className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-cafe-surface-sunken text-white cursor-wait"
+          className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-cafe-surface-sunken text-[var(--cafe-surface)] cursor-wait"
           title="转写中"
           aria-label="Transcribing"
         >
@@ -154,7 +154,7 @@ export function ChatInputActionButton({
           <button
             onClick={onQueueSend}
             disabled={isSendDisabled}
-            className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-[var(--console-voice-companion)] text-white hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="flex h-10 w-10 items-center justify-center rounded-[12px] bg-[var(--console-voice-companion)] text-[var(--cafe-surface)] hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             aria-label="排队发送"
             title="排队发送 — 猫猫忙完后处理"
           >
@@ -182,7 +182,7 @@ export function ChatInputActionButton({
         <button
           onClick={onSend}
           disabled={isSendDisabled}
-          className="flex h-10 w-[42px] items-center justify-center rounded-[12px] bg-[var(--console-input-stroke)] text-white hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="flex h-10 w-[42px] items-center justify-center rounded-[12px] bg-[var(--console-input-stroke)] text-[var(--cafe-surface)] hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           title="发送消息"
           aria-label="Send message"
         >

@@ -124,7 +124,7 @@ export function MissionHubView() {
           <button
             type="button"
             disabled
-            className="flex items-center gap-2 rounded-lg bg-[var(--cafe-accent,#C65F3D)] px-3.5 text-[13px] font-semibold text-white opacity-50 cursor-not-allowed"
+            className="flex items-center gap-2 rounded-lg bg-[var(--cafe-accent,#C65F3D)] px-3.5 text-[13px] font-semibold text-[var(--cafe-surface)] opacity-50 cursor-not-allowed"
             style={{ height: 36 }}
             title="任务创建功能即将上线"
           >

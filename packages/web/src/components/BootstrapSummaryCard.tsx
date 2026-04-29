@@ -162,7 +162,7 @@ export function BootstrapSummaryCard({
             onClick={onSearchKnowledge}
             className={
               onSearchKnowledge
-                ? 'px-3 py-1.5 rounded-lg text-xs text-cafe-secondary hover:text-gray-800 hover:bg-[var(--console-card-soft-bg)] transition-colors inline-flex items-center gap-1'
+                ? 'px-3 py-1.5 rounded-lg text-xs text-cafe-secondary hover:text-cafe hover:bg-[var(--console-card-soft-bg)] transition-colors inline-flex items-center gap-1'
                 : 'px-3 py-1.5 rounded-lg text-xs text-cafe-muted cursor-not-allowed inline-flex items-center gap-1'
             }
           >
@@ -175,8 +175,8 @@ export function BootstrapSummaryCard({
             onClick={onGoToMemoryHub}
             className={
               onGoToMemoryHub
-                ? 'px-3 py-1.5 rounded-lg bg-[var(--color-conn-emerald-text)] hover:opacity-90 text-white text-xs font-medium transition-colors inline-flex items-center gap-1'
-                : 'px-3 py-1.5 rounded-lg bg-[var(--color-conn-emerald-text)]/50 text-white/70 text-xs font-medium cursor-not-allowed inline-flex items-center gap-1'
+                ? 'px-3 py-1.5 rounded-lg bg-[var(--color-conn-emerald-text)] hover:opacity-90 text-[var(--cafe-surface)] text-xs font-medium transition-colors inline-flex items-center gap-1'
+                : 'px-3 py-1.5 rounded-lg bg-[var(--color-conn-emerald-text)]/50 text-[var(--cafe-surface)]/70 text-xs font-medium cursor-not-allowed inline-flex items-center gap-1'
             }
           >
             <MemoryIcon className="w-3.5 h-3.5" />

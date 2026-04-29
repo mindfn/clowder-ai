@@ -149,7 +149,7 @@ export function SkillPreviewModal({
           </button>
           <button
             disabled
-            className="rounded-lg bg-[var(--cafe-accent,#C65F3D)] px-4 py-2 text-sm font-semibold text-white opacity-50 cursor-not-allowed"
+            className="rounded-lg bg-[var(--cafe-accent,#C65F3D)] px-4 py-2 text-sm font-semibold text-[var(--cafe-surface)] opacity-50 cursor-not-allowed"
           >
             编辑配置
           </button>

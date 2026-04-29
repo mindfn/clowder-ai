@@ -89,7 +89,7 @@ export function HubButton() {
           // 即使未来 cap 字符变长也不会撑爆。
           style={{
             backgroundColor: badgeColor,
-            color: '#FFFFFF',
+            color: 'var(--cafe-surface)',
             maxWidth: '22px',
             overflow: 'hidden',
             textOverflow: 'ellipsis',

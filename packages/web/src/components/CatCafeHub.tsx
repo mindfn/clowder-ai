@@ -247,7 +247,7 @@ export function CatCafeHub() {
     >
       <div
         className="rounded-2xl shadow-xl max-w-4xl w-full mx-4 h-[85vh] flex flex-col"
-        style={{ backgroundColor: '#FDF8F3' }}
+        style={{ backgroundColor: 'var(--console-card-bg)' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

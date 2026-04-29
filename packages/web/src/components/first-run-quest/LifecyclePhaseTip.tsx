@@ -26,20 +26,20 @@ export function LifecyclePhaseTip({ phase, config }: LifecyclePhaseTipProps) {
 
   const border = {
     blue: 'border-blue-300',
-    purple: 'border-purple-300',
-    amber: 'border-amber-300',
+    purple: 'border-conn-purple-ring',
+    amber: 'border-conn-amber-ring',
     green: 'border-green-300',
   }[config.variant];
   const background = {
     blue: 'bg-blue-50',
-    purple: 'bg-purple-50',
-    amber: 'bg-amber-50',
-    green: 'bg-green-50',
+    purple: 'bg-conn-purple-bg',
+    amber: 'bg-conn-amber-bg',
+    green: 'bg-conn-emerald-bg',
   }[config.variant];
   const textColor = {
     blue: 'text-blue-800',
     purple: 'text-purple-800',
-    amber: 'text-amber-800',
+    amber: 'text-conn-amber-text',
     green: 'text-green-800',
   }[config.variant];
 

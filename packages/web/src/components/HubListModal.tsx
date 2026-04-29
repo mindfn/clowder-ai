@@ -175,7 +175,7 @@ export function HubListModal({ open, onClose, currentThreadId }: HubListModalPro
                     onClick={() => setPermConnector(c.id)}
                     className={`px-3 py-1 text-xs rounded-full transition-colors ${
                       permConnector === c.id
-                        ? 'bg-[var(--color-cafe-accent)] text-white'
+                        ? 'bg-[var(--color-cafe-accent)] text-[var(--cafe-surface)]'
                         : 'bg-cafe-surface-elevated text-cafe-secondary hover:bg-cafe-surface-elevated'
                     }`}
                     data-testid={`perm-connector-${c.id}`}

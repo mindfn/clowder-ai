@@ -59,7 +59,7 @@ export function DynamicList({
           <button
             type="button"
             onClick={() => onChange(values.filter((_, j) => j !== i))}
-            className="text-xs text-cafe-muted transition-colors hover:text-red-400"
+            className="text-xs text-cafe-muted transition-colors hover:text-conn-red-text"
             title="删除"
           >
             ✕
@@ -115,7 +115,7 @@ export function DynamicKVList({
           <button
             type="button"
             onClick={() => onChange(pairs.filter((_, j) => j !== i))}
-            className="text-xs text-cafe-muted transition-colors hover:text-red-400"
+            className="text-xs text-cafe-muted transition-colors hover:text-conn-red-text"
             title="删除"
           >
             ✕

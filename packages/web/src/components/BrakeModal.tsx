@@ -118,7 +118,7 @@ export function BrakeModal() {
       >
         {/* Header */}
         <div className="text-center">
-          <h2 className={`text-lg font-bold ${nightMode ? 'text-indigo-200' : ''}`}>
+          <h2 className={`text-lg font-bold ${nightMode ? 'text-conn-sky-text' : ''}`}>
             {nightMode ? '深夜了，猫猫们想你休息' : style.title}
           </h2>
           <p className="text-sm text-cafe-secondary mt-1">已专注工作 {activeMinutes} 分钟</p>
@@ -189,7 +189,7 @@ export function BrakeModal() {
             type="button"
             onClick={() => checkin('wrap_up')}
             disabled={submitting}
-            className="w-full py-2.5 rounded-xl text-sm font-medium text-white bg-conn-amber-bg hover:opacity-90 transition-colors disabled:opacity-50"
+            className="w-full py-2.5 rounded-xl text-sm font-medium text-[var(--cafe-surface)] bg-conn-amber-bg hover:opacity-90 transition-colors disabled:opacity-50"
           >
             收尾（10 分钟）
           </button>

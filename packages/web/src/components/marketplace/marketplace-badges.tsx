@@ -4,7 +4,7 @@ import type { InstallMode, MarketplaceEcosystem, TrustLevel } from '@cat-cafe/sh
 import { HubIcon } from '../hub-icons';
 
 const ECOSYSTEM_STYLES: Record<MarketplaceEcosystem, { bg: string; text: string; label: string }> = {
-  claude: { bg: 'bg-purple-50', text: 'text-purple-600 border-purple-300', label: 'Claude' },
+  claude: { bg: 'bg-conn-purple-bg', text: 'text-conn-purple-text border-conn-purple-ring', label: 'Claude' },
   codex: { bg: 'bg-conn-emerald-bg', text: 'text-conn-emerald-text border-conn-emerald-ring', label: 'Codex' },
   openclaw: { bg: 'bg-conn-red-bg', text: 'text-conn-red-text border-conn-red-ring', label: 'OpenClaw' },
   antigravity: {
@@ -55,8 +55,8 @@ const MODE_STYLES: Record<InstallMode, { bg: string; text: string; label: string
     label: 'CLI 安装',
     iconName: 'terminal',
   },
-  manual_file: { bg: 'bg-orange-50', text: 'text-orange-700', label: '手动配置', iconName: 'file-text' },
-  manual_ui: { bg: 'bg-orange-50', text: 'text-orange-700', label: '手动配置', iconName: 'file-text' },
+  manual_file: { bg: 'bg-conn-amber-bg', text: 'text-conn-amber-text', label: '手动配置', iconName: 'file-text' },
+  manual_ui: { bg: 'bg-conn-amber-bg', text: 'text-conn-amber-text', label: '手动配置', iconName: 'file-text' },
 };
 
 export function InstallModeBadge({ mode }: { mode: InstallMode }) {

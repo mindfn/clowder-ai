@@ -143,7 +143,7 @@ export function StudyFoldArea({
             <button
               type="button"
               onClick={onStartStudy}
-              className="rounded-md bg-opus-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-opus-dark"
+              className="rounded-md bg-opus-primary px-3 py-1.5 text-xs font-semibold text-[var(--cafe-surface)] hover:bg-opus-dark"
             >
               开始学习
             </button>

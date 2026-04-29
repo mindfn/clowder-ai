@@ -105,7 +105,7 @@ export function HubCoCreatorOverviewCard({ coCreator, onEdit }: { coCreator: CoC
       className="flex h-24 cursor-pointer items-center gap-4 rounded-2xl bg-[var(--console-card-bg)] px-5 py-[18px] shadow-[0_8px_24px_rgba(43,33,26,0.05)] transition hover:shadow-[0_8px_24px_rgba(43,33,26,0.09)]"
     >
       <div
-        className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full text-[11px] font-bold text-white"
+        className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full text-[11px] font-bold text-[var(--cafe-surface)]"
         style={{ backgroundColor: primary }}
       >
         {avatarSrc ? (

@@ -556,14 +556,14 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
       data-bootcamp-host="cat-editor-modal"
     >
       <div
-        className="flex max-h-[88vh] w-full max-w-[560px] flex-col rounded-[32px] border border-[#F0DDCD] bg-[#FFF8F2] shadow-2xl"
+        className="flex max-h-[88vh] w-full max-w-[560px] flex-col rounded-[32px] border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] shadow-2xl"
         data-guide-id="member-editor.profile"
         onClick={(event) => event.stopPropagation()}
         data-bootcamp-step="cat-editor"
       >
-        <div className="flex shrink-0 items-start justify-between border-b border-[#F0DDCD] px-7 py-5">
+        <div className="flex shrink-0 items-start justify-between border-b border-[var(--console-border-soft)] px-7 py-5">
           <div>
-            <p className="text-[13px] font-semibold text-[#77A777]">
+            <p className="text-[13px] font-semibold text-conn-emerald-text">
               成员协作 &gt; 总览 &gt; {cat ? '编辑成员' : '添加成员'}
             </p>
           </div>
@@ -571,7 +571,7 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
             <button
               type="button"
               onClick={requestClose}
-              className="text-2xl leading-none text-[#B59A88]"
+              className="text-2xl leading-none text-cafe-muted"
               aria-label="关闭"
             >
               ×
@@ -583,17 +583,17 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
           {!cat && templates.length > 0 && (
             <section
               data-guide-id="add-member.template-picker"
-              className="space-y-2 rounded-[20px] border border-[#F1E7DF] bg-[#FFFDFC] p-[18px]"
+              className="space-y-2 rounded-[20px] border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] p-[18px]"
             >
-              <h4 className="text-[15px] font-bold text-[#2D2118]">模板快选（可选）</h4>
+              <h4 className="text-[15px] font-bold text-cafe">模板快选（可选）</h4>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={() => handleTemplateSelect(null)}
                   className={`rounded-full px-3 py-1.5 text-sm transition ${
                     selectedTemplateId === 'custom'
-                      ? 'bg-[#D49266] text-white'
-                      : 'bg-[#F7EEE6] text-[#5C4B42] hover:bg-[#EDE0D5]'
+                      ? 'bg-[var(--cafe-accent)] text-[var(--cafe-surface)]'
+                      : 'bg-[var(--console-pill-bg)] text-cafe-secondary hover:bg-[var(--console-pill-bg)]'
                   }`}
                 >
                   自定义
@@ -605,8 +605,8 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
                     onClick={() => handleTemplateSelect(selectedTemplateId === t.id ? null : t)}
                     className={`rounded-full px-3 py-1.5 text-sm transition ${
                       selectedTemplateId === t.id
-                        ? 'bg-[#D49266] text-white'
-                        : 'bg-[#F7EEE6] text-[#5C4B42] hover:bg-[#EDE0D5]'
+                        ? 'bg-[var(--cafe-accent)] text-[var(--cafe-surface)]'
+                        : 'bg-[var(--console-pill-bg)] text-cafe-secondary hover:bg-[var(--console-pill-bg)]'
                     }`}
                   >
                     {t.nickname ?? t.name}
@@ -656,8 +656,8 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
           {error ? <p className="rounded-2xl bg-conn-red-bg px-4 py-3 text-sm text-conn-red-text">{error}</p> : null}
         </div>
 
-        <div className="flex shrink-0 items-center justify-between border-t border-[#F0DDCD] bg-[#FFF3EA] px-7 py-4">
-          <div className="text-xs leading-5 text-[#8A776B]">
+        <div className="flex shrink-0 items-center justify-between border-t border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-7 py-4">
+          <div className="text-xs leading-5 text-cafe-muted">
             {buildEditorLoadingNote({ loadingProfiles, loadingStrategy, loadingCodexSettings })}
           </div>
           <div className="flex gap-2">
@@ -667,7 +667,7 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
                 aria-label="删除成员"
                 onClick={handleDelete}
                 disabled={saving}
-                className="rounded-full bg-red-50 px-5 py-2.5 text-sm font-semibold text-red-600 transition hover:bg-red-100 disabled:opacity-50"
+                className="rounded-full bg-conn-red-bg px-5 py-2.5 text-sm font-semibold text-conn-red-text transition hover:bg-conn-red-bg disabled:opacity-50"
               >
                 删除成员
               </button>
@@ -675,7 +675,7 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
             <button
               type="button"
               onClick={requestClose}
-              className="rounded-full bg-[#F7F3F0] px-5 py-2.5 text-sm font-semibold text-[#8A776B] transition hover:bg-[#F7EEE6]"
+              className="rounded-full bg-[var(--console-pill-bg)] px-5 py-2.5 text-sm font-semibold text-cafe-muted transition hover:bg-[var(--console-pill-bg)]"
             >
               取消
             </button>
@@ -683,7 +683,7 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
               type="button"
               onClick={handleSave}
               disabled={saving || saveBlockedByProfileBinding}
-              className="rounded-full bg-[#D49266] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#C88254] disabled:opacity-50"
+              className="rounded-full bg-[var(--cafe-accent)] px-5 py-2.5 text-sm font-semibold text-[var(--cafe-surface)] transition hover:bg-[var(--cafe-accent-hover,#C88254)] disabled:opacity-50"
             >
               {saving ? '保存中…' : cat ? '保存修改' : '保存'}
             </button>

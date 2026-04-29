@@ -555,8 +555,8 @@ export function ChatInput({
       {/* F39: Queue status bar — visible when cat is running */}
       {hasActiveInvocation && (
         <div className="px-4 pt-2 flex items-center gap-2">
-          <span className="inline-block w-2 h-2 rounded-full bg-[#9B7EBD] animate-pulse" />
-          <span className="text-xs text-[#9B7EBD] font-medium">猫猫正在回复中...</span>
+          <span className="inline-block w-2 h-2 rounded-full bg-[var(--color-opus-primary)] animate-pulse" />
+          <span className="text-xs text-[var(--color-opus-primary)] font-medium">猫猫正在回复中...</span>
           <span className="text-xs text-cafe-muted">继续输入，消息会排队</span>
         </div>
       )}
@@ -611,7 +611,7 @@ export function ChatInput({
         </div>
       )}
       {imageLifecycleStatus === 'uploading' && (
-        <div className="px-4 pt-2 text-xs text-indigo-500" role="status">
+        <div className="px-4 pt-2 text-xs text-conn-sky-text" role="status">
           图片上传中，请稍候...
         </div>
       )}
@@ -704,7 +704,7 @@ export function ChatInput({
           ref={gameBtnRef}
           onClick={handleGameClick}
           disabled={disabled || sendTemporarilyDisabled}
-          className="hidden md:block p-3 rounded-xl text-cafe-muted hover:text-indigo-500 hover:bg-cafe-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          className="hidden md:block p-3 rounded-xl text-cafe-muted hover:text-conn-sky-text hover:bg-cafe-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           aria-label="Game mode"
           title="游戏模式"
         >

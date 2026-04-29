@@ -27,7 +27,7 @@ export function SkillsContent() {
             type="button"
             disabled
             title="新增 Skill 功能即将上线"
-            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--cafe-accent,#C65F3D)] px-3.5 py-2 text-[13px] font-semibold text-white opacity-50 cursor-not-allowed"
+            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--cafe-accent,#C65F3D)] px-3.5 py-2 text-[13px] font-semibold text-[var(--cafe-surface)] opacity-50 cursor-not-allowed"
           >
             <HubIcon name="plus" className="h-3.5 w-3.5" />
             新增 Skill
@@ -65,7 +65,7 @@ export function SkillsContent() {
                     className="flex min-w-0 flex-1 items-center gap-4 text-left"
                   >
                     <div
-                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white"
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-[var(--cafe-surface)]"
                       style={{ backgroundColor: color }}
                     >
                       {item.id.charAt(0).toUpperCase()}

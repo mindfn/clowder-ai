@@ -73,7 +73,7 @@ function AddTermRow({ onAdd }: { onAdd: (from: string, to: string) => void }) {
       <button
         onClick={handleAdd}
         disabled={!from.trim() || !to.trim()}
-        className="text-xs px-2.5 py-1.5 rounded bg-cafe-accent text-white hover:bg-cafe-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        className="text-xs px-2.5 py-1.5 rounded bg-cafe-accent text-[var(--cafe-surface)] hover:bg-cafe-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
       >
         添加
       </button>

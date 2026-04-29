@@ -137,7 +137,9 @@ export function KnowledgeFeed() {
             {tab.count != null && tab.count > 0 && (
               <span
                 className={`text-[9px] rounded-full px-1.5 py-0.5 ${
-                  activeTab === tab.key ? 'bg-cafe-accent text-white' : 'bg-[var(--console-hover-bg)] text-cafe-muted'
+                  activeTab === tab.key
+                    ? 'bg-cafe-accent text-[var(--cafe-surface)]'
+                    : 'bg-[var(--console-hover-bg)] text-cafe-muted'
                 }`}
               >
                 {tab.count}
@@ -239,7 +241,7 @@ function KnowledgeCard({
           <button
             type="button"
             onClick={() => onApprove(marker.id)}
-            className="text-[10px] font-semibold text-white bg-cafe-accent rounded px-2 py-1 hover:opacity-90 transition-opacity"
+            className="text-[10px] font-semibold text-[var(--cafe-surface)] bg-cafe-accent rounded px-2 py-1 hover:opacity-90 transition-opacity"
           >
             Approve
           </button>

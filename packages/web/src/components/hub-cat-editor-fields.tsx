@@ -13,7 +13,7 @@ function FieldShell({
   tone?: 'neutral' | 'success';
   children: ReactNode;
 }) {
-  const labelColor = tone === 'success' ? 'text-[#5B7A5C]' : 'text-cafe-secondary';
+  const labelColor = tone === 'success' ? 'text-conn-emerald-text' : 'text-cafe-secondary';
   return (
     <label className="flex flex-col gap-1.5 text-cafe sm:flex-row sm:items-center sm:gap-3">
       <span className={`text-[13px] font-semibold ${labelColor} sm:w-[140px] sm:shrink-0`}>
@@ -39,7 +39,7 @@ export function SectionCard({
 } & React.HTMLAttributes<HTMLElement>) {
   const toneClasses: Record<string, string> = {
     neutral: 'border-[var(--console-border-soft)] bg-[var(--console-card-bg)]',
-    success: 'border-[#CFE5D5] bg-[#F2FAF4]',
+    success: 'border-conn-emerald-ring bg-conn-emerald-bg',
     error: 'border-conn-red-ring bg-conn-red-bg animate-[shake_0.3s_ease-in-out]',
   };
   const toneClass = toneClasses[tone] ?? toneClasses.neutral;
@@ -75,7 +75,7 @@ export function TextField({
 }) {
   const inputColors =
     tone === 'success'
-      ? 'border-[#CFE5D5] bg-[#E8F5E9] focus:border-[#77A777] focus:ring-[#CFE5D5]'
+      ? 'border-conn-emerald-ring bg-[#E8F5E9] focus:border-[#77A777] focus:ring-[#CFE5D5]'
       : 'border-[var(--console-border-soft)] bg-[var(--console-card-soft-bg)] focus:border-cafe-accent focus:ring-cafe-accent/30';
   return (
     <FieldShell label={label} required={required} tone={tone}>
@@ -109,7 +109,7 @@ export function TextAreaField({
 }) {
   const inputColors =
     tone === 'success'
-      ? 'border-[#CFE5D5] bg-[#E8F5E9] focus:border-[#77A777] focus:ring-[#CFE5D5]'
+      ? 'border-conn-emerald-ring bg-[#E8F5E9] focus:border-[#77A777] focus:ring-[#CFE5D5]'
       : 'border-[var(--console-border-soft)] bg-[var(--console-card-soft-bg)] focus:border-cafe-accent focus:ring-cafe-accent/30';
   return (
     <FieldShell label={label} tone={tone}>
@@ -145,7 +145,7 @@ export function SelectField({
 }) {
   const inputColors =
     tone === 'success'
-      ? 'border-[#CFE5D5] bg-[#E8F5E9] focus:border-[#77A777] focus:ring-[#CFE5D5]'
+      ? 'border-conn-emerald-ring bg-[#E8F5E9] focus:border-[#77A777] focus:ring-[#CFE5D5]'
       : 'border-[var(--console-border-soft)] bg-[var(--console-card-soft-bg)] focus:border-cafe-accent focus:ring-cafe-accent/30';
   return (
     <FieldShell label={label} required={required} tone={tone}>
@@ -184,11 +184,11 @@ export function RangeField({
   return (
     <label className="flex flex-col gap-2 text-cafe sm:flex-row sm:items-start sm:gap-3">
       <div className="sm:w-[140px] sm:shrink-0 sm:pt-1">
-        <span className="text-[13px] font-semibold text-[#5B7A5C]">{label}</span>
+        <span className="text-[13px] font-semibold text-conn-emerald-text">{label}</span>
       </div>
       <div className="min-w-0 flex-1 space-y-2">
         <div className="flex items-center justify-between gap-3">
-          <span className="rounded-full bg-cafe-surface/80 px-2 py-0.5 text-xs font-semibold text-[#5B7A5C]">
+          <span className="rounded-full bg-cafe-surface/80 px-2 py-0.5 text-xs font-semibold text-conn-emerald-text">
             {(safeValue * 100).toFixed(0)}%
           </span>
         </div>
@@ -202,7 +202,7 @@ export function RangeField({
           onChange={(event) => onChange(event.target.value)}
           className="w-full accent-[#77A777]"
         />
-        <p className="text-xs leading-5 text-[#6C7A6D]">{hint}</p>
+        <p className="text-xs leading-5 text-conn-emerald-text">{hint}</p>
       </div>
     </label>
   );

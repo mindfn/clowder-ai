@@ -16,12 +16,12 @@ export interface EvidenceData {
 export function EvidencePanel({ data }: { data: EvidenceData }) {
   return (
     <div className="flex justify-center mb-6">
-      <div className="bg-slate-800/90 backdrop-blur-sm border border-slate-600 rounded-2xl px-5 pt-4 pb-4 max-w-lg w-full shadow-sm shadow-slate-900/30">
+      <div className="bg-cafe-surface-sunken/90 backdrop-blur-sm border border-cafe rounded-2xl px-5 pt-4 pb-4 max-w-lg w-full shadow-sm shadow-cafe/30">
         {/* Header */}
         <div className="flex items-center justify-between mb-3 px-0.5">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-black text-slate-200 tracking-wide uppercase">Hindsight 检索结果</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-600 text-slate-300 font-bold">
+            <span className="text-xs font-black text-cafe-muted tracking-wide uppercase">Hindsight 检索结果</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cafe-surface-sunken text-cafe-muted font-bold">
               {data.results.length}
             </span>
           </div>
@@ -52,7 +52,7 @@ export function EvidencePanel({ data }: { data: EvidenceData }) {
 
         {/* Results */}
         {data.results.length === 0 ? (
-          <div className="text-xs text-slate-400 text-center py-6 font-medium italic">
+          <div className="text-xs text-cafe-muted text-center py-6 font-medium italic">
             喵... 翻遍了猫砂盆也没找到相关证据
           </div>
         ) : (

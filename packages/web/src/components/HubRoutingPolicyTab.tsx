@@ -146,7 +146,7 @@ export function HubRoutingPolicyTab() {
             <button
               onClick={onSave}
               disabled={saving}
-              className="px-3 py-2 text-sm rounded-lg bg-[var(--color-cafe-accent)] text-white disabled:opacity-60"
+              className="px-3 py-2 text-sm rounded-lg bg-[var(--color-cafe-accent)] text-[var(--cafe-surface)] disabled:opacity-60"
             >
               {saving ? '保存中...' : '保存'}
             </button>

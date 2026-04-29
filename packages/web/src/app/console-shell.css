@@ -19,6 +19,9 @@
   --console-stop: #f26767;
   --console-inspector-bg: #f4ece4;
   --console-inspector-gradient: linear-gradient(180deg, #faf4ee 0%, #f6efe7 50%, #eee6dc 100%);
+  --terminal-bg: #1e1e24;
+  --terminal-bg-deep: #16161c;
+  --terminal-border: #2a2a32;
 }
 
 [data-theme="dark"] {

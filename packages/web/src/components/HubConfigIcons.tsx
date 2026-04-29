@@ -56,7 +56,7 @@ export const PLATFORM_VISUALS: Record<string, PlatformVisual> = {
 
 export const DEFAULT_VISUAL: PlatformVisual = {
   iconBg: '#F3F4F6',
-  iconColor: '#6B7280',
+  iconColor: 'var(--cafe-text-muted)',
   icon: (
     <svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" stroke="currentColor" {...SVG_PROPS}>
       <path d="M12 12m-10 0a10 10 0 1 0 20 0a10 10 0 1 0-20 0" />
@@ -66,7 +66,7 @@ export const DEFAULT_VISUAL: PlatformVisual = {
 
 export function StepBadge({ num }: { num: number }) {
   return (
-    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-[var(--color-cafe-accent)] text-white text-[11px] font-bold flex-shrink-0">
+    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-[var(--color-cafe-accent)] text-[var(--cafe-surface)] text-[11px] font-bold flex-shrink-0">
       {num}
     </span>
   );

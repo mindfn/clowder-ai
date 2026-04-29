@@ -42,7 +42,7 @@ export function WhisperCatSelector({ cats, selected, activeCatIds, onToggle }: W
         ))}
       </div>
       {canScrollDown && (
-        <div className="px-4 py-1 text-[10px] text-cafe-muted text-center border-t border-[var(--console-border-soft)] bg-gradient-to-t from-white shrink-0">
+        <div className="px-4 py-1 text-[10px] text-cafe-muted text-center border-t border-[var(--console-border-soft)] bg-gradient-to-t from-cafe-surface shrink-0">
           ↓ 还有更多猫猫
         </div>
       )}

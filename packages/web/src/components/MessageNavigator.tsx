@@ -246,7 +246,7 @@ function NavTooltip({
 
   return (
     <div
-      className="absolute right-full mr-2 -translate-y-1/2 bg-gray-900/90 text-white text-xs rounded-lg px-2.5 py-1.5 max-w-[200px] pointer-events-none whitespace-nowrap z-50"
+      className="absolute right-full mr-2 -translate-y-1/2 bg-cafe-surface-sunken/90 text-[var(--cafe-surface)] text-xs rounded-lg px-2.5 py-1.5 max-w-[200px] pointer-events-none whitespace-nowrap z-50"
       style={{ top: `${topPercent}%` }}
     >
       <div className="font-medium">

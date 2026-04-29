@@ -82,8 +82,8 @@ function classifyPath(absPath: string, projectRoot: string, isDir: boolean): { k
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-[20px] border border-[#F1E7DF] bg-[#FFFDFC] p-[18px]">
-      <h3 className="text-[17px] font-bold text-[#2D2118]">{title}</h3>
+    <section className="rounded-[20px] border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] p-[18px]">
+      <h3 className="text-[17px] font-bold text-cafe">{title}</h3>
       <div className="mt-3">{children}</div>
     </section>
   );
@@ -91,9 +91,9 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function PageIntro() {
   return (
-    <section className="rounded-[20px] border border-[#F1E7DF] bg-[#FFFDFC] p-[18px]">
-      <p className="text-[13px] font-semibold text-[#E29578]">系统配置 &gt; 环境 &amp; 文件</p>
-      <p className="mt-2 text-[14px] leading-6 text-[#8A776B]">
+    <section className="rounded-[20px] border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] p-[18px]">
+      <p className="text-[13px] font-semibold text-conn-amber-text">系统配置 &gt; 环境 &amp; 文件</p>
+      <p className="mt-2 text-[14px] leading-6 text-cafe-muted">
         当前环境变量、配置文件、数据目录三段式不变。新增：变量值可直接编辑，保存后自动回填 .env。
       </p>
     </section>
@@ -256,12 +256,12 @@ function ConfigFilesSection({ projectRoot }: { projectRoot: string }) {
           return (
             <div
               key={f.name}
-              className="flex items-baseline gap-2 rounded-[12px] border border-[#F3E8DE] bg-cafe-surface px-3 py-2"
+              className="flex items-baseline gap-2 rounded-[12px] border border-[var(--console-border-soft)] bg-cafe-surface px-3 py-2"
             >
-              <code className="shrink-0 rounded bg-[#F7F3F0] px-1.5 py-0.5 font-mono text-xs text-[#6A5A50]">
+              <code className="shrink-0 rounded bg-[var(--console-pill-bg)] px-1.5 py-0.5 font-mono text-xs text-cafe-secondary">
                 {f.name}
               </code>
-              <span className="text-xs text-[#8A776B]">{f.desc}</span>
+              <span className="text-xs text-cafe-muted">{f.desc}</span>
               <PathAction classification={cls} absPath={f.path} />
             </div>
           );
@@ -300,23 +300,25 @@ function EnvVarsSection({
 
   return (
     <Section title="环境变量">
-      <div className="mb-3 rounded-[12px] border border-[#D7E9D7] bg-[#F6FBF6] px-3 py-2 text-xs leading-5 text-[#5B7A5C]">
+      <div className="mb-3 rounded-[12px] border border-conn-emerald-ring bg-conn-emerald-bg px-3 py-2 text-xs leading-5 text-conn-emerald-text">
         变量值可直接编辑，保存后自动回填 `.env`。写回 .env 后需重启相关服务生效；URL
         型连接串当前值已脱敏，修改时请填写完整值。
       </div>
       <div className="space-y-3">
         {grouped.map((group) => (
           <div key={group.key}>
-            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#77A777]">{group.label}</p>
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-conn-emerald-text">
+              {group.label}
+            </p>
             <div className="space-y-1">
               {group.vars.map((v) => (
                 <div
                   key={v.name}
-                  className="grid gap-2 rounded-[12px] border border-[#F3E8DE] bg-cafe-surface px-3 py-2 text-xs md:grid-cols-[minmax(0,1fr)_220px]"
+                  className="grid gap-2 rounded-[12px] border border-[var(--console-border-soft)] bg-cafe-surface px-3 py-2 text-xs md:grid-cols-[minmax(0,1fr)_220px]"
                 >
                   <div className="min-w-0 space-y-1">
                     <div className="flex items-baseline gap-1.5 min-w-0">
-                      <code className="shrink-0 font-mono text-[#6A5A50]">{v.name}</code>
+                      <code className="shrink-0 font-mono text-cafe-secondary">{v.name}</code>
                       <span
                         className={`shrink-0 text-[10px] ${needsRestart(v) ? 'text-conn-amber-text' : 'text-conn-emerald-text'}`}
                         title={needsRestart(v) ? '需重启生效' : '即时生效'}
@@ -331,11 +333,13 @@ function EnvVarsSection({
                           已废弃
                         </span>
                       )}
-                      <span className="truncate text-[#B59A88]">{v.description}</span>
+                      <span className="truncate text-cafe-muted">{v.description}</span>
                     </div>
-                    <div className="text-[11px] text-[#B59A88]">默认: {v.defaultValue}</div>
+                    <div className="text-[11px] text-cafe-muted">默认: {v.defaultValue}</div>
                     {!isEditableVariable(v) && (
-                      <div className={`font-mono text-[11px] ${v.currentValue ? 'text-[#6A5A50]' : 'text-[#D4C5BA]'}`}>
+                      <div
+                        className={`font-mono text-[11px] ${v.currentValue ? 'text-cafe-secondary' : 'text-cafe-muted'}`}
+                      >
                         {v.currentValue ?? '未设置'}
                       </div>
                     )}
@@ -357,14 +361,14 @@ function EnvVarsSection({
                               ? '保持当前值（已脱敏）'
                               : v.defaultValue
                         }
-                        className="rounded-[10px] border border-[#E8DCCF] bg-[#F7F3F0] px-3 py-2 font-mono text-xs text-[#6A5A50]"
+                        className="rounded-[10px] border border-[var(--console-border-soft)] bg-[var(--console-pill-bg)] px-3 py-2 font-mono text-xs text-cafe-secondary"
                       />
                       {buildVariableHint(v) ? (
-                        <div className="text-[11px] leading-5 text-[#B59A88]">{buildVariableHint(v)}</div>
+                        <div className="text-[11px] leading-5 text-cafe-muted">{buildVariableHint(v)}</div>
                       ) : null}
                     </div>
                   ) : (
-                    <div className="rounded-[10px] border border-dashed border-[#E8DCCF] bg-[#F7F3F0] px-3 py-2 text-[11px] text-[#8A776B]">
+                    <div className="rounded-[10px] border border-dashed border-[var(--console-border-soft)] bg-[var(--console-pill-bg)] px-3 py-2 text-[11px] text-cafe-muted">
                       只读变量（认证凭证 / 仅启动期生效）
                     </div>
                   )}
@@ -384,7 +388,7 @@ function EnvVarsSection({
           type="button"
           onClick={onSave}
           disabled={!isDirty || saveState.saving}
-          className="rounded-full bg-[#D49266] px-4 py-2 text-xs font-semibold text-white hover:bg-[#c47f52] disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-full bg-[var(--cafe-accent)] px-4 py-2 text-xs font-semibold text-[var(--cafe-surface)] hover:bg-[var(--cafe-accent-hover,#c47f52)] disabled:cursor-not-allowed disabled:opacity-50"
         >
           {saveState.saving ? '保存中...' : '保存到 .env'}
         </button>
@@ -405,10 +409,10 @@ function DataDirsSection({ dataDirs, projectRoot }: { dataDirs: DataDirs; projec
           return (
             <div
               key={d.name}
-              className="flex items-baseline gap-2 rounded-[12px] border border-[#F3E8DE] bg-cafe-surface px-3 py-2"
+              className="flex items-baseline gap-2 rounded-[12px] border border-[var(--console-border-soft)] bg-cafe-surface px-3 py-2"
             >
-              <span className="shrink-0 text-xs font-medium text-[#6A5A50]">{d.name}</span>
-              <span className="text-xs text-[#8A776B]">{d.desc}</span>
+              <span className="shrink-0 text-xs font-medium text-cafe-secondary">{d.name}</span>
+              <span className="text-xs text-cafe-muted">{d.desc}</span>
               <PathAction classification={cls} absPath={d.path} />
             </div>
           );

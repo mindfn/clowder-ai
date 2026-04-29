@@ -12,7 +12,7 @@ const PRIORITY_CLASS: Record<BacklogItem['priority'], string> = {
   p0: 'bg-conn-red-bg text-conn-red-text',
   p1: 'bg-conn-amber-bg text-conn-amber-text',
   p2: 'bg-conn-amber-bg text-conn-amber-text',
-  p3: 'bg-slate-200 text-slate-600',
+  p3: 'bg-slate-200 text-cafe-secondary',
 };
 
 export function MissionControlCard({ item, selected, onSelect }: MissionControlCardProps) {
@@ -24,27 +24,30 @@ export function MissionControlCard({ item, selected, onSelect }: MissionControlC
         'w-full rounded-xl border p-3 text-left transition-all',
         selected
           ? 'border-[#5F4B37] bg-[#FFF7EA] shadow-sm'
-          : 'border-[#EADFCF] bg-[#FFFDF8] hover:border-[#CAB396] hover:bg-[#FFF8EE]',
+          : 'border-[var(--console-border-soft)] bg-[var(--console-card-bg)] hover:border-[#CAB396] hover:bg-[#FFF8EE]',
       ].join(' ')}
     >
       <div className="mb-2 flex items-center gap-2">
-        <span className="text-xs font-semibold text-[#5C4B39]">{item.title}</span>
+        <span className="text-xs font-semibold text-cafe-secondary">{item.title}</span>
         <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${PRIORITY_CLASS[item.priority]}`}>
           {item.priority.toUpperCase()}
         </span>
       </div>
-      <p className="line-clamp-2 text-[11px] leading-relaxed text-[#715F4C]">{item.summary}</p>
+      <p className="line-clamp-2 text-[11px] leading-relaxed text-cafe-secondary">{item.summary}</p>
       {item.tags.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1">
           {item.tags.map((tag) => (
-            <span key={tag} className="rounded bg-[#EFE7DC] px-1.5 py-0.5 text-[10px] text-[#6B5946]">
+            <span
+              key={tag}
+              className="rounded bg-[var(--console-pill-bg)] px-1.5 py-0.5 text-[10px] text-cafe-secondary"
+            >
               #{tag}
             </span>
           ))}
         </div>
       )}
       {item.suggestion && (
-        <p className="mt-2 text-[10px] text-[#8A765F]">
+        <p className="mt-2 text-[10px] text-cafe-muted">
           建议领取：@{item.suggestion.catId} · {item.suggestion.requestedPhase}
         </p>
       )}

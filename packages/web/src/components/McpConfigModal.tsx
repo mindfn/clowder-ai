@@ -277,7 +277,7 @@ export function McpConfigModal({ projectPath, editId, editData, onSaved, onClose
             type="button"
             onClick={handleSave}
             disabled={!id.trim() || saving}
-            className={`disabled:opacity-50 ${isHttpEdit ? 'rounded-[14px] bg-[var(--cafe-accent,#C65F3D)] px-[18px] text-[15px] font-extrabold text-white' : 'console-button-primary'}`}
+            className={`disabled:opacity-50 ${isHttpEdit ? 'rounded-[14px] bg-[var(--cafe-accent,#C65F3D)] px-[18px] text-[15px] font-extrabold text-[var(--cafe-surface)]' : 'console-button-primary'}`}
             style={isHttpEdit ? { height: 42 } : undefined}
           >
             {saving ? '保存中...' : '保存'}

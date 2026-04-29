@@ -162,7 +162,7 @@ function SelectInteraction({
               if (e.key === 'Enter' && !ime.isComposing() && customText.trim()) handleSubmit();
             }}
             placeholder={pendingOpt?.customInputPlaceholder ?? '输入你的想法...'}
-            className="w-full px-4 py-2.5 rounded-xl border-[1.5px] border-conn-amber-ring bg-cafe-surface dark:bg-gray-900 text-sm focus:outline-none focus:border-conn-amber-ring focus:ring-1 focus:ring-conn-amber-ring/30 placeholder:text-cafe-muted"
+            className="w-full px-4 py-2.5 rounded-xl border-[1.5px] border-conn-amber-ring bg-cafe-surface dark:bg-cafe-surface-sunken text-sm focus:outline-none focus:border-conn-amber-ring focus:ring-1 focus:ring-conn-amber-ring/30 placeholder:text-cafe-muted"
           />
         </div>
       )}
@@ -175,7 +175,7 @@ function SelectInteraction({
             ${
               showCustomInput && !customText.trim()
                 ? 'bg-[var(--console-pill-bg)] text-cafe-muted cursor-not-allowed'
-                : 'bg-conn-amber-text text-white hover:opacity-90'
+                : 'bg-conn-amber-text text-[var(--cafe-surface)] hover:opacity-90'
             }`}
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -245,7 +245,7 @@ function MultiSelectInteraction({
             >
               {isChecked && (
                 <svg
-                  className="w-3.5 h-3.5 text-white"
+                  className="w-3.5 h-3.5 text-[var(--cafe-surface)]"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -264,7 +264,7 @@ function MultiSelectInteraction({
         <button
           type="button"
           onClick={() => onSelect([...checked])}
-          className="mt-2 w-full py-2.5 bg-conn-amber-text text-white rounded-full text-sm font-semibold hover:opacity-90 transition-colors flex items-center justify-center gap-1.5"
+          className="mt-2 w-full py-2.5 bg-conn-amber-text text-[var(--cafe-surface)] rounded-full text-sm font-semibold hover:opacity-90 transition-colors flex items-center justify-center gap-1.5"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -395,7 +395,7 @@ function CardGridInteraction({
             <button
               type="button"
               onClick={handleRandom}
-              className="px-4 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-lg text-sm hover:from-amber-600 hover:to-orange-600 transition-all"
+              className="px-4 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 text-[var(--cafe-surface)] rounded-lg text-sm hover:from-amber-600 hover:to-orange-600 transition-all"
             >
               <CafeIcon name="shuffle" className="w-4 h-4 inline-block" /> 随机抽
             </button>
@@ -404,7 +404,7 @@ function CardGridInteraction({
             <button
               type="button"
               onClick={handleSubmit}
-              className="flex-1 py-2.5 bg-conn-amber-text text-white rounded-full text-sm font-semibold hover:opacity-90 transition-colors flex items-center justify-center gap-1.5"
+              className="flex-1 py-2.5 bg-conn-amber-text text-[var(--cafe-surface)] rounded-full text-sm font-semibold hover:opacity-90 transition-colors flex items-center justify-center gap-1.5"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />

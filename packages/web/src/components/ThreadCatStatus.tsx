@@ -52,7 +52,7 @@ export function ThreadCatStatus({
       )}
       {unreadCount > 0 && (
         <span
-          className={`inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-white text-[10px] font-bold leading-none ${
+          className={`inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-[var(--cafe-surface)] text-[10px] font-bold leading-none ${
             hasUserMention ? 'bg-conn-red-bg' : 'bg-conn-amber-bg'
           }`}
         >

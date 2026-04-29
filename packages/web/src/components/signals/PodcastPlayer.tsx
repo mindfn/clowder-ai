@@ -253,7 +253,7 @@ export function PodcastPlayer({ articleId, podcasts, onArtifactCreated }: Podcas
               onClick={() => void loadScript(p.id)}
               className={`rounded px-2 py-0.5 text-[10px] ${
                 selectedId === p.id
-                  ? 'bg-opus-primary text-white'
+                  ? 'bg-opus-primary text-[var(--cafe-surface)]'
                   : 'border border-[var(--console-border-soft)] text-cafe-secondary hover:bg-cafe-surface-elevated'
               }`}
             >

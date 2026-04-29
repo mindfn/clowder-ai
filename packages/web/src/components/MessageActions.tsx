@@ -268,7 +268,7 @@ export function MessageActions({ message, threadId, children }: MessageActionsPr
               <button
                 onClick={handleBranchConfirm}
                 disabled={!dialog.editedContent.trim()}
-                className="px-4 py-2 text-sm text-white bg-[var(--color-cafe-accent)] hover:bg-[var(--color-cafe-accent)]/80 rounded-lg disabled:opacity-40"
+                className="px-4 py-2 text-sm text-[var(--cafe-surface)] bg-[var(--color-cafe-accent)] hover:bg-[var(--color-cafe-accent)]/80 rounded-lg disabled:opacity-40"
               >
                 保存
               </button>

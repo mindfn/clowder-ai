@@ -200,7 +200,7 @@ export function IndexStatus() {
                     className={`relative h-5 w-9 rounded-full transition-colors ${isOn ? 'bg-conn-emerald-text' : 'bg-cafe-surface-sunken'} ${isUpdating ? 'opacity-50' : ''}`}
                   >
                     <span
-                      className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${isOn ? 'translate-x-4' : ''}`}
+                      className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-cafe-surface shadow transition-transform ${isOn ? 'translate-x-4' : ''}`}
                     />
                   </button>
                 ) : (

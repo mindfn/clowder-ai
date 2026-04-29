@@ -183,7 +183,7 @@ export function ChatMessage({ message, getCatById }: ChatMessageProps) {
     const toneClass = isTool
       ? 'text-cafe-muted bg-cafe-surface-elevated/50 font-mono text-xs py-1'
       : isFollowup
-        ? 'text-purple-700 bg-purple-50 border border-purple-200'
+        ? 'text-conn-purple-text bg-conn-purple-bg border border-purple-200'
         : isError
           ? 'text-conn-red-text bg-conn-red-bg rounded-full'
           : 'text-[var(--color-cafe-accent)] bg-[var(--color-cafe-accent)]/5';
@@ -192,7 +192,9 @@ export function ChatMessage({ message, getCatById }: ChatMessageProps) {
         <div className={`text-sm px-4 py-2 rounded-lg whitespace-pre-wrap text-left max-w-[85%] ${toneClass}`}>
           {isFollowup && <span className="mr-1">🔗</span>}
           {message.content}
-          {isFollowup && <span className="block mt-1 text-xs text-purple-500">输入 @猫名 跟进 来发起 follow-up</span>}
+          {isFollowup && (
+            <span className="block mt-1 text-xs text-conn-purple-text">输入 @猫名 跟进 来发起 follow-up</span>
+          )}
         </div>
       </div>
     );
@@ -251,7 +253,7 @@ export function ChatMessage({ message, getCatById }: ChatMessageProps) {
           </div>
         </div>
         <div
-          className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 ring-2 flex items-center justify-center text-[11px] font-bold text-white"
+          className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 ring-2 flex items-center justify-center text-[11px] font-bold text-[var(--cafe-surface)]"
           style={{ backgroundColor: coCreatorPrimary, boxShadow: `0 0 0 2px ${coCreatorSecondary}` }}
         >
           {coCreator.avatar ? (

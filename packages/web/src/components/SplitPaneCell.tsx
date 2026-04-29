@@ -71,7 +71,7 @@ export function SplitPaneCell({
         <span className="text-xs font-medium text-cafe-secondary truncate flex-1">{threadTitle}</span>
         {threadState.isLoading && <span className="w-1.5 h-1.5 rounded-full bg-conn-amber-bg animate-pulse" />}
         {threadState.unreadCount > 0 && (
-          <span className="text-[9px] bg-conn-amber-bg text-white rounded-full px-1 min-w-[14px] text-center">
+          <span className="text-[9px] bg-conn-amber-bg text-[var(--cafe-surface)] rounded-full px-1 min-w-[14px] text-center">
             {threadState.unreadCount > 99 ? '99+' : threadState.unreadCount}
           </span>
         )}
@@ -95,7 +95,7 @@ export function SplitPaneCell({
 export function SplitPanePlaceholder({ index }: { index: number }) {
   return (
     <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-[var(--console-border-soft)] transition-colors">
-      <span className="text-2xl text-gray-200 mb-1">+</span>
+      <span className="text-2xl text-cafe-muted mb-1">+</span>
       <span className="text-xs text-cafe-muted">窗格 {index + 1}</span>
       <span className="text-[10px] text-cafe-muted mt-0.5">点击左侧 thread 分配到此处</span>
     </div>

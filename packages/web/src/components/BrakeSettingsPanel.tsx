@@ -86,8 +86,8 @@ export function BrakeSettingsPanel() {
         </div>
 
         {/* Night mode info */}
-        <div className="rounded-md bg-indigo-50 border border-indigo-100 px-3 py-2">
-          <p className="text-xs text-indigo-600 flex items-center gap-1">
+        <div className="rounded-md bg-conn-sky-bg border border-conn-sky-ring px-3 py-2">
+          <p className="text-xs text-conn-sky-text flex items-center gap-1">
             <svg
               className="w-3.5 h-3.5 flex-shrink-0"
               fill="none"

@@ -37,9 +37,9 @@ describe('BrakeModal theme compliance', () => {
     expect(panelMatch).toBeTruthy();
     const panelClasses = panelMatch![0];
     expect(panelClasses).not.toContain('bg-conn-amber-bg');
-    expect(panelClasses).not.toContain('bg-orange-50');
+    expect(panelClasses).not.toContain('bg-conn-amber-bg');
     expect(panelClasses).not.toContain('bg-conn-red-bg');
-    expect(panelClasses).not.toContain('bg-indigo-50');
+    expect(panelClasses).not.toContain('bg-conn-sky-bg');
   });
 
   it('preserves border-based level indication', () => {

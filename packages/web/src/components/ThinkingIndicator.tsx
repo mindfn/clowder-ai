@@ -166,7 +166,7 @@ export function ThinkingIndicator({ onCancel }: ThinkingIndicatorProps = {}) {
               type="button"
               data-testid="cancel-btn"
               onClick={() => onCancel(currentThreadId, catId)}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-[10px] text-[13px] font-semibold text-white flex-shrink-0 transition-opacity hover:opacity-90"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-[10px] text-[13px] font-semibold text-[var(--cafe-surface)] flex-shrink-0 transition-opacity hover:opacity-90"
               style={{ backgroundColor: 'var(--notice-icon)' }}
             >
               <SquareIcon className="w-3.5 h-3.5" />

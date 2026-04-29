@@ -245,7 +245,7 @@ export function CatStrategyCard({ entry, onSaved }: { entry: CatStrategyEntry; o
             <button
               onClick={handleSave}
               disabled={saving || warnThreshold >= actionThreshold}
-              className="text-xs px-3 py-1.5 rounded bg-[var(--color-cafe-accent)] text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              className="text-xs px-3 py-1.5 rounded bg-[var(--color-cafe-accent)] text-[var(--cafe-surface)] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               {saving ? '保存中...' : '保存'}
             </button>

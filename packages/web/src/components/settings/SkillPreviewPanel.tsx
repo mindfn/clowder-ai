@@ -87,7 +87,7 @@ export function SkillPreviewPanel() {
             onClick={() => loadContent(skill.name)}
             className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
               selectedSkill === skill.name
-                ? 'border border-[rgba(99,102,241,0.18)] bg-[rgba(99,102,241,0.12)] text-indigo-700'
+                ? 'border border-[rgba(99,102,241,0.18)] bg-[rgba(99,102,241,0.12)] text-conn-sky-text'
                 : 'console-pill text-cafe-secondary hover:text-cafe'
             }`}
           >

@@ -201,7 +201,7 @@ export function JsxPreview({ code, filePath, worktreeId }: JsxPreviewProps) {
 
   if (building) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-[#1E1E24] text-cafe-muted text-xs">
+      <div className="flex-1 flex items-center justify-center bg-[var(--terminal-bg)] text-cafe-muted text-xs">
         Bundling JSX/TSX...
       </div>
     );
@@ -209,7 +209,7 @@ export function JsxPreview({ code, filePath, worktreeId }: JsxPreviewProps) {
 
   if (error) {
     return (
-      <div className="flex-1 overflow-auto bg-[#1E1E24] p-4">
+      <div className="flex-1 overflow-auto bg-[var(--terminal-bg)] p-4">
         <div className="text-conn-red-text text-xs font-mono whitespace-pre-wrap">
           <div className="font-semibold mb-2">Bundle Error</div>
           {error}

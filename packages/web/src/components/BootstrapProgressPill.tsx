@@ -37,7 +37,7 @@ export function BootstrapProgressPill({ progress, expanded: defaultExpanded }: B
                   <span
                     className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] ${
                       isDone
-                        ? 'bg-cafe-accent text-white'
+                        ? 'bg-cafe-accent text-[var(--cafe-surface)]'
                         : isActive
                           ? 'bg-[var(--console-active-bg)] text-cafe-accent'
                           : 'bg-[var(--console-card-soft-bg)] text-cafe-muted'
@@ -58,7 +58,7 @@ export function BootstrapProgressPill({ progress, expanded: defaultExpanded }: B
             })}
           </div>
           {progress.docsTotal > 0 && (
-            <div className="mt-2 pt-2 border-t border-gray-100">
+            <div className="mt-2 pt-2 border-t border-[var(--console-border-soft)]">
               <div className="h-1 rounded-full bg-[var(--console-card-soft-bg)] overflow-hidden">
                 <div
                   className="h-full rounded-full bg-cafe-accent transition-all duration-300"

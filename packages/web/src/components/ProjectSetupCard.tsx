@@ -189,7 +189,7 @@ export function ProjectSetupCard({
                     onCompositionStart={ime.onCompositionStart}
                     onCompositionEnd={ime.onCompositionEnd}
                     placeholder="https:// 或 git@..."
-                    className="flex-1 text-xs px-3 py-2 rounded-lg border border-gray-200 bg-[var(--console-card-bg)] focus:outline-none focus:ring-1 focus:ring-cafe-accent"
+                    className="flex-1 text-xs px-3 py-2 rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] focus:outline-none focus:ring-1 focus:ring-cafe-accent"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && ime.isComposing()) {
                         e.preventDefault();
@@ -202,7 +202,7 @@ export function ProjectSetupCard({
                     type="button"
                     onClick={() => handleSetup('clone')}
                     disabled={!cloneUrl.trim()}
-                    className="min-w-[6.5rem] px-4 py-2 rounded-lg bg-cafe-accent hover:bg-cafe-accent/80 text-white text-xs font-medium transition-colors disabled:opacity-40"
+                    className="min-w-[6.5rem] px-4 py-2 rounded-lg bg-cafe-accent hover:bg-cafe-accent/80 text-[var(--cafe-surface)] text-xs font-medium transition-colors disabled:opacity-40"
                   >
                     立即拉取
                   </button>
@@ -222,7 +222,7 @@ export function ProjectSetupCard({
                   <button
                     type="button"
                     onClick={() => handleSetup('init')}
-                    className="min-w-[6.5rem] px-4 py-2 rounded-lg bg-cafe-accent hover:bg-cafe-accent/80 text-white text-xs font-medium transition-colors"
+                    className="min-w-[6.5rem] px-4 py-2 rounded-lg bg-cafe-accent hover:bg-cafe-accent/80 text-[var(--cafe-surface)] text-xs font-medium transition-colors"
                   >
                     初始化
                   </button>
@@ -245,7 +245,7 @@ export function ProjectSetupCard({
                 <button
                   type="button"
                   onClick={() => handleSetup('skip')}
-                  className="min-w-[6.5rem] px-4 py-2 rounded-lg bg-cafe-accent hover:bg-cafe-accent/80 text-white text-xs font-medium transition-colors"
+                  className="min-w-[6.5rem] px-4 py-2 rounded-lg bg-cafe-accent hover:bg-cafe-accent/80 text-[var(--cafe-surface)] text-xs font-medium transition-colors"
                 >
                   {isGitRepo ? '初始化' : '跳过'}
                 </button>

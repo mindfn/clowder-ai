@@ -32,7 +32,7 @@ export function ToggleSwitch({
       title={title ?? (enabled ? '禁用' : '启用')}
     >
       <span
-        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-[18px]' : 'translate-x-[2px]'} mt-[2px]`}
+        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-cafe-surface shadow transition-transform ${enabled ? 'translate-x-[18px]' : 'translate-x-[2px]'} mt-[2px]`}
       />
     </button>
   );

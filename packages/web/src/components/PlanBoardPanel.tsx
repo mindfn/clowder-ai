@@ -93,7 +93,7 @@ function PlanCard({ catId, threadId, inv }: { catId: string; threadId: string; i
         </div>
         {status === 'interrupted' && (
           <button
-            className="text-[10px] px-2 py-0.5 rounded-full border border-[var(--console-border-soft)] hover:border-gray-400 hover:bg-cafe-surface-elevated transition-colors"
+            className="text-[10px] px-2 py-0.5 rounded-full border border-[var(--console-border-soft)] hover:border-cafe hover:bg-cafe-surface-elevated transition-colors"
             onClick={async () => {
               if (await confirm({ title: '继续任务', message: '确认继续上次任务？' })) {
                 void handleSend(buildContinueMessage(catId, tp), undefined, threadId);

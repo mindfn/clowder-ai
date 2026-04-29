@@ -118,7 +118,7 @@ function DonutRing({ byAuthority, total }: { byAuthority: Record<string, number>
             <circle cx="50" cy="50" r="40" fill="none" stroke="#E8C872" strokeWidth="16" />
           )}
         </svg>
-        <span className="absolute text-lg font-bold text-[#7A5C1F]">{pct}%</span>
+        <span className="absolute text-lg font-bold text-conn-amber-text">{pct}%</span>
       </div>
       <div className="flex flex-col gap-1.5">
         {AUTHORITY_LEVELS.map((level) => (
@@ -150,7 +150,7 @@ function KindBarChart({ byKind }: { byKind: Record<string, number> }) {
             <span className="w-20 text-right text-xs text-cafe-secondary">{kind}</span>
             <div className="flex-1">
               <div
-                className="h-6 rounded-md bg-[#D4C5A9] transition-all"
+                className="h-6 rounded-md bg-[var(--console-pill-bg)] transition-all"
                 style={{ width: `${computeBarWidth(count, max)}%` }}
               />
             </div>

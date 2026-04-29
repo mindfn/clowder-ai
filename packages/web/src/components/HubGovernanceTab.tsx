@@ -145,7 +145,7 @@ export function HubGovernanceTab() {
               <th className="px-3 py-2 font-medium text-cafe-secondary">操作</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-[var(--console-border-soft)]">
             {projects.map((p) => {
               const fallback = STATUS_STYLES['never-synced'];
               const style = STATUS_STYLES[p.status] ?? fallback;
@@ -171,7 +171,7 @@ export function HubGovernanceTab() {
                         type="button"
                         onClick={() => handleConfirm(p.projectPath)}
                         disabled={confirming === p.projectPath}
-                        className="text-xs px-2 py-1 rounded bg-[var(--color-cafe-accent)] text-white hover:opacity-90 disabled:opacity-50"
+                        className="text-xs px-2 py-1 rounded bg-[var(--color-cafe-accent)] text-[var(--cafe-surface)] hover:opacity-90 disabled:opacity-50"
                       >
                         {confirming === p.projectPath ? '同步中...' : '立即同步'}
                       </button>

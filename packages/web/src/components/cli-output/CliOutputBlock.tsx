@@ -224,7 +224,7 @@ function ToolRow({
           <span className="font-medium">{event.label?.split(' ')[0]}</span>
           {event.label?.includes(' ') && (
             <span
-              style={{ color: isActive ? accentLight : '#64748B' }}
+              style={{ color: isActive ? accentLight : 'var(--cafe-text-secondary)' }}
             >{` ${event.label.split(' ').slice(1).join(' ')}`}</span>
           )}
         </span>
@@ -232,7 +232,10 @@ function ToolRow({
       {/* Detail — hidden by default, shown on click */}
       {hasResult && !rowExpanded && <ChevronIcon expanded={false} />}
       {rowExpanded && hasResult && event.detail && (
-        <div className="w-full mt-1 pl-7 whitespace-pre-wrap text-[10px]" style={{ color: '#64748B' }}>
+        <div
+          className="w-full mt-1 pl-7 whitespace-pre-wrap text-[10px]"
+          style={{ color: 'var(--cafe-text-secondary)' }}
+        >
           {event.detail}
         </div>
       )}
@@ -281,7 +284,7 @@ function ToolsSection({
         type="button"
         data-testid="tools-section-toggle"
         className="w-full flex items-center gap-1.5 px-2 py-1.5 text-[11px] font-mono rounded transition-colors"
-        style={{ color: '#94A3B8' }}
+        style={{ color: 'var(--cafe-text-muted)' }}
         onClick={() => {
           toolsUserInteracted.current = true;
           setToolsExpanded((v) => !v);
@@ -389,13 +392,13 @@ export function CliOutputBlock({
         type="button"
         onClick={handleToggle}
         className="w-full flex items-center gap-2 text-[11px] font-mono transition-colors"
-        style={{ padding: '8px 12px', color: '#94A3B8', backgroundColor: surface }}
+        style={{ padding: '8px 12px', color: 'var(--cafe-text-muted)', backgroundColor: surface }}
       >
         <span style={{ color: accent }}>
           <ChevronIcon expanded={expanded} />
         </span>
         <span className="font-medium">{summary}</span>
-        <span className="ml-auto flex items-center gap-1" style={{ color: '#64748B', fontSize: 10 }}>
+        <span className="ml-auto flex items-center gap-1" style={{ color: 'var(--cafe-text-secondary)', fontSize: 10 }}>
           {thinkingMode === 'debug' ? (
             <>
               <PawPrint />
@@ -433,7 +436,7 @@ export function CliOutputBlock({
                       padding: '8px 12px 4px 12px',
                       fontFamily: 'JetBrains Mono, monospace',
                       fontSize: 10,
-                      color: '#475569',
+                      color: 'var(--cafe-text-secondary)',
                     }}
                   >
                     ─── stdout ───
@@ -444,7 +447,7 @@ export function CliOutputBlock({
                 style={{ padding: '8px 12px 10px 12px' }}
                 className="font-mono text-[11px] leading-relaxed cli-output-md"
               >
-                <span style={{ color: '#CBD5E1' }}>
+                <span style={{ color: 'var(--cafe-text-muted)' }}>
                   <MarkdownContent content={textEvents.map((e) => e.content).join('\n')} />
                 </span>
               </div>

@@ -114,7 +114,7 @@ export function ChangesPanel({ worktreeId, basisPct }: ChangesPanelProps) {
       </div>
 
       {/* Diff viewer */}
-      <div className="flex-1 min-h-0 overflow-auto bg-[#16161c]">
+      <div className="flex-1 min-h-0 overflow-auto bg-[var(--terminal-bg-deep)]">
         {data?.diff ? (
           <DiffViewer diff={data.diff} filePath={selectedFile ?? undefined} />
         ) : (

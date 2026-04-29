@@ -38,7 +38,7 @@ export function AuthorizationCard({ request, onRespond }: AuthorizationCardProps
           <>
             <button
               onClick={() => onRespond(request.requestId, true, 'once')}
-              className="px-3 py-1 text-xs bg-[var(--color-conn-emerald-text)] text-white rounded-md hover:opacity-90 transition-colors"
+              className="px-3 py-1 text-xs bg-[var(--color-conn-emerald-text)] text-[var(--cafe-surface)] rounded-md hover:opacity-90 transition-colors"
             >
               允许 (仅此次)
             </button>
@@ -59,19 +59,19 @@ export function AuthorizationCard({ request, onRespond }: AuthorizationCardProps
           <div className="flex flex-wrap gap-2">
             <button
               onClick={() => onRespond(request.requestId, true, 'once')}
-              className="px-3 py-1 text-xs bg-[var(--color-conn-emerald-text)] text-white rounded-md hover:opacity-90 transition-colors"
+              className="px-3 py-1 text-xs bg-[var(--color-conn-emerald-text)] text-[var(--cafe-surface)] rounded-md hover:opacity-90 transition-colors"
             >
               允许 (仅此次)
             </button>
             <button
               onClick={() => onRespond(request.requestId, true, 'thread')}
-              className="px-3 py-1 text-xs bg-[var(--color-conn-emerald-text)] text-white rounded-md hover:opacity-90 transition-colors"
+              className="px-3 py-1 text-xs bg-[var(--color-conn-emerald-text)] text-[var(--cafe-surface)] rounded-md hover:opacity-90 transition-colors"
             >
               允许 (此对话)
             </button>
             <button
               onClick={() => onRespond(request.requestId, true, 'global')}
-              className="px-3 py-1 text-xs bg-[var(--color-conn-emerald-text)] text-white rounded-md hover:opacity-90 transition-colors"
+              className="px-3 py-1 text-xs bg-[var(--color-conn-emerald-text)] text-[var(--cafe-surface)] rounded-md hover:opacity-90 transition-colors"
             >
               允许 (全局)
             </button>
@@ -83,7 +83,7 @@ export function AuthorizationCard({ request, onRespond }: AuthorizationCardProps
             </button>
             <button
               onClick={() => onRespond(request.requestId, false, 'global')}
-              className="px-3 py-1 text-xs bg-[var(--color-conn-red-text)] text-white rounded-md hover:opacity-90 transition-colors"
+              className="px-3 py-1 text-xs bg-[var(--color-conn-red-text)] text-[var(--cafe-surface)] rounded-md hover:opacity-90 transition-colors"
             >
               拒绝 (全局)
             </button>

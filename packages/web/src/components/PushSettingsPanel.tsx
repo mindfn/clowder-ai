@@ -211,7 +211,7 @@ export function PushSettingsPanel() {
           className={`px-4 py-1.5 text-sm rounded-lg font-medium transition-colors ${
             isSubscribed
               ? 'bg-[var(--console-pill-bg)] text-cafe-secondary hover:bg-[var(--console-hover-bg)]'
-              : 'bg-[var(--color-cafe-accent)] text-white hover:opacity-90'
+              : 'bg-[var(--color-cafe-accent)] text-[var(--cafe-surface)] hover:opacity-90'
           } disabled:opacity-50`}
         >
           {isLoading ? '处理中...' : isSubscribed ? '关闭' : '开启'}
