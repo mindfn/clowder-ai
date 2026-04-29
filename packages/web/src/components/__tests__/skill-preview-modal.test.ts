@@ -40,7 +40,7 @@ describe('SkillPreviewModal', () => {
     expect(html).toContain('加载中');
   });
 
-  it('renders close and disabled edit buttons', () => {
+  it('renders close button and degradation note', () => {
     const html = renderToStaticMarkup(
       React.createElement(SkillPreviewModal, {
         skillId: 'x',
@@ -49,7 +49,6 @@ describe('SkillPreviewModal', () => {
       }),
     );
     expect(html).toContain('关闭');
-    expect(html).toContain('编辑配置');
-    expect(html).toContain('disabled');
+    expect(html).toContain('配置编辑功能开发中');
   });
 });

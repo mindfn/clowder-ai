@@ -556,12 +556,12 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
       data-bootcamp-host="cat-editor-modal"
     >
       <div
-        className="flex max-h-[88vh] w-full max-w-[560px] flex-col rounded-[32px] bg-[var(--console-card-bg)] shadow-[0_24px_56px_rgba(43,33,26,0.14)]"
+        className="flex max-h-[88vh] w-full max-w-[600px] flex-col rounded-[32px] bg-[var(--console-card-bg)] shadow-[0_24px_56px_rgba(43,33,26,0.14)]"
         data-guide-id="member-editor.profile"
         onClick={(event) => event.stopPropagation()}
         data-bootcamp-step="cat-editor"
       >
-        <div className="flex shrink-0 items-start justify-between border-b border-[var(--console-border-soft)] px-7 py-5">
+        <div className="flex shrink-0 items-start justify-between px-7 py-5">
           <div>
             <p className="text-[13px] font-semibold text-conn-emerald-text">
               成员协作 &gt; 总览 &gt; {cat ? '编辑成员' : '添加成员'}
@@ -583,7 +583,7 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
           {!cat && templates.length > 0 && (
             <section
               data-guide-id="add-member.template-picker"
-              className="space-y-2 rounded-[20px] border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] p-[18px]"
+              className="space-y-2 rounded-[20px] bg-[var(--console-card-soft-bg)] p-[18px]"
             >
               <h4 className="text-[15px] font-bold text-cafe">模板快选（可选）</h4>
               <div className="flex flex-wrap gap-2">
@@ -656,7 +656,7 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
           {error ? <p className="rounded-2xl bg-conn-red-bg px-4 py-3 text-sm text-conn-red-text">{error}</p> : null}
         </div>
 
-        <div className="flex shrink-0 items-center justify-between border-t border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-7 py-4">
+        <div className="flex shrink-0 items-center justify-between bg-[var(--console-card-bg)] px-7 py-4">
           <div className="text-xs leading-5 text-cafe-muted">
             {buildEditorLoadingNote({ loadingProfiles, loadingStrategy, loadingCodexSettings })}
           </div>

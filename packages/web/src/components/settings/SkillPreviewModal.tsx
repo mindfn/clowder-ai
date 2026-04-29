@@ -79,7 +79,7 @@ export function SkillPreviewModal({
         className="relative mx-4 w-full max-w-[600px] rounded-2xl bg-[var(--console-card-bg)] shadow-[0_24px_56px_rgba(43,33,26,0.14)]"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start gap-4 border-b border-[var(--console-border-soft)] p-6 pb-4">
+        <div className="flex items-start gap-4 p-6 pb-4">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--cafe-accent,#C65F3D)]/15 text-sm font-bold text-[var(--cafe-accent,#C65F3D)]">
             {letter}
           </div>
@@ -140,18 +140,13 @@ export function SkillPreviewModal({
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-3 border-t border-[var(--console-border-soft)] px-6 py-4">
+        <div className="flex items-center justify-end gap-3 px-6 py-4">
+          <span className="mr-auto text-[10px] text-cafe-muted">配置编辑功能开发中</span>
           <button
             onClick={onClose}
             className="rounded-lg px-4 py-2 text-sm font-medium text-cafe-secondary hover:bg-[var(--console-card-soft-bg)] transition-colors"
           >
             关闭
-          </button>
-          <button
-            disabled
-            className="rounded-lg bg-[var(--cafe-accent,#C65F3D)] px-4 py-2 text-sm font-semibold text-[var(--cafe-surface)] opacity-50 cursor-not-allowed"
-          >
-            编辑配置
           </button>
         </div>
       </div>

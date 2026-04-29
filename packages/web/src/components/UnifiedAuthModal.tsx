@@ -208,7 +208,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/30 px-4" onClick={handleClose}>
       <div
-        className="w-full max-w-md rounded-xl bg-cafe-surface p-5 shadow-[0_24px_56px_rgba(43,33,26,0.14)]"
+        className="w-full max-w-[600px] rounded-2xl bg-[var(--console-card-bg)] p-6 shadow-[0_24px_56px_rgba(43,33,26,0.14)]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -229,9 +229,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
         <h4 className="mb-4 text-base font-semibold text-cafe">{isEdit ? '编辑账户认证' : '添加账户认证'}</h4>
 
         {/* Mode toggle */}
-        <div
-          className={`mb-4 flex rounded-lg border border-[var(--console-border-soft)] p-0.5 ${isEdit ? 'opacity-50' : ''}`}
-        >
+        <div className={`mb-4 flex rounded-lg bg-[var(--console-card-soft-bg)] p-0.5 ${isEdit ? 'opacity-50' : ''}`}>
           <button
             type="button"
             onClick={() => !isEdit && setAuthMode('oauth')}
@@ -262,7 +260,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               placeholder="例如: my-claude-account"
-              className="w-full rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface px-3 py-2 text-sm placeholder:text-cafe-muted"
+              className="w-full rounded-lg bg-[var(--console-active-bg)] px-3 py-2 text-sm text-cafe outline-none placeholder:text-cafe-muted"
             />
           </div>
 
@@ -271,14 +269,14 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
             <div>
               <label className="mb-1 block text-xs font-medium text-cafe-muted">Client</label>
               {initialClientId ? (
-                <p className="w-full rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface-elevated px-3 py-2 text-sm text-cafe">
+                <p className="w-full rounded-lg bg-[var(--console-active-bg)] px-3 py-2 text-sm text-cafe">
                   {builtinClientLabel(initialClientId)}
                 </p>
               ) : (
                 <select
                   value={clientId}
                   onChange={(e) => setClientId(e.target.value as BuiltinAccountClient)}
-                  className="w-full rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface px-3 py-2 text-sm text-cafe"
+                  className="w-full rounded-lg bg-[var(--console-active-bg)] px-3 py-2 text-sm text-cafe outline-none"
                 >
                   {CLIENT_OPTIONS.map((c) => (
                     <option key={c} value={c}>
@@ -299,7 +297,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                   value={baseUrl}
                   onChange={(e) => setBaseUrl(e.target.value)}
                   placeholder="https://api.openai.com/v1"
-                  className="w-full rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface px-3 py-2 text-sm placeholder:text-cafe-muted"
+                  className="w-full rounded-lg bg-[var(--console-active-bg)] px-3 py-2 text-sm text-cafe outline-none placeholder:text-cafe-muted"
                 />
               </div>
               <div>
@@ -315,7 +313,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                     setError(null);
                   }}
                   placeholder={isEdit ? '••••••••••••' : 'sk-...'}
-                  className="w-full rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface px-3 py-2 text-sm placeholder:text-cafe-muted"
+                  className="w-full rounded-lg bg-[var(--console-active-bg)] px-3 py-2 text-sm text-cafe outline-none placeholder:text-cafe-muted"
                 />
               </div>
             </>
@@ -329,7 +327,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
               tone="purple"
               addLabel="+ 添加"
               placeholder="输入模型名"
-              emptyLabel={isOAuth ? '(可选，留空使用默认模型)' : '(至少添加 1 个模型)'}
+              emptyLabel={isOAuth ? '' : '(至少添加 1 个模型)'}
               onChange={setModels}
               minCount={0}
             />
@@ -345,7 +343,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                         key={m}
                         type="button"
                         onClick={() => setModels([...models, m])}
-                        className="rounded-full border border-dashed border-[var(--console-border-soft)] px-2 py-0.5 text-[10px] text-cafe-muted transition hover:border-cafe-accent hover:text-cafe-accent"
+                        className="rounded-full bg-[var(--console-card-soft-bg)] px-2 py-0.5 text-[10px] text-cafe-muted transition hover:bg-[var(--console-hover-bg)] hover:text-cafe-accent"
                       >
                         + {m}
                       </button>
@@ -355,7 +353,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
           </div>
 
           {/* F171: 高级配置 — collapsible env var injection */}
-          <div className="rounded-lg border border-[var(--console-border-soft)]">
+          <div className="rounded-lg bg-[var(--console-card-soft-bg)]">
             <button
               type="button"
               onClick={() => setAdvancedOpen((v) => !v)}
@@ -365,7 +363,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
               高级配置 (可选)
             </button>
             {advancedOpen && (
-              <div className="border-t border-[var(--console-border-soft)] px-3 pb-3 pt-2">
+              <div className="px-3 pb-3 pt-2">
                 <p className="mb-2 text-[10px] text-cafe-secondary">
                   自定义环境变量，启动 agent 时注入子进程 (CAT_CAFE_ 前缀为保留变量)
                 </p>
@@ -380,10 +378,10 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                           setEnvEntries(next);
                         }}
                         placeholder="KEY"
-                        className={`w-[38%] rounded border px-2 py-1 font-mono text-xs placeholder:text-cafe-muted ${
+                        className={`w-[38%] rounded px-2 py-1 font-mono text-xs outline-none placeholder:text-cafe-muted ${
                           entry.key.trim() && !isValidEnvKey(entry.key.trim())
-                            ? 'border-conn-red-ring bg-conn-red-bg text-conn-red-text'
-                            : 'border-[var(--console-border-soft)] bg-cafe-surface text-cafe'
+                            ? 'border border-conn-red-ring bg-conn-red-bg text-conn-red-text'
+                            : 'bg-[var(--console-active-bg)] text-cafe'
                         }`}
                       />
                       <span className="text-[10px] text-cafe-muted">=</span>
@@ -395,7 +393,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                           setEnvEntries(next);
                         }}
                         placeholder="value"
-                        className="flex-1 rounded border border-[var(--console-border-soft)] bg-cafe-surface px-2 py-1 font-mono text-xs text-cafe placeholder:text-cafe-muted"
+                        className="flex-1 rounded bg-[var(--console-active-bg)] px-2 py-1 font-mono text-xs text-cafe outline-none placeholder:text-cafe-muted"
                       />
                       <button
                         type="button"
