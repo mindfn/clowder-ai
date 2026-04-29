@@ -48,6 +48,7 @@ import type { Thread, ThreadRoutingPolicyV1 } from '../../stores/ports/ThreadSto
 import { getStreamingTtsRegistry, StreamingTtsChunker } from '../../tts/StreamingTtsChunker.js';
 import { getVoiceBlockSynthesizer } from '../../tts/VoiceBlockSynthesizer.js';
 import type { AgentMessage, AgentMessageType, MessageMetadata } from '../../types.js';
+import { buildCapsuleFromRouteState } from '../invocation/CollaborationContinuityCapsule.js';
 import { invokeSingleCat } from '../invocation/invoke-single-cat.js';
 import { buildMcpCallbackInstructions, needsMcpInjection } from '../invocation/McpPromptInjector.js';
 import { getRichBlockBuffer } from '../invocation/RichBlockBuffer.js';
@@ -94,6 +95,56 @@ function collectStructuredTargetCatsFromInput(input: unknown): string[] {
       ? parsed.targets
       : [];
   return values.filter((value): value is string => typeof value === 'string' && value.length > 0);
+}
+
+function isPostMessageToolName(toolName: string | undefined): boolean {
+  if (!toolName) return false;
+  if (toolName.endsWith('cat_cafe_post_message')) return true;
+  return toolName === 'mcp:cat-cafe/post_message' || toolName === 'cat_cafe_post_message';
+}
+
+function confirmsPostMessagePersistence(content: string | undefined): boolean {
+  return content?.includes('"status":"ok"') || content?.includes('"status":"duplicate"') || false;
+}
+
+function inferToolResultName(msg: AgentMessage): string | undefined {
+  if (msg.toolName) return msg.toolName;
+  const firstLine = msg.content?.trimStart().split('\n', 1)[0]?.trim();
+  if (!firstLine) return undefined;
+  const mcpLabel = firstLine.match(/^(mcp:[^\s]+)\s+\(/);
+  if (mcpLabel?.[1]) return mcpLabel[1];
+  if (firstLine.startsWith('command: ')) return 'command_execution';
+  return undefined;
+}
+
+function toolNamesMatch(a: string, b: string): boolean {
+  return a === b || (isPostMessageToolName(a) && isPostMessageToolName(b));
+}
+
+function consumePendingToolResult(
+  pendingToolResults: string[],
+  msg: AgentMessage,
+  hasConfirmingContent: boolean,
+): string | undefined {
+  const resultToolName = inferToolResultName(msg);
+  if (resultToolName) {
+    const pendingIndex = pendingToolResults.findIndex((name) => toolNamesMatch(name, resultToolName));
+    if (pendingIndex !== -1) pendingToolResults.splice(pendingIndex, 1);
+    return resultToolName;
+  }
+
+  const firstPending = pendingToolResults[0];
+  if (!firstPending) return undefined;
+
+  if (!isPostMessageToolName(firstPending)) {
+    return pendingToolResults.shift();
+  }
+
+  if (hasConfirmingContent && pendingToolResults.length === 1) {
+    return pendingToolResults.shift();
+  }
+
+  return undefined;
 }
 
 export async function* routeSerial(
@@ -303,15 +354,17 @@ export async function* routeSerial(
         }
       }
 
+      const invocationMode = worklist.length > 1 ? 'serial' : 'independent';
+      const a2aEnabled = worklistEntry.a2aCount < maxDepth;
       const invocationContext = buildInvocationContext({
         catId,
-        mode: worklist.length > 1 ? 'serial' : 'independent',
+        mode: invocationMode,
         chainIndex: index + 1,
         chainTotal: worklist.length,
         teammates,
         mcpAvailable,
         ...(promptTags && promptTags.length > 0 ? { promptTags } : {}),
-        a2aEnabled: worklistEntry.a2aCount < maxDepth,
+        a2aEnabled,
         ...(directMessageFrom ? { directMessageFrom } : {}),
         ...(pingPongWarning ? { pingPongWarning } : {}),
         ...(mentionRoutingFeedback ? { mentionRoutingFeedback } : {}),
@@ -323,6 +376,19 @@ export async function* routeSerial(
         ...(bootcampState ? { bootcampState, threadId, bootcampMemberCount } : {}),
         ...(alwaysOnDocs && alwaysOnInjectionMode === 'on' ? { alwaysOnDocs } : {}),
         ...guideContextForCat(guideCtx, catId, targetCatIds, threadId),
+      });
+      const continuityCapsule = buildCapsuleFromRouteState({
+        threadId,
+        catId: catId as string,
+        ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
+        mode: invocationMode,
+        chainIndex: index + 1,
+        chainTotal: worklist.length,
+        ...(directMessageFrom ? { directMessageFrom: directMessageFrom as string } : {}),
+        ...(streamReplyTo ? { a2aTriggerMessageId: streamReplyTo } : {}),
+        a2aEnabled,
+        a2aDepth: worklistEntry.a2aCount,
+        maxA2ADepth: maxDepth,
       });
 
       // F24 Phase E: Bootstrap context for Session #2+
@@ -492,6 +558,10 @@ export async function* routeSerial(
       const collectedToolEvents: StoredToolEvent[] = [];
       // F148 OQ-2: Collect tool names for context eval signals
       const collectedToolNames: string[] = [];
+      const pendingToolResults: string[] = [];
+      // #573: Track confirmed cat_cafe_post_message callback persistence
+      let callbackPostConfirmed = false;
+      let awaitingCallbackResult = false;
       const structuredTargetCats = new Set<string>();
       // F060: Collect rich blocks emitted inline via system_info (not MCP buffer)
       const streamRichBlocks: import('@cat-cafe/shared').RichBlock[] = [];
@@ -531,6 +601,7 @@ export async function* routeSerial(
         ...(signal ? { signal } : {}),
         ...(staticIdentity ? { systemPrompt: staticIdentity } : {}),
         ...(options.parentInvocationId ? { parentInvocationId: options.parentInvocationId } : {}),
+        continuityCapsule,
         // F121: Pass A2A trigger message ID for auto-replyTo threading
         ...(worklistEntry.a2aTriggerMessageId.get(catId)
           ? { a2aTriggerMessageId: worklistEntry.a2aTriggerMessageId.get(catId) }
@@ -633,6 +704,22 @@ export async function* routeSerial(
           // F148 OQ-2: Collect tool names for context eval
           if (effectiveMsg.type === 'tool_use' && effectiveMsg.toolName) {
             collectedToolNames.push(effectiveMsg.toolName);
+            pendingToolResults.push(effectiveMsg.toolName);
+            if (isPostMessageToolName(effectiveMsg.toolName)) awaitingCallbackResult = true;
+          }
+          // #573: Confirm callback persistence via tool_result success
+          if (effectiveMsg.type === 'tool_result') {
+            const hasConfirmingContent = confirmsPostMessagePersistence(effectiveMsg.content);
+            const completedToolName = consumePendingToolResult(pendingToolResults, effectiveMsg, hasConfirmingContent);
+            if (
+              awaitingCallbackResult &&
+              completedToolName &&
+              isPostMessageToolName(completedToolName) &&
+              hasConfirmingContent
+            ) {
+              callbackPostConfirmed = true;
+              awaitingCallbackResult = false;
+            }
           }
 
           // F150: Fire-and-forget tool usage counter
@@ -1112,41 +1199,47 @@ export async function* routeSerial(
         // F061: Detect @co-creator mentions in agent response for browser notification
         mentionsUser = storedContent ? detectUserMention(storedContent) : false;
 
+        // #573: skip stream store only when callback confirmed persistence (not just invocation)
+        const callbackAlreadyStored = callbackPostConfirmed;
+
         // Store with actual mentions — degrade on failure to ensure done reaches frontend
         // (缅因猫 review P1-2: Redis failure must not block done yield)
         let storedMsgId: string | undefined;
         try {
           // #573: persist with the OUTER cat-cafe parentInvocationId (set by QueueProcessor)
-          // not the INNER CLI invocationId (claude/codex's own session UUID from
-          // invocation_created event). Socket broadcasts use parentInvocationId — if persisted
-          // record carries a different id, frontend creates two bubbles for one logical
-          // response (one from live stream broadcast, one from persisted-msg broadcast).
           const persistedInvocationId = options.parentInvocationId ?? ownInvocationId;
-          const storedMsg = await deps.messageStore.append({
-            userId,
-            catId,
-            content: storedContent,
-            mentions: a2aMentions,
-            origin: 'stream',
-            timestamp: storedTimestamp,
-            threadId,
-            ...(mentionsUser ? { mentionsUser } : {}),
-            ...(thinkingChunks.length > 0 ? { thinking: renderThinkingChunks(thinkingChunks) } : {}),
-            ...(firstMetadata ? { metadata: firstMetadata } : {}),
-            ...(collectedToolEvents.length > 0 ? { toolEvents: collectedToolEvents } : {}),
-            ...(streamReplyTo ? { replyTo: streamReplyTo } : {}),
-            extra: {
-              ...(allRichBlocks.length > 0 ? { rich: { v: 1 as const, blocks: allRichBlocks } } : {}),
-              ...(persistedInvocationId ? { stream: { invocationId: persistedInvocationId } } : {}),
-              ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
-            },
-          });
-          storedMsgId = storedMsg.id;
-          // F088-P3: Stash rich blocks for outbound delivery
-          if (options.persistenceContext && allRichBlocks.length > 0) {
-            options.persistenceContext.richBlocks = allRichBlocks;
+          if (!callbackAlreadyStored) {
+            const storedMsg = await deps.messageStore.append({
+              userId,
+              catId,
+              content: storedContent,
+              mentions: a2aMentions,
+              origin: 'stream',
+              timestamp: storedTimestamp,
+              threadId,
+              ...(mentionsUser ? { mentionsUser } : {}),
+              ...(thinkingChunks.length > 0 ? { thinking: renderThinkingChunks(thinkingChunks) } : {}),
+              ...(firstMetadata ? { metadata: firstMetadata } : {}),
+              ...(collectedToolEvents.length > 0 ? { toolEvents: collectedToolEvents } : {}),
+              ...(streamReplyTo ? { replyTo: streamReplyTo } : {}),
+              extra: {
+                ...(allRichBlocks.length > 0 ? { rich: { v: 1 as const, blocks: allRichBlocks } } : {}),
+                ...(persistedInvocationId ? { stream: { invocationId: persistedInvocationId } } : {}),
+                ...(doneMsg?.tracing ? { tracing: doneMsg.tracing } : {}),
+              },
+            });
+            storedMsgId = storedMsg.id;
+            // F088-P3: Stash rich blocks for outbound delivery
+            if (options.persistenceContext && allRichBlocks.length > 0) {
+              options.persistenceContext.richBlocks = allRichBlocks;
+            }
+          } else {
+            log.info(
+              { threadId, catId: catId as string },
+              'Stream store skipped — cat_cafe_post_message callback already persisted',
+            );
           }
-          // #80: Clean up draft only after successful append (guard: keep draft if append fails)
+          // #80: Clean up draft after message is persisted (either via append or callback)
           if (deps.draftStore && ownInvocationId) {
             deps.draftStore.delete(userId, threadId, ownInvocationId)?.catch?.(noop);
           }
@@ -1404,7 +1497,10 @@ export async function* routeSerial(
             content: JSON.stringify({
               type: 'silent_completion',
               detail: `${catConfig?.displayName ?? (catId as string)} completed without textual output.`,
-              toolCount: 0,
+              toolCount: collectedToolEvents.length,
+              provider: firstMetadata?.provider,
+              model: firstMetadata?.model,
+              invocationId: ownInvocationId,
             }),
             timestamp: Date.now(),
           } as AgentMessage;
