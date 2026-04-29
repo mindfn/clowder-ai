@@ -127,7 +127,7 @@ export function StudyFoldArea({
       <button
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className="flex w-full items-center justify-between rounded-t-lg border border-[var(--console-border-soft)] bg-cafe-surface-elevated px-3 py-2 text-left text-xs font-semibold text-cafe-secondary"
+        className="flex w-full items-center justify-between rounded-t-lg bg-[var(--console-card-soft-bg)] px-3 py-2 text-left text-xs font-semibold text-cafe-secondary"
       >
         <span>
           {open ? '▾' : '▸'} 学习区
@@ -138,7 +138,7 @@ export function StudyFoldArea({
         )}
       </button>
       {open && (
-        <div className="rounded-b-lg border border-t-0 border-[var(--console-border-soft)] bg-cafe-surface-elevated p-3">
+        <div className="rounded-b-lg bg-[var(--console-card-soft-bg)] p-3">
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -151,7 +151,7 @@ export function StudyFoldArea({
               type="button"
               onClick={onDiscuss}
               disabled={discussLoading}
-              className="rounded-md border border-[var(--console-border-soft)] px-3 py-1.5 text-xs text-cafe-secondary hover:bg-cafe-surface-elevated disabled:opacity-50"
+              className="rounded-md bg-[var(--console-active-bg)] px-3 py-1.5 text-xs text-cafe-secondary transition-colors hover:bg-[var(--console-hover-bg)] disabled:opacity-50"
             >
               {discussLoading ? '正在创建讨论...' : '在对话中讨论'}
             </button>
@@ -172,7 +172,7 @@ export function StudyFoldArea({
                   <li key={t.threadId} className="flex items-center gap-1">
                     <a
                       href={getThreadHref(t.threadId, detectRoutePrefix())}
-                      className="flex flex-1 items-center justify-between rounded-md border border-[var(--console-border-soft)] bg-cafe-surface px-3 py-1.5 text-xs text-opus-dark hover:bg-opus-bg"
+                      className="flex flex-1 items-center justify-between rounded-md bg-[var(--console-active-bg)] px-3 py-1.5 text-xs text-opus-dark transition-colors hover:bg-opus-bg"
                     >
                       <span className="truncate">{t.threadId}</span>
                       <span className="ml-2 shrink-0 text-cafe-muted">{formatDate(t.linkedAt)}</span>
@@ -209,12 +209,12 @@ export function StudyFoldArea({
                   }
                 }}
                 placeholder="输入 Thread ID 关联..."
-                className="flex-1 rounded-md border border-[var(--console-border-soft)] px-2 py-1 text-xs"
+                className="flex-1 rounded-md bg-[var(--console-active-bg)] px-2 py-1 text-xs text-cafe outline-none"
               />
               <button
                 type="button"
                 onClick={() => void handleLinkThread()}
-                className="rounded-md border border-opus-light px-2 py-1 text-xs text-opus-dark hover:bg-opus-bg"
+                className="rounded-md bg-opus-bg px-2 py-1 text-xs text-opus-dark transition-opacity hover:opacity-80"
               >
                 关联
               </button>
@@ -230,7 +230,7 @@ export function StudyFoldArea({
                     <button
                       type="button"
                       onClick={() => void toggleNote(n.id)}
-                      className="flex w-full items-center justify-between rounded-md border border-[var(--console-border-soft)] bg-cafe-surface px-3 py-1.5 text-xs text-cafe-secondary hover:bg-cafe-surface-elevated"
+                      className="flex w-full items-center justify-between rounded-md bg-[var(--console-active-bg)] px-3 py-1.5 text-xs text-cafe-secondary transition-colors hover:bg-[var(--console-hover-bg)]"
                       data-testid={`note-toggle-${n.id}`}
                     >
                       <span className="flex items-center gap-1.5">
@@ -242,7 +242,7 @@ export function StudyFoldArea({
                       </span>
                     </button>
                     {expandedNote === n.id && (
-                      <div className="mt-1 rounded-md border border-[var(--console-border-soft)] bg-cafe-surface-elevated px-3 py-2 text-xs text-cafe-secondary">
+                      <div className="mt-1 rounded-md bg-[var(--console-card-soft-bg)] px-3 py-2 text-xs text-cafe-secondary">
                         {loadingNote === n.id ? (
                           <span className="text-cafe-muted">加载中...</span>
                         ) : (
@@ -266,7 +266,7 @@ export function StudyFoldArea({
                 {reports.map((r) => (
                   <li
                     key={r.id}
-                    className="rounded-md border border-[var(--console-border-soft)] bg-cafe-surface px-3 py-1.5 text-xs text-cafe-secondary"
+                    className="rounded-md bg-[var(--console-active-bg)] px-3 py-1.5 text-xs text-cafe-secondary"
                   >
                     <span className="font-medium">{r.id}</span>
                     <span className="ml-2 text-cafe-muted">
@@ -286,10 +286,7 @@ export function StudyFoldArea({
                 {studyMeta?.collections?.map((colId) => {
                   const col = collections.find((c) => c.id === colId);
                   return (
-                    <li
-                      key={colId}
-                      className="rounded-full border border-opus-light bg-opus-bg px-2 py-0.5 text-xs text-opus-dark"
-                    >
+                    <li key={colId} className="rounded-full bg-opus-bg px-2 py-0.5 text-xs text-opus-dark">
                       {col?.name ?? colId}
                     </li>
                   );
@@ -305,7 +302,7 @@ export function StudyFoldArea({
                   if (e.target.value) void onAddToCollection(e.target.value);
                   e.target.value = '';
                 }}
-                className="rounded-md border border-[var(--console-border-soft)] px-2 py-1 text-xs"
+                className="rounded-md bg-[var(--console-active-bg)] px-2 py-1 text-xs text-cafe"
                 defaultValue=""
               >
                 <option value="" disabled>
@@ -338,7 +335,7 @@ export function StudyFoldArea({
                   }
                 }}
                 placeholder="新建学习集..."
-                className="flex-1 rounded-md border border-[var(--console-border-soft)] px-2 py-1 text-xs"
+                className="flex-1 rounded-md bg-[var(--console-active-bg)] px-2 py-1 text-xs text-cafe outline-none"
               />
               <button
                 type="button"
@@ -348,7 +345,7 @@ export function StudyFoldArea({
                     setNewCollectionName('');
                   }
                 }}
-                className="rounded-md border border-opus-light px-2 py-1 text-xs text-opus-dark hover:bg-opus-bg"
+                className="rounded-md bg-opus-bg px-2 py-1 text-xs text-opus-dark transition-opacity hover:opacity-80"
               >
                 创建
               </button>

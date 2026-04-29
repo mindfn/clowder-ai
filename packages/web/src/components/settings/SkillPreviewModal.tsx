@@ -76,7 +76,7 @@ export function SkillPreviewModal({
       onClick={handleBackdrop}
     >
       <div
-        className="relative mx-4 w-full max-w-[600px] rounded-2xl bg-[var(--console-card-bg)] shadow-xl"
+        className="relative mx-4 w-full max-w-[600px] rounded-2xl bg-[var(--console-card-bg)] shadow-[0_24px_56px_rgba(43,33,26,0.14)]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start gap-4 border-b border-[var(--console-border-soft)] p-6 pb-4">

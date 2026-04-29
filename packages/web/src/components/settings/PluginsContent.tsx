@@ -135,7 +135,7 @@ export function PluginsContent() {
         return (
           <article
             key={plugin.id}
-            className="flex h-24 items-center gap-4 rounded-2xl bg-[var(--console-card-bg)] px-5 py-[18px] shadow-[0_8px_24px_rgba(43,33,26,0.05)]"
+            className="flex h-24 items-center gap-4 rounded-2xl bg-[var(--console-card-warm-bg)] px-5 py-[18px] shadow-[0_10px_30px_rgba(43,33,26,0.09)] transition hover:shadow-[0_10px_30px_rgba(43,33,26,0.14)]"
           >
             <div
               className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[10px]"

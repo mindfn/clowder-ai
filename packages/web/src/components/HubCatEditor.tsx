@@ -556,7 +556,7 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
       data-bootcamp-host="cat-editor-modal"
     >
       <div
-        className="flex max-h-[88vh] w-full max-w-[560px] flex-col rounded-[32px] border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] shadow-2xl"
+        className="flex max-h-[88vh] w-full max-w-[560px] flex-col rounded-[32px] bg-[var(--console-card-bg)] shadow-[0_24px_56px_rgba(43,33,26,0.14)]"
         data-guide-id="member-editor.profile"
         onClick={(event) => event.stopPropagation()}
         data-bootcamp-step="cat-editor"

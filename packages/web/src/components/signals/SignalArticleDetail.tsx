@@ -222,7 +222,7 @@ export function SignalArticleDetail({
           type="button"
           onClick={() => void navigateToDiscuss()}
           disabled={discussLoading}
-          className="rounded-md border border-opus-light px-3 py-1.5 text-xs text-opus-dark hover:bg-opus-bg disabled:opacity-50"
+          className="rounded-md bg-opus-bg px-3 py-1.5 text-xs text-opus-dark transition-opacity hover:opacity-80 disabled:opacity-50"
         >
           {discussLoading ? '正在创建讨论...' : '在对话中讨论'}
         </button>
@@ -270,10 +270,7 @@ export function SignalArticleDetail({
             <span className="text-xs text-cafe-secondary">暂无标签</span>
           ) : (
             article.tags.map((tag) => (
-              <span
-                key={tag}
-                className="rounded-full border border-codex-light bg-codex-bg px-2 py-0.5 text-xs text-codex-dark"
-              >
+              <span key={tag} className="rounded-full bg-codex-bg px-2 py-0.5 text-xs text-codex-dark">
                 {tag}
               </span>
             ))
@@ -294,12 +291,12 @@ export function SignalArticleDetail({
               }
             }}
             placeholder="添加标签"
-            className="flex-1 rounded-md border border-[var(--console-border-soft)] px-2 py-1.5 text-xs"
+            className="flex-1 rounded-md bg-[var(--console-active-bg)] px-2 py-1.5 text-xs text-cafe outline-none"
           />
           <button
             type="button"
             onClick={() => void addPendingTag()}
-            className="rounded-md border border-codex-light px-2.5 py-1.5 text-xs text-codex-dark hover:bg-codex-bg"
+            className="rounded-md bg-codex-bg px-2.5 py-1.5 text-xs text-codex-dark transition-opacity hover:opacity-80"
           >
             添加标签
           </button>
@@ -323,12 +320,12 @@ export function SignalArticleDetail({
                 onBlur={() => void saveNote()}
                 placeholder="写下你的笔记..."
                 rows={3}
-                className="w-full rounded-md border border-[var(--console-border-soft)] px-3 py-2 text-sm"
+                className="w-full rounded-md bg-[var(--console-active-bg)] px-3 py-2 text-sm text-cafe outline-none"
               />
               <button
                 type="button"
                 onClick={() => void saveNote()}
-                className="mt-1 rounded-md border border-opus-light px-3 py-1 text-xs text-opus-dark hover:bg-opus-bg"
+                className="mt-1 rounded-md bg-opus-bg px-3 py-1 text-xs text-opus-dark transition-opacity hover:opacity-80"
               >
                 保存备注
               </button>
