@@ -258,7 +258,7 @@ export function SignalArticleDetail({
           </button>
         </div>
         <div
-          className={`mt-1 overflow-y-auto rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface-elevated p-3 text-sm text-cafe-black ${expandContent ? '' : 'max-h-[300px]'}`}
+          className={`mt-1 overflow-y-auto rounded-lg bg-[var(--console-card-soft-bg)] p-3 text-sm text-cafe-black ${expandContent ? '' : 'max-h-[300px]'}`}
         >
           <MarkdownContent content={article.content || '（无正文）'} />
         </div>
@@ -344,7 +344,7 @@ export function SignalArticleDetail({
         <button
           type="button"
           onClick={() => void onStatusChange(article.id, 'read')}
-          className="rounded-md border border-[var(--console-border-soft)] px-3 py-1.5 text-xs text-cafe-secondary hover:bg-cafe-surface-elevated"
+          className="rounded-md bg-[var(--console-active-bg)] px-3 py-1.5 text-xs text-cafe-secondary transition-colors hover:bg-[var(--console-hover-bg)]"
         >
           标记已读
         </button>
@@ -369,7 +369,7 @@ export function SignalArticleDetail({
               <button
                 type="button"
                 onClick={() => setConfirmDelete(false)}
-                className="rounded-md border border-[var(--console-border-soft)] px-3 py-1.5 text-xs text-cafe-secondary hover:bg-cafe-surface-elevated"
+                className="rounded-md bg-[var(--console-active-bg)] px-3 py-1.5 text-xs text-cafe-secondary transition-colors hover:bg-[var(--console-hover-bg)]"
               >
                 取消
               </button>

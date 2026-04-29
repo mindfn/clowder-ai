@@ -267,9 +267,7 @@ export function McpConfigModal({ projectPath, editId, editData, onSaved, onClose
           )}
         </div>
 
-        <div
-          className={`flex items-center justify-end gap-2 border-t border-[var(--console-border-soft)] ${isHttpEdit ? 'px-[34px] py-4' : 'px-6 py-4'}`}
-        >
+        <div className={`flex items-center justify-end gap-2 ${isHttpEdit ? 'px-[34px] py-4' : 'px-6 py-4'}`}>
           <button type="button" onClick={onClose} className="console-button-ghost">
             取消
           </button>
@@ -300,7 +298,7 @@ function HttpEndpointCard({
   onEnvChange: (p: KVPair[]) => void;
 }) {
   return (
-    <div className="rounded-[18px] border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] p-4 space-y-3">
+    <div className="rounded-[18px] bg-[var(--console-card-soft-bg)] p-4 space-y-3">
       <div className="space-y-2">
         <p className="text-[15px] font-extrabold text-cafe">URL</p>
         <input
@@ -308,7 +306,7 @@ function HttpEndpointCard({
           value={url}
           onChange={(e) => onUrlChange(e.target.value)}
           placeholder="https://mcp.example.com/mcp"
-          className="h-[46px] w-full rounded-xl border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-3.5 text-sm text-cafe outline-none focus:border-[var(--cafe-accent,#C65F3D)]"
+          className="h-[46px] w-full rounded-xl bg-[var(--console-active-bg)] px-3.5 text-sm text-cafe outline-none"
         />
       </div>
       <div className="space-y-2">
@@ -321,7 +319,7 @@ function HttpEndpointCard({
 
 function HttpHeadersCard({ headers, onChange }: { headers: KVPair[]; onChange: (p: KVPair[]) => void }) {
   return (
-    <div className="rounded-[18px] border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] p-4 space-y-2.5">
+    <div className="rounded-[18px] bg-[var(--console-card-soft-bg)] p-4 space-y-2.5">
       <p className="text-[15px] font-extrabold text-cafe">标头</p>
       <DynamicKVList pairs={headers} onChange={onChange} addLabel="标头" />
     </div>

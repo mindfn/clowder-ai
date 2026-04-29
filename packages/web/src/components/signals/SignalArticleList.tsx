@@ -47,7 +47,7 @@ export function SignalArticleList({
   }
 
   return (
-    <ul className="divide-y divide-[var(--console-border-soft)]">
+    <ul className="space-y-0.5">
       {items.map((article) => {
         const selected = selectedArticleId === article.id;
         return (
@@ -118,7 +118,7 @@ export function SignalArticleList({
                       event.stopPropagation();
                       void onStatusChange(article.id, 'read');
                     }}
-                    className="rounded-md border border-[var(--console-border-soft)] px-2 py-1 text-xs text-cafe-secondary hover:border-codex-light hover:text-codex-dark"
+                    className="rounded-md bg-[var(--console-active-bg)] px-2 py-1 text-xs text-cafe-secondary transition-colors hover:bg-[var(--console-hover-bg)] hover:text-codex-dark"
                   >
                     已读
                   </button>
