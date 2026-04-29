@@ -172,6 +172,87 @@ describe('HubAccountItem', () => {
     expect(onDelete).toHaveBeenCalledWith('deletable');
   });
 
+  it('clicking non-builtin card body triggers onEdit (no pencil icon)', async () => {
+    const profile = profileItem({
+      id: 'editable-api',
+      provider: 'custom',
+      displayName: 'Editable Account',
+      name: 'Editable',
+      authType: 'api_key',
+      kind: 'api_key',
+      builtin: false,
+      mode: 'api_key',
+      baseUrl: 'https://custom.api',
+      models: [],
+      hasApiKey: true,
+      createdAt: '2026-04-01T00:00:00.000Z',
+      updatedAt: '2026-04-01T00:00:00.000Z',
+    });
+    const onEdit = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <HubAccountItem
+          profile={profile}
+          busy={false}
+          onSave={vi.fn(async () => {})}
+          onDelete={() => {}}
+          onEdit={onEdit}
+        />,
+      );
+    });
+
+    expect(container.querySelector('button[title="编辑"]')).toBeNull();
+
+    const cardBody = Array.from(container.querySelectorAll('button')).find((btn) =>
+      btn.textContent?.includes('Editable Account'),
+    );
+    expect(cardBody).toBeTruthy();
+
+    await act(async () => {
+      cardBody!.click();
+    });
+
+    expect(onEdit).toHaveBeenCalledWith('editable-api');
+  });
+
+  it('builtin card body is not clickable', async () => {
+    const profile = profileItem({
+      id: 'builtin-oauth',
+      provider: 'builtin-oauth',
+      displayName: 'Built-in OAuth',
+      name: 'Built-in OAuth',
+      authType: 'oauth',
+      mode: 'subscription',
+      models: [],
+      hasApiKey: false,
+      createdAt: '2026-04-01T00:00:00.000Z',
+      updatedAt: '2026-04-01T00:00:00.000Z',
+    });
+    const onEdit = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <HubAccountItem
+          profile={profile}
+          busy={false}
+          onSave={vi.fn(async () => {})}
+          onDelete={() => {}}
+          onEdit={onEdit}
+        />,
+      );
+    });
+
+    const cardBody = container.querySelector('button[disabled]');
+    expect(cardBody).toBeTruthy();
+
+    await act(async () => {
+      cardBody!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(onEdit).not.toHaveBeenCalled();
+  });
+
   it('trash button does NOT call onDelete when confirm is cancelled', async () => {
     mockConfirm.mockResolvedValueOnce(false);
 

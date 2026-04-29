@@ -17,6 +17,7 @@ interface HubAccountItemProps {
   busy: boolean;
   onSave: (profileId: string, payload: ProfileEditPayload) => Promise<void>;
   onDelete: (profileId: string) => void;
+  onEdit?: (profileId: string) => void;
 }
 
 function summaryText(profile: ProfileItem): string | null {
@@ -25,8 +26,9 @@ function summaryText(profile: ProfileItem): string | null {
   return `${host} · ${profile.authType === 'oauth' ? 'OAuth' : 'API Key'}`;
 }
 
-export function HubAccountItem({ profile, busy, onDelete }: HubAccountItemProps) {
+export function HubAccountItem({ profile, busy, onDelete, onEdit }: HubAccountItemProps) {
   const confirm = useConfirm();
+  const editable = !profile.builtin && !!onEdit;
 
   const handleDelete = async () => {
     const ok = await confirm({
@@ -40,15 +42,23 @@ export function HubAccountItem({ profile, busy, onDelete }: HubAccountItemProps)
 
   return (
     <div className="flex w-full items-center gap-4 rounded-xl bg-[var(--console-card-bg)] p-4 transition-colors hover:bg-[var(--console-card-soft-bg)]">
-      <div className="min-w-0 flex-1">
+      <button
+        type="button"
+        disabled={!editable}
+        onClick={() => editable && onEdit(profile.id)}
+        className={`min-w-0 flex-1 text-left ${editable ? 'cursor-pointer' : 'cursor-default'}`}
+      >
         <p className="text-[13px] font-bold text-cafe">{profile.displayName}</p>
         <p className="mt-1 text-[12px] text-cafe-secondary truncate">{summaryText(profile)}</p>
-      </div>
+      </button>
       {!profile.builtin && (
         <button
           type="button"
           disabled={busy}
-          onClick={handleDelete}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleDelete();
+          }}
           className={`shrink-0 rounded-md p-1.5 text-cafe-muted hover:bg-[var(--console-card-soft-bg)] hover:text-[var(--console-stop,#f26767)] transition-colors ${busy ? 'opacity-50' : ''}`}
           title="删除"
         >

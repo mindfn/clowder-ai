@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { HubAccountItem, type ProfileEditPayload } from './HubAccountItem';
-import type { AccountsResponse } from './hub-accounts.types';
+import type { AccountsResponse, ProfileItem } from './hub-accounts.types';
 import { normalizeBuiltinClientIds, resolveAccountActionId } from './hub-accounts.view';
 import { type UnifiedAuthEditData, UnifiedAuthModal } from './UnifiedAuthModal';
 
@@ -102,6 +102,24 @@ export function HubAccountsTab() {
   const customAccounts = useMemo(() => displayAccounts.filter((a) => !a.builtin), [displayAccounts]);
   const displayCards = useMemo(() => [...builtinAccounts, ...customAccounts], [builtinAccounts, customAccounts]);
 
+  const handleEdit = useCallback(
+    (profileId: string) => {
+      const account = displayAccounts.find((a) => a.id === profileId) as ProfileItem | undefined;
+      if (!account || account.builtin) return;
+      setEditTarget({
+        id: account.id,
+        displayName: account.displayName,
+        baseUrl: account.baseUrl,
+        clientId: account.clientId,
+        authType: account.authType,
+        models: account.models,
+        envVars: account.envVars,
+      });
+      setShowAuthModal(true);
+    },
+    [displayAccounts],
+  );
+
   if (loading) return <p className="text-sm text-cafe-muted">加载中...</p>;
   if (!data)
     return (
@@ -156,6 +174,7 @@ export function HubAccountsTab() {
             busy={busyId === resolveAccountActionId(account)}
             onSave={(_id, payload) => saveAccount(resolveAccountActionId(account), payload)}
             onDelete={() => deleteAccount(resolveAccountActionId(account))}
+            onEdit={handleEdit}
           />
         ))}
       </div>
