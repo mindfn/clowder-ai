@@ -178,9 +178,9 @@ Commit: {sha} — {message}
 
 > **PASS only closes the stated review target.** 单次 review 放行不等于 feature done。
 
-### Reviewer 放行时必须带的结构
+### 作者校验：裸 PASS 无效
 
-Reviewer 在 PASS / LGTM 时，输出必须包含以下格式（不能裸奔放行）：
+收到 reviewer 的 PASS / LGTM 时，**作者必须校验是否带了 Verdict 结构**：
 
 ```md
 Verdict: PASS / REQUEST CHANGES
@@ -190,7 +190,11 @@ Not covered: 本次结论不证明的范围
 Next: fix findings / return to plan / run quality-gate / eligible for merge-gate
 ```
 
-`Not covered` 可以短，但**不能省**。它把"放行"从裸奔变成有边界的信号。
+- 有完整结构 → 按 `Covered` 范围判断是否可以进 merge-gate
+- **裸 PASS（无 Covered/Not covered）→ 不能直接进 merge-gate**，回问 reviewer 补充覆盖范围
+- `Not covered` 可以短（如 `feature completion beyond this PR`），但**不能省**
+
+> Reviewer 未必会加载 `receive-review`，所以 verdict 模板在 `request-review` 请求信里提出（见 request-review #598），这里做作者侧兜底校验。
 
 ### 实现者收到 PASS 后的 invariant
 
