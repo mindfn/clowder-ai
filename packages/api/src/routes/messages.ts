@@ -1364,7 +1364,8 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           const checkedActiveDrafts: typeof activeDrafts = [];
           for (const draft of activeDrafts) {
             const slotStartedAt = draft.catId ? slotStartMap.get(draft.catId) : undefined;
-            if (slotStartedAt !== undefined && draft.updatedAt >= slotStartedAt) {
+            const draftOrigin = draft.createdAt ?? draft.updatedAt;
+            if (slotStartedAt !== undefined && draftOrigin >= slotStartedAt) {
               checkedActiveDrafts.push(draft);
             } else {
               orphanDrafts.push(draft);

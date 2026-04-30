@@ -21,6 +21,7 @@ export interface DraftRecord {
   toolEvents?: unknown[];
   thinking?: string;
   updatedAt: number;
+  createdAt?: number;
 }
 
 /**
@@ -60,7 +61,10 @@ export class DraftStore implements IDraftStore {
   }
 
   upsert(draft: DraftRecord): void {
-    this.drafts.set(this.key(draft.userId, draft.threadId, draft.invocationId), draft);
+    const k = this.key(draft.userId, draft.threadId, draft.invocationId);
+    const existing = this.drafts.get(k);
+    const createdAt = existing?.createdAt ?? draft.createdAt ?? draft.updatedAt;
+    this.drafts.set(k, { ...draft, createdAt });
   }
 
   touch(userId: string, threadId: string, invocationId: string): void {

@@ -53,6 +53,7 @@ export class RedisDraftStore implements IDraftStore {
     }
 
     const pipeline = this.redis.multi();
+    pipeline.hsetnx(detailKey, 'createdAt', String(draft.updatedAt));
     pipeline.hset(detailKey, fields);
     pipeline.sadd(indexKey, draft.invocationId);
     if (this.ttlSeconds !== null) {
@@ -149,13 +150,15 @@ export class RedisDraftStore implements IDraftStore {
         /* ignore parse errors */
       }
     }
+    const updatedAt = parseInt(d.updatedAt ?? '0', 10);
     return {
       userId: d.userId ?? '',
       threadId: d.threadId ?? '',
       invocationId: d.invocationId ?? '',
       catId: (d.catId ?? 'opus') as CatId,
       content: d.content ?? '',
-      updatedAt: parseInt(d.updatedAt ?? '0', 10),
+      updatedAt,
+      createdAt: d.createdAt ? parseInt(d.createdAt, 10) : updatedAt,
       ...(toolEvents ? { toolEvents } : {}),
       ...(d.thinking ? { thinking: d.thinking } : {}),
     };
