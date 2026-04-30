@@ -232,6 +232,7 @@ export interface HandleBackgroundMessageOptions {
   clearDoneTimeout?: (threadId?: string) => void;
   /** #586 follow-up: Just-finalized stream bubble IDs keyed by streamKey */
   finalizedBgRefs: Map<string, string>;
+  pendingCallbacks?: Map<string, { bubbleId: string; patch: ChatMessagePatch }>;
 }
 
 export type ActiveRoutedAgentMessage = {
@@ -1106,6 +1107,14 @@ export function handleBackgroundAgentMessage(
 
   if (msg.type === 'done') {
     stopTrackedStream(streamKey, msg, options);
+    if (msg.invocationId && options.pendingCallbacks) {
+      const pendingKey = `${msg.catId}:${msg.invocationId}`;
+      const pendingCb = options.pendingCallbacks.get(pendingKey);
+      if (pendingCb) {
+        options.store.patchThreadMessage(msg.threadId, pendingCb.bubbleId, pendingCb.patch);
+        options.pendingCallbacks.delete(pendingKey);
+      }
+    }
     const currentStatus = options.store.getThreadState(msg.threadId).catStatuses[msg.catId];
     if (currentStatus !== 'error') {
       options.store.updateThreadCatStatus(msg.threadId, msg.catId, 'done');
@@ -1969,6 +1978,7 @@ export function useAgentMessages() {
           nextBgSeq: () => bgSeqRef.current++,
           addToast: (toast) => useToastStore.getState().addToast(toast),
           clearDoneTimeout,
+          pendingCallbacks: pendingCallbacksRef.current,
         });
         return;
       }
