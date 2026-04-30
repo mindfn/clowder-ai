@@ -1,30 +1,39 @@
 #!/usr/bin/env bash
-# sync-skills.sh — 从 cat-cafe-skills/ 自动同步 symlinks 到三猫 skills 目录
-# 解决 Wave 2 欠债：手工 symlink 反复遗漏
+# sync-skills.sh — 从 cat-cafe-skills/ 同步 symlinks 到当前项目的四猫 skills 目录
+#
+# 设计原则：启动目录 = 配置真相源
+#   会话从哪个目录打开，skill 就从那个目录的 cat-cafe-skills/ 读取。
+#   Agent 可能在会话中创建 worktree 干活，但 skill 上下文不变。
+#   因此同步目标是当前项目目录，不是遍历所有 worktree。
 #
 # 同步目标：
-#   1. main worktree  .claude/skills/     （git tracked）
-#   2. 所有 worktree   .claude/skills/     （runtime 等）
-#   3. HOME 级  ~/.claude/skills/          （Claude Code 全局 + Hub 检测）
-#   4. HOME 级  ~/.codex/skills/           （Codex）
-#   5. HOME 级  ~/.gemini/skills/          （Gemini）
+#   1. 当前项目  .{claude,codex,gemini,kimi}/skills/  （project-level，relative symlinks）
+#   2. HOME 级  ~/.{claude,codex,gemini}/skills/        （opt-in via --with-home，fallback）
 #
-# 注：OpenCode（金渐层）读取 ~/.claude/ 配置，无需单独同步
-#
-# 用法: pnpm sync:skills [--dry-run]
+# 用法: pnpm sync:skills [--dry-run] [--with-home]
 
 set -euo pipefail
 
-MAIN_REPO="$(git worktree list --porcelain | head -1 | sed 's/^worktree //')"
-SKILLS_SRC="$MAIN_REPO/cat-cafe-skills"
+# Skill source: current project root (respects branch-specific skills)
+PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+SKILLS_SRC="$PROJECT_ROOT/cat-cafe-skills"
 
-# HOME-level uses absolute symlinks (check-skills-mount.sh expects this)
+# All four harness names for project-level sync
+HARNESSES=(claude codex gemini kimi)
+
+# HOME-level dirs (absolute symlinks; check-skills-mount.sh expects this)
 HOME_CLAUDE="$HOME/.claude/skills"
 HOME_CODEX="$HOME/.codex/skills"
 HOME_GEMINI="$HOME/.gemini/skills"
 
 DRY_RUN=false
-[ "${1:-}" = "--dry-run" ] && DRY_RUN=true
+WITH_HOME=false
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run)   DRY_RUN=true ;;
+    --with-home) WITH_HOME=true ;;
+  esac
+done
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -39,10 +48,9 @@ errors=0
 sync_link() {
   local skill_name="$1"
   local target_dir="$2"
-  local link_target="$3"  # absolute or relative path to skill dir
+  local link_target="$3"
   local link_path="$target_dir/$skill_name"
 
-  # Skip if correct symlink already exists
   if [ -L "$link_path" ]; then
     local existing
     existing="$(readlink "$link_path")"
@@ -50,7 +58,6 @@ sync_link() {
       skipped=$((skipped + 1))
       return 0
     fi
-    # Wrong target — remove and recreate
     if $DRY_RUN; then
       printf "  ${YELLOW}[dry-run]${NC} would replace %s → %s\n" "$link_path" "$link_target"
       created=$((created + 1))
@@ -58,13 +65,11 @@ sync_link() {
     fi
     rm "$link_path"
   elif [ -e "$link_path" ]; then
-    # Not a symlink but something exists — skip with warning
     printf "  ${RED}SKIP${NC} %s (exists but not a symlink)\n" "$link_path"
     errors=$((errors + 1))
     return 0
   fi
 
-  # Ensure target dir exists
   if [ ! -d "$target_dir" ]; then
     if $DRY_RUN; then
       printf "  ${YELLOW}[dry-run]${NC} would mkdir %s\n" "$target_dir"
@@ -82,7 +87,7 @@ sync_link() {
   created=$((created + 1))
 }
 
-# Collect all skill names
+# Collect all skill names from source
 skill_names=()
 for skill_dir in "$SKILLS_SRC"/*/; do
   [ -d "$skill_dir" ] || continue
@@ -95,68 +100,46 @@ printf "\n${BOLD}Cat Café Skills Sync${NC}\n"
 printf "源: %s (%d skills)\n" "$SKILLS_SRC" "${#skill_names[@]}"
 $DRY_RUN && printf "${YELLOW}[DRY RUN MODE]${NC}\n"
 
-# ─── Part 1: All worktrees (project-level, relative symlinks) ───
+# ─── Part 1: Current project (all four harnesses, relative symlinks) ───
 
-# Collect worktree paths
-worktree_paths=()
-while IFS= read -r line; do
-  wt_path="${line#worktree }"
-  worktree_paths+=("$wt_path")
-done < <(git worktree list --porcelain | grep '^worktree ')
-
-printf "\n${BOLD}[Worktrees]${NC} %d 个\n" "${#worktree_paths[@]}"
-for wt in "${worktree_paths[@]}"; do
-  wt_skills="$wt/.claude/skills"
-
-  # Skip ff-only sync worktrees (runtime, alpha) — their content comes from
-  # origin/main; local symlink generation only causes merge conflicts.
-  wt_branch="$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-  if [[ "$wt_branch" == */main-sync ]]; then
-    continue
-  fi
-
-  # Only sync worktrees that have a .claude/skills dir (or main)
-  if [ "$wt" = "$MAIN_REPO" ] || [ -d "$wt_skills" ]; then
-    wt_label="$(basename "$wt")"
-    [ "$wt" = "$MAIN_REPO" ] && wt_label="main"
-    synced=0
-    for skill_name in "${skill_names[@]}"; do
-      before=$created
-      sync_link "$skill_name" "$wt_skills" "../../cat-cafe-skills/$skill_name"
-      [ "$created" -gt "$before" ] && synced=$((synced + 1))
-    done
-    if [ "$synced" -gt 0 ]; then
-      printf "  ${GREEN}%s${NC}: %d 修复\n" "$wt_label" "$synced"
-    fi
+printf "\n${BOLD}[Project]${NC} %s\n" "$PROJECT_ROOT"
+for harness in "${HARNESSES[@]}"; do
+  harness_skills="$PROJECT_ROOT/.$harness/skills"
+  synced=0
+  for skill_name in "${skill_names[@]}"; do
+    before=$created
+    sync_link "$skill_name" "$harness_skills" "../../cat-cafe-skills/$skill_name"
+    [ "$created" -gt "$before" ] && synced=$((synced + 1))
+  done
+  if [ "$synced" -gt 0 ]; then
+    printf "  ${GREEN}.%s/skills/${NC}: %d 修复\n" "$harness" "$synced"
   fi
 done
 
-# ─── Part 2: HOME-level (absolute symlinks) ───
+# ─── Part 2: HOME-level (opt-in, absolute symlinks) ───
 
-printf "\n${BOLD}[HOME]${NC} ~/.{claude,codex,gemini}/skills/ (OpenCode via ~/.claude/)\n"
-for skill_name in "${skill_names[@]}"; do
-  sync_link "$skill_name" "$HOME_CLAUDE" "$SKILLS_SRC/$skill_name"
-  sync_link "$skill_name" "$HOME_CODEX"  "$SKILLS_SRC/$skill_name"
-  sync_link "$skill_name" "$HOME_GEMINI" "$SKILLS_SRC/$skill_name"
-done
+if $WITH_HOME; then
+  printf "\n${BOLD}[HOME]${NC} ~/.{claude,codex,gemini}/skills/\n"
+  for skill_name in "${skill_names[@]}"; do
+    sync_link "$skill_name" "$HOME_CLAUDE" "$SKILLS_SRC/$skill_name"
+    sync_link "$skill_name" "$HOME_CODEX"  "$SKILLS_SRC/$skill_name"
+    sync_link "$skill_name" "$HOME_GEMINI" "$SKILLS_SRC/$skill_name"
+  done
+else
+  printf "\n${BOLD}[HOME]${NC} 跳过（使用 --with-home 启用）\n"
+fi
 
-# ─── Part 3: Write skills-state.json (ADR-025 Phase 1) ───
+# ─── Part 3: Write skills-state.json ───
 
 if ! $DRY_RUN; then
-  STATE_DIR="$MAIN_REPO/.cat-cafe"
+  STATE_DIR="$PROJECT_ROOT/.cat-cafe"
   STATE_FILE="$STATE_DIR/skills-state.json"
   mkdir -p "$STATE_DIR"
 
-  # Compute manifest hash: SHA-256 of sorted skill names
-  # Must match computeSourceManifestHash() in skills-state.ts
   MANIFEST_HASH="sha256:$(printf '%s\n' "${skill_names[@]}" | sort | shasum -a 256 | cut -c1-16)"
   SYNCED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  SOURCE_ROOT="${SKILLS_SRC#"$PROJECT_ROOT"/}"
 
-  # sourceRoot: relative path from project root to skills source
-  # For main repo: SKILLS_SRC is $MAIN_REPO/cat-cafe-skills → relative = "cat-cafe-skills"
-  SOURCE_ROOT="${SKILLS_SRC#"$MAIN_REPO"/}"
-
-  # Build JSON (sorted names for deterministic output)
   SORTED_NAMES=$(printf '%s\n' "${skill_names[@]}" | sort | awk '{printf "    \"%s\"", $0; if (NR<TOTAL) printf ","; printf "\n"}' TOTAL="${#skill_names[@]}")
   cat > "$STATE_FILE" <<EOJSON
 {
@@ -186,7 +169,7 @@ printf "\n\n"
 
 if [ "$created" -gt 0 ] && ! $DRY_RUN; then
   printf "${YELLOW}提示${NC}: 项目级 symlinks 需要 git add + commit 才能持久化\n"
-  printf "  git add .claude/skills/ && git commit -m 'fix(skills): sync missing symlinks'\n\n"
+  printf "  git add .{claude,codex,gemini,kimi}/skills/ && git commit -m 'fix(skills): sync missing symlinks'\n\n"
 fi
 
 exit "$errors"
