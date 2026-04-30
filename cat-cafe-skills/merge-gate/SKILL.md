@@ -27,6 +27,7 @@ triggers:
 3. Review 针对**当前分支/当前工作**（不是历史 review，且必须覆盖**当前 HEAD SHA**）
 4. BACKLOG 涉及条目已在 feature branch 上标 `[x]`
 5. **`pnpm gate` 全绿**（基于最新 `origin/main` rebase 后的全量 build + test + lint + check）
+6. **Review Verdict 覆盖范围 ≥ 合入范围**（#598）— reviewer 的 PASS 必须带 `Covered / Not covered` 声明，且 Covered 范围包含本次合入的全部改动
 
 ### Review Continuity Guard（review 是否真的覆盖当前 HEAD）
 
@@ -51,6 +52,27 @@ echo "$CURRENT_HEAD"
 - 当前 HEAD：`{short_sha}`
 - reviewer 已覆盖：`yes/no`
 - 如果 `no`：说明是“请求延续到新 SHA”还是“请求重审”
+
+### Verdict Scope Verification（#598 — Step 0 前必查）
+
+> **PASS only closes the stated review target.** Commit-level PASS ≠ feature-level done.
+
+合入前校验 reviewer 的 Verdict 是否覆盖本次合入范围：
+
+1. Reviewer 的 PASS 必须包含 `Covered / Not covered` 字段（裸奔放行 = 无效）
+2. `Covered` 范围必须 ≥ 本次 PR/merge 涉及的全部改动
+3. 如果 reviewer 的 `Covered` 只覆盖部分 commit → 缺失部分需要补审或 reviewer 显式延续
+
+**四层语义辨别**（不要把低层 PASS 升级为高层）：
+
+| 层级 | 含义 | 可以做什么 |
+|------|------|-----------|
+| Commit P1/P2 清零 | 当前 commit 的 findings 已修复 | 继续推进，不能 merge |
+| PR delta 可继续 | 当前 PR 差异无阻塞问题 | 可进入 merge-gate 流程 |
+| Phase 可合入 | 当前 Phase 的全部改动已审过 | 可执行 squash merge |
+| Feature 已完成 | 整个 feature 所有 Phase 已完成 | 可走 feat-lifecycle completion |
+
+**Feature complete 仍以 `feat-lifecycle completion` + `Vision Guardian` 为唯一判定机制**，merge-gate 只管单次合入。
 
 ### `pnpm gate` — Latest Main 全量门禁（Step 0，开 PR 前必跑）
 
@@ -437,6 +459,31 @@ gh pr comment {PR_NUMBER} --body '@codex review'
 **铁律：降级后仍须校验"reviewer ≠ 作者"**——降级表是建议顺序，不能覆盖 self-review 禁令。
 
 操作：`gh pr comment {PR} --body "..."` 用标准触发模板 @ 降级 reviewer（句柄查 `cat-config.json`）。
+
+## Upstream PR Workflow（Fork 协作门禁）
+
+> 内部开发完成 ≠ 可以提 upstream PR。上游 PR 有独立的门禁。
+
+### 前置条件（全部满足才能提 upstream PR）
+
+1. Feature **完整开发完毕**，在 fork 内已验收通过
+2. 在 fork 内已经过完整的 review 循环（quality-gate → request-review → receive-review → merge-gate）
+3. 已合入 fork 的 develop_base 或 main，本地可正常运行
+4. **不要在开发过程中提 upstream PR**——开发期的中间状态不应暴露给上游
+
+### Upstream PR 门禁
+
+| 条件 | 说明 |
+|------|------|
+| Fork 内 review 通过 | 内部 PASS + Verdict Scope 覆盖完整 feature |
+| Rebase 到上游最新 main | 确保无冲突，diff clean |
+| 上游 CI 全绿 | `gh pr checks` 通过 |
+| PR 描述按上游模板 | 遵循上游 repo 的 PR template / contributing guide |
+| Maintainer review | 上游 maintainer 的 review 流程独立于内部 review |
+
+### 内部 PASS ≠ 上游 merge
+
+内部 review 的 Verdict PASS 只证明 fork 内质量达标。上游 maintainer 可能有额外要求（API 设计、向后兼容、文档）。收到上游 review 反馈后按 `receive-review` 流程处理，不因"内部已通过"而跳过验证。
 
 ## 和其他 skill 的区别
 

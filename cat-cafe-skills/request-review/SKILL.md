@@ -109,6 +109,19 @@ pnpm review:start
 
 沙盒必须是 detached HEAD / read-only。要改代码 = TAKEOVER，开正式 worktree。
 
+### Review Scope Declaration (#598)
+
+Review 请求必须明确 **review target**（审查范围），让 reviewer 知道要覆盖什么：
+
+```
+Review target: {commit <sha> / diff <base..head> / PR delta / named scope}
+Expected coverage: {本次期望 reviewer 覆盖的范围}
+```
+
+**为什么**：没有明确范围的 review 请求 = reviewer 自己猜范围 = PASS 的含义模糊。`receive-review` 要求 reviewer 回复时带 `Covered / Not covered` 字段（#598），但前提是你先声明了期望范围。
+
+Reviewer 放行时必须按 `receive-review` 的 Verdict 模板回复（Verdict / Review target / Covered / Not covered / Next），不能裸奔放行。
+
 ## Block 场景
 
 **❌ 没有 quality-gate 报告**
