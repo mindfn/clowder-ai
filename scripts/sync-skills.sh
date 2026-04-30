@@ -98,10 +98,19 @@ remove_stale_links() {
   local target_dir="$1"
   [ -d "$target_dir" ] || return 0
 
-  for link_path in "$target_dir"/*/; do
-    [ -L "${link_path%/}" ] || continue
+  for entry in "$target_dir"/*; do
+    [ -L "$entry" ] || continue
     local name
-    name="$(basename "${link_path%/}")"
+    name="$(basename "$entry")"
+    local link_dest
+    link_dest="$(readlink "$entry")"
+
+    # Only consider links that point into cat-cafe-skills/ (managed by us)
+    case "$link_dest" in
+      *cat-cafe-skills/*) ;;
+      *) continue ;;
+    esac
+
     local is_current=false
     for sn in "${skill_names[@]}"; do
       if [ "$name" = "$sn" ]; then
@@ -111,9 +120,9 @@ remove_stale_links() {
     done
     if ! $is_current; then
       if $DRY_RUN; then
-        printf "  ${YELLOW}[dry-run]${NC} would remove stale %s\n" "${link_path%/}"
+        printf "  ${YELLOW}[dry-run]${NC} would remove stale %s\n" "$entry"
       else
-        rm "${link_path%/}"
+        rm "$entry"
         printf "  ${RED}✗${NC} removed stale: %s\n" "$name"
       fi
       removed=$((removed + 1))

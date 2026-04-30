@@ -109,7 +109,7 @@ for skill_dir in "$SKILLS_SRC"/*/; do
     _proj_dir="${!_proj_var}"
     _home_dir="${!_home_var}"
 
-    if is_skill_mounted_for_provider "$skill_name" "$SKILLS_SRC" "$FALLBACK_SKILLS_SRC" "$_proj_dir"; then
+    if is_skill_mounted_for_provider "$skill_name" "$SKILLS_SRC" "" "$_proj_dir"; then
       row="$row  ${GREEN}✓${NC}       "
     elif is_skill_mounted_for_provider "$skill_name" "$SKILLS_SRC" "$FALLBACK_SKILLS_SRC" "$_home_dir"; then
       row="$row  ${YELLOW}~${NC}       "
