@@ -414,28 +414,18 @@ gh pr comment {PR_NUMBER} --body '@codex review'
 
 ## Upstream PR Workflow（Fork 协作门禁）
 
-> 内部开发完成 ≠ 可以提 upstream PR。上游 PR 有独立的门禁。
+> 上游 PR 是独立流程，不等同于 fork merge-gate。
 
-### 前置条件（全部满足才能提 upstream PR）
+### 前置条件
 
-1. Feature **完整开发完毕**，在 fork 内已验收通过
-2. 在 fork 内已经过完整的 review 循环（quality-gate → request-review → receive-review → merge-gate）
-3. 已合入 fork 的 develop_base 或 main，本地可正常运行
+1. 内部 scoped review 通过（Verdict Scope 覆盖本次提交范围即可，不要求先完成 fork 内 merge-gate）
+2. Rebase 到 upstream/main，确保无冲突、diff clean
+3. 注册 PR tracking（`cat_cafe_register_pr_tracking`）
 4. **不要在开发过程中提 upstream PR**——开发期的中间状态不应暴露给上游
 
-### Upstream PR 门禁
+### 上游 Maintainer Review
 
-| 条件 | 说明 |
-|------|------|
-| Fork 内 review 通过 | 内部 PASS + Verdict Scope 覆盖完整 feature |
-| Rebase 到上游最新 main | 确保无冲突，diff clean |
-| 上游 CI 全绿 | `gh pr checks` 通过 |
-| PR 描述按上游模板 | 遵循上游 repo 的 PR template / contributing guide |
-| Maintainer review | 上游 maintainer 的 review 流程独立于内部 review |
-
-### 内部 PASS ≠ 上游 merge
-
-内部 review 的 Verdict PASS 只证明 fork 内质量达标。上游 maintainer 可能有额外要求（API 设计、向后兼容、文档）。收到上游 review 反馈后按 `receive-review` 流程处理，不因"内部已通过"而跳过验证。
+上游 maintainer 的 review 流程独立于内部 review——内部 PASS 只证明 fork 内质量达标。Maintainer 可能有额外要求（API 设计、向后兼容、文档）。收到上游 review 反馈后按 `receive-review` 流程处理，不因"内部已通过"而跳过验证。
 
 ## 和其他 skill 的区别
 

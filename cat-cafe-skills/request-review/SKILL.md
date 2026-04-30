@@ -118,9 +118,20 @@ Review target: {commit <sha> / diff <base..head> / PR delta / named scope}
 Expected coverage: {本次期望 reviewer 覆盖的范围}
 ```
 
-**为什么**：没有明确范围的 review 请求 = reviewer 自己猜范围 = PASS 的含义模糊。`receive-review` 要求 reviewer 回复时带 `Covered / Not covered` 字段（#598），但前提是你先声明了期望范围。
+**为什么**：没有明确范围的 review 请求 = reviewer 自己猜范围 = PASS 的含义模糊。
 
-Reviewer 放行时必须按 `receive-review` 的 Verdict 模板回复（Verdict / Review target / Covered / Not covered / Next），不能裸奔放行。
+**要求 reviewer 返回 Verdict 结构**（在请求信里明确提出）：
+
+```
+请在放行/退回时附带以下结构：
+Verdict: PASS / REQUEST CHANGES
+Review target: {你实际审查的范围}
+Covered: {本次实际审过的范围}
+Not covered: {本次结论不证明的范围}
+Next: {建议的下一步}
+```
+
+这是 verdict 模板的**发起点**——reviewer 未必会加载 `receive-review`，所以由 author 在请求信里提出格式要求。`receive-review` 做作者侧兜底校验（裸 PASS 无效）。
 
 ## Block 场景
 
