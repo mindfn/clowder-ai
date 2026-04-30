@@ -1106,6 +1106,28 @@ created: 2026-02-26
 
 ---
 
+### LL-054: 热补丁反模式——已有治理机制不查就另起炉灶
+- 状态：draft
+- 更新时间：2026-04-30
+
+- 坑：skill symlinks 指向旧版本，直接手动批量重链接 HOME 目录 + 改 `sync-skills.sh`，没有先分析已有的 worktree skill、`sync-skills.sh`、`check-skills-mount.sh`、`skill-sync.ts` 四层治理链条。同一天在 #598 verdict scope boundary 上也犯了类似错误——没分析 thread 根因、没和 reviewer 沟通就直接改了三个 skill 文件。
+- 根因：
+  1. **对已有机制缺乏检索习惯**：问题出现后直接跳到"怎么修"，没有先问"已有什么机制在处理这个"。
+  2. **把"能跑"等同于"方案正确"**：手动 symlink 确实能让当前 session 读到新 skill，但绕过了 worktree 创建时的自动同步链条，制造了新的不一致。
+  3. **执行速度 > 方向正确**（LL-009 复发）：铲屎官两次叫停，说明节奏判断失误不是个案。
+- 触发条件：发现"状态不对"时的冲动修复——尤其是 symlink/config/环境变量类问题，手动修一个很快，但会绕过治理链。
+- 修复：回退 `sync-skills.sh` 热补丁（`97ef3c2d`），改为先做根因分析 → 盘点已有机制 → 和 codex 对齐方案 → 开 worktree 走正常合入流程。
+- 防护：
+  1. 发现问题后第一步：`grep -r` / `git log` 搜已有机制（脚本、治理服务、skill 步骤）
+  2. 盘点完才提方案，方案必须说明"在已有机制的哪一层修"
+  3. 改动走 worktree → review → merge-gate，不直接在 develop_base 上热补丁
+- 来源锚点：`scripts/sync-skills.sh` | `scripts/check-skills-mount.sh` | `cat-cafe-skills/worktree/SKILL.md` | `packages/api/src/config/governance/skill-sync.ts`
+- 原理：**治理机制存在的意义是把"正确做法"编码成自动化。绕过它 = 把一次性修复变成永久的手动负担，还会让治理机制逐渐失效（因为大家习惯绕过）。**
+
+- 关联：LL-009 | LL-020 | `cat-cafe-skills/refs/shared-rules.md` §P3
+
+---
+
 ## 8) 维护约定
 
 - 本文件是入口，不替代 ADR/bug-report 原文。
