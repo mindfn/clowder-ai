@@ -1345,14 +1345,20 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         // message is written. Such orphan drafts produce zombie bubbles on F5.
         // Fix: draft.invocationId is a Callback ID (from CallbackRegistry),
         // but invocationRecordStore only has Lifecycle IDs — lookup always
-        // returns null. Use InvocationTracker.has(threadId, catId) instead,
-        // which checks the live execution slot without needing ID mapping.
+        // returns null. Use InvocationTracker.getActiveSlots to correlate by
+        // (catId, startedAt) — a draft belongs to the current invocation only
+        // if the cat has an active slot AND the draft was updated after the
+        // slot started. This prevents stale drafts from a previous invocation
+        // surviving when the same cat starts a new one.
         if (activeDrafts.length > 0 && opts.invocationTracker) {
           const tracker = opts.invocationTracker;
+          const activeSlots = tracker.getActiveSlots(resolvedThreadId);
+          const slotStartMap = new Map(activeSlots.map((s) => [s.catId, s.startedAt]));
           const orphanDrafts: typeof activeDrafts = [];
           const checkedActiveDrafts: typeof activeDrafts = [];
           for (const draft of activeDrafts) {
-            if (draft.catId && tracker.has(resolvedThreadId, draft.catId)) {
+            const slotStartedAt = draft.catId ? slotStartMap.get(draft.catId) : undefined;
+            if (slotStartedAt !== undefined && draft.updatedAt >= slotStartedAt) {
               checkedActiveDrafts.push(draft);
             } else {
               orphanDrafts.push(draft);
