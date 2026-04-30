@@ -1346,81 +1346,48 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           }
           activeDrafts = activeDrafts.filter((d) => !formalInvocationIds.has(d.invocationId));
         }
-        // F173 Phase A hotfix3 / stream-catchup repair:
-        // Draft persistence can outlive its invocation record when an invocation
-        // crashes or is replaced before a formal message is written. Filter those
-        // orphan drafts from the response, but do not delete from the GET path:
-        // a stale/missing InvocationRecord can be corrected by the active
-        // InvocationTracker, while real zombies still expire by DraftStore TTL or
-        // explicit completion/cancel cleanup.
-        if (activeDrafts.length > 0 && opts.invocationRecordStore) {
-          const invocationRecordStore = opts.invocationRecordStore;
+        // F173 Phase A hotfix3: draft persistence can outlive its invocation
+        // record when an invocation crashes or is replaced before a formal
+        // message is written. Such orphan drafts produce zombie bubbles on F5.
+        // Fix: draft.invocationId is a Callback ID (from CallbackRegistry),
+        // but invocationRecordStore only has Lifecycle IDs — lookup always
+        // returns null. Use InvocationTracker.getActiveSlots to correlate by
+        // (catId, startedAt) — a draft belongs to the current invocation only
+        // if the cat has an active slot AND the draft was updated after the
+        // slot started. This prevents stale drafts from a previous invocation
+        // surviving when the same cat starts a new one.
+        if (activeDrafts.length > 0 && opts.invocationTracker) {
+          const tracker = opts.invocationTracker;
+          const activeSlots = tracker.getActiveSlots(resolvedThreadId);
+          const slotStartMap = new Map(activeSlots.map((s) => [s.catId, s.startedAt]));
           const orphanDrafts: typeof activeDrafts = [];
-          const orphanDetails: Array<Record<string, unknown>> = [];
           const checkedActiveDrafts: typeof activeDrafts = [];
           for (const draft of activeDrafts) {
-            let record;
-            try {
-              record = await invocationRecordStore.get(draft.invocationId);
-            } catch (error) {
-              request.log.warn(
-                { err: error, threadId: resolvedThreadId, draftId: draft.invocationId },
-                '#80 draft merge: invocation liveness lookup failed',
-              );
-              checkedActiveDrafts.push(draft);
-              continue;
-            }
-            const recordActive =
-              record?.status === 'running' && record.threadId === resolvedThreadId && record.userId === userId;
-            let trackerActive = false;
-            let trackerSlotStartedAt: number | null = null;
-            let trackerUserId: string | null = null;
-            if (!recordActive && opts.invocationTracker) {
-              try {
-                const trackerSlot = opts.invocationTracker
-                  .getActiveSlots(resolvedThreadId)
-                  .find((slot) => slot.catId === draft.catId && slot.startedAt <= draft.updatedAt);
-                if (trackerSlot) {
-                  trackerSlotStartedAt = trackerSlot.startedAt;
-                  trackerUserId = opts.invocationTracker.getUserId(resolvedThreadId, draft.catId);
-                  trackerActive = trackerUserId === userId;
-                }
-              } catch (error) {
-                request.log.warn(
-                  { err: error, threadId: resolvedThreadId, draftId: draft.invocationId, catId: draft.catId },
-                  '#80 draft merge: tracker liveness lookup failed',
-                );
-                checkedActiveDrafts.push(draft);
-                continue;
-              }
-            }
-            if (recordActive || trackerActive) {
+            const slotStartedAt = draft.catId ? slotStartMap.get(draft.catId) : undefined;
+            if (slotStartedAt !== undefined && draft.updatedAt >= slotStartedAt) {
               checkedActiveDrafts.push(draft);
             } else {
               orphanDrafts.push(draft);
-              orphanDetails.push({
-                draftId: draft.invocationId,
-                catId: draft.catId,
-                draftUpdatedAt: draft.updatedAt,
-                recordStatus: record?.status ?? null,
-                recordThreadId: record?.threadId ?? null,
-                recordUserId: record?.userId ?? null,
-                trackerSlotStartedAt,
-                trackerUserId,
-              });
             }
           }
           activeDrafts = checkedActiveDrafts;
 
           if (orphanDrafts.length > 0) {
+            const deleteResults = await Promise.allSettled(
+              orphanDrafts.map((d) => draftStore.delete(userId, resolvedThreadId, d.invocationId)),
+            );
+            const failedDeletes = deleteResults.filter((r) => r.status === 'rejected').length;
             const logPayload = {
               threadId: resolvedThreadId,
               orphanCount: orphanDrafts.length,
+              failedDeletes,
               draftIds: orphanDrafts.map((d) => d.invocationId),
-              orphanDetails,
-              cleanup: 'ttl_or_completion',
             };
-            request.log.info(logPayload, '#80 draft merge: filtered orphan drafts');
+            if (failedDeletes > 0) {
+              request.log.warn(logPayload, '#80 draft merge: filtered orphan drafts');
+            } else {
+              request.log.info(logPayload, '#80 draft merge: filtered orphan drafts');
+            }
           }
         }
         // P2: stable sort by updatedAt for parallel multi-cat drafts
