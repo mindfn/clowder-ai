@@ -8,7 +8,7 @@
  */
 
 import { resolveCliTimeoutMs } from '../../../../../utils/cli-timeout.js';
-import type { IMessageStore } from '../../stores/ports/MessageStore.js';
+import { hydrateReplyPreview, type IMessageStore } from '../../stores/ports/MessageStore.js';
 import {
   accumulateTextAggregate,
   accumulateTextParts,
@@ -144,6 +144,7 @@ export class QueueProcessor {
   private processingSlots = new Map<string, number>();
   /** F108: Per-slot pause tracking (set on canceled/failed, cleared on next execution) */
   private pausedSlots = new Map<string, 'canceled' | 'failed'>();
+  private pauseEpoch = new Map<string, number>();
   /** F122B B6: Per-entry completion hooks (for multi-mention response aggregation). */
   private entryCompleteHooks = new Map<string, EntryCompleteHook>();
   /** F118 D4: max age before a processingSlot is considered zombie (default 2.5× CLI timeout = 75min) */
@@ -190,7 +191,32 @@ export class QueueProcessor {
   }
 
   private static slotKey(threadId: string, catId: string): string {
-    return `${threadId}:${catId}`;
+    return JSON.stringify([threadId, catId]);
+  }
+
+  private static slotMatchesThread(key: string, threadId: string): boolean {
+    return QueueProcessor.parseSlotKey(key)?.threadId === threadId;
+  }
+
+  private static parseSlotKey(key: string): { threadId: string; catId: string } | null {
+    try {
+      const parsed = JSON.parse(key);
+      if (
+        Array.isArray(parsed) &&
+        parsed.length === 2 &&
+        typeof parsed[0] === 'string' &&
+        typeof parsed[1] === 'string'
+      ) {
+        return { threadId: parsed[0], catId: parsed[1] };
+      }
+    } catch {
+      // Legacy in-memory keys from older code are not expected after restart.
+    }
+    const legacySep = key.indexOf(':');
+    if (legacySep > 0) {
+      return { threadId: key.slice(0, legacySep), catId: key.slice(legacySep + 1) };
+    }
+    return null;
   }
 
   /**
@@ -199,15 +225,14 @@ export class QueueProcessor {
    * The tracker check prevents false-positive cleanup of genuinely slow invocations.
    */
   private sweepZombieSlots(threadId: string): void {
-    const prefix = `${threadId}:`;
     const now = Date.now();
     const ttl = this.processingSlotTtlMs;
     for (const [key, startedAt] of this.processingSlots) {
-      if (!key.startsWith(prefix)) continue;
+      if (!QueueProcessor.slotMatchesThread(key, threadId)) continue;
       if (now - startedAt <= ttl) continue;
       // Only release if tracker also has no active invocation — double-confirm zombie
-      const parts = key.split(':');
-      const catId = parts.slice(1).join(':');
+      const catId = QueueProcessor.parseSlotKey(key)?.catId;
+      if (!catId) continue;
       if (!this.deps.invocationTracker.has(threadId, catId)) {
         this.processingSlots.delete(key);
         this.deps.log.warn({ threadId, catId, ageMs: now - startedAt }, '[F118 D4] zombie processingSlot released');
@@ -224,7 +249,7 @@ export class QueueProcessor {
     }
     // Backward compat: check if any slot for this thread is paused
     for (const key of this.pausedSlots.keys()) {
-      if (key.startsWith(`${threadId}:`)) {
+      if (QueueProcessor.slotMatchesThread(key, threadId)) {
         if (this.deps.queue.hasQueuedForThread(threadId)) return true;
       }
     }
@@ -360,9 +385,20 @@ export class QueueProcessor {
   /** F151: Check if thread has any queued or processing entries (used by delivery-batch-done signal). */
   isThreadBusy(threadId: string): boolean {
     if (this.deps.queue.hasQueuedForThread(threadId)) return true;
-    const prefix = `${threadId}:`;
     for (const key of this.processingSlots.keys()) {
-      if (key.startsWith(prefix)) return true;
+      if (QueueProcessor.slotMatchesThread(key, threadId)) return true;
+    }
+    return false;
+  }
+
+  /** Active execution only; queued leftovers are not enough to keep new broadcasts in queue mode. */
+  hasActiveExecution(threadId: string): boolean {
+    if (this.deps.invocationTracker.has(threadId)) return true;
+    this.sweepZombieSlots(threadId);
+    const now = Date.now();
+    for (const [key, startedAt] of this.processingSlots) {
+      if (!QueueProcessor.slotMatchesThread(key, threadId)) continue;
+      if (now - startedAt < this.processingSlotTtlMs) return true;
     }
     return false;
   }
@@ -386,16 +422,19 @@ export class QueueProcessor {
     }
     // Backward compat: return first paused slot's reason
     for (const [key, reason] of this.pausedSlots.entries()) {
-      if (key.startsWith(`${threadId}:`)) return reason;
+      if (QueueProcessor.slotMatchesThread(key, threadId)) return reason;
     }
     return undefined;
   }
+
+  /** #595: auto-recovery delay for failed/canceled slots (ms) */
+  private static readonly PAUSE_RECOVERY_DELAY_MS = 10_000;
 
   /**
    * System-level entry: called when an invocation completes.
    * F108: Now slot-aware — catId identifies which slot completed.
    * - succeeded → auto-dequeue oldest across users
-   * - canceled/failed → pause slot, notify relevant users
+   * - canceled/failed → pause slot, notify users, auto-recover after delay
    */
   async onInvocationComplete(
     threadId: string,
@@ -418,8 +457,25 @@ export class QueueProcessor {
         this.pausedSlots.delete(sk);
         return;
       }
+      const epoch = (this.pauseEpoch.get(sk) ?? 0) + 1;
+      this.pauseEpoch.set(sk, epoch);
       this.pausedSlots.set(sk, status);
       this.emitPausedToQueuedUsers(threadId, status);
+
+      // #595: auto-recover paused slot after delay — prevents indefinite stuck state
+      setTimeout(() => {
+        if (this.pauseEpoch.get(sk) !== epoch) return;
+        this.pausedSlots.delete(sk);
+        this.deps.log.info(
+          { threadId, catId, status },
+          '[QueueProcessor] Auto-recovering paused slot after timeout (#595)',
+        );
+        if (this.deps.queue.hasQueuedForThread(threadId)) {
+          void this.tryExecuteNextAcrossUsers(threadId, catId).catch((err) => {
+            this.deps.log.error({ err, threadId, catId }, '[QueueProcessor] Auto-recovery dequeue failed');
+          });
+        }
+      }, QueueProcessor.PAUSE_RECOVERY_DELAY_MS);
     }
   }
 
@@ -431,11 +487,13 @@ export class QueueProcessor {
    */
   clearPause(threadId: string, catId?: string): void {
     if (catId) {
-      this.pausedSlots.delete(QueueProcessor.slotKey(threadId, catId));
+      const sk = QueueProcessor.slotKey(threadId, catId);
+      this.pausedSlots.delete(sk);
     } else {
-      // Backward compat: clear all paused slots for this thread
       for (const key of [...this.pausedSlots.keys()]) {
-        if (key.startsWith(`${threadId}:`)) this.pausedSlots.delete(key);
+        if (QueueProcessor.slotMatchesThread(key, threadId)) {
+          this.pausedSlots.delete(key);
+        }
       }
     }
   }
@@ -458,7 +516,7 @@ export class QueueProcessor {
    */
   releaseThread(threadId: string): void {
     for (const key of [...this.processingSlots.keys()]) {
-      if (key.startsWith(`${threadId}:`)) this.processingSlots.delete(key);
+      if (QueueProcessor.slotMatchesThread(key, threadId)) this.processingSlots.delete(key);
     }
   }
 
@@ -709,12 +767,25 @@ export class QueueProcessor {
         mentions: readonly string[];
         userId: string;
         contentBlocks?: readonly unknown[];
+        extra?: Record<string, unknown>;
+        origin?: string;
+        replyTo?: string;
+        replyPreview?: { senderCatId: string | null; content: string; deleted?: boolean; kind?: string };
+        mentionsUser?: boolean;
       }> = [];
       for (const mid of allMessageIds) {
         try {
           const result = await messageStore.markDelivered(mid, deliveredNow);
           if (result) {
             deliveredIds.push(mid);
+            let preview: Awaited<ReturnType<typeof hydrateReplyPreview>> | null = null;
+            if (result.replyTo) {
+              try {
+                preview = await hydrateReplyPreview(messageStore, result.replyTo);
+              } catch {
+                /* best-effort: preview failure must not drop the delivered message */
+              }
+            }
             deliveredMessages.push({
               id: result.id,
               content: result.content,
@@ -723,6 +794,11 @@ export class QueueProcessor {
               mentions: result.mentions,
               userId: result.userId,
               contentBlocks: result.contentBlocks,
+              ...(result.extra ? { extra: result.extra as Record<string, unknown> } : {}),
+              ...(result.origin ? { origin: result.origin } : {}),
+              ...(result.replyTo ? { replyTo: result.replyTo } : {}),
+              ...(preview ? { replyPreview: preview } : {}),
+              ...(result.mentionsUser ? { mentionsUser: true } : {}),
             });
           }
         } catch {
