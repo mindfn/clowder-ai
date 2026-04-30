@@ -11,11 +11,7 @@
 #
 # 注：OpenCode（金渐层）读取 ~/.claude/ 配置，无需单独同步
 #
-# 用法: pnpm sync:skills [--dry-run] [--with-home]
-#
-# 默认只同步项目级 symlinks（.claude/.codex/.gemini/skills/）
-# --with-home: 同时同步 HOME 级（~/.claude/~/.codex/~/.gemini/skills/）
-#              HOME 级是全局的，会影响所有项目，慎用
+# 用法: pnpm sync:skills [--dry-run]
 
 set -euo pipefail
 
@@ -28,13 +24,7 @@ HOME_CODEX="$HOME/.codex/skills"
 HOME_GEMINI="$HOME/.gemini/skills"
 
 DRY_RUN=false
-WITH_HOME=false
-for arg in "$@"; do
-  case "$arg" in
-    --dry-run) DRY_RUN=true ;;
-    --with-home) WITH_HOME=true ;;
-  esac
-done
+[ "${1:-}" = "--dry-run" ] && DRY_RUN=true
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -114,47 +104,41 @@ while IFS= read -r line; do
   worktree_paths+=("$wt_path")
 done < <(git worktree list --porcelain | grep '^worktree ')
 
-HARNESSES=(.claude .codex .gemini)
-
-printf "\n${BOLD}[Worktrees]${NC} %d 个 × %d harnesses\n" "${#worktree_paths[@]}" "${#HARNESSES[@]}"
+printf "\n${BOLD}[Worktrees]${NC} %d 个\n" "${#worktree_paths[@]}"
 for wt in "${worktree_paths[@]}"; do
+  wt_skills="$wt/.claude/skills"
+
+  # Skip ff-only sync worktrees (runtime, alpha) — their content comes from
+  # origin/main; local symlink generation only causes merge conflicts.
   wt_branch="$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
   if [[ "$wt_branch" == */main-sync ]]; then
     continue
   fi
 
-  wt_label="$(basename "$wt")"
-  [ "$wt" = "$MAIN_REPO" ] && wt_label="main"
-
-  for harness in "${HARNESSES[@]}"; do
-    wt_skills="$wt/$harness/skills"
-    if [ "$wt" = "$MAIN_REPO" ] || [ -d "$wt_skills" ] || [ -d "$wt/$harness" ]; then
-      synced=0
-      for skill_name in "${skill_names[@]}"; do
-        before=$created
-        sync_link "$skill_name" "$wt_skills" "../../cat-cafe-skills/$skill_name"
-        [ "$created" -gt "$before" ] && synced=$((synced + 1))
-      done
-      if [ "$synced" -gt 0 ]; then
-        printf "  ${GREEN}%s${NC} [%s]: %d 修复\n" "$wt_label" "$harness" "$synced"
-      fi
+  # Only sync worktrees that have a .claude/skills dir (or main)
+  if [ "$wt" = "$MAIN_REPO" ] || [ -d "$wt_skills" ]; then
+    wt_label="$(basename "$wt")"
+    [ "$wt" = "$MAIN_REPO" ] && wt_label="main"
+    synced=0
+    for skill_name in "${skill_names[@]}"; do
+      before=$created
+      sync_link "$skill_name" "$wt_skills" "../../cat-cafe-skills/$skill_name"
+      [ "$created" -gt "$before" ] && synced=$((synced + 1))
+    done
+    if [ "$synced" -gt 0 ]; then
+      printf "  ${GREEN}%s${NC}: %d 修复\n" "$wt_label" "$synced"
     fi
-  done
+  fi
 done
 
-# ─── Part 2: HOME-level (absolute symlinks, opt-in) ───
+# ─── Part 2: HOME-level (absolute symlinks) ───
 
-if $WITH_HOME; then
-  printf "\n${BOLD}[HOME]${NC} ~/.{claude,codex,gemini}/skills/ (OpenCode via ~/.claude/)\n"
-  printf "${YELLOW}注意${NC}: HOME 级 symlinks 是全局的，会覆盖所有项目的技能版本\n"
-  for skill_name in "${skill_names[@]}"; do
-    sync_link "$skill_name" "$HOME_CLAUDE" "$SKILLS_SRC/$skill_name"
-    sync_link "$skill_name" "$HOME_CODEX"  "$SKILLS_SRC/$skill_name"
-    sync_link "$skill_name" "$HOME_GEMINI" "$SKILLS_SRC/$skill_name"
-  done
-else
-  printf "\n${BOLD}[HOME]${NC} 跳过（默认不同步 HOME 级，用 --with-home 启用）\n"
-fi
+printf "\n${BOLD}[HOME]${NC} ~/.{claude,codex,gemini}/skills/ (OpenCode via ~/.claude/)\n"
+for skill_name in "${skill_names[@]}"; do
+  sync_link "$skill_name" "$HOME_CLAUDE" "$SKILLS_SRC/$skill_name"
+  sync_link "$skill_name" "$HOME_CODEX"  "$SKILLS_SRC/$skill_name"
+  sync_link "$skill_name" "$HOME_GEMINI" "$SKILLS_SRC/$skill_name"
+done
 
 # ─── Part 3: Write skills-state.json (ADR-025 Phase 1) ───
 
