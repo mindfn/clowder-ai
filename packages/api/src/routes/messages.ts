@@ -919,10 +919,29 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
               }
             }
 
-            opts.socketManager.broadcastAgentMessage(
-              { ...msg, invocationId: createResult.invocationId },
-              resolvedThreadId,
-            );
+            const broadcastPayload = {
+              ...msg,
+              invocationId: createResult.invocationId,
+            };
+
+            if (msg.type === 'a2a_handoff' && msg.content) {
+              try {
+                const stored = await opts.messageStore.append({
+                  userId: 'system',
+                  catId: null,
+                  content: msg.content,
+                  mentions: [],
+                  timestamp: msg.timestamp,
+                  threadId: resolvedThreadId,
+                  extra: { systemKind: 'a2a_routing' },
+                });
+                broadcastPayload.messageId = stored.id;
+              } catch (persistErr) {
+                log.warn({ err: persistErr, threadId: resolvedThreadId }, 'Failed to persist a2a_handoff');
+              }
+            }
+
+            opts.socketManager.broadcastAgentMessage(broadcastPayload, resolvedThreadId);
           }
 
           // F39 P1 fix (砚砚 R1): abort guard after loop — when signal is aborted
@@ -1183,7 +1202,24 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
               });
               intentModeBroadcast = true;
             }
-            opts.socketManager.broadcastAgentMessage(msg, resolvedThreadId);
+            const legacyPayload = { ...msg };
+            if (msg.type === 'a2a_handoff' && msg.content) {
+              try {
+                const stored = await opts.messageStore.append({
+                  userId: 'system',
+                  catId: null,
+                  content: msg.content,
+                  mentions: [],
+                  timestamp: msg.timestamp,
+                  threadId: resolvedThreadId,
+                  extra: { systemKind: 'a2a_routing' },
+                });
+                legacyPayload.messageId = stored.id;
+              } catch (persistErr) {
+                log.warn({ err: persistErr, threadId: resolvedThreadId }, 'Failed to persist a2a_handoff');
+              }
+            }
+            opts.socketManager.broadcastAgentMessage(legacyPayload, resolvedThreadId);
           }
         } catch (err) {
           log.error({ err }, 'Background processing error');
@@ -1272,7 +1308,12 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       ...(m.metadata ? { metadata: m.metadata } : {}),
       ...(m.origin ? { origin: m.origin } : {}),
       ...(m.thinking ? { thinking: m.thinking } : {}),
-      ...(m.extra?.rich || m.extra?.crossPost || m.extra?.stream || m.extra?.targetCats || m.extra?.scheduler
+      ...(m.extra?.rich ||
+      m.extra?.crossPost ||
+      m.extra?.stream ||
+      m.extra?.targetCats ||
+      m.extra?.scheduler ||
+      m.extra?.systemKind
         ? {
             extra: {
               ...(m.extra.rich ? { rich: m.extra.rich } : {}),
@@ -1280,6 +1321,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
               ...(m.extra.stream ? { stream: m.extra.stream } : {}),
               ...(m.extra.targetCats ? { targetCats: m.extra.targetCats } : {}),
               ...(m.extra.scheduler ? { scheduler: m.extra.scheduler } : {}),
+              ...(m.extra.systemKind ? { systemKind: m.extra.systemKind } : {}),
             },
           }
         : {}),
