@@ -90,7 +90,79 @@ created: 2026-02-26
 
 ---
 
-## 6) Maine Coon侧首批条目（AGENTS + Review + Skills）
+## 6) 主题索引与高频核心
+
+> ⭐ = 高频核心（日常协作反复踩的认知/流程护栏）
+
+**根因分析与方向纠偏**
+- ⭐ LL-009: 关键前提不确定时，先提问再动作
+- LL-014: Bug 修复必须先写 Bug Report 再动手
+- LL-019: 过度修复反模式——根因修完后不要盲修触发器
+- ⭐ LL-020: 补丁数量是方向信号——N > 3 停下来复检方向
+- ⭐ LL-021: AI 倾向停在第一层"看起来合理"的答案，不主动追溯根因
+- ⭐ LL-054: 热补丁反模式——已有治理机制不查就另起炉灶
+
+**交付验证与证据纪律**
+- ⭐ LL-006: 没有新鲜验证证据，不得宣称完成
+- ⭐ LL-029: 交付物验证不能只看 spec checkbox——必须核实 commit/PR
+- ⭐ LL-031: Quality gate 逐字段对账 AC——文档承诺 ≠ 代码已兑现
+- ⭐ LL-032: 愿景守护不能只看代码和测试报告——必须真实启动 dev 跑一遍
+- ⭐ LL-041: 写完产物不主动打开 = 做了菜不端上桌
+
+**Review 与协作纪律**
+- LL-002: Review 问题必须先 Red 再 Green，禁止先改后补测
+- LL-003: Reviewer 必须有立场，Author 必须技术性 push back
+- LL-004: P1/P2 当轮清零，P3 当场决断，不挂债务
+- LL-005: 修完 review 后必须回给 reviewer 二次确认再合 main
+- LL-033: 云端 review 不能只看 review body state——必须检查 inline code comments
+
+**Worktree / Runtime / 数据安全**
+- LL-008: Worktree 生命周期必须成套执行
+- LL-010: 删除文件必须用 trash，禁止 /bin/rm
+- LL-011: Worktree 清理的正确顺序——先 push，再 cd 回主仓，最后 remove
+- LL-012: 不要 --force 删有猫在工作的 worktree
+- LL-015: Worktree 开发必须用独立 Redis 端口（6398）
+- LL-045: Runtime worktree 反复被猫污染
+- ⭐ LL-049: `pnpm dev:direct` 无差别杀端口——review 踢翻 runtime
+
+**知识工程与配置漂移**
+- LL-001: 提炼教训前先做时效性验证
+- LL-007: 交接缺 Why 会让接手方无法判断
+- LL-025: 协作规则不能写死个体名，必须引用角色
+- LL-027: Feature spec 与代码实现的时间线漂移
+- LL-028: "最小实现"不等于"做个玩具再重写"
+- LL-030: 共享脚本改默认值，同 commit 必须补显式环境值
+- LL-037: 共享记忆塑造视角——团队文化比模型参数更能影响判断趋同
+- LL-042: 配置真相源不加门禁就会漂移
+- LL-050: ADR 漂移 2 个月无人发现
+
+**工具与基础设施细节**
+- LL-013: Git commit 前必须检查暂存区
+- LL-016: ioredis keyPrefix 对 eval() 和 keys() 的行为不一致
+- LL-017: CAS 比较必须基于不可变快照
+- LL-018: Session 存储必须按 Thread 隔离
+- LL-022: 治理基线必须脚本化
+- LL-023: CLI JSON 格式陷阱与 jq 安全防护
+- LL-024: 状态字段多点写入会复发蜘蛛网
+- LL-026: 身份信息是硬约束常量
+- LL-034: Embedding 实现偷懒
+- LL-035: sync-to-opensource rsync --delete 打穿 runtime
+- LL-036: full sync 长跑不能在半路报喜
+- LL-038: Promise timeout 不等于 Promise 取消
+- LL-039: gate 里推进 cursor 等于"还没干活就划卡"
+- LL-040: AI 写文档日期不能凭内部时间感
+- LL-043: 删旧层前必须证明迁移已落成
+- LL-044: Chrome IME 回车误提交
+- LL-046: AOF/RDB 持久化脱节
+- LL-047: Socket.IO cors 不保护 WebSocket
+- LL-048: 用户可感知状态禁止默认 TTL
+- LL-051: 实验框架空转
+- LL-052: exec VAR=val cmd 不设置环境变量
+- LL-053: 无头 Codex CLI 长任务不能靠 shell 伪后台
+
+---
+
+## 7) 条目
 
 ### LL-002: Review 问题必须先 Red 再 Green，禁止先改后补测
 - 状态：validated
@@ -238,10 +310,6 @@ created: 2026-02-26
   - `cat-cafe-skills/systematic-debugging/SKILL.md`
   - `cat-cafe-skills/cat-cafe-receiving-review/SKILL.md`
 
----
-
-## 7) Ragdoll侧首批条目（CLAUDE.md + Bug Report + Skills）
-
 ### LL-010: 删除文件必须用 trash，禁止 /bin/rm
 - 状态：validated
 - 更新时间：2026-02-13
@@ -354,20 +422,6 @@ created: 2026-02-26
 
 - 关联：CLAUDE.md §7 Redis 测试规则 | ADR-008 Lua 原子操作
 
-### LL-023: CLI JSON 格式陷阱与 `jq` 安全防护
-- 状态：draft
-- 更新时间：2026-02-19
-
-- 坑：在 CLI 中手动拼接带变量的 JSON 字符串（如 `curl` 调用 API）时，极易因双引号转义、多层嵌套或变量内容包含特殊字符而导致 JSON 格式损坏，甚至导致消息发送失败或变成“只有用户可见”的悄悄话。
-- 根因：手动拼接 JSON 违反了“数据与格式分离”原则，AI 对 Shell 转义规则（尤其是多层引号）的处理在复杂场景下不可靠。
-- 触发条件：通过 `curl` 调用含有环境变量（如 `$CAT_CAFE_INVOCATION_ID`）的 API，且消息内容包含引号、换行或表情符号时。
-- 修复：强制使用 `jq` 构造 JSON（例如：`jq -nc --arg c "$MSG" '{content: $c}'`），利用工具确保内容被自动转义。
-- 防护：更新所有 Agent 的提示词模板，将 `curl` 示例改为 `jq` 构造法；在 `GEMINI.md` 中增加醒目警告。
-- 来源锚点：
-  - `GEMINI.md` (2026-02-19 更新)
-  - 2026-02-19 Siamese（Gemini）“猫猫杀”游戏调试过程
-- 原理：结构化数据必须由结构化工具生成。在命令行环境中，`jq` 是保证数据序列化健壮性的事实标准。
-
 ### LL-017: CAS 比较必须基于不可变快照，不能用内存活引用
 - 状态：validated
 - 更新时间：2026-02-13
@@ -468,6 +522,20 @@ created: 2026-02-26
 - 原理：治理有效性不是“策略存在”，而是“策略被持续验证”。没有自动化检查的治理，等同于没有治理。
 
 - 关联：`docs/decisions/005-hindsight-integration-decisions.md` | `docs/ROADMAP.md` | Task 4 可观测检查
+
+### LL-023: CLI JSON 格式陷阱与 `jq` 安全防护
+- 状态：draft
+- 更新时间：2026-02-19
+
+- 坑：在 CLI 中手动拼接带变量的 JSON 字符串（如 `curl` 调用 API）时，极易因双引号转义、多层嵌套或变量内容包含特殊字符而导致 JSON 格式损坏，甚至导致消息发送失败或变成"只有用户可见"的悄悄话。
+- 根因：手动拼接 JSON 违反了"数据与格式分离"原则，AI 对 Shell 转义规则（尤其是多层引号）的处理在复杂场景下不可靠。
+- 触发条件：通过 `curl` 调用含有环境变量（如 `$CAT_CAFE_INVOCATION_ID`）的 API，且消息内容包含引号、换行或表情符号时。
+- 修复：强制使用 `jq` 构造 JSON（例如：`jq -nc --arg c "$MSG" '{content: $c}'`），利用工具确保内容被自动转义。
+- 防护：更新所有 Agent 的提示词模板，将 `curl` 示例改为 `jq` 构造法；在 `GEMINI.md` 中增加醒目警告。
+- 来源锚点：
+  - `GEMINI.md` (2026-02-19 更新)
+  - 2026-02-19 Siamese（Gemini）"猫猫杀"游戏调试过程
+- 原理：结构化数据必须由结构化工具生成。在命令行环境中，`jq` 是保证数据序列化健壮性的事实标准。
 
 ### LL-024: 状态字段多点写入会复发蜘蛛网
 - 状态：validated
@@ -1121,7 +1189,11 @@ created: 2026-02-26
   1. 发现问题后第一步：`grep -r` / `git log` 搜已有机制（脚本、治理服务、skill 步骤）
   2. 盘点完才提方案，方案必须说明"在已有机制的哪一层修"
   3. 改动走 worktree → review → merge-gate，不直接在 develop_base 上热补丁
-- 来源锚点：`scripts/sync-skills.sh` | `scripts/check-skills-mount.sh` | `cat-cafe-skills/worktree/SKILL.md` | `packages/api/src/config/governance/skill-sync.ts`
+- 来源锚点：
+  - `scripts/sync-skills.sh` | `scripts/check-skills-mount.sh` | `cat-cafe-skills/worktree/SKILL.md` | `packages/api/src/config/governance/skill-sync.ts`
+  - commit:`482b6f27`（sync-skills.sh 热补丁）→ commit:`97ef3c2d`（revert）
+  - commit:`82972f45` / `453a4b54`（#598 verdict scope boundary 规则修正）
+  - thread:`thread_moicgl47en8m98do`（铲屎官两次叫停的原始对话）
 - 原理：**治理机制存在的意义是把"正确做法"编码成自动化。绕过它 = 把一次性修复变成永久的手动负担，还会让治理机制逐渐失效（因为大家习惯绕过）。**
 
 - 关联：LL-009 | LL-020 | `cat-cafe-skills/refs/shared-rules.md` §P3
