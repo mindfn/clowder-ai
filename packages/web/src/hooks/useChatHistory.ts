@@ -473,6 +473,7 @@ export function useChatHistory(threadId: string) {
               crossPost?: { sourceThreadId: string; sourceInvocationId?: string };
               stream?: { invocationId?: string };
               scheduler?: SchedulerMessageExtra['scheduler'];
+              systemKind?: 'a2a_routing';
             };
             timestamp: number;
             summary?: { id: string; topic: string; conclusions: string[]; openQuestions: string[]; createdBy: string };
