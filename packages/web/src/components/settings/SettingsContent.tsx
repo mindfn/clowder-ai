@@ -8,6 +8,7 @@ import { HubAccountsTab } from '../HubAccountsTab';
 import { HubCatEditor } from '../HubCatEditor';
 import { HubCoCreatorEditor } from '../HubCoCreatorEditor';
 import { HubConnectorConfigTab } from '../HubConnectorConfigTab';
+import { HubEnvFilesTab } from '../HubEnvFilesTab';
 import { PushSettingsPanel } from '../PushSettingsPanel';
 import { VoiceSettingsPanel } from '../VoiceSettingsPanel';
 import { ConsoleSetupState, resolveConsoleSetupState } from './console-setup-state';
@@ -150,10 +151,15 @@ export function SettingsContent({ section }: SettingsContentProps) {
       );
     case 'system':
       if (setupState) return <ConsoleSetupState {...setupState} />;
-      return config ? (
-        <SystemTab config={config} onConfigChange={fetchData} />
-      ) : (
-        <p className="text-sm text-cafe-muted">加载中...</p>
+      return (
+        <div className="space-y-6">
+          {config ? (
+            <SystemTab config={config} onConfigChange={fetchData} />
+          ) : (
+            <p className="text-sm text-cafe-muted">加载中...</p>
+          )}
+          <HubEnvFilesTab />
+        </div>
       );
     case 'rules':
       return <RulesPromptsContent />;

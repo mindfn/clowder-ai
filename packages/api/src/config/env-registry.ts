@@ -55,6 +55,10 @@ export interface EnvDefinition {
   runtimeEditable?: boolean;
   /** If true, changes take effect only after service restart */
   restartRequired?: boolean;
+  /** UI grouping key — vars with the same group render together (e.g. 'connector-feishu') */
+  group?: string;
+  /** Related var names that should be configured together (e.g. APP_ID ↔ APP_SECRET) */
+  dependencies?: string[];
   /** If true, this var should appear in .env.example (enforced by check:env-example) */
   exampleRecommended?: boolean;
   /** If set, this var is deprecated — value explains the replacement */
@@ -788,6 +792,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: true,
     restartRequired: true,
+    group: 'connector-telegram',
   },
   {
     name: 'FEISHU_APP_ID',
@@ -796,6 +801,8 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: false,
     restartRequired: true,
+    group: 'connector-feishu',
+    dependencies: ['FEISHU_APP_SECRET'],
   },
   {
     name: 'FEISHU_APP_SECRET',
@@ -804,6 +811,8 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: true,
     restartRequired: true,
+    group: 'connector-feishu',
+    dependencies: ['FEISHU_APP_ID'],
   },
   {
     name: 'FEISHU_VERIFICATION_TOKEN',
@@ -812,6 +821,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: true,
     restartRequired: true,
+    group: 'connector-feishu',
   },
   {
     name: 'FEISHU_CONNECTION_MODE',
@@ -820,6 +830,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: false,
     restartRequired: true,
+    group: 'connector-feishu',
   },
   {
     name: 'DINGTALK_APP_KEY',
@@ -828,6 +839,8 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: false,
     restartRequired: true,
+    group: 'connector-dingtalk',
+    dependencies: ['DINGTALK_APP_SECRET'],
   },
   {
     name: 'DINGTALK_APP_SECRET',
@@ -836,6 +849,8 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: true,
     restartRequired: true,
+    group: 'connector-dingtalk',
+    dependencies: ['DINGTALK_APP_KEY'],
   },
   {
     name: 'XIAOYI_AK',
@@ -910,6 +925,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: true,
     restartRequired: true,
+    group: 'connector-wechat',
   },
   {
     name: 'WECOM_BOT_ID',
@@ -919,6 +935,8 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
     exampleRecommended: true,
     restartRequired: true,
+    group: 'connector-wecom',
+    dependencies: ['WECOM_BOT_SECRET'],
   },
   {
     name: 'WECOM_BOT_SECRET',
@@ -928,6 +946,8 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: true,
     exampleRecommended: true,
     restartRequired: true,
+    group: 'connector-wecom',
+    dependencies: ['WECOM_BOT_ID'],
   },
   {
     name: 'WECOM_CORP_ID',
@@ -937,6 +957,7 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
     exampleRecommended: true,
     restartRequired: true,
+    group: 'connector-wecom',
   },
   {
     name: 'WECOM_AGENT_ID',
@@ -946,6 +967,7 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
     exampleRecommended: true,
     restartRequired: true,
+    group: 'connector-wecom',
   },
   {
     name: 'WECOM_AGENT_SECRET',
@@ -955,6 +977,7 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: true,
     exampleRecommended: true,
     restartRequired: true,
+    group: 'connector-wecom',
   },
   {
     name: 'WECOM_TOKEN',
@@ -964,6 +987,7 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: true,
     exampleRecommended: true,
     restartRequired: true,
+    group: 'connector-wecom',
   },
   {
     name: 'WECOM_ENCODING_AES_KEY',
@@ -973,6 +997,7 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: true,
     exampleRecommended: true,
     restartRequired: true,
+    group: 'connector-wecom',
   },
 
   // --- GitHub Repo Inbox (F141) ---
