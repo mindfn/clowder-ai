@@ -1343,23 +1343,16 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         // F173 Phase A hotfix3: draft persistence can outlive its invocation
         // record when an invocation crashes or is replaced before a formal
         // message is written. Such orphan drafts produce zombie bubbles on F5.
-        if (activeDrafts.length > 0 && opts.invocationRecordStore) {
-          const invocationRecordStore = opts.invocationRecordStore;
+        // Fix: draft.invocationId is a Callback ID (from CallbackRegistry),
+        // but invocationRecordStore only has Lifecycle IDs — lookup always
+        // returns null. Use InvocationTracker.has(threadId, catId) instead,
+        // which checks the live execution slot without needing ID mapping.
+        if (activeDrafts.length > 0 && opts.invocationTracker) {
+          const tracker = opts.invocationTracker;
           const orphanDrafts: typeof activeDrafts = [];
           const checkedActiveDrafts: typeof activeDrafts = [];
           for (const draft of activeDrafts) {
-            let record;
-            try {
-              record = await invocationRecordStore.get(draft.invocationId);
-            } catch (error) {
-              request.log.warn(
-                { err: error, threadId: resolvedThreadId, draftId: draft.invocationId },
-                '#80 draft merge: invocation liveness lookup failed',
-              );
-              checkedActiveDrafts.push(draft);
-              continue;
-            }
-            if (record?.status === 'running' && record.threadId === resolvedThreadId && record.userId === userId) {
+            if (draft.catId && tracker.has(resolvedThreadId, draft.catId)) {
               checkedActiveDrafts.push(draft);
             } else {
               orphanDrafts.push(draft);

@@ -1209,6 +1209,11 @@ export function useAgentMessages() {
   const bgFinalizedRefsRef = useRef<Map<string, string>>(new Map());
   const bgSeqRef = useRef(0);
 
+  // Deferred callback: when callback arrives before done (callback-stream race),
+  // store the callback data and apply it on done instead of immediately.
+  // Key: `${catId}:${invocationId}`, Value: callback patch fields for patchMessage.
+  const pendingCallbacksRef = useRef<Map<string, { bubbleId: string; patch: ChatMessagePatch }>>(new Map());
+
   /**
    * F173 Phase B AC-B1 (integration step 4): activeRefs migrated to ledger.
    * Old `Map<catId, {id, catId}>` ref → ledger setActiveBubble keyed by
@@ -1885,7 +1890,12 @@ export function useAgentMessages() {
       const tid = useChatStore.getState().currentThreadId;
       // Cloud P2 (PR#1352): membership check against replaced Set (multi-value).
       if (invocationId) {
-        if (isInvocationReplaced(tid, catId, invocationId)) return true;
+        if (isInvocationReplaced(tid, catId, invocationId)) {
+          // Callback-stream race guard: if we deferred a callback (stream was
+          // actively running when callback arrived), allow remaining chunks through.
+          if (pendingCallbacksRef.current.has(`${catId}:${invocationId}`)) return false;
+          return true;
+        }
         // Cloud P1#6 (PR#1352): observing a fresh explicit invocationId that's NOT in
         // the replaced set means the cat moved on. catInvocations may still be stale
         // (prior done lost) — surgically remove the stale catInvocations value from the
@@ -1953,13 +1963,15 @@ export function useAgentMessages() {
       // suppression handoff. After callback replace (in either direction), late stream
       // chunks for that invocation are dropped; without this guard, store's hard-merge
       // by (catId, invocationId) would overwrite authoritative callback content.
+      // Callback-stream race guard: skip suppression if invocation is still active.
       if (
         isActiveThreadMessage &&
         msg.type === 'text' &&
         msg.origin !== 'callback' &&
         msg.invocationId &&
         msg.threadId &&
-        isInvocationReplaced(msg.threadId, msg.catId, msg.invocationId)
+        isInvocationReplaced(msg.threadId, msg.catId, msg.invocationId) &&
+        !pendingCallbacksRef.current.has(`${msg.catId}:${msg.invocationId}`)
       ) {
         recordDebugEvent({
           event: 'agent_message',
@@ -2023,23 +2035,42 @@ export function useAgentMessages() {
               ...(msg.extra?.crossPost ? { crossPost: msg.extra.crossPost } : {}),
               ...(hasExplicitInvocationId && msg.invocationId ? { stream: { invocationId: msg.invocationId } } : {}),
             };
-            patchMessage(finalId, {
-              content: msg.content,
-              origin: 'callback',
-              isStreaming: false,
-              ...(msg.metadata ? { metadata: msg.metadata } : {}),
-              ...(Object.keys(extraForPatch).length > 0 ? { extra: extraForPatch } : {}),
-              ...(msg.mentionsUser ? { mentionsUser: true } : {}),
-              ...(msg.replyTo ? { replyTo: msg.replyTo } : {}),
-              ...(msg.replyPreview ? { replyPreview: msg.replyPreview } : {}),
-            });
-            deleteActive(msg.catId);
-            // Consume the finalized ref — callback successfully replaced the bubble
-            clearFinalized(msg.catId);
-            if (invocationId) {
-              // F173 A.6 — write to shared module so background handler also sees the suppression
-              // when user switches away after callback replace.
-              markReplacedInvocation(useChatStore.getState().currentThreadId, msg.catId, invocationId);
+            // Callback-stream race: if invocation is still active (done hasn't
+            // arrived), defer the content patch — let stream continue rendering.
+            // Apply the authoritative callback content on done instead.
+            const currentInv = getCurrentInvocationIdForCat(msg.catId);
+            const isStillActive = hasExplicitInvocationId && invocationId && currentInv === invocationId;
+            if (isStillActive) {
+              const deferredPatch: ChatMessagePatch = {
+                content: msg.content,
+                origin: 'callback',
+                isStreaming: false,
+                ...(msg.metadata ? { metadata: msg.metadata } : {}),
+                ...(Object.keys(extraForPatch).length > 0 ? { extra: extraForPatch } : {}),
+                ...(msg.mentionsUser ? { mentionsUser: true } : {}),
+                ...(msg.replyTo ? { replyTo: msg.replyTo } : {}),
+                ...(msg.replyPreview ? { replyPreview: msg.replyPreview } : {}),
+              };
+              pendingCallbacksRef.current.set(`${msg.catId}:${invocationId}`, {
+                bubbleId: finalId,
+                patch: deferredPatch,
+              });
+            } else {
+              patchMessage(finalId, {
+                content: msg.content,
+                origin: 'callback',
+                isStreaming: false,
+                ...(msg.metadata ? { metadata: msg.metadata } : {}),
+                ...(Object.keys(extraForPatch).length > 0 ? { extra: extraForPatch } : {}),
+                ...(msg.mentionsUser ? { mentionsUser: true } : {}),
+                ...(msg.replyTo ? { replyTo: msg.replyTo } : {}),
+                ...(msg.replyPreview ? { replyPreview: msg.replyPreview } : {}),
+              });
+              deleteActive(msg.catId);
+              clearFinalized(msg.catId);
+              if (invocationId) {
+                markReplacedInvocation(useChatStore.getState().currentThreadId, msg.catId, invocationId);
+              }
             }
           } else {
             // Use backend messageId when available for rich_block correlation (#83 P2)
@@ -2259,6 +2290,14 @@ export function useAgentMessages() {
           }
           if (messageId) {
             setStreaming(messageId, false);
+            // Apply deferred callback: if callback arrived before done (race),
+            // now is the time to apply its authoritative content.
+            const pendingKey = msg.invocationId ? `${msg.catId}:${msg.invocationId}` : undefined;
+            const pendingCb = pendingKey ? pendingCallbacksRef.current.get(pendingKey) : undefined;
+            if (pendingCb) {
+              patchMessage(pendingCb.bubbleId, pendingCb.patch);
+              pendingCallbacksRef.current.delete(pendingKey!);
+            }
             // Bug-G: back-fill invocationId on bubbles that somehow missed the
             // invocation_created binding path (the primary handler at :789-802
             // already back-fills if invocation_created arrives; this is the
