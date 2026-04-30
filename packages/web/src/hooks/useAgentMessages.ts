@@ -1079,6 +1079,9 @@ export function handleBackgroundAgentMessage(
     if (!recoverableInFlightError) {
       stopTrackedStream(streamKey, msg, options);
     }
+    if (msg.invocationId && options.pendingCallbacks) {
+      options.pendingCallbacks.delete(`${msg.catId}:${msg.invocationId}`);
+    }
     options.store.addMessageToThread(msg.threadId, {
       id: `bg-err-${msg.timestamp}-${msg.catId}-${options.nextBgSeq()}`,
       type: 'system',
@@ -2943,6 +2946,9 @@ export function useAgentMessages() {
               setStreaming(messageId, false);
               deleteActive(msg.catId);
             }
+          }
+          if (msg.invocationId) {
+            pendingCallbacksRef.current.delete(`${msg.catId}:${msg.invocationId}`);
           }
 
           addMessage({
