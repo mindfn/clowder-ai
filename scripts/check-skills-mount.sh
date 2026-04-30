@@ -32,6 +32,7 @@ NC='\033[0m'
 
 total=0
 missing=0
+home_only=0
 reg_warnings=0
 manifest_failures=0
 
@@ -85,7 +86,8 @@ is_skill_mounted_for_provider() {
 # ─── Part 1: Symlink Mount Check ───
 
 printf "\n${BOLD}Cat Café Skills 挂载看板${NC}\n"
-printf "源目录: %s\n\n" "$SKILLS_SRC"
+printf "源目录: %s\n" "$SKILLS_SRC"
+printf "图例: ${GREEN}✓${NC}=项目级  ${YELLOW}~${NC}=仅HOME级(需修复)  ${RED}✗${NC}=缺失\n\n"
 printf "%-35s  %-8s  %-8s  %-8s  %-8s\n" "Skill" "Claude*" "Codex" "Gemini" "Kimi"
 printf "%-35s  %-8s  %-8s  %-8s  %-8s\n" "-----------------------------------" "--------" "--------" "--------" "--------"
 
@@ -100,42 +102,36 @@ for skill_dir in "$SKILLS_SRC"/*/; do
   total=$((total + 1))
   row=""
 
-  if is_skill_mounted_for_provider "$skill_name" "$SKILLS_SRC" "$FALLBACK_SKILLS_SRC" "$PROJECT_CLAUDE_SKILLS" "$CLAUDE_SKILLS"; then
-    row="$row  ${GREEN}✓${NC}       "
-  else
-    row="$row  ${RED}✗${NC}       "
-    missing=$((missing + 1))
-  fi
+  # Check each provider: project-level required, HOME-level is advisory warning
+  for _pair in "PROJECT_CLAUDE_SKILLS:CLAUDE_SKILLS" "PROJECT_CODEX_SKILLS:CODEX_SKILLS" "PROJECT_GEMINI_SKILLS:GEMINI_SKILLS" "PROJECT_KIMI_SKILLS:KIMI_SKILLS"; do
+    _proj_var="${_pair%%:*}"
+    _home_var="${_pair##*:}"
+    _proj_dir="${!_proj_var}"
+    _home_dir="${!_home_var}"
 
-  if is_skill_mounted_for_provider "$skill_name" "$SKILLS_SRC" "$FALLBACK_SKILLS_SRC" "$PROJECT_CODEX_SKILLS" "$CODEX_SKILLS"; then
-    row="$row  ${GREEN}✓${NC}       "
-  else
-    row="$row  ${RED}✗${NC}       "
-    missing=$((missing + 1))
-  fi
-
-  if is_skill_mounted_for_provider "$skill_name" "$SKILLS_SRC" "$FALLBACK_SKILLS_SRC" "$PROJECT_GEMINI_SKILLS" "$GEMINI_SKILLS"; then
-    row="$row  ${GREEN}✓${NC}       "
-  else
-    row="$row  ${RED}✗${NC}       "
-    missing=$((missing + 1))
-  fi
-
-  if is_skill_mounted_for_provider "$skill_name" "$SKILLS_SRC" "$FALLBACK_SKILLS_SRC" "$PROJECT_KIMI_SKILLS" "$KIMI_SKILLS"; then
-    row="$row  ${GREEN}✓${NC}       "
-  else
-    row="$row  ${RED}✗${NC}       "
-    missing=$((missing + 1))
-  fi
+    if is_skill_mounted_for_provider "$skill_name" "$SKILLS_SRC" "$FALLBACK_SKILLS_SRC" "$_proj_dir"; then
+      row="$row  ${GREEN}✓${NC}       "
+    elif is_skill_mounted_for_provider "$skill_name" "$SKILLS_SRC" "$FALLBACK_SKILLS_SRC" "$_home_dir"; then
+      row="$row  ${YELLOW}~${NC}       "
+      home_only=$((home_only + 1))
+    else
+      row="$row  ${RED}✗${NC}       "
+      missing=$((missing + 1))
+    fi
+  done
 
   printf "%-35s %b\n" "$skill_name" "$row"
 done
 
 printf "\n${BOLD}挂载合计${NC}: %d skills, " "$total"
-if [ "$missing" -eq 0 ]; then
-  printf "${GREEN}全部正确挂载${NC}\n"
+if [ "$missing" -eq 0 ] && [ "$home_only" -eq 0 ]; then
+  printf "${GREEN}全部项目级挂载${NC}\n"
+elif [ "$missing" -eq 0 ]; then
+  printf "${YELLOW}%d 处仅 HOME 级（应迁移到项目级）${NC}\n" "$home_only"
 else
-  printf "${RED}%d 处缺失/异常${NC}\n" "$missing"
+  printf "${RED}%d 处缺失${NC}" "$missing"
+  [ "$home_only" -gt 0 ] && printf " ${YELLOW}%d 处仅 HOME 级${NC}" "$home_only"
+  printf "\n"
 fi
 
 # ─── Part 2: BOOTSTRAP.md Registration Check (advisory, not blocking) ───
@@ -192,31 +188,28 @@ fi
 # Exit code: mount failures + manifest failures are blocking; registration warnings are advisory.
 
 printf "\n${BOLD}总结${NC}: %d skills, " "$total"
-if [ "$missing" -eq 0 ] && [ "$reg_warnings" -eq 0 ] && [ "$manifest_failures" -eq 0 ]; then
-  printf "${GREEN}全部正确（挂载 + 注册 + manifest）${NC}\n\n"
+if [ "$missing" -eq 0 ] && [ "$home_only" -eq 0 ] && [ "$reg_warnings" -eq 0 ] && [ "$manifest_failures" -eq 0 ]; then
+  printf "${GREEN}全部正确（项目级挂载 + 注册 + manifest）${NC}\n\n"
   exit 0
 else
-  [ "$missing" -gt 0 ] && printf "${RED}%d 挂载异常${NC} " "$missing"
+  [ "$missing" -gt 0 ] && printf "${RED}%d 挂载缺失${NC} " "$missing"
+  [ "$home_only" -gt 0 ] && printf "${YELLOW}%d 仅HOME级${NC} " "$home_only"
   [ "$reg_warnings" -gt 0 ] && printf "${YELLOW}%d 注册警告${NC} " "$reg_warnings"
   [ "$manifest_failures" -gt 0 ] && printf "${RED}%d manifest 失败${NC} " "$manifest_failures"
   printf "\n\n"
-  if [ "$missing" -gt 0 ]; then
-    printf "修复挂载:\n"
-    printf "  ln -s %s %s/.claude/skills\n" "$SKILLS_SRC" "$WORKTREE_REPO"
-    printf "  ln -s %s %s/.codex/skills\n" "$SKILLS_SRC" "$WORKTREE_REPO"
-    printf "  ln -s %s %s/.gemini/skills\n" "$SKILLS_SRC" "$WORKTREE_REPO"
-    printf "  ln -s %s %s/.kimi/skills\n" "$SKILLS_SRC" "$WORKTREE_REPO"
-    printf "  # 或使用 HOME 级 per-skill fallback（兼容旧口径）\n"
-    printf "  ln -s %s/{skill-name} ~/.claude/skills/{skill-name}\n" "$SKILLS_SRC"
-    printf "  ln -s %s/{skill-name} ~/.codex/skills/{skill-name}\n" "$SKILLS_SRC"
-    printf "  ln -s %s/{skill-name} ~/.gemini/skills/{skill-name}\n" "$SKILLS_SRC"
-    printf "  ln -s %s/{skill-name} ~/.kimi/skills/{skill-name}\n\n" "$SKILLS_SRC"
-    printf "  * Claude 列同时覆盖 OpenCode（金渐层读取 ~/.claude/ 配置）\n\n"
+  if [ "$missing" -gt 0 ] || [ "$home_only" -gt 0 ]; then
+    printf "修复挂载（推荐项目级）:\n"
+    printf "  pnpm sync:skills\n"
+    printf "  # 或手动:\n"
+    printf "  ln -s ../../cat-cafe-skills/{skill} %s/.claude/skills/{skill}\n" "$WORKTREE_REPO"
+    printf "  ln -s ../../cat-cafe-skills/{skill} %s/.codex/skills/{skill}\n" "$WORKTREE_REPO"
+    printf "  ln -s ../../cat-cafe-skills/{skill} %s/.gemini/skills/{skill}\n" "$WORKTREE_REPO"
+    printf "  ln -s ../../cat-cafe-skills/{skill} %s/.kimi/skills/{skill}\n\n" "$WORKTREE_REPO"
   fi
   if [ "$reg_warnings" -gt 0 ]; then
     printf "修复注册: 编辑 cat-cafe-skills/BOOTSTRAP.md 添加/移除对应条目\n\n"
   fi
-  # Mount failures and manifest failures are blocking.
+  # Mount failures and manifest failures are blocking; home-only and reg warnings are advisory.
   if [ "$missing" -gt 0 ] || [ "$manifest_failures" -gt 0 ]; then
     exit 1
   fi

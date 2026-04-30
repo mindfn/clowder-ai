@@ -11,6 +11,11 @@
 #   2. HOME 级  ~/.{claude,codex,gemini}/skills/        （opt-in via --with-home，fallback）
 #
 # 用法: pnpm sync:skills [--dry-run] [--with-home]
+#
+# NOTE: This script is the CLI entry point for skill sync. The API/governance
+# entry point (routes/skills.ts → skill-sync.ts) uses a separate source
+# resolution and is NOT yet aligned with this "启动目录 = 配置真相源" design.
+# That alignment is tracked separately.
 
 set -euo pipefail
 
@@ -87,6 +92,35 @@ sync_link() {
   created=$((created + 1))
 }
 
+removed=0
+
+remove_stale_links() {
+  local target_dir="$1"
+  [ -d "$target_dir" ] || return 0
+
+  for link_path in "$target_dir"/*/; do
+    [ -L "${link_path%/}" ] || continue
+    local name
+    name="$(basename "${link_path%/}")"
+    local is_current=false
+    for sn in "${skill_names[@]}"; do
+      if [ "$name" = "$sn" ]; then
+        is_current=true
+        break
+      fi
+    done
+    if ! $is_current; then
+      if $DRY_RUN; then
+        printf "  ${YELLOW}[dry-run]${NC} would remove stale %s\n" "${link_path%/}"
+      else
+        rm "${link_path%/}"
+        printf "  ${RED}✗${NC} removed stale: %s\n" "$name"
+      fi
+      removed=$((removed + 1))
+    fi
+  done
+}
+
 # Collect all skill names from source
 skill_names=()
 for skill_dir in "$SKILLS_SRC"/*/; do
@@ -105,6 +139,7 @@ $DRY_RUN && printf "${YELLOW}[DRY RUN MODE]${NC}\n"
 printf "\n${BOLD}[Project]${NC} %s\n" "$PROJECT_ROOT"
 for harness in "${HARNESSES[@]}"; do
   harness_skills="$PROJECT_ROOT/.$harness/skills"
+  remove_stale_links "$harness_skills"
   synced=0
   for skill_name in "${skill_names[@]}"; do
     before=$created
@@ -120,6 +155,9 @@ done
 
 if $WITH_HOME; then
   printf "\n${BOLD}[HOME]${NC} ~/.{claude,codex,gemini}/skills/\n"
+  remove_stale_links "$HOME_CLAUDE"
+  remove_stale_links "$HOME_CODEX"
+  remove_stale_links "$HOME_GEMINI"
   for skill_name in "${skill_names[@]}"; do
     sync_link "$skill_name" "$HOME_CLAUDE" "$SKILLS_SRC/$skill_name"
     sync_link "$skill_name" "$HOME_CODEX"  "$SKILLS_SRC/$skill_name"
@@ -161,6 +199,9 @@ printf "\n${BOLD}结果${NC}: "
 if [ "$created" -gt 0 ]; then
   printf "${GREEN}%d 新建/修复${NC} " "$created"
 fi
+if [ "$removed" -gt 0 ]; then
+  printf "${RED}%d 清理${NC} " "$removed"
+fi
 printf "%d 已正确 " "$skipped"
 if [ "$errors" -gt 0 ]; then
   printf "${RED}%d 错误${NC}" "$errors"
@@ -168,8 +209,9 @@ fi
 printf "\n\n"
 
 if [ "$created" -gt 0 ] && ! $DRY_RUN; then
-  printf "${YELLOW}提示${NC}: 项目级 symlinks 需要 git add + commit 才能持久化\n"
-  printf "  git add .{claude,codex,gemini,kimi}/skills/ && git commit -m 'fix(skills): sync missing symlinks'\n\n"
+  printf "${YELLOW}提示${NC}: .claude/skills/ symlinks 需要 git add + commit 才能持久化\n"
+  printf "  git add .claude/skills/ && git commit -m 'fix(skills): sync missing symlinks'\n"
+  printf "  # .codex/.gemini/.kimi 通常在 .gitignore 中，无需 commit\n\n"
 fi
 
 exit "$errors"
