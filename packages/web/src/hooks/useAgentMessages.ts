@@ -2970,7 +2970,7 @@ export function useAgentMessages() {
               deleteActive(msg.catId);
             }
           }
-          if (msg.invocationId) {
+          if (msg.invocationId && !recoverableInFlightError) {
             pendingCallbacksRef.current.delete(`${msg.catId}:${msg.invocationId}`);
           }
 
