@@ -232,7 +232,7 @@ export interface HandleBackgroundMessageOptions {
   clearDoneTimeout?: (threadId?: string) => void;
   /** #586 follow-up: Just-finalized stream bubble IDs keyed by streamKey */
   finalizedBgRefs: Map<string, string>;
-  pendingCallbacks?: Map<string, { bubbleId: string; patch: ChatMessagePatch }>;
+  pendingCallbacks?: Map<string, { bubbleId: string; patch: ChatMessagePatch; threadId: string }>;
 }
 
 export type ActiveRoutedAgentMessage = {
@@ -1239,7 +1239,9 @@ export function useAgentMessages() {
   // Deferred callback: when callback arrives before done (callback-stream race),
   // store the callback data and apply it on done instead of immediately.
   // Key: `${catId}:${invocationId}`, Value: callback patch fields for patchMessage.
-  const pendingCallbacksRef = useRef<Map<string, { bubbleId: string; patch: ChatMessagePatch }>>(new Map());
+  const pendingCallbacksRef = useRef<Map<string, { bubbleId: string; patch: ChatMessagePatch; threadId: string }>>(
+    new Map(),
+  );
 
   /**
    * F173 Phase B AC-B1 (integration step 4): activeRefs migrated to ledger.
@@ -1399,11 +1401,12 @@ export function useAgentMessages() {
           }
         }
         for (const [key, cb] of pendingCallbacksRef.current) {
+          if (cb.threadId !== timeoutThreadId) continue;
           store.patchThreadMessage(timeoutThreadId, cb.bubbleId, cb.patch);
           const [catId, invId] = key.split(':');
           if (catId && invId) markReplacedInvocation(timeoutThreadId, catId, invId);
+          pendingCallbacksRef.current.delete(key);
         }
-        pendingCallbacksRef.current.clear();
         store.resetThreadInvocationState(timeoutThreadId);
         store.addMessageToThread(timeoutThreadId, {
           id: `sysinfo-timeout-${Date.now()}`,
@@ -1421,11 +1424,12 @@ export function useAgentMessages() {
       // Timeout fired — stop loading and show system message
       setLoading(false);
       for (const [key, cb] of pendingCallbacksRef.current) {
+        if (cb.threadId !== timeoutThreadId) continue;
         patchMessage(cb.bubbleId, cb.patch);
         const [catId, invId] = key.split(':');
         if (catId && invId && timeoutThreadId) markReplacedInvocation(timeoutThreadId, catId, invId);
+        pendingCallbacksRef.current.delete(key);
       }
-      pendingCallbacksRef.current.clear();
       clearAllActiveInvocations();
       setIntentMode(null);
       clearCatStatuses();
@@ -2094,6 +2098,7 @@ export function useAgentMessages() {
               pendingCallbacksRef.current.set(`${msg.catId}:${invocationId}`, {
                 bubbleId: finalId,
                 patch: deferredPatch,
+                threadId: useChatStore.getState().currentThreadId,
               });
             } else {
               patchMessage(finalId, {
