@@ -2082,7 +2082,12 @@ export function useAgentMessages() {
             // Callback-stream race: if invocation is still active (done hasn't
             // arrived), defer the content patch — let stream continue rendering.
             // Apply the authoritative callback content on done instead.
-            const currentInv = getCurrentInvocationIdForCat(msg.catId);
+            const rawCurrentInv = getCurrentInvocationIdForCat(msg.catId);
+            const catSuffix = `-${msg.catId}`;
+            const currentInv =
+              rawCurrentInv && rawCurrentInv.endsWith(catSuffix)
+                ? rawCurrentInv.slice(0, -catSuffix.length)
+                : rawCurrentInv;
             const isStillActive = hasExplicitInvocationId && invocationId && currentInv === invocationId;
             if (isStillActive) {
               const deferredPatch: ChatMessagePatch = {
