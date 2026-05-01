@@ -1374,21 +1374,15 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           activeDrafts = checkedActiveDrafts;
 
           if (orphanDrafts.length > 0) {
-            const deleteResults = await Promise.allSettled(
-              orphanDrafts.map((d) => draftStore.delete(userId, resolvedThreadId, d.invocationId)),
+            request.log.info(
+              {
+                threadId: resolvedThreadId,
+                orphanCount: orphanDrafts.length,
+                draftIds: orphanDrafts.map((d) => d.invocationId),
+                cleanup: 'ttl_or_completion',
+              },
+              '#80 draft merge: filtered orphan drafts',
             );
-            const failedDeletes = deleteResults.filter((r) => r.status === 'rejected').length;
-            const logPayload = {
-              threadId: resolvedThreadId,
-              orphanCount: orphanDrafts.length,
-              failedDeletes,
-              draftIds: orphanDrafts.map((d) => d.invocationId),
-            };
-            if (failedDeletes > 0) {
-              request.log.warn(logPayload, '#80 draft merge: filtered orphan drafts');
-            } else {
-              request.log.info(logPayload, '#80 draft merge: filtered orphan drafts');
-            }
           }
         }
         // P2: stable sort by updatedAt for parallel multi-cat drafts
