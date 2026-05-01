@@ -1116,6 +1116,7 @@ export function handleBackgroundAgentMessage(
       if (pendingCb) {
         options.store.patchThreadMessage(msg.threadId, pendingCb.bubbleId, pendingCb.patch);
         options.pendingCallbacks.delete(pendingKey);
+        markReplacedInvocation(msg.threadId, msg.catId, msg.invocationId);
       }
     }
     const currentStatus = options.store.getThreadState(msg.threadId).catStatuses[msg.catId];
@@ -1397,6 +1398,12 @@ export function useAgentMessages() {
             store.setThreadMessageStreaming(timeoutThreadId, message.id, false);
           }
         }
+        for (const [key, cb] of pendingCallbacksRef.current) {
+          store.patchThreadMessage(timeoutThreadId, cb.bubbleId, cb.patch);
+          const [catId, invId] = key.split(':');
+          if (catId && invId) markReplacedInvocation(timeoutThreadId, catId, invId);
+        }
+        pendingCallbacksRef.current.clear();
         store.resetThreadInvocationState(timeoutThreadId);
         store.addMessageToThread(timeoutThreadId, {
           id: `sysinfo-timeout-${Date.now()}`,
@@ -1413,6 +1420,12 @@ export function useAgentMessages() {
 
       // Timeout fired — stop loading and show system message
       setLoading(false);
+      for (const [key, cb] of pendingCallbacksRef.current) {
+        patchMessage(cb.bubbleId, cb.patch);
+        const [catId, invId] = key.split(':');
+        if (catId && invId && timeoutThreadId) markReplacedInvocation(timeoutThreadId, catId, invId);
+      }
+      pendingCallbacksRef.current.clear();
       clearAllActiveInvocations();
       setIntentMode(null);
       clearCatStatuses();
