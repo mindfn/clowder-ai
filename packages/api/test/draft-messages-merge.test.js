@@ -255,7 +255,11 @@ describe('GET /api/messages — draft merge (#80)', () => {
     const body = JSON.parse(res.body);
     const orphan = body.messages.find((m) => m.id === 'draft-inv-orphan');
     assert.equal(orphan, undefined, 'Orphan draft should not appear in GET /api/messages response');
-    assert.equal(draftStore.getByThread('user-1', 'thread-1').length, 1, 'Orphan draft remains in store (TTL handles cleanup)');
+    assert.equal(
+      draftStore.getByThread('user-1', 'thread-1').length,
+      1,
+      'Orphan draft remains in store (TTL handles cleanup)',
+    );
   });
 
   it('filters draft when cat slot completed (F173 hotfix3)', async () => {
@@ -280,7 +284,11 @@ describe('GET /api/messages — draft merge (#80)', () => {
     const body = JSON.parse(res.body);
     const failedDraft = body.messages.find((m) => m.id === 'draft-inv-failed');
     assert.equal(failedDraft, undefined, 'Non-running invocation draft should not appear');
-    assert.equal(draftStore.getByThread('user-1', 'thread-1').length, 1, 'Draft remains in store (TTL handles cleanup)');
+    assert.equal(
+      draftStore.getByThread('user-1', 'thread-1').length,
+      1,
+      'Draft remains in store (TTL handles cleanup)',
+    );
   });
 
   it('filters stale draft when same cat starts a newer invocation (P2 regression)', async () => {
@@ -306,7 +314,11 @@ describe('GET /api/messages — draft merge (#80)', () => {
     const body = JSON.parse(res.body);
     const stale = body.messages.find((m) => m.id === 'draft-inv-stale');
     assert.equal(stale, undefined, 'Stale draft from previous invocation should be filtered');
-    assert.equal(draftStore.getByThread('user-1', 'thread-1').length, 1, 'Stale draft remains in store (TTL handles cleanup)');
+    assert.equal(
+      draftStore.getByThread('user-1', 'thread-1').length,
+      1,
+      'Stale draft remains in store (TTL handles cleanup)',
+    );
   });
 
   it('keeps draft visible when no invocation tracker is available (F173 hotfix3)', async () => {
