@@ -17,6 +17,8 @@ export interface QueueEntry {
   id: string;
   threadId: string;
   userId: string;
+  /** Optional request-level idempotency key for API replay dedup. */
+  idempotencyKey?: string;
   content: string;
   messageId: string | null;
   mergedMessageIds: string[];
@@ -49,6 +51,8 @@ export interface EnqueueResult {
   outcome: 'enqueued' | 'full';
   entry?: QueueEntry;
   queuePosition?: number;
+  /** True when enqueue returned an existing active entry by idempotency key. */
+  deduped?: boolean;
 }
 
 const MAX_QUEUE_DEPTH = 5;
@@ -139,6 +143,24 @@ export class InvocationQueue {
     const key = this.scopeKey(input.threadId, input.userId);
     const q = this.getOrCreate(key);
 
+    // Request replay dedupe: if an active entry already exists for this key in this scope,
+    // return it instead of creating a second queue row.
+    if (input.idempotencyKey) {
+      const existing = q.find(
+        (entry) =>
+          entry.idempotencyKey === input.idempotencyKey && (entry.status === 'queued' || entry.status === 'processing'),
+      );
+      if (existing) {
+        const position = q.findIndex((entry) => entry.id === existing.id);
+        return {
+          outcome: 'enqueued',
+          entry: { ...existing },
+          queuePosition: position >= 0 ? position + 1 : undefined,
+          deduped: true,
+        };
+      }
+    }
+
     // F175: capacity check — only user messages are depth-limited
     if (input.source === 'user') {
       const userQueuedCount = q.filter((e) => e.status === 'queued' && e.source === 'user').length;
@@ -151,6 +173,7 @@ export class InvocationQueue {
       id: randomUUID(),
       threadId: input.threadId,
       userId: input.userId,
+      idempotencyKey: input.idempotencyKey,
       content: input.content,
       messageId: null,
       mergedMessageIds: [],
@@ -642,8 +665,36 @@ export class InvocationQueue {
     return false;
   }
 
-  /** Whether any user has queued entries for this thread. */
+  /** Whether any scope has fresh queued entries for this thread.
+   *  Agent-sourced entries are dispatchable pending work regardless of age;
+   *  user/connector entries keep the stale guard so old interactive messages
+   *  do not permanently force thread-wide queue/busy mode.
+   */
   hasQueuedForThread(threadId: string): boolean {
+    const now = Date.now();
+    for (const q of this.queues.values()) {
+      if (!this.queueMatchesThread(q, threadId)) continue;
+      if (
+        q.some((e) => {
+          if (e.status !== 'queued') return false;
+          if (e.source === 'agent') return true;
+          return now - e.createdAt < InvocationQueue.STALE_QUEUED_THRESHOLD_MS;
+        })
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Whether any scope has dispatchable queued work for this thread.
+   *
+   * This deliberately has no stale queued guard: a queued entry is pending work
+   * until it is dispatched, canceled, or cleared. The stale guard in
+   * hasQueuedForThread is only for fairness/queue-mode routing decisions.
+   */
+  hasDispatchableQueuedForThread(threadId: string): boolean {
     for (const q of this.queues.values()) {
       if (!this.queueMatchesThread(q, threadId)) continue;
       if (q.some((e) => e.status === 'queued')) return true;

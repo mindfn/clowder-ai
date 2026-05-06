@@ -51,6 +51,7 @@ import type { ISummaryStore } from '../domains/cats/services/stores/ports/Summar
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { isSystemUserMessage } from '../domains/cats/services/stores/visibility.js';
 import { mergeTokenUsage, type TokenUsage } from '../domains/cats/services/types.js';
+import { buildThreadDeepLink } from '../infrastructure/connectors/connector-command-helpers.js';
 import { createModuleLogger } from '../infrastructure/logger.js';
 import { buildCancelMessages, type SocketManager } from '../infrastructure/websocket/index.js';
 import { getDefaultUploadDir } from '../utils/upload-paths.js';
@@ -433,7 +434,8 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     // Broadcast without @mention → thread-level check (any active → queue)
     // #555: Cover the gap between one invocation ending (tracker cleared) and the
     // next starting from queue (tracker not yet registered).
-    // Whisper / @mention use cat-specific isCatBusy; broadcast uses thread-wide isThreadBusy.
+    // Whisper / @mention use cat-specific isCatBusy; broadcast uses active execution,
+    // not queued leftovers, to avoid enqueue-only dead ends.
     const hasActive = (() => {
       if (!opts.invocationTracker) {
         return opts.queueProcessor?.hasActiveExecution?.(resolvedThreadId) ?? false;
@@ -465,6 +467,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       const enqueueResult = opts.invocationQueue.enqueue({
         threadId: resolvedThreadId,
         userId,
+        idempotencyKey: resolvedIdempotencyKey,
         content,
         source: 'user',
         targetCats,
@@ -487,35 +490,39 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         };
       }
 
-      let storedUserMessageId: string | null = null;
+      let storedUserMessageId: string | null = enqueueResult.entry?.messageId ?? null;
 
       // ② Write user message (F117: mark as queued — invisible until dequeue)
-      try {
-        const userMessage = await opts.messageStore.append({
-          userId,
-          catId: null,
-          content,
-          mentions: targetCats,
-          timestamp: Date.now(),
-          threadId: resolvedThreadId,
-          deliveryStatus: 'queued', // F117: not visible in history/context/mentions until delivered
-          ...(contentBlocks ? { contentBlocks } : {}),
-          ...(whisperVisibility && whisperRecipients
-            ? { visibility: whisperVisibility, whisperTo: whisperRecipients }
-            : {}),
-        });
-        storedUserMessageId = userMessage.id;
+      // If enqueue returned a deduped active entry, reuse existing messageId and skip append.
+      if (!enqueueResult.deduped) {
+        try {
+          const userMessage = await opts.messageStore.append({
+            userId,
+            catId: null,
+            content,
+            mentions: targetCats,
+            timestamp: Date.now(),
+            threadId: resolvedThreadId,
+            idempotencyKey: resolvedIdempotencyKey,
+            deliveryStatus: 'queued', // F117: not visible in history/context/mentions until delivered
+            ...(contentBlocks ? { contentBlocks } : {}),
+            ...(whisperVisibility && whisperRecipients
+              ? { visibility: whisperVisibility, whisperTo: whisperRecipients }
+              : {}),
+          });
+          storedUserMessageId = userMessage.id;
 
-        const queueEntryId = enqueueResult.entry?.id;
-        if (queueEntryId) {
-          opts.invocationQueue.backfillMessageId(resolvedThreadId, userId, queueEntryId, userMessage.id);
+          const queueEntryId = enqueueResult.entry?.id;
+          if (queueEntryId) {
+            opts.invocationQueue.backfillMessageId(resolvedThreadId, userId, queueEntryId, userMessage.id);
+          }
+        } catch (err) {
+          const queueEntryId = enqueueResult.entry?.id;
+          if (queueEntryId) {
+            opts.invocationQueue.rollbackEnqueue(resolvedThreadId, userId, queueEntryId);
+          }
+          throw err;
         }
-      } catch (err) {
-        const queueEntryId = enqueueResult.entry?.id;
-        if (queueEntryId) {
-          opts.invocationQueue.rollbackEnqueue(resolvedThreadId, userId, queueEntryId);
-        }
-        throw err;
       }
 
       // Emit queue update to this user only (privacy: scopeKey isolation)
@@ -576,6 +583,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
             const enqueueResult = opts.invocationQueue.enqueue({
               threadId: resolvedThreadId,
               userId,
+              idempotencyKey: resolvedIdempotencyKey,
               content,
               source: 'user',
               targetCats,
@@ -593,31 +601,35 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
             }
             // F122 R1-gpt52 P1-1: Wrap append+backfill in try/catch with rollback,
             // matching original queue path (lines 340-374) to prevent ghost queue entries.
-            let toctouUserMessage: { id: string };
-            try {
-              toctouUserMessage = await opts.messageStore.append({
-                userId,
-                catId: null,
-                content,
-                mentions: targetCats,
-                timestamp: Date.now(),
-                threadId: resolvedThreadId,
-                deliveryStatus: 'queued',
-                ...(contentBlocks ? { contentBlocks } : {}),
-                ...(whisperVisibility && whisperRecipients
-                  ? { visibility: whisperVisibility, whisperTo: whisperRecipients }
-                  : {}),
-              });
-              const queueEntryId = enqueueResult.entry?.id;
-              if (queueEntryId) {
-                opts.invocationQueue.backfillMessageId(resolvedThreadId, userId, queueEntryId, toctouUserMessage.id);
+            let toctouUserMessageId: string | null = enqueueResult.entry?.messageId ?? null;
+            if (!enqueueResult.deduped) {
+              try {
+                const toctouUserMessage = await opts.messageStore.append({
+                  userId,
+                  catId: null,
+                  content,
+                  mentions: targetCats,
+                  timestamp: Date.now(),
+                  threadId: resolvedThreadId,
+                  idempotencyKey: resolvedIdempotencyKey,
+                  deliveryStatus: 'queued',
+                  ...(contentBlocks ? { contentBlocks } : {}),
+                  ...(whisperVisibility && whisperRecipients
+                    ? { visibility: whisperVisibility, whisperTo: whisperRecipients }
+                    : {}),
+                });
+                toctouUserMessageId = toctouUserMessage.id;
+                const queueEntryId = enqueueResult.entry?.id;
+                if (queueEntryId) {
+                  opts.invocationQueue.backfillMessageId(resolvedThreadId, userId, queueEntryId, toctouUserMessage.id);
+                }
+              } catch (err) {
+                const queueEntryId = enqueueResult.entry?.id;
+                if (queueEntryId) {
+                  opts.invocationQueue.rollbackEnqueue(resolvedThreadId, userId, queueEntryId);
+                }
+                throw err;
               }
-            } catch (err) {
-              const queueEntryId = enqueueResult.entry?.id;
-              if (queueEntryId) {
-                opts.invocationQueue.rollbackEnqueue(resolvedThreadId, userId, queueEntryId);
-              }
-              throw err;
             }
             opts.socketManager.emitToUser(userId, 'queue_updated', {
               threadId: resolvedThreadId,
@@ -631,7 +643,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
               queuePosition: enqueueResult.queuePosition,
               entryId: enqueueResult.entry?.id,
               merged: false,
-              userMessageId: toctouUserMessage.id,
+              ...(toctouUserMessageId ? { userMessageId: toctouUserMessageId } : {}),
             };
           }
           // No queue available — thread is busy but we can't queue. Reject.
@@ -1386,12 +1398,17 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           }
           activeDrafts = activeDrafts.filter((d) => !formalInvocationIds.has(d.invocationId));
         }
-        // F173 Phase A hotfix3: draft persistence can outlive its invocation
-        // record when an invocation crashes or is replaced before a formal
-        // message is written. Such orphan drafts produce zombie bubbles on F5.
+        // F173 Phase A hotfix3 / stream-catchup repair:
+        // Draft persistence can outlive its invocation record when an invocation
+        // crashes or is replaced before a formal message is written. Filter those
+        // orphan drafts from the response, but do not delete from the GET path:
+        // a stale/missing InvocationRecord can be corrected by the active
+        // InvocationTracker, while real zombies still expire by DraftStore TTL or
+        // explicit completion/cancel cleanup.
         if (activeDrafts.length > 0 && opts.invocationRecordStore) {
           const invocationRecordStore = opts.invocationRecordStore;
           const orphanDrafts: typeof activeDrafts = [];
+          const orphanDetails: Array<Record<string, unknown>> = [];
           const checkedActiveDrafts: typeof activeDrafts = [];
           for (const draft of activeDrafts) {
             let record;
@@ -1405,30 +1422,57 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
               checkedActiveDrafts.push(draft);
               continue;
             }
-            if (record?.status === 'running' && record.threadId === resolvedThreadId && record.userId === userId) {
+            const recordActive =
+              record?.status === 'running' && record.threadId === resolvedThreadId && record.userId === userId;
+            let trackerActive = false;
+            let trackerSlotStartedAt: number | null = null;
+            let trackerUserId: string | null = null;
+            if (!recordActive && opts.invocationTracker) {
+              try {
+                const trackerSlot = opts.invocationTracker
+                  .getActiveSlots(resolvedThreadId)
+                  .find((slot) => slot.catId === draft.catId && slot.startedAt <= draft.updatedAt);
+                if (trackerSlot) {
+                  trackerSlotStartedAt = trackerSlot.startedAt;
+                  trackerUserId = opts.invocationTracker.getUserId(resolvedThreadId, draft.catId);
+                  trackerActive = trackerUserId === userId;
+                }
+              } catch (error) {
+                request.log.warn(
+                  { err: error, threadId: resolvedThreadId, draftId: draft.invocationId, catId: draft.catId },
+                  '#80 draft merge: tracker liveness lookup failed',
+                );
+                checkedActiveDrafts.push(draft);
+                continue;
+              }
+            }
+            if (recordActive || trackerActive) {
               checkedActiveDrafts.push(draft);
             } else {
               orphanDrafts.push(draft);
+              orphanDetails.push({
+                draftId: draft.invocationId,
+                catId: draft.catId,
+                draftUpdatedAt: draft.updatedAt,
+                recordStatus: record?.status ?? null,
+                recordThreadId: record?.threadId ?? null,
+                recordUserId: record?.userId ?? null,
+                trackerSlotStartedAt,
+                trackerUserId,
+              });
             }
           }
           activeDrafts = checkedActiveDrafts;
 
           if (orphanDrafts.length > 0) {
-            const deleteResults = await Promise.allSettled(
-              orphanDrafts.map((d) => draftStore.delete(userId, resolvedThreadId, d.invocationId)),
-            );
-            const failedDeletes = deleteResults.filter((r) => r.status === 'rejected').length;
             const logPayload = {
               threadId: resolvedThreadId,
               orphanCount: orphanDrafts.length,
-              failedDeletes,
               draftIds: orphanDrafts.map((d) => d.invocationId),
+              orphanDetails,
+              cleanup: 'ttl_or_completion',
             };
-            if (failedDeletes > 0) {
-              request.log.warn(logPayload, '#80 draft merge: filtered orphan drafts');
-            } else {
-              request.log.info(logPayload, '#80 draft merge: filtered orphan drafts');
-            }
+            request.log.info(logPayload, '#80 draft merge: filtered orphan drafts');
           }
         }
         // P2: stable sort by updatedAt for parallel multi-cat drafts
@@ -1536,7 +1580,7 @@ export async function deliverOutboundFromWeb(
         threadMeta = {
           threadShortId: threadId.slice(0, 15),
           threadTitle: resolved.title ?? undefined,
-          deepLinkUrl: `${frontendBase}/threads/${threadId}`,
+          deepLinkUrl: buildThreadDeepLink(frontendBase, threadId),
         };
       }
     }

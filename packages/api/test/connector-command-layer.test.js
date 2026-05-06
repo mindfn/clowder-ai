@@ -91,7 +91,7 @@ describe('ConnectorCommandLayer', () => {
     assert.equal(result.kind, 'where');
     assert.ok(result.response.includes('thread-a'));
     assert.ok(result.response.includes('飞书测试'));
-    assert.ok(result.response.includes('cafe.example.com'));
+    assert.ok(result.response.includes('https://cafe.example.com/thread/thread-a'));
   });
 
   it('/where returns helpful message when no binding exists', async () => {
@@ -135,7 +135,7 @@ describe('ConnectorCommandLayer', () => {
     assert.equal(result.kind, 'new');
     assert.ok(result.newActiveThreadId);
     assert.ok(result.response.includes('新话题'));
-    assert.ok(result.response.includes('cafe.example.com'));
+    assert.ok(result.response.includes('https://cafe.example.com/thread/'));
   });
 
   it('/new without title still creates thread', async () => {
@@ -262,6 +262,7 @@ describe('ConnectorCommandLayer', () => {
     assert.equal(result.kind, 'use');
     assert.equal(result.newActiveThreadId, 'thread-target-xyz');
     assert.ok(result.response.includes('目标Thread'));
+    assert.ok(result.response.includes('https://cafe.example.com/thread/thread-target-xyz'));
   });
 
   it('/use with no match returns error', async () => {
@@ -910,6 +911,7 @@ describe('ConnectorCommandLayer', () => {
       assert.equal(result.kind, 'status');
       assert.ok(result.response.includes('F142 开发'));
       assert.ok(result.response.includes('2')); // participant count
+      assert.ok(result.response.includes('https://cafe.example.com/thread/t-bound'));
       assert.equal(result.contextThreadId, 't-bound');
     });
 
