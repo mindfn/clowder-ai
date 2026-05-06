@@ -43,10 +43,11 @@ function makeStubSocketManager() {
   };
 }
 
-function makeInvocationTracker(activeSlots = []) {
+function makeInvocationTracker(activeSlots = [], userId = 'user-1') {
   return {
     has: (threadId, catId) => activeSlots.some((s) => s.catId === catId),
     getActiveSlots: (threadId) => activeSlots,
+    getUserId: () => userId,
     start: () => new AbortController(),
     cancel: () => ({ cancelled: false }),
     complete: () => {},
