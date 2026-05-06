@@ -2386,6 +2386,12 @@ export function useAgentMessages() {
           // cat from PlanBoardPanel and defeat clearCatStatuses' snapshot preservation.
           setCatInvocation(msg.catId, { invocationId: undefined });
         }
+        // Codex P2: clean up deferred callback on stale done — the non-stale
+        // path drains+deletes inside the block above, but a preempted invocation
+        // skips that block entirely, leaking the entry for the session lifetime.
+        if (isStaleDone && msg.invocationId) {
+          pendingCallbacksRef.current.delete(`${msg.catId}:${msg.invocationId}`);
+        }
         // Stale-done direct cleanup (cloud R12 P1): even when the bubble-side
         // processing was skipped as stale, we MUST still clear `catInvocations
         // [msg.catId].invocationId` when it matches `msg.invocationId` —
