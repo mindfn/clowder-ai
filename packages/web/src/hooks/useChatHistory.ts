@@ -136,7 +136,17 @@ function mergeMessageExtra(
   const scheduler = preferred?.scheduler ?? fallback?.scheduler;
   const timeoutDiagnostics = preferred?.timeoutDiagnostics ?? fallback?.timeoutDiagnostics;
   const governanceBlocked = preferred?.governanceBlocked ?? fallback?.governanceBlocked;
-  if (!rich && !crossPost && !stream && !targetCats && !scheduler && !timeoutDiagnostics && !governanceBlocked) {
+  const systemKind = preferred?.systemKind ?? fallback?.systemKind;
+  if (
+    !rich &&
+    !crossPost &&
+    !stream &&
+    !targetCats &&
+    !scheduler &&
+    !timeoutDiagnostics &&
+    !governanceBlocked &&
+    !systemKind
+  ) {
     return undefined;
   }
   return {
@@ -147,6 +157,7 @@ function mergeMessageExtra(
     ...(scheduler ? { scheduler } : {}),
     ...(timeoutDiagnostics ? { timeoutDiagnostics } : {}),
     ...(governanceBlocked ? { governanceBlocked } : {}),
+    ...(systemKind ? { systemKind } : {}),
   };
 }
 
