@@ -1079,7 +1079,7 @@ export function handleBackgroundAgentMessage(
     if (!recoverableInFlightError) {
       stopTrackedStream(streamKey, msg, options);
     }
-    if (msg.invocationId && options.pendingCallbacks) {
+    if (msg.invocationId && options.pendingCallbacks && !recoverableInFlightError) {
       options.pendingCallbacks.delete(`${msg.catId}:${msg.invocationId}`);
     }
     options.store.addMessageToThread(msg.threadId, {
