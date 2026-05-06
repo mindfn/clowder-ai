@@ -3084,6 +3084,10 @@ export function useAgentMessages() {
             }
           }
         }
+        // Codex P2: clean up deferred callback on stale error — mirrors stale-done handling.
+        if (isStaleError && msg.invocationId) {
+          pendingCallbacksRef.current.delete(`${msg.catId}:${msg.invocationId}`);
+        }
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
