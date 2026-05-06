@@ -146,6 +146,29 @@ function tryAutoCancelPendingHolds(threadId: string, deps: HoldBallCancelDeps | 
   }
 }
 
+async function persistA2ARoutingMessage(
+  messageStore: IMessageStore,
+  msg: { content?: string; timestamp: number },
+  threadId: string,
+): Promise<string | undefined> {
+  if (!msg.content) return undefined;
+  try {
+    const stored = await messageStore.append({
+      userId: 'system',
+      catId: null,
+      content: msg.content,
+      mentions: [],
+      timestamp: msg.timestamp,
+      threadId,
+      extra: { systemKind: 'a2a_routing' },
+    });
+    return stored.id;
+  } catch (err) {
+    log.warn({ err, threadId }, 'Failed to persist a2a_handoff');
+    return undefined;
+  }
+}
+
 const getMessagesSchema = z.object({
   limit: z.coerce.number().int().min(1).max(10000).default(50),
   /** Cursor: "timestamp:id" or legacy plain timestamp */
@@ -936,21 +959,9 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
               invocationId: createResult.invocationId,
             };
 
-            if (msg.type === 'a2a_handoff' && msg.content) {
-              try {
-                const stored = await opts.messageStore.append({
-                  userId: 'system',
-                  catId: null,
-                  content: msg.content,
-                  mentions: [],
-                  timestamp: msg.timestamp,
-                  threadId: resolvedThreadId,
-                  extra: { systemKind: 'a2a_routing' },
-                });
-                broadcastPayload.messageId = stored.id;
-              } catch (persistErr) {
-                log.warn({ err: persistErr, threadId: resolvedThreadId }, 'Failed to persist a2a_handoff');
-              }
+            if (msg.type === 'a2a_handoff') {
+              const storedId = await persistA2ARoutingMessage(opts.messageStore, msg, resolvedThreadId);
+              if (storedId) broadcastPayload.messageId = storedId;
             }
 
             opts.socketManager.broadcastAgentMessage(broadcastPayload, resolvedThreadId);
@@ -1215,21 +1226,9 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
               intentModeBroadcast = true;
             }
             const legacyPayload = { ...msg };
-            if (msg.type === 'a2a_handoff' && msg.content) {
-              try {
-                const stored = await opts.messageStore.append({
-                  userId: 'system',
-                  catId: null,
-                  content: msg.content,
-                  mentions: [],
-                  timestamp: msg.timestamp,
-                  threadId: resolvedThreadId,
-                  extra: { systemKind: 'a2a_routing' },
-                });
-                legacyPayload.messageId = stored.id;
-              } catch (persistErr) {
-                log.warn({ err: persistErr, threadId: resolvedThreadId }, 'Failed to persist a2a_handoff');
-              }
+            if (msg.type === 'a2a_handoff') {
+              const storedId = await persistA2ARoutingMessage(opts.messageStore, msg, resolvedThreadId);
+              if (storedId) legacyPayload.messageId = storedId;
             }
             opts.socketManager.broadcastAgentMessage(legacyPayload, resolvedThreadId);
           }
