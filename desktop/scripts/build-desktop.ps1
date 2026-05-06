@@ -77,14 +77,50 @@ if (-not $SkipBundleDeps) {
     if (Test-Path $deployRoot) { Remove-Item $deployRoot -Recurse -Force }
     New-Item -ItemType Directory -Path $deployRoot -Force | Out-Null
 
-    Push-Location $ProjectRoot
-    foreach ($pkg in @('api', 'web', 'mcp-server')) {
-        Write-Host "  Deploying @cat-cafe/$pkg ..." -ForegroundColor Gray
-        $out = Join-Path $deployRoot $pkg
-        pnpm --filter "@cat-cafe/$pkg" --prod --config.node-linker=hoisted deploy $out
-        if ($LASTEXITCODE -ne 0) { Write-Err "pnpm deploy @cat-cafe/$pkg failed"; Pop-Location; exit 1 }
+    # pnpm deploy creates .bin/ shims on Windows that Defender can lock,
+    # causing EPERM.  pnpm deploy also requires an empty target directory.
+    # Retry with a delay lets Defender finish scanning before the next attempt.
+    $defenderExclusionAdded = $false
+    $deployFailed = $false
+
+    try {
+        Add-MpPreference -ExclusionPath $deployRoot -ErrorAction Stop
+        $defenderExclusionAdded = $true
+    } catch {
+        Write-Host "  Defender exclusion skipped: $($_.Exception.Message)" -ForegroundColor Yellow
     }
-    Pop-Location
+
+    try {
+        Push-Location $ProjectRoot
+        try {
+            foreach ($pkg in @('api', 'web', 'mcp-server')) {
+                $out = Join-Path $deployRoot $pkg
+                $deployed = $false
+                for ($attempt = 1; $attempt -le 3; $attempt++) {
+                    if ($attempt -gt 1) {
+                        Write-Host "  Retry $attempt/3 for @cat-cafe/$pkg ..." -ForegroundColor Yellow
+                        Start-Sleep -Seconds 10
+                    }
+                    if (Test-Path $out) { Remove-Item $out -Recurse -Force }
+                    Write-Host "  Deploying @cat-cafe/$pkg ..." -ForegroundColor Gray
+                    pnpm --filter "@cat-cafe/$pkg" --prod --config.node-linker=hoisted deploy $out 2>&1
+                    if ($LASTEXITCODE -eq 0) { $deployed = $true; break }
+                }
+                if (-not $deployed) { throw "pnpm deploy @cat-cafe/$pkg failed after 3 attempts" }
+            }
+        } finally {
+            Pop-Location
+        }
+    } catch {
+        Write-Err $_.Exception.Message
+        $deployFailed = $true
+    } finally {
+        if ($defenderExclusionAdded) {
+            try { Remove-MpPreference -ExclusionPath $deployRoot -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+
+    if ($deployFailed) { exit 1 }
 
     # Web's pre-built .next artifact is not copied by `pnpm deploy` (it's outside
     # the package `files` field), so inject it explicitly.
@@ -350,6 +386,19 @@ if (-not $SkipInstaller) {
     $pkgJson = Get-Content $desktopPkg -Raw | ConvertFrom-Json
     $catCafeVersion = if ($env:CATCAFE_VERSION) { $env:CATCAFE_VERSION } else { $pkgJson.version }
     Write-Host "  Inno Setup MyAppVersion = $catCafeVersion" -ForegroundColor Cyan
+
+    $isccDir = Split-Path $iscc -Parent
+    $zhIsl = Join-Path $isccDir "Languages\ChineseSimplified.isl"
+    if (-not (Test-Path $zhIsl)) {
+        $unofficial = Join-Path $isccDir "Languages\Unofficial\ChineseSimplified.isl"
+        if (Test-Path $unofficial) {
+            Copy-Item $unofficial $zhIsl
+        } else {
+            $url = "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Unofficial/ChineseSimplified.isl"
+            Invoke-WebRequest -Uri $url -OutFile $zhIsl -ErrorAction Stop
+        }
+        Write-Host "  Installed ChineseSimplified.isl" -ForegroundColor Gray
+    }
 
     & $iscc "/DMyAppVersion=$catCafeVersion" $issFile
     if ($LASTEXITCODE -ne 0) { Write-Err "Inno Setup compilation failed"; exit 1 }
