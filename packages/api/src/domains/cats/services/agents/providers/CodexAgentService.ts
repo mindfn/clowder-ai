@@ -143,11 +143,11 @@ function toTomlString(value: string): string {
  * Ensure Codex subprocess always receives cat-cafe MCP server config
  * based on the current thread working directory.
  */
+// index.js registers ALL tools (collab+memory+signals+limb) via registerFullToolset.
+// Running it alongside the split servers causes duplicate tool names, which breaks
+// codex CLI MCP loading. Use index.js only until the split servers exclude duplicates.
 const CAT_CAFE_MCP_SERVER_ENTRIES = [
   ['cat-cafe', 'index.js'],
-  ['cat-cafe-collab', 'collab.js'],
-  ['cat-cafe-memory', 'memory.js'],
-  ['cat-cafe-signals', 'signals.js'],
 ] as const;
 
 function buildCatCafeMcpConfigArgs(workingDirectory?: string, callbackEnv?: Record<string, string>): string[] {
