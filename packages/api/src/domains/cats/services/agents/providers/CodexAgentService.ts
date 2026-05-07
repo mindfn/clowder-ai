@@ -152,10 +152,7 @@ const CAT_CAFE_MCP_SERVER_ENTRIES = [
 
 function buildCatCafeMcpConfigArgs(workingDirectory?: string, callbackEnv?: Record<string, string>): string[] {
   const fileDir = dirname(fileURLToPath(import.meta.url));
-  const candidateRoots: string[] = [
-    process.cwd(),
-    resolve(fileDir, '../../../../../../../..'),
-  ];
+  const candidateRoots: string[] = [process.cwd(), resolve(fileDir, '../../../../../../../..')];
 
   let mcpDistDir: string | undefined;
   for (const root of candidateRoots) {
