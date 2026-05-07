@@ -103,7 +103,7 @@ function snapshotActive(s: ChatState): ThreadState {
     hasMore: s.hasMore,
     hasDraft: s.hasDraft,
     hasActiveInvocation: s.hasActiveInvocation,
-    activeInvocations: s.activeInvocations,
+    activeInvocations: s.hasActiveInvocation ? s.activeInvocations : {},
     intentMode: s.intentMode,
     targetCats: s.targetCats,
     catStatuses: s.catStatuses,
@@ -197,8 +197,16 @@ function stampThreadCompletion(
 
 /** Flatten a ThreadState into partial ChatState fields */
 function flattenThread(ts: ThreadState): Partial<ChatState> {
+  // Streaming is ephemeral UI state — finalize on restore so stale streaming
+  // bubbles from completed invocations don't cause duplicates alongside new
+  // drafts/streams.  Socket events + force-refresh re-establish streaming if
+  // the invocation is still active.
+  const messages = ts.messages.some((m) => m.isStreaming)
+    ? ts.messages.map((m) => (m.isStreaming ? { ...m, isStreaming: false } : m))
+    : ts.messages;
+
   const result: Partial<ChatState> = {
-    messages: ts.messages,
+    messages,
     isLoading: ts.isLoading,
     isLoadingHistory: ts.isLoadingHistory,
     hasMore: ts.hasMore,
