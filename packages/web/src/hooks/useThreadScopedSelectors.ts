@@ -17,6 +17,7 @@
  * them with `useChatStore` + `useShallow` to control re-renders.
  */
 import { useShallow } from 'zustand/react/shallow';
+import { getBubbleInvocationId } from '@/debug/bubbleIdentity';
 import type { CatInvocationInfo, CatStatusType, ChatMessage } from '@/stores/chat-types';
 import { type ChatState, useChatStore } from '@/stores/chatStore';
 
@@ -47,15 +48,51 @@ const DEFAULT_LIVENESS: ThreadLiveness = {
   targetCats: EMPTY_TARGET_CATS as string[],
 };
 
+/** Deduplicate assistant messages that share the same (catId, invocationId).
+ *  Multiple write paths (socket stream, draft injection, hydration merge) can
+ *  race and leave two bubbles for the same invocation in the store.  This
+ *  read-side guard keeps only the richer/later one so duplicates never render. */
+function deduplicateByInvocationId(messages: ChatMessage[]): ChatMessage[] {
+  const seen = new Map<string, number>();
+  let hasDup = false;
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i]!;
+    if (msg.type !== 'assistant' || !msg.catId) continue;
+    const invId = getBubbleInvocationId(msg);
+    if (!invId) continue;
+    const key = `${msg.catId}:${invId}`;
+    if (seen.has(key)) {
+      hasDup = true;
+      const prevIdx = seen.get(key)!;
+      const prev = messages[prevIdx]!;
+      const prevLen = prev.content.length + (prev.thinking?.length ?? 0);
+      const curLen = msg.content.length + (msg.thinking?.length ?? 0);
+      if (curLen >= prevLen) seen.set(key, i);
+    } else {
+      seen.set(key, i);
+    }
+  }
+  if (!hasDup) return messages;
+  const keep = new Set(seen.values());
+  return messages.filter((_, i) => {
+    const msg = messages[i]!;
+    if (msg.type !== 'assistant' || !msg.catId) return true;
+    const invId = getBubbleInvocationId(msg);
+    if (!invId) return true;
+    return keep.has(i);
+  });
+}
+
 /** Pure selector — returns the messages array for a thread, preferring the
  *  flat slice when threadId is current (to keep reference equality with the
  *  source-of-truth and avoid cross-thread dup). */
 export function selectThreadMessages(state: ChatState, threadId: string | null): ChatMessage[] {
   if (!threadId) return EMPTY_MESSAGES as ChatMessage[];
-  if (threadId === state.currentThreadId || !state.currentThreadId) {
-    return state.messages ?? (EMPTY_MESSAGES as ChatMessage[]);
-  }
-  return state.threadStates?.[threadId]?.messages ?? (EMPTY_MESSAGES as ChatMessage[]);
+  const raw =
+    threadId === state.currentThreadId || !state.currentThreadId
+      ? (state.messages ?? (EMPTY_MESSAGES as ChatMessage[]))
+      : (state.threadStates?.[threadId]?.messages ?? (EMPTY_MESSAGES as ChatMessage[]));
+  return deduplicateByInvocationId(raw);
 }
 
 /** Pure selector — returns liveness fields for a thread. Defensively
