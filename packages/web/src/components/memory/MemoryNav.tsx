@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
 import { getThreadHref } from '../ThreadSidebar/thread-navigation';
 
-export type MemoryTab = 'feed' | 'search' | 'status';
+export type MemoryTab = 'feed' | 'search' | 'status' | 'health' | 'catalog' | 'graph';
 
 interface MemoryNavProps {
   readonly active: MemoryTab;
