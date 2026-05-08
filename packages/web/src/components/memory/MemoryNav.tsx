@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useChatStore } from '@/stores/chatStore';
-import { getThreadHref } from '../ThreadSidebar/thread-navigation';
 
 export type MemoryTab = 'feed' | 'search' | 'status' | 'health' | 'catalog' | 'graph';
 
@@ -29,8 +28,8 @@ export function resolveReferrerThread(urlSearch: string, storeThreadId: string |
 /**
  * Pure: build back href from referrer thread.
  */
-export function buildBackHref(referrerThread: string | null, prefix = ''): string {
-  return getThreadHref(referrerThread ?? 'default', prefix);
+export function buildBackHref(referrerThread: string | null): string {
+  return referrerThread && referrerThread !== 'default' ? `/thread/${referrerThread}` : '/';
 }
 
 /**

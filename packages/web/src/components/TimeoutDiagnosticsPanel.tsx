@@ -105,7 +105,7 @@ export function TimeoutDiagnosticsPanel({ errorMessage, diagnostics, description
       >
         <CircleXIcon className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--conn-amber-text)' }} />
         <div className="flex flex-col gap-0.5 min-w-0">
-          <span className="text-[13px] font-semibold" style={{ color: 'var(--cafe-text-primary)' }}>
+          <span className="text-[13px] font-semibold" style={{ color: 'var(--cafe-text)' }}>
             {errorMessage}
           </span>
           {description && (
@@ -136,7 +136,7 @@ export function TimeoutDiagnosticsPanel({ errorMessage, diagnostics, description
         <div
           data-testid="diagnostics-panel"
           className="rounded-lg"
-          style={{ backgroundColor: 'var(--cafe-text-primary)', padding: '12px 14px' }}
+          style={{ backgroundColor: '#1E1D1C', padding: '12px 14px' }}
         >
           <div className="flex flex-col gap-1">
             {rows.map((row) => (

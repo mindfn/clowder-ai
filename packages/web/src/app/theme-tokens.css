@@ -19,6 +19,7 @@
   --cafe-accent: var(--cat-paw-pink);
   --cafe-accent-hover: #b55838;
   --cafe-accent-foreground: #fffdfb;
+  --color-cafe-accent: var(--cafe-accent);
   --cafe-crosspost: var(--cat-soft-blue);
   --cafe-interactive: #6f6259;
 
@@ -76,6 +77,7 @@
   --conn-emerald-bg: #d1fae5;
   --conn-emerald-ring: #a7f3d0;
   --conn-emerald-text: #047857;
+  --color-conn-emerald-text: var(--conn-emerald-text);
   --conn-emerald-hover: #064e3b;
   --conn-emerald-bubble-bg: #ecfdf5;
   --conn-emerald-bubble-border: #a7f3d0;
@@ -100,6 +102,7 @@
   --conn-red-bg: #fee2e2;
   --conn-red-ring: #fecaca;
   --conn-red-text: #b91c1c;
+  --color-conn-red-text: var(--conn-red-text);
   --conn-red-hover: #7f1d1d;
   --conn-red-bubble-bg: #fef2f2;
   --conn-red-bubble-border: #fecaca;
