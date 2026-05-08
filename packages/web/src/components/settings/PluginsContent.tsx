@@ -47,9 +47,7 @@ export function resolvePluginStatuses(services: ServiceEntry[], apiReachable: bo
   }
 
   for (const def of SERVICE_PLUGINS) {
-    const matching = services.filter((s) =>
-      s.manifest.enablesFeatures.some((f) => def.featureKeys.includes(f)),
-    );
+    const matching = services.filter((s) => s.manifest.enablesFeatures.some((f) => def.featureKeys.includes(f)));
     if (matching.length === 0) {
       result.push({ ...def, status: 'available', statusLabel: '未连接' });
     } else if (matching.some((s) => s.status === 'running')) {
