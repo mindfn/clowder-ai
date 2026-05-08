@@ -54,6 +54,15 @@ export interface CatData {
   breedDisplayName?: string;
   /** F149: Adapter mode for Google provider cats (ACP vs legacy CLI) */
   adapterMode?: 'acp' | 'cli';
+  voiceConfig?: {
+    voice?: string;
+    langCode?: string;
+    speed?: number;
+    refAudio?: string;
+    refText?: string;
+    instruct?: string;
+    temperature?: number;
+  };
   /** F127: Roster metadata used by Hub ownership/lead markers */
   roster?: {
     family: string;

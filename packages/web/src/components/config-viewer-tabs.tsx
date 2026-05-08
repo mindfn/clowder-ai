@@ -251,3 +251,5 @@ export function CatOverviewTab({
     </div>
   );
 }
+
+export { SystemTab } from './SystemTab';

@@ -29,6 +29,18 @@ export interface CapabilityBoardItem {
   layer?: 'L1' | 'L2' | 'L3';
   ecosystem?: 'claude' | 'codex' | 'openclaw' | 'antigravity';
   lockVersion?: { source: string; version: string; installedAt: string; installedBy: string };
+  mcpServer?: {
+    transport?: 'stdio' | 'streamableHttp';
+    command?: string;
+    args?: string[];
+    url?: string;
+    env?: Record<string, string>;
+    headers?: Record<string, string>;
+    resolver?: string;
+    resolvedCommand?: string;
+    resolvedArgs?: string[];
+    envKeys?: string[];
+  };
 }
 
 export interface CatFamily {
@@ -135,6 +147,7 @@ export function CapabilitySection({
   onToggle: ToggleHandler;
   onDeleteMcp?: (id: string, hard: boolean) => void;
   deletingMcp?: string | null;
+  onEditMcp?: (id: string) => void;
 }) {
   if (items.length === 0) return null;
   return (
