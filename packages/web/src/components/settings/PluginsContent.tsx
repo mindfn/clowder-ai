@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { HubIcon } from '../hub-icons';
-import { GithubConfigPanel } from './GithubConfigPanel';
 import { SettingsPageHeader } from './SettingsPageHeader';
 
 interface ServiceEntry {
@@ -113,7 +112,9 @@ export function PluginsContent() {
                 </span>
               </div>
             </button>
-            {expandedId === plugin.id && plugin.id === 'github' && <GithubConfigPanel />}
+            {expandedId === plugin.id && plugin.id === 'github' && (
+              <div className="px-4 py-3 text-xs text-cafe-muted">GitHub 配置面板（规划中）</div>
+            )}
           </div>
         ))}
       </div>
