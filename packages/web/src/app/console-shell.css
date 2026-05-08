@@ -334,6 +334,29 @@
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--item-accent, var(--cafe-accent)) 30%, transparent);
 }
 
+.session-corner-arcs {
+  position: relative;
+}
+
+.session-corner-arcs::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 2px solid var(--console-card-soft-bg);
+  -webkit-mask-image:
+    radial-gradient(20px 20px at 0% 0%, black 80%, transparent 81%),
+    radial-gradient(20px 20px at 100% 0%, black 80%, transparent 81%),
+    radial-gradient(20px 20px at 0% 100%, black 80%, transparent 81%),
+    radial-gradient(20px 20px at 100% 100%, black 80%, transparent 81%);
+  mask-image:
+    radial-gradient(20px 20px at 0% 0%, black 80%, transparent 81%),
+    radial-gradient(20px 20px at 100% 0%, black 80%, transparent 81%),
+    radial-gradient(20px 20px at 0% 100%, black 80%, transparent 81%),
+    radial-gradient(20px 20px at 100% 100%, black 80%, transparent 81%);
+  pointer-events: none;
+}
+
 .console-inspector-section {
   background: color-mix(in srgb, var(--console-card-bg) 60%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--console-border-soft) 50%, transparent);

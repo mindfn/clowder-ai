@@ -187,8 +187,8 @@ export function ActivityBar({ className }: ActivityBarProps) {
       if (!referrer && typeof window !== 'undefined') {
         referrer = new URLSearchParams(window.location.search).get('from');
       }
-      if (referrer && path === '/') {
-        router.push(`/thread/${encodeURIComponent(referrer)}`);
+      if (path === '/') {
+        router.push('/');
       } else if (referrer) {
         const sep = path.includes('?') ? '&' : '?';
         router.push(`${path}${sep}from=${encodeURIComponent(referrer)}`);
