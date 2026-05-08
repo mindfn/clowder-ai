@@ -9,7 +9,6 @@ import {
   settingsResourceCardClass,
   settingsResourceRowClass,
 } from '../SettingsResourceCard';
-import { GithubConfigPanel } from './GithubConfigPanel';
 
 interface PluginDef {
   id: string;
@@ -146,7 +145,9 @@ export function PluginsContent() {
                 </div>
               </button>
             )}
-            {isExpanded && plugin.id === 'github' && <GithubConfigPanel />}
+            {isExpanded && plugin.id === 'github' && (
+              <div className="px-4 py-3 text-xs text-cafe-muted">GitHub 配置面板（规划中）</div>
+            )}
           </article>
         );
       })}
