@@ -1,6 +1,6 @@
 'use client';
 
-import type { SignalArticle, SignalArticleStatus } from '@cat-cafe/shared';
+import type { SignalArticle, SignalArticleStatus, SignalTier } from '@cat-cafe/shared';
 import { useSearchParams } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useIMEGuard } from '@/hooks/useIMEGuard';
@@ -31,6 +31,13 @@ const initialFilters: SignalArticleFilters = {
 
 function uniqueSources(items: readonly SignalArticle[]): readonly string[] {
   return Array.from(new Set(items.map((item) => item.source))).sort();
+}
+
+function toSignalTier(value: string | undefined): SignalTier | undefined {
+  if (!value || value === 'all') return undefined;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 4) return undefined;
+  return parsed as SignalTier;
 }
 
 export function SignalInboxView({ initialReferrerThread = null }: { initialReferrerThread?: string | null }) {
@@ -156,6 +163,7 @@ export function SignalInboxView({ initialReferrerThread = null }: { initialRefer
       }
       const formData = new FormData(event.currentTarget);
       const selectedSource = formData.get('source');
+      const selectedTier = formData.get('tier');
       const statusForSearch = filters.status === 'all' ? undefined : (filters.status as SignalArticleStatus);
 
       setLoading(true);
@@ -164,7 +172,7 @@ export function SignalInboxView({ initialReferrerThread = null }: { initialRefer
           limit: 80,
           status: statusForSearch,
           source: typeof selectedSource === 'string' && selectedSource !== 'all' ? selectedSource : undefined,
-          tier: undefined,
+          tier: typeof selectedTier === 'string' ? toSignalTier(selectedTier) : undefined,
         });
         setItems(result.items);
         setShowServerSearchResults(true);
