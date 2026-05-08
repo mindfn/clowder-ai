@@ -1173,7 +1173,6 @@ function StandaloneMemberEditor() {
       existingCats={cats}
       onClose={closeMemberEditor}
       onSaved={handleSaved}
-      hideDelete
     />
   );
 }
