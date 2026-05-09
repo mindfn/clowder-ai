@@ -15,6 +15,8 @@ const SIDEBAR_HIDDEN_ROUTES = ['/settings', '/signals', '/memory', '/mission'];
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname() ?? '/';
+  // useSearchParams() breaks SSG — wrapping in Suspense doesn't help because
+  // Next.js static export bails on any page that transitively uses it.
   const [isExport, setIsExport] = useState(false);
   useEffect(() => {
     setIsExport(new URLSearchParams(window.location.search).get('export') === 'true');

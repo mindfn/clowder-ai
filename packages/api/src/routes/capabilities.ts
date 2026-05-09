@@ -144,6 +144,7 @@ const SECRET_FLAG_EXACT = new Set([
 ]);
 const SECRET_FLAG_CONTAINS = /secret|token|password|auth|credential|\bkey\b|\bheader\b/i;
 const SECRET_VALUE_PATTERN = /^(sk-|ghp_|gho_|ghu_|xoxb-|xoxp-)|Bearer\s|^Authorization:/i;
+const SECRET_VALUE_EMBEDDED = /(?:^|[;,\s])(sk-|ghp_|gho_|ghu_|xoxb-|xoxp-)/i;
 const ENV_LIKE_SECRET = /^[A-Z][A-Z0-9_]*(SECRET|TOKEN|PASSWORD|KEY|AUTH|CREDENTIAL)[A-Z0-9_]*=.+/;
 const NESTED_SECRET_KEY = /secret|token|password|auth|credential|key/i;
 
@@ -189,6 +190,10 @@ export function sanitizeArgsForDisplay(args: string[]): string[] {
           result.push(`${arg.slice(0, eqIdx + 1 + nestedEq + 1)}••••••`);
           continue;
         }
+      }
+      if (SECRET_VALUE_EMBEDDED.test(valuePart)) {
+        result.push(`${arg.slice(0, eqIdx + 1)}••••••`);
+        continue;
       }
     }
     if (eqIdx < 0 && isSecretFlag(arg)) {
