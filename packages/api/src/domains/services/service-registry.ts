@@ -140,9 +140,18 @@ const KNOWN_SERVICES: ServiceManifest[] = [
       estimatedMinutes: 30,
     },
     scripts: {
-      install: { unix: 'scripts/services/llm-postprocess-install.sh', windows: 'scripts/services/llm-postprocess-install.ps1' },
-      start: { unix: 'scripts/services/llm-postprocess-server.sh', windows: 'scripts/services/llm-postprocess-server.ps1' },
-      uninstall: { unix: 'scripts/services/llm-postprocess-uninstall.sh', windows: 'scripts/services/llm-postprocess-uninstall.ps1' },
+      install: {
+        unix: 'scripts/services/llm-postprocess-install.sh',
+        windows: 'scripts/services/llm-postprocess-install.ps1',
+      },
+      start: {
+        unix: 'scripts/services/llm-postprocess-server.sh',
+        windows: 'scripts/services/llm-postprocess-server.ps1',
+      },
+      uninstall: {
+        unix: 'scripts/services/llm-postprocess-uninstall.sh',
+        windows: 'scripts/services/llm-postprocess-uninstall.ps1',
+      },
     },
     enablesFeatures: ['voice-postprocess'],
     configVars: ['NEXT_PUBLIC_LLM_POSTPROCESS_URL'],
