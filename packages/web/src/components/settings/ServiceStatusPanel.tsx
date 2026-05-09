@@ -194,12 +194,13 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
       id: string,
       action: 'start' | 'stop' | 'install' | 'uninstall',
       opts?: { model?: string; name?: string },
-    ) => {
+    ): Promise<boolean> => {
       const displayName = opts?.name ?? id;
       const key = `${id}:${action}`;
       setActing((prev) => new Set(prev).add(key));
       const longRunning = action === 'install' || action === 'uninstall';
       if (longRunning) startLogPoll(id);
+      let ok = false;
       try {
         const fetchOpts: RequestInit = { method: 'POST' };
         if (opts?.model) {
@@ -207,6 +208,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
           fetchOpts.body = JSON.stringify({ model: opts.model });
         }
         const res = await apiFetch(`/api/services/${id}/${action}`, fetchOpts);
+        ok = res.ok;
         if (!res.ok && (action === 'start' || action === 'install')) {
           const body = (await res.json().catch(() => ({}))) as { error?: string; output?: string };
           const detail = body.output?.trim().split('\n').filter(Boolean).pop();
@@ -231,6 +233,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
           return next;
         });
       }
+      return ok;
     },
     [addToast, fetchServices, pollStartStatus, pollStopStatus, startLogPoll, stopLogPoll],
   );
@@ -362,12 +365,15 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
             const id = installPreview.id;
             const name = installPreview.name;
             setInstallPreview(null);
-            await apiFetch(`/api/services/${id}/toggle`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ enabled: true, model: selectedModel }),
-            });
-            await handleAction(id, 'install', { model: selectedModel, name });
+            const ok = await handleAction(id, 'install', { model: selectedModel, name });
+            if (ok) {
+              await apiFetch(`/api/services/${id}/toggle`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: true, model: selectedModel }),
+              });
+              await fetchServices();
+            }
           }}
           onCancel={() => setInstallPreview(null)}
         />
