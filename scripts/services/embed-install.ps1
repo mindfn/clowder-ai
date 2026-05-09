@@ -41,7 +41,7 @@ $ErrorActionPreference = $prevEAP
 
 if ($feResult -ne 0) {
     Write-Host "  fastembed full install failed (missing build tools?), installing without source builds..."
-    & $VenvPython -m pip install --progress-bar on onnxruntime tokenizers numpy tqdm requests huggingface_hub Pillow mmh3 fastapi uvicorn
+    & $VenvPython -m pip install --progress-bar on onnxruntime tokenizers numpy tqdm requests huggingface_hub Pillow mmh3 loguru pydantic typer fastapi uvicorn
     if ($LASTEXITCODE -ne 0) { throw "Failed to install embedding core dependencies" }
     & $VenvPython -m pip install --progress-bar on --no-deps fastembed
     if ($LASTEXITCODE -ne 0) { throw "Failed to install fastembed" }
