@@ -246,6 +246,11 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         return { error: platformErr };
       }
 
+      const current = await getServiceState(manifest);
+      if (current.status === 'installing') {
+        return { ok: true, message: `${manifest.name} is already installing` };
+      }
+
       const scriptPath = resolveScriptPath(manifest.scripts.install);
       if (!existsSync(scriptPath)) {
         reply.status(400);
