@@ -30,15 +30,15 @@ if (-not (Test-Path $VenvPython)) {
     if ($LASTEXITCODE -ne 0) { throw "Failed to create embed venv" }
 }
 
-& $VenvPython -m pip install --quiet -U pip
+& $VenvPython -m pip install --progress-bar on -U pip
 if ($LASTEXITCODE -ne 0) { throw "Failed to upgrade pip in embed-venv" }
 
 Write-Host "  Installing PyTorch (CPU) ..."
-& $VenvPython -m pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+& $VenvPython -m pip install --progress-bar on torch --index-url https://download.pytorch.org/whl/cpu
 if ($LASTEXITCODE -ne 0) { throw "Failed to install PyTorch" }
 
 Write-Host "  Installing dependencies: sentence-transformers fastapi uvicorn numpy huggingface_hub ..."
-& $VenvPython -m pip install --quiet sentence-transformers fastapi uvicorn numpy huggingface_hub
+& $VenvPython -m pip install --progress-bar on sentence-transformers fastapi uvicorn numpy huggingface_hub
 if ($LASTEXITCODE -ne 0) { throw "Failed to install embedding dependencies" }
 
 $Model = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ" }
