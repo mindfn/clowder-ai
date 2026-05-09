@@ -230,6 +230,12 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       if (!manifest.scripts.install) {
         return { ok: true, message: `${manifest.name} has no install script (dependencies managed externally)` };
       }
+
+      if (body.model && !isValidModelId(body.model)) {
+        reply.status(400);
+        return { error: 'Invalid model ID format (expected: org/model-name)' };
+      }
+
       const platformErr = checkPlatformSupport(manifest);
       if (platformErr) {
         reply.status(422);
@@ -244,10 +250,6 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
       const env: Record<string, string> = { ...process.env } as Record<string, string>;
       if (body.model) {
-        if (!isValidModelId(body.model)) {
-          reply.status(400);
-          return { error: 'Invalid model ID format (expected: org/model-name)' };
-        }
         const envKey = MODEL_ENV_VARS[id];
         if (envKey) env[envKey] = body.model;
       }
