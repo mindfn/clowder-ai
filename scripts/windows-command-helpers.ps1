@@ -175,5 +175,8 @@ function Invoke-ToolCommand {
     param([string]$Name, [string[]]$CommandArgs)
     $toolCommand = Resolve-ToolCommand -Name $Name
     if (-not $toolCommand) { throw "$Name command not found" }
-    & $toolCommand @CommandArgs
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try { & $toolCommand @CommandArgs }
+    finally { $ErrorActionPreference = $prevEAP }
 }
