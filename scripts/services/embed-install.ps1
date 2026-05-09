@@ -34,7 +34,7 @@ if (-not (Test-Path $VenvPython)) {
 if ($LASTEXITCODE -ne 0) { throw "Failed to upgrade pip in embed-venv" }
 
 Write-Host "  Installing PyTorch (CPU) ..."
-& $VenvPython -m pip install --progress-bar on torch --index-url https://download.pytorch.org/whl/cpu
+& $VenvPython -m pip install --progress-bar on torch --extra-index-url https://download.pytorch.org/whl/cpu
 if ($LASTEXITCODE -ne 0) { throw "Failed to install PyTorch" }
 
 Write-Host "  Installing dependencies: sentence-transformers fastapi uvicorn numpy huggingface_hub ..."

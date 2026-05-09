@@ -107,18 +107,38 @@ function Assert-DiskSpace {
     Write-Host "  Disk space: ${freeGB}GB available [OK]"
 }
 
-function Assert-Network {
-    $timeout = 5000
-    try {
-        $r = Invoke-WebRequest -Uri "https://pypi.org/simple/" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
-        Write-Host "  PyPI connectivity [OK]"
-    } catch {
-        Write-Warning "Cannot reach PyPI (https://pypi.org) — pip install may fail. Set PIP_INDEX_URL for mirror."
+function Sync-SystemProxy {
+    if ($env:HTTP_PROXY -or $env:HTTPS_PROXY) {
+        Write-Host "  Proxy env already set [OK]"
+        return
     }
     try {
-        $r = Invoke-WebRequest -Uri "https://huggingface.co" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+        $reg = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
+        if ($reg.ProxyEnable -and $reg.ProxyServer) {
+            $proxy = "http://$($reg.ProxyServer)"
+            $env:HTTP_PROXY = $proxy
+            $env:HTTPS_PROXY = $proxy
+            Write-Host "  System proxy detected: $proxy [OK]"
+        }
+    } catch {}
+}
+
+function Assert-Network {
+    Sync-SystemProxy
+
+    try {
+        $null = Invoke-WebRequest -Uri "https://pypi.org/simple/" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+        Write-Host "  PyPI connectivity [OK]"
+    } catch {
+        Write-Host "  PyPI unreachable, switching to Tsinghua mirror"
+        $env:PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+        $env:PIP_TRUSTED_HOST = "pypi.tuna.tsinghua.edu.cn"
+    }
+    try {
+        $null = Invoke-WebRequest -Uri "https://huggingface.co" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
         Write-Host "  HuggingFace connectivity [OK]"
     } catch {
-        Write-Warning "Cannot reach HuggingFace (https://huggingface.co) — model download may fail. Set HF_ENDPOINT for mirror."
+        Write-Host "  HuggingFace unreachable, switching to hf-mirror.com"
+        $env:HF_ENDPOINT = "https://hf-mirror.com"
     }
 }
