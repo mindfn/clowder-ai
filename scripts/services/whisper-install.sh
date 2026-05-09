@@ -13,9 +13,12 @@ VENV_DIR="${HOME}/.cat-cafe/whisper-venv"
 
 if [ ! -d "$VENV_DIR" ]; then
   echo "  创建 venv: $VENV_DIR ..."
-  python3 -m venv "$VENV_DIR"
+  python3 -m venv "$VENV_DIR" || { echo "ERROR: venv 创建失败" >&2; exit 1; }
 fi
 source "$VENV_DIR/bin/activate"
+
+echo "  升级 pip ..."
+pip install --quiet -U pip
 
 if ! command -v ffmpeg &>/dev/null; then
   echo "ERROR: ffmpeg 未安装，Whisper ASR 需要 ffmpeg。"

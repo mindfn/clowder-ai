@@ -151,20 +151,50 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
           fetchOpts.body = JSON.stringify({ model: opts.model });
         }
         const res = await apiFetch(`/api/services/${id}/${action}`, fetchOpts);
+        if (!res.ok && (action === 'start' || action === 'install')) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          const svc = services.find((sv) => sv.manifest.id === id);
+          addToast({
+            type: 'error',
+            title: `${svc?.manifest.name ?? id} ${action === 'start' ? '启动' : '安装'}失败`,
+            message: body.error ?? `HTTP ${res.status}`,
+            duration: 8000,
+          });
+        }
         await fetchServices();
         if (res.ok && action === 'start') {
           startLogPoll(id);
           const maxWait = 120_000;
           const deadline = Date.now() + maxWait;
+          let finalStatus = '';
           while (Date.now() < deadline) {
             await new Promise((r) => setTimeout(r, 2000));
             await fetchServices();
             const healthRes = await apiFetch(`/api/services/${id}/health`);
             if (healthRes.ok) {
-              const state = (await healthRes.json()) as { status: string };
+              const state = (await healthRes.json()) as { status: string; error?: string };
+              finalStatus = state.status;
               if (state.status === 'running') break;
-              if (state.status === 'error') break;
+              if (state.status === 'error') {
+                const svc = services.find((sv) => sv.manifest.id === id);
+                addToast({
+                  type: 'error',
+                  title: `${svc?.manifest.name ?? id} 启动失败`,
+                  message: state.error ?? '服务异常，请查看日志',
+                  duration: 8000,
+                });
+                break;
+              }
             }
+          }
+          if (!finalStatus || (finalStatus !== 'running' && finalStatus !== 'error')) {
+            const svc = services.find((sv) => sv.manifest.id === id);
+            addToast({
+              type: 'error',
+              title: `${svc?.manifest.name ?? id} 启动超时`,
+              message: '服务未能在预期时间内启动，请检查日志',
+              duration: 8000,
+            });
           }
           stopLogPoll(id);
         }

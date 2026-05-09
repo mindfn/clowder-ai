@@ -183,11 +183,34 @@ export function resolveHealthUrl(manifest: ServiceManifest): string | null {
   return `${endpoint}${manifest.healthEndpoint}`;
 }
 
+async function probePort(port: number): Promise<boolean> {
+  const { createConnection } = await import('node:net');
+  return new Promise((res) => {
+    const sock = createConnection({ port, host: '127.0.0.1', timeout: 2000 });
+    sock.on('connect', () => {
+      sock.destroy();
+      res(true);
+    });
+    sock.on('error', () => res(false));
+    sock.on('timeout', () => {
+      sock.destroy();
+      res(false);
+    });
+  });
+}
+
 async function probeHealth(
   manifest: ServiceManifest,
 ): Promise<{ status: ServiceStatus; detail?: Record<string, unknown>; error?: string }> {
   const url = resolveHealthUrl(manifest);
-  if (!url) return { status: 'unknown' };
+  if (!url) {
+    const port = resolveServicePort(manifest);
+    if (port) {
+      const listening = await probePort(port);
+      return { status: listening ? 'running' : 'stopped' };
+    }
+    return { status: 'unknown' };
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 3000);

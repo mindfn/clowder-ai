@@ -13,9 +13,12 @@ VENV_DIR="${HOME}/.cat-cafe/llm-venv"
 
 if [ ! -d "$VENV_DIR" ]; then
   echo "  创建 venv: $VENV_DIR ..."
-  python3 -m venv "$VENV_DIR"
+  python3 -m venv "$VENV_DIR" || { echo "ERROR: venv 创建失败" >&2; exit 1; }
 fi
 source "$VENV_DIR/bin/activate"
+
+echo "  升级 pip ..."
+pip install --quiet -U pip
 
 echo "  安装依赖: mlx-vlm fastapi uvicorn pydantic ..."
 pip install --quiet mlx-vlm "httpx[socks]" torchvision fastapi uvicorn pydantic huggingface_hub
