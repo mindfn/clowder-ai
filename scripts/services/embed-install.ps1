@@ -33,18 +33,14 @@ if (-not (Test-Path $VenvPython)) {
 & $VenvPython -m pip install --progress-bar on -U pip
 if ($LASTEXITCODE -ne 0) { throw "Failed to upgrade pip in embed-venv" }
 
-Write-Host "  Installing dependencies: fastembed fastapi uvicorn numpy huggingface_hub ..."
-$prevEAP = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-& $VenvPython -m pip install --progress-bar on fastembed fastapi uvicorn numpy huggingface_hub 2>&1
-$feResult = $LASTEXITCODE
-$ErrorActionPreference = $prevEAP
-
-if ($feResult -ne 0) {
-    Write-Host "  fastembed install failed (py-rust-stemmers needs build tools), creating stub and retrying..."
-    # Create a proper stub package so pip sees py-rust-stemmers as already installed
-    $sitePackages = Join-Path $VenvDir "Lib\site-packages"
-    $stubDir = Join-Path $sitePackages "py_rust_stemmers"
-    $distInfo = Join-Path $sitePackages "py_rust_stemmers-0.1.0.dist-info"
+# Pre-create py-rust-stemmers stub: it needs Rust+MSVC to compile from source,
+# but is only used for sparse/BM25 retrieval — our dense embeddings don't need it.
+# By registering a stub with dist-info, pip sees it as installed and skips the build.
+$sitePackages = Join-Path $VenvDir "Lib\site-packages"
+$stubDir = Join-Path $sitePackages "py_rust_stemmers"
+$distInfo = Join-Path $sitePackages "py_rust_stemmers-0.1.0.dist-info"
+if (-not (Test-Path $stubDir)) {
+    Write-Host "  Creating py-rust-stemmers stub (avoids Rust/MSVC build requirement)..."
     New-Item -ItemType Directory -Path $stubDir -Force | Out-Null
     New-Item -ItemType Directory -Path $distInfo -Force | Out-Null
     $stubCode = "class Stemmer:`n    def __init__(self, *a, **kw): pass`n    def stem_word(self, w): return w`n    def stem_words(self, ws): return list(ws)"
@@ -52,11 +48,11 @@ if ($feResult -ne 0) {
     Set-Content -Path (Join-Path $distInfo "METADATA") -Value "Metadata-Version: 2.1`nName: py-rust-stemmers`nVersion: 0.1.0"
     Set-Content -Path (Join-Path $distInfo "INSTALLER") -Value "pip"
     Set-Content -Path (Join-Path $distInfo "RECORD") -Value ""
-    # Now pip will skip py-rust-stemmers (already "installed") and resolve all other deps normally
-    & $VenvPython -m pip install --progress-bar on fastembed fastapi uvicorn numpy huggingface_hub
-    if ($LASTEXITCODE -ne 0) { throw "Failed to install embedding dependencies" }
-    Write-Host "  Installed fastembed with py-rust-stemmers stub (dense embeddings only)"
 }
+
+Write-Host "  Installing dependencies: fastembed fastapi uvicorn numpy huggingface_hub ..."
+& $VenvPython -m pip install --progress-bar on fastembed fastapi uvicorn numpy huggingface_hub
+if ($LASTEXITCODE -ne 0) { throw "Failed to install embedding dependencies" }
 
 $hasCuda = $false
 try {
