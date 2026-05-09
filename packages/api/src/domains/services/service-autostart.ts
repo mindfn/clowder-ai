@@ -1,12 +1,9 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { getAllServiceConfigs } from './service-config.js';
+import { resolveScriptPath, resolveSpawnCommand } from './service-logs.js';
 import { MODEL_ENV_VARS } from './service-manifest.js';
 import { checkInstalled, getKnownServices, getServiceState } from './service-registry.js';
-
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../..');
 
 interface Logger {
   info: (msg: string, ...args: unknown[]) => void;
@@ -28,6 +25,10 @@ export async function autoStartEnabledServices(log: Logger): Promise<void> {
   for (const manifest of enabled) {
     const cfg = configs[manifest.id]!;
     if (!manifest.scripts.start) continue;
+    if (manifest.supportedPlatforms && !manifest.supportedPlatforms.includes(process.platform as 'darwin' | 'linux' | 'win32')) {
+      log.info('[services] ⊘ %s — not supported on %s', manifest.name, process.platform);
+      continue;
+    }
     if (!checkInstalled(manifest)) {
       log.warn('[services] ✗ %s — enabled but not installed (run install from Settings)', manifest.name);
       continue;
@@ -39,9 +40,9 @@ export async function autoStartEnabledServices(log: Logger): Promise<void> {
       continue;
     }
 
-    const scriptPath = resolve(REPO_ROOT, manifest.scripts.start);
+    const scriptPath = resolveScriptPath(manifest.scripts.start);
     if (!existsSync(scriptPath)) {
-      log.warn('[services] ✗ %s — start script not found: %s', manifest.name, manifest.scripts.start);
+      log.warn('[services] ✗ %s — start script not found: %s', manifest.name, scriptPath);
       continue;
     }
 
@@ -53,7 +54,8 @@ export async function autoStartEnabledServices(log: Logger): Promise<void> {
 
     log.info('[services] ⟳ %s — starting (port %s)...', manifest.name, manifest.port ?? '?');
     try {
-      const child = spawn('bash', [scriptPath], {
+      const { command, args } = resolveSpawnCommand(manifest.scripts.start);
+      const child = spawn(command, args, {
         detached: true,
         stdio: 'ignore',
         env,

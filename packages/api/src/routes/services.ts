@@ -30,6 +30,13 @@ function checkServiceOwner(request: Parameters<typeof resolveUserId>[0]): { stat
   return null;
 }
 
+function checkPlatformSupport(manifest: { supportedPlatforms?: string[]; name: string }): string | null {
+  if (!manifest.supportedPlatforms) return null;
+  if (manifest.supportedPlatforms.includes(process.platform)) return null;
+  const supported = manifest.supportedPlatforms.join(', ');
+  return `${manifest.name} requires ${supported} (current: ${process.platform}). MLX-based services are Apple Silicon only.`;
+}
+
 export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.get('/api/services', async () => {
     const states = await getAllServiceStates();
@@ -75,6 +82,11 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     if (!manifest.scripts.start) {
       reply.status(400);
       return { error: `Service "${id}" has no start script` };
+    }
+    const platformErr = checkPlatformSupport(manifest);
+    if (platformErr) {
+      reply.status(422);
+      return { error: platformErr };
     }
 
     const current = await getServiceState(manifest);
@@ -217,6 +229,11 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       }
       if (!manifest.scripts.install) {
         return { ok: true, message: `${manifest.name} has no install script (dependencies managed externally)` };
+      }
+      const platformErr = checkPlatformSupport(manifest);
+      if (platformErr) {
+        reply.status(422);
+        return { error: platformErr };
       }
 
       const scriptPath = resolveScriptPath(manifest.scripts.install);

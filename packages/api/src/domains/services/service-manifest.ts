@@ -2,6 +2,7 @@ export interface ServiceManifest {
   id: string;
   name: string;
   type: 'python' | 'node' | 'binary';
+  supportedPlatforms?: ('darwin' | 'linux' | 'win32')[];
   port?: number;
   healthEndpoint?: string;
 

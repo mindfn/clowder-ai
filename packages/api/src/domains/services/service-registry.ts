@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { getServiceConfig, setServiceConfig } from './service-config.js';
+import { resolveScriptPath } from './service-logs.js';
 import type { ServiceManifest, ServiceState, ServiceStatus } from './service-manifest.js';
 
 const KNOWN_SERVICES: ServiceManifest[] = [
@@ -10,6 +11,7 @@ const KNOWN_SERVICES: ServiceManifest[] = [
     id: 'whisper-stt',
     name: 'Whisper 语音转写',
     type: 'python',
+    supportedPlatforms: ['darwin'],
     port: 9876,
     healthEndpoint: '/health',
     prerequisites: {
@@ -40,9 +42,9 @@ const KNOWN_SERVICES: ServiceManifest[] = [
       estimatedMinutes: 5,
     },
     scripts: {
-      install: { unix: 'scripts/services/whisper-install.sh', windows: 'scripts/services/whisper-install.ps1' },
-      start: { unix: 'scripts/services/whisper-server.sh', windows: 'scripts/services/whisper-server.ps1' },
-      uninstall: { unix: 'scripts/services/whisper-uninstall.sh', windows: 'scripts/services/whisper-uninstall.ps1' },
+      install: 'scripts/services/whisper-install.sh',
+      start: 'scripts/services/whisper-server.sh',
+      uninstall: 'scripts/services/whisper-uninstall.sh',
     },
     enablesFeatures: ['voice-input', 'connector-stt'],
     configVars: ['WHISPER_URL', 'NEXT_PUBLIC_WHISPER_URL'],
@@ -51,6 +53,7 @@ const KNOWN_SERVICES: ServiceManifest[] = [
     id: 'mlx-tts',
     name: 'MLX-Audio 语音合成',
     type: 'python',
+    supportedPlatforms: ['darwin'],
     port: 9879,
     healthEndpoint: '/health',
     prerequisites: {
@@ -69,9 +72,9 @@ const KNOWN_SERVICES: ServiceManifest[] = [
       estimatedMinutes: 3,
     },
     scripts: {
-      install: { unix: 'scripts/services/tts-install.sh', windows: 'scripts/services/tts-install.ps1' },
-      start: { unix: 'scripts/services/tts-server.sh', windows: 'scripts/services/tts-server.ps1' },
-      uninstall: { unix: 'scripts/services/tts-uninstall.sh', windows: 'scripts/services/tts-uninstall.ps1' },
+      install: 'scripts/services/tts-install.sh',
+      start: 'scripts/services/tts-server.sh',
+      uninstall: 'scripts/services/tts-uninstall.sh',
     },
     enablesFeatures: ['voice-output', 'voice-companion'],
     configVars: ['TTS_URL'],
@@ -109,6 +112,7 @@ const KNOWN_SERVICES: ServiceManifest[] = [
     id: 'llm-postprocess',
     name: 'LLM 转写纠正',
     type: 'python',
+    supportedPlatforms: ['darwin'],
     port: 9878,
     healthEndpoint: '/health',
     prerequisites: {
@@ -139,9 +143,9 @@ const KNOWN_SERVICES: ServiceManifest[] = [
       estimatedMinutes: 30,
     },
     scripts: {
-      install: { unix: 'scripts/services/llm-postprocess-install.sh', windows: 'scripts/services/llm-postprocess-install.ps1' },
-      start: { unix: 'scripts/services/llm-postprocess-server.sh', windows: 'scripts/services/llm-postprocess-server.ps1' },
-      uninstall: { unix: 'scripts/services/llm-postprocess-uninstall.sh', windows: 'scripts/services/llm-postprocess-uninstall.ps1' },
+      install: 'scripts/services/llm-postprocess-install.sh',
+      start: 'scripts/services/llm-postprocess-server.sh',
+      uninstall: 'scripts/services/llm-postprocess-uninstall.sh',
     },
     enablesFeatures: ['voice-postprocess'],
     configVars: ['NEXT_PUBLIC_LLM_POSTPROCESS_URL'],
@@ -222,18 +226,12 @@ export function checkInstalled(manifest: ServiceManifest): boolean {
   return existsSync(resolveVenvPath(venv));
 }
 
-function resolveScriptString(script: string | { unix: string; windows: string } | undefined): string | undefined {
-  if (!script) return undefined;
-  if (typeof script === 'string') return script;
-  return process.platform === 'win32' ? script.windows : script.unix;
-}
-
 function isScriptRunning(script: string | { unix: string; windows: string } | undefined): boolean {
-  const scriptPath = resolveScriptString(script);
-  if (!scriptPath) return false;
+  if (!script) return false;
+  const absolutePath = resolveScriptPath(script);
   if (process.platform === 'win32') {
     try {
-      const escaped = scriptPath.replace(/'/g, "''");
+      const escaped = absolutePath.replace(/'/g, "''").replace(/\\/g, '\\\\');
       const out = execSync(
         `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"CommandLine like '%${escaped}%'\\" | Select-Object -ExpandProperty ProcessId"`,
         { encoding: 'utf-8', timeout: 5000 },
@@ -244,7 +242,7 @@ function isScriptRunning(script: string | { unix: string; windows: string } | un
     }
   }
   try {
-    const out = execSync(`pgrep -f "${scriptPath}"`, { encoding: 'utf-8', timeout: 2000 });
+    const out = execSync(`pgrep -f "${absolutePath}"`, { encoding: 'utf-8', timeout: 2000 });
     return out.trim().length > 0;
   } catch {
     return false;
