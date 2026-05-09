@@ -19,6 +19,7 @@ if (-not (Test-Path $VenvPython)) {
     throw "Venv not found: $VenvDir. Run tts-install.ps1 first."
 }
 
-$env:TTS_PROVIDER = "edge-tts"
-Write-Host "Starting TTS server: provider=edge-tts, port=$Port"
+$Provider = if ($env:TTS_MODEL -and $env:TTS_MODEL -in @("edge-tts", "sapi")) { $env:TTS_MODEL } else { "edge-tts" }
+$env:TTS_PROVIDER = $Provider
+Write-Host "Starting TTS server: provider=$Provider, port=$Port"
 & $VenvPython $ApiScript --port $Port
