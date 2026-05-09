@@ -34,8 +34,24 @@ if (-not (Test-Path $VenvPython)) {
 if ($LASTEXITCODE -ne 0) { throw "Failed to upgrade pip in embed-venv" }
 
 Write-Host "  Installing dependencies: fastembed fastapi uvicorn numpy huggingface_hub ..."
-& $VenvPython -m pip install --progress-bar on fastembed fastapi uvicorn numpy huggingface_hub
-if ($LASTEXITCODE -ne 0) { throw "Failed to install embedding dependencies" }
+$prevEAP = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+& $VenvPython -m pip install --progress-bar on fastembed fastapi uvicorn numpy huggingface_hub 2>&1
+$feResult = $LASTEXITCODE
+$ErrorActionPreference = $prevEAP
+
+if ($feResult -ne 0) {
+    Write-Host "  fastembed full install failed (missing build tools?), installing without source builds..."
+    & $VenvPython -m pip install --progress-bar on onnxruntime tokenizers numpy tqdm requests huggingface_hub Pillow mmh3 fastapi uvicorn
+    if ($LASTEXITCODE -ne 0) { throw "Failed to install embedding core dependencies" }
+    & $VenvPython -m pip install --progress-bar on --no-deps fastembed
+    if ($LASTEXITCODE -ne 0) { throw "Failed to install fastembed" }
+    # Create stub for py-rust-stemmers (only used for sparse retrieval, not dense embeddings)
+    $stubDir = Join-Path $VenvDir "Lib\site-packages\py_rust_stemmers"
+    New-Item -ItemType Directory -Path $stubDir -Force | Out-Null
+    $stubCode = "class Stemmer:`n    def __init__(self, *a, **kw): pass`n    def stem_word(self, w): return w`n    def stem_words(self, ws): return list(ws)"
+    Set-Content -Path (Join-Path $stubDir "__init__.py") -Value $stubCode
+    Write-Host "  Installed fastembed without py-rust-stemmers (dense embeddings only)"
+}
 
 $hasCuda = $false
 try {
