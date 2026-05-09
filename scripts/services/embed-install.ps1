@@ -3,11 +3,11 @@
   Install dependencies for Embedding service on Windows.
 
 .DESCRIPTION
-  Creates ~/.cat-cafe/embed-venv, installs sentence-transformers + torch deps,
-  and pre-downloads the embedding model from HuggingFace.
+  Creates ~/.cat-cafe/embed-venv, installs fastembed (ONNX Runtime based,
+  lightweight alternative to torch+sentence-transformers for Windows).
 
   Env vars:
-  - EMBED_MODEL  (default: mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ)
+  - EMBED_ONNX_MODEL  (default: BAAI/bge-small-zh-v1.5)
 #>
 
 $ErrorActionPreference = "Stop"
@@ -18,7 +18,7 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 
 $BootstrapPython = Resolve-BootstrapPython
 Assert-Python310 -Bootstrap $BootstrapPython
-Assert-DiskSpace -RequiredGB 3
+Assert-DiskSpace -RequiredGB 2
 Assert-Network
 
 $VenvDir = Join-Path $HOME ".cat-cafe\embed-venv"
@@ -33,17 +33,13 @@ if (-not (Test-Path $VenvPython)) {
 & $VenvPython -m pip install --progress-bar on -U pip
 if ($LASTEXITCODE -ne 0) { throw "Failed to upgrade pip in embed-venv" }
 
-Write-Host "  Installing PyTorch (CPU) ..."
-& $VenvPython -m pip install --progress-bar on torch --extra-index-url https://download.pytorch.org/whl/cpu
-if ($LASTEXITCODE -ne 0) { throw "Failed to install PyTorch" }
-
-Write-Host "  Installing dependencies: sentence-transformers fastapi uvicorn numpy huggingface_hub ..."
-& $VenvPython -m pip install --progress-bar on sentence-transformers fastapi uvicorn numpy huggingface_hub
+Write-Host "  Installing dependencies: fastembed fastapi uvicorn numpy huggingface_hub ..."
+& $VenvPython -m pip install --progress-bar on fastembed fastapi uvicorn numpy huggingface_hub
 if ($LASTEXITCODE -ne 0) { throw "Failed to install embedding dependencies" }
 
-$Model = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ" }
-Write-Host "  Pre-downloading model: $Model ..."
-& $VenvPython -c "from huggingface_hub import snapshot_download; snapshot_download('$Model')"
-if ($LASTEXITCODE -ne 0) { throw "Failed to download model: $Model" }
+$OnnxModel = if ($env:EMBED_ONNX_MODEL) { $env:EMBED_ONNX_MODEL } else { "BAAI/bge-small-zh-v1.5" }
+Write-Host "  Pre-downloading ONNX model: $OnnxModel ..."
+& $VenvPython -c "from fastembed import TextEmbedding; TextEmbedding(model_name='$OnnxModel')"
+if ($LASTEXITCODE -ne 0) { throw "Failed to download model: $OnnxModel" }
 
 Write-Host "Installation complete."

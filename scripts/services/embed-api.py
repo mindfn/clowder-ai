@@ -76,7 +76,11 @@ _embed_lock = asyncio.Lock()
 MAX_BATCH_SIZE = 64
 MAX_TEXT_LENGTH = 8192
 
-# Fallback: if mlx-embeddings not available, use sentence-transformers + MPS
+# Lightweight fallback: fastembed (ONNX Runtime, no torch needed)
+_use_fastembed = False
+_fe_model = None
+
+# Heavy fallback: sentence-transformers + MPS/CUDA/CPU (needs torch)
 _use_fallback = False
 _st_model = None
 
@@ -141,7 +145,7 @@ async def health():
         "status": "ok" if model_loaded else "loading",
         "model": model_name or "none",
         "backend": _backend,
-        "device": "mlx" if not _use_fallback else "mps",
+        "device": "onnx-cpu" if _use_fastembed else ("mlx" if not _use_fallback else "cpu"),
         "dim": embed_dim,
     }
 
@@ -150,6 +154,8 @@ async def health():
 
 def _encode(texts: List[str]) -> np.ndarray:
     """Encode texts to normalized embeddings with MRL truncation."""
+    if _use_fastembed:
+        return _encode_fastembed(texts)
     if _use_fallback:
         return _encode_fallback(texts)
     return _encode_mlx(texts)
@@ -190,8 +196,17 @@ def _encode_mlx(texts: List[str]) -> np.ndarray:
     return truncated / norms
 
 
+def _encode_fastembed(texts: List[str]) -> np.ndarray:
+    """Lightweight ONNX Runtime encoding via fastembed."""
+    raw = np.array(list(_fe_model.embed(texts)))
+    truncated = raw[:, :embed_dim]
+    norms = np.linalg.norm(truncated, axis=1, keepdims=True)
+    norms = np.where(norms > 0, norms, 1.0)
+    return truncated / norms
+
+
 def _encode_fallback(texts: List[str]) -> np.ndarray:
-    """Fallback: sentence-transformers + MPS/CUDA/CPU."""
+    """Heavy fallback: sentence-transformers + MPS/CUDA/CPU."""
     assert _st_model is not None
     raw = _st_model.encode(texts, normalize_embeddings=False, show_progress_bar=False)
     truncated = raw[:, :embed_dim]
@@ -254,8 +269,35 @@ def main():
             mlx_tokenizer = None
             return False
 
+    def _try_fastembed() -> bool:
+        """Lightweight ONNX backend via fastembed (no torch needed)."""
+        global _use_fastembed, _fe_model, _backend, model_loaded, model_name, embed_dim
+        try:
+            from fastembed import TextEmbedding
+        except ImportError:
+            log.warning("fastembed not installed")
+            return False
+        fe_name = os.environ.get("EMBED_ONNX_MODEL", "BAAI/bge-small-zh-v1.5")
+        try:
+            log.info("Loading via fastembed (ONNX CPU): %s ...", fe_name)
+            _fe_model = TextEmbedding(model_name=fe_name)
+            test_out = np.array(list(_fe_model.embed(["test"])))
+            native_dim = test_out.shape[1]
+            if native_dim < embed_dim:
+                embed_dim = native_dim
+                log.info("Adjusted embed_dim to model native: %d", native_dim)
+            _use_fastembed = True
+            _backend = "fastembed-onnx"
+            model_name = fe_name
+            model_loaded = True
+            log.info("fastembed loaded in %.1fs (dim=%d, ONNX CPU)", time.time() - start, embed_dim)
+            return True
+        except Exception as e:
+            log.warning("fastembed failed (%s), trying next backend", e)
+            return False
+
     def _try_sentence_transformers() -> bool:
-        """Fallback: sentence-transformers + MPS/CUDA/CPU."""
+        """Heavy fallback: sentence-transformers + MPS/CUDA/CPU (needs torch)."""
         global _use_fallback, _st_model, _backend, model_loaded, model_name
         _use_fallback = True
         _backend = "sentence-transformers"
@@ -277,7 +319,7 @@ def main():
                 device = "cpu"
             log.info("Loading model via sentence-transformers (device: %s)...", device)
             _st_model = SentenceTransformer(fallback_model, device=device)
-            model_name = fallback_model  # update displayed model name
+            model_name = fallback_model
             model_loaded = True
             log.info("Fallback model loaded in %.1fs! (device: %s)", time.time() - start, device)
             return True
@@ -286,9 +328,10 @@ def main():
             return False
 
     if not _try_mlx():
-        if not _try_sentence_transformers():
-            log.error("All backends failed, exiting")
-            sys.exit(1)
+        if not _try_fastembed():
+            if not _try_sentence_transformers():
+                log.error("All backends failed, exiting")
+                sys.exit(1)
 
     log.info("API: http://localhost:%d/v1/embeddings", args.port)
     log.info("Health: http://localhost:%d/health", args.port)
