@@ -20,10 +20,10 @@ export interface ServiceManifest {
   };
 
   scripts: {
-    install?: string;
-    start?: string;
-    stop?: string;
-    uninstall?: string;
+    install?: string | { unix: string; windows: string };
+    start?: string | { unix: string; windows: string };
+    stop?: string | { unix: string; windows: string };
+    uninstall?: string | { unix: string; windows: string };
   };
 
   enablesFeatures: string[];

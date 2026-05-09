@@ -10,6 +10,7 @@ import {
   openLogFd,
   readLogTail,
   resolveScriptPath,
+  resolveSpawnCommand,
 } from '../domains/services/service-logs.js';
 import { MODEL_ENV_VARS } from '../domains/services/service-manifest.js';
 import {
@@ -103,7 +104,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
     const logFd = openLogFd(id);
     try {
-      const child = spawn('bash', [scriptPath], {
+      const { command: spawnCmd, args: spawnArgs } = resolveSpawnCommand(manifest.scripts.start);
+      const child = spawn(spawnCmd, spawnArgs, {
         detached: true,
         stdio: logFd != null ? ['ignore', logFd, logFd] : 'ignore',
         env,
@@ -156,7 +158,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       const scriptPath = resolveScriptPath(manifest.scripts.stop);
       if (existsSync(scriptPath)) {
         try {
-          const child = spawn('bash', [scriptPath], { stdio: 'ignore' });
+          const { command: stopCmd, args: stopArgs } = resolveSpawnCommand(manifest.scripts.stop);
+          const child = spawn(stopCmd, stopArgs, { stdio: 'ignore' });
           const code = await new Promise<number | null>((res, rej) => {
             child.on('error', rej);
             child.on('close', (c) => res(c));
@@ -233,7 +236,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       }
 
       try {
-        const child = spawn('bash', [scriptPath], {
+        const { command: installCmd, args: installArgs } = resolveSpawnCommand(manifest.scripts.install);
+        const child = spawn(installCmd, installArgs, {
           stdio: ['pipe', 'pipe', 'pipe'],
           env,
         });
@@ -273,7 +277,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
               if (ek) startEnv[ek] = cfg.selectedModel;
             }
             const startFd = openLogFd(id);
-            const startChild = spawn('bash', [startScript], {
+            const { command: autoStartCmd, args: autoStartArgs } = resolveSpawnCommand(manifest.scripts.start);
+            const startChild = spawn(autoStartCmd, autoStartArgs, {
               detached: true,
               stdio: startFd != null ? ['ignore', startFd, startFd] : 'ignore',
               env: startEnv,
@@ -315,7 +320,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     }
 
     try {
-      const child = spawn('bash', [scriptPath], {
+      const { command: uninstallCmd, args: uninstallArgs } = resolveSpawnCommand(manifest.scripts.uninstall);
+      const child = spawn(uninstallCmd, uninstallArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env },
       });

@@ -14,8 +14,20 @@ export function isValidModelId(model: string): boolean {
   return MODEL_ID_PATTERN.test(model) && model.length <= 200;
 }
 
-export function resolveScriptPath(script: string): string {
-  return resolve(REPO_ROOT, script);
+export function resolveScriptPath(script: string | { unix: string; windows: string }): string {
+  const path = typeof script === 'string' ? script : process.platform === 'win32' ? script.windows : script.unix;
+  return resolve(REPO_ROOT, path);
+}
+
+export function resolveSpawnCommand(script: string | { unix: string; windows: string }): {
+  command: string;
+  args: string[];
+} {
+  const resolved = resolveScriptPath(script);
+  if (process.platform === 'win32' && resolved.endsWith('.ps1')) {
+    return { command: 'powershell', args: ['-ExecutionPolicy', 'Bypass', '-File', resolved] };
+  }
+  return { command: 'bash', args: [resolved] };
 }
 
 function resolveLogDir(): string {

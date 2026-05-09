@@ -40,9 +40,9 @@ const KNOWN_SERVICES: ServiceManifest[] = [
       estimatedMinutes: 5,
     },
     scripts: {
-      install: 'scripts/services/whisper-install.sh',
-      start: 'scripts/services/whisper-server.sh',
-      uninstall: 'scripts/services/whisper-uninstall.sh',
+      install: { unix: 'scripts/services/whisper-install.sh', windows: 'scripts/services/whisper-install.ps1' },
+      start: { unix: 'scripts/services/whisper-server.sh', windows: 'scripts/services/whisper-server.ps1' },
+      uninstall: { unix: 'scripts/services/whisper-uninstall.sh', windows: 'scripts/services/whisper-uninstall.ps1' },
     },
     enablesFeatures: ['voice-input', 'connector-stt'],
     configVars: ['WHISPER_URL', 'NEXT_PUBLIC_WHISPER_URL'],
@@ -69,9 +69,9 @@ const KNOWN_SERVICES: ServiceManifest[] = [
       estimatedMinutes: 3,
     },
     scripts: {
-      install: 'scripts/services/tts-install.sh',
-      start: 'scripts/services/tts-server.sh',
-      uninstall: 'scripts/services/tts-uninstall.sh',
+      install: { unix: 'scripts/services/tts-install.sh', windows: 'scripts/services/tts-install.ps1' },
+      start: { unix: 'scripts/services/tts-server.sh', windows: 'scripts/services/tts-server.ps1' },
+      uninstall: { unix: 'scripts/services/tts-uninstall.sh', windows: 'scripts/services/tts-uninstall.ps1' },
     },
     enablesFeatures: ['voice-output', 'voice-companion'],
     configVars: ['TTS_URL'],
@@ -98,9 +98,9 @@ const KNOWN_SERVICES: ServiceManifest[] = [
       estimatedMinutes: 3,
     },
     scripts: {
-      install: 'scripts/services/embed-install.sh',
-      start: 'scripts/services/embed-server.sh',
-      uninstall: 'scripts/services/embed-uninstall.sh',
+      install: { unix: 'scripts/services/embed-install.sh', windows: 'scripts/services/embed-install.ps1' },
+      start: { unix: 'scripts/services/embed-server.sh', windows: 'scripts/services/embed-server.ps1' },
+      uninstall: { unix: 'scripts/services/embed-uninstall.sh', windows: 'scripts/services/embed-uninstall.ps1' },
     },
     enablesFeatures: ['memory-semantic-search'],
     configVars: ['EMBED_URL', 'EMBED_PORT'],
@@ -139,9 +139,9 @@ const KNOWN_SERVICES: ServiceManifest[] = [
       estimatedMinutes: 30,
     },
     scripts: {
-      install: 'scripts/services/llm-postprocess-install.sh',
-      start: 'scripts/services/llm-postprocess-server.sh',
-      uninstall: 'scripts/services/llm-postprocess-uninstall.sh',
+      install: { unix: 'scripts/services/llm-postprocess-install.sh', windows: 'scripts/services/llm-postprocess-install.ps1' },
+      start: { unix: 'scripts/services/llm-postprocess-server.sh', windows: 'scripts/services/llm-postprocess-server.ps1' },
+      uninstall: { unix: 'scripts/services/llm-postprocess-uninstall.sh', windows: 'scripts/services/llm-postprocess-uninstall.ps1' },
     },
     enablesFeatures: ['voice-postprocess'],
     configVars: ['NEXT_PUBLIC_LLM_POSTPROCESS_URL'],
@@ -222,15 +222,23 @@ export function checkInstalled(manifest: ServiceManifest): boolean {
   return existsSync(resolveVenvPath(venv));
 }
 
-function isScriptRunning(scriptPath: string | undefined): boolean {
+function resolveScriptString(script: string | { unix: string; windows: string } | undefined): string | undefined {
+  if (!script) return undefined;
+  if (typeof script === 'string') return script;
+  return process.platform === 'win32' ? script.windows : script.unix;
+}
+
+function isScriptRunning(script: string | { unix: string; windows: string } | undefined): boolean {
+  const scriptPath = resolveScriptString(script);
   if (!scriptPath) return false;
   if (process.platform === 'win32') {
     try {
+      const escaped = scriptPath.replace(/'/g, "''");
       const out = execSync(
-        `wmic process where "CommandLine like '%${scriptPath.replace(/'/g, "\\'")}%'" get ProcessId /FORMAT:LIST`,
-        { encoding: 'utf-8', timeout: 3000 },
+        `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"CommandLine like '%${escaped}%'\\" | Select-Object -ExpandProperty ProcessId"`,
+        { encoding: 'utf-8', timeout: 5000 },
       );
-      return /ProcessId=\d+/.test(out);
+      return out.trim().length > 0;
     } catch {
       return false;
     }
