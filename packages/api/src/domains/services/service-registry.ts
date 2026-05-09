@@ -224,6 +224,17 @@ export function checkInstalled(manifest: ServiceManifest): boolean {
 
 function isScriptRunning(scriptPath: string | undefined): boolean {
   if (!scriptPath) return false;
+  if (process.platform === 'win32') {
+    try {
+      const out = execSync(
+        `wmic process where "CommandLine like '%${scriptPath.replace(/'/g, "\\'")}%'" get ProcessId /FORMAT:LIST`,
+        { encoding: 'utf-8', timeout: 3000 },
+      );
+      return /ProcessId=\d+/.test(out);
+    } catch {
+      return false;
+    }
+  }
   try {
     const out = execSync(`pgrep -f "${scriptPath}"`, { encoding: 'utf-8', timeout: 2000 });
     return out.trim().length > 0;

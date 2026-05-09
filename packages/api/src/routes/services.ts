@@ -1,10 +1,16 @@
-import { execSync, spawn } from 'node:child_process';
-import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
+import { closeSync, existsSync } from 'node:fs';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { checkProcessByPattern, findPidsByPort, isServiceProcess } from '../domains/services/process-utils.js';
 import { getServiceConfig, setServiceConfig } from '../domains/services/service-config.js';
+import {
+  appendLog,
+  isValidModelId,
+  openLogFd,
+  readLogTail,
+  resolveScriptPath,
+} from '../domains/services/service-logs.js';
 import { MODEL_ENV_VARS } from '../domains/services/service-manifest.js';
 import {
   getAllServiceStates,
@@ -14,83 +20,6 @@ import {
   resolveServiceEndpoint,
 } from '../domains/services/service-registry.js';
 import { resolveUserId } from '../utils/request-identity.js';
-
-// cwd is packages/api in standard startup — resolve from file location instead
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
-
-// HuggingFace repo-id: org/model-name with optional quantization suffixes
-const MODEL_ID_PATTERN = /^[a-zA-Z0-9_-]+\/[a-zA-Z0-9._-]+$/;
-
-function isValidModelId(model: string): boolean {
-  return MODEL_ID_PATTERN.test(model) && model.length <= 200;
-}
-
-function resolveScriptPath(script: string): string {
-  return resolve(REPO_ROOT, script);
-}
-
-function resolveLogDir(): string {
-  return process.env['LOG_DIR'] ?? resolve(REPO_ROOT, 'data/logs/api');
-}
-
-function readLogTail(serviceId: string, lines = 100): string[] {
-  const logPath = resolve(resolveLogDir(), `${serviceId}.log`);
-  if (!existsSync(logPath)) return [];
-  try {
-    const fd = openSync(logPath, 'r');
-    try {
-      const stat = fstatSync(fd);
-      const maxRead = 256 * 1024;
-      const readSize = Math.min(stat.size, maxRead);
-      if (readSize === 0) return [];
-      const buf = Buffer.alloc(readSize);
-      readSync(fd, buf, 0, readSize, Math.max(0, stat.size - readSize));
-      return buf.toString('utf-8').split('\n').slice(-lines).filter(Boolean);
-    } finally {
-      closeSync(fd);
-    }
-  } catch {
-    return [];
-  }
-}
-
-function openLogFd(serviceId: string): number | null {
-  try {
-    const logDir = resolveLogDir();
-    mkdirSync(logDir, { recursive: true });
-    return openSync(resolve(logDir, `${serviceId}.log`), 'a');
-  } catch {
-    return null;
-  }
-}
-
-function appendLog(serviceId: string, chunk: string): void {
-  try {
-    const logDir = resolveLogDir();
-    mkdirSync(logDir, { recursive: true });
-    appendFileSync(resolve(logDir, `${serviceId}.log`), chunk);
-  } catch {
-    /* best effort */
-  }
-}
-
-/** Check if a PID's command line matches the service (prevents killing unrelated processes). */
-function isServiceProcess(pid: number, manifest: { id: string; scripts: { start?: string } }): boolean {
-  const startScript = manifest.scripts.start;
-  if (!startScript) return false;
-  try {
-    const cmd = execSync(`ps -o command= -p ${pid}`, { encoding: 'utf-8', timeout: 2000 }).trim();
-    const scriptBasename = startScript.replace(/.*\//, '');
-    if (cmd.includes(scriptBasename) || cmd.includes(startScript)) return true;
-    const serviceDir = startScript.replace(/\/[^/]+$/, '');
-    if (serviceDir && cmd.includes(serviceDir)) return true;
-    const prefix = scriptBasename.replace(/[-_](server|start|run)\.\w+$/, '');
-    if (prefix.length >= 3 && cmd.includes(prefix)) return true;
-    return false;
-  } catch {
-    return false;
-  }
-}
 
 function checkServiceOwner(request: Parameters<typeof resolveUserId>[0]): string | null {
   const userId = resolveUserId(request);
@@ -153,18 +82,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     }
 
     if (manifest.port) {
-      const pgrep = spawn('pgrep', ['-f', manifest.scripts.start], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-      let pout = '';
-      pgrep.stdout?.on('data', (d: Buffer) => {
-        pout += d.toString();
-      });
-      await new Promise<void>((res) => {
-        pgrep.on('close', () => res());
-        pgrep.on('error', () => res());
-      });
-      if (pout.trim()) {
+      const existingProcess = await checkProcessByPattern(manifest.scripts.start);
+      if (existingProcess) {
         return { ok: true, message: `${manifest.name} is still starting (existing process found)` };
       }
     }
@@ -258,26 +177,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     }
 
     try {
-      // -sTCP:LISTEN restricts to processes LISTENING on the port (not clients
-      // that happen to have a connection, like our API doing health checks).
-      const child = spawn('lsof', ['-ti', `TCP:${manifest.port}`, '-sTCP:LISTEN'], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-      let stdout = '';
-      child.stdout?.on('data', (d: Buffer) => {
-        stdout += d.toString();
-      });
-      await new Promise<void>((res, rej) => {
-        child.on('error', rej);
-        child.on('close', () => res());
-      });
-      const myPid = process.pid;
-      const candidatePids = stdout
-        .trim()
-        .split('\n')
-        .filter(Boolean)
-        .map((s) => Number(s))
-        .filter((n) => Number.isFinite(n) && n > 0 && n !== myPid);
+      const candidatePids = await findPidsByPort(manifest.port);
       const killed: number[] = [];
       for (const pid of candidatePids) {
         if (!isServiceProcess(pid, manifest)) continue;
