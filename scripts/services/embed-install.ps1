@@ -40,17 +40,22 @@ $feResult = $LASTEXITCODE
 $ErrorActionPreference = $prevEAP
 
 if ($feResult -ne 0) {
-    Write-Host "  fastembed full install failed (missing build tools?), installing without source builds..."
-    & $VenvPython -m pip install --progress-bar on onnxruntime tokenizers numpy tqdm requests huggingface_hub Pillow mmh3 loguru pydantic typer fastapi uvicorn
-    if ($LASTEXITCODE -ne 0) { throw "Failed to install embedding core dependencies" }
-    & $VenvPython -m pip install --progress-bar on --no-deps fastembed
-    if ($LASTEXITCODE -ne 0) { throw "Failed to install fastembed" }
-    # Create stub for py-rust-stemmers (only used for sparse retrieval, not dense embeddings)
-    $stubDir = Join-Path $VenvDir "Lib\site-packages\py_rust_stemmers"
+    Write-Host "  fastembed install failed (py-rust-stemmers needs build tools), creating stub and retrying..."
+    # Create a proper stub package so pip sees py-rust-stemmers as already installed
+    $sitePackages = Join-Path $VenvDir "Lib\site-packages"
+    $stubDir = Join-Path $sitePackages "py_rust_stemmers"
+    $distInfo = Join-Path $sitePackages "py_rust_stemmers-0.1.0.dist-info"
     New-Item -ItemType Directory -Path $stubDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $distInfo -Force | Out-Null
     $stubCode = "class Stemmer:`n    def __init__(self, *a, **kw): pass`n    def stem_word(self, w): return w`n    def stem_words(self, ws): return list(ws)"
     Set-Content -Path (Join-Path $stubDir "__init__.py") -Value $stubCode
-    Write-Host "  Installed fastembed without py-rust-stemmers (dense embeddings only)"
+    Set-Content -Path (Join-Path $distInfo "METADATA") -Value "Metadata-Version: 2.1`nName: py-rust-stemmers`nVersion: 0.1.0"
+    Set-Content -Path (Join-Path $distInfo "INSTALLER") -Value "pip"
+    Set-Content -Path (Join-Path $distInfo "RECORD") -Value ""
+    # Now pip will skip py-rust-stemmers (already "installed") and resolve all other deps normally
+    & $VenvPython -m pip install --progress-bar on fastembed fastapi uvicorn numpy huggingface_hub
+    if ($LASTEXITCODE -ne 0) { throw "Failed to install embedding dependencies" }
+    Write-Host "  Installed fastembed with py-rust-stemmers stub (dense embeddings only)"
 }
 
 $hasCuda = $false
