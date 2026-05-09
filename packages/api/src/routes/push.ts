@@ -124,12 +124,17 @@ export const pushRoutes: FastifyPluginAsync<PushRoutesOptions> = async (app, opt
     }
   }
 
-  // POST /api/push/generate-vapid — 一键生成 VAPID 密钥对
+  // POST /api/push/generate-vapid — 一键生成 VAPID 密钥对 (owner-only)
   app.post('/api/push/generate-vapid', async (request, reply) => {
     const userId = resolveUserId(request);
     if (!userId) {
       reply.status(401);
       return { error: 'Identity required (X-Cat-Cafe-User header)' };
+    }
+    const ownerId = process.env['DEFAULT_OWNER_USER_ID']?.trim();
+    if (ownerId && userId !== ownerId) {
+      reply.status(403);
+      return { error: 'Only the owner can generate VAPID keys' };
     }
     const keys = webpush.generateVAPIDKeys();
     return { publicKey: keys.publicKey, privateKey: keys.privateKey };

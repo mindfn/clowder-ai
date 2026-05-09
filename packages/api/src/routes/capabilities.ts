@@ -170,12 +170,19 @@ export function sanitizeArgsForDisplay(args: string[]): string[] {
         result.push(`${arg.slice(0, eqIdx + 1)}••••••`);
         continue;
       }
-      if (ENV_LIKE_SECRET.test(arg)) {
-        result.push(`${arg.slice(0, eqIdx + 1)}••••••`);
+      if (ENV_LIKE_SECRET.test(arg) || ENV_LIKE_SECRET.test(valuePart)) {
+        const nestedEq = valuePart.indexOf('=');
+        const redactFrom = nestedEq > 0 ? eqIdx + 1 + nestedEq + 1 : eqIdx + 1;
+        result.push(`${arg.slice(0, redactFrom)}••••••`);
         continue;
       }
       if (SECRET_VALUE_PATTERN.test(valuePart)) {
         result.push(`${arg.slice(0, eqIdx + 1)}••••••`);
+        continue;
+      }
+      const nestedEq = valuePart.indexOf('=');
+      if (nestedEq > 0 && SECRET_VALUE_PATTERN.test(valuePart.slice(nestedEq + 1))) {
+        result.push(`${arg.slice(0, eqIdx + 1 + nestedEq + 1)}••••••`);
         continue;
       }
     }
