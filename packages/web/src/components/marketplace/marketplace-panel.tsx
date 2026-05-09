@@ -61,6 +61,7 @@ export function MarketplacePanel({
 
   // Auto-browse on mount
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional mount-only
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!query && results.length === 0 && !loading) browse();
   }, []);

@@ -2070,75 +2070,78 @@ export function useAgentMessages() {
    * can't prove the terminal event is for the current invocation → treat as
    * stale to avoid touching a newer bubble whose events were also lost).
    */
-  const isStaleTerminalEvent = useCallback((catId: string, msgInvocationId: string | undefined): boolean => {
-    if (!msgInvocationId) return false;
-    const state = useChatStore.getState();
-    const suffix = `-${catId}`;
-    const normalize = (k: string | undefined): string | undefined =>
-      k && k.endsWith(suffix) ? k.slice(0, -suffix.length) : k;
+  const isStaleTerminalEvent = useCallback(
+    (catId: string, msgInvocationId: string | undefined): boolean => {
+      if (!msgInvocationId) return false;
+      const state = useChatStore.getState();
+      const suffix = `-${catId}`;
+      const normalize = (k: string | undefined): string | undefined =>
+        k && k.endsWith(suffix) ? k.slice(0, -suffix.length) : k;
 
-    // Hierarchical resolver with slot-fresh override (cloud R15 fix):
-    //
-    // Order matters because signals have different freshness profiles:
-    //  - activeSlot (intent_mode): updates eagerly on every user-triggered
-    //    invocation — freshest.
-    //  - activeBinding / direct: updated by invocation_created — can lag if
-    //    that event is lost over a flaky WS.
-    //  - latest same-cat streaming bubble binding: reconnect fallback.
-    //
-    // Cloud R15 pathway: previous done(inv-1) lost → bubble.extra.stream.invocationId
-    // still inv-1; user starts inv-2 → activeInvocations[inv-2] set; invocation_created
-    // for inv-2 lost → bubble binding not updated. Real done(inv-2) arrives. Using
-    // bubble binding as primary says STALE (inv-1 ≠ inv-2) → legitimate terminal
-    // skipped.
-    //
-    // Fix: if activeSlot POSITIVELY confirms msg.invocationId, short-circuit to
-    // not-stale FIRST. Bubble binding is still consulted for contradictions when
-    // slot doesn't confirm (cloud R8 scenario: orphan slot + fresh bubble binding).
-    let latestRealSlot: string | undefined;
-    const activeEntries = Object.entries(state.activeInvocations ?? {});
-    for (let i = activeEntries.length - 1; i >= 0; i--) {
-      const [key, info] = activeEntries[i]!;
-      if (info.catId !== catId) continue;
-      if (key.startsWith('hydrated-')) continue;
-      latestRealSlot = normalize(key);
-      break;
-    }
-    if (latestRealSlot === msgInvocationId) return false; // slot-fresh override
+      // Hierarchical resolver with slot-fresh override (cloud R15 fix):
+      //
+      // Order matters because signals have different freshness profiles:
+      //  - activeSlot (intent_mode): updates eagerly on every user-triggered
+      //    invocation — freshest.
+      //  - activeBinding / direct: updated by invocation_created — can lag if
+      //    that event is lost over a flaky WS.
+      //  - latest same-cat streaming bubble binding: reconnect fallback.
+      //
+      // Cloud R15 pathway: previous done(inv-1) lost → bubble.extra.stream.invocationId
+      // still inv-1; user starts inv-2 → activeInvocations[inv-2] set; invocation_created
+      // for inv-2 lost → bubble binding not updated. Real done(inv-2) arrives. Using
+      // bubble binding as primary says STALE (inv-1 ≠ inv-2) → legitimate terminal
+      // skipped.
+      //
+      // Fix: if activeSlot POSITIVELY confirms msg.invocationId, short-circuit to
+      // not-stale FIRST. Bubble binding is still consulted for contradictions when
+      // slot doesn't confirm (cloud R8 scenario: orphan slot + fresh bubble binding).
+      let latestRealSlot: string | undefined;
+      const activeEntries = Object.entries(state.activeInvocations ?? {});
+      for (let i = activeEntries.length - 1; i >= 0; i--) {
+        const [key, info] = activeEntries[i]!;
+        if (info.catId !== catId) continue;
+        if (key.startsWith('hydrated-')) continue;
+        latestRealSlot = normalize(key);
+        break;
+      }
+      if (latestRealSlot === msgInvocationId) return false; // slot-fresh override
 
-    const activeRefId = getActive(catId)?.id;
-    if (activeRefId) {
-      const activeBubble = state.messages.find((m) => m.id === activeRefId);
-      if (activeBubble?.type === 'assistant' && activeBubble.catId === catId) {
-        const activeBinding = activeBubble.extra?.stream?.invocationId;
-        if (activeBinding !== undefined) {
-          return activeBinding !== msgInvocationId;
+      const activeRefId = getActive(catId)?.id;
+      if (activeRefId) {
+        const activeBubble = state.messages.find((m) => m.id === activeRefId);
+        if (activeBubble?.type === 'assistant' && activeBubble.catId === catId) {
+          const activeBinding = activeBubble.extra?.stream?.invocationId;
+          if (activeBinding !== undefined) {
+            return activeBinding !== msgInvocationId;
+          }
         }
       }
-    }
 
-    if (latestRealSlot !== undefined) {
-      return latestRealSlot !== msgInvocationId;
-    }
-
-    const direct = state.catInvocations?.[catId]?.invocationId;
-    if (direct !== undefined) {
-      return direct !== msgInvocationId;
-    }
-
-    for (let i = state.messages.length - 1; i >= 0; i--) {
-      const m = state.messages[i];
-      if (m.type !== 'assistant' || m.catId !== catId) continue;
-      if (!m.isStreaming) continue;
-      const bound = m.extra?.stream?.invocationId;
-      if (bound !== undefined) {
-        return bound !== msgInvocationId;
+      if (latestRealSlot !== undefined) {
+        return latestRealSlot !== msgInvocationId;
       }
-      break;
-    }
 
-    return false;
-  }, []);
+      const direct = state.catInvocations?.[catId]?.invocationId;
+      if (direct !== undefined) {
+        return direct !== msgInvocationId;
+      }
+
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        const m = state.messages[i];
+        if (m.type !== 'assistant' || m.catId !== catId) continue;
+        if (!m.isStreaming) continue;
+        const bound = m.extra?.stream?.invocationId;
+        if (bound !== undefined) {
+          return bound !== msgInvocationId;
+        }
+        break;
+      }
+
+      return false;
+    },
+    [getActive],
+  );
 
   /**
    * AC-B10 wired into production: returns the structured TerminalDecision so
@@ -2250,7 +2253,7 @@ export function useAgentMessages() {
 
       return null;
     },
-    [getCurrentInvocationIdForCat],
+    [getCurrentInvocationIdForCat, getFinalized],
   );
 
   const findCallbackReplacementTarget = useCallback((catId: string, invocationId: string): { id: string } | null => {
@@ -2273,53 +2276,56 @@ export function useAgentMessages() {
     return null;
   }, []);
 
-  const findInvocationlessStreamPlaceholder = useCallback((catId: string): { id: string } | null => {
-    const currentMessages = useChatStore.getState().messages;
-    const activeId = getActive(catId)?.id;
+  const findInvocationlessStreamPlaceholder = useCallback(
+    (catId: string): { id: string } | null => {
+      const currentMessages = useChatStore.getState().messages;
+      const activeId = getActive(catId)?.id;
 
-    if (activeId) {
-      const activeMessage = currentMessages.find(
-        (msg) =>
-          msg.id === activeId &&
-          msg.type === 'assistant' &&
+      if (activeId) {
+        const activeMessage = currentMessages.find(
+          (msg) =>
+            msg.id === activeId &&
+            msg.type === 'assistant' &&
+            msg.catId === catId &&
+            msg.origin === 'stream' &&
+            !msg.extra?.stream?.invocationId,
+        );
+        if (activeMessage) {
+          return { id: activeMessage.id };
+        }
+      }
+
+      // First pass: find actively-streaming invocationless bubble
+      for (let i = currentMessages.length - 1; i >= 0; i -= 1) {
+        const msg = currentMessages[i];
+        if (
+          msg?.type === 'assistant' &&
           msg.catId === catId &&
           msg.origin === 'stream' &&
-          !msg.extra?.stream?.invocationId,
-      );
-      if (activeMessage) {
-        return { id: activeMessage.id };
+          msg.isStreaming &&
+          !msg.extra?.stream?.invocationId
+        ) {
+          return { id: msg.id };
+        }
       }
-    }
 
-    // First pass: find actively-streaming invocationless bubble
-    for (let i = currentMessages.length - 1; i >= 0; i -= 1) {
-      const msg = currentMessages[i];
-      if (
-        msg?.type === 'assistant' &&
-        msg.catId === catId &&
-        msg.origin === 'stream' &&
-        msg.isStreaming &&
-        !msg.extra?.stream?.invocationId
-      ) {
-        return { id: msg.id };
+      // #586 follow-up: Check finalizedStreamRef — the done handler records the
+      // exact message ID of the just-finalized stream bubble. This avoids the
+      // greedy scan that could match arbitrary historical messages (P1 from review).
+      const finalizedId = getFinalized(catId);
+      if (finalizedId) {
+        const finalized = currentMessages.find(
+          (m) => m.id === finalizedId && m.type === 'assistant' && m.catId === catId && m.origin === 'stream',
+        );
+        if (finalized) {
+          return { id: finalized.id };
+        }
       }
-    }
 
-    // #586 follow-up: Check finalizedStreamRef — the done handler records the
-    // exact message ID of the just-finalized stream bubble. This avoids the
-    // greedy scan that could match arbitrary historical messages (P1 from review).
-    const finalizedId = getFinalized(catId);
-    if (finalizedId) {
-      const finalized = currentMessages.find(
-        (m) => m.id === finalizedId && m.type === 'assistant' && m.catId === catId && m.origin === 'stream',
-      );
-      if (finalized) {
-        return { id: finalized.id };
-      }
-    }
-
-    return null;
-  }, []);
+      return null;
+    },
+    [getActive, getFinalized],
+  );
 
   /**
    * Only reclaim rich/tool-only placeholders that have not started streaming text.
@@ -2330,36 +2336,39 @@ export function useAgentMessages() {
    * - Drop the rich/tool guard and empty placeholders created by ensureActiveAssistantMessage
    *   can be reclaimed before their real callback lands, reintroducing split bubbles.
    */
-  const findInvocationlessRichPlaceholder = useCallback((catId: string): { id: string } | null => {
-    const currentMessages = useChatStore.getState().messages;
-    const isRichOrToolOnlyPlaceholder = (
-      msg: (typeof currentMessages)[number] | undefined,
-    ): msg is NonNullable<typeof msg> =>
-      !!msg &&
-      msg.type === 'assistant' &&
-      msg.catId === catId &&
-      msg.origin === 'stream' &&
-      !msg.extra?.stream?.invocationId &&
-      msg.content.trim().length === 0 &&
-      ((msg.extra?.rich?.blocks.length ?? 0) > 0 || (msg.toolEvents?.length ?? 0) > 0);
+  const findInvocationlessRichPlaceholder = useCallback(
+    (catId: string): { id: string } | null => {
+      const currentMessages = useChatStore.getState().messages;
+      const isRichOrToolOnlyPlaceholder = (
+        msg: (typeof currentMessages)[number] | undefined,
+      ): msg is NonNullable<typeof msg> =>
+        !!msg &&
+        msg.type === 'assistant' &&
+        msg.catId === catId &&
+        msg.origin === 'stream' &&
+        !msg.extra?.stream?.invocationId &&
+        msg.content.trim().length === 0 &&
+        ((msg.extra?.rich?.blocks.length ?? 0) > 0 || (msg.toolEvents?.length ?? 0) > 0);
 
-    const activeId = getActive(catId)?.id;
-    if (activeId) {
-      const activeMessage = currentMessages.find((msg) => msg.id === activeId);
-      if (isRichOrToolOnlyPlaceholder(activeMessage)) {
-        return { id: activeMessage.id };
+      const activeId = getActive(catId)?.id;
+      if (activeId) {
+        const activeMessage = currentMessages.find((msg) => msg.id === activeId);
+        if (isRichOrToolOnlyPlaceholder(activeMessage)) {
+          return { id: activeMessage.id };
+        }
       }
-    }
 
-    for (let i = currentMessages.length - 1; i >= 0; i -= 1) {
-      const msg = currentMessages[i];
-      if (isRichOrToolOnlyPlaceholder(msg)) {
-        return { id: msg.id };
+      for (let i = currentMessages.length - 1; i >= 0; i -= 1) {
+        const msg = currentMessages[i];
+        if (isRichOrToolOnlyPlaceholder(msg)) {
+          return { id: msg.id };
+        }
       }
-    }
 
-    return null;
-  }, []);
+      return null;
+    },
+    [getActive],
+  );
 
   const isActiveCallbackStillStreaming = useCallback((catId: string, invocationId: string): boolean => {
     return useChatStore
@@ -2684,7 +2693,7 @@ export function useAgentMessages() {
       }
       return recovered.id;
     },
-    [findRecoverableAssistantMessage, setMessageMetadata, setStreaming],
+    [findRecoverableAssistantMessage, setMessageMetadata, setStreaming, getActive, deleteActive, setActive],
   );
 
   const ensureActiveAssistantMessage = useCallback(
@@ -2726,7 +2735,7 @@ export function useAgentMessages() {
       }
       return id;
     },
-    [addMessage, getOrRecoverActiveAssistantMessageId, recordLateBindBubbleCreate],
+    [addMessage, getOrRecoverActiveAssistantMessageId, recordLateBindBubbleCreate, setActive],
   );
 
   const shouldSuppressLateStreamChunk = useCallback(
@@ -4235,6 +4244,8 @@ export function useAgentMessages() {
       clearCatStatuses,
       clearDoneTimeout,
       clearPendingCallbacksForThread,
+      getAllActiveValues,
+      clearAllActive,
     ],
   );
 
@@ -4262,7 +4273,7 @@ export function useAgentMessages() {
     // newly-current thread before its done/timeout drain.
     const tid = useChatStore.getState().currentThreadId;
     if (tid) clearAllFinalizedForThreadLedger(getThreadRuntimeLedger(), tid);
-  }, []);
+  }, [clearAllActive]);
 
   return { handleAgentMessage, handleStop, resetRefs, resetTimeout, clearDoneTimeout };
 }

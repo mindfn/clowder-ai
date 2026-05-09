@@ -78,7 +78,7 @@ export function PushServiceConfig({ onSaved }: { onSaved?: () => void }) {
     } finally {
       setSaving(false);
     }
-  }, [values, fetchStatus, onSaved]);
+  }, [values, onSaved]);
 
   const handleGenerate = useCallback(async () => {
     setGenerating(true);

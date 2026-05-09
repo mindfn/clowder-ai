@@ -23,6 +23,13 @@ interface SignalArticleDetailProps {
   readonly onCollectionChanged?: () => void;
 }
 
+const REASON_LABEL: Record<string, string> = {
+  already_enriched: '已获取过全文',
+  no_better_content: '原始页面无可提取正文',
+  fetch_403: '原始页面拒绝访问 (403)',
+  fetch_404: '原始页面不存在 (404)',
+};
+
 function formatDate(input: string): string {
   const value = Date.parse(input);
   if (Number.isNaN(value)) {
@@ -166,14 +173,7 @@ export function SignalArticleDetail({
     } finally {
       setDiscussLoading(false);
     }
-  }, [article, discussLoading]);
-
-  const REASON_LABEL: Record<string, string> = {
-    already_enriched: '已获取过全文',
-    no_better_content: '原始页面无可提取正文',
-    fetch_403: '原始页面拒绝访问 (403)',
-    fetch_404: '原始页面不存在 (404)',
-  };
+  }, [article, discussLoading, router]);
 
   const handleExpand = useCallback(async () => {
     if (expandContent) {

@@ -620,7 +620,7 @@ export function useChatHistory(threadId: string) {
         }
       }
     },
-    [setLoadingHistory, prependHistory, replaceMessages, hydrateThread, threadId],
+    [setLoadingHistory, prependHistory, hydrateThread, threadId],
   );
 
   const fetchTasks = useCallback(async () => {

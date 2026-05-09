@@ -1,3 +1,4 @@
+import Image from 'next/image';
 import { type DragEvent as ReactDragEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type CatData, saveCatOrder } from '@/hooks/useCatData';
 import { sortCatsByOrder } from '@/lib/sort-cats-by-order';
@@ -179,9 +180,11 @@ export function CatOverviewTab({
             className={`${settingsResourceCardClass} ${settingsResourceRowClass} cursor-pointer`}
           >
             {config.coCreator.avatar ? (
-              <img
+              <Image
                 src={config.coCreator.avatar}
                 alt={config.coCreator.name}
+                width={36}
+                height={36}
                 className="h-9 w-9 shrink-0 rounded-full object-cover"
               />
             ) : (
