@@ -6,26 +6,71 @@
   (checks version >= 3.10). Source this at the top of each install script.
 #>
 
+function Test-PythonCandidate {
+    param([string]$Path, [string[]]$PrefixArgs)
+    try {
+        $out = & $Path @($PrefixArgs + @('--version')) 2>&1
+        $text = "$out"
+        if ($text -match 'Python (\d+\.\d+)') { return $true }
+    } catch {}
+    return $false
+}
+
+function Install-PythonViaWinget {
+    $hasWinget = $null -ne (Get-Command winget -ErrorAction SilentlyContinue)
+    if (-not $hasWinget) { return $false }
+    Write-Host "  Attempting Python install via winget..."
+    try {
+        winget install Python.Python.3.12 --accept-source-agreements --accept-package-agreements --silent 2>$null
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 function Resolve-BootstrapPython {
     $py = Get-Command py -ErrorAction SilentlyContinue
-    if ($py) {
+    if ($py -and (Test-PythonCandidate -Path $py.Source -PrefixArgs @('-3'))) {
         return [pscustomobject]@{
             Path = $py.Source
             PrefixArgs = @('-3')
         }
     }
     $python = Get-Command python -ErrorAction SilentlyContinue
-    if ($python) {
+    if ($python -and (Test-PythonCandidate -Path $python.Source -PrefixArgs @())) {
         return [pscustomobject]@{
             Path = $python.Source
             PrefixArgs = @()
         }
     }
+
+    if (Install-PythonViaWinget) {
+        $py2 = Get-Command py -ErrorAction SilentlyContinue
+        if ($py2 -and (Test-PythonCandidate -Path $py2.Source -PrefixArgs @('-3'))) {
+            Write-Host "  Python installed via winget ✓"
+            return [pscustomobject]@{
+                Path = $py2.Source
+                PrefixArgs = @('-3')
+            }
+        }
+        $python2 = Get-Command python -ErrorAction SilentlyContinue
+        if ($python2 -and (Test-PythonCandidate -Path $python2.Source -PrefixArgs @())) {
+            Write-Host "  Python installed via winget ✓"
+            return [pscustomobject]@{
+                Path = $python2.Source
+                PrefixArgs = @()
+            }
+        }
+    }
+
     Write-Error @"
 ERROR: Python 3 not found.
 
 Please install Python 3.10+ from https://www.python.org/downloads/
 Make sure to check "Add python.exe to PATH" during installation.
+On Windows, disable the App Execution Alias for python.exe in:
+  Settings > Apps > Advanced app settings > App execution aliases
 "@
     exit 1
 }
@@ -33,7 +78,11 @@ Make sure to check "Add python.exe to PATH" during installation.
 function Assert-Python310 {
     param([pscustomobject]$Bootstrap)
     $ver = & $Bootstrap.Path @($Bootstrap.PrefixArgs + @('-c', 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'))
-    $parts = $ver.Trim() -split '\.'
+    if (-not $ver) {
+        Write-Error "ERROR: Could not determine Python version. Ensure Python is correctly installed."
+        exit 1
+    }
+    $parts = "$ver".Trim() -split '\.'
     $major = [int]$parts[0]
     $minor = [int]$parts[1]
     if ($major -lt 3 -or ($major -eq 3 -and $minor -lt 10)) {

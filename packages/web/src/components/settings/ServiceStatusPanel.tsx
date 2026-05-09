@@ -208,11 +208,12 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
         }
         const res = await apiFetch(`/api/services/${id}/${action}`, fetchOpts);
         if (!res.ok && (action === 'start' || action === 'install')) {
-          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          const body = (await res.json().catch(() => ({}))) as { error?: string; output?: string };
+          const detail = body.output?.trim().split('\n').filter(Boolean).pop();
           addToast({
             type: 'error',
             title: `${displayName} ${action === 'start' ? '启动' : '安装'}失败`,
-            message: body.error ?? `HTTP ${res.status}`,
+            message: detail || body.error || `HTTP ${res.status}`,
             duration: 8000,
           });
         }

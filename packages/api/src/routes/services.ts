@@ -141,6 +141,10 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
       if (earlyExit !== null) {
         const logs = readLogTail(id, 20);
+        request.log.error(
+          { serviceId: id, exitCode: earlyExit, logs },
+          `service start failed: ${manifest.name} exited immediately`,
+        );
         reply.status(500);
         return { error: `${manifest.name} exited immediately (code ${earlyExit})`, logs };
       }
@@ -282,6 +286,10 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         });
 
         if (code !== 0) {
+          request.log.error(
+            { serviceId: id, exitCode: code, output: output.slice(-2000) },
+            `service install failed: ${manifest.name}`,
+          );
           reply.status(422);
           return { ok: false, error: `Install failed (exit ${code})`, output: output.slice(-2000) };
         }
@@ -366,6 +374,10 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       });
 
       if (code !== 0) {
+        request.log.error(
+          { serviceId: id, exitCode: code, output: output.slice(-2000) },
+          `service uninstall failed: ${manifest.name}`,
+        );
         reply.status(422);
         return { ok: false, error: `Uninstall failed (exit ${code})`, output: output.slice(-2000) };
       }
