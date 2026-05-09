@@ -21,7 +21,7 @@ function Install-PythonViaWinget {
     if (-not $hasWinget) { return $false }
     Write-Host "  Attempting Python install via winget..."
     try {
-        winget install Python.Python.3.12 --accept-source-agreements --accept-package-agreements --silent 2>$null
+        $null = winget install Python.Python.3.12 --accept-source-agreements --accept-package-agreements --silent 2>$null
         $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
         return $true
     } catch {
@@ -45,7 +45,8 @@ function Resolve-BootstrapPython {
         }
     }
 
-    if (Install-PythonViaWinget) {
+    $wingetOk = Install-PythonViaWinget
+    if ($wingetOk) {
         $py2 = Get-Command py -ErrorAction SilentlyContinue
         if ($py2 -and (Test-PythonCandidate -Path $py2.Source -PrefixArgs @('-3'))) {
             Write-Host "  Python installed via winget ✓"
