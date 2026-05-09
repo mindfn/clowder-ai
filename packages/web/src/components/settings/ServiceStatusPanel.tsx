@@ -138,8 +138,63 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
     });
   }, []);
 
+  const awaitServiceHealth = useCallback(
+    async (id: string): Promise<{ status: string; error?: string }> => {
+      const deadline = Date.now() + 120_000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2000));
+        await fetchServices();
+        const res = await apiFetch(`/api/services/${id}/health`);
+        if (!res.ok) continue;
+        const state = (await res.json()) as { status: string; error?: string };
+        if (state.status === 'running' || state.status === 'error') return state;
+      }
+      return { status: 'timeout' };
+    },
+    [fetchServices],
+  );
+
+  const pollStartStatus = useCallback(
+    async (id: string, displayName: string) => {
+      startLogPoll(id);
+      const result = await awaitServiceHealth(id);
+      if (result.status === 'error') {
+        addToast({
+          type: 'error',
+          title: `${displayName} 启动失败`,
+          message: result.error ?? '服务异常，请查看日志',
+          duration: 8000,
+        });
+      } else if (result.status === 'timeout') {
+        addToast({
+          type: 'error',
+          title: `${displayName} 启动超时`,
+          message: '服务未能在预期时间内启动，请检查日志',
+          duration: 8000,
+        });
+      }
+      stopLogPoll(id);
+    },
+    [addToast, awaitServiceHealth, startLogPoll, stopLogPoll],
+  );
+
+  const pollStopStatus = useCallback(async (id: string) => {
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const healthRes = await apiFetch(`/api/services/${id}/health`);
+      if (!healthRes.ok) break;
+      const state = (await healthRes.json()) as { status: string };
+      if (state.status !== 'running') break;
+    }
+  }, []);
+
   const handleAction = useCallback(
-    async (id: string, action: 'start' | 'stop' | 'install' | 'uninstall', opts?: { model?: string; name?: string }) => {
+    async (
+      id: string,
+      action: 'start' | 'stop' | 'install' | 'uninstall',
+      opts?: { model?: string; name?: string },
+    ) => {
       const displayName = opts?.name ?? id;
       const key = `${id}:${action}`;
       setActing((prev) => new Set(prev).add(key));
@@ -162,53 +217,8 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
           });
         }
         await fetchServices();
-        if (res.ok && action === 'start') {
-          startLogPoll(id);
-          const maxWait = 120_000;
-          const deadline = Date.now() + maxWait;
-          let finalStatus = '';
-          while (Date.now() < deadline) {
-            await new Promise((r) => setTimeout(r, 2000));
-            await fetchServices();
-            const healthRes = await apiFetch(`/api/services/${id}/health`);
-            if (healthRes.ok) {
-              const state = (await healthRes.json()) as { status: string; error?: string };
-              finalStatus = state.status;
-              if (state.status === 'running') break;
-              if (state.status === 'error') {
-                addToast({
-                  type: 'error',
-                  title: `${displayName} 启动失败`,
-                  message: state.error ?? '服务异常，请查看日志',
-                  duration: 8000,
-                });
-                break;
-              }
-            }
-          }
-          if (!finalStatus || (finalStatus !== 'running' && finalStatus !== 'error')) {
-            addToast({
-              type: 'error',
-              title: `${displayName} 启动超时`,
-              message: '服务未能在预期时间内启动，请检查日志',
-              duration: 8000,
-            });
-          }
-          stopLogPoll(id);
-        }
-        if (res.ok && action === 'stop') {
-          const deadline = Date.now() + 10_000;
-          while (Date.now() < deadline) {
-            await new Promise((r) => setTimeout(r, 1000));
-            const healthRes = await apiFetch(`/api/services/${id}/health`);
-            if (healthRes.ok) {
-              const state = (await healthRes.json()) as { status: string };
-              if (state.status !== 'running') break;
-            } else {
-              break;
-            }
-          }
-        }
+        if (res.ok && action === 'start') await pollStartStatus(id, displayName);
+        if (res.ok && action === 'stop') await pollStopStatus(id);
         await fetchServices();
       } catch {
         stopLogPoll(id);
@@ -221,7 +231,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
         });
       }
     },
-    [addToast, fetchServices, startLogPoll, stopLogPoll],
+    [addToast, fetchServices, pollStartStatus, pollStopStatus, startLogPoll, stopLogPoll],
   );
 
   const handleToggle = useCallback(

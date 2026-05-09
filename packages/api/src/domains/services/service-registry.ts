@@ -2,7 +2,7 @@ import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import { getServiceConfig, setServiceConfig } from './service-config.js';
+import { getServiceConfig } from './service-config.js';
 import { resolveScriptPath } from './service-logs.js';
 import type { ServiceManifest, ServiceState, ServiceStatus } from './service-manifest.js';
 
@@ -199,9 +199,20 @@ async function probePort(port: number): Promise<boolean> {
   });
 }
 
-async function probeHealth(
-  manifest: ServiceManifest,
-): Promise<{ status: ServiceStatus; detail?: Record<string, unknown>; error?: string }> {
+type HealthResult = { status: ServiceStatus; detail?: Record<string, unknown>; error?: string };
+
+function classifyFetchError(err: unknown): HealthResult {
+  if (err instanceof Error && err.name === 'AbortError') {
+    return { status: 'error', error: 'health probe timeout' };
+  }
+  const cause = err instanceof Error ? (err as Error & { cause?: { code?: string } }).cause : undefined;
+  if (cause?.code === 'ECONNREFUSED') return { status: 'stopped' };
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes('ECONNREFUSED')) return { status: 'stopped' };
+  return { status: 'error', error: msg };
+}
+
+async function probeHealth(manifest: ServiceManifest): Promise<HealthResult> {
   const url = resolveHealthUrl(manifest);
   if (!url) {
     const port = resolveServicePort(manifest);
@@ -221,18 +232,7 @@ async function probeHealth(
     if (detail.status === 'loading') return { status: 'starting', detail };
     return { status: 'running', detail };
   } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      return { status: 'error', error: 'health probe timeout' };
-    }
-    const cause = err instanceof Error ? (err as Error & { cause?: { code?: string } }).cause : undefined;
-    if (cause?.code === 'ECONNREFUSED') {
-      return { status: 'stopped' };
-    }
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('ECONNREFUSED')) {
-      return { status: 'stopped' };
-    }
-    return { status: 'error', error: msg };
+    return classifyFetchError(err);
   } finally {
     clearTimeout(timeout);
   }

@@ -25,7 +25,10 @@ export async function autoStartEnabledServices(log: Logger): Promise<void> {
   for (const manifest of enabled) {
     const cfg = configs[manifest.id]!;
     if (!manifest.scripts.start) continue;
-    if (manifest.supportedPlatforms && !manifest.supportedPlatforms.includes(process.platform as 'darwin' | 'linux' | 'win32')) {
+    if (
+      manifest.supportedPlatforms &&
+      !manifest.supportedPlatforms.includes(process.platform as 'darwin' | 'linux' | 'win32')
+    ) {
       log.info('[services] ⊘ %s — not supported on %s', manifest.name, process.platform);
       continue;
     }

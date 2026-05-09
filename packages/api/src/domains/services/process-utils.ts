@@ -4,7 +4,10 @@ import { resolveScriptPath } from './service-logs.js';
 const IS_WIN32 = process.platform === 'win32';
 
 /** Check if a PID's command line matches the service (prevents killing unrelated processes). */
-export function isServiceProcess(pid: number, manifest: { id: string; scripts: { start?: string | { unix: string; windows: string } } }): boolean {
+export function isServiceProcess(
+  pid: number,
+  manifest: { id: string; scripts: { start?: string | { unix: string; windows: string } } },
+): boolean {
   const startScript = manifest.scripts.start;
   if (!startScript) return false;
   const scriptPath = resolveScriptPath(startScript);
@@ -37,10 +40,15 @@ export async function checkProcessByPattern(pattern: string | { unix: string; wi
     let cmd: ReturnType<typeof spawn>;
     if (IS_WIN32) {
       const escaped = pat.replace(/'/g, "''").replace(/\\/g, '\\\\');
-      cmd = spawn('powershell', [
-        '-NoProfile', '-Command',
-        `Get-CimInstance Win32_Process -Filter "CommandLine like '%${escaped}%'" | Select-Object -ExpandProperty ProcessId`,
-      ], { stdio: ['pipe', 'pipe', 'pipe'] });
+      cmd = spawn(
+        'powershell',
+        [
+          '-NoProfile',
+          '-Command',
+          `Get-CimInstance Win32_Process -Filter "CommandLine like '%${escaped}%'" | Select-Object -ExpandProperty ProcessId`,
+        ],
+        { stdio: ['pipe', 'pipe', 'pipe'] },
+      );
     } else {
       cmd = spawn('pgrep', ['-f', pat], { stdio: ['pipe', 'pipe', 'pipe'] });
     }
@@ -58,10 +66,15 @@ export function findPidsByPort(port: number): Promise<number[]> {
   return new Promise((resolve) => {
     let cmd: ReturnType<typeof spawn>;
     if (IS_WIN32) {
-      cmd = spawn('powershell', [
-        '-NoProfile', '-Command',
-        `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess`,
-      ], { stdio: ['pipe', 'pipe', 'pipe'] });
+      cmd = spawn(
+        'powershell',
+        [
+          '-NoProfile',
+          '-Command',
+          `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess`,
+        ],
+        { stdio: ['pipe', 'pipe', 'pipe'] },
+      );
     } else {
       cmd = spawn('lsof', ['-ti', `TCP:${port}`, '-sTCP:LISTEN'], {
         stdio: ['pipe', 'pipe', 'pipe'],
