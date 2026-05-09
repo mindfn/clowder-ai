@@ -213,7 +213,10 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
     'w-full rounded-lg border border-transparent bg-[var(--console-field-bg)] px-3 h-9 text-compact text-cafe outline-none placeholder:text-cafe-muted transition focus:border-cafe-accent focus:ring-2 focus:ring-cafe-accent/30';
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 px-4" onClick={handleClose}>
+    <div
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-[var(--console-overlay-medium)] px-4"
+      onClick={handleClose}
+    >
       <div
         className="flex w-full max-w-[580px] flex-col overflow-hidden rounded-2xl bg-[var(--console-card-bg)] px-6 py-4 shadow-[0_22px_48px_rgba(43,33,26,0.13)]"
         onClick={(e) => e.stopPropagation()}

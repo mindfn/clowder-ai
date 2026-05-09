@@ -64,7 +64,10 @@ export function InstallPreviewModal({
   const estimatedMinutes = prerequisites.estimatedMinutes;
 
   return (
-    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[100] p-4" onClick={onCancel}>
+    <div
+      className="fixed inset-0 bg-[var(--console-overlay-backdrop)] flex items-center justify-center z-[100] p-4"
+      onClick={onCancel}
+    >
       <div
         className="bg-cafe-surface rounded-xl border border-[var(--cafe-border)] shadow-xl p-6 max-w-md w-full mx-4 max-h-[85vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}

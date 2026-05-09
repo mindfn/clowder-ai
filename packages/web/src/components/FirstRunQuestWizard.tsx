@@ -161,7 +161,10 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--console-overlay-medium)] px-4"
+      onClick={onClose}
+    >
       <div
         className="flex max-h-[88vh] w-full max-w-lg flex-col rounded-2xl border border-conn-amber-ring bg-cafe-surface shadow-2xl"
         onClick={(e) => e.stopPropagation()}

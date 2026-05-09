@@ -43,7 +43,10 @@ export function ImportProjectModal({ onClose, onImported }: ImportProjectModalPr
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--console-overlay-backdrop)]"
+      onClick={onClose}
+    >
       <div
         className="w-full max-w-md rounded-2xl bg-[var(--console-card-bg)] p-6 shadow-[0_12px_30px_rgba(43,33,26,0.08)]"
         onClick={(e) => e.stopPropagation()}

@@ -765,7 +765,11 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
       {/* Mobile-only sidebar overlay — desktop sidebar is in AppShell */}
       {sidebarOpen && (
         <div className="md:hidden">
-          <div className="fixed inset-0 bg-black/30 z-20" onClick={() => setSidebarOpen(false)} aria-hidden="true" />
+          <div
+            className="fixed inset-0 bg-[var(--console-overlay-backdrop)] z-20"
+            onClick={() => setSidebarOpen(false)}
+            aria-hidden="true"
+          />
           <div className="fixed inset-y-0 left-0 z-30 flex-shrink-0" style={{ width: sidebarWidth }}>
             <ThreadSidebar onClose={() => setSidebarOpen(false)} className="w-full" />
           </div>
@@ -1099,7 +1103,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
         messageSummary={messageSummary}
       />
       {showFirstRunQuestPrompt && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--console-overlay-medium)] px-4">
           <div
             className="w-full max-w-md rounded-2xl bg-[var(--console-card-bg)] p-6 shadow-[var(--console-shadow)]"
             onClick={(event) => event.stopPropagation()}

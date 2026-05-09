@@ -247,7 +247,10 @@ export function MessageActions({ message, threadId, children }: MessageActionsPr
 
       {/* Edit: inline textarea */}
       {dialog.type === 'edit' && (
-        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50" onClick={close}>
+        <div
+          className="fixed inset-0 bg-[var(--console-overlay-backdrop)] flex items-center justify-center z-50"
+          onClick={close}
+        >
           <div
             className="bg-cafe-surface rounded-xl shadow-xl p-6 max-w-lg w-full mx-4"
             onClick={(e) => e.stopPropagation()}

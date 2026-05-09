@@ -129,7 +129,10 @@ export function HubCoCreatorEditor({ open, coCreator, onClose, onSaved }: HubCoC
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--console-overlay-medium)] px-4"
+      onClick={onClose}
+    >
       <div
         className="flex max-h-[88vh] w-full max-w-[560px] flex-col overflow-hidden rounded-[28px] bg-[var(--console-card-bg)] shadow-[0_22px_48px_rgba(43,33,26,0.13)]"
         onClick={(event) => event.stopPropagation()}

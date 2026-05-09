@@ -727,7 +727,7 @@ export function HubCatEditor({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-[var(--console-overlay-medium)] px-4"
       onClick={requestClose}
       data-bootcamp-host="cat-editor-modal"
     >

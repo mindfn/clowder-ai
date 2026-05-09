@@ -816,7 +816,10 @@ function DeleteConfirmDialog({
   }, [isSystem]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onCancel}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--console-overlay-medium)]"
+      onClick={onCancel}
+    >
       <div
         className="bg-cafe-surface rounded-xl shadow-2xl p-5 max-w-sm w-full mx-4"
         onClick={(e) => e.stopPropagation()}

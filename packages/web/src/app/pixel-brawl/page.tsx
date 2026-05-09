@@ -76,7 +76,7 @@ export default function PixelBrawlPage() {
         alignItems: 'center',
         width: '100vw',
         height: '100vh',
-        backgroundColor: '#000',
+        backgroundColor: 'var(--pixel-brawl-bg)',
         fontFamily: silkscreen.style.fontFamily,
       }}
     >
@@ -93,7 +93,7 @@ export default function PixelBrawlPage() {
           <h1
             style={{
               fontSize: '24px',
-              color: '#F1E28A',
+              color: 'var(--pixel-brawl-title)',
               margin: 0,
               letterSpacing: '2px',
               fontFamily: pressStart2p.style.fontFamily,
@@ -108,9 +108,9 @@ export default function PixelBrawlPage() {
               onClick={() => startGame('aivai')}
               style={{
                 padding: '12px 24px',
-                backgroundColor: '#1E2430',
-                color: '#00F0FF',
-                border: '2px solid #3A4658',
+                backgroundColor: 'var(--pixel-brawl-btn-bg)',
+                color: 'var(--pixel-brawl-btn-cyan)',
+                border: '2px solid var(--pixel-brawl-btn-border)',
                 fontFamily: silkscreen.style.fontFamily,
                 fontSize: '14px',
                 cursor: 'pointer',
@@ -123,9 +123,9 @@ export default function PixelBrawlPage() {
               onClick={() => startGame('pvai')}
               style={{
                 padding: '12px 24px',
-                backgroundColor: '#1E2430',
-                color: '#2FA56E',
-                border: '2px solid #3A4658',
+                backgroundColor: 'var(--pixel-brawl-btn-bg)',
+                color: 'var(--pixel-brawl-btn-green)',
+                border: '2px solid var(--pixel-brawl-btn-border)',
                 fontFamily: silkscreen.style.fontFamily,
                 fontSize: '14px',
                 cursor: 'pointer',

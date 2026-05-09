@@ -63,7 +63,7 @@ export function WorldPanel({ worldId, apiBase = '' }: WorldPanelProps) {
 
   return (
     <div className="flex flex-col h-full bg-cafe-surface/80 text-sm">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-[#FFDDD2]">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--console-border-soft)]">
         <span className="font-semibold text-cafe-primary">{world?.name ?? worldId}</span>
         <span className="text-xs text-cafe-secondary">[{world?.status ?? '...'}]</span>
         <div className="ml-auto flex gap-1">
@@ -73,7 +73,7 @@ export function WorldPanel({ worldId, apiBase = '' }: WorldPanelProps) {
               onClick={() => setMode(m)}
               className={`px-2 py-0.5 rounded text-xs transition-colors ${
                 mode === m
-                  ? 'bg-cafe-primary text-white'
+                  ? 'bg-cafe-primary text-[var(--cafe-surface)]'
                   : 'bg-cafe-surface hover:bg-cafe-primary/10 text-cafe-secondary'
               }`}
             >

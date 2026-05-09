@@ -49,7 +49,7 @@ export function MobileStatusSheet({
     <>
       {/* Backdrop */}
       <div
-        className={`fixed inset-0 bg-black/30 z-40 transition-opacity lg:hidden ${
+        className={`fixed inset-0 bg-[var(--console-overlay-backdrop)] z-40 transition-opacity lg:hidden ${
           open ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
         onClick={onClose}

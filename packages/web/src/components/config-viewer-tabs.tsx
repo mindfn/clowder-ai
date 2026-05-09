@@ -234,7 +234,9 @@ export function CatOverviewTab({
       {cats.length === 0 && <p className="text-sm text-cafe-muted">未找到成员配置数据</p>}
       {disabledCats.length > 0 && (
         <div className="space-y-3">
-          <p className="text-[12px] font-semibold text-slate-400 uppercase tracking-wide">已停用成员</p>
+          <p className="text-[12px] font-semibold text-[var(--semantic-muted-text)] uppercase tracking-wide">
+            已停用成员
+          </p>
           {disabledCats.map((catData) => (
             <HubMemberOverviewCard
               key={catData.id}

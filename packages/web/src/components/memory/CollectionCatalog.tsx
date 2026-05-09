@@ -115,7 +115,7 @@ export function CollectionCatalog() {
         return (
           <div
             key={c.manifest.id}
-            className="rounded-lg border border-cafe bg-white p-4 transition-colors hover:border-cafe-primary/30"
+            className="rounded-lg border border-cafe bg-[var(--cafe-surface)] p-4 transition-colors hover:border-cafe-primary/30"
             data-testid={`collection-card-${c.manifest.id}`}
           >
             <button

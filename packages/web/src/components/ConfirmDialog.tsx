@@ -55,7 +55,10 @@ export function ConfirmDialog({
   const isDanger = variant === 'danger';
 
   return (
-    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[100]" onClick={onCancel}>
+    <div
+      className="fixed inset-0 bg-[var(--console-overlay-backdrop)] flex items-center justify-center z-[100]"
+      onClick={onCancel}
+    >
       <div
         className="bg-cafe-surface rounded-xl border border-[var(--cafe-border)] shadow-xl p-6 max-w-sm w-full mx-4"
         onClick={(e) => e.stopPropagation()}

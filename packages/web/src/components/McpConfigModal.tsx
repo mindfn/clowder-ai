@@ -125,7 +125,7 @@ export function McpConfigModal({
   return (
     <div
       ref={backdropRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--console-overlay-backdrop)]"
       onClick={(e) => {
         if (e.target === backdropRef.current) onClose();
       }}
