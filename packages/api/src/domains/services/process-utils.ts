@@ -1,4 +1,5 @@
 import { execSync, spawn } from 'node:child_process';
+import { resolveScriptPath } from './service-logs.js';
 
 const IS_WIN32 = process.platform === 'win32';
 
@@ -6,7 +7,7 @@ const IS_WIN32 = process.platform === 'win32';
 export function isServiceProcess(pid: number, manifest: { id: string; scripts: { start?: string | { unix: string; windows: string } } }): boolean {
   const startScript = manifest.scripts.start;
   if (!startScript) return false;
-  const scriptPath = typeof startScript === 'string' ? startScript : IS_WIN32 ? startScript.windows : startScript.unix;
+  const scriptPath = resolveScriptPath(startScript);
   try {
     let cmd: string;
     if (IS_WIN32) {
@@ -31,11 +32,11 @@ export function isServiceProcess(pid: number, manifest: { id: string; scripts: {
 
 /** Check if a process matching a command-line pattern is running. */
 export async function checkProcessByPattern(pattern: string | { unix: string; windows: string }): Promise<boolean> {
-  const pat = typeof pattern === 'string' ? pattern : IS_WIN32 ? pattern.windows : pattern.unix;
+  const pat = resolveScriptPath(pattern);
   return new Promise((resolve) => {
     let cmd: ReturnType<typeof spawn>;
     if (IS_WIN32) {
-      const escaped = pat.replace(/'/g, "''");
+      const escaped = pat.replace(/'/g, "''").replace(/\\/g, '\\\\');
       cmd = spawn('powershell', [
         '-NoProfile', '-Command',
         `Get-CimInstance Win32_Process -Filter "CommandLine like '%${escaped}%'" | Select-Object -ExpandProperty ProcessId`,
