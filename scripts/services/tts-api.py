@@ -223,6 +223,40 @@ class EdgeTtsAdapter(TtsAdapter):
         return b"".join(audio_chunks), actual_format
 
 
+# ─── SAPI Adapter (Windows offline) ─────────────────────────────────
+
+
+class SapiAdapter(TtsAdapter):
+    """Windows SAPI5 TTS via pyttsx3 (offline, no model download)."""
+
+    @property
+    def name(self) -> str:
+        return "sapi"
+
+    async def synthesize(
+        self, text: str, voice: str, lang_code: str, speed: float, audio_format: str,
+    ) -> tuple[bytes, str]:
+        try:
+            import pyttsx3
+        except ImportError as exc:
+            raise RuntimeError("pyttsx3 not available — pip install pyttsx3") from exc
+
+        tmp = Path(tempfile.mktemp(suffix=".wav"))
+        try:
+            def _speak():
+                engine = pyttsx3.init()
+                engine.setProperty("rate", int(engine.getProperty("rate") * speed))
+                engine.save_to_file(text, str(tmp))
+                engine.runAndWait()
+
+            await asyncio.to_thread(_speak)
+            if not tmp.exists():
+                raise RuntimeError("pyttsx3 produced no audio")
+            return tmp.read_bytes(), "wav"
+        finally:
+            tmp.unlink(missing_ok=True)
+
+
 # ─── Qwen3 Clone Adapter ────────────────────────────────────────────
 
 
@@ -335,8 +369,10 @@ def create_adapter(provider: str, model: str) -> TtsAdapter:
         return MlxAudioAdapter(model=model)
     if provider == "edge-tts":
         return EdgeTtsAdapter()
+    if provider == "sapi":
+        return SapiAdapter()
     raise ValueError(
-        f"Unknown TTS provider: '{provider}'. Supported: qwen3-clone, mlx-audio, edge-tts"
+        f"Unknown TTS provider: '{provider}'. Supported: qwen3-clone, mlx-audio, edge-tts, sapi"
     )
 
 

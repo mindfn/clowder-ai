@@ -29,8 +29,8 @@ if (-not (Test-Path $VenvPython)) {
 & $VenvPython -m pip install --progress-bar on -U pip
 if ($LASTEXITCODE -ne 0) { throw "Failed to upgrade pip in tts-venv" }
 
-Write-Host "  Installing dependencies: edge-tts fastapi uvicorn httpx ..."
-& $VenvPython -m pip install --progress-bar on edge-tts fastapi uvicorn "httpx[socks]" huggingface_hub
+Write-Host "  Installing dependencies: edge-tts pyttsx3 fastapi uvicorn httpx ..."
+& $VenvPython -m pip install --progress-bar on edge-tts pyttsx3 fastapi uvicorn "httpx[socks]" huggingface_hub
 if ($LASTEXITCODE -ne 0) { throw "Failed to install TTS dependencies" }
 
 Write-Host "Installation complete."
