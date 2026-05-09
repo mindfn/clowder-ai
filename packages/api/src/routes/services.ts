@@ -75,16 +75,19 @@ function appendLog(serviceId: string, chunk: string): void {
 }
 
 /** Check if a PID's command line matches the service (prevents killing unrelated processes). */
-function isServiceProcess(pid: number, manifest: { scripts: { start?: string } }): boolean {
+function isServiceProcess(pid: number, manifest: { id: string; scripts: { start?: string } }): boolean {
   const startScript = manifest.scripts.start;
   if (!startScript) return false;
   try {
     const cmd = execSync(`ps -o command= -p ${pid}`, { encoding: 'utf-8', timeout: 2000 }).trim();
-    // Match if the process command contains the service script name
     const scriptBasename = startScript.replace(/.*\//, '');
-    return cmd.includes(scriptBasename) || cmd.includes(startScript);
+    if (cmd.includes(scriptBasename) || cmd.includes(startScript)) return true;
+    const serviceDir = startScript.replace(/\/[^/]+$/, '');
+    if (serviceDir && cmd.includes(serviceDir)) return true;
+    const prefix = scriptBasename.replace(/[-_](server|start|run)\.\w+$/, '');
+    if (prefix.length >= 3 && cmd.includes(prefix)) return true;
+    return false;
   } catch {
-    // Process may have already exited — treat as non-matching
     return false;
   }
 }

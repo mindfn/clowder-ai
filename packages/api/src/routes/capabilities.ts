@@ -205,6 +205,9 @@ export function sanitizeUrlForDisplay(url: string): string {
         parsed.searchParams.set(key, '••••••');
       }
     }
+    if (parsed.hash) {
+      parsed.hash = parsed.hash.replace(/(?<=[#&])(token|key|secret|auth|password|access_token)=[^&#]*/gi, '$1=••••••');
+    }
     let result = parsed.toString();
     if (hadUser || hadPass) {
       const cred = hadUser && hadPass ? '••••••:••••••@' : '••••••@';
