@@ -48,7 +48,11 @@ const PROVIDER_GUIDE_FILES: Record<string, string> = {
 };
 
 export const rulesRoutes: FastifyPluginAsync = async (app) => {
-  app.get('/api/rules', async () => {
+  app.get('/api/rules', async (request, reply) => {
+    if (!resolveUserId(request)) {
+      reply.status(401);
+      return { error: 'Authentication required' };
+    }
     const root = findProjectRoot();
     const [sharedRules, providerGuides] = await Promise.all([
       Promise.all(SHARED_RULE_FILES.map((f) => readRuleFile(root, f))),

@@ -142,7 +142,7 @@ const SECRET_FLAG_EXACT = new Set([
   '--apikey',
   '--auth',
 ]);
-const SECRET_FLAG_CONTAINS = /secret|token|password|auth|credential|\bkey\b/i;
+const SECRET_FLAG_CONTAINS = /secret|token|password|auth|credential|\bkey\b|\bheader\b/i;
 const SECRET_VALUE_PATTERN = /^(sk-|ghp_|gho_|ghu_|xoxb-|xoxp-)|Bearer\s|^Authorization:/i;
 const ENV_LIKE_SECRET = /^[A-Z][A-Z0-9_]*(SECRET|TOKEN|PASSWORD|KEY|AUTH|CREDENTIAL)[A-Z0-9_]*=.+/;
 

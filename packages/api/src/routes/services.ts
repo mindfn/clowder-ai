@@ -162,10 +162,12 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
             child.on('close', (c) => res(c));
           });
           if (code !== 0) {
+            reply.status(500);
             return { ok: false, error: `Stop script for ${manifest.name} exited with code ${code}` };
           }
           return { ok: true, message: `${manifest.name} stopped via script` };
         } catch {
+          reply.status(500);
           return { ok: false, error: `Failed to run stop script for ${manifest.name}` };
         }
       }
@@ -190,6 +192,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       }
       return { ok: true, message: `${manifest.name} stopped (${killed.length} process(es))` };
     } catch {
+      reply.status(500);
       return { ok: false, error: 'Failed to stop service' };
     }
   });
