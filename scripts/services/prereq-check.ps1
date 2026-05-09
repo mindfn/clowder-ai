@@ -42,3 +42,32 @@ function Assert-Python310 {
     }
     Write-Host "  Python $ver ✓"
 }
+
+function Assert-DiskSpace {
+    param([int]$RequiredGB = 2)
+    $targetDir = Join-Path $HOME ".cat-cafe"
+    if (-not (Test-Path $targetDir)) { New-Item -ItemType Directory -Path $targetDir -Force | Out-Null }
+    $drive = (Resolve-Path $targetDir).Drive
+    $freeGB = [math]::Floor((Get-PSDrive $drive.Name).Free / 1GB)
+    if ($freeGB -lt $RequiredGB) {
+        Write-Error "ERROR: Disk space insufficient. Need ${RequiredGB}GB, available ${freeGB}GB ($targetDir)"
+        exit 1
+    }
+    Write-Host "  Disk space: ${freeGB}GB available ✓"
+}
+
+function Assert-Network {
+    $timeout = 5000
+    try {
+        $r = Invoke-WebRequest -Uri "https://pypi.org/simple/" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+        Write-Host "  PyPI connectivity ✓"
+    } catch {
+        Write-Warning "Cannot reach PyPI (https://pypi.org) — pip install may fail. Set PIP_INDEX_URL for mirror."
+    }
+    try {
+        $r = Invoke-WebRequest -Uri "https://huggingface.co" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+        Write-Host "  HuggingFace connectivity ✓"
+    } catch {
+        Write-Warning "Cannot reach HuggingFace (https://huggingface.co) — model download may fail. Set HF_ENDPOINT for mirror."
+    }
+}

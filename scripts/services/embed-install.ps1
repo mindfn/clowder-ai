@@ -18,6 +18,8 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 
 $BootstrapPython = Resolve-BootstrapPython
 Assert-Python310 -Bootstrap $BootstrapPython
+Assert-DiskSpace -RequiredGB 3
+Assert-Network
 
 $VenvDir = Join-Path $HOME ".cat-cafe\embed-venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"

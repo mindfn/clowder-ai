@@ -139,7 +139,8 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
   }, []);
 
   const handleAction = useCallback(
-    async (id: string, action: 'start' | 'stop' | 'install' | 'uninstall', opts?: { model?: string }) => {
+    async (id: string, action: 'start' | 'stop' | 'install' | 'uninstall', opts?: { model?: string; name?: string }) => {
+      const displayName = opts?.name ?? id;
       const key = `${id}:${action}`;
       setActing((prev) => new Set(prev).add(key));
       const longRunning = action === 'install' || action === 'uninstall';
@@ -153,10 +154,9 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
         const res = await apiFetch(`/api/services/${id}/${action}`, fetchOpts);
         if (!res.ok && (action === 'start' || action === 'install')) {
           const body = (await res.json().catch(() => ({}))) as { error?: string };
-          const svc = services.find((sv) => sv.manifest.id === id);
           addToast({
             type: 'error',
-            title: `${svc?.manifest.name ?? id} ${action === 'start' ? '启动' : '安装'}失败`,
+            title: `${displayName} ${action === 'start' ? '启动' : '安装'}失败`,
             message: body.error ?? `HTTP ${res.status}`,
             duration: 8000,
           });
@@ -176,10 +176,9 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
               finalStatus = state.status;
               if (state.status === 'running') break;
               if (state.status === 'error') {
-                const svc = services.find((sv) => sv.manifest.id === id);
                 addToast({
                   type: 'error',
-                  title: `${svc?.manifest.name ?? id} 启动失败`,
+                  title: `${displayName} 启动失败`,
                   message: state.error ?? '服务异常，请查看日志',
                   duration: 8000,
                 });
@@ -188,10 +187,9 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
             }
           }
           if (!finalStatus || (finalStatus !== 'running' && finalStatus !== 'error')) {
-            const svc = services.find((sv) => sv.manifest.id === id);
             addToast({
               type: 'error',
-              title: `${svc?.manifest.name ?? id} 启动超时`,
+              title: `${displayName} 启动超时`,
               message: '服务未能在预期时间内启动，请检查日志',
               duration: 8000,
             });
@@ -223,7 +221,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
         });
       }
     },
-    [fetchServices, startLogPoll, stopLogPoll],
+    [addToast, fetchServices, startLogPoll, stopLogPoll],
   );
 
   const handleToggle = useCallback(
@@ -257,9 +255,9 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
         }
 
         if (nextEnabled && s.status !== 'running' && s.status !== 'starting') {
-          await handleAction(m.id, 'start');
+          await handleAction(m.id, 'start', { name: m.name });
         } else if (!nextEnabled && s.status === 'running') {
-          await handleAction(m.id, 'stop');
+          await handleAction(m.id, 'stop', { name: m.name });
         } else {
           await fetchServices();
         }
@@ -329,7 +327,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
                     {!s.enabled && !isTransitional && !!m.scripts?.uninstall && (
                       <SettingsResourceIconButton
                         disabled={busy}
-                        onClick={() => handleAction(m.id, 'uninstall')}
+                        onClick={() => handleAction(m.id, 'uninstall', { name: m.name })}
                         title="卸载"
                         aria-label="卸载"
                         tone="danger"
@@ -351,13 +349,14 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
           prerequisites={installPreview.prerequisites}
           onConfirm={async (selectedModel) => {
             const id = installPreview.id;
+            const name = installPreview.name;
             setInstallPreview(null);
             await apiFetch(`/api/services/${id}/toggle`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ enabled: true, model: selectedModel }),
             });
-            await handleAction(id, 'install', { model: selectedModel });
+            await handleAction(id, 'install', { model: selectedModel, name });
           }}
           onCancel={() => setInstallPreview(null)}
         />

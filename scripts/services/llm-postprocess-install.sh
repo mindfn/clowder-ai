@@ -6,6 +6,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/prereq-check.sh"
 check_python3
+check_disk_space 25
+check_network
 source "$SCRIPT_DIR/../download-source-overrides.sh"
 apply_manual_download_source_overrides
 
