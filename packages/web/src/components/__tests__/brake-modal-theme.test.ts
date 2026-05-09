@@ -33,17 +33,17 @@ describe('BrakeModal theme compliance', () => {
   it('uses theme card-bg as modal panel background, not alert colors', () => {
     const html = renderToStaticMarkup(React.createElement(BrakeModal));
     expect(html).toContain('--console-card-bg');
-    const panelMatch = html.match(/border-2 rounded-2xl[^"]*"/);
+    const panelMatch = html.match(/rounded-2xl shadow-2xl[^"]*"/);
     expect(panelMatch).toBeTruthy();
     const panelClasses = panelMatch![0];
-    expect(panelClasses).not.toContain('bg-conn-amber-bg');
     expect(panelClasses).not.toContain('bg-conn-amber-bg');
     expect(panelClasses).not.toContain('bg-conn-red-bg');
     expect(panelClasses).not.toContain('bg-conn-sky-bg');
   });
 
-  it('preserves border-based level indication', () => {
+  it('uses shadow-only design without visible borders', () => {
     const html = renderToStaticMarkup(React.createElement(BrakeModal));
-    expect(html).toContain('border-cafe-accent');
+    expect(html).toContain('shadow-2xl');
+    expect(html).not.toContain('border-2');
   });
 });
