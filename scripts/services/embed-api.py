@@ -1,36 +1,9 @@
 #!/usr/bin/env python3
 """
-Embedding server for Cat Cafe memory system (F102 Phase C/G).
-Uses Apple Silicon GPU via MLX framework (native Metal acceleration).
+Embedding server for Cat Cafe memory system.
 
-POST /v1/embeddings         — generate embeddings for a batch of texts
-GET  /health                — health check (status/model/backend/device)
-
-Usage:
-  source ~/.cat-cafe/embed-venv/bin/activate
-  python scripts/embed-api.py                                         # default: Qwen3-Embedding-0.6B 4bit
-  python scripts/embed-api.py --port 9877                             # custom port
-  EMBED_DIM=512 python scripts/embed-api.py                           # MRL truncation to 512
-
-Setup (one-time):
-  python3 -m venv ~/.cat-cafe/embed-venv
-  source ~/.cat-cafe/embed-venv/bin/activate
-  pip install mlx mlx-embeddings fastapi uvicorn numpy
-
-Model selection (LL-034: must use MLX GPU, not CPU ONNX):
-  Default: mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ (335MB, MLX 4-bit)
-  Larger:  mlx-community/Qwen3-Embedding-4B-4bit-DWQ   (~2.5GB, better quality)
-
-Dim recommendations (CMTEB bilingual quality):
-  768  — sweet spot for Chinese-English mixed content (default)
-  512  — storage-sensitive floor (quality drops ~2%)
-  256  — DO NOT USE for CJK (quality drops ~5%, too much semantic loss)
-  1024 — maximum quality, 33% more storage than 768
-
-Env vars:
-  EMBED_PORT    — server port (default: 9877)
-  EMBED_MODEL   — MLX model ID (default: mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ)
-  EMBED_DIM     — output dimension after MRL truncation (default: 768)
+Backends: MLX (macOS GPU) → fastembed/ONNX (CPU/CUDA) → sentence-transformers.
+Env vars: EMBED_PORT, EMBED_MODEL (MLX), EMBED_ONNX_MODEL (fastembed), EMBED_DIM.
 """
 
 from __future__ import annotations
@@ -79,6 +52,7 @@ MAX_TEXT_LENGTH = 8192
 # Lightweight fallback: fastembed (ONNX Runtime, no torch needed)
 _use_fastembed = False
 _fe_model = None
+_onnx_device = "cpu"
 
 # Heavy fallback: sentence-transformers + MPS/CUDA/CPU (needs torch)
 _use_fallback = False
@@ -145,7 +119,7 @@ async def health():
         "status": "ok" if model_loaded else "loading",
         "model": model_name or "none",
         "backend": _backend,
-        "device": "onnx-cpu" if _use_fastembed else ("mlx" if not _use_fallback else "cpu"),
+        "device": f"onnx-{_onnx_device}" if _use_fastembed else ("mlx" if not _use_fallback else "cpu"),
         "dim": embed_dim,
     }
 
@@ -271,16 +245,30 @@ def main():
 
     def _try_fastembed() -> bool:
         """Lightweight ONNX backend via fastembed (no torch needed)."""
-        global _use_fastembed, _fe_model, _backend, model_loaded, model_name, embed_dim
+        global _use_fastembed, _fe_model, _onnx_device, _backend, model_loaded, model_name, embed_dim
         try:
             from fastembed import TextEmbedding
         except ImportError:
             log.warning("fastembed not installed")
             return False
         fe_name = os.environ.get("EMBED_ONNX_MODEL", "BAAI/bge-small-zh-v1.5")
+        providers = None
+        device_label = "CPU"
         try:
-            log.info("Loading via fastembed (ONNX CPU): %s ...", fe_name)
-            _fe_model = TextEmbedding(model_name=fe_name)
+            import onnxruntime as ort
+            avail = ort.get_available_providers()
+            if "CUDAExecutionProvider" in avail:
+                providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+                device_label = "CUDA GPU"
+                _onnx_device = "gpu"
+        except ImportError:
+            pass
+        try:
+            log.info("Loading via fastembed (ONNX %s): %s ...", device_label, fe_name)
+            fe_kwargs: dict = {"model_name": fe_name}
+            if providers:
+                fe_kwargs["providers"] = providers
+            _fe_model = TextEmbedding(**fe_kwargs)
             test_out = np.array(list(_fe_model.embed(["test"])))
             native_dim = test_out.shape[1]
             if native_dim < embed_dim:
@@ -290,7 +278,7 @@ def main():
             _backend = "fastembed-onnx"
             model_name = fe_name
             model_loaded = True
-            log.info("fastembed loaded in %.1fs (dim=%d, ONNX CPU)", time.time() - start, embed_dim)
+            log.info("fastembed loaded in %.1fs (dim=%d, ONNX %s)", time.time() - start, embed_dim, device_label)
             return True
         except Exception as e:
             log.warning("fastembed failed (%s), trying next backend", e)
