@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Shared prerequisite check for ML service install scripts on Windows.
 .DESCRIPTION
@@ -49,7 +49,7 @@ function Resolve-BootstrapPython {
     if ($wingetOk) {
         $py2 = Get-Command py -ErrorAction SilentlyContinue
         if ($py2 -and (Test-PythonCandidate -Path $py2.Source -PrefixArgs @('-3'))) {
-            Write-Host "  Python installed via winget ✓"
+            Write-Host "  Python installed via winget [OK]"
             return [pscustomobject]@{
                 Path = $py2.Source
                 PrefixArgs = @('-3')
@@ -57,7 +57,7 @@ function Resolve-BootstrapPython {
         }
         $python2 = Get-Command python -ErrorAction SilentlyContinue
         if ($python2 -and (Test-PythonCandidate -Path $python2.Source -PrefixArgs @())) {
-            Write-Host "  Python installed via winget ✓"
+            Write-Host "  Python installed via winget [OK]"
             return [pscustomobject]@{
                 Path = $python2.Source
                 PrefixArgs = @()
@@ -90,7 +90,7 @@ function Assert-Python310 {
         Write-Error "ERROR: Python $ver too old, need 3.10+."
         exit 1
     }
-    Write-Host "  Python $ver ✓"
+    Write-Host "  Python $ver [OK]"
 }
 
 function Assert-DiskSpace {
@@ -103,20 +103,20 @@ function Assert-DiskSpace {
         Write-Error "ERROR: Disk space insufficient. Need ${RequiredGB}GB, available ${freeGB}GB ($targetDir)"
         exit 1
     }
-    Write-Host "  Disk space: ${freeGB}GB available ✓"
+    Write-Host "  Disk space: ${freeGB}GB available [OK]"
 }
 
 function Assert-Network {
     $timeout = 5000
     try {
         $r = Invoke-WebRequest -Uri "https://pypi.org/simple/" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
-        Write-Host "  PyPI connectivity ✓"
+        Write-Host "  PyPI connectivity [OK]"
     } catch {
         Write-Warning "Cannot reach PyPI (https://pypi.org) — pip install may fail. Set PIP_INDEX_URL for mirror."
     }
     try {
         $r = Invoke-WebRequest -Uri "https://huggingface.co" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
-        Write-Host "  HuggingFace connectivity ✓"
+        Write-Host "  HuggingFace connectivity [OK]"
     } catch {
         Write-Warning "Cannot reach HuggingFace (https://huggingface.co) — model download may fail. Set HF_ENDPOINT for mirror."
     }
