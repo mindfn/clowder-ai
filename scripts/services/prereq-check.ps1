@@ -78,7 +78,8 @@ On Windows, disable the App Execution Alias for python.exe in:
 
 function Assert-Python310 {
     param([pscustomobject]$Bootstrap)
-    $ver = & $Bootstrap.Path @($Bootstrap.PrefixArgs + @('-c', 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'))
+    $pyCmd = 'import sys; print(str(sys.version_info.major) + "." + str(sys.version_info.minor))'
+    $ver = & $Bootstrap.Path @($Bootstrap.PrefixArgs + @('-c', $pyCmd))
     if (-not $ver) {
         Write-Error "ERROR: Could not determine Python version. Ensure Python is correctly installed."
         exit 1
