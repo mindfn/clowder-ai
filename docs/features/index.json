@@ -1157,12 +1157,6 @@
       "name": "Console Settings Shell — 全局导航 + 设置面板骨架",
       "status": "Implemented (branch), pending merge | **Owner**: Ragdoll | **Priority**: P0",
       "file": "F190-console-settings-shell.md"
-    },
-    {
-      "id": "F190",
-      "name": "Service Manifest — ML 服务统一管理",
-      "status": "doing | **Owner**: 布偶猫/宪宪",
-      "file": "F190-service-manifest.md"
     }
   ]
 }
