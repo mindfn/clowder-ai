@@ -21,11 +21,11 @@ import {
 } from '../domains/services/service-registry.js';
 import { resolveUserId } from '../utils/request-identity.js';
 
-function checkServiceOwner(request: Parameters<typeof resolveUserId>[0]): string | null {
+function checkServiceOwner(request: Parameters<typeof resolveUserId>[0]): { status: 401 | 403; error: string } | null {
   const userId = resolveUserId(request);
-  if (!userId) return 'Authentication required';
+  if (!userId) return { status: 401, error: 'Authentication required' };
   const ownerId = process.env['DEFAULT_OWNER_USER_ID']?.trim();
-  if (ownerId && userId !== ownerId) return 'Only the owner can manage services';
+  if (ownerId && userId !== ownerId) return { status: 403, error: 'Only the owner can manage services' };
   return null;
 }
 
@@ -62,8 +62,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.post<{ Params: { id: string } }>('/api/services/:id/start', async (request, reply) => {
     const ownerErr = checkServiceOwner(request);
     if (ownerErr) {
-      reply.status(403);
-      return { error: ownerErr };
+      reply.status(ownerErr.status);
+      return { error: ownerErr.error };
     }
     const { id } = request.params;
     const manifest = getServiceById(id);
@@ -142,8 +142,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.post<{ Params: { id: string } }>('/api/services/:id/stop', async (request, reply) => {
     const ownerErr = checkServiceOwner(request);
     if (ownerErr) {
-      reply.status(403);
-      return { error: ownerErr };
+      reply.status(ownerErr.status);
+      return { error: ownerErr.error };
     }
     const { id } = request.params;
     const manifest = getServiceById(id);
@@ -202,8 +202,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     async (request, reply) => {
       const ownerErr = checkServiceOwner(request);
       if (ownerErr) {
-        reply.status(403);
-        return { error: ownerErr };
+        reply.status(ownerErr.status);
+        return { error: ownerErr.error };
       }
       const { id } = request.params;
       const body = (request.body ?? {}) as { model?: string };
@@ -295,8 +295,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.post<{ Params: { id: string } }>('/api/services/:id/uninstall', async (request, reply) => {
     const ownerErr = checkServiceOwner(request);
     if (ownerErr) {
-      reply.status(403);
-      return { error: ownerErr };
+      reply.status(ownerErr.status);
+      return { error: ownerErr.error };
     }
     const { id } = request.params;
     const manifest = getServiceById(id);
@@ -354,8 +354,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.get<{ Params: { id: string } }>('/api/services/:id/logs', async (request, reply) => {
     const ownerErr = checkServiceOwner(request);
     if (ownerErr) {
-      reply.status(403);
-      return { error: ownerErr };
+      reply.status(ownerErr.status);
+      return { error: ownerErr.error };
     }
     const { id } = request.params;
     const manifest = getServiceById(id);
@@ -372,8 +372,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     async (request, reply) => {
       const ownerErr = checkServiceOwner(request);
       if (ownerErr) {
-        reply.status(403);
-        return { error: ownerErr };
+        reply.status(ownerErr.status);
+        return { error: ownerErr.error };
       }
       const { id } = request.params;
       const toggleSchema = z.object({ enabled: z.boolean(), model: z.string().optional() });

@@ -40,14 +40,14 @@ describe('service management security — real route', () => {
   });
 
   describe('owner gate — toggle endpoint', () => {
-    test('no auth header → 403', async () => {
+    test('no auth header → 401', async () => {
       process.env.DEFAULT_OWNER_USER_ID = 'owner-1';
       const res = await app.inject({
         method: 'POST',
         url: `/api/services/${KNOWN_SERVICE_ID}/toggle`,
         payload: { enabled: true },
       });
-      assert.equal(res.statusCode, 403);
+      assert.equal(res.statusCode, 401);
       const body = JSON.parse(res.body);
       assert.ok(body.error.includes('Authentication'));
     });
