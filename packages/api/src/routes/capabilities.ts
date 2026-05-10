@@ -145,6 +145,7 @@ const SECRET_FLAG_EXACT = new Set([
 const SECRET_FLAG_CONTAINS = /secret|token|password|auth|credential|\bkey\b|\bheader\b/i;
 const SECRET_VALUE_PATTERN = /^(sk-|ghp_|gho_|ghu_|xoxb-|xoxp-)|Bearer\s|^Authorization:/i;
 const ENV_LIKE_SECRET = /^[A-Z][A-Z0-9_]*(SECRET|TOKEN|PASSWORD|KEY|AUTH|CREDENTIAL)[A-Z0-9_]*=.+/;
+const NESTED_SECRET_KEY = /secret|token|password|auth|credential|key/i;
 
 function isSecretFlag(flag: string): boolean {
   const lower = flag.toLowerCase();
@@ -181,9 +182,13 @@ export function sanitizeArgsForDisplay(args: string[]): string[] {
         continue;
       }
       const nestedEq = valuePart.indexOf('=');
-      if (nestedEq > 0 && SECRET_VALUE_PATTERN.test(valuePart.slice(nestedEq + 1))) {
-        result.push(`${arg.slice(0, eqIdx + 1 + nestedEq + 1)}••••••`);
-        continue;
+      if (nestedEq > 0) {
+        const nestedKey = valuePart.slice(0, nestedEq);
+        const nestedVal = valuePart.slice(nestedEq + 1);
+        if (NESTED_SECRET_KEY.test(nestedKey) || SECRET_VALUE_PATTERN.test(nestedVal)) {
+          result.push(`${arg.slice(0, eqIdx + 1 + nestedEq + 1)}••••••`);
+          continue;
+        }
       }
     }
     if (eqIdx < 0 && isSecretFlag(arg)) {
@@ -207,8 +212,8 @@ export function sanitizeUrlForDisplay(url: string): string {
     const hadPass = !!parsed.password;
     parsed.username = '';
     parsed.password = '';
-    for (const key of [...parsed.searchParams.keys()]) {
-      if (/token|key|secret|auth|password/i.test(key)) {
+    for (const [key, val] of [...parsed.searchParams.entries()]) {
+      if (/token|key|secret|auth|password|sig/i.test(key) || SECRET_VALUE_PATTERN.test(val)) {
         parsed.searchParams.set(key, '••••••');
       }
     }
@@ -222,7 +227,11 @@ export function sanitizeUrlForDisplay(url: string): string {
     }
     return result;
   } catch {
-    if (SECRET_VALUE_PATTERN.test(url) || /:\/\/[^@/]*@/.test(url)) {
+    if (
+      SECRET_VALUE_PATTERN.test(url) ||
+      /:\/\/[^@/]*@/.test(url) ||
+      /[?&#](token|key|secret|auth|password|access_token|sig)=/i.test(url)
+    ) {
       return '••••••';
     }
     return url;
