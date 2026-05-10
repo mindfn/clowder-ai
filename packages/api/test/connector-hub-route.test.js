@@ -893,18 +893,20 @@ describe('PUT /api/connector/:connectorId/config — owner guard', () => {
     return { app, envFilePath };
   }
 
-  it('returns 403 when DEFAULT_OWNER_USER_ID is not configured', async () => {
+  it('allows saves when DEFAULT_OWNER_USER_ID is not configured (permissive mode)', async () => {
     delete process.env.DEFAULT_OWNER_USER_ID;
     const { app, envFilePath } = await buildConfigApp();
     const res = await app.inject({
       method: 'PUT',
       url: '/api/connector/telegram/config',
       headers: { 'x-cat-cafe-user': 'anyone', 'content-type': 'application/json' },
-      payload: JSON.stringify({ secrets: [{ name: 'TELEGRAM_BOT_TOKEN', value: '123456:ABC' }] }),
+      payload: JSON.stringify({
+        secrets: [{ name: 'TELEGRAM_BOT_TOKEN', value: '123456:ABCdefghij_permissive_test' }],
+      }),
     });
-    assert.equal(res.statusCode, 403);
+    assert.equal(res.statusCode, 200);
     const env = readFileSync(envFilePath, 'utf8');
-    assert.ok(!env.includes('TELEGRAM_BOT_TOKEN'), '.env must not be mutated');
+    assert.ok(env.includes('TELEGRAM_BOT_TOKEN'), '.env should be mutated in permissive mode');
     await app.close();
   });
 
