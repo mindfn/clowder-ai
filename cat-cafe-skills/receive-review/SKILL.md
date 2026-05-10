@@ -174,6 +174,41 @@ Commit: {sha} — {message}
 
 **云端 review 修了 P1/P2 → 必须 re-trigger 云端 review，不能自判通过直接合入。**
 
+## Review Verdict Scope Boundary (#598)
+
+> **PASS only closes the stated review target.** 单次 review 放行不等于 feature done。
+
+### 作者校验：裸 PASS 无效
+
+收到 reviewer 的 PASS / LGTM 时，**作者必须校验是否带了 Verdict 结构**：
+
+```md
+Verdict: PASS / REQUEST CHANGES
+Review target: commit <sha> / diff <base..head> / PR delta / named scope
+Covered: 本次实际审过的范围
+Not covered: 本次结论不证明的范围
+Next: fix findings / return to plan / run quality-gate / eligible for merge-gate
+```
+
+- 有完整结构 → 按 `Covered` 范围判断是否可以进 merge-gate
+- **裸 PASS（无 Covered/Not covered）→ 不能直接进 merge-gate**，回问 reviewer 补充覆盖范围
+- `Not covered` 可以短（如 `feature completion beyond this PR`），但**不能省**
+
+> Reviewer 未必会加载 `receive-review`，所以 verdict 模板在 `request-review` 请求信里提出（见 request-review #598），这里做作者侧兜底校验。
+
+### 实现者收到 PASS 后的 invariant
+
+> **PASS only closes the stated review target.** Before declaring feature done or entering merge-gate, reconcile against the current feature plan / feat-lifecycle completion source.
+
+同一句"放行"至少有四种层级：
+
+1. 当前 commit 的 P1/P2 已清零
+2. 当前 PR delta 可以继续推进
+3. 当前 phase 可以合入
+4. 整个 feature 已完成
+
+**不要把 commit-level PASS 语义升级为 feature-level done。** `Next` 字段引导下一步，这条 invariant 挡住跳跃。Feature complete 仍以 `feat-lifecycle completion` + `Vision Guardian` 为唯一机制。
+
 ## Reviewer 验证 UX/前端改动（硬规则）
 
 > 教训（F121 狼人杀）：reviewer 只看代码没打开浏览器，author 连续 9 轮瞎猜修都没被发现。
