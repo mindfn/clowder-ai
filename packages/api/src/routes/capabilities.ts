@@ -218,7 +218,12 @@ export function sanitizeUrlForDisplay(url: string): string {
       }
     }
     if (parsed.hash) {
-      parsed.hash = parsed.hash.replace(/(?<=[#&])(token|key|secret|auth|password|access_token)=[^&#]*/gi, '$1=••••••');
+      parsed.hash = parsed.hash.replace(/(?<=[#&])([^=&#]+)=([^&#]*)/g, (_m, k, v) => {
+        if (/token|key|secret|auth|password|access_token|sig/i.test(k) || SECRET_VALUE_PATTERN.test(v)) {
+          return `${k}=••••••`;
+        }
+        return `${k}=${v}`;
+      });
     }
     let result = parsed.toString();
     if (hadUser || hadPass) {
