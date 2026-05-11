@@ -135,3 +135,25 @@ test('Invoke-PnpmInstallWithCapturedOutput trusts $LASTEXITCODE over pipeline ex
     'catch block must check $LASTEXITCODE -eq 0 to avoid DEP0169 false failures',
   );
 });
+
+test('Invoke-PnpmInstallWithCapturedOutput pins $LASTEXITCODE sentinel before pnpm call (codex P2)', () => {
+  // $LASTEXITCODE is a process-global variable; PowerShell does NOT reset it on
+  // `throw`. If Invoke-ToolCommand throws "command not found" before pnpm runs,
+  // $LASTEXITCODE keeps whatever the previous native command left behind. Without
+  // a sentinel a stale 0 would let the catch path return Ok=$true — fail-open.
+  // Codex P2 fix: assign $LASTEXITCODE = -1 immediately before the Invoke-Pnpm
+  // call so only a real pnpm.exe exit can overwrite it.
+  const fn = installScript.match(/function Invoke-PnpmInstallWithCapturedOutput[\s\S]*?\n\}\n/);
+  assert.ok(fn, 'must define Invoke-PnpmInstallWithCapturedOutput');
+  const body = fn[0];
+  // The sentinel must appear, and it must appear BEFORE the Invoke-Pnpm call so
+  // that an Invoke-ToolCommand pre-execution throw cannot leave a stale 0 in place.
+  const sentinelIdx = body.indexOf('$LASTEXITCODE = -1');
+  const invokeIdx = body.indexOf('Invoke-Pnpm -CommandArgs');
+  assert.ok(sentinelIdx >= 0, 'must set $LASTEXITCODE = -1 sentinel before invoking pnpm');
+  assert.ok(invokeIdx >= 0, 'must invoke pnpm via Invoke-Pnpm');
+  assert.ok(
+    sentinelIdx < invokeIdx,
+    'sentinel assignment must appear BEFORE Invoke-Pnpm so a pre-execution throw cannot leave stale $LASTEXITCODE',
+  );
+});

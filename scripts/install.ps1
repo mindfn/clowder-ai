@@ -99,6 +99,13 @@ function Invoke-PnpmInstallWithCapturedOutput {
             Remove-Item Env:PUPPETEER_SKIP_DOWNLOAD -ErrorAction SilentlyContinue
         }
 
+        # Sentinel: $LASTEXITCODE is a process-global variable and PowerShell does
+        # NOT reset it on `throw`. If Invoke-ToolCommand throws "command not found"
+        # (or any other pre-execution error), $LASTEXITCODE keeps whatever value
+        # the previous native command left behind (possibly 0), which would let
+        # the catch path below fail-open. Pin it to -1 immediately before the
+        # Invoke-Pnpm call so only a real pnpm.exe exit can overwrite it.
+        $LASTEXITCODE = -1
         try {
             Invoke-Pnpm -CommandArgs $CommandArgs 2>&1 | Tee-Object -Variable capturedOutput
             return [pscustomobject]@{
@@ -107,10 +114,15 @@ function Invoke-PnpmInstallWithCapturedOutput {
                 OutputText = Get-CommandOutputText -OutputLines $capturedOutput
             }
         } catch {
-            # Node 24 emits DEP0169 (and similar) deprecation warnings to stderr;
-            # the 2>&1 | Tee-Object pipeline can throw under $ErrorActionPreference=Stop
-            # even when pnpm itself exited 0. Trust $LASTEXITCODE as the source of
-            # truth for the process result rather than the PowerShell exception.
+            # Two distinct scenarios reach this catch:
+            #   (a) pnpm actually ran, exited 0, and only the 2>&1 | Tee-Object
+            #       pipeline threw (e.g. Node 24 DEP0169 deprecation on stderr
+            #       under $ErrorActionPreference=Stop). $LASTEXITCODE is now 0
+            #       and we should treat this as success.
+            #   (b) Invoke-ToolCommand threw before pnpm ran (e.g. "pnpm command
+            #       not found"). $LASTEXITCODE was never refreshed and remains
+            #       at the -1 sentinel set above, so the `-eq 0` check fails
+            #       closed.
             if ($LASTEXITCODE -eq 0) {
                 return [pscustomobject]@{
                     Ok = $true
