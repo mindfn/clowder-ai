@@ -48,12 +48,15 @@ const DEFAULT_LIVENESS: ThreadLiveness = {
   targetCats: EMPTY_TARGET_CATS as string[],
 };
 
-/** Deduplicate assistant messages that share the same (catId, invocationId).
- *  Multiple write paths (socket stream, draft injection, hydration merge) can
- *  race and leave two bubbles for the same invocation in the store.  This
- *  read-side guard keeps only the richer/later one so duplicates never render. */
-function deduplicateByInvocationId(messages: ChatMessage[]): ChatMessage[] {
-  const seen = new Map<string, number>();
+/** Deduplicate transient assistant messages (streaming / draft) that share the
+ *  same (catId, invocationId) with another message. Only messages that are still
+ *  in-flight (isStreaming or draft-prefixed id) participate as dedup candidates;
+ *  finalized history messages are never dropped — this avoids swallowing A→B→A
+ *  re-entry where the same cat legitimately speaks twice under one outer
+ *  invocation. */
+function deduplicateTransientMessages(messages: ChatMessage[]): ChatMessage[] {
+  const isTransient = (m: ChatMessage) => m.isStreaming || m.id.startsWith('draft-');
+  const keyOf = new Map<string, number[]>();
   let hasDup = false;
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i]!;
@@ -61,26 +64,31 @@ function deduplicateByInvocationId(messages: ChatMessage[]): ChatMessage[] {
     const invId = getBubbleInvocationId(msg);
     if (!invId) continue;
     const key = `${msg.catId}:${invId}`;
-    if (seen.has(key)) {
-      hasDup = true;
-      const prevIdx = seen.get(key)!;
-      const prev = messages[prevIdx]!;
-      const prevLen = prev.content.length + (prev.thinking?.length ?? 0);
-      const curLen = msg.content.length + (msg.thinking?.length ?? 0);
-      if (curLen >= prevLen) seen.set(key, i);
-    } else {
-      seen.set(key, i);
-    }
+    const arr = keyOf.get(key);
+    if (arr) { arr.push(i); hasDup = true; } else { keyOf.set(key, [i]); }
   }
   if (!hasDup) return messages;
-  const keep = new Set(seen.values());
-  return messages.filter((_, i) => {
-    const msg = messages[i]!;
-    if (msg.type !== 'assistant' || !msg.catId) return true;
-    const invId = getBubbleInvocationId(msg);
-    if (!invId) return true;
-    return keep.has(i);
-  });
+  const drop = new Set<number>();
+  for (const indices of keyOf.values()) {
+    if (indices.length < 2) continue;
+    const transients = indices.filter((i) => isTransient(messages[i]!));
+    if (transients.length === 0) continue;
+    const finalized = indices.filter((i) => !isTransient(messages[i]!));
+    if (finalized.length > 0) {
+      for (const t of transients) drop.add(t);
+    } else {
+      let bestIdx = transients[0]!;
+      let bestLen = 0;
+      for (const t of transients) {
+        const m = messages[t]!;
+        const len = m.content.length + (m.thinking?.length ?? 0);
+        if (len >= bestLen) { bestLen = len; bestIdx = t; }
+      }
+      for (const t of transients) { if (t !== bestIdx) drop.add(t); }
+    }
+  }
+  if (drop.size === 0) return messages;
+  return messages.filter((_, i) => !drop.has(i));
 }
 
 /** Pure selector — returns the messages array for a thread, preferring the
@@ -92,7 +100,7 @@ export function selectThreadMessages(state: ChatState, threadId: string | null):
     threadId === state.currentThreadId || !state.currentThreadId
       ? (state.messages ?? (EMPTY_MESSAGES as ChatMessage[]))
       : (state.threadStates?.[threadId]?.messages ?? (EMPTY_MESSAGES as ChatMessage[]));
-  return deduplicateByInvocationId(raw);
+  return deduplicateTransientMessages(raw);
 }
 
 /** Pure selector — returns liveness fields for a thread. Defensively
