@@ -64,6 +64,8 @@ export interface CapabilityEntry {
   lockVersion?: LockVersion;
   /** F146-C: Persistent probe state (AC-C3/C4/C6) */
   probeState?: ProbeState;
+  /** F197: Plugin that owns this capability (for plugin-managed resources) */
+  pluginId?: string;
 }
 
 /** Root schema for .cat-cafe/capabilities.json */
@@ -110,6 +112,8 @@ export interface CapabilityBoardItem {
   ecosystem?: MarketplaceEcosystem;
   /** F146-D: Version lock info (from Phase C install governance) */
   lockVersion?: LockVersion;
+  /** F197: Plugin that owns this capability */
+  pluginId?: string;
 }
 
 /** Lightweight MCP tool info for board display */

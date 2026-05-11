@@ -404,6 +404,16 @@ export {
   MIN_TIMEOUT_MINUTES,
   MULTI_MENTION_TERMINAL_STATES,
 } from './multi-mention.js';
+// Plugin Framework types (F197 声明式插件注册)
+export type {
+  PluginConfigField,
+  PluginHealthCheck,
+  PluginInfo,
+  PluginManifest,
+  PluginResourceDef,
+  PluginResourceStatus,
+  PluginStatus,
+} from './plugin.js';
 // Pack System types (F129 Multi-Agent Mod)
 export type {
   CompiledPackBlocks,
