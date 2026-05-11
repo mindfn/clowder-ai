@@ -2121,7 +2121,12 @@ export async function* routeSerial(
         const isFinal = index === worklist.length - 1;
         const ownStampedDone =
           ownInvocationId && !doneMsg.invocationId ? { ...doneMsg, invocationId: ownInvocationId } : doneMsg;
-        yield { ...ownStampedDone, ...(mentionsUser ? { mentionsUser } : {}), ...(ownInvocationId ? { turnId: ownInvocationId } : {}), isFinal };
+        yield {
+          ...ownStampedDone,
+          ...(mentionsUser ? { mentionsUser } : {}),
+          ...(ownInvocationId ? { turnId: ownInvocationId } : {}),
+          isFinal,
+        };
         activeTrackedA2ASlots.delete(catId);
         if (isFinal) yieldedFinalDone = true;
         if (ownInvocationId) completedCatInvocationIds.push([catId, ownInvocationId]);
