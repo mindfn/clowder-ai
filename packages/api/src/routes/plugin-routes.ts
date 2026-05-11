@@ -220,13 +220,22 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
       }
 
       const yamlPath = join(pluginsDir, id, limbResource.path);
-      let nodeId: string;
-      try {
-        const decl = loadLimbDeclaration(yamlPath);
-        nodeId = decl.nodeId;
-      } catch {
+      const decl = (() => {
+        try { return loadLimbDeclaration(yamlPath); } catch { return null; }
+      })();
+      if (!decl) {
         return { ok: false, status: 'offline', error: 'Failed to load limb declaration' };
       }
+
+      const allCommands = decl.capabilities.flatMap((c) => c.commands);
+      if (!allCommands.includes(manifest.healthCheck.limbCommand)) {
+        reply.status(400);
+        return {
+          error: `limbCommand '${manifest.healthCheck.limbCommand}' not found in plugin's limb capabilities`,
+        };
+      }
+
+      const nodeId = decl.nodeId;
 
       const handle = limbRegistry.getNodeHandle(nodeId);
       if (!handle) {
