@@ -326,6 +326,8 @@ export interface BackgroundAgentMessage {
    *  sets this from inner invokeSingleCat invocation_created event. Frontend writes to
    *  `extra.stream.turnInvocationId` so bubble dedup uses the turn dimension. */
   turnInvocationId?: string;
+  /** Per-turn unique identity for A2A serial chains (child invocation's own ID) */
+  turnId?: string;
   /**
    * F183 Phase C — thread-scoped monotonic sequence number (KD-9).
    * Client tracks `lastSeq` per thread; gap (incomingSeq > lastSeq + 1) triggers

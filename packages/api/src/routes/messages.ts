@@ -1449,27 +1449,32 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         // `turnInvocationId` (Z3 dual id, where draft.invocationId === turnInvocationId for new
         // formal messages). Without this, append-success-but-draft-not-yet-deleted window double-shows
         // formal + draft for the same turn.
+        // Also collect turnId for per-turn identity dedup in A2A chains.
         const formalInvocationIds = new Set<string>();
+        const formalTurnIds = new Set<string>();
         for (const m of page) {
           const parentInv = m.extra?.stream?.invocationId;
           const turnInv = m.extra?.stream?.turnInvocationId;
+          const turnId = m.extra?.stream?.turnId;
           if (parentInv) formalInvocationIds.add(parentInv);
           if (turnInv) formalInvocationIds.add(turnInv);
+          if (turnId) formalTurnIds.add(turnId);
         }
-        activeDrafts = drafts.filter((d) => !formalInvocationIds.has(d.invocationId));
+        activeDrafts = drafts.filter((d) => !formalInvocationIds.has(d.invocationId) && !formalTurnIds.has(d.invocationId));
         // Cloud R4 P2: if drafts survive page-level dedup, widen the check to cover
         // formal messages pushed off the first page (race window: TTL > page depth).
-        // Cloud R5 P2: wider window must always exceed page limit (limit max=200 → worst case 800).
         if (activeDrafts.length > 0 && page.length >= limit) {
           const widerLimit = Math.max(200, limit * 4);
           const wider = await opts.messageStore.getByThread(resolvedThreadId, widerLimit, userId);
           for (const m of wider) {
             const parentInv = m.extra?.stream?.invocationId;
             const turnInv = m.extra?.stream?.turnInvocationId;
+            const turnId = m.extra?.stream?.turnId;
             if (parentInv) formalInvocationIds.add(parentInv);
             if (turnInv) formalInvocationIds.add(turnInv);
+            if (turnId) formalTurnIds.add(turnId);
           }
-          activeDrafts = activeDrafts.filter((d) => !formalInvocationIds.has(d.invocationId));
+          activeDrafts = activeDrafts.filter((d) => !formalInvocationIds.has(d.invocationId) && !formalTurnIds.has(d.invocationId));
         }
       }
 
@@ -1574,7 +1579,8 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           origin: 'stream',
           // F194 Phase Z9 AC-Z25 (KD-28): always stamp turnInvocationId; draft has only
           // one identity so both fields point to draft invocationId.
-          extra: { stream: { invocationId: d.invocationId, turnInvocationId: d.invocationId } },
+          // turnId dedup: use parentInvocationId for stream.invocationId when available.
+          extra: { stream: { invocationId: d.parentInvocationId ?? d.invocationId, turnInvocationId: d.invocationId } },
           ...(d.toolEvents ? { toolEvents: d.toolEvents } : {}),
           ...(d.thinking ? { thinking: d.thinking } : {}),
         });

@@ -833,6 +833,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       stream: {
         invocationId: effectiveInvId,
         turnInvocationId: invocationId ?? effectiveInvId,
+        turnId: actor.invocationId,
       },
     };
     const storedMsg = await messageStore.append({

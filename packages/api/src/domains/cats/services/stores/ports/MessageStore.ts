@@ -64,8 +64,9 @@ export interface StoredMessage {
      *    - `invocationId` = parent/chain invocation (legacy field, liveness/queue/cancel SoT)
      *    - `turnInvocationId` = per-cat-turn invocation (Z3 new — bubble identity SoT for frontend
      *      hydrate/merge stable key; required so same-parent multi-turn-same-cat bubbles do NOT merge)
+     *    - `turnId` = per-turn identity for draft/formal dedup in A2A chains
      *  Frontend prefers `turnInvocationId` (fallback `invocationId` for legacy messages). */
-    stream?: { invocationId: string; turnInvocationId?: string };
+    stream?: { invocationId: string; turnInvocationId?: string; turnId?: string };
     crossPost?: { sourceThreadId: string; sourceInvocationId?: string };
     targetCats?: string[];
     scheduler?: SchedulerMessageExtra['scheduler'];

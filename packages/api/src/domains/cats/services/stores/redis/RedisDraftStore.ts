@@ -46,6 +46,9 @@ export class RedisDraftStore implements IDraftStore {
       content: draft.content,
       updatedAt: String(draft.updatedAt),
     };
+    if (draft.parentInvocationId) {
+      fields.parentInvocationId = draft.parentInvocationId;
+    }
     if (draft.toolEvents && draft.toolEvents.length > 0) {
       fields.toolEvents = JSON.stringify(draft.toolEvents);
     }
@@ -167,6 +170,7 @@ export class RedisDraftStore implements IDraftStore {
       content: d.content ?? '',
       createdAt: parseInt(d.createdAt ?? d.updatedAt ?? '0', 10),
       updatedAt: parseInt(d.updatedAt ?? '0', 10),
+      ...(d.parentInvocationId ? { parentInvocationId: d.parentInvocationId } : {}),
       ...(toolEvents ? { toolEvents } : {}),
       ...(d.thinking ? { thinking: d.thinking } : {}),
     };
