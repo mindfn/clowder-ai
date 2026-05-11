@@ -1,0 +1,14 @@
+id: test-skill-only
+name: Test Skill Plugin
+version: "1.0.0"
+description: F197 verification plugin (skill-only)
+
+config:
+  - envName: TEST_SKILL_ONLY_API_KEY
+    label: API Key
+    sensitive: true
+    required: true
+
+resources:
+  - type: skill
+    path: skills/test-skill
