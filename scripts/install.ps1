@@ -47,6 +47,41 @@ function Write-PuppeteerSkipWarning {
     Write-Warn "Bundled Chrome download failed - skipped"
     Write-Warn "Thread export / screenshot may be unavailable. To install later: npx puppeteer browsers install chrome"
 }
+function Test-LockfileMismatchFailure {
+    param([string]$OutputText)
+    if (-not $OutputText) { return $false }
+    # Classify pnpm 9 lockfile drift (the only failure mode that justifies a plain
+    # `pnpm install` retry). Anything else (EPERM, network, native build) must
+    # surface its original stderr rather than be re-buried under a misleading
+    # "Frozen lockfile failed, retrying..." line.
+    return ($OutputText -match "ERR_PNPM_OUTDATED_LOCKFILE") -or
+           ($OutputText -match "ERR_PNPM_LOCKFILE_BREAKING_CHANGE") -or
+           ($OutputText -match "Cannot install with .frozen-lockfile") -or
+           ($OutputText -match "lockfile is not up to date") -or
+           ($OutputText -match "lockfile.*is incompatible") -or
+           ($OutputText -match "Cannot proceed with .* without the lockfile")
+}
+function Test-WindowsEpermFailure {
+    param([string]$OutputText)
+    if (-not $OutputText) { return $false }
+    return ($OutputText -match "EPERM[:\s]") -or
+           ($OutputText -match "EBUSY[:\s]") -or
+           ($OutputText -match "EACCES[:\s]") -or
+           ($OutputText -match "operation not permitted") -or
+           ($OutputText -match "resource busy or locked")
+}
+function Write-WindowsEpermHint {
+    Write-Err "This looks like a Windows file-system error (EPERM/EBUSY/EACCES),"
+    Write-Err "not a lockfile mismatch. Common causes and fixes:"
+    Write-Err "  1. Antivirus / Windows Defender locking files in the pnpm store"
+    Write-Err "     -> Add your project folder and %LOCALAPPDATA%\pnpm to Defender exclusions, then retry"
+    Write-Err "  2. A previous Node / pnpm / installer process still holding files open"
+    Write-Err "     -> Close other shells, reboot, then retry"
+    Write-Err "  3. Long path support disabled"
+    Write-Err "     -> Enable Win32 long paths (LongPathsEnabled=1 under HKLM\SYSTEM\CurrentControlSet\Control\FileSystem)"
+    Write-Err "  4. Project path requires elevation or sits on a sync'd drive (OneDrive/Dropbox)"
+    Write-Err "     -> Move the project under your local user profile, or run PowerShell as Administrator"
+}
 function Invoke-PnpmInstallWithCapturedOutput {
     param(
         [string[]]$CommandArgs,
@@ -360,15 +395,27 @@ if (-not $frozenInstallResult.Ok -and (Test-PuppeteerBrowserDownloadFailure -Out
 }
 if (-not $frozenInstallResult.Ok) {
     Exit-InstallerIfCancelled -ErrorRecord $frozenInstallResult.ErrorRecord -Context "pnpm install"
-    Write-Warn "Frozen lockfile failed, retrying..."
-    $plainInstallResult = Invoke-PnpmInstallWithCapturedOutput -CommandArgs @("install")
-    if (-not $plainInstallResult.Ok -and (Test-PuppeteerBrowserDownloadFailure -OutputText $plainInstallResult.OutputText)) {
-        Write-PuppeteerSkipWarning
-        $plainInstallResult = Invoke-PnpmInstallWithCapturedOutput -CommandArgs @("install") -SkipPuppeteerDownload
-    }
-    if (-not $plainInstallResult.Ok) {
-        Exit-InstallerIfCancelled -ErrorRecord $plainInstallResult.ErrorRecord -Context "pnpm install"
-        Write-Err "pnpm install failed"
+    if (Test-LockfileMismatchFailure -OutputText $frozenInstallResult.OutputText) {
+        Write-Warn "Frozen lockfile failed, retrying..."
+        $plainInstallResult = Invoke-PnpmInstallWithCapturedOutput -CommandArgs @("install")
+        if (-not $plainInstallResult.Ok -and (Test-PuppeteerBrowserDownloadFailure -OutputText $plainInstallResult.OutputText)) {
+            Write-PuppeteerSkipWarning
+            $plainInstallResult = Invoke-PnpmInstallWithCapturedOutput -CommandArgs @("install") -SkipPuppeteerDownload
+        }
+        if (-not $plainInstallResult.Ok) {
+            Exit-InstallerIfCancelled -ErrorRecord $plainInstallResult.ErrorRecord -Context "pnpm install"
+            Write-Err "pnpm install failed"
+            exit 1
+        }
+    } else {
+        # Non-lockfile failure (EPERM / EBUSY / network / native build). Falling back
+        # to plain `pnpm install` would just repeat the same error and bury the real
+        # cause under a misleading "Frozen lockfile failed" message.
+        if (Test-WindowsEpermFailure -OutputText $frozenInstallResult.OutputText) {
+            Write-WindowsEpermHint
+        }
+        Write-Err "pnpm install --frozen-lockfile failed"
+        Write-Err "The real error is above. This is NOT a lockfile drift issue."
         exit 1
     }
 }

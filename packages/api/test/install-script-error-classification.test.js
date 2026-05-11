@@ -1,0 +1,117 @@
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { assert } from './install-script-test-helpers.js';
+
+const testDir = dirname(fileURLToPath(import.meta.url));
+const repoRoot = resolve(testDir, '..', '..', '..');
+const installScript = readFileSync(resolve(repoRoot, 'scripts', 'install.ps1'), 'utf8');
+
+test('install.ps1 defines Test-LockfileMismatchFailure helper', () => {
+  assert.match(
+    installScript,
+    /function Test-LockfileMismatchFailure\b/,
+    'must classify lockfile mismatch errors distinctly from generic install failures',
+  );
+});
+
+test('Test-LockfileMismatchFailure recognises pnpm 9 lockfile error codes and phrases', () => {
+  const fn = installScript.match(/function Test-LockfileMismatchFailure[\s\S]*?\n\}/);
+  assert.ok(fn, 'must define Test-LockfileMismatchFailure body');
+  const body = fn[0];
+  assert.match(body, /ERR_PNPM_OUTDATED_LOCKFILE/, 'must match pnpm outdated lockfile error code');
+  assert.match(body, /frozen-lockfile/i, 'must reference frozen-lockfile error context');
+  assert.match(body, /lockfile/i, 'must reference lockfile phrase');
+});
+
+test('install.ps1 defines Test-WindowsEpermFailure helper', () => {
+  assert.match(
+    installScript,
+    /function Test-WindowsEpermFailure\b/,
+    'must classify Windows EPERM/EBUSY/EACCES errors distinctly',
+  );
+});
+
+test('Test-WindowsEpermFailure recognises EPERM / EBUSY / EACCES errno codes', () => {
+  const fn = installScript.match(/function Test-WindowsEpermFailure[\s\S]*?\n\}/);
+  assert.ok(fn, 'must define Test-WindowsEpermFailure body');
+  const body = fn[0];
+  assert.match(body, /EPERM/, 'must match EPERM errno');
+  assert.match(body, /EBUSY/, 'must match EBUSY errno');
+  assert.match(body, /EACCES/, 'must match EACCES errno');
+});
+
+test('install.ps1 defines Write-WindowsEpermHint to surface actionable fixes', () => {
+  assert.match(
+    installScript,
+    /function Write-WindowsEpermHint\b/,
+    'must define a hint helper for Windows EPERM failures',
+  );
+  const fn = installScript.match(/function Write-WindowsEpermHint[\s\S]*?\n\}/);
+  assert.ok(fn, 'must define Write-WindowsEpermHint body');
+  const body = fn[0];
+  assert.match(body, /Defender|antivirus/i, 'hint must mention AV / Defender as common cause');
+  assert.match(body, /long path|LongPathsEnabled/i, 'hint must mention Windows long path support');
+});
+
+test('Step 5 install flow branches on error class instead of blind retry', () => {
+  const step5Block = installScript.match(/Write-Step "Step 5\/9[\s\S]*?Write-Step "Step 6\/9/);
+  assert.ok(step5Block, 'must find Step 5 install block');
+  const block = step5Block[0];
+  assert.match(
+    block,
+    /Test-LockfileMismatchFailure/,
+    'Step 5 must call Test-LockfileMismatchFailure before deciding to retry',
+  );
+  assert.match(
+    block,
+    /Test-WindowsEpermFailure/,
+    'Step 5 must call Test-WindowsEpermFailure to detect file-system errors',
+  );
+});
+
+test('Step 5 no longer prints misleading "Frozen lockfile failed, retrying" for non-lockfile errors', () => {
+  const step5Block = installScript.match(/Write-Step "Step 5\/9[\s\S]*?Write-Step "Step 6\/9/);
+  assert.ok(step5Block, 'must find Step 5 install block');
+  const block = step5Block[0];
+  // The misleading retry message must now be gated behind a lockfile-mismatch check.
+  // It is acceptable for the string to appear once, but only inside a branch that
+  // first confirmed the error is actually a lockfile mismatch.
+  const retryWarn = block.match(/Frozen lockfile[^\n]*retrying/);
+  if (retryWarn) {
+    const preceding = block.slice(0, block.indexOf(retryWarn[0]));
+    assert.match(
+      preceding,
+      /Test-LockfileMismatchFailure/,
+      'retry warning must appear AFTER Test-LockfileMismatchFailure check, not unconditionally',
+    );
+  }
+});
+
+test('Step 5 surfaces Windows EPERM hint when EPERM detected, instead of silently failing', () => {
+  const step5Block = installScript.match(/Write-Step "Step 5\/9[\s\S]*?Write-Step "Step 6\/9/);
+  assert.ok(step5Block, 'must find Step 5 install block');
+  const block = step5Block[0];
+  assert.match(
+    block,
+    /Write-WindowsEpermHint/,
+    'Step 5 must call Write-WindowsEpermHint when EPERM/EBUSY/EACCES detected',
+  );
+});
+
+test('Step 5 fails fast on non-lockfile errors instead of swapping to plain pnpm install', () => {
+  // The fix: when frozen-lockfile fails for a reason that is NOT a lockfile mismatch
+  // (e.g. EPERM unlink), we must NOT fall back to plain `pnpm install` — that just
+  // repeats the same failure and buries the real error under a misleading message.
+  const step5Block = installScript.match(/Write-Step "Step 5\/9[\s\S]*?Write-Step "Step 6\/9/);
+  assert.ok(step5Block, 'must find Step 5 install block');
+  const block = step5Block[0];
+  // There must be a code path that exits 1 without invoking a second plain install
+  // when the first failure is not a lockfile mismatch.
+  assert.match(
+    block,
+    /Test-LockfileMismatchFailure[\s\S]*?\belse\b[\s\S]*?exit 1/,
+    'must have an else-branch that exits without retrying when error is not a lockfile mismatch',
+  );
+});
