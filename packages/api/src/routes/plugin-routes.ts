@@ -4,13 +4,14 @@
  * Dynamic plugin discovery, configuration, and resource lifecycle management.
  */
 
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { PluginInfo } from '@cat-cafe/shared';
 import type { LimbRegistry } from '../domains/limb/LimbRegistry.js';
 import type { PluginResourceActivator } from '../domains/plugin/PluginResourceActivator.js';
 import type { PluginRegistry } from '../domains/plugin/PluginRegistry.js';
 import { validateEnvSafety } from '../domains/plugin/plugin-manifest.js';
+import { loadLimbDeclaration } from '../domains/limb/limb-yaml-loader.js';
 import { applyConnectorSecretUpdates } from '../config/connector-secret-updater.js';
 import { readCapabilitiesConfig } from '../config/capabilities/capability-orchestrator.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
@@ -23,10 +24,11 @@ interface PluginRoutesOpts {
   pluginRegistry: PluginRegistry;
   pluginActivator: PluginResourceActivator;
   limbRegistry: LimbRegistry;
+  pluginsDir: string;
 }
 
 export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpts): void {
-  const { pluginRegistry, pluginActivator, limbRegistry } = opts;
+  const { pluginRegistry, pluginActivator, limbRegistry, pluginsDir } = opts;
 
   app.get('/api/plugins', async () => {
     const projectRoot = resolveActiveProjectRoot();
@@ -217,13 +219,27 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
         return { error: 'Plugin declares limbCommand but has no limb resource' };
       }
 
-      const handle = limbRegistry.getNodeHandle(id);
+      const yamlPath = join(pluginsDir, id, limbResource.path);
+      let nodeId: string;
+      try {
+        const decl = loadLimbDeclaration(yamlPath);
+        nodeId = decl.nodeId;
+      } catch {
+        return { ok: false, status: 'offline', error: 'Failed to load limb declaration' };
+      }
+
+      const handle = limbRegistry.getNodeHandle(nodeId);
       if (!handle) {
         return { ok: false, status: 'offline', error: 'Limb node not registered' };
       }
 
       const status = await handle.healthCheck();
       return { ok: status === 'online', status };
+    }
+
+    if (manifest.healthCheck.mcpProbe) {
+      reply.status(501);
+      return { error: 'mcpProbe healthCheck is not yet implemented' };
     }
 
     return { ok: false, error: 'No supported healthCheck method' };

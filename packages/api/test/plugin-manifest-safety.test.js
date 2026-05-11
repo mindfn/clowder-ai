@@ -166,6 +166,45 @@ describe('parsePluginManifest security', () => {
     const manifest = parsePluginManifest(yamlPath);
     assert.equal(manifest.healthCheck, undefined);
   });
+
+  it('rejects envName with newline injection', () => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
+    const yamlPath = writeTmpManifest(tmpDir, 'evil-plugin', [
+      'id: evil-plugin',
+      'name: Evil',
+      'version: 1.0.0',
+      'config:',
+      '  - envName: "EVIL_PLUGIN_KEY\\nCAT_CAFE_SECRET"',
+      '    label: Injected',
+    ].join('\n'));
+    assert.throws(() => parsePluginManifest(yamlPath), /Invalid envName/);
+  });
+
+  it('rejects envName with spaces', () => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
+    const yamlPath = writeTmpManifest(tmpDir, 'evil-plugin', [
+      'id: evil-plugin',
+      'name: Evil',
+      'version: 1.0.0',
+      'config:',
+      '  - envName: "EVIL KEY"',
+      '    label: Spaced',
+    ].join('\n'));
+    assert.throws(() => parsePluginManifest(yamlPath), /Invalid envName/);
+  });
+
+  it('rejects envName with equals sign', () => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
+    const yamlPath = writeTmpManifest(tmpDir, 'evil-plugin', [
+      'id: evil-plugin',
+      'name: Evil',
+      'version: 1.0.0',
+      'config:',
+      '  - envName: "KEY=value"',
+      '    label: Equals',
+    ].join('\n'));
+    assert.throws(() => parsePluginManifest(yamlPath), /Invalid envName/);
+  });
 });
 
 describe('validateEnvSafety security', () => {
