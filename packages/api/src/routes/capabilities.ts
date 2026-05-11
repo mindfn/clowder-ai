@@ -585,7 +585,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
     // Guard: only prune when ALL provider scans succeeded (no null returns).
     if (allScansOk) {
       const before = config.capabilities.length;
-      config.capabilities = config.capabilities.filter((c) => c.type !== 'skill' || allSkillNames.has(c.id));
+      config.capabilities = config.capabilities.filter((c) => c.type !== 'skill' || allSkillNames.has(c.id) || c.pluginId);
       if (config.capabilities.length !== before) configDirty = true;
     }
 
@@ -714,6 +714,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
         enabled: cap.enabled,
         cats,
         layer: cap.source === 'external' ? 'L3' : 'L2',
+        pluginId: cap.pluginId,
       };
       const meta =
         cap.source === 'cat-cafe'
