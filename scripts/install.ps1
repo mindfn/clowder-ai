@@ -107,6 +107,17 @@ function Invoke-PnpmInstallWithCapturedOutput {
                 OutputText = Get-CommandOutputText -OutputLines $capturedOutput
             }
         } catch {
+            # Node 24 emits DEP0169 (and similar) deprecation warnings to stderr;
+            # the 2>&1 | Tee-Object pipeline can throw under $ErrorActionPreference=Stop
+            # even when pnpm itself exited 0. Trust $LASTEXITCODE as the source of
+            # truth for the process result rather than the PowerShell exception.
+            if ($LASTEXITCODE -eq 0) {
+                return [pscustomobject]@{
+                    Ok = $true
+                    ErrorRecord = $null
+                    OutputText = Get-CommandOutputText -OutputLines ($capturedOutput + @($_))
+                }
+            }
             return [pscustomobject]@{
                 Ok = $false
                 ErrorRecord = $_

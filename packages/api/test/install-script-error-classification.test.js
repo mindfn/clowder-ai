@@ -115,3 +115,23 @@ test('Step 5 fails fast on non-lockfile errors instead of swapping to plain pnpm
     'must have an else-branch that exits without retrying when error is not a lockfile mismatch',
   );
 });
+
+// ── DEP0169 false-failure tolerance (codex bug-report root-cause #3 / #4) ──
+
+test('Invoke-PnpmInstallWithCapturedOutput trusts $LASTEXITCODE over pipeline exceptions (DEP0169 tolerance)', () => {
+  // Node 24 emits DEP0169 deprecation warnings to stderr. With $ErrorActionPreference=Stop,
+  // the 2>&1 | Tee-Object pipeline can throw even when pnpm itself exited 0.
+  // The catch path must check $LASTEXITCODE and treat exit 0 as success, not failure.
+  const fn = installScript.match(/function Invoke-PnpmInstallWithCapturedOutput[\s\S]*?\n\}\n/);
+  assert.ok(fn, 'must define Invoke-PnpmInstallWithCapturedOutput');
+  const body = fn[0];
+  // The catch block must reference $LASTEXITCODE so it can distinguish a real
+  // process failure from a benign pipeline throw on stderr.
+  const catchBlock = body.match(/} catch \{[\s\S]*?\}/);
+  assert.ok(catchBlock, 'must have catch block');
+  assert.match(
+    catchBlock[0],
+    /\$LASTEXITCODE\s*-eq\s*0/,
+    'catch block must check $LASTEXITCODE -eq 0 to avoid DEP0169 false failures',
+  );
+});
