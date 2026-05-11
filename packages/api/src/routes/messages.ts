@@ -1379,23 +1379,26 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           { threadId: resolvedThreadId, draftCount: drafts.length, draftIds: drafts.map((d) => d.invocationId) },
           '#80 draft merge: found active drafts',
         );
-        // P1-2 dedup: filter out drafts whose invocationId matches a formal message.
-        // Build invocationId set from current page first (fast path).
-        const formalInvocationIds = new Set(
-          page.map((m) => m.extra?.stream?.invocationId).filter((id): id is string => !!id),
-        );
-        let activeDrafts = drafts.filter((d) => !formalInvocationIds.has(d.invocationId));
+        // P1-2 dedup: filter out drafts whose ownInvocationId matches a formal message's
+        // turnId (exact per-turn identity). turnId is the child invocation's own ID, unique
+        // per turn even in A2A re-entry chains. For backward compat with formal messages
+        // that predate turnId, fall through to the downstream liveness check.
+        const formalTurnIds = new Set<string>();
+        for (const m of page) {
+          const tid = m.extra?.stream?.turnId ?? m.extra?.stream?.invocationId;
+          if (tid) formalTurnIds.add(tid);
+        }
+        let activeDrafts = drafts.filter((d) => !formalTurnIds.has(d.invocationId));
         // Cloud R4 P2: if drafts survive page-level dedup, widen the check to cover
         // formal messages pushed off the first page (race window: TTL > page depth).
-        // Cloud R5 P2: wider window must always exceed page limit (limit max=200 → worst case 800).
         if (activeDrafts.length > 0 && page.length >= limit) {
           const widerLimit = Math.max(200, limit * 4);
           const wider = await opts.messageStore.getByThread(resolvedThreadId, widerLimit, userId);
           for (const m of wider) {
-            const invId = m.extra?.stream?.invocationId;
-            if (invId) formalInvocationIds.add(invId);
+            const tid = m.extra?.stream?.turnId ?? m.extra?.stream?.invocationId;
+            if (tid) formalTurnIds.add(tid);
           }
-          activeDrafts = activeDrafts.filter((d) => !formalInvocationIds.has(d.invocationId));
+          activeDrafts = activeDrafts.filter((d) => !formalTurnIds.has(d.invocationId));
         }
         // F173 Phase A hotfix3 / stream-catchup repair:
         // Draft persistence can outlive its invocation record when an invocation
@@ -1493,7 +1496,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
             timestamp: d.updatedAt,
             isDraft: true,
             origin: 'stream',
-            extra: { stream: { invocationId: d.invocationId } },
+            extra: { stream: { invocationId: d.parentInvocationId ?? d.invocationId } },
             ...(d.toolEvents ? { toolEvents: d.toolEvents } : {}),
             ...(d.thinking ? { thinking: d.thinking } : {}),
           });

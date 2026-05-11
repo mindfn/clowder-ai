@@ -763,7 +763,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // Merge with any existing extra (cross-post / explicit targets) without losing it.
     const persistedExtra = {
       ...(extra ?? {}),
-      stream: { invocationId: effectiveInvId },
+      stream: { invocationId: effectiveInvId, turnId: actor.invocationId },
     };
     const storedMsg = await messageStore.append({
       userId: actor.userId,

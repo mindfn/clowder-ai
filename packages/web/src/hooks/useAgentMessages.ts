@@ -197,6 +197,8 @@ export interface BackgroundAgentMessage {
   replyPreview?: { senderCatId: string | null; content: string; deleted?: true };
   /** F108: Invocation ID — distinguishes messages from concurrent invocations */
   invocationId?: string;
+  /** Per-turn unique identity for A2A serial chains (child invocation's own ID) */
+  turnId?: string;
   /**
    * F183 Phase C — thread-scoped monotonic sequence number (KD-9).
    * Client tracks `lastSeq` per thread; gap (incomingSeq > lastSeq + 1) triggers

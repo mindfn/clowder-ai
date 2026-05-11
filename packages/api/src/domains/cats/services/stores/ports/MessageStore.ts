@@ -60,7 +60,7 @@ export interface StoredMessage {
   /** F022+F052+F098-C1+F153-F: Extensible extra data (rich blocks, stream metadata, cross-post origin, explicit targets, tracing pointers) */
   extra?: {
     rich?: RichMessageExtra;
-    stream?: { invocationId: string };
+    stream?: { invocationId: string; turnId?: string };
     crossPost?: { sourceThreadId: string; sourceInvocationId?: string };
     targetCats?: string[];
     scheduler?: SchedulerMessageExtra['scheduler'];
