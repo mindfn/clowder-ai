@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { accountTools } from './mediahub/account-tools.js';
 import { mediahubTools } from './mediahub/mediahub-tools.js';
@@ -127,11 +129,26 @@ const MEDIAHUB_CREDENTIAL_ENV_KEYS = [
   'KLING_ACCESS_KEY',
   'VOLC_ACCESSKEY',
   'MEDIAHUB_CREDENTIAL_KEY',
-  'GEMINI_API_KEY',
 ];
 
+function isMediaHubPluginEnabled(): boolean {
+  try {
+    const capPath = join(process.cwd(), '.cat-cafe', 'capabilities.json');
+    if (!existsSync(capPath)) return false;
+    const raw = JSON.parse(readFileSync(capPath, 'utf-8'));
+    if (raw?.version !== 1 || !Array.isArray(raw?.capabilities)) return false;
+    return raw.capabilities.some(
+      (c: { pluginId?: string; enabled?: boolean }) =>
+        c.pluginId === 'mediahub' && c.enabled === true,
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isMediaHubEnabled(): boolean {
-  return MEDIAHUB_CREDENTIAL_ENV_KEYS.some((k) => !!process.env[k]);
+  const hasCredentials = MEDIAHUB_CREDENTIAL_ENV_KEYS.some((k) => !!process.env[k]);
+  return isMediaHubPluginEnabled() && hasCredentials;
 }
 
 const mediahubAllTools: readonly ToolDef[] = [...mediahubTools, ...accountTools];

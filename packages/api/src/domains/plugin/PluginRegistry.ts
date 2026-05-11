@@ -57,8 +57,7 @@ export class PluginRegistry {
           continue;
         }
         if (BUILTIN_PLUGIN_IDS.has(manifest.id)) {
-          console.warn(`[PluginRegistry] skip ${entry}: '${manifest.id}' is a reserved builtin plugin id`);
-          continue;
+          manifest.builtin = true;
         }
         candidates.push({ id: manifest.id, manifest, yamlPath });
       } catch (err) {

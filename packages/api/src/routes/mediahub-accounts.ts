@@ -9,6 +9,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { resolveUserId } from '../utils/request-identity.js';
 
+const LOOPBACK_ADDRS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const CRED_PREFIX = 'mediahub:cred:';
 const CRED_INDEX = 'mediahub:creds';
 const ALGORITHM = 'aes-256-gcm';
@@ -137,6 +138,10 @@ export const mediahubAccountsRoutes: FastifyPluginAsync<MediaHubAccountsRoutesOp
 
   // POST /api/mediahub/providers/:id/bind — bind credentials
   app.post<{ Params: { id: string } }>('/api/mediahub/providers/:id/bind', async (request, reply) => {
+    if (!LOOPBACK_ADDRS.has(request.ip)) {
+      reply.status(403);
+      return { error: 'Credential write endpoint is loopback-only' };
+    }
     const userId = resolveUserId(request);
     if (!userId) {
       reply.status(401);
@@ -186,6 +191,10 @@ export const mediahubAccountsRoutes: FastifyPluginAsync<MediaHubAccountsRoutesOp
 
   // DELETE /api/mediahub/providers/:id — unbind
   app.delete<{ Params: { id: string } }>('/api/mediahub/providers/:id', async (request, reply) => {
+    if (!LOOPBACK_ADDRS.has(request.ip)) {
+      reply.status(403);
+      return { error: 'Credential write endpoint is loopback-only' };
+    }
     const userId = resolveUserId(request);
     if (!userId) {
       reply.status(401);
