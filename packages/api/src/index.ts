@@ -1518,7 +1518,7 @@ async function main(): Promise<void> {
       }
     }
 
-    registerPluginRoutes(app, { pluginRegistry, pluginActivator, limbRegistry });
+    registerPluginRoutes(app, { pluginRegistry, pluginActivator, limbRegistry, pluginsDir });
   }
   // F174 D2b-1 — single notifier instance shared between callback auth preHandler
   // (posts in-context surface on 401) and the hide-similar debug endpoint
