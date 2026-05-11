@@ -476,9 +476,16 @@ export function WorkspacePanel() {
             <div className="px-3 py-2 border-b border-[var(--console-border-soft)] bg-[var(--console-shell-bg)]">
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-conn-emerald-text flex-shrink-0" />
-                <span className="text-xs font-medium text-cafe-black truncate">{currentWorktree.branch}</span>
-                <span className="text-[10px] font-mono text-cafe-muted">{currentWorktree.head}</span>
+                <span className="text-xs font-medium text-cafe-black truncate" title={currentWorktree.root}>
+                  {currentWorktree.root.split('/').pop()}
+                </span>
+                {currentWorktree.head !== 'linked' && (
+                  <span className="text-[10px] font-mono text-cafe-muted">{currentWorktree.head}</span>
+                )}
               </div>
+              {currentWorktree.head !== 'linked' && (
+                <div className="text-[10px] text-cafe-muted ml-4 truncate">🌿 {currentWorktree.branch}</div>
+              )}
               {worktrees.length > 1 && (
                 <div className="flex items-center gap-1 mt-1.5">
                   <select
@@ -487,8 +494,10 @@ export function WorkspacePanel() {
                     className="flex-1 text-[10px] border border-[var(--console-border-soft)] rounded-md px-2 py-1 bg-cafe-surface/80 text-cafe-black focus:outline-none focus:border-cafe-accent"
                   >
                     {worktrees.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.head === 'linked' ? `📂 ${w.branch}` : `🌿 ${w.branch} (${w.head})`}
+                      <option key={w.id} value={w.id} title={w.root}>
+                        {w.head === 'linked'
+                          ? `📂 ${w.branch}`
+                          : `${w.root.split('/').pop()} — ${w.branch} (${w.head})`}
                       </option>
                     ))}
                   </select>
