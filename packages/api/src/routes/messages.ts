@@ -1460,7 +1460,9 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           if (turnInv) formalInvocationIds.add(turnInv);
           if (turnId) formalTurnIds.add(turnId);
         }
-        activeDrafts = drafts.filter((d) => !formalInvocationIds.has(d.invocationId) && !formalTurnIds.has(d.invocationId));
+        activeDrafts = drafts.filter(
+          (d) => !formalInvocationIds.has(d.invocationId) && !formalTurnIds.has(d.invocationId),
+        );
         // Cloud R4 P2: if drafts survive page-level dedup, widen the check to cover
         // formal messages pushed off the first page (race window: TTL > page depth).
         if (activeDrafts.length > 0 && page.length >= limit) {
@@ -1474,7 +1476,9 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
             if (turnInv) formalInvocationIds.add(turnInv);
             if (turnId) formalTurnIds.add(turnId);
           }
-          activeDrafts = activeDrafts.filter((d) => !formalInvocationIds.has(d.invocationId) && !formalTurnIds.has(d.invocationId));
+          activeDrafts = activeDrafts.filter(
+            (d) => !formalInvocationIds.has(d.invocationId) && !formalTurnIds.has(d.invocationId),
+          );
         }
       }
 

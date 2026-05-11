@@ -201,7 +201,7 @@ describe('#573: stream store dedup when cat_cafe_post_message used', () => {
     assert.match(patch.thinking, /stream thinking chunk/);
     assert.deepEqual(patch.metadata, { provider: 'mock-provider', model: 'mock-model' });
     assert.equal(patch.toolEvents.length, 2, 'tool_use/tool_result should be retained for reload');
-    assert.deepEqual(patch.extra.stream, { invocationId: 'parent-inv-1', turnInvocationId: 'inv-1' });
+    assert.deepEqual(patch.extra.stream, { invocationId: 'parent-inv-1', turnInvocationId: 'inv-1', turnId: 'inv-1' });
     assert.deepEqual(patch.extra.tracing, { traceId: 'trace-1', spanId: 'span-1' });
     assert.deepEqual(patch.extra.rich.blocks, [service.richBlock]);
   });
@@ -242,6 +242,7 @@ describe('#573: stream store dedup when cat_cafe_post_message used', () => {
     assert.deepEqual(patch.extra.stream, {
       invocationId: 'parent-inv-prefixed',
       turnInvocationId: 'inv-1',
+      turnId: 'inv-1',
     });
     assert.deepEqual(patch.extra.rich.blocks, [bufferedBlock]);
   });
