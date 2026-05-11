@@ -17,7 +17,6 @@
  * them with `useChatStore` + `useShallow` to control re-renders.
  */
 import { useShallow } from 'zustand/react/shallow';
-import { getBubbleInvocationId } from '@/debug/bubbleIdentity';
 import type { CatInvocationInfo, CatStatusType, ChatMessage } from '@/stores/chat-types';
 import { type ChatState, useChatStore } from '@/stores/chatStore';
 
@@ -48,52 +47,15 @@ const DEFAULT_LIVENESS: ThreadLiveness = {
   targetCats: EMPTY_TARGET_CATS as string[],
 };
 
-/** Deduplicate transient assistant messages that share the same (catId,
- *  invocationId) — but ONLY when the entire group is transient (all streaming
- *  or draft-prefixed). If any finalized message shares the key, no dedup runs
- *  for that group — it may be a legitimate A→B→A re-entry where the same cat
- *  speaks multiple times under one outer invocation. */
-function deduplicateTransientMessages(messages: ChatMessage[]): ChatMessage[] {
-  const isTransient = (m: ChatMessage) => m.isStreaming || m.id.startsWith('draft-');
-  const keyOf = new Map<string, number[]>();
-  let hasDup = false;
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i]!;
-    if (msg.type !== 'assistant' || !msg.catId) continue;
-    const invId = getBubbleInvocationId(msg);
-    if (!invId) continue;
-    const key = `${msg.catId}:${invId}`;
-    const arr = keyOf.get(key);
-    if (arr) { arr.push(i); hasDup = true; } else { keyOf.set(key, [i]); }
-  }
-  if (!hasDup) return messages;
-  const drop = new Set<number>();
-  for (const indices of keyOf.values()) {
-    if (indices.length < 2) continue;
-    if (indices.some((i) => !isTransient(messages[i]!))) continue;
-    let bestIdx = indices[0]!;
-    let bestLen = 0;
-    for (const idx of indices) {
-      const m = messages[idx]!;
-      const len = m.content.length + (m.thinking?.length ?? 0);
-      if (len >= bestLen) { bestLen = len; bestIdx = idx; }
-    }
-    for (const idx of indices) { if (idx !== bestIdx) drop.add(idx); }
-  }
-  if (drop.size === 0) return messages;
-  return messages.filter((_, i) => !drop.has(i));
-}
-
 /** Pure selector — returns the messages array for a thread, preferring the
  *  flat slice when threadId is current (to keep reference equality with the
  *  source-of-truth and avoid cross-thread dup). */
 export function selectThreadMessages(state: ChatState, threadId: string | null): ChatMessage[] {
   if (!threadId) return EMPTY_MESSAGES as ChatMessage[];
-  const raw =
-    threadId === state.currentThreadId || !state.currentThreadId
-      ? (state.messages ?? (EMPTY_MESSAGES as ChatMessage[]))
-      : (state.threadStates?.[threadId]?.messages ?? (EMPTY_MESSAGES as ChatMessage[]));
-  return deduplicateTransientMessages(raw);
+  if (threadId === state.currentThreadId || !state.currentThreadId) {
+    return state.messages ?? (EMPTY_MESSAGES as ChatMessage[]);
+  }
+  return state.threadStates?.[threadId]?.messages ?? (EMPTY_MESSAGES as ChatMessage[]);
 }
 
 /** Pure selector — returns liveness fields for a thread. Defensively
