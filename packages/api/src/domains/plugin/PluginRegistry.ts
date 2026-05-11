@@ -18,6 +18,7 @@ function maskValue(raw: string | undefined, sensitive: boolean): string | null {
 
 export class PluginRegistry {
   private manifests = new Map<string, PluginManifest>();
+  private envClaims = new Map<string, string>();
   private readonly pluginsDir: string;
 
   constructor(pluginsDir: string) {
@@ -26,10 +27,9 @@ export class PluginRegistry {
 
   scan(): PluginManifest[] {
     this.manifests.clear();
+    this.envClaims.clear();
 
     if (!existsSync(this.pluginsDir)) return [];
-
-    const envClaims = new Map<string, string>();
     const candidates: { id: string; manifest: PluginManifest; yamlPath: string }[] = [];
 
     let entries: string[];
@@ -67,14 +67,14 @@ export class PluginRegistry {
     }
 
     for (const { id, manifest, yamlPath } of candidates) {
-      const safety = validateEnvSafety(manifest, envClaims);
+      const safety = validateEnvSafety(manifest, this.envClaims);
       if (!safety.ok) {
         console.warn(`[PluginRegistry] skip ${id} (${yamlPath}): env safety: ${safety.errors.join('; ')}`);
         continue;
       }
 
       for (const field of manifest.config) {
-        envClaims.set(field.envName, id);
+        this.envClaims.set(field.envName, id);
       }
       this.manifests.set(id, manifest);
     }
@@ -92,6 +92,16 @@ export class PluginRegistry {
         const manifest = parsePluginManifest(yamlPath);
         if (manifest.id !== id) continue;
         manifest.builtin = true;
+
+        const safety = validateEnvSafety(manifest, this.envClaims);
+        if (!safety.ok) {
+          console.warn(`[PluginRegistry] skip builtin ${id}: env safety: ${safety.errors.join('; ')}`);
+          continue;
+        }
+
+        for (const field of manifest.config) {
+          this.envClaims.set(field.envName, id);
+        }
         this.manifests.set(id, manifest);
         loaded.push(manifest);
       } catch (err) {

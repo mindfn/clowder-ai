@@ -129,6 +129,7 @@ const MEDIAHUB_CREDENTIAL_ENV_KEYS = [
   'KLING_ACCESS_KEY',
   'VOLC_ACCESSKEY',
   'MEDIAHUB_CREDENTIAL_KEY',
+  'GEMINI_API_KEY',
 ];
 
 function isMediaHubPluginEnabled(): boolean {

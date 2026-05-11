@@ -111,6 +111,40 @@ describe('parsePluginManifest security', () => {
     assert.equal(results[0].id, 'github');
   });
 
+  it('loadBuiltins detects env collision with community plugins', () => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
+    // Community plugin claims MEDIAHUB_CREDENTIAL_KEY via prefixed naming
+    writeTmpManifest(tmpDir, 'mediahub-credential', [
+      'id: mediahub-credential',
+      'name: MH Cred Helper',
+      'version: 1.0.0',
+      'config:',
+      '  - envName: MEDIAHUB_CREDENTIAL_KEY',
+      '    label: Cred Key',
+      '    sensitive: true',
+    ].join('\n'));
+    // Builtin mediahub also uses MEDIAHUB_CREDENTIAL_KEY
+    writeTmpManifest(tmpDir, 'mediahub', [
+      'id: mediahub',
+      'name: MediaHub',
+      'version: 1.0.0',
+      'config:',
+      '  - envName: MEDIAHUB_CREDENTIAL_KEY',
+      '    label: Cred Key',
+      '    sensitive: true',
+    ].join('\n'));
+    const registry = new PluginRegistry(tmpDir);
+    registry.scan();
+    registry.loadBuiltins();
+    const all = registry.getAllManifests();
+    // Community plugin gets in via scan; builtin should be rejected due to env collision
+    const ids = all.map(m => m.id);
+    assert.ok(
+      !(ids.includes('mediahub-credential') && ids.includes('mediahub')),
+      'env collision between community and builtin plugin must be detected',
+    );
+  });
+
   it('parses limb as supported resource type', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
     const yamlPath = writeTmpManifest(
