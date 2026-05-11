@@ -654,6 +654,9 @@ export async function* routeSerial(
       const streamRichBlocks: import('@cat-cafe/shared').RichBlock[] = [];
       // F22 R2 P1-1: Capture own invocationId from stream (not getLatestId)
       let ownInvocationId: string | undefined;
+      // Draft must use the broadcast-aligned invocationId so frontend dedup works.
+      // Stream broadcast stamps parentInvocationId (outer); DraftStore must match.
+      const draftInvocationId = () => options.parentInvocationId ?? ownInvocationId;
       // F111 Phase B: Streaming TTS chunker for real-time voice (voiceMode only)
       let voiceChunker: StreamingTtsChunker | undefined;
 
@@ -743,7 +746,7 @@ export async function* routeSerial(
                 // Issue #83: Start keepalive timer once we have an invocationId.
                 // This ensures draft TTL is renewed even during long silent tool calls.
                 if (deps.draftStore && !keepaliveTimer) {
-                  const keepInvId = ownInvocationId!;
+                  const keepInvId = draftInvocationId()!;
                   keepaliveTimer = setInterval(() => {
                     deps.draftStore!.touch(userId, threadId, keepInvId)?.catch?.(noop);
                   }, KEEPALIVE_INTERVAL_MS);
@@ -830,6 +833,7 @@ export async function* routeSerial(
 
           // #80: Draft flush — fire-and-forget periodic persistence for F5 recovery
           if (deps.draftStore && ownInvocationId) {
+            const effectiveDraftInvId = draftInvocationId()!;
             const now = Date.now();
             const charDelta = textContent.length - lastFlushLen;
             const isReplaceText = (effectiveMsg as { textMode?: 'append' | 'replace' }).textMode === 'replace';
@@ -846,7 +850,7 @@ export async function* routeSerial(
                 .upsert({
                   userId,
                   threadId,
-                  invocationId: ownInvocationId,
+                  invocationId: effectiveDraftInvId,
                   catId,
                   content: textContent,
                   ...(collectedToolEvents.length > 0 ? { toolEvents: collectedToolEvents } : {}),
@@ -871,7 +875,7 @@ export async function* routeSerial(
                   .upsert({
                     userId,
                     threadId,
-                    invocationId: ownInvocationId,
+                    invocationId: effectiveDraftInvId,
                     catId,
                     content: textContent,
                     ...(collectedToolEvents.length > 0 ? { toolEvents: collectedToolEvents } : {}),
@@ -882,7 +886,7 @@ export async function* routeSerial(
                 lastFlushLen = textContent.length;
                 lastFlushToolLen = collectedToolEvents.length;
               } else {
-                deps.draftStore.touch(userId, threadId, ownInvocationId)?.catch?.(noop);
+                deps.draftStore.touch(userId, threadId, effectiveDraftInvId)?.catch?.(noop);
               }
               lastFlushTime = now;
             }
@@ -1374,7 +1378,7 @@ export async function* routeSerial(
           }
           // #80: Clean up draft after message is persisted (either via append or callback)
           if (deps.draftStore && ownInvocationId) {
-            deps.draftStore.delete(userId, threadId, ownInvocationId)?.catch?.(noop);
+            deps.draftStore.delete(userId, threadId, draftInvocationId()!)?.catch?.(noop);
           }
           // Cloud Codex R4 P1 fix: Update activity in isolated try/catch to not affect append status
           if (deps.invocationDeps.threadStore) {
@@ -1598,7 +1602,7 @@ export async function* routeSerial(
             }
             // #80: Clean up draft only after successful append
             if (deps.draftStore && ownInvocationId) {
-              deps.draftStore.delete(userId, threadId, ownInvocationId)?.catch?.(noop);
+              deps.draftStore.delete(userId, threadId, draftInvocationId()!)?.catch?.(noop);
             }
             // Cloud Codex R4 P1 fix: Update activity in isolated try/catch to not affect append status
             if (deps.invocationDeps.threadStore) {
@@ -1639,10 +1643,10 @@ export async function* routeSerial(
           } as AgentMessage;
           // No persisted message for fully silent turns.
           if (deps.draftStore && ownInvocationId) {
-            deps.draftStore.delete(userId, threadId, ownInvocationId)?.catch?.(noop);
+            deps.draftStore.delete(userId, threadId, draftInvocationId()!)?.catch?.(noop);
           }
         } else if (deps.draftStore && ownInvocationId) {
-          deps.draftStore.delete(userId, threadId, ownInvocationId)?.catch?.(noop);
+          deps.draftStore.delete(userId, threadId, draftInvocationId()!)?.catch?.(noop);
         }
       } else if (collectedToolEvents.length > 0) {
         // hadError && textContent === '' but toolEvents exist — persist tool record so
@@ -1672,7 +1676,7 @@ export async function* routeSerial(
           });
           // #80: Clean up draft only after successful append
           if (deps.draftStore && ownInvocationId) {
-            deps.draftStore.delete(userId, threadId, ownInvocationId)?.catch?.(noop);
+            deps.draftStore.delete(userId, threadId, draftInvocationId()!)?.catch?.(noop);
           }
           // Cloud Codex R4 P1 fix: Update activity in isolated try/catch to not affect append status
           if (deps.invocationDeps.threadStore) {
@@ -1700,7 +1704,7 @@ export async function* routeSerial(
       } else {
         // hadError && textContent === '' && no toolEvents → clean up draft only
         if (deps.draftStore && ownInvocationId) {
-          deps.draftStore.delete(userId, threadId, ownInvocationId)?.catch?.(noop);
+          deps.draftStore.delete(userId, threadId, draftInvocationId()!)?.catch?.(noop);
         }
         // Update activity for error-only responses (no text/tools branch handles it)
         if (deps.invocationDeps.threadStore) {
