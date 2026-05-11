@@ -48,12 +48,11 @@ const DEFAULT_LIVENESS: ThreadLiveness = {
   targetCats: EMPTY_TARGET_CATS as string[],
 };
 
-/** Deduplicate transient assistant messages (streaming / draft) that share the
- *  same (catId, invocationId) with another message. Only messages that are still
- *  in-flight (isStreaming or draft-prefixed id) participate as dedup candidates;
- *  finalized history messages are never dropped — this avoids swallowing A→B→A
- *  re-entry where the same cat legitimately speaks twice under one outer
- *  invocation. */
+/** Deduplicate transient assistant messages that share the same (catId,
+ *  invocationId) — but ONLY when the entire group is transient (all streaming
+ *  or draft-prefixed). If any finalized message shares the key, no dedup runs
+ *  for that group — it may be a legitimate A→B→A re-entry where the same cat
+ *  speaks multiple times under one outer invocation. */
 function deduplicateTransientMessages(messages: ChatMessage[]): ChatMessage[] {
   const isTransient = (m: ChatMessage) => m.isStreaming || m.id.startsWith('draft-');
   const keyOf = new Map<string, number[]>();
@@ -71,21 +70,15 @@ function deduplicateTransientMessages(messages: ChatMessage[]): ChatMessage[] {
   const drop = new Set<number>();
   for (const indices of keyOf.values()) {
     if (indices.length < 2) continue;
-    const transients = indices.filter((i) => isTransient(messages[i]!));
-    if (transients.length === 0) continue;
-    const finalized = indices.filter((i) => !isTransient(messages[i]!));
-    if (finalized.length > 0) {
-      for (const t of transients) drop.add(t);
-    } else {
-      let bestIdx = transients[0]!;
-      let bestLen = 0;
-      for (const t of transients) {
-        const m = messages[t]!;
-        const len = m.content.length + (m.thinking?.length ?? 0);
-        if (len >= bestLen) { bestLen = len; bestIdx = t; }
-      }
-      for (const t of transients) { if (t !== bestIdx) drop.add(t); }
+    if (indices.some((i) => !isTransient(messages[i]!))) continue;
+    let bestIdx = indices[0]!;
+    let bestLen = 0;
+    for (const idx of indices) {
+      const m = messages[idx]!;
+      const len = m.content.length + (m.thinking?.length ?? 0);
+      if (len >= bestLen) { bestLen = len; bestIdx = idx; }
     }
+    for (const idx of indices) { if (idx !== bestIdx) drop.add(idx); }
   }
   if (drop.size === 0) return messages;
   return messages.filter((_, i) => !drop.has(i));
