@@ -1,4 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { accountTools } from './mediahub/account-tools.js';
+import { mediahubTools } from './mediahub/mediahub-tools.js';
 import {
   callbackMemoryTools,
   callbackTools,
@@ -120,9 +122,30 @@ export function registerLimbToolset(server: McpServer): void {
   registerTools(server, limbNodeTools);
 }
 
+const MEDIAHUB_CREDENTIAL_ENV_KEYS = [
+  'COGVIDEO_API_KEY',
+  'KLING_ACCESS_KEY',
+  'VOLC_ACCESSKEY',
+  'MEDIAHUB_CREDENTIAL_KEY',
+  'GEMINI_API_KEY',
+];
+
+function isMediaHubEnabled(): boolean {
+  return MEDIAHUB_CREDENTIAL_ENV_KEYS.some((k) => !!process.env[k]);
+}
+
+const mediahubAllTools: readonly ToolDef[] = [...mediahubTools, ...accountTools];
+
+export function registerMediaHubToolset(server: McpServer): void {
+  registerTools(server, mediahubAllTools);
+}
+
 export function registerFullToolset(server: McpServer): void {
   registerCollabToolset(server);
   registerMemoryToolset(server);
   registerSignalToolset(server);
   registerLimbToolset(server);
+  if (isMediaHubEnabled()) {
+    registerMediaHubToolset(server);
+  }
 }

@@ -73,7 +73,8 @@ export type RichBlockKind =
   | 'audio'
   | 'interactive'
   | 'html_widget'
-  | 'file';
+  | 'file'
+  | 'video';
 
 /** F066 Phase 4: Card action button */
 export interface CardAction {
@@ -202,6 +203,18 @@ export interface RichHtmlWidgetBlock {
   height?: number;
 }
 
+/** F142: Video block for MediaHub generated video/image content */
+export interface RichVideoBlock {
+  id: string;
+  kind: 'video';
+  v: 1;
+  url: string;
+  poster?: string;
+  mimeType?: string;
+  title?: string;
+  durationMs?: number;
+}
+
 export type RichBlock =
   | RichCardBlock
   | RichDiffBlock
@@ -210,7 +223,8 @@ export type RichBlock =
   | RichAudioBlock
   | RichInteractiveBlock
   | RichHtmlWidgetBlock
-  | RichFileBlock;
+  | RichFileBlock
+  | RichVideoBlock;
 
 /** F97: External connector source info (only when type='connector') */
 export interface ConnectorSourceData {

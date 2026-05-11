@@ -5,6 +5,7 @@ import { useCatData } from '@/hooks/useCatData';
 import { apiFetch } from '@/utils/api-client';
 import { CatOverviewTab, type ConfigData } from '../config-viewer-tabs';
 import { HubAccountsTab } from '../HubAccountsTab';
+import { HubMediaHubTab } from '../HubMediaHubTab';
 import { HubCatEditor } from '../HubCatEditor';
 import { HubCoCreatorEditor } from '../HubCoCreatorEditor';
 import { HubConnectorConfigTab } from '../HubConnectorConfigTab';
@@ -158,6 +159,8 @@ export function SettingsContent({ section }: SettingsContentProps) {
             <VoiceSettingsPanel />
           </div>
         );
+      case 'mediahub':
+        return <HubMediaHubTab />;
       case 'system':
         if (fetchError) return <p className="text-sm text-[var(--semantic-error-text)]">{fetchError}</p>;
         return <HubEnvFilesTab excludeCategories={['connector']} />;

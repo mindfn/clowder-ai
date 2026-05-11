@@ -60,6 +60,10 @@ const nextConfig = {
   async rewrites() {
     return [
       {
+        source: '/api/mediahub/media/:path*',
+        destination: `${apiBaseUrl}/api/mediahub/media/:path*`,
+      },
+      {
         source: '/api/:path*',
         destination: `${apiBaseUrl}/api/:path*`,
       },

@@ -1,0 +1,39 @@
+id: mediahub
+name: MediaHub 媒体生成
+version: "1.0.0"
+description: 视频/图片生成与分析 — CogVideoX、可灵、即梦、Gemini 多 provider 支持
+icon: camera
+
+config:
+  - envName: MEDIAHUB_CREDENTIAL_KEY
+    label: 凭证加密密钥 (base64, 32 字节 AES-256)
+    sensitive: true
+    required: false
+  - envName: COGVIDEO_API_KEY
+    label: CogVideoX (智谱) API Key
+    sensitive: true
+    required: false
+  - envName: KLING_ACCESS_KEY
+    label: 可灵 Access Key
+    sensitive: true
+    required: false
+  - envName: KLING_SECRET_KEY
+    label: 可灵 Secret Key
+    sensitive: true
+    required: false
+  - envName: VOLC_ACCESSKEY
+    label: 即梦 Access Key (火山引擎)
+    sensitive: true
+    required: false
+  - envName: VOLC_SECRETKEY
+    label: 即梦 Secret Key (火山引擎)
+    sensitive: true
+    required: false
+  - envName: GEMINI_API_KEY
+    label: Gemini API Key (视频分析)
+    sensitive: true
+    required: false
+
+resources:
+  - type: mcp
+    name: mediahub-toolset

@@ -35,7 +35,8 @@ export type EnvCategory =
   | 'evidence'
   | 'quota'
   | 'telemetry'
-  | 'antigravity';
+  | 'antigravity'
+  | 'mediahub';
 
 export interface EnvDefinition {
   /** The env var name, e.g. 'REDIS_URL' */
@@ -88,6 +89,7 @@ export const ENV_CATEGORIES: Record<EnvCategory, string> = {
   quota: '额度监控',
   telemetry: '可观测性 (OTel)',
   antigravity: '孟加拉猫 (Antigravity)',
+  mediahub: 'MediaHub 媒体生成',
 };
 
 export const ENV_VARS: EnvDefinition[] = [
@@ -1667,6 +1669,15 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'MCP Server 只读模式：跳过 post_message 等写操作工具注册（Antigravity 持久 MCP 用）',
     category: 'antigravity',
     sensitive: false,
+  },
+
+  // --- mediahub ---
+  {
+    name: 'MEDIAHUB_CREDENTIAL_KEY',
+    defaultValue: '(未设置)',
+    description: 'MediaHub 凭据加密密钥（Base64 编码，用于加密存储 provider credentials）',
+    category: 'mediahub',
+    sensitive: true,
   },
 ];
 

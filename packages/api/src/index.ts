@@ -140,6 +140,8 @@ import {
   configRoutes,
   connectorHubRoutes,
   connectorMediaRoutes,
+  mediahubAccountsRoutes,
+  mediahubMediaRoutes,
   distillationRoutes,
   evidenceRoutes,
   executionDigestRoutes,
@@ -1777,6 +1779,7 @@ async function main(): Promise<void> {
   await app.register(configSecretsRoutes);
   await app.register(featureDocDetailRoutes);
   await app.register(accountsRoutes);
+  await app.register(mediahubAccountsRoutes);
   await app.register(claudeRescueRoutes);
   await app.register(auditRoutes, { threadStore });
   await app.register(capabilitiesRoutes);
@@ -1991,6 +1994,7 @@ async function main(): Promise<void> {
   // F088: Serve downloaded connector media files
   const connectorMediaDir = process.env.CONNECTOR_MEDIA_DIR ?? './data/connector-media';
   await app.register(connectorMediaRoutes, { mediaDir: connectorMediaDir });
+  await app.register(mediahubMediaRoutes, { mediaDir: './data/mediahub/outputs' });
 
   // F34: TTS Provider (mlx-audio → Python TTS server)
   const ttsRegistry = new TtsRegistry();

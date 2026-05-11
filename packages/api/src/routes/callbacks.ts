@@ -301,6 +301,17 @@ const richBlockSchema = z.discriminatedUnion('kind', [
     title: z.string().optional(),
     height: z.number().int().min(50).max(2000).optional(),
   }),
+  // F142: video block — MediaHub generated video/image
+  z.object({
+    id: z.string().min(1),
+    kind: z.literal('video'),
+    v: z.literal(1),
+    url: z.string().min(1),
+    poster: z.string().optional(),
+    mimeType: z.string().optional(),
+    title: z.string().optional(),
+    durationMs: z.number().int().min(0).optional(),
+  }),
 ]);
 const createRichBlockSchema = z.object({
   block: richBlockSchema,

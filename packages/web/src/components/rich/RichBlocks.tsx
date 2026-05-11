@@ -12,6 +12,7 @@ import { HtmlWidgetBlock } from './HtmlWidgetBlock';
 import { InteractiveBlock } from './InteractiveBlock';
 import { InteractiveBlockGroup } from './InteractiveBlockGroup';
 import { MediaGalleryBlock } from './MediaGalleryBlock';
+import { VideoBlock } from './VideoBlock';
 
 function RichBlockRenderer({
   block,
@@ -56,6 +57,8 @@ function RichBlockRenderer({
       return <HtmlWidgetBlock block={block} />;
     case 'file':
       return <FileBlock block={block} />;
+    case 'video':
+      return <VideoBlock key={block.id} block={block} />;
     default:
       return (
         <div className="rounded-lg border border-[var(--console-border-soft)] px-3 py-2 text-xs text-cafe-muted">

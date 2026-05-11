@@ -92,6 +92,19 @@ const EXPECTED_TOOLS = [
   'cat_cafe_shell_exec',
 ];
 
+const EXPECTED_MEDIAHUB_TOOLS = [
+  'mediahub_list_providers',
+  'mediahub_generate_video',
+  'mediahub_generate_image',
+  'mediahub_send_media',
+  'mediahub_get_job_status',
+  'mediahub_analyze_video',
+  'mediahub_list_jobs',
+  'mediahub_bind_account',
+  'mediahub_unbind_account',
+  'mediahub_account_status',
+];
+
 const EXPECTED_COLLAB_TOOLS = [
   'cat_cafe_post_message',
   'cat_cafe_get_pending_mentions',
@@ -166,6 +179,7 @@ function assertUnique(values, label) {
 describe('MCP Server Tool Registration', () => {
   test('expected tool lists stay duplicate-free', () => {
     assertUnique(EXPECTED_TOOLS, 'EXPECTED_TOOLS');
+    assertUnique(EXPECTED_MEDIAHUB_TOOLS, 'EXPECTED_MEDIAHUB_TOOLS');
     assertUnique(EXPECTED_COLLAB_TOOLS, 'EXPECTED_COLLAB_TOOLS');
     assertUnique(EXPECTED_MEMORY_TOOLS, 'EXPECTED_MEMORY_TOOLS');
     assertUnique(EXPECTED_SIGNAL_TOOLS, 'EXPECTED_SIGNAL_TOOLS');
@@ -175,11 +189,26 @@ describe('MCP Server Tool Registration', () => {
     const { createServer } = await import('../dist/index.js');
     const server = createServer();
 
-    // _registeredTools is a plain object keyed by tool name
     const registeredNames = Object.keys(server._registeredTools);
 
     for (const name of EXPECTED_TOOLS) {
       assert.ok(registeredNames.includes(name), `Tool "${name}" is NOT registered on the MCP server`);
+    }
+  });
+
+  test('mediahub tools are registered when credentials present', async () => {
+    process.env.MEDIAHUB_CREDENTIAL_KEY = 'test-key';
+    try {
+      const { registerMediaHubToolset } = await import('../dist/server-toolsets.js');
+      const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js');
+      const server = new McpServer({ name: 'test', version: '0.1.0' });
+      registerMediaHubToolset(server);
+      const registeredNames = Object.keys(server._registeredTools);
+      for (const name of EXPECTED_MEDIAHUB_TOOLS) {
+        assert.ok(registeredNames.includes(name), `MediaHub tool "${name}" is NOT registered`);
+      }
+    } finally {
+      delete process.env.MEDIAHUB_CREDENTIAL_KEY;
     }
   });
 
@@ -188,11 +217,12 @@ describe('MCP Server Tool Registration', () => {
     const server = createServer();
 
     const registeredNames = Object.keys(server._registeredTools);
+    const allExpected = [...EXPECTED_TOOLS, ...EXPECTED_MEDIAHUB_TOOLS];
 
     for (const name of registeredNames) {
       assert.ok(
-        EXPECTED_TOOLS.includes(name),
-        `Unexpected tool "${name}" found — add it to EXPECTED_TOOLS if intentional`,
+        allExpected.includes(name),
+        `Unexpected tool "${name}" found — add it to EXPECTED_TOOLS or EXPECTED_MEDIAHUB_TOOLS if intentional`,
       );
     }
   });

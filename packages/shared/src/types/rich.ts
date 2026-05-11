@@ -15,7 +15,8 @@ export type RichBlockKind =
   | 'audio'
   | 'interactive'
   | 'html_widget'
-  | 'file';
+  | 'file'
+  | 'video';
 
 // ── Base ────────────────────────────────────────────────────
 
@@ -159,6 +160,16 @@ export interface RichHtmlWidgetBlock extends RichBlockBase {
   height?: number;
 }
 
+/** F142: Video block for MediaHub generated video/image content */
+export interface RichVideoBlock extends RichBlockBase {
+  kind: 'video';
+  url: string;
+  poster?: string;
+  mimeType?: string;
+  title?: string;
+  durationMs?: number;
+}
+
 // ── Union ───────────────────────────────────────────────────
 
 export type RichBlock =
@@ -169,7 +180,8 @@ export type RichBlock =
   | RichAudioBlock
   | RichInteractiveBlock
   | RichHtmlWidgetBlock
-  | RichFileBlock;
+  | RichFileBlock
+  | RichVideoBlock;
 
 // ── Container (stored in StoredMessage.extra.rich) ──────────
 
@@ -189,6 +201,7 @@ const VALID_KINDS: readonly string[] = [
   'interactive',
   'html_widget',
   'file',
+  'video',
 ];
 
 /**
