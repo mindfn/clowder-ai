@@ -1385,8 +1385,8 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         // that predate turnId, fall through to the downstream liveness check.
         const formalTurnIds = new Set<string>();
         for (const m of page) {
-          const turnId = m.extra?.stream?.turnId;
-          if (turnId) formalTurnIds.add(turnId);
+          const tid = m.extra?.stream?.turnId ?? m.extra?.stream?.invocationId;
+          if (tid) formalTurnIds.add(tid);
         }
         let activeDrafts = drafts.filter((d) => !formalTurnIds.has(d.invocationId));
         // Cloud R4 P2: if drafts survive page-level dedup, widen the check to cover
@@ -1395,8 +1395,8 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           const widerLimit = Math.max(200, limit * 4);
           const wider = await opts.messageStore.getByThread(resolvedThreadId, widerLimit, userId);
           for (const m of wider) {
-            const turnId = m.extra?.stream?.turnId;
-            if (turnId) formalTurnIds.add(turnId);
+            const tid = m.extra?.stream?.turnId ?? m.extra?.stream?.invocationId;
+            if (tid) formalTurnIds.add(tid);
           }
           activeDrafts = activeDrafts.filter((d) => !formalTurnIds.has(d.invocationId));
         }
