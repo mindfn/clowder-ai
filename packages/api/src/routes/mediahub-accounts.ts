@@ -7,6 +7,7 @@ import { createCipheriv, randomBytes } from 'node:crypto';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import { resolveUserId } from '../utils/request-identity.js';
 
 const LOOPBACK_ADDRS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
@@ -186,6 +187,14 @@ export const mediahubAccountsRoutes: FastifyPluginAsync<MediaHubAccountsRoutesOp
     });
     await redis.zadd(CRED_INDEX, now, id);
 
+    try {
+      const auditLog = getEventAuditLog();
+      await auditLog.append({
+        type: AuditEventTypes.CONFIG_UPDATED,
+        data: { target: 'mediahub-credential-bind', providerId: id, operator: userId, fields: Object.keys(credentials) },
+      });
+    } catch { /* audit failure is non-critical */ }
+
     return { ok: true, providerId: id };
   });
 
@@ -214,6 +223,15 @@ export const mediahubAccountsRoutes: FastifyPluginAsync<MediaHubAccountsRoutesOp
 
     await redis.del(CRED_PREFIX + id);
     await redis.zrem(CRED_INDEX, id);
+
+    try {
+      const auditLog = getEventAuditLog();
+      await auditLog.append({
+        type: AuditEventTypes.CONFIG_UPDATED,
+        data: { target: 'mediahub-credential-unbind', providerId: id, operator: userId },
+      });
+    } catch { /* audit failure is non-critical */ }
+
     return { ok: true, providerId: id };
   });
 };

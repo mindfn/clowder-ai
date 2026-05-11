@@ -57,7 +57,8 @@ export class PluginRegistry {
           continue;
         }
         if (BUILTIN_PLUGIN_IDS.has(manifest.id)) {
-          manifest.builtin = true;
+          console.warn(`[PluginRegistry] skip ${entry}: '${manifest.id}' is a reserved builtin plugin id`);
+          continue;
         }
         candidates.push({ id: manifest.id, manifest, yamlPath });
       } catch (err) {
@@ -79,6 +80,25 @@ export class PluginRegistry {
     }
 
     return [...this.manifests.values()];
+  }
+
+  loadBuiltins(): PluginManifest[] {
+    const loaded: PluginManifest[] = [];
+    for (const id of BUILTIN_PLUGIN_IDS) {
+      if (this.manifests.has(id)) continue;
+      const yamlPath = join(this.pluginsDir, id, 'plugin.yaml');
+      if (!existsSync(yamlPath)) continue;
+      try {
+        const manifest = parsePluginManifest(yamlPath);
+        if (manifest.id !== id) continue;
+        manifest.builtin = true;
+        this.manifests.set(id, manifest);
+        loaded.push(manifest);
+      } catch (err) {
+        console.warn(`[PluginRegistry] skip builtin ${id}: ${(err as Error).message}`);
+      }
+    }
+    return loaded;
   }
 
   getManifest(pluginId: string): PluginManifest | undefined {
