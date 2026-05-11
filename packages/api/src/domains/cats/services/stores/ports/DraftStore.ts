@@ -20,6 +20,8 @@ export interface DraftRecord {
   content: string;
   toolEvents?: unknown[];
   thinking?: string;
+  /** Parent/outer invocation ID for A2A chains. Used for frontend bubble matching. */
+  parentInvocationId?: string;
   /** First time this draft was created. Stable across touch/upsert updates. */
   createdAt?: number;
   updatedAt: number;
