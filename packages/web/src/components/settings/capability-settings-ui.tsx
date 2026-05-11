@@ -6,18 +6,28 @@ import type { CapabilityBoardItem, CatFamily } from '../capability-board-ui';
 import { SettingsResourceToggleSwitch } from '../SettingsResourceCard';
 import { projectDisplayName } from './useCapabilityState';
 
+const AVATAR_COLORS = ['#C65F3D', '#8B6E5A', '#A0522D', '#7B6B63', '#9B7653', '#6F5946'];
+
+export function avatarColor(name: string) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0;
+  return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
+}
+
 export function ToggleSwitch({
   enabled,
   busy,
   onClick,
   title,
+  disabled,
 }: {
   enabled: boolean;
   busy: boolean;
   onClick: (event: MouseEvent<HTMLButtonElement>) => void;
   title?: string;
+  disabled?: boolean;
 }) {
-  return <SettingsResourceToggleSwitch enabled={enabled} busy={busy} onClick={onClick} title={title} />;
+  return <SettingsResourceToggleSwitch enabled={enabled} busy={busy} onClick={onClick} title={title} disabled={disabled} />;
 }
 
 export function ProjectSelector({
@@ -69,11 +79,13 @@ export function PerCatToggles({
   catFamilies,
   toggling,
   onToggle,
+  disabled,
 }: {
   item: CapabilityBoardItem;
   catFamilies: CatFamily[];
   toggling: string | null;
   onToggle: (item: CapabilityBoardItem, enabled: boolean, catId?: string) => void;
+  disabled?: boolean;
 }) {
   if (catFamilies.length === 0 || !item.cats) return null;
   const catEntries = Object.entries(item.cats);
@@ -98,6 +110,7 @@ export function PerCatToggles({
                     <ToggleSwitch
                       enabled={enabled}
                       busy={busy}
+                      disabled={disabled}
                       onClick={(event) => {
                         event.stopPropagation();
                         onToggle(item, !enabled, catId);

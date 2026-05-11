@@ -1,144 +1,116 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
+import type { PluginInfo, PluginStatus } from '@cat-cafe/shared';
 import { HubIcon } from '../hub-icons';
 import {
+  settingsResourceActionGroupClass,
   settingsResourceAvatarClass,
   settingsResourceCardClass,
   settingsResourceRowClass,
 } from '../SettingsResourceCard';
 import { GithubConfigPanel } from './GithubConfigPanel';
-import { SettingsBadge, SettingsText } from './primitives';
-import {
-  adaptServiceState,
-  adaptServiceToPlugin,
-  type HomeServiceState,
-  type PluginUiItem,
-  type PluginUiStatus,
-} from './service-ui-adapter';
+import { PluginConfigPanel } from './PluginConfigPanel';
 
-type BadgeTone = 'emerald' | 'amber' | 'slate';
-const STATUS_BADGE_TONE: Record<PluginUiStatus, BadgeTone> = {
-  active: 'emerald',
-  configured: 'amber',
-  available: 'slate',
+const STATUS_CONFIG: Record<PluginStatus, { label: string; bg: string; text: string }> = {
+  enabled: { label: '已启用', bg: 'bg-conn-emerald-bg', text: 'text-conn-emerald-text' },
+  configured: { label: '已配置', bg: 'bg-conn-amber-bg', text: 'text-conn-amber-text' },
+  partial: { label: '部分启用', bg: 'bg-conn-amber-bg', text: 'text-conn-amber-text' },
+  not_configured: { label: '未配置', bg: 'bg-cafe-surface-sunken', text: 'text-cafe-muted' },
 };
 
+const PLUGIN_ICONS: Record<string, { icon: string; bg: string }> = {
+  github: { icon: 'git-branch', bg: '#24292e' },
+  'weixin-mp': { icon: 'megaphone', bg: '#07c160' },
+};
+
+const BUILTIN_PLUGINS: PluginInfo[] = [
+  {
+    id: 'github',
+    name: 'GitHub',
+    version: '1.0.0',
+    description: 'PR Tracking, Review Router, CI/CD Monitor',
+    status: 'configured',
+    configured: true,
+    config: [],
+    resources: [],
+    hasHealthCheck: false,
+  },
+];
+
 export function PluginsContent() {
-  const [plugins, setPlugins] = useState<PluginUiItem[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: cancellation guard pattern
-    async function fetchServices() {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await apiFetch('/api/services');
-        if (cancelled) return;
-        if (!res.ok) {
-          setError(`服务清单加载失败 (${res.status})`);
-          return;
-        }
-        const payload = (await res.json()) as { services?: unknown };
-        if (cancelled) return;
-        const list = Array.isArray(payload.services) ? (payload.services as HomeServiceState[]) : [];
-        setPlugins(list.map((s) => adaptServiceToPlugin(adaptServiceState(s))));
-      } catch {
-        if (!cancelled) setError('服务清单加载失败');
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+  const fetchPlugins = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/plugins');
+      const dynamicPlugins: PluginInfo[] = res.ok
+        ? ((await res.json()) as { plugins: PluginInfo[] }).plugins ?? []
+        : [];
+      const dynamicIds = new Set(dynamicPlugins.map((p) => p.id));
+      setPlugins([
+        ...BUILTIN_PLUGINS.filter((p) => !dynamicIds.has(p.id)),
+        ...dynamicPlugins,
+      ]);
+    } catch {
+      setPlugins(BUILTIN_PLUGINS);
+    } finally {
+      setLoading(false);
     }
-
-    void fetchServices();
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
-  return (
-    <div className="space-y-3">
-      <article className={settingsResourceCardClass}>
-        <button
-          type="button"
-          className={`${settingsResourceRowClass} w-full`}
-          style={{ textAlign: 'left' }}
-          onClick={() => setExpandedId(expandedId === 'github' ? null : 'github')}
-        >
-          <div className={settingsResourceAvatarClass} style={{ backgroundColor: '#24292e' }}>
-            <span style={{ color: 'var(--cafe-surface)' }}>
-              <HubIcon name="key" className="h-5 w-5" />
-            </span>
-          </div>
-          <div className="min-w-0 flex-1">
-            <SettingsText as="p" variant="sm" tone="default" className="font-semibold">
-              GitHub
-            </SettingsText>
-            <SettingsText as="p" tone="secondary" className="mt-0.5">
-              PR 追踪、Review 投递、CI/CD 监控与 Token 配置
-            </SettingsText>
-            <SettingsText as="p" tone="muted" className="mt-0.5">
-              内置插件
-            </SettingsText>
-          </div>
-          <SettingsBadge tone="emerald" className="shrink-0 font-bold">
-            可配置
-          </SettingsBadge>
-        </button>
-        {expandedId === 'github' && <GithubConfigPanel />}
-      </article>
+  useEffect(() => {
+    void fetchPlugins();
+  }, [fetchPlugins]);
 
-      {loading ? (
-        <SettingsText as="p" variant="sm" tone="muted">
-          加载中...
-        </SettingsText>
-      ) : error ? (
-        <SettingsText as="p" variant="sm" tone="red">
-          {error}
-        </SettingsText>
-      ) : (
-        plugins.map((plugin) => (
+  if (loading) return <p className="text-sm text-cafe-muted">加载中...</p>;
+
+  return (
+    <div className="flex flex-col gap-3.5" data-testid="plugins-list">
+      {plugins.map((plugin) => {
+        const statusCfg = STATUS_CONFIG[plugin.status];
+        const iconCfg = PLUGIN_ICONS[plugin.id];
+        const isExpanded = expandedId === plugin.id;
+
+        return (
           <article key={plugin.id} className={settingsResourceCardClass}>
-            <div className={settingsResourceRowClass}>
-              <div className={settingsResourceAvatarClass}>{plugin.name.charAt(0).toUpperCase()}</div>
+            <button
+              type="button"
+              className={`${settingsResourceRowClass} w-full text-left`}
+              onClick={() => setExpandedId(isExpanded ? null : plugin.id)}
+            >
+              <div
+                className={settingsResourceAvatarClass}
+                style={{ backgroundColor: iconCfg?.bg ?? '#9ca3af' }}
+              >
+                <HubIcon name={iconCfg?.icon ?? 'blocks'} className="h-5 w-5 text-[var(--cafe-surface)]" />
+              </div>
               <div className="min-w-0 flex-1">
-                <SettingsText as="p" variant="sm" tone="default" className="font-semibold">
-                  {plugin.name}
-                </SettingsText>
-                <SettingsText as="p" tone="secondary" className="mt-0.5">
-                  {plugin.description}
-                </SettingsText>
-                <SettingsText as="p" tone="muted" className="mt-0.5">
-                  扩展服务
-                </SettingsText>
+                <p className="text-sm font-bold text-cafe">{plugin.name}</p>
+                {plugin.description && (
+                  <p className="mt-0.5 text-xs text-cafe-secondary">{plugin.description}</p>
+                )}
               </div>
-              <SettingsBadge tone={STATUS_BADGE_TONE[plugin.status]} className="shrink-0 font-bold">
-                {plugin.statusLabel}
-              </SettingsBadge>
-            </div>
-            {plugin.features.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 pb-3" style={{ paddingInline: '1rem' }}>
-                {plugin.features.map((feature) => (
-                  <SettingsBadge key={feature} tone="slate" size="xxs">
-                    {feature}
-                  </SettingsBadge>
-                ))}
+              <div className={settingsResourceActionGroupClass}>
+                <span
+                  className={`flex-shrink-0 rounded-[13px] px-2.5 py-0.5 text-label font-medium ${statusCfg.bg} ${statusCfg.text}`}
+                >
+                  {statusCfg.label}
+                </span>
               </div>
-            )}
-            {plugin.error && (
-              <SettingsText as="p" tone="red" className="pb-3" style={{ paddingInline: '1rem' }}>
-                {plugin.error}
-              </SettingsText>
+            </button>
+
+            {isExpanded && (
+              plugin.id === 'github'
+                ? <GithubConfigPanel />
+                : <PluginConfigPanel plugin={plugin} onUpdated={fetchPlugins} />
             )}
           </article>
-        ))
-      )}
+        );
+      })}
     </div>
   );
 }

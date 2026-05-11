@@ -1508,6 +1508,69 @@ async function main(): Promise<void> {
   const limbPairingStore = new LimbPairingStore();
   registerLimbNodeRoutes(app, { limbRegistry, pairingStore: limbPairingStore });
 
+  // F197: Plugin framework — discovery + config + resource activation
+  {
+    const { join } = await import('node:path');
+    const { PluginRegistry } = await import('./domains/plugin/PluginRegistry.js');
+    const { PluginResourceActivator } = await import('./domains/plugin/PluginResourceActivator.js');
+    const { PluginLimbNode } = await import('./domains/plugin/PluginLimbNode.js');
+    const { loadLimbDeclaration } = await import('./domains/limb/limb-yaml-loader.js');
+    const { registerPluginRoutes } = await import('./routes/plugin-routes.js');
+    const { readCapabilitiesConfig, writeCapabilitiesConfig, withCapabilityLock } = await import(
+      './config/capabilities/capability-orchestrator.js'
+    );
+    const { resolveStartupCliConfigContext } = await import(
+      './config/capabilities/startup-cli-config.js'
+    );
+
+    const monorepoRoot = findMonorepoRoot(process.cwd());
+    const { paths: cliConfigPaths } = resolveStartupCliConfigContext(monorepoRoot);
+    const pluginsDir = join(monorepoRoot, 'plugins');
+    const pluginRegistry = new PluginRegistry(pluginsDir);
+    pluginRegistry.scan();
+    app.log.info(`[api] F197: PluginRegistry scanned ${pluginRegistry.getAllManifests().length} plugin(s)`);
+
+    const pluginActivator = new PluginResourceActivator({
+      projectRoot: monorepoRoot,
+      pluginsDir,
+      limbRegistry,
+      readCapabilities: () => readCapabilitiesConfig(monorepoRoot),
+      writeCapabilities: async (config) => {
+        await writeCapabilitiesConfig(monorepoRoot, config);
+        await generateCliConfigs(config, cliConfigPaths);
+      },
+      withCapabilityLock: (fn) => withCapabilityLock(monorepoRoot, fn),
+      limbAdapterFactory: async (_pluginId, limbYamlPath) => {
+        const decl = loadLimbDeclaration(limbYamlPath);
+        return new PluginLimbNode(decl);
+      },
+    });
+
+    // Rehydrate enabled limb plugins on startup
+    const startupCaps = await readCapabilitiesConfig(monorepoRoot);
+    if (startupCaps) {
+      const enabledLimbs = startupCaps.capabilities.filter(
+        (c) => c.type === 'limb' && c.enabled && c.pluginId,
+      );
+      for (const cap of enabledLimbs) {
+        const manifest = pluginRegistry.getManifest(cap.pluginId!);
+        if (!manifest) continue;
+        const limbResource = manifest.resources.find((r) => r.type === 'limb');
+        if (!limbResource?.path) continue;
+        try {
+          const yamlPath = join(pluginsDir, manifest.id, limbResource.path);
+          const decl = loadLimbDeclaration(yamlPath);
+          const node = new PluginLimbNode(decl);
+          await limbRegistry.register(node);
+          app.log.info(`[api] F197: Rehydrated limb '${decl.nodeId}' for plugin '${manifest.id}'`);
+        } catch (err) {
+          app.log.warn(`[api] F197: Failed to rehydrate limb for plugin '${manifest.id}': ${(err as Error).message}`);
+        }
+      }
+    }
+
+    registerPluginRoutes(app, { pluginRegistry, pluginActivator, limbRegistry });
+  }
   // F174 D2b-1 — single notifier instance shared between callback auth preHandler
   // (posts in-context surface on 401) and the hide-similar debug endpoint
   // (lets the user 24h-suppress a (reason, tool, catId) tuple).
