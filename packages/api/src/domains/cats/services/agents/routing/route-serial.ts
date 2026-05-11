@@ -1845,7 +1845,12 @@ export async function* routeSerial(
       // MUST always reach here regardless of append success (缅因猫 review P1-2)
       if (doneMsg) {
         const isFinal = index === worklist.length - 1;
-        yield { ...doneMsg, ...(mentionsUser ? { mentionsUser } : {}), ...(ownInvocationId ? { turnId: ownInvocationId } : {}), isFinal };
+        yield {
+          ...doneMsg,
+          ...(mentionsUser ? { mentionsUser } : {}),
+          ...(ownInvocationId ? { turnId: ownInvocationId } : {}),
+          isFinal,
+        };
         activeTrackedA2ASlots.delete(catId);
         if (isFinal) yieldedFinalDone = true;
       }
