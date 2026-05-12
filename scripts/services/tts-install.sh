@@ -15,7 +15,7 @@ VENV_DIR="${HOME}/.cat-cafe/tts-venv"
 
 if [ ! -d "$VENV_DIR" ]; then
   echo "  创建 venv: $VENV_DIR ..."
-  python3 -m venv "$VENV_DIR" || { echo "ERROR: venv 创建失败" >&2; exit 1; }
+  "$PYTHON3" -m venv "$VENV_DIR" || { echo "ERROR: venv 创建失败" >&2; exit 1; }
 fi
 source "$VENV_DIR/bin/activate"
 
@@ -27,7 +27,7 @@ pip install --quiet mlx-audio 'misaki[zh]' fastapi uvicorn 'httpx[socks]' num2wo
 
 TTS_MODEL="${TTS_MODEL:-mlx-community/Kokoro-82M-bf16}"
 echo "  预下载模型: $TTS_MODEL ..."
-python3 -c "
+"$PYTHON3" -c "
 import sys
 from huggingface_hub import snapshot_download
 try:

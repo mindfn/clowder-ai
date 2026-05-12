@@ -94,7 +94,7 @@ export function DailyUsageSection() {
           type="button"
           onClick={() => fetchUsage(true)}
           disabled={loading}
-          className="px-3 py-1 text-xs rounded-md bg-cafe-surface-sunken text-[var(--cafe-surface)] hover:bg-cafe-surface-sunken disabled:opacity-50"
+          className="px-3 py-1 text-xs rounded-md bg-[var(--console-button-emphasis)] text-cafe hover:opacity-80 disabled:opacity-50"
         >
           {loading ? '加载中...' : '刷新'}
         </button>
@@ -108,6 +108,7 @@ export function DailyUsageSection() {
         const cats = Object.entries(day.cats).sort(
           (a, b) => b[1].inputTokens + b[1].outputTokens - (a[1].inputTokens + a[1].outputTokens),
         );
+        const showCost = cats.some(([, u]) => u.costUsd > 0);
         return (
           <div key={day.date} className="border-t border-[var(--console-border-soft)] pt-2 space-y-1">
             <div className="flex items-center justify-between text-xs">
@@ -115,7 +116,7 @@ export function DailyUsageSection() {
               <span className="text-cafe-muted">{day.total.invocations} 次调用</span>
             </div>
             {cats.map(([catId, usage]) => (
-              <CatUsageRow key={catId} catId={catId} usage={usage} />
+              <CatUsageRow key={catId} catId={catId} usage={usage} showCost={showCost} />
             ))}
           </div>
         );
@@ -140,17 +141,26 @@ export function DailyUsageSection() {
   );
 }
 
-function CatUsageRow({ catId, usage }: { catId: string; usage: CatDailyUsage }) {
+function CatUsageRow({ catId, usage, showCost }: { catId: string; usage: CatDailyUsage; showCost: boolean }) {
   return (
-    <div className="flex items-center justify-between gap-2 text-xs">
-      <div className="flex items-center gap-2 min-w-0">
+    <div className="flex items-center gap-2 text-xs">
+      <div className="flex items-center gap-2 min-w-0 flex-1">
         <span className="font-medium text-cafe-secondary truncate">{catLabel(catId)}</span>
-        <span className="text-cafe-muted">{usage.participations}次</span>
+        <span className="shrink-0 text-cafe-muted">{usage.participations}次</span>
       </div>
-      <div className="flex items-center gap-3 text-cafe-secondary shrink-0">
-        <span title="输入 tokens">入 {formatTokens(usage.inputTokens)}</span>
-        <span title="输出 tokens">出 {formatTokens(usage.outputTokens)}</span>
-      </div>
+      <span className="w-16 shrink-0 text-right tabular-nums text-cafe-secondary" title="输入 tokens">
+        入 {formatTokens(usage.inputTokens)}
+      </span>
+      <span className="w-16 shrink-0 text-right tabular-nums text-cafe-secondary" title="输出 tokens">
+        出 {formatTokens(usage.outputTokens)}
+      </span>
+      {showCost && (
+        <span
+          className={`w-14 shrink-0 text-right tabular-nums ${usage.costUsd > 0 ? 'text-conn-amber-text font-semibold' : 'text-transparent'}`}
+        >
+          ${usage.costUsd.toFixed(2)}
+        </span>
+      )}
     </div>
   );
 }

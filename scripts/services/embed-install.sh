@@ -17,7 +17,7 @@ ARCH="$(uname -m)"
 
 if [ ! -d "$VENV_DIR" ]; then
   echo "  创建 venv: $VENV_DIR ..."
-  python3 -m venv "$VENV_DIR" || { echo "ERROR: venv 创建失败" >&2; exit 1; }
+  "$PYTHON3" -m venv "$VENV_DIR" || { echo "ERROR: venv 创建失败" >&2; exit 1; }
 fi
 source "$VENV_DIR/bin/activate"
 
@@ -36,7 +36,7 @@ fi
 
 MODEL="${EMBED_MODEL:-mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ}"
 echo "  预下载模型: $MODEL ..."
-python3 -c "
+"$PYTHON3" -c "
 import sys
 from huggingface_hub import snapshot_download
 try:

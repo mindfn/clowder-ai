@@ -15,7 +15,7 @@ VENV_DIR="${HOME}/.cat-cafe/whisper-venv"
 
 if [ ! -d "$VENV_DIR" ]; then
   echo "  创建 venv: $VENV_DIR ..."
-  python3 -m venv "$VENV_DIR" || { echo "ERROR: venv 创建失败" >&2; exit 1; }
+  "$PYTHON3" -m venv "$VENV_DIR" || { echo "ERROR: venv 创建失败" >&2; exit 1; }
 fi
 source "$VENV_DIR/bin/activate"
 
@@ -36,7 +36,7 @@ pip install --quiet mlx-whisper fastapi uvicorn python-multipart 'httpx[socks]' 
 
 MODEL="${WHISPER_MODEL:-mlx-community/whisper-large-v3-turbo}"
 echo "  预下载模型: $MODEL ..."
-python3 -c "
+"$PYTHON3" -c "
 import sys
 from huggingface_hub import snapshot_download
 try:

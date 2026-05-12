@@ -3,11 +3,11 @@
   Install dependencies for Embedding service on Windows.
 
 .DESCRIPTION
-  Creates ~/.cat-cafe/embed-venv, installs fastembed (ONNX Runtime based,
-  lightweight alternative to torch+sentence-transformers for Windows).
+  Creates ~/.cat-cafe/embed-venv, installs sentence-transformers + torch
+  (matching embed-server.ps1 dependency stack).
 
   Env vars:
-  - EMBED_ONNX_MODEL  (default: BAAI/bge-small-zh-v1.5)
+  - EMBED_MODEL  (default: BAAI/bge-small-zh-v1.5)
 #>
 
 $ErrorActionPreference = "Stop"
@@ -33,50 +33,13 @@ if (-not (Test-Path $VenvPython)) {
 & $VenvPython -m pip install --progress-bar on -U pip
 if ($LASTEXITCODE -ne 0) { throw "Failed to upgrade pip in embed-venv" }
 
-# Pre-create py-rust-stemmers stub: it needs Rust+MSVC to compile from source,
-# but is only used for sparse/BM25 retrieval — our dense embeddings don't need it.
-# By registering a stub with dist-info, pip sees it as installed and skips the build.
-$sitePackages = Join-Path $VenvDir "Lib\site-packages"
-$stubDir = Join-Path $sitePackages "py_rust_stemmers"
-$distInfo = Join-Path $sitePackages "py_rust_stemmers-0.1.0.dist-info"
-if (-not (Test-Path $stubDir)) {
-    Write-Host "  Creating py-rust-stemmers stub (avoids Rust/MSVC build requirement)..."
-    New-Item -ItemType Directory -Path $stubDir -Force | Out-Null
-    New-Item -ItemType Directory -Path $distInfo -Force | Out-Null
-    $stubCode = "class Stemmer:`n    def __init__(self, *a, **kw): pass`n    def stem_word(self, w): return w`n    def stem_words(self, ws): return list(ws)"
-    Set-Content -Path (Join-Path $stubDir "__init__.py") -Value $stubCode
-    Set-Content -Path (Join-Path $distInfo "METADATA") -Value "Metadata-Version: 2.1`nName: py-rust-stemmers`nVersion: 0.1.0"
-    Set-Content -Path (Join-Path $distInfo "INSTALLER") -Value "pip"
-    Set-Content -Path (Join-Path $distInfo "RECORD") -Value ""
-}
-
-Write-Host "  Installing dependencies: fastembed fastapi uvicorn numpy huggingface_hub ..."
-& $VenvPython -m pip install --progress-bar on fastembed fastapi uvicorn numpy huggingface_hub
+Write-Host "  Installing dependencies: sentence-transformers torch fastapi uvicorn numpy huggingface_hub ..."
+& $VenvPython -m pip install --progress-bar on sentence-transformers torch fastapi uvicorn numpy huggingface_hub
 if ($LASTEXITCODE -ne 0) { throw "Failed to install embedding dependencies" }
 
-$hasCuda = $false
-try {
-    $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-    $null = & nvidia-smi 2>$null
-    if ($LASTEXITCODE -eq 0) { $hasCuda = $true }
-    $ErrorActionPreference = $prevEAP
-} catch {}
-
-if ($hasCuda) {
-    Write-Host "  NVIDIA GPU detected, upgrading to GPU-accelerated ONNX Runtime ..."
-    $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-    & $VenvPython -m pip install --progress-bar on onnxruntime-gpu
-    $ErrorActionPreference = $prevEAP
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "  GPU ONNX Runtime install failed, using CPU"
-    }
-} else {
-    Write-Host "  No NVIDIA GPU detected, using CPU inference"
-}
-
-$OnnxModel = if ($env:EMBED_ONNX_MODEL) { $env:EMBED_ONNX_MODEL } else { "BAAI/bge-small-zh-v1.5" }
-Write-Host "  Pre-downloading ONNX model: $OnnxModel ..."
-& $VenvPython -c "from fastembed import TextEmbedding; TextEmbedding(model_name='$OnnxModel')"
-if ($LASTEXITCODE -ne 0) { throw "Failed to download model: $OnnxModel" }
+$Model = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "BAAI/bge-small-zh-v1.5" }
+Write-Host "  Pre-downloading model: $Model ..."
+& $VenvPython -c "from huggingface_hub import snapshot_download; snapshot_download('$Model'); print('Model download complete.')"
+if ($LASTEXITCODE -ne 0) { throw "Failed to download model: $Model" }
 
 Write-Host "Installation complete."
