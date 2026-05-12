@@ -1471,7 +1471,6 @@ async function main(): Promise<void> {
     const { resolveActiveProjectRoot } = await import('./utils/active-project-root.js');
 
     const monorepoRoot = findMonorepoRoot(process.cwd());
-    const { paths: cliConfigPaths } = resolveStartupCliConfigContext(monorepoRoot);
     const pluginsDir = join(monorepoRoot, 'plugins');
     const pluginRegistry = new PluginRegistry(pluginsDir);
     pluginRegistry.scan();
@@ -1487,7 +1486,8 @@ async function main(): Promise<void> {
       writeCapabilities: async (config) => {
         const root = resolveActiveProjectRoot();
         await writeCapabilitiesConfig(root, config);
-        await generateCliConfigs(config, cliConfigPaths);
+        const { paths } = resolveStartupCliConfigContext(root);
+        await generateCliConfigs(config, paths);
       },
       withCapabilityLock: (fn) => withCapabilityLock(resolveActiveProjectRoot(), fn),
       limbAdapterFactory: async (pluginId, limbYamlPath) => {
@@ -1503,7 +1503,7 @@ async function main(): Promise<void> {
     });
 
     // Rehydrate enabled limb plugins on startup
-    const startupCaps = await readCapabilitiesConfig(monorepoRoot);
+    const startupCaps = await readCapabilitiesConfig(resolveActiveProjectRoot());
     if (startupCaps) {
       const enabledLimbs = startupCaps.capabilities.filter((c) => c.type === 'limb' && c.enabled && c.pluginId);
       for (const cap of enabledLimbs) {
