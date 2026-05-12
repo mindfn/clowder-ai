@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { parse as parseYaml } from 'yaml';
 import type { PluginConfigField, PluginHealthCheck, PluginManifest, PluginResourceDef } from '@cat-cafe/shared';
+import { parse as parseYaml } from 'yaml';
 
 const SYSTEM_ENV_DENYLIST_PREFIXES = [
   'CAT_CAFE_',
@@ -14,14 +14,7 @@ const SYSTEM_ENV_DENYLIST_PREFIXES = [
   'SESSION_',
 ];
 
-const SYSTEM_ENV_DENYLIST_EXACT = new Set([
-  'NODE_OPTIONS',
-  'NODE_ENV',
-  'PATH',
-  'HOME',
-  'SHELL',
-  'PORT',
-]);
+const SYSTEM_ENV_DENYLIST_EXACT = new Set(['NODE_OPTIONS', 'NODE_ENV', 'PATH', 'HOME', 'SHELL', 'PORT']);
 
 const SUPPORTED_RESOURCE_TYPES = new Set(['skill', 'mcp', 'limb']);
 const DEFERRED_RESOURCE_TYPES = new Set(['schedule']);
@@ -39,10 +32,7 @@ function isSystemEnv(envName: string): boolean {
   return SYSTEM_ENV_DENYLIST_PREFIXES.some((p) => upper.startsWith(p));
 }
 
-export function validateEnvSafety(
-  manifest: PluginManifest,
-  existingClaims: Map<string, string>,
-): EnvSafetyResult {
+export function validateEnvSafety(manifest: PluginManifest, existingClaims: Map<string, string>): EnvSafetyResult {
   const errors: string[] = [];
   const pluginPrefix = manifest.id.toUpperCase().replace(/-/g, '_') + '_';
 
@@ -53,9 +43,7 @@ export function validateEnvSafety(
     }
 
     if (!manifest.builtin && !field.envName.toUpperCase().startsWith(pluginPrefix)) {
-      errors.push(
-        `Community plugin '${manifest.id}' env '${field.envName}' must start with '${pluginPrefix}'`,
-      );
+      errors.push(`Community plugin '${manifest.id}' env '${field.envName}' must start with '${pluginPrefix}'`);
       continue;
     }
 
@@ -79,7 +67,9 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
     throw new Error(`Invalid plugin manifest at ${yamlPath}: missing id, name, or version`);
   }
   if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(id)) {
-    throw new Error(`Invalid plugin id '${id}': must be a lowercase slug (a-z, 0-9, hyphens, no leading/trailing hyphen)`);
+    throw new Error(
+      `Invalid plugin id '${id}': must be a lowercase slug (a-z, 0-9, hyphens, no leading/trailing hyphen)`,
+    );
   }
 
   const config: PluginConfigField[] = [];

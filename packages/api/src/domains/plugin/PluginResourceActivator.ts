@@ -25,13 +25,10 @@ export interface ActivatePluginResult {
   resources: ActivationResult[];
 }
 
-export type LimbAdapterFactory = (
-  pluginId: string,
-  limbYamlPath: string,
-) => Promise<ILimbNode>;
+export type LimbAdapterFactory = (pluginId: string, limbYamlPath: string) => Promise<ILimbNode>;
 
 export interface PluginResourceActivatorDeps {
-  projectRoot: string;
+  resolveProjectRoot: () => string;
   pluginsDir: string;
   limbRegistry: LimbRegistry;
   readCapabilities: () => Promise<CapabilitiesConfig | null>;
@@ -138,7 +135,7 @@ export class PluginResourceActivator {
     const skillName = resource.path.split('/').pop()!;
 
     for (const providerDir of PROVIDER_DIRS) {
-      const skillsDir = join(this.deps.projectRoot, providerDir);
+      const skillsDir = join(this.deps.resolveProjectRoot(), providerDir);
       await mkdir(skillsDir, { recursive: true });
       const linkPath = join(skillsDir, skillName);
       await this.ensureSymlink(linkPath, skillSourceDir);
@@ -154,7 +151,7 @@ export class PluginResourceActivator {
     const skillName = resource.path.split('/').pop()!;
 
     for (const providerDir of PROVIDER_DIRS) {
-      const linkPath = join(this.deps.projectRoot, providerDir, skillName);
+      const linkPath = join(this.deps.resolveProjectRoot(), providerDir, skillName);
       await this.removeOwnedSymlink(linkPath, skillSourceDir);
     }
 
@@ -248,9 +245,7 @@ export class PluginResourceActivator {
         const { readlink } = await import('node:fs/promises');
         const existing = await readlink(linkPath);
         if (existing === target) return;
-        throw new Error(
-          `Refusing to overwrite existing symlink at ${linkPath} (current target: ${existing})`,
-        );
+        throw new Error(`Refusing to overwrite existing symlink at ${linkPath} (current target: ${existing})`);
       } else {
         throw new Error(`Refusing to overwrite non-symlink at ${linkPath}`);
       }

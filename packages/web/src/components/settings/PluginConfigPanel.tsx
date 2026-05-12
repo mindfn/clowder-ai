@@ -1,8 +1,8 @@
 'use client';
 
+import type { PluginInfo } from '@cat-cafe/shared';
 import { useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
-import type { PluginInfo } from '@cat-cafe/shared';
 
 interface Props {
   plugin: PluginInfo;
@@ -18,8 +18,11 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
 
   const handleSave = async () => {
     const updates = plugin.config
-      .filter((f) => fieldValues[f.envName] !== undefined && fieldValues[f.envName] !== '')
-      .map((f) => ({ name: f.envName, value: fieldValues[f.envName] ?? null }));
+      .filter((f) => fieldValues[f.envName] !== undefined)
+      .map((f) => ({
+        name: f.envName,
+        value: fieldValues[f.envName] === '' ? null : fieldValues[f.envName]!,
+      }));
     if (updates.length === 0) {
       setResult({ type: 'error', msg: '请填写至少一个配置项' });
       return;
@@ -53,7 +56,10 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
     setResult(null);
     try {
       const res = await apiFetch(`/api/plugins/${plugin.id}/${action}`, { method: 'POST' });
-      const data = (await res.json()) as { status: string; resources?: { type: string; ok: boolean; error?: string }[] };
+      const data = (await res.json()) as {
+        status: string;
+        resources?: { type: string; ok: boolean; error?: string }[];
+      };
       if (data.status === 'success') {
         setResult({ type: 'success', msg: action === 'enable' ? '插件已启用' : '插件已禁用' });
       } else if (data.status === 'partial') {
@@ -103,11 +109,7 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
                 id={`plugin-${f.envName}`}
                 type={f.sensitive ? 'password' : 'text'}
                 placeholder={
-                  f.sensitive
-                    ? f.currentValue
-                      ? '已设置（输入新值覆盖）'
-                      : '未设置'
-                    : (f.currentValue ?? '未设置')
+                  f.sensitive ? (f.currentValue ? '已设置（输入新值覆盖）' : '未设置') : (f.currentValue ?? '未设置')
                 }
                 value={fieldValues[f.envName] ?? ''}
                 onChange={(e) => setFieldValues((prev) => ({ ...prev, [f.envName]: e.target.value }))}
@@ -124,12 +126,11 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
             <span
               key={i}
               className={`rounded-md px-2 py-0.5 text-[11px] font-medium ${
-                r.enabled
-                  ? 'bg-conn-emerald-bg text-conn-emerald-text'
-                  : 'bg-cafe-surface-sunken text-cafe-muted'
+                r.enabled ? 'bg-conn-emerald-bg text-conn-emerald-text' : 'bg-cafe-surface-sunken text-cafe-muted'
               }`}
             >
-              {r.type}{r.error ? ` (${r.error})` : ''}
+              {r.type}
+              {r.error ? ` (${r.error})` : ''}
             </span>
           ))}
         </div>

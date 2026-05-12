@@ -1,4 +1,4 @@
-import { readdirSync, statSync, existsSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
   CapabilitiesConfig,
@@ -69,9 +69,7 @@ export class PluginRegistry {
     for (const { id, manifest, yamlPath } of candidates) {
       const safety = validateEnvSafety(manifest, envClaims);
       if (!safety.ok) {
-        console.warn(
-          `[PluginRegistry] skip ${id} (${yamlPath}): env safety: ${safety.errors.join('; ')}`,
-        );
+        console.warn(`[PluginRegistry] skip ${id} (${yamlPath}): env safety: ${safety.errors.join('; ')}`);
         continue;
       }
 
@@ -97,17 +95,13 @@ export class PluginRegistry {
     capabilities: CapabilitiesConfig | null,
     env: Record<string, string | undefined>,
   ): PluginStatus {
-    const allConfigured = manifest.config
-      .filter((f) => f.required)
-      .every((f) => !!env[f.envName]);
+    const allConfigured = manifest.config.filter((f) => f.required).every((f) => !!env[f.envName]);
 
     if (!allConfigured) return 'not_configured';
 
     if (!capabilities) return 'configured';
 
-    const capEntries = capabilities.capabilities.filter(
-      (c) => c.pluginId === manifest.id,
-    );
+    const capEntries = capabilities.capabilities.filter((c) => c.pluginId === manifest.id);
 
     if (capEntries.length === 0) return 'configured';
 
@@ -124,9 +118,7 @@ export class PluginRegistry {
     env: Record<string, string | undefined>,
   ): PluginInfo {
     const status = this.deriveStatus(manifest, capabilities, env);
-    const allConfigured = manifest.config
-      .filter((f) => f.required)
-      .every((f) => !!env[f.envName]);
+    const allConfigured = manifest.config.filter((f) => f.required).every((f) => !!env[f.envName]);
 
     const configWithValues = manifest.config.map((f) => ({
       ...f,
@@ -156,15 +148,15 @@ export class PluginRegistry {
       config: configWithValues,
       healthCheck: manifest.healthCheck,
       resources: resourceStatuses,
-      hasHealthCheck: !!manifest.healthCheck,
+      hasHealthCheck: !!manifest.healthCheck?.limbCommand,
     };
   }
 }
 
-export function resourceCapId(_pluginId: string, resource: { type: string; path?: string; name?: string }): string {
-  if (resource.type === 'skill' && resource.path) {
-    return resource.path.split('/').pop()!;
-  }
-  const suffix = resource.path ?? resource.name ?? resource.type;
-  return `plugin:${_pluginId}:${suffix}`;
+export function resourceCapId(pluginId: string, resource: { type: string; path?: string; name?: string }): string {
+  const suffix =
+    resource.type === 'skill' && resource.path
+      ? resource.path.split('/').pop()!
+      : (resource.path ?? resource.name ?? resource.type);
+  return `plugin:${pluginId}:${suffix}`;
 }

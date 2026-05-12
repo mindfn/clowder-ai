@@ -5,18 +5,18 @@
  */
 
 import { join, resolve } from 'node:path';
-import type { FastifyInstance } from 'fastify';
 import type { PluginInfo } from '@cat-cafe/shared';
-import type { LimbRegistry } from '../domains/limb/LimbRegistry.js';
-import type { PluginResourceActivator } from '../domains/plugin/PluginResourceActivator.js';
-import type { PluginRegistry } from '../domains/plugin/PluginRegistry.js';
-import { validateEnvSafety } from '../domains/plugin/plugin-manifest.js';
-import { loadLimbDeclaration } from '../domains/limb/limb-yaml-loader.js';
-import { applyConnectorSecretUpdates } from '../config/connector-secret-updater.js';
+import type { FastifyInstance } from 'fastify';
 import { readCapabilitiesConfig } from '../config/capabilities/capability-orchestrator.js';
+import { applyConnectorSecretUpdates } from '../config/connector-secret-updater.js';
+import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
+import type { LimbRegistry } from '../domains/limb/LimbRegistry.js';
+import { loadLimbDeclaration } from '../domains/limb/limb-yaml-loader.js';
+import type { PluginRegistry } from '../domains/plugin/PluginRegistry.js';
+import type { PluginResourceActivator } from '../domains/plugin/PluginResourceActivator.js';
+import { validateEnvSafety } from '../domains/plugin/plugin-manifest.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
-import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 
 const LOOPBACK_ADDRS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
@@ -81,7 +81,9 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
         type: AuditEventTypes.CONFIG_UPDATED,
         data: { target: 'plugin-enable', pluginId: id, operator },
       });
-    } catch { /* audit failure is non-critical */ }
+    } catch {
+      /* audit failure is non-critical */
+    }
 
     return result;
   });
@@ -112,7 +114,9 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
         type: AuditEventTypes.CONFIG_UPDATED,
         data: { target: 'plugin-disable', pluginId: id, operator },
       });
-    } catch { /* audit failure is non-critical */ }
+    } catch {
+      /* audit failure is non-critical */
+    }
 
     return result;
   });
@@ -221,7 +225,11 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
 
       const yamlPath = join(pluginsDir, id, limbResource.path);
       const decl = (() => {
-        try { return loadLimbDeclaration(yamlPath); } catch { return null; }
+        try {
+          return loadLimbDeclaration(yamlPath);
+        } catch {
+          return null;
+        }
       })();
       if (!decl) {
         return { ok: false, status: 'offline', error: 'Failed to load limb declaration' };
