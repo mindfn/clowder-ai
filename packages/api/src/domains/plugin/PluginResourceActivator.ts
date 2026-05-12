@@ -208,6 +208,13 @@ export class PluginResourceActivator {
         }
         existing.enabled = enabled;
         existing.pluginId = manifest.id;
+        if (resource.type === 'mcp' && resource.command) {
+          existing.mcpServer = {
+            command: resource.command,
+            args: resource.args ?? [],
+            transport: (resource.transport as 'stdio' | 'streamableHttp') ?? 'stdio',
+          };
+        }
       } else {
         const entry: CapabilityEntry = {
           id: capId,
