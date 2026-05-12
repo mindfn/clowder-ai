@@ -1460,7 +1460,7 @@ async function main(): Promise<void> {
   // F197: Plugin framework — discovery + config + resource activation
   {
     const { join } = await import('node:path');
-    const { PluginRegistry } = await import('./domains/plugin/PluginRegistry.js');
+    const { PluginRegistry, resourceCapId } = await import('./domains/plugin/PluginRegistry.js');
     const { PluginResourceActivator } = await import('./domains/plugin/PluginResourceActivator.js');
     const { loadLimbDeclaration } = await import('./domains/limb/limb-yaml-loader.js');
     const { registerPluginRoutes } = await import('./routes/plugin-routes.js');
@@ -1509,7 +1509,9 @@ async function main(): Promise<void> {
       for (const cap of enabledLimbs) {
         const manifest = pluginRegistry.getManifest(cap.pluginId!);
         if (!manifest) continue;
-        const limbResource = manifest.resources.find((r) => r.type === 'limb');
+        const limbResource = manifest.resources.find(
+          (r) => r.type === 'limb' && resourceCapId(manifest.id, r) === cap.id,
+        );
         if (!limbResource?.path) continue;
         const factory = limbAdapterRegistry.get(manifest.id);
         if (!factory) {
