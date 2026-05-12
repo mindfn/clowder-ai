@@ -201,6 +201,11 @@ export class PluginResourceActivator {
 
       const existing = cap.capabilities.find((c) => c.id === capId);
       if (existing) {
+        if (existing.pluginId && existing.pluginId !== manifest.id) {
+          throw new Error(
+            `Capability '${capId}' is already owned by plugin '${existing.pluginId}'`,
+          );
+        }
         existing.enabled = enabled;
         existing.pluginId = manifest.id;
       } else {
