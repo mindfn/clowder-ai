@@ -48,7 +48,12 @@ Write-Host "  Installing PyTorch ($torchLabel) from $torchIndex ..."
 if ($LASTEXITCODE -ne 0) { throw "Failed to install PyTorch" }
 
 Write-Host "  Installing dependencies: sentence-transformers fastapi uvicorn numpy huggingface_hub ..."
-& $VenvPython -m pip install --progress-bar on sentence-transformers fastapi uvicorn numpy huggingface_hub
+$pipArgs = @('-m', 'pip', 'install', '--progress-bar', 'on',
+    'sentence-transformers', 'fastapi', 'uvicorn', 'numpy', 'huggingface_hub')
+if ($env:PIP_INDEX_URL) {
+    $pipArgs += @('--extra-index-url', 'https://pypi.org/simple/')
+}
+& $VenvPython @pipArgs
 if ($LASTEXITCODE -ne 0) { throw "Failed to install embedding dependencies" }
 
 $Model = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "BAAI/bge-small-zh-v1.5" }
