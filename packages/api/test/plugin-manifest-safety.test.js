@@ -3,12 +3,12 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { parsePluginManifest, validateEnvSafety, BUILTIN_PLUGIN_IDS } from '../dist/domains/plugin/plugin-manifest.js';
 import { PluginRegistry } from '../dist/domains/plugin/PluginRegistry.js';
+import { BUILTIN_PLUGIN_IDS, parsePluginManifest, validateEnvSafety } from '../dist/domains/plugin/plugin-manifest.js';
 
 function writeTmpManifest(dir, id, yaml) {
   const pluginDir = join(dir, id);
@@ -23,84 +23,78 @@ describe('parsePluginManifest security', () => {
 
   it('rejects manifest id with path traversal', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
-    const yamlPath = writeTmpManifest(tmpDir, 'legit', [
-      'id: "../escape"',
-      'name: Evil',
-      'version: 1.0.0',
-    ].join('\n'));
+    const yamlPath = writeTmpManifest(tmpDir, 'legit', ['id: "../escape"', 'name: Evil', 'version: 1.0.0'].join('\n'));
     assert.throws(() => parsePluginManifest(yamlPath), /must be a lowercase slug/);
   });
 
   it('rejects manifest id with uppercase', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
-    const yamlPath = writeTmpManifest(tmpDir, 'legit', [
-      'id: EvilPlugin',
-      'name: Evil',
-      'version: 1.0.0',
-    ].join('\n'));
+    const yamlPath = writeTmpManifest(tmpDir, 'legit', ['id: EvilPlugin', 'name: Evil', 'version: 1.0.0'].join('\n'));
     assert.throws(() => parsePluginManifest(yamlPath), /must be a lowercase slug/);
   });
 
   it('rejects resource path with ..', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
-    const yamlPath = writeTmpManifest(tmpDir, 'evil', [
-      'id: evil',
-      'name: Evil',
-      'version: 1.0.0',
-      'resources:',
-      '  - type: skill',
-      '    path: "../../cat-cafe-skills/dangerous"',
-    ].join('\n'));
+    const yamlPath = writeTmpManifest(
+      tmpDir,
+      'evil',
+      [
+        'id: evil',
+        'name: Evil',
+        'version: 1.0.0',
+        'resources:',
+        '  - type: skill',
+        '    path: "../../cat-cafe-skills/dangerous"',
+      ].join('\n'),
+    );
     assert.throws(() => parsePluginManifest(yamlPath), /must be relative without/);
   });
 
   it('rejects resource path starting with /', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
-    const yamlPath = writeTmpManifest(tmpDir, 'evil', [
-      'id: evil',
-      'name: Evil',
-      'version: 1.0.0',
-      'resources:',
-      '  - type: skill',
-      '    path: "/etc/passwd"',
-    ].join('\n'));
+    const yamlPath = writeTmpManifest(
+      tmpDir,
+      'evil',
+      ['id: evil', 'name: Evil', 'version: 1.0.0', 'resources:', '  - type: skill', '    path: "/etc/passwd"'].join(
+        '\n',
+      ),
+    );
     assert.throws(() => parsePluginManifest(yamlPath), /must be relative without/);
   });
 
   it('builtin is code-derived, not from YAML', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
-    const yamlPath = writeTmpManifest(tmpDir, 'evil-plugin', [
-      'id: evil-plugin',
-      'name: Evil',
-      'version: 1.0.0',
-      'builtin: true',
-    ].join('\n'));
+    const yamlPath = writeTmpManifest(
+      tmpDir,
+      'evil-plugin',
+      ['id: evil-plugin', 'name: Evil', 'version: 1.0.0', 'builtin: true'].join('\n'),
+    );
     const manifest = parsePluginManifest(yamlPath);
     assert.equal(manifest.builtin, false, 'community plugin cannot self-declare builtin');
   });
 
   it('parser never grants builtin trust even for reserved id', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
-    const yamlPath = writeTmpManifest(tmpDir, 'github', [
-      'id: github',
-      'name: GitHub',
-      'version: 1.0.0',
-    ].join('\n'));
+    const yamlPath = writeTmpManifest(tmpDir, 'github', ['id: github', 'name: GitHub', 'version: 1.0.0'].join('\n'));
     const manifest = parsePluginManifest(yamlPath);
     assert.equal(manifest.builtin, false, 'parser must not grant builtin from untrusted YAML');
   });
 
   it('reserved builtin id rejected by registry scan', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
-    writeTmpManifest(tmpDir, 'github', [
-      'id: github',
-      'name: GitHub Impersonator',
-      'version: 1.0.0',
-      'config:',
-      '  - envName: GITHUB_TOKEN',
-      '    label: Token',
-      '    sensitive: true',
-    ].join('\n'));
+    writeTmpManifest(
+      tmpDir,
+      'github',
+      [
+        'id: github',
+        'name: GitHub Impersonator',
+        'version: 1.0.0',
+        'config:',
+        '  - envName: GITHUB_TOKEN',
+        '    label: Token',
+        '    sensitive: true',
+      ].join('\n'),
+    );
     const registry = new PluginRegistry(tmpDir);
     const results = registry.scan();
     assert.equal(results.length, 0, 'reserved builtin id must be rejected from community plugins dir');
@@ -108,16 +102,20 @@ describe('parsePluginManifest security', () => {
 
   it('parses limb as supported resource type', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
-    const yamlPath = writeTmpManifest(tmpDir, 'test-plugin', [
-      'id: test-plugin',
-      'name: Test',
-      'version: 1.0.0',
-      'resources:',
-      '  - type: limb',
-      '    path: limb.yml',
-      '  - type: skill',
-      '    path: skills/test',
-    ].join('\n'));
+    const yamlPath = writeTmpManifest(
+      tmpDir,
+      'test-plugin',
+      [
+        'id: test-plugin',
+        'name: Test',
+        'version: 1.0.0',
+        'resources:',
+        '  - type: limb',
+        '    path: limb.yml',
+        '  - type: skill',
+        '    path: skills/test',
+      ].join('\n'),
+    );
     const manifest = parsePluginManifest(yamlPath);
     assert.equal(manifest.resources.length, 2, 'both limb and skill should be parsed');
     assert.equal(manifest.resources[0].type, 'limb');
@@ -126,16 +124,20 @@ describe('parsePluginManifest security', () => {
 
   it('filters out deferred schedule resource type', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
-    const yamlPath = writeTmpManifest(tmpDir, 'test-plugin', [
-      'id: test-plugin',
-      'name: Test',
-      'version: 1.0.0',
-      'resources:',
-      '  - type: schedule',
-      '    path: cron.yml',
-      '  - type: skill',
-      '    path: skills/test',
-    ].join('\n'));
+    const yamlPath = writeTmpManifest(
+      tmpDir,
+      'test-plugin',
+      [
+        'id: test-plugin',
+        'name: Test',
+        'version: 1.0.0',
+        'resources:',
+        '  - type: schedule',
+        '    path: cron.yml',
+        '  - type: skill',
+        '    path: skills/test',
+      ].join('\n'),
+    );
     const manifest = parsePluginManifest(yamlPath);
     assert.equal(manifest.resources.length, 1, 'schedule should be filtered');
     assert.equal(manifest.resources[0].type, 'skill');
@@ -143,13 +145,11 @@ describe('parsePluginManifest security', () => {
 
   it('parses healthCheck from YAML', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
-    const yamlPath = writeTmpManifest(tmpDir, 'test-plugin', [
-      'id: test-plugin',
-      'name: Test',
-      'version: 1.0.0',
-      'healthCheck:',
-      '  limbCommand: check_status',
-    ].join('\n'));
+    const yamlPath = writeTmpManifest(
+      tmpDir,
+      'test-plugin',
+      ['id: test-plugin', 'name: Test', 'version: 1.0.0', 'healthCheck:', '  limbCommand: check_status'].join('\n'),
+    );
     const manifest = parsePluginManifest(yamlPath);
     assert.ok(manifest.healthCheck, 'healthCheck should be parsed');
     assert.equal(manifest.healthCheck.limbCommand, 'check_status');
@@ -158,51 +158,63 @@ describe('parsePluginManifest security', () => {
 
   it('omits healthCheck when not declared', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
-    const yamlPath = writeTmpManifest(tmpDir, 'test-plugin', [
-      'id: test-plugin',
-      'name: Test',
-      'version: 1.0.0',
-    ].join('\n'));
+    const yamlPath = writeTmpManifest(
+      tmpDir,
+      'test-plugin',
+      ['id: test-plugin', 'name: Test', 'version: 1.0.0'].join('\n'),
+    );
     const manifest = parsePluginManifest(yamlPath);
     assert.equal(manifest.healthCheck, undefined);
   });
 
   it('rejects envName with newline injection', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
-    const yamlPath = writeTmpManifest(tmpDir, 'evil-plugin', [
-      'id: evil-plugin',
-      'name: Evil',
-      'version: 1.0.0',
-      'config:',
-      '  - envName: "EVIL_PLUGIN_KEY\\nCAT_CAFE_SECRET"',
-      '    label: Injected',
-    ].join('\n'));
+    const yamlPath = writeTmpManifest(
+      tmpDir,
+      'evil-plugin',
+      [
+        'id: evil-plugin',
+        'name: Evil',
+        'version: 1.0.0',
+        'config:',
+        '  - envName: "EVIL_PLUGIN_KEY\\nCAT_CAFE_SECRET"',
+        '    label: Injected',
+      ].join('\n'),
+    );
     assert.throws(() => parsePluginManifest(yamlPath), /Invalid envName/);
   });
 
   it('rejects envName with spaces', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
-    const yamlPath = writeTmpManifest(tmpDir, 'evil-plugin', [
-      'id: evil-plugin',
-      'name: Evil',
-      'version: 1.0.0',
-      'config:',
-      '  - envName: "EVIL KEY"',
-      '    label: Spaced',
-    ].join('\n'));
+    const yamlPath = writeTmpManifest(
+      tmpDir,
+      'evil-plugin',
+      [
+        'id: evil-plugin',
+        'name: Evil',
+        'version: 1.0.0',
+        'config:',
+        '  - envName: "EVIL KEY"',
+        '    label: Spaced',
+      ].join('\n'),
+    );
     assert.throws(() => parsePluginManifest(yamlPath), /Invalid envName/);
   });
 
   it('rejects envName with equals sign', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
-    const yamlPath = writeTmpManifest(tmpDir, 'evil-plugin', [
-      'id: evil-plugin',
-      'name: Evil',
-      'version: 1.0.0',
-      'config:',
-      '  - envName: "KEY=value"',
-      '    label: Equals',
-    ].join('\n'));
+    const yamlPath = writeTmpManifest(
+      tmpDir,
+      'evil-plugin',
+      [
+        'id: evil-plugin',
+        'name: Evil',
+        'version: 1.0.0',
+        'config:',
+        '  - envName: "KEY=value"',
+        '    label: Equals',
+      ].join('\n'),
+    );
     assert.throws(() => parsePluginManifest(yamlPath), /Invalid envName/);
   });
 });

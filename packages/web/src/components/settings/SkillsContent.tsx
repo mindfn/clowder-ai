@@ -54,9 +54,9 @@ export function SkillsContent() {
         {cap.items.map((item) => {
           const busy = cap.toggling === item.id;
           const expanded = expandedId === item.id;
-          const pluginDisabled = !!item.pluginId && !item.enabled;
+          const pluginOwned = !!item.pluginId;
           return (
-            <div key={item.id} className={`${settingsResourceCardClass}${pluginDisabled ? ' opacity-50' : ''}`}>
+            <div key={item.id} className={settingsResourceCardClass}>
               <div className={settingsResourceRowClass}>
                 <svg
                   className="h-[18px] w-[18px] shrink-0 text-cafe-muted"
@@ -81,7 +81,7 @@ export function SkillsContent() {
                     <p className="text-sm font-bold text-cafe">{item.id}</p>
                     <p className="mt-0.5 truncate text-xs text-cafe-secondary">{item.description || '—'}</p>
                     {item.category && <p className="mt-0.5 text-label text-cafe-muted">{item.category}</p>}
-                    {pluginDisabled && (
+                    {pluginOwned && !item.enabled && (
                       <p className="mt-0.5 text-label text-orange-500">需先启用对应插件</p>
                     )}
                   </div>
@@ -99,7 +99,6 @@ export function SkillsContent() {
                   <ToggleSwitch
                     enabled={item.enabled}
                     busy={busy}
-                    disabled={pluginDisabled}
                     onClick={(e) => {
                       e.stopPropagation();
                       cap.handleToggle(item, !item.enabled);
@@ -126,7 +125,7 @@ export function SkillsContent() {
                   catFamilies={cap.catFamilies}
                   toggling={cap.toggling}
                   onToggle={cap.handleToggle}
-                  disabled={pluginDisabled}
+                  disabled={false}
                 />
               )}
             </div>

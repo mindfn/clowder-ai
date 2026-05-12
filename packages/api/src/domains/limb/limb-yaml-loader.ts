@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { parse as parseYaml } from 'yaml';
 import type { LimbCapability } from '@cat-cafe/shared';
+import { parse as parseYaml } from 'yaml';
 
 interface LimbYamlDeclaration {
   nodeId: string;
