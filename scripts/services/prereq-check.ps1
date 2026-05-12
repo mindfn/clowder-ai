@@ -126,11 +126,21 @@ function Sync-SystemProxy {
 function Assert-Network {
     Sync-SystemProxy
 
+    $proxyDetected = [bool]($env:HTTP_PROXY -or $env:HTTPS_PROXY)
+    $useMirror = $false
     try {
         $null = Invoke-WebRequest -Uri "https://pypi.org/simple/" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
         Write-Host "  PyPI connectivity [OK]"
+        if ($proxyDetected) {
+            # Invoke-WebRequest passes through proxy but pip often fails with SSL
+            # handshake timeouts through the same proxy. Use domestic mirror instead.
+            $useMirror = $true
+        }
     } catch {
-        Write-Host "  PyPI unreachable, switching to Tsinghua mirror"
+        $useMirror = $true
+    }
+    if ($useMirror) {
+        Write-Host "  Using Tsinghua mirror for pip"
         $env:PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple/"
         $env:PIP_TRUSTED_HOST = "pypi.tuna.tsinghua.edu.cn"
     }
