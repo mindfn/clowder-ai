@@ -140,9 +140,12 @@ function Assert-Network {
         $useMirror = $true
     }
     if ($useMirror) {
-        Write-Host "  Using Tsinghua mirror for pip"
+        Write-Host "  Using Tsinghua mirror for pip (bypassing proxy for domestic hosts)"
         $env:PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple/"
         $env:PIP_TRUSTED_HOST = "pypi.tuna.tsinghua.edu.cn"
+        $noProxy = @("pypi.tuna.tsinghua.edu.cn", "hf-mirror.com", "mirrors.tuna.tsinghua.edu.cn")
+        if ($env:NO_PROXY) { $noProxy = @($env:NO_PROXY -split ',') + $noProxy }
+        $env:NO_PROXY = ($noProxy | Select-Object -Unique) -join ','
     }
     try {
         $null = Invoke-WebRequest -Uri "https://huggingface.co" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
