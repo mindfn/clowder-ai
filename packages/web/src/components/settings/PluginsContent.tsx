@@ -1,8 +1,8 @@
 'use client';
 
+import type { PluginInfo, PluginStatus } from '@cat-cafe/shared';
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
-import type { PluginInfo, PluginStatus } from '@cat-cafe/shared';
 import { HubIcon } from '../hub-icons';
 import {
   settingsResourceActionGroupClass,
@@ -48,13 +48,10 @@ export function PluginsContent() {
     try {
       const res = await apiFetch('/api/plugins');
       const dynamicPlugins: PluginInfo[] = res.ok
-        ? ((await res.json()) as { plugins: PluginInfo[] }).plugins ?? []
+        ? (((await res.json()) as { plugins: PluginInfo[] }).plugins ?? [])
         : [];
       const dynamicIds = new Set(dynamicPlugins.map((p) => p.id));
-      setPlugins([
-        ...BUILTIN_PLUGINS.filter((p) => !dynamicIds.has(p.id)),
-        ...dynamicPlugins,
-      ]);
+      setPlugins([...BUILTIN_PLUGINS.filter((p) => !dynamicIds.has(p.id)), ...dynamicPlugins]);
     } catch {
       setPlugins(BUILTIN_PLUGINS);
     } finally {
@@ -90,9 +87,7 @@ export function PluginsContent() {
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-bold text-cafe">{plugin.name}</p>
-                {plugin.description && (
-                  <p className="mt-0.5 text-xs text-cafe-secondary">{plugin.description}</p>
-                )}
+                {plugin.description && <p className="mt-0.5 text-xs text-cafe-secondary">{plugin.description}</p>}
               </div>
               <div className={settingsResourceActionGroupClass}>
                 <span
@@ -103,11 +98,12 @@ export function PluginsContent() {
               </div>
             </button>
 
-            {isExpanded && (
-              plugin.id === 'github'
-                ? <GithubConfigPanel />
-                : <PluginConfigPanel plugin={plugin} onUpdated={fetchPlugins} />
-            )}
+            {isExpanded &&
+              (plugin.id === 'github' ? (
+                <GithubConfigPanel />
+              ) : (
+                <PluginConfigPanel plugin={plugin} onUpdated={fetchPlugins} />
+              ))}
           </article>
         );
       })}

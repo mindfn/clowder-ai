@@ -585,7 +585,9 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
     // Guard: only prune when ALL provider scans succeeded (no null returns).
     if (allScansOk) {
       const before = config.capabilities.length;
-      config.capabilities = config.capabilities.filter((c) => c.type !== 'skill' || allSkillNames.has(c.id) || c.pluginId);
+      config.capabilities = config.capabilities.filter(
+        (c) => c.type !== 'skill' || allSkillNames.has(c.id) || c.pluginId,
+      );
       if (config.capabilities.length !== before) configDirty = true;
     }
 
