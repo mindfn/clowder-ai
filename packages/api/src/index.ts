@@ -1463,6 +1463,7 @@ async function main(): Promise<void> {
     const { PluginRegistry } = await import('./domains/plugin/PluginRegistry.js');
     const { PluginResourceActivator } = await import('./domains/plugin/PluginResourceActivator.js');
     const { PluginLimbNode } = await import('./domains/plugin/PluginLimbNode.js');
+    const { WeixinMpLimbNode } = await import('./domains/limb/WeixinMpLimbNode.js');
     const { loadLimbDeclaration } = await import('./domains/limb/limb-yaml-loader.js');
     const { registerPluginRoutes } = await import('./routes/plugin-routes.js');
     const { readCapabilitiesConfig, writeCapabilitiesConfig, withCapabilityLock } = await import(
@@ -1479,6 +1480,14 @@ async function main(): Promise<void> {
     pluginRegistry.scan();
     app.log.info(`[api] F197: PluginRegistry scanned ${pluginRegistry.getAllManifests().length} plugin(s)`);
 
+    const limbAdapterFactory = async (pluginId: string, limbYamlPath: string) => {
+      const decl = loadLimbDeclaration(limbYamlPath);
+      if (pluginId === 'weixin-mp') {
+        return new WeixinMpLimbNode({ capabilities: decl.capabilities, redis });
+      }
+      return new PluginLimbNode(decl);
+    };
+
     const pluginActivator = new PluginResourceActivator({
       projectRoot: monorepoRoot,
       pluginsDir,
@@ -1489,10 +1498,7 @@ async function main(): Promise<void> {
         await generateCliConfigs(config, cliConfigPaths);
       },
       withCapabilityLock: (fn) => withCapabilityLock(monorepoRoot, fn),
-      limbAdapterFactory: async (_pluginId, limbYamlPath) => {
-        const decl = loadLimbDeclaration(limbYamlPath);
-        return new PluginLimbNode(decl);
-      },
+      limbAdapterFactory,
     });
 
     // Rehydrate enabled limb plugins on startup
@@ -1508,10 +1514,9 @@ async function main(): Promise<void> {
         if (!limbResource?.path) continue;
         try {
           const yamlPath = join(pluginsDir, manifest.id, limbResource.path);
-          const decl = loadLimbDeclaration(yamlPath);
-          const node = new PluginLimbNode(decl);
+          const node = await limbAdapterFactory(manifest.id, yamlPath);
           await limbRegistry.register(node);
-          app.log.info(`[api] F197: Rehydrated limb '${decl.nodeId}' for plugin '${manifest.id}'`);
+          app.log.info(`[api] F197: Rehydrated limb for plugin '${manifest.id}'`);
         } catch (err) {
           app.log.warn(`[api] F197: Failed to rehydrate limb for plugin '${manifest.id}': ${(err as Error).message}`);
         }
