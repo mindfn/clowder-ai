@@ -27,7 +27,9 @@ export function ToggleSwitch({
   title?: string;
   disabled?: boolean;
 }) {
-  return <SettingsResourceToggleSwitch enabled={enabled} busy={busy} onClick={onClick} title={title} disabled={disabled} />;
+  return (
+    <SettingsResourceToggleSwitch enabled={enabled} busy={busy} onClick={onClick} title={title} disabled={disabled} />
+  );
 }
 
 export function ProjectSelector({
