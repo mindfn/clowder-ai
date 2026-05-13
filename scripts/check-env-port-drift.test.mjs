@@ -672,42 +672,11 @@ excluded:
       }
     });
 
-    it('source install/setup attempts F180 agent hook sync as a nonfatal step', () => {
-      const install = readFileSync(resolve(ROOT, 'scripts/install.sh'), 'utf-8');
-      const setup = readFileSync(resolve(ROOT, 'scripts/setup.sh'), 'utf-8');
-
-      for (const [name, content] of [
-        ['install.sh', install],
-        ['setup.sh', setup],
-      ]) {
-        assert.match(content, /sync_agent_hooks_best_effort\(\)/, `${name} should call the shared hook sync step`);
-        assert.match(
-          content,
-          /pnpm exec tsx scripts\/sync-system-prompts\.ts --apply --agent-hooks-only/,
-          `${name} should reuse sync-system-prompts hook targets without syncing non-hook prompts`,
-        );
-        assert.match(
-          content,
-          /Agent CLI hook sync failed[\s\S]*continuing/,
-          `${name} should warn and continue when hook sync fails`,
-        );
-      }
-    });
-
-    it('sync-system-prompts agent hook mode also configures Claude settings', () => {
-      const content = readFileSync(resolve(ROOT, 'scripts/sync-system-prompts.ts'), 'utf-8');
-
-      assert.match(
-        content,
-        /syncClaudeSettings/,
-        'agent hook sync CLI should reuse the same Claude settings merge helper as the Hub sync API',
-      );
-      assert.match(
-        content,
-        /if\s*\(\s*isAgentHooksOnly\s*&&\s*!isDryRun\s*\)[\s\S]*await syncClaudeSettings\(syncTargetRoot\)/,
-        '--agent-hooks-only --apply must configure Claude settings, not only copy hook scripts and Codex hooks',
-      );
-    });
+    // F180 agent hook sync tests removed: scripts/sync-system-prompts.ts is
+    // referenced by upstream cat-cafe but was never synced into clowder-ai,
+    // so the install.sh call was dead code that printed ERR_MODULE_NOT_FOUND
+    // on every install. install.sh / setup.sh no longer invoke it; Hub
+    // reconciles hooks on startup instead. Re-add these once the .ts ships.
 
     it('desktop installer bundles F180 hook truth source and offline sync helper', () => {
       const inno = readFileSync(resolve(ROOT, 'desktop/installer/cat-cafe.iss'), 'utf-8');
