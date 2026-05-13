@@ -104,10 +104,11 @@ services:
           description: faster-whisper turbo（x86 模拟，仅推荐高内存机器）
           requirements: { ramGb: 4, diskGb: 2 }
       notes:
-        - '⚠ 系统未检测到 Python。点击安装后会通过 winget 自动安装 x64 (AMD64) Python（不是 ARM64 版本），通过 Windows 内置 emulation 运行——这是 ARM64 上能跑通 faster-whisper 的唯一方式。'
-        - 'winget 失败时可手动从 https://www.python.org/downloads/ 下载 "Windows installer (64-bit)" 重试。'
+        - '⚠ 未检测到 Python。点击安装后会自动获取 x64 (AMD64) Python 3.12 到 ~/.cat-cafe/python/，不修改系统 PATH 也不影响已有 ARM64 Python。'
+        - 'ARM64 上 faster-whisper 必须走 x64 路径——PyAV / ctranslate2 没有 win-arm64 wheel。'
+        - '矩阵里的 "x86-emulated" 命名是历史叫法，实际指 AMD64（64-bit）Python 跑在 Windows ARM64 内置 Prism emulator 上，不是 32-bit i386。'
       customModelHint:
-        description: 'faster-whisper 后端 (x86 模拟 Python，待安装)：内置 ID（tiny/base/small/medium/large-v1~v3/large-v3-turbo/distil-large-v3）'
+        description: 'faster-whisper 后端 (AMD64 Python on ARM64 emulation，待安装)：内置 ID（tiny/base/small/medium/large-v1~v3/large-v3-turbo/distil-large-v3）'
         links:
           - { label: 'Python 64-bit installer', url: 'https://www.python.org/downloads/' }
 
@@ -227,10 +228,10 @@ services:
           description: Windows 内置语音，离线可用
           requirements: { ramGb: 1, diskGb: 0.1 }
       notes:
-        - '⚠ 系统未检测到 Python。点击安装后会通过 winget 自动安装 x64 (AMD64) Python（不是 ARM64 版本），通过 Windows 内置 emulation 运行——edge-tts 依赖的 aiohttp 没有 ARM64 wheel，必须走 x64 路径。'
-        - 'winget 失败时可手动从 https://www.python.org/downloads/ 下载 "Windows installer (64-bit)" 重试。'
+        - '⚠ 未检测到 Python。点击安装后会自动获取 x64 (AMD64) Python 3.12 到 ~/.cat-cafe/python/，不修改系统 PATH 也不影响已有 ARM64 Python。'
+        - 'edge-tts 依赖 aiohttp 没有 win-arm64 wheel，必须走 x64 路径。'
       customModelHint:
-        description: 'edge-tts 云端服务 / SAPI Windows 内置（x86 模拟 Python，待安装）'
+        description: 'edge-tts 云端服务 / SAPI Windows 内置（AMD64 Python on ARM64 emulation，待安装）'
         links:
           - { label: 'Python 64-bit installer', url: 'https://www.python.org/downloads/' }
 
@@ -495,10 +496,10 @@ services:
           requirements: { ramGb: 8, diskGb: 7 }
           performance: CPU 偏慢
       notes:
-        - '⚠ 系统未检测到 Python。点击安装后会通过 winget 自动安装 x64 (AMD64) Python（不是 ARM64 版本），通过 Windows 内置 emulation 运行——transformers/safetensors 没有 ARM64 wheel，必须走 x64 路径。'
-        - 'winget 失败时可手动从 https://www.python.org/downloads/ 下载 "Windows installer (64-bit)" 重试。'
+        - '⚠ 未检测到 Python。点击安装后会自动获取 x64 (AMD64) Python 3.12 到 ~/.cat-cafe/python/，不修改系统 PATH 也不影响已有 ARM64 Python。'
+        - 'transformers / safetensors 没有 win-arm64 wheel，必须走 x64 路径。'
       customModelHint:
-        description: 'transformers 后端 (x86 模拟 Python，待安装)：HuggingFace 上的因果语言模型；模拟层性能较低，建议 ≤3B'
+        description: 'transformers 后端 (AMD64 Python on ARM64 emulation，待安装)：HuggingFace 上的因果语言模型；emulation 性能较低，建议 ≤3B'
         links:
           - { label: 'Python 64-bit installer', url: 'https://www.python.org/downloads/' }
 
