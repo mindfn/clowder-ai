@@ -182,64 +182,72 @@ services:
 
     - match: { os: darwin, arch: x64 }
       models:
-        - name: BAAI/bge-base-zh-v1.5
-          size: ~250MB
-          description: BGE 中文向量，ONNX 优化（CPU 通用，推荐）
-          requirements: { ramGb: 2, diskGb: 0.5 }
+        - name: intfloat/multilingual-e5-base
+          size: ~500MB
+          description: 多语言向量 base（中英双语，sentence-transformers，推荐）
+          requirements: { ramGb: 2, diskGb: 1 }
           performance: CPU 实时
-        - name: BAAI/bge-large-zh-v1.5
-          size: ~600MB
-          description: 更高质量，Intel Mac CPU 偏慢
-          requirements: { ramGb: 4, diskGb: 1.5 }
+        - name: intfloat/multilingual-e5-large
+          size: ~1.3GB
+          description: 多语言向量 large（更高质量，Intel Mac CPU 偏慢）
+          requirements: { ramGb: 4, diskGb: 2 }
           performance: CPU 偏慢
       notes:
-        - Intel Mac 不支持 MLX，使用 ONNX 后端
+        - Intel Mac 不支持 MLX，使用 sentence-transformers 后端
+        - 多语言模型，中英文都支持
 
     # Windows/Linux ARM64: fastembed backend only (no torch wheels for ARM).
-    # fastembed has a hardcoded model whitelist — bge-base/large-zh-v1.5 are NOT in it.
-    # Only bge-small-zh-v1.5 ships with fastembed for Chinese text.
+    # fastembed has a hardcoded model whitelist — must use whitelisted models.
+    # multilingual-e5-* family is in the fastembed catalog and is bilingual.
     - match: { os: [win32, linux], arch: arm64 }
       models:
-        - name: BAAI/bge-small-zh-v1.5
-          size: ~100MB
-          description: BGE 中文向量 small（fastembed/ONNX，ARM64 唯一选项）
-          requirements: { ramGb: 2, diskGb: 0.3 }
+        - name: intfloat/multilingual-e5-small
+          size: ~470MB
+          description: 多语言向量 small（中英双语，fastembed/ONNX，ARM64 唯一选项）
+          requirements: { ramGb: 2, diskGb: 1 }
           performance: CPU 实时
       notes:
-        - 'ARM64 走 fastembed 后端，仅支持 bge-small-zh-v1.5；如需 base/large 质量请使用 x86 Python（参考 LLM 服务的 x86 安装引导）'
+        - 'ARM64 走 fastembed 后端，受白名单限制只能选 multilingual-e5-small'
+        - '如需 base/large 质量请安装 x86 Python（参考 LLM 服务的 x86 安装引导），切换到 sentence-transformers 后端'
+        - 多语言模型，中英文都支持
 
     # Windows/Linux x64 + GPU: sentence-transformers backend, anything goes
     - match: { os: [win32, linux], arch: x64, gpu: [cuda, rocm] }
       models:
-        - name: BAAI/bge-large-zh-v1.5
-          size: ~600MB
-          description: BGE 中文向量 large（sentence-transformers，GPU 推荐）
-          requirements: { ramGb: 4, diskGb: 1.5, gpu: recommended }
+        - name: intfloat/multilingual-e5-large
+          size: ~1.3GB
+          description: 多语言向量 large（1024 dim，GPU 推荐，中英双语，最高质量）
+          requirements: { ramGb: 4, diskGb: 2, gpu: recommended }
           performance: GPU 实时
-        - name: BAAI/bge-base-zh-v1.5
-          size: ~250MB
-          description: BGE 中文向量 base（sentence-transformers）
-          requirements: { ramGb: 2, diskGb: 0.5 }
+        - name: intfloat/multilingual-e5-base
+          size: ~500MB
+          description: 多语言向量 base（768 dim，CPU/GPU 通用）
+          requirements: { ramGb: 2, diskGb: 1 }
           performance: CPU 实时
+      notes:
+        - 多语言模型，中英文都支持
 
     # Windows/Linux x64 CPU
     - match: { os: [win32, linux], arch: x64 }
       models:
-        - name: BAAI/bge-base-zh-v1.5
-          size: ~250MB
-          description: BGE 中文向量 base（sentence-transformers，CPU 通用，推荐）
-          requirements: { ramGb: 2, diskGb: 0.5 }
+        - name: intfloat/multilingual-e5-base
+          size: ~500MB
+          description: 多语言向量 base（768 dim，中英双语，CPU 通用，推荐）
+          requirements: { ramGb: 2, diskGb: 1 }
           performance: CPU 实时
-        - name: BAAI/bge-small-zh-v1.5
-          size: ~100MB
-          description: 轻量版（fastembed/ONNX 也支持）
-          requirements: { ramGb: 2, diskGb: 0.3 }
+        - name: intfloat/multilingual-e5-small
+          size: ~470MB
+          description: 多语言向量 small（384 dim，轻量备选）
+          requirements: { ramGb: 2, diskGb: 1 }
           performance: CPU 实时
-        - name: BAAI/bge-large-zh-v1.5
-          size: ~600MB
-          description: 更高质量，但 CPU 偏慢
-          requirements: { ramGb: 4, diskGb: 1.5, gpu: recommended }
+        - name: intfloat/multilingual-e5-large
+          size: ~1.3GB
+          description: 多语言向量 large（1024 dim，更高质量，CPU 偏慢）
+          requirements: { ramGb: 4, diskGb: 2, gpu: recommended }
           performance: CPU 偏慢，GPU 实时
+      notes:
+        - 多语言模型，中英文都支持
+        - '⚠ 切换模型尺寸会改变向量维度（small=384, base=768, large=1024），需要重建 memory 索引'
 
   # ------------------------------------------------------------
   # LLM Postprocess (转写纠正)

@@ -79,10 +79,11 @@ describe('recommendation matrix — Windows ARM64', () => {
     assert.ok(rec.notes.some((c) => c.includes('x86')));
   });
 
-  test('embedding-model → bge-small (ARM64 fastembed whitelist 限制)', () => {
+  test('embedding-model → multilingual-e5-small (ARM64 fastembed bilingual)', () => {
     const rec = buildRecommendation('embedding-model', profile);
-    assert.equal(rec.models[0]?.name, 'BAAI/bge-small-zh-v1.5');
+    assert.equal(rec.models[0]?.name, 'intfloat/multilingual-e5-small');
     assert.ok(rec.notes.some((n) => n.includes('fastembed')));
+    assert.ok(rec.notes.some((n) => n.includes('中英')));
   });
 
   test('whisper-stt → faster-whisper base (CPU)', () => {
@@ -101,9 +102,9 @@ describe('recommendation matrix — Windows x64 with CUDA', () => {
     assert.ok(rec.models.length >= 2);
   });
 
-  test('embedding-model → bge-large (GPU)', () => {
+  test('embedding-model → multilingual-e5-large (GPU)', () => {
     const rec = buildRecommendation('embedding-model', profile);
-    assert.equal(rec.models[0]?.name, 'BAAI/bge-large-zh-v1.5');
+    assert.equal(rec.models[0]?.name, 'intfloat/multilingual-e5-large');
   });
 
   test('whisper-stt → faster-whisper turbo (GPU)', () => {
@@ -147,8 +148,8 @@ describe('recommendation matrix — match ordering', () => {
     const cpu = findMatrixEntry('embedding-model', noneProfile);
 
     assert.notEqual(cuda, cpu);
-    assert.equal(cuda?.models?.[0]?.name, 'BAAI/bge-large-zh-v1.5');
-    assert.equal(cpu?.models?.[0]?.name, 'BAAI/bge-base-zh-v1.5');
+    assert.equal(cuda?.models?.[0]?.name, 'intfloat/multilingual-e5-large');
+    assert.equal(cpu?.models?.[0]?.name, 'intfloat/multilingual-e5-base');
   });
 });
 

@@ -10,7 +10,7 @@
   The embed-api.py auto-detects the available backend at startup.
 
   Env vars:
-  - EMBED_MODEL  (model to install; ARM64 default BAAI/bge-small-zh-v1.5, x86 default BAAI/bge-base-zh-v1.5)
+  - EMBED_MODEL  (model to install; ARM64 default intfloat/multilingual-e5-small, x86 default intfloat/multilingual-e5-base)
 #>
 
 $ErrorActionPreference = "Stop"
@@ -71,10 +71,11 @@ Stemmer = SnowballStemmer
     & $VenvPython @pipArgs
     if ($LASTEXITCODE -ne 0) { throw "Failed to install embedding dependencies" }
 
-    # fastembed has a strict model whitelist — only bge-small-zh-v1.5 is in
-    # it for Chinese. bge-base/large-zh-v1.5 will fail with "is not supported
-    # in TextEmbedding". Override via EMBED_MODEL only if you know it's whitelisted.
-    $Model = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "BAAI/bge-small-zh-v1.5" }
+    # fastembed has a strict model whitelist. The multilingual-e5 family is in
+    # the catalog and gives proper Chinese + English support (our docs and agent
+    # outputs are bilingual). Override via EMBED_MODEL only if you know the
+    # target name is in fastembed's TextEmbedding.list_supported_models().
+    $Model = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "intfloat/multilingual-e5-small" }
     Write-Host "  Pre-downloading ONNX model: $Model ..."
     & $VenvPython -c "from fastembed import TextEmbedding; TextEmbedding(model_name='$Model'); print('Model download complete.')"
     if ($LASTEXITCODE -ne 0) { throw "Failed to download model: $Model" }
@@ -103,7 +104,7 @@ Stemmer = SnowballStemmer
     & $VenvPython @pipArgs
     if ($LASTEXITCODE -ne 0) { throw "Failed to install embedding dependencies" }
 
-    $Model = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "BAAI/bge-base-zh-v1.5" }
+    $Model = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "intfloat/multilingual-e5-base" }
     Write-Host "  Pre-downloading model: $Model ..."
     & $VenvPython -c "from huggingface_hub import snapshot_download; snapshot_download('$Model'); print('Model download complete.')"
     if ($LASTEXITCODE -ne 0) { throw "Failed to download model: $Model" }
