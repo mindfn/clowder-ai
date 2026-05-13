@@ -37,6 +37,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Core deps missing in embed-venv. Run embed-install.ps1 first."
 }
 
-Write-Output "Starting Embedding server: port=$Port"
-& $VenvPython $ApiScript --port $Port
+$Model = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "BAAI/bge-base-zh-v1.5" }
+Write-Output "Starting Embedding server: model=$Model, port=$Port"
+& $VenvPython $ApiScript --model $Model --port $Port
 exit $LASTEXITCODE

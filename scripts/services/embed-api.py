@@ -251,7 +251,7 @@ def main():
         except ImportError:
             log.warning("fastembed not installed")
             return False
-        fe_name = os.environ.get("EMBED_ONNX_MODEL", "BAAI/bge-small-zh-v1.5")
+        fe_name = model_name if not model_name.startswith("mlx-community/") else "BAAI/bge-base-zh-v1.5"
         providers = None
         device_label = "CPU"
         try:
