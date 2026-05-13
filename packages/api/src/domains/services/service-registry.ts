@@ -1,4 +1,3 @@
-import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
@@ -208,35 +207,18 @@ export function getInstallStatus(manifest: ServiceManifest): InstallStatus {
   return existsSync(resolveVenvPath(venv)) ? 'installed' : 'none';
 }
 
-function isScriptRunning(script: string | { unix: string; windows: string } | undefined): boolean {
-  if (!script) return false;
-  const absolutePath = resolveScriptPath(script);
-  if (process.platform === 'win32') {
-    try {
-      const escaped = absolutePath.replace(/'/g, "''").replace(/\\/g, '\\\\');
-      const out = execSync(
-        `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"CommandLine like '%${escaped}%'\\" | Select-Object -ExpandProperty ProcessId"`,
-        { encoding: 'utf-8', timeout: 5000 },
-      );
-      return out.trim().length > 0;
-    } catch {
-      return false;
-    }
-  }
-  try {
-    const out = execSync(`pgrep -f "${absolutePath}"`, { encoding: 'utf-8', timeout: 2000 });
-    return out.trim().length > 0;
-  } catch {
-    return false;
-  }
-}
-
-function detectProcessStatus(manifest: ServiceManifest): ServiceStatus | null {
-  if (isScriptRunning(manifest.scripts.install)) return 'installing';
-  if (isScriptRunning(manifest.scripts.uninstall)) return 'uninstalling';
-  if (isScriptRunning(manifest.scripts.start)) return 'starting';
-  return null;
-}
+// Removed: isScriptRunning + detectProcessStatus. They probed `pgrep -f
+// <install.sh>` / Win32_Process CommandLine to recover process state across
+// API restarts, but the probe false-positived (matching API's own argv,
+// shell history, sibling worktrees, etc.) and silently kept the install
+// button hidden on fresh installs. Going forward, service state derives
+// only from explicit signals:
+//   - probeHealth() (HTTP /health on the configured port) → running / stopped
+//   - installStatus persisted in services.json (set by install/uninstall routes)
+//   - in-memory servicePids (set on spawn, cleared on stop/exit)
+// If the API restarts mid-install, the stored PID is lost and the next
+// /api/services call reports 'stopped' / installStatus='none'. The user
+// clicks install again — much less confusing than a phantom 'installing'.
 
 const servicePids = new Map<string, number>();
 export function setServicePid(id: string, pid: number): void {
@@ -305,11 +287,7 @@ function enrichManifestModels(manifest: ServiceManifest, rec: ServiceRecommendat
 
 export async function getServiceState(manifest: ServiceManifest, refreshEnv = false): Promise<ServiceState> {
   const probe = await probeHealth(manifest);
-  let { status } = probe;
-  if (status === 'stopped' || status === 'unknown') {
-    const processStatus = detectProcessStatus(manifest);
-    if (processStatus) status = processStatus;
-  }
+  const { status } = probe;
   const config = getServiceConfig(manifest.id);
   const installStatus = getInstallStatus(manifest);
   const profile = getEnvironmentProfile(refreshEnv);

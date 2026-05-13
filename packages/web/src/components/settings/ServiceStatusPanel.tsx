@@ -354,14 +354,26 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
                 {s.error && <p className="mt-0.5 truncate text-[11px] text-conn-red-text">{s.error}</p>}
               </div>
               <div className={settingsResourceActionGroupClass}>
-                {(notInstalled || installFailed) && !isTransitional ? (
+                {notInstalled || installFailed ? (
+                  // Button is always rendered when the service isn't installed
+                  // (or last install failed). isTransitional flips it to a
+                  // disabled "安装中..." / "卸载中..." label so users keep
+                  // the visual anchor; previously we hid the button entirely
+                  // when status === 'installing', which left an empty card
+                  // and stranded users when state was wrong.
                   <button
                     type="button"
-                    disabled={busy}
+                    disabled={busy || isTransitional}
                     onClick={() => setInstallPreview(m)}
                     className="console-button-secondary px-3 py-1.5 text-xs disabled:opacity-40"
                   >
-                    {acting.has(`${m.id}:install`) ? '安装中...' : installFailed ? '重试安装' : '安装'}
+                    {s.status === 'installing' || acting.has(`${m.id}:install`)
+                      ? '安装中...'
+                      : s.status === 'uninstalling'
+                        ? '卸载中...'
+                        : installFailed
+                          ? '重试安装'
+                          : '安装'}
                   </button>
                 ) : s.installed ? (
                   <>
