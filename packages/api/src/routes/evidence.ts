@@ -274,8 +274,20 @@ export const evidenceRoutes: FastifyPluginAsync<EvidenceRoutesOptions> = async (
         db.prepare("SELECT count(*) AS c FROM evidence_docs WHERE kind = 'thread'").get() as { c: number }
       ).c;
       const edgeCount = (db.prepare('SELECT count(*) AS c FROM edges').get() as { c: number }).c;
-      const lastUpdated = (db.prepare('SELECT max(updated_at) AS t FROM evidence_docs').get() as { t: string | null })
-        .t;
+      // Prefer the explicit rebuild stamp written by IndexBuilder; fall back to
+      // MAX(evidence_docs.updated_at) for old databases that predate the stamp.
+      let lastUpdated: string | null = null;
+      try {
+        const stampRow = db
+          .prepare("SELECT value FROM embedding_meta WHERE key = 'last_rebuild_at'")
+          .get() as { value: string } | undefined;
+        lastUpdated = stampRow?.value ?? null;
+      } catch {
+        /* embedding_meta may not exist in very old schemas */
+      }
+      if (!lastUpdated) {
+        lastUpdated = (db.prepare('SELECT max(updated_at) AS t FROM evidence_docs').get() as { t: string | null }).t;
+      }
 
       // Passages count (may not exist in older schemas)
       let passageCount = 0;

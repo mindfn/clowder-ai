@@ -414,6 +414,19 @@ export class IndexBuilder implements IIndexBuilder {
     // Persist current indexing version so next startup can detect changes
     await this.storeIndexingVersion();
 
+    // Stamp a real rebuild marker — distinct from MAX(evidence_docs.updated_at),
+    // which doesn't move when every doc's hash matches (so a no-op rebuild
+    // would otherwise leave the "Last rebuild" stat frozen).
+    try {
+      const db = this.store.getDb();
+      db.prepare("INSERT OR REPLACE INTO embedding_meta (key, value) VALUES ('last_rebuild_at', ?)").run(
+        new Date().toISOString(),
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[IndexBuilder] failed to stamp last_rebuild_at: ${msg}`);
+    }
+
     return { docsIndexed: indexed, docsSkipped: skipped, durationMs: Date.now() - start };
   }
 
