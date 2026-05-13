@@ -8,7 +8,7 @@ export function resolveRepoRoot(): string {
   return REPO_ROOT;
 }
 
-const MODEL_ID_PATTERN = /^[a-zA-Z0-9_-]+\/[a-zA-Z0-9._-]+$/;
+const MODEL_ID_PATTERN = /^[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._-]+)?$/;
 
 export function isValidModelId(model: string): boolean {
   return MODEL_ID_PATTERN.test(model) && model.length <= 200;

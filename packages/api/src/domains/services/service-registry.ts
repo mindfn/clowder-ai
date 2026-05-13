@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { getEnvironmentProfile } from './environment-detector.js';
 import { buildRecommendation } from './recommendation-matrix.js';
+import type { ServiceRecommendation } from './recommendation-types.js';
 import { getServiceConfig } from './service-config.js';
 import { resolveScriptPath } from './service-logs.js';
 import type { InstallStatus, ServiceManifest, ServiceState, ServiceStatus } from './service-manifest.js';
@@ -19,52 +20,6 @@ const KNOWN_SERVICES: ServiceManifest[] = [
       runtime: 'python3.10+',
       venvPath: '~/.cat-cafe/whisper-venv',
       packages: ['mlx-whisper', 'fastapi', 'uvicorn'],
-      models: [
-        {
-          name: 'mlx-community/whisper-large-v3-turbo',
-          size: '~1.5GB',
-          autoDownload: true,
-          isDefault: true,
-          description: '速度快、质量高（推荐）',
-          platforms: ['darwin'],
-        },
-        {
-          name: 'mlx-community/whisper-large-v3-mlx',
-          size: '~3GB',
-          autoDownload: true,
-          description: '最高质量，速度较慢',
-          platforms: ['darwin'],
-        },
-        {
-          name: 'mlx-community/whisper-small-mlx',
-          size: '~500MB',
-          autoDownload: true,
-          description: '轻量版，适合低配机器',
-          platforms: ['darwin'],
-        },
-        {
-          name: 'large-v3-turbo',
-          size: '~1.5GB',
-          autoDownload: true,
-          isDefault: true,
-          description: '速度快、质量高（推荐）',
-          platforms: ['win32', 'linux'],
-        },
-        {
-          name: 'large-v3',
-          size: '~3GB',
-          autoDownload: true,
-          description: '最高质量，速度较慢',
-          platforms: ['win32', 'linux'],
-        },
-        {
-          name: 'base',
-          size: '~150MB',
-          autoDownload: true,
-          description: '轻量版，适合低配机器',
-          platforms: ['win32', 'linux'],
-        },
-      ],
       estimatedMinutes: 5,
     },
     scripts: {
@@ -85,31 +40,6 @@ const KNOWN_SERVICES: ServiceManifest[] = [
       runtime: 'python3.10+',
       venvPath: '~/.cat-cafe/tts-venv',
       packages: ['mlx-audio', 'fastapi', 'uvicorn'],
-      models: [
-        {
-          name: 'mlx-community/Kokoro-82M-bf16',
-          size: '~160MB',
-          autoDownload: true,
-          isDefault: true,
-          description: '轻量高质量语音合成',
-          platforms: ['darwin'],
-        },
-        {
-          name: 'edge-tts',
-          size: '~20MB',
-          autoDownload: true,
-          isDefault: true,
-          description: '微软云端语音，高质量，需联网',
-          platforms: ['win32', 'linux'],
-        },
-        {
-          name: 'sapi',
-          size: '~5MB',
-          autoDownload: true,
-          description: 'Windows 内置语音，离线可用',
-          platforms: ['win32'],
-        },
-      ],
       estimatedMinutes: 2,
     },
     scripts: {
@@ -130,31 +60,6 @@ const KNOWN_SERVICES: ServiceManifest[] = [
       runtime: 'python3.10+',
       venvPath: '~/.cat-cafe/embed-venv',
       packages: ['sentence-transformers', 'fastapi', 'uvicorn'],
-      models: [
-        {
-          name: 'mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ',
-          size: '~400MB',
-          autoDownload: true,
-          isDefault: true,
-          description: '轻量语义向量模型 (Apple Silicon)',
-          platforms: ['darwin'],
-        },
-        {
-          name: 'BAAI/bge-base-zh-v1.5',
-          size: '~250MB',
-          autoDownload: true,
-          isDefault: true,
-          description: '语义向量模型 (ONNX, CPU/GPU)',
-          platforms: ['win32', 'linux'],
-        },
-        {
-          name: 'BAAI/bge-large-zh-v1.5',
-          size: '~600MB',
-          autoDownload: true,
-          description: '高质量语义向量模型 (ONNX, 推荐 GPU)',
-          platforms: ['win32', 'linux'],
-        },
-      ],
       estimatedMinutes: 3,
     },
     scripts: {
@@ -175,45 +80,6 @@ const KNOWN_SERVICES: ServiceManifest[] = [
       runtime: 'python3.10+',
       venvPath: '~/.cat-cafe/llm-venv',
       packages: ['mlx-vlm', 'fastapi', 'uvicorn', 'pydantic'],
-      models: [
-        {
-          name: 'mlx-community/Qwen3.5-35B-A3B-4bit',
-          size: '~20GB',
-          autoDownload: true,
-          isDefault: true,
-          description: '高质量纠错，需大内存(48GB+)',
-          platforms: ['darwin'],
-        },
-        {
-          name: 'mlx-community/Qwen2.5-7B-Instruct-4bit',
-          size: '~4GB',
-          autoDownload: true,
-          description: '轻量版，16GB内存可用',
-          platforms: ['darwin'],
-        },
-        {
-          name: 'mlx-community/Qwen2.5-14B-Instruct-4bit',
-          size: '~8GB',
-          autoDownload: true,
-          description: '中等质量，32GB内存推荐',
-          platforms: ['darwin'],
-        },
-        {
-          name: 'Qwen/Qwen2.5-3B-Instruct',
-          size: '~6GB',
-          autoDownload: true,
-          isDefault: true,
-          description: '轻量纠错，适合普通机器',
-          platforms: ['win32', 'linux'],
-        },
-        {
-          name: 'Qwen/Qwen2.5-7B-Instruct',
-          size: '~14GB',
-          autoDownload: true,
-          description: '高质量纠错，推荐 GPU',
-          platforms: ['win32', 'linux'],
-        },
-      ],
       estimatedMinutes: 30,
     },
     scripts: {
@@ -391,14 +257,18 @@ export function getServiceById(id: string): ServiceManifest | undefined {
   return KNOWN_SERVICES.find((s) => s.id === id);
 }
 
-function filterModelsByPlatform(m: ServiceManifest): ServiceManifest {
-  const models = m.prerequisites.models;
-  if (!models?.some((x) => x.platforms)) return m;
-  const p = process.platform as 'darwin' | 'linux' | 'win32';
-  return {
-    ...m,
-    prerequisites: { ...m.prerequisites, models: models.filter((x) => !x.platforms || x.platforms.includes(p)) },
-  };
+function enrichManifestModels(manifest: ServiceManifest, rec: ServiceRecommendation): ServiceManifest {
+  type Model = NonNullable<ServiceManifest['prerequisites']['models']>[number];
+  const models: Model[] = [];
+  if (rec.recommended) {
+    const { name, size, description } = rec.recommended;
+    models.push({ name, size, autoDownload: true, isDefault: true, description });
+  }
+  for (const { name, size, description } of rec.alternatives) {
+    models.push({ name, size, autoDownload: true, description });
+  }
+  if (models.length === 0) return manifest;
+  return { ...manifest, prerequisites: { ...manifest.prerequisites, models } };
 }
 
 export async function getServiceState(manifest: ServiceManifest, refreshEnv = false): Promise<ServiceState> {
@@ -413,7 +283,7 @@ export async function getServiceState(manifest: ServiceManifest, refreshEnv = fa
   const profile = getEnvironmentProfile(refreshEnv);
   const recommendation = buildRecommendation(manifest.id, profile);
   return {
-    manifest: filterModelsByPlatform(manifest),
+    manifest: enrichManifestModels(manifest, recommendation),
     status,
     installed: installStatus === 'installed',
     installStatus,

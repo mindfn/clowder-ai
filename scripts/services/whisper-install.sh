@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/services/whisper-install.sh
-# Install dependencies for Whisper ASR service (venv + mlx-whisper).
+# Install dependencies for Whisper ASR service (venv + mlx-whisper / faster-whisper).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,6 +12,8 @@ source "$SCRIPT_DIR/../download-source-overrides.sh"
 apply_manual_download_source_overrides
 
 VENV_DIR="${HOME}/.cat-cafe/whisper-venv"
+PLATFORM="$(uname -s)"
+ARCH="$(uname -m)"
 
 if [ ! -d "$VENV_DIR" ]; then
   echo "  创建 venv: $VENV_DIR ..."
@@ -24,19 +26,20 @@ pip install --quiet -U pip
 
 if ! command -v ffmpeg &>/dev/null; then
   echo "ERROR: ffmpeg 未安装，Whisper ASR 需要 ffmpeg。"
-  case "$(uname -s)" in
+  case "$PLATFORM" in
     Darwin) echo "  请运行: brew install ffmpeg" ;;
     Linux)  echo "  请运行: sudo apt install ffmpeg  # 或 dnf install ffmpeg" ;;
   esac
   exit 1
 fi
 
-echo "  安装依赖: mlx-whisper fastapi uvicorn python-multipart httpx[socks] huggingface_hub ..."
-pip install --quiet mlx-whisper fastapi uvicorn python-multipart 'httpx[socks]' huggingface_hub
+if [ "$PLATFORM" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
+  echo "  安装依赖: mlx-whisper fastapi uvicorn python-multipart httpx[socks] huggingface_hub ..."
+  pip install --quiet mlx-whisper fastapi uvicorn python-multipart 'httpx[socks]' huggingface_hub
 
-MODEL="${WHISPER_MODEL:-mlx-community/whisper-large-v3-turbo}"
-echo "  预下载模型: $MODEL ..."
-"$PYTHON3" -c "
+  MODEL="${WHISPER_MODEL:-mlx-community/whisper-large-v3-turbo}"
+  echo "  预下载模型: $MODEL ..."
+  "$PYTHON3" -c "
 import sys
 from huggingface_hub import snapshot_download
 try:
@@ -46,4 +49,21 @@ except Exception as e:
     print(f'ERROR: 模型下载失败: {e}', file=sys.stderr)
     sys.exit(1)
 " "$MODEL"
+else
+  echo "  安装依赖: faster-whisper fastapi uvicorn python-multipart httpx[socks] huggingface_hub ..."
+  pip install --quiet faster-whisper fastapi uvicorn python-multipart 'httpx[socks]' huggingface_hub
+
+  MODEL="${WHISPER_MODEL:-large-v3-turbo}"
+  echo "  预下载模型: $MODEL ..."
+  "$PYTHON3" -c "
+import sys
+from faster_whisper import WhisperModel
+try:
+    WhisperModel(sys.argv[1], device='cpu', compute_type='int8')
+    print('模型下载完成。')
+except Exception as e:
+    print(f'ERROR: 模型下载失败: {e}', file=sys.stderr)
+    sys.exit(1)
+" "$MODEL"
+fi
 echo "安装完成。"

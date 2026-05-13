@@ -29,7 +29,10 @@ function runQuiet(command: string, args: string[] = [], timeout = 3000): string 
 function detectGpu(): { gpu: EnvGpu; gpuDetail?: string } {
   const os = resolveOs();
   if (os === 'darwin') {
-    return { gpu: 'apple', gpuDetail: 'Apple Silicon GPU (Metal)' };
+    if (process.arch === 'arm64') {
+      return { gpu: 'apple', gpuDetail: 'Apple Silicon GPU (Metal)' };
+    }
+    return { gpu: 'none', gpuDetail: 'Intel Mac (no MLX support)' };
   }
 
   const nv = runQuiet('nvidia-smi', ['--query-gpu=name,memory.total', '--format=csv,noheader']);

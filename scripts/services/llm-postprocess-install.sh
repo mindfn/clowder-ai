@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/services/llm-postprocess-install.sh
-# Install dependencies for LLM post-processing service (venv + mlx-vlm).
+# Install dependencies for LLM post-processing service (venv + mlx-vlm / transformers).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,6 +12,8 @@ source "$SCRIPT_DIR/../download-source-overrides.sh"
 apply_manual_download_source_overrides
 
 VENV_DIR="${HOME}/.cat-cafe/llm-venv"
+PLATFORM="$(uname -s)"
+ARCH="$(uname -m)"
 
 if [ ! -d "$VENV_DIR" ]; then
   echo "  创建 venv: $VENV_DIR ..."
@@ -22,10 +24,18 @@ source "$VENV_DIR/bin/activate"
 echo "  升级 pip ..."
 pip install --quiet -U pip
 
-echo "  安装依赖: mlx-vlm fastapi uvicorn pydantic ..."
-pip install --quiet mlx-vlm "httpx[socks]" torchvision fastapi uvicorn pydantic huggingface_hub
+if [ "$PLATFORM" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
+  echo "  安装依赖: mlx-vlm fastapi uvicorn pydantic ..."
+  pip install --quiet mlx-vlm "httpx[socks]" torchvision fastapi uvicorn pydantic huggingface_hub
 
-MODEL="${LLM_POSTPROCESS_MODEL:-mlx-community/Qwen3.5-35B-A3B-4bit}"
+  MODEL="${LLM_POSTPROCESS_MODEL:-mlx-community/Qwen3.5-35B-A3B-4bit}"
+else
+  echo "  安装依赖: transformers torch fastapi uvicorn pydantic ..."
+  pip install --quiet transformers torch fastapi uvicorn pydantic huggingface_hub
+
+  MODEL="${LLM_POSTPROCESS_MODEL:-Qwen/Qwen2.5-3B-Instruct}"
+fi
+
 echo "  预下载模型: $MODEL ..."
 "$PYTHON3" -c "
 import sys

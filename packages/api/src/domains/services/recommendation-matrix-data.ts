@@ -130,6 +130,20 @@ export const SERVICE_MATRIX: ServiceMatrix = {
       ],
     },
     {
+      match: { os: 'darwin', arch: 'x64' },
+      recommended: WHISPER_FW_TURBO,
+      alternatives: [
+        {
+          name: 'large-v3',
+          size: '~3GB',
+          description: '最高质量',
+          requirements: { ramGb: 6, diskGb: 3.5 },
+        },
+        WHISPER_FW_BASE,
+      ],
+      caveats: ['Intel Mac 不支持 MLX，使用 faster-whisper 后端'],
+    },
+    {
       match: { os: ['win32', 'linux'], gpu: ['cuda', 'rocm'] },
       recommended: WHISPER_FW_TURBO,
       alternatives: [
@@ -158,6 +172,12 @@ export const SERVICE_MATRIX: ServiceMatrix = {
       alternatives: [{ ...TTS_EDGE, description: '微软云端，备选（需联网）' }],
     },
     {
+      match: { os: 'darwin', arch: 'x64' },
+      recommended: TTS_EDGE,
+      alternatives: [],
+      caveats: ['Intel Mac 不支持 MLX-Audio，使用 edge-tts'],
+    },
+    {
       match: { os: 'win32' },
       recommended: TTS_EDGE,
       alternatives: [TTS_SAPI],
@@ -178,6 +198,12 @@ export const SERVICE_MATRIX: ServiceMatrix = {
       alternatives: [],
     },
     {
+      match: { os: 'darwin', arch: 'x64' },
+      recommended: EMBED_BGE_BASE,
+      alternatives: [{ ...EMBED_BGE_LARGE, description: '更高质量，Intel Mac CPU 偏慢' }],
+      caveats: ['Intel Mac 不支持 MLX，使用 ONNX 后端'],
+    },
+    {
       match: { os: ['win32', 'linux'], gpu: ['cuda', 'rocm'] },
       recommended: EMBED_BGE_LARGE,
       alternatives: [EMBED_BGE_BASE],
@@ -195,6 +221,12 @@ export const SERVICE_MATRIX: ServiceMatrix = {
       recommended: LLM_QWEN35_MLX,
       alternatives: [LLM_QWEN25_14B_MLX, LLM_QWEN25_7B_MLX],
       caveats: ['Qwen3.5-35B 需要 48GB+ 统一内存'],
+    },
+    {
+      match: { os: 'darwin', arch: 'x64' },
+      recommended: LLM_QWEN25_3B_HF,
+      alternatives: [LLM_QWEN25_7B_HF],
+      caveats: ['Intel Mac 不支持 MLX，使用 transformers 后端'],
     },
     {
       match: { os: 'win32', arch: 'arm64', pythonArch: 'native' },
