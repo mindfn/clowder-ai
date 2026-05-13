@@ -96,19 +96,18 @@ services:
       models:
         - name: base
           size: ~150MB
-          description: faster-whisper base（x86 模拟运行，推荐）
+          description: faster-whisper base（推荐）
           requirements: { ramGb: 2, diskGb: 0.5 }
           performance: CPU 偏慢
         - name: large-v3-turbo
           size: ~1.5GB
-          description: faster-whisper turbo（x86 模拟，仅推荐高内存机器）
+          description: faster-whisper turbo（仅推荐高内存机器）
           requirements: { ramGb: 4, diskGb: 2 }
       notes:
-        - '⚠ 未检测到 Python。点击安装后会自动获取 x64 (AMD64) Python 3.12 到 ~/.cat-cafe/python/，不修改系统 PATH 也不影响已有 ARM64 Python。'
-        - 'ARM64 上 faster-whisper 必须走 x64 路径——PyAV / ctranslate2 没有 win-arm64 wheel。'
-        - '矩阵里的 "x86-emulated" 命名是历史叫法，实际指 AMD64（64-bit）Python 跑在 Windows ARM64 内置 Prism emulator 上，不是 32-bit i386。'
+        - '⚠ 未检测到 Python。点击安装后会自动获取 Python 3.12 到 ~/.cat-cafe/python/，不修改系统 PATH 也不影响已有 Python。'
+        - 'ARM64 上 faster-whisper 依赖的 PyAV / ctranslate2 没有 ARM 版本，所以会装 64-bit 通用版本，通过 Windows 内置 emulator 运行。'
       customModelHint:
-        description: 'faster-whisper 后端 (AMD64 Python on ARM64 emulation，待安装)：内置 ID（tiny/base/small/medium/large-v1~v3/large-v3-turbo/distil-large-v3）'
+        description: 'faster-whisper 后端（待安装 Python）：内置 ID（tiny/base/small/medium/large-v1~v3/large-v3-turbo/distil-large-v3）'
         links:
           - { label: 'Python 64-bit installer', url: 'https://www.python.org/downloads/' }
 
@@ -126,17 +125,17 @@ services:
       models:
         - name: base
           size: ~150MB
-          description: faster-whisper base（x86 模拟运行，推荐）
+          description: faster-whisper base（推荐）
           requirements: { ramGb: 2, diskGb: 0.5 }
           performance: CPU 偏慢
         - name: large-v3-turbo
           size: ~1.5GB
-          description: faster-whisper turbo（x86 模拟，仅推荐高内存机器）
+          description: faster-whisper turbo（仅推荐高内存机器）
           requirements: { ramGb: 4, diskGb: 2 }
       notes:
         - x86 Python 运行在 ARM 模拟层上，性能比原生略低
       customModelHint:
-        description: 'faster-whisper 后端 (x86 模拟 Python)：内置 ID（tiny/base/small/medium/large-v1~v3/large-v3-turbo/distil-large-v3）'
+        description: 'faster-whisper 后端：内置 ID（tiny/base/small/medium/large-v1~v3/large-v3-turbo/distil-large-v3）'
         links:
           - { label: 'faster-whisper 内置模型列表', url: 'https://github.com/SYSTRAN/faster-whisper#available-models' }
 
@@ -220,7 +219,7 @@ services:
       models:
         - name: edge-tts
           size: ~20MB
-          description: 微软云端语音（x86 模拟运行，推荐）
+          description: 微软云端语音（推荐）
           requirements: { ramGb: 1, diskGb: 0.1 }
           performance: 取决于网络
         - name: sapi
@@ -228,10 +227,10 @@ services:
           description: Windows 内置语音，离线可用
           requirements: { ramGb: 1, diskGb: 0.1 }
       notes:
-        - '⚠ 未检测到 Python。点击安装后会自动获取 x64 (AMD64) Python 3.12 到 ~/.cat-cafe/python/，不修改系统 PATH 也不影响已有 ARM64 Python。'
-        - 'edge-tts 依赖 aiohttp 没有 win-arm64 wheel，必须走 x64 路径。'
+        - '⚠ 未检测到 Python。点击安装后会自动获取 Python 3.12 到 ~/.cat-cafe/python/，不修改系统 PATH 也不影响已有 Python。'
+        - 'ARM64 上 edge-tts 依赖的 aiohttp 没有 ARM 版本，所以会装 64-bit 通用版本，通过 Windows 内置 emulator 运行。'
       customModelHint:
-        description: 'edge-tts 云端服务 / SAPI Windows 内置（AMD64 Python on ARM64 emulation，待安装）'
+        description: 'edge-tts 云端服务 / SAPI Windows 内置（待安装 Python）'
         links:
           - { label: 'Python 64-bit installer', url: 'https://www.python.org/downloads/' }
 
@@ -256,7 +255,7 @@ services:
       models:
         - name: edge-tts
           size: ~20MB
-          description: 微软云端语音（x86 模拟运行，推荐）
+          description: 微软云端语音（推荐）
           requirements: { ramGb: 1, diskGb: 0.1 }
           performance: 取决于网络
         - name: sapi
@@ -266,7 +265,7 @@ services:
       notes:
         - x86 Python 运行在 ARM 模拟层上，性能比原生略低；edge-tts 与 sapi 都基本不受影响
       customModelHint:
-        description: 'edge-tts 云端服务 / sapi Windows 内置（x86 模拟 Python）'
+        description: 'edge-tts 云端服务 / sapi Windows 内置'
         links:
           - { label: 'edge-tts voice 列表', url: 'https://github.com/rany2/edge-tts#changing-voices' }
 
@@ -492,14 +491,14 @@ services:
       models:
         - name: Qwen/Qwen2.5-3B-Instruct
           size: ~6GB
-          description: transformers 后端（x86 模拟运行）
+          description: transformers 后端
           requirements: { ramGb: 8, diskGb: 7 }
           performance: CPU 偏慢
       notes:
-        - '⚠ 未检测到 Python。点击安装后会自动获取 x64 (AMD64) Python 3.12 到 ~/.cat-cafe/python/，不修改系统 PATH 也不影响已有 ARM64 Python。'
-        - 'transformers / safetensors 没有 win-arm64 wheel，必须走 x64 路径。'
+        - '⚠ 未检测到 Python。点击安装后会自动获取 Python 3.12 到 ~/.cat-cafe/python/，不修改系统 PATH 也不影响已有 Python。'
+        - 'ARM64 上 transformers / safetensors 没有 ARM 版本，所以会装 64-bit 通用版本，通过 Windows 内置 emulator 运行。'
       customModelHint:
-        description: 'transformers 后端 (AMD64 Python on ARM64 emulation，待安装)：HuggingFace 上的因果语言模型；emulation 性能较低，建议 ≤3B'
+        description: 'transformers 后端（待安装 Python）：HuggingFace 上的因果语言模型；建议 ≤3B'
         links:
           - { label: 'Python 64-bit installer', url: 'https://www.python.org/downloads/' }
 
@@ -513,13 +512,13 @@ services:
       models:
         - name: Qwen/Qwen2.5-3B-Instruct
           size: ~6GB
-          description: transformers 后端（x86 模拟运行）
+          description: transformers 后端
           requirements: { ramGb: 8, diskGb: 7 }
           performance: CPU 偏慢
       notes:
         - x86 Python 运行在 ARM 模拟层上，性能比原生略低
       customModelHint:
-        description: 'transformers 后端 (x86 模拟 Python)：HuggingFace 上的因果语言模型；模拟层性能较低，建议 ≤3B'
+        description: 'transformers 后端：HuggingFace 上的因果语言模型；建议 ≤3B（emulation 性能较低）'
         links:
           - { label: 'HF text-generation 模型', url: 'https://huggingface.co/models?pipeline_tag=text-generation&sort=likes' }
 
