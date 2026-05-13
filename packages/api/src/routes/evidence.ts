@@ -233,7 +233,25 @@ export const evidenceRoutes: FastifyPluginAsync<EvidenceRoutesOptions> = async (
         ...(responseGroups && responseGroups.length > 0 ? { collectionGroups: responseGroups } : {}),
         ...(resolveResult?.deprecationWarnings ? { deprecationWarnings: resolveResult.deprecationWarnings } : {}),
       } satisfies Partial<EvidenceSearchResponse>;
-    } catch {
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const errStack = err instanceof Error ? err.stack : undefined;
+      const errCause = err instanceof Error ? (err as Error & { cause?: unknown }).cause : undefined;
+      request.log.error(
+        {
+          serviceArea: 'evidence-search',
+          query: q,
+          scope,
+          mode,
+          depth,
+          dimension,
+          threadId,
+          errMsg,
+          errStack,
+          errCause,
+        },
+        'evidence search failed — returning degraded response',
+      );
       return {
         results: [],
         degraded: true,
