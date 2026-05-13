@@ -42,7 +42,12 @@ if (-not $ffmpegPath) {
 }
 
 Write-Host "  Installing dependencies: faster-whisper fastapi uvicorn ..."
-& $VenvPython -m pip install --progress-bar on faster-whisper fastapi uvicorn python-multipart "httpx[socks]" huggingface_hub
+$pipArgs = @('-m', 'pip', 'install', '--progress-bar', 'on',
+    'faster-whisper', 'fastapi', 'uvicorn', 'python-multipart', 'httpx[socks]', 'huggingface_hub')
+if ($env:PIP_INDEX_URL) {
+    $pipArgs += @('--extra-index-url', 'https://pypi.org/simple/')
+}
+& $VenvPython @pipArgs
 if ($LASTEXITCODE -ne 0) { throw "Failed to install whisper dependencies" }
 
 $hasCuda = $false

@@ -30,7 +30,12 @@ if (-not (Test-Path $VenvPython)) {
 if ($LASTEXITCODE -ne 0) { throw "Failed to upgrade pip in tts-venv" }
 
 Write-Host "  Installing dependencies: edge-tts pyttsx3 fastapi uvicorn httpx ..."
-& $VenvPython -m pip install --progress-bar on edge-tts pyttsx3 fastapi uvicorn "httpx[socks]" huggingface_hub
+$pipArgs = @('-m', 'pip', 'install', '--progress-bar', 'on',
+    'edge-tts', 'pyttsx3', 'fastapi', 'uvicorn', 'httpx[socks]', 'huggingface_hub')
+if ($env:PIP_INDEX_URL) {
+    $pipArgs += @('--extra-index-url', 'https://pypi.org/simple/')
+}
+& $VenvPython @pipArgs
 if ($LASTEXITCODE -ne 0) { throw "Failed to install TTS dependencies" }
 
 Write-Host "Installation complete."

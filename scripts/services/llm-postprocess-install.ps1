@@ -32,6 +32,21 @@ if (-not (Test-Path $VenvPython)) {
 & $VenvPython -m pip install --progress-bar on -U pip
 if ($LASTEXITCODE -ne 0) { throw "Failed to upgrade pip in llm-venv" }
 
+$isArm64 = ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") -or
+    ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64)
+if ($isArm64) {
+    Write-Error @"
+ERROR: LLM post-processing requires 'transformers' which depends on
+tokenizers/safetensors (Rust crates) — no ARM64 Windows wheels available.
+
+Options:
+  1. Install x86_64 Python (Windows ARM has x86 emulation)
+  2. Install Visual Studio Build Tools + Rust toolchain for native compilation
+  3. Skip this service — it is optional for core functionality
+"@
+    exit 1
+}
+
 $hasCuda = $false
 try {
     $prevEAP = $ErrorActionPreference; $ErrorActionPreference = "Continue"
@@ -54,7 +69,12 @@ if ($hasCuda) {
 if ($LASTEXITCODE -ne 0) { throw "Failed to install torch" }
 
 Write-Host "  Installing dependencies: transformers fastapi uvicorn pydantic ..."
-& $VenvPython -m pip install --progress-bar on transformers fastapi uvicorn pydantic huggingface_hub
+$pipArgs = @('-m', 'pip', 'install', '--progress-bar', 'on',
+    'transformers', 'fastapi', 'uvicorn', 'pydantic', 'huggingface_hub')
+if ($env:PIP_INDEX_URL) {
+    $pipArgs += @('--extra-index-url', 'https://pypi.org/simple/')
+}
+& $VenvPython @pipArgs
 if ($LASTEXITCODE -ne 0) { throw "Failed to install LLM dependencies" }
 
 $LlmModel = if ($env:LLM_POSTPROCESS_MODEL) { $env:LLM_POSTPROCESS_MODEL } else { "Qwen/Qwen2.5-3B-Instruct" }
