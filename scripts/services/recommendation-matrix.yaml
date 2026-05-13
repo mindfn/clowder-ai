@@ -191,14 +191,22 @@ services:
         links:
           - { label: 'edge-tts voice 列表', url: 'https://github.com/rany2/edge-tts#changing-voices' }
 
-    # Windows ARM64 native Python — edge-tts pulls aiohttp which has no
-    # win-arm64 prebuilt wheel; pip falls back to source build and needs MSVC
-    # to compile aiohttp._websocket. Same gate as whisper-stt / llm-postprocess.
+    # Windows ARM64 native Python — edge-tts pulls aiohttp and piper-tts
+    # pulls piper_phonemize; neither has win-arm64 prebuilt wheels. SAPI is
+    # the only path that works: pyttsx3 (pure python) + pywin32 (ships
+    # win-arm64 wheels from cp310). Audio quality is older Windows TTS but
+    # it's fully offline and installs cleanly without MSVC.
     - match: { os: win32, arch: arm64, pythonArch: native }
-      unsupported:
-        reason: edge-tts 依赖 aiohttp，在 Windows ARM64 没有预编译 wheel，原生 ARM Python 装不上（需要 MSVC 编译 C 扩展）。
-        userAction: 请安装 x86 Python 3.10+（python.org 64-bit Windows 安装包，Microsoft Store 版也可）
-        retryHint: 安装好 x86 Python 后，关闭此弹窗再次点击「安装」，会自动按 x86 模式重新匹配
+      models:
+        - name: sapi
+          size: ~5MB
+          description: Windows 内置语音（SAPI，离线可用；ARM64 唯一可装的路径）
+          requirements: { ramGb: 1, diskGb: 0.1 }
+          performance: 实时 1x
+      notes:
+        - 'ARM64 上 edge-tts / piper 受 pip wheel 限制装不上。如需更高质量请安装 x86 Python（参考 LLM 服务的 x86 安装引导）。'
+      customModelHint:
+        description: 'SAPI 后端（Windows 内置 TTS）：通过 pyttsx3 调用，无云端依赖；音色由 Windows 系统决定'
 
     - match: { os: win32, arch: arm64, pythonArch: x86-emulated }
       models:

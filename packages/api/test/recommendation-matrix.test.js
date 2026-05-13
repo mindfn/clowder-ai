@@ -103,12 +103,12 @@ describe('recommendation matrix — Windows ARM64', () => {
     assert.ok(rec.notes.some((n) => n.includes('x86')));
   });
 
-  test('mlx-tts native python → unsupported (aiohttp no win-arm64 wheel)', () => {
+  test('mlx-tts native python → SAPI-only (no aiohttp / piper deps needed)', () => {
     const rec = buildRecommendation('mlx-tts', profile);
-    assert.equal(rec.models.length, 0);
-    assert.ok(rec.unsupported);
-    assert.match(rec.unsupported.reason, /aiohttp/);
-    assert.match(rec.unsupported.userAction, /x86 Python/);
+    assert.equal(rec.unsupported, undefined);
+    assert.equal(rec.models[0]?.name, 'sapi');
+    assert.equal(rec.models.length, 1);
+    assert.ok(rec.notes.some((n) => /ARM64|x86/.test(n)));
   });
 
   test('mlx-tts x86-emulated python → edge-tts default', () => {

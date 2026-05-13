@@ -29,17 +29,27 @@ if (-not (Test-Path $VenvPython)) {
 & $VenvPython -m pip install --progress-bar on -U pip
 if ($LASTEXITCODE -ne 0) { throw "Failed to upgrade pip in tts-venv" }
 
-Write-Host "  Installing dependencies: edge-tts pyttsx3 fastapi uvicorn httpx ..."
-$pipArgs = @('-m', 'pip', 'install', '--progress-bar', 'on',
-    'edge-tts', 'pyttsx3', 'fastapi', 'uvicorn', 'httpx[socks]', 'huggingface_hub[hf_xet]')
+$TtsModel = if ($env:TTS_MODEL) { $env:TTS_MODEL } else { "edge-tts" }
+$IsPiper = $TtsModel -eq "piper" -or $TtsModel -like "zh_CN-*" -or $TtsModel -like "en_US-*" -or $TtsModel -like "en_GB-*"
+$IsSapi = $TtsModel -eq "sapi"
+
+# SAPI path is the only one that installs cleanly on native ARM64 Python
+# (edge-tts→aiohttp and piper-tts→piper_phonemize have no win-arm64 wheels).
+# Skip those deps when SAPI is selected so the install actually succeeds.
+if ($IsSapi) {
+    Write-Host "  Installing SAPI-only dependencies: pyttsx3 pywin32 fastapi uvicorn ..."
+    $pipArgs = @('-m', 'pip', 'install', '--progress-bar', 'on',
+        'pyttsx3', 'pywin32', 'fastapi', 'uvicorn', 'httpx[socks]')
+} else {
+    Write-Host "  Installing dependencies: edge-tts pyttsx3 fastapi uvicorn httpx ..."
+    $pipArgs = @('-m', 'pip', 'install', '--progress-bar', 'on',
+        'edge-tts', 'pyttsx3', 'fastapi', 'uvicorn', 'httpx[socks]', 'huggingface_hub[hf_xet]')
+}
 if ($env:PIP_INDEX_URL) {
     $pipArgs += @('--extra-index-url', 'https://pypi.org/simple/')
 }
 & $VenvPython @pipArgs
 if ($LASTEXITCODE -ne 0) { throw "Failed to install TTS dependencies" }
-
-$TtsModel = if ($env:TTS_MODEL) { $env:TTS_MODEL } else { "edge-tts" }
-$IsPiper = $TtsModel -eq "piper" -or $TtsModel -like "zh_CN-*" -or $TtsModel -like "en_US-*" -or $TtsModel -like "en_GB-*"
 
 if ($IsPiper) {
     $Voice = if ($TtsModel -eq "piper") { "zh_CN-huayan-medium" } else { $TtsModel }
