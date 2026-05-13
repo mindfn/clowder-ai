@@ -93,11 +93,43 @@ function Try-ProjectPython {
 }
 
 function Install-PythonToProjectDir {
+    # Wrap the download + silent install in a system-wide named mutex so
+    # concurrent install scripts (whisper/tts/embed/llm clicked together
+    # in the UI) don't all race to install Python into the same target.
+    # Only one process performs the install; the others wait, then the
+    # outer Resolve-Python312 picks up the result via Try-ProjectPython.
+    $mutex = New-Object System.Threading.Mutex($false, "Global\catCafePythonInstall")
+    $acquired = $false
+    try {
+        $acquired = $mutex.WaitOne([TimeSpan]::FromMinutes(10))
+    } catch [System.Threading.AbandonedMutexException] {
+        # Previous holder crashed without releasing — we still own it now.
+        $acquired = $true
+    }
+    if (-not $acquired) {
+        Write-Host "  Python install lock timed out (>10min)"
+        return $false
+    }
+    try {
+        # Re-check inside the critical section — another concurrent install
+        # might have already finished while we were waiting on the mutex.
+        $existing = Join-Path $script:ProjectPythonDir "python.exe"
+        if (Test-Path $existing) {
+            Write-Host "  Project Python already present (installed by concurrent install)"
+            return $true
+        }
+        return Install-PythonToProjectDir-Inner
+    } finally {
+        $mutex.ReleaseMutex() | Out-Null
+        $mutex.Dispose()
+    }
+}
+
+function Install-PythonToProjectDir-Inner {
     # Download python-3.12.x-amd64.exe and silent-install to project dir.
     # PrependPath=0 keeps the system PATH untouched; the resolver returns
     # the absolute path to the project-owned python.exe.
     $hasCurl = Get-Command curl.exe -ErrorAction SilentlyContinue
-    $hasIwr = $true  # Invoke-WebRequest is always available
     $version = '3.12.7'
     $installerUrl = "https://www.python.org/ftp/python/$version/python-$version-amd64.exe"
     $installerPath = Join-Path $env:TEMP "python-$version-amd64.exe"
@@ -122,7 +154,7 @@ function Install-PythonToProjectDir {
     Write-Host "  Installing Python to $script:ProjectPythonDir (silent, no PATH changes)..."
     # /quiet: no UI; TargetDir: install location; PrependPath=0: don't touch PATH;
     # Include_pip=1: bundle pip; Include_test=0: skip test suite to save space.
-    $args = @(
+    $installerArgs = @(
         "/quiet",
         "TargetDir=$script:ProjectPythonDir",
         "PrependPath=0",
@@ -132,7 +164,7 @@ function Install-PythonToProjectDir {
         "Include_launcher=0",
         "InstallLauncherAllUsers=0"
     )
-    $proc = Start-Process -FilePath $installerPath -ArgumentList $args -Wait -PassThru -NoNewWindow
+    $proc = Start-Process -FilePath $installerPath -ArgumentList $installerArgs -Wait -PassThru -NoNewWindow
     Remove-Item -Force $installerPath -ErrorAction SilentlyContinue
     if ($proc.ExitCode -ne 0) {
         Write-Host "  Python installer exited with code $($proc.ExitCode)"

@@ -163,10 +163,15 @@ _pbs_target_triple() {
   return 0
 }
 
-_install_project_python() {
-  # Download python-build-standalone tarball and extract to ~/.cat-cafe/python/.
-  # No root, no system PATH changes; the resolver's _try_project_python picks
-  # it up via $RESOLVED_PYTHON afterwards.
+_install_project_python_locked() {
+  # Actual download + extract — runs holding the inter-process lock.
+  # Re-check inside the critical section: another concurrent install (e.g.
+  # whisper / tts / embed clicked at the same time in the UI) might have
+  # finished while we waited. Skip download if so.
+  if [ -x "${_PROJECT_PYTHON_DIR}/bin/python3" ]; then
+    echo "  Project Python already present (installed by a concurrent install)"
+    return 0
+  fi
   local triple
   triple=$(_pbs_target_triple) || return 1
   command -v curl >/dev/null 2>&1 || { echo "  curl required to bootstrap project Python — please install curl" >&2; return 1; }
@@ -192,6 +197,42 @@ _install_project_python() {
   rm -rf "$tmpdir"
   echo "  Python ${_PBS_VERSION} installed to $_PROJECT_PYTHON_DIR (project-owned, no system changes)"
   return 0
+}
+
+_install_project_python() {
+  # Wrap the actual install in an inter-process lock so concurrent service
+  # installs (e.g. the user clicks install on whisper + tts + embed at the
+  # same time, each spawning its own install.sh, each running this resolver)
+  # don't all race to download and extract into the same target dir. Only
+  # one process performs the download; the others wait and reuse the result
+  # via _try_project_python in resolve_python_312.
+  mkdir -p "$_CAT_CAFE_HOME"
+  local lockfile="${_CAT_CAFE_HOME}/python-install.lock"
+  if command -v flock >/dev/null 2>&1; then
+    # Open fd 200 to the lockfile, then flock it for the duration of the
+    # subshell. The lock is released automatically when fd 200 closes.
+    (
+      flock -w 600 200 || { echo "  Python install lock timed out (>600s)" >&2; exit 1; }
+      _install_project_python_locked
+    ) 200>"$lockfile"
+    return $?
+  fi
+  # macOS / minimal containers lack flock(1). Fall back to a directory-based
+  # lock that's race-safe for the rare contention window (mkdir is atomic).
+  local lockdir="${_CAT_CAFE_HOME}/python-install.lock.d"
+  local waited=0
+  while ! mkdir "$lockdir" 2>/dev/null; do
+    if [ "$waited" -ge 600 ]; then
+      echo "  Python install lock timed out (>600s) — assuming staler holder, breaking" >&2
+      rmdir "$lockdir" 2>/dev/null || true
+      mkdir "$lockdir" 2>/dev/null || return 1
+      break
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  trap 'rmdir "$lockdir" 2>/dev/null || true; trap - RETURN' RETURN
+  _install_project_python_locked
 }
 
 resolve_python_312() {
