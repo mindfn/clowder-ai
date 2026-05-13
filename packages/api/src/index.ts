@@ -706,9 +706,7 @@ async function main(): Promise<void> {
         const r = await builder.embedPending();
         if (r.probed) {
           if (r.embedded > 0) {
-            app.log.info(
-              `[api] F102: deferred embed catch-up — ${r.embedded} doc(s) vectorized, pending=${r.pending}`,
-            );
+            app.log.info(`[api] F102: deferred embed catch-up — ${r.embedded} doc(s) vectorized, pending=${r.pending}`);
           }
           // Stop once service is reachable AND nothing is pending.
           if (r.pending === 0) {
