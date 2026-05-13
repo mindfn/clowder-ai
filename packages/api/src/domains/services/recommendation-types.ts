@@ -42,12 +42,17 @@ export interface MatchCriteria {
   pythonArch?: PythonArch | PythonArch[];
 }
 
+export interface CustomModelHint {
+  description: string;
+  links?: Array<{ label: string; url: string }>;
+}
+
 export interface MatrixEntry {
   match: MatchCriteria;
   models?: ModelOption[];
   unsupported?: UnsupportedReason;
   notes?: string[];
-  customModelHint?: string;
+  customModelHint?: CustomModelHint;
 }
 
 export type ServiceMatrix = Record<string, MatrixEntry[]>;
@@ -58,5 +63,5 @@ export interface ServiceRecommendation {
   models: ModelOption[];
   unsupported?: UnsupportedReason;
   notes: string[];
-  customModelHint?: string;
+  customModelHint?: CustomModelHint;
 }

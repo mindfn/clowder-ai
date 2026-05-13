@@ -35,13 +35,18 @@ interface EnvironmentProfile {
   detectedAt: number;
 }
 
+interface CustomModelHint {
+  description: string;
+  links?: Array<{ label: string; url: string }>;
+}
+
 interface ServiceRecommendation {
   serviceId: string;
   profile: EnvironmentProfile;
   models: ModelOption[];
   unsupported?: UnsupportedReason;
   notes: string[];
-  customModelHint?: string;
+  customModelHint?: CustomModelHint;
 }
 
 interface InstallPreviewModalProps {
@@ -125,7 +130,7 @@ interface ModelSelectorProps {
   selectedModel: string;
   useCustom: boolean;
   customModel: string;
-  customModelHint?: string;
+  customModelHint?: CustomModelHint;
   onSelect: (name: string) => void;
   onToggleCustom: (v: boolean) => void;
   onCustomChange: (v: string) => void;
@@ -199,7 +204,25 @@ function ModelSelector(props: ModelSelectorProps) {
                   className="mt-1 w-full border border-[var(--console-border-soft)] rounded-md px-2 py-1 text-xs bg-[var(--console-card-bg)] focus:outline-none focus:ring-1 focus:ring-conn-sky-ring"
                 />
                 {customModelHint && (
-                  <p className="mt-1 text-[11px] text-cafe-muted leading-relaxed">{customModelHint}</p>
+                  <div className="mt-1 space-y-0.5">
+                    <p className="text-[11px] text-cafe-muted leading-relaxed">{customModelHint.description}</p>
+                    {customModelHint.links && customModelHint.links.length > 0 && (
+                      <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+                        {customModelHint.links.map((link) => (
+                          <a
+                            key={link.url}
+                            href={link.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-[11px] text-conn-sky-text hover:underline"
+                          >
+                            ↗ {link.label}
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
               </>
             )}
