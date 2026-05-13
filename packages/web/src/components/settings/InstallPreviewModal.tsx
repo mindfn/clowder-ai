@@ -407,7 +407,8 @@ export function InstallPreviewModal({
             onClick={() => {
               const trimmedPort = portInput.trim();
               const parsedPort = trimmedPort ? Number.parseInt(trimmedPort, 10) : Number.NaN;
-              const port = Number.isFinite(parsedPort) && parsedPort >= 1 && parsedPort <= 65535 ? parsedPort : undefined;
+              const port =
+                Number.isFinite(parsedPort) && parsedPort >= 1 && parsedPort <= 65535 ? parsedPort : undefined;
               onConfirm({
                 model: allModels.length > 0 ? finalModel : undefined,
                 port,
