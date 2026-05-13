@@ -1012,18 +1012,42 @@ install_brew_cask() {
 }
 install_kimi_cli() {
     info "  Installing Kimi CLI..."
+    # kimi-cli requires Python >=3.12 (verified via pypi metadata). Pin to 3.12
+    # (the minimum) rather than 3.13 so installs work on Ubuntu 24.04 where
+    # 3.12 is the system default, and uv only auto-fetches a newer interpreter
+    # if the requested one is missing.
+    local log_file; log_file="$(mktemp)"
+    local installer_tried=""
     if command -v uv &>/dev/null; then
-        uv tool install --python 3.13 kimi-cli >/dev/null 2>&1 || uv tool upgrade kimi-cli >/dev/null 2>&1 || true
+        installer_tried="uv"
+        if ! uv tool install --python 3.12 kimi-cli >"$log_file" 2>&1; then
+            uv tool upgrade kimi-cli >>"$log_file" 2>&1 || true
+        fi
     elif command -v pipx &>/dev/null; then
-        pipx install kimi-cli >/dev/null 2>&1 || pipx upgrade kimi-cli >/dev/null 2>&1 || true
+        installer_tried="pipx"
+        if ! pipx install kimi-cli >"$log_file" 2>&1; then
+            pipx upgrade kimi-cli >>"$log_file" 2>&1 || true
+        fi
     elif command -v python3 &>/dev/null; then
-        python3 -m pip install --user --upgrade kimi-cli >/dev/null 2>&1 || true
+        installer_tried="python3 -m pip"
+        python3 -m pip install --user --upgrade kimi-cli >"$log_file" 2>&1 || true
     else
-        fail "Kimi install failed. Need uv, pipx, or python3 to install kimi-cli"
+        rm -f "$log_file"
+        fail "Kimi install failed: need uv, pipx, or python3 (>=3.12)"
+        info "    Recommended: curl -LsSf https://astral.sh/uv/install.sh | sh"
         exit 1
     fi
     export PATH="$HOME/.local/bin:$PATH"; hash -r 2>/dev/null || true
-    command -v kimi &>/dev/null || { fail "Kimi install failed. Try: uv tool install --python 3.13 kimi-cli"; exit 1; }; ok "Kimi CLI installed"
+    if command -v kimi &>/dev/null; then
+        rm -f "$log_file"
+        ok "Kimi CLI installed"
+    else
+        fail "Kimi install failed via $installer_tried — last output:"
+        tail -10 "$log_file" 2>/dev/null | sed 's/^/    /'
+        info "    Recovery: install uv (curl -LsSf https://astral.sh/uv/install.sh | sh) and rerun"
+        rm -f "$log_file"
+        exit 1
+    fi
 }
 install_claude_cli() {
     info "  Installing Claude Code..."
