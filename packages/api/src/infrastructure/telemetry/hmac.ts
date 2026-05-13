@@ -18,7 +18,9 @@ const TENANT_SALT = process.env.TELEMETRY_HMAC_SALT;
 function getSalt(): string {
   if (TENANT_SALT) return TENANT_SALT;
   const env = process.env.NODE_ENV;
-  if (env === 'development' || env === 'test') {
+  // #675: treat missing NODE_ENV same as 'development' — self-hosted installs
+  // rarely set NODE_ENV, and blocking startup is worse than using a fallback salt.
+  if (!env || env === 'development' || env === 'test') {
     return 'dev-only-insecure-salt';
   }
   throw new Error(

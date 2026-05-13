@@ -4,13 +4,12 @@
  * Defines the managed block content that gets injected into
  * external project CLAUDE.md/AGENTS.md/GEMINI.md/KIMI.md files.
  *
- * Port values use internal defaults (3001/6399/6398).
- * The sync-to-opensource pipeline transforms API/frontend ports
- * to public defaults (3003/3004). Redis ports stay as-is (6399/6398).
+ * Port values reference .env config vars instead of hardcoded numbers
+ * so fork users with non-default ports get correct governance rules.
  */
 import { createHash } from 'node:crypto';
 
-export const GOVERNANCE_PACK_VERSION = '1.3.0';
+export const GOVERNANCE_PACK_VERSION = '1.4.0';
 
 export const MANAGED_BLOCK_START = '<!-- CAT-CAFE-GOVERNANCE-START -->';
 export const MANAGED_BLOCK_END = '<!-- CAT-CAFE-GOVERNANCE-END -->';
@@ -18,8 +17,8 @@ export const MANAGED_BLOCK_END = '<!-- CAT-CAFE-GOVERNANCE-END -->';
 const HARD_CONSTRAINTS = `## Cat Cafe Governance Rules (Auto-managed)
 
 ### Hard Constraints (immutable)
-- **Public local defaults**: use frontend 3003 and API 3004 to avoid colliding with another local runtime.
-- **Redis port 6399** is Cat Cafe's production Redis. Never connect to it from external projects. Use 6398 for dev/test.
+- **Port Boundary**: Ports configured in \`.env\` (\`FRONTEND_PORT\` / \`API_SERVER_PORT\`) are reserved for the running instance. Dev servers must use other ports to avoid collision.
+- **Redis Isolation**: Production Redis (configured as \`REDIS_URL\` in \`.env\`) is sacred user data. Never connect from external projects. Use a separate Redis instance for dev/test.
 - **No self-review**: The same individual cannot review their own code. Cross-family review preferred.
 - **Identity is constant**: Never impersonate another cat. Identity is a hard constraint.
 

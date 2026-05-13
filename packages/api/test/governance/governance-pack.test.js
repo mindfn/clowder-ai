@@ -16,20 +16,18 @@ describe('governance-pack', () => {
     assert.ok(block.includes(MANAGED_BLOCK_END));
   });
 
-  it('contains internal port 3003 (transformed by sync pipeline for open-source)', () => {
+  it('references .env port config instead of hardcoded ports (#601/#602)', () => {
     const block = getGovernanceManagedBlock('claude');
-    assert.ok(block.includes('3003'), 'Source should use internal port 3003');
-  });
-
-  it('contains internal port 6399 (transformed by sync pipeline for open-source)', () => {
-    const block = getGovernanceManagedBlock('claude');
-    assert.ok(block.includes('6399'), 'Source should use internal port 6399');
+    assert.ok(block.includes('FRONTEND_PORT'), 'Should reference FRONTEND_PORT env var');
+    assert.ok(block.includes('API_SERVER_PORT'), 'Should reference API_SERVER_PORT env var');
+    assert.ok(!block.includes('3003'), 'Should not hardcode port 3003');
+    assert.ok(!block.includes('6399'), 'Should not hardcode port 6399');
   });
 
   it('port reservation concept is present', () => {
     const block = getGovernanceManagedBlock('claude');
-    assert.ok(block.includes('local defaults'), 'Port defaults guidance should be present');
-    assert.ok(block.includes('production Redis'), 'Redis port guidance should be present');
+    assert.ok(block.includes('Port Boundary'), 'Port boundary guidance should be present');
+    assert.ok(block.includes('Redis Isolation'), 'Redis isolation guidance should be present');
   });
 
   it('managed block includes governance rules from shared-rules', () => {
@@ -78,7 +76,7 @@ describe('governance-pack', () => {
     assert.ok(block.includes('cat-cafe-skills'));
   });
 
-  it('pack version is 1.3.0', () => {
-    assert.equal(GOVERNANCE_PACK_VERSION, '1.3.0');
+  it('pack version is 1.4.0', () => {
+    assert.equal(GOVERNANCE_PACK_VERSION, '1.4.0');
   });
 });
