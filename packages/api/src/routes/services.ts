@@ -19,8 +19,9 @@ import {
   resolveScriptPath,
   resolveSpawnCommand,
 } from '../domains/services/service-logs.js';
-import { MODEL_ENV_VARS } from '../domains/services/service-manifest.js';
+import { MODEL_ENV_VARS, PORT_ENV_VARS } from '../domains/services/service-manifest.js';
 import {
+  allocateAvailablePort,
   clearServicePid,
   getAllServiceStates,
   getKnownServices,
@@ -28,6 +29,7 @@ import {
   getServicePid,
   getServiceState,
   resolveServiceEndpoint,
+  resolveServicePort,
   setServicePid,
 } from '../domains/services/service-registry.js';
 import { resolveUserId } from '../utils/request-identity.js';
@@ -152,7 +154,13 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     }
     const profile = getEnvironmentProfile(true);
     const recommendation = buildRecommendation(id, profile);
-    return { profile, recommendation };
+    // Suggest a port for the install dialog to pre-fill. Honors any port
+    // already saved in services.json (legacy fixed-port behaviour), otherwise
+    // scans for the first free port starting at the manifest default.
+    const cfg = getServiceConfig(id);
+    const defaultPort = manifest.port ?? 9000;
+    const suggestedPort = cfg.port ?? (await allocateAvailablePort(defaultPort));
+    return { profile, recommendation, suggestedPort };
   });
 
   app.post<{ Params: { id: string } }>('/api/services/:id/start', async (request, reply) => {
@@ -200,6 +208,13 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     if (cfg.selectedModel && isValidModelId(cfg.selectedModel)) {
       const envKey = MODEL_ENV_VARS[id];
       if (envKey) env[envKey] = cfg.selectedModel;
+    }
+    // Server scripts bind to *_PORT env var when set, else fall back to a
+    // hard-coded default. Pipe the persisted port through.
+    const cfgPort = resolveServicePort(manifest);
+    if (cfgPort) {
+      const portEnv = PORT_ENV_VARS[id];
+      if (portEnv) env[portEnv] = String(cfgPort);
     }
 
     const logFd = openLogFd(id);
@@ -340,7 +355,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     }
   });
 
-  app.post<{ Params: { id: string }; Body: { model?: string } }>(
+  app.post<{ Params: { id: string }; Body: { model?: string; port?: number } }>(
     '/api/services/:id/install',
     async (request, reply) => {
       const ownerErr = checkServiceOwner(request);
@@ -349,7 +364,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         return { error: ownerErr.error };
       }
       const { id } = request.params;
-      const body = (request.body ?? {}) as { model?: string };
+      const body = (request.body ?? {}) as { model?: string; port?: number };
       const manifest = getServiceById(id);
       if (!manifest) {
         reply.status(404);
@@ -397,6 +412,25 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         const envKey = MODEL_ENV_VARS[id];
         if (envKey) env[envKey] = body.model;
       }
+
+      // Decide on the port this service will bind to:
+      //   1. body.port (user explicitly chose in the install dialog)
+      //   2. getServiceConfig(id).port (already saved from a prior install)
+      //   3. allocateAvailablePort(manifest.port) (auto — first free port)
+      // The chosen port is persisted to services.json so subsequent
+      // start / autostart / status routes use the same value.
+      let resolvedPort: number | undefined = body.port;
+      if (typeof resolvedPort === 'number' && (resolvedPort < 1 || resolvedPort > 65535)) {
+        reply.status(400);
+        return { error: 'Invalid port (expected 1..65535)' };
+      }
+      if (!resolvedPort) {
+        const existing = getServiceConfig(id).port;
+        resolvedPort = existing ?? (await allocateAvailablePort(manifest.port ?? 9000));
+      }
+      setServiceConfig(id, { port: resolvedPort });
+      const portEnv = PORT_ENV_VARS[id];
+      if (portEnv) env[portEnv] = String(resolvedPort);
 
       // Always run uninstall first to guarantee a clean venv. The uninstall
       // script is idempotent (rm -rf of a non-existent venv is fine), so this
@@ -480,6 +514,10 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
             if (cfg.selectedModel && isValidModelId(cfg.selectedModel)) {
               const ek = MODEL_ENV_VARS[id];
               if (ek) startEnv[ek] = cfg.selectedModel;
+            }
+            if (cfg.port) {
+              const pk = PORT_ENV_VARS[id];
+              if (pk) startEnv[pk] = String(cfg.port);
             }
             const startFd = openLogFd(id);
             const { command: autoStartCmd, args: autoStartArgs } = resolveSpawnCommand(manifest.scripts.start);

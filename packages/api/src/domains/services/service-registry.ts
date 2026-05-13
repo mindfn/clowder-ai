@@ -253,6 +253,39 @@ export function getKnownServices(): ServiceManifest[] {
   return KNOWN_SERVICES;
 }
 
+/**
+ * Probe a single port for availability by attempting to bind.
+ * Returns true if the port is free, false if anything else is listening.
+ */
+async function isPortAvailable(port: number): Promise<boolean> {
+  const { createServer } = await import('node:net');
+  return new Promise<boolean>((resolve) => {
+    const server = createServer();
+    server.once('error', () => resolve(false));
+    server.once('listening', () => {
+      server.close(() => resolve(true));
+    });
+    try {
+      server.listen(port, '127.0.0.1');
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+/**
+ * Find an unused port starting from `start` (inclusive) and walking up by 1.
+ * Returns the first available port within `range` tries. Falls back to `start`
+ * if none of the candidates are free — caller can still try to bind and let
+ * the OS error if the entire range is saturated.
+ */
+export async function allocateAvailablePort(start: number, range = 100): Promise<number> {
+  for (let p = start; p < start + range; p++) {
+    if (await isPortAvailable(p)) return p;
+  }
+  return start;
+}
+
 export function getServiceById(id: string): ServiceManifest | undefined {
   return KNOWN_SERVICES.find((s) => s.id === id);
 }

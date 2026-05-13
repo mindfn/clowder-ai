@@ -4,7 +4,7 @@ import { getAllServiceConfigs } from './service-config.js';
 import { fireServiceEvent } from './service-hooks.js';
 import { resolveScriptPath, resolveSpawnCommand } from './service-logs.js';
 import type { ServiceManifest } from './service-manifest.js';
-import { MODEL_ENV_VARS } from './service-manifest.js';
+import { MODEL_ENV_VARS, PORT_ENV_VARS } from './service-manifest.js';
 import { checkInstalled, getKnownServices, getServiceState, setServicePid } from './service-registry.js';
 
 interface Logger {
@@ -89,6 +89,10 @@ export async function autoStartEnabledServices(log: Logger): Promise<void> {
     if (cfg.selectedModel) {
       const envKey = MODEL_ENV_VARS[manifest.id];
       if (envKey) env[envKey] = cfg.selectedModel;
+    }
+    if (cfg.port) {
+      const portKey = PORT_ENV_VARS[manifest.id];
+      if (portKey) env[portKey] = String(cfg.port);
     }
 
     log.info('[services] ⟳ %s — starting (port %s)...', manifest.name, manifest.port ?? '?');

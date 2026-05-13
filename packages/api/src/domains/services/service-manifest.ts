@@ -50,6 +50,14 @@ export const MODEL_ENV_VARS: Record<string, string> = {
   'llm-postprocess': 'LLM_POSTPROCESS_MODEL',
 };
 
+/** Env var that each server script reads to bind its listening port. */
+export const PORT_ENV_VARS: Record<string, string> = {
+  'whisper-stt': 'WHISPER_PORT',
+  'mlx-tts': 'TTS_PORT',
+  'embedding-model': 'EMBED_PORT',
+  'llm-postprocess': 'LLM_POSTPROCESS_PORT',
+};
+
 export interface ServiceState {
   manifest: ServiceManifest;
   status: ServiceStatus;

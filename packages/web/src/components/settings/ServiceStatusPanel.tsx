@@ -196,7 +196,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
     async (
       id: string,
       action: 'start' | 'stop' | 'install' | 'uninstall',
-      opts?: { model?: string; name?: string },
+      opts?: { model?: string; name?: string; port?: number },
     ): Promise<boolean> => {
       const displayName = opts?.name ?? id;
       const key = `${id}:${action}`;
@@ -206,9 +206,12 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
       let ok = false;
       try {
         const fetchOpts: RequestInit = { method: 'POST' };
-        if (opts?.model) {
+        const payload: Record<string, unknown> = {};
+        if (opts?.model) payload.model = opts.model;
+        if (typeof opts?.port === 'number') payload.port = opts.port;
+        if (Object.keys(payload).length > 0) {
           fetchOpts.headers = { 'Content-Type': 'application/json' };
-          fetchOpts.body = JSON.stringify({ model: opts.model });
+          fetchOpts.body = JSON.stringify(payload);
         }
         const res = await apiFetch(`/api/services/${id}/${action}`, fetchOpts);
         ok = res.ok;
@@ -394,11 +397,11 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
           serviceId={installPreview.id}
           serviceName={installPreview.name}
           estimatedMinutes={installPreview.prerequisites?.estimatedMinutes}
-          onConfirm={async (selectedModel) => {
+          onConfirm={async ({ model: selectedModel, port }) => {
             const id = installPreview.id;
             const name = installPreview.name;
             setInstallPreview(null);
-            const ok = await handleAction(id, 'install', { model: selectedModel, name });
+            const ok = await handleAction(id, 'install', { model: selectedModel, name, port });
             if (ok && selectedModel) {
               await apiFetch(`/api/services/${id}/toggle`, {
                 method: 'POST',
