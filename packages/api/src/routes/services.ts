@@ -337,6 +337,35 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         if (envKey) env[envKey] = body.model;
       }
 
+      // Always run uninstall first to guarantee a clean venv. The uninstall
+      // script is idempotent (rm -rf of a non-existent venv is fine), so this
+      // is safe for first-time installs and corrects any state left behind by
+      // a failed previous attempt (e.g. partial pip install, locked .pyd).
+      if (manifest.scripts.uninstall) {
+        const uninstallPath = resolveScriptPath(manifest.scripts.uninstall);
+        if (existsSync(uninstallPath)) {
+          const { command: uCmd, args: uArgs } = resolveSpawnCommand(manifest.scripts.uninstall);
+          await new Promise<void>((resolve) => {
+            const child = spawn(uCmd, uArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+            child.stdout?.on('data', (d: Buffer) => appendLog(id, d.toString()));
+            child.stderr?.on('data', (d: Buffer) => appendLog(id, d.toString()));
+            child.on('error', (err) => {
+              request.log.warn({ serviceId: id, err: err.message }, 'pre-install uninstall errored (continuing)');
+              resolve();
+            });
+            child.on('close', (code) => {
+              if (code !== 0) {
+                request.log.warn(
+                  { serviceId: id, exitCode: code },
+                  'pre-install uninstall exited non-zero (continuing — install will rebuild)',
+                );
+              }
+              resolve();
+            });
+          });
+        }
+      }
+
       try {
         const { command: installCmd, args: installArgs } = resolveSpawnCommand(manifest.scripts.install);
         const child = spawn(installCmd, installArgs, {
