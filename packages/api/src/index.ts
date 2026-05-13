@@ -693,20 +693,31 @@ async function main(): Promise<void> {
     // Event-driven embedding catch-up:
     // service-autostart owns the "is sidecar healthy yet" polling. It calls
     // service-hooks.fireServiceReady('embedding-model') the moment the
-    // sidecar's /health turns ok. We just register a callback that embeds
-    // any docs missing from evidence_vectors. No timer of our own — if the
-    // sidecar is already healthy at API boot, the hook fires on next tick.
+    // sidecar's /health turns ok. We register a one-shot hook that embeds
+    // any docs missing from evidence_vectors.
+    //
+    // The hook throws on partial success / unreachable embedding so
+    // service-hooks keeps it registered for retry on next fire (e.g. on the
+    // next API restart). A fully-successful run causes the hook to be
+    // unregistered automatically.
     const builder = memoryServices.indexBuilder;
     const { onServiceReady } = await import('./domains/services/service-hooks.js');
     onServiceReady('embedding-model', async () => {
-      try {
-        const r = await builder.embedPending();
-        if (r.probed) {
-          app.log.info(`[api] F102: embed catch-up — embedded=${r.embedded}, pending=${r.pending}`);
-        }
-      } catch (err) {
-        app.log.warn(`[api] F102: embed catch-up hook failed: ${err}`);
+      const r = await builder.embedPending();
+      if (!r.probed) {
+        // Sidecar reported running but embed-api isn't responding to /embed.
+        // Throw → hook stays registered so the next fire-cycle retries.
+        throw new Error('embedding service health passed but embed API unreachable');
       }
+      if (r.embedded > 0) {
+        app.log.info(`[api] F102: embed catch-up — vectorized ${r.embedded} doc(s)`);
+      }
+      if (r.pending > 0) {
+        // Some docs couldn't be embedded (e.g. partial batch failure).
+        // Throw → keep hook registered for next attempt.
+        throw new Error(`${r.pending} doc(s) still pending after batch`);
+      }
+      // probed + nothing pending → hook unregisters on return.
     });
   }
 
