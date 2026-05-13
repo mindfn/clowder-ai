@@ -278,9 +278,9 @@ export const evidenceRoutes: FastifyPluginAsync<EvidenceRoutesOptions> = async (
       // MAX(evidence_docs.updated_at) for old databases that predate the stamp.
       let lastUpdated: string | null = null;
       try {
-        const stampRow = db
-          .prepare("SELECT value FROM embedding_meta WHERE key = 'last_rebuild_at'")
-          .get() as { value: string } | undefined;
+        const stampRow = db.prepare("SELECT value FROM embedding_meta WHERE key = 'last_rebuild_at'").get() as
+          | { value: string }
+          | undefined;
         lastUpdated = stampRow?.value ?? null;
       } catch {
         /* embedding_meta may not exist in very old schemas */
