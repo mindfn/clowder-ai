@@ -87,10 +87,35 @@ describe('recommendation matrix — Windows ARM64', () => {
     assert.match(rec.unsupported.userAction, /BM25|关键字|x64/);
   });
 
-  test('whisper-stt → faster-whisper base (CPU)', () => {
+  test('whisper-stt native python → unsupported (PyAV/ctranslate2 no win-arm64 wheel)', () => {
     const rec = buildRecommendation('whisper-stt', profile);
+    assert.equal(rec.models.length, 0);
+    assert.ok(rec.unsupported);
+    assert.match(rec.unsupported.reason, /PyAV|ctranslate2/);
+    assert.match(rec.unsupported.userAction, /x86 Python/);
+  });
+
+  test('whisper-stt x86-emulated python → faster-whisper base', () => {
+    const x86Profile = makeProfile({ os: 'win32', arch: 'arm64', gpu: 'none', pythonArch: 'x86-emulated' });
+    const rec = buildRecommendation('whisper-stt', x86Profile);
     assert.equal(rec.models[0]?.name, 'base');
-    assert.ok(rec.notes.some((c) => c.includes('CPU')));
+    assert.equal(rec.unsupported, undefined);
+    assert.ok(rec.notes.some((n) => n.includes('x86')));
+  });
+
+  test('mlx-tts native python → unsupported (aiohttp no win-arm64 wheel)', () => {
+    const rec = buildRecommendation('mlx-tts', profile);
+    assert.equal(rec.models.length, 0);
+    assert.ok(rec.unsupported);
+    assert.match(rec.unsupported.reason, /aiohttp/);
+    assert.match(rec.unsupported.userAction, /x86 Python/);
+  });
+
+  test('mlx-tts x86-emulated python → edge-tts default', () => {
+    const x86Profile = makeProfile({ os: 'win32', arch: 'arm64', gpu: 'none', pythonArch: 'x86-emulated' });
+    const rec = buildRecommendation('mlx-tts', x86Profile);
+    assert.equal(rec.models[0]?.name, 'edge-tts');
+    assert.equal(rec.unsupported, undefined);
   });
 });
 

@@ -89,11 +89,39 @@ services:
           - { label: 'faster-whisper 内置模型列表', url: 'https://github.com/SYSTRAN/faster-whisper#available-models' }
           - { label: 'HF CTranslate2 whisper 模型', url: 'https://huggingface.co/models?library=ctranslate2&search=whisper' }
 
+    # Windows ARM64 native Python — faster-whisper pulls PyAV/ctranslate2 which
+    # have no win-arm64 prebuilt wheels; pip falls back to source build and
+    # fails on Cython compile. Same pattern as llm-postprocess: gate behind x86
+    # Python emulation.
+    - match: { os: win32, arch: arm64, pythonArch: native }
+      unsupported:
+        reason: faster-whisper 间接依赖 PyAV / ctranslate2 等 C 扩展，在 Windows ARM64 没有预编译 wheel，原生 ARM Python 装不上。
+        userAction: 请安装 x86 Python 3.10+（python.org 64-bit Windows 安装包，Microsoft Store 版也可）
+        retryHint: 安装好 x86 Python 后，关闭此弹窗再次点击「安装」，会自动按 x86 模式重新匹配
+
+    - match: { os: win32, arch: arm64, pythonArch: x86-emulated }
+      models:
+        - name: base
+          size: ~150MB
+          description: faster-whisper base（x86 模拟运行，推荐）
+          requirements: { ramGb: 2, diskGb: 0.5 }
+          performance: CPU 偏慢
+        - name: large-v3-turbo
+          size: ~1.5GB
+          description: faster-whisper turbo（x86 模拟，仅推荐高内存机器）
+          requirements: { ramGb: 4, diskGb: 2 }
+      notes:
+        - x86 Python 运行在 ARM 模拟层上，性能比原生略低
+      customModelHint:
+        description: 'faster-whisper 后端 (x86 模拟 Python)：内置 ID（tiny/base/small/medium/large-v1~v3/large-v3-turbo/distil-large-v3）'
+        links:
+          - { label: 'faster-whisper 内置模型列表', url: 'https://github.com/SYSTRAN/faster-whisper#available-models' }
+
     - match: { os: [win32, linux], gpu: [cuda, rocm] }
       models:
         - name: large-v3-turbo
           size: ~1.5GB
-          description: faster-whisper turbo（CTranslate2，GPU 推荐）
+          description: faster-whisper turbo（CTranslate2,GPU 推荐）
           requirements: { ramGb: 4, diskGb: 2 }
           performance: GPU 10x+
         - name: large-v3
@@ -160,6 +188,33 @@ services:
         - Intel Mac 不支持 MLX-Audio，使用 edge-tts
       customModelHint:
         description: 'edge-tts 云端服务（无本地模型下载），通过 voice 名选择音色'
+        links:
+          - { label: 'edge-tts voice 列表', url: 'https://github.com/rany2/edge-tts#changing-voices' }
+
+    # Windows ARM64 native Python — edge-tts pulls aiohttp which has no
+    # win-arm64 prebuilt wheel; pip falls back to source build and needs MSVC
+    # to compile aiohttp._websocket. Same gate as whisper-stt / llm-postprocess.
+    - match: { os: win32, arch: arm64, pythonArch: native }
+      unsupported:
+        reason: edge-tts 依赖 aiohttp，在 Windows ARM64 没有预编译 wheel，原生 ARM Python 装不上（需要 MSVC 编译 C 扩展）。
+        userAction: 请安装 x86 Python 3.10+（python.org 64-bit Windows 安装包，Microsoft Store 版也可）
+        retryHint: 安装好 x86 Python 后，关闭此弹窗再次点击「安装」，会自动按 x86 模式重新匹配
+
+    - match: { os: win32, arch: arm64, pythonArch: x86-emulated }
+      models:
+        - name: edge-tts
+          size: ~20MB
+          description: 微软云端语音（x86 模拟运行，推荐）
+          requirements: { ramGb: 1, diskGb: 0.1 }
+          performance: 取决于网络
+        - name: sapi
+          size: ~5MB
+          description: Windows 内置语音，离线可用
+          requirements: { ramGb: 1, diskGb: 0.1 }
+      notes:
+        - x86 Python 运行在 ARM 模拟层上，性能比原生略低；edge-tts 与 sapi 都基本不受影响
+      customModelHint:
+        description: 'edge-tts 云端服务 / sapi Windows 内置（x86 模拟 Python）'
         links:
           - { label: 'edge-tts voice 列表', url: 'https://github.com/rany2/edge-tts#changing-voices' }
 
