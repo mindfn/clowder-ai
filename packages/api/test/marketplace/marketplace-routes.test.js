@@ -96,14 +96,14 @@ describe('Marketplace Routes', () => {
     }
   });
 
-  it('GET /api/marketplace/search returns 400 without q param', async () => {
+  it('GET /api/marketplace/search returns 200 without q param (browse mode)', async () => {
     const res = await app.inject({
       method: 'GET',
       url: '/api/marketplace/search',
     });
-    assert.strictEqual(res.statusCode, 400);
+    assert.strictEqual(res.statusCode, 200);
     const body = res.json();
-    assert.ok(body.error.includes('q'));
+    assert.ok(Array.isArray(body));
   });
 
   it('POST /api/marketplace/install/plan returns install plan', async () => {
