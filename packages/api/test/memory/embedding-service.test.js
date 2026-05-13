@@ -38,6 +38,43 @@ describe('EmbeddingService (HTTP client to embed-api.py)', () => {
     await assert.rejects(() => svc.embed(['hello']), /not ready/i);
   });
 
+  it('embed splits inputs > 64 into batches (mirrors embed-api MAX_BATCH_SIZE)', async () => {
+    const { EmbeddingService } = await import('../../dist/domains/memory/EmbeddingService.js');
+    const svc = new EmbeddingService({
+      embedModel: 'qwen3-embedding-0.6b',
+      embedDim: 4,
+      embedTimeoutMs: 3000,
+      maxModelMemMb: 800,
+    });
+    svc.markReady();
+    const originalFetch = globalThis.fetch;
+    const seenBatchSizes = [];
+    globalThis.fetch = async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      seenBatchSizes.push(body.input.length);
+      const data = body.input.map((_, i) => ({
+        index: i,
+        embedding: [0.1, 0.2, 0.3, 0.4],
+      }));
+      return {
+        ok: true,
+        async json() {
+          return { data, model: 'mock' };
+        },
+      };
+    };
+    try {
+      const texts = new Array(150).fill('hello');
+      const vectors = await svc.embed(texts);
+      assert.equal(vectors.length, 150);
+      // 150 split into 64 + 64 + 22
+      assert.deepEqual(seenBatchSizes, [64, 64, 22]);
+      assert.ok(seenBatchSizes.every((n) => n <= 64));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('markReady flips ready without probing /health (event-driven entry)', async () => {
     const { EmbeddingService } = await import('../../dist/domains/memory/EmbeddingService.js');
     const svc = new EmbeddingService({

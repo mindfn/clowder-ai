@@ -27,6 +27,10 @@ interface HealthResponse {
   dim: number;
 }
 
+// Mirror of embed-api.py's MAX_BATCH_SIZE (scripts/services/embed-api.py).
+// Server rejects batches > this with HTTP 400, so the client must split.
+const EMBED_BATCH_SIZE = 64;
+
 export class EmbeddingService implements IEmbeddingService {
   private config: EmbeddingServiceConfig;
   private baseUrl: string;
@@ -82,7 +86,20 @@ export class EmbeddingService implements IEmbeddingService {
 
   async embed(texts: string[]): Promise<Float32Array[]> {
     if (!this.ready) throw new Error('EmbeddingService not ready — embed-api server not available');
+    if (texts.length === 0) return [];
 
+    const results: Float32Array[] = new Array(texts.length);
+    for (let offset = 0; offset < texts.length; offset += EMBED_BATCH_SIZE) {
+      const batch = texts.slice(offset, offset + EMBED_BATCH_SIZE);
+      const vectors = await this.embedBatch(batch);
+      for (let i = 0; i < vectors.length; i++) {
+        results[offset + i] = vectors[i]!;
+      }
+    }
+    return results;
+  }
+
+  private async embedBatch(texts: string[]): Promise<Float32Array[]> {
     const timeoutMs = this.config.embedTimeoutMs;
     const res = await fetch(`${this.baseUrl}/v1/embeddings`, {
       method: 'POST',
@@ -92,19 +109,16 @@ export class EmbeddingService implements IEmbeddingService {
     });
 
     if (!res.ok) {
-      throw new Error(`Embed API error: ${res.status} ${res.statusText}`);
+      const detail = await res.text().catch(() => '');
+      throw new Error(`Embed API error: ${res.status} ${res.statusText}${detail ? ` — ${detail.slice(0, 200)}` : ''}`);
     }
 
     const body = (await res.json()) as EmbedApiResponse;
-
-    // Convert number[] to Float32Array with MRL dim check
     const targetDim = this.config.embedDim;
     return body.data
       .sort((a, b) => a.index - b.index)
       .map((d) => {
         const emb = d.embedding;
-        // Server already does MRL truncation + L2 normalization,
-        // but guard against dim mismatch
         const arr = new Float32Array(targetDim);
         for (let i = 0; i < Math.min(emb.length, targetDim); i++) {
           arr[i] = emb[i]!;

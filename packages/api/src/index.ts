@@ -702,9 +702,9 @@ async function main(): Promise<void> {
     onServiceEvent('embedding-model', 'started', async () => {
       embedding?.markReady();
       const r = await builder.embedPending();
-      if (r.embedded > 0) {
-        app.log.info(`[api] F102: embed catch-up — vectorized ${r.embedded} doc(s)`);
-      }
+      app.log.info(
+        `[api] F102: embed catch-up — probed=${r.probed} embedded=${r.embedded} pending=${r.pending}`,
+      );
       if (r.pending > 0) {
         // Partial batch failure — throw so service-hooks keeps the hook
         // registered for retry on the next fire-cycle.
