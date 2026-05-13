@@ -118,38 +118,22 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     return { services: states };
   });
 
-  // Serve the offline-install guide as rendered HTML from the local repo so
-  // the help link in InstallPreviewModal works in offline / air-gapped
-  // environments — falling back to a github URL would defeat the whole point.
-  // HTML is rendered on the fly (file is ~7KB, marked is fast) so doc edits
-  // take effect on next request, no build step.
+  // Serve the offline-install guide from the local repo so the help link in
+  // InstallPreviewModal works in offline / air-gapped environments. The HTML
+  // is pre-rendered and checked in (docs/services-offline-install.html);
+  // regenerate with `pnpm -w build-docs` (or the one-shot script in commit
+  // history) when the .md source changes. Keeps marked off the production
+  // dependency list — doc edits are infrequent enough that manual regen is
+  // cheaper than a runtime parser.
   app.get('/api/services/docs/offline-install', async (_request, reply) => {
-    const docPath = resolve(resolveRepoRoot(), 'docs/services-offline-install.md');
-    if (!existsSync(docPath)) {
+    const htmlPath = resolve(resolveRepoRoot(), 'docs/services-offline-install.html');
+    if (!existsSync(htmlPath)) {
       reply.status(404);
-      return { error: 'docs/services-offline-install.md not found in repo' };
+      return { error: 'docs/services-offline-install.html not found — regenerate from the .md source' };
     }
-    const { marked } = await import('marked');
-    const md = readFileSync(docPath, 'utf-8');
-    const body = await marked.parse(md);
-    const html = `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>离线安装指南 — Clowder AI</title>
-<style>
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;max-width:860px;margin:2em auto;padding:0 1.5em;color:#1f2937;line-height:1.6}
-  h1,h2,h3{border-bottom:1px solid #e5e7eb;padding-bottom:.3em;margin-top:1.6em}
-  h1{font-size:1.9em}h2{font-size:1.5em}h3{font-size:1.2em;border-bottom:none}
-  code{background:#f3f4f6;padding:.15em .4em;border-radius:3px;font-size:.92em}
-  pre{background:#0f172a;color:#e2e8f0;padding:1em;border-radius:6px;overflow-x:auto}
-  pre code{background:transparent;padding:0;color:inherit}
-  a{color:#2563eb;text-decoration:none}a:hover{text-decoration:underline}
-  table{border-collapse:collapse;margin:1em 0}th,td{border:1px solid #d1d5db;padding:.4em .7em}th{background:#f3f4f6}
-  blockquote{border-left:4px solid #d1d5db;margin:0;padding:.2em 1em;color:#4b5563;background:#f9fafb}
-</style></head><body>
-${body}
-</body></html>`;
     reply.header('cache-control', 'no-cache');
     reply.type('text/html; charset=utf-8');
-    return html;
+    return readFileSync(htmlPath, 'utf-8');
   });
 
   app.get('/api/services/endpoints', async (request, reply) => {
