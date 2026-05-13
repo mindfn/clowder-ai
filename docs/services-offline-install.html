@@ -102,7 +102,7 @@ curl -L -o ~/.cat-cafe/piper-models/zh_CN-huayan-medium.onnx \
 curl -L -o ~/.cat-cafe/piper-models/zh_CN-huayan-medium.onnx.json \
   https://hf-mirror.com/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx.json
 </code></pre>
-<p>放好后重试 install，脚本检测到文件存在就跳过下载（见 <code>scripts/services/tts-install.sh</code> 的 <code>[ ! -f ... ]</code> 判断）。</p>
+<p>放好后重试 install，脚本检测到文件存在就跳过下载（见 <code>scripts/services/tts-install.sh</code> 中的文件存在判断）。</p>
 <h3>3.3 venv 依赖离线安装</h3>
 <p>如果 pip install 也跑不通，可以在能上网的机器先把 wheel 包打包：</p>
 <pre><code class="language-bash"># 在能上网的机器
