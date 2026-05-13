@@ -44,11 +44,9 @@ export interface MatchCriteria {
 
 export interface MatrixEntry {
   match: MatchCriteria;
-  recommended?: ModelOption;
-  alternatives?: ModelOption[];
+  models?: ModelOption[];
   unsupported?: UnsupportedReason;
-  caveats?: string[];
-  notes?: string;
+  notes?: string[];
 }
 
 export type ServiceMatrix = Record<string, MatrixEntry[]>;
@@ -56,9 +54,7 @@ export type ServiceMatrix = Record<string, MatrixEntry[]>;
 export interface ServiceRecommendation {
   serviceId: string;
   profile: EnvironmentProfile;
-  recommended?: ModelOption;
-  alternatives: ModelOption[];
+  models: ModelOption[];
   unsupported?: UnsupportedReason;
-  caveats: string[];
-  notes?: string;
+  notes: string[];
 }

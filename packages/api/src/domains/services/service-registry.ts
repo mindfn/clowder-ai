@@ -259,15 +259,14 @@ export function getServiceById(id: string): ServiceManifest | undefined {
 
 function enrichManifestModels(manifest: ServiceManifest, rec: ServiceRecommendation): ServiceManifest {
   type Model = NonNullable<ServiceManifest['prerequisites']['models']>[number];
-  const models: Model[] = [];
-  if (rec.recommended) {
-    const { name, size, description } = rec.recommended;
-    models.push({ name, size, autoDownload: true, isDefault: true, description });
-  }
-  for (const { name, size, description } of rec.alternatives) {
-    models.push({ name, size, autoDownload: true, description });
-  }
-  if (models.length === 0) return manifest;
+  if (rec.models.length === 0) return manifest;
+  const models: Model[] = rec.models.map((m, i) => ({
+    name: m.name,
+    size: m.size,
+    autoDownload: true,
+    description: m.description,
+    ...(i === 0 ? { isDefault: true } : {}),
+  }));
   return { ...manifest, prerequisites: { ...manifest.prerequisites, models } };
 }
 

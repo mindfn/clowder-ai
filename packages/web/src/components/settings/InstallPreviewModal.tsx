@@ -38,11 +38,9 @@ interface EnvironmentProfile {
 interface ServiceRecommendation {
   serviceId: string;
   profile: EnvironmentProfile;
-  recommended?: ModelOption;
-  alternatives: ModelOption[];
+  models: ModelOption[];
   unsupported?: UnsupportedReason;
-  caveats: string[];
-  notes?: string;
+  notes: string[];
 }
 
 interface InstallPreviewModalProps {
@@ -235,7 +233,7 @@ export function InstallPreviewModal({
         }
         const data = (await res.json()) as { profile: EnvironmentProfile; recommendation: ServiceRecommendation };
         setRec(data.recommendation);
-        setSelectedModel(data.recommendation.recommended?.name ?? '');
+        setSelectedModel(data.recommendation.models[0]?.name ?? '');
       })
       .catch(() => setError('检测失败：网络错误'))
       .finally(() => setLoading(false));
@@ -252,9 +250,7 @@ export function InstallPreviewModal({
 
   if (!open) return null;
 
-  const allModels: ModelOption[] = rec?.recommended
-    ? [rec.recommended, ...rec.alternatives]
-    : (rec?.alternatives ?? []);
+  const allModels: ModelOption[] = rec?.models ?? [];
   const finalModel = useCustom ? customModel.trim() : selectedModel;
   const isUnsupported = !!rec?.unsupported;
   const canConfirm = !loading && !error && !isUnsupported && (allModels.length === 0 || finalModel.length > 0);
@@ -301,7 +297,7 @@ export function InstallPreviewModal({
           {rec && !isUnsupported && allModels.length > 0 && (
             <ModelSelector
               models={allModels}
-              recommendedName={rec.recommended?.name}
+              recommendedName={allModels[0]?.name}
               selectedModel={selectedModel}
               useCustom={useCustom}
               customModel={customModel}
@@ -311,10 +307,10 @@ export function InstallPreviewModal({
             />
           )}
 
-          {rec && rec.caveats.length > 0 && (
+          {rec && rec.notes.length > 0 && (
             <div className="rounded-lg border border-conn-amber-border bg-conn-amber-bg/40 px-4 py-3 space-y-1">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-conn-amber-text">注意事项</p>
-              {rec.caveats.map((c) => (
+              {rec.notes.map((c) => (
                 <p key={c} className="text-[12px] text-cafe-secondary">
                   · {c}
                 </p>

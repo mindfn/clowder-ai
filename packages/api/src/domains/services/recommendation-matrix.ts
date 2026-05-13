@@ -25,8 +25,8 @@ export function buildRecommendation(serviceId: string, profile: EnvironmentProfi
     return {
       serviceId,
       profile,
-      alternatives: [],
-      caveats: [],
+      models: [],
+      notes: [],
       unsupported: {
         reason: `服务 ${serviceId} 没有针对当前环境（${profile.os}/${profile.arch}/gpu=${profile.gpu}）的推荐配置`,
         userAction: '请联系开发者补充矩阵条目，或在 GitHub 提 issue',
@@ -37,11 +37,9 @@ export function buildRecommendation(serviceId: string, profile: EnvironmentProfi
   return {
     serviceId,
     profile,
-    recommended: entry.recommended,
-    alternatives: entry.alternatives ?? [],
+    models: entry.models ?? [],
     unsupported: entry.unsupported,
-    caveats: entry.caveats ?? [],
-    notes: entry.notes,
+    notes: entry.notes ?? [],
   };
 }
 
