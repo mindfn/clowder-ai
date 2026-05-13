@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import type { ServiceMatrix } from './recommendation-types.js';
 
-const YAML_PATH = resolve(dirname(fileURLToPath(import.meta.url)), 'recommendation-matrix.yaml');
+// Matrix lives next to install/server scripts in scripts/services/ — see CLAUDE.md
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../..');
+const YAML_PATH = resolve(REPO_ROOT, 'scripts/services/recommendation-matrix.yaml');
 
 interface MatrixFile {
   services: ServiceMatrix;
