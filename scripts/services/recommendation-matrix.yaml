@@ -31,6 +31,11 @@
 #           userAction: <what user should do>
 #           retryHint: <how to retry>
 #         notes: [<text>, ...]        # general guidance (was "caveats")
+#         customModelHint: <text>     # hint shown beside the "custom model"
+#                                     # input — tells user what kind of
+#                                     # model is acceptable in this env
+#                                     # (backend whitelist, architecture
+#                                     # family, resource limits)
 # ============================================================
 
 services:
@@ -53,6 +58,7 @@ services:
           size: ~500MB
           description: 轻量版，低配机器可用
           requirements: { ramGb: 2, diskGb: 1 }
+      customModelHint: 自定义请填 mlx-community 下的 whisper 模型（如 mlx-community/whisper-medium-mlx）
 
     - match: { os: darwin, arch: x64 }
       models:
@@ -72,6 +78,7 @@ services:
           performance: CPU 实时 1-2x
       notes:
         - Intel Mac 不支持 MLX，使用 faster-whisper 后端
+      customModelHint: '自定义必须是 faster-whisper 内置 ID（tiny / base / small / medium / large-v1~v3 / large-v3-turbo / distil-large-v3 等）或 HuggingFace 上的 CTranslate2 转换模型'
 
     - match: { os: [win32, linux], gpu: [cuda, rocm] }
       models:
@@ -90,6 +97,7 @@ services:
           requirements: { ramGb: 2, diskGb: 0.5 }
       notes:
         - GPU 加速需 CUDA 12+ 或 ROCm 5.7+
+      customModelHint: '自定义必须是 faster-whisper 内置 ID（tiny / base / small / medium / large-v1~v3 / large-v3-turbo / distil-large-v3 等）或 CTranslate2 转换模型'
 
     - match: { os: [win32, linux], gpu: none }
       models:
@@ -105,6 +113,7 @@ services:
           performance: CPU 实时 2x，可能偏慢
       notes:
         - 纯 CPU 上 large 模型偏慢，默认 base
+      customModelHint: '自定义必须是 faster-whisper 内置 ID（tiny / base / small / medium / large-v1~v3 / distil-large-v3 等），CPU 推荐 base/small'
 
   # ------------------------------------------------------------
   # MLX TTS (语音合成)
@@ -122,6 +131,7 @@ services:
           description: 微软云端，备选（需联网）
           requirements: { ramGb: 1, diskGb: 0.1 }
           performance: 取决于网络
+      customModelHint: 自定义请填 mlx-audio 兼容模型 ID（mlx-community 下的 Kokoro/StyleTTS2 量化版），或者 edge-tts 关键字使用云端
 
     - match: { os: darwin, arch: x64 }
       models:
@@ -132,6 +142,7 @@ services:
           performance: 取决于网络
       notes:
         - Intel Mac 不支持 MLX-Audio，使用 edge-tts
+      customModelHint: 自定义请填 edge-tts（云端关键字，无本地模型）
 
     - match: { os: win32 }
       models:
@@ -152,6 +163,7 @@ services:
           performance: 实时 1x
       notes:
         - edge-tts 需要联网；piper/sapi 完全离线
+      customModelHint: '自定义可填 piper voice ID（zh_CN-huayan-medium / en_US-amy-medium / en_US-lessac-medium / en_GB-alan-medium）或关键字 edge-tts / sapi'
 
     - match: { os: linux }
       models:
@@ -167,6 +179,7 @@ services:
           performance: CPU 实时
       notes:
         - 离线选项 piper 默认下载中文 huayan-medium 模型；可手填 en_US-amy-medium 等
+      customModelHint: '自定义可填 piper voice ID（zh_CN-huayan-medium / en_US-amy-medium / en_US-lessac-medium / en_GB-alan-medium）或关键字 edge-tts'
 
   # ------------------------------------------------------------
   # Embedding (语义向量)
@@ -176,9 +189,20 @@ services:
       models:
         - name: mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ
           size: ~400MB
-          description: Qwen3 中文向量，新一代质量（MLX，推荐）
+          description: Qwen3 中文向量 0.6B（MLX 4bit-DWQ，推荐）
           requirements: { ramGb: 2, diskGb: 1 }
           performance: 实时
+        - name: mlx-community/Qwen3-Embedding-4B-4bit-DWQ
+          size: ~2.5GB
+          description: Qwen3 中文向量 4B（更高质量，32GB+ 内存推荐）
+          requirements: { ramGb: 8, diskGb: 3 }
+          performance: 实时
+        - name: mlx-community/Qwen3-Embedding-8B-4bit-DWQ
+          size: ~5GB
+          description: Qwen3 中文向量 8B（最高质量，48GB+ 内存）
+          requirements: { ramGb: 16, diskGb: 6 }
+          performance: 实时
+      customModelHint: 自定义请填 mlx-community 下的 embedding 模型（推荐 Qwen3-Embedding-*-4bit-DWQ 或 -mxfp8 量化版）
 
     # Verified against fastembed 0.8 TextEmbedding.list_supported_models():
     # jinaai/jina-embeddings-v2-base-zh is in the catalog (768 dim, 640MB) and
@@ -200,6 +224,7 @@ services:
       notes:
         - Intel Mac 不支持 MLX，使用 sentence-transformers 后端
         - 中英文都支持
+      customModelHint: 自定义请填 HuggingFace 上任意 sentence-transformers 兼容的 embedding 模型 ID（如 BAAI/bge-m3）
 
     # Windows/Linux ARM64: fastembed backend only (no torch wheels for ARM).
     # fastembed has a hardcoded model whitelist. Choices verified via
@@ -219,6 +244,7 @@ services:
       notes:
         - 'ARM64 走 fastembed 后端，受白名单限制（已对照 fastembed.TextEmbedding.list_supported_models() 选型）'
         - '如需更高质量请安装 x86 Python（参考 LLM 服务的 x86 安装引导），切换到 sentence-transformers 后端'
+      customModelHint: '自定义必须是 fastembed catalog 内的模型（运行 `fastembed.TextEmbedding.list_supported_models()` 查看），如 intfloat/multilingual-e5-large、sentence-transformers/paraphrase-multilingual-mpnet-base-v2、jinaai/jina-embeddings-v2-base-de 等'
 
     # Windows/Linux x64 + GPU: sentence-transformers backend, anything HF goes
     - match: { os: [win32, linux], arch: x64, gpu: [cuda, rocm] }
@@ -235,6 +261,7 @@ services:
           performance: CPU 实时
       notes:
         - 中英文都支持
+      customModelHint: 自定义请填 HuggingFace 上任意 sentence-transformers 兼容的 embedding 模型 ID（GPU 推荐 768/1024 dim 多语言模型，如 BAAI/bge-m3）
 
     # Windows/Linux x64 CPU (sentence-transformers, no GPU)
     - match: { os: [win32, linux], arch: x64 }
@@ -252,6 +279,7 @@ services:
       notes:
         - 中英文都支持
         - '⚠ 切换 jina (768 dim) ↔ e5-large (1024 dim) 时维度变化，需重建 memory 索引'
+      customModelHint: 自定义请填 HuggingFace 上任意 sentence-transformers 兼容的 embedding 模型 ID（CPU 建议 ≤768 dim，1024 dim 偏慢）
 
   # ------------------------------------------------------------
   # LLM Postprocess (转写纠正)
@@ -274,6 +302,7 @@ services:
           requirements: { ramGb: 12, diskGb: 5 }
       notes:
         - Qwen3.5-35B 需要 48GB+ 统一内存
+      customModelHint: 自定义请填 mlx-community 下的 Instruct/Chat 模型（如 Qwen2.5-32B-Instruct-4bit 或其它 Llama/Mistral 量化版）。每 4bit-quant 内存占用约为原始参数量的 0.5 倍
 
     - match: { os: darwin, arch: x64 }
       models:
@@ -288,6 +317,7 @@ services:
           requirements: { ramGb: 16, diskGb: 15, gpu: recommended }
       notes:
         - Intel Mac 不支持 MLX，使用 transformers 后端
+      customModelHint: 自定义请填 HuggingFace 上 transformers 兼容的因果语言模型（CausalLM）。CPU 推荐 3B 以下
 
     - match: { os: win32, arch: arm64, pythonArch: native }
       unsupported:
@@ -304,6 +334,7 @@ services:
           performance: CPU 偏慢
       notes:
         - x86 Python 运行在 ARM 模拟层上，性能比原生略低
+      customModelHint: '自定义请填 HuggingFace 上 transformers 兼容的因果语言模型；x86 模拟运行建议 ≤3B'
 
     - match: { os: [win32, linux], arch: x64, gpu: [cuda, rocm] }
       models:
@@ -318,6 +349,7 @@ services:
           performance: CPU 偏慢，GPU 流畅
       notes:
         - 7B 模型需 ≥12GB 显存
+      customModelHint: 自定义请填 HuggingFace 上 transformers 兼容的因果语言模型。FP16 模型大小（GB）约为参数量（B）的 2 倍，需匹配显存
 
     - match: { os: [win32, linux], arch: x64, gpu: none }
       models:
@@ -328,3 +360,4 @@ services:
           performance: '~5 tok/s'
       notes:
         - 纯 CPU 上 3B 模型生成偏慢
+      customModelHint: 自定义请填 HuggingFace 上 transformers 兼容的因果语言模型；纯 CPU 建议 ≤3B

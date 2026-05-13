@@ -40,6 +40,7 @@ export function buildRecommendation(serviceId: string, profile: EnvironmentProfi
     models: entry.models ?? [],
     unsupported: entry.unsupported,
     notes: entry.notes ?? [],
+    customModelHint: entry.customModelHint,
   };
 }
 

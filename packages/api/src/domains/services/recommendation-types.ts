@@ -47,6 +47,7 @@ export interface MatrixEntry {
   models?: ModelOption[];
   unsupported?: UnsupportedReason;
   notes?: string[];
+  customModelHint?: string;
 }
 
 export type ServiceMatrix = Record<string, MatrixEntry[]>;
@@ -57,4 +58,5 @@ export interface ServiceRecommendation {
   models: ModelOption[];
   unsupported?: UnsupportedReason;
   notes: string[];
+  customModelHint?: string;
 }

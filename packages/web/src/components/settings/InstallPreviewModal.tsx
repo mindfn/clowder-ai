@@ -41,6 +41,7 @@ interface ServiceRecommendation {
   models: ModelOption[];
   unsupported?: UnsupportedReason;
   notes: string[];
+  customModelHint?: string;
 }
 
 interface InstallPreviewModalProps {
@@ -124,13 +125,14 @@ interface ModelSelectorProps {
   selectedModel: string;
   useCustom: boolean;
   customModel: string;
+  customModelHint?: string;
   onSelect: (name: string) => void;
   onToggleCustom: (v: boolean) => void;
   onCustomChange: (v: string) => void;
 }
 
 function ModelSelector(props: ModelSelectorProps) {
-  const { models, recommendedName, selectedModel, useCustom, customModel } = props;
+  const { models, recommendedName, selectedModel, useCustom, customModel, customModelHint } = props;
   return (
     <div className="rounded-lg bg-[var(--console-field-bg)] px-4 py-3 space-y-2">
       <p className="text-[11px] font-semibold uppercase tracking-wider text-cafe-muted">模型选择</p>
@@ -188,13 +190,18 @@ function ModelSelector(props: ModelSelectorProps) {
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-cafe">自定义模型</p>
             {useCustom && (
-              <input
-                type="text"
-                value={customModel}
-                onChange={(e) => props.onCustomChange(e.target.value)}
-                placeholder="org/model-name"
-                className="mt-1 w-full border border-[var(--console-border-soft)] rounded-md px-2 py-1 text-xs bg-[var(--console-card-bg)] focus:outline-none focus:ring-1 focus:ring-conn-sky-ring"
-              />
+              <>
+                <input
+                  type="text"
+                  value={customModel}
+                  onChange={(e) => props.onCustomChange(e.target.value)}
+                  placeholder="org/model-name"
+                  className="mt-1 w-full border border-[var(--console-border-soft)] rounded-md px-2 py-1 text-xs bg-[var(--console-card-bg)] focus:outline-none focus:ring-1 focus:ring-conn-sky-ring"
+                />
+                {customModelHint && (
+                  <p className="mt-1 text-[11px] text-cafe-muted leading-relaxed">{customModelHint}</p>
+                )}
+              </>
             )}
           </div>
         </label>
@@ -301,6 +308,7 @@ export function InstallPreviewModal({
               selectedModel={selectedModel}
               useCustom={useCustom}
               customModel={customModel}
+              customModelHint={rec.customModelHint}
               onSelect={setSelectedModel}
               onToggleCustom={setUseCustom}
               onCustomChange={setCustomModel}
