@@ -1,7 +1,7 @@
 export type EnvOs = 'darwin' | 'win32' | 'linux';
 export type EnvArch = 'arm64' | 'x64';
 export type EnvGpu = 'apple' | 'cuda' | 'rocm' | 'none';
-export type PythonArch = 'native' | 'x86-emulated';
+export type PythonArch = 'native' | 'x86-emulated' | 'missing';
 
 export interface EnvironmentProfile {
   os: EnvOs;

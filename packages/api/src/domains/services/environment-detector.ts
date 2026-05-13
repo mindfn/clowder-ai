@@ -117,7 +117,7 @@ function detectPython(os: EnvOs, arch: EnvArch): { pythonArch: PythonArch; pytho
   }
 
   if (probes.length === 0) {
-    return { pythonArch: 'native' };
+    return { pythonArch: 'missing' };
   }
 
   const native = probes.find((p) => p.machine && isNativeMachine(p.machine, arch));

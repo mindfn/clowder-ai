@@ -89,6 +89,28 @@ services:
           - { label: 'faster-whisper 内置模型列表', url: 'https://github.com/SYSTRAN/faster-whisper#available-models' }
           - { label: 'HF CTranslate2 whisper 模型', url: 'https://huggingface.co/models?library=ctranslate2&search=whisper' }
 
+    # Windows ARM64, no Python yet — installer will auto-fetch x64 Python via
+    # winget. Show the same model list as the x86-emulated case so the dialog
+    # is identical except for the heads-up note.
+    - match: { os: win32, arch: arm64, pythonArch: missing }
+      models:
+        - name: base
+          size: ~150MB
+          description: faster-whisper base（x86 模拟运行，推荐）
+          requirements: { ramGb: 2, diskGb: 0.5 }
+          performance: CPU 偏慢
+        - name: large-v3-turbo
+          size: ~1.5GB
+          description: faster-whisper turbo（x86 模拟，仅推荐高内存机器）
+          requirements: { ramGb: 4, diskGb: 2 }
+      notes:
+        - '⚠ 系统未检测到 Python。点击安装后会通过 winget 自动安装 x64 (AMD64) Python（不是 ARM64 版本），通过 Windows 内置 emulation 运行——这是 ARM64 上能跑通 faster-whisper 的唯一方式。'
+        - 'winget 失败时可手动从 https://www.python.org/downloads/ 下载 "Windows installer (64-bit)" 重试。'
+      customModelHint:
+        description: 'faster-whisper 后端 (x86 模拟 Python，待安装)：内置 ID（tiny/base/small/medium/large-v1~v3/large-v3-turbo/distil-large-v3）'
+        links:
+          - { label: 'Python 64-bit installer', url: 'https://www.python.org/downloads/' }
+
     # Windows ARM64 native Python — faster-whisper pulls PyAV/ctranslate2 which
     # have no win-arm64 prebuilt wheels; pip falls back to source build and
     # fails on Cython compile. Same pattern as llm-postprocess: gate behind x86
@@ -190,6 +212,27 @@ services:
         description: 'edge-tts 云端服务（无本地模型下载），通过 voice 名选择音色'
         links:
           - { label: 'edge-tts voice 列表', url: 'https://github.com/rany2/edge-tts#changing-voices' }
+
+    # Windows ARM64, no Python yet — installer will auto-fetch x64 Python via
+    # winget; offer the full x86-emulated catalog.
+    - match: { os: win32, arch: arm64, pythonArch: missing }
+      models:
+        - name: edge-tts
+          size: ~20MB
+          description: 微软云端语音（x86 模拟运行，推荐）
+          requirements: { ramGb: 1, diskGb: 0.1 }
+          performance: 取决于网络
+        - name: sapi
+          size: ~5MB
+          description: Windows 内置语音，离线可用
+          requirements: { ramGb: 1, diskGb: 0.1 }
+      notes:
+        - '⚠ 系统未检测到 Python。点击安装后会通过 winget 自动安装 x64 (AMD64) Python（不是 ARM64 版本），通过 Windows 内置 emulation 运行——edge-tts 依赖的 aiohttp 没有 ARM64 wheel，必须走 x64 路径。'
+        - 'winget 失败时可手动从 https://www.python.org/downloads/ 下载 "Windows installer (64-bit)" 重试。'
+      customModelHint:
+        description: 'edge-tts 云端服务 / SAPI Windows 内置（x86 模拟 Python，待安装）'
+        links:
+          - { label: 'Python 64-bit installer', url: 'https://www.python.org/downloads/' }
 
     # Windows ARM64 native Python — edge-tts pulls aiohttp and piper-tts
     # pulls piper_phonemize; neither has win-arm64 prebuilt wheels. SAPI is
@@ -440,6 +483,24 @@ services:
         description: 'transformers 后端：HuggingFace 上的因果语言模型（CausalLM，pipeline_tag=text-generation）。CPU 推荐 ≤3B'
         links:
           - { label: 'HF text-generation 模型', url: 'https://huggingface.co/models?pipeline_tag=text-generation&sort=likes' }
+
+    # Windows ARM64, no Python yet — installer will auto-fetch x64 Python via
+    # winget; surface the same Qwen2.5-3B model as the x86-emulated path with
+    # an upfront heads-up.
+    - match: { os: win32, arch: arm64, pythonArch: missing }
+      models:
+        - name: Qwen/Qwen2.5-3B-Instruct
+          size: ~6GB
+          description: transformers 后端（x86 模拟运行）
+          requirements: { ramGb: 8, diskGb: 7 }
+          performance: CPU 偏慢
+      notes:
+        - '⚠ 系统未检测到 Python。点击安装后会通过 winget 自动安装 x64 (AMD64) Python（不是 ARM64 版本），通过 Windows 内置 emulation 运行——transformers/safetensors 没有 ARM64 wheel，必须走 x64 路径。'
+        - 'winget 失败时可手动从 https://www.python.org/downloads/ 下载 "Windows installer (64-bit)" 重试。'
+      customModelHint:
+        description: 'transformers 后端 (x86 模拟 Python，待安装)：HuggingFace 上的因果语言模型；模拟层性能较低，建议 ≤3B'
+        links:
+          - { label: 'Python 64-bit installer', url: 'https://www.python.org/downloads/' }
 
     - match: { os: win32, arch: arm64, pythonArch: native }
       unsupported:

@@ -19,9 +19,21 @@ function Test-PythonCandidate {
 function Install-PythonViaWinget {
     $hasWinget = $null -ne (Get-Command winget -ErrorAction SilentlyContinue)
     if (-not $hasWinget) { return $false }
-    Write-Host "  Attempting Python install via winget..."
+
+    # Always pin to x64 (AMD64): on ARM64 Windows, winget will otherwise
+    # install the native arm64 Python build, and several of our service
+    # dependencies (aiohttp / PyAV / piper-tts / sentence-transformers) have
+    # no upstream win-arm64 wheels — they only have win_amd64. x64 Python
+    # runs natively on x64 machines and through Prism emulation on ARM64,
+    # so this single architecture choice works everywhere.
+    $isArm64 = ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64)
+    if ($isArm64) {
+        Write-Host "  Attempting Python install via winget (x64 build for ARM64 emulation)..."
+    } else {
+        Write-Host "  Attempting Python install via winget (x64)..."
+    }
     try {
-        $null = winget install Python.Python.3.12 --accept-source-agreements --accept-package-agreements --silent 2>$null
+        $null = winget install Python.Python.3.12 --architecture x64 --accept-source-agreements --accept-package-agreements --silent 2>$null
         $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
         return $true
     } catch {
