@@ -371,14 +371,14 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
             const name = installPreview.name;
             setInstallPreview(null);
             const ok = await handleAction(id, 'install', { model: selectedModel, name });
-            if (ok) {
+            if (ok && selectedModel) {
               await apiFetch(`/api/services/${id}/toggle`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enabled: true, model: selectedModel }),
+                body: JSON.stringify({ enabled: false, model: selectedModel }),
               });
-              await fetchServices();
             }
+            await fetchServices();
           }}
           onCancel={() => setInstallPreview(null)}
         />
