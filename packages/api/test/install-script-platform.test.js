@@ -218,11 +218,7 @@ test('darwin redis install does not ping-gate after install', () => {
   const fnMatch = installScriptText.match(/install_redis_local\(\)\s*\{([\s\S]*?)\n\}/);
   assert.ok(fnMatch, 'install_redis_local function must exist');
   const fnBody = fnMatch[1];
-  assert.doesNotMatch(
-    fnBody,
-    /redis-cli ping[\s\S]*?return 1/s,
-    'install_redis_local must not fail on redis-cli ping',
-  );
+  assert.doesNotMatch(fnBody, /redis-cli ping[\s\S]*?return 1/s, 'install_redis_local must not fail on redis-cli ping');
 });
 
 test('darwin redis install reports brew install failure instead of swallowing', () => {
