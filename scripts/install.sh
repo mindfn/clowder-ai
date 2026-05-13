@@ -1010,12 +1010,35 @@ install_brew_cask() {
     hash -r 2>/dev/null || true
     command -v "$cmd" &>/dev/null || { fail "$name install failed. Try: brew install --cask $cask"; exit 1; }; ok "$name installed"
 }
+ensure_uv_installed() {
+    # uv is the recommended kimi-cli installer: it auto-fetches Python 3.12+
+    # interpreters without touching the system Python and dodges Ubuntu's
+    # PEP 668 externally-managed-environment restriction. Auto-install it
+    # the same way we already auto-install Node toolchains, instead of
+    # forcing the user to do it manually.
+    if command -v uv &>/dev/null; then return 0; fi
+    info "  uv not found — installing (https://astral.sh/uv)..."
+    if ! command -v curl &>/dev/null; then
+        warn "uv install needs curl, which is missing — skipping"
+        return 1
+    fi
+    local uv_log; uv_log="$(mktemp)"
+    if curl -LsSf https://astral.sh/uv/install.sh 2>"$uv_log" | sh >>"$uv_log" 2>&1; then
+        export PATH="$HOME/.local/bin:$PATH"; hash -r 2>/dev/null || true
+        if command -v uv &>/dev/null; then ok "uv installed"; rm -f "$uv_log"; return 0; fi
+    fi
+    warn "uv install failed — last output:"
+    tail -8 "$uv_log" 2>/dev/null | sed 's/^/    /'
+    rm -f "$uv_log"
+    return 1
+}
+
 install_kimi_cli() {
     info "  Installing Kimi CLI..."
-    # kimi-cli requires Python >=3.12 (verified via pypi metadata). Pin to 3.12
-    # (the minimum) rather than 3.13 so installs work on Ubuntu 24.04 where
-    # 3.12 is the system default, and uv only auto-fetches a newer interpreter
-    # if the requested one is missing.
+    # kimi-cli requires Python >=3.12 (verified via pypi metadata). Prefer uv
+    # because it can auto-fetch a matching interpreter; if it's missing, try
+    # to install it. Fall back to pipx / system pip as best-effort.
+    ensure_uv_installed || true
     local log_file; log_file="$(mktemp)"
     local installer_tried=""
     if command -v uv &>/dev/null; then
