@@ -93,12 +93,21 @@ function Try-ProjectPython {
 }
 
 function Install-PythonToProjectDir {
-    # Wrap the download + silent install in a system-wide named mutex so
-    # concurrent install scripts (whisper/tts/embed/llm clicked together
-    # in the UI) don't all race to install Python into the same target.
-    # Only one process performs the install; the others wait, then the
-    # outer Resolve-Python312 picks up the result via Try-ProjectPython.
-    $mutex = New-Object System.Threading.Mutex($false, "Global\catCafePythonInstall")
+    # Wrap download + silent-install in a per-user mutex so concurrent
+    # service installs don't race. Use an unprefixed name → equivalent to
+    # Local\catCafePythonInstall (session-scoped). Avoid Global\ — that
+    # requires SeCreateGlobalPrivilege which standard users lack; trying
+    # to create a Global mutex would throw UnauthorizedAccessException
+    # that's not in our try-catch path and would unwind to the caller's
+    # throw. Multiple service installs only ever race within the same
+    # user session, so Local scope is sufficient.
+    $mutex = $null
+    try {
+        $mutex = New-Object System.Threading.Mutex($false, "catCafePythonInstall")
+    } catch {
+        Write-Host "  Mutex create failed ($($_.Exception.Message)); proceeding without lock"
+        return (Install-PythonToProjectDirInner)
+    }
     $acquired = $false
     try {
         $acquired = $mutex.WaitOne([TimeSpan]::FromMinutes(10))
@@ -108,6 +117,7 @@ function Install-PythonToProjectDir {
     }
     if (-not $acquired) {
         Write-Host "  Python install lock timed out (>10min)"
+        $mutex.Dispose()
         return $false
     }
     try {
@@ -118,14 +128,14 @@ function Install-PythonToProjectDir {
             Write-Host "  Project Python already present (installed by concurrent install)"
             return $true
         }
-        return Install-PythonToProjectDir-Inner
+        return (Install-PythonToProjectDirInner)
     } finally {
-        $mutex.ReleaseMutex() | Out-Null
+        try { $mutex.ReleaseMutex() | Out-Null } catch {}
         $mutex.Dispose()
     }
 }
 
-function Install-PythonToProjectDir-Inner {
+function Install-PythonToProjectDirInner {
     # Download python-3.12.x-amd64.exe and silent-install to project dir.
     # PrependPath=0 keeps the system PATH untouched; the resolver returns
     # the absolute path to the project-owned python.exe.
@@ -145,7 +155,10 @@ function Install-PythonToProjectDir-Inner {
         Write-Host "  Failed to download Python installer: $($_.Exception.Message)"
         return $false
     }
-    if (-not (Test-Path $installerPath)) { return $false }
+    if (-not (Test-Path $installerPath)) {
+        Write-Host "  Python installer not at expected path: $installerPath"
+        return $false
+    }
 
     if (-not (Test-Path $script:ProjectPythonDir)) {
         New-Item -ItemType Directory -Path $script:ProjectPythonDir -Force | Out-Null
@@ -164,13 +177,25 @@ function Install-PythonToProjectDir-Inner {
         "Include_launcher=0",
         "InstallLauncherAllUsers=0"
     )
-    $proc = Start-Process -FilePath $installerPath -ArgumentList $installerArgs -Wait -PassThru -NoNewWindow
-    Remove-Item -Force $installerPath -ErrorAction SilentlyContinue
-    if ($proc.ExitCode -ne 0) {
-        Write-Host "  Python installer exited with code $($proc.ExitCode)"
+    try {
+        $proc = Start-Process -FilePath $installerPath -ArgumentList $installerArgs -Wait -PassThru -NoNewWindow
+    } catch {
+        Write-Host "  Python installer Start-Process failed: $($_.Exception.Message)"
+        Remove-Item -Force $installerPath -ErrorAction SilentlyContinue
         return $false
     }
-    return Test-Path (Join-Path $script:ProjectPythonDir "python.exe")
+    Remove-Item -Force $installerPath -ErrorAction SilentlyContinue
+    if ($proc.ExitCode -ne 0) {
+        Write-Host "  Python installer exited with code $($proc.ExitCode) — see Microsoft Installer logs in %TEMP%\\Python*.log"
+        return $false
+    }
+    $expectedPython = Join-Path $script:ProjectPythonDir "python.exe"
+    if (Test-Path $expectedPython) {
+        Write-Host "  Python $version installed to $script:ProjectPythonDir"
+        return $true
+    }
+    Write-Host "  Python installer exited 0 but $expectedPython is missing — installer might have redirected via App Execution Alias. Disable it in Settings → Apps → Advanced app settings → App execution aliases (toggle off python.exe / python3.exe)."
+    return $false
 }
 
 function Resolve-Python312 {
