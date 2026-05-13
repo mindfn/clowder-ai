@@ -267,6 +267,14 @@ export interface IIndexBuilder {
   rebuild(options?: { force?: boolean }): Promise<RebuildResult>;
   incrementalUpdate(changedPaths: string[]): Promise<void>;
   checkConsistency(): Promise<ConsistencyReport>;
+  /**
+   * Re-probe embedding service readiness, then embed any evidence_docs that
+   * have no row in evidence_vectors. Idempotent — safe to call in a poll
+   * loop until either the service comes up or the operator gives up.
+   * Returns { probed: true } once the embedding service is reachable,
+   * { embedded } counts only newly-vectorized docs.
+   */
+  embedPending(): Promise<{ probed: boolean; embedded: number; pending: number }>;
 }
 
 export interface IMarkerQueue {

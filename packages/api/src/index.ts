@@ -689,6 +689,41 @@ async function main(): Promise<void> {
     } catch (err) {
       app.log.warn(`[api] F102: evidence index rebuild failed (non-fatal): ${err}`);
     }
+
+    // Deferred embedding catch-up:
+    // autoStartEnabledServices() spawns the embed sidecar asynchronously and
+    // model loading often takes 10-60s. The initial rebuild() above runs
+    // while embedding.isReady() is still false, so it skips the embed step and
+    // Vectors stays at 0. Poll every 5s for up to ~5 min, re-probe readiness,
+    // then embed any pending docs once the sidecar comes up.
+    const builder = memoryServices.indexBuilder;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 60;
+    const POLL_MS = 5000;
+    const poller = setInterval(async () => {
+      attempts++;
+      try {
+        const r = await builder.embedPending();
+        if (r.probed) {
+          if (r.embedded > 0) {
+            app.log.info(
+              `[api] F102: deferred embed catch-up — ${r.embedded} doc(s) vectorized, pending=${r.pending}`,
+            );
+          }
+          // Stop once service is reachable AND nothing is pending.
+          if (r.pending === 0) {
+            clearInterval(poller);
+          }
+        }
+      } catch (err) {
+        app.log.warn(`[api] F102: deferred embed catch-up errored (will retry): ${err}`);
+      }
+      if (attempts >= MAX_ATTEMPTS) {
+        clearInterval(poller);
+        app.log.warn(`[api] F102: deferred embed catch-up gave up after ${attempts} attempts`);
+      }
+    }, POLL_MS);
+    poller.unref?.();
   }
 
   // F-4: Global knowledge rebuild (Skills + MEMORY.md → global_knowledge.sqlite)

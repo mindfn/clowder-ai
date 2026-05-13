@@ -511,6 +511,71 @@ export class IndexBuilder implements IIndexBuilder {
     }
   }
 
+  /**
+   * Re-probe embedding service readiness (load() is fail-open + idempotent),
+   * then embed any evidence_docs that are missing from evidence_vectors.
+   * Designed to be called by a polling loop on startup, because the embed
+   * sidecar (autoStart spawned) often takes longer to come online than the
+   * initial rebuild() call — leaving Vectors=0 until first doc change.
+   */
+  async embedPending(): Promise<{ probed: boolean; embedded: number; pending: number }> {
+    if (!this.embedDeps) return { probed: false, embedded: 0, pending: 0 };
+
+    // Re-probe — fail-open: even after a failed first attempt, the sidecar
+    // may have come online by now.
+    if (!this.embedDeps.embedding.isReady()) {
+      try {
+        await this.embedDeps.embedding.load();
+      } catch {
+        /* still not ready */
+      }
+    }
+    if (!this.embedDeps.embedding.isReady()) return { probed: false, embedded: 0, pending: 0 };
+
+    const db = this.store.getDb();
+    const pendingRows = db
+      .prepare(
+        `SELECT anchor, title, summary FROM evidence_docs
+         WHERE anchor NOT IN (SELECT anchor FROM evidence_vectors)`,
+      )
+      .all() as Array<{ anchor: string; title: string; summary: string | null }>;
+
+    if (pendingRows.length === 0) {
+      // Still stamp meta so the console shows the model row.
+      try {
+        this.embedDeps.vectorStore.initMeta(this.embedDeps.embedding.getModelInfo());
+      } catch {
+        /* best effort */
+      }
+      return { probed: true, embedded: 0, pending: 0 };
+    }
+
+    // embedIndexedItems only reads anchor/title/summary, so the cast is safe.
+    // Same pattern as the consistency-rebuild branch above (line ~550).
+    const items = pendingRows.map(
+      (d) => ({ anchor: d.anchor, title: d.title, summary: d.summary ?? undefined }) as EvidenceItem,
+    );
+
+    await this.embedIndexedItems(items);
+
+    // Count how many are still pending after the batch (could remain if embed
+    // threw mid-batch; embedIndexedItems already logs the warn).
+    const stillPending = (
+      db
+        .prepare(
+          `SELECT COUNT(*) as c FROM evidence_docs
+           WHERE anchor NOT IN (SELECT anchor FROM evidence_vectors)`,
+        )
+        .get() as { c: number }
+    ).c;
+
+    return {
+      probed: true,
+      embedded: pendingRows.length - stillPending,
+      pending: stillPending,
+    };
+  }
+
   async checkConsistency(): Promise<ConsistencyReport> {
     const db = this.store.getDb();
     const docCount = (db.prepare('SELECT count(*) AS c FROM evidence_docs').get() as { c: number }).c;
