@@ -31,12 +31,15 @@ export interface ServiceManifest {
   configVars: string[];
 }
 
-export type ServiceStatus = 'running' | 'starting' | 'installing' | 'stopped' | 'unknown' | 'error';
+export type ServiceStatus = 'running' | 'starting' | 'installing' | 'uninstalling' | 'stopped' | 'unknown' | 'error';
+
+export type InstallStatus = 'none' | 'installed' | 'failed';
 
 export interface ServiceConfig {
   enabled: boolean;
   selectedModel?: string;
   port?: number;
+  installStatus?: InstallStatus;
 }
 
 export const MODEL_ENV_VARS: Record<string, string> = {
@@ -50,6 +53,7 @@ export interface ServiceState {
   manifest: ServiceManifest;
   status: ServiceStatus;
   installed: boolean;
+  installStatus: InstallStatus;
   enabled: boolean;
   selectedModel?: string;
   lastChecked: number | null;

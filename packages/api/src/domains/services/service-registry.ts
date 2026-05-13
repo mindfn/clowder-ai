@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { getServiceConfig } from './service-config.js';
 import { resolveScriptPath } from './service-logs.js';
-import type { ServiceManifest, ServiceState, ServiceStatus } from './service-manifest.js';
+import type { InstallStatus, ServiceManifest, ServiceState, ServiceStatus } from './service-manifest.js';
 
 const KNOWN_SERVICES: ServiceManifest[] = [
   {
@@ -262,9 +262,19 @@ function resolveVenvPath(venvPath: string): string {
 }
 
 export function checkInstalled(manifest: ServiceManifest): boolean {
+  const config = getServiceConfig(manifest.id);
+  if (config.installStatus) return config.installStatus === 'installed';
   const venv = manifest.prerequisites?.venvPath;
   if (!venv) return true;
   return existsSync(resolveVenvPath(venv));
+}
+
+export function getInstallStatus(manifest: ServiceManifest): InstallStatus {
+  const config = getServiceConfig(manifest.id);
+  if (config.installStatus) return config.installStatus;
+  const venv = manifest.prerequisites?.venvPath;
+  if (!venv) return 'installed';
+  return existsSync(resolveVenvPath(venv)) ? 'installed' : 'none';
 }
 
 function isScriptRunning(script: string | { unix: string; windows: string } | undefined): boolean {
@@ -292,6 +302,7 @@ function isScriptRunning(script: string | { unix: string; windows: string } | un
 
 function detectProcessStatus(manifest: ServiceManifest): ServiceStatus | null {
   if (isScriptRunning(manifest.scripts.install)) return 'installing';
+  if (isScriptRunning(manifest.scripts.uninstall)) return 'uninstalling';
   if (isScriptRunning(manifest.scripts.start)) return 'starting';
   return null;
 }
@@ -312,10 +323,12 @@ export async function getServiceState(manifest: ServiceManifest): Promise<Servic
     if (processStatus) status = processStatus;
   }
   const config = getServiceConfig(manifest.id);
+  const installStatus = getInstallStatus(manifest);
   return {
     manifest,
     status,
-    installed: checkInstalled(manifest),
+    installed: installStatus === 'installed',
+    installStatus,
     enabled: config.enabled,
     selectedModel: config.selectedModel,
     lastChecked: Date.now(),

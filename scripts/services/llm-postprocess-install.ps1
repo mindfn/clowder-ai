@@ -36,13 +36,18 @@ $isArm64 = ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") -or
     ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64)
 if ($isArm64) {
     Write-Error @"
-ERROR: LLM post-processing requires 'transformers' which depends on
-tokenizers/safetensors (Rust crates) — no ARM64 Windows wheels available.
+ERROR: LLM 后处理服务暂不支持 ARM64 Windows。
 
-Options:
-  1. Install x86_64 Python (Windows ARM has x86 emulation)
-  2. Install Visual Studio Build Tools + Rust toolchain for native compilation
-  3. Skip this service — it is optional for core functionality
+原因: transformers 库依赖 tokenizers/safetensors (Rust 编译)，目前没有 ARM64 Windows 预编译包。
+      与 Embedding 不同，LLM 文本生成没有纯 ONNX 的轻量替代方案。
+
+影响: 跳过此服务不会影响核心功能。LLM 后处理仅用于 ASR 语音转文字的校准优化
+      (修正同音字、标点等)，语音识别本身仍正常工作，只是转写结果不经过二次校准。
+
+解决方案:
+  1. 跳过安装 — 推荐，不影响主要功能
+  2. 安装 x86 版 Python — Windows ARM 内置 x86 模拟，所有 amd64 包可用
+  3. 安装 Visual Studio Build Tools + Rust — 从源码编译 (复杂，不推荐)
 "@
     exit 1
 }

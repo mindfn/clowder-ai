@@ -291,6 +291,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         });
 
         if (code !== 0) {
+          setServiceConfig(id, { installStatus: 'failed' });
           request.log.error(
             { serviceId: id, exitCode: code, output: output.slice(-2000) },
             `service install failed: ${manifest.name}`,
@@ -298,6 +299,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
           reply.status(422);
           return { ok: false, error: `Install failed (exit ${code})`, output: output.slice(-2000) };
         }
+
+        setServiceConfig(id, { installStatus: 'installed' });
 
         if (manifest.scripts.start && getServiceConfig(id).enabled) {
           const startScript = resolveScriptPath(manifest.scripts.start);
@@ -386,6 +389,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         reply.status(422);
         return { ok: false, error: `Uninstall failed (exit ${code})`, output: output.slice(-2000) };
       }
+      setServiceConfig(id, { installStatus: 'none', enabled: false });
       return { ok: true, message: `${manifest.name} uninstalled successfully` };
     } catch {
       reply.status(500);

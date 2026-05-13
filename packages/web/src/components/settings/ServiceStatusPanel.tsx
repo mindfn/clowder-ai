@@ -40,12 +40,14 @@ interface ServiceManifest {
   configVars?: string[];
 }
 
-type ServiceStatus = 'running' | 'starting' | 'installing' | 'stopped' | 'unknown' | 'error';
+type ServiceStatus = 'running' | 'starting' | 'installing' | 'uninstalling' | 'stopped' | 'unknown' | 'error';
+type InstallStatus = 'none' | 'installed' | 'failed';
 
 interface ServiceState {
   manifest: ServiceManifest;
   status: ServiceStatus;
   installed: boolean;
+  installStatus: InstallStatus;
   enabled: boolean;
   selectedModel?: string;
   lastChecked: number | null;
@@ -57,6 +59,7 @@ const STATUS_CONFIG: Record<ServiceStatus, { dot: string; label: string }> = {
   running: { dot: 'bg-conn-emerald-text', label: '运行中' },
   starting: { dot: 'bg-conn-amber-text', label: '启动中' },
   installing: { dot: 'bg-conn-amber-text', label: '安装中' },
+  uninstalling: { dot: 'bg-conn-amber-text', label: '卸载中' },
   stopped: { dot: 'bg-cafe-surface-sunken', label: '未启动' },
   error: { dot: 'bg-conn-red-text', label: '异常' },
   unknown: { dot: 'bg-cafe-surface-sunken', label: '未知' },
@@ -243,7 +246,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
       const m = s.manifest;
       const nextEnabled = !s.enabled;
 
-      if (nextEnabled && !s.installed) {
+      if (nextEnabled && s.installStatus !== 'installed') {
         setInstallPreview(m);
         return;
       }
@@ -296,11 +299,13 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
       {title && <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cafe-muted">{title}</p>}
       {services.map((s) => {
         const m = s.manifest;
-        const isTransitional = s.status === 'starting' || s.status === 'installing';
+        const isTransitional = s.status === 'starting' || s.status === 'installing' || s.status === 'uninstalling';
         const busy = [...acting].some((a) => a.startsWith(`${m.id}:`));
         const cfg = STATUS_CONFIG[s.status] ?? STATUS_CONFIG.unknown;
-        const statusLabel = !s.installed ? '未安装' : cfg.label;
-        const statusDot = !s.installed ? 'bg-cafe-surface-sunken' : cfg.dot;
+        const installFailed = s.installStatus === 'failed';
+        const notInstalled = !s.installed && !installFailed;
+        const statusLabel = installFailed ? '安装失败' : notInstalled ? '未安装' : cfg.label;
+        const statusDot = installFailed ? 'bg-conn-red-text' : notInstalled ? 'bg-cafe-surface-sunken' : cfg.dot;
         const toggleDisabled = busy || isTransitional;
 
         return (
@@ -319,14 +324,14 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
                 {s.error && <p className="mt-0.5 truncate text-[11px] text-conn-red-text">{s.error}</p>}
               </div>
               <div className={settingsResourceActionGroupClass}>
-                {!s.installed && !isTransitional ? (
+                {(notInstalled || installFailed) && !isTransitional ? (
                   <button
                     type="button"
                     disabled={busy}
                     onClick={() => setInstallPreview(m)}
                     className="console-button-secondary px-3 py-1.5 text-xs disabled:opacity-40"
                   >
-                    {acting.has(`${m.id}:install`) ? '安装中...' : '安装'}
+                    {acting.has(`${m.id}:install`) ? '安装中...' : installFailed ? '重试安装' : '安装'}
                   </button>
                 ) : s.installed ? (
                   <>

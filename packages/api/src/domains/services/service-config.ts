@@ -31,12 +31,12 @@ function save(data: ServiceConfigMap): void {
 
 export function getServiceConfig(id: string): ServiceConfig {
   const all = load();
-  return all[id] ?? { enabled: false };
+  return all[id] ?? { enabled: false, installStatus: 'none' };
 }
 
 export function setServiceConfig(id: string, patch: Partial<ServiceConfig>): ServiceConfig {
   const all = load();
-  const current = all[id] ?? { enabled: false };
+  const current = all[id] ?? { enabled: false, installStatus: 'none' };
   const updated = { ...current, ...patch };
   all[id] = updated;
   save(all);
