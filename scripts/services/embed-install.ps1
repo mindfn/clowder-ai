@@ -10,7 +10,7 @@
   The embed-api.py auto-detects the available backend at startup.
 
   Env vars:
-  - EMBED_MODEL  (model to install; ARM64 default intfloat/multilingual-e5-small, x86 default intfloat/multilingual-e5-base)
+  - EMBED_MODEL  (model to install; both branches default to jinaai/jina-embeddings-v2-base-zh)
 #>
 
 $ErrorActionPreference = "Stop"
@@ -71,11 +71,14 @@ Stemmer = SnowballStemmer
     & $VenvPython @pipArgs
     if ($LASTEXITCODE -ne 0) { throw "Failed to install embedding dependencies" }
 
-    # fastembed has a strict model whitelist. The multilingual-e5 family is in
-    # the catalog and gives proper Chinese + English support (our docs and agent
-    # outputs are bilingual). Override via EMBED_MODEL only if you know the
-    # target name is in fastembed's TextEmbedding.list_supported_models().
-    $Model = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "intfloat/multilingual-e5-small" }
+    # fastembed has a strict model whitelist verified against
+    # TextEmbedding.list_supported_models() in fastembed 0.8:
+    #   jinaai/jina-embeddings-v2-base-zh — 768 dim, ~640MB, bilingual ✓
+    #   BAAI/bge-small-zh-v1.5            — 512 dim, ~90MB, Chinese-only ✓
+    #   intfloat/multilingual-e5-large    — 1024 dim, ~2.3GB ✓
+    # multilingual-e5-small/base are NOT in the fastembed catalog despite the
+    # HuggingFace repos existing — fastembed only ships pre-converted ONNX.
+    $Model = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "jinaai/jina-embeddings-v2-base-zh" }
     Write-Host "  Pre-downloading ONNX model: $Model ..."
     & $VenvPython -c "from fastembed import TextEmbedding; TextEmbedding(model_name='$Model'); print('Model download complete.')"
     if ($LASTEXITCODE -ne 0) { throw "Failed to download model: $Model" }
@@ -104,7 +107,7 @@ Stemmer = SnowballStemmer
     & $VenvPython @pipArgs
     if ($LASTEXITCODE -ne 0) { throw "Failed to install embedding dependencies" }
 
-    $Model = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "intfloat/multilingual-e5-base" }
+    $Model = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "jinaai/jina-embeddings-v2-base-zh" }
     Write-Host "  Pre-downloading model: $Model ..."
     & $VenvPython -c "from huggingface_hub import snapshot_download; snapshot_download('$Model'); print('Model download complete.')"
     if ($LASTEXITCODE -ne 0) { throw "Failed to download model: $Model" }

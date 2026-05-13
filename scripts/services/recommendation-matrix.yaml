@@ -180,74 +180,78 @@ services:
           requirements: { ramGb: 2, diskGb: 1 }
           performance: 实时
 
+    # Verified against fastembed 0.8 TextEmbedding.list_supported_models():
+    # jinaai/jina-embeddings-v2-base-zh is in the catalog (768 dim, 640MB) and
+    # is explicitly bilingual (Chinese + English). multilingual-e5-large is
+    # also catalogued for higher-quality GPU use cases.
+
     - match: { os: darwin, arch: x64 }
       models:
-        - name: intfloat/multilingual-e5-base
-          size: ~500MB
-          description: 多语言向量 base（中英双语，sentence-transformers，推荐）
+        - name: jinaai/jina-embeddings-v2-base-zh
+          size: ~640MB
+          description: Jina 中英双语向量 base（768 dim，sentence-transformers，推荐）
           requirements: { ramGb: 2, diskGb: 1 }
           performance: CPU 实时
         - name: intfloat/multilingual-e5-large
-          size: ~1.3GB
-          description: 多语言向量 large（更高质量，Intel Mac CPU 偏慢）
-          requirements: { ramGb: 4, diskGb: 2 }
+          size: ~2.3GB
+          description: 多语言向量 large（1024 dim，更高质量，Intel Mac CPU 偏慢）
+          requirements: { ramGb: 4, diskGb: 3 }
           performance: CPU 偏慢
       notes:
         - Intel Mac 不支持 MLX，使用 sentence-transformers 后端
-        - 多语言模型，中英文都支持
+        - 中英文都支持
 
     # Windows/Linux ARM64: fastembed backend only (no torch wheels for ARM).
-    # fastembed has a hardcoded model whitelist — must use whitelisted models.
-    # multilingual-e5-* family is in the fastembed catalog and is bilingual.
+    # fastembed has a hardcoded model whitelist. Choices verified via
+    # TextEmbedding.list_supported_models() in fastembed 0.8.
     - match: { os: [win32, linux], arch: arm64 }
       models:
-        - name: intfloat/multilingual-e5-small
-          size: ~470MB
-          description: 多语言向量 small（中英双语，fastembed/ONNX，ARM64 唯一选项）
+        - name: jinaai/jina-embeddings-v2-base-zh
+          size: ~640MB
+          description: Jina 中英双语向量 base（768 dim，fastembed/ONNX，ARM64 推荐）
           requirements: { ramGb: 2, diskGb: 1 }
           performance: CPU 实时
+        - name: BAAI/bge-small-zh-v1.5
+          size: ~90MB
+          description: BGE 中文 small（512 dim，轻量但中文专用，英文弱）
+          requirements: { ramGb: 2, diskGb: 0.2 }
+          performance: CPU 实时
       notes:
-        - 'ARM64 走 fastembed 后端，受白名单限制只能选 multilingual-e5-small'
-        - '如需 base/large 质量请安装 x86 Python（参考 LLM 服务的 x86 安装引导），切换到 sentence-transformers 后端'
-        - 多语言模型，中英文都支持
+        - 'ARM64 走 fastembed 后端，受白名单限制（已对照 fastembed.TextEmbedding.list_supported_models() 选型）'
+        - '如需更高质量请安装 x86 Python（参考 LLM 服务的 x86 安装引导），切换到 sentence-transformers 后端'
 
-    # Windows/Linux x64 + GPU: sentence-transformers backend, anything goes
+    # Windows/Linux x64 + GPU: sentence-transformers backend, anything HF goes
     - match: { os: [win32, linux], arch: x64, gpu: [cuda, rocm] }
       models:
         - name: intfloat/multilingual-e5-large
-          size: ~1.3GB
+          size: ~2.3GB
           description: 多语言向量 large（1024 dim，GPU 推荐，中英双语，最高质量）
-          requirements: { ramGb: 4, diskGb: 2, gpu: recommended }
+          requirements: { ramGb: 4, diskGb: 3, gpu: recommended }
           performance: GPU 实时
-        - name: intfloat/multilingual-e5-base
-          size: ~500MB
-          description: 多语言向量 base（768 dim，CPU/GPU 通用）
+        - name: jinaai/jina-embeddings-v2-base-zh
+          size: ~640MB
+          description: Jina 中英双语向量 base（768 dim，备选）
           requirements: { ramGb: 2, diskGb: 1 }
           performance: CPU 实时
       notes:
-        - 多语言模型，中英文都支持
+        - 中英文都支持
 
-    # Windows/Linux x64 CPU
+    # Windows/Linux x64 CPU (sentence-transformers, no GPU)
     - match: { os: [win32, linux], arch: x64 }
       models:
-        - name: intfloat/multilingual-e5-base
-          size: ~500MB
-          description: 多语言向量 base（768 dim，中英双语，CPU 通用，推荐）
-          requirements: { ramGb: 2, diskGb: 1 }
-          performance: CPU 实时
-        - name: intfloat/multilingual-e5-small
-          size: ~470MB
-          description: 多语言向量 small（384 dim，轻量备选）
+        - name: jinaai/jina-embeddings-v2-base-zh
+          size: ~640MB
+          description: Jina 中英双语向量 base（768 dim，CPU 通用，推荐）
           requirements: { ramGb: 2, diskGb: 1 }
           performance: CPU 实时
         - name: intfloat/multilingual-e5-large
-          size: ~1.3GB
-          description: 多语言向量 large（1024 dim，更高质量，CPU 偏慢）
-          requirements: { ramGb: 4, diskGb: 2, gpu: recommended }
+          size: ~2.3GB
+          description: 多语言向量 large（1024 dim，质量更高但 CPU 偏慢）
+          requirements: { ramGb: 4, diskGb: 3, gpu: recommended }
           performance: CPU 偏慢，GPU 实时
       notes:
-        - 多语言模型，中英文都支持
-        - '⚠ 切换模型尺寸会改变向量维度（small=384, base=768, large=1024），需要重建 memory 索引'
+        - 中英文都支持
+        - '⚠ 切换 jina (768 dim) ↔ e5-large (1024 dim) 时维度变化，需重建 memory 索引'
 
   # ------------------------------------------------------------
   # LLM Postprocess (转写纠正)

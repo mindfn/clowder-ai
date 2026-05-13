@@ -251,11 +251,16 @@ def main():
         except ImportError:
             log.warning("fastembed not installed")
             return False
-        # fastembed has a hardcoded whitelist. multilingual-e5-small is in the
-        # catalog and bilingual (Chinese + English), matching our doc/output
-        # bilingual mix. If the configured model is MLX (mac) or another
-        # non-whitelisted name, fall back to multilingual-e5-small.
-        fe_name = model_name if not model_name.startswith("mlx-community/") else "intfloat/multilingual-e5-small"
+        # fastembed has a hardcoded whitelist (verified via fastembed 0.8
+        # TextEmbedding.list_supported_models()). jinaai/jina-embeddings-v2-base-zh
+        # is in the catalog (768 dim, bilingual zh+en, ~640MB).
+        # If the configured model is MLX (mac) or another non-whitelisted name,
+        # fall back to jina-zh.
+        fe_name = (
+            model_name
+            if not model_name.startswith("mlx-community/")
+            else "jinaai/jina-embeddings-v2-base-zh"
+        )
         providers = None
         device_label = "CPU"
         try:

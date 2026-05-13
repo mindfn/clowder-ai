@@ -79,11 +79,10 @@ describe('recommendation matrix — Windows ARM64', () => {
     assert.ok(rec.notes.some((c) => c.includes('x86')));
   });
 
-  test('embedding-model → multilingual-e5-small (ARM64 fastembed bilingual)', () => {
+  test('embedding-model → jina-zh (ARM64, fastembed-whitelisted, bilingual)', () => {
     const rec = buildRecommendation('embedding-model', profile);
-    assert.equal(rec.models[0]?.name, 'intfloat/multilingual-e5-small');
+    assert.equal(rec.models[0]?.name, 'jinaai/jina-embeddings-v2-base-zh');
     assert.ok(rec.notes.some((n) => n.includes('fastembed')));
-    assert.ok(rec.notes.some((n) => n.includes('中英')));
   });
 
   test('whisper-stt → faster-whisper base (CPU)', () => {
@@ -149,7 +148,7 @@ describe('recommendation matrix — match ordering', () => {
 
     assert.notEqual(cuda, cpu);
     assert.equal(cuda?.models?.[0]?.name, 'intfloat/multilingual-e5-large');
-    assert.equal(cpu?.models?.[0]?.name, 'intfloat/multilingual-e5-base');
+    assert.equal(cpu?.models?.[0]?.name, 'jinaai/jina-embeddings-v2-base-zh');
   });
 });
 
