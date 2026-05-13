@@ -103,7 +103,7 @@ describe('Marketplace Routes', () => {
     });
     assert.strictEqual(res.statusCode, 200);
     const body = res.json();
-    assert.ok(Array.isArray(body));
+    assert.ok(Array.isArray(body.results));
   });
 
   it('POST /api/marketplace/install/plan returns install plan', async () => {
