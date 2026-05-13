@@ -62,6 +62,14 @@ export function getGovernanceManagedBlock(provider: Provider): string {
 }
 
 /**
+ * Return governance rules suitable for Codex CLI's developer_instructions config.
+ * This content goes into `role: "developer"` (higher priority than AGENTS.md's `role: "user"`).
+ */
+export function getDeveloperInstructionsContent(): string {
+  return HARD_CONSTRAINTS;
+}
+
+/**
  * Compute a stable checksum for the governance pack content.
  * Used for idempotency — skip re-sync if checksum matches.
  */

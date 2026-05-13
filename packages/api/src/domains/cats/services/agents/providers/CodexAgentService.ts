@@ -39,6 +39,7 @@ import {
   createCodexSessionContextSnapshotResolver,
 } from '../providers/codex-session-context-snapshot.js';
 import { extractImagePaths } from '../providers/image-paths.js';
+import { getDeveloperInstructionsContent } from '../../../../../config/governance/governance-pack.js';
 
 const log = createModuleLogger('codex-agent');
 
@@ -262,6 +263,9 @@ export class CodexAgentService implements AgentService {
     const effortLevel = getCatEffort(this.catId as string, undefined, 'openai');
     const reasoningArgs = ['--config', `model_reasoning_effort="${effortLevel}"`];
     const approvalArgs = ['--config', `approval_policy="${approvalPolicy}"`];
+    // Inject governance rules via developer_instructions → role: "developer" (higher priority than AGENTS.md's role: "user")
+    const devInstructions = getDeveloperInstructionsContent();
+    const developerInstructionsArgs = ['--config', `developer_instructions=${toTomlString(devInstructions)}`];
     const ctxConfig = getCatContextWindowConfig(this.catId as string);
     const contextWindowArgs: string[] = ctxConfig
       ? [
@@ -354,6 +358,8 @@ export class CodexAgentService implements AgentService {
       return out;
     };
 
+    // Governance developer_instructions bypass dedup — hard constraints are non-overridable.
+    // Placed after userConfigArgs so the last --config developer_instructions wins over any user override.
     const args: string[] = options?.sessionId
       ? [
           'exec',
@@ -366,6 +372,7 @@ export class CodexAgentService implements AgentService {
           ...dedup(approvalArgs),
           ...dedup(customProviderArgs),
           ...userConfigArgs,
+          ...developerInstructionsArgs,
           ...gitRepoArgs,
           ...catCafeMcpArgs,
           ...imageArgs,
@@ -384,6 +391,7 @@ export class CodexAgentService implements AgentService {
           ...dedup(approvalArgs),
           ...dedup(customProviderArgs),
           ...userConfigArgs,
+          ...developerInstructionsArgs,
           ...gitRepoArgs,
           ...catCafeMcpArgs,
           ...imageArgs,
