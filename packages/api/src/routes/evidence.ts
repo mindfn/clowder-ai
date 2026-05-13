@@ -309,13 +309,16 @@ export const evidenceRoutes: FastifyPluginAsync<EvidenceRoutesOptions> = async (
       }
 
       // Vector index size — proves embedding generation actually ran.
-      // If embeddingModel is set but vectorsCount === 0, the embedding service
-      // is reachable enough to report itself but failed to actually embed docs.
+      // If the table query throws, sqlite-vec was not loaded on this platform
+      // (e.g. windows-arm64 has no upstream prebuilt binary as of 0.1.9) —
+      // surface that so "Vectors=0" doesn't look like a regression in the UI.
       let vectorsCount = 0;
+      let vectorSearchAvailable = false;
       try {
         vectorsCount = (db.prepare('SELECT count(*) AS c FROM evidence_vectors').get() as { c: number }).c;
+        vectorSearchAvailable = true;
       } catch {
-        /* vec0 virtual table may not exist on older schemas */
+        /* vec0 virtual table missing — sqlite-vec not loaded for this platform */
       }
 
       return {
@@ -326,6 +329,7 @@ export const evidenceRoutes: FastifyPluginAsync<EvidenceRoutesOptions> = async (
         passages_count: passageCount,
         edges_count: edgeCount,
         vectors_count: vectorsCount,
+        vector_search_available: vectorSearchAvailable,
         last_rebuild_at: lastUpdated,
         embedding_model: embeddingModel,
       };

@@ -43,6 +43,20 @@ describe('parseIndexStatus', () => {
     expect(status.embeddingModel).toBeNull();
   });
 
+  it('treats missing vector_search_available as available (back-compat default)', () => {
+    const raw = { backend: 'sqlite', healthy: true, vectors_count: 5 };
+    const status = parseIndexStatus(raw);
+    expect(status.vectorSearchAvailable).toBe(true);
+    expect(status.vectorsCount).toBe(5);
+  });
+
+  it('parses vector_search_available=false (platform without sqlite-vec binary)', () => {
+    const raw = { backend: 'sqlite', healthy: true, vectors_count: 0, vector_search_available: false };
+    const status = parseIndexStatus(raw);
+    expect(status.vectorSearchAvailable).toBe(false);
+    expect(status.vectorsCount).toBe(0);
+  });
+
   it('parses threads, passages, and embedding mode (Issue 6)', () => {
     const raw = {
       backend: 'sqlite',
