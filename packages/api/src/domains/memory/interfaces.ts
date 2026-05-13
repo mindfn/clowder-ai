@@ -317,6 +317,13 @@ export interface IEmbeddingService {
   embed(texts: string[]): Promise<Float32Array[]>;
   isReady(): boolean;
   getModelInfo(): EmbedModelInfo;
+  /**
+   * Externally mark the service ready — used when the service lifecycle bus
+   * (service-hooks 'started' event) has already verified the sidecar is
+   * healthy. Avoids a redundant local /health probe that may disagree with
+   * the bus due to different parsing rules or timing.
+   */
+  markReady(modelId?: string): void;
   dispose(): void;
 }
 

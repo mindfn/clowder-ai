@@ -691,33 +691,26 @@ async function main(): Promise<void> {
     }
 
     // Event-driven embedding catch-up:
-    // service-autostart owns the "is sidecar healthy yet" polling. It calls
-    // service-hooks.fireServiceReady('embedding-model') the moment the
-    // sidecar's /health turns ok. We register a one-shot hook that embeds
-    // any docs missing from evidence_vectors.
-    //
-    // The hook throws on partial success / unreachable embedding so
-    // service-hooks keeps it registered for retry on next fire (e.g. on the
-    // next API restart). A fully-successful run causes the hook to be
-    // unregistered automatically.
+    // service-autostart fires 'started' once the sidecar's /health turns ok.
+    // We trust that signal — mark the EmbeddingService ready directly and
+    // embed any docs missing from evidence_vectors. No second probe: the
+    // earlier double-probe pattern caused false negatives because the bus
+    // and EmbeddingService parsed /health responses with different rules.
     const builder = memoryServices.indexBuilder;
+    const embedding = memoryServices.embeddingService;
     const { onServiceEvent } = await import('./domains/services/service-hooks.js');
     onServiceEvent('embedding-model', 'started', async () => {
+      embedding?.markReady();
       const r = await builder.embedPending();
-      if (!r.probed) {
-        // Sidecar reported running but embed-api isn't responding to /embed.
-        // Throw → hook stays registered so the next fire-cycle retries.
-        throw new Error('embedding service health passed but embed API unreachable');
-      }
       if (r.embedded > 0) {
         app.log.info(`[api] F102: embed catch-up — vectorized ${r.embedded} doc(s)`);
       }
       if (r.pending > 0) {
-        // Some docs couldn't be embedded (e.g. partial batch failure).
-        // Throw → keep hook registered for next attempt.
+        // Partial batch failure — throw so service-hooks keeps the hook
+        // registered for retry on the next fire-cycle.
         throw new Error(`${r.pending} doc(s) still pending after batch`);
       }
-      // probed + nothing pending → hook unregisters on return.
+      // Success → hook unregisters automatically on return.
     });
   }
 

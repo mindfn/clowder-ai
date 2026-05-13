@@ -67,6 +67,11 @@ export class EmbeddingService implements IEmbeddingService {
     return this.ready;
   }
 
+  markReady(modelId?: string): void {
+    this.ready = true;
+    if (modelId) this.modelId = modelId;
+  }
+
   getModelInfo(): EmbedModelInfo {
     return {
       modelId: this.modelId || this.config.embedModel,

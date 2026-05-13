@@ -512,24 +512,15 @@ export class IndexBuilder implements IIndexBuilder {
   }
 
   /**
-   * Re-probe embedding service readiness (load() is fail-open + idempotent),
-   * then embed any evidence_docs that are missing from evidence_vectors.
-   * Designed to be called by a polling loop on startup, because the embed
-   * sidecar (autoStart spawned) often takes longer to come online than the
-   * initial rebuild() call — leaving Vectors=0 until first doc change.
+   * Embed any evidence_docs that are missing from evidence_vectors.
+   * Caller (service-hooks 'started' subscriber) is responsible for marking
+   * the embedding service ready via markReady() before invoking — the bus
+   * has already verified the sidecar is healthy, so we trust that signal
+   * rather than redoing a local /health probe (which previously caused
+   * false negatives when the two probes parsed health responses differently).
    */
   async embedPending(): Promise<{ probed: boolean; embedded: number; pending: number }> {
     if (!this.embedDeps) return { probed: false, embedded: 0, pending: 0 };
-
-    // Re-probe — fail-open: even after a failed first attempt, the sidecar
-    // may have come online by now.
-    if (!this.embedDeps.embedding.isReady()) {
-      try {
-        await this.embedDeps.embedding.load();
-      } catch {
-        /* still not ready */
-      }
-    }
     if (!this.embedDeps.embedding.isReady()) return { probed: false, embedded: 0, pending: 0 };
 
     const db = this.store.getDb();
