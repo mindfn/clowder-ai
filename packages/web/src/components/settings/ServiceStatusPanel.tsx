@@ -334,6 +334,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
                   {m.type}
                   {m.port ? ` · :${m.port}` : ''} · {statusLabel}
                   {(() => {
+                    if (notInstalled || installFailed) return '';
                     const runtimeModel = (s.healthDetail?.model as string) || s.selectedModel;
                     return runtimeModel ? ` · ${runtimeModel.split('/').pop()}` : '';
                   })()}
