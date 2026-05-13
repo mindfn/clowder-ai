@@ -275,6 +275,29 @@ $embedPortDefault = if ($env:EMBED_PORT) { [int]$env:EMBED_PORT } else { 9880 }
 $configuredEmbedUrl = if ($env:EMBED_URL) { $env:EMBED_URL.Trim() } else { "" }
 $localEmbedPort = Get-LoopbackHttpPort -Url $configuredEmbedUrl -DefaultPort $embedPortDefault
 $useLocalEmbedSidecar = $embedEnabled -and ((-not $configuredEmbedUrl) -or ($null -ne $localEmbedPort))
+
+# Console service management override: if the user has explicitly managed the
+# embedding service via Console (.cat-cafe/services.json), honor that state.
+# Skip sidecar autostart when not installed or not enabled; env var control
+# (EMBED_MODE/EMBED_ENABLED) only applies as a default when no entry exists.
+$ServicesJson = Join-Path $ProjectRoot ".cat-cafe\services.json"
+if ($useLocalEmbedSidecar -and (Test-Path $ServicesJson)) {
+    try {
+        $svcCfg = Get-Content $ServicesJson -Raw -Encoding UTF8 | ConvertFrom-Json
+        $embedEntry = $svcCfg.'embedding-model'
+        if ($null -ne $embedEntry) {
+            $isInstalled = ($embedEntry.installStatus -eq 'installed')
+            $isEnabled = [bool]$embedEntry.enabled
+            if (-not ($isInstalled -and $isEnabled)) {
+                Write-Host "  Skipping embed sidecar autostart — Console state: installed=$isInstalled, enabled=$isEnabled"
+                $useLocalEmbedSidecar = $false
+            }
+        }
+    } catch {
+        Write-Warning "Failed to parse $ServicesJson: $_ — using env var default"
+    }
+}
+
 $EmbedPort = if ($useLocalEmbedSidecar) {
     if ($null -ne $localEmbedPort) { [int]$localEmbedPort } else { $embedPortDefault }
 } else {
