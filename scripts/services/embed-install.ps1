@@ -48,20 +48,20 @@ if ($isArm64) {
     $sitePackages = Join-Path $VenvDir "Lib\site-packages"
     $stubDir = Join-Path $sitePackages "py_rust_stemmers"
     $distInfo = Join-Path $sitePackages "py_rust_stemmers-0.1.0.dist-info"
-    if (-not (Test-Path $stubDir)) {
-        Write-Host "  Creating py-rust-stemmers stub ..."
-        New-Item -ItemType Directory -Path $stubDir -Force | Out-Null
-        New-Item -ItemType Directory -Path $distInfo -Force | Out-Null
-        Set-Content -Path (Join-Path $stubDir "__init__.py") -Value @"
-class Stemmer:
+    Write-Host "  Writing py-rust-stemmers stub ..."
+    New-Item -ItemType Directory -Path $stubDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $distInfo -Force | Out-Null
+    Set-Content -Path (Join-Path $stubDir "__init__.py") -Value @"
+class SnowballStemmer:
     def __init__(self, *a, **kw): pass
     def stem_word(self, w): return w
     def stem_words(self, ws): return list(ws)
+
+Stemmer = SnowballStemmer
 "@
-        Set-Content -Path (Join-Path $distInfo "METADATA") -Value "Metadata-Version: 2.1`nName: py-rust-stemmers`nVersion: 0.1.0"
-        Set-Content -Path (Join-Path $distInfo "INSTALLER") -Value "pip"
-        Set-Content -Path (Join-Path $distInfo "RECORD") -Value ""
-    }
+    Set-Content -Path (Join-Path $distInfo "METADATA") -Value "Metadata-Version: 2.1`nName: py-rust-stemmers`nVersion: 0.1.0"
+    Set-Content -Path (Join-Path $distInfo "INSTALLER") -Value "pip"
+    Set-Content -Path (Join-Path $distInfo "RECORD") -Value ""
 
     Write-Host "  Installing dependencies: fastembed onnxruntime fastapi uvicorn numpy huggingface_hub ..."
     $pipArgs = @('-m', 'pip', 'install', '--progress-bar', 'on',
