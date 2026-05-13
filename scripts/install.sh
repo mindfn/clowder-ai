@@ -1010,64 +1010,58 @@ install_brew_cask() {
     hash -r 2>/dev/null || true
     command -v "$cmd" &>/dev/null || { fail "$name install failed. Try: brew install --cask $cask"; exit 1; }; ok "$name installed"
 }
-ensure_uv_installed() {
-    # uv is the recommended kimi-cli installer: it auto-fetches Python 3.12+
-    # interpreters without touching the system Python and dodges Ubuntu's
-    # PEP 668 externally-managed-environment restriction. Auto-install it
-    # the same way we already auto-install Node toolchains, instead of
-    # forcing the user to do it manually.
-    if command -v uv &>/dev/null; then return 0; fi
-    info "  uv not found — installing (https://astral.sh/uv)..."
-    if ! command -v curl &>/dev/null; then
-        warn "uv install needs curl, which is missing — skipping"
-        return 1
-    fi
-    local uv_log; uv_log="$(mktemp)"
-    if curl -LsSf https://astral.sh/uv/install.sh 2>"$uv_log" | sh >>"$uv_log" 2>&1; then
-        export PATH="$HOME/.local/bin:$PATH"; hash -r 2>/dev/null || true
-        if command -v uv &>/dev/null; then ok "uv installed"; rm -f "$uv_log"; return 0; fi
-    fi
-    warn "uv install failed — last output:"
-    tail -8 "$uv_log" 2>/dev/null | sed 's/^/    /'
-    rm -f "$uv_log"
-    return 1
-}
-
 install_kimi_cli() {
     info "  Installing Kimi CLI..."
-    # kimi-cli requires Python >=3.12 (verified via pypi metadata). Prefer uv
-    # because it can auto-fetch a matching interpreter; if it's missing, try
-    # to install it. Fall back to pipx / system pip as best-effort.
-    ensure_uv_installed || true
+    # kimi-cli requires Python >=3.12 (verified via pypi metadata). Resolution
+    # order matches the D-plan service install policy — reuse what the user
+    # already has, NEVER auto-install uv on their system:
+    #   1. uv (reuse only) → uv tool install isolates kimi in its own venv
+    #   2. pipx (reuse only) → similar isolation
+    #   3. python-resolve.sh resolver → falls back to ~/.cat-cafe/python/,
+    #      and we create ~/.cat-cafe/kimi-venv/ on top of it, then symlink
+    #      $USER_BIN_DIR/kimi to the venv's kimi executable.
     local log_file; log_file="$(mktemp)"
     local installer_tried=""
     if command -v uv &>/dev/null; then
-        installer_tried="uv"
+        installer_tried="uv (reused)"
         if ! uv tool install --python 3.12 kimi-cli >"$log_file" 2>&1; then
             uv tool upgrade kimi-cli >>"$log_file" 2>&1 || true
         fi
     elif command -v pipx &>/dev/null; then
-        installer_tried="pipx"
+        installer_tried="pipx (reused)"
         if ! pipx install kimi-cli >"$log_file" 2>&1; then
             pipx upgrade kimi-cli >>"$log_file" 2>&1 || true
         fi
-    elif command -v python3 &>/dev/null; then
-        installer_tried="python3 -m pip"
-        python3 -m pip install --user --upgrade kimi-cli >"$log_file" 2>&1 || true
     else
-        rm -f "$log_file"
-        fail "Kimi install failed: need uv, pipx, or python3 (>=3.12)"
-        info "    Recommended: curl -LsSf https://astral.sh/uv/install.sh | sh"
-        exit 1
+        installer_tried="project-owned venv via python-resolve.sh"
+        # Source the resolver in a subshell to avoid leaking RESOLVED_* into
+        # the caller's environment unintentionally.
+        # shellcheck source=services/python-resolve.sh
+        . "$PROJECT_DIR/scripts/services/python-resolve.sh"
+        if ! resolve_python_312 >>"$log_file" 2>&1; then
+            rm -f "$log_file"
+            fail "Kimi install failed: no Python >=3.12 available and resolver couldn't bootstrap one"
+            info "    Recovery: install Python 3.12+ (system / brew / uv / pyenv) and rerun"
+            exit 1
+        fi
+        local kimi_venv="$HOME/.cat-cafe/kimi-venv"
+        if [[ ! -x "$kimi_venv/bin/kimi" ]]; then
+            "$RESOLVED_PYTHON" -m venv "$kimi_venv" >>"$log_file" 2>&1 || true
+        fi
+        "$kimi_venv/bin/pip" install --upgrade kimi-cli >>"$log_file" 2>&1 || true
+        # Symlink into $USER_BIN_DIR so `kimi` is on PATH.
+        local kimi_bin="${USER_BIN_DIR:-$HOME/.local/bin}"
+        mkdir -p "$kimi_bin"
+        ln -sfn "$kimi_venv/bin/kimi" "$kimi_bin/kimi"
     fi
-    export PATH="$HOME/.local/bin:$PATH"; hash -r 2>/dev/null || true
+    export PATH="${USER_BIN_DIR:-$HOME/.local/bin}:$PATH"; hash -r 2>/dev/null || true
     if command -v kimi &>/dev/null; then
         rm -f "$log_file"
-        ok "Kimi CLI installed"
+        ok "Kimi CLI installed via $installer_tried"
     else
         fail "Kimi install failed via $installer_tried — last output:"
         tail -10 "$log_file" 2>/dev/null | sed 's/^/    /'
-        info "    Recovery: install uv (curl -LsSf https://astral.sh/uv/install.sh | sh) and rerun"
+        info "    Recovery: install one of uv / pipx / Python 3.12+ on your system, then rerun"
         rm -f "$log_file"
         exit 1
     fi
