@@ -434,6 +434,27 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         return { error: `Install script not found: ${scriptPath}` };
       }
 
+      // python-bootstrap (D-plan): make sure a working Python 3.12+ interpreter
+      // is installed BEFORE we spawn the service install script. ensurePython
+      // is idempotent and process-shared:
+      //   - already installed → returns immediately
+      //   - install in flight → awaits the same Promise (no duplicate spawn
+      //     when whisper / tts / embed / llm are clicked in parallel)
+      //   - last attempt failed → throws → we 422 here so the user sees the
+      //     real failure and doesn't trigger a second per-service spawn
+      try {
+        const { ensurePython } = await import('../domains/services/python-bootstrap.js');
+        await ensurePython(request.log);
+      } catch (err) {
+        request.log.error({ err: err instanceof Error ? err.message : String(err) }, 'python-bootstrap failed');
+        reply.status(422);
+        return {
+          ok: false,
+          error: 'Python 3.12+ bootstrap failed — service install cannot proceed',
+          detail: err instanceof Error ? err.message : String(err),
+        };
+      }
+
       const env: Record<string, string> = { ...process.env } as Record<string, string>;
       if (body.model) {
         const envKey = MODEL_ENV_VARS[id];

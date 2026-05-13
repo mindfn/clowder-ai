@@ -34,13 +34,25 @@ export interface ServiceManifest {
 
 export type ServiceStatus = 'running' | 'starting' | 'installing' | 'uninstalling' | 'stopped' | 'unknown' | 'error';
 
-export type InstallStatus = 'none' | 'installed' | 'failed';
+// Added 'installing' so python-bootstrap can persist its progress between
+// API restarts via services.json. Regular service install routes set
+// 'installed' or 'failed' synchronously after their child exits, so this
+// new state is rare for them — but doesn't break: existing consumers
+// (UI button condition, install endpoint) only branch on 'failed' /
+// 'installed', everything else falls through to "not yet installed".
+export type InstallStatus = 'none' | 'installing' | 'installed' | 'failed';
 
 export interface ServiceConfig {
   enabled: boolean;
   selectedModel?: string;
   port?: number;
   installStatus?: InstallStatus;
+  // python-bootstrap meta-service fields. Populated only for the
+  // 'python-bootstrap' pseudo-service entry in services.json; left
+  // undefined for normal services (whisper / tts / embed / llm).
+  pythonPath?: string;
+  pythonArch?: string;
+  pythonSource?: string;
 }
 
 export const MODEL_ENV_VARS: Record<string, string> = {
