@@ -251,7 +251,7 @@ async function probeHealth(manifest: ServiceManifest): Promise<HealthResult> {
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3000);
+  const timeout = setTimeout(() => controller.abort(), 6000);
   try {
     const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) return { status: 'error', error: `HTTP ${res.status}` };
