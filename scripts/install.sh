@@ -49,10 +49,14 @@ persist_user_bin() {
     local bin="$1" path=""; path="$(command -v "$bin" 2>/dev/null || true)"
     [[ -n "$path" ]] || return 0
     local real_src; real_src="$(resolve_realpath "$path")"
-    local target="$USER_BIN_DIR/$bin"
+    # Fallback default: callers that forget to initialize USER_BIN_DIR won't
+    # trip `set -u`. The global setup near OS detection sets this for all
+    # unix platforms, but defensive default keeps the function self-contained.
+    local user_bin="${USER_BIN_DIR:-$HOME/.local/bin}"
+    local target="$user_bin/$bin"
     # Guard: GNU ln -sfn errors when source and target resolve to the same path.
     [[ "$(resolve_realpath "$target" 2>/dev/null)" == "$real_src" ]] && return 0
-    $SUDO mkdir -p "$USER_BIN_DIR"
+    $SUDO mkdir -p "$user_bin"
     $SUDO ln -sfn "$real_src" "$target"
 }
 # Append a line to the user's shell profile (idempotent).
@@ -720,17 +724,20 @@ if [[ "$DISTRO_FAMILY" != "darwin" && $EUID -ne 0 ]]; then
     command -v sudo &>/dev/null || { fail "Not root and sudo not found / 请以 root 运行或安装 sudo"; exit 1; }
     SUDO="sudo"
 fi
-# On Darwin, /usr/local/bin often requires sudo which we skip.
-# Use ~/.local/bin for user-local binaries.
+# Per-user binary dir for symlinks created by persist_user_bin.
+# All unix platforms use ~/.local/bin (XDG-friendly). Earlier this was darwin-only
+# which left USER_BIN_DIR unset on Linux and tripped `set -u` once persist_user_bin
+# fired during the Node / pnpm install steps.
+USER_BIN_DIR="$HOME/.local/bin"
+mkdir -p "$USER_BIN_DIR"
+case ":$PATH:" in
+    *":$USER_BIN_DIR:"*) ;;
+    *) export PATH="$USER_BIN_DIR:$PATH" ;;
+esac
+# Persist ~/.local/bin into login profiles only on macOS — the same shell-profile
+# discovery (darwin_login_profiles) doesn't exist for Linux, and most Linux
+# distros already include ~/.local/bin in PATH via ~/.profile / ~/.bashrc.
 if [[ "$DISTRO_FAMILY" == "darwin" ]]; then
-    USER_BIN_DIR="$HOME/.local/bin"
-    mkdir -p "$USER_BIN_DIR"
-    case ":$PATH:" in
-        *":$USER_BIN_DIR:"*) ;;
-        *) export PATH="$USER_BIN_DIR:$PATH" ;;
-    esac
-    # Persist ~/.local/bin to login profiles unconditionally so that any later
-    # persist_user_bin symlinks survive in new terminals.
     for _prof in $(darwin_login_profiles); do
         append_to_profile 'export PATH="$HOME/.local/bin:$PATH"  # Cat Cafe user binaries' "$_prof"
     done
