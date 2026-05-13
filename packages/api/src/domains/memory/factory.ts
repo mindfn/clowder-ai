@@ -107,7 +107,9 @@ export async function createMemoryServices(config: MemoryConfig): Promise<Memory
       if (ok) {
         vectorStore = new VectorStore(store.getDb(), embedConfig.embedDim);
       } else {
-        console.warn('[factory] sqlite-vec loaded but evidence_vectors table could not be created — vector search disabled');
+        console.warn(
+          '[factory] sqlite-vec loaded but evidence_vectors table could not be created — vector search disabled',
+        );
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
