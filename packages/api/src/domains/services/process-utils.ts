@@ -62,38 +62,57 @@ export async function checkProcessByPattern(pattern: string | { unix: string; wi
 }
 
 /** Find PIDs listening on a given port (cross-platform). */
-export function findPidsByPort(port: number): Promise<number[]> {
-  return new Promise((resolve) => {
-    let cmd: ReturnType<typeof spawn>;
-    if (IS_WIN32) {
-      cmd = spawn(
-        'powershell',
-        [
-          '-NoProfile',
-          '-Command',
-          `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess`,
-        ],
-        { stdio: ['pipe', 'pipe', 'pipe'] },
-      );
-    } else {
-      cmd = spawn('lsof', ['-ti', `TCP:${port}`, '-sTCP:LISTEN'], {
-        stdio: ['pipe', 'pipe', 'pipe'],
+export async function findPidsByPort(port: number): Promise<number[]> {
+  const myPid = process.pid;
+  const parse = (stdout: string) =>
+    stdout
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0 && n !== myPid);
+
+  const run = (command: string, args: string[]): Promise<string> =>
+    new Promise((resolve) => {
+      const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+      let out = '';
+      child.stdout?.on('data', (d: Buffer) => {
+        out += d.toString();
       });
-    }
-    let stdout = '';
-    cmd.stdout?.on('data', (d: Buffer) => {
-      stdout += d.toString();
+      child.on('error', () => resolve(''));
+      child.on('close', () => resolve(out));
     });
-    cmd.on('error', () => resolve([]));
-    cmd.on('close', () => {
-      const myPid = process.pid;
-      const pids = stdout
-        .trim()
-        .split('\n')
-        .filter(Boolean)
-        .map((s) => Number(s.trim()))
-        .filter((n) => Number.isFinite(n) && n > 0 && n !== myPid);
-      resolve(pids);
-    });
-  });
+
+  if (!IS_WIN32) {
+    const out = await run('lsof', ['-ti', `TCP:${port}`, '-sTCP:LISTEN']);
+    return parse(out);
+  }
+
+  const psOut = await run('powershell', [
+    '-NoProfile',
+    '-Command',
+    `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess`,
+  ]);
+  const pids = parse(psOut);
+  if (pids.length > 0) return pids;
+
+  // Fallback: netstat works without admin privileges
+  const nsOut = await run('cmd', ['/c', `netstat -aon`]);
+  const portPattern = `:${port} `;
+  return nsOut
+    .split('\n')
+    .filter((l) => l.includes(portPattern) && l.includes('LISTENING'))
+    .map((l) => Number(l.trim().split(/\s+/).pop()))
+    .filter((n) => Number.isFinite(n) && n > 0 && n !== myPid);
+}
+
+/** Kill a process on Windows using taskkill (kills process tree). */
+export function winTaskKill(pid: number): boolean {
+  if (!IS_WIN32) return false;
+  try {
+    execSync(`taskkill /PID ${pid} /F /T`, { timeout: 5000, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
 }

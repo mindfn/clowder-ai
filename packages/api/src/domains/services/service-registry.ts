@@ -316,6 +316,17 @@ function detectProcessStatus(manifest: ServiceManifest): ServiceStatus | null {
   return null;
 }
 
+const servicePids = new Map<string, number>();
+export function setServicePid(id: string, pid: number): void {
+  servicePids.set(id, pid);
+}
+export function getServicePid(id: string): number | undefined {
+  return servicePids.get(id);
+}
+export function clearServicePid(id: string): void {
+  servicePids.delete(id);
+}
+
 export function getKnownServices(): ServiceManifest[] {
   return KNOWN_SERVICES;
 }

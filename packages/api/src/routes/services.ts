@@ -2,7 +2,12 @@ import { spawn } from 'node:child_process';
 import { closeSync, existsSync } from 'node:fs';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { checkProcessByPattern, findPidsByPort, isServiceProcess } from '../domains/services/process-utils.js';
+import {
+  checkProcessByPattern,
+  findPidsByPort,
+  isServiceProcess,
+  winTaskKill,
+} from '../domains/services/process-utils.js';
 import { getServiceConfig, setServiceConfig } from '../domains/services/service-config.js';
 import {
   appendLog,
@@ -14,11 +19,14 @@ import {
 } from '../domains/services/service-logs.js';
 import { MODEL_ENV_VARS } from '../domains/services/service-manifest.js';
 import {
+  clearServicePid,
   getAllServiceStates,
   getKnownServices,
   getServiceById,
+  getServicePid,
   getServiceState,
   resolveServiceEndpoint,
+  setServicePid,
 } from '../domains/services/service-registry.js';
 import { resolveUserId } from '../utils/request-identity.js';
 
@@ -144,6 +152,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
           await new Promise((r) => setTimeout(r, 1500));
           const healthState = await getServiceState(manifest);
           if (healthState.status === 'running' || healthState.status === 'starting') {
+            setServicePid(id, child.pid);
             return { ok: true, message: `${manifest.name} start initiated` };
           }
         }
@@ -155,6 +164,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         reply.status(500);
         return { error: `${manifest.name} exited immediately (code ${earlyExit})`, logs };
       }
+      setServicePid(id, child.pid);
       return { ok: true, message: `${manifest.name} start initiated (pid: ${child.pid})` };
     } catch {
       reply.status(500);
@@ -177,6 +187,23 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       return { error: `Service "${id}" not found` };
     }
 
+    // 1) Try stored PID (most reliable — recorded at start time)
+    const storedPid = getServicePid(id);
+    if (storedPid) {
+      try {
+        if (process.platform === 'win32') {
+          winTaskKill(storedPid);
+        } else {
+          process.kill(-storedPid, 'SIGTERM');
+        }
+      } catch {
+        /* already gone */
+      }
+      clearServicePid(id);
+      return { ok: true, message: `${manifest.name} stopped (pid ${storedPid})` };
+    }
+
+    // 2) Try stop script if defined
     if (manifest.scripts.stop) {
       const scriptPath = resolveScriptPath(manifest.scripts.stop);
       if (existsSync(scriptPath)) {
@@ -199,9 +226,10 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
+    // 3) Fallback: port-based kill
     if (!manifest.port) {
       reply.status(400);
-      return { error: `Service "${id}" has no port or stop script` };
+      return { error: `Service "${id}" has no stored PID, stop script, or port` };
     }
 
     try {
@@ -209,12 +237,21 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       const killed: number[] = [];
       for (const pid of candidatePids) {
         if (!isServiceProcess(pid, manifest)) continue;
-        try {
-          process.kill(pid, 'SIGTERM');
-          killed.push(pid);
-        } catch {
-          /* already gone */
-        }
+        const ok =
+          process.platform === 'win32'
+            ? winTaskKill(pid)
+            : (() => {
+                try {
+                  process.kill(pid, 'SIGTERM');
+                  return true;
+                } catch {
+                  return false;
+                }
+              })();
+        if (ok) killed.push(pid);
+      }
+      if (killed.length === 0) {
+        request.log.warn({ serviceId: id, port: manifest.port, candidatePids }, 'stop: no matching processes killed');
       }
       return { ok: true, message: `${manifest.name} stopped (${killed.length} process(es))` };
     } catch {
@@ -326,6 +363,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
               env: startEnv,
             });
             startChild.on('error', () => {});
+            if (startChild.pid) setServicePid(id, startChild.pid);
             startChild.unref();
             if (startFd != null) closeSync(startFd);
           }

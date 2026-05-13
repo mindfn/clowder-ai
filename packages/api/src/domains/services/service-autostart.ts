@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { getAllServiceConfigs } from './service-config.js';
 import { resolveScriptPath, resolveSpawnCommand } from './service-logs.js';
 import { MODEL_ENV_VARS } from './service-manifest.js';
-import { checkInstalled, getKnownServices, getServiceState } from './service-registry.js';
+import { checkInstalled, getKnownServices, getServiceState, setServicePid } from './service-registry.js';
 
 interface Logger {
   info: (msg: string, ...args: unknown[]) => void;
@@ -64,6 +64,7 @@ export async function autoStartEnabledServices(log: Logger): Promise<void> {
         env,
       });
       child.on('error', () => {});
+      if (child.pid) setServicePid(manifest.id, child.pid);
       child.unref();
     } catch {
       log.warn('[services] ✗ %s — failed to spawn start script', manifest.name);
