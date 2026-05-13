@@ -2,12 +2,14 @@ import { spawn } from 'node:child_process';
 import { closeSync, existsSync } from 'node:fs';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { getEnvironmentProfile } from '../domains/services/environment-detector.js';
 import {
   checkProcessByPattern,
   findPidsByPort,
   isServiceProcess,
   winTaskKill,
 } from '../domains/services/process-utils.js';
+import { buildRecommendation } from '../domains/services/recommendation-matrix.js';
 import { getServiceConfig, setServiceConfig } from '../domains/services/service-config.js';
 import {
   appendLog,
@@ -73,6 +75,23 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     }
     const state = await getServiceState(manifest);
     return state;
+  });
+
+  app.get<{ Params: { id: string } }>('/api/services/:id/install-preview', async (request, reply) => {
+    const ownerErr = checkServiceOwner(request);
+    if (ownerErr) {
+      reply.status(ownerErr.status);
+      return { error: ownerErr.error };
+    }
+    const { id } = request.params;
+    const manifest = getServiceById(id);
+    if (!manifest) {
+      reply.status(404);
+      return { error: `Service "${id}" not found` };
+    }
+    const profile = getEnvironmentProfile(true);
+    const recommendation = buildRecommendation(id, profile);
+    return { profile, recommendation };
   });
 
   app.post<{ Params: { id: string } }>('/api/services/:id/start', async (request, reply) => {
@@ -288,6 +307,17 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       if (platformErr) {
         reply.status(422);
         return { error: platformErr };
+      }
+
+      const previewProfile = getEnvironmentProfile();
+      const previewRec = buildRecommendation(id, previewProfile);
+      if (previewRec.unsupported) {
+        reply.status(422);
+        return {
+          ok: false,
+          error: previewRec.unsupported.reason,
+          unsupported: previewRec.unsupported,
+        };
       }
 
       const current = await getServiceState(manifest);

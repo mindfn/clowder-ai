@@ -60,4 +60,5 @@ export interface ServiceState {
   lastChecked: number | null;
   healthDetail?: Record<string, unknown>;
   error?: string;
+  recommendation?: import('./recommendation-types.js').ServiceRecommendation;
 }

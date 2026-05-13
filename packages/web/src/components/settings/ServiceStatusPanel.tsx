@@ -381,11 +381,12 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
           </div>
         );
       })}
-      {installPreview?.prerequisites && (
+      {installPreview && (
         <InstallPreviewModal
           open={!!installPreview}
+          serviceId={installPreview.id}
           serviceName={installPreview.name}
-          prerequisites={installPreview.prerequisites}
+          estimatedMinutes={installPreview.prerequisites?.estimatedMinutes}
           onConfirm={async (selectedModel) => {
             const id = installPreview.id;
             const name = installPreview.name;

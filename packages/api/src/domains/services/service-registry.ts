@@ -2,6 +2,8 @@ import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
+import { getEnvironmentProfile } from './environment-detector.js';
+import { buildRecommendation } from './recommendation-matrix.js';
 import { getServiceConfig } from './service-config.js';
 import { resolveScriptPath } from './service-logs.js';
 import type { InstallStatus, ServiceManifest, ServiceState, ServiceStatus } from './service-manifest.js';
@@ -399,7 +401,7 @@ function filterModelsByPlatform(m: ServiceManifest): ServiceManifest {
   };
 }
 
-export async function getServiceState(manifest: ServiceManifest): Promise<ServiceState> {
+export async function getServiceState(manifest: ServiceManifest, refreshEnv = false): Promise<ServiceState> {
   const probe = await probeHealth(manifest);
   let { status } = probe;
   if (status === 'stopped' || status === 'unknown') {
@@ -408,6 +410,8 @@ export async function getServiceState(manifest: ServiceManifest): Promise<Servic
   }
   const config = getServiceConfig(manifest.id);
   const installStatus = getInstallStatus(manifest);
+  const profile = getEnvironmentProfile(refreshEnv);
+  const recommendation = buildRecommendation(manifest.id, profile);
   return {
     manifest: filterModelsByPlatform(manifest),
     status,
@@ -418,9 +422,10 @@ export async function getServiceState(manifest: ServiceManifest): Promise<Servic
     lastChecked: Date.now(),
     healthDetail: probe.detail,
     error: probe.error,
+    recommendation,
   };
 }
 
 export async function getAllServiceStates(): Promise<ServiceState[]> {
-  return Promise.all(KNOWN_SERVICES.map(getServiceState));
+  return Promise.all(KNOWN_SERVICES.map((m) => getServiceState(m)));
 }
