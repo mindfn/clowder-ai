@@ -26,7 +26,7 @@ pip install --quiet -U pip
 
 if [ "$PLATFORM" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
   echo "  安装依赖: mlx-audio + misaki[zh] ..."
-  pip install --quiet mlx-audio 'misaki[zh]' fastapi uvicorn 'httpx[socks]' num2words spacy phonemizer huggingface_hub
+  pip install --quiet mlx-audio 'misaki[zh]' fastapi uvicorn 'httpx[socks]' num2words spacy phonemizer 'huggingface_hub[hf_xet]'
 
   TTS_MODEL="${TTS_MODEL:-mlx-community/Kokoro-82M-bf16}"
   echo "  预下载模型: $TTS_MODEL ..."
@@ -45,7 +45,7 @@ else
 
   # Common deps (always installed so users can swap providers later)
   echo "  安装基础依赖: edge-tts fastapi uvicorn httpx[socks] ..."
-  pip install --quiet edge-tts fastapi uvicorn 'httpx[socks]' huggingface_hub
+  pip install --quiet edge-tts fastapi uvicorn 'httpx[socks]' 'huggingface_hub[hf_xet]'
 
   case "$TTS_MODEL" in
     piper|zh_CN-*|en_US-*|en_GB-*|*-piper)

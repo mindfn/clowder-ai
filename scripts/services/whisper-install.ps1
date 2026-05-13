@@ -43,7 +43,7 @@ if (-not $ffmpegPath) {
 
 Write-Host "  Installing dependencies: faster-whisper fastapi uvicorn ..."
 $pipArgs = @('-m', 'pip', 'install', '--progress-bar', 'on',
-    'faster-whisper', 'fastapi', 'uvicorn', 'python-multipart', 'httpx[socks]', 'huggingface_hub')
+    'faster-whisper', 'fastapi', 'uvicorn', 'python-multipart', 'httpx[socks]', 'huggingface_hub[hf_xet]')
 if ($env:PIP_INDEX_URL) {
     $pipArgs += @('--extra-index-url', 'https://pypi.org/simple/')
 }

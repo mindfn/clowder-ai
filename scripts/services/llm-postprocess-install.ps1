@@ -75,7 +75,7 @@ if ($LASTEXITCODE -ne 0) { throw "Failed to install torch" }
 
 Write-Host "  Installing dependencies: transformers fastapi uvicorn pydantic ..."
 $pipArgs = @('-m', 'pip', 'install', '--progress-bar', 'on',
-    'transformers', 'fastapi', 'uvicorn', 'pydantic', 'huggingface_hub')
+    'transformers', 'fastapi', 'uvicorn', 'pydantic', 'huggingface_hub[hf_xet]')
 if ($env:PIP_INDEX_URL) {
     $pipArgs += @('--extra-index-url', 'https://pypi.org/simple/')
 }

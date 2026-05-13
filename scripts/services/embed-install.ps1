@@ -64,7 +64,7 @@ Stemmer = SnowballStemmer
 
     Write-Host "  Installing dependencies: fastembed onnxruntime fastapi uvicorn numpy huggingface_hub ..."
     $pipArgs = @('-m', 'pip', 'install', '--progress-bar', 'on',
-        'fastembed', 'onnxruntime', 'fastapi', 'uvicorn', 'numpy', 'huggingface_hub')
+        'fastembed', 'onnxruntime', 'fastapi', 'uvicorn', 'numpy', 'huggingface_hub[hf_xet]')
     if ($env:PIP_INDEX_URL) {
         $pipArgs += @('--extra-index-url', 'https://pypi.org/simple/')
     }
@@ -100,7 +100,7 @@ Stemmer = SnowballStemmer
 
     Write-Host "  Installing dependencies: sentence-transformers fastapi uvicorn numpy huggingface_hub ..."
     $pipArgs = @('-m', 'pip', 'install', '--progress-bar', 'on',
-        'sentence-transformers', 'fastapi', 'uvicorn', 'numpy', 'huggingface_hub')
+        'sentence-transformers', 'fastapi', 'uvicorn', 'numpy', 'huggingface_hub[hf_xet]')
     if ($env:PIP_INDEX_URL) {
         $pipArgs += @('--extra-index-url', 'https://pypi.org/simple/')
     }

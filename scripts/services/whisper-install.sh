@@ -34,8 +34,8 @@ if ! command -v ffmpeg &>/dev/null; then
 fi
 
 if [ "$PLATFORM" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
-  echo "  安装依赖: mlx-whisper fastapi uvicorn python-multipart httpx[socks] huggingface_hub ..."
-  pip install --quiet mlx-whisper fastapi uvicorn python-multipart 'httpx[socks]' huggingface_hub
+  echo "  安装依赖: mlx-whisper fastapi uvicorn python-multipart httpx[socks] 'huggingface_hub[hf_xet]' ..."
+  pip install --quiet mlx-whisper fastapi uvicorn python-multipart 'httpx[socks]' 'huggingface_hub[hf_xet]'
 
   MODEL="${WHISPER_MODEL:-mlx-community/whisper-large-v3-turbo}"
   echo "  预下载模型: $MODEL ..."
@@ -50,8 +50,8 @@ except Exception as e:
     sys.exit(1)
 " "$MODEL"
 else
-  echo "  安装依赖: faster-whisper fastapi uvicorn python-multipart httpx[socks] huggingface_hub ..."
-  pip install --quiet faster-whisper fastapi uvicorn python-multipart 'httpx[socks]' huggingface_hub
+  echo "  安装依赖: faster-whisper fastapi uvicorn python-multipart httpx[socks] 'huggingface_hub[hf_xet]' ..."
+  pip install --quiet faster-whisper fastapi uvicorn python-multipart 'httpx[socks]' 'huggingface_hub[hf_xet]'
 
   MODEL="${WHISPER_MODEL:-large-v3-turbo}"
   echo "  预下载模型: $MODEL ..."
