@@ -719,23 +719,6 @@ wait_for_port_or_exit() {
     return 1
 }
 
-# Sidecar 状态机：disabled → launching → ready | failed
-# 用法: start_sidecar <name> <state_var> <port> <timeout> <launch_cmd...>
-start_sidecar() {
-    local name="$1" state_var="$2" port="$3" timeout="$4"
-    shift 4
-    local launch_cmd="$*"
-
-    eval "${state_var}=launching"
-    echo "  启动 ${name} (端口 ${port})..."
-    background_eval_with_null_stdin "$launch_cmd"
-    if wait_for_port "$port" "$name" "$timeout"; then
-        eval "${state_var}=ready"
-    else
-        eval "${state_var}=failed"
-    fi
-}
-
 # 后台 Node dev 进程（tsx watch / next dev）在 macOS + Node 25 下若继承 TTY stdin，
 # 可能在读取 fd0 时抛出 `TTY.onStreamRead` EIO。统一把后台任务 stdin 切到 /dev/null。
 background_eval_with_null_stdin() {
@@ -781,35 +764,6 @@ frontend_launch_command() {
 
 web_production_build_ready() {
     [ -f "$PROJECT_DIR/packages/web/.next/BUILD_ID" ]
-}
-
-# Sidecar summary: ready → 地址, failed → 报告, disabled → 静默
-print_sidecar_summary_all() {
-    local name state_var port state
-    for entry in "ASR:_STATE_ASR:${ASR_PORT:-9876}" "TTS:_STATE_TTS:${TTS_PORT_VAL:-9879}" "LLM后修:_STATE_LLM_PP:${LLM_PP_PORT:-9878}" "Embedding:_STATE_EMBED:${EMBED_PORT:-9880}"; do
-        name="${entry%%:*}"
-        local rest="${entry#*:}"
-        state_var="${rest%%:*}"
-        port="${rest#*:}"
-        state="${!state_var}"
-        case "$state" in
-            ready)   echo "  - ${name}:      http://localhost:${port}" ;;
-            failed)  echo -e "  - ${name}:      ${RED:-}启动失败${NC:-}" ;;
-        esac
-    done
-}
-
-# 检查 sidecar 依赖是否存在（ENABLED=1 时调用）
-# 用法: check_sidecar_dep <name> <command>
-# 返回 0 = 存在, 1 = 缺失（并打印安装提示）
-check_sidecar_dep() {
-    local name="$1" cmd="$2"
-    if ! command -v "$cmd" &>/dev/null; then
-        echo -e "${RED:-}  ✗ ${name} 需要 ${cmd}，但未安装${NC:-}"
-        echo "    请运行: ./scripts/setup.sh 或手动安装 ${cmd}"
-        return 1
-    fi
-    return 0
 }
 
 # 清理缓存
@@ -1307,12 +1261,9 @@ main() {
         echo -e "${YELLOW}  ⚠ Anthropic Proxy 已禁用 (ANTHROPIC_PROXY_ENABLED=0)${NC}"
     fi
 
-    # ML 服务（ASR/TTS/LLM后修/Embedding）由 service-manifest 管理
-    # API 启动后通过 autoStartEnabledServices 自动拉起已启用的服务
-    _STATE_ASR=disabled
-    _STATE_TTS=disabled
-    _STATE_LLM_PP=disabled
-    _STATE_EMBED=disabled
+    # ML 服务（ASR/TTS/LLM后修/Embedding）的生命周期由 API 启动后的
+    # autoStartEnabledServices() 统一管理：读 .cat-cafe/services.json，
+    # 按 enabled 字段拉起 scripts/services/*-server.{sh,ps1}。
 
     API_LAUNCH_CMD="$(api_launch_command)"
     if [ "${CAT_CAFE_DIRECT_NO_WATCH:-0}" = "1" ]; then
@@ -1370,7 +1321,7 @@ main() {
     echo "  - Frontend: http://localhost:$WEB_PORT"
     echo "  - API:      http://localhost:$API_PORT"
     [ "${ANTHROPIC_PROXY_ENABLED:-0}" = "1" ] && echo "  - Proxy:    http://localhost:$PROXY_PORT"
-    print_sidecar_summary_all
+    echo "  - 服务管理: Console（http://localhost:$WEB_PORT/settings）→ ML 服务由 API autoStartEnabledServices 拉起"
     echo -e "  - 前端模式: $PWA_INFO"
     echo -e "  - 存储:     $STORAGE_INFO"
     echo ""
