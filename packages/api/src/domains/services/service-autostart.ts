@@ -1,13 +1,42 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { fireServiceReady } from './service-hooks.js';
 import { getAllServiceConfigs } from './service-config.js';
 import { resolveScriptPath, resolveSpawnCommand } from './service-logs.js';
+import type { ServiceManifest } from './service-manifest.js';
 import { MODEL_ENV_VARS } from './service-manifest.js';
 import { checkInstalled, getKnownServices, getServiceState, setServicePid } from './service-registry.js';
 
 interface Logger {
   info: (msg: string, ...args: unknown[]) => void;
   warn: (msg: string, ...args: unknown[]) => void;
+}
+
+const READY_POLL_INTERVAL_MS = 5000;
+const READY_POLL_MAX_ATTEMPTS = 60; // 5 minutes — long enough for slow model loads
+
+/**
+ * After spawning a service, poll its health probe until it reports `running`,
+ * then fire its onReady hooks. Fire-and-forget — never blocks the caller.
+ */
+function watchAndAnnounceReady(manifest: ServiceManifest, log: Logger): void {
+  void (async () => {
+    for (let attempt = 0; attempt < READY_POLL_MAX_ATTEMPTS; attempt++) {
+      await new Promise((r) => setTimeout(r, READY_POLL_INTERVAL_MS));
+      try {
+        const state = await getServiceState(manifest);
+        if (state.status === 'running') {
+          log.info('[services] ✓ %s — healthy, firing onReady hooks', manifest.name);
+          await fireServiceReady(manifest.id);
+          return;
+        }
+      } catch {
+        /* probe failure → try again next tick */
+      }
+    }
+    const totalSec = (READY_POLL_INTERVAL_MS * READY_POLL_MAX_ATTEMPTS) / 1000;
+    log.warn(`[services] ⏱ ${manifest.name} — did not become healthy within ${totalSec}s, hooks not fired`);
+  })();
 }
 
 export async function autoStartEnabledServices(log: Logger): Promise<void> {
@@ -40,6 +69,13 @@ export async function autoStartEnabledServices(log: Logger): Promise<void> {
     const state = await getServiceState(manifest);
     if (state.status === 'running' || state.status === 'starting') {
       log.info('[services] ✓ %s — already running (port %s)', manifest.name, manifest.port ?? '?');
+      // Fire hooks immediately for already-running services (e.g. when API
+      // restarts but the sidecar was left running by a previous instance).
+      if (state.status === 'running') {
+        void fireServiceReady(manifest.id);
+      } else {
+        watchAndAnnounceReady(manifest, log);
+      }
       continue;
     }
 
@@ -66,6 +102,10 @@ export async function autoStartEnabledServices(log: Logger): Promise<void> {
       child.on('error', () => {});
       if (child.pid) setServicePid(manifest.id, child.pid);
       child.unref();
+      // Watch the new sidecar's health probe and fire onReady hooks when
+      // it transitions to running. Consumers (e.g. evidence embed catch-up)
+      // register on manifest.id via service-hooks.onServiceReady().
+      watchAndAnnounceReady(manifest, log);
     } catch {
       log.warn('[services] ✗ %s — failed to spawn start script', manifest.name);
     }

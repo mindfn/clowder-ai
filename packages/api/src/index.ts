@@ -690,38 +690,24 @@ async function main(): Promise<void> {
       app.log.warn(`[api] F102: evidence index rebuild failed (non-fatal): ${err}`);
     }
 
-    // Deferred embedding catch-up:
-    // autoStartEnabledServices() spawns the embed sidecar asynchronously and
-    // model loading often takes 10-60s. The initial rebuild() above runs
-    // while embedding.isReady() is still false, so it skips the embed step and
-    // Vectors stays at 0. Poll every 5s for up to ~5 min, re-probe readiness,
-    // then embed any pending docs once the sidecar comes up.
+    // Event-driven embedding catch-up:
+    // service-autostart owns the "is sidecar healthy yet" polling. It calls
+    // service-hooks.fireServiceReady('embedding-model') the moment the
+    // sidecar's /health turns ok. We just register a callback that embeds
+    // any docs missing from evidence_vectors. No timer of our own — if the
+    // sidecar is already healthy at API boot, the hook fires on next tick.
     const builder = memoryServices.indexBuilder;
-    let attempts = 0;
-    const MAX_ATTEMPTS = 60;
-    const POLL_MS = 5000;
-    const poller = setInterval(async () => {
-      attempts++;
+    const { onServiceReady } = await import('./domains/services/service-hooks.js');
+    onServiceReady('embedding-model', async () => {
       try {
         const r = await builder.embedPending();
         if (r.probed) {
-          if (r.embedded > 0) {
-            app.log.info(`[api] F102: deferred embed catch-up — ${r.embedded} doc(s) vectorized, pending=${r.pending}`);
-          }
-          // Stop once service is reachable AND nothing is pending.
-          if (r.pending === 0) {
-            clearInterval(poller);
-          }
+          app.log.info(`[api] F102: embed catch-up — embedded=${r.embedded}, pending=${r.pending}`);
         }
       } catch (err) {
-        app.log.warn(`[api] F102: deferred embed catch-up errored (will retry): ${err}`);
+        app.log.warn(`[api] F102: embed catch-up hook failed: ${err}`);
       }
-      if (attempts >= MAX_ATTEMPTS) {
-        clearInterval(poller);
-        app.log.warn(`[api] F102: deferred embed catch-up gave up after ${attempts} attempts`);
-      }
-    }, POLL_MS);
-    poller.unref?.();
+    });
   }
 
   // F-4: Global knowledge rebuild (Skills + MEMORY.md → global_knowledge.sqlite)
