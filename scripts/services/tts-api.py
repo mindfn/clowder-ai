@@ -257,6 +257,79 @@ class SapiAdapter(TtsAdapter):
             tmp.unlink(missing_ok=True)
 
 
+# ─── Piper Adapter (open-source offline, cross-platform ONNX) ────────
+
+
+class PiperAdapter(TtsAdapter):
+    """Piper neural TTS via piper-tts (offline, cross-platform).
+
+    Models are downloaded by tts-install.sh / tts-install.ps1 into
+    ~/.cat-cafe/piper-models/<voice>.onnx + .onnx.json
+    """
+
+    DEFAULT_MODEL = "zh_CN-huayan-medium"
+    MODELS_DIR = Path.home() / ".cat-cafe" / "piper-models"
+
+    def __init__(self, model: str | None = None):
+        self._model = model or self.DEFAULT_MODEL
+        self._voice = None
+        self._lock = asyncio.Lock()
+
+    @property
+    def name(self) -> str:
+        return "piper"
+
+    @property
+    def model_name(self) -> str:
+        return self._model
+
+    def _model_paths(self) -> tuple[Path, Path]:
+        # Allow either bare voice name or full filename
+        base = self._model.removesuffix(".onnx")
+        onnx_path = self.MODELS_DIR / f"{base}.onnx"
+        config_path = self.MODELS_DIR / f"{base}.onnx.json"
+        return onnx_path, config_path
+
+    async def _ensure_loaded(self):
+        if self._voice is not None:
+            return
+        async with self._lock:
+            if self._voice is not None:
+                return
+            try:
+                from piper import PiperVoice
+            except ImportError as exc:
+                raise RuntimeError(
+                    "piper-tts not available — install with: pip install piper-tts"
+                ) from exc
+
+            onnx_path, config_path = self._model_paths()
+            if not onnx_path.exists() or not config_path.exists():
+                raise RuntimeError(
+                    f"Piper model missing at {onnx_path}. Run tts-install to download."
+                )
+            self._voice = await asyncio.to_thread(PiperVoice.load, str(onnx_path))
+            log.info("Loaded Piper voice: %s", self._model)
+
+    async def synthesize(
+        self, text: str, voice: str, lang_code: str, speed: float, audio_format: str,
+    ) -> tuple[bytes, str]:
+        del voice, lang_code, speed, audio_format  # Piper voice/speed driven by model
+        await self._ensure_loaded()
+
+        import io
+        import wave
+
+        def _synth() -> bytes:
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as wf:
+                self._voice.synthesize(text, wf)
+            return buf.getvalue()
+
+        audio_bytes = await asyncio.to_thread(_synth)
+        return audio_bytes, "wav"
+
+
 # ─── Qwen3 Clone Adapter ────────────────────────────────────────────
 
 
@@ -371,8 +444,10 @@ def create_adapter(provider: str, model: str) -> TtsAdapter:
         return EdgeTtsAdapter()
     if provider == "sapi":
         return SapiAdapter()
+    if provider == "piper":
+        return PiperAdapter(model=model if model else None)
     raise ValueError(
-        f"Unknown TTS provider: '{provider}'. Supported: qwen3-clone, mlx-audio, edge-tts, sapi"
+        f"Unknown TTS provider: '{provider}'. Supported: qwen3-clone, mlx-audio, edge-tts, sapi, piper"
     )
 
 

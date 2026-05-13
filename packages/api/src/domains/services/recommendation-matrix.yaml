@@ -140,19 +140,18 @@ services:
           description: 微软云端语音，高质量、需联网（推荐）
           requirements: { ramGb: 1, diskGb: 0.1 }
           performance: 取决于网络
+        - name: piper
+          size: ~80MB
+          description: Piper 开源离线 TTS（ONNX，默认 zh_CN-huayan-medium）
+          requirements: { ramGb: 2, diskGb: 0.2 }
+          performance: CPU 实时
         - name: sapi
           size: ~5MB
           description: Windows 内置语音，离线可用（音色较老）
           requirements: { ramGb: 1, diskGb: 0.1 }
           performance: 实时 1x
-        - name: piper
-          size: ~80MB
-          description: Piper 开源离线 TTS（ONNX，跨平台，质量好）
-          requirements: { ramGb: 2, diskGb: 0.2 }
-          performance: CPU 实时
       notes:
-        - edge-tts 需要联网；sapi 离线但音色较老
-        - 'Piper 后端开发中：选择后会引导先安装 PiperAdapter 依赖（下个 commit 启用）'
+        - edge-tts 需要联网；piper/sapi 完全离线
 
     - match: { os: linux }
       models:
@@ -163,11 +162,11 @@ services:
           performance: 取决于网络
         - name: piper
           size: ~80MB
-          description: Piper 开源离线 TTS（ONNX，跨平台，质量好）
+          description: Piper 开源离线 TTS（ONNX，默认 zh_CN-huayan-medium）
           requirements: { ramGb: 2, diskGb: 0.2 }
           performance: CPU 实时
       notes:
-        - 'Piper 后端开发中：选择后会引导先安装 PiperAdapter 依赖（下个 commit 启用）'
+        - 离线选项 piper 默认下载中文 huayan-medium 模型；可手填 en_US-amy-medium 等
 
   # ------------------------------------------------------------
   # Embedding (语义向量)

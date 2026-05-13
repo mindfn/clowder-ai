@@ -14,8 +14,20 @@ set -euo pipefail
 VENV_DIR="${HOME}/.cat-cafe/tts-venv"
 MODEL="${TTS_MODEL:-${1:-mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16}}"
 PORT="${TTS_PORT:-9879}"
-PROVIDER="${TTS_PROVIDER:-qwen3-clone}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Infer provider from model name when TTS_PROVIDER not explicitly set
+if [ -z "${TTS_PROVIDER:-}" ]; then
+  case "$MODEL" in
+    edge-tts)                     PROVIDER="edge-tts" ;;
+    sapi)                         PROVIDER="sapi" ;;
+    piper|zh_CN-*|en_US-*|en_GB-*) PROVIDER="piper" ;;
+    mlx-community/Kokoro-*)       PROVIDER="mlx-audio" ;;
+    *)                            PROVIDER="qwen3-clone" ;;
+  esac
+else
+  PROVIDER="$TTS_PROVIDER"
+fi
 
 if [ ! -d "$VENV_DIR" ]; then
   echo "ERROR: 虚拟环境不存在: $VENV_DIR"

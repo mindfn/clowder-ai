@@ -38,4 +38,38 @@ if ($env:PIP_INDEX_URL) {
 & $VenvPython @pipArgs
 if ($LASTEXITCODE -ne 0) { throw "Failed to install TTS dependencies" }
 
+$TtsModel = if ($env:TTS_MODEL) { $env:TTS_MODEL } else { "edge-tts" }
+$IsPiper = $TtsModel -eq "piper" -or $TtsModel -like "zh_CN-*" -or $TtsModel -like "en_US-*" -or $TtsModel -like "en_GB-*"
+
+if ($IsPiper) {
+    $Voice = if ($TtsModel -eq "piper") { "zh_CN-huayan-medium" } else { $TtsModel }
+    Write-Host "  Installing piper-tts + downloading voice: $Voice ..."
+
+    $piperArgs = @('-m', 'pip', 'install', '--progress-bar', 'on', 'piper-tts')
+    if ($env:PIP_INDEX_URL) { $piperArgs += @('--extra-index-url', 'https://pypi.org/simple/') }
+    & $VenvPython @piperArgs
+    if ($LASTEXITCODE -ne 0) { throw "Failed to install piper-tts" }
+
+    $PiperDir = Join-Path $HOME ".cat-cafe\piper-models"
+    if (-not (Test-Path $PiperDir)) { New-Item -ItemType Directory -Path $PiperDir | Out-Null }
+
+    $voiceBase = switch ($Voice) {
+        "zh_CN-huayan-medium"  { "https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium" }
+        "en_US-amy-medium"     { "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium" }
+        "en_US-lessac-medium"  { "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium" }
+        "en_GB-alan-medium"    { "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium" }
+        default                { throw "Unknown piper voice: $Voice. Supported: zh_CN-huayan-medium, en_US-amy-medium, en_US-lessac-medium, en_GB-alan-medium" }
+    }
+
+    $onnxPath = Join-Path $PiperDir "$Voice.onnx"
+    $jsonPath = Join-Path $PiperDir "$Voice.onnx.json"
+    if (-not (Test-Path $onnxPath)) {
+        Invoke-WebRequest -Uri "$voiceBase/$Voice.onnx" -OutFile $onnxPath -UseBasicParsing
+    }
+    if (-not (Test-Path $jsonPath)) {
+        Invoke-WebRequest -Uri "$voiceBase/$Voice.onnx.json" -OutFile $jsonPath -UseBasicParsing
+    }
+    Write-Host "  Piper voice model ready: $onnxPath"
+}
+
 Write-Host "Installation complete."

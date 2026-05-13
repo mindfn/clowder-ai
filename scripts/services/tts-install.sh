@@ -41,10 +41,46 @@ except Exception as e:
     sys.exit(1)
 " "$TTS_MODEL"
 else
-  echo "  安装依赖: edge-tts fastapi uvicorn httpx[socks] ..."
+  TTS_MODEL="${TTS_MODEL:-edge-tts}"
+
+  # Common deps (always installed so users can swap providers later)
+  echo "  安装基础依赖: edge-tts fastapi uvicorn httpx[socks] ..."
   pip install --quiet edge-tts fastapi uvicorn 'httpx[socks]' huggingface_hub
 
-  TTS_MODEL="${TTS_MODEL:-edge-tts}"
-  echo "  TTS 后端: $TTS_MODEL（云端服务，无需本地模型下载）"
+  case "$TTS_MODEL" in
+    piper|zh_CN-*|en_US-*|en_GB-*|*-piper)
+      VOICE="${TTS_MODEL}"
+      [ "$VOICE" = "piper" ] && VOICE="zh_CN-huayan-medium"
+      echo "  安装 piper-tts + 下载离线语音模型: $VOICE ..."
+      pip install --quiet piper-tts
+
+      PIPER_DIR="${HOME}/.cat-cafe/piper-models"
+      mkdir -p "$PIPER_DIR"
+
+      case "$VOICE" in
+        zh_CN-huayan-medium) BASE="https://huggingface.co/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium" ;;
+        en_US-amy-medium)    BASE="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium" ;;
+        en_US-lessac-medium) BASE="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium" ;;
+        en_GB-alan-medium)   BASE="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium" ;;
+        *)
+          echo "ERROR: 未知的 piper voice: $VOICE。支持: zh_CN-huayan-medium, en_US-amy-medium, en_US-lessac-medium, en_GB-alan-medium" >&2
+          exit 1
+          ;;
+      esac
+
+      if [ ! -f "$PIPER_DIR/${VOICE}.onnx" ]; then
+        curl -fL --progress-bar "$BASE/${VOICE}.onnx" -o "$PIPER_DIR/${VOICE}.onnx" \
+          || { echo "ERROR: 下载 $VOICE.onnx 失败" >&2; exit 1; }
+      fi
+      if [ ! -f "$PIPER_DIR/${VOICE}.onnx.json" ]; then
+        curl -fL --progress-bar "$BASE/${VOICE}.onnx.json" -o "$PIPER_DIR/${VOICE}.onnx.json" \
+          || { echo "ERROR: 下载 $VOICE.onnx.json 失败" >&2; exit 1; }
+      fi
+      echo "  Piper 语音模型就绪: $PIPER_DIR/${VOICE}.onnx"
+      ;;
+    *)
+      echo "  TTS 后端: $TTS_MODEL（云端服务，无需本地模型下载）"
+      ;;
+  esac
 fi
 echo "安装完成。"
