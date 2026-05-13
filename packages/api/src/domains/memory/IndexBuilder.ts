@@ -372,10 +372,19 @@ export class IndexBuilder implements IIndexBuilder {
     if (this.messageListFn && this.threadListFn && !threadListFailed) {
       try {
         threads = await this.threadListFn();
-      } catch {
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[IndexBuilder] threadListFn failed during rebuild (passages will not be indexed): ${msg}`);
         threads = [];
       }
-      await this.indexPassages(threads);
+      const passageStats = await this.indexPassages(threads);
+      console.info(
+        `[IndexBuilder] passages indexed — threads=${threads.length} fetched=${passageStats.messagesFetched} inserted=${passageStats.passagesInserted} failedThreads=${passageStats.failedThreads}`,
+      );
+    } else {
+      console.info(
+        `[IndexBuilder] skipped passage indexing — messageListFn=${!!this.messageListFn} threadListFn=${!!this.threadListFn} threadListFailed=${threadListFailed}`,
+      );
     }
 
     // Phase I (AC-I1/I3): Backfill from JSONL transcripts for threads with expired Redis messages
@@ -783,9 +792,16 @@ export class IndexBuilder implements IIndexBuilder {
   /**
    * E-3: Index thread messages as passages in evidence_passages table.
    * For each thread, fetches messages via messageListFn and upserts into evidence_passages.
+   * Returns counters so callers can log how the indexing went.
    */
-  private async indexPassages(threads: ThreadSnapshot[]): Promise<void> {
-    if (!this.messageListFn) return;
+  private async indexPassages(
+    threads: ThreadSnapshot[],
+  ): Promise<{ messagesFetched: number; passagesInserted: number; failedThreads: number }> {
+    let messagesFetched = 0;
+    let passagesInserted = 0;
+    let failedThreads = 0;
+
+    if (!this.messageListFn) return { messagesFetched, passagesInserted, failedThreads };
     const db = this.store.getDb();
 
     // Phase I (AC-I2): INSERT OR IGNORE — passages only increase, never deleted on rebuild.
@@ -800,14 +816,19 @@ export class IndexBuilder implements IIndexBuilder {
       let messages: StoredMessageSnapshot[];
       try {
         messages = await this.messageListFn(thread.id, 2000);
-      } catch {
+      } catch (err) {
+        failedThreads++;
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[IndexBuilder] messageListFn failed for thread ${thread.id}: ${msg}`);
         continue;
       }
+      messagesFetched += messages.length;
 
+      let insertedThisThread = 0;
       const tx = db.transaction((msgs: StoredMessageSnapshot[]) => {
         for (let i = 0; i < msgs.length; i++) {
           const msg = msgs[i];
-          upsertStmt.run(
+          const info = upsertStmt.run(
             `thread-${thread.id}`,
             `msg-${msg.id}`,
             msg.content,
@@ -815,12 +836,16 @@ export class IndexBuilder implements IIndexBuilder {
             i,
             new Date(msg.timestamp).toISOString(),
           );
+          insertedThisThread += info.changes;
         }
       });
 
       // Route batch insert through single-writer queue (F163 AC-A5)
       await this.store.runExclusive(() => tx(messages));
+      passagesInserted += insertedThisThread;
     }
+
+    return { messagesFetched, passagesInserted, failedThreads };
   }
 
   /**
