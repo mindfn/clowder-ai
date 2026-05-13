@@ -4,32 +4,22 @@
 # Source this file at the top of each install script.
 
 PYTHON3=""
+# Delegate to the shared resolver (python-resolve.sh) so all service install
+# scripts pick interpreters the same way: prefer system Python 3.12+, then
+# reuse uv / pyenv / brew if the user already has them, finally fall back
+# to a project-owned interpreter under ~/.cat-cafe/python/. We never
+# auto-install uv / pyenv on the user's system; that's their choice.
 check_python3() {
-  local candidates=(python3.13 python3.12 python3.11 python3.10 python3)
-  for cmd in "${candidates[@]}"; do
-    if ! command -v "$cmd" &>/dev/null; then continue; fi
-    local ver
-    ver=$("$cmd" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null) || continue
-    local major minor
-    major=$(echo "$ver" | cut -d. -f1)
-    minor=$(echo "$ver" | cut -d. -f2)
-    if [ "$major" -ge 3 ] && [ "$minor" -ge 10 ]; then
-      PYTHON3="$cmd"
-      export PYTHON3
-      echo "  Python $ver ✓ ($cmd)"
-      return
-    fi
-  done
-  echo "ERROR: Python 3.10+ 未找到。"
-  echo ""
-  echo "请先安装 Python 3.10+："
-  case "$(uname -s)" in
-    Darwin) echo "  brew install python@3.12" ;;
-    Linux)  echo "  sudo apt install python3 python3-venv  # Debian/Ubuntu"
-            echo "  sudo dnf install python3              # Fedora/RHEL" ;;
-    *)      echo "  请从 https://www.python.org/downloads/ 下载安装" ;;
-  esac
-  exit 1
+  local resolver_dir
+  resolver_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck source=./python-resolve.sh
+  . "$resolver_dir/python-resolve.sh"
+  if ! resolve_python_312; then
+    exit 1
+  fi
+  PYTHON3="$RESOLVED_PYTHON"
+  export PYTHON3 RESOLVED_PYTHON RESOLVED_PYTHON_SOURCE RESOLVED_PYTHON_ARCH
+  echo "  Python ${RESOLVED_PYTHON_SOURCE}: $RESOLVED_PYTHON ✓ (arch=$RESOLVED_PYTHON_ARCH)"
 }
 
 check_disk_space() {
