@@ -391,7 +391,7 @@ export function InstallPreviewModal({
             <p className="text-[11px] text-cafe-muted">
               网络受限 / 内网 / 离线？{' '}
               <a
-                href="https://github.com/zts212653/clowder-ai/blob/main/docs/services-offline-install.md"
+                href="/api/services/docs/offline-install"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-conn-sky-text hover:underline"

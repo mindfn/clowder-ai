@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { closeSync, existsSync } from 'node:fs';
+import { closeSync, existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { getEnvironmentProfile } from '../domains/services/environment-detector.js';
@@ -16,6 +17,7 @@ import {
   isValidModelId,
   openLogFd,
   readLogTail,
+  resolveRepoRoot,
   resolveScriptPath,
   resolveSpawnCommand,
 } from '../domains/services/service-logs.js';
@@ -114,6 +116,20 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.get('/api/services', async () => {
     const states = await getAllServiceStates();
     return { services: states };
+  });
+
+  // Serve the offline-install guide from the local repo so the help link in
+  // InstallPreviewModal works in offline / air-gapped environments — falling
+  // back to a github URL would defeat the whole point.
+  app.get('/api/services/docs/offline-install', async (_request, reply) => {
+    const docPath = resolve(resolveRepoRoot(), 'docs/services-offline-install.md');
+    if (!existsSync(docPath)) {
+      reply.status(404);
+      return { error: 'docs/services-offline-install.md not found in repo' };
+    }
+    reply.header('cache-control', 'no-cache');
+    reply.type('text/markdown; charset=utf-8');
+    return readFileSync(docPath, 'utf-8');
   });
 
   app.get('/api/services/endpoints', async (request, reply) => {
