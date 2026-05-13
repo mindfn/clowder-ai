@@ -19,12 +19,11 @@ export const marketplaceRoutes: FastifyPluginAsync<MarketplaceRouteOptions> = as
       limit?: string;
     };
 
-    if (!q) {
-      return reply.status(400).send({ error: 'Missing required query parameter: q' });
-    }
-
+    // Empty q is allowed: it means "browse all / popular" — the marketplace
+    // panel calls this with no query to populate the initial list. Adapters
+    // are responsible for returning a sensible default set (or empty list).
     const results = await registry.search({
-      query: q,
+      query: q ?? '',
       ecosystems: ecosystems?.split(',') as MarketplaceEcosystem[] | undefined,
       trustLevels: trustLevels?.split(',') as TrustLevel[] | undefined,
       artifactKinds: artifactKinds?.split(',') as MarketplaceArtifactKind[] | undefined,

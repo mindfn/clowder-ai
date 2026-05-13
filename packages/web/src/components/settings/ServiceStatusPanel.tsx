@@ -85,10 +85,10 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
     try {
       const res = await apiFetch('/api/services');
       if (res.ok) {
-        const data = (await res.json()) as { services: ServiceState[] };
-        let list = data.services;
+        const data = (await res.json()) as { services?: ServiceState[] };
+        let list = data.services ?? [];
         if (filterFeatures?.length) {
-          list = list.filter((s) => s.manifest.enablesFeatures.some((f) => filterFeatures.includes(f)));
+          list = list.filter((s) => s.manifest?.enablesFeatures?.some((f) => filterFeatures.includes(f)) ?? false);
         }
         setServices(list);
       }
