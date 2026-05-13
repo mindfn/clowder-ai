@@ -308,6 +308,16 @@ export const evidenceRoutes: FastifyPluginAsync<EvidenceRoutesOptions> = async (
         /* table may not exist */
       }
 
+      // Vector index size — proves embedding generation actually ran.
+      // If embeddingModel is set but vectorsCount === 0, the embedding service
+      // is reachable enough to report itself but failed to actually embed docs.
+      let vectorsCount = 0;
+      try {
+        vectorsCount = (db.prepare('SELECT count(*) AS c FROM evidence_vectors').get() as { c: number }).c;
+      } catch {
+        /* vec0 virtual table may not exist on older schemas */
+      }
+
       return {
         backend: 'sqlite',
         healthy: true,
@@ -315,6 +325,7 @@ export const evidenceRoutes: FastifyPluginAsync<EvidenceRoutesOptions> = async (
         threads_count: threadCount,
         passages_count: passageCount,
         edges_count: edgeCount,
+        vectors_count: vectorsCount,
         last_rebuild_at: lastUpdated,
         embedding_model: embeddingModel,
       };

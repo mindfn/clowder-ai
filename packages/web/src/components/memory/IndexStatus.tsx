@@ -12,6 +12,7 @@ interface RawStatusResponse {
   threads_count?: number;
   passages_count?: number;
   edges_count?: number;
+  vectors_count?: number;
   last_rebuild_at?: string | null;
   embedding_model?: string | null;
   reason?: string;
@@ -24,6 +25,7 @@ export interface IndexStatusData {
   threadsCount: number;
   passagesCount: number;
   edgesCount: number;
+  vectorsCount: number;
   lastRebuildAt: string | null;
   embeddingModel: string | null;
   reason?: string;
@@ -40,6 +42,7 @@ export function parseIndexStatus(raw: RawStatusResponse): IndexStatusData {
     threadsCount: raw.threads_count ?? 0,
     passagesCount: raw.passages_count ?? 0,
     edgesCount: raw.edges_count ?? 0,
+    vectorsCount: raw.vectors_count ?? 0,
     lastRebuildAt: raw.last_rebuild_at ?? null,
     embeddingModel: raw.embedding_model ?? null,
     reason: raw.reason,
@@ -175,7 +178,7 @@ export function IndexStatus() {
     );
   }
 
-  const statsCount = 5 + (status.embeddingModel ? 1 : 0) + 1;
+  const statsCount = 5 + (status.embeddingModel ? 1 : 0) + 1 + 1; // +1 for Vectors row
 
   return (
     <div data-testid="index-status" className={`${settingsResourceCardClass} p-[18px]`}>
@@ -194,6 +197,7 @@ export function IndexStatus() {
           <StatusRow label="Threads" value={status.threadsCount} />
           <StatusRow label="Passages" value={status.passagesCount} />
           <StatusRow label="Edges" value={status.edgesCount} />
+          <StatusRow label="Vectors" value={status.vectorsCount} />
           {status.embeddingModel && <StatusRow label="Embedding" value={status.embeddingModel} />}
           <StatusRow
             label="Last rebuild"
