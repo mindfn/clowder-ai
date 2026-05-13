@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { fireServiceReady } from './service-hooks.js';
 import { getAllServiceConfigs } from './service-config.js';
+import { fireServiceReady } from './service-hooks.js';
 import { resolveScriptPath, resolveSpawnCommand } from './service-logs.js';
 import type { ServiceManifest } from './service-manifest.js';
 import { MODEL_ENV_VARS } from './service-manifest.js';
