@@ -10,7 +10,7 @@
   The embed-api.py auto-detects the available backend at startup.
 
   Env vars:
-  - EMBED_MODEL  (model to install, default: BAAI/bge-base-zh-v1.5)
+  - EMBED_MODEL  (model to install; ARM64 default BAAI/bge-small-zh-v1.5, x86 default BAAI/bge-base-zh-v1.5)
 #>
 
 $ErrorActionPreference = "Stop"
@@ -71,7 +71,10 @@ Stemmer = SnowballStemmer
     & $VenvPython @pipArgs
     if ($LASTEXITCODE -ne 0) { throw "Failed to install embedding dependencies" }
 
-    $Model = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "BAAI/bge-base-zh-v1.5" }
+    # fastembed has a strict model whitelist — only bge-small-zh-v1.5 is in
+    # it for Chinese. bge-base/large-zh-v1.5 will fail with "is not supported
+    # in TextEmbedding". Override via EMBED_MODEL only if you know it's whitelisted.
+    $Model = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "BAAI/bge-small-zh-v1.5" }
     Write-Host "  Pre-downloading ONNX model: $Model ..."
     & $VenvPython -c "from fastembed import TextEmbedding; TextEmbedding(model_name='$Model'); print('Model download complete.')"
     if ($LASTEXITCODE -ne 0) { throw "Failed to download model: $Model" }

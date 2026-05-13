@@ -195,25 +195,45 @@ services:
       notes:
         - Intel Mac 不支持 MLX，使用 ONNX 后端
 
-    - match: { os: [win32, linux], gpu: [cuda, rocm] }
+    # Windows/Linux ARM64: fastembed backend only (no torch wheels for ARM).
+    # fastembed has a hardcoded model whitelist — bge-base/large-zh-v1.5 are NOT in it.
+    # Only bge-small-zh-v1.5 ships with fastembed for Chinese text.
+    - match: { os: [win32, linux], arch: arm64 }
+      models:
+        - name: BAAI/bge-small-zh-v1.5
+          size: ~100MB
+          description: BGE 中文向量 small（fastembed/ONNX，ARM64 唯一选项）
+          requirements: { ramGb: 2, diskGb: 0.3 }
+          performance: CPU 实时
+      notes:
+        - 'ARM64 走 fastembed 后端，仅支持 bge-small-zh-v1.5；如需 base/large 质量请使用 x86 Python（参考 LLM 服务的 x86 安装引导）'
+
+    # Windows/Linux x64 + GPU: sentence-transformers backend, anything goes
+    - match: { os: [win32, linux], arch: x64, gpu: [cuda, rocm] }
       models:
         - name: BAAI/bge-large-zh-v1.5
           size: ~600MB
-          description: BGE 中文向量，更高维度（GPU 推荐）
+          description: BGE 中文向量 large（sentence-transformers，GPU 推荐）
           requirements: { ramGb: 4, diskGb: 1.5, gpu: recommended }
           performance: GPU 实时
         - name: BAAI/bge-base-zh-v1.5
           size: ~250MB
-          description: BGE 中文向量，ONNX 优化（CPU/GPU 通用）
+          description: BGE 中文向量 base（sentence-transformers）
           requirements: { ramGb: 2, diskGb: 0.5 }
           performance: CPU 实时
 
-    - match: { os: [win32, linux] }
+    # Windows/Linux x64 CPU
+    - match: { os: [win32, linux], arch: x64 }
       models:
         - name: BAAI/bge-base-zh-v1.5
           size: ~250MB
-          description: BGE 中文向量，ONNX 优化（CPU 通用，推荐）
+          description: BGE 中文向量 base（sentence-transformers，CPU 通用，推荐）
           requirements: { ramGb: 2, diskGb: 0.5 }
+          performance: CPU 实时
+        - name: BAAI/bge-small-zh-v1.5
+          size: ~100MB
+          description: 轻量版（fastembed/ONNX 也支持）
+          requirements: { ramGb: 2, diskGb: 0.3 }
           performance: CPU 实时
         - name: BAAI/bge-large-zh-v1.5
           size: ~600MB

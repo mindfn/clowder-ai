@@ -251,7 +251,10 @@ def main():
         except ImportError:
             log.warning("fastembed not installed")
             return False
-        fe_name = model_name if not model_name.startswith("mlx-community/") else "BAAI/bge-base-zh-v1.5"
+        # fastembed has a hardcoded whitelist — bge-small-zh-v1.5 is the only
+        # Chinese model in its catalog. If the configured model is MLX (mac)
+        # or another non-whitelisted name, fall back to bge-small-zh.
+        fe_name = model_name if not model_name.startswith("mlx-community/") else "BAAI/bge-small-zh-v1.5"
         providers = None
         device_label = "CPU"
         try:

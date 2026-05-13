@@ -79,9 +79,10 @@ describe('recommendation matrix — Windows ARM64', () => {
     assert.ok(rec.notes.some((c) => c.includes('x86')));
   });
 
-  test('embedding-model → bge-base (ARM64 没 GPU 走 cpu 默认)', () => {
+  test('embedding-model → bge-small (ARM64 fastembed whitelist 限制)', () => {
     const rec = buildRecommendation('embedding-model', profile);
-    assert.equal(rec.models[0]?.name, 'BAAI/bge-base-zh-v1.5');
+    assert.equal(rec.models[0]?.name, 'BAAI/bge-small-zh-v1.5');
+    assert.ok(rec.notes.some((n) => n.includes('fastembed')));
   });
 
   test('whisper-stt → faster-whisper base (CPU)', () => {
