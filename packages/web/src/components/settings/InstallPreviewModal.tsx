@@ -352,6 +352,20 @@ export function InstallPreviewModal({
           {estimatedMinutes && !isUnsupported && (
             <p className="text-[11px] text-cafe-muted">预计耗时 ~{estimatedMinutes} 分钟（取决于网络速度）</p>
           )}
+
+          {!isUnsupported && (
+            <p className="text-[11px] text-cafe-muted">
+              网络受限 / 内网 / 离线？{' '}
+              <a
+                href="https://github.com/zts212653/clowder-ai/blob/main/docs/services-offline-install.md"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-conn-sky-text hover:underline"
+              >
+                ↗ 查看离线安装指南
+              </a>
+            </p>
+          )}
         </div>
 
         <div className="flex justify-end pt-4">

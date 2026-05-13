@@ -47,6 +47,67 @@ function checkPlatformSupport(manifest: { supportedPlatforms?: string[]; name: s
   return `${manifest.name} requires ${supported} (current: ${process.platform}). MLX-based services are Apple Silicon only.`;
 }
 
+/**
+ * Pattern-match install stdout/stderr to give the user an actionable next step.
+ * Pip + HuggingFace + Piper download failures usually have stable error markers
+ * that map to a concrete remediation (mirror env var, manual model placement).
+ * Returns null when no known pattern matches.
+ */
+function detectInstallFailureHint(output: string): string | null {
+  const lower = output.toLowerCase();
+
+  // Pip can't reach PyPI / wheel index
+  if (
+    lower.includes('connectionerror') ||
+    lower.includes('connecttimeouterror') ||
+    lower.includes('connect timeout') ||
+    lower.includes('temporary failure in name resolution') ||
+    lower.includes('proxyerror') ||
+    lower.includes('failed to establish a new connection')
+  ) {
+    return [
+      '网络连接失败。可能的解决方法：',
+      '· 国内用户：在 .env 设置 HF_ENDPOINT=https://hf-mirror.com（HuggingFace 镜像）+ PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple',
+      '· 内网环境：设置 PIP_INDEX_URL=<内网 PyPI 镜像>',
+      '· 离线环境：手动准备模型后重试 install（详见 docs/services-offline-install.md）',
+    ].join('\n');
+  }
+
+  // Pip can't find a wheel for the current platform / Python version
+  if (lower.includes('could not find a version') || lower.includes('no matching distribution')) {
+    return [
+      'pip 找不到匹配的 wheel。可能的原因：',
+      '· 当前架构（ARM / x86）没有预编译 wheel — 详见 docs/services-offline-install.md "平台兼容性"',
+      '· 内网 PyPI 镜像没同步该包 — 设置 PIP_EXTRA_INDEX_URL=https://pypi.org/simple 回落到官方源',
+    ].join('\n');
+  }
+
+  // HuggingFace snapshot_download fails (covers HFHubHTTPError, RepositoryNotFoundError, etc.)
+  if (
+    lower.includes('repositorynotfound') ||
+    lower.includes('hfhubconnectionerror') ||
+    lower.includes('hfvalidationerror') ||
+    lower.includes('failed to download model') ||
+    lower.includes('huggingface.co') && lower.includes('error')
+  ) {
+    return [
+      'HuggingFace 模型下载失败。可能的解决方法：',
+      '· 国内用户：在 .env 设置 HF_ENDPOINT=https://hf-mirror.com',
+      '· 离线环境：手动下载模型到 ~/.cache/huggingface/hub/，然后重试 install 会自动识别（详见 docs/services-offline-install.md）',
+    ].join('\n');
+  }
+
+  // Piper voice download (custom curl-based, not huggingface_hub)
+  if (lower.includes('failed to download') && (lower.includes('.onnx') || lower.includes('piper'))) {
+    return [
+      'Piper voice 模型下载失败。可手动下载到 ~/.cat-cafe/piper-models/<voice>.onnx + .onnx.json，重试 install 会跳过下载。',
+      '镜像源：https://huggingface.co/rhasspy/piper-voices/tree/main (国内用 https://hf-mirror.com/rhasspy/piper-voices/tree/main)',
+    ].join('\n');
+  }
+
+  return null;
+}
+
 export const servicesRoutes: FastifyPluginAsync = async (app) => {
   app.get('/api/services', async () => {
     const states = await getAllServiceStates();
@@ -395,12 +456,18 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
         if (code !== 0) {
           setServiceConfig(id, { installStatus: 'failed' });
+          const troubleshootHint = detectInstallFailureHint(output);
           request.log.error(
             { serviceId: id, exitCode: code, output: output.slice(-2000) },
             `service install failed: ${manifest.name}`,
           );
           reply.status(422);
-          return { ok: false, error: `Install failed (exit ${code})`, output: output.slice(-2000) };
+          return {
+            ok: false,
+            error: `Install failed (exit ${code})`,
+            output: output.slice(-2000),
+            troubleshootHint,
+          };
         }
 
         setServiceConfig(id, { installStatus: 'installed' });
