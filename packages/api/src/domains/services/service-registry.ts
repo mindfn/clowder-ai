@@ -105,7 +105,16 @@ const KNOWN_SERVICES: ServiceManifest[] = [
           size: '~400MB',
           autoDownload: true,
           isDefault: true,
-          description: '轻量语义向量模型',
+          description: '轻量语义向量模型 (Apple Silicon)',
+          platforms: ['darwin'],
+        },
+        {
+          name: 'BAAI/bge-small-zh-v1.5',
+          size: '~100MB',
+          autoDownload: true,
+          isDefault: true,
+          description: '轻量语义向量模型 (ONNX)',
+          platforms: ['win32', 'linux'],
         },
       ],
       estimatedMinutes: 3,
@@ -315,6 +324,16 @@ export function getServiceById(id: string): ServiceManifest | undefined {
   return KNOWN_SERVICES.find((s) => s.id === id);
 }
 
+function filterModelsByPlatform(m: ServiceManifest): ServiceManifest {
+  const models = m.prerequisites.models;
+  if (!models?.some((x) => x.platforms)) return m;
+  const p = process.platform as 'darwin' | 'linux' | 'win32';
+  return {
+    ...m,
+    prerequisites: { ...m.prerequisites, models: models.filter((x) => !x.platforms || x.platforms.includes(p)) },
+  };
+}
+
 export async function getServiceState(manifest: ServiceManifest): Promise<ServiceState> {
   const probe = await probeHealth(manifest);
   let { status } = probe;
@@ -325,7 +344,7 @@ export async function getServiceState(manifest: ServiceManifest): Promise<Servic
   const config = getServiceConfig(manifest.id);
   const installStatus = getInstallStatus(manifest);
   return {
-    manifest,
+    manifest: filterModelsByPlatform(manifest),
     status,
     installed: installStatus === 'installed',
     installStatus,

@@ -16,6 +16,7 @@ export interface ServiceManifest {
       autoDownload: boolean;
       isDefault?: boolean;
       description?: string;
+      platforms?: ('darwin' | 'linux' | 'win32')[];
     }[];
     estimatedMinutes?: number;
   };

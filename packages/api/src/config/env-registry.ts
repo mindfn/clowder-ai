@@ -1368,7 +1368,7 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'EMBED_MODE',
     defaultValue: 'off',
-    description: '向量检索模式 (off/shadow/on)，on = 开启 Qwen3 embedding rerank',
+    description: '向量检索模式 (off/shadow/on)，需先安装并启用 Embedding 语义搜索服务',
     category: 'evidence',
     sensitive: false,
   },
