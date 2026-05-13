@@ -701,8 +701,8 @@ async function main(): Promise<void> {
     // next API restart). A fully-successful run causes the hook to be
     // unregistered automatically.
     const builder = memoryServices.indexBuilder;
-    const { onServiceReady } = await import('./domains/services/service-hooks.js');
-    onServiceReady('embedding-model', async () => {
+    const { onServiceEvent } = await import('./domains/services/service-hooks.js');
+    onServiceEvent('embedding-model', 'started', async () => {
       const r = await builder.embedPending();
       if (!r.probed) {
         // Sidecar reported running but embed-api isn't responding to /embed.

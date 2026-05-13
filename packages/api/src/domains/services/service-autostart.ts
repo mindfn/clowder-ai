@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { getAllServiceConfigs } from './service-config.js';
-import { fireServiceReady } from './service-hooks.js';
+import { fireServiceEvent } from './service-hooks.js';
 import { resolveScriptPath, resolveSpawnCommand } from './service-logs.js';
 import type { ServiceManifest } from './service-manifest.js';
 import { MODEL_ENV_VARS } from './service-manifest.js';
@@ -27,7 +27,7 @@ function watchAndAnnounceReady(manifest: ServiceManifest, log: Logger): void {
         const state = await getServiceState(manifest);
         if (state.status === 'running') {
           log.info('[services] ✓ %s — healthy, firing onReady hooks', manifest.name);
-          await fireServiceReady(manifest.id);
+          await fireServiceEvent(manifest.id, 'started');
           return;
         }
       } catch {
@@ -72,7 +72,7 @@ export async function autoStartEnabledServices(log: Logger): Promise<void> {
       // Fire hooks immediately for already-running services (e.g. when API
       // restarts but the sidecar was left running by a previous instance).
       if (state.status === 'running') {
-        void fireServiceReady(manifest.id);
+        void fireServiceEvent(manifest.id, 'started');
       } else {
         watchAndAnnounceReady(manifest, log);
       }

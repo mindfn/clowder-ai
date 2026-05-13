@@ -1,100 +1,145 @@
-// Event-driven service readiness hooks.
-// Consumers register "when service X becomes healthy, do Y" callbacks instead
-// of polling on their own.
+// Event-driven service hook bus.
 //
-// Lifecycle policy:
-//   • Each hook runs at most once per process startup per service.
-//   • On success → the hook is unregistered (removed from the map). Re-firing
-//     the same service won't re-run it.
-//   • On throw   → the hook stays registered so a future re-fire (e.g. API
-//     restart that re-detects the sidecar as healthy) can retry it.
-//   • Late registration (hook added after fire) — if all previously registered
-//     hooks have already succeeded for this service, the new hook fires on
-//     the next microtask; otherwise it waits for the next fire.
+// Consumers register interest in a specific event on a specific service.
+// The service lifecycle layer (service-autostart, install/uninstall routes)
+// is the only place that *fires* events. Consumers never poll on their own.
+//
+// Registration shape:
+//   onServiceEvent(serviceId, event, callback, options?)
+//
+// Lifecycle policy (per callback):
+//   • Run at most once per fire-cycle for the registered event.
+//   • On success → callback is unregistered (default; opt-out via
+//     options.unregisterOnSuccess = false to keep it always-on).
+//   • On throw   → callback stays registered so the next fire of the same
+//     event retries it.
+//   • Late registration: if the event already fired AND no other hooks are
+//     pending retry for it, the new hook fires on the next microtask.
+//     Otherwise it waits and rides the next external fire-cycle alongside
+//     the existing retries.
+//
+// Adding a new event later: just add to ServiceEvent below; the bus is
+// generic. Today the only emitter is "started" (service health probe
+// transitioned to running). Future emitters can hook in the same way
+// (e.g. install/uninstall routes calling fireServiceEvent(id, 'installed')).
 
-type ServiceReadyHook = (serviceId: string) => Promise<void> | void;
+export type ServiceEvent =
+  | 'started' // sidecar health probe transitioned to `running`
+  | 'stopped' // (reserved) sidecar transitioned away from `running`
+  | 'installed' // (reserved) install completed successfully
+  | 'uninstalled'; // (reserved) uninstall completed
 
-const hooks = new Map<string, ServiceReadyHook[]>();
-// Per-service "we've seen this service become ready at least once" flag.
-// Used so a late-registered hook can fire immediately if the service is
-// already up — but only when there are no still-pending (previously-failed)
-// hooks; otherwise the next fire-cycle picks it up alongside the retries.
-const alreadyReady = new Set<string>();
+export interface ServiceEventContext {
+  serviceId: string;
+  event: ServiceEvent;
+}
+
+type ServiceEventHook = (ctx: ServiceEventContext) => Promise<void> | void;
+
+interface RegisterOptions {
+  /** Drop the hook from the registry after a successful run. Default true. */
+  unregisterOnSuccess?: boolean;
+}
+
+interface HookEntry {
+  fn: ServiceEventHook;
+  unregisterOnSuccess: boolean;
+}
+
+const hooks = new Map<string, HookEntry[]>(); // key = `${serviceId}:${event}`
+const fired = new Set<string>(); // key = `${serviceId}:${event}` once seen ready
+
+function key(serviceId: string, event: ServiceEvent): string {
+  return `${serviceId}:${event}`;
+}
 
 /**
- * Register a callback to run when the named service becomes healthy.
- * If the service is already healthy AND no prior hooks are pending retry,
- * the callback runs on the next microtask.
+ * Register a callback for a specific event on a specific service.
+ * The default lifecycle is "fire once on success, retry on failure".
  */
-export function onServiceReady(serviceId: string, hook: ServiceReadyHook): void {
-  if (!hooks.has(serviceId)) hooks.set(serviceId, []);
-  hooks.get(serviceId)?.push(hook);
+export function onServiceEvent(
+  serviceId: string,
+  event: ServiceEvent,
+  hook: ServiceEventHook,
+  options?: RegisterOptions,
+): void {
+  const k = key(serviceId, event);
+  if (!hooks.has(k)) hooks.set(k, []);
+  hooks.get(k)?.push({
+    fn: hook,
+    unregisterOnSuccess: options?.unregisterOnSuccess ?? true,
+  });
 
-  // Already-ready + no pending retries → fire this late-comer right away.
-  if (alreadyReady.has(serviceId)) {
-    const pending = hooks.get(serviceId) ?? [];
+  // Late-registration fast path: if the event already fired and the new hook
+  // is the only entry pending, fire it on the next microtask. If other hooks
+  // are queued (= previous retries), the new hook waits and rides the next
+  // external fire-cycle alongside them.
+  if (fired.has(k)) {
+    const pending = hooks.get(k) ?? [];
     if (pending.length === 1) {
-      // The only entry is the one we just pushed → safe to fire immediately
       queueMicrotask(() => {
-        void fireServiceReady(serviceId);
+        void fireServiceEvent(serviceId, event);
       });
     }
-    // If pending.length > 1, there are previously-failed hooks waiting —
-    // the next external fireServiceReady() call will pick this one up too.
   }
 }
 
 /**
- * Fire all registered hooks for a service. Runs each hook; successful hooks
- * are unregistered, failed ones stay so the next fire-cycle retries them.
- *
- * Calling twice with the same serviceId is safe:
- *   • If all hooks succeeded last time, the map is empty → no-op.
- *   • If some failed, the next call retries the leftovers (and any
- *     new late-registered hooks).
+ * Fire all registered hooks for a service/event pair. Successful hooks with
+ * unregisterOnSuccess=true (default) are dropped; failed and "always-on"
+ * hooks stay registered for future fires.
  */
-export async function fireServiceReady(serviceId: string): Promise<void> {
-  alreadyReady.add(serviceId);
+export async function fireServiceEvent(serviceId: string, event: ServiceEvent): Promise<void> {
+  const k = key(serviceId, event);
+  fired.add(k);
 
-  const list = hooks.get(serviceId) ?? [];
+  const list = hooks.get(k) ?? [];
   if (list.length === 0) return;
 
-  // Snapshot before iterating — late registrations during a hook run will
-  // be picked up by the next fire-cycle, not this one (avoids surprising
-  // mid-iteration mutations).
+  // Snapshot before iteration so late registrations during a hook run get
+  // picked up by the next fire-cycle, not this one.
   const snapshot = [...list];
-  const survivors: ServiceReadyHook[] = [];
+  const survivors: HookEntry[] = [];
+  const ctx: ServiceEventContext = { serviceId, event };
 
-  for (const hook of snapshot) {
-    const ok = await runHook(serviceId, hook);
-    if (!ok) {
-      // Failure → keep registered for the next fire-cycle.
-      survivors.push(hook);
+  for (const entry of snapshot) {
+    let ok = false;
+    try {
+      await entry.fn(ctx);
+      ok = true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[service-hooks] ${serviceId}/${event} hook failed: ${msg} (will retry on next fire)`);
     }
-    // Success → silently dropped (= unregistered).
+    // Survive into the next fire-cycle if:
+    //   - the hook threw (retry semantics), OR
+    //   - the consumer asked to stay registered after success.
+    if (!ok || !entry.unregisterOnSuccess) {
+      survivors.push(entry);
+    }
   }
 
   if (survivors.length > 0) {
-    hooks.set(serviceId, survivors);
+    hooks.set(k, survivors);
   } else {
-    hooks.delete(serviceId);
+    hooks.delete(k);
   }
+}
+
+// ─── Backward-compatibility aliases (started event) ───────────────────────
+// Older code paths used onServiceReady / fireServiceReady. They map 1:1 to
+// the 'started' event so internal callers can migrate at their own pace.
+
+export function onServiceReady(serviceId: string, hook: (id: string) => Promise<void> | void): void {
+  onServiceEvent(serviceId, 'started', (ctx) => hook(ctx.serviceId));
+}
+
+export async function fireServiceReady(serviceId: string): Promise<void> {
+  await fireServiceEvent(serviceId, 'started');
 }
 
 /** Test-only — reset hook state between test cases. */
 export function _resetServiceHooks(): void {
   hooks.clear();
-  alreadyReady.clear();
-}
-
-/** Returns true if hook succeeded, false if it threw. */
-async function runHook(serviceId: string, hook: ServiceReadyHook): Promise<boolean> {
-  try {
-    await hook(serviceId);
-    return true;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[service-hooks] ${serviceId} ready-hook failed: ${msg} (will retry on next fire)`);
-    return false;
-  }
+  fired.clear();
 }
