@@ -341,14 +341,21 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    // 3) Fallback: port-based kill
-    if (!manifest.port) {
+    // 3) Fallback: port-based kill.
+    // Stored PID lives in this API process only — after API restart we lose
+    // it, and the service kept running on the port we wrote to services.json.
+    // Probe the configured/allocated port (resolveServicePort honours
+    // services.json cfg.port first, then manifest.port). Probing the
+    // manifest default would miss services launched on a user-chosen or
+    // auto-allocated port and silently return ok while leaving them alive.
+    const stopPort = resolveServicePort(manifest);
+    if (!stopPort) {
       reply.status(400);
       return { error: `Service "${id}" has no stored PID, stop script, or port` };
     }
 
     try {
-      const candidatePids = await findPidsByPort(manifest.port);
+      const candidatePids = await findPidsByPort(stopPort);
       const killed: number[] = [];
       for (const pid of candidatePids) {
         if (!isServiceProcess(pid, manifest)) continue;
@@ -366,7 +373,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         if (ok) killed.push(pid);
       }
       if (killed.length === 0) {
-        request.log.warn({ serviceId: id, port: manifest.port, candidatePids }, 'stop: no matching processes killed');
+        request.log.warn({ serviceId: id, port: stopPort, candidatePids }, 'stop: no matching processes killed');
       }
       return { ok: true, message: `${manifest.name} stopped (${killed.length} process(es))` };
     } catch {

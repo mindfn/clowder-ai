@@ -5,7 +5,13 @@
   Loopback port (default 9876).
 #>
 
-param([int]$Port = 9876)
+param([int]$Port = 0)
+# API writes user-chosen / auto-allocated port to services.json and passes it
+# through WHISPER_PORT when spawning. Honour env first; fall back to hardcoded
+# default only when neither -Port nor $env:WHISPER_PORT was set.
+if ($Port -le 0) {
+    if ($env:WHISPER_PORT) { $Port = [int]$env:WHISPER_PORT } else { $Port = 9876 }
+}
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
