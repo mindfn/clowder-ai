@@ -88,7 +88,7 @@ function detectInstallFailureHint(output: string): string | null {
     lower.includes('hfhubconnectionerror') ||
     lower.includes('hfvalidationerror') ||
     lower.includes('failed to download model') ||
-    lower.includes('huggingface.co') && lower.includes('error')
+    (lower.includes('huggingface.co') && lower.includes('error'))
   ) {
     return [
       'HuggingFace 模型下载失败。可能的解决方法：',
