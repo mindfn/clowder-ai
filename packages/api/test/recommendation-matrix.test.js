@@ -79,10 +79,12 @@ describe('recommendation matrix — Windows ARM64', () => {
     assert.ok(rec.notes.some((c) => c.includes('x86')));
   });
 
-  test('embedding-model → jina-zh (ARM64, fastembed-whitelisted, bilingual)', () => {
+  test('embedding-model → unsupported (sqlite-vec has no windows-arm64 binary)', () => {
     const rec = buildRecommendation('embedding-model', profile);
-    assert.equal(rec.models[0]?.name, 'jinaai/jina-embeddings-v2-base-zh');
-    assert.ok(rec.notes.some((n) => n.includes('fastembed')));
+    assert.equal(rec.models.length, 0);
+    assert.ok(rec.unsupported);
+    assert.match(rec.unsupported.reason, /sqlite-vec/);
+    assert.match(rec.unsupported.userAction, /BM25|关键字|x64/);
   });
 
   test('whisper-stt → faster-whisper base (CPU)', () => {

@@ -259,10 +259,21 @@ services:
         links:
           - { label: 'HF sentence-transformers 模型', url: 'https://huggingface.co/models?library=sentence-transformers&sort=likes' }
 
-    # Windows/Linux ARM64: fastembed backend only (no torch wheels for ARM).
-    # fastembed has a hardcoded model whitelist. Choices verified via
+    # Windows ARM64: sqlite-vec upstream has no prebuilt windows-arm64 binary
+    # (verified: sqlite-vec@0.1.9 optionalDependencies list omits it; npm has
+    # no sqlite-vec-windows-arm64 package). The sidecar would run fine, but
+    # the API main process (native ARM64 Node) cannot load an x86 .dll across
+    # arch — so vectors never persist. Block install with a clear reason.
+    - match: { os: win32, arch: arm64 }
+      unsupported:
+        reason: sqlite-vec（向量索引存储扩展）上游没有 windows-arm64 预编译 binary。Embedding sidecar 本身能跑，但 API 主进程是 ARM64 Node，无法跨架构加载 x86 binary，向量无法落盘。
+        userAction: Windows ARM64 暂不支持向量搜索。BM25 关键字搜索已自动可用，无需任何配置；如需向量搜索请在 x64 Windows / macOS / Linux 上启用。
+        retryHint: 等待上游 sqlite-vec (https://github.com/asg017/sqlite-vec) 发布 windows-arm64 binary 后重试。
+
+    # Linux ARM64: fastembed backend + sqlite-vec-linux-arm64 prebuilt OK.
+    # fastembed has a hardcoded model whitelist verified via
     # TextEmbedding.list_supported_models() in fastembed 0.8.
-    - match: { os: [win32, linux], arch: arm64 }
+    - match: { os: linux, arch: arm64 }
       models:
         - name: jinaai/jina-embeddings-v2-base-zh
           size: ~640MB
