@@ -12,7 +12,7 @@ describe('environment detector — shape & sanity', () => {
     assert.ok(['darwin', 'win32', 'linux'].includes(p.os));
     assert.ok(['arm64', 'x64'].includes(p.arch));
     assert.ok(['apple', 'cuda', 'rocm', 'none'].includes(p.gpu));
-    assert.ok(['native', 'x86-emulated'].includes(p.pythonArch));
+    assert.ok(['native', 'x86-emulated', 'missing'].includes(p.pythonArch));
     assert.equal(typeof p.ramGb, 'number');
     assert.ok(p.ramGb > 0);
     assert.equal(typeof p.diskFreeGb, 'number');

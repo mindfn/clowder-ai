@@ -14,12 +14,20 @@ function Resolve-BootstrapPython {
     #   3. Project-owned Python at ~/.cat-cafe/python/
     #   4. Last resort: download python.org installer and silent-install
     #      to the project dir (PrependPath=0, no system pollution)
+    #
+    # Step 4 hits the network — call Sync-SystemProxy first so HTTP_PROXY /
+    # HTTPS_PROXY are populated from the Windows registry before any download.
+    # Otherwise users behind a corporate / WSL Proxy proxy would see Step 4
+    # fail to reach python.org while the subsequent Assert-Network already
+    # ran in another path. Sync-SystemProxy is idempotent.
+    Sync-SystemProxy
     . "$PSScriptRoot\python-resolve.ps1"
     $info = Resolve-Python312   # throws on hard failure
     Write-Host ("  Python {0}: {1} [OK] (arch={2})" -f $info.Source, $info.Path, $info.Machine)
     return [pscustomobject]@{
         Path = $info.Path
         PrefixArgs = $info.PrefixArgs
+        Machine = $info.Machine
     }
 }
 

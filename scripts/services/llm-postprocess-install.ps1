@@ -32,22 +32,25 @@ if (-not (Test-Path $VenvPython)) {
 & $VenvPython -m pip install --progress-bar on -U pip
 if ($LASTEXITCODE -ne 0) { throw "Failed to upgrade pip in llm-venv" }
 
-$isArm64 = ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") -or
-    ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64)
-if ($isArm64) {
+# Arch check: gate on the *interpreter's* architecture (resolved by
+# python-resolve.ps1), not the host OS. On ARM64 Windows the resolver
+# downloads an AMD64 Python to ~/.cat-cafe/python/, so $BootstrapPython
+# can be AMD64 even when the host OS is ARM64 — in that case transformers
+# / tokenizers install fine. Reject only when the interpreter itself is
+# native ARM64 (where no upstream wheels exist).
+$interpreterMachine = (& $BootstrapPython.Path @($BootstrapPython.PrefixArgs + @('-c', 'import platform; print(platform.machine())'))).Trim().ToLower()
+if ($interpreterMachine -eq 'arm64' -or $interpreterMachine -eq 'aarch64') {
     Write-Error @"
-ERROR: LLM 后处理服务暂不支持 ARM64 Windows。
+ERROR: LLM 后处理服务暂不支持 ARM64 Python 解释器。
 
-原因: transformers 库依赖 tokenizers/safetensors (Rust 编译)，目前没有 ARM64 Windows 预编译包。
+原因: transformers 库依赖 tokenizers/safetensors (Rust 编译)，目前没有 win-arm64 预编译包。
       与 Embedding 不同，LLM 文本生成没有纯 ONNX 的轻量替代方案。
 
-影响: 跳过此服务不会影响核心功能。LLM 后处理仅用于 ASR 语音转文字的校准优化
-      (修正同音字、标点等)，语音识别本身仍正常工作，只是转写结果不经过二次校准。
-
 解决方案:
-  1. 跳过安装 — 推荐，不影响主要功能
-  2. 安装 x86 版 Python — Windows ARM 内置 x86 模拟，所有 amd64 包可用
-  3. 安装 Visual Studio Build Tools + Rust — 从源码编译 (复杂，不推荐)
+  1. 让 cat-cafe 的 python-resolve 自动安装 AMD64 Python 到 ~/.cat-cafe/python/，
+     然后重试（这是 ARM64 Windows 上的标准路径，依靠 Prism emulation 跑 AMD64 wheel）。
+  2. 或者手动从 https://www.python.org/downloads/ 下载 "Windows installer (64-bit)"。
+  3. 跳过此服务 — LLM 后处理仅用于 ASR 二次校准，不影响语音识别本身。
 "@
     exit 1
 }

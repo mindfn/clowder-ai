@@ -17,8 +17,14 @@
 #>
 
 param(
-    [int]$Port = 9880
+    [int]$Port = 0
 )
+# API writes user-chosen / auto-allocated port to services.json and passes it
+# through EMBED_PORT when spawning. Honour env first; fall back to hardcoded
+# default only when neither -Port nor $env:EMBED_PORT was set.
+if ($Port -le 0) {
+    if ($env:EMBED_PORT) { $Port = [int]$env:EMBED_PORT } else { $Port = 9880 }
+}
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8

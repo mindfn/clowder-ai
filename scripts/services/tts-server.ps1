@@ -5,7 +5,13 @@
   Loopback port (default 9879).
 #>
 
-param([int]$Port = 9879)
+param([int]$Port = 0)
+# API writes user-chosen / auto-allocated port to services.json and passes it
+# through TTS_PORT when spawning. Honour env first; fall back to hardcoded
+# default only when neither -Port nor $env:TTS_PORT was set.
+if ($Port -le 0) {
+    if ($env:TTS_PORT) { $Port = [int]$env:TTS_PORT } else { $Port = 9879 }
+}
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8

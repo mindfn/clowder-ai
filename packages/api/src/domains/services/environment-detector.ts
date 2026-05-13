@@ -108,6 +108,23 @@ function isNativeMachine(machine: string, arch: EnvArch): boolean {
   return m === 'x86_64' || m === 'amd64';
 }
 
+/**
+ * On Windows ARM64 a native arm64 Python interpreter can be detected on PATH,
+ * but it's unusable for our service deps (aiohttp / PyAV / piper-tts /
+ * sentence-transformers ship no win-arm64 wheels). The bash/ps1 resolver
+ * (python-resolve.{sh,ps1}) handles this at install time by downloading an
+ * AMD64 interpreter to ~/.cat-cafe/python/. To keep the install-preview UI
+ * aligned with that behavior, the detector here must NOT report such an
+ * arm64 interpreter as a usable 'native' python — otherwise the matrix
+ * win-arm64+native unsupported branch fires and 422s the install request
+ * before resolver ever runs.
+ */
+function isAcceptableNativeInterpreter(os: EnvOs, arch: EnvArch, machine: string): boolean {
+  if (!isNativeMachine(machine, arch)) return false;
+  if (os === 'win32' && arch === 'arm64') return false; // native = arm64 here, rejected
+  return true;
+}
+
 function detectPython(os: EnvOs, arch: EnvArch): { pythonArch: PythonArch; pythonVersion?: string } {
   const candidates = listCandidatePythons(os);
   const probes: PythonProbe[] = [];
@@ -120,17 +137,22 @@ function detectPython(os: EnvOs, arch: EnvArch): { pythonArch: PythonArch; pytho
     return { pythonArch: 'missing' };
   }
 
-  const native = probes.find((p) => p.machine && isNativeMachine(p.machine, arch));
-  if (native) {
-    return { pythonArch: 'native', pythonVersion: native.version ?? undefined };
+  const acceptableNative = probes.find((p) => p.machine && isAcceptableNativeInterpreter(os, arch, p.machine));
+  if (acceptableNative) {
+    return { pythonArch: 'native', pythonVersion: acceptableNative.version ?? undefined };
   }
 
+  // Found an "emulated" interpreter — i.e. an architecture different from the
+  // host's native one. On Windows ARM64 this is the desired AMD64 path.
   const emulated = probes.find((p) => p.machine && !isNativeMachine(p.machine, arch));
   if (emulated) {
     return { pythonArch: 'x86-emulated', pythonVersion: emulated.version ?? undefined };
   }
 
-  return { pythonArch: 'native', pythonVersion: probes[0]?.version ?? undefined };
+  // Only an unacceptable native interpreter (i.e. arm64 Python on Windows
+  // ARM64) was found. From the matrix's point of view this is the same as
+  // "no Python yet" — the resolver will replace it at install time.
+  return { pythonArch: 'missing' };
 }
 
 function detectRamGb(): number {

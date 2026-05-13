@@ -43,10 +43,12 @@ _CAT_CAFE_HOME="${HOME}/.cat-cafe"
 _PROJECT_PYTHON_DIR="${_CAT_CAFE_HOME}/python"
 
 # Pinned python-build-standalone release. Same kind of portable Python
-# tarball that uv / pyenv / rye fetch — first-party github.com/indygreg
-# project. We pin a specific release so installs are reproducible.
-_PBS_RELEASE="20251010"
-_PBS_VERSION="3.12.7"
+# tarball that uv / pyenv / rye fetch. The project moved from
+# github.com/indygreg to github.com/astral-sh in 2025, both org+release+version
+# need to match a real existing asset (verified via curl -I 200 OK before pinning).
+_PBS_OWNER="astral-sh"
+_PBS_RELEASE="20260510"
+_PBS_VERSION="3.12.13"
 
 _python_version_ok() {
   # Args: python_command [arg...]
@@ -170,7 +172,7 @@ _install_project_python() {
   command -v curl >/dev/null 2>&1 || { echo "  curl required to bootstrap project Python — please install curl" >&2; return 1; }
   command -v tar >/dev/null 2>&1 || { echo "  tar required to bootstrap project Python" >&2; return 1; }
 
-  local tar_url="https://github.com/indygreg/python-build-standalone/releases/download/${_PBS_RELEASE}/cpython-${_PBS_VERSION}+${_PBS_RELEASE}-${triple}-install_only.tar.gz"
+  local tar_url="https://github.com/${_PBS_OWNER}/python-build-standalone/releases/download/${_PBS_RELEASE}/cpython-${_PBS_VERSION}+${_PBS_RELEASE}-${triple}-install_only.tar.gz"
   local tmpdir
   tmpdir=$(mktemp -d) || return 1
   echo "  Downloading portable Python ${_PBS_VERSION} (${triple}) from python-build-standalone..."
