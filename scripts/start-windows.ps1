@@ -304,7 +304,7 @@ $EmbedPort = if ($useLocalEmbedSidecar) {
     $embedPortDefault
 }
 $EmbedPidFile = Join-Path $RunDir "embed-$EmbedPort.pid"
-$EmbedLauncher = Join-Path $ProjectRoot "scripts\embed-server.ps1"
+$EmbedLauncher = Join-Path $ProjectRoot "scripts\services\embed-server.ps1"
 if ($useLocalEmbedSidecar) {
     $env:EMBED_URL = "http://127.0.0.1:$EmbedPort"
 }

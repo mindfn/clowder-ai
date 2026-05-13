@@ -1,7 +1,7 @@
 // F102 Phase C/G: EmbeddingService — HTTP client to external GPU embedding server
 // Replaces in-process ONNX (LL-034: must not run model inference in API process)
 //
-// The actual model runs in scripts/embed-api.py (independent Python process on GPU).
+// The actual model runs in scripts/services/embed-api.py (independent Python process on GPU).
 // This service is just an HTTP client, like MlxAudioTtsProvider / WhisperSttProvider.
 
 import { resolveServiceEndpoint } from '../services/service-registry.js';
