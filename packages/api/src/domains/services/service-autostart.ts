@@ -59,7 +59,7 @@ export async function autoStartEnabledServices(log: Logger): Promise<void> {
     try {
       const { command, args } = resolveSpawnCommand(manifest.scripts.start);
       const child = spawn(command, args, {
-        detached: true,
+        detached: process.platform !== 'win32',
         stdio: 'ignore',
         env,
       });

@@ -118,7 +118,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     try {
       const { command: spawnCmd, args: spawnArgs } = resolveSpawnCommand(manifest.scripts.start);
       const child = spawn(spawnCmd, spawnArgs, {
-        detached: true,
+        detached: process.platform !== 'win32',
         stdio: logFd != null ? ['ignore', logFd, logFd] : 'ignore',
         env,
       });
@@ -321,7 +321,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
             const startFd = openLogFd(id);
             const { command: autoStartCmd, args: autoStartArgs } = resolveSpawnCommand(manifest.scripts.start);
             const startChild = spawn(autoStartCmd, autoStartArgs, {
-              detached: true,
+              detached: process.platform !== 'win32',
               stdio: startFd != null ? ['ignore', startFd, startFd] : 'ignore',
               env: startEnv,
             });
