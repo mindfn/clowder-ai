@@ -272,9 +272,25 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
         }
 
         if (nextEnabled && s.status !== 'running' && s.status !== 'starting') {
-          await handleAction(m.id, 'start', { name: m.name });
+          const ok = await handleAction(m.id, 'start', { name: m.name });
+          if (!ok) {
+            await apiFetch(`/api/services/${m.id}/toggle`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ enabled: false }),
+            });
+            await fetchServices();
+          }
         } else if (!nextEnabled && s.status === 'running') {
-          await handleAction(m.id, 'stop', { name: m.name });
+          const ok = await handleAction(m.id, 'stop', { name: m.name });
+          if (!ok) {
+            await apiFetch(`/api/services/${m.id}/toggle`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ enabled: true }),
+            });
+            await fetchServices();
+          }
         } else {
           await fetchServices();
         }

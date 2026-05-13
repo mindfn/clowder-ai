@@ -20,5 +20,6 @@ if (-not (Test-Path $VenvPython)) {
 }
 
 $Model = if ($env:LLM_POSTPROCESS_MODEL) { $env:LLM_POSTPROCESS_MODEL } else { "Qwen/Qwen2.5-3B-Instruct" }
-Write-Host "Starting LLM post-process server: model=$Model, port=$Port"
+Write-Output "Starting LLM post-process server: model=$Model, port=$Port"
 & $VenvPython $ApiScript --model $Model --port $Port
+exit $LASTEXITCODE

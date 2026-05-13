@@ -37,5 +37,6 @@ if ($LASTEXITCODE -ne 0) {
     throw "Core deps missing in embed-venv. Run embed-install.ps1 first."
 }
 
-Write-Host "Starting Embedding server: port=$Port"
+Write-Output "Starting Embedding server: port=$Port"
 & $VenvPython $ApiScript --port $Port
+exit $LASTEXITCODE

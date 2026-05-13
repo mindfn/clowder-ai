@@ -25,5 +25,6 @@ if (-not $ffmpegPath) {
 }
 
 $Model = if ($env:WHISPER_MODEL) { $env:WHISPER_MODEL } else { "large-v3-turbo" }
-Write-Host "Starting Whisper server: model=$Model, port=$Port"
+Write-Output "Starting Whisper server: model=$Model, port=$Port"
 & $VenvPython $ApiScript --model $Model --port $Port
+exit $LASTEXITCODE

@@ -21,5 +21,6 @@ if (-not (Test-Path $VenvPython)) {
 
 $Provider = if ($env:TTS_MODEL -and $env:TTS_MODEL -in @("edge-tts", "sapi")) { $env:TTS_MODEL } else { "edge-tts" }
 $env:TTS_PROVIDER = $Provider
-Write-Host "Starting TTS server: provider=$Provider, port=$Port"
+Write-Output "Starting TTS server: provider=$Provider, port=$Port"
 & $VenvPython $ApiScript --port $Port
+exit $LASTEXITCODE
