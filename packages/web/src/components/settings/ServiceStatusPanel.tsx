@@ -333,7 +333,10 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
                 <p className="mt-0.5 truncate text-xs text-cafe-muted">
                   {m.type}
                   {m.port ? ` · :${m.port}` : ''} · {statusLabel}
-                  {s.selectedModel ? ` · ${s.selectedModel.split('/').pop()}` : ''}
+                  {(() => {
+                    const runtimeModel = (s.healthDetail?.model as string) || s.selectedModel;
+                    return runtimeModel ? ` · ${runtimeModel.split('/').pop()}` : '';
+                  })()}
                 </p>
                 {progress.get(m.id) && (
                   <p className="mt-1 truncate text-[11px] text-cafe-secondary font-mono">{progress.get(m.id)}</p>
