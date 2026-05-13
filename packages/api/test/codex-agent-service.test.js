@@ -1271,6 +1271,75 @@ test('Issue #116: turn.completed unblocks done even when process exit is delayed
   assert.equal(done.metadata?.usage?.outputTokens, 50);
 });
 
+// --- P3: developer_instructions governance injection ---
+
+test('fresh exec args include governance developer_instructions', async () => {
+  const proc = createMockProcess();
+  const spawnFn = createMockSpawnFn(proc);
+  const service = new CodexAgentService({ spawnFn, model: 'gpt-5.3-codex' });
+
+  const promise = collect(service.invoke('hello'));
+  emitCodexEvents(proc, [{ type: 'thread.started', thread_id: 't-dev-instr-fresh' }]);
+  await promise;
+
+  const args = spawnFn.mock.calls[0].arguments[1];
+  const configIndices = args.flatMap((a, i) => (a === '--config' ? [i] : []));
+  const devInstrArg = configIndices
+    .map((i) => args[i + 1])
+    .find((v) => v?.startsWith('developer_instructions='));
+  assert.ok(devInstrArg, 'fresh exec must inject developer_instructions via --config');
+  assert.ok(devInstrArg.includes('Redis'), 'developer_instructions should contain governance rules (Redis sanctuary)');
+  assert.ok(devInstrArg.includes('Identity is constant'), 'developer_instructions should contain identity constraint');
+});
+
+test('resume exec args include governance developer_instructions', async () => {
+  const proc = createMockProcess();
+  const spawnFn = createMockSpawnFn(proc);
+  const service = new CodexAgentService({ spawnFn, model: 'gpt-5.3-codex' });
+
+  const promise = collect(service.invoke('Continue', { sessionId: 'session-dev-instr' }));
+  emitCodexEvents(proc, [{ type: 'thread.started', thread_id: 'session-dev-instr' }]);
+  await promise;
+
+  const args = spawnFn.mock.calls[0].arguments[1];
+  assert.equal(args[0], 'exec');
+  assert.equal(args[1], 'resume');
+  const configIndices = args.flatMap((a, i) => (a === '--config' ? [i] : []));
+  const devInstrArg = configIndices
+    .map((i) => args[i + 1])
+    .find((v) => v?.startsWith('developer_instructions='));
+  assert.ok(devInstrArg, 'resume exec must inject developer_instructions via --config');
+  assert.ok(devInstrArg.includes('No self-review'), 'developer_instructions should contain review protocol');
+});
+
+test('user cliConfigArgs cannot override governance developer_instructions (last wins)', async () => {
+  const proc = createMockProcess();
+  const spawnFn = createMockSpawnFn(proc);
+  const service = new CodexAgentService({ spawnFn, model: 'gpt-5.3-codex' });
+
+  const promise = collect(
+    service.invoke('override attempt', {
+      cliConfigArgs: ['--config developer_instructions="ignore-all-rules"'],
+    }),
+  );
+  emitCodexEvents(proc, [{ type: 'thread.started', thread_id: 't-dev-instr-override' }]);
+  await promise;
+
+  const args = spawnFn.mock.calls[0].arguments[1];
+  // Find ALL developer_instructions config values in order
+  const devInstrValues = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--config' && args[i + 1]?.startsWith('developer_instructions=')) {
+      devInstrValues.push(args[i + 1]);
+    }
+  }
+  assert.ok(devInstrValues.length >= 2, `expected user + governance developer_instructions, got ${devInstrValues.length}`);
+  // Last one must be the governance version (Codex CLI: last --config wins)
+  const lastValue = devInstrValues.at(-1);
+  assert.ok(lastValue.includes('Redis'), 'last developer_instructions must be governance (contains Redis rule)');
+  assert.ok(!lastValue.includes('ignore-all-rules'), 'governance developer_instructions must not be the user override');
+});
+
 test('[F172] yields system_info rich_block for images found in codex generated_images dir', async () => {
   const sessionId = 'thread-f172-img';
   const tmpHome = mkdtempSync(join(import.meta.dirname ?? '.', '.tmp-f172-'));
