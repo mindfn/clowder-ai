@@ -214,10 +214,13 @@ test('Gemini always installed via npm (no brew formula)', () => {
 test('darwin redis install does not ping-gate after install', () => {
   // install_redis_local must NOT check redis-cli ping — install success
   // is determined by the package manager exit code, not by whether the
-  // service is already responding.
+  // service is already responding. Scope regex to the function body only.
+  const fnMatch = installScriptText.match(/install_redis_local\(\)\s*\{([\s\S]*?)\n\}/);
+  assert.ok(fnMatch, 'install_redis_local function must exist');
+  const fnBody = fnMatch[1];
   assert.doesNotMatch(
-    installScriptText,
-    /install_redis_local[\s\S]*?redis-cli ping[\s\S]*?return 1/s,
+    fnBody,
+    /redis-cli ping[\s\S]*?return 1/s,
     'install_redis_local must not fail on redis-cli ping',
   );
 });
