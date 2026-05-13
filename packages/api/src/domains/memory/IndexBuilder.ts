@@ -529,14 +529,21 @@ export class IndexBuilder implements IIndexBuilder {
   /**
    * Batch-embed indexed items when embedding service is ready.
    * AC-C6: check meta consistency — if model changed, clearAll + re-embed all docs.
+   *
+   * Meta-stamp invariant: as long as the embedding service is ready, we always
+   * record the model info in embedding_meta — even when items.length === 0 (a
+   * no-op rebuild). This is what makes the console's "Embedding" stat appear
+   * the first time after the embedding service comes online, instead of
+   * waiting for the next doc-change rebuild.
    */
   private async embedIndexedItems(items: EvidenceItem[]): Promise<void> {
-    if (!this.embedDeps?.embedding.isReady() || items.length === 0) return;
+    if (!this.embedDeps?.embedding.isReady()) return;
 
     const { embedding, vectorStore } = this.embedDeps;
+    const modelInfo = embedding.getModelInfo();
 
     // Version anchor check: model/dim change → full re-embed
-    const consistency = vectorStore.checkMetaConsistency(embedding.getModelInfo());
+    const consistency = vectorStore.checkMetaConsistency(modelInfo);
     let itemsToEmbed = items;
     if (!consistency.consistent) {
       vectorStore.clearAll();
@@ -552,15 +559,28 @@ export class IndexBuilder implements IIndexBuilder {
       );
     }
 
+    // Stamp meta even if itemsToEmbed is empty — surfaces the model to the
+    // console immediately after the embedding service is ready.
+    try {
+      vectorStore.initMeta(modelInfo);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[IndexBuilder] failed to stamp embedding_meta: ${msg}`);
+    }
+
+    if (itemsToEmbed.length === 0) return;
+
     try {
       const texts = itemsToEmbed.map((i) => `${i.title} ${i.summary ?? ''}`);
       const vectors = await embedding.embed(texts);
       for (let i = 0; i < itemsToEmbed.length; i++) {
         vectorStore.upsert(itemsToEmbed[i].anchor, vectors[i]);
       }
-      vectorStore.initMeta(embedding.getModelInfo());
-    } catch {
-      // fail-open: embedding errors don't block indexing
+    } catch (err) {
+      // fail-open: embedding errors don't block indexing, but DO log so we
+      // can tell why "Embedding" appeared but search degraded.
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[IndexBuilder] embedding batch failed (vector search may degrade): ${msg}`);
     }
   }
 
