@@ -140,6 +140,13 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       });
 
       if (earlyExit !== null) {
+        if (earlyExit === 0 && manifest.port) {
+          await new Promise((r) => setTimeout(r, 1500));
+          const healthState = await getServiceState(manifest);
+          if (healthState.status === 'running' || healthState.status === 'starting') {
+            return { ok: true, message: `${manifest.name} start initiated` };
+          }
+        }
         const logs = readLogTail(id, 20);
         request.log.error(
           { serviceId: id, exitCode: earlyExit, logs },
