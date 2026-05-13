@@ -559,14 +559,27 @@ async function main(): Promise<void> {
   initRepoIdentity(repoRoot);
 
   const { createMemoryServices } = await import('./domains/memory/factory.js');
+  // Resolve embed mode: EMBED_MODE env wins (explicit override), otherwise
+  // infer from the embedding-model service config — if the user enabled the
+  // sidecar in Settings, the in-process EmbeddingService should match. This
+  // avoids the foot-gun where the sidecar runs but the API layer never wires
+  // up embeddings because the env var was forgotten.
+  const { getServiceConfig: getEmbedSvcCfg } = await import('./domains/services/service-config.js');
+  const resolvedEmbedMode: 'off' | 'shadow' | 'on' = (() => {
+    const envMode = process.env.EMBED_MODE;
+    if (envMode === 'off' || envMode === 'shadow' || envMode === 'on') return envMode;
+    return getEmbedSvcCfg('embedding-model').enabled ? 'on' : 'off';
+  })();
+  app.log.info(
+    `[api] F102: embed mode = ${resolvedEmbedMode} (EMBED_MODE=${process.env.EMBED_MODE ?? '(unset)'}, service.enabled=${getEmbedSvcCfg('embedding-model').enabled})`,
+  );
   const memoryServices = await createMemoryServices({
     type: 'sqlite',
     sqlitePath: process.env.EVIDENCE_DB ?? resolve(repoRoot, 'evidence.sqlite'),
     docsRoot: process.env.DOCS_ROOT ?? resolve(repoRoot, 'docs'),
     markersDir: resolve(repoRoot, 'docs', 'markers'),
     transcriptDataDir, // reuse the same resolved path as Writer/Reader (line 282)
-    // Gap-1: expose EMBED_MODE env variable (Phase C infra ready, default off for open-source)
-    embed: process.env.EMBED_MODE ? { embedMode: process.env.EMBED_MODE as 'off' | 'shadow' | 'on' } : undefined,
+    embed: { embedMode: resolvedEmbedMode },
     // Phase E-2: message passage indexing — provide a callback that reads thread messages
     messageListFn: async (threadId: string, limit?: number) => {
       const messages = await messageStore.getByThread(threadId, limit ?? 2000, 'default-user');

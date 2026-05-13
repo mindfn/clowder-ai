@@ -106,13 +106,19 @@ export async function createMemoryServices(config: MemoryConfig): Promise<Memory
       const ok = ensureVectorTable(store.getDb(), embedConfig.embedDim);
       if (ok) {
         vectorStore = new VectorStore(store.getDb(), embedConfig.embedDim);
+      } else {
+        console.warn('[factory] sqlite-vec loaded but evidence_vectors table could not be created — vector search disabled');
       }
-    } catch {
-      // fail-open: sqlite-vec not available
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[factory] sqlite-vec unavailable — vector search disabled: ${msg}`);
     }
   }
 
   const embedDeps = embeddingService && vectorStore ? { embedding: embeddingService, vectorStore } : undefined;
+  console.info(
+    `[factory] memory init — embedMode=${embedConfig.embedMode} embeddingService=${!!embeddingService} vectorStore=${!!vectorStore} embedDeps=${!!embedDeps}`,
+  );
   const indexBuilder = new IndexBuilder(
     store,
     docsRoot,
