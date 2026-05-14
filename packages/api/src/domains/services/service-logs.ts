@@ -101,11 +101,7 @@ interface ChildLike {
  * and the marker listener also guards itself with a `fired` flag so we never
  * call onReady twice from stdout/stderr races.
  */
-export function wireUpSidecarReadyListener(
-  child: ChildLike,
-  serviceId: string,
-  onReady: () => void,
-): void {
+export function wireUpSidecarReadyListener(child: ChildLike, serviceId: string, onReady: () => void): void {
   let fired = false;
   const trigger = (reason: string): void => {
     if (fired) return;
