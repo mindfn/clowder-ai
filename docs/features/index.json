@@ -1157,6 +1157,12 @@
       "name": "Console Settings Shell — 全局导航 + 设置面板骨架",
       "status": "Implemented (branch), pending merge | **Owner**: Ragdoll | **Priority**: P0",
       "file": "F190-console-settings-shell.md"
+    },
+    {
+      "id": "F196",
+      "name": "Console & Service Followup — 跨平台 install / sidecar lifecycle / embedding consistency",
+      "status": "Implemented (branch), Linux verified, Windows x86 + Mac pending | **Owner**: Ragdoll | **Priority**: P1",
+      "file": "F196-console-service-followup.md"
     }
   ]
 }
