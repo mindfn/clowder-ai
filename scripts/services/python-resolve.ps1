@@ -105,7 +105,7 @@ function Install-PythonToProjectDir {
     try {
         $mutex = New-Object System.Threading.Mutex($false, "catCafePythonInstall")
     } catch {
-        Write-Host "  Mutex create failed ($($_.Exception.Message)); proceeding without lock"
+        [Console]::Error.WriteLine("  Mutex create failed ($($_.Exception.Message)); proceeding without lock")
         return (Install-PythonToProjectDirInner)
     }
     $acquired = $false
@@ -116,7 +116,7 @@ function Install-PythonToProjectDir {
         $acquired = $true
     }
     if (-not $acquired) {
-        Write-Host "  Python install lock timed out (>10min)"
+        [Console]::Error.WriteLine("  Python install lock timed out (>10min)")
         $mutex.Dispose()
         return $false
     }
@@ -125,7 +125,7 @@ function Install-PythonToProjectDir {
         # might have already finished while we were waiting on the mutex.
         $existing = Join-Path $script:ProjectPythonDir "python.exe"
         if (Test-Path $existing) {
-            Write-Host "  Project Python already present (installed by concurrent install)"
+            [Console]::Error.WriteLine("  Project Python already present (installed by concurrent install)")
             return $true
         }
         return (Install-PythonToProjectDirInner)
@@ -144,19 +144,20 @@ function Install-PythonToProjectDirInner {
     $installerUrl = "https://www.python.org/ftp/python/$version/python-$version-amd64.exe"
     $installerPath = Join-Path $env:TEMP "python-$version-amd64.exe"
 
-    Write-Host "  Downloading Python $version (AMD64) from python.org..."
+    [Console]::Error.WriteLine("  Downloading Python $version (AMD64) from python.org...")
     try {
         if ($hasCurl) {
             & curl.exe -L --fail -o $installerPath $installerUrl
+            if ($LASTEXITCODE -ne 0) { throw "curl.exe exit $LASTEXITCODE" }
         } else {
             Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing
         }
     } catch {
-        Write-Host "  Failed to download Python installer: $($_.Exception.Message)"
+        [Console]::Error.WriteLine("  Failed to download Python installer: $($_.Exception.Message)")
         return $false
     }
     if (-not (Test-Path $installerPath)) {
-        Write-Host "  Python installer not at expected path: $installerPath"
+        [Console]::Error.WriteLine("  Python installer not at expected path: $installerPath")
         return $false
     }
 
@@ -164,11 +165,16 @@ function Install-PythonToProjectDirInner {
         New-Item -ItemType Directory -Path $script:ProjectPythonDir -Force | Out-Null
     }
 
-    Write-Host "  Installing Python to $script:ProjectPythonDir (silent, no PATH changes)..."
+    [Console]::Error.WriteLine("  Installing Python to $script:ProjectPythonDir (silent, no PATH changes)...")
     # /quiet: no UI; TargetDir: install location; PrependPath=0: don't touch PATH;
     # Include_pip=1: bundle pip; Include_test=0: skip test suite to save space.
+    # Write installer log to a known path so we can surface it when the
+    # installer exits non-zero or silently relocates python.exe.
+    $installerLogPath = Join-Path $env:TEMP "cat-cafe-python-installer.log"
     $installerArgs = @(
         "/quiet",
+        "/log",
+        $installerLogPath,
         "TargetDir=$script:ProjectPythonDir",
         "PrependPath=0",
         "Include_pip=1",
@@ -180,22 +186,47 @@ function Install-PythonToProjectDirInner {
     try {
         $proc = Start-Process -FilePath $installerPath -ArgumentList $installerArgs -Wait -PassThru -NoNewWindow
     } catch {
-        Write-Host "  Python installer Start-Process failed: $($_.Exception.Message)"
+        [Console]::Error.WriteLine("  Python installer Start-Process failed: $($_.Exception.Message)")
         Remove-Item -Force $installerPath -ErrorAction SilentlyContinue
         return $false
     }
     Remove-Item -Force $installerPath -ErrorAction SilentlyContinue
     if ($proc.ExitCode -ne 0) {
-        Write-Host "  Python installer exited with code $($proc.ExitCode) — see Microsoft Installer logs in %TEMP%\\Python*.log"
+        [Console]::Error.WriteLine("  Python installer exited with code $($proc.ExitCode) — see installer log: $installerLogPath")
+        Show-PythonInstallerDiagnostic -InstallerLog $installerLogPath
         return $false
     }
     $expectedPython = Join-Path $script:ProjectPythonDir "python.exe"
     if (Test-Path $expectedPython) {
-        Write-Host "  Python $version installed to $script:ProjectPythonDir"
+        [Console]::Error.WriteLine("  Python $version installed to $script:ProjectPythonDir")
         return $true
     }
-    Write-Host "  Python installer exited 0 but $expectedPython is missing — installer might have redirected via App Execution Alias. Disable it in Settings → Apps → Advanced app settings → App execution aliases (toggle off python.exe / python3.exe)."
+    [Console]::Error.WriteLine("  Python installer exited 0 but $expectedPython is missing.")
+    Show-PythonInstallerDiagnostic -InstallerLog $installerLogPath
     return $false
+}
+
+function Show-PythonInstallerDiagnostic {
+    param([string]$InstallerLog)
+    # Surface what's actually in the target dir so we can tell whether the
+    # silent installer redirected (App Execution Alias hijack on Win-ARM64),
+    # placed python.exe in a subdirectory, or installed nothing at all.
+    if (Test-Path $script:ProjectPythonDir) {
+        [Console]::Error.WriteLine("  TargetDir contents ($script:ProjectPythonDir):")
+        try {
+            Get-ChildItem -Path $script:ProjectPythonDir -Recurse -Depth 2 -Force -ErrorAction SilentlyContinue |
+                ForEach-Object { [Console]::Error.WriteLine("    " + $_.FullName) }
+        } catch {}
+    } else {
+        [Console]::Error.WriteLine("  TargetDir does not exist after installer ran: $script:ProjectPythonDir")
+    }
+    if ($InstallerLog -and (Test-Path $InstallerLog)) {
+        [Console]::Error.WriteLine("  Installer log tail ($InstallerLog):")
+        try {
+            Get-Content -Path $InstallerLog -Tail 40 -ErrorAction SilentlyContinue |
+                ForEach-Object { [Console]::Error.WriteLine("    $_") }
+        } catch {}
+    }
 }
 
 function Resolve-Python312 {
