@@ -74,3 +74,66 @@ export function appendLog(serviceId: string, chunk: string): void {
     /* best effort */
   }
 }
+
+const READY_MARKER = '__CATCAFE_SIDECAR_READY__';
+// Fallback markers — if the sidecar didn't get the explicit READY_MARKER hook
+// installed yet (older script), fall back to uvicorn's own ready emission.
+const FALLBACK_MARKERS: readonly RegExp[] = [/Uvicorn running on http/i, /Application startup complete/i];
+
+interface ChildLike {
+  stdout: NodeJS.ReadableStream | null;
+  stderr: NodeJS.ReadableStream | null;
+}
+
+/**
+ * Wire up a child process's stdout/stderr to:
+ *   1. continue writing into the per-service log file (preserves existing UX
+ *      — users see install/start logs in the same place); and
+ *   2. parse for a ready marker (sidecar boot completion) and invoke
+ *      onReady() exactly once when seen — this is the push-based fast path
+ *      that replaces the old 5-min polling watcher.
+ *
+ * Caller must spawn with `stdio: ['ignore', 'pipe', 'pipe']` (or another
+ * config that gives us readable stdout + stderr handles).
+ *
+ * The polling watcher (watchForRunningAndFire) can still run alongside as a
+ * safety net — onReady is idempotent if you guard fire on the consumer side,
+ * and the marker listener also guards itself with a `fired` flag so we never
+ * call onReady twice from stdout/stderr races.
+ */
+export function wireUpSidecarReadyListener(
+  child: ChildLike,
+  serviceId: string,
+  onReady: () => void,
+): void {
+  let fired = false;
+  const trigger = (reason: string): void => {
+    if (fired) return;
+    fired = true;
+    appendLog(serviceId, `\n[ready-marker] sidecar ready signal received (${reason})\n`);
+    try {
+      onReady();
+    } catch {
+      /* swallow — caller's onReady is itself idempotent / safe */
+    }
+  };
+  const handleChunk = (chunk: Buffer | string): void => {
+    const text = chunk.toString('utf-8');
+    // Mirror stdout/stderr into the service log so users still see install/
+    // start output via readLogTail.
+    appendLog(serviceId, text);
+    if (fired) return;
+    if (text.includes(READY_MARKER)) {
+      trigger('explicit marker');
+      return;
+    }
+    for (const pattern of FALLBACK_MARKERS) {
+      if (pattern.test(text)) {
+        trigger(`uvicorn pattern: ${pattern.source}`);
+        return;
+      }
+    }
+  };
+  child.stdout?.on('data', handleChunk);
+  child.stderr?.on('data', handleChunk);
+}

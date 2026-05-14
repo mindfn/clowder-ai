@@ -27,6 +27,19 @@ log = logging.getLogger("embed-api")
 
 app = FastAPI(title="Cat Cafe Embedding Server (MLX)")
 
+
+@app.on_event("startup")
+async def _emit_ready_marker():
+    """Print a marker line so the TS parent process can fire 'started' the
+    moment uvicorn finishes binding the port — push-based fast path that
+    replaces a 5s polling delay. Matches the marker constant in
+    packages/api/src/domains/services/service-logs.ts (wireUpSidecarReadyListener).
+    Falls back to uvicorn's own 'Uvicorn running on http' line if this hook
+    doesn't run for any reason.
+    """
+    print("__CATCAFE_SIDECAR_READY__", flush=True)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",

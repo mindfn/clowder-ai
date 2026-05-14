@@ -48,6 +48,13 @@ log = logging.getLogger("tts-api")
 
 app = FastAPI(title="Cat Cafe TTS Server")
 
+
+@app.on_event("startup")
+async def _emit_ready_marker():
+    """Push-based ready signal — see embed-api.py + service-logs.ts."""
+    print("__CATCAFE_SIDECAR_READY__", flush=True)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",

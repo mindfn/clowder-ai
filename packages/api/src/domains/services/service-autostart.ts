@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { getAllServiceConfigs } from './service-config.js';
 import { fireServiceEvent } from './service-hooks.js';
-import { resolveScriptPath, resolveSpawnCommand } from './service-logs.js';
+import { resolveScriptPath, resolveSpawnCommand, wireUpSidecarReadyListener } from './service-logs.js';
 import type { ServiceManifest } from './service-manifest.js';
 import { MODEL_ENV_VARS, PORT_ENV_VARS } from './service-manifest.js';
 import { checkInstalled, getKnownServices, getServiceState, setServicePid } from './service-registry.js';
@@ -107,15 +107,25 @@ export async function autoStartEnabledServices(log: Logger): Promise<void> {
       const { command, args } = resolveSpawnCommand(manifest.scripts.start);
       const child = spawn(command, args, {
         detached: process.platform !== 'win32',
-        stdio: 'ignore',
+        // Pipe stdout/stderr so we can watch for the sidecar's ready
+        // marker AND keep mirroring its output to the per-service log
+        // (via wireUpSidecarReadyListener.appendLog inside).
+        stdio: ['ignore', 'pipe', 'pipe'],
         env,
       });
       child.on('error', () => {});
       if (child.pid) setServicePid(manifest.id, child.pid);
+      // Push-based fast path: as soon as the sidecar prints its ready
+      // marker (or uvicorn's "Uvicorn running on http"), fire 'started'.
+      // No need to wait for the polling watcher below.
+      wireUpSidecarReadyListener(child, manifest.id, () => {
+        log.info('[services] ✓ %s — ready marker seen, firing onReady hooks', manifest.name);
+        void fireServiceEvent(manifest.id, 'started');
+      });
       child.unref();
-      // Watch the new sidecar's health probe and fire onReady hooks when
-      // it transitions to running. Consumers (e.g. evidence embed catch-up)
-      // register on manifest.id via service-hooks.onServiceReady().
+      // Polling watcher as safety net (covers slow boot beyond stdout
+      // buffer flush, missing markers in old Python scripts, etc.).
+      // fireServiceEvent is no-op when bus already saw the event.
       watchAndAnnounceReady(manifest, log);
     } catch {
       log.warn('[services] ✗ %s — failed to spawn start script', manifest.name);

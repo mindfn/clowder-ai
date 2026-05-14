@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { closeSync, existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
@@ -16,11 +16,11 @@ import { fireServiceEvent } from '../domains/services/service-hooks.js';
 import {
   appendLog,
   isValidModelId,
-  openLogFd,
   readLogTail,
   resolveRepoRoot,
   resolveScriptPath,
   resolveSpawnCommand,
+  wireUpSidecarReadyListener,
 } from '../domains/services/service-logs.js';
 import { MODEL_ENV_VARS, PORT_ENV_VARS } from '../domains/services/service-manifest.js';
 import {
@@ -337,13 +337,18 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     // the watcher must clear the flag itself (handled in finally below).
     setStarting(id, true);
     let watcherStarted = false;
-    const logFd = openLogFd(id);
     try {
       const { command: spawnCmd, args: spawnArgs } = resolveSpawnCommand(manifest.scripts.start);
       const child = spawn(spawnCmd, spawnArgs, {
         detached: process.platform !== 'win32',
-        stdio: logFd != null ? ['ignore', logFd, logFd] : 'ignore',
+        // Pipe so wireUpSidecarReadyListener can watch the ready marker
+        // AND mirror stdout/stderr into the per-service log via appendLog.
+        stdio: ['ignore', 'pipe', 'pipe'],
         env,
+      });
+      wireUpSidecarReadyListener(child, id, () => {
+        request.log.info(`[services] /start ${id} → ready marker seen, firing 'started' event`);
+        void fireServiceEvent(id, 'started');
       });
       child.on('error', () => {});
       if (!child.pid) {
@@ -396,7 +401,6 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       reply.status(500);
       return { error: `Failed to start ${manifest.name}: spawn error` };
     } finally {
-      if (logFd != null) closeSync(logFd);
       // If we never kicked off the background watcher (any early-return
       // path above), clear startingServices here so the UI doesn't stay
       // stuck on 启动中.
@@ -719,21 +723,23 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
                 const pk = PORT_ENV_VARS[id];
                 if (pk) startEnv[pk] = String(cfg.port);
               }
-              const startFd = openLogFd(id);
               const { command: autoStartCmd, args: autoStartArgs } = resolveSpawnCommand(manifest.scripts.start);
               const startChild = spawn(autoStartCmd, autoStartArgs, {
                 detached: process.platform !== 'win32',
-                stdio: startFd != null ? ['ignore', startFd, startFd] : 'ignore',
+                // Pipe so the ready-marker listener can fire fast and
+                // appendLog keeps the per-service log file intact.
+                stdio: ['ignore', 'pipe', 'pipe'],
                 env: startEnv,
               });
               startChild.on('error', () => {});
               if (startChild.pid) setServicePid(id, startChild.pid);
+              wireUpSidecarReadyListener(startChild, id, () => {
+                request.log.info(`[services] install→autostart ${id} → ready marker seen, firing 'started' event`);
+                void fireServiceEvent(id, 'started');
+              });
               startChild.unref();
-              if (startFd != null) closeSync(startFd);
-              // Wait for the freshly-spawned sidecar to settle, then fire
-              // 'started' — same contract as /api/services/:id/start so
-              // install-followed-by-autostart triggers evidence embed
-              // catch-up. Background; don't block the install reply.
+              // Polling watcher kept as safety net (covers slow boot,
+              // missing markers in older Python scripts, etc.).
               void watchForRunningAndFire(id, manifest, request.log);
             }
           }
