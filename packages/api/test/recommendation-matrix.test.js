@@ -175,7 +175,7 @@ describe('recommendation matrix — match ordering', () => {
 
     assert.notEqual(cuda, cpu);
     assert.equal(cuda?.models?.[0]?.name, 'intfloat/multilingual-e5-large');
-    assert.equal(cpu?.models?.[0]?.name, 'jinaai/jina-embeddings-v2-base-zh');
+    assert.equal(cpu?.models?.[0]?.name, 'BAAI/bge-small-zh-v1.5');
   });
 });
 
