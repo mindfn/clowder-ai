@@ -1476,10 +1476,10 @@ async function main(): Promise<void> {
     const { loadAllPluginConfigs } = await import('./domains/plugin/plugin-config-store.js');
     const pluginRegistry = new PluginRegistry(pluginsDir);
     pluginRegistry.scan();
-    const scannedIds = pluginRegistry.getAllManifests().map((m) => m.id);
-    const loadedEnvKeys = loadAllPluginConfigs(resolveActiveProjectRoot(), scannedIds);
+    const scannedManifests = pluginRegistry.getAllManifests();
+    const loadedEnvKeys = loadAllPluginConfigs(resolveActiveProjectRoot(), scannedManifests);
     app.log.info(
-      `[api] F197: PluginRegistry scanned ${scannedIds.length} plugin(s), loaded ${loadedEnvKeys} config key(s)`,
+      `[api] F197: PluginRegistry scanned ${scannedManifests.length} plugin(s), loaded ${loadedEnvKeys} config key(s)`,
     );
 
     const limbAdapterRegistry = new Map<string, (yamlPath: string) => Promise<ILimbNode>>();
