@@ -12,6 +12,7 @@ import {
 } from '../domains/services/process-utils.js';
 import { buildRecommendation } from '../domains/services/recommendation-matrix.js';
 import { getServiceConfig, setServiceConfig } from '../domains/services/service-config.js';
+import { fireServiceEvent } from '../domains/services/service-hooks.js';
 import {
   appendLog,
   isValidModelId,
@@ -249,6 +250,12 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
     const current = await getServiceState(manifest);
     if (current.status === 'running') {
+      // Re-fire 'started' so consumers (e.g. evidence embed catch-up) still
+      // run their initial hook even when the sidecar was already healthy
+      // (e.g. autostart raced ahead, or the user double-clicks 启动). Hook
+      // lifecycle is "fire once on success, unregister on success", so this
+      // is a no-op when no pending consumer is waiting.
+      void fireServiceEvent(id, 'started');
       return { ok: true, message: `${manifest.name} is already running` };
     }
 
@@ -324,7 +331,15 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
             watcherStarted = true;
             void (async () => {
               try {
-                await waitUntilHealthSettles(manifest, 60_000);
+                const settled = await waitUntilHealthSettles(manifest, 60_000);
+                if (settled === 'running') {
+                  // Fire 'started' so onServiceEvent hooks (e.g. evidence
+                  // embed catch-up registered in index.ts) run after a
+                  // user-triggered start. Without this, only autostart-spawned
+                  // sidecars triggered the hook; console-clicked starts
+                  // skipped the catch-up step entirely.
+                  await fireServiceEvent(id, 'started');
+                }
               } finally {
                 setStarting(id, false);
               }
@@ -346,7 +361,12 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       void (async () => {
         try {
           const settled = await waitUntilHealthSettles(manifest, 60_000);
-          if (settled !== 'running') {
+          if (settled === 'running') {
+            // Same fire site as the earlyExit=0 watcher above — see comment
+            // there. Without this fire, hooks registered via onServiceEvent
+            // never run for console-clicked starts.
+            await fireServiceEvent(id, 'started');
+          } else {
             appendLog(id, `[start] service did not become healthy within 60s (final probe: ${settled})\n`);
           }
         } finally {
@@ -692,6 +712,16 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
               if (startChild.pid) setServicePid(id, startChild.pid);
               startChild.unref();
               if (startFd != null) closeSync(startFd);
+              // Wait for the freshly-spawned sidecar to settle, then fire
+              // 'started' — same contract as /api/services/:id/start so
+              // install-followed-by-autostart triggers evidence embed
+              // catch-up. Background; don't block the install reply.
+              void (async () => {
+                const settled = await waitUntilHealthSettles(manifest, 60_000);
+                if (settled === 'running') {
+                  await fireServiceEvent(id, 'started');
+                }
+              })();
             }
           }
 
