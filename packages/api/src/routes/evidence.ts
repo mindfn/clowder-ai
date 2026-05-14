@@ -308,17 +308,14 @@ export const evidenceRoutes: FastifyPluginAsync<EvidenceRoutesOptions> = async (
         /* table may not exist */
       }
 
-      // Vector index size — proves embedding generation actually ran.
-      // If the table query throws, sqlite-vec was not loaded on this platform
-      // (e.g. windows-arm64 has no upstream prebuilt binary as of 0.1.9) —
-      // surface that so "Vectors=0" doesn't look like a regression in the UI.
+      // Vector index size. If the table query throws, sqlite-vec wasn't
+      // loaded — already blocked at the install dialog via the matrix
+      // 'unsupported' branch, so we just defensively return 0 here.
       let vectorsCount = 0;
-      let vectorSearchAvailable = false;
       try {
         vectorsCount = (db.prepare('SELECT count(*) AS c FROM evidence_vectors').get() as { c: number }).c;
-        vectorSearchAvailable = true;
       } catch {
-        /* vec0 virtual table missing — sqlite-vec not loaded for this platform */
+        /* vec0 virtual table missing — install dialog blocked this case */
       }
 
       return {
@@ -329,7 +326,6 @@ export const evidenceRoutes: FastifyPluginAsync<EvidenceRoutesOptions> = async (
         passages_count: passageCount,
         edges_count: edgeCount,
         vectors_count: vectorsCount,
-        vector_search_available: vectorSearchAvailable,
         last_rebuild_at: lastUpdated,
         embedding_model: embeddingModel,
       };
