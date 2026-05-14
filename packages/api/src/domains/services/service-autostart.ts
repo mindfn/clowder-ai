@@ -86,6 +86,13 @@ export async function autoStartEnabledServices(log: Logger): Promise<void> {
     }
 
     const env: Record<string, string> = { ...process.env } as Record<string, string>;
+    // Normalize invalid proxy schemes (clash / v2ray often emit socks://
+    // which httpx rejects). Mirrors prereq-check.sh's normalize_proxy_scheme
+    // so the autostart spawn behaves identically to a user-triggered start.
+    for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) {
+      const v = env[key];
+      if (v && v.startsWith('socks://')) env[key] = `socks5${v.slice('socks'.length)}`;
+    }
     if (cfg.selectedModel) {
       const envKey = MODEL_ENV_VARS[manifest.id];
       if (envKey) env[envKey] = cfg.selectedModel;

@@ -56,6 +56,44 @@ function checkPlatformSupport(manifest: { supportedPlatforms?: string[]; name: s
 }
 
 /**
+ * Normalize invalid proxy URL schemes in the child env. VPN clients like
+ * clash / v2ray frequently emit ALL_PROXY=socks://... but httpx (used by
+ * huggingface_hub, used by every service sidecar) rejects 'socks' — it
+ * wants 'socks5' or 'socks5h'. Same fix prereq-check.sh does, but
+ * applied here so the API also normalizes for the child without relying
+ * on each shell script to do it.
+ */
+function normalizeProxyEnv(env: Record<string, string>): void {
+  for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) {
+    const val = env[key];
+    if (val && val.startsWith('socks://')) {
+      env[key] = `socks5${val.slice('socks'.length)}`;
+    }
+  }
+}
+
+/**
+ * Resolve which model env var value to use when spawning a sidecar. If the
+ * user explicitly picked a model on install, use that. Otherwise fall back
+ * to the matrix recommendation's first model — same default the install
+ * dialog showed to the user. Avoids the bug where embed-api.py picks an
+ * mlx-only hardcoded default on platforms where MLX isn't even installable.
+ */
+function resolveSelectedModel(id: string, manifest: { id: string }): string | undefined {
+  const cfg = getServiceConfig(id);
+  if (cfg.selectedModel && isValidModelId(cfg.selectedModel)) return cfg.selectedModel;
+  try {
+    const profile = getEnvironmentProfile();
+    const rec = buildRecommendation(manifest.id, profile);
+    const fallback = rec.models[0]?.name;
+    if (fallback && isValidModelId(fallback)) return fallback;
+  } catch {
+    /* env detector failure shouldn't block start — let the script handle it */
+  }
+  return undefined;
+}
+
+/**
  * Pattern-match install stdout/stderr to give the user an actionable next step.
  * Pip + HuggingFace + Piper download failures usually have stable error markers
  * that map to a concrete remediation (mirror env var, manual model placement).
@@ -228,10 +266,11 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const env: Record<string, string> = { ...process.env } as Record<string, string>;
-    const cfg = getServiceConfig(id);
-    if (cfg.selectedModel && isValidModelId(cfg.selectedModel)) {
+    normalizeProxyEnv(env);
+    const selectedModel = resolveSelectedModel(id, manifest);
+    if (selectedModel) {
       const envKey = MODEL_ENV_VARS[id];
-      if (envKey) env[envKey] = cfg.selectedModel;
+      if (envKey) env[envKey] = selectedModel;
     }
     // Server scripts bind to *_PORT env var when set, else fall back to a
     // hard-coded default. Pipe the persisted port through.
@@ -510,9 +549,18 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         }
 
         const env: Record<string, string> = { ...process.env } as Record<string, string>;
-        if (body.model) {
+        normalizeProxyEnv(env);
+        // Resolve which model to install: explicit body.model > stored
+        // cfg.selectedModel > matrix recommendation default. Persisting
+        // the resolved choice means subsequent start/autostart sees it
+        // even if the user never changes the picker.
+        let installModel = body.model && isValidModelId(body.model) ? body.model : undefined;
+        if (!installModel) installModel = resolveSelectedModel(id, manifest);
+        if (installModel) {
           const envKey = MODEL_ENV_VARS[id];
-          if (envKey) env[envKey] = body.model;
+          if (envKey) env[envKey] = installModel;
+          // Persist so the start path picks the same model without re-resolving.
+          setServiceConfig(id, { selectedModel: installModel });
         }
 
         // Decide on the port this service will bind to:
@@ -612,11 +660,13 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
             const startScript = resolveScriptPath(manifest.scripts.start);
             if (existsSync(startScript)) {
               const startEnv: Record<string, string> = { ...process.env } as Record<string, string>;
-              const cfg = getServiceConfig(id);
-              if (cfg.selectedModel && isValidModelId(cfg.selectedModel)) {
+              normalizeProxyEnv(startEnv);
+              const startSelected = resolveSelectedModel(id, manifest);
+              if (startSelected) {
                 const ek = MODEL_ENV_VARS[id];
-                if (ek) startEnv[ek] = cfg.selectedModel;
+                if (ek) startEnv[ek] = startSelected;
               }
+              const cfg = getServiceConfig(id);
               if (cfg.port) {
                 const pk = PORT_ENV_VARS[id];
                 if (pk) startEnv[pk] = String(cfg.port);
@@ -670,10 +720,12 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
     setUninstalling(id, true);
     try {
+      const uninstallEnv: Record<string, string> = { ...process.env } as Record<string, string>;
+      normalizeProxyEnv(uninstallEnv);
       const { command: uninstallCmd, args: uninstallArgs } = resolveSpawnCommand(manifest.scripts.uninstall);
       const child = spawn(uninstallCmd, uninstallArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env },
+        env: uninstallEnv,
       });
       let output = '';
       const MAX_OUTPUT = 8192;
