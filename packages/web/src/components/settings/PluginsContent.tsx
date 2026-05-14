@@ -10,7 +10,6 @@ import {
   settingsResourceCardClass,
   settingsResourceRowClass,
 } from '../SettingsResourceCard';
-import { GithubConfigPanel } from './GithubConfigPanel';
 import { PluginConfigPanel } from './PluginConfigPanel';
 
 const STATUS_CONFIG: Record<PluginStatus, { label: string; bg: string; text: string }> = {
@@ -20,27 +19,6 @@ const STATUS_CONFIG: Record<PluginStatus, { label: string; bg: string; text: str
   not_configured: { label: '未配置', bg: 'bg-cafe-surface-sunken', text: 'text-cafe-muted' },
 };
 
-const BUILTIN_PLUGINS: PluginInfo[] = [
-  {
-    id: 'github',
-    name: 'GitHub',
-    version: '1.0.0',
-    description: 'PR Tracking, Review Router, CI/CD Monitor',
-    icon: 'git-branch',
-    iconBg: '#24292e',
-    docsUrl: 'https://github.com/settings/tokens',
-    setupSteps: [
-      '在 GitHub 创建 Personal Access Token，需要 repo 权限',
-      'Token 用于 PR 追踪、Review 路由、CI/CD 状态同步',
-    ],
-    status: 'configured',
-    configured: true,
-    config: [],
-    resources: [],
-    hasHealthCheck: false,
-  },
-];
-
 export function PluginsContent() {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,13 +27,12 @@ export function PluginsContent() {
   const fetchPlugins = useCallback(async () => {
     try {
       const res = await apiFetch('/api/plugins');
-      const dynamicPlugins: PluginInfo[] = res.ok
+      const data: PluginInfo[] = res.ok
         ? (((await res.json()) as { plugins: PluginInfo[] }).plugins ?? [])
         : [];
-      const dynamicIds = new Set(dynamicPlugins.map((p) => p.id));
-      setPlugins([...BUILTIN_PLUGINS.filter((p) => !dynamicIds.has(p.id)), ...dynamicPlugins]);
+      setPlugins(data);
     } catch {
-      setPlugins(BUILTIN_PLUGINS);
+      setPlugins([]);
     } finally {
       setLoading(false);
     }
@@ -66,6 +43,16 @@ export function PluginsContent() {
   }, [fetchPlugins]);
 
   if (loading) return <p className="text-sm text-cafe-muted">加载中...</p>;
+
+  if (plugins.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center rounded-2xl bg-[var(--console-card-bg)] px-8 py-16 text-center">
+        <HubIcon name="blocks" className="mb-3 h-10 w-10 text-cafe-muted opacity-40" />
+        <p className="text-[15px] font-semibold text-cafe">暂无已安装的插件</p>
+        <p className="mt-1 text-xs text-cafe-muted">插件在 plugins/ 目录下管理</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-3.5" data-testid="plugins-list">
@@ -96,12 +83,7 @@ export function PluginsContent() {
               </div>
             </button>
 
-            {isExpanded &&
-              (plugin.id === 'github' ? (
-                <GithubConfigPanel docsUrl={plugin.docsUrl} setupSteps={plugin.setupSteps} />
-              ) : (
-                <PluginConfigPanel plugin={plugin} onUpdated={fetchPlugins} />
-              ))}
+            {isExpanded && <PluginConfigPanel plugin={plugin} onUpdated={fetchPlugins} />}
           </article>
         );
       })}
