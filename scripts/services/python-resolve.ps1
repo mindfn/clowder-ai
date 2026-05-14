@@ -169,10 +169,31 @@ function Install-PythonToProjectDir {
     }
 }
 
+function Sync-ResolverSystemProxy {
+    # Mirror of Sync-SystemProxy in prereq-check.ps1 — we duplicate it here
+    # rather than source prereq-check.ps1 because python-bootstrap's
+    # install-python.ps1 entry only sources python-resolve.ps1 (it's the
+    # meta-service entrypoint, doesn't need the rest of prereq-check). Without
+    # this, curl.exe below would dial python.org directly, ignoring any
+    # Windows system proxy the user has configured — observed: 12 KB/s vs
+    # multi-MB/s when proxy is wired up.
+    if ($env:HTTP_PROXY -or $env:HTTPS_PROXY) { return }
+    try {
+        $reg = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
+        if ($reg.ProxyEnable -and $reg.ProxyServer) {
+            $proxy = "http://$($reg.ProxyServer)"
+            $env:HTTP_PROXY = $proxy
+            $env:HTTPS_PROXY = $proxy
+            [Console]::Error.WriteLine("  System proxy synced for resolver: $proxy")
+        }
+    } catch {}
+}
+
 function Install-PythonToProjectDirInner {
     # Download python-3.12.x-amd64.exe and silent-install to project dir.
     # PrependPath=0 keeps the system PATH untouched; the resolver returns
     # the absolute path to the project-owned python.exe.
+    Sync-ResolverSystemProxy
     $hasCurl = Get-Command curl.exe -ErrorAction SilentlyContinue
     $version = '3.12.7'
     $installerUrl = "https://www.python.org/ftp/python/$version/python-$version-amd64.exe"
