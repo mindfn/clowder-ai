@@ -128,7 +128,9 @@ async function watchForRunningAndFire(
         /* transient probe failure — try again next tick */
       }
     }
-    log.warn(`[services] /start ${id} watcher: did not become healthy within ${(MAX_ATTEMPTS * POLL_INTERVAL_MS) / 1000}s`);
+    log.warn(
+      `[services] /start ${id} watcher: did not become healthy within ${(MAX_ATTEMPTS * POLL_INTERVAL_MS) / 1000}s`,
+    );
   } finally {
     setStarting(id, false);
   }
