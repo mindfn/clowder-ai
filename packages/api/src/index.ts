@@ -1472,9 +1472,14 @@ async function main(): Promise<void> {
 
     const monorepoRoot = findMonorepoRoot(process.cwd());
     const pluginsDir = join(monorepoRoot, 'plugins');
+    const { loadAllPluginConfigs } = await import('./domains/plugin/plugin-config-store.js');
     const pluginRegistry = new PluginRegistry(pluginsDir);
     pluginRegistry.scan();
-    app.log.info(`[api] F197: PluginRegistry scanned ${pluginRegistry.getAllManifests().length} plugin(s)`);
+    const scannedIds = pluginRegistry.getAllManifests().map((m) => m.id);
+    const loadedEnvKeys = loadAllPluginConfigs(resolveActiveProjectRoot(), scannedIds);
+    app.log.info(
+      `[api] F197: PluginRegistry scanned ${scannedIds.length} plugin(s), loaded ${loadedEnvKeys} config key(s)`,
+    );
 
     const limbAdapterRegistry = new Map<string, (yamlPath: string) => Promise<ILimbNode>>();
 
