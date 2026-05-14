@@ -33,6 +33,7 @@ export interface PluginManifest {
   version: string;
   description?: string;
   icon?: string;
+  iconBg?: string;
   builtin?: boolean;
   docsUrl?: string;
   setupSteps?: string[];
@@ -60,6 +61,7 @@ export interface PluginInfo {
   version: string;
   description?: string;
   icon?: string;
+  iconBg?: string;
   docsUrl?: string;
   setupSteps?: string[];
   status: PluginStatus;
