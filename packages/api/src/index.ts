@@ -1462,6 +1462,7 @@ async function main(): Promise<void> {
     const { join } = await import('node:path');
     const { PluginRegistry, resourceCapId } = await import('./domains/plugin/PluginRegistry.js');
     const { PluginResourceActivator } = await import('./domains/plugin/PluginResourceActivator.js');
+    const { WeixinMpLimbNode } = await import('./domains/limb/WeixinMpLimbNode.js');
     const { loadLimbDeclaration } = await import('./domains/limb/limb-yaml-loader.js');
     const { registerPluginRoutes } = await import('./routes/plugin-routes.js');
     const { readCapabilitiesConfig, writeCapabilitiesConfig, withCapabilityLock } = await import(
@@ -1477,6 +1478,12 @@ async function main(): Promise<void> {
     app.log.info(`[api] F197: PluginRegistry scanned ${pluginRegistry.getAllManifests().length} plugin(s)`);
 
     const limbAdapterRegistry = new Map<string, (yamlPath: string) => Promise<ILimbNode>>();
+
+    // F197 Phase 2: Register weixin-mp limb adapter
+    limbAdapterRegistry.set('weixin-mp', async (yamlPath) => {
+      const decl = loadLimbDeclaration(yamlPath);
+      return new WeixinMpLimbNode({ capabilities: decl.capabilities, redis });
+    });
 
     const pluginActivator = new PluginResourceActivator({
       resolveProjectRoot: () => resolveActiveProjectRoot(),
