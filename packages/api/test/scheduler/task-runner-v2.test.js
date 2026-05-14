@@ -880,10 +880,14 @@ describe('TaskRunnerV2 — cron setTimeout overflow (#605)', () => {
     logMessages.length = 0;
   });
 
-  it('yearly cron does NOT rapid-fire — delay is chunked (#605 regression)', async () => {
+  it('far-future cron does NOT rapid-fire — delay is chunked (#605 regression)', async () => {
     // Bug: Node clamps setTimeout(fn, n) where n > 2^31-1 to ~1ms, causing
     // yearly crons to fire immediately in a tight loop. The fix chunks long
     // delays into MAX_TIMER_DELAY steps that only reschedule, never execute.
+    //
+    // Pick a month ~6 months from now so next-fire is always >24.8 days,
+    // making this test deterministic year-round.
+    const safeMonth = ((new Date().getMonth() + 6) % 12) + 1;
     const { TaskRunnerV2 } = await import('../../dist/infrastructure/scheduler/TaskRunnerV2.js');
     const runner = new TaskRunnerV2({ logger: capturingLogger, ledger });
     let executeCount = 0;
@@ -891,7 +895,7 @@ describe('TaskRunnerV2 — cron setTimeout overflow (#605)', () => {
     runner.register({
       id: 'yearly-cron',
       profile: 'awareness',
-      trigger: { type: 'cron', expression: '0 0 1 1 *' },
+      trigger: { type: 'cron', expression: `0 0 1 ${safeMonth} *` },
       admission: {
         gate: async () => ({ run: true, workItems: [{ signal: 'go', subjectKey: 'k' }] }),
       },
@@ -925,6 +929,7 @@ describe('TaskRunnerV2 — cron setTimeout overflow (#605)', () => {
   it('cancelled cron task does not resurrect via chunk callback', async () => {
     // When a long-delay cron enters the chunking path, stopping the runner
     // must prevent the chunk callback from rescheduling the task.
+    const safeMonth = ((new Date().getMonth() + 6) % 12) + 1;
     const { TaskRunnerV2 } = await import('../../dist/infrastructure/scheduler/TaskRunnerV2.js');
     const runner = new TaskRunnerV2({ logger: capturingLogger, ledger });
     let executeCount = 0;
@@ -932,7 +937,7 @@ describe('TaskRunnerV2 — cron setTimeout overflow (#605)', () => {
     runner.register({
       id: 'cancel-yearly',
       profile: 'awareness',
-      trigger: { type: 'cron', expression: '0 0 1 1 *' },
+      trigger: { type: 'cron', expression: `0 0 1 ${safeMonth} *` },
       admission: {
         gate: async () => ({ run: true, workItems: [{ signal: 'go', subjectKey: 'k' }] }),
       },
