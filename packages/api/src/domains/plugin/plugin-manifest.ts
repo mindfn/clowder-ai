@@ -129,6 +129,12 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
     }
   }
 
+  const docsUrl = typeof doc['docsUrl'] === 'string' ? doc['docsUrl'] : undefined;
+  const rawSteps = doc['setupSteps'];
+  const setupSteps = Array.isArray(rawSteps)
+    ? rawSteps.filter((s): s is string => typeof s === 'string')
+    : undefined;
+
   return {
     id,
     name,
@@ -136,6 +142,8 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
     description: doc['description'] as string | undefined,
     icon: doc['icon'] as string | undefined,
     builtin: false,
+    docsUrl,
+    setupSteps: setupSteps && setupSteps.length > 0 ? setupSteps : undefined,
     config,
     healthCheck,
     resources,
