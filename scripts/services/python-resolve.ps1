@@ -89,6 +89,26 @@ function Try-ProjectPython {
         $info | Add-Member -NotePropertyName Source -NotePropertyValue 'project' -PassThru
         return $info
     }
+    # python.exe exists but Test-Python312Candidate rejected it. Surface
+    # the actual interpreter telemetry so the user (and us) can tell whether
+    # it's wrong arch, wrong version, or just unable to run at all. This
+    # is the *only* place we know a project-owned python.exe is broken —
+    # Test-Python312Candidate swallows errors silently so it works in
+    # Try-SystemPythons / Try-UvPython without log noise.
+    [Console]::Error.WriteLine("  Project Python at $py exists but failed validation:")
+    try {
+        $pyCode = "import sys, platform; print('version=' + str(sys.version_info[0]) + '.' + str(sys.version_info[1]) + ', machine=' + platform.machine())"
+        $diag = & $py -c $pyCode 2>&1
+        [Console]::Error.WriteLine("    interpreter reports: $diag")
+    } catch {
+        [Console]::Error.WriteLine("    interpreter could not be executed: $($_.Exception.Message)")
+    }
+    try {
+        $venvCheck = & $py -c 'import venv' 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            [Console]::Error.WriteLine("    venv module missing/broken: $venvCheck")
+        }
+    } catch {}
     return $null
 }
 
@@ -123,10 +143,24 @@ function Install-PythonToProjectDir {
     try {
         # Re-check inside the critical section — another concurrent install
         # might have already finished while we were waiting on the mutex.
-        $existing = Join-Path $script:ProjectPythonDir "python.exe"
-        if (Test-Path $existing) {
-            [Console]::Error.WriteLine("  Project Python already present (installed by concurrent install)")
+        # Use Try-ProjectPython (full validation), not just Test-Path —
+        # otherwise a half-installed / wrong-arch / broken python.exe
+        # from a prior failed install attempt would make us claim success
+        # without verifying the interpreter actually works, and the outer
+        # Resolve-Python312 then loops back to Try-ProjectPython which
+        # rejects it → throws "Python not found" even though Install said
+        # "already present".
+        $existingInfo = Try-ProjectPython
+        if ($existingInfo) {
+            [Console]::Error.WriteLine("  Project Python already present and valid (installed by concurrent install)")
             return $true
+        }
+        # python.exe might still exist but failed validation. Purge before
+        # re-running the silent installer so it starts from a clean state
+        # (avoids "TargetDir not empty" rejection and stale registry entries).
+        if (Test-Path $script:ProjectPythonDir) {
+            [Console]::Error.WriteLine("  Purging stale/invalid Python at $script:ProjectPythonDir before reinstall")
+            Remove-Item -Recurse -Force $script:ProjectPythonDir -ErrorAction SilentlyContinue
         }
         return (Install-PythonToProjectDirInner)
     } finally {
