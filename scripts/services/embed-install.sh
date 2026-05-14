@@ -26,12 +26,12 @@ pip install --quiet -U pip
 
 if [ "$PLATFORM" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
   echo "  安装依赖: mlx + mlx-embeddings ..."
-  pip install --quiet mlx mlx-embeddings fastapi uvicorn numpy 'huggingface_hub[hf_xet]'
+  pip install --quiet mlx mlx-embeddings fastapi uvicorn numpy 'httpx[socks]' 'huggingface_hub[hf_xet]'
   echo "  安装 fallback 依赖: sentence-transformers + torch ..."
   pip install --quiet sentence-transformers torch
 else
   echo "  安装依赖: sentence-transformers + torch ..."
-  pip install --quiet sentence-transformers torch fastapi uvicorn numpy 'huggingface_hub[hf_xet]'
+  pip install --quiet sentence-transformers torch fastapi uvicorn numpy 'httpx[socks]' 'huggingface_hub[hf_xet]'
 fi
 
 MODEL="${EMBED_MODEL:-mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ}"

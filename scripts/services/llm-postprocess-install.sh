@@ -31,7 +31,7 @@ if [ "$PLATFORM" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
   MODEL="${LLM_POSTPROCESS_MODEL:-mlx-community/Qwen3.5-35B-A3B-4bit}"
 else
   echo "  安装依赖: transformers torch fastapi uvicorn pydantic ..."
-  pip install --quiet transformers torch fastapi uvicorn pydantic 'huggingface_hub[hf_xet]'
+  pip install --quiet transformers torch fastapi uvicorn pydantic 'httpx[socks]' 'huggingface_hub[hf_xet]'
 
   MODEL="${LLM_POSTPROCESS_MODEL:-Qwen/Qwen2.5-3B-Instruct}"
 fi
