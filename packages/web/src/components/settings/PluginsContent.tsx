@@ -20,17 +20,14 @@ const STATUS_CONFIG: Record<PluginStatus, { label: string; bg: string; text: str
   not_configured: { label: '未配置', bg: 'bg-cafe-surface-sunken', text: 'text-cafe-muted' },
 };
 
-const PLUGIN_ICONS: Record<string, { icon: string; bg: string }> = {
-  github: { icon: 'git-branch', bg: '#24292e' },
-  'weixin-mp': { icon: 'megaphone', bg: '#07c160' },
-};
-
 const BUILTIN_PLUGINS: PluginInfo[] = [
   {
     id: 'github',
     name: 'GitHub',
     version: '1.0.0',
     description: 'PR Tracking, Review Router, CI/CD Monitor',
+    icon: 'git-branch',
+    iconBg: '#24292e',
     docsUrl: 'https://github.com/settings/tokens',
     setupSteps: [
       '在 GitHub 创建 Personal Access Token，需要 repo 权限',
@@ -74,7 +71,6 @@ export function PluginsContent() {
     <div className="flex flex-col gap-3.5" data-testid="plugins-list">
       {plugins.map((plugin) => {
         const statusCfg = STATUS_CONFIG[plugin.status];
-        const iconCfg = PLUGIN_ICONS[plugin.id];
         const isExpanded = expandedId === plugin.id;
 
         return (
@@ -84,11 +80,8 @@ export function PluginsContent() {
               className={`${settingsResourceRowClass} w-full text-left`}
               onClick={() => setExpandedId(isExpanded ? null : plugin.id)}
             >
-              <div
-                className={settingsResourceAvatarClass}
-                style={{ backgroundColor: iconCfg?.bg ?? plugin.iconBg ?? '#9ca3af' }}
-              >
-                <HubIcon name={iconCfg?.icon ?? plugin.icon ?? 'blocks'} className="h-5 w-5 text-[var(--cafe-surface)]" />
+              <div className={settingsResourceAvatarClass} style={{ backgroundColor: plugin.iconBg ?? '#9ca3af' }}>
+                <HubIcon name={plugin.icon ?? 'blocks'} className="h-5 w-5 text-[var(--cafe-surface)]" />
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-bold text-cafe">{plugin.name}</p>
