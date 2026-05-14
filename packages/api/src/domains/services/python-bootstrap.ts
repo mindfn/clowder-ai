@@ -49,6 +49,10 @@ interface ResolvedPython {
 // instances on the same machine) is handled by python-resolve's own lock.
 let inFlight: Promise<ResolvedPython> | null = null;
 let cachedResult: ResolvedPython | null = null;
+// Subscribers that want python-bootstrap progress fan-out (e.g. each parallel
+// service install handler wants to mirror chunks into ITS own service log).
+// Populated by ensurePython() callers; cleared when the spawn resolves.
+const logChunkSubscribers = new Set<(chunk: string) => void>();
 
 function bootstrapScript(): { unix: string; windows: string } {
   return {
@@ -72,8 +76,16 @@ function parseResolverOutput(out: string): Partial<ResolvedPython> {
  * Returns the path to a Python 3.12+ interpreter, blocking only as long as
  * an actual install is needed. Concurrent callers within this API process
  * share one spawn.
+ *
+ * `onLogChunk` is invoked for every stdout/stderr chunk the bootstrap child
+ * produces — useful to mirror progress into the calling service's own log
+ * (so the UI card doesn't stare at stale text while python-bootstrap runs).
+ * Multiple concurrent callers each get their callback invoked.
  */
-export async function ensurePython(logger?: BootstrapLogger): Promise<ResolvedPython> {
+export async function ensurePython(
+  logger?: BootstrapLogger,
+  onLogChunk?: (chunk: string) => void,
+): Promise<ResolvedPython> {
   if (cachedResult) return cachedResult;
 
   // Cheap path: services.json says we already installed last time. Trust
@@ -84,19 +96,27 @@ export async function ensurePython(logger?: BootstrapLogger): Promise<ResolvedPy
     return cachedResult;
   }
 
-  // Another caller in this same API process is already running the
-  // bootstrap — share their Promise.
-  if (inFlight) return inFlight;
+  // Register this caller's log forwarder for the duration of the bootstrap
+  // run. spawnBootstrap fans out every chunk to every subscriber.
+  if (onLogChunk) logChunkSubscribers.add(onLogChunk);
 
-  inFlight = spawnBootstrap(logger).finally(() => {
-    inFlight = null;
-  });
   try {
-    cachedResult = await inFlight;
-    return cachedResult;
-  } catch (err) {
-    cachedResult = null;
-    throw err;
+    // Another caller in this same API process is already running the
+    // bootstrap — share their Promise.
+    if (inFlight) return await inFlight;
+
+    inFlight = spawnBootstrap(logger).finally(() => {
+      inFlight = null;
+    });
+    try {
+      cachedResult = await inFlight;
+      return cachedResult;
+    } catch (err) {
+      cachedResult = null;
+      throw err;
+    }
+  } finally {
+    if (onLogChunk) logChunkSubscribers.delete(onLogChunk);
   }
 }
 
@@ -129,12 +149,26 @@ function spawnBootstrap(logger?: BootstrapLogger): Promise<ResolvedPython> {
       stdoutBuf += s;
       appendLog(PYTHON_BOOTSTRAP_ID, s);
       logger?.info('[python-bootstrap stdout] %s', s.trimEnd());
+      for (const cb of logChunkSubscribers) {
+        try {
+          cb(s);
+        } catch {
+          /* a subscriber failing shouldn't crash bootstrap */
+        }
+      }
     });
     child.stderr?.on('data', (d: Buffer) => {
       const s = d.toString();
       stderrBuf += s;
       appendLog(PYTHON_BOOTSTRAP_ID, s);
       logger?.warn('[python-bootstrap stderr] %s', s.trimEnd());
+      for (const cb of logChunkSubscribers) {
+        try {
+          cb(s);
+        } catch {
+          /* ignore subscriber failure */
+        }
+      }
     });
     child.on('error', (err) => {
       try {

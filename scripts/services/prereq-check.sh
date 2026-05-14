@@ -40,18 +40,50 @@ check_disk_space() {
   echo "  磁盘空间: ${avail_gb}GB 可用 ✓"
 }
 
+normalize_proxy_scheme() {
+  # User VPN clients (clash / v2ray etc.) commonly emit ALL_PROXY=socks://...
+  # but httpx / huggingface_hub / requests reject that scheme — they want
+  # socks5:// (or socks5h://). Auto-rewrite so the user's VPN env "just
+  # works" instead of crashing model preload with "Unknown scheme for
+  # proxy URL". Also handles http:// proxies that some clients write as
+  # plain host:port.
+  local var val
+  for var in HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; do
+    val="${!var:-}"
+    [ -z "$val" ] && continue
+    case "$val" in
+      socks://*)
+        export "$var=socks5${val#socks}"
+        echo "  Normalized $var: socks:// → socks5://"
+        ;;
+    esac
+  done
+}
+
 check_network() {
+  normalize_proxy_scheme
+
   local timeout=5
   if command -v curl &>/dev/null; then
     if ! curl -sf --max-time "$timeout" "https://pypi.org/simple/" >/dev/null 2>&1; then
       echo "WARNING: 无法连接 PyPI (https://pypi.org)，pip install 可能会失败"
       echo "  如需使用镜像源，请设置 PIP_INDEX_URL 环境变量"
+      # Auto-pick a domestic mirror if user hasn't set one. PIP_INDEX_URL
+      # takes precedence over pypi.org but only if we actually export it.
+      if [ -z "${PIP_INDEX_URL:-}" ]; then
+        export PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
+        echo "  自动启用清华 pip 镜像: $PIP_INDEX_URL"
+      fi
     else
       echo "  PyPI 连接 ✓"
     fi
     if ! curl -sf --max-time "$timeout" "https://huggingface.co" >/dev/null 2>&1; then
       echo "WARNING: 无法连接 HuggingFace (https://huggingface.co)，模型下载可能会失败"
       echo "  如需使用镜像，请设置 HF_ENDPOINT 环境变量"
+      if [ -z "${HF_ENDPOINT:-}" ]; then
+        export HF_ENDPOINT="https://hf-mirror.com"
+        echo "  自动启用 HF 镜像: $HF_ENDPOINT"
+      fi
     else
       echo "  HuggingFace 连接 ✓"
     fi

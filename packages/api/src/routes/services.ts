@@ -453,16 +453,23 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         //     when whisper / tts / embed / llm are clicked in parallel)
         //   - last attempt failed → throws → we 422 here so the user sees the
         //     real failure and doesn't trigger a second per-service spawn
+        // Also mirror python-bootstrap progress into THIS service's log so the
+        // UI card stops showing the previous failed install's last line
+        // ("Failed to install X dependencies") while python-bootstrap runs.
         try {
           const { ensurePython } = await import('../domains/services/python-bootstrap.js');
-          await ensurePython(request.log);
+          appendLog(id, '\n[install] preparing Python 3.12+ runtime...\n');
+          await ensurePython(request.log, (chunk) => appendLog(id, chunk));
+          appendLog(id, '[install] Python ready, installing service dependencies...\n');
         } catch (err) {
-          request.log.error({ err: err instanceof Error ? err.message : String(err) }, 'python-bootstrap failed');
+          const msg = err instanceof Error ? err.message : String(err);
+          appendLog(id, `[install] python-bootstrap failed: ${msg}\n`);
+          request.log.error({ err: msg }, 'python-bootstrap failed');
           reply.status(422);
           return {
             ok: false,
             error: 'Python 3.12+ bootstrap failed — service install cannot proceed',
-            detail: err instanceof Error ? err.message : String(err),
+            detail: msg,
           };
         }
 
