@@ -139,6 +139,7 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
     version,
     description: doc['description'] as string | undefined,
     icon: doc['icon'] as string | undefined,
+    iconBg: typeof doc['iconBg'] === 'string' ? doc['iconBg'] : undefined,
     builtin: false,
     docsUrl,
     setupSteps: setupSteps && setupSteps.length > 0 ? setupSteps : undefined,
