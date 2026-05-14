@@ -523,6 +523,23 @@ export class IndexBuilder implements IIndexBuilder {
     if (!this.embedDeps) return { probed: false, embedded: 0, pending: 0 };
     if (!this.embedDeps.embedding.isReady()) return { probed: false, embedded: 0, pending: 0 };
 
+    const { vectorStore, embedding } = this.embedDeps;
+    const modelInfo = embedding.getModelInfo();
+
+    // Version-anchor check FIRST so pending=0 still re-embeds when the
+    // model / dim changed since last stamp. Without this, the
+    // pending-rows branch below would silently stamp the new model id
+    // into embedding_meta while leaving stale vectors (different model /
+    // different dim) untouched — semantic search would return wrong
+    // results computed against the prior embedding space. clearAll()
+    // drops embedding_meta + evidence_vectors atomically; the SELECT
+    // immediately after then reports every doc as pending and we
+    // re-embed them all below.
+    const consistency = vectorStore.checkMetaConsistency(modelInfo);
+    if (!consistency.consistent) {
+      vectorStore.clearAll();
+    }
+
     const db = this.store.getDb();
     const pendingRows = db
       .prepare(
@@ -532,9 +549,9 @@ export class IndexBuilder implements IIndexBuilder {
       .all() as Array<{ anchor: string; title: string; summary: string | null }>;
 
     if (pendingRows.length === 0) {
-      // Still stamp meta so the console shows the model row.
+      // Consistent + no pending — stamp meta so the console shows the row.
       try {
-        this.embedDeps.vectorStore.initMeta(this.embedDeps.embedding.getModelInfo());
+        vectorStore.initMeta(modelInfo);
       } catch {
         /* best effort */
       }

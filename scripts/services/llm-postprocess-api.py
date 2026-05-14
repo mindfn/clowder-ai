@@ -27,12 +27,15 @@ log = logging.getLogger("llm-postprocess")
 
 app = FastAPI(title="Cat Cafe LLM Post-Process Server")
 
-
-@app.on_event("startup")
-async def _emit_ready_marker():
-    """Push-based ready signal — see embed-api.py + service-logs.ts."""
-    print("__CATCAFE_SIDECAR_READY__", flush=True)
-
+# NOTE: deliberately no __CATCAFE_SIDECAR_READY__ marker emit here.
+# Unlike embed/whisper/tts which finish model load synchronously in main()
+# before uvicorn.run(), this sidecar offloads model load to a background
+# thread (see `_startup_load` below + threading.Thread). At the moment
+# uvicorn binds the port, /health is still status=loading, so emitting
+# the push marker would falsely signal readiness. Health polling (the
+# watcher safety net) correctly waits for status=running anyway, and
+# llm-postprocess has no embed-catch-up hook to fire so the marker
+# wouldn't gain anything even if timed correctly.
 
 app.add_middleware(
     CORSMiddleware,

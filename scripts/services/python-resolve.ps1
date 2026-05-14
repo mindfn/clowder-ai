@@ -230,6 +230,37 @@ function Install-PythonToProjectDir {
     }
 }
 
+function Test-ResolverProxyAnonymous {
+    # Duplicate of prereq-check.ps1::Test-ProxyAnonymous — see comment on
+    # Sync-ResolverSystemProxy for why the resolver doesn't source
+    # prereq-check.ps1. Probes a proxy WITH NO CREDENTIALS so a corp
+    # proxy that needs NTLM/Kerberos returns 407 instead of letting .NET
+    # auto-fill the logged-in Windows user token (which would make us
+    # think pip can use the proxy when it actually cannot).
+    param([string]$ProxyUrl, [string]$TargetUrl, [int]$TimeoutSec = 5)
+    $handler = $null
+    $client = $null
+    try {
+        $webProxy = New-Object System.Net.WebProxy($ProxyUrl)
+        $webProxy.UseDefaultCredentials = $false
+        $webProxy.Credentials = $null
+        $handler = New-Object System.Net.Http.HttpClientHandler
+        $handler.Proxy = $webProxy
+        $handler.UseProxy = $true
+        $handler.UseDefaultCredentials = $false
+        $handler.PreAuthenticate = $false
+        $client = New-Object System.Net.Http.HttpClient($handler)
+        $client.Timeout = [TimeSpan]::FromSeconds($TimeoutSec)
+        $response = $client.GetAsync($TargetUrl).Result
+        return $response.IsSuccessStatusCode
+    } catch {
+        return $false
+    } finally {
+        if ($client) { $client.Dispose() }
+        if ($handler) { $handler.Dispose() }
+    }
+}
+
 function Sync-ResolverSystemProxy {
     # Mirror of Sync-SystemProxy in prereq-check.ps1 — we duplicate it here
     # rather than source prereq-check.ps1 because python-bootstrap's
@@ -243,9 +274,22 @@ function Sync-ResolverSystemProxy {
         $reg = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
         if ($reg.ProxyEnable -and $reg.ProxyServer) {
             $proxy = "http://$($reg.ProxyServer)"
-            $env:HTTP_PROXY = $proxy
-            $env:HTTPS_PROXY = $proxy
-            [Console]::Error.WriteLine("  System proxy synced for resolver: $proxy")
+            # Probe anonymously BEFORE injecting. If the proxy needs auth
+            # we don't have, leaving the env unset is correct — pip /
+            # huggingface_hub would fail with 407 anyway, and the
+            # downstream Assert-Network in prereq-check.ps1 will then
+            # surface the actionable WARNING. Injecting a dead proxy
+            # would let Assert-Network think proxy env is OK and skip
+            # the warning entirely (the bug that f3a86c0d fixed in
+            # prereq-check.ps1 but that this file silently re-introduced).
+            $usable = Test-ResolverProxyAnonymous -ProxyUrl $proxy -TargetUrl "https://pypi.org/simple/" -TimeoutSec 5
+            if ($usable) {
+                $env:HTTP_PROXY = $proxy
+                $env:HTTPS_PROXY = $proxy
+                [Console]::Error.WriteLine("  System proxy synced for resolver: $proxy")
+            } else {
+                [Console]::Error.WriteLine("  System proxy detected but unreachable/auth-required, not injecting: $proxy")
+            }
         }
     } catch {}
 }

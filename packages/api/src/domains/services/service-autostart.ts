@@ -5,6 +5,7 @@ import { fireServiceEvent } from './service-hooks.js';
 import { resolveScriptPath, resolveSpawnCommand, wireUpSidecarReadyListener } from './service-logs.js';
 import type { ServiceManifest } from './service-manifest.js';
 import { MODEL_ENV_VARS, PORT_ENV_VARS } from './service-manifest.js';
+import { resolveSelectedModel } from './service-model-resolver.js';
 import { checkInstalled, getKnownServices, getServiceState, setServicePid } from './service-registry.js';
 
 interface Logger {
@@ -93,9 +94,18 @@ export async function autoStartEnabledServices(log: Logger): Promise<void> {
       const v = env[key];
       if (v && v.startsWith('socks://')) env[key] = `socks5${v.slice('socks'.length)}`;
     }
-    if (cfg.selectedModel) {
+    // Resolve via shared helper so autostart honors the SAME priority chain
+    // as /api/services/:id/start and the install endpoint: cfg.selectedModel
+    // first, then matrix recommendation default. Without this, a legacy
+    // services.json (enabled+installed but no selectedModel — e.g. user
+    // installed via an older code path) would launch the sidecar with the
+    // model env unset; server scripts are now fail-fast on missing env so
+    // autostart would silently fail on first restart after the fail-fast
+    // commit landed.
+    const resolvedModel = resolveSelectedModel(manifest.id, manifest.id);
+    if (resolvedModel) {
       const envKey = MODEL_ENV_VARS[manifest.id];
-      if (envKey) env[envKey] = cfg.selectedModel;
+      if (envKey) env[envKey] = resolvedModel;
     }
     if (cfg.port) {
       const portKey = PORT_ENV_VARS[manifest.id];
@@ -125,7 +135,10 @@ export async function autoStartEnabledServices(log: Logger): Promise<void> {
       child.unref();
       // Polling watcher as safety net (covers slow boot beyond stdout
       // buffer flush, missing markers in old Python scripts, etc.).
-      // fireServiceEvent is no-op when bus already saw the event.
+      // fireServiceEvent itself does NOT dedupe across calls — but every
+      // catch-up hook we register is idempotent (embedPending: pending=0
+      // returns immediately), so running it 2× (push + this watcher) is
+      // a free no-op rather than a correctness problem.
       watchAndAnnounceReady(manifest, log);
     } catch {
       log.warn('[services] ✗ %s — failed to spawn start script', manifest.name);

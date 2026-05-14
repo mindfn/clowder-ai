@@ -13,6 +13,7 @@ import {
 import { buildRecommendation } from '../domains/services/recommendation-matrix.js';
 import { getServiceConfig, setServiceConfig } from '../domains/services/service-config.js';
 import { fireServiceEvent } from '../domains/services/service-hooks.js';
+import { resolveSelectedModel } from '../domains/services/service-model-resolver.js';
 import {
   appendLog,
   isValidModelId,
@@ -72,26 +73,11 @@ function normalizeProxyEnv(env: Record<string, string>): void {
   }
 }
 
-/**
- * Resolve which model env var value to use when spawning a sidecar. If the
- * user explicitly picked a model on install, use that. Otherwise fall back
- * to the matrix recommendation's first model — same default the install
- * dialog showed to the user. Avoids the bug where embed-api.py picks an
- * mlx-only hardcoded default on platforms where MLX isn't even installable.
- */
-function resolveSelectedModel(id: string, manifest: { id: string }): string | undefined {
-  const cfg = getServiceConfig(id);
-  if (cfg.selectedModel && isValidModelId(cfg.selectedModel)) return cfg.selectedModel;
-  try {
-    const profile = getEnvironmentProfile();
-    const rec = buildRecommendation(manifest.id, profile);
-    const fallback = rec.models[0]?.name;
-    if (fallback && isValidModelId(fallback)) return fallback;
-  } catch {
-    /* env detector failure shouldn't block start — let the script handle it */
-  }
-  return undefined;
-}
+// resolveSelectedModel moved to ./domains/services/service-model-resolver.ts
+// so service-autostart can reuse the exact same priority chain (body.model >
+// cfg.selectedModel > matrix recommendation default). The legacy
+// service-autostart only honored cfg.selectedModel — that bug is fixed by
+// the shared helper now imported above.
 
 /**
  * After a sidecar spawn, poll its health probe until it reports 'running',
@@ -317,7 +303,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
     const env: Record<string, string> = { ...process.env } as Record<string, string>;
     normalizeProxyEnv(env);
-    const selectedModel = resolveSelectedModel(id, manifest);
+    const selectedModel = resolveSelectedModel(id, manifest.id);
     if (selectedModel) {
       const envKey = MODEL_ENV_VARS[id];
       if (envKey) env[envKey] = selectedModel;
@@ -597,7 +583,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         // the resolved choice means subsequent start/autostart sees it
         // even if the user never changes the picker.
         let installModel = body.model && isValidModelId(body.model) ? body.model : undefined;
-        if (!installModel) installModel = resolveSelectedModel(id, manifest);
+        if (!installModel) installModel = resolveSelectedModel(id, manifest.id);
         if (installModel) {
           const envKey = MODEL_ENV_VARS[id];
           if (envKey) env[envKey] = installModel;
@@ -713,7 +699,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
             if (existsSync(startScript)) {
               const startEnv: Record<string, string> = { ...process.env } as Record<string, string>;
               normalizeProxyEnv(startEnv);
-              const startSelected = resolveSelectedModel(id, manifest);
+              const startSelected = resolveSelectedModel(id, manifest.id);
               if (startSelected) {
                 const ek = MODEL_ENV_VARS[id];
                 if (ek) startEnv[ek] = startSelected;
