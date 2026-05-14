@@ -1462,7 +1462,6 @@ async function main(): Promise<void> {
     const { join } = await import('node:path');
     const { PluginRegistry, resourceCapId } = await import('./domains/plugin/PluginRegistry.js');
     const { PluginResourceActivator } = await import('./domains/plugin/PluginResourceActivator.js');
-    const { loadLimbDeclaration } = await import('./domains/limb/limb-yaml-loader.js');
     const { registerPluginRoutes } = await import('./routes/plugin-routes.js');
     const { readCapabilitiesConfig, writeCapabilitiesConfig, withCapabilityLock } = await import(
       './config/capabilities/capability-orchestrator.js'
