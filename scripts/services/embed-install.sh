@@ -34,7 +34,11 @@ else
   pip install --quiet sentence-transformers torch fastapi uvicorn numpy 'httpx[socks]' 'huggingface_hub[hf_xet]'
 fi
 
-MODEL="${EMBED_MODEL:-mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ}"
+if [ -z "${EMBED_MODEL:-}" ]; then
+  echo "ERROR: EMBED_MODEL 未设置。请通过 console install 按钮触发（自动按 scripts/services/recommendation-matrix.yaml 选型），或手动 EMBED_MODEL=<model-id> bash $0" >&2
+  exit 1
+fi
+MODEL="$EMBED_MODEL"
 echo "  预下载模型: $MODEL ..."
 # Use the venv Python — $PYTHON3 still points at the bootstrap interpreter
 # (system / project-owned), which doesn't see packages we just pip-installed

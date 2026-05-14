@@ -78,7 +78,10 @@ Stemmer = SnowballStemmer
     #   intfloat/multilingual-e5-large    — 1024 dim, ~2.3GB ✓
     # multilingual-e5-small/base are NOT in the fastembed catalog despite the
     # HuggingFace repos existing — fastembed only ships pre-converted ONNX.
-    $Model = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "jinaai/jina-embeddings-v2-base-zh" }
+    if (-not $env:EMBED_MODEL) {
+        throw "ERROR: EMBED_MODEL 未设置。请通过 console install 按钮触发（自动按 scripts/services/recommendation-matrix.yaml 选型），或手动 `$env:EMBED_MODEL='<model-id>' 后再跑。"
+    }
+    $Model = $env:EMBED_MODEL
     Write-Host "  Pre-downloading ONNX model: $Model ..."
     & $VenvPython -c "from fastembed import TextEmbedding; TextEmbedding(model_name='$Model'); print('Model download complete.')"
     if ($LASTEXITCODE -ne 0) { throw "Failed to download model: $Model" }
@@ -107,7 +110,10 @@ Stemmer = SnowballStemmer
     & $VenvPython @pipArgs
     if ($LASTEXITCODE -ne 0) { throw "Failed to install embedding dependencies" }
 
-    $Model = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "jinaai/jina-embeddings-v2-base-zh" }
+    if (-not $env:EMBED_MODEL) {
+        throw "ERROR: EMBED_MODEL 未设置。请通过 console install 按钮触发（自动按 scripts/services/recommendation-matrix.yaml 选型），或手动 `$env:EMBED_MODEL='<model-id>' 后再跑。"
+    }
+    $Model = $env:EMBED_MODEL
     Write-Host "  Pre-downloading model: $Model ..."
     & $VenvPython -c "from huggingface_hub import snapshot_download; snapshot_download('$Model'); print('Model download complete.')"
     if ($LASTEXITCODE -ne 0) { throw "Failed to download model: $Model" }

@@ -29,7 +29,10 @@ if (-not (Test-Path $VenvPython)) {
 & $VenvPython -m pip install --progress-bar on -U pip
 if ($LASTEXITCODE -ne 0) { throw "Failed to upgrade pip in tts-venv" }
 
-$TtsModel = if ($env:TTS_MODEL) { $env:TTS_MODEL } else { "edge-tts" }
+if (-not $env:TTS_MODEL) {
+    throw "ERROR: TTS_MODEL 未设置。请通过 console install 按钮触发（自动按 scripts/services/recommendation-matrix.yaml 选型），或手动 `$env:TTS_MODEL='<model-id>' 后再跑。"
+}
+$TtsModel = $env:TTS_MODEL
 $IsPiper = $TtsModel -eq "piper" -or $TtsModel -like "zh_CN-*" -or $TtsModel -like "en_US-*" -or $TtsModel -like "en_GB-*"
 $IsSapi = $TtsModel -eq "sapi"
 

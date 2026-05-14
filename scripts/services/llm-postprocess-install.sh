@@ -28,12 +28,20 @@ if [ "$PLATFORM" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
   echo "  安装依赖: mlx-vlm fastapi uvicorn pydantic ..."
   pip install --quiet mlx-vlm "httpx[socks]" torchvision fastapi uvicorn pydantic 'huggingface_hub[hf_xet]'
 
-  MODEL="${LLM_POSTPROCESS_MODEL:-mlx-community/Qwen3.5-35B-A3B-4bit}"
+  if [ -z "${LLM_POSTPROCESS_MODEL:-}" ]; then
+    echo "ERROR: LLM_POSTPROCESS_MODEL 未设置。请通过 console install 按钮触发（自动按 scripts/services/recommendation-matrix.yaml 选型），或手动 LLM_POSTPROCESS_MODEL=<model-id> bash $0" >&2
+    exit 1
+  fi
+  MODEL="$LLM_POSTPROCESS_MODEL"
 else
   echo "  安装依赖: transformers torch fastapi uvicorn pydantic ..."
   pip install --quiet transformers torch fastapi uvicorn pydantic 'httpx[socks]' 'huggingface_hub[hf_xet]'
 
-  MODEL="${LLM_POSTPROCESS_MODEL:-Qwen/Qwen2.5-3B-Instruct}"
+  if [ -z "${LLM_POSTPROCESS_MODEL:-}" ]; then
+    echo "ERROR: LLM_POSTPROCESS_MODEL 未设置。请通过 console install 按钮触发（自动按 scripts/services/recommendation-matrix.yaml 选型），或手动 LLM_POSTPROCESS_MODEL=<model-id> bash $0" >&2
+    exit 1
+  fi
+  MODEL="$LLM_POSTPROCESS_MODEL"
 fi
 
 echo "  预下载模型: $MODEL ..."

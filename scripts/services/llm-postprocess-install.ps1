@@ -85,7 +85,10 @@ if ($env:PIP_INDEX_URL) {
 & $VenvPython @pipArgs
 if ($LASTEXITCODE -ne 0) { throw "Failed to install LLM dependencies" }
 
-$LlmModel = if ($env:LLM_POSTPROCESS_MODEL) { $env:LLM_POSTPROCESS_MODEL } else { "Qwen/Qwen2.5-3B-Instruct" }
+if (-not $env:LLM_POSTPROCESS_MODEL) {
+    throw "ERROR: LLM_POSTPROCESS_MODEL 未设置。请通过 console install 按钮触发（自动按 scripts/services/recommendation-matrix.yaml 选型），或手动 `$env:LLM_POSTPROCESS_MODEL='<model-id>' 后再跑。"
+}
+$LlmModel = $env:LLM_POSTPROCESS_MODEL
 Write-Host "  Pre-downloading model: $LlmModel ..."
 & $VenvPython -c "from huggingface_hub import snapshot_download; snapshot_download('$LlmModel')"
 if ($LASTEXITCODE -ne 0) { throw "Failed to download model: $LlmModel" }

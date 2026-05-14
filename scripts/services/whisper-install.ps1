@@ -70,7 +70,10 @@ if ($hasCuda) {
     Write-Host "  No NVIDIA GPU detected, using CPU inference"
 }
 
-$WhisperModel = if ($env:WHISPER_MODEL) { $env:WHISPER_MODEL } else { "large-v3-turbo" }
+if (-not $env:WHISPER_MODEL) {
+    throw "ERROR: WHISPER_MODEL 未设置。请通过 console install 按钮触发（自动按 scripts/services/recommendation-matrix.yaml 选型），或手动 `$env:WHISPER_MODEL='<model-id>' 后再跑。"
+}
+$WhisperModel = $env:WHISPER_MODEL
 Write-Host "  Pre-downloading model: $WhisperModel ..."
 & $VenvPython -c "from faster_whisper import WhisperModel; WhisperModel('$WhisperModel', device='cpu', compute_type='int8')"
 if ($LASTEXITCODE -ne 0) { throw "Failed to download model: $WhisperModel" }

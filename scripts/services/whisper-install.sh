@@ -37,7 +37,11 @@ if [ "$PLATFORM" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
   echo "  安装依赖: mlx-whisper fastapi uvicorn python-multipart httpx[socks] 'huggingface_hub[hf_xet]' ..."
   pip install --quiet mlx-whisper fastapi uvicorn python-multipart 'httpx[socks]' 'huggingface_hub[hf_xet]'
 
-  MODEL="${WHISPER_MODEL:-mlx-community/whisper-large-v3-turbo}"
+  if [ -z "${WHISPER_MODEL:-}" ]; then
+    echo "ERROR: WHISPER_MODEL 未设置。请通过 console install 按钮触发（自动按 scripts/services/recommendation-matrix.yaml 选型），或手动 WHISPER_MODEL=<model-id> bash $0" >&2
+    exit 1
+  fi
+  MODEL="$WHISPER_MODEL"
   echo "  预下载模型: $MODEL ..."
   "$VENV_DIR/bin/python" -c "
 import sys
@@ -53,7 +57,11 @@ else
   echo "  安装依赖: faster-whisper fastapi uvicorn python-multipart httpx[socks] 'huggingface_hub[hf_xet]' ..."
   pip install --quiet faster-whisper fastapi uvicorn python-multipart 'httpx[socks]' 'huggingface_hub[hf_xet]'
 
-  MODEL="${WHISPER_MODEL:-large-v3-turbo}"
+  if [ -z "${WHISPER_MODEL:-}" ]; then
+    echo "ERROR: WHISPER_MODEL 未设置。请通过 console install 按钮触发（自动按 scripts/services/recommendation-matrix.yaml 选型），或手动 WHISPER_MODEL=<model-id> bash $0" >&2
+    exit 1
+  fi
+  MODEL="$WHISPER_MODEL"
   echo "  预下载模型: $MODEL ..."
   "$VENV_DIR/bin/python" -c "
 import sys

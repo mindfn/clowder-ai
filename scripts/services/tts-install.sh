@@ -28,7 +28,10 @@ if [ "$PLATFORM" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
   echo "  安装依赖: mlx-audio + misaki[zh] ..."
   pip install --quiet mlx-audio 'misaki[zh]' fastapi uvicorn 'httpx[socks]' num2words spacy phonemizer 'huggingface_hub[hf_xet]'
 
-  TTS_MODEL="${TTS_MODEL:-mlx-community/Kokoro-82M-bf16}"
+  if [ -z "${TTS_MODEL:-}" ]; then
+    echo "ERROR: TTS_MODEL 未设置。请通过 console install 按钮触发（自动按 scripts/services/recommendation-matrix.yaml 选型），或手动 TTS_MODEL=<model-id> bash $0" >&2
+    exit 1
+  fi
   echo "  预下载模型: $TTS_MODEL ..."
   "$VENV_DIR/bin/python" -c "
 import sys
@@ -41,7 +44,10 @@ except Exception as e:
     sys.exit(1)
 " "$TTS_MODEL"
 else
-  TTS_MODEL="${TTS_MODEL:-edge-tts}"
+  if [ -z "${TTS_MODEL:-}" ]; then
+    echo "ERROR: TTS_MODEL 未设置。请通过 console install 按钮触发（自动按 scripts/services/recommendation-matrix.yaml 选型），或手动 TTS_MODEL=<model-id> bash $0" >&2
+    exit 1
+  fi
 
   # Common deps (always installed so users can swap providers later)
   echo "  安装基础依赖: edge-tts fastapi uvicorn httpx[socks] ..."
