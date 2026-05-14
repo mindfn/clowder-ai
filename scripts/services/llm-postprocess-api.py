@@ -252,8 +252,8 @@ def main():
     parser = argparse.ArgumentParser(description="Cat Cafe LLM Post-Process Server")
     parser.add_argument(
         "--model",
-        default="mlx-community/Qwen3.5-35B-A3B-4bit",
-        help="HuggingFace model repo (default: mlx-community/Qwen3.5-35B-A3B-4bit)",
+        required=True,
+        help="Model repo ID — required, no fallback default. Backend always passes via env.",
     )
     parser.add_argument("--port", type=int, default=9878)
     args = parser.parse_args()

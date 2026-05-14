@@ -198,8 +198,11 @@ def main():
     parser = argparse.ArgumentParser(description="Cat Cafe Embedding Server (MLX GPU)")
     parser.add_argument(
         "--model",
-        default=os.environ.get("EMBED_MODEL", "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"),
-        help="MLX model ID (default: mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ)",
+        required=True,
+        help="Model repo ID — required, no fallback default. The backend spawn caller "
+        "(routes/services.ts resolveSelectedModel) must always pass this; we rejected "
+        "the previous mlx-community default because it picked the wrong model on "
+        "non-mac platforms when EMBED_MODEL was unset.",
     )
     parser.add_argument("--port", type=int, default=int(os.environ.get("EMBED_PORT", "9880")))
     parser.add_argument("--dim", type=int, default=int(os.environ.get("EMBED_DIM", "768")))

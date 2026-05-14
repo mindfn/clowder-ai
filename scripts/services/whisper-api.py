@@ -182,8 +182,8 @@ def main():
     parser = argparse.ArgumentParser(description="Cat Cafe Whisper Server")
     parser.add_argument(
         "--model",
-        default="mlx-community/whisper-large-v3-turbo",
-        help="Model repo or size (default: mlx-community/whisper-large-v3-turbo)",
+        required=True,
+        help="Model repo ID — required, no fallback default. Backend always passes via env.",
     )
     parser.add_argument("--port", type=int, default=9876)
     args = parser.parse_args()

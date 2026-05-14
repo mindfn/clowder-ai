@@ -13,7 +13,11 @@
 set -euo pipefail
 
 VENV_DIR="${HOME}/.cat-cafe/llm-venv"
-MODEL="${LLM_POSTPROCESS_MODEL:-${1:-mlx-community/Qwen3.5-35B-A3B-4bit}}"
+MODEL="${LLM_POSTPROCESS_MODEL:-${1:-}}"
+if [ -z "$MODEL" ]; then
+  echo "ERROR: LLM_POSTPROCESS_MODEL env var (or positional arg) required — backend specifies model, no fallback default." >&2
+  exit 1
+fi
 PORT="${LLM_POSTPROCESS_PORT:-9878}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

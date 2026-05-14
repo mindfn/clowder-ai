@@ -30,7 +30,11 @@ if (-not $ffmpegPath) {
     Write-Host "WARNING: ffmpeg not found. Install via: winget install Gyan.FFmpeg"
 }
 
-$Model = if ($env:WHISPER_MODEL) { $env:WHISPER_MODEL } else { "large-v3-turbo" }
+$Model = $env:WHISPER_MODEL
+if (-not $Model) {
+    Write-Error "WHISPER_MODEL env var required - backend specifies model, no fallback default."
+    exit 1
+}
 Write-Output "Starting Whisper server: model=$Model, port=$Port"
 & $VenvPython $ApiScript --model $Model --port $Port
 exit $LASTEXITCODE

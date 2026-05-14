@@ -25,7 +25,11 @@ if (-not (Test-Path $VenvPython)) {
     throw "Venv not found: $VenvDir. Run llm-postprocess-install.ps1 first."
 }
 
-$Model = if ($env:LLM_POSTPROCESS_MODEL) { $env:LLM_POSTPROCESS_MODEL } else { "Qwen/Qwen2.5-3B-Instruct" }
+$Model = $env:LLM_POSTPROCESS_MODEL
+if (-not $Model) {
+    Write-Error "LLM_POSTPROCESS_MODEL env var required - backend specifies model, no fallback default."
+    exit 1
+}
 Write-Output "Starting LLM post-process server: model=$Model, port=$Port"
 & $VenvPython $ApiScript --model $Model --port $Port
 exit $LASTEXITCODE

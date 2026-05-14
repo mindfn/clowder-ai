@@ -25,7 +25,11 @@ if (-not (Test-Path $VenvPython)) {
     throw "Venv not found: $VenvDir. Run tts-install.ps1 first."
 }
 
-$Model = if ($env:TTS_MODEL) { $env:TTS_MODEL } else { "edge-tts" }
+$Model = $env:TTS_MODEL
+if (-not $Model) {
+    Write-Error "TTS_MODEL env var required - backend specifies model, no fallback default."
+    exit 1
+}
 $Provider = if ($env:TTS_PROVIDER) { $env:TTS_PROVIDER } else {
     switch -Wildcard ($Model) {
         "edge-tts"  { "edge-tts" }

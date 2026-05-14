@@ -12,7 +12,11 @@
 set -euo pipefail
 
 VENV_DIR="${HOME}/.cat-cafe/whisper-venv"
-MODEL="${WHISPER_MODEL:-${1:-mlx-community/whisper-large-v3-turbo}}"
+MODEL="${WHISPER_MODEL:-${1:-}}"
+if [ -z "$MODEL" ]; then
+  echo "ERROR: WHISPER_MODEL env var (or positional arg) required — backend specifies model, no fallback default." >&2
+  exit 1
+fi
 PORT="${WHISPER_PORT:-9876}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
