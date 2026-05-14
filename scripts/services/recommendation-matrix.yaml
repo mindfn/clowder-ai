@@ -379,17 +379,21 @@ services:
     # Linux ARM64: fastembed backend + sqlite-vec-linux-arm64 prebuilt OK.
     # fastembed has a hardcoded model whitelist verified via
     # TextEmbedding.list_supported_models() in fastembed 0.8.
+    # NOTE: BGE moved to default position (was jina). jinaai/jina-embeddings-v2
+    # has attn_implementation="torch" baked in its config.json which transformers
+    # ≥4.46 rejects — we override via model_kwargs in embed-api.py, but BGE
+    # doesn't need that workaround, so it's the safer default.
     - match: { os: linux, arch: arm64 }
       models:
-        - name: jinaai/jina-embeddings-v2-base-zh
-          size: ~640MB
-          description: Jina 中英双语向量 base（768 dim，fastembed/ONNX，ARM64 推荐）
-          requirements: { ramGb: 2, diskGb: 1 }
-          performance: CPU 实时
         - name: BAAI/bge-small-zh-v1.5
           size: ~90MB
-          description: BGE 中文 small（512 dim，轻量但中文专用，英文弱）
+          description: BGE 中文 small（512 dim，轻量，兼容性好，推荐）
           requirements: { ramGb: 2, diskGb: 0.2 }
+          performance: CPU 实时
+        - name: jinaai/jina-embeddings-v2-base-zh
+          size: ~640MB
+          description: Jina 中英双语向量 base（768 dim，更高质量但偏老）
+          requirements: { ramGb: 2, diskGb: 1 }
           performance: CPU 实时
       notes:
         - 'ARM64 走 fastembed 后端，受白名单限制（已对照 fastembed.TextEmbedding.list_supported_models() 选型）'
@@ -420,11 +424,20 @@ services:
           - { label: 'HF sentence-transformers 模型', url: 'https://huggingface.co/models?library=sentence-transformers&sort=likes' }
 
     # Windows/Linux x64 CPU (sentence-transformers, no GPU)
+    # NOTE: BGE moved to default position (was jina). Same rationale as
+    # the linux+arm64 entry — jina's stale attn_implementation="torch"
+    # in config.json needs a transformers monkey-patch we should not
+    # rely on as the default.
     - match: { os: [win32, linux], arch: x64 }
       models:
+        - name: BAAI/bge-small-zh-v1.5
+          size: ~90MB
+          description: BGE 中文 small（512 dim，轻量，兼容性好，推荐）
+          requirements: { ramGb: 2, diskGb: 0.2 }
+          performance: CPU 实时
         - name: jinaai/jina-embeddings-v2-base-zh
           size: ~640MB
-          description: Jina 中英双语向量 base（768 dim，CPU 通用，推荐）
+          description: Jina 中英双语向量 base（768 dim，CPU 通用）
           requirements: { ramGb: 2, diskGb: 1 }
           performance: CPU 实时
         - name: intfloat/multilingual-e5-large
@@ -434,7 +447,7 @@ services:
           performance: CPU 偏慢，GPU 实时
       notes:
         - 中英文都支持
-        - '⚠ 切换 jina (768 dim) ↔ e5-large (1024 dim) 时维度变化，需重建 memory 索引'
+        - '⚠ 切换模型后维度变化 (BGE 512 / jina 768 / e5-large 1024)，需重建 memory 索引'
       customModelHint:
         description: 'sentence-transformers 后端：HuggingFace 上任意 sentence-transformers 兼容的 embedding 模型（BERT-family encoder）；CPU 建议 ≤768 dim，1024 dim 偏慢'
         links:

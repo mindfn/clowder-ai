@@ -156,11 +156,31 @@ function Install-PythonToProjectDir {
             return $true
         }
         # python.exe might still exist but failed validation. Purge before
-        # re-running the silent installer so it starts from a clean state
-        # (avoids "TargetDir not empty" rejection and stale registry entries).
+        # re-running the silent installer so it starts from a clean state.
+        # CRITICAL: don't use -ErrorAction SilentlyContinue — it silently
+        # tolerates partial-purge (file lock by antivirus, running process,
+        # or explorer preview holding python.exe open) and the new tarball's
+        # x86-64 python.exe fails to overwrite the stale ARM one, producing
+        # the dead-loop: "purged" → "extracted" → "still ARM64".
         if (Test-Path $script:ProjectPythonDir) {
             [Console]::Error.WriteLine("  Purging stale/invalid Python at $script:ProjectPythonDir before reinstall")
-            Remove-Item -Recurse -Force $script:ProjectPythonDir -ErrorAction SilentlyContinue
+            try {
+                Remove-Item -Recurse -Force $script:ProjectPythonDir -ErrorAction Stop
+            } catch {
+                [Console]::Error.WriteLine("  Purge failed: $($_.Exception.Message)")
+                # Rename aside so the fresh install gets a clean dir. The
+                # stale dir lingers until next reboot / user cleanup but
+                # doesn't poison this install.
+                $stale = "$($script:ProjectPythonDir).stale-$(Get-Random)"
+                try {
+                    Rename-Item -Path $script:ProjectPythonDir -NewName (Split-Path -Leaf $stale) -Force -ErrorAction Stop
+                    [Console]::Error.WriteLine("  Renamed stale dir aside: $stale (clean up at next reboot)")
+                } catch {
+                    [Console]::Error.WriteLine("  Cannot rename stale dir either: $($_.Exception.Message)")
+                    [Console]::Error.WriteLine("  Manual fix: close any program holding python.exe, then delete $script:ProjectPythonDir and retry")
+                    return $false
+                }
+            }
         }
         return (Install-PythonToProjectDirInner)
     } finally {
