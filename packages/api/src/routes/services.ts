@@ -34,7 +34,9 @@ import {
   resolveServicePort,
   setInstalling,
   setServicePid,
+  setStarting,
   setUninstalling,
+  waitUntilHealthSettles,
 } from '../domains/services/service-registry.js';
 import { resolveUserId } from '../utils/request-identity.js';
 
@@ -239,6 +241,13 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       if (portEnv) env[portEnv] = String(cfgPort);
     }
 
+    // Flag startingServices so /api/services reflects '启动中' across page
+    // refreshes during the post-spawn health-probe window. A background
+    // watcher clears the flag once the sidecar settles (running / stopped
+    // / error / 60s timeout). Anything that returns before kicking off
+    // the watcher must clear the flag itself (handled in finally below).
+    setStarting(id, true);
+    let watcherStarted = false;
     const logFd = openLogFd(id);
     try {
       const { command: spawnCmd, args: spawnArgs } = resolveSpawnCommand(manifest.scripts.start);
@@ -270,6 +279,17 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
           const healthState = await getServiceState(manifest);
           if (healthState.status === 'running' || healthState.status === 'starting') {
             setServicePid(id, child.pid);
+            // Spawn finished cleanly + service responding — background-watch
+            // until fully running so the UI's 启动中 → 运行中 transition is
+            // reflected without keeping the HTTP handler open.
+            watcherStarted = true;
+            void (async () => {
+              try {
+                await waitUntilHealthSettles(manifest, 60_000);
+              } finally {
+                setStarting(id, false);
+              }
+            })();
             return { ok: true, message: `${manifest.name} start initiated` };
           }
         }
@@ -278,16 +298,32 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
           { serviceId: id, exitCode: earlyExit, logs },
           `service start failed: ${manifest.name} exited immediately`,
         );
+        appendLog(id, `[start] service exited immediately (code ${earlyExit})\n`);
         reply.status(500);
         return { error: `${manifest.name} exited immediately (code ${earlyExit})`, logs };
       }
       setServicePid(id, child.pid);
+      watcherStarted = true;
+      void (async () => {
+        try {
+          const settled = await waitUntilHealthSettles(manifest, 60_000);
+          if (settled !== 'running') {
+            appendLog(id, `[start] service did not become healthy within 60s (final probe: ${settled})\n`);
+          }
+        } finally {
+          setStarting(id, false);
+        }
+      })();
       return { ok: true, message: `${manifest.name} start initiated (pid: ${child.pid})` };
     } catch {
       reply.status(500);
       return { error: `Failed to start ${manifest.name}: spawn error` };
     } finally {
       if (logFd != null) closeSync(logFd);
+      // If we never kicked off the background watcher (any early-return
+      // path above), clear startingServices here so the UI doesn't stay
+      // stuck on 启动中.
+      if (!watcherStarted) setStarting(id, false);
     }
   });
 

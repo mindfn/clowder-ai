@@ -240,6 +240,7 @@ export function clearServicePid(id: string): void {
 // same 'installing' status without needing a stale services.json entry.
 const installingServices = new Set<string>();
 const uninstallingServices = new Set<string>();
+const startingServices = new Set<string>();
 export function setInstalling(id: string, value: boolean): void {
   if (value) installingServices.add(id);
   else installingServices.delete(id);
@@ -248,11 +249,18 @@ export function setUninstalling(id: string, value: boolean): void {
   if (value) uninstallingServices.add(id);
   else uninstallingServices.delete(id);
 }
+export function setStarting(id: string, value: boolean): void {
+  if (value) startingServices.add(id);
+  else startingServices.delete(id);
+}
 export function isInstalling(id: string): boolean {
   return installingServices.has(id);
 }
 export function isUninstalling(id: string): boolean {
   return uninstallingServices.has(id);
+}
+export function isStarting(id: string): boolean {
+  return startingServices.has(id);
 }
 
 export function getKnownServices(): ServiceManifest[] {
@@ -309,15 +317,43 @@ function enrichManifestModels(manifest: ServiceManifest, rec: ServiceRecommendat
   return { ...manifest, prerequisites: { ...manifest.prerequisites, models } };
 }
 
+/**
+ * Probe health on a polling loop until the service settles into a terminal
+ * state (running / stopped / error) or the timeout expires. Used by start
+ * handlers to keep startingServices flagged while we wait for the spawned
+ * sidecar to either become healthy or visibly fail — so the UI shows
+ * '启动中' across page refreshes instead of immediately flipping to '未启动'.
+ * Caller is responsible for setStarting(false) once this resolves.
+ */
+export async function waitUntilHealthSettles(
+  manifest: ServiceManifest,
+  timeoutMs: number,
+): Promise<'running' | 'stopped' | 'error' | 'timeout'> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 2000));
+    const probe = await probeHealth(manifest);
+    if (probe.status === 'running' || probe.status === 'stopped' || probe.status === 'error') {
+      return probe.status;
+    }
+  }
+  return 'timeout';
+}
+
 export async function getServiceState(manifest: ServiceManifest, refreshEnv = false): Promise<ServiceState> {
   const probe = await probeHealth(manifest);
-  // In-flight install/uninstall is a live UI signal — override probe status
-  // so a page refresh during a long install still shows '安装中'. The set
-  // is process-local; if the API restarted, the spawn died and the set is
-  // empty, so the user correctly sees stopped/none.
+  // In-flight install/uninstall/start is a live UI signal — override probe
+  // status so a page refresh during a long install/start still shows the
+  // correct transitional state. The sets are process-local; if the API
+  // restarted, the spawn died and the sets are empty, so the user correctly
+  // sees stopped/none. Probe-derived 'starting' (HTTP /health returning
+  // status='loading') still wins through naturally — startingServices is
+  // only set during the brief spawn-watch window before health probe
+  // reports back.
   let status = probe.status;
   if (installingServices.has(manifest.id)) status = 'installing';
   else if (uninstallingServices.has(manifest.id)) status = 'uninstalling';
+  else if (startingServices.has(manifest.id) && status !== 'running') status = 'starting';
   const config = getServiceConfig(manifest.id);
   const installStatus = getInstallStatus(manifest);
   const profile = getEnvironmentProfile(refreshEnv);

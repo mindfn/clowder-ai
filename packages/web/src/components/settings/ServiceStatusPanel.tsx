@@ -159,6 +159,21 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
     }
   }, [services, acting, startLogPoll, stopLogPoll]);
 
+  // Auto-refetch /api/services every 3s while any service is transitioning
+  // (installing / uninstalling / starting). Otherwise the user has to
+  // manually refresh after a long install/start to see the new state.
+  // Stops as soon as everything settles into running / stopped / error.
+  useEffect(() => {
+    const hasTransitional = services.some(
+      (s) => s.status === 'installing' || s.status === 'uninstalling' || s.status === 'starting',
+    );
+    if (!hasTransitional) return;
+    const iv = setInterval(() => {
+      void fetchServices();
+    }, 3000);
+    return () => clearInterval(iv);
+  }, [services, fetchServices]);
+
   const awaitServiceHealth = useCallback(
     async (id: string): Promise<{ status: string; error?: string }> => {
       const deadline = Date.now() + 120_000;
