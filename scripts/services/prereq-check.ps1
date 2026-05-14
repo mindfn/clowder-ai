@@ -62,6 +62,38 @@ function Assert-DiskSpace {
     Write-Host "  Disk space: ${freeGB}GB available [OK]"
 }
 
+function Test-ProxyAnonymous {
+    # Probe a proxy WITH NO CREDENTIALS — this matches what pip /
+    # huggingface_hub / curl will do once we set HTTP_PROXY. PowerShell's
+    # default Invoke-WebRequest auto-fills the logged-in Windows user's
+    # NTLM/Kerberos token when challenged by a corp proxy with 407, so
+    # `Invoke-WebRequest -Proxy <url>` looks "successful" even though pip
+    # can't authenticate. Using HttpClient + UseDefaultCredentials=false
+    # + Credentials=null forces an anonymous request, exposing the 407.
+    param([string]$ProxyUrl, [string]$TargetUrl, [int]$TimeoutSec = 5)
+    $handler = $null
+    $client = $null
+    try {
+        $webProxy = New-Object System.Net.WebProxy($ProxyUrl)
+        $webProxy.UseDefaultCredentials = $false
+        $webProxy.Credentials = $null
+        $handler = New-Object System.Net.Http.HttpClientHandler
+        $handler.Proxy = $webProxy
+        $handler.UseProxy = $true
+        $handler.UseDefaultCredentials = $false
+        $handler.PreAuthenticate = $false
+        $client = New-Object System.Net.Http.HttpClient($handler)
+        $client.Timeout = [TimeSpan]::FromSeconds($TimeoutSec)
+        $response = $client.GetAsync($TargetUrl).Result
+        return $response.IsSuccessStatusCode  # 407 → IsSuccessStatusCode = $false
+    } catch {
+        return $false
+    } finally {
+        if ($client) { $client.Dispose() }
+        if ($handler) { $handler.Dispose() }
+    }
+}
+
 function Sync-SystemProxy {
     if ($env:HTTP_PROXY -or $env:HTTPS_PROXY) {
         Write-Host "  Proxy env already set: $env:HTTP_PROXY"
@@ -71,19 +103,10 @@ function Sync-SystemProxy {
         $reg = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
         if ($reg.ProxyEnable -and $reg.ProxyServer) {
             $proxy = "http://$($reg.ProxyServer)"
-            # Probe whether the system proxy is actually usable BEFORE we
-            # inject it. Corporate proxies often demand NTLM/Kerberos auth
-            # that pip / huggingface_hub / Invoke-WebRequest can't perform —
-            # in that case the proxy returns 407 (or just times out) and
-            # silently injecting it would force every later download through
-            # an unauthorized hop. So we test once, then commit.
-            $usable = $false
-            try {
-                $null = Invoke-WebRequest -Uri "https://pypi.org/simple/" -Proxy $proxy -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
-                $usable = $true
-            } catch {
-                $usable = $false
-            }
+            # Probe with NO credentials — see Test-ProxyAnonymous for why.
+            # A corporate proxy that needs NTLM auth will return 407 here
+            # (pip will see the same 407), so we'll skip injection.
+            $usable = Test-ProxyAnonymous -ProxyUrl $proxy -TargetUrl "https://pypi.org/simple/" -TimeoutSec 5
             if ($usable) {
                 $env:HTTP_PROXY = $proxy
                 $env:HTTPS_PROXY = $proxy
