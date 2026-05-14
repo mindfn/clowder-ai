@@ -61,8 +61,14 @@ _python_version_ok() {
   # major>=3 AND minor>=12 (in practice major is always 3, but be explicit)
   if [ "$major" -lt 3 ]; then return 1; fi
   if [ "$major" -eq 3 ] && [ "$minor" -lt 12 ]; then return 1; fi
-  # Confirm venv module works — some distros ship python without it.
-  "$@" -c 'import venv' >/dev/null 2>&1 || return 1
+  # Confirm venv module works AND can actually create venvs. On Debian/Ubuntu
+  # the system Python ships *without* ensurepip unless the user separately
+  # installs python3.X-venv; `import venv` succeeds in that broken state but
+  # `python -m venv <dir>` fails at venv.create() because it depends on
+  # ensurepip. Test ensurepip directly so we reject those incomplete
+  # interpreters and fall through to project-owned Python (which always
+  # bundles ensurepip via the python-build-standalone tarball).
+  "$@" -c 'import venv, ensurepip' >/dev/null 2>&1 || return 1
   printf '%s %s\n' "$ver" "$machine"
   return 0
 }
