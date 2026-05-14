@@ -318,7 +318,17 @@ def main():
             else:
                 device = "cpu"
             log.info("Loading model via sentence-transformers (device: %s)...", device)
-            _st_model = SentenceTransformer(fallback_model, device=device)
+            # Override attn_implementation: some HF models (e.g. older
+            # jinaai/jina-embeddings-v2-*) have `attn_implementation="torch"`
+            # baked into their config.json — newer transformers (>=4.46)
+            # rejects that string and only accepts eager/sdpa/flash_*. Pass
+            # 'eager' explicitly so SentenceTransformer forwards it to
+            # from_pretrained() and shadows the broken config value.
+            _st_model = SentenceTransformer(
+                fallback_model,
+                device=device,
+                model_kwargs={"attn_implementation": "eager"},
+            )
             model_name = fallback_model
             model_loaded = True
             log.info("Fallback model loaded in %.1fs! (device: %s)", time.time() - start, device)
