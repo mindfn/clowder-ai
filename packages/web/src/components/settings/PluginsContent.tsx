@@ -31,6 +31,11 @@ const BUILTIN_PLUGINS: PluginInfo[] = [
     name: 'GitHub',
     version: '1.0.0',
     description: 'PR Tracking, Review Router, CI/CD Monitor',
+    docsUrl: 'https://github.com/settings/tokens',
+    setupSteps: [
+      '在 GitHub 创建 Personal Access Token，需要 repo 权限',
+      'Token 用于 PR 追踪、Review 路由、CI/CD 状态同步',
+    ],
     status: 'configured',
     configured: true,
     config: [],
@@ -97,7 +102,7 @@ export function PluginsContent() {
 
             {isExpanded &&
               (plugin.id === 'github' ? (
-                <GithubConfigPanel />
+                <GithubConfigPanel docsUrl={plugin.docsUrl} setupSteps={plugin.setupSteps} />
               ) : (
                 <PluginConfigPanel plugin={plugin} onUpdated={fetchPlugins} />
               ))}
