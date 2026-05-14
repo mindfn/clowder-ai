@@ -104,6 +104,13 @@ _try_uv() {
   local found
   found=$(uv python find '>=3.12' 2>/dev/null) || return 1
   [ -n "$found" ] && [ -x "$found" ] || return 1
+  # CRITICAL: uv on Linux happily points at /usr/bin/python3 (Debian/Ubuntu
+  # system Python) which lacks ensurepip — `python -m venv` then fails. We
+  # were missing this check on _try_uv / _try_pyenv / _try_brew, so the
+  # resolver returned a broken interpreter that survived all the way to
+  # the venv-create step in install scripts. Same _python_version_ok used
+  # by _try_system_pythons (covers version + venv + ensurepip).
+  _python_version_ok "$found" >/dev/null || return 1
   RESOLVED_PYTHON="$found"
   RESOLVED_PYTHON_ARCH="$($found -c 'import platform; print(platform.machine().lower())' 2>/dev/null || echo unknown)"
   RESOLVED_PYTHON_SOURCE="uv"
@@ -118,6 +125,7 @@ _try_pyenv() {
   local py
   py=$(pyenv root)/versions/${installed}/bin/python
   [ -x "$py" ] || return 1
+  _python_version_ok "$py" >/dev/null || return 1
   RESOLVED_PYTHON="$py"
   RESOLVED_PYTHON_ARCH="$($py -c 'import platform; print(platform.machine().lower())' 2>/dev/null || echo unknown)"
   RESOLVED_PYTHON_SOURCE="pyenv"
@@ -131,6 +139,7 @@ _try_brew() {
   brew_prefix=$(brew --prefix python@3.12 2>/dev/null) || return 1
   local py="${brew_prefix}/bin/python3.12"
   [ -x "$py" ] || return 1
+  _python_version_ok "$py" >/dev/null || return 1
   RESOLVED_PYTHON="$py"
   RESOLVED_PYTHON_ARCH="$($py -c 'import platform; print(platform.machine().lower())' 2>/dev/null || echo unknown)"
   RESOLVED_PYTHON_SOURCE="brew"
