@@ -559,16 +559,27 @@ async function main(): Promise<void> {
   initRepoIdentity(repoRoot);
 
   const { createMemoryServices } = await import('./domains/memory/factory.js');
-  // Resolve embed mode: EMBED_MODE env wins (explicit override), otherwise
-  // infer from the embedding-model service config — if the user enabled the
-  // sidecar in Settings, the in-process EmbeddingService should match. This
-  // avoids the foot-gun where the sidecar runs but the API layer never wires
-  // up embeddings because the env var was forgotten.
+  // Resolve embed mode. Priority:
+  //   1. If the user enabled the Embedding service in console (service.enabled=true),
+  //      force the in-process mode to 'on' (or honor an explicit 'shadow' / 'on' env
+  //      override). UI toggle is the most direct expression of user intent — letting
+  //      a stale EMBED_MODE=off in .env silently disable catch-up would be a foot-gun
+  //      (sidecar runs, but evidence_vectors stays empty + catch-up logs probed=false).
+  //   2. Otherwise, an explicit EMBED_MODE env wins.
+  //   3. Otherwise, default 'off' (service disabled in console, no env → no
+  //      embedding services wired up).
+  // .env.example used to seed EMBED_MODE=off and that silently broke the Mac flow
+  // even after the user enabled the sidecar in console — we now ignore EMBED_MODE=off
+  // when service.enabled=true.
   const { getServiceConfig: getEmbedSvcCfg } = await import('./domains/services/service-config.js');
   const resolvedEmbedMode: 'off' | 'shadow' | 'on' = (() => {
     const envMode = process.env.EMBED_MODE;
+    const svcEnabled = getEmbedSvcCfg('embedding-model').enabled;
+    if (svcEnabled) {
+      return envMode === 'shadow' || envMode === 'on' ? envMode : 'on';
+    }
     if (envMode === 'off' || envMode === 'shadow' || envMode === 'on') return envMode;
-    return getEmbedSvcCfg('embedding-model').enabled ? 'on' : 'off';
+    return 'off';
   })();
   app.log.info(
     `[api] F102: embed mode = ${resolvedEmbedMode} (EMBED_MODE=${process.env.EMBED_MODE ?? '(unset)'}, service.enabled=${getEmbedSvcCfg('embedding-model').enabled})`,

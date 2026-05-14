@@ -1368,7 +1368,9 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'EMBED_MODE',
     defaultValue: 'off',
-    description: '向量检索模式 (off/shadow/on)，需先安装并启用 Embedding 语义搜索服务',
+    description:
+      '向量检索模式 (off/shadow/on)。留空时由 console 上 Embedding 服务的开关决定（启用 → on）。' +
+      '显式设了 shadow/on 会覆盖，但 EMBED_MODE=off 不会关掉已经在 console 启用的服务（防 foot-gun）。',
     category: 'evidence',
     sensitive: false,
   },
