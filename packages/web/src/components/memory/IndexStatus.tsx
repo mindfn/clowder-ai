@@ -13,7 +13,6 @@ interface RawStatusResponse {
   passages_count?: number;
   edges_count?: number;
   vectors_count?: number;
-  vector_search_available?: boolean;
   last_rebuild_at?: string | null;
   embedding_model?: string | null;
   reason?: string;
@@ -27,7 +26,6 @@ export interface IndexStatusData {
   passagesCount: number;
   edgesCount: number;
   vectorsCount: number;
-  vectorSearchAvailable: boolean;
   lastRebuildAt: string | null;
   embeddingModel: string | null;
   reason?: string;
@@ -45,7 +43,6 @@ export function parseIndexStatus(raw: RawStatusResponse): IndexStatusData {
     passagesCount: raw.passages_count ?? 0,
     edgesCount: raw.edges_count ?? 0,
     vectorsCount: raw.vectors_count ?? 0,
-    vectorSearchAvailable: raw.vector_search_available ?? true,
     lastRebuildAt: raw.last_rebuild_at ?? null,
     embeddingModel: raw.embedding_model ?? null,
     reason: raw.reason,
@@ -200,12 +197,6 @@ export function IndexStatus() {
           <StatusRow label="Threads" value={status.threadsCount} />
           <StatusRow label="Passages" value={status.passagesCount} />
           <StatusRow label="Edges" value={status.edgesCount} />
-          {/* Vectors=0 is meaningful (e.g. sidecar still warming up, or */}
-          {/* user hasn't installed embedding). The "no binary" fallback */}
-          {/* used to live here was redundant — install dialog already */}
-          {/* blocks platforms where sqlite-vec has no prebuilt (matrix */}
-          {/* 'unsupported' branch), so users would never reach this UI */}
-          {/* with a truly unsupported platform. */}
           <StatusRow label="Vectors" value={status.vectorsCount} />
           {status.embeddingModel && <StatusRow label="Embedding" value={status.embeddingModel} />}
           <StatusRow

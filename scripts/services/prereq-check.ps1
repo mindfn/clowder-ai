@@ -67,29 +67,37 @@ function Sync-SystemProxy {
         Write-Host "  Proxy env already set: $env:HTTP_PROXY"
         return
     }
-    # Deliberately do NOT auto-inject the Windows system proxy as HTTP_PROXY.
-    # Corporate / enterprise system proxies typically require NTLM / Kerberos
-    # auth that pip / huggingface_hub / Invoke-WebRequest can't perform —
-    # auto-injecting forces every download through an auth-required proxy
-    # that we have no credentials for, and pip just sees opaque 407 / SSL
-    # handshake timeouts. Users on internal networks should:
-    #   • run a local auth-handling proxy (cntlm / PX on 127.0.0.1:3128) and
-    #     set HTTP_PROXY=http://127.0.0.1:3128 in .env, OR
-    #   • rely on direct access to Tsinghua / hf-mirror (which we auto-switch
-    #     to when pypi.org / huggingface.co fail).
     try {
         $reg = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
         if ($reg.ProxyEnable -and $reg.ProxyServer) {
-            Write-Host "  System proxy detected but NOT auto-injected: http://$($reg.ProxyServer)"
-            Write-Host "  (Internal proxies usually need auth pip cannot do. If downloads later fail,"
-            Write-Host "   start cntlm/PX on 127.0.0.1:3128 and set HTTP_PROXY in .env.)"
+            $proxy = "http://$($reg.ProxyServer)"
+            # Probe whether the system proxy is actually usable BEFORE we
+            # inject it. Corporate proxies often demand NTLM/Kerberos auth
+            # that pip / huggingface_hub / Invoke-WebRequest can't perform —
+            # in that case the proxy returns 407 (or just times out) and
+            # silently injecting it would force every later download through
+            # an unauthorized hop. So we test once, then commit.
+            $usable = $false
+            try {
+                $null = Invoke-WebRequest -Uri "https://pypi.org/simple/" -Proxy $proxy -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+                $usable = $true
+            } catch {
+                $usable = $false
+            }
+            if ($usable) {
+                $env:HTTP_PROXY = $proxy
+                $env:HTTPS_PROXY = $proxy
+                Write-Host "  System proxy detected and reachable: $proxy [OK]"
+            } else {
+                Write-Host "  System proxy detected but unreachable / auth-required: $proxy"
+                Write-Host "  (Skipping — will try direct connection + domestic mirrors instead.)"
+                Write-Host "  (If both fail, see the WARNING below to set HTTP_PROXY in .env.)"
+                # Also keep Invoke-WebRequest from silently re-routing through
+                # this dead proxy via .NET DefaultWebProxy (which would defeat
+                # the direct connection attempt in Assert-Network).
+                try { [System.Net.WebRequest]::DefaultWebProxy = $null } catch {}
+            }
         }
-    } catch {}
-    # Stop .NET WebRequest from silently routing Invoke-WebRequest through
-    # the system proxy below — without this, Test-UrlReachable hangs on
-    # auth-required corporate proxies even when HTTP_PROXY is unset.
-    try {
-        [System.Net.WebRequest]::DefaultWebProxy = $null
     } catch {}
 }
 
