@@ -300,7 +300,13 @@ export interface IKnowledgeResolver {
 
 export interface EmbedConfig {
   embedMode: 'off' | 'shadow' | 'on';
-  embedModel: 'qwen3-embedding-0.6b' | 'multilingual-e5-small';
+  // Free-form: the actual model id comes from the sidecar's /health probe
+  // (EmbeddingService.load() / markReady(modelId)) and from the user's
+  // selectedModel in services.json (recommendation-matrix.yaml).
+  // The value stored here is only used as a fallback display label when
+  // the sidecar probe hasn't succeeded yet — see EmbeddingService.modelId
+  // and IndexBuilder.embedIndexedItems -> vectorStore.initMeta.
+  embedModel: string;
   embedDim: number;
   maxModelMemMb: number;
   embedTimeoutMs: number;
@@ -328,16 +334,19 @@ export interface IEmbeddingService {
 }
 
 const VALID_EMBED_MODES = new Set(['off', 'shadow', 'on']);
-const VALID_EMBED_MODELS = new Set(['qwen3-embedding-0.6b', 'multilingual-e5-small']);
 
 export function resolveEmbedConfig(partial?: Partial<EmbedConfig>): EmbedConfig {
   const mode = partial?.embedMode ?? 'off';
   if (!VALID_EMBED_MODES.has(mode)) throw new Error(`Invalid embedMode: ${mode}`);
-  const model = partial?.embedModel ?? 'qwen3-embedding-0.6b';
-  if (!VALID_EMBED_MODELS.has(model)) throw new Error(`Invalid embedModel: ${model}`);
+  // No model-id whitelist: the runtime authority is the sidecar's /health
+  // probe + services.json selectedModel (driven by recommendation-matrix.yaml).
+  // 'unknown' is a sentinel — IndexBuilder will overwrite embedding_meta as
+  // soon as EmbeddingService.load() / markReady(actualId) reports the real
+  // model. Was hardcoded to 'qwen3-embedding-0.6b' which surfaced as a
+  // bogus label in the memory console on non-MLX platforms.
   return {
     embedMode: mode as EmbedConfig['embedMode'],
-    embedModel: model as EmbedConfig['embedModel'],
+    embedModel: partial?.embedModel ?? 'unknown',
     embedDim: partial?.embedDim ?? 768, // LL-034: 768 is sweet spot for CJK bilingual; 256 too low
     maxModelMemMb: partial?.maxModelMemMb ?? 800,
     embedTimeoutMs: partial?.embedTimeoutMs ?? 3000,

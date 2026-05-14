@@ -60,32 +60,59 @@ normalize_proxy_scheme() {
   done
 }
 
+_print_proxy_guidance() {
+  local context="$1"
+  echo ""
+  echo "  WARNING: $context"
+  echo "  既无法直连 pypi.org / huggingface.co，也无法访问国内镜像（清华 / hf-mirror）。"
+  echo "  通常这是内网环境需要 HTTP 代理。请在 .env 中设置（或临时 export 后重试）:"
+  echo "    HTTP_PROXY=http://<host>:<port>"
+  echo "    HTTPS_PROXY=http://<host>:<port>"
+  echo "  PX / cntlm 这类内网认证代理一般是 http://127.0.0.1:3128，Clash 一般是 http://127.0.0.1:7897"
+  echo "  配好后关闭弹窗再点一次安装，无需重启 API。"
+  echo ""
+}
+
 check_network() {
   normalize_proxy_scheme
 
   local timeout=5
-  if command -v curl &>/dev/null; then
-    if ! curl -sf --max-time "$timeout" "https://pypi.org/simple/" >/dev/null 2>&1; then
-      echo "WARNING: 无法连接 PyPI (https://pypi.org)，pip install 可能会失败"
-      echo "  如需使用镜像源，请设置 PIP_INDEX_URL 环境变量"
-      # Auto-pick a domestic mirror if user hasn't set one. PIP_INDEX_URL
-      # takes precedence over pypi.org but only if we actually export it.
-      if [ -z "${PIP_INDEX_URL:-}" ]; then
+  if ! command -v curl &>/dev/null; then
+    return
+  fi
+
+  if curl -sf --max-time "$timeout" "https://pypi.org/simple/" >/dev/null 2>&1; then
+    echo "  PyPI 连接 ✓"
+  else
+    echo "WARNING: 无法连接 PyPI (https://pypi.org)，pip install 可能会失败"
+    # Verify Tsinghua reachability before switching — internal/PX networks
+    # may need a proxy even for domestic mirrors. Surface a clear .env hint
+    # instead of silently switching to a mirror the user can't reach.
+    if [ -z "${PIP_INDEX_URL:-}" ]; then
+      if curl -sf --max-time "$timeout" "https://pypi.tuna.tsinghua.edu.cn/simple/" >/dev/null 2>&1; then
         export PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
         echo "  自动启用清华 pip 镜像: $PIP_INDEX_URL"
+      else
+        _print_proxy_guidance "pypi.org 和清华镜像都不可达，pip install 一定会失败。"
       fi
     else
-      echo "  PyPI 连接 ✓"
+      echo "  已设 PIP_INDEX_URL=$PIP_INDEX_URL"
     fi
-    if ! curl -sf --max-time "$timeout" "https://huggingface.co" >/dev/null 2>&1; then
-      echo "WARNING: 无法连接 HuggingFace (https://huggingface.co)，模型下载可能会失败"
-      echo "  如需使用镜像，请设置 HF_ENDPOINT 环境变量"
-      if [ -z "${HF_ENDPOINT:-}" ]; then
+  fi
+
+  if curl -sf --max-time "$timeout" "https://huggingface.co" >/dev/null 2>&1; then
+    echo "  HuggingFace 连接 ✓"
+  else
+    echo "WARNING: 无法连接 HuggingFace (https://huggingface.co)，模型下载可能会失败"
+    if [ -z "${HF_ENDPOINT:-}" ]; then
+      if curl -sf --max-time "$timeout" "https://hf-mirror.com" >/dev/null 2>&1; then
         export HF_ENDPOINT="https://hf-mirror.com"
         echo "  自动启用 HF 镜像: $HF_ENDPOINT"
+      else
+        _print_proxy_guidance "huggingface.co 和 hf-mirror.com 都不可达，模型下载一定会失败。"
       fi
     else
-      echo "  HuggingFace 连接 ✓"
+      echo "  已设 HF_ENDPOINT=$HF_ENDPOINT"
     fi
   fi
 }

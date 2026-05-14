@@ -78,35 +78,66 @@ function Sync-SystemProxy {
     } catch {}
 }
 
+function Test-UrlReachable {
+    param([string]$Url, [int]$TimeoutSec = 5)
+    try {
+        $null = Invoke-WebRequest -Uri $Url -TimeoutSec $TimeoutSec -UseBasicParsing -ErrorAction Stop
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Write-ProxyGuidance {
+    param([string]$Context)
+    Write-Host ""
+    Write-Host "  WARNING: $Context"
+    Write-Host "  既无法直连 pypi.org / huggingface.co，也无法访问国内镜像（清华 / hf-mirror）。"
+    Write-Host "  通常这是内网环境需要 HTTP 代理。请在 .env 中设置（或临时 export 后重试）:"
+    Write-Host "    HTTP_PROXY=http://<host>:<port>"
+    Write-Host "    HTTPS_PROXY=http://<host>:<port>"
+    Write-Host "  PX / cntlm 这类内网认证代理一般是 http://127.0.0.1:3128，Clash 一般是 http://127.0.0.1:7897"
+    Write-Host "  配好后关闭弹窗再点一次安装，无需重启 API。"
+    Write-Host ""
+}
+
 function Assert-Network {
     Sync-SystemProxy
 
     $proxyDetected = [bool]($env:HTTP_PROXY -or $env:HTTPS_PROXY)
     $useMirror = $false
-    try {
-        $null = Invoke-WebRequest -Uri "https://pypi.org/simple/" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+    if (Test-UrlReachable -Url "https://pypi.org/simple/") {
         Write-Host "  PyPI connectivity [OK]"
         if ($proxyDetected) {
             # Invoke-WebRequest passes through proxy but pip often fails with SSL
             # handshake timeouts through the same proxy. Use domestic mirror instead.
             $useMirror = $true
         }
-    } catch {
+    } else {
         $useMirror = $true
     }
     if ($useMirror) {
-        Write-Host "  Using Tsinghua mirror for pip (bypassing proxy for domestic hosts)"
-        $env:PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple/"
-        $env:PIP_TRUSTED_HOST = "pypi.tuna.tsinghua.edu.cn"
-        $noProxy = @("pypi.tuna.tsinghua.edu.cn", "hf-mirror.com", "mirrors.tuna.tsinghua.edu.cn")
-        if ($env:NO_PROXY) { $noProxy = @($env:NO_PROXY -split ',') + $noProxy }
-        $env:NO_PROXY = ($noProxy | Select-Object -Unique) -join ','
+        # Verify Tsinghua before switching — internal/PX networks may need a
+        # proxy even to reach domestic mirrors. Surface a clear .env hint
+        # instead of silently switching to a mirror the user can't reach.
+        if (Test-UrlReachable -Url "https://pypi.tuna.tsinghua.edu.cn/simple/") {
+            Write-Host "  Using Tsinghua mirror for pip (bypassing proxy for domestic hosts)"
+            $env:PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+            $env:PIP_TRUSTED_HOST = "pypi.tuna.tsinghua.edu.cn"
+            $noProxy = @("pypi.tuna.tsinghua.edu.cn", "hf-mirror.com", "mirrors.tuna.tsinghua.edu.cn")
+            if ($env:NO_PROXY) { $noProxy = @($env:NO_PROXY -split ',') + $noProxy }
+            $env:NO_PROXY = ($noProxy | Select-Object -Unique) -join ','
+        } else {
+            Write-ProxyGuidance -Context "pypi.org 和清华镜像都不可达，pip install 一定会失败。"
+            # Don't throw — pip might still work if the user has other connectivity.
+        }
     }
-    try {
-        $null = Invoke-WebRequest -Uri "https://huggingface.co" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+    if (Test-UrlReachable -Url "https://huggingface.co") {
         Write-Host "  HuggingFace connectivity [OK]"
-    } catch {
+    } elseif (Test-UrlReachable -Url "https://hf-mirror.com") {
         Write-Host "  HuggingFace unreachable, switching to hf-mirror.com"
         $env:HF_ENDPOINT = "https://hf-mirror.com"
+    } else {
+        Write-ProxyGuidance -Context "huggingface.co 和 hf-mirror.com 都不可达，模型下载一定会失败。"
     }
 }
