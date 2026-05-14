@@ -433,7 +433,7 @@ Apply-InstallerAuthEnv -State $authState -EnvFile $envFile
 
 # #675: Generate TELEMETRY_HMAC_SALT if missing
 if (Test-Path $envFile) {
-    $hasSalt = Select-String -Path $envFile -Pattern "^TELEMETRY_HMAC_SALT=" -Quiet
+    $hasSalt = Select-String -Path $envFile -Pattern "^TELEMETRY_HMAC_SALT=.+" -Quiet
     if (-not $hasSalt) {
         $bytes = [byte[]]::new(32)
         [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
