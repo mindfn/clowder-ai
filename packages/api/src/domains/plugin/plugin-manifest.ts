@@ -19,7 +19,7 @@ const SYSTEM_ENV_DENYLIST_EXACT = new Set(['NODE_OPTIONS', 'NODE_ENV', 'PATH', '
 const SUPPORTED_RESOURCE_TYPES = new Set(['skill', 'mcp', 'limb']);
 const DEFERRED_RESOURCE_TYPES = new Set(['schedule']);
 
-export const BUILTIN_PLUGIN_IDS = new Set(['github']);
+export const BUILTIN_PLUGIN_IDS = new Set<string>();
 
 export interface EnvSafetyResult {
   ok: boolean;
