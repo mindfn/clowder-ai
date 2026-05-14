@@ -201,8 +201,7 @@ function Install-PythonToProjectDirInner {
     #     on Windows ARM64). PBS tarballs are arch-explicit in the URL.
     #   - Same code path on Windows / Linux / macOS — easier to maintain.
     Sync-ResolverSystemProxy
-    $hasCurl = Get-Command curl.exe -ErrorAction SilentlyContinue
-    $hasTar  = Get-Command tar.exe -ErrorAction SilentlyContinue
+    $hasTar = Get-Command tar.exe -ErrorAction SilentlyContinue
     if (-not $hasTar) {
         [Console]::Error.WriteLine("  tar.exe required to extract the portable Python tarball (Windows 10+ ships tar.exe; older Windows is not supported)")
         return $false
@@ -218,19 +217,24 @@ function Install-PythonToProjectDirInner {
     $extractTmp  = Join-Path $env:TEMP 'cat-cafe-python-extract'
 
     [Console]::Error.WriteLine("  Downloading portable Python $pbsVersion (AMD64) from python-build-standalone...")
+    # Use Invoke-WebRequest (.NET HttpClient TLS stack) instead of curl.exe.
+    # On Windows curl uses SChannel which intermittently bails on GitHub's
+    # objects.githubusercontent.com CDN with "server closed abruptly
+    # (missing close_notify)" — observed: curl spent 30+ min at 80% and
+    # died, IWR on the same URL finished in seconds (CVO-verified).
+    # ProgressPreference='SilentlyContinue' avoids the IWR perf cliff where
+    # the progress bar throttles large transfers.
+    $prevProgress = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
     try {
-        if ($hasCurl) {
-            # --retry 3: SChannel TLS sometimes drops; auto-retry transient closes.
-            # --connect-timeout 30: don't hang forever if proxy is dead.
-            # --retry-max-time 600: cap total retry time at 10 min.
-            & curl.exe -L --fail --retry 3 --retry-delay 5 --connect-timeout 30 --retry-max-time 600 -o $tarballPath $tarballUrl
-            if ($LASTEXITCODE -ne 0) { throw "curl.exe exit $LASTEXITCODE" }
-        } else {
-            Invoke-WebRequest -Uri $tarballUrl -OutFile $tarballPath -UseBasicParsing
+        try {
+            Invoke-WebRequest -Uri $tarballUrl -OutFile $tarballPath -UseBasicParsing -ErrorAction Stop
+        } catch {
+            [Console]::Error.WriteLine("  Failed to download Python tarball: $($_.Exception.Message)")
+            return $false
         }
-    } catch {
-        [Console]::Error.WriteLine("  Failed to download Python tarball: $($_.Exception.Message)")
-        return $false
+    } finally {
+        $ProgressPreference = $prevProgress
     }
     if (-not (Test-Path $tarballPath)) {
         [Console]::Error.WriteLine("  Tarball not at expected path: $tarballPath")
