@@ -55,7 +55,12 @@ function Test-Python312Candidate {
         # Version check: platform.machine() is unreliable on Windows ARM
         # (emulator hides process arch — see Get-PythonBinaryArch comment),
         # so we only ask Python for the version and read arch from PE header.
-        $out = & $Path @($PrefixArgs + @('-c', 'import sys; print(sys.version_info[0], sys.version_info[1], sep=":")')) 2>$null
+        # IMPORTANT: Python string literal uses single quotes (`sep=':'`),
+        # not double quotes. PowerShell 5.1 re-quotes args when handing them
+        # to native exe — embedded `"` gets eaten, Python receives broken
+        # syntax and produces empty stdout. CVO-verified on Win-ARM64:
+        # `print('a:b:c')` → "a:b:c" but `print(x, y, sep=":")` → "".
+        $out = & $Path @($PrefixArgs + @('-c', "import sys; print(sys.version_info[0], sys.version_info[1], sep=':')")) 2>$null
         if (-not $out) { return $null }
         $parts = "$out".Trim() -split ':'
         if ($parts.Length -lt 2) { return $null }
