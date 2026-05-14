@@ -712,26 +712,37 @@ async function main(): Promise<void> {
     const builder = memoryServices.indexBuilder;
     const embedding = memoryServices.embeddingService;
     const { onServiceEvent } = await import('./domains/services/service-hooks.js');
-    onServiceEvent('embedding-model', 'started', async () => {
-      // Re-probe sidecar /health so EmbeddingService.modelId reflects the
-      // model the sidecar actually loaded (sidecar may have fallen back to a
-      // different model than EMBED_MODEL requested, and the startup load()
-      // saw the sidecar before it was up so modelId is still empty).
-      // Without this, getModelInfo() returns the parseEmbedConfig hardcoded
-      // default ('qwen3-embedding-0.6b'), which then gets stamped into the
-      // embedding_meta table by initMeta() — the "Embedding" row in the
-      // console then shows qwen3 even when the sidecar is running BGE/Jina.
-      await embedding?.load();
-      if (embedding && !embedding.isReady()) embedding.markReady();
-      const r = await builder.embedPending();
-      app.log.info(`[api] F102: embed catch-up — probed=${r.probed} embedded=${r.embedded} pending=${r.pending}`);
-      if (r.pending > 0) {
-        // Partial batch failure — throw so service-hooks keeps the hook
-        // registered for retry on the next fire-cycle.
-        throw new Error(`${r.pending} doc(s) still pending after batch`);
-      }
-      // Success → hook unregisters automatically on return.
-    });
+    onServiceEvent(
+      'embedding-model',
+      'started',
+      async () => {
+        // Re-probe sidecar /health so EmbeddingService.modelId reflects the
+        // model the sidecar actually loaded (sidecar may have fallen back to
+        // a different model than EMBED_MODEL requested, and the startup
+        // load() saw the sidecar before it was up so modelId is still empty).
+        // Without this, getModelInfo() returns the parseEmbedConfig hardcoded
+        // default, which then gets stamped into the embedding_meta table by
+        // initMeta() — the console then shows the wrong model.
+        await embedding?.load();
+        if (embedding && !embedding.isReady()) embedding.markReady();
+        const r = await builder.embedPending();
+        app.log.info(`[api] F102: embed catch-up — probed=${r.probed} embedded=${r.embedded} pending=${r.pending}`);
+        if (r.pending > 0) {
+          // Partial batch failure — throw so the bus surfaces a warn line;
+          // hook stays registered regardless (always-on).
+          throw new Error(`${r.pending} doc(s) still pending after batch`);
+        }
+      },
+      // Keep this hook registered across fires. Default behavior is "fire
+      // once, unregister on success" — that's correct for one-shot bootstrap,
+      // but our user case is broader: every time the embedding sidecar
+      // transitions to 'running' (autostart on API restart, OR user
+      // disable→enable from the console, OR a fresh /api/services/:id/start)
+      // we need to re-check that evidence_vectors is in sync with
+      // evidence_docs. embedPending() is idempotent — pending=0 returns
+      // immediately as a no-op — so re-firing is safe and free.
+      { unregisterOnSuccess: false },
+    );
   }
 
   // F-4: Global knowledge rebuild (Skills + MEMORY.md → global_knowledge.sqlite)
