@@ -54,6 +54,7 @@ export function SkillsContent() {
         {cap.items.map((item) => {
           const busy = cap.toggling === item.id;
           const expanded = expandedId === item.id;
+          const pluginOwned = !!item.pluginId;
           return (
             <div key={item.id} className={settingsResourceCardClass}>
               <div className={settingsResourceRowClass}>
@@ -80,6 +81,9 @@ export function SkillsContent() {
                     <p className="text-sm font-bold text-cafe">{item.id}</p>
                     <p className="mt-0.5 truncate text-xs text-cafe-secondary">{item.description || '—'}</p>
                     {item.category && <p className="mt-0.5 text-label text-cafe-muted">{item.category}</p>}
+                    {pluginOwned && !item.enabled && (
+                      <p className="mt-0.5 text-label text-orange-500">需先启用对应插件</p>
+                    )}
                   </div>
                 </button>
                 <div className={settingsResourceActionGroupClass}>
@@ -121,6 +125,7 @@ export function SkillsContent() {
                   catFamilies={cap.catFamilies}
                   toggling={cap.toggling}
                   onToggle={cap.handleToggle}
+                  disabled={false}
                 />
               )}
             </div>

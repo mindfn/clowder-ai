@@ -18,13 +18,17 @@ export function ToggleSwitch({
   busy,
   onClick,
   title,
+  disabled,
 }: {
   enabled: boolean;
   busy: boolean;
   onClick: (e: React.MouseEvent) => void;
   title?: string;
+  disabled?: boolean;
 }) {
-  return <SettingsResourceToggleSwitch enabled={enabled} busy={busy} onClick={onClick} title={title} />;
+  return (
+    <SettingsResourceToggleSwitch enabled={enabled} busy={busy} onClick={onClick} title={title} disabled={disabled} />
+  );
 }
 
 export function ProjectSelector({
@@ -76,11 +80,13 @@ export function PerCatToggles({
   catFamilies,
   toggling,
   onToggle,
+  disabled,
 }: {
   item: CapabilityBoardItem;
   catFamilies: CatFamily[];
   toggling: string | null;
   onToggle: (item: CapabilityBoardItem, enabled: boolean, catId?: string) => void;
+  disabled?: boolean;
 }) {
   if (catFamilies.length === 0 || !item.cats) return null;
   const catEntries = Object.entries(item.cats);
@@ -105,6 +111,7 @@ export function PerCatToggles({
                     <ToggleSwitch
                       enabled={enabled}
                       busy={busy}
+                      disabled={disabled}
                       onClick={(e) => {
                         e.stopPropagation();
                         onToggle(item, !enabled, catId);
