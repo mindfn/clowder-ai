@@ -4,16 +4,16 @@
  * Dynamic plugin discovery, configuration, and resource lifecycle management.
  */
 
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import type { PluginInfo } from '@cat-cafe/shared';
 import type { FastifyInstance } from 'fastify';
 import { readCapabilitiesConfig } from '../config/capabilities/capability-orchestrator.js';
-import { applyConnectorSecretUpdates } from '../config/connector-secret-updater.js';
 import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import type { LimbRegistry } from '../domains/limb/LimbRegistry.js';
 import { loadLimbDeclaration } from '../domains/limb/limb-yaml-loader.js';
 import type { PluginRegistry } from '../domains/plugin/PluginRegistry.js';
 import type { PluginResourceActivator } from '../domains/plugin/PluginResourceActivator.js';
+import { writePluginConfig } from '../domains/plugin/plugin-config-store.js';
 import { validateEnvSafety } from '../domains/plugin/plugin-manifest.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
@@ -168,11 +168,7 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
       }
 
       const projectRoot = resolveActiveProjectRoot();
-      const envFilePath = resolve(projectRoot, '.env.local');
-      await applyConnectorSecretUpdates(
-        body.updates.map((u) => ({ name: u.name, value: u.value })),
-        { envFilePath },
-      );
+      writePluginConfig(projectRoot, id, body.updates);
 
       try {
         const auditLog = getEventAuditLog();
