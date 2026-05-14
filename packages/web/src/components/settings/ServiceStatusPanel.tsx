@@ -141,6 +141,24 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
     });
   }, []);
 
+  // Auto-attach log polling to any service the API reports as actively
+  // installing / uninstalling. This recovers progress streaming after a
+  // page refresh during a long install: handleAction's startLogPoll only
+  // runs on user click, and that local state is gone after F5. The backend
+  // (service-registry.ts installingServices set) still knows the spawn is
+  // alive, so any visible 'installing' / 'uninstalling' status implies a
+  // running child we should be tailing.
+  useEffect(() => {
+    const ref = pollRef.current;
+    for (const s of services) {
+      const id = s.manifest.id;
+      const inFlight = s.status === 'installing' || s.status === 'uninstalling';
+      const userActing = acting.has(`${id}:install`) || acting.has(`${id}:uninstall`);
+      if (inFlight && !ref.has(id)) startLogPoll(id);
+      else if (!inFlight && !userActing && ref.has(id)) stopLogPoll(id);
+    }
+  }, [services, acting, startLogPoll, stopLogPoll]);
+
   const awaitServiceHealth = useCallback(
     async (id: string): Promise<{ status: string; error?: string }> => {
       const deadline = Date.now() + 120_000;
@@ -329,8 +347,26 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
         const cfg = STATUS_CONFIG[s.status] ?? STATUS_CONFIG.unknown;
         const installFailed = s.installStatus === 'failed';
         const notInstalled = !s.installed && !installFailed;
-        const statusLabel = installFailed ? '安装失败' : notInstalled ? '未安装' : cfg.label;
-        const statusDot = installFailed ? 'bg-conn-red-text' : notInstalled ? 'bg-cafe-surface-sunken' : cfg.dot;
+        // In-flight install/uninstall wins over stale 'failed' label. When
+        // the user retries after a failed install, status flips to
+        // 'installing' but installStatus stays 'failed' until the new spawn
+        // either succeeds or fails — without this priority the card would
+        // simultaneously show '安装失败' (label) and '安装中...' (button),
+        // which is confusing.
+        const statusLabel = isTransitional
+          ? cfg.label
+          : installFailed
+            ? '安装失败'
+            : notInstalled
+              ? '未安装'
+              : cfg.label;
+        const statusDot = isTransitional
+          ? cfg.dot
+          : installFailed
+            ? 'bg-conn-red-text'
+            : notInstalled
+              ? 'bg-cafe-surface-sunken'
+              : cfg.dot;
         const toggleDisabled = busy || isTransitional;
 
         return (
