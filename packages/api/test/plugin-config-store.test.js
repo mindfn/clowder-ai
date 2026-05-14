@@ -88,15 +88,48 @@ describe('plugin-config-store', () => {
     assert.deepEqual(changedKeys, []);
   });
 
-  it('loadAllPluginConfigs populates process.env', () => {
-    trackEnv('TEST_PLUGIN_LOAD');
+  it('loadAllPluginConfigs populates process.env for manifest-declared keys only', () => {
+    trackEnv('LOAD_TEST_KEY');
+    trackEnv('LOAD_TEST_ROGUE');
 
-    writePluginConfig(tmpDir, 'load-test', [{ name: 'TEST_PLUGIN_LOAD', value: 'loaded' }]);
-    delete process.env.TEST_PLUGIN_LOAD;
+    writePluginConfig(tmpDir, 'load-test', [
+      { name: 'LOAD_TEST_KEY', value: 'loaded' },
+      { name: 'LOAD_TEST_ROGUE', value: 'injected' },
+    ]);
+    delete process.env.LOAD_TEST_KEY;
+    delete process.env.LOAD_TEST_ROGUE;
 
-    const count = loadAllPluginConfigs(tmpDir, ['load-test']);
+    const manifest = {
+      id: 'load-test',
+      name: 'Load Test',
+      version: '1.0.0',
+      builtin: false,
+      config: [{ envName: 'LOAD_TEST_KEY', label: 'Key', sensitive: false, required: true }],
+      resources: [],
+    };
+    const count = loadAllPluginConfigs(tmpDir, [manifest]);
     assert.equal(count, 1);
-    assert.equal(process.env.TEST_PLUGIN_LOAD, 'loaded');
+    assert.equal(process.env.LOAD_TEST_KEY, 'loaded');
+    assert.equal(process.env.LOAD_TEST_ROGUE, undefined, 'undeclared key must not be loaded');
+  });
+
+  it('loadAllPluginConfigs applies null tombstone to override dotenv residue', () => {
+    trackEnv('TOMBSTONE_KEY');
+
+    process.env.TOMBSTONE_KEY = 'from-dotenv';
+    writePluginConfig(tmpDir, 'tomb-test', [{ name: 'TOMBSTONE_KEY', value: null }]);
+    process.env.TOMBSTONE_KEY = 'from-dotenv';
+
+    const manifest = {
+      id: 'tomb-test',
+      name: 'Tomb Test',
+      version: '1.0.0',
+      builtin: false,
+      config: [{ envName: 'TOMBSTONE_KEY', label: 'Key', sensitive: false, required: true }],
+      resources: [],
+    };
+    loadAllPluginConfigs(tmpDir, [manifest]);
+    assert.equal(process.env.TOMBSTONE_KEY, undefined, 'null tombstone must delete env var');
   });
 
   it('JSON file has restricted permissions (0o600)', () => {
