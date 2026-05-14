@@ -713,7 +713,16 @@ async function main(): Promise<void> {
     const embedding = memoryServices.embeddingService;
     const { onServiceEvent } = await import('./domains/services/service-hooks.js');
     onServiceEvent('embedding-model', 'started', async () => {
-      embedding?.markReady();
+      // Re-probe sidecar /health so EmbeddingService.modelId reflects the
+      // model the sidecar actually loaded (sidecar may have fallen back to a
+      // different model than EMBED_MODEL requested, and the startup load()
+      // saw the sidecar before it was up so modelId is still empty).
+      // Without this, getModelInfo() returns the parseEmbedConfig hardcoded
+      // default ('qwen3-embedding-0.6b'), which then gets stamped into the
+      // embedding_meta table by initMeta() — the "Embedding" row in the
+      // console then shows qwen3 even when the sidecar is running BGE/Jina.
+      await embedding?.load();
+      if (embedding && !embedding.isReady()) embedding.markReady();
       const r = await builder.embedPending();
       app.log.info(`[api] F102: embed catch-up — probed=${r.probed} embedded=${r.embedded} pending=${r.pending}`);
       if (r.pending > 0) {
