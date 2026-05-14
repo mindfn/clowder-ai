@@ -20,27 +20,63 @@
 $script:CatCafeHome = Join-Path $HOME ".cat-cafe"
 $script:ProjectPythonDir = Join-Path $script:CatCafeHome "python"
 
+function Get-PythonBinaryArch {
+    # Read the PE header machine field directly to determine python.exe's
+    # binary arch. We can't rely on platform.machine() inside Python on
+    # Windows ARM — when an AMD64 Python runs under the Prism emulator on
+    # ARM64 Windows, platform.machine() reports the host arch (ARM64),
+    # not the process arch (AMD64). PE header is the unambiguous source.
+    #
+    # CVO-verified on Windows ARM64 hardware (2026-05-14):
+    #   $bytes[$peOffset+4..+5] = 0x8664  →  AMD64 PBS-extracted python.exe
+    #   but: .\python.exe -c 'platform.machine()' →  ARM64
+    param([string]$ExePath)
+    if (-not (Test-Path $ExePath)) { return $null }
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($ExePath)
+        if ($bytes.Length -lt 0x40) { return $null }
+        $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+        if ($peOffset -lt 0 -or $peOffset + 6 -gt $bytes.Length) { return $null }
+        $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+        switch ($machine) {
+            0x8664 { return 'amd64' }
+            0xAA64 { return 'arm64' }
+            0x14C  { return 'i386' }
+            default { return ("unknown-0x{0:X4}" -f $machine) }
+        }
+    } catch {
+        return $null
+    }
+}
+
 function Test-Python312Candidate {
     param([string]$Path, [string[]]$PrefixArgs)
     try {
-        $out = & $Path @($PrefixArgs + @('-c', 'import sys, platform; print(sys.version_info[0], sys.version_info[1], platform.machine(), sep=":")')) 2>$null
+        # Version check: platform.machine() is unreliable on Windows ARM
+        # (emulator hides process arch — see Get-PythonBinaryArch comment),
+        # so we only ask Python for the version and read arch from PE header.
+        $out = & $Path @($PrefixArgs + @('-c', 'import sys; print(sys.version_info[0], sys.version_info[1], sep=":")')) 2>$null
         if (-not $out) { return $null }
         $parts = "$out".Trim() -split ':'
-        if ($parts.Length -lt 3) { return $null }
-        $major = [int]$parts[0]; $minor = [int]$parts[1]; $machine = $parts[2].ToLower()
+        if ($parts.Length -lt 2) { return $null }
+        $major = [int]$parts[0]; $minor = [int]$parts[1]
         if ($major -lt 3) { return $null }
         if ($major -eq 3 -and $minor -lt 12) { return $null }
-        # Confirm venv module is usable.
-        $vcheck = & $Path @($PrefixArgs + @('-c', 'import venv')) 2>$null
+        # Confirm venv module works AND ensurepip exists. Some distros (rare
+        # on Windows) ship a venv-stub without ensurepip.
+        & $Path @($PrefixArgs + @('-c', 'import venv, ensurepip')) 2>$null
         if ($LASTEXITCODE -ne 0) { return $null }
-        # Reject non-AMD64 architectures: on Windows we always need a binary
-        # that pip-installs aiohttp / PyAV / piper-tts. arm64 native fails.
-        if ($machine -notin @('amd64', 'x86_64')) { return $null }
+        # Reject non-AMD64 binaries: on Windows we always need a binary that
+        # pip-installs aiohttp / PyAV / piper-tts wheels. Native ARM Python
+        # has no wheels and fails. PE header is binary truth — use it instead
+        # of platform.machine() which lies under emulation.
+        $binaryArch = Get-PythonBinaryArch $Path
+        if ($binaryArch -ne 'amd64') { return $null }
         return [pscustomobject]@{
             Path = $Path
             PrefixArgs = $PrefixArgs
             Version = "$major.$minor"
-            Machine = $machine
+            Machine = $binaryArch
         }
     } catch {
         return $null
@@ -90,23 +126,23 @@ function Try-ProjectPython {
         return $info
     }
     # python.exe exists but Test-Python312Candidate rejected it. Surface
-    # the actual interpreter telemetry so the user (and us) can tell whether
-    # it's wrong arch, wrong version, or just unable to run at all. This
-    # is the *only* place we know a project-owned python.exe is broken —
-    # Test-Python312Candidate swallows errors silently so it works in
-    # Try-SystemPythons / Try-UvPython without log noise.
+    # both PE header arch (binary truth) AND interpreter-reported arch so
+    # the diagnostic captures the Windows-ARM emulation case: PE header
+    # says AMD64 but Python's platform.machine() lies and says ARM64.
     [Console]::Error.WriteLine("  Project Python at $py exists but failed validation:")
+    $peArch = Get-PythonBinaryArch $py
+    [Console]::Error.WriteLine("    PE header machine: $peArch (binary truth)")
     try {
-        $pyCode = "import sys, platform; print('version=' + str(sys.version_info[0]) + '.' + str(sys.version_info[1]) + ', machine=' + platform.machine())"
+        $pyCode = "import sys, platform; print('version=' + str(sys.version_info[0]) + '.' + str(sys.version_info[1]) + ', platform.machine=' + platform.machine())"
         $diag = & $py -c $pyCode 2>&1
         [Console]::Error.WriteLine("    interpreter reports: $diag")
     } catch {
         [Console]::Error.WriteLine("    interpreter could not be executed: $($_.Exception.Message)")
     }
     try {
-        $venvCheck = & $py -c 'import venv' 2>&1
+        $venvCheck = & $py -c 'import venv, ensurepip' 2>&1
         if ($LASTEXITCODE -ne 0) {
-            [Console]::Error.WriteLine("    venv module missing/broken: $venvCheck")
+            [Console]::Error.WriteLine("    venv/ensurepip missing/broken: $venvCheck")
         }
     } catch {}
     return $null
