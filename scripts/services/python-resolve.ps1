@@ -210,7 +210,9 @@ function Install-PythonToProjectDirInner {
     $pbsOwner   = 'astral-sh'
     $pbsRelease = '20260510'
     $pbsVersion = '3.12.13'
-    $tarballName = "cpython-$pbsVersion+$pbsRelease-x86_64-pc-windows-msvc-shared-install_only.tar.gz"
+    # Note Windows naming convention differs from Linux/Mac — no `-shared-`
+    # infix (the Unix variants have shared/static, Windows is single-variant).
+    $tarballName = "cpython-$pbsVersion+$pbsRelease-x86_64-pc-windows-msvc-install_only.tar.gz"
     $tarballUrl  = "https://github.com/$pbsOwner/python-build-standalone/releases/download/$pbsRelease/$tarballName"
     $tarballPath = Join-Path $env:TEMP $tarballName
     $extractTmp  = Join-Path $env:TEMP 'cat-cafe-python-extract'
