@@ -27,9 +27,7 @@ export function PluginsContent() {
   const fetchPlugins = useCallback(async () => {
     try {
       const res = await apiFetch('/api/plugins');
-      const data: PluginInfo[] = res.ok
-        ? (((await res.json()) as { plugins: PluginInfo[] }).plugins ?? [])
-        : [];
+      const data: PluginInfo[] = res.ok ? (((await res.json()) as { plugins: PluginInfo[] }).plugins ?? []) : [];
       setPlugins(data);
     } catch {
       setPlugins([]);
