@@ -743,6 +743,7 @@ async function main(): Promise<void> {
       // immediately as a no-op — so re-firing is safe and free.
       { unregisterOnSuccess: false },
     );
+    app.log.info(`[api] F102: embed catch-up hook registered for embedding-model 'started' (always-on)`);
   }
 
   // F-4: Global knowledge rebuild (Skills + MEMORY.md → global_knowledge.sqlite)
