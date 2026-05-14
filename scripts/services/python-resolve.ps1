@@ -101,7 +101,7 @@ function Try-SystemPythons {
         if (-not $cmd) { continue }
         $info = Test-Python312Candidate -Path $cmd.Source -PrefixArgs $c.Args
         if ($info) {
-            $info | Add-Member -NotePropertyName Source -NotePropertyValue 'system' -PassThru
+            $info | Add-Member -NotePropertyName Source -NotePropertyValue 'system'
             return $info
         }
     }
@@ -115,7 +115,7 @@ function Try-UvPython {
         if (-not $found -or -not (Test-Path $found)) { return $null }
         $info = Test-Python312Candidate -Path $found -PrefixArgs @()
         if ($info) {
-            $info | Add-Member -NotePropertyName Source -NotePropertyValue 'uv' -PassThru
+            $info | Add-Member -NotePropertyName Source -NotePropertyValue 'uv'
             return $info
         }
     } catch {}
@@ -127,7 +127,7 @@ function Try-ProjectPython {
     if (-not (Test-Path $py)) { return $null }
     $info = Test-Python312Candidate -Path $py -PrefixArgs @()
     if ($info) {
-        $info | Add-Member -NotePropertyName Source -NotePropertyValue 'project' -PassThru
+        $info | Add-Member -NotePropertyName Source -NotePropertyValue 'project'
         return $info
     }
     # python.exe exists but Test-Python312Candidate rejected it. Surface
