@@ -90,8 +90,8 @@ function Sync-SystemProxy {
                 Write-Host "  System proxy detected and reachable: $proxy [OK]"
             } else {
                 Write-Host "  System proxy detected but unreachable / auth-required: $proxy"
-                Write-Host "  (Skipping — will try direct connection + domestic mirrors instead.)"
-                Write-Host "  (If both fail, see the WARNING below to set HTTP_PROXY in .env.)"
+                Write-Host "  (Skipping — will try direct connection + reachable mirrors instead.)"
+                Write-Host "  (If all paths fail, see the WARNING below to configure a usable proxy or mirror.)"
                 # Also keep Invoke-WebRequest from silently re-routing through
                 # this dead proxy via .NET DefaultWebProxy (which would defeat
                 # the direct connection attempt in Assert-Network).
@@ -115,11 +115,18 @@ function Write-ProxyGuidance {
     param([string]$Context)
     Write-Host ""
     Write-Host "  WARNING: $Context"
-    Write-Host "  既无法直连 pypi.org / huggingface.co，也无法访问国内镜像（清华 / hf-mirror）。"
-    Write-Host "  通常这是内网环境需要 HTTP 代理。请在 .env 中设置（或临时 export 后重试）:"
-    Write-Host "    HTTP_PROXY=http://<host>:<port>"
-    Write-Host "    HTTPS_PROXY=http://<host>:<port>"
-    Write-Host "  PX / cntlm 这类内网认证代理一般是 http://127.0.0.1:3128，Clash 一般是 http://127.0.0.1:7897"
+    Write-Host "  当前网络下既不能直连 pypi.org / huggingface.co，也不能访问我们默认尝试的镜像（清华 / hf-mirror）。"
+    Write-Host "  你需要在 .env 中（或临时 export 后重试）做下面任一选择："
+    Write-Host ""
+    Write-Host "  方案 A — 配置一个可用的 HTTP 代理（地址可按 RFC 标准包含认证信息）:"
+    Write-Host "    HTTP_PROXY=http://<host>:<port>                 # 无认证代理"
+    Write-Host "    HTTP_PROXY=http://<user>:<password>@<host>:<port>   # 带认证的标准代理"
+    Write-Host "    HTTPS_PROXY=<同上>"
+    Write-Host ""
+    Write-Host "  方案 B — 配置当前网络下可达的镜像源（不走代理）:"
+    Write-Host "    PIP_INDEX_URL=<可达的 pip 镜像，如 https://pypi.tuna.tsinghua.edu.cn/simple>"
+    Write-Host "    HF_ENDPOINT=<可达的 HuggingFace 镜像，如 https://hf-mirror.com>"
+    Write-Host ""
     Write-Host "  配好后关闭弹窗再点一次安装，无需重启 API。"
     Write-Host ""
 }
