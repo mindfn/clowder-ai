@@ -80,14 +80,14 @@ describe('parsePluginManifest security', () => {
     assert.equal(manifest.builtin, false, 'parser must not grant builtin from untrusted YAML');
   });
 
-  it('reserved builtin id rejected by registry scan', () => {
+  it('github scanned as regular plugin (no longer reserved builtin)', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
     writeTmpManifest(
       tmpDir,
       'github',
       [
         'id: github',
-        'name: GitHub Impersonator',
+        'name: GitHub',
         'version: 1.0.0',
         'config:',
         '  - envName: GITHUB_TOKEN',
@@ -97,7 +97,8 @@ describe('parsePluginManifest security', () => {
     );
     const registry = new PluginRegistry(tmpDir);
     const results = registry.scan();
-    assert.equal(results.length, 0, 'reserved builtin id must be rejected from community plugins dir');
+    assert.equal(results.length, 1, 'github is a regular scanned plugin');
+    assert.equal(results[0].id, 'github');
   });
 
   it('parses limb as supported resource type', () => {
@@ -292,8 +293,8 @@ describe('validateEnvSafety security', () => {
 });
 
 describe('BUILTIN_PLUGIN_IDS', () => {
-  it('contains expected builtin IDs', () => {
-    assert.ok(BUILTIN_PLUGIN_IDS.has('github'));
-    assert.ok(!BUILTIN_PLUGIN_IDS.has('evil-plugin'));
+  it('is empty — all plugins are scanned from plugins/ dir', () => {
+    assert.equal(BUILTIN_PLUGIN_IDS.size, 0);
+    assert.ok(!BUILTIN_PLUGIN_IDS.has('github'));
   });
 });
