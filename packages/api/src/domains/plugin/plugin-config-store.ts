@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import type { PluginManifest } from '@cat-cafe/shared';
 import { configEventBus, createChangeSetId } from '../../config/config-event-bus.js';
 
 const CONFIG_DIR = '.cat-cafe';
@@ -28,21 +29,33 @@ function writeFileAtomic(filePath: string, content: string): void {
   }
 }
 
-export function readPluginConfig(projectRoot: string, pluginId: string): Record<string, string> {
+type StoredValues = Record<string, string | null>;
+
+function readRawConfig(projectRoot: string, pluginId: string): StoredValues {
   const configPath = resolvePluginConfigPath(projectRoot, pluginId);
   if (!existsSync(configPath)) return {};
   try {
     const raw = readFileSync(configPath, 'utf-8');
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
-    const result: Record<string, string> = {};
+    const result: StoredValues = {};
     for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
       if (typeof v === 'string') result[k] = v;
+      else if (v === null) result[k] = null;
     }
     return result;
   } catch {
     return {};
   }
+}
+
+export function readPluginConfig(projectRoot: string, pluginId: string): Record<string, string> {
+  const raw = readRawConfig(projectRoot, pluginId);
+  const result: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v === 'string') result[k] = v;
+  }
+  return result;
 }
 
 export function writePluginConfig(
@@ -53,7 +66,7 @@ export function writePluginConfig(
   const dir = resolvePluginConfigDir(projectRoot);
   mkdirSync(dir, { recursive: true });
 
-  const existing = readPluginConfig(projectRoot, pluginId);
+  const existing = readRawConfig(projectRoot, pluginId);
   const changedKeys: string[] = [];
 
   for (const { name, value } of updates) {
@@ -62,7 +75,7 @@ export function writePluginConfig(
     if (oldVal !== newVal) changedKeys.push(name);
 
     if (value == null || value === '') {
-      delete existing[name];
+      existing[name] = null;
     } else {
       existing[name] = value;
     }
@@ -89,14 +102,18 @@ export function writePluginConfig(
   return { changedKeys };
 }
 
-export function loadAllPluginConfigs(projectRoot: string, pluginIds: string[]): number {
+export function loadAllPluginConfigs(projectRoot: string, manifests: PluginManifest[]): number {
   let loaded = 0;
-  for (const id of pluginIds) {
-    const config = readPluginConfig(projectRoot, id);
-    for (const [name, value] of Object.entries(config)) {
-      if (value) {
+  for (const manifest of manifests) {
+    const allowedEnvNames = new Set(manifest.config.map((f) => f.envName));
+    const raw = readRawConfig(projectRoot, manifest.id);
+    for (const [name, value] of Object.entries(raw)) {
+      if (!allowedEnvNames.has(name)) continue;
+      if (typeof value === 'string') {
         process.env[name] = value;
         loaded++;
+      } else if (value === null) {
+        delete process.env[name];
       }
     }
   }
