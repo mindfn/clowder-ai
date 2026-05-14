@@ -143,6 +143,8 @@ export class PluginRegistry {
       version: manifest.version,
       description: manifest.description,
       icon: manifest.icon,
+      docsUrl: manifest.docsUrl,
+      setupSteps: manifest.setupSteps,
       status,
       configured: allConfigured,
       config: configWithValues,
