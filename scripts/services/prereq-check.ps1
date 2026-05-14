@@ -150,7 +150,7 @@ function Write-ProxyGuidance {
     Write-Host "    PIP_INDEX_URL=<可达的 pip 镜像，如 https://pypi.tuna.tsinghua.edu.cn/simple>"
     Write-Host "    HF_ENDPOINT=<可达的 HuggingFace 镜像，如 https://hf-mirror.com>"
     Write-Host ""
-    Write-Host "  配好后关闭弹窗再点一次安装，无需重启 API。"
+    Write-Host "  ⚠ 改完 .env 后需要重启主服务（API），新代理 / 镜像 env 才会注入 install 子进程。"
     Write-Host ""
 }
 

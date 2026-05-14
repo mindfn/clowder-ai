@@ -76,7 +76,7 @@ _print_proxy_guidance() {
   echo "    PIP_INDEX_URL=<可达的 pip 镜像，如 https://pypi.tuna.tsinghua.edu.cn/simple>"
   echo "    HF_ENDPOINT=<可达的 HuggingFace 镜像，如 https://hf-mirror.com>"
   echo ""
-  echo "  配好后关闭弹窗再点一次安装，无需重启 API。"
+  echo "  ⚠ 改完 .env 后需要重启主服务（API），新代理 / 镜像 env 才会注入 install 子进程。"
   echo ""
 }
 

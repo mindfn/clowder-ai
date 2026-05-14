@@ -37,7 +37,6 @@ import {
   setServicePid,
   setStarting,
   setUninstalling,
-  waitUntilHealthSettles,
 } from '../domains/services/service-registry.js';
 import { resolveUserId } from '../utils/request-identity.js';
 
@@ -92,6 +91,47 @@ function resolveSelectedModel(id: string, manifest: { id: string }): string | un
     /* env detector failure shouldn't block start — let the script handle it */
   }
   return undefined;
+}
+
+/**
+ * After a sidecar spawn, poll its health probe until it reports 'running',
+ * then fire its 'started' event so registered hooks (e.g. embed catch-up)
+ * run. Mirrors service-autostart's watchAndAnnounceReady contract —
+ * critically, we only treat 'running' as terminal here, NOT 'stopped':
+ * a freshly-spawned sidecar's health endpoint returns ECONNREFUSED for
+ * the first few seconds while uvicorn is binding the port, and
+ * waitUntilHealthSettles would (incorrectly) classify that as a terminal
+ * 'stopped' and return immediately, skipping the fire.
+ *
+ * 5 min total budget, 5 s between probes — same as the autostart watcher.
+ * Always clears the in-flight setStarting flag in finally.
+ */
+async function watchForRunningAndFire(
+  id: string,
+  manifest: import('../domains/services/service-manifest.js').ServiceManifest,
+  log: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void },
+): Promise<void> {
+  const POLL_INTERVAL_MS = 5_000;
+  const MAX_ATTEMPTS = 60; // 5 min
+  try {
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      try {
+        const state = await getServiceState(manifest);
+        if (state.status === 'running') {
+          log.info(`[services] /start ${id} watcher: healthy after ${((attempt + 1) * POLL_INTERVAL_MS) / 1000}s`);
+          await fireServiceEvent(id, 'started');
+          log.info(`[services] /start ${id} fired 'started' event`);
+          return;
+        }
+      } catch {
+        /* transient probe failure — try again next tick */
+      }
+    }
+    log.warn(`[services] /start ${id} watcher: did not become healthy within ${(MAX_ATTEMPTS * POLL_INTERVAL_MS) / 1000}s`);
+  } finally {
+    setStarting(id, false);
+  }
 }
 
 /**
@@ -330,22 +370,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
             // until fully running so the UI's 启动中 → 运行中 transition is
             // reflected without keeping the HTTP handler open.
             watcherStarted = true;
-            request.log.info(`[services] /start ${id} → spawned (earlyExit=0, healthy), watcher waiting for settle`);
-            void (async () => {
-              try {
-                const settled = await waitUntilHealthSettles(manifest, 60_000);
-                request.log.info(`[services] /start ${id} watcher settled=${settled}`);
-                if (settled === 'running') {
-                  // Fire 'started' so onServiceEvent hooks (e.g. evidence
-                  // embed catch-up registered in index.ts) run after a
-                  // user-triggered start.
-                  await fireServiceEvent(id, 'started');
-                  request.log.info(`[services] /start ${id} fired 'started' event`);
-                }
-              } finally {
-                setStarting(id, false);
-              }
-            })();
+            request.log.info(`[services] /start ${id} → spawned (earlyExit=0, healthy), watcher polling for running`);
+            void watchForRunningAndFire(id, manifest, request.log);
             return { ok: true, message: `${manifest.name} start initiated` };
           }
         }
@@ -360,22 +386,9 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       }
       setServicePid(id, child.pid);
       watcherStarted = true;
-      request.log.info(`[services] /start ${id} → spawned (pid=${child.pid}), watcher waiting for settle`);
-      void (async () => {
-        try {
-          const settled = await waitUntilHealthSettles(manifest, 60_000);
-          request.log.info(`[services] /start ${id} watcher settled=${settled}`);
-          if (settled === 'running') {
-            // Same fire site as the earlyExit=0 watcher above.
-            await fireServiceEvent(id, 'started');
-            request.log.info(`[services] /start ${id} fired 'started' event`);
-          } else {
-            appendLog(id, `[start] service did not become healthy within 60s (final probe: ${settled})\n`);
-          }
-        } finally {
-          setStarting(id, false);
-        }
-      })();
+      request.log.info(`[services] /start ${id} → spawned (pid=${child.pid}), watcher polling for running`);
+      void watchForRunningAndFire(id, manifest, request.log);
+      // (background watcher fire-and-forget; setStarting handled inside)
       return { ok: true, message: `${manifest.name} start initiated (pid: ${child.pid})` };
     } catch {
       reply.status(500);
@@ -719,12 +732,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
               // 'started' — same contract as /api/services/:id/start so
               // install-followed-by-autostart triggers evidence embed
               // catch-up. Background; don't block the install reply.
-              void (async () => {
-                const settled = await waitUntilHealthSettles(manifest, 60_000);
-                if (settled === 'running') {
-                  await fireServiceEvent(id, 'started');
-                }
-              })();
+              void watchForRunningAndFire(id, manifest, request.log);
             }
           }
 
