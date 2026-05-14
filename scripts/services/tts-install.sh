@@ -30,7 +30,7 @@ if [ "$PLATFORM" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
 
   TTS_MODEL="${TTS_MODEL:-mlx-community/Kokoro-82M-bf16}"
   echo "  预下载模型: $TTS_MODEL ..."
-  "$PYTHON3" -c "
+  "$VENV_DIR/bin/python" -c "
 import sys
 from huggingface_hub import snapshot_download
 try:

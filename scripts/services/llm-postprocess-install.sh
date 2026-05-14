@@ -37,7 +37,9 @@ else
 fi
 
 echo "  预下载模型: $MODEL ..."
-"$PYTHON3" -c "
+# Use the venv Python — $PYTHON3 still points at the bootstrap interpreter
+# (system / project-owned). pip install put huggingface_hub in the venv.
+"$VENV_DIR/bin/python" -c "
 import sys
 from huggingface_hub import snapshot_download
 try:

@@ -36,7 +36,11 @@ fi
 
 MODEL="${EMBED_MODEL:-mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ}"
 echo "  预下载模型: $MODEL ..."
-"$PYTHON3" -c "
+# Use the venv Python — $PYTHON3 still points at the bootstrap interpreter
+# (system / project-owned), which doesn't see packages we just pip-installed
+# into the venv. `source activate` only repointed the shell's `python` alias,
+# not the $PYTHON3 variable.
+"$VENV_DIR/bin/python" -c "
 import sys
 from huggingface_hub import snapshot_download
 try:

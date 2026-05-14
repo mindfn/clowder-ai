@@ -39,7 +39,7 @@ if [ "$PLATFORM" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
 
   MODEL="${WHISPER_MODEL:-mlx-community/whisper-large-v3-turbo}"
   echo "  预下载模型: $MODEL ..."
-  "$PYTHON3" -c "
+  "$VENV_DIR/bin/python" -c "
 import sys
 from huggingface_hub import snapshot_download
 try:
@@ -55,7 +55,7 @@ else
 
   MODEL="${WHISPER_MODEL:-large-v3-turbo}"
   echo "  预下载模型: $MODEL ..."
-  "$PYTHON3" -c "
+  "$VENV_DIR/bin/python" -c "
 import sys
 from faster_whisper import WhisperModel
 try:
