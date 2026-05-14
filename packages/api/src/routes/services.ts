@@ -32,7 +32,9 @@ import {
   getServiceState,
   resolveServiceEndpoint,
   resolveServicePort,
+  setInstalling,
   setServicePid,
+  setUninstalling,
 } from '../domains/services/service-registry.js';
 import { resolveUserId } from '../utils/request-identity.js';
 
@@ -434,6 +436,15 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         return { error: `Install script not found: ${scriptPath}` };
       }
 
+      // Mark this service as actively installing so /api/services reflects
+      // it as status='installing' even if the user refreshes the page mid-
+      // install. The set lives in this API process only — when the API
+      // restarts, the spawn dies with it and the set is empty, so the next
+      // fetch correctly reports stopped/none. Wrap the rest of the handler
+      // in try/finally so every return path (ok / 422 / 500 / catch) clears
+      // the flag before responding.
+      setInstalling(id, true);
+      try {
       // python-bootstrap (D-plan): make sure a working Python 3.12+ interpreter
       // is installed BEFORE we spawn the service install script. ensurePython
       // is idempotent and process-shared:
@@ -586,6 +597,9 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         reply.status(500);
         return { ok: false, error: `Failed to run install script for ${manifest.name}` };
       }
+      } finally {
+        setInstalling(id, false);
+      }
     },
   );
 
@@ -611,6 +625,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       return { error: `Uninstall script not found: ${scriptPath}` };
     }
 
+    setUninstalling(id, true);
     try {
       const { command: uninstallCmd, args: uninstallArgs } = resolveSpawnCommand(manifest.scripts.uninstall);
       const child = spawn(uninstallCmd, uninstallArgs, {
@@ -633,24 +648,28 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         appendOutput(s);
         appendLog(id, s);
       });
-      const code = await new Promise<number | null>((res, rej) => {
-        child.on('error', rej);
-        child.on('close', (c) => res(c));
-      });
+      try {
+        const code = await new Promise<number | null>((res, rej) => {
+          child.on('error', rej);
+          child.on('close', (c) => res(c));
+        });
 
-      if (code !== 0) {
-        request.log.error(
-          { serviceId: id, exitCode: code, output: output.slice(-2000) },
-          `service uninstall failed: ${manifest.name}`,
-        );
-        reply.status(422);
-        return { ok: false, error: `Uninstall failed (exit ${code})`, output: output.slice(-2000) };
+        if (code !== 0) {
+          request.log.error(
+            { serviceId: id, exitCode: code, output: output.slice(-2000) },
+            `service uninstall failed: ${manifest.name}`,
+          );
+          reply.status(422);
+          return { ok: false, error: `Uninstall failed (exit ${code})`, output: output.slice(-2000) };
+        }
+        setServiceConfig(id, { installStatus: 'none', enabled: false });
+        return { ok: true, message: `${manifest.name} uninstalled successfully` };
+      } catch {
+        reply.status(500);
+        return { ok: false, error: `Failed to run uninstall script for ${manifest.name}` };
       }
-      setServiceConfig(id, { installStatus: 'none', enabled: false });
-      return { ok: true, message: `${manifest.name} uninstalled successfully` };
-    } catch {
-      reply.status(500);
-      return { ok: false, error: `Failed to run uninstall script for ${manifest.name}` };
+    } finally {
+      setUninstalling(id, false);
     }
   });
 

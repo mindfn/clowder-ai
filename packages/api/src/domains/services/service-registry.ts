@@ -231,6 +231,30 @@ export function clearServicePid(id: string): void {
   servicePids.delete(id);
 }
 
+// In-memory transient state: which services are currently being installed
+// or uninstalled by *this* API process. Not persisted — when the API
+// restarts, in-flight spawns die with it, and the next /api/services call
+// naturally reflects the new state. This lets the UI survive page refresh
+// during a long install: the server still knows the install is running
+// because the spawn handle is in-process, so the next fetch returns the
+// same 'installing' status without needing a stale services.json entry.
+const installingServices = new Set<string>();
+const uninstallingServices = new Set<string>();
+export function setInstalling(id: string, value: boolean): void {
+  if (value) installingServices.add(id);
+  else installingServices.delete(id);
+}
+export function setUninstalling(id: string, value: boolean): void {
+  if (value) uninstallingServices.add(id);
+  else uninstallingServices.delete(id);
+}
+export function isInstalling(id: string): boolean {
+  return installingServices.has(id);
+}
+export function isUninstalling(id: string): boolean {
+  return uninstallingServices.has(id);
+}
+
 export function getKnownServices(): ServiceManifest[] {
   return KNOWN_SERVICES;
 }
@@ -287,7 +311,13 @@ function enrichManifestModels(manifest: ServiceManifest, rec: ServiceRecommendat
 
 export async function getServiceState(manifest: ServiceManifest, refreshEnv = false): Promise<ServiceState> {
   const probe = await probeHealth(manifest);
-  const { status } = probe;
+  // In-flight install/uninstall is a live UI signal — override probe status
+  // so a page refresh during a long install still shows '安装中'. The set
+  // is process-local; if the API restarted, the spawn died and the set is
+  // empty, so the user correctly sees stopped/none.
+  let status = probe.status;
+  if (installingServices.has(manifest.id)) status = 'installing';
+  else if (uninstallingServices.has(manifest.id)) status = 'uninstalling';
   const config = getServiceConfig(manifest.id);
   const installStatus = getInstallStatus(manifest);
   const profile = getEnvironmentProfile(refreshEnv);
