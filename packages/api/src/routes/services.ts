@@ -13,7 +13,6 @@ import {
 import { buildRecommendation } from '../domains/services/recommendation-matrix.js';
 import { getServiceConfig, setServiceConfig } from '../domains/services/service-config.js';
 import { fireServiceEvent } from '../domains/services/service-hooks.js';
-import { resolveSelectedModel } from '../domains/services/service-model-resolver.js';
 import {
   appendLog,
   isValidModelId,
@@ -24,6 +23,7 @@ import {
   wireUpSidecarReadyListener,
 } from '../domains/services/service-logs.js';
 import { MODEL_ENV_VARS, PORT_ENV_VARS } from '../domains/services/service-manifest.js';
+import { resolveSelectedModel } from '../domains/services/service-model-resolver.js';
 import {
   allocateAvailablePort,
   clearServicePid,
