@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
+import { ExternalLinkIcon, StepBadge } from '../HubConfigIcons';
 import { SettingsPrimaryButton, SettingsStatusStrip, SettingsText } from './primitives';
 
 const REDACTED_PLACEHOLDER = '••••••';
@@ -43,7 +44,12 @@ async function readError(res: Response, fallback: string): Promise<string> {
   return fallback;
 }
 
-export function GithubConfigPanel() {
+interface Props {
+  docsUrl?: string;
+  setupSteps?: string[];
+}
+
+export function GithubConfigPanel({ docsUrl, setupSteps }: Props) {
   const [fields, setFields] = useState<GitHubField[]>([]);
   const [values, setValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -106,21 +112,10 @@ export function GithubConfigPanel() {
   };
 
   const messageTone = message?.tone === 'success' ? 'success' : message?.tone === 'error' ? 'error' : 'info';
+  const hasGuide = docsUrl || (setupSteps && setupSteps.length > 0);
 
-  return (
-    <div
-      className="space-y-3"
-      style={{ borderTop: '1px solid var(--console-border-soft)', paddingInline: '1rem', paddingBlock: '0.75rem' }}
-    >
-      <div className="space-y-1">
-        <SettingsText as="p" variant="sm" tone="default" className="font-medium">
-          GitHub Token
-        </SettingsText>
-        <SettingsText as="p" tone="secondary">
-          保存后写入运行时 .env；secret 字段留空会保留现有值。标记为重启的字段需重启 API 后生效。
-        </SettingsText>
-      </div>
-
+  const configFields = (
+    <>
       {fields.length === 0 ? (
         <SettingsText as="p" tone="muted">
           加载配置项...
@@ -166,6 +161,71 @@ export function GithubConfigPanel() {
             </label>
           ))}
         </div>
+      )}
+    </>
+  );
+
+  return (
+    <div
+      className="space-y-3"
+      style={{ borderTop: '1px solid var(--cafe-border)', paddingInline: '1rem', paddingBlock: '0.75rem' }}
+    >
+      {hasGuide ? (
+        <div className="console-list-card overflow-hidden rounded-2xl shadow-[0_12px_30px_rgba(43,33,26,0.08)]">
+          <div className="flex items-center gap-3 bg-conn-sky-bg px-4 py-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-conn-sky-ring text-conn-sky-text">
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z"
+                />
+              </svg>
+            </div>
+            <div>
+              <div className="text-sm font-semibold">基础配置</div>
+              <div className="text-xs text-cafe-secondary">应用凭证与连接设置</div>
+            </div>
+          </div>
+          <div className="space-y-3.5 p-4">
+            {setupSteps?.map((step, idx) => (
+              <div key={idx} className="space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <StepBadge num={idx + 1} />
+                  <span className="text-[13px] font-medium text-cafe">{step}</span>
+                </div>
+                {idx === 0 && docsUrl && (
+                  <div className="ml-[26px]">
+                    <a href={docsUrl} target="_blank" rel="noopener noreferrer" className="console-inline-link">
+                      <ExternalLinkIcon />
+                      <span>{new URL(docsUrl).hostname} → 查看官方文档</span>
+                    </a>
+                  </div>
+                )}
+              </div>
+            ))}
+
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5">
+                <StepBadge num={(setupSteps?.length ?? 0) + 1} />
+                <span className="text-[13px] font-medium text-cafe">填写应用凭证</span>
+              </div>
+              <div className="ml-[26px]">{configFields}</div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="space-y-1">
+            <SettingsText as="p" variant="sm" tone="default" className="font-medium">
+              GitHub Token
+            </SettingsText>
+            <SettingsText as="p" tone="secondary">
+              保存后写入运行时 .env；secret 字段留空会保留现有值。标记为重启的字段需重启 API 后生效。
+            </SettingsText>
+          </div>
+          {configFields}
+        </>
       )}
 
       {message && (

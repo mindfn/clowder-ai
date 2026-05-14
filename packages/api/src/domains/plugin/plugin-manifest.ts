@@ -131,9 +131,7 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
 
   const docsUrl = typeof doc['docsUrl'] === 'string' ? doc['docsUrl'] : undefined;
   const rawSteps = doc['setupSteps'];
-  const setupSteps = Array.isArray(rawSteps)
-    ? rawSteps.filter((s): s is string => typeof s === 'string')
-    : undefined;
+  const setupSteps = Array.isArray(rawSteps) ? rawSteps.filter((s): s is string => typeof s === 'string') : undefined;
 
   return {
     id,
