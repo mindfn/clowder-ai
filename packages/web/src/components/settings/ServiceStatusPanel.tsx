@@ -118,7 +118,19 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
         const r = await apiFetch(`/api/services/${id}/logs`);
         if (r.ok) {
           const data = (await r.json()) as { lines: string[] };
-          const last = data.lines.filter((l) => l.trim()).pop();
+          const lastLine = data.lines.filter((l) => l.trim()).pop();
+          // tqdm progress bars (huggingface_hub snapshot_download, etc.)
+          // use \r (carriage return) to overwrite the same TTY line in-place.
+          // When piped into the per-service log file the whole sequence
+          // collapses into one logical line — the panel would otherwise
+          // render every frame concatenated. Split on \r and take the most
+          // recent frame so the UI shows the live progress as a single
+          // up-to-date line.
+          const last = lastLine
+            ?.split(/\r/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .at(-1);
           if (last) setProgress((prev) => new Map(prev).set(id, last));
         }
       } catch {
