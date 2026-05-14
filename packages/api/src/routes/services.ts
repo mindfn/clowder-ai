@@ -445,158 +445,158 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       // the flag before responding.
       setInstalling(id, true);
       try {
-      // python-bootstrap (D-plan): make sure a working Python 3.12+ interpreter
-      // is installed BEFORE we spawn the service install script. ensurePython
-      // is idempotent and process-shared:
-      //   - already installed → returns immediately
-      //   - install in flight → awaits the same Promise (no duplicate spawn
-      //     when whisper / tts / embed / llm are clicked in parallel)
-      //   - last attempt failed → throws → we 422 here so the user sees the
-      //     real failure and doesn't trigger a second per-service spawn
-      try {
-        const { ensurePython } = await import('../domains/services/python-bootstrap.js');
-        await ensurePython(request.log);
-      } catch (err) {
-        request.log.error({ err: err instanceof Error ? err.message : String(err) }, 'python-bootstrap failed');
-        reply.status(422);
-        return {
-          ok: false,
-          error: 'Python 3.12+ bootstrap failed — service install cannot proceed',
-          detail: err instanceof Error ? err.message : String(err),
-        };
-      }
-
-      const env: Record<string, string> = { ...process.env } as Record<string, string>;
-      if (body.model) {
-        const envKey = MODEL_ENV_VARS[id];
-        if (envKey) env[envKey] = body.model;
-      }
-
-      // Decide on the port this service will bind to:
-      //   1. body.port (user explicitly chose in the install dialog)
-      //   2. getServiceConfig(id).port (already saved from a prior install)
-      //   3. allocateAvailablePort(manifest.port) (auto — first free port)
-      // The chosen port is persisted to services.json so subsequent
-      // start / autostart / status routes use the same value.
-      let resolvedPort: number | undefined = body.port;
-      if (typeof resolvedPort === 'number' && (resolvedPort < 1 || resolvedPort > 65535)) {
-        reply.status(400);
-        return { error: 'Invalid port (expected 1..65535)' };
-      }
-      if (!resolvedPort) {
-        const existing = getServiceConfig(id).port;
-        resolvedPort = existing ?? (await allocateAvailablePort(manifest.port ?? 9000));
-      }
-      setServiceConfig(id, { port: resolvedPort });
-      const portEnv = PORT_ENV_VARS[id];
-      if (portEnv) env[portEnv] = String(resolvedPort);
-
-      // Always run uninstall first to guarantee a clean venv. The uninstall
-      // script is idempotent (rm -rf of a non-existent venv is fine), so this
-      // is safe for first-time installs and corrects any state left behind by
-      // a failed previous attempt (e.g. partial pip install, locked .pyd).
-      if (manifest.scripts.uninstall) {
-        const uninstallPath = resolveScriptPath(manifest.scripts.uninstall);
-        if (existsSync(uninstallPath)) {
-          const { command: uCmd, args: uArgs } = resolveSpawnCommand(manifest.scripts.uninstall);
-          await new Promise<void>((resolve) => {
-            const child = spawn(uCmd, uArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
-            child.stdout?.on('data', (d: Buffer) => appendLog(id, d.toString()));
-            child.stderr?.on('data', (d: Buffer) => appendLog(id, d.toString()));
-            child.on('error', (err) => {
-              request.log.warn({ serviceId: id, err: err.message }, 'pre-install uninstall errored (continuing)');
-              resolve();
-            });
-            child.on('close', (code) => {
-              if (code !== 0) {
-                request.log.warn(
-                  { serviceId: id, exitCode: code },
-                  'pre-install uninstall exited non-zero (continuing — install will rebuild)',
-                );
-              }
-              resolve();
-            });
-          });
-        }
-      }
-
-      try {
-        const { command: installCmd, args: installArgs } = resolveSpawnCommand(manifest.scripts.install);
-        const child = spawn(installCmd, installArgs, {
-          stdio: ['pipe', 'pipe', 'pipe'],
-          env,
-        });
-        let output = '';
-        const MAX_OUTPUT = 8192;
-        const appendOutput = (s: string) => {
-          output += s;
-          if (output.length > MAX_OUTPUT) output = output.slice(-MAX_OUTPUT);
-        };
-        child.stdout?.on('data', (d: Buffer) => {
-          const s = d.toString();
-          appendOutput(s);
-          appendLog(id, s);
-        });
-        child.stderr?.on('data', (d: Buffer) => {
-          const s = d.toString();
-          appendOutput(s);
-          appendLog(id, s);
-        });
-        const code = await new Promise<number | null>((res, rej) => {
-          child.on('error', rej);
-          child.on('close', (c) => res(c));
-        });
-
-        if (code !== 0) {
-          setServiceConfig(id, { installStatus: 'failed' });
-          const troubleshootHint = detectInstallFailureHint(output);
-          request.log.error(
-            { serviceId: id, exitCode: code, output: output.slice(-2000) },
-            `service install failed: ${manifest.name}`,
-          );
+        // python-bootstrap (D-plan): make sure a working Python 3.12+ interpreter
+        // is installed BEFORE we spawn the service install script. ensurePython
+        // is idempotent and process-shared:
+        //   - already installed → returns immediately
+        //   - install in flight → awaits the same Promise (no duplicate spawn
+        //     when whisper / tts / embed / llm are clicked in parallel)
+        //   - last attempt failed → throws → we 422 here so the user sees the
+        //     real failure and doesn't trigger a second per-service spawn
+        try {
+          const { ensurePython } = await import('../domains/services/python-bootstrap.js');
+          await ensurePython(request.log);
+        } catch (err) {
+          request.log.error({ err: err instanceof Error ? err.message : String(err) }, 'python-bootstrap failed');
           reply.status(422);
           return {
             ok: false,
-            error: `Install failed (exit ${code})`,
-            output: output.slice(-2000),
-            troubleshootHint,
+            error: 'Python 3.12+ bootstrap failed — service install cannot proceed',
+            detail: err instanceof Error ? err.message : String(err),
           };
         }
 
-        setServiceConfig(id, { installStatus: 'installed' });
+        const env: Record<string, string> = { ...process.env } as Record<string, string>;
+        if (body.model) {
+          const envKey = MODEL_ENV_VARS[id];
+          if (envKey) env[envKey] = body.model;
+        }
 
-        if (manifest.scripts.start && getServiceConfig(id).enabled) {
-          const startScript = resolveScriptPath(manifest.scripts.start);
-          if (existsSync(startScript)) {
-            const startEnv: Record<string, string> = { ...process.env } as Record<string, string>;
-            const cfg = getServiceConfig(id);
-            if (cfg.selectedModel && isValidModelId(cfg.selectedModel)) {
-              const ek = MODEL_ENV_VARS[id];
-              if (ek) startEnv[ek] = cfg.selectedModel;
-            }
-            if (cfg.port) {
-              const pk = PORT_ENV_VARS[id];
-              if (pk) startEnv[pk] = String(cfg.port);
-            }
-            const startFd = openLogFd(id);
-            const { command: autoStartCmd, args: autoStartArgs } = resolveSpawnCommand(manifest.scripts.start);
-            const startChild = spawn(autoStartCmd, autoStartArgs, {
-              detached: process.platform !== 'win32',
-              stdio: startFd != null ? ['ignore', startFd, startFd] : 'ignore',
-              env: startEnv,
+        // Decide on the port this service will bind to:
+        //   1. body.port (user explicitly chose in the install dialog)
+        //   2. getServiceConfig(id).port (already saved from a prior install)
+        //   3. allocateAvailablePort(manifest.port) (auto — first free port)
+        // The chosen port is persisted to services.json so subsequent
+        // start / autostart / status routes use the same value.
+        let resolvedPort: number | undefined = body.port;
+        if (typeof resolvedPort === 'number' && (resolvedPort < 1 || resolvedPort > 65535)) {
+          reply.status(400);
+          return { error: 'Invalid port (expected 1..65535)' };
+        }
+        if (!resolvedPort) {
+          const existing = getServiceConfig(id).port;
+          resolvedPort = existing ?? (await allocateAvailablePort(manifest.port ?? 9000));
+        }
+        setServiceConfig(id, { port: resolvedPort });
+        const portEnv = PORT_ENV_VARS[id];
+        if (portEnv) env[portEnv] = String(resolvedPort);
+
+        // Always run uninstall first to guarantee a clean venv. The uninstall
+        // script is idempotent (rm -rf of a non-existent venv is fine), so this
+        // is safe for first-time installs and corrects any state left behind by
+        // a failed previous attempt (e.g. partial pip install, locked .pyd).
+        if (manifest.scripts.uninstall) {
+          const uninstallPath = resolveScriptPath(manifest.scripts.uninstall);
+          if (existsSync(uninstallPath)) {
+            const { command: uCmd, args: uArgs } = resolveSpawnCommand(manifest.scripts.uninstall);
+            await new Promise<void>((resolve) => {
+              const child = spawn(uCmd, uArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+              child.stdout?.on('data', (d: Buffer) => appendLog(id, d.toString()));
+              child.stderr?.on('data', (d: Buffer) => appendLog(id, d.toString()));
+              child.on('error', (err) => {
+                request.log.warn({ serviceId: id, err: err.message }, 'pre-install uninstall errored (continuing)');
+                resolve();
+              });
+              child.on('close', (code) => {
+                if (code !== 0) {
+                  request.log.warn(
+                    { serviceId: id, exitCode: code },
+                    'pre-install uninstall exited non-zero (continuing — install will rebuild)',
+                  );
+                }
+                resolve();
+              });
             });
-            startChild.on('error', () => {});
-            if (startChild.pid) setServicePid(id, startChild.pid);
-            startChild.unref();
-            if (startFd != null) closeSync(startFd);
           }
         }
 
-        return { ok: true, message: `${manifest.name} installed successfully` };
-      } catch {
-        reply.status(500);
-        return { ok: false, error: `Failed to run install script for ${manifest.name}` };
-      }
+        try {
+          const { command: installCmd, args: installArgs } = resolveSpawnCommand(manifest.scripts.install);
+          const child = spawn(installCmd, installArgs, {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env,
+          });
+          let output = '';
+          const MAX_OUTPUT = 8192;
+          const appendOutput = (s: string) => {
+            output += s;
+            if (output.length > MAX_OUTPUT) output = output.slice(-MAX_OUTPUT);
+          };
+          child.stdout?.on('data', (d: Buffer) => {
+            const s = d.toString();
+            appendOutput(s);
+            appendLog(id, s);
+          });
+          child.stderr?.on('data', (d: Buffer) => {
+            const s = d.toString();
+            appendOutput(s);
+            appendLog(id, s);
+          });
+          const code = await new Promise<number | null>((res, rej) => {
+            child.on('error', rej);
+            child.on('close', (c) => res(c));
+          });
+
+          if (code !== 0) {
+            setServiceConfig(id, { installStatus: 'failed' });
+            const troubleshootHint = detectInstallFailureHint(output);
+            request.log.error(
+              { serviceId: id, exitCode: code, output: output.slice(-2000) },
+              `service install failed: ${manifest.name}`,
+            );
+            reply.status(422);
+            return {
+              ok: false,
+              error: `Install failed (exit ${code})`,
+              output: output.slice(-2000),
+              troubleshootHint,
+            };
+          }
+
+          setServiceConfig(id, { installStatus: 'installed' });
+
+          if (manifest.scripts.start && getServiceConfig(id).enabled) {
+            const startScript = resolveScriptPath(manifest.scripts.start);
+            if (existsSync(startScript)) {
+              const startEnv: Record<string, string> = { ...process.env } as Record<string, string>;
+              const cfg = getServiceConfig(id);
+              if (cfg.selectedModel && isValidModelId(cfg.selectedModel)) {
+                const ek = MODEL_ENV_VARS[id];
+                if (ek) startEnv[ek] = cfg.selectedModel;
+              }
+              if (cfg.port) {
+                const pk = PORT_ENV_VARS[id];
+                if (pk) startEnv[pk] = String(cfg.port);
+              }
+              const startFd = openLogFd(id);
+              const { command: autoStartCmd, args: autoStartArgs } = resolveSpawnCommand(manifest.scripts.start);
+              const startChild = spawn(autoStartCmd, autoStartArgs, {
+                detached: process.platform !== 'win32',
+                stdio: startFd != null ? ['ignore', startFd, startFd] : 'ignore',
+                env: startEnv,
+              });
+              startChild.on('error', () => {});
+              if (startChild.pid) setServicePid(id, startChild.pid);
+              startChild.unref();
+              if (startFd != null) closeSync(startFd);
+            }
+          }
+
+          return { ok: true, message: `${manifest.name} installed successfully` };
+        } catch {
+          reply.status(500);
+          return { ok: false, error: `Failed to run install script for ${manifest.name}` };
+        }
       } finally {
         setInstalling(id, false);
       }
