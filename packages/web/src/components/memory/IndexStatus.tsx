@@ -200,10 +200,13 @@ export function IndexStatus() {
           <StatusRow label="Threads" value={status.threadsCount} />
           <StatusRow label="Passages" value={status.passagesCount} />
           <StatusRow label="Edges" value={status.edgesCount} />
-          <StatusRow
-            label="Vectors"
-            value={status.vectorSearchAvailable ? status.vectorsCount : '当前平台不支持（sqlite-vec 无 binary）'}
-          />
+          {/* Vectors=0 is meaningful (e.g. sidecar still warming up, or */}
+          {/* user hasn't installed embedding). The "no binary" fallback */}
+          {/* used to live here was redundant — install dialog already */}
+          {/* blocks platforms where sqlite-vec has no prebuilt (matrix */}
+          {/* 'unsupported' branch), so users would never reach this UI */}
+          {/* with a truly unsupported platform. */}
+          <StatusRow label="Vectors" value={status.vectorsCount} />
           {status.embeddingModel && <StatusRow label="Embedding" value={status.embeddingModel} />}
           <StatusRow
             label="Last rebuild"

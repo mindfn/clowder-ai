@@ -64,17 +64,32 @@ function Assert-DiskSpace {
 
 function Sync-SystemProxy {
     if ($env:HTTP_PROXY -or $env:HTTPS_PROXY) {
-        Write-Host "  Proxy env already set [OK]"
+        Write-Host "  Proxy env already set: $env:HTTP_PROXY"
         return
     }
+    # Deliberately do NOT auto-inject the Windows system proxy as HTTP_PROXY.
+    # Corporate / enterprise system proxies typically require NTLM / Kerberos
+    # auth that pip / huggingface_hub / Invoke-WebRequest can't perform —
+    # auto-injecting forces every download through an auth-required proxy
+    # that we have no credentials for, and pip just sees opaque 407 / SSL
+    # handshake timeouts. Users on internal networks should:
+    #   • run a local auth-handling proxy (cntlm / PX on 127.0.0.1:3128) and
+    #     set HTTP_PROXY=http://127.0.0.1:3128 in .env, OR
+    #   • rely on direct access to Tsinghua / hf-mirror (which we auto-switch
+    #     to when pypi.org / huggingface.co fail).
     try {
         $reg = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
         if ($reg.ProxyEnable -and $reg.ProxyServer) {
-            $proxy = "http://$($reg.ProxyServer)"
-            $env:HTTP_PROXY = $proxy
-            $env:HTTPS_PROXY = $proxy
-            Write-Host "  System proxy detected: $proxy [OK]"
+            Write-Host "  System proxy detected but NOT auto-injected: http://$($reg.ProxyServer)"
+            Write-Host "  (Internal proxies usually need auth pip cannot do. If downloads later fail,"
+            Write-Host "   start cntlm/PX on 127.0.0.1:3128 and set HTTP_PROXY in .env.)"
         }
+    } catch {}
+    # Stop .NET WebRequest from silently routing Invoke-WebRequest through
+    # the system proxy below — without this, Test-UrlReachable hangs on
+    # auth-required corporate proxies even when HTTP_PROXY is unset.
+    try {
+        [System.Net.WebRequest]::DefaultWebProxy = $null
     } catch {}
 }
 
