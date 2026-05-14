@@ -34,6 +34,8 @@ export interface PluginManifest {
   description?: string;
   icon?: string;
   builtin?: boolean;
+  docsUrl?: string;
+  setupSteps?: string[];
   config: PluginConfigField[];
   healthCheck?: PluginHealthCheck;
   resources: PluginResourceDef[];
@@ -58,6 +60,8 @@ export interface PluginInfo {
   version: string;
   description?: string;
   icon?: string;
+  docsUrl?: string;
+  setupSteps?: string[];
   status: PluginStatus;
   configured: boolean;
   config: (PluginConfigField & { currentValue: string | null })[];
