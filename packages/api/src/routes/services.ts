@@ -586,19 +586,25 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         // script is idempotent (rm -rf of a non-existent venv is fine), so this
         // is safe for first-time installs and corrects any state left behind by
         // a failed previous attempt (e.g. partial pip install, locked .pyd).
+        // Sentinel logs around the call so the service log shows whether the
+        // pre-install uninstall actually ran (debugging "venv not deleted"
+        // reports — silent spawn failures previously hid this whole step).
         if (manifest.scripts.uninstall) {
           const uninstallPath = resolveScriptPath(manifest.scripts.uninstall);
           if (existsSync(uninstallPath)) {
+            appendLog(id, '\n[install] running pre-install uninstall to clean any stale venv...\n');
             const { command: uCmd, args: uArgs } = resolveSpawnCommand(manifest.scripts.uninstall);
             await new Promise<void>((resolve) => {
               const child = spawn(uCmd, uArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
               child.stdout?.on('data', (d: Buffer) => appendLog(id, d.toString()));
               child.stderr?.on('data', (d: Buffer) => appendLog(id, d.toString()));
               child.on('error', (err) => {
+                appendLog(id, `[install] pre-install uninstall spawn errored: ${err.message}\n`);
                 request.log.warn({ serviceId: id, err: err.message }, 'pre-install uninstall errored (continuing)');
                 resolve();
               });
               child.on('close', (code) => {
+                appendLog(id, `[install] pre-install uninstall finished (exit ${code ?? 'null'})\n`);
                 if (code !== 0) {
                   request.log.warn(
                     { serviceId: id, exitCode: code },
@@ -608,7 +614,11 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
                 resolve();
               });
             });
+          } else {
+            appendLog(id, `[install] pre-install uninstall skipped: script not found at ${uninstallPath}\n`);
           }
+        } else {
+          appendLog(id, '[install] pre-install uninstall skipped: manifest has no uninstall script\n');
         }
 
         try {
@@ -719,10 +729,12 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     }
 
     setUninstalling(id, true);
+    appendLog(id, `\n[uninstall] starting ${manifest.scripts.uninstall} ...\n`);
     try {
       const uninstallEnv: Record<string, string> = { ...process.env } as Record<string, string>;
       normalizeProxyEnv(uninstallEnv);
       const { command: uninstallCmd, args: uninstallArgs } = resolveSpawnCommand(manifest.scripts.uninstall);
+      appendLog(id, `[uninstall] spawn: ${uninstallCmd} ${uninstallArgs.join(' ')}\n`);
       const child = spawn(uninstallCmd, uninstallArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: uninstallEnv,
