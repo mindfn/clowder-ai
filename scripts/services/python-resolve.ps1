@@ -190,74 +190,98 @@ function Sync-ResolverSystemProxy {
 }
 
 function Install-PythonToProjectDirInner {
-    # Download python-3.12.x-amd64.exe and silent-install to project dir.
-    # PrependPath=0 keeps the system PATH untouched; the resolver returns
-    # the absolute path to the project-owned python.exe.
+    # Download portable Python from python-build-standalone (astral-sh) —
+    # same source as the Unix resolver, hosted on GitHub. We switched away
+    # from python.org's silent installer (`python-3.12.x-amd64.exe`) because:
+    #   - On restricted networks, python.org TLS frequently breaks under
+    #     Windows SChannel ("server closed abruptly (missing close_notify)").
+    #     GitHub Releases is more tolerant in the same environments.
+    #   - python.org silent installer can pick architecture/redirects we
+    #     can't control (observed: ARM64 Python from the AMD64 installer
+    #     on Windows ARM64). PBS tarballs are arch-explicit in the URL.
+    #   - Same code path on Windows / Linux / macOS — easier to maintain.
     Sync-ResolverSystemProxy
     $hasCurl = Get-Command curl.exe -ErrorAction SilentlyContinue
-    $version = '3.12.7'
-    $installerUrl = "https://www.python.org/ftp/python/$version/python-$version-amd64.exe"
-    $installerPath = Join-Path $env:TEMP "python-$version-amd64.exe"
+    $hasTar  = Get-Command tar.exe -ErrorAction SilentlyContinue
+    if (-not $hasTar) {
+        [Console]::Error.WriteLine("  tar.exe required to extract the portable Python tarball (Windows 10+ ships tar.exe; older Windows is not supported)")
+        return $false
+    }
+    $pbsOwner   = 'astral-sh'
+    $pbsRelease = '20260510'
+    $pbsVersion = '3.12.13'
+    $tarballName = "cpython-$pbsVersion+$pbsRelease-x86_64-pc-windows-msvc-shared-install_only.tar.gz"
+    $tarballUrl  = "https://github.com/$pbsOwner/python-build-standalone/releases/download/$pbsRelease/$tarballName"
+    $tarballPath = Join-Path $env:TEMP $tarballName
+    $extractTmp  = Join-Path $env:TEMP 'cat-cafe-python-extract'
 
-    [Console]::Error.WriteLine("  Downloading Python $version (AMD64) from python.org...")
+    [Console]::Error.WriteLine("  Downloading portable Python $pbsVersion (AMD64) from python-build-standalone...")
     try {
         if ($hasCurl) {
-            & curl.exe -L --fail -o $installerPath $installerUrl
+            # --retry 3: SChannel TLS sometimes drops; auto-retry transient closes.
+            # --connect-timeout 30: don't hang forever if proxy is dead.
+            # --retry-max-time 600: cap total retry time at 10 min.
+            & curl.exe -L --fail --retry 3 --retry-delay 5 --connect-timeout 30 --retry-max-time 600 -o $tarballPath $tarballUrl
             if ($LASTEXITCODE -ne 0) { throw "curl.exe exit $LASTEXITCODE" }
         } else {
-            Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath -UseBasicParsing
+            Invoke-WebRequest -Uri $tarballUrl -OutFile $tarballPath -UseBasicParsing
         }
     } catch {
-        [Console]::Error.WriteLine("  Failed to download Python installer: $($_.Exception.Message)")
+        [Console]::Error.WriteLine("  Failed to download Python tarball: $($_.Exception.Message)")
         return $false
     }
-    if (-not (Test-Path $installerPath)) {
-        [Console]::Error.WriteLine("  Python installer not at expected path: $installerPath")
+    if (-not (Test-Path $tarballPath)) {
+        [Console]::Error.WriteLine("  Tarball not at expected path: $tarballPath")
         return $false
     }
 
+    if (Test-Path $extractTmp) {
+        Remove-Item -Recurse -Force $extractTmp -ErrorAction SilentlyContinue
+    }
+    New-Item -ItemType Directory -Path $extractTmp -Force | Out-Null
+
+    [Console]::Error.WriteLine("  Extracting Python tarball to $script:ProjectPythonDir ...")
+    try {
+        & tar.exe -xzf $tarballPath -C $extractTmp
+        if ($LASTEXITCODE -ne 0) { throw "tar.exe exit $LASTEXITCODE" }
+    } catch {
+        [Console]::Error.WriteLine("  Failed to extract Python tarball: $($_.Exception.Message)")
+        Remove-Item -Force $tarballPath -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force $extractTmp -ErrorAction SilentlyContinue
+        return $false
+    }
+    Remove-Item -Force $tarballPath -ErrorAction SilentlyContinue
+
+    # PBS tarball lays out as `python/{python.exe,Lib,...}` — strip that one
+    # level so python.exe lands directly under TargetDir.
+    $pythonInTmp = Join-Path $extractTmp 'python'
+    if (-not (Test-Path $pythonInTmp)) {
+        [Console]::Error.WriteLine("  Unexpected tarball layout: $pythonInTmp not found")
+        Show-PythonInstallerDiagnostic -InstallerLog ''
+        Remove-Item -Recurse -Force $extractTmp -ErrorAction SilentlyContinue
+        return $false
+    }
     if (-not (Test-Path $script:ProjectPythonDir)) {
         New-Item -ItemType Directory -Path $script:ProjectPythonDir -Force | Out-Null
     }
-
-    [Console]::Error.WriteLine("  Installing Python to $script:ProjectPythonDir (silent, no PATH changes)...")
-    # /quiet: no UI; TargetDir: install location; PrependPath=0: don't touch PATH;
-    # Include_pip=1: bundle pip; Include_test=0: skip test suite to save space.
-    # Write installer log to a known path so we can surface it when the
-    # installer exits non-zero or silently relocates python.exe.
-    $installerLogPath = Join-Path $env:TEMP "cat-cafe-python-installer.log"
-    $installerArgs = @(
-        "/quiet",
-        "/log",
-        $installerLogPath,
-        "TargetDir=$script:ProjectPythonDir",
-        "PrependPath=0",
-        "Include_pip=1",
-        "Include_test=0",
-        "Include_doc=0",
-        "Include_launcher=0",
-        "InstallLauncherAllUsers=0"
-    )
     try {
-        $proc = Start-Process -FilePath $installerPath -ArgumentList $installerArgs -Wait -PassThru -NoNewWindow
+        Get-ChildItem -Path $pythonInTmp -Force | ForEach-Object {
+            Move-Item -Path $_.FullName -Destination $script:ProjectPythonDir -Force
+        }
     } catch {
-        [Console]::Error.WriteLine("  Python installer Start-Process failed: $($_.Exception.Message)")
-        Remove-Item -Force $installerPath -ErrorAction SilentlyContinue
+        [Console]::Error.WriteLine("  Failed to relocate extracted Python: $($_.Exception.Message)")
+        Remove-Item -Recurse -Force $extractTmp -ErrorAction SilentlyContinue
         return $false
     }
-    Remove-Item -Force $installerPath -ErrorAction SilentlyContinue
-    if ($proc.ExitCode -ne 0) {
-        [Console]::Error.WriteLine("  Python installer exited with code $($proc.ExitCode) — see installer log: $installerLogPath")
-        Show-PythonInstallerDiagnostic -InstallerLog $installerLogPath
-        return $false
-    }
-    $expectedPython = Join-Path $script:ProjectPythonDir "python.exe"
+    Remove-Item -Recurse -Force $extractTmp -ErrorAction SilentlyContinue
+
+    $expectedPython = Join-Path $script:ProjectPythonDir 'python.exe'
     if (Test-Path $expectedPython) {
-        [Console]::Error.WriteLine("  Python $version installed to $script:ProjectPythonDir")
+        [Console]::Error.WriteLine("  Python $pbsVersion installed to $script:ProjectPythonDir")
         return $true
     }
-    [Console]::Error.WriteLine("  Python installer exited 0 but $expectedPython is missing.")
-    Show-PythonInstallerDiagnostic -InstallerLog $installerLogPath
+    [Console]::Error.WriteLine("  Python tarball extracted but $expectedPython is missing.")
+    Show-PythonInstallerDiagnostic -InstallerLog ''
     return $false
 }
 
