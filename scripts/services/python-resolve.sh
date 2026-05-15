@@ -170,6 +170,30 @@ _try_project_python() {
   return 0
 }
 
+_try_legacy_project_python() {
+  # Pre-a34ab1f2 (the "move Python + venvs from $HOME/.cat-cafe to
+  # <ProjectRoot>/.cat-cafe" commit) installs lived at
+  # $HOME/.cat-cafe/python. Reuse them if they exist so existing
+  # installs survive the path migration without re-downloading the
+  # whole python-build-standalone tarball — which on isolated VMs
+  # (Linux/macOS without good GitHub reach) is the difference between
+  # "one-click install works" and "fails at first network blip".
+  # We don't auto-migrate the directory — the user can clean install
+  # later to switch to the repo-local path on their own schedule.
+  local legacy_dir="${HOME}/.cat-cafe/python"
+  # Skip if legacy path IS the active path (caller explicitly set
+  # CAT_CAFE_HOME=$HOME/.cat-cafe, or HOME == repoRoot).
+  [ "$legacy_dir" = "$_PROJECT_PYTHON_DIR" ] && return 1
+  local py="${legacy_dir}/bin/python3"
+  [ -x "$py" ] || return 1
+  _python_version_ok "$py" >/dev/null || return 1
+  RESOLVED_PYTHON="$py"
+  RESOLVED_PYTHON_ARCH="$($py -c 'import platform; print(platform.machine().lower())' 2>/dev/null || echo unknown)"
+  RESOLVED_PYTHON_SOURCE="project-legacy"
+  echo "  Reusing legacy project Python: $py (pre-CAT_CAFE_HOME-migration install — venv 仍创建到 $_CAT_CAFE_HOME)" >&2
+  return 0
+}
+
 _pbs_target_triple() {
   # Determine which python-build-standalone target tarball matches this host.
   case "$(uname -s)" in
@@ -271,7 +295,12 @@ resolve_python_312() {
   _try_pyenv && return 0
   _try_brew && return 0
   _try_project_python && return 0
-  # Last resort: download a portable interpreter to ~/.cat-cafe/python/.
+  # Legacy path: reuse pre-a34ab1f2 install at $HOME/.cat-cafe/python
+  # before triggering a fresh download (saves users on isolated VMs
+  # from re-downloading python-build-standalone over an unreliable
+  # GitHub connection just because we moved the default path).
+  _try_legacy_project_python && return 0
+  # Last resort: download a portable interpreter to the project path.
   if _install_project_python && _try_project_python; then return 0; fi
   echo "ERROR: no Python 3.12+ interpreter found and the portable Python fallback also failed." >&2
   echo "  You can install one manually:" >&2

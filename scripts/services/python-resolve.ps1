@@ -138,6 +138,25 @@ function Try-UvPython {
     return $null
 }
 
+function Try-LegacyProjectPython {
+    # Pre-a34ab1f2 installs lived at $HOME/.cat-cafe/python. Reuse them
+    # if they exist so existing installs survive the path migration
+    # without re-downloading the whole python-build-standalone tarball
+    # over an unreliable GitHub connection. We don't auto-migrate; the
+    # user can clean install to switch to the repo-local path later.
+    $legacyDir = Join-Path $HOME '.cat-cafe\python'
+    if ($legacyDir -eq $script:ProjectPythonDir) { return $null }
+    $py = Join-Path $legacyDir 'python.exe'
+    if (-not (Test-Path $py)) { return $null }
+    $info = Test-Python312Candidate -Path $py -PrefixArgs @()
+    if ($info) {
+        $info | Add-Member -NotePropertyName Source -NotePropertyValue 'project-legacy'
+        Write-Host "  Reusing legacy project Python: $py (pre-CAT_CAFE_HOME-migration install -- venv still created under $script:CatCafeHome)"
+        return $info
+    }
+    return $null
+}
+
 function Try-ProjectPython {
     $py = Join-Path $script:ProjectPythonDir "python.exe"
     if (-not (Test-Path $py)) { return $null }
@@ -512,7 +531,15 @@ function Resolve-Python312 {
     $info = Try-ProjectPython
     if ($info) { return $info }
 
-    # 4. Last resort: install a project-owned Python.
+    # 4. Legacy project Python ($HOME\.cat-cafe\python) — reuse pre-
+    #    a34ab1f2 install before triggering a fresh download. Saves
+    #    users on isolated VMs from re-downloading PBS over an
+    #    unreliable GitHub connection just because we moved the default
+    #    path.
+    $info = Try-LegacyProjectPython
+    if ($info) { return $info }
+
+    # 5. Last resort: install a project-owned Python.
     if (Install-PythonToProjectDir) {
         $info = Try-ProjectPython
         if ($info) { return $info }
