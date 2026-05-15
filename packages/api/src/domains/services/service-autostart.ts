@@ -166,6 +166,15 @@ export async function autoStartEnabledServices(log: Logger): Promise<void> {
       wireUpSidecarReadyListener(child, manifest.id, () => {
         log.info('[services] ✓ %s — ready marker seen, firing onReady hooks', manifest.name);
         void fireServiceEvent(manifest.id, 'started');
+        // After readiness, release parent-side pipe FDs so the child
+        // isn't tied to the parent's stdio lifecycle. Same rationale as
+        // commit a25002c0 in services.ts /start: without this, parent
+        // exit/restart breaks the child's stdout pipe and Python's
+        // SIGPIPE handling is the only thing keeping the daemon alive
+        // (fragile across platforms, no SIGPIPE on Windows). Codex P1
+        // 3250058952.
+        child.stdout?.destroy();
+        child.stderr?.destroy();
       });
       child.unref();
       // Polling watcher as safety net (covers slow boot beyond stdout
