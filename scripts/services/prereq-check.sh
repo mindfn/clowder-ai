@@ -83,19 +83,97 @@ _print_proxy_guidance() {
   echo ""
 }
 
+_get_system_proxy_candidate() {
+  # Best-effort: read the OS-level HTTP/HTTPS proxy that the user has
+  # configured at the system layer (macOS network settings, GNOME
+  # gsettings, Windows is .ps1's territory). Returns a proxy URL like
+  # http://127.0.0.1:7890 on stdout, or nothing if no system proxy is
+  # configured. Used by _test_source_mode as the proxy candidate when
+  # the user hasn't explicitly set HTTP_PROXY env. Mirrors the .ps1
+  # Get-SystemProxyCandidate behavior — without this, curl probes on
+  # macOS run anonymous-direct and miss clash verge / GoLand HTTP proxy
+  # / Surge / etc. even though pip / huggingface_hub running in the same
+  # shell sometimes pick it up via urllib.request.getproxies().
+  case "$(uname -s)" in
+    Darwin)
+      command -v scutil >/dev/null 2>&1 || return 1
+      local proxy_info
+      proxy_info=$(scutil --proxy 2>/dev/null) || return 1
+      # Prefer HTTPS proxy, fall back to HTTP.
+      local enabled host port
+      enabled=$(echo "$proxy_info" | awk '/HTTPSEnable/{print $NF; exit}')
+      if [ "$enabled" = "1" ]; then
+        host=$(echo "$proxy_info" | awk '/HTTPSProxy /{print $NF; exit}')
+        port=$(echo "$proxy_info" | awk '/HTTPSPort /{print $NF; exit}')
+        if [ -n "$host" ] && [ -n "$port" ]; then
+          echo "http://${host}:${port}"
+          return 0
+        fi
+      fi
+      enabled=$(echo "$proxy_info" | awk '/HTTPEnable/{print $NF; exit}')
+      if [ "$enabled" = "1" ]; then
+        host=$(echo "$proxy_info" | awk '/HTTPProxy /{print $NF; exit}')
+        port=$(echo "$proxy_info" | awk '/HTTPPort /{print $NF; exit}')
+        if [ -n "$host" ] && [ -n "$port" ]; then
+          echo "http://${host}:${port}"
+          return 0
+        fi
+      fi
+      return 1
+      ;;
+    Linux)
+      # GNOME-style proxy detection (best-effort; container hosts often
+      # have nothing here and we just fall through).
+      command -v gsettings >/dev/null 2>&1 || return 1
+      local mode
+      mode=$(gsettings get org.gnome.system.proxy mode 2>/dev/null | tr -d \') || return 1
+      [ "$mode" = "manual" ] || return 1
+      local host port
+      host=$(gsettings get org.gnome.system.proxy.https host 2>/dev/null | tr -d \') || return 1
+      port=$(gsettings get org.gnome.system.proxy.https port 2>/dev/null) || return 1
+      if [ -n "$host" ] && [ "$port" != "0" ]; then
+        echo "http://${host}:${port}"
+        return 0
+      fi
+      return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 _test_source_mode() {
   # Probe a URL twice — first without any proxy (matches how pip will
-  # hit the host once we add it to NO_PROXY), then with the env proxy.
-  # Echoes 'direct' / 'proxy' / 'unreachable' so the caller can write
-  # PIP_INDEX_URL + NO_PROXY in a way that matches pip's runtime path.
+  # hit the host once we add it to NO_PROXY), then through the proxy
+  # candidate (env HTTP_PROXY first, then OS-level system proxy as
+  # detected by _get_system_proxy_candidate). Echoes 'direct' / 'proxy'
+  # / 'unreachable' so the caller can write PIP_INDEX_URL + NO_PROXY
+  # in a way that matches pip's runtime path.
   local url="$1"
   local timeout="${2:-5}"
   if curl -sf --max-time "$timeout" --noproxy '*' "$url" >/dev/null 2>&1; then
     echo "direct"
     return
   fi
-  if [ -n "${HTTPS_PROXY:-}${HTTP_PROXY:-}${https_proxy:-}${http_proxy:-}" ]; then
-    if curl -sf --max-time "$timeout" "$url" >/dev/null 2>&1; then
+  # Pick the proxy candidate: explicit env first, then OS-level system
+  # proxy. Without the system fallback, .sh probe was blind on macOS to
+  # clash verge / Surge etc. (the user's typical "I have a proxy
+  # running but never exported HTTP_PROXY" case).
+  local candidate=""
+  if [ -n "${HTTPS_PROXY:-}" ]; then
+    candidate="$HTTPS_PROXY"
+  elif [ -n "${HTTP_PROXY:-}" ]; then
+    candidate="$HTTP_PROXY"
+  elif [ -n "${https_proxy:-}" ]; then
+    candidate="$https_proxy"
+  elif [ -n "${http_proxy:-}" ]; then
+    candidate="$http_proxy"
+  else
+    candidate=$(_get_system_proxy_candidate 2>/dev/null || echo "")
+  fi
+  if [ -n "$candidate" ]; then
+    if curl -sf --max-time "$timeout" -x "$candidate" "$url" >/dev/null 2>&1; then
       echo "proxy"
       return
     fi
@@ -121,6 +199,21 @@ check_network() {
   local timeout=5
   if ! command -v curl &>/dev/null; then
     return
+  fi
+
+  # Detect OS-level system proxy candidate up front. _test_source_mode
+  # uses this as fallback when env HTTP_PROXY/HTTPS_PROXY is unset, so
+  # macOS users with clash verge / Surge / GoLand HTTP proxy etc. get
+  # auto-discovered. Result is informational and surfaced through the
+  # per-source probe — if no source needs the candidate, we don't
+  # inject HTTP_PROXY (avoid breaking user envs that explicitly want
+  # direct).
+  local sys_proxy_candidate=""
+  if [ -z "${HTTPS_PROXY:-}${HTTP_PROXY:-}${https_proxy:-}${http_proxy:-}" ]; then
+    sys_proxy_candidate=$(_get_system_proxy_candidate 2>/dev/null || echo "")
+    if [ -n "$sys_proxy_candidate" ]; then
+      echo "  Detected system proxy candidate: $sys_proxy_candidate (will be tested per-source)"
+    fi
   fi
 
   # FIRST: classify the user's PIP_INDEX_URL (if set) the same way we
@@ -261,6 +354,24 @@ check_network() {
       esac
       ;;
   esac
+
+  # Inject HTTP_PROXY/HTTPS_PROXY from the system proxy candidate if:
+  #   1) we detected one (sys_proxy_candidate non-empty)
+  #   2) user hasn't set HTTP_PROXY/HTTPS_PROXY in env
+  #   3) at least one source's probe needed the proxy to succeed
+  # Without this, pip and huggingface_hub running in install scripts
+  # won't see the proxy (curl probe used candidate explicitly via -x,
+  # but Python tools read env). Mirrors .ps1 Assert-Network's
+  # $needProxyInjection injection block.
+  if [ -n "$sys_proxy_candidate" ] && [ -z "${HTTP_PROXY:-}${HTTPS_PROXY:-}" ]; then
+    if [ "$pypi_mode" = "proxy" ] || [ "$tsinghua_mode" = "proxy" ] || \
+       [ "${hf_mode:-}" = "proxy" ] || [ "${hf_mirror_mode:-}" = "proxy" ] || \
+       [ "${user_idx_mode:-}" = "proxy" ]; then
+      export HTTP_PROXY="$sys_proxy_candidate"
+      export HTTPS_PROXY="$sys_proxy_candidate"
+      echo "  注入 HTTP_PROXY / HTTPS_PROXY = $sys_proxy_candidate（至少一个源需要走代理才能 reach；让 pip / huggingface_hub 也用这个代理）"
+    fi
+  fi
 
   # Always inject PIP_EXTRA_INDEX_URL (unless user already set it
   # explicitly). pip's primary index resolution falls back through
