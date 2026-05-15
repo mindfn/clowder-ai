@@ -530,7 +530,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
               await apiFetch(`/api/services/${id}/toggle`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enabled: false, model: selectedModel }),
+                body: JSON.stringify({ enabled: true, model: selectedModel }),
               });
             }
             await fetchServices();
