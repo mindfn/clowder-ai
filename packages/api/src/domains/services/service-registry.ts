@@ -101,8 +101,26 @@ const KNOWN_SERVICES: ServiceManifest[] = [
 ];
 
 export function resolveServicePort(manifest: ServiceManifest): number | null {
+  // Same priority chain as resolveServiceEndpoint so spawn and health
+  // probe agree on the port. Previously this only looked at
+  // services.json + manifest, ignoring env-port overrides — which
+  // resolveServiceEndpoint DID honor — so a deployment with
+  // EMBED_PORT=9999 in .env had the sidecar spawned on the manifest
+  // default (e.g. 9880) while health resolution probed 9999, making
+  // /start report success while subsequent health/watch logic appeared
+  // stuck (codex P1 finding 3249156652).
+  //
+  // Order: services.json (console's most recent intent) > env port
+  // (static .env override) > manifest.port (hardcoded default).
   const cfg = getServiceConfig(manifest.id);
   if (cfg.port) return cfg.port;
+  for (const envVar of manifest.configVars) {
+    const val = process.env[envVar];
+    if (!val) continue;
+    if (val.startsWith('http')) continue; // env-set URL, not a bare port
+    const parsed = Number.parseInt(val, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
   if (manifest.port) return manifest.port;
   return null;
 }

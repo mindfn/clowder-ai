@@ -626,9 +626,15 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       // IIFE's markFailed clear it. Sync failures below clean up
       // explicitly; the IIFE handles its own cleanup.
       if (!resolvedPort) {
-        const existing = getServiceConfig(id).port;
+        // Use the same priority chain as resolveServiceEndpoint /
+        // resolveServicePort: services.json > env port > manifest.
+        // Without this, a deployment with EMBED_PORT=9999 set in .env
+        // would silently be rewritten to manifest.port (e.g. 9880) in
+        // services.json during install, then drift across start/health/
+        // stop (codex P2 finding 3249156659).
+        const resolvedFromChain = resolveServicePort(manifest);
         try {
-          resolvedPort = existing ?? (await allocateAvailablePort(manifest.port ?? 9000));
+          resolvedPort = resolvedFromChain ?? (await allocateAvailablePort(manifest.port ?? 9000));
         } catch (err) {
           setInstalling(id, false);
           throw err;
