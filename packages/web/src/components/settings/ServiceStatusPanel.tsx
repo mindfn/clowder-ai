@@ -370,6 +370,17 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
         return;
       }
 
+      // Same click→response guard as handleAction (codex P2 3249693892).
+      // Without this, rapid double-clicks of the toggle send overlapping
+      // enable/disable POSTs before the first response splices state in,
+      // which then triggers conflicting start/stop follow-ups based on
+      // stale pre-click `s.status` / `s.enabled`.
+      setPendingActions((prev) => {
+        const next = new Set(prev);
+        next.add(m.id);
+        return next;
+      });
+
       try {
         const res = await apiFetch(`/api/services/${m.id}/toggle`, {
           method: 'POST',
@@ -418,6 +429,13 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
         }
       } catch {
         addToast({ type: 'error', title: '网络错误', message: `无法连接到服务管理 API`, duration: 5000 });
+      } finally {
+        setPendingActions((prev) => {
+          if (!prev.has(m.id)) return prev;
+          const next = new Set(prev);
+          next.delete(m.id);
+          return next;
+        });
       }
     },
     [fetchServices, handleAction, addToast],

@@ -203,7 +203,16 @@ function spawnBootstrap(logger?: BootstrapLogger): Promise<ResolvedPython> {
         pythonArch: result.arch,
         pythonSource: result.source,
       });
-      // Fire-and-forget event for non-blocking subscribers.
+      // Publish the resolved Python info to cachedResult BEFORE firing
+      // the 'installed' event, so `onPythonReady` subscribers see the
+      // data when their callback runs. Without this, fireServiceEvent's
+      // synchronous loop enters entry.fn before ensurePython's
+      // `cachedResult = await inFlight` assignment has run (resolveResult
+      // is scheduled here, but the awaiter's continuation is a microtask
+      // that hasn't fired yet) — subscriber's `if (cachedResult)` guard
+      // sees null, skips the cb, and gets unregistered as "successful"
+      // without ever running. Codex P2 3249693895.
+      cachedResult = result;
       void fireServiceEvent(PYTHON_BOOTSTRAP_ID, 'installed');
       resolveResult(result);
     });
