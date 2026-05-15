@@ -192,6 +192,15 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
   },
   {
+    name: 'CAT_CAFE_HOME',
+    defaultValue: '<repoRoot>/.cat-cafe',
+    description:
+      'Service install data root (Python interpreter, per-service venvs, Piper voice models, etc.). Honored by scripts/services/* and the venv-probe path in service-registry — override to share install state across users / containers / mounts.',
+    category: 'server',
+    sensitive: false,
+    runtimeEditable: false,
+  },
+  {
     name: 'CAT_CAFE_INVOCATION_REGISTRY',
     defaultValue: '(自动：有 Redis 用 redis，否则 memory)',
     description: 'F174-B InvocationRegistry 后端选择：redis（重启不丢 callback 鉴权）/ memory（fallback / 测试）',

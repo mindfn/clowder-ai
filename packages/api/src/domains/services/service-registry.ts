@@ -252,14 +252,22 @@ async function probeHealth(manifest: ServiceManifest): Promise<HealthResult> {
 function resolveVenvPath(venvPath: string): string {
   const catCafeMatch = venvPath.match(/^~\/\.cat-cafe\/(.+)/);
   if (catCafeMatch) {
-    // Resolve from the repo root, NOT process.cwd(): install scripts
-    // place venvs under `<repoRoot>/.cat-cafe/...` via CAT_CAFE_HOME
-    // (see scripts/services/python-resolve.sh). The API may run from
-    // a different working directory (started as a service, launched
-    // by Tauri, etc.), so `resolve('.cat-cafe', ...)` against cwd
-    // would probe the wrong place. resolveRepoRoot() returns the
-    // canonical repo root that install scripts also use.
-    const projectLocal = resolve(resolveRepoRoot(), '.cat-cafe', catCafeMatch[1]);
+    const subPath = catCafeMatch[1];
+    // Probe priority must match what install/start scripts actually use:
+    //   1. $CAT_CAFE_HOME — explicit override, honored by python-resolve.sh
+    //      and all install scripts. Users on shared deployments / custom
+    //      data dirs (Docker volume mounts, network-attached homes, etc.)
+    //      depend on this (codex P2 3250238772).
+    //   2. <repoRoot>/.cat-cafe — the default that python-resolve.sh
+    //      derives when CAT_CAFE_HOME is unset (Redis-convention layout).
+    //   3. ~/.cat-cafe — legacy pre-a34ab1f2 install location, kept as
+    //      probe target so existing installs from old code don't show
+    //      as "not installed" after the user pulls.
+    if (process.env.CAT_CAFE_HOME) {
+      const envHomePath = resolve(process.env.CAT_CAFE_HOME, subPath);
+      if (existsSync(envHomePath)) return envHomePath;
+    }
+    const projectLocal = resolve(resolveRepoRoot(), '.cat-cafe', subPath);
     if (existsSync(projectLocal)) return projectLocal;
   }
   if (venvPath.startsWith('~/')) return resolve(homedir(), venvPath.slice(2));
