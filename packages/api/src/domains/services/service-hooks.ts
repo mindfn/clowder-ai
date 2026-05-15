@@ -48,6 +48,7 @@ interface HookEntry {
 
 const hooks = new Map<string, HookEntry[]>(); // key = `${serviceId}:${event}`
 const fired = new Set<string>(); // key = `${serviceId}:${event}` once seen ready
+const inFlight = new Set<string>(); // key set while fireServiceEvent is dispatching
 
 function key(serviceId: string, event: ServiceEvent): string {
   return `${serviceId}:${event}`;
@@ -70,17 +71,21 @@ export function onServiceEvent(
     unregisterOnSuccess: options?.unregisterOnSuccess ?? true,
   });
 
-  // Late-registration fast path: if the event already fired and the new hook
-  // is the only entry pending, fire it on the next microtask. If other hooks
-  // are queued (= previous retries), the new hook waits and rides the next
-  // external fire-cycle alongside them.
-  if (fired.has(k)) {
-    const pending = hooks.get(k) ?? [];
-    if (pending.length === 1) {
-      queueMicrotask(() => {
-        void fireServiceEvent(serviceId, event);
-      });
-    }
+  // Late-registration fast path: if the event already fired AND no
+  // fireServiceEvent is currently dispatching for this key, schedule a
+  // microtask replay so the just-registered hook catches up. Previously
+  // gated on `pending.length === 1`, which incorrectly treated an
+  // already-present always-on hook (`unregisterOnSuccess: false`) as a
+  // blocker — the new hook would silently wait for a "next external
+  // fire" that may never come (codex P2 3249789190). The `inFlight`
+  // guard prevents recursive re-fire when a hook registers another hook
+  // mid-dispatch — fireServiceEvent's own snapshot-diff late-detect
+  // (commit 6fd14749) handles the in-flight case, so we only schedule
+  // here for AFTER-dispatch registrations.
+  if (fired.has(k) && !inFlight.has(k)) {
+    queueMicrotask(() => {
+      void fireServiceEvent(serviceId, event);
+    });
   }
 }
 
@@ -96,50 +101,55 @@ export async function fireServiceEvent(serviceId: string, event: ServiceEvent): 
   const list = hooks.get(k) ?? [];
   if (list.length === 0) return;
 
-  // Snapshot before iteration. Hooks registered during dispatch are
-  // detected after the loop (by identity diff against snapshot) and
-  // re-fired on the next microtask so they don't have to wait for an
-  // external fire-cycle that may never come (codex P2 3249229014).
-  const snapshot = [...list];
-  const survivors: HookEntry[] = [];
-  const ctx: ServiceEventContext = { serviceId, event };
+  inFlight.add(k);
+  try {
+    // Snapshot before iteration. Hooks registered during dispatch are
+    // detected after the loop (by identity diff against snapshot) and
+    // re-fired on the next microtask so they don't have to wait for an
+    // external fire-cycle that may never come (codex P2 3249229014).
+    const snapshot = [...list];
+    const survivors: HookEntry[] = [];
+    const ctx: ServiceEventContext = { serviceId, event };
 
-  for (const entry of snapshot) {
-    let ok = false;
-    try {
-      await entry.fn(ctx);
-      ok = true;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[service-hooks] ${serviceId}/${event} hook failed: ${msg} (will retry on next fire)`);
+    for (const entry of snapshot) {
+      let ok = false;
+      try {
+        await entry.fn(ctx);
+        ok = true;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[service-hooks] ${serviceId}/${event} hook failed: ${msg} (will retry on next fire)`);
+      }
+      // Survive into the next fire-cycle if:
+      //   - the hook threw (retry semantics), OR
+      //   - the consumer asked to stay registered after success.
+      if (!ok || !entry.unregisterOnSuccess) {
+        survivors.push(entry);
+      }
     }
-    // Survive into the next fire-cycle if:
-    //   - the hook threw (retry semantics), OR
-    //   - the consumer asked to stay registered after success.
-    if (!ok || !entry.unregisterOnSuccess) {
-      survivors.push(entry);
+
+    // Hooks registered during this dispatch are present in the live list
+    // but absent from snapshot. Merge them into the survivor set so the
+    // hooks.set/delete below doesn't silently drop them, and queue a
+    // microtask to fire them (the event already happened — fired.add(k)
+    // is at the top of this function, so late subscribers should run).
+    const current = hooks.get(k) ?? [];
+    const lateRegistered = current.filter((e) => !snapshot.includes(e));
+    const merged = survivors.length > 0 || lateRegistered.length > 0 ? [...survivors, ...lateRegistered] : [];
+
+    if (merged.length > 0) {
+      hooks.set(k, merged);
+    } else {
+      hooks.delete(k);
     }
-  }
 
-  // Hooks registered during this dispatch are present in the live list
-  // but absent from snapshot. Merge them into the survivor set so the
-  // hooks.set/delete below doesn't silently drop them, and queue a
-  // microtask to fire them (the event already happened — fired.add(k)
-  // is at the top of this function, so late subscribers should run).
-  const current = hooks.get(k) ?? [];
-  const lateRegistered = current.filter((e) => !snapshot.includes(e));
-  const merged = survivors.length > 0 || lateRegistered.length > 0 ? [...survivors, ...lateRegistered] : [];
-
-  if (merged.length > 0) {
-    hooks.set(k, merged);
-  } else {
-    hooks.delete(k);
-  }
-
-  if (lateRegistered.length > 0) {
-    queueMicrotask(() => {
-      void fireServiceEvent(serviceId, event);
-    });
+    if (lateRegistered.length > 0) {
+      queueMicrotask(() => {
+        void fireServiceEvent(serviceId, event);
+      });
+    }
+  } finally {
+    inFlight.delete(k);
   }
 }
 
@@ -159,4 +169,5 @@ export async function fireServiceReady(serviceId: string): Promise<void> {
 export function _resetServiceHooks(): void {
   hooks.clear();
   fired.clear();
+  inFlight.clear();
 }

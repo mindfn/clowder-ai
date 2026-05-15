@@ -70,4 +70,34 @@ describe('service-hooks', () => {
 
     assert.equal(lateRan, 1, 'late hook must not be dropped by hooks.delete when survivors=[]');
   });
+
+  it('late hook fires even when always-on hook stays in queue (codex P2 3249789190)', async () => {
+    // Scenario: always-on hook (unregisterOnSuccess=false) registered + fired,
+    // stays in the queue. Then a NEW subscriber registers after the event
+    // already fired. Pre-fix, the late-fast-path's `pending.length === 1`
+    // guard would see length=2 (always-on + new) and skip the microtask
+    // replay — the new hook would silently wait for a future external fire.
+    let alwaysOnRuns = 0;
+    let lateRan = 0;
+    onServiceEvent(
+      'svc-e',
+      'started',
+      () => {
+        alwaysOnRuns += 1;
+      },
+      { unregisterOnSuccess: false },
+    );
+    await fireServiceEvent('svc-e', 'started');
+    assert.equal(alwaysOnRuns, 1, 'always-on hook runs on first fire');
+
+    // Now register late — event already fired, always-on still in queue
+    onServiceEvent('svc-e', 'started', () => {
+      lateRan += 1;
+    });
+    await new Promise((res) => setTimeout(res, 10));
+
+    assert.equal(lateRan, 1, 'late hook must catch up via microtask replay despite always-on blocker');
+    // always-on is idempotent by contract; re-running it during catch-up is OK
+    assert.equal(alwaysOnRuns, 2, 'always-on hook re-runs during catch-up (idempotent contract)');
+  });
 });
