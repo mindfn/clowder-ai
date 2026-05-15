@@ -41,7 +41,7 @@ tts_install_non_arm64_extras() {
         en_US-lessac-medium) base="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium" ;;
         en_GB-alan-medium)   base="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium" ;;
         *)
-          echo "ERROR: 未知的 piper voice: $voice。支持: zh_CN-huayan-medium, en_US-amy-medium, en_US-lessac-medium, en_GB-alan-medium" >&2
+          echo "ERROR: 未知的 piper voice: ${voice}。支持: zh_CN-huayan-medium, en_US-amy-medium, en_US-lessac-medium, en_GB-alan-medium" >&2
           exit 1
           ;;
       esac
