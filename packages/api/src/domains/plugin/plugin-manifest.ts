@@ -60,11 +60,11 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
   const raw = readFileSync(yamlPath, 'utf-8');
   const doc = parseYaml(raw) as Record<string, unknown>;
 
-  const id = doc['id'] as string | undefined;
-  const name = doc['name'] as string | undefined;
-  const version = doc['version'] as string | undefined;
-  if (!id || !name || !version) {
-    throw new Error(`Invalid plugin manifest at ${yamlPath}: missing id, name, or version`);
+  const id = doc['id'];
+  const name = doc['name'];
+  const version = doc['version'];
+  if (typeof id !== 'string' || typeof name !== 'string' || typeof version !== 'string') {
+    throw new Error(`Invalid plugin manifest at ${yamlPath}: id, name, and version must be strings`);
   }
   if (!/^[a-z]([a-z0-9-]*[a-z0-9])?$/.test(id)) {
     throw new Error(
@@ -77,16 +77,16 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
   if (Array.isArray(rawConfig)) {
     for (const c of rawConfig) {
       const rc = c as Record<string, unknown>;
-      if (!rc['envName'] || !rc['label']) {
-        throw new Error(`Invalid config entry in ${yamlPath}: each entry must have envName and label`);
+      if (typeof rc['envName'] !== 'string' || typeof rc['label'] !== 'string') {
+        throw new Error(`Invalid config entry in ${yamlPath}: envName and label must be strings`);
       }
-      const envName = rc['envName'] as string;
+      const envName = rc['envName'];
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(envName)) {
         throw new Error(`Invalid envName '${envName}': must be a valid shell variable name`);
       }
       config.push({
         envName,
-        label: rc['label'] as string,
+        label: rc['label'],
         sensitive: rc['sensitive'] === true,
         required: rc['required'] !== false,
       });
@@ -110,12 +110,21 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
         throw new Error(`Invalid resource path '${path}': must be relative without '..'`);
       }
 
+      const rawArgs = rr['args'];
+      let args: string[] | undefined;
+      if (rawArgs != null) {
+        if (!Array.isArray(rawArgs) || !rawArgs.every((a) => typeof a === 'string')) {
+          throw new Error(`Invalid resource args in ${yamlPath}: must be an array of strings`);
+        }
+        args = rawArgs as string[];
+      }
+
       resources.push({
         type: type as PluginResourceDef['type'],
         path,
         name: rr['name'] as string | undefined,
         command: rr['command'] as string | undefined,
-        args: rr['args'] as string[] | undefined,
+        args,
         transport: rr['transport'] as string | undefined,
       });
     }
