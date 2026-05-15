@@ -187,6 +187,11 @@ async function probeHealth(manifest: ServiceManifest): Promise<HealthResult> {
 }
 
 function resolveVenvPath(venvPath: string): string {
+  const catCafeMatch = venvPath.match(/^~\/\.cat-cafe\/(.+)/);
+  if (catCafeMatch) {
+    const projectLocal = resolve('.cat-cafe', catCafeMatch[1]);
+    if (existsSync(projectLocal)) return projectLocal;
+  }
   if (venvPath.startsWith('~/')) return resolve(homedir(), venvPath.slice(2));
   return resolve(venvPath);
 }
