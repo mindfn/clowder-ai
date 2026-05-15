@@ -182,10 +182,14 @@ export class PluginResourceActivator {
   private async deactivateLimb(manifest: PluginManifest, resource: PluginResourceDef): Promise<void> {
     if (!resource.path) return;
 
-    const yamlPath = join(this.deps.pluginsDir, manifest.id, resource.path);
-    const { loadLimbDeclaration } = await import('../limb/limb-yaml-loader.js');
-    const decl = loadLimbDeclaration(yamlPath);
-    this.deps.limbRegistry.deregister(decl.nodeId);
+    try {
+      const yamlPath = join(this.deps.pluginsDir, manifest.id, resource.path);
+      const { loadLimbDeclaration } = await import('../limb/limb-yaml-loader.js');
+      const decl = loadLimbDeclaration(yamlPath);
+      this.deps.limbRegistry.deregister(decl.nodeId);
+    } catch {
+      // YAML missing/malformed — still remove capability entry below
+    }
 
     await this.removeCapabilityEntry(manifest, resource);
   }
