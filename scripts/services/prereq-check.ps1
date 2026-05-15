@@ -212,10 +212,14 @@ function Write-ProxyGuidance {
 }
 
 function Add-NoProxyHost {
-    param([string]$Host)
+    # NOTE: Do not name the parameter $Host -- that is a PowerShell
+    # automatic variable (read-only) and assignment raises
+    # "Cannot overwrite variable Host because it is read-only or constant"
+    # which aborts the install. Use $HostName instead.
+    param([string]$HostName)
     $entries = @()
     if ($env:NO_PROXY) { $entries = @($env:NO_PROXY -split ',') }
-    $entries += $Host
+    $entries += $HostName
     $env:NO_PROXY = ($entries | Where-Object { $_ } | Select-Object -Unique) -join ','
 }
 
