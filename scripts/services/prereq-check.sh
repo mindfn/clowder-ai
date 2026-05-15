@@ -403,7 +403,7 @@ check_network() {
   if [ -z "${HTTP_PROXY:-}${HTTPS_PROXY:-}" ] && [ -n "$sys_proxy_candidate" ]; then
     if [ "${hf_mode:-}" = "proxy" ] || [ "${hf_mirror_mode:-}" = "proxy" ]; then
       export _CATCAFE_HF_PROXY_FOR_DOWNLOAD="$sys_proxy_candidate"
-      echo "  HF model 下载步骤将使用系统代理: $_CATCAFE_HF_PROXY_FOR_DOWNLOAD（per-process 注入，不影响 pip）"
+      echo "  HF model 下载步骤将使用系统代理: ${_CATCAFE_HF_PROXY_FOR_DOWNLOAD}（per-process 注入，不影响 pip）"
     fi
   fi
 
