@@ -66,9 +66,9 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
   if (!id || !name || !version) {
     throw new Error(`Invalid plugin manifest at ${yamlPath}: missing id, name, or version`);
   }
-  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(id)) {
+  if (!/^[a-z]([a-z0-9-]*[a-z0-9])?$/.test(id)) {
     throw new Error(
-      `Invalid plugin id '${id}': must be a lowercase slug (a-z, 0-9, hyphens, no leading/trailing hyphen)`,
+      `Invalid plugin id '${id}': must start with a letter, contain only a-z, 0-9, hyphens, no trailing hyphen`,
     );
   }
 
