@@ -194,4 +194,24 @@ check_network() {
       esac
       ;;
   esac
+
+  # Public fallback when user already has PIP_INDEX_URL set (e.g. an
+  # internal corporate mirror). pip honors PIP_EXTRA_INDEX_URL natively;
+  # when the primary index doesn't have a package (e.g. internal mirror
+  # missing sentence-transformers), pip falls back to extra-index-url.
+  # Without this, an internal-only mirror is a dead end for any package
+  # the IT team didn't pre-mirror.
+  if [ -n "${PIP_INDEX_URL:-}" ] && [ -z "${PIP_EXTRA_INDEX_URL:-}" ]; then
+    if [ "$pypi_mode" = "direct" ] || [ "$pypi_mode" = "proxy" ]; then
+      export PIP_EXTRA_INDEX_URL="https://pypi.org/simple"
+      echo "  注入 PIP_EXTRA_INDEX_URL=https://pypi.org/simple（公共 fallback，用户已设 PIP_INDEX_URL=$PIP_INDEX_URL）"
+    else
+      local tsinghua_fb_mode
+      tsinghua_fb_mode=$(_test_source_mode "https://pypi.tuna.tsinghua.edu.cn/simple/" "$timeout")
+      if [ "$tsinghua_fb_mode" = "direct" ] || [ "$tsinghua_fb_mode" = "proxy" ]; then
+        export PIP_EXTRA_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
+        echo "  注入 PIP_EXTRA_INDEX_URL=清华镜像（公共 fallback，用户已设 PIP_INDEX_URL=$PIP_INDEX_URL）"
+      fi
+    fi
+  fi
 }

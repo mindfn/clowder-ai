@@ -287,4 +287,23 @@ function Assert-Network {
         $env:HTTPS_PROXY = $candidate
         Write-Host "  Injected HTTP_PROXY / HTTPS_PROXY = $candidate (needed for at least one source)"
     }
+
+    # Public fallback when user already has PIP_INDEX_URL set (e.g. an
+    # internal corporate mirror). pip honors PIP_EXTRA_INDEX_URL natively;
+    # when the primary index doesn't have a package (e.g. internal mirror
+    # missing sentence-transformers), pip falls back to extra-index-url.
+    # Without this, an internal-only mirror is a dead end for any package
+    # the IT team didn't pre-mirror.
+    if ($env:PIP_INDEX_URL -and -not $env:PIP_EXTRA_INDEX_URL) {
+        if ($pypiMode -eq 'direct' -or $pypiMode -eq 'proxy') {
+            $env:PIP_EXTRA_INDEX_URL = 'https://pypi.org/simple'
+            Write-Host "  Injected PIP_EXTRA_INDEX_URL = https://pypi.org/simple (public fallback; user already set PIP_INDEX_URL=$env:PIP_INDEX_URL)"
+        } else {
+            $fbMode = Test-SourceMode -Url 'https://pypi.tuna.tsinghua.edu.cn/simple/' -TimeoutSec 5 -CandidateProxy $candidate
+            if ($fbMode -eq 'direct' -or $fbMode -eq 'proxy') {
+                $env:PIP_EXTRA_INDEX_URL = 'https://pypi.tuna.tsinghua.edu.cn/simple'
+                Write-Host "  Injected PIP_EXTRA_INDEX_URL = Tsinghua mirror (public fallback; user already set PIP_INDEX_URL=$env:PIP_INDEX_URL)"
+            }
+        }
+    }
 }
