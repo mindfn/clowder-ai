@@ -39,6 +39,7 @@ import {
   setServicePid,
   setStarting,
   setUninstalling,
+  tryAcquireInstallLock,
 } from '../domains/services/service-registry.js';
 import { resolveUserId } from '../utils/request-identity.js';
 
@@ -569,36 +570,43 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         };
       }
 
-      const current = await getServiceState(manifest);
-      if (current.status === 'installing') {
-        return { ok: true, message: `${manifest.name} is already installing` };
-      }
-
       const scriptPath = resolveScriptPath(manifest.scripts.install);
       if (!existsSync(scriptPath)) {
         reply.status(400);
         return { error: `Install script not found: ${scriptPath}` };
       }
-
-      // Mark this service as actively installing so /api/services reflects
-      // it as status='installing' even if the user refreshes the page mid-
-      // install. The set lives in this API process only — when the API
-      // restarts, the spawn dies with it and the set is empty, so the next
-      // fetch correctly reports stopped/none. Wrap the rest of the handler
-      // in try/finally so every return path (ok / 422 / 500 / catch) clears
-      // the flag before responding.
-      // Validate port BEFORE setInstalling — caller-supplied invalid values
-      // should fail-fast with 400 without leaving the service stuck on
-      // 'installing'. Same goes for ALL other sync prep work; everything that
-      // could throw must happen before we flip the in-flight flag.
+      // Sync port validation — must happen BEFORE we acquire the lock
+      // so caller-supplied bad input fails fast without leaving the
+      // service stuck on 'installing'.
       let resolvedPort: number | undefined = body.port;
       if (typeof resolvedPort === 'number' && (resolvedPort < 1 || resolvedPort > 65535)) {
         reply.status(400);
         return { error: 'Invalid port (expected 1..65535)' };
       }
+
+      // Atomic acquire of the in-flight install lock. Sync — no await —
+      // so two concurrent POST handlers race-safely: exactly one acquires
+      // the lock, the rest see false and bail. This MUST happen before
+      // the next await (port allocation below), otherwise the old
+      // getServiceState-based 'installing' check would let two
+      // simultaneous installs both pass while the status field was still
+      // being awaited (codex P2 finding 3247373269).
+      if (!tryAcquireInstallLock(id)) {
+        return { ok: true, message: `${manifest.name} is already installing` };
+      }
+
+      // From here on we own the lock. Every error path must either
+      // setInstalling(id, false) explicitly OR let the background async
+      // IIFE's markFailed clear it. Sync failures below clean up
+      // explicitly; the IIFE handles its own cleanup.
       if (!resolvedPort) {
         const existing = getServiceConfig(id).port;
-        resolvedPort = existing ?? (await allocateAvailablePort(manifest.port ?? 9000));
+        try {
+          resolvedPort = existing ?? (await allocateAvailablePort(manifest.port ?? 9000));
+        } catch (err) {
+          setInstalling(id, false);
+          throw err;
+        }
       }
       setServiceConfig(id, { port: resolvedPort });
 
@@ -619,13 +627,13 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       const portEnv = PORT_ENV_VARS[id];
       if (portEnv) env[portEnv] = String(resolvedPort);
 
-      // From here on we own the in-flight flag; every exit path must clear it.
+      // In-flight lock already acquired earlier via tryAcquireInstallLock.
+      // Persist installStatus = 'installing' so /api/services reflects it
+      // even if the user refreshes the page mid-install (the lock is
+      // process-local; installStatus is persistent in services.json).
       // The actual install work (ensurePython → pre-install uninstall →
-      // install spawn → autostart) is now FULLY backgrounded so the HTTP
-      // response returns immediately with state.status='installing'. UI
-      // tracks progress via the 3s transitional poll and the per-service
-      // log endpoint.
-      setInstalling(id, true);
+      // install spawn → autostart) is FULLY backgrounded so the HTTP
+      // response returns immediately with state.status='installing'.
       setServiceConfig(id, {
         installStatus: 'installing',
         lastInstallError: undefined,

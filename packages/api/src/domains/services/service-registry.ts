@@ -298,6 +298,23 @@ export function clearServicePid(id: string): void {
 const installingServices = new Set<string>();
 const uninstallingServices = new Set<string>();
 const startingServices = new Set<string>();
+/**
+ * Atomic check-and-set for the install lock. Returns true iff the lock
+ * was acquired (i.e. no other concurrent install for this id was
+ * already in flight). Sync — no `await` — so two concurrent POST
+ * /api/services/:id/install handlers race-safely: exactly one gets
+ * `acquired=true`, the rest get false and must bail. Used by the
+ * install endpoint to avoid double-spawning on double-click / retry /
+ * two-clients-same-time scenarios that would otherwise pass through
+ * the original getServiceState-based 'installing' check while the
+ * status was still being awaited.
+ */
+export function tryAcquireInstallLock(id: string): boolean {
+  if (installingServices.has(id)) return false;
+  installingServices.add(id);
+  return true;
+}
+
 export function setInstalling(id: string, value: boolean): void {
   if (value) installingServices.add(id);
   else installingServices.delete(id);
