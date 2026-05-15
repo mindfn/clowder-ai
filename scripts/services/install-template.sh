@@ -165,23 +165,29 @@ _install_template_load_model() {
   # Single inline Python script per loader because we want both retry +
   # loader-specific entry point (snapshot_download vs WhisperModel)
   # without spawning multiple processes.
+  #
+  # Proxy: prereq-check.sh already decided whether HuggingFace needs
+  # the system proxy (HF probe via candidate → exports
+  # _CATCAFE_HF_PROXY_FOR_DOWNLOAD). We just consume that decision
+  # here, per-call, so pip install (earlier step) goes direct via the
+  # NO_PROXY classification and only HF model download gets the
+  # proxy. No second detection inside Python — single source of
+  # truth lives in prereq-check.
   local venv_dir="$1"
   local loader="$2"
   local model_id="$3"
 
+  local hf_proxy_env=()
+  if [ -n "${_CATCAFE_HF_PROXY_FOR_DOWNLOAD:-}" ]; then
+    hf_proxy_env=(env "HTTP_PROXY=${_CATCAFE_HF_PROXY_FOR_DOWNLOAD}" "HTTPS_PROXY=${_CATCAFE_HF_PROXY_FOR_DOWNLOAD}")
+    echo "  使用 HF 代理: ${_CATCAFE_HF_PROXY_FOR_DOWNLOAD}（仅此模型下载子进程）"
+  fi
+
   case "$loader" in
     snapshot)
-      "$venv_dir/bin/python" -c "
+      "${hf_proxy_env[@]}" "$venv_dir/bin/python" -c "
 import sys, time, os
 os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '60')
-# requests (used by huggingface_hub) only reads HTTP(S)_PROXY env vars,
-# not macOS system proxy. Bridge via stdlib getproxies().
-import urllib.request
-for _k in ('https', 'http'):
-    _ek = _k.upper() + '_PROXY'
-    _sv = urllib.request.getproxies().get(_k, '')
-    if _sv and not os.environ.get(_ek):
-        os.environ[_ek] = _sv
 from huggingface_hub import snapshot_download
 max_attempts = 3
 for attempt in range(1, max_attempts + 1):
@@ -200,15 +206,9 @@ sys.exit(1)
 " "$model_id"
       ;;
     faster_whisper)
-      "$venv_dir/bin/python" -c "
+      "${hf_proxy_env[@]}" "$venv_dir/bin/python" -c "
 import sys, time, os
 os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '60')
-import urllib.request
-for _k in ('https', 'http'):
-    _ek = _k.upper() + '_PROXY'
-    _sv = urllib.request.getproxies().get(_k, '')
-    if _sv and not os.environ.get(_ek):
-        os.environ[_ek] = _sv
 from faster_whisper import WhisperModel
 max_attempts = 3
 for attempt in range(1, max_attempts + 1):

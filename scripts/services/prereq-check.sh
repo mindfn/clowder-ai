@@ -388,6 +388,25 @@ check_network() {
     fi
   fi
 
+  # Export sentinel for downstream model-download steps. If HF probe
+  # only succeeded VIA candidate (and user didn't pre-set HTTP_PROXY),
+  # the model preload step (install-template.sh::_install_template_
+  # load_model) needs to know to wire that proxy into the Python child
+  # process — `requests`/`huggingface_hub` don't read macOS system
+  # proxy on their own. We keep this sentinel separate from
+  # HTTP_PROXY/HTTPS_PROXY so pip install (the earlier step in the
+  # template) still goes direct to e.g. Tsinghua via NO_PROXY, only
+  # the HF model download step gets the proxy.
+  #
+  # Single source of truth: prereq-check decides, downstream just
+  # consumes — no second urllib.getproxies() call inside Python.
+  if [ -z "${HTTP_PROXY:-}${HTTPS_PROXY:-}" ] && [ -n "$sys_proxy_candidate" ]; then
+    if [ "${hf_mode:-}" = "proxy" ] || [ "${hf_mirror_mode:-}" = "proxy" ]; then
+      export _CATCAFE_HF_PROXY_FOR_DOWNLOAD="$sys_proxy_candidate"
+      echo "  HF model 下载步骤将使用系统代理: $_CATCAFE_HF_PROXY_FOR_DOWNLOAD（per-process 注入，不影响 pip）"
+    fi
+  fi
+
   # Always inject PIP_EXTRA_INDEX_URL (unless user already set it
   # explicitly). pip's primary index resolution falls back through
   # multiple sources: command-line --index-url > $PIP_INDEX_URL env >
