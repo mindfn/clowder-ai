@@ -44,14 +44,24 @@ if [ "$PLATFORM" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
   MODEL="$WHISPER_MODEL"
   echo "  预下载模型: $MODEL ..."
   "$VENV_DIR/bin/python" -c "
-import sys
+import sys, time, os
+os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '60')
 from huggingface_hub import snapshot_download
-try:
-    snapshot_download(sys.argv[1])
-    print('模型下载完成。')
-except Exception as e:
-    print(f'ERROR: 模型下载失败: {e}', file=sys.stderr)
-    sys.exit(1)
+max_attempts = 3
+for attempt in range(1, max_attempts + 1):
+    try:
+        snapshot_download(sys.argv[1])
+        print('模型下载完成。')
+        sys.exit(0)
+    except Exception as e:
+        msg = f'  下载尝试 {attempt}/{max_attempts} 失败: {e}'
+        print(msg, file=sys.stderr)
+        if attempt < max_attempts:
+            wait = 5 * attempt
+            print(f'  {wait}s 后重试...', file=sys.stderr)
+            time.sleep(wait)
+print(f'ERROR: 模型下载失败，已尝试 {max_attempts} 次', file=sys.stderr)
+sys.exit(1)
 " "$MODEL"
 else
   echo "  安装依赖: faster-whisper fastapi uvicorn python-multipart httpx[socks] 'huggingface_hub[hf_xet]' ..."
@@ -64,14 +74,24 @@ else
   MODEL="$WHISPER_MODEL"
   echo "  预下载模型: $MODEL ..."
   "$VENV_DIR/bin/python" -c "
-import sys
+import sys, time, os
+os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '60')
 from faster_whisper import WhisperModel
-try:
-    WhisperModel(sys.argv[1], device='cpu', compute_type='int8')
-    print('模型下载完成。')
-except Exception as e:
-    print(f'ERROR: 模型下载失败: {e}', file=sys.stderr)
-    sys.exit(1)
+max_attempts = 3
+for attempt in range(1, max_attempts + 1):
+    try:
+        WhisperModel(sys.argv[1], device='cpu', compute_type='int8')
+        print('模型下载完成。')
+        sys.exit(0)
+    except Exception as e:
+        msg = f'  下载尝试 {attempt}/{max_attempts} 失败: {e}'
+        print(msg, file=sys.stderr)
+        if attempt < max_attempts:
+            wait = 5 * attempt
+            print(f'  {wait}s 后重试...', file=sys.stderr)
+            time.sleep(wait)
+print(f'ERROR: 模型下载失败，已尝试 {max_attempts} 次', file=sys.stderr)
+sys.exit(1)
 " "$MODEL"
 fi
 echo "安装完成。"
