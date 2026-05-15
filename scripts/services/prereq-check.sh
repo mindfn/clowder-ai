@@ -245,31 +245,33 @@ check_network() {
       # reachable. Inject everything we confirmed.
       fb_url="$candidates"
       fb_reason="主探测可达，按优先级 pypi → 清华"
-    else
-      # Probe found nothing reachable that isn't already the user's
-      # primary. Last-resort: list BOTH public mirrors so pip has the
-      # maximum chance of finding the package — curl probes can miss
-      # what Windows system proxies / transparent corp gateways resolve
-      # for pip. Worst case pip also fails and the user lands in the
-      # same error state they would without any fallback at all.
+    elif [ -n "${HTTP_PROXY:-}${HTTPS_PROXY:-}${http_proxy:-}${https_proxy:-}" ]; then
+      # Probe found nothing curl could reach, but the user has an HTTP
+      # proxy configured (.env / shell). Trust that pip can use the same
+      # proxy to reach pypi / Tsinghua even though our curl-based probe
+      # couldn't (Windows transparent proxies, proxy.pac, SSPI corp
+      # gateways, etc.). Inject BOTH so pip has maximum coverage —
+      # mirror policy parity with the strong-signal path.
       local last_resort=""
       if [ "$user_idx" != "https://pypi.org/simple" ]; then
         last_resort="https://pypi.org/simple"
       fi
       if [ "$user_idx" != "https://pypi.tuna.tsinghua.edu.cn/simple" ]; then
-        if [ -z "$last_resort" ]; then
-          last_resort="https://pypi.tuna.tsinghua.edu.cn/simple"
-        else
-          last_resort="$last_resort https://pypi.tuna.tsinghua.edu.cn/simple"
-        fi
+        last_resort="${last_resort}${last_resort:+ }https://pypi.tuna.tsinghua.edu.cn/simple"
       fi
       fb_url="$last_resort"
-      fb_reason="last-resort（curl 探测未通；pip 可能能通过系统代理/透明代理 reach）"
+      fb_reason="last-resort（curl 探测未通，但用户已配 HTTP_PROXY，信任 pip 走代理 reach）"
     fi
+    # No `else` branch: probe failed AND no user proxy → no fallback.
+    # Injecting URLs pip can't reach just inflates the error log noise
+    # without changing the outcome — let pip surface the precise
+    # "internal mirror missing X" error instead.
 
     if [ -n "$fb_url" ]; then
       export PIP_EXTRA_INDEX_URL="$fb_url"
       echo "  注入 PIP_EXTRA_INDEX_URL=\"$fb_url\"（$fb_reason；用户 PIP_INDEX_URL=$PIP_INDEX_URL）"
+    elif [ -z "${HTTP_PROXY:-}${HTTPS_PROXY:-}${http_proxy:-}${https_proxy:-}" ]; then
+      echo "  PIP_EXTRA_INDEX_URL 未注入（curl 探测公共源不通 + 无 HTTP_PROXY 配置 → pip 大概率也通不了，跳过避免噪音）"
     else
       echo "  PIP_EXTRA_INDEX_URL 未注入（用户 PIP_INDEX_URL=$PIP_INDEX_URL 已覆盖所有候选公共源）"
     fi

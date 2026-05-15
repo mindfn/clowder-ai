@@ -328,17 +328,17 @@ function Assert-Network {
         $fbUrl = $null
         $fbReason = $null
         if ($candidates.Count -gt 0) {
-            # Strong signal path: HEAD probe confirmed at least one public
-            # mirror reachable. Inject everything we confirmed.
+            # Strong signal path: HEAD probe confirmed at least one
+            # public mirror reachable. Inject everything we confirmed.
             $fbUrl = ($candidates -join ' ')
             $fbReason = "primary probe (priority pypi -> Tsinghua)"
-        } else {
-            # Probe found nothing reachable that isn't already the user's
-            # primary. Last-resort: list BOTH public mirrors so pip has
-            # the maximum chance of finding the package — HEAD probes can
-            # miss what Windows system proxies / transparent corp gateways
-            # resolve for pip. Worst case pip also fails and the user
-            # lands in the same error state without any fallback at all.
+        } elseif ($env:HTTP_PROXY -or $env:HTTPS_PROXY) {
+            # Probe found nothing curl could reach, but user has an HTTP
+            # proxy configured (.env / shell). Trust pip to use the same
+            # proxy to reach pypi / Tsinghua even though our HEAD probe
+            # couldn't (Windows transparent proxies, proxy.pac, SSPI
+            # corp gateways, etc.). Inject BOTH so pip has maximum
+            # coverage — mirror policy parity with strong-signal path.
             $lastResort = New-Object System.Collections.ArrayList
             if ($userIdx -ne 'https://pypi.org/simple') {
                 [void]$lastResort.Add('https://pypi.org/simple')
@@ -348,13 +348,18 @@ function Assert-Network {
             }
             if ($lastResort.Count -gt 0) {
                 $fbUrl = ($lastResort -join ' ')
-                $fbReason = "last-resort (HEAD probe failed; pip may still reach via system/transparent proxy)"
+                $fbReason = "last-resort (HEAD probe failed but HTTP_PROXY configured; trust pip to reach via proxy)"
             }
         }
+        # No further branch: probe failed AND no user proxy → no
+        # fallback. Injecting URLs pip can't reach just inflates error
+        # log noise without changing the outcome.
 
         if ($fbUrl) {
             $env:PIP_EXTRA_INDEX_URL = $fbUrl
             Write-Host "  Injected PIP_EXTRA_INDEX_URL = `"$fbUrl`" ($fbReason; user PIP_INDEX_URL=$env:PIP_INDEX_URL)"
+        } elseif (-not $env:HTTP_PROXY -and -not $env:HTTPS_PROXY) {
+            Write-Host "  PIP_EXTRA_INDEX_URL not injected (HEAD probe failed + no HTTP_PROXY -> pip likely can't reach public mirrors either; skipping to avoid noise)"
         } else {
             Write-Host "  PIP_EXTRA_INDEX_URL not injected (user PIP_INDEX_URL=$env:PIP_INDEX_URL already covers every candidate)"
         }
