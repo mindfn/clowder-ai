@@ -253,20 +253,22 @@ function resolveVenvPath(venvPath: string): string {
   const catCafeMatch = venvPath.match(/^~\/\.cat-cafe\/(.+)/);
   if (catCafeMatch) {
     const subPath = catCafeMatch[1];
-    // Probe priority must match what install/start scripts actually use:
-    //   1. $CAT_CAFE_HOME — explicit override, honored by python-resolve.sh
-    //      and all install scripts. Users on shared deployments / custom
-    //      data dirs (Docker volume mounts, network-attached homes, etc.)
-    //      depend on this (codex P2 3250238772).
-    //   2. <repoRoot>/.cat-cafe — the default that python-resolve.sh
-    //      derives when CAT_CAFE_HOME is unset (Redis-convention layout).
-    //   3. ~/.cat-cafe — legacy pre-a34ab1f2 install location, kept as
-    //      probe target so existing installs from old code don't show
-    //      as "not installed" after the user pulls.
+    // When the operator has explicitly set $CAT_CAFE_HOME, it is the
+    // SOLE authoritative location: scripts/services/* run only against
+    // that path, so a stale venv at <repoRoot>/.cat-cafe or ~/.cat-cafe
+    // is a false-positive (we'd report 'installed' but actual install
+    // attempts and autostart spawn against $CAT_CAFE_HOME and fail).
+    // Don't fall through (codex P2 3250354116).
     if (process.env.CAT_CAFE_HOME) {
-      const envHomePath = resolve(process.env.CAT_CAFE_HOME, subPath);
-      if (existsSync(envHomePath)) return envHomePath;
+      return resolve(process.env.CAT_CAFE_HOME, subPath);
     }
+    // No explicit override — probe the default locations the scripts
+    // would use in that case:
+    //   1. <repoRoot>/.cat-cafe — python-resolve.sh derives this when
+    //      CAT_CAFE_HOME is unset (Redis-convention layout).
+    //   2. ~/.cat-cafe — legacy pre-a34ab1f2 install location, kept so
+    //      old installs from pre-migration code don't show "not installed"
+    //      after the user pulls.
     const projectLocal = resolve(resolveRepoRoot(), '.cat-cafe', subPath);
     if (existsSync(projectLocal)) return projectLocal;
   }
