@@ -20,13 +20,22 @@ const READY_POLL_MAX_ATTEMPTS = 60; // 5 minutes — long enough for slow model 
  * After spawning a service, poll its health probe until it reports `running`,
  * then fire its onReady hooks. Fire-and-forget — never blocks the caller.
  */
-function watchAndAnnounceReady(manifest: ServiceManifest, log: Logger): void {
+function watchAndAnnounceReady(manifest: ServiceManifest, log: Logger, isAlreadyFired?: () => boolean): void {
   void (async () => {
     for (let attempt = 0; attempt < READY_POLL_MAX_ATTEMPTS; attempt++) {
       await new Promise((r) => setTimeout(r, READY_POLL_INTERVAL_MS));
+      // If the push-based ready marker (wireUpSidecarReadyListener) has
+      // already fired 'started' for this service, the watcher's role is
+      // done — exit silently. Without this guard the watcher would
+      // re-fire 'started' a few seconds later and run every always-on
+      // hook (e.g. embedding catch-up) twice on a single startup, which
+      // is wasted work and risks race conditions in hook side effects
+      // (codex P2 3251529185).
+      if (isAlreadyFired?.()) return;
       try {
         const state = await getServiceState(manifest);
         if (state.status === 'running') {
+          if (isAlreadyFired?.()) return; // re-check after async probe
           log.info('[services] ✓ %s — healthy, firing onReady hooks', manifest.name);
           await fireServiceEvent(manifest.id, 'started');
           return;
@@ -162,8 +171,13 @@ export async function autoStartEnabledServices(log: Logger): Promise<void> {
       if (child.pid) setServicePid(manifest.id, child.pid);
       // Push-based fast path: as soon as the sidecar prints its ready
       // marker (or uvicorn's "Uvicorn running on http"), fire 'started'.
-      // No need to wait for the polling watcher below.
+      // Local flag tells the polling watcher to skip its own fire so we
+      // dispatch exactly one logical 'started' per spawn (codex P2
+      // 3251529185).
+      let markerFired = false;
       wireUpSidecarReadyListener(child, manifest.id, () => {
+        if (markerFired) return; // wireUp also has its own internal guard
+        markerFired = true;
         log.info('[services] ✓ %s — ready marker seen, firing onReady hooks', manifest.name);
         void fireServiceEvent(manifest.id, 'started');
         // After readiness, release parent-side pipe FDs so the child
@@ -179,11 +193,9 @@ export async function autoStartEnabledServices(log: Logger): Promise<void> {
       child.unref();
       // Polling watcher as safety net (covers slow boot beyond stdout
       // buffer flush, missing markers in old Python scripts, etc.).
-      // fireServiceEvent itself does NOT dedupe across calls — but every
-      // catch-up hook we register is idempotent (embedPending: pending=0
-      // returns immediately), so running it 2× (push + this watcher) is
-      // a free no-op rather than a correctness problem.
-      watchAndAnnounceReady(manifest, log);
+      // Pass markerFired getter so the watcher bails when the push path
+      // already won the race — one logical 'started' event per spawn.
+      watchAndAnnounceReady(manifest, log, () => markerFired);
     } catch {
       log.warn('[services] ✗ %s — failed to spawn start script', manifest.name);
     }
