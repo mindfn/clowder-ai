@@ -355,21 +355,35 @@ check_network() {
       ;;
   esac
 
-  # Inject HTTP_PROXY/HTTPS_PROXY from the system proxy candidate if:
-  #   1) we detected one (sys_proxy_candidate non-empty)
-  #   2) user hasn't set HTTP_PROXY/HTTPS_PROXY in env
-  #   3) at least one source's probe needed the proxy to succeed
-  # Without this, pip and huggingface_hub running in install scripts
-  # won't see the proxy (curl probe used candidate explicitly via -x,
-  # but Python tools read env). Mirrors .ps1 Assert-Network's
-  # $needProxyInjection injection block.
+  # Deliberately do NOT auto-inject HTTP_PROXY / HTTPS_PROXY here,
+  # even when we detected a system proxy candidate AND some source
+  # only reached via that candidate. Real-world regression on Mac
+  # (user feedback): forcing pip to tunnel through clash verge's
+  # mixed port (7897) breaks for hosts the user's clash rules mark
+  # as DIRECT (e.g. tsinghua):
+  #   1. We set PIP_INDEX_URL=tsinghua + inject HTTPS_PROXY=clash
+  #   2. pip sends CONNECT tsinghua:443 to clash
+  #   3. clash sees rule "tsinghua → DIRECT" and tries to forward
+  #      transparently, but the CONNECT tunnel handshake breaks on
+  #      SSL handshake → pip retries until 3-attempt cap fails.
+  # NO_PROXY also didn't reliably bypass pip's proxy logic across
+  # pip / requests / urllib3 versions.
+  #
+  # Instead: trust the OS-level proxy stack. macOS urllib /
+  # huggingface_hub reads system proxy via system facilities; curl
+  # probes above used -x explicitly so we get accurate per-source
+  # reachability without forcing the user's tooling to follow our
+  # decision. User can still .env-export HTTP_PROXY if they want
+  # everything tunneled — that path is unchanged.
+  #
+  # .ps1 equivalent (Windows Assert-Network) still injects because
+  # Windows tooling has no OS-level fallback — that asymmetry is
+  # intentional and documented there.
   if [ -n "$sys_proxy_candidate" ] && [ -z "${HTTP_PROXY:-}${HTTPS_PROXY:-}" ]; then
     if [ "$pypi_mode" = "proxy" ] || [ "$tsinghua_mode" = "proxy" ] || \
        [ "${hf_mode:-}" = "proxy" ] || [ "${hf_mirror_mode:-}" = "proxy" ] || \
        [ "${user_idx_mode:-}" = "proxy" ]; then
-      export HTTP_PROXY="$sys_proxy_candidate"
-      export HTTPS_PROXY="$sys_proxy_candidate"
-      echo "  注入 HTTP_PROXY / HTTPS_PROXY = ${sys_proxy_candidate}（至少一个源需要走代理才能 reach；让 pip / huggingface_hub 也用这个代理）"
+      echo "  检测到系统代理 ${sys_proxy_candidate}（对至少一个源可达），但不主动注入 HTTP_PROXY 到 install 子进程——pip / huggingface_hub 走 OS 系统代理栈。如需强制 pip 也走该代理，请在 .env 显式: HTTP_PROXY=${sys_proxy_candidate}"
     fi
   fi
 
