@@ -261,37 +261,69 @@ function Test-ResolverProxyAnonymous {
     }
 }
 
-function Sync-ResolverSystemProxy {
-    # Mirror of Sync-SystemProxy in prereq-check.ps1 — we duplicate it here
-    # rather than source prereq-check.ps1 because python-bootstrap's
-    # install-python.ps1 entry only sources python-resolve.ps1 (it's the
-    # meta-service entrypoint, doesn't need the rest of prereq-check). Without
-    # this, curl.exe below would dial python.org directly, ignoring any
-    # Windows system proxy the user has configured — observed: 12 KB/s vs
-    # multi-MB/s when proxy is wired up.
-    if ($env:HTTP_PROXY -or $env:HTTPS_PROXY) { return }
+function Get-ResolverSystemProxyCandidate {
+    # Mirror of prereq-check.ps1::Get-SystemProxyCandidate — returns the
+    # candidate URL from env > registry, no probing. Per-target decision
+    # happens at the call site (resolver downloads GitHub PBS, NOT pypi —
+    # so the previous "probe pypi to gate the proxy" was wrong for this
+    # path: pypi-via-proxy can fail while github-via-proxy works).
+    if ($env:HTTPS_PROXY) { return $env:HTTPS_PROXY }
+    if ($env:HTTP_PROXY) { return $env:HTTP_PROXY }
     try {
         $reg = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
         if ($reg.ProxyEnable -and $reg.ProxyServer) {
-            $proxy = "http://$($reg.ProxyServer)"
-            # Probe anonymously BEFORE injecting. If the proxy needs auth
-            # we don't have, leaving the env unset is correct — pip /
-            # huggingface_hub would fail with 407 anyway, and the
-            # downstream Assert-Network in prereq-check.ps1 will then
-            # surface the actionable WARNING. Injecting a dead proxy
-            # would let Assert-Network think proxy env is OK and skip
-            # the warning entirely (the bug that f3a86c0d fixed in
-            # prereq-check.ps1 but that this file silently re-introduced).
-            $usable = Test-ResolverProxyAnonymous -ProxyUrl $proxy -TargetUrl "https://pypi.org/simple/" -TimeoutSec 5
-            if ($usable) {
-                $env:HTTP_PROXY = $proxy
-                $env:HTTPS_PROXY = $proxy
-                [Console]::Error.WriteLine("  System proxy synced for resolver: $proxy")
-            } else {
-                [Console]::Error.WriteLine("  System proxy detected but unreachable/auth-required, not injecting: $proxy")
-            }
+            return "http://$($reg.ProxyServer)"
         }
     } catch {}
+    return $null
+}
+
+function Test-ResolverSourceMode {
+    # Same two-mode probe as prereq-check.ps1::Test-SourceMode but inlined
+    # here so the resolver doesn't have to source prereq-check.ps1.
+    # CandidateProxy is explicit so probing GitHub doesn't depend on
+    # whatever Sync-* shim already injected env for unrelated hosts.
+    param([string]$Url, [int]$TimeoutSec = 5, [string]$CandidateProxy = $null)
+    try {
+        $req = [System.Net.HttpWebRequest]::Create($Url)
+        $req.Proxy = $null
+        $req.Method = 'HEAD'
+        $req.Timeout = $TimeoutSec * 1000
+        $resp = $req.GetResponse()
+        $resp.Close()
+        return 'direct'
+    } catch {}
+    if ($CandidateProxy) {
+        try {
+            $webProxy = New-Object System.Net.WebProxy($CandidateProxy)
+            $webProxy.UseDefaultCredentials = $false
+            $webProxy.Credentials = $null
+            $req = [System.Net.HttpWebRequest]::Create($Url)
+            $req.Proxy = $webProxy
+            $req.Method = 'HEAD'
+            $req.Timeout = $TimeoutSec * 1000
+            $resp = $req.GetResponse()
+            $resp.Close()
+            return 'proxy'
+        } catch {}
+    }
+    return 'unreachable'
+}
+
+# Back-compat shim: install-python.ps1 source-calls Sync-ResolverSystemProxy.
+# It used to probe pypi and inject env if reachable; that was wrong for
+# the resolver path (which actually downloads from GitHub) and would gate
+# the GitHub proxy decision on an unrelated pypi probe. New behavior:
+# clear .NET DefaultWebProxy so the IWR call later doesn't silently use
+# SSPI through the system proxy. The actual proxy decision happens
+# inline in Install-PythonToProjectDirInner against $tarballUrl.
+function Sync-ResolverSystemProxy {
+    if ($env:HTTP_PROXY -or $env:HTTPS_PROXY) { return }
+    try { [System.Net.WebRequest]::DefaultWebProxy = $null } catch {}
+    $candidate = Get-ResolverSystemProxyCandidate
+    if ($candidate) {
+        [Console]::Error.WriteLine("  System proxy detected: $candidate (will be tested against the download URL)")
+    }
 }
 
 function Install-PythonToProjectDirInner {
@@ -322,6 +354,20 @@ function Install-PythonToProjectDirInner {
     $extractTmp  = Join-Path $env:TEMP 'cat-cafe-python-extract'
 
     [Console]::Error.WriteLine("  Downloading portable Python $pbsVersion (AMD64) from python-build-standalone...")
+    # Probe the ACTUAL download URL with both direct and via-proxy modes —
+    # NOT pypi.org. Internal networks that can reach GitHub releases via
+    # a corp proxy were previously broken because Sync-ResolverSystemProxy
+    # gated proxy injection on a pypi probe; if pypi-via-proxy failed,
+    # the GitHub proxy was never tried.
+    $candidate = Get-ResolverSystemProxyCandidate
+    $mode = Test-ResolverSourceMode -Url $tarballUrl -TimeoutSec 6 -CandidateProxy $candidate
+    if ($mode -eq 'unreachable') {
+        [Console]::Error.WriteLine(
+            "  Cannot reach $tarballUrl (direct or via candidate proxy '$candidate'). " +
+            "Configure HTTP_PROXY in .env or check network — see prereq-check guidance."
+        )
+        return $false
+    }
     # Use Invoke-WebRequest (.NET HttpClient TLS stack) instead of curl.exe.
     # On Windows curl uses SChannel which intermittently bails on GitHub's
     # objects.githubusercontent.com CDN with "server closed abruptly
@@ -333,7 +379,14 @@ function Install-PythonToProjectDirInner {
     $ProgressPreference = 'SilentlyContinue'
     try {
         try {
-            Invoke-WebRequest -Uri $tarballUrl -OutFile $tarballPath -UseBasicParsing -ErrorAction Stop
+            if ($mode -eq 'proxy' -and $candidate) {
+                [Console]::Error.WriteLine("  Using proxy for download: $candidate")
+                Invoke-WebRequest -Uri $tarballUrl -OutFile $tarballPath -UseBasicParsing -Proxy $candidate -ErrorAction Stop
+            } else {
+                # direct: explicitly null .NET proxy so the system proxy
+                # doesn't get used through .NET DefaultWebProxy fallback.
+                Invoke-WebRequest -Uri $tarballUrl -OutFile $tarballPath -UseBasicParsing -ErrorAction Stop
+            }
         } catch {
             [Console]::Error.WriteLine("  Failed to download Python tarball: $($_.Exception.Message)")
             return $false

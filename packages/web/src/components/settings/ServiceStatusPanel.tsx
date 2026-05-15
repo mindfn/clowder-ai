@@ -448,6 +448,22 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
                   <p className="mt-1 truncate text-[11px] text-cafe-secondary font-mono">{progress.get(m.id)}</p>
                 )}
                 {s.error && <p className="mt-0.5 truncate text-[11px] text-conn-red-text">{s.error}</p>}
+                {installFailed && s.lastInstallError && (
+                  // Persistent install-failure detail. Toast also fires once on the
+                  // installing → failed transition (see useEffect on line 175); this
+                  // line keeps the detail visible after page refresh / 关闭浏览器
+                  // / API-startup stale-state sweep, so users always see why.
+                  <p
+                    className="mt-0.5 truncate text-[11px] text-conn-red-text"
+                    title={
+                      s.lastInstallTroubleshootHint
+                        ? `${s.lastInstallError}\n\n${s.lastInstallTroubleshootHint}`
+                        : s.lastInstallError
+                    }
+                  >
+                    {s.lastInstallError}
+                  </p>
+                )}
               </div>
               <div className={settingsResourceActionGroupClass}>
                 {notInstalled || installFailed ? (
