@@ -257,42 +257,46 @@ function Assert-Network {
         }
     }
 
-    # Probe BOTH public pip sources (pypi.org and Tsinghua mirror), no
-    # short-circuit. Collect every reachable URL into $publicPipUrls
-    # (priority order: pypi → Tsinghua). pip natively supports multiple
-    # PIP_EXTRA_INDEX_URL values separated by space — when the primary
-    # source misses a package pip tries each extra-index in order — so
-    # offering both mirrors maximises fallback coverage instead of
-    # forcing a single pypi-OR-Tsinghua choice.
-    $publicPipUrls = New-Object System.Collections.ArrayList
+    # Split classification: direct group (NO_PROXY) and proxy group
+    # (HTTP_PROXY). Final PIP_EXTRA_INDEX_URL list orders direct first,
+    # proxy second — pip walks the list in order so this means "try
+    # no-proxy sources first, then proxy sources". Matches user's
+    # expectation: 先试无代理的，缺包再试有代理的.
+    $directUrls = New-Object System.Collections.ArrayList
+    $proxyUrls = New-Object System.Collections.ArrayList
 
     $pypiMode = Test-SourceMode -Url "https://pypi.org/simple/" -TimeoutSec 5 -CandidateProxy $candidate
     $tsinghuaMode = Test-SourceMode -Url "https://pypi.tuna.tsinghua.edu.cn/simple/" -TimeoutSec 5 -CandidateProxy $candidate
 
     if ($pypiMode -eq 'direct') {
-        Write-Host "  PyPI connectivity [OK] (direct)"
+        Write-Host "  PyPI connectivity [OK] (direct -> no-proxy group)"
         Add-NoProxyHost "pypi.org"
-        [void]$publicPipUrls.Add("https://pypi.org/simple")
+        [void]$directUrls.Add("https://pypi.org/simple")
     } elseif ($pypiMode -eq 'proxy') {
-        Write-Host "  PyPI connectivity [OK] (via proxy: $candidate)"
+        Write-Host "  PyPI connectivity [OK] (via proxy: $candidate -> proxy group)"
         $needProxyInjection = $true
-        [void]$publicPipUrls.Add("https://pypi.org/simple")
+        [void]$proxyUrls.Add("https://pypi.org/simple")
     } else {
         Write-Host "  WARNING: PyPI unreachable both direct and via proxy"
     }
 
     if ($tsinghuaMode -eq 'direct') {
-        Write-Host "  Tsinghua mirror reachable [OK] (direct) — pip will bypass proxy"
+        Write-Host "  Tsinghua mirror reachable [OK] (direct -> no-proxy group)"
         Add-NoProxyHost "pypi.tuna.tsinghua.edu.cn"
         Add-NoProxyHost "mirrors.tuna.tsinghua.edu.cn"
-        [void]$publicPipUrls.Add("https://pypi.tuna.tsinghua.edu.cn/simple/")
+        [void]$directUrls.Add("https://pypi.tuna.tsinghua.edu.cn/simple/")
     } elseif ($tsinghuaMode -eq 'proxy') {
-        Write-Host "  Tsinghua mirror reachable [OK] (via proxy: $candidate) — pip will route through proxy"
+        Write-Host "  Tsinghua mirror reachable [OK] (via proxy: $candidate -> proxy group)"
         $needProxyInjection = $true
-        [void]$publicPipUrls.Add("https://pypi.tuna.tsinghua.edu.cn/simple/")
+        [void]$proxyUrls.Add("https://pypi.tuna.tsinghua.edu.cn/simple/")
     } elseif ($pypiMode -eq 'unreachable') {
         Write-ProxyGuidance -Context "pypi.org 和清华镜像在 direct + via proxy 两种模式下都不可达，pip install 一定会失败。"
     }
+
+    # Concat: direct first, then proxy.
+    $publicPipUrls = New-Object System.Collections.ArrayList
+    foreach ($u in $directUrls) { [void]$publicPipUrls.Add($u) }
+    foreach ($u in $proxyUrls) { [void]$publicPipUrls.Add($u) }
 
     # Auto-pick primary index when user didn't set one and pypi is
     # unreachable: prefer Tsinghua. Preserves legacy behavior — users

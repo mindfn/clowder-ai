@@ -170,20 +170,23 @@ check_network() {
   pypi_mode=$(_test_source_mode "https://pypi.org/simple/" "$timeout")
   tsinghua_mode=$(_test_source_mode "https://pypi.tuna.tsinghua.edu.cn/simple" "$timeout")
 
-  # Space-separated, priority order (pypi → Tsinghua). The
-  # ${var:+ } expansion adds a leading separator only when the list is
-  # already non-empty, so prepending is safe without a helper function.
-  local public_pip_urls=""
+  # Split classification: direct group (NO_PROXY) and proxy group
+  # (HTTP_PROXY). Final PIP_EXTRA_INDEX_URL list orders direct first,
+  # proxy second — pip walks the list in order so this means "try
+  # no-proxy sources first, then proxy sources". Matches the user's
+  # expectation: 先试无代理的，缺包再试有代理的.
+  local direct_urls=""
+  local proxy_urls=""
 
   case "$pypi_mode" in
     direct)
-      echo "  PyPI 连接 ✓ (direct)"
+      echo "  PyPI 连接 ✓ (direct → 无代理组)"
       _add_no_proxy_host "pypi.org"
-      public_pip_urls="${public_pip_urls}${public_pip_urls:+ }https://pypi.org/simple"
+      direct_urls="${direct_urls}${direct_urls:+ }https://pypi.org/simple"
       ;;
     proxy)
-      echo "  PyPI 连接 ✓ (via env proxy)"
-      public_pip_urls="${public_pip_urls}${public_pip_urls:+ }https://pypi.org/simple"
+      echo "  PyPI 连接 ✓ (via env proxy → 有代理组)"
+      proxy_urls="${proxy_urls}${proxy_urls:+ }https://pypi.org/simple"
       ;;
     unreachable)
       echo "WARNING: 无法连接 PyPI (https://pypi.org)，pip install 主源可能会失败"
@@ -192,15 +195,15 @@ check_network() {
 
   case "$tsinghua_mode" in
     direct)
-      echo "  清华 pip 镜像 ✓ (direct)"
+      echo "  清华 pip 镜像 ✓ (direct → 无代理组)"
       _add_no_proxy_host "pypi.tuna.tsinghua.edu.cn"
       _add_no_proxy_host "mirrors.tuna.tsinghua.edu.cn"
-      public_pip_urls="${public_pip_urls}${public_pip_urls:+ }https://pypi.tuna.tsinghua.edu.cn/simple"
+      direct_urls="${direct_urls}${direct_urls:+ }https://pypi.tuna.tsinghua.edu.cn/simple"
       ;;
     proxy)
-      echo "  清华 pip 镜像 ✓ (via env proxy)"
+      echo "  清华 pip 镜像 ✓ (via env proxy → 有代理组)"
       # Deliberately NOT adding to NO_PROXY so pip honors HTTP_PROXY.
-      public_pip_urls="${public_pip_urls}${public_pip_urls:+ }https://pypi.tuna.tsinghua.edu.cn/simple"
+      proxy_urls="${proxy_urls}${proxy_urls:+ }https://pypi.tuna.tsinghua.edu.cn/simple"
       ;;
     unreachable)
       if [ "$pypi_mode" = "unreachable" ]; then
@@ -208,6 +211,11 @@ check_network() {
       fi
       ;;
   esac
+
+  # Concat: direct first, then proxy.
+  local public_pip_urls=""
+  if [ -n "$direct_urls" ]; then public_pip_urls="$direct_urls"; fi
+  if [ -n "$proxy_urls" ]; then public_pip_urls="${public_pip_urls}${public_pip_urls:+ }$proxy_urls"; fi
 
   # Auto-pick primary index when user didn't set one and pypi is
   # unreachable: prefer Tsinghua. Preserves legacy behavior — users
