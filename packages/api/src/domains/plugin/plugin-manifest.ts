@@ -119,11 +119,16 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
         args = rawArgs as string[];
       }
 
+      const command = rr['command'];
+      if (command != null && typeof command !== 'string') {
+        throw new Error(`Invalid resource command in ${yamlPath}: must be a string`);
+      }
+
       resources.push({
         type: type as PluginResourceDef['type'],
         path,
         name: rr['name'] as string | undefined,
-        command: rr['command'] as string | undefined,
+        command: command as string | undefined,
         args,
         transport: rr['transport'] as string | undefined,
       });
