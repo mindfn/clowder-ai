@@ -360,6 +360,17 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       wireUpSidecarReadyListener(child, id, () => {
         request.log.info(`[services] /start ${id} → ready marker seen, firing 'started' event`);
         void fireServiceEvent(id, 'started');
+        // After readiness, release the parent-side pipe FDs so the child
+        // isn't tied to the parent's stdio lifecycle. Python ignores
+        // SIGPIPE by default (BrokenPipeError on write to closed pipe
+        // gets swallowed by uvicorn's logging module), so the core serve
+        // loop is unaffected. Without this, the parent's `child.stdout`
+        // listener pins the child handle in the parent process and the
+        // child's stdio FDs stay tied to parent's process FDs — when the
+        // API exits or restarts, the child can break (codex P1
+        // 3249880339).
+        child.stdout?.destroy();
+        child.stderr?.destroy();
       });
       child.on('error', () => {});
       if (!child.pid) {
