@@ -355,7 +355,10 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
           await new Promise((r) => setTimeout(r, 1500));
           const healthState = await getServiceState(manifest);
           if (healthState.status === 'running' || healthState.status === 'starting') {
-            setServicePid(id, child.pid);
+            // Do NOT store child.pid here — the launcher already exited, so
+            // this PID is stale. Storing it would make /stop kill a reused PID
+            // and return success without stopping the real daemon. Letting it
+            // stay empty forces /stop to fall through to script/port-based stop.
             // Spawn finished cleanly + service responding — background-watch
             // until fully running so the UI's 启动中 → 运行中 transition is
             // reflected without keeping the HTTP handler open.
