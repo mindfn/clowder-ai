@@ -278,12 +278,9 @@ $env:EMBED_ENABLED = if ($embedEnabled) { "1" } else { "0" }
 # EMBED_URL/EMBED_PORT so the API can locate the sidecar.
 $embedPortDefault = if ($env:EMBED_PORT) { [int]$env:EMBED_PORT } else { 9880 }
 $configuredEmbedUrl = if ($env:EMBED_URL) { $env:EMBED_URL.Trim() } else { "" }
-$EmbedPort = if ($configuredEmbedUrl) {
-    $parsedPort = Get-LoopbackHttpPort -Url $configuredEmbedUrl -DefaultPort $embedPortDefault
-    if ($null -ne $parsedPort) { [int]$parsedPort } else { $embedPortDefault }
-} else {
-    $embedPortDefault
-}
+$localEmbedPort = Get-LoopbackHttpPort -Url $configuredEmbedUrl -DefaultPort $embedPortDefault
+$EmbedPort = if ($null -ne $localEmbedPort) { [int]$localEmbedPort } else { $embedPortDefault }
+$embedIsLocal = (-not $configuredEmbedUrl) -or ($null -ne $localEmbedPort)
 if (-not $configuredEmbedUrl) {
     $env:EMBED_URL = "http://127.0.0.1:$EmbedPort"
 }
@@ -291,9 +288,9 @@ if (-not $configuredEmbedUrl) {
 Write-Step "Check ports"
 Stop-PortProcess -Port ([int]$ApiPort) -Name "API" -PidFile $ApiPidFile -ProjectRoot $ProjectRoot
 Stop-PortProcess -Port ([int]$WebPort) -Name "Frontend" -PidFile $WebPidFile -ProjectRoot $ProjectRoot
-# Embedding port: clean any stale sidecar from a prior crashed run so
-# autoStartEnabledServices can rebind freshly.
-Stop-PortProcess -Port ([int]$EmbedPort) -Name "Embedding" -PidFile (Join-Path $RunDir "embed-$EmbedPort.pid") -ProjectRoot $ProjectRoot
+if ($embedIsLocal) {
+    Stop-PortProcess -Port ([int]$EmbedPort) -Name "Embedding" -PidFile (Join-Path $RunDir "embed-$EmbedPort.pid") -ProjectRoot $ProjectRoot
+}
 
 # -- Storage (Redis or Memory) -------------------------------
 Write-Step "Storage"
