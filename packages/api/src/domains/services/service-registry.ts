@@ -100,6 +100,20 @@ const KNOWN_SERVICES: ServiceManifest[] = [
   },
 ];
 
+/**
+ * Strict port parser: rejects partial parses like `Number.parseInt('127.0.0.1:9880')`
+ * (returns 127) or `Number.parseInt('9880/foo')` (returns 9880). Only accepts
+ * a string that IS a positive integer in the valid port range. Codex P2 3249279172.
+ */
+function parseStrictPort(val: string | undefined): number | null {
+  if (!val) return null;
+  const trimmed = val.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const n = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(n) || n <= 0 || n > 65535) return null;
+  return n;
+}
+
 export function resolveServicePort(manifest: ServiceManifest): number | null {
   // Same priority chain as resolveServiceEndpoint so spawn and health
   // probe agree on the port. Previously this only looked at
@@ -115,11 +129,8 @@ export function resolveServicePort(manifest: ServiceManifest): number | null {
   const cfg = getServiceConfig(manifest.id);
   if (cfg.port) return cfg.port;
   for (const envVar of manifest.configVars) {
-    const val = process.env[envVar];
-    if (!val) continue;
-    if (val.startsWith('http')) continue; // env-set URL, not a bare port
-    const parsed = Number.parseInt(val, 10);
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    const port = parseStrictPort(process.env[envVar]);
+    if (port) return port;
   }
   if (manifest.port) return manifest.port;
   return null;
@@ -152,11 +163,11 @@ export function resolveServiceEndpoint(idOrManifest: string | ServiceManifest): 
   const cfg = getServiceConfig(manifest.id);
   if (cfg.port) return `http://127.0.0.1:${cfg.port}`;
 
-  // 3. env port number
+  // 3. env port number (strict — reject host:port partial parses like
+  //    `EMBED_URL=127.0.0.1:9880` resolving to port 127)
   for (const envVar of manifest.configVars) {
-    const val = process.env[envVar];
-    const parsed = val ? Number.parseInt(val, 10) : Number.NaN;
-    if (Number.isFinite(parsed) && parsed > 0) return `http://127.0.0.1:${parsed}`;
+    const port = parseStrictPort(process.env[envVar]);
+    if (port) return `http://127.0.0.1:${port}`;
   }
 
   // 4. manifest default

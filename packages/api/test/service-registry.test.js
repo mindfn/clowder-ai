@@ -94,4 +94,59 @@ describe('resolveHealthUrl', () => {
       if (savedPort !== undefined) process.env.EMBED_PORT = savedPort;
     }
   });
+
+  it('rejects partial-parse strings like host:port (codex P2 3249279172)', () => {
+    // `Number.parseInt('127.0.0.1:9880')` returns 127 — a malformed env value
+    // must NOT cause the resolver to silently spawn on port 127. Strict parser
+    // requires the entire string to be a positive integer in the port range.
+    const savedUrl = process.env.EMBED_URL;
+    const savedPort = process.env.EMBED_PORT;
+    delete process.env.EMBED_URL;
+    process.env.EMBED_PORT = '127.0.0.1:9880'; // looks like host:port, NOT a port
+    try {
+      const manifest = getServiceById('embedding-model');
+      const url = resolveHealthUrl(manifest);
+      // Should fall through to manifest default (9880), NOT parse 127.
+      assert.equal(url, 'http://127.0.0.1:9880/health');
+    } finally {
+      if (savedUrl !== undefined) process.env.EMBED_URL = savedUrl;
+      else delete process.env.EMBED_URL;
+      if (savedPort !== undefined) process.env.EMBED_PORT = savedPort;
+      else delete process.env.EMBED_PORT;
+    }
+  });
+
+  it('rejects trailing-junk strings like 9880/foo (codex P2 3249279172)', () => {
+    const savedUrl = process.env.EMBED_URL;
+    const savedPort = process.env.EMBED_PORT;
+    delete process.env.EMBED_URL;
+    process.env.EMBED_PORT = '9880/foo';
+    try {
+      const manifest = getServiceById('embedding-model');
+      const url = resolveHealthUrl(manifest);
+      assert.equal(url, 'http://127.0.0.1:9880/health'); // manifest default, not parsed
+    } finally {
+      if (savedUrl !== undefined) process.env.EMBED_URL = savedUrl;
+      else delete process.env.EMBED_URL;
+      if (savedPort !== undefined) process.env.EMBED_PORT = savedPort;
+      else delete process.env.EMBED_PORT;
+    }
+  });
+
+  it('rejects out-of-range port values', () => {
+    const savedUrl = process.env.EMBED_URL;
+    const savedPort = process.env.EMBED_PORT;
+    delete process.env.EMBED_URL;
+    process.env.EMBED_PORT = '99999'; // > 65535
+    try {
+      const manifest = getServiceById('embedding-model');
+      const url = resolveHealthUrl(manifest);
+      assert.equal(url, 'http://127.0.0.1:9880/health'); // manifest default
+    } finally {
+      if (savedUrl !== undefined) process.env.EMBED_URL = savedUrl;
+      else delete process.env.EMBED_URL;
+      if (savedPort !== undefined) process.env.EMBED_PORT = savedPort;
+      else delete process.env.EMBED_PORT;
+    }
+  });
 });
