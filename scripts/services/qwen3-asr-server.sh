@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/qwen3-asr-server.sh
 # Start local Qwen3-ASR server for Cat Cafe voice input (MLX backend).
-# Drop-in replacement for whisper-server.sh — same port, same API.
+# Drop-in replacement for whisper-server.sh -- same port, same API.
 #
 # Usage:
 #   ./scripts/qwen3-asr-server.sh                                              # default: 8bit

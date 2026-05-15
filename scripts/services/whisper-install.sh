@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/services/whisper-install.sh
 # Install dependencies for Whisper ASR (venv + mlx-whisper / faster-whisper).
-# Pure declarative — install-template.sh handles the actual pipeline (F198).
+# Pure declarative -- install-template.sh handles the actual pipeline (F198).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

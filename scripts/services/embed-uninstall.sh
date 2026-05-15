@@ -20,17 +20,17 @@ VENV_DIR_LEGACY="${HOME}/.cat-cafe/embed-venv"
 
 removed=0
 if [ -d "$VENV_DIR" ]; then
-  echo "删除虚拟环境: $VENV_DIR ..."
+  echo "Removing venv: $VENV_DIR ..."
   rm -rf "$VENV_DIR"
   removed=1
 fi
 if [ -d "$VENV_DIR_LEGACY" ] && [ "$VENV_DIR_LEGACY" != "$VENV_DIR" ]; then
-  echo "删除遗留虚拟环境（pre-a34ab1f2 路径）: $VENV_DIR_LEGACY ..."
+  echo "Removing legacy venv (pre-a34ab1f2 path): $VENV_DIR_LEGACY ..."
   rm -rf "$VENV_DIR_LEGACY"
   removed=1
 fi
 if [ "$removed" = "0" ]; then
-  echo "虚拟环境不存在: $VENV_DIR (legacy: $VENV_DIR_LEGACY)"
+  echo "Venv not found: $VENV_DIR (legacy: $VENV_DIR_LEGACY)"
   exit 0
 fi
-echo "卸载完成。"
+echo "Uninstall complete."

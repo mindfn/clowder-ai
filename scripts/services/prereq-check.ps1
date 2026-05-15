@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Shared prerequisite check for ML service install scripts on Windows.
 .DESCRIPTION
@@ -15,7 +15,7 @@ function Resolve-BootstrapPython {
     #   4. Last resort: download python.org installer and silent-install
     #      to the project dir (PrependPath=0, no system pollution)
     #
-    # Step 4 hits the network — call Sync-SystemProxy first so HTTP_PROXY /
+    # Step 4 hits the network -- call Sync-SystemProxy first so HTTP_PROXY /
     # HTTPS_PROXY are populated from the Windows registry before any download.
     # Otherwise users behind a corporate / WSL Proxy proxy would see Step 4
     # fail to reach python.org while the subsequent Assert-Network already
@@ -66,7 +66,7 @@ function Assert-DiskSpace {
 }
 
 function Test-ProxyAnonymous {
-    # Probe a proxy WITH NO CREDENTIALS — this matches what pip /
+    # Probe a proxy WITH NO CREDENTIALS -- this matches what pip /
     # huggingface_hub / curl will do once we set HTTP_PROXY. PowerShell's
     # default Invoke-WebRequest auto-fills the logged-in Windows user's
     # NTLM/Kerberos token when challenged by a corp proxy with 407, so
@@ -88,7 +88,7 @@ function Test-ProxyAnonymous {
         $client = New-Object System.Net.Http.HttpClient($handler)
         $client.Timeout = [TimeSpan]::FromSeconds($TimeoutSec)
         $response = $client.GetAsync($TargetUrl).Result
-        return $response.IsSuccessStatusCode  # 407 → IsSuccessStatusCode = $false
+        return $response.IsSuccessStatusCode  # 407 -> IsSuccessStatusCode = $false
     } catch {
         return $false
     } finally {
@@ -98,12 +98,12 @@ function Test-ProxyAnonymous {
 }
 
 function Get-SystemProxyCandidate {
-    # Return the candidate proxy URL (env override → IE registry → $null)
+    # Return the candidate proxy URL (env override -> IE registry -> $null)
     # WITHOUT gating on a single pypi.org probe. Per-source decisions live
     # in Test-SourceMode below. Previous gating broke the user-reported
-    # case where corp-proxy → pypi.org fails but corp-proxy → Tsinghua
-    # works: pypi probe failed → candidate dropped → mirror probe ran
-    # with no proxy candidate → mirror's via-proxy mode never got tested.
+    # case where corp-proxy -> pypi.org fails but corp-proxy -> Tsinghua
+    # works: pypi probe failed -> candidate dropped -> mirror probe ran
+    # with no proxy candidate -> mirror's via-proxy mode never got tested.
     if ($env:HTTPS_PROXY) { return $env:HTTPS_PROXY }
     if ($env:HTTP_PROXY) { return $env:HTTP_PROXY }
     try {
@@ -117,7 +117,7 @@ function Get-SystemProxyCandidate {
 
 # Back-compat shim: legacy callers still source-call Sync-SystemProxy.
 # Behavior changed from "auto-inject after pypi probe" to "informational
-# only" — the per-source decisions live in Assert-Network now.
+# only" -- the per-source decisions live in Assert-Network now.
 function Sync-SystemProxy {
     if ($env:HTTP_PROXY -or $env:HTTPS_PROXY) {
         Write-Host "  Proxy env already set: $env:HTTP_PROXY"
@@ -145,7 +145,7 @@ function Test-UrlReachable {
 }
 
 function Test-SourceMode {
-    # Probe a URL twice — first with NO proxy (matches `curl --noproxy '*'`),
+    # Probe a URL twice -- first with NO proxy (matches `curl --noproxy '*'`),
     # then with the supplied candidate proxy URL (env override OR the system-
     # proxy URL from Get-SystemProxyCandidate). Returns 'direct' / 'proxy' /
     # 'unreachable' so the caller can decide PIP_INDEX_URL + NO_PROXY in
@@ -166,7 +166,7 @@ function Test-SourceMode {
         $resp.Close()
         return 'direct'
     } catch {}
-    # 2. Try via candidate proxy (anonymous — DON'T let .NET auto-fill the
+    # 2. Try via candidate proxy (anonymous -- DON'T let .NET auto-fill the
     #    SSPI token, that would mask auth-required corp proxies as reachable).
     $proxyUrl = $CandidateProxy
     if (-not $proxyUrl) {
@@ -195,19 +195,19 @@ function Write-ProxyGuidance {
     param([string]$Context)
     Write-Host ""
     Write-Host "  WARNING: $Context"
-    Write-Host "  当前网络下既不能直连 pypi.org / huggingface.co，也不能访问我们默认尝试的镜像（清华 / hf-mirror）。"
-    Write-Host "  你需要在 .env 中（或临时 export 后重试）做下面任一选择："
+    Write-Host "  Cannot directly reach pypi.org / huggingface.co under the current network, and the default mirrors (Tsinghua / hf-mirror) are also unreachable."
+    Write-Host "  Pick one of the options below in .env (or set env temporarily and retry):"
     Write-Host ""
-    Write-Host "  方案 A — 配置一个可用的 HTTP 代理（地址可按 RFC 标准包含认证信息）:"
-    Write-Host "    HTTP_PROXY=http://<host>:<port>                 # 无认证代理"
-    Write-Host "    HTTP_PROXY=http://<user>:<password>@<host>:<port>   # 带认证的标准代理"
-    Write-Host "    HTTPS_PROXY=<同上>"
+    Write-Host "  Option A - Configure a working HTTP proxy (RFC-standard URL can include credentials):"
+    Write-Host "    HTTP_PROXY=http://<host>:<port>                 # proxy without auth"
+    Write-Host "    HTTP_PROXY=http://<user>:<password>@<host>:<port>   # standard proxy with auth"
+    Write-Host "    HTTPS_PROXY=<same as above>"
     Write-Host ""
-    Write-Host "  方案 B — 配置当前网络下可达的镜像源（不走代理）:"
-    Write-Host "    PIP_INDEX_URL=<可达的 pip 镜像，如 https://pypi.tuna.tsinghua.edu.cn/simple>"
-    Write-Host "    HF_ENDPOINT=<可达的 HuggingFace 镜像，如 https://hf-mirror.com>"
+    Write-Host "  Option B - Configure a mirror source reachable on the current network (no proxy):"
+    Write-Host "    PIP_INDEX_URL=<a reachable pip mirror, e.g. https://pypi.tuna.tsinghua.edu.cn/simple>"
+    Write-Host "    HF_ENDPOINT=<a reachable HuggingFace mirror, e.g. https://hf-mirror.com>"
     Write-Host ""
-    Write-Host "  ⚠ 改完 .env 后需要重启主服务（API），新代理 / 镜像 env 才会注入 install 子进程。"
+    Write-Host "  NOTE: After editing .env, restart the main service (API) so the new proxy / mirror env is injected into install subprocesses."
     Write-Host ""
 }
 
@@ -225,7 +225,7 @@ function Invoke-ModelDownloadWithRetry {
     # services get the same robustness (3 attempts, 5s/10s backoff,
     # HF_HUB_DOWNLOAD_TIMEOUT=60). Previously each *-install.ps1 had
     # its own bare 'snapshot_download(...)' or 'WhisperModel(...)' call
-    # with no retry — one ConnectTimeout = install failed even when
+    # with no retry -- one ConnectTimeout = install failed even when
     # the next attempt would've worked. F198 fixes this fan-out by
     # collapsing the retry path into one place.
     param(
@@ -246,15 +246,15 @@ max_attempts = 3
 for attempt in range(1, max_attempts + 1):
     try:
         snapshot_download(sys.argv[1])
-        print('模型下载完成。')
+        print('Model download complete.')
         sys.exit(0)
     except Exception as e:
-        print(f'  下载尝试 {attempt}/{max_attempts} 失败: {e}', file=sys.stderr)
+        print(f'  Download attempt {attempt}/{max_attempts} failed: {e}', file=sys.stderr)
         if attempt < max_attempts:
             wait = 5 * attempt
-            print(f'  {wait}s 后重试...', file=sys.stderr)
+            print(f'  Retrying in {wait}s...', file=sys.stderr)
             time.sleep(wait)
-print(f'ERROR: 模型下载失败，已尝试 {max_attempts} 次', file=sys.stderr)
+print(f'ERROR: Model download failed after {max_attempts} attempts', file=sys.stderr)
 sys.exit(1)
 "@ }
         "faster_whisper" { @"
@@ -265,15 +265,15 @@ max_attempts = 3
 for attempt in range(1, max_attempts + 1):
     try:
         WhisperModel(sys.argv[1], device='cpu', compute_type='int8')
-        print('模型下载完成。')
+        print('Model download complete.')
         sys.exit(0)
     except Exception as e:
-        print(f'  下载尝试 {attempt}/{max_attempts} 失败: {e}', file=sys.stderr)
+        print(f'  Download attempt {attempt}/{max_attempts} failed: {e}', file=sys.stderr)
         if attempt < max_attempts:
             wait = 5 * attempt
-            print(f'  {wait}s 后重试...', file=sys.stderr)
+            print(f'  Retrying in {wait}s...', file=sys.stderr)
             time.sleep(wait)
-print(f'ERROR: 模型下载失败，已尝试 {max_attempts} 次', file=sys.stderr)
+print(f'ERROR: Model download failed after {max_attempts} attempts', file=sys.stderr)
 sys.exit(1)
 "@ }
         "fastembed" { @"
@@ -284,15 +284,15 @@ max_attempts = 3
 for attempt in range(1, max_attempts + 1):
     try:
         TextEmbedding(model_name=sys.argv[1])
-        print('模型下载完成。')
+        print('Model download complete.')
         sys.exit(0)
     except Exception as e:
-        print(f'  下载尝试 {attempt}/{max_attempts} 失败: {e}', file=sys.stderr)
+        print(f'  Download attempt {attempt}/{max_attempts} failed: {e}', file=sys.stderr)
         if attempt < max_attempts:
             wait = 5 * attempt
-            print(f'  {wait}s 后重试...', file=sys.stderr)
+            print(f'  Retrying in {wait}s...', file=sys.stderr)
             time.sleep(wait)
-print(f'ERROR: 模型下载失败，已尝试 {max_attempts} 次', file=sys.stderr)
+print(f'ERROR: Model download failed after {max_attempts} attempts', file=sys.stderr)
 sys.exit(1)
 "@ }
         default { throw "Invoke-ModelDownloadWithRetry: unknown loader '$Loader'" }
@@ -313,7 +313,7 @@ function Assert-Network {
 
     # FIRST: classify the user's PIP_INDEX_URL (if set) the same way we
     # classify public mirrors. Internal corporate mirrors typically
-    # don't need (and often break behind) the system proxy — adding
+    # don't need (and often break behind) the system proxy -- adding
     # HTTP_PROXY because some public source needs it would route the
     # user's primary through the proxy too, breaking direct-only
     # internals. Per-source NO_PROXY classification fixes this: we tell
@@ -326,10 +326,10 @@ function Assert-Network {
             if ($userIdxHost) {
                 $userIdxMode = Test-SourceMode -Url $env:PIP_INDEX_URL -TimeoutSec 5 -CandidateProxy $candidate
                 if ($userIdxMode -eq 'direct') {
-                    Write-Host "  User PIP_INDEX_URL reachable [OK] (direct, $userIdxHost) — adding to NO_PROXY so pip bypasses HTTP_PROXY"
+                    Write-Host "  User PIP_INDEX_URL reachable [OK] (direct, $userIdxHost) -- adding to NO_PROXY so pip bypasses HTTP_PROXY"
                     Add-NoProxyHost $userIdxHost
                 } elseif ($userIdxMode -eq 'proxy') {
-                    Write-Host "  User PIP_INDEX_URL reachable [OK] (via proxy: $candidate, $userIdxHost) — NOT adding to NO_PROXY"
+                    Write-Host "  User PIP_INDEX_URL reachable [OK] (via proxy: $candidate, $userIdxHost) -- NOT adding to NO_PROXY"
                     $needProxyInjection = $true
                 } else {
                     Write-Host "  WARNING: User PIP_INDEX_URL unreachable both direct and via proxy ($userIdxHost)"
@@ -342,9 +342,9 @@ function Assert-Network {
 
     # Split classification: direct group (NO_PROXY) and proxy group
     # (HTTP_PROXY). Final PIP_EXTRA_INDEX_URL list orders direct first,
-    # proxy second — pip walks the list in order so this means "try
+    # proxy second -- pip walks the list in order so this means "try
     # no-proxy sources first, then proxy sources". Matches user's
-    # expectation: 先试无代理的，缺包再试有代理的.
+    # expectation: try direct sources first, fall back to proxy sources.
     $directUrls = New-Object System.Collections.ArrayList
     $proxyUrls = New-Object System.Collections.ArrayList
 
@@ -373,7 +373,7 @@ function Assert-Network {
         $needProxyInjection = $true
         [void]$proxyUrls.Add("https://pypi.tuna.tsinghua.edu.cn/simple/")
     } elseif ($pypiMode -eq 'unreachable') {
-        Write-ProxyGuidance -Context "pypi.org 和清华镜像在 direct + via proxy 两种模式下都不可达，pip install 一定会失败。"
+        Write-ProxyGuidance -Context "pypi.org and the Tsinghua mirror are unreachable in both direct and via-proxy modes; pip install will definitely fail."
     }
 
     # Concat: direct first, then proxy.
@@ -382,7 +382,7 @@ function Assert-Network {
     foreach ($u in $proxyUrls) { [void]$publicPipUrls.Add($u) }
 
     # Auto-pick primary index when user didn't set one and pypi is
-    # unreachable: prefer Tsinghua. Preserves legacy behavior — users
+    # unreachable: prefer Tsinghua. Preserves legacy behavior -- users
     # without explicit PIP_INDEX_URL get an accessible mirror picked
     # for them.
     if (-not $env:PIP_INDEX_URL -and $pypiMode -eq 'unreachable' -and ($tsinghuaMode -eq 'direct' -or $tsinghuaMode -eq 'proxy')) {
@@ -410,7 +410,7 @@ function Assert-Network {
             $env:HF_ENDPOINT = "https://hf-mirror.com"
             $needProxyInjection = $true
         } else {
-            Write-ProxyGuidance -Context "huggingface.co 和 hf-mirror.com 在 direct + via proxy 两种模式下都不可达，模型下载一定会失败。"
+            Write-ProxyGuidance -Context "huggingface.co and hf-mirror.com are unreachable in both direct and via-proxy modes; model download will definitely fail."
         }
     }
 
@@ -429,7 +429,7 @@ function Assert-Network {
     # multiple sources: command-line --index-url > $PIP_INDEX_URL env
     # > pip.conf/pip.ini > pip default (pypi.org). Previous guard
     # "only inject if $PIP_INDEX_URL is set" missed the pip.conf case
-    # — if the user has an index-url in pip.conf (corporate mirror),
+    # -- if the user has an index-url in pip.conf (corporate mirror),
     # pip uses it but we can't see it from env, so we'd skip injecting
     # EXTRA and leave pip with no public fallback when the corp mirror
     # misses a package.
@@ -460,7 +460,7 @@ function Assert-Network {
             # proxy to reach pypi / Tsinghua even though our HEAD probe
             # couldn't (Windows transparent proxies, proxy.pac, SSPI
             # corp gateways, etc.). Inject BOTH so pip has maximum
-            # coverage — mirror policy parity with strong-signal path.
+            # coverage -- mirror policy parity with strong-signal path.
             $lastResort = New-Object System.Collections.ArrayList
             if ($userIdx -ne 'https://pypi.org/simple') {
                 [void]$lastResort.Add('https://pypi.org/simple')
@@ -473,7 +473,7 @@ function Assert-Network {
                 $fbReason = "last-resort (HEAD probe failed but HTTP_PROXY configured; trust pip to reach via proxy)"
             }
         }
-        # No further branch: probe failed AND no user proxy → no
+        # No further branch: probe failed AND no user proxy -> no
         # fallback. Injecting URLs pip can't reach just inflates error
         # log noise without changing the outcome.
 

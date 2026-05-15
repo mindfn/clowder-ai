@@ -2,7 +2,7 @@
 # scripts/services/llm-postprocess-install.sh
 # Install dependencies for LLM post-processing (venv + mlx-vlm on
 # Darwin arm64; transformers + torch on other platforms).
-# Declarative — install-template.sh handles common pipeline (F198).
+# Declarative -- install-template.sh handles common pipeline (F198).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

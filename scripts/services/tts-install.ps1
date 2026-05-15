@@ -3,7 +3,7 @@
   Install dependencies for TTS service on Windows (edge-tts, cloud-based).
 .DESCRIPTION
   Creates ~/.cat-cafe/tts-venv, installs edge-tts (Microsoft cloud TTS).
-  No GPU or model download required — edge-tts streams from Microsoft servers.
+  No GPU or model download required -- edge-tts streams from Microsoft servers.
 #>
 
 $ErrorActionPreference = "Stop"
@@ -30,14 +30,14 @@ if (-not (Test-Path $VenvPython)) {
 if ($LASTEXITCODE -ne 0) { throw "Failed to upgrade pip in tts-venv" }
 
 if (-not $env:TTS_MODEL) {
-    throw "ERROR: TTS_MODEL 未设置。请通过 console install 按钮触发（自动按 scripts/services/recommendation-matrix.yaml 选型），或手动 `$env:TTS_MODEL='<model-id>' 后再跑。"
+    throw "ERROR: TTS_MODEL not set. Trigger via the console install button (auto-picks per scripts/services/recommendation-matrix.yaml), or manually set `$env:TTS_MODEL='<model-id>' before re-running."
 }
 $TtsModel = $env:TTS_MODEL
 $IsPiper = $TtsModel -eq "piper" -or $TtsModel -like "zh_CN-*" -or $TtsModel -like "en_US-*" -or $TtsModel -like "en_GB-*"
 $IsSapi = $TtsModel -eq "sapi"
 
 # SAPI path is the only one that installs cleanly on native ARM64 Python
-# (edge-tts→aiohttp and piper-tts→piper_phonemize have no win-arm64 wheels).
+# (edge-tts -> aiohttp and piper-tts -> piper_phonemize have no win-arm64 wheels).
 # Skip those deps when SAPI is selected so the install actually succeeds.
 if ($IsSapi) {
     Write-Host "  Installing SAPI-only dependencies: pyttsx3 pywin32 fastapi uvicorn ..."

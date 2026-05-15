@@ -17,7 +17,7 @@ if (-not $env:CAT_CAFE_HOME) {
 }
 
 $VenvDir = Join-Path $env:CAT_CAFE_HOME "whisper-venv"
-# Legacy path cleanup — see embed-uninstall.ps1 for rationale.
+# Legacy path cleanup -- see embed-uninstall.ps1 for rationale.
 $VenvDirLegacy = Join-Path $HOME ".cat-cafe\whisper-venv"
 
 function Remove-VenvDir {
@@ -32,7 +32,7 @@ function Remove-VenvDir {
     if (Test-Path $Path) {
         Start-Sleep -Seconds 2
         cmd /c "rmdir /s /q `"$Path`""
-        if (Test-Path $Path) { throw "Failed to remove $Path — files locked by another process" }
+        if (Test-Path $Path) { throw "Failed to remove $Path -- files locked by another process" }
     }
     return $true
 }

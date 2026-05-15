@@ -35,7 +35,7 @@ function Remove-VenvDir {
     if (Test-Path $Path) {
         Start-Sleep -Seconds 2
         cmd /c "rmdir /s /q `"$Path`""
-        if (Test-Path $Path) { throw "Failed to remove $Path — files locked by another process" }
+        if (Test-Path $Path) { throw "Failed to remove $Path -- files locked by another process" }
     }
     return $true
 }

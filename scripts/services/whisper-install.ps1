@@ -71,7 +71,7 @@ if ($hasCuda) {
 }
 
 if (-not $env:WHISPER_MODEL) {
-    throw "ERROR: WHISPER_MODEL 未设置。请通过 console install 按钮触发（自动按 scripts/services/recommendation-matrix.yaml 选型），或手动 `$env:WHISPER_MODEL='<model-id>' 后再跑。"
+    throw "ERROR: WHISPER_MODEL not set. Trigger via the console install button (auto-picks per scripts/services/recommendation-matrix.yaml), or manually set `$env:WHISPER_MODEL='<model-id>' before re-running."
 }
 $WhisperModel = $env:WHISPER_MODEL
 Write-Host "  Pre-downloading model: $WhisperModel ..."

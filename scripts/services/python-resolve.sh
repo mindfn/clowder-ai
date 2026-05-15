@@ -17,14 +17,14 @@
 #   1. System Python candidates (python3.13, python3.12, py -3.12, python).
 #      Accept anything with major.minor >= 3.12 AND a working venv module.
 #      On Windows ARM64 we additionally require AMD64 architecture (Prism
-#      emulation) — native ARM Python can't pip-install several deps.
-#   2. uv (if user already has it) — uv python find 3.12 reuses uv-managed
+#      emulation) -- native ARM Python can't pip-install several deps.
+#   2. uv (if user already has it) -- uv python find 3.12 reuses uv-managed
 #      builds or the user's pyenv toolchain.
-#   3. pyenv (Linux/macOS, if installed) — query installed 3.12.x version
+#   3. pyenv (Linux/macOS, if installed) -- query installed 3.12.x version
 #      or install one if not present.
-#   4. Homebrew (macOS, if installed) — brew --prefix python@3.12.
+#   4. Homebrew (macOS, if installed) -- brew --prefix python@3.12.
 #   5. Project-owned Python in ~/.cat-cafe/python-x64/ (or platform-equivalent)
-#      — only when nothing above worked.
+#      -- only when nothing above worked.
 #
 # Usage from an install script:
 #   source "$(dirname "$0")/python-resolve.sh"
@@ -32,8 +32,8 @@
 #   "$RESOLVED_PYTHON" -m venv ~/.cat-cafe/whisper-venv
 #
 # Exit codes:
-#   0 — RESOLVED_PYTHON set, ready to use
-#   1 — no interpreter could be resolved (user must intervene)
+#   0 -- RESOLVED_PYTHON set, ready to use
+#   1 -- no interpreter could be resolved (user must intervene)
 
 RESOLVED_PYTHON=""
 RESOLVED_PYTHON_ARCH=""   # native | x86_64 (== amd64) | unknown
@@ -41,16 +41,16 @@ RESOLVED_PYTHON_SOURCE="" # system | uv | pyenv | brew | project
 
 # Single source of truth for the cat-cafe data dir. Mirrors the Windows
 # Redis convention (install-windows-helpers.ps1 line 104 places its
-# portable Redis under <ProjectRoot>/.cat-cafe/redis/windows/) — Python
+# portable Redis under <ProjectRoot>/.cat-cafe/redis/windows/) -- Python
 # + venvs + Piper voice models all live under the same project-rooted
 # .cat-cafe/ so uninstall = delete the project dir, no cross-instance
 # pollution in $HOME.
 #
 # Resolution priority:
-#   1. CAT_CAFE_HOME env (caller override — e.g. a CI environment that
+#   1. CAT_CAFE_HOME env (caller override -- e.g. a CI environment that
 #      wants its own scratch path)
 #   2. <repo-root>/.cat-cafe (derived from this script's location:
-#      scripts/services/python-resolve.sh → repo-root is two levels up)
+#      scripts/services/python-resolve.sh -> repo-root is two levels up)
 _RESOLVER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 _CAT_CAFE_HOME="${CAT_CAFE_HOME:-${_RESOLVER_REPO_ROOT}/.cat-cafe}"
 export CAT_CAFE_HOME="$_CAT_CAFE_HOME"   # exported so child install scripts can reuse the same path
@@ -91,7 +91,7 @@ _arch_acceptable_for_platform() {
   # Args: machine_string
   # On Windows we'd be checking AMD64, but this resolver runs on POSIX only;
   # the PowerShell version (python-resolve.ps1) enforces AMD64. Here we
-  # accept any architecture — Linux/macOS native interpreters work.
+  # accept any architecture -- Linux/macOS native interpreters work.
   return 0
 }
 
@@ -112,14 +112,14 @@ _try_system_pythons() {
 
 _try_uv() {
   command -v uv >/dev/null 2>&1 || return 1
-  # uv python find prints absolute path of a matching interpreter — or fails.
+  # uv python find prints absolute path of a matching interpreter -- or fails.
   # We don't ask uv to install (that would silently grow user state); we only
   # reuse what uv already has.
   local found
   found=$(uv python find '>=3.12' 2>/dev/null) || return 1
   [ -n "$found" ] && [ -x "$found" ] || return 1
   # CRITICAL: uv on Linux happily points at /usr/bin/python3 (Debian/Ubuntu
-  # system Python) which lacks ensurepip — `python -m venv` then fails. We
+  # system Python) which lacks ensurepip -- `python -m venv` then fails. We
   # were missing this check on _try_uv / _try_pyenv / _try_brew, so the
   # resolver returned a broken interpreter that survived all the way to
   # the venv-create step in install scripts. Same _python_version_ok used
@@ -175,10 +175,10 @@ _try_legacy_project_python() {
   # <ProjectRoot>/.cat-cafe" commit) installs lived at
   # $HOME/.cat-cafe/python. Reuse them if they exist so existing
   # installs survive the path migration without re-downloading the
-  # whole python-build-standalone tarball — which on isolated VMs
+  # whole python-build-standalone tarball -- which on isolated VMs
   # (Linux/macOS without good GitHub reach) is the difference between
   # "one-click install works" and "fails at first network blip".
-  # We don't auto-migrate the directory — the user can clean install
+  # We don't auto-migrate the directory -- the user can clean install
   # later to switch to the repo-local path on their own schedule.
   local legacy_dir="${HOME}/.cat-cafe/python"
   # Skip if legacy path IS the active path (caller explicitly set
@@ -190,7 +190,7 @@ _try_legacy_project_python() {
   RESOLVED_PYTHON="$py"
   RESOLVED_PYTHON_ARCH="$($py -c 'import platform; print(platform.machine().lower())' 2>/dev/null || echo unknown)"
   RESOLVED_PYTHON_SOURCE="project-legacy"
-  echo "  Reusing legacy project Python: $py (pre-CAT_CAFE_HOME-migration install — venv 仍创建到 $_CAT_CAFE_HOME)" >&2
+  echo "  Reusing legacy project Python: $py (pre-CAT_CAFE_HOME-migration install - venv still created under $_CAT_CAFE_HOME)" >&2
   return 0
 }
 
@@ -217,7 +217,7 @@ _pbs_target_triple() {
 }
 
 _install_project_python_locked() {
-  # Actual download + extract — runs holding the inter-process lock.
+  # Actual download + extract -- runs holding the inter-process lock.
   # Re-check inside the critical section: another concurrent install (e.g.
   # whisper / tts / embed clicked at the same time in the UI) might have
   # finished while we waited. Skip download if so.
@@ -227,7 +227,7 @@ _install_project_python_locked() {
   fi
   local triple
   triple=$(_pbs_target_triple) || return 1
-  command -v curl >/dev/null 2>&1 || { echo "  curl required to bootstrap project Python — please install curl" >&2; return 1; }
+  command -v curl >/dev/null 2>&1 || { echo "  curl required to bootstrap project Python -- please install curl" >&2; return 1; }
   command -v tar >/dev/null 2>&1 || { echo "  tar required to bootstrap project Python" >&2; return 1; }
 
   local tar_url="https://github.com/${_PBS_OWNER}/python-build-standalone/releases/download/${_PBS_RELEASE}/cpython-${_PBS_VERSION}+${_PBS_RELEASE}-${triple}-install_only.tar.gz"
@@ -240,7 +240,7 @@ _install_project_python_locked() {
   # system proxy (macOS scutil / GNOME gsettings). Without the system
   # fallback, mac users running clash verge / Surge with HTTP_PROXY
   # only set in macOS network prefs (not exported in shell env) would
-  # see the PBS download attempt direct connect to github.com — which
+  # see the PBS download attempt direct connect to github.com -- which
   # often fails in CN networks even though the proxy itself works.
   # This mirrors prereq-check.sh's _get_system_proxy_candidate logic,
   # but inlined here because python-resolve.sh runs BEFORE prereq-check
@@ -269,7 +269,7 @@ _install_project_python_locked() {
     fi
   fi
 
-  # IMPORTANT: drop `-s` (silent) — it swallows the actual curl error
+  # IMPORTANT: drop `-s` (silent) -- it swallows the actual curl error
   # text ("Could not resolve host" / "Connection timed out" / 403 / ...).
   # Keep --silent for the progress bar but use --show-error so failures
   # surface to stderr (and via install-endpoint to the service log).
@@ -300,7 +300,7 @@ _install_project_python_locked() {
   fi
   [ -n "$curl_log" ] && rm -f "$curl_log"
   mkdir -p "$_PROJECT_PYTHON_DIR"
-  # Tarball extracts into a top-level "python/" directory — strip that one
+  # Tarball extracts into a top-level "python/" directory -- strip that one
   # component so files land directly in $_PROJECT_PYTHON_DIR.
   if ! tar -xzf "${tmpdir}/python.tar.gz" -C "$_PROJECT_PYTHON_DIR" --strip-components=1; then
     echo "  Failed to extract Python tarball" >&2
@@ -336,7 +336,7 @@ _install_project_python() {
   local waited=0
   while ! mkdir "$lockdir" 2>/dev/null; do
     if [ "$waited" -ge 600 ]; then
-      echo "  Python install lock timed out (>600s) — assuming staler holder, breaking" >&2
+      echo "  Python install lock timed out (>600s) -- assuming staler holder, breaking" >&2
       rmdir "$lockdir" 2>/dev/null || true
       mkdir "$lockdir" 2>/dev/null || return 1
       break

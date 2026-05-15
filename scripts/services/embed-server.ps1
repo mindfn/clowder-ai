@@ -5,7 +5,7 @@
 .DESCRIPTION
   Launches embed-api.py from ~/.cat-cafe/embed-venv.
   Dependencies are managed by embed-install.ps1.
-  embed-api.py auto-detects backend: MLX → fastembed/ONNX → sentence-transformers.
+  embed-api.py auto-detects backend: MLX -> fastembed/ONNX -> sentence-transformers.
 
   Env vars passed through to embed-api.py:
   - EMBED_PORT  (default 9880; overridden by -Port)

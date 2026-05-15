@@ -18,14 +18,14 @@ export CAT_CAFE_HOME
 VENV_DIR="${CAT_CAFE_HOME}/whisper-venv"
 MODEL="${WHISPER_MODEL:-${1:-}}"
 if [ -z "$MODEL" ]; then
-  echo "ERROR: WHISPER_MODEL env var (or positional arg) required — backend specifies model, no fallback default." >&2
+  echo "ERROR: WHISPER_MODEL env var (or positional arg) required -- backend specifies model, no fallback default." >&2
   exit 1
 fi
 PORT="${WHISPER_PORT:-9876}"
 
 if [ ! -d "$VENV_DIR" ]; then
-  echo "ERROR: 虚拟环境不存在: $VENV_DIR"
-  echo "请先运行安装: scripts/services/whisper-install.sh"
+  echo "ERROR: venv not found: $VENV_DIR"
+  echo "Run install first: scripts/services/whisper-install.sh"
   exit 1
 fi
 source "$VENV_DIR/bin/activate"

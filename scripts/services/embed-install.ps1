@@ -40,9 +40,9 @@ $isArm64 = ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") -or
     ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64)
 
 if ($isArm64) {
-    Write-Host "  ARM64 detected — using fastembed/ONNX backend (no Rust compilation needed)"
+    Write-Host "  ARM64 detected - using fastembed/ONNX backend (no Rust compilation needed)"
 
-    # Stub py_rust_stemmers before pip install — fastembed's sparse retrieval
+    # Stub py_rust_stemmers before pip install -- fastembed's sparse retrieval
     # imports it, but dense embeddings don't use it. Stub prevents ImportError.
     $sitePackages = Join-Path $VenvDir "Lib\site-packages"
     $stubDir = Join-Path $sitePackages "py_rust_stemmers"
@@ -73,13 +73,13 @@ Stemmer = SnowballStemmer
 
     # fastembed has a strict model whitelist verified against
     # TextEmbedding.list_supported_models() in fastembed 0.8:
-    #   jinaai/jina-embeddings-v2-base-zh — 768 dim, ~640MB, bilingual ✓
-    #   BAAI/bge-small-zh-v1.5            — 512 dim, ~90MB, Chinese-only ✓
-    #   intfloat/multilingual-e5-large    — 1024 dim, ~2.3GB ✓
+    #   jinaai/jina-embeddings-v2-base-zh - 768 dim, ~640MB, bilingual [OK]
+    #   BAAI/bge-small-zh-v1.5            - 512 dim, ~90MB, Chinese-only [OK]
+    #   intfloat/multilingual-e5-large    - 1024 dim, ~2.3GB [OK]
     # multilingual-e5-small/base are NOT in the fastembed catalog despite the
-    # HuggingFace repos existing — fastembed only ships pre-converted ONNX.
+    # HuggingFace repos existing - fastembed only ships pre-converted ONNX.
     if (-not $env:EMBED_MODEL) {
-        throw "ERROR: EMBED_MODEL 未设置。请通过 console install 按钮触发（自动按 scripts/services/recommendation-matrix.yaml 选型），或手动 `$env:EMBED_MODEL='<model-id>' 后再跑。"
+        throw "ERROR: EMBED_MODEL not set. Trigger via the console install button (auto-picks per scripts/services/recommendation-matrix.yaml), or manually set `$env:EMBED_MODEL='<model-id>' before re-running."
     }
     $Model = $env:EMBED_MODEL
     Write-Host "  Pre-downloading ONNX model: $Model ..."
@@ -110,7 +110,7 @@ Stemmer = SnowballStemmer
     if ($LASTEXITCODE -ne 0) { throw "Failed to install embedding dependencies" }
 
     if (-not $env:EMBED_MODEL) {
-        throw "ERROR: EMBED_MODEL 未设置。请通过 console install 按钮触发（自动按 scripts/services/recommendation-matrix.yaml 选型），或手动 `$env:EMBED_MODEL='<model-id>' 后再跑。"
+        throw "ERROR: EMBED_MODEL not set. Trigger via the console install button (auto-picks per scripts/services/recommendation-matrix.yaml), or manually set `$env:EMBED_MODEL='<model-id>' before re-running."
     }
     $Model = $env:EMBED_MODEL
     Write-Host "  Pre-downloading model: $Model ..."

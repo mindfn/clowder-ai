@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/services/embed-install.sh
 # Install dependencies for Embedding service (venv + mlx-embeddings /
-# sentence-transformers). Pure declarative — install-template.sh
+# sentence-transformers). Pure declarative -- install-template.sh
 # handles the actual pipeline (F198).
 set -euo pipefail
 

@@ -2,19 +2,19 @@
 .SYNOPSIS
   Standalone entry point for the python-bootstrap "meta-service" on Windows.
 .DESCRIPTION
-  Sister of install-python.sh — see that file for the contract. Spawned by
+  Sister of install-python.sh -- see that file for the contract. Spawned by
   the API's ensurePython() helper before any real service install. The four
   service install ps1s never race to install Python themselves; they pick
   up the result via Resolve-BootstrapPython.
 
   Output:
-    stdout — '[python-bootstrap] ...' progress lines plus
+    stdout -- '[python-bootstrap] ...' progress lines plus
              PYTHON_PATH=<abs path>
              PYTHON_ARCH=<machine>
              PYTHON_SOURCE=<system|uv|project>
              on success.
-    exit 0 — resolved.
-    exit 1 — failed.
+    exit 0 -- resolved.
+    exit 1 -- failed.
 
   Concurrency safe: python-resolve.ps1 uses a per-user mutex around the
   install step.

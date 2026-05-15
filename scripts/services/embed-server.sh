@@ -6,7 +6,7 @@
 #   EMBED_MODEL=jinaai/jina-embeddings-v2-base-zh ./scripts/services/embed-server.sh
 #   EMBED_DIM=512 ./scripts/services/embed-server.sh
 #
-# EMBED_MODEL is REQUIRED — no fallback default. The backend
+# EMBED_MODEL is REQUIRED -- no fallback default. The backend
 # (routes/services.ts resolveSelectedModel) is the single source of truth
 # for which model to load; a script-level default historically silently
 # picked the wrong model on non-mac platforms when the env was unset.
@@ -23,14 +23,14 @@ PORT="${EMBED_PORT:-9880}"
 MODEL="${EMBED_MODEL:-}"
 
 if [ -z "$MODEL" ]; then
-  echo "ERROR: EMBED_MODEL env var required — backend must specify which model to load." >&2
+  echo "ERROR: EMBED_MODEL env var required -- backend must specify which model to load." >&2
   echo "If you're running this script directly, set EMBED_MODEL first (e.g. EMBED_MODEL=jinaai/jina-embeddings-v2-base-zh)." >&2
   exit 1
 fi
 
 if [ ! -d "$VENV_DIR" ]; then
-  echo "ERROR: 虚拟环境不存在: $VENV_DIR"
-  echo "请先运行安装: scripts/services/embed-install.sh"
+  echo "ERROR: venv not found: $VENV_DIR"
+  echo "Run install first: scripts/services/embed-install.sh"
   exit 1
 fi
 source "$VENV_DIR/bin/activate"
