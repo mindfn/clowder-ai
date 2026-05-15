@@ -24,13 +24,23 @@ describe('parsePluginManifest security', () => {
   it('rejects manifest id with path traversal', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
     const yamlPath = writeTmpManifest(tmpDir, 'legit', ['id: "../escape"', 'name: Evil', 'version: 1.0.0'].join('\n'));
-    assert.throws(() => parsePluginManifest(yamlPath), /must be a lowercase slug/);
+    assert.throws(() => parsePluginManifest(yamlPath), /must start with a letter/);
   });
 
   it('rejects manifest id with uppercase', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
     const yamlPath = writeTmpManifest(tmpDir, 'legit', ['id: EvilPlugin', 'name: Evil', 'version: 1.0.0'].join('\n'));
-    assert.throws(() => parsePluginManifest(yamlPath), /must be a lowercase slug/);
+    assert.throws(() => parsePluginManifest(yamlPath), /must start with a letter/);
+  });
+
+  it('rejects manifest id with leading digit', () => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
+    const yamlPath = writeTmpManifest(
+      tmpDir,
+      'legit',
+      ['id: 123-plugin', 'name: Numeric', 'version: 1.0.0'].join('\n'),
+    );
+    assert.throws(() => parsePluginManifest(yamlPath), /must start with a letter/);
   });
 
   it('rejects resource path with ..', () => {
