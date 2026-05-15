@@ -80,6 +80,38 @@ _print_proxy_guidance() {
   echo ""
 }
 
+_test_source_mode() {
+  # Probe a URL twice — first without any proxy (matches how pip will
+  # hit the host once we add it to NO_PROXY), then with the env proxy.
+  # Echoes 'direct' / 'proxy' / 'unreachable' so the caller can write
+  # PIP_INDEX_URL + NO_PROXY in a way that matches pip's runtime path.
+  local url="$1"
+  local timeout="${2:-5}"
+  if curl -sf --max-time "$timeout" --noproxy '*' "$url" >/dev/null 2>&1; then
+    echo "direct"
+    return
+  fi
+  if [ -n "${HTTPS_PROXY:-}${HTTP_PROXY:-}${https_proxy:-}${http_proxy:-}" ]; then
+    if curl -sf --max-time "$timeout" "$url" >/dev/null 2>&1; then
+      echo "proxy"
+      return
+    fi
+  fi
+  echo "unreachable"
+}
+
+_add_no_proxy_host() {
+  local h="$1"
+  if [ -z "${NO_PROXY:-}" ]; then
+    export NO_PROXY="$h"
+  else
+    case ",$NO_PROXY," in
+      *",$h,"*) ;;  # already present
+      *) export NO_PROXY="${NO_PROXY},$h" ;;
+    esac
+  fi
+}
+
 check_network() {
   normalize_proxy_scheme
 
@@ -88,38 +120,75 @@ check_network() {
     return
   fi
 
-  if curl -sf --max-time "$timeout" "https://pypi.org/simple/" >/dev/null 2>&1; then
-    echo "  PyPI 连接 ✓"
-  else
-    echo "WARNING: 无法连接 PyPI (https://pypi.org)，pip install 可能会失败"
-    # Verify Tsinghua reachability before switching — internal/PX networks
-    # may need a proxy even for domestic mirrors. Surface a clear .env hint
-    # instead of silently switching to a mirror the user can't reach.
-    if [ -z "${PIP_INDEX_URL:-}" ]; then
-      if curl -sf --max-time "$timeout" "https://pypi.tuna.tsinghua.edu.cn/simple/" >/dev/null 2>&1; then
-        export PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
-        echo "  自动启用清华 pip 镜像: $PIP_INDEX_URL"
-      else
-        _print_proxy_guidance "pypi.org 和清华镜像都不可达，pip install 一定会失败。"
-      fi
-    else
-      echo "  已设 PIP_INDEX_URL=$PIP_INDEX_URL"
-    fi
-  fi
+  local pypi_mode
+  pypi_mode=$(_test_source_mode "https://pypi.org/simple/" "$timeout")
+  case "$pypi_mode" in
+    direct)
+      echo "  PyPI 连接 ✓ (direct)"
+      _add_no_proxy_host "pypi.org"
+      ;;
+    proxy)
+      echo "  PyPI 连接 ✓ (via env proxy)"
+      ;;
+    unreachable)
+      echo "WARNING: 无法连接 PyPI (https://pypi.org)，pip install 可能会失败"
+      local tsinghua_mode
+      tsinghua_mode=$(_test_source_mode "https://pypi.tuna.tsinghua.edu.cn/simple" "$timeout")
+      case "$tsinghua_mode" in
+        direct)
+          if [ -z "${PIP_INDEX_URL:-}" ]; then
+            export PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
+            echo "  自动启用清华 pip 镜像 (direct, 不走代理): $PIP_INDEX_URL"
+          fi
+          _add_no_proxy_host "pypi.tuna.tsinghua.edu.cn"
+          _add_no_proxy_host "mirrors.tuna.tsinghua.edu.cn"
+          ;;
+        proxy)
+          if [ -z "${PIP_INDEX_URL:-}" ]; then
+            export PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
+            echo "  自动启用清华 pip 镜像 (via env proxy): $PIP_INDEX_URL"
+          fi
+          # Deliberately NOT adding to NO_PROXY so pip honors HTTP_PROXY.
+          ;;
+        unreachable)
+          _print_proxy_guidance "pypi.org 和清华镜像在 direct + via proxy 两种模式下都不可达。"
+          ;;
+      esac
+      ;;
+  esac
 
-  if curl -sf --max-time "$timeout" "https://huggingface.co" >/dev/null 2>&1; then
-    echo "  HuggingFace 连接 ✓"
-  else
-    echo "WARNING: 无法连接 HuggingFace (https://huggingface.co)，模型下载可能会失败"
-    if [ -z "${HF_ENDPOINT:-}" ]; then
-      if curl -sf --max-time "$timeout" "https://hf-mirror.com" >/dev/null 2>&1; then
-        export HF_ENDPOINT="https://hf-mirror.com"
-        echo "  自动启用 HF 镜像: $HF_ENDPOINT"
-      else
-        _print_proxy_guidance "huggingface.co 和 hf-mirror.com 都不可达，模型下载一定会失败。"
-      fi
-    else
-      echo "  已设 HF_ENDPOINT=$HF_ENDPOINT"
-    fi
-  fi
+  local hf_mode
+  hf_mode=$(_test_source_mode "https://huggingface.co" "$timeout")
+  case "$hf_mode" in
+    direct)
+      echo "  HuggingFace 连接 ✓ (direct)"
+      _add_no_proxy_host "huggingface.co"
+      ;;
+    proxy)
+      echo "  HuggingFace 连接 ✓ (via env proxy)"
+      ;;
+    unreachable)
+      echo "WARNING: 无法连接 HuggingFace (https://huggingface.co)，模型下载可能会失败"
+      local hf_mirror_mode
+      hf_mirror_mode=$(_test_source_mode "https://hf-mirror.com" "$timeout")
+      case "$hf_mirror_mode" in
+        direct)
+          if [ -z "${HF_ENDPOINT:-}" ]; then
+            export HF_ENDPOINT="https://hf-mirror.com"
+            echo "  自动启用 HF 镜像 (direct): $HF_ENDPOINT"
+          fi
+          _add_no_proxy_host "hf-mirror.com"
+          ;;
+        proxy)
+          if [ -z "${HF_ENDPOINT:-}" ]; then
+            export HF_ENDPOINT="https://hf-mirror.com"
+            echo "  自动启用 HF 镜像 (via env proxy): $HF_ENDPOINT"
+          fi
+          ;;
+        unreachable)
+          _print_proxy_guidance "huggingface.co 和 hf-mirror.com 在 direct + via proxy 两种模式下都不可达。"
+          ;;
+      esac
+      ;;
+  esac
 }

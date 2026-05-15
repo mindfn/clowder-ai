@@ -134,6 +134,50 @@ function Test-UrlReachable {
     }
 }
 
+function Test-SourceMode {
+    # Probe a URL twice — first with NO proxy (the way pip will hit the
+    # host once we add it to NO_PROXY), then with the env proxy if one
+    # is set. Returns 'direct' / 'proxy' / 'unreachable' so caller can
+    # configure PIP_INDEX_URL + NO_PROXY in a way that matches what
+    # pip / huggingface_hub will actually do at install time.
+    #
+    # Background: the old prereq-check probed candidate mirrors with
+    # IWR's .NET-default proxy (the registry system proxy). If the
+    # corp proxy could reach Tsinghua, we declared "Tsinghua reachable"
+    # and added it to NO_PROXY — but then pip ignored the proxy for
+    # Tsinghua because of NO_PROXY and the host was actually unreachable
+    # without the proxy. probe-vs-runtime mismatch.
+    param([string]$Url, [int]$TimeoutSec = 5)
+    # 1. Try without any proxy at all.
+    try {
+        $req = [System.Net.HttpWebRequest]::Create($Url)
+        $req.Proxy = $null
+        $req.Method = 'HEAD'
+        $req.Timeout = $TimeoutSec * 1000
+        $resp = $req.GetResponse()
+        $resp.Close()
+        return 'direct'
+    } catch {}
+    # 2. If user env has a proxy, try via that proxy.
+    $proxyUrl = $env:HTTPS_PROXY
+    if (-not $proxyUrl) { $proxyUrl = $env:HTTP_PROXY }
+    if ($proxyUrl) {
+        try {
+            $webProxy = New-Object System.Net.WebProxy($proxyUrl)
+            $webProxy.UseDefaultCredentials = $false
+            $webProxy.Credentials = $null
+            $req = [System.Net.HttpWebRequest]::Create($Url)
+            $req.Proxy = $webProxy
+            $req.Method = 'HEAD'
+            $req.Timeout = $TimeoutSec * 1000
+            $resp = $req.GetResponse()
+            $resp.Close()
+            return 'proxy'
+        } catch {}
+    }
+    return 'unreachable'
+}
+
 function Write-ProxyGuidance {
     param([string]$Context)
     Write-Host ""
@@ -154,43 +198,66 @@ function Write-ProxyGuidance {
     Write-Host ""
 }
 
+function Add-NoProxyHost {
+    param([string]$Host)
+    $entries = @()
+    if ($env:NO_PROXY) { $entries = @($env:NO_PROXY -split ',') }
+    $entries += $Host
+    $env:NO_PROXY = ($entries | Where-Object { $_ } | Select-Object -Unique) -join ','
+}
+
 function Assert-Network {
     Sync-SystemProxy
 
-    $proxyDetected = [bool]($env:HTTP_PROXY -or $env:HTTPS_PROXY)
-    $useMirror = $false
-    if (Test-UrlReachable -Url "https://pypi.org/simple/") {
-        Write-Host "  PyPI connectivity [OK]"
-        if ($proxyDetected) {
-            # Invoke-WebRequest passes through proxy but pip often fails with SSL
-            # handshake timeouts through the same proxy. Use domestic mirror instead.
-            $useMirror = $true
-        }
+    # Probe each candidate source twice (direct + via env proxy) so the
+    # mode we record for the source matches what pip/huggingface_hub
+    # will actually do at install time. See Test-SourceMode comment.
+    $pypiMode = Test-SourceMode -Url "https://pypi.org/simple/" -TimeoutSec 5
+    if ($pypiMode -eq 'direct') {
+        Write-Host "  PyPI connectivity [OK] (direct)"
+        # pip will reach pypi.org without proxy — make sure proxy env, if any,
+        # bypasses pypi.org so we don't accidentally route through the proxy.
+        Add-NoProxyHost "pypi.org"
+    } elseif ($pypiMode -eq 'proxy') {
+        Write-Host "  PyPI connectivity [OK] (via env proxy)"
+        # Leave HTTP_PROXY in place; pip will pick it up.
     } else {
-        $useMirror = $true
-    }
-    if ($useMirror) {
-        # Verify Tsinghua before switching — internal/PX networks may need a
-        # proxy even to reach domestic mirrors. Surface a clear .env hint
-        # instead of silently switching to a mirror the user can't reach.
-        if (Test-UrlReachable -Url "https://pypi.tuna.tsinghua.edu.cn/simple/") {
-            Write-Host "  Using Tsinghua mirror for pip (bypassing proxy for domestic hosts)"
+        Write-Host "  PyPI unreachable both direct and via proxy — switching to mirror"
+        $tsinghuaMode = Test-SourceMode -Url "https://pypi.tuna.tsinghua.edu.cn/simple/" -TimeoutSec 5
+        if ($tsinghuaMode -eq 'direct') {
+            Write-Host "  Tsinghua mirror reachable (direct) — pip will bypass proxy"
             $env:PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple/"
             $env:PIP_TRUSTED_HOST = "pypi.tuna.tsinghua.edu.cn"
-            $noProxy = @("pypi.tuna.tsinghua.edu.cn", "hf-mirror.com", "mirrors.tuna.tsinghua.edu.cn")
-            if ($env:NO_PROXY) { $noProxy = @($env:NO_PROXY -split ',') + $noProxy }
-            $env:NO_PROXY = ($noProxy | Select-Object -Unique) -join ','
+            Add-NoProxyHost "pypi.tuna.tsinghua.edu.cn"
+            Add-NoProxyHost "mirrors.tuna.tsinghua.edu.cn"
+        } elseif ($tsinghuaMode -eq 'proxy') {
+            Write-Host "  Tsinghua mirror reachable (via env proxy) — pip will route through proxy"
+            $env:PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+            $env:PIP_TRUSTED_HOST = "pypi.tuna.tsinghua.edu.cn"
+            # Deliberately NOT adding to NO_PROXY so pip honors HTTP_PROXY.
         } else {
-            Write-ProxyGuidance -Context "pypi.org 和清华镜像都不可达，pip install 一定会失败。"
-            # Don't throw — pip might still work if the user has other connectivity.
+            Write-ProxyGuidance -Context "pypi.org 和清华镜像在 direct + via proxy 两种模式下都不可达，pip install 一定会失败。"
         }
     }
-    if (Test-UrlReachable -Url "https://huggingface.co") {
-        Write-Host "  HuggingFace connectivity [OK]"
-    } elseif (Test-UrlReachable -Url "https://hf-mirror.com") {
-        Write-Host "  HuggingFace unreachable, switching to hf-mirror.com"
-        $env:HF_ENDPOINT = "https://hf-mirror.com"
+
+    # Same two-mode probe for HuggingFace.
+    $hfMode = Test-SourceMode -Url "https://huggingface.co" -TimeoutSec 5
+    if ($hfMode -eq 'direct') {
+        Write-Host "  HuggingFace connectivity [OK] (direct)"
+        Add-NoProxyHost "huggingface.co"
+    } elseif ($hfMode -eq 'proxy') {
+        Write-Host "  HuggingFace connectivity [OK] (via env proxy)"
     } else {
-        Write-ProxyGuidance -Context "huggingface.co 和 hf-mirror.com 都不可达，模型下载一定会失败。"
+        $hfMirrorMode = Test-SourceMode -Url "https://hf-mirror.com" -TimeoutSec 5
+        if ($hfMirrorMode -eq 'direct') {
+            Write-Host "  HuggingFace unreachable, switching to hf-mirror.com (direct)"
+            $env:HF_ENDPOINT = "https://hf-mirror.com"
+            Add-NoProxyHost "hf-mirror.com"
+        } elseif ($hfMirrorMode -eq 'proxy') {
+            Write-Host "  HuggingFace unreachable, switching to hf-mirror.com (via env proxy)"
+            $env:HF_ENDPOINT = "https://hf-mirror.com"
+        } else {
+            Write-ProxyGuidance -Context "huggingface.co 和 hf-mirror.com 在 direct + via proxy 两种模式下都不可达，模型下载一定会失败。"
+        }
     }
 }
