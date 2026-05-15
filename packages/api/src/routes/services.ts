@@ -421,7 +421,11 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         /* already gone */
       }
       clearServicePid(id);
-      return { ok: true, message: `${manifest.name} stopped (pid ${storedPid})`, state: await getServiceState(manifest) };
+      return {
+        ok: true,
+        message: `${manifest.name} stopped (pid ${storedPid})`,
+        state: await getServiceState(manifest),
+      };
     }
 
     // 2) Try stop script if defined
@@ -689,10 +693,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
           // so /api/services polling surfaces success / failure (with
           // lastInstallError / lastInstallTroubleshootHint).
           child.on('error', (err) => {
-            request.log.error(
-              { serviceId: id, err: err.message },
-              `service install spawn errored: ${manifest.name}`,
-            );
+            request.log.error({ serviceId: id, err: err.message }, `service install spawn errored: ${manifest.name}`);
             setServiceConfig(id, {
               installStatus: 'failed',
               lastInstallError: err.message,
