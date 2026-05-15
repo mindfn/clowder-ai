@@ -377,14 +377,24 @@ function Install-PythonToProjectDirInner {
     # the progress bar throttles large transfers.
     $prevProgress = $ProgressPreference
     $ProgressPreference = 'SilentlyContinue'
+    # Snapshot the .NET DefaultWebProxy so we can restore after the
+    # download. We need this for the direct-mode branch: bare IWR honors
+    # DefaultWebProxy, which on Windows defaults to the system proxy.
+    # Test-ResolverSourceMode used Proxy=$null on the HEAD probe, so the
+    # probe and the actual download must agree — otherwise direct-mode
+    # download silently routes through the registry proxy that the probe
+    # explicitly avoided.
+    $savedDefaultProxy = $null
+    try { $savedDefaultProxy = [System.Net.WebRequest]::DefaultWebProxy } catch {}
     try {
         try {
             if ($mode -eq 'proxy' -and $candidate) {
                 [Console]::Error.WriteLine("  Using proxy for download: $candidate")
                 Invoke-WebRequest -Uri $tarballUrl -OutFile $tarballPath -UseBasicParsing -Proxy $candidate -ErrorAction Stop
             } else {
-                # direct: explicitly null .NET proxy so the system proxy
-                # doesn't get used through .NET DefaultWebProxy fallback.
+                # direct: force .NET DefaultWebProxy to null for THIS IWR call
+                # so we don't silently route through the system proxy.
+                try { [System.Net.WebRequest]::DefaultWebProxy = $null } catch {}
                 Invoke-WebRequest -Uri $tarballUrl -OutFile $tarballPath -UseBasicParsing -ErrorAction Stop
             }
         } catch {
@@ -393,6 +403,7 @@ function Install-PythonToProjectDirInner {
         }
     } finally {
         $ProgressPreference = $prevProgress
+        try { [System.Net.WebRequest]::DefaultWebProxy = $savedDefaultProxy } catch {}
     }
     if (-not (Test-Path $tarballPath)) {
         [Console]::Error.WriteLine("  Tarball not at expected path: $tarballPath")
