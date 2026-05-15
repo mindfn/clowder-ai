@@ -493,10 +493,16 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
             process.kill(-storedPid, 'SIGTERM');
             killed = true;
           }
-        } catch {
-          // Process group already gone — same effect as kill succeeded
-          // (the sidecar is no longer running under that PID).
-          killed = true;
+        } catch (err) {
+          // Distinguish "process already gone" (effective success) from
+          // "we can't kill it" (real failure → fall through to fallbacks).
+          // ESRCH = no such process: kill effectively succeeded, the
+          // sidecar isn't running under that PID anymore. EPERM and
+          // anything else = process likely alive but we can't signal it
+          // (ownership / elevation), so we MUST try stop-script / port
+          // fallbacks (codex P2 3250137869).
+          const code = (err as NodeJS.ErrnoException)?.code;
+          killed = code === 'ESRCH';
         }
         if (killed) {
           clearServicePid(id);
@@ -915,9 +921,13 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
             process.kill(-storedPid, 'SIGTERM');
             stopped = true;
           }
-        } catch {
-          // Process group already gone — same observable result.
-          stopped = true;
+        } catch (err) {
+          // Only ESRCH (no such process) counts as "effectively stopped".
+          // EPERM means the sidecar is still alive but we can't signal it,
+          // so we must fall through to the port-based fallback below
+          // (codex P2 3250137869 — same shape as the /stop fix).
+          const code = (err as NodeJS.ErrnoException)?.code;
+          stopped = code === 'ESRCH';
         }
         clearServicePid(id);
       } else if (storedPid) {
