@@ -170,7 +170,7 @@ export class PluginResourceActivator {
 
     const yamlPath = join(this.deps.pluginsDir, manifest.id, resource.path);
     const node = await this.deps.limbAdapterFactory(manifest.id, yamlPath);
-    await this.upsertCapabilityEntry(manifest, resource, true);
+    await this.upsertCapabilityEntry(manifest, resource, true, node.nodeId);
     try {
       await this.deps.limbRegistry.register(node);
     } catch (err) {
@@ -182,13 +182,20 @@ export class PluginResourceActivator {
   private async deactivateLimb(manifest: PluginManifest, resource: PluginResourceDef): Promise<void> {
     if (!resource.path) return;
 
+    let nodeId: string | undefined;
     try {
       const yamlPath = join(this.deps.pluginsDir, manifest.id, resource.path);
       const { loadLimbDeclaration } = await import('../limb/limb-yaml-loader.js');
       const decl = loadLimbDeclaration(yamlPath);
-      this.deps.limbRegistry.deregister(decl.nodeId);
+      nodeId = decl.nodeId;
     } catch {
-      // YAML missing/malformed — still remove capability entry below
+      const capId = resourceCapId(manifest.id, resource);
+      const config = await this.deps.readCapabilities();
+      nodeId = config?.capabilities.find((c) => c.id === capId)?.limbNodeId;
+    }
+
+    if (nodeId) {
+      this.deps.limbRegistry.deregister(nodeId);
     }
 
     await this.removeCapabilityEntry(manifest, resource);
@@ -209,6 +216,7 @@ export class PluginResourceActivator {
     manifest: PluginManifest,
     resource: PluginResourceDef,
     enabled: boolean,
+    limbNodeId?: string,
   ): Promise<void> {
     await this.deps.withCapabilityLock(async () => {
       const config = await this.deps.readCapabilities();
@@ -225,6 +233,7 @@ export class PluginResourceActivator {
         }
         existing.enabled = enabled;
         existing.pluginId = manifest.id;
+        if (limbNodeId) existing.limbNodeId = limbNodeId;
         if (resource.type === 'mcp' && resource.command) {
           existing.mcpServer = {
             command: resource.command,
@@ -239,6 +248,7 @@ export class PluginResourceActivator {
           enabled,
           source: 'cat-cafe',
           pluginId: manifest.id,
+          ...(limbNodeId ? { limbNodeId } : {}),
         };
 
         if (resource.type === 'mcp' && resource.command) {
