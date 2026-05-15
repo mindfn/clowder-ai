@@ -123,54 +123,66 @@ check_network() {
     return
   fi
 
-  # Track the first reachable PUBLIC pip index URL (follows the same
-  # pypi → Tsinghua probe order used to pick PIP_INDEX_URL above). This
-  # is reused by the PIP_EXTRA_INDEX_URL fallback at the bottom so the
-  # fallback follows our standard mirror policy instead of hard-coding
-  # a single mirror — if we ever add another mirror to the probe chain
-  # (e.g. aliyun), the fallback inherits it automatically.
-  local public_pip_url=""
-
+  # Probe BOTH public pip sources (pypi.org and Tsinghua mirror), no
+  # short-circuit. Collect every reachable URL into public_pip_urls
+  # (space-separated, priority order). pip natively supports multiple
+  # PIP_EXTRA_INDEX_URL values separated by space — when the primary
+  # source misses a package pip tries each extra-index in order — so
+  # offering both mirrors maximises fallback coverage instead of
+  # forcing a single pypi-OR-Tsinghua choice.
   local pypi_mode
+  local tsinghua_mode
   pypi_mode=$(_test_source_mode "https://pypi.org/simple/" "$timeout")
+  tsinghua_mode=$(_test_source_mode "https://pypi.tuna.tsinghua.edu.cn/simple" "$timeout")
+
+  # Space-separated, priority order (pypi → Tsinghua). The
+  # ${var:+ } expansion adds a leading separator only when the list is
+  # already non-empty, so prepending is safe without a helper function.
+  local public_pip_urls=""
+
   case "$pypi_mode" in
     direct)
       echo "  PyPI 连接 ✓ (direct)"
       _add_no_proxy_host "pypi.org"
-      public_pip_url="https://pypi.org/simple"
+      public_pip_urls="${public_pip_urls}${public_pip_urls:+ }https://pypi.org/simple"
       ;;
     proxy)
       echo "  PyPI 连接 ✓ (via env proxy)"
-      public_pip_url="https://pypi.org/simple"
+      public_pip_urls="${public_pip_urls}${public_pip_urls:+ }https://pypi.org/simple"
       ;;
     unreachable)
-      echo "WARNING: 无法连接 PyPI (https://pypi.org)，pip install 可能会失败"
-      local tsinghua_mode
-      tsinghua_mode=$(_test_source_mode "https://pypi.tuna.tsinghua.edu.cn/simple" "$timeout")
-      case "$tsinghua_mode" in
-        direct)
-          if [ -z "${PIP_INDEX_URL:-}" ]; then
-            export PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
-            echo "  自动启用清华 pip 镜像 (direct, 不走代理): $PIP_INDEX_URL"
-          fi
-          _add_no_proxy_host "pypi.tuna.tsinghua.edu.cn"
-          _add_no_proxy_host "mirrors.tuna.tsinghua.edu.cn"
-          public_pip_url="https://pypi.tuna.tsinghua.edu.cn/simple"
-          ;;
-        proxy)
-          if [ -z "${PIP_INDEX_URL:-}" ]; then
-            export PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
-            echo "  自动启用清华 pip 镜像 (via env proxy): $PIP_INDEX_URL"
-          fi
-          # Deliberately NOT adding to NO_PROXY so pip honors HTTP_PROXY.
-          public_pip_url="https://pypi.tuna.tsinghua.edu.cn/simple"
-          ;;
-        unreachable)
-          _print_proxy_guidance "pypi.org 和清华镜像在 direct + via proxy 两种模式下都不可达。"
-          ;;
-      esac
+      echo "WARNING: 无法连接 PyPI (https://pypi.org)，pip install 主源可能会失败"
       ;;
   esac
+
+  case "$tsinghua_mode" in
+    direct)
+      echo "  清华 pip 镜像 ✓ (direct)"
+      _add_no_proxy_host "pypi.tuna.tsinghua.edu.cn"
+      _add_no_proxy_host "mirrors.tuna.tsinghua.edu.cn"
+      public_pip_urls="${public_pip_urls}${public_pip_urls:+ }https://pypi.tuna.tsinghua.edu.cn/simple"
+      ;;
+    proxy)
+      echo "  清华 pip 镜像 ✓ (via env proxy)"
+      # Deliberately NOT adding to NO_PROXY so pip honors HTTP_PROXY.
+      public_pip_urls="${public_pip_urls}${public_pip_urls:+ }https://pypi.tuna.tsinghua.edu.cn/simple"
+      ;;
+    unreachable)
+      if [ "$pypi_mode" = "unreachable" ]; then
+        _print_proxy_guidance "pypi.org 和清华镜像在 direct + via proxy 两种模式下都不可达。"
+      fi
+      ;;
+  esac
+
+  # Auto-pick primary index when user didn't set one and pypi is
+  # unreachable: prefer Tsinghua. Preserves legacy behavior — users
+  # without explicit PIP_INDEX_URL get an accessible mirror picked for
+  # them.
+  if [ -z "${PIP_INDEX_URL:-}" ] && [ "$pypi_mode" = "unreachable" ] && \
+     ([ "$tsinghua_mode" = "direct" ] || [ "$tsinghua_mode" = "proxy" ]); then
+    export PIP_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
+    echo "  自动启用清华 pip 镜像作为主源: $PIP_INDEX_URL"
+  fi
 
   local hf_mode
   hf_mode=$(_test_source_mode "https://huggingface.co" "$timeout")
@@ -208,35 +220,58 @@ check_network() {
   esac
 
   # Public fallback when user already has PIP_INDEX_URL set (e.g. an
-  # internal corporate mirror). pip honors PIP_EXTRA_INDEX_URL natively;
-  # when the primary index doesn't have a package (e.g. internal mirror
-  # missing sentence-transformers), pip falls back to extra-index-url.
-  # Without this, an internal-only mirror is a dead end for any package
-  # the IT team didn't pre-mirror.
+  # internal corporate mirror). pip honors PIP_EXTRA_INDEX_URL natively
+  # and accepts space-separated multi-values — when the primary source
+  # misses a package (e.g. internal mirror without sentence-transformers)
+  # pip walks the extra-index list in order. Inject EVERY reachable
+  # public mirror (minus duplicates of the user's primary) so coverage
+  # is maximised.
   if [ -n "${PIP_INDEX_URL:-}" ] && [ -z "${PIP_EXTRA_INDEX_URL:-}" ]; then
+    # Normalize user URL for dedup comparison (strip trailing slash).
+    local user_idx="${PIP_INDEX_URL%/}"
+    # Build dedup candidate list from probe results.
+    local candidates=""
+    local url
+    for url in $public_pip_urls; do
+      if [ "${url%/}" != "$user_idx" ]; then
+        if [ -z "$candidates" ]; then candidates="$url"; else candidates="$candidates $url"; fi
+      fi
+    done
+
     local fb_url=""
     local fb_reason=""
-    if [ -n "$public_pip_url" ] && [ "$PIP_INDEX_URL" != "$public_pip_url" ]; then
-      # Primary probe found a reachable public mirror — use that. This is
-      # the strong signal path: curl confirmed reachability so pip will
-      # almost certainly reach it too.
-      fb_url="$public_pip_url"
-      fb_reason="主探测可达"
-    elif [ "$PIP_INDEX_URL" != "https://pypi.org/simple" ] && [ "$PIP_INDEX_URL" != "https://pypi.org/simple/" ]; then
-      # Probe found nothing reachable OR the only reachable mirror is what
-      # the user already set. Fall back to pypi.org as a LAST-RESORT
-      # default — our curl probe can't see through Windows system proxies
-      # or transparent corp gateways, but pip running in the same shell
-      # often can. Worst case pip also fails and the user gets the same
-      # error they'd get without any fallback at all.
-      fb_url="https://pypi.org/simple"
+    if [ -n "$candidates" ]; then
+      # Strong signal path: curl confirmed at least one public mirror
+      # reachable. Inject everything we confirmed.
+      fb_url="$candidates"
+      fb_reason="主探测可达，按优先级 pypi → 清华"
+    else
+      # Probe found nothing reachable that isn't already the user's
+      # primary. Last-resort: list BOTH public mirrors so pip has the
+      # maximum chance of finding the package — curl probes can miss
+      # what Windows system proxies / transparent corp gateways resolve
+      # for pip. Worst case pip also fails and the user lands in the
+      # same error state they would without any fallback at all.
+      local last_resort=""
+      if [ "$user_idx" != "https://pypi.org/simple" ]; then
+        last_resort="https://pypi.org/simple"
+      fi
+      if [ "$user_idx" != "https://pypi.tuna.tsinghua.edu.cn/simple" ]; then
+        if [ -z "$last_resort" ]; then
+          last_resort="https://pypi.tuna.tsinghua.edu.cn/simple"
+        else
+          last_resort="$last_resort https://pypi.tuna.tsinghua.edu.cn/simple"
+        fi
+      fi
+      fb_url="$last_resort"
       fb_reason="last-resort（curl 探测未通；pip 可能能通过系统代理/透明代理 reach）"
     fi
+
     if [ -n "$fb_url" ]; then
       export PIP_EXTRA_INDEX_URL="$fb_url"
-      echo "  注入 PIP_EXTRA_INDEX_URL=$fb_url（$fb_reason；用户 PIP_INDEX_URL=$PIP_INDEX_URL）"
+      echo "  注入 PIP_EXTRA_INDEX_URL=\"$fb_url\"（$fb_reason；用户 PIP_INDEX_URL=$PIP_INDEX_URL）"
     else
-      echo "  PIP_EXTRA_INDEX_URL 未注入（用户 PIP_INDEX_URL=$PIP_INDEX_URL 已等于 pypi.org，注入会重复）"
+      echo "  PIP_EXTRA_INDEX_URL 未注入（用户 PIP_INDEX_URL=$PIP_INDEX_URL 已覆盖所有候选公共源）"
     fi
   fi
 }

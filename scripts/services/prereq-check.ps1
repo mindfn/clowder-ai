@@ -228,48 +228,51 @@ function Assert-Network {
     $candidate = Get-SystemProxyCandidate
     $needProxyInjection = $false
 
-    # Track the first reachable PUBLIC pip index URL (follows the same
-    # pypi → Tsinghua probe order used to pick $env:PIP_INDEX_URL). Reused
-    # by the PIP_EXTRA_INDEX_URL fallback at the bottom so the fallback
-    # follows our standard mirror policy instead of hard-coding a single
-    # mirror — if we ever add another mirror to the probe chain (e.g.
-    # aliyun), the fallback inherits it automatically.
-    $publicPipUrl = $null
+    # Probe BOTH public pip sources (pypi.org and Tsinghua mirror), no
+    # short-circuit. Collect every reachable URL into $publicPipUrls
+    # (priority order: pypi → Tsinghua). pip natively supports multiple
+    # PIP_EXTRA_INDEX_URL values separated by space — when the primary
+    # source misses a package pip tries each extra-index in order — so
+    # offering both mirrors maximises fallback coverage instead of
+    # forcing a single pypi-OR-Tsinghua choice.
+    $publicPipUrls = New-Object System.Collections.ArrayList
 
-    # Probe each candidate source twice (direct + via candidate proxy).
     $pypiMode = Test-SourceMode -Url "https://pypi.org/simple/" -TimeoutSec 5 -CandidateProxy $candidate
+    $tsinghuaMode = Test-SourceMode -Url "https://pypi.tuna.tsinghua.edu.cn/simple/" -TimeoutSec 5 -CandidateProxy $candidate
+
     if ($pypiMode -eq 'direct') {
         Write-Host "  PyPI connectivity [OK] (direct)"
         Add-NoProxyHost "pypi.org"
-        $publicPipUrl = "https://pypi.org/simple"
+        [void]$publicPipUrls.Add("https://pypi.org/simple")
     } elseif ($pypiMode -eq 'proxy') {
         Write-Host "  PyPI connectivity [OK] (via proxy: $candidate)"
         $needProxyInjection = $true
-        $publicPipUrl = "https://pypi.org/simple"
+        [void]$publicPipUrls.Add("https://pypi.org/simple")
     } else {
-        Write-Host "  PyPI unreachable both direct and via proxy — switching to mirror"
-        $tsinghuaMode = Test-SourceMode -Url "https://pypi.tuna.tsinghua.edu.cn/simple/" -TimeoutSec 5 -CandidateProxy $candidate
-        if ($tsinghuaMode -eq 'direct') {
-            Write-Host "  Tsinghua mirror reachable (direct) — pip will bypass proxy"
-            # Guard: don't overwrite a user-supplied PIP_INDEX_URL (matches .sh).
-            if (-not $env:PIP_INDEX_URL) {
-                $env:PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple/"
-                $env:PIP_TRUSTED_HOST = "pypi.tuna.tsinghua.edu.cn"
-            }
-            Add-NoProxyHost "pypi.tuna.tsinghua.edu.cn"
-            Add-NoProxyHost "mirrors.tuna.tsinghua.edu.cn"
-            $publicPipUrl = "https://pypi.tuna.tsinghua.edu.cn/simple/"
-        } elseif ($tsinghuaMode -eq 'proxy') {
-            Write-Host "  Tsinghua mirror reachable (via proxy: $candidate) — pip will route through proxy"
-            if (-not $env:PIP_INDEX_URL) {
-                $env:PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple/"
-                $env:PIP_TRUSTED_HOST = "pypi.tuna.tsinghua.edu.cn"
-            }
-            $needProxyInjection = $true
-            $publicPipUrl = "https://pypi.tuna.tsinghua.edu.cn/simple/"
-        } else {
-            Write-ProxyGuidance -Context "pypi.org 和清华镜像在 direct + via proxy 两种模式下都不可达，pip install 一定会失败。"
-        }
+        Write-Host "  WARNING: PyPI unreachable both direct and via proxy"
+    }
+
+    if ($tsinghuaMode -eq 'direct') {
+        Write-Host "  Tsinghua mirror reachable [OK] (direct) — pip will bypass proxy"
+        Add-NoProxyHost "pypi.tuna.tsinghua.edu.cn"
+        Add-NoProxyHost "mirrors.tuna.tsinghua.edu.cn"
+        [void]$publicPipUrls.Add("https://pypi.tuna.tsinghua.edu.cn/simple/")
+    } elseif ($tsinghuaMode -eq 'proxy') {
+        Write-Host "  Tsinghua mirror reachable [OK] (via proxy: $candidate) — pip will route through proxy"
+        $needProxyInjection = $true
+        [void]$publicPipUrls.Add("https://pypi.tuna.tsinghua.edu.cn/simple/")
+    } elseif ($pypiMode -eq 'unreachable') {
+        Write-ProxyGuidance -Context "pypi.org 和清华镜像在 direct + via proxy 两种模式下都不可达，pip install 一定会失败。"
+    }
+
+    # Auto-pick primary index when user didn't set one and pypi is
+    # unreachable: prefer Tsinghua. Preserves legacy behavior — users
+    # without explicit PIP_INDEX_URL get an accessible mirror picked
+    # for them.
+    if (-not $env:PIP_INDEX_URL -and $pypiMode -eq 'unreachable' -and ($tsinghuaMode -eq 'direct' -or $tsinghuaMode -eq 'proxy')) {
+        $env:PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+        $env:PIP_TRUSTED_HOST = "pypi.tuna.tsinghua.edu.cn"
+        Write-Host "  Auto-set PIP_INDEX_URL = Tsinghua mirror (primary)"
     }
 
     # Same two-mode probe for HuggingFace.
@@ -306,35 +309,54 @@ function Assert-Network {
     }
 
     # Public fallback when user already has PIP_INDEX_URL set (e.g. an
-    # internal corporate mirror). pip honors PIP_EXTRA_INDEX_URL natively;
-    # when the primary index doesn't have a package (e.g. internal mirror
-    # missing sentence-transformers), pip falls back to extra-index-url.
-    # Without this, an internal-only mirror is a dead end for any package
-    # the IT team didn't pre-mirror.
+    # internal corporate mirror). pip honors PIP_EXTRA_INDEX_URL natively
+    # and accepts space-separated multi-values — when the primary source
+    # misses a package (e.g. internal mirror without sentence-transformers)
+    # pip walks the extra-index list in order. Inject EVERY reachable
+    # public mirror (minus duplicates of the user's primary) so coverage
+    # is maximised.
     if ($env:PIP_INDEX_URL -and -not $env:PIP_EXTRA_INDEX_URL) {
+        # Normalize user URL for dedup comparison (strip trailing slash).
+        $userIdx = $env:PIP_INDEX_URL.TrimEnd('/')
+        $candidates = New-Object System.Collections.ArrayList
+        foreach ($url in $publicPipUrls) {
+            if ($url.TrimEnd('/') -ne $userIdx) {
+                [void]$candidates.Add($url)
+            }
+        }
+
         $fbUrl = $null
         $fbReason = $null
-        if ($publicPipUrl -and $env:PIP_INDEX_URL -ne $publicPipUrl) {
-            # Primary probe found a reachable public mirror — use that.
-            # Strong signal path: HEAD probe confirmed reachability.
-            $fbUrl = $publicPipUrl
-            $fbReason = "primary probe"
-        } elseif ($env:PIP_INDEX_URL -ne 'https://pypi.org/simple' -and $env:PIP_INDEX_URL -ne 'https://pypi.org/simple/') {
-            # Probe found nothing reachable OR the only reachable mirror is
-            # what the user already set. Fall back to pypi.org as a
-            # LAST-RESORT default — our HEAD probe can't see through
-            # Windows system proxies or transparent corp gateways, but pip
-            # running in the same shell often can. Worst case pip also
-            # fails and the user gets the same error they would get
-            # without any fallback at all.
-            $fbUrl = 'https://pypi.org/simple'
-            $fbReason = "last-resort (HEAD probe failed; pip may still reach via system/transparent proxy)"
+        if ($candidates.Count -gt 0) {
+            # Strong signal path: HEAD probe confirmed at least one public
+            # mirror reachable. Inject everything we confirmed.
+            $fbUrl = ($candidates -join ' ')
+            $fbReason = "primary probe (priority pypi -> Tsinghua)"
+        } else {
+            # Probe found nothing reachable that isn't already the user's
+            # primary. Last-resort: list BOTH public mirrors so pip has
+            # the maximum chance of finding the package — HEAD probes can
+            # miss what Windows system proxies / transparent corp gateways
+            # resolve for pip. Worst case pip also fails and the user
+            # lands in the same error state without any fallback at all.
+            $lastResort = New-Object System.Collections.ArrayList
+            if ($userIdx -ne 'https://pypi.org/simple') {
+                [void]$lastResort.Add('https://pypi.org/simple')
+            }
+            if ($userIdx -ne 'https://pypi.tuna.tsinghua.edu.cn/simple') {
+                [void]$lastResort.Add('https://pypi.tuna.tsinghua.edu.cn/simple/')
+            }
+            if ($lastResort.Count -gt 0) {
+                $fbUrl = ($lastResort -join ' ')
+                $fbReason = "last-resort (HEAD probe failed; pip may still reach via system/transparent proxy)"
+            }
         }
+
         if ($fbUrl) {
             $env:PIP_EXTRA_INDEX_URL = $fbUrl
-            Write-Host "  Injected PIP_EXTRA_INDEX_URL = $fbUrl ($fbReason; user PIP_INDEX_URL=$env:PIP_INDEX_URL)"
+            Write-Host "  Injected PIP_EXTRA_INDEX_URL = `"$fbUrl`" ($fbReason; user PIP_INDEX_URL=$env:PIP_INDEX_URL)"
         } else {
-            Write-Host "  PIP_EXTRA_INDEX_URL not injected (user PIP_INDEX_URL=$env:PIP_INDEX_URL already equals pypi.org)"
+            Write-Host "  PIP_EXTRA_INDEX_URL not injected (user PIP_INDEX_URL=$env:PIP_INDEX_URL already covers every candidate)"
         }
     }
 }
