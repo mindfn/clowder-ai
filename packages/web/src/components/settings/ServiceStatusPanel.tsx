@@ -239,7 +239,13 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
         const res = await apiFetch(`/api/services/${id}/health`);
         if (!res.ok) continue;
         const state = (await res.json()) as { status: string; error?: string };
-        if (state.status === 'running' || state.status === 'error') return state;
+        // `stopped` is also terminal: backend watchForRunningAndFire
+        // (commit 6ab6ec6d) bails early after 3 consecutive 'stopped'
+        // probes when a sidecar crashes on start. Without this branch,
+        // the UI keeps polling until the 120s deadline and reports
+        // "timeout" instead of the actual crash-on-start (codex P2
+        // 3249941785).
+        if (state.status === 'running' || state.status === 'error' || state.status === 'stopped') return state;
       }
       return { status: 'timeout' };
     },
@@ -250,7 +256,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
     async (id: string, displayName: string) => {
       startLogPoll(id);
       const result = await awaitServiceHealth(id);
-      if (result.status === 'error') {
+      if (result.status === 'error' || result.status === 'stopped') {
         addToast({
           type: 'error',
           title: `${displayName} 启动失败`,
