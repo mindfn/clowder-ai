@@ -368,6 +368,8 @@ export async function getServiceState(manifest: ServiceManifest, refreshEnv = fa
     lastChecked: Date.now(),
     healthDetail: probe.detail,
     error: probe.error,
+    lastInstallError: config.lastInstallError,
+    lastInstallTroubleshootHint: config.lastInstallTroubleshootHint,
     recommendation,
   };
 }

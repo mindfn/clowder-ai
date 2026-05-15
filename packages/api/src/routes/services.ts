@@ -279,13 +279,10 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     const current = await getServiceState(manifest);
     if (current.status === 'running') {
       // Re-fire 'started' so consumers (e.g. evidence embed catch-up) still
-      // run their initial hook even when the sidecar was already healthy
-      // (e.g. autostart raced ahead, or the user double-clicks 启动). Hook
-      // is always-on (unregisterOnSuccess=false), so multiple fires per
-      // session are intentional + idempotent.
+      // run their initial hook even when the sidecar was already healthy.
       request.log.info(`[services] /start ${id} → already running, firing 'started' event`);
       void fireServiceEvent(id, 'started');
-      return { ok: true, message: `${manifest.name} is already running` };
+      return { ok: true, message: `${manifest.name} is already running`, state: current };
     }
 
     if (manifest.port) {
@@ -365,7 +362,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
             watcherStarted = true;
             request.log.info(`[services] /start ${id} → spawned (earlyExit=0, healthy), watcher polling for running`);
             void watchForRunningAndFire(id, manifest, request.log);
-            return { ok: true, message: `${manifest.name} start initiated` };
+            return { ok: true, message: `${manifest.name} start initiated`, state: await getServiceState(manifest) };
           }
         }
         const logs = readLogTail(id, 20);
@@ -382,7 +379,11 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       request.log.info(`[services] /start ${id} → spawned (pid=${child.pid}), watcher polling for running`);
       void watchForRunningAndFire(id, manifest, request.log);
       // (background watcher fire-and-forget; setStarting handled inside)
-      return { ok: true, message: `${manifest.name} start initiated (pid: ${child.pid})` };
+      return {
+        ok: true,
+        message: `${manifest.name} start initiated (pid: ${child.pid})`,
+        state: await getServiceState(manifest),
+      };
     } catch {
       reply.status(500);
       return { error: `Failed to start ${manifest.name}: spawn error` };
@@ -420,7 +421,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         /* already gone */
       }
       clearServicePid(id);
-      return { ok: true, message: `${manifest.name} stopped (pid ${storedPid})` };
+      return { ok: true, message: `${manifest.name} stopped (pid ${storedPid})`, state: await getServiceState(manifest) };
     }
 
     // 2) Try stop script if defined
@@ -438,7 +439,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
             reply.status(500);
             return { ok: false, error: `Stop script for ${manifest.name} exited with code ${code}` };
           }
-          return { ok: true, message: `${manifest.name} stopped via script` };
+          return { ok: true, message: `${manifest.name} stopped via script`, state: await getServiceState(manifest) };
         } catch {
           reply.status(500);
           return { ok: false, error: `Failed to run stop script for ${manifest.name}` };
@@ -480,7 +481,11 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       if (killed.length === 0) {
         request.log.warn({ serviceId: id, port: stopPort, candidatePids }, 'stop: no matching processes killed');
       }
-      return { ok: true, message: `${manifest.name} stopped (${killed.length} process(es))` };
+      return {
+        ok: true,
+        message: `${manifest.name} stopped (${killed.length} process(es))`,
+        state: await getServiceState(manifest),
+      };
     } catch {
       reply.status(500);
       return { ok: false, error: 'Failed to stop service' };
@@ -649,6 +654,14 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
           appendLog(id, '[install] pre-install uninstall skipped: manifest has no uninstall script\n');
         }
 
+        // Spawn install child + handle its lifecycle ASYNCHRONOUSLY so this
+        // HTTP handler can return the in-flight state to the client right
+        // away. Previously the handler awaited the entire install (could be
+        // many minutes), forcing the frontend to keep an `acting` Set as a
+        // shadow source of truth. Single-source design: client POST returns
+        // a state snapshot showing status='installing', then frontend tracks
+        // completion via /api/services polling (the existing 3s transitional
+        // poll already covers this).
         try {
           const { command: installCmd, args: installArgs } = resolveSpawnCommand(manifest.scripts.install);
           const child = spawn(installCmd, installArgs, {
@@ -671,72 +684,102 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
             appendOutput(s);
             appendLog(id, s);
           });
-          const code = await new Promise<number | null>((res, rej) => {
-            child.on('error', rej);
-            child.on('close', (c) => res(c));
+
+          // Fire-and-forget close handler: writes final status to service config
+          // so /api/services polling surfaces success / failure (with
+          // lastInstallError / lastInstallTroubleshootHint).
+          child.on('error', (err) => {
+            request.log.error(
+              { serviceId: id, err: err.message },
+              `service install spawn errored: ${manifest.name}`,
+            );
+            setServiceConfig(id, {
+              installStatus: 'failed',
+              lastInstallError: err.message,
+              lastInstallTroubleshootHint: undefined,
+            });
+            setInstalling(id, false);
+          });
+          child.on('close', (code) => {
+            try {
+              if (code !== 0) {
+                const troubleshootHint = detectInstallFailureHint(output);
+                request.log.error(
+                  { serviceId: id, exitCode: code, output: output.slice(-2000) },
+                  `service install failed: ${manifest.name}`,
+                );
+                setServiceConfig(id, {
+                  installStatus: 'failed',
+                  lastInstallError: `Install failed (exit ${code}): ${output.slice(-2000)}`,
+                  lastInstallTroubleshootHint: troubleshootHint ?? undefined,
+                });
+                return;
+              }
+              setServiceConfig(id, {
+                installStatus: 'installed',
+                lastInstallError: undefined,
+                lastInstallTroubleshootHint: undefined,
+              });
+              if (manifest.scripts.start && getServiceConfig(id).enabled) {
+                const startScript = resolveScriptPath(manifest.scripts.start);
+                if (existsSync(startScript)) {
+                  const startEnv: Record<string, string> = { ...process.env } as Record<string, string>;
+                  normalizeProxyEnv(startEnv);
+                  const startSelected = resolveSelectedModel(id, manifest.id);
+                  if (startSelected) {
+                    const ek = MODEL_ENV_VARS[id];
+                    if (ek) startEnv[ek] = startSelected;
+                  }
+                  const cfg = getServiceConfig(id);
+                  if (cfg.port) {
+                    const pk = PORT_ENV_VARS[id];
+                    if (pk) startEnv[pk] = String(cfg.port);
+                  }
+                  const { command: autoStartCmd, args: autoStartArgs } = resolveSpawnCommand(manifest.scripts.start);
+                  const startChild = spawn(autoStartCmd, autoStartArgs, {
+                    detached: process.platform !== 'win32',
+                    stdio: ['ignore', 'pipe', 'pipe'],
+                    env: startEnv,
+                  });
+                  startChild.on('error', () => {});
+                  if (startChild.pid) setServicePid(id, startChild.pid);
+                  setStarting(id, true);
+                  wireUpSidecarReadyListener(startChild, id, () => {
+                    request.log.info(`[services] install→autostart ${id} → ready marker seen, firing 'started' event`);
+                    void fireServiceEvent(id, 'started');
+                  });
+                  startChild.unref();
+                  void watchForRunningAndFire(id, manifest, request.log);
+                }
+              }
+            } finally {
+              setInstalling(id, false);
+            }
           });
 
-          if (code !== 0) {
-            setServiceConfig(id, { installStatus: 'failed' });
-            const troubleshootHint = detectInstallFailureHint(output);
-            request.log.error(
-              { serviceId: id, exitCode: code, output: output.slice(-2000) },
-              `service install failed: ${manifest.name}`,
-            );
-            reply.status(422);
-            return {
-              ok: false,
-              error: `Install failed (exit ${code})`,
-              output: output.slice(-2000),
-              troubleshootHint,
-            };
-          }
-
-          setServiceConfig(id, { installStatus: 'installed' });
-
-          if (manifest.scripts.start && getServiceConfig(id).enabled) {
-            const startScript = resolveScriptPath(manifest.scripts.start);
-            if (existsSync(startScript)) {
-              const startEnv: Record<string, string> = { ...process.env } as Record<string, string>;
-              normalizeProxyEnv(startEnv);
-              const startSelected = resolveSelectedModel(id, manifest.id);
-              if (startSelected) {
-                const ek = MODEL_ENV_VARS[id];
-                if (ek) startEnv[ek] = startSelected;
-              }
-              const cfg = getServiceConfig(id);
-              if (cfg.port) {
-                const pk = PORT_ENV_VARS[id];
-                if (pk) startEnv[pk] = String(cfg.port);
-              }
-              const { command: autoStartCmd, args: autoStartArgs } = resolveSpawnCommand(manifest.scripts.start);
-              const startChild = spawn(autoStartCmd, autoStartArgs, {
-                detached: process.platform !== 'win32',
-                // Pipe so the ready-marker listener can fire fast and
-                // appendLog keeps the per-service log file intact.
-                stdio: ['ignore', 'pipe', 'pipe'],
-                env: startEnv,
-              });
-              startChild.on('error', () => {});
-              if (startChild.pid) setServicePid(id, startChild.pid);
-              wireUpSidecarReadyListener(startChild, id, () => {
-                request.log.info(`[services] install→autostart ${id} → ready marker seen, firing 'started' event`);
-                void fireServiceEvent(id, 'started');
-              });
-              startChild.unref();
-              // Polling watcher kept as safety net (covers slow boot,
-              // missing markers in older Python scripts, etc.).
-              void watchForRunningAndFire(id, manifest, request.log);
-            }
-          }
-
-          return { ok: true, message: `${manifest.name} installed successfully` };
-        } catch {
+          // Return in-flight state immediately. installingServices already set,
+          // so getServiceState reports status='installing'.
+          return { ok: true, state: await getServiceState(manifest) };
+        } catch (err) {
+          // synchronous spawn failure (rare — usually fires the 'error' event
+          // we handle above, but cover the case where spawn() itself throws)
+          setInstalling(id, false);
+          setServiceConfig(id, {
+            installStatus: 'failed',
+            lastInstallError: err instanceof Error ? err.message : String(err),
+          });
           reply.status(500);
           return { ok: false, error: `Failed to run install script for ${manifest.name}` };
         }
-      } finally {
+      } catch (outerErr) {
+        // Outer wrapper safety — inner try/catch already handles spawn errors,
+        // but defensively clear the in-flight flag if something unexpected
+        // propagates past it.
         setInstalling(id, false);
+        const msg = outerErr instanceof Error ? outerErr.message : String(outerErr);
+        setServiceConfig(id, { installStatus: 'failed', lastInstallError: msg });
+        reply.status(500);
+        return { ok: false, error: msg };
       }
     },
   );
@@ -804,8 +847,17 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
           reply.status(422);
           return { ok: false, error: `Uninstall failed (exit ${code})`, output: output.slice(-2000) };
         }
-        setServiceConfig(id, { installStatus: 'none', enabled: false });
-        return { ok: true, message: `${manifest.name} uninstalled successfully` };
+        setServiceConfig(id, {
+          installStatus: 'none',
+          enabled: false,
+          lastInstallError: undefined,
+          lastInstallTroubleshootHint: undefined,
+        });
+        return {
+          ok: true,
+          message: `${manifest.name} uninstalled successfully`,
+          state: await getServiceState(manifest),
+        };
       } catch {
         reply.status(500);
         return { ok: false, error: `Failed to run uninstall script for ${manifest.name}` };
@@ -863,7 +915,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       }
       setServiceConfig(id, patch);
 
-      return { ok: true, config: getServiceConfig(id) };
+      return { ok: true, config: getServiceConfig(id), state: await getServiceState(manifest) };
     },
   );
 };

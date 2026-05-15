@@ -76,7 +76,6 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
   const addToast = useToastStore((s) => s.addToast);
   const [services, setServices] = useState<ServiceState[]>([]);
   const [loading, setLoading] = useState(true);
-  const [acting, setActing] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState<Map<string, string>>(new Map());
   const pollRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
   const [installPreview, setInstallPreview] = useState<ServiceManifest | null>(null);
@@ -154,22 +153,19 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
   }, []);
 
   // Auto-attach log polling to any service the API reports as actively
-  // installing / uninstalling. This recovers progress streaming after a
-  // page refresh during a long install: handleAction's startLogPoll only
-  // runs on user click, and that local state is gone after F5. The backend
-  // (service-registry.ts installingServices set) still knows the spawn is
-  // alive, so any visible 'installing' / 'uninstalling' status implies a
-  // running child we should be tailing.
+  // installing / uninstalling. Backend `installingServices` Set drives
+  // s.status='installing' as soon as POST /install hits the server (well
+  // before the spawn completes), so this single source of truth covers
+  // both the freshly-clicked case and post-page-refresh recovery.
   useEffect(() => {
     const ref = pollRef.current;
     for (const s of services) {
       const id = s.manifest.id;
       const inFlight = s.status === 'installing' || s.status === 'uninstalling';
-      const userActing = acting.has(`${id}:install`) || acting.has(`${id}:uninstall`);
       if (inFlight && !ref.has(id)) startLogPoll(id);
-      else if (!inFlight && !userActing && ref.has(id)) stopLogPoll(id);
+      else if (!inFlight && ref.has(id)) stopLogPoll(id);
     }
-  }, [services, acting, startLogPoll, stopLogPoll]);
+  }, [services, startLogPoll, stopLogPoll]);
 
   // Auto-refetch /api/services every 3s while any service is transitioning
   // (installing / uninstalling / starting). Otherwise the user has to
@@ -244,8 +240,6 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
       opts?: { model?: string; name?: string; port?: number },
     ): Promise<boolean> => {
       const displayName = opts?.name ?? id;
-      const key = `${id}:${action}`;
-      setActing((prev) => new Set(prev).add(key));
       const longRunning = action === 'install' || action === 'uninstall';
       if (longRunning) startLogPoll(id);
       let ok = false;
@@ -260,12 +254,21 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
         }
         const res = await apiFetch(`/api/services/${id}/${action}`, fetchOpts);
         ok = res.ok;
+        // Backend now returns { ok, state } on success: state is the
+        // post-action snapshot (status='installing' / 'starting' / etc).
+        // We splice it straight into the services array — single source
+        // of truth lives on the server, no shadow `acting` Set needed.
+        const body = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          state?: ServiceState;
+          error?: string;
+          output?: string;
+          troubleshootHint?: string;
+        };
+        if (body.state) {
+          setServices((prev) => prev.map((s) => (s.manifest.id === id ? (body.state as ServiceState) : s)));
+        }
         if (!res.ok && (action === 'start' || action === 'install')) {
-          const body = (await res.json().catch(() => ({}))) as {
-            error?: string;
-            output?: string;
-            troubleshootHint?: string;
-          };
           const detail = body.output?.trim().split('\n').filter(Boolean).pop();
           const baseMessage = detail || body.error || `HTTP ${res.status}`;
           const message = body.troubleshootHint ? `${baseMessage}\n\n${body.troubleshootHint}` : baseMessage;
@@ -276,19 +279,18 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
             duration: body.troubleshootHint ? 15000 : 8000,
           });
         }
-        await fetchServices();
+        // Don't refetch — body.state already gave us the post-action
+        // snapshot. The 3s transitional poll keeps tracking until the
+        // background install/start completes.
         if (res.ok && action === 'start') await pollStartStatus(id, displayName);
         if (res.ok && action === 'stop') await pollStopStatus(id);
+        // After polling settles, fetch once more so installStatus /
+        // lastInstallError / etc. reach the UI for the final state.
         await fetchServices();
       } catch {
         stopLogPoll(id);
       } finally {
         if (longRunning) stopLogPoll(id);
-        setActing((prev) => {
-          const next = new Set(prev);
-          next.delete(key);
-          return next;
-        });
       }
       return ok;
     },
@@ -305,8 +307,6 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
         return;
       }
 
-      const key = `${m.id}:toggle`;
-      setActing((prev) => new Set(prev).add(key));
       try {
         const res = await apiFetch(`/api/services/${m.id}/toggle`, {
           method: 'POST',
@@ -323,6 +323,13 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
             duration: 5000,
           });
           return;
+        }
+
+        // /toggle returns { ok, state } — splice it into the services
+        // array so the UI reflects enabled flip immediately.
+        const body = (await res.json().catch(() => ({}))) as { state?: ServiceState };
+        if (body.state) {
+          setServices((prev) => prev.map((s2) => (s2.manifest.id === m.id ? (body.state as ServiceState) : s2)));
         }
 
         if (nextEnabled && s.status !== 'running' && s.status !== 'starting') {
@@ -345,17 +352,9 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
             });
             await fetchServices();
           }
-        } else {
-          await fetchServices();
         }
       } catch {
         addToast({ type: 'error', title: '网络错误', message: `无法连接到服务管理 API`, duration: 5000 });
-      } finally {
-        setActing((prev) => {
-          const next = new Set(prev);
-          next.delete(key);
-          return next;
-        });
       }
     },
     [fetchServices, handleAction, addToast],
@@ -370,7 +369,12 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
       {services.map((s) => {
         const m = s.manifest;
         const isTransitional = s.status === 'starting' || s.status === 'installing' || s.status === 'uninstalling';
-        const busy = [...acting].some((a) => a.startsWith(`${m.id}:`));
+        // `busy` (button disabled) follows the single server-side source of
+        // truth: while any in-flight transition is on this card, the button
+        // is disabled. installingServices / startingServices / uninstallingServices
+        // are set the moment POST hits the server, so the response.state we
+        // splice into the array shows isTransitional=true immediately.
+        const busy = isTransitional;
         const cfg = STATUS_CONFIG[s.status] ?? STATUS_CONFIG.unknown;
         const installFailed = s.installStatus === 'failed';
         const notInstalled = !s.installed && !installFailed;
@@ -430,7 +434,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
                     onClick={() => setInstallPreview(m)}
                     className="console-button-secondary px-3 py-1.5 text-xs disabled:opacity-40"
                   >
-                    {s.status === 'installing' || acting.has(`${m.id}:install`)
+                    {s.status === 'installing'
                       ? '安装中...'
                       : s.status === 'uninstalling'
                         ? '卸载中...'

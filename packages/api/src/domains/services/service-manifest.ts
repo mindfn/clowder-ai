@@ -47,6 +47,15 @@ export interface ServiceConfig {
   selectedModel?: string;
   port?: number;
   installStatus?: InstallStatus;
+  // Last install failure surface — written by /api/services/:id/install
+  // child-close handler when the script exits non-zero, cleared on the
+  // next successful install. Frontend reads these from ServiceState to
+  // display a single toast after polling spots installStatus flipping
+  // from 'installing' → 'failed' (the install endpoint itself now
+  // returns immediately so the failure never came back in the POST
+  // response).
+  lastInstallError?: string;
+  lastInstallTroubleshootHint?: string;
   // python-bootstrap meta-service fields. Populated only for the
   // 'python-bootstrap' pseudo-service entry in services.json; left
   // undefined for normal services (whisper / tts / embed / llm).
@@ -80,5 +89,9 @@ export interface ServiceState {
   lastChecked: number | null;
   healthDetail?: Record<string, unknown>;
   error?: string;
+  /** Last install failure message (script output tail). */
+  lastInstallError?: string;
+  /** detectInstallFailureHint result from the previous failed install run. */
+  lastInstallTroubleshootHint?: string;
   recommendation?: import('./recommendation-types.js').ServiceRecommendation;
 }
