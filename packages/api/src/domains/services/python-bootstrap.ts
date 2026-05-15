@@ -172,13 +172,29 @@ function spawnBootstrap(logger?: BootstrapLogger): Promise<ResolvedPython> {
         }
       }
     });
+    // setServiceConfig under the hood calls writeFileSync — can throw on
+    // disk-full / perm-denied. These event handlers are async with no
+    // outer try/catch, so a throw would surface as an uncaught exception
+    // and could crash the API mid-bootstrap (codex P2 3251506000).
+    // Helper here swallows the persist error and continues with reject /
+    // resolve flow so the awaiter sees the original spawn outcome instead
+    // of a process-level crash.
+    const safePersist = (patch: Parameters<typeof setServiceConfig>[1]): void => {
+      try {
+        setServiceConfig(PYTHON_BOOTSTRAP_ID, patch);
+      } catch (writeErr) {
+        const msg = writeErr instanceof Error ? writeErr.message : String(writeErr);
+        logger?.warn('[python-bootstrap] failed to persist state: %s', msg);
+      }
+    };
+
     child.on('error', (err) => {
-      setServiceConfig(PYTHON_BOOTSTRAP_ID, { installStatus: 'failed' });
+      safePersist({ installStatus: 'failed' });
       rejectResult(err);
     });
     child.on('close', (code) => {
       if (code !== 0) {
-        setServiceConfig(PYTHON_BOOTSTRAP_ID, { installStatus: 'failed' });
+        safePersist({ installStatus: 'failed' });
         rejectResult(
           new Error(
             `python-bootstrap exited with code ${code}\nstderr: ${stderrBuf.slice(-1000)}\nstdout: ${stdoutBuf.slice(-500)}`,
@@ -188,7 +204,7 @@ function spawnBootstrap(logger?: BootstrapLogger): Promise<ResolvedPython> {
       }
       const parsed = parseResolverOutput(stdoutBuf);
       if (!parsed.path) {
-        setServiceConfig(PYTHON_BOOTSTRAP_ID, { installStatus: 'failed' });
+        safePersist({ installStatus: 'failed' });
         rejectResult(new Error('python-bootstrap finished but did not report PYTHON_PATH'));
         return;
       }
@@ -197,7 +213,7 @@ function spawnBootstrap(logger?: BootstrapLogger): Promise<ResolvedPython> {
         arch: parsed.arch ?? '',
         source: parsed.source ?? 'unknown',
       };
-      setServiceConfig(PYTHON_BOOTSTRAP_ID, {
+      safePersist({
         installStatus: 'installed',
         pythonPath: result.path,
         pythonArch: result.arch,

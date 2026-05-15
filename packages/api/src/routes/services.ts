@@ -902,6 +902,26 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
               // surface), leaving users with enabled=true + status=stopped
               // and no diagnostic. Per user decision: keep install scoped
               // to "prepare environment", let the user explicitly start.
+            } catch (writeErr) {
+              // setServiceConfig (writeFileSync) can throw on disk-full /
+              // perm-denied. This callback is an async event handler with
+              // no outer catch — letting it throw would surface as an
+              // uncaught exception and could terminate the API process
+              // (codex P2 3251505997). Route the write failure through
+              // markFailed so the UI still gets a useful state and the
+              // lock releases cleanly.
+              const msg = writeErr instanceof Error ? writeErr.message : String(writeErr);
+              request.log.error(
+                { serviceId: id, err: msg },
+                'failed to persist post-install state — write threw inside close handler',
+              );
+              try {
+                markFailed(`Install completed but failed to persist state: ${msg}`);
+              } catch {
+                // markFailed itself could throw if its own setServiceConfig
+                // dies the same way; swallow — setInstalling in finally
+                // below still releases the lock.
+              }
             } finally {
               setInstalling(id, false);
             }
