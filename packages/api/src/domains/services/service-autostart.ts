@@ -51,8 +51,18 @@ function watchAndAnnounceReady(manifest: ServiceManifest, log: Logger): void {
  */
 function clearStaleInstallingState(log: Logger): void {
   const configs = getAllServiceConfigs();
+  const services = getKnownServices();
   for (const [id, cfg] of Object.entries(configs)) {
     if (cfg.installStatus === 'installing') {
+      const manifest = services.find((m) => m.id === id);
+      // Clear the 'installing' status so checkInstalled falls through to
+      // venv probe — recovers installs that completed before API crashed.
+      setServiceConfig(id, { installStatus: 'none' });
+      if (manifest && checkInstalled(manifest)) {
+        log.info(`[services] ${id} was 'installing' on startup — venv present, recovering to installed`);
+        setServiceConfig(id, { installStatus: 'installed' });
+        continue;
+      }
       log.warn(`[services] ${id} was 'installing' on startup — marking failed (previous API process died mid-install)`);
       setServiceConfig(id, {
         installStatus: 'failed',
