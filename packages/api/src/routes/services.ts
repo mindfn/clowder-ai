@@ -640,11 +640,15 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       }
       // Sync port validation — must happen BEFORE we acquire the lock
       // so caller-supplied bad input fails fast without leaving the
-      // service stuck on 'installing'.
+      // service stuck on 'installing'. Reject non-integer values
+      // (9876.5 etc.) too; downstream PORT env vars + listen() expect
+      // integers (codex P2 3250197028).
       let resolvedPort: number | undefined = body.port;
-      if (typeof resolvedPort === 'number' && (resolvedPort < 1 || resolvedPort > 65535)) {
-        reply.status(400);
-        return { error: 'Invalid port (expected 1..65535)' };
+      if (typeof resolvedPort === 'number') {
+        if (!Number.isInteger(resolvedPort) || resolvedPort < 1 || resolvedPort > 65535) {
+          reply.status(400);
+          return { error: 'Invalid port (expected integer 1..65535)' };
+        }
       }
 
       // Atomic acquire of the in-flight install lock. Sync — no await —
@@ -673,14 +677,41 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       let env: Record<string, string>;
       try {
         if (!resolvedPort) {
-          // Use the same priority chain as resolveServiceEndpoint /
-          // resolveServicePort: services.json > env port > manifest.
-          // Without this, a deployment with EMBED_PORT=9999 set in .env
-          // would silently be rewritten to manifest.port (e.g. 9880) in
-          // services.json during install, then drift across start/health/
-          // stop (codex P2 finding 3249156659).
-          const resolvedFromChain = resolveServicePort(manifest);
-          resolvedPort = resolvedFromChain ?? (await allocateAvailablePort(manifest.port ?? 9000));
+          // Priority for default install port (when caller omits `port`):
+          //   1. services.json cfg.port — console's previous user intent
+          //      (e.g. user changed port in UI on a prior install).
+          //   2. env port (EMBED_PORT etc.) — .env-set default.
+          //   3. allocateAvailablePort starting from manifest.port —
+          //      hunts a free port if manifest.port is taken.
+          //
+          // resolveServicePort returns 1/2 OR manifest.port (cfg/env/manifest
+          // priority chain). For 1 and 2 we trust the user's explicit
+          // intent and don't auto-allocate around it. For 3 (manifest
+          // fallback) we MUST do allocateAvailablePort — codex P2
+          // 3250197033: if the manifest default is occupied, persisting
+          // it leads to address-in-use on start. So we re-derive:
+          // ask for cfg/env first via getServiceConfig(id) + env vars,
+          // and only call allocateAvailablePort when both are unset.
+          const cfg = getServiceConfig(id);
+          if (cfg.port) {
+            resolvedPort = cfg.port;
+          } else {
+            // Check env port via the strict parser (same source of truth
+            // as resolveServicePort, but without the manifest fallback).
+            let envPort: number | undefined;
+            for (const envVar of manifest.configVars) {
+              const val = process.env[envVar];
+              if (!val || val.startsWith('http')) continue;
+              const trimmed = val.trim();
+              if (!/^\d+$/.test(trimmed)) continue;
+              const n = Number.parseInt(trimmed, 10);
+              if (Number.isFinite(n) && n > 0 && n <= 65535) {
+                envPort = n;
+                break;
+              }
+            }
+            resolvedPort = envPort ?? (await allocateAvailablePort(manifest.port ?? 9000));
+          }
         }
         setServiceConfig(id, { port: resolvedPort });
 
