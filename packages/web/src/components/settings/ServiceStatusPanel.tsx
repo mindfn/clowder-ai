@@ -84,6 +84,16 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
   const pollRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
   const [installPreview, setInstallPreview] = useState<ServiceManifest | null>(null);
   const [expandedErrorIds, setExpandedErrorIds] = useState<Set<string>>(new Set());
+  // Short-lived per-service guard for the click→response window. The
+  // server-side transitional flags (installingServices / startingServices
+  // / uninstallingServices) are set the moment POST hits the handler, so
+  // once we splice the response.state in, `isTransitional` carries the
+  // weight. But between the user click and the server response there is
+  // a network-latency window where the card would still look idle —
+  // rapid double-clicks could fire two POSTs (codex P2 3249364247).
+  // pendingActions covers exactly that gap; cleared in the finally
+  // block of handleAction, replaced by the server transitional state.
+  const [pendingActions, setPendingActions] = useState<Set<string>>(new Set());
   const toggleErrorExpand = useCallback((id: string) => {
     setExpandedErrorIds((prev) => {
       const next = new Set(prev);
@@ -280,6 +290,15 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
       const displayName = opts?.name ?? id;
       const longRunning = action === 'install' || action === 'uninstall';
       if (longRunning) startLogPoll(id);
+      // Mark this card pending immediately — prevents rapid double-clicks
+      // from firing two POSTs during the network round-trip (codex P2
+      // 3249364247). Cleared in the finally below; once the response
+      // splices server transitional state in, isTransitional takes over.
+      setPendingActions((prev) => {
+        const next = new Set(prev);
+        next.add(id);
+        return next;
+      });
       let ok = false;
       try {
         const fetchOpts: RequestInit = { method: 'POST' };
@@ -329,6 +348,12 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
         stopLogPoll(id);
       } finally {
         if (longRunning) stopLogPoll(id);
+        setPendingActions((prev) => {
+          if (!prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
       }
       return ok;
     },
@@ -412,7 +437,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
         // is disabled. installingServices / startingServices / uninstallingServices
         // are set the moment POST hits the server, so the response.state we
         // splice into the array shows isTransitional=true immediately.
-        const busy = isTransitional;
+        const busy = isTransitional || pendingActions.has(s.manifest.id);
         const cfg = STATUS_CONFIG[s.status] ?? STATUS_CONFIG.unknown;
         const installFailed = s.installStatus === 'failed';
         const notInstalled = !s.installed && !installFailed;
