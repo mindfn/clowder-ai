@@ -96,8 +96,10 @@ export async function fireServiceEvent(serviceId: string, event: ServiceEvent): 
   const list = hooks.get(k) ?? [];
   if (list.length === 0) return;
 
-  // Snapshot before iteration so late registrations during a hook run get
-  // picked up by the next fire-cycle, not this one.
+  // Snapshot before iteration. Hooks registered during dispatch are
+  // detected after the loop (by identity diff against snapshot) and
+  // re-fired on the next microtask so they don't have to wait for an
+  // external fire-cycle that may never come (codex P2 3249229014).
   const snapshot = [...list];
   const survivors: HookEntry[] = [];
   const ctx: ServiceEventContext = { serviceId, event };
@@ -119,10 +121,25 @@ export async function fireServiceEvent(serviceId: string, event: ServiceEvent): 
     }
   }
 
-  if (survivors.length > 0) {
-    hooks.set(k, survivors);
+  // Hooks registered during this dispatch are present in the live list
+  // but absent from snapshot. Merge them into the survivor set so the
+  // hooks.set/delete below doesn't silently drop them, and queue a
+  // microtask to fire them (the event already happened — fired.add(k)
+  // is at the top of this function, so late subscribers should run).
+  const current = hooks.get(k) ?? [];
+  const lateRegistered = current.filter((e) => !snapshot.includes(e));
+  const merged = survivors.length > 0 || lateRegistered.length > 0 ? [...survivors, ...lateRegistered] : [];
+
+  if (merged.length > 0) {
+    hooks.set(k, merged);
   } else {
     hooks.delete(k);
+  }
+
+  if (lateRegistered.length > 0) {
+    queueMicrotask(() => {
+      void fireServiceEvent(serviceId, event);
+    });
   }
 }
 
