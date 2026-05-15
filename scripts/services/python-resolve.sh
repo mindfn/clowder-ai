@@ -235,6 +235,40 @@ _install_project_python_locked() {
   tmpdir=$(mktemp -d) || return 1
   echo "  Downloading portable Python ${_PBS_VERSION} (${triple}) from python-build-standalone..."
   echo "  URL: $tar_url"
+
+  # Pick the proxy candidate to use: explicit env first, then OS-level
+  # system proxy (macOS scutil / GNOME gsettings). Without the system
+  # fallback, mac users running clash verge / Surge with HTTP_PROXY
+  # only set in macOS network prefs (not exported in shell env) would
+  # see the PBS download attempt direct connect to github.com — which
+  # often fails in CN networks even though the proxy itself works.
+  # This mirrors prereq-check.sh's _get_system_proxy_candidate logic,
+  # but inlined here because python-resolve.sh runs BEFORE prereq-check
+  # in the install pipeline (ensurePython is invoked by the API).
+  local pbs_proxy=""
+  if [ -n "${HTTPS_PROXY:-}" ]; then pbs_proxy="$HTTPS_PROXY"
+  elif [ -n "${HTTP_PROXY:-}" ]; then pbs_proxy="$HTTP_PROXY"
+  elif [ -n "${https_proxy:-}" ]; then pbs_proxy="$https_proxy"
+  elif [ -n "${http_proxy:-}" ]; then pbs_proxy="$http_proxy"
+  elif [ "$(uname -s)" = "Darwin" ] && command -v scutil >/dev/null 2>&1; then
+    local _proxy_info _enabled _host _port
+    _proxy_info=$(scutil --proxy 2>/dev/null)
+    _enabled=$(echo "$_proxy_info" | awk '/HTTPSEnable/{print $NF; exit}')
+    if [ "$_enabled" = "1" ]; then
+      _host=$(echo "$_proxy_info" | awk '/HTTPSProxy /{print $NF; exit}')
+      _port=$(echo "$_proxy_info" | awk '/HTTPSPort /{print $NF; exit}')
+      [ -n "$_host" ] && [ -n "$_port" ] && pbs_proxy="http://${_host}:${_port}"
+    fi
+    if [ -z "$pbs_proxy" ]; then
+      _enabled=$(echo "$_proxy_info" | awk '/HTTPEnable/{print $NF; exit}')
+      if [ "$_enabled" = "1" ]; then
+        _host=$(echo "$_proxy_info" | awk '/HTTPProxy /{print $NF; exit}')
+        _port=$(echo "$_proxy_info" | awk '/HTTPPort /{print $NF; exit}')
+        [ -n "$_host" ] && [ -n "$_port" ] && pbs_proxy="http://${_host}:${_port}"
+      fi
+    fi
+  fi
+
   # IMPORTANT: drop `-s` (silent) — it swallows the actual curl error
   # text ("Could not resolve host" / "Connection timed out" / 403 / ...).
   # Keep --silent for the progress bar but use --show-error so failures
@@ -242,9 +276,14 @@ _install_project_python_locked() {
   # Also print HTTP status / proxy env so users can self-diagnose what
   # path the request actually took.
   echo "  HTTP_PROXY=${HTTP_PROXY:-<unset>}  HTTPS_PROXY=${HTTPS_PROXY:-<unset>}  NO_PROXY=${NO_PROXY:-<unset>}"
+  if [ -n "$pbs_proxy" ] && [ -z "${HTTP_PROXY:-}${HTTPS_PROXY:-}" ]; then
+    echo "  Using detected system proxy for this download: $pbs_proxy"
+  fi
   local curl_log
   curl_log=$(mktemp) || curl_log=""
-  if ! curl -fL --silent --show-error -o "${tmpdir}/python.tar.gz" -w "  HTTP status: %{http_code}  time: %{time_total}s  size: %{size_download} bytes\n" "$tar_url" 2>"${curl_log:-/dev/null}"; then
+  local curl_proxy_args=()
+  [ -n "$pbs_proxy" ] && [ -z "${HTTP_PROXY:-}${HTTPS_PROXY:-}" ] && curl_proxy_args=(-x "$pbs_proxy")
+  if ! curl -fL --silent --show-error "${curl_proxy_args[@]}" -o "${tmpdir}/python.tar.gz" -w "  HTTP status: %{http_code}  time: %{time_total}s  size: %{size_download} bytes\n" "$tar_url" 2>"${curl_log:-/dev/null}"; then
     echo "  Failed to download $tar_url" >&2
     if [ -n "$curl_log" ] && [ -s "$curl_log" ]; then
       echo "  curl error detail:" >&2
