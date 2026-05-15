@@ -8,7 +8,7 @@ created: 2026-05-15
 
 # F198: Unified Service Install Pipeline — 抽象通用安装流程，service 只声明差异
 
-> **Status**: done | **Owner**: Ragdoll | **Priority**: P1 (implemented in PR #674 — user explicit "no follow-up" decision)
+> **Status**: in-progress (implemented in PR #674, pending merge) | **Owner**: Ragdoll | **Priority**: P1 — user explicit "no follow-up" decision: 一次性做完不留 followup
 
 ## Why
 

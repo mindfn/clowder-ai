@@ -32,6 +32,7 @@ import {
   getServiceById,
   getServicePid,
   getServiceState,
+  probeServiceHealth,
   resolveServiceEndpoint,
   resolveServicePort,
   setInstalling,
@@ -353,8 +354,18 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       if (earlyExit !== null) {
         if (earlyExit === 0 && manifest.port) {
           await new Promise((r) => setTimeout(r, 1500));
-          const healthState = await getServiceState(manifest);
-          if (healthState.status === 'running' || healthState.status === 'starting') {
+          // Use probeServiceHealth (raw probe) instead of getServiceState
+          // here: getServiceState rewrites non-running results to
+          // 'starting' when startingServices is set (which we did at
+          // line ~321 before spawning), so a launcher that exits 0
+          // without bringing up the sidecar would get a false 'starting'
+          // and be reported as successful start. The real signal is
+          // whether the sidecar is actually serving its /health
+          // endpoint — either 'running' (HTTP 200 with status='running')
+          // or 'starting' from its OWN /health response (status='loading',
+          // model still loading but already serving).
+          const rawProbe = await probeServiceHealth(manifest);
+          if (rawProbe.status === 'running' || rawProbe.status === 'starting') {
             // Do NOT store child.pid here — the launcher already exited, so
             // this PID is stale. Storing it would make /stop kill a reused PID
             // and return success without stopping the real daemon. Letting it
@@ -363,7 +374,9 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
             // until fully running so the UI's 启动中 → 运行中 transition is
             // reflected without keeping the HTTP handler open.
             watcherStarted = true;
-            request.log.info(`[services] /start ${id} → spawned (earlyExit=0, healthy), watcher polling for running`);
+            request.log.info(
+              `[services] /start ${id} → spawned (earlyExit=0, probe=${rawProbe.status}), watcher polling for running`,
+            );
             void watchForRunningAndFire(id, manifest, request.log);
             return { ok: true, message: `${manifest.name} start initiated`, state: await getServiceState(manifest) };
           }

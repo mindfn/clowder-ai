@@ -5,7 +5,7 @@ import { getEnvironmentProfile } from './environment-detector.js';
 import { buildRecommendation } from './recommendation-matrix.js';
 import type { ServiceRecommendation } from './recommendation-types.js';
 import { getServiceConfig } from './service-config.js';
-import { resolveScriptPath } from './service-logs.js';
+import { resolveRepoRoot, resolveScriptPath } from './service-logs.js';
 import type { InstallStatus, ServiceManifest, ServiceState, ServiceStatus } from './service-manifest.js';
 
 const KNOWN_SERVICES: ServiceManifest[] = [
@@ -183,6 +183,17 @@ function classifyFetchError(err: unknown): HealthResult {
   return { status: 'error', error: msg };
 }
 
+export async function probeServiceHealth(manifest: ServiceManifest): Promise<HealthResult> {
+  // Public-export wrapper around probeHealth so /start can do raw probe
+  // checks WITHOUT getServiceState's startingServices override. Without
+  // this, an earlyExit=0 path where the sidecar never actually came up
+  // would see `getServiceState()` rewrite the raw 'stopped' probe to
+  // 'starting' (because we already set startingServices) and pass the
+  // success branch. Real probe result is the only signal that the
+  // sidecar is reachable.
+  return probeHealth(manifest);
+}
+
 async function probeHealth(manifest: ServiceManifest): Promise<HealthResult> {
   const url = resolveHealthUrl(manifest);
   if (!url) {
@@ -212,7 +223,14 @@ async function probeHealth(manifest: ServiceManifest): Promise<HealthResult> {
 function resolveVenvPath(venvPath: string): string {
   const catCafeMatch = venvPath.match(/^~\/\.cat-cafe\/(.+)/);
   if (catCafeMatch) {
-    const projectLocal = resolve('.cat-cafe', catCafeMatch[1]);
+    // Resolve from the repo root, NOT process.cwd(): install scripts
+    // place venvs under `<repoRoot>/.cat-cafe/...` via CAT_CAFE_HOME
+    // (see scripts/services/python-resolve.sh). The API may run from
+    // a different working directory (started as a service, launched
+    // by Tauri, etc.), so `resolve('.cat-cafe', ...)` against cwd
+    // would probe the wrong place. resolveRepoRoot() returns the
+    // canonical repo root that install scripts also use.
+    const projectLocal = resolve(resolveRepoRoot(), '.cat-cafe', catCafeMatch[1]);
     if (existsSync(projectLocal)) return projectLocal;
   }
   if (venvPath.startsWith('~/')) return resolve(homedir(), venvPath.slice(2));
