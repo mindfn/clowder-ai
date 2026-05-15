@@ -11,6 +11,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${CAT_CAFE_HOME:=$(cd "$SCRIPT_DIR/../.." && pwd)/.cat-cafe}"
+export CAT_CAFE_HOME
+
 VENV_DIR="${CAT_CAFE_HOME}/tts-venv"
 MODEL="${TTS_MODEL:-${1:-}}"
 if [ -z "$MODEL" ]; then
@@ -18,7 +22,6 @@ if [ -z "$MODEL" ]; then
   exit 1
 fi
 PORT="${TTS_PORT:-9879}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Infer provider from model name when TTS_PROVIDER not explicitly set
 if [ -z "${TTS_PROVIDER:-}" ]; then

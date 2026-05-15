@@ -14,10 +14,13 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${CAT_CAFE_HOME:=$(cd "$SCRIPT_DIR/../.." && pwd)/.cat-cafe}"
+export CAT_CAFE_HOME
+
 VENV_DIR="${CAT_CAFE_HOME}/embed-venv"
 PORT="${EMBED_PORT:-9880}"
 MODEL="${EMBED_MODEL:-}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ -z "$MODEL" ]; then
   echo "ERROR: EMBED_MODEL env var required — backend must specify which model to load." >&2

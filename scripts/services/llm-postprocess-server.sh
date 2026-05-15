@@ -12,6 +12,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${CAT_CAFE_HOME:=$(cd "$SCRIPT_DIR/../.." && pwd)/.cat-cafe}"
+export CAT_CAFE_HOME
+
 VENV_DIR="${CAT_CAFE_HOME}/llm-venv"
 MODEL="${LLM_POSTPROCESS_MODEL:-${1:-}}"
 if [ -z "$MODEL" ]; then
@@ -19,7 +23,6 @@ if [ -z "$MODEL" ]; then
   exit 1
 fi
 PORT="${LLM_POSTPROCESS_PORT:-9878}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ ! -d "$VENV_DIR" ]; then
   echo "ERROR: 虚拟环境不存在: $VENV_DIR"
