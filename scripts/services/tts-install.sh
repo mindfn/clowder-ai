@@ -14,18 +14,7 @@ SERVICE_LABEL="TTS"
 VENV_NAME="tts-venv"
 DISK_REQUIRED_GB=2
 MODEL_ENV_VAR="TTS_MODEL"
-
-# Recommendation matrix offers `edge-tts` as a cloud fallback on darwin/arm64
-# (next to mlx-community/Kokoro-82M-bf16). edge-tts is Microsoft Azure cloud
-# TTS — it has no HuggingFace repo to snapshot, so the generic loader hits
-# `huggingface.co/api/models/edge-tts` → 401. Switch deps + loader to the
-# non-arm64 (cloud) recipe when user picked edge-tts on arm64.
-if [ "${TTS_MODEL:-}" = "edge-tts" ]; then
-  PIP_DEPS_ARM64="edge-tts fastapi uvicorn httpx[socks] huggingface_hub[hf_xet]"
-  MODEL_LOADER_ARM64="skip"
-else
-  PIP_DEPS_ARM64="mlx-audio misaki[zh] fastapi uvicorn httpx[socks] num2words spacy phonemizer huggingface_hub[hf_xet]"
-fi
+PIP_DEPS_ARM64="mlx-audio misaki[zh] fastapi uvicorn httpx[socks] num2words spacy phonemizer huggingface_hub[hf_xet]"
 PIP_DEPS_OTHER="edge-tts fastapi uvicorn httpx[socks] huggingface_hub[hf_xet]"
 MODEL_LOADER_OTHER="skip"
 POST_INSTALL_HOOK_OTHER="tts_install_non_arm64_extras"
