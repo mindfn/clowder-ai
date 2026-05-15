@@ -94,34 +94,41 @@ function Test-ProxyAnonymous {
     }
 }
 
+function Get-SystemProxyCandidate {
+    # Return the candidate proxy URL (env override → IE registry → $null)
+    # WITHOUT gating on a single pypi.org probe. Per-source decisions live
+    # in Test-SourceMode below. Previous gating broke the user-reported
+    # case where corp-proxy → pypi.org fails but corp-proxy → Tsinghua
+    # works: pypi probe failed → candidate dropped → mirror probe ran
+    # with no proxy candidate → mirror's via-proxy mode never got tested.
+    if ($env:HTTPS_PROXY) { return $env:HTTPS_PROXY }
+    if ($env:HTTP_PROXY) { return $env:HTTP_PROXY }
+    try {
+        $reg = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
+        if ($reg.ProxyEnable -and $reg.ProxyServer) {
+            return "http://$($reg.ProxyServer)"
+        }
+    } catch {}
+    return $null
+}
+
+# Back-compat shim: legacy callers still source-call Sync-SystemProxy.
+# Behavior changed from "auto-inject after pypi probe" to "informational
+# only" — the per-source decisions live in Assert-Network now.
 function Sync-SystemProxy {
     if ($env:HTTP_PROXY -or $env:HTTPS_PROXY) {
         Write-Host "  Proxy env already set: $env:HTTP_PROXY"
         return
     }
-    try {
-        $reg = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
-        if ($reg.ProxyEnable -and $reg.ProxyServer) {
-            $proxy = "http://$($reg.ProxyServer)"
-            # Probe with NO credentials — see Test-ProxyAnonymous for why.
-            # A corporate proxy that needs NTLM auth will return 407 here
-            # (pip will see the same 407), so we'll skip injection.
-            $usable = Test-ProxyAnonymous -ProxyUrl $proxy -TargetUrl "https://pypi.org/simple/" -TimeoutSec 5
-            if ($usable) {
-                $env:HTTP_PROXY = $proxy
-                $env:HTTPS_PROXY = $proxy
-                Write-Host "  System proxy detected and reachable: $proxy [OK]"
-            } else {
-                Write-Host "  System proxy detected but unreachable / auth-required: $proxy"
-                Write-Host "  (Skipping — will try direct connection + reachable mirrors instead.)"
-                Write-Host "  (If all paths fail, see the WARNING below to configure a usable proxy or mirror.)"
-                # Also keep Invoke-WebRequest from silently re-routing through
-                # this dead proxy via .NET DefaultWebProxy (which would defeat
-                # the direct connection attempt in Assert-Network).
-                try { [System.Net.WebRequest]::DefaultWebProxy = $null } catch {}
-            }
-        }
-    } catch {}
+    $candidate = Get-SystemProxyCandidate
+    if ($candidate) {
+        Write-Host "  System proxy detected: $candidate (will be tested per-source)"
+    }
+    # Defensively disable .NET DefaultWebProxy so .NET-default Invoke-
+    # WebRequest calls don't silently route through the system proxy with
+    # SSPI credentials, which would let auth-required corp proxies
+    # masquerade as "reachable" during anonymous Test-SourceMode probes.
+    try { [System.Net.WebRequest]::DefaultWebProxy = $null } catch {}
 }
 
 function Test-UrlReachable {
@@ -135,19 +142,17 @@ function Test-UrlReachable {
 }
 
 function Test-SourceMode {
-    # Probe a URL twice — first with NO proxy (the way pip will hit the
-    # host once we add it to NO_PROXY), then with the env proxy if one
-    # is set. Returns 'direct' / 'proxy' / 'unreachable' so caller can
-    # configure PIP_INDEX_URL + NO_PROXY in a way that matches what
-    # pip / huggingface_hub will actually do at install time.
+    # Probe a URL twice — first with NO proxy (matches `curl --noproxy '*'`),
+    # then with the supplied candidate proxy URL (env override OR the system-
+    # proxy URL from Get-SystemProxyCandidate). Returns 'direct' / 'proxy' /
+    # 'unreachable' so the caller can decide PIP_INDEX_URL + NO_PROXY in
+    # alignment with what pip / huggingface_hub will actually do at install.
     #
-    # Background: the old prereq-check probed candidate mirrors with
-    # IWR's .NET-default proxy (the registry system proxy). If the
-    # corp proxy could reach Tsinghua, we declared "Tsinghua reachable"
-    # and added it to NO_PROXY — but then pip ignored the proxy for
-    # Tsinghua because of NO_PROXY and the host was actually unreachable
-    # without the proxy. probe-vs-runtime mismatch.
-    param([string]$Url, [int]$TimeoutSec = 5)
+    # The CandidateProxy parameter (not env) is what enables the
+    # "corp-proxy reaches Tsinghua even though it can't reach pypi" case:
+    # Sync-SystemProxy no longer gates the candidate on a single pypi probe,
+    # so per-source decisions in Assert-Network always see the candidate.
+    param([string]$Url, [int]$TimeoutSec = 5, [string]$CandidateProxy = $null)
     # 1. Try without any proxy at all.
     try {
         $req = [System.Net.HttpWebRequest]::Create($Url)
@@ -158,9 +163,14 @@ function Test-SourceMode {
         $resp.Close()
         return 'direct'
     } catch {}
-    # 2. If user env has a proxy, try via that proxy.
-    $proxyUrl = $env:HTTPS_PROXY
-    if (-not $proxyUrl) { $proxyUrl = $env:HTTP_PROXY }
+    # 2. Try via candidate proxy (anonymous — DON'T let .NET auto-fill the
+    #    SSPI token, that would mask auth-required corp proxies as reachable).
+    $proxyUrl = $CandidateProxy
+    if (-not $proxyUrl) {
+        # Back-compat: still pick up env if caller didn't supply explicit.
+        $proxyUrl = $env:HTTPS_PROXY
+        if (-not $proxyUrl) { $proxyUrl = $env:HTTP_PROXY }
+    }
     if ($proxyUrl) {
         try {
             $webProxy = New-Object System.Net.WebProxy($proxyUrl)
@@ -207,23 +217,25 @@ function Add-NoProxyHost {
 }
 
 function Assert-Network {
-    Sync-SystemProxy
+    Sync-SystemProxy   # back-compat: informational + clears .NET DefaultWebProxy
 
-    # Probe each candidate source twice (direct + via env proxy) so the
-    # mode we record for the source matches what pip/huggingface_hub
-    # will actually do at install time. See Test-SourceMode comment.
-    $pypiMode = Test-SourceMode -Url "https://pypi.org/simple/" -TimeoutSec 5
+    # Get the candidate proxy URL (env first, then registry). This is
+    # passed explicitly to every Test-SourceMode call so per-source
+    # decisions don't depend on whether env was already set.
+    $candidate = Get-SystemProxyCandidate
+    $needProxyInjection = $false
+
+    # Probe each candidate source twice (direct + via candidate proxy).
+    $pypiMode = Test-SourceMode -Url "https://pypi.org/simple/" -TimeoutSec 5 -CandidateProxy $candidate
     if ($pypiMode -eq 'direct') {
         Write-Host "  PyPI connectivity [OK] (direct)"
-        # pip will reach pypi.org without proxy — make sure proxy env, if any,
-        # bypasses pypi.org so we don't accidentally route through the proxy.
         Add-NoProxyHost "pypi.org"
     } elseif ($pypiMode -eq 'proxy') {
-        Write-Host "  PyPI connectivity [OK] (via env proxy)"
-        # Leave HTTP_PROXY in place; pip will pick it up.
+        Write-Host "  PyPI connectivity [OK] (via proxy: $candidate)"
+        $needProxyInjection = $true
     } else {
         Write-Host "  PyPI unreachable both direct and via proxy — switching to mirror"
-        $tsinghuaMode = Test-SourceMode -Url "https://pypi.tuna.tsinghua.edu.cn/simple/" -TimeoutSec 5
+        $tsinghuaMode = Test-SourceMode -Url "https://pypi.tuna.tsinghua.edu.cn/simple/" -TimeoutSec 5 -CandidateProxy $candidate
         if ($tsinghuaMode -eq 'direct') {
             Write-Host "  Tsinghua mirror reachable (direct) — pip will bypass proxy"
             $env:PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple/"
@@ -231,33 +243,45 @@ function Assert-Network {
             Add-NoProxyHost "pypi.tuna.tsinghua.edu.cn"
             Add-NoProxyHost "mirrors.tuna.tsinghua.edu.cn"
         } elseif ($tsinghuaMode -eq 'proxy') {
-            Write-Host "  Tsinghua mirror reachable (via env proxy) — pip will route through proxy"
+            Write-Host "  Tsinghua mirror reachable (via proxy: $candidate) — pip will route through proxy"
             $env:PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple/"
             $env:PIP_TRUSTED_HOST = "pypi.tuna.tsinghua.edu.cn"
-            # Deliberately NOT adding to NO_PROXY so pip honors HTTP_PROXY.
+            $needProxyInjection = $true
         } else {
             Write-ProxyGuidance -Context "pypi.org 和清华镜像在 direct + via proxy 两种模式下都不可达，pip install 一定会失败。"
         }
     }
 
     # Same two-mode probe for HuggingFace.
-    $hfMode = Test-SourceMode -Url "https://huggingface.co" -TimeoutSec 5
+    $hfMode = Test-SourceMode -Url "https://huggingface.co" -TimeoutSec 5 -CandidateProxy $candidate
     if ($hfMode -eq 'direct') {
         Write-Host "  HuggingFace connectivity [OK] (direct)"
         Add-NoProxyHost "huggingface.co"
     } elseif ($hfMode -eq 'proxy') {
-        Write-Host "  HuggingFace connectivity [OK] (via env proxy)"
+        Write-Host "  HuggingFace connectivity [OK] (via proxy: $candidate)"
+        $needProxyInjection = $true
     } else {
-        $hfMirrorMode = Test-SourceMode -Url "https://hf-mirror.com" -TimeoutSec 5
+        $hfMirrorMode = Test-SourceMode -Url "https://hf-mirror.com" -TimeoutSec 5 -CandidateProxy $candidate
         if ($hfMirrorMode -eq 'direct') {
             Write-Host "  HuggingFace unreachable, switching to hf-mirror.com (direct)"
             $env:HF_ENDPOINT = "https://hf-mirror.com"
             Add-NoProxyHost "hf-mirror.com"
         } elseif ($hfMirrorMode -eq 'proxy') {
-            Write-Host "  HuggingFace unreachable, switching to hf-mirror.com (via env proxy)"
+            Write-Host "  HuggingFace unreachable, switching to hf-mirror.com (via proxy: $candidate)"
             $env:HF_ENDPOINT = "https://hf-mirror.com"
+            $needProxyInjection = $true
         } else {
             Write-ProxyGuidance -Context "huggingface.co 和 hf-mirror.com 在 direct + via proxy 两种模式下都不可达，模型下载一定会失败。"
         }
+    }
+
+    # Only inject HTTP_PROXY / HTTPS_PROXY if at least one source actually
+    # needs the candidate proxy to be reachable. This avoids the old bug
+    # where injecting the system proxy made pip route everything through
+    # an unauthenticated corp proxy that returned 407.
+    if ($needProxyInjection -and $candidate -and -not $env:HTTP_PROXY -and -not $env:HTTPS_PROXY) {
+        $env:HTTP_PROXY = $candidate
+        $env:HTTPS_PROXY = $candidate
+        Write-Host "  Injected HTTP_PROXY / HTTPS_PROXY = $candidate (needed for at least one source)"
     }
 }

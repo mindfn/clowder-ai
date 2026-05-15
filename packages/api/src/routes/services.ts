@@ -555,123 +555,125 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       // fetch correctly reports stopped/none. Wrap the rest of the handler
       // in try/finally so every return path (ok / 422 / 500 / catch) clears
       // the flag before responding.
+      // Validate port BEFORE setInstalling — caller-supplied invalid values
+      // should fail-fast with 400 without leaving the service stuck on
+      // 'installing'. Same goes for ALL other sync prep work; everything that
+      // could throw must happen before we flip the in-flight flag.
+      let resolvedPort: number | undefined = body.port;
+      if (typeof resolvedPort === 'number' && (resolvedPort < 1 || resolvedPort > 65535)) {
+        reply.status(400);
+        return { error: 'Invalid port (expected 1..65535)' };
+      }
+      if (!resolvedPort) {
+        const existing = getServiceConfig(id).port;
+        resolvedPort = existing ?? (await allocateAvailablePort(manifest.port ?? 9000));
+      }
+      setServiceConfig(id, { port: resolvedPort });
+
+      // Resolve install model (sync — no async/IO).
+      let installModel = body.model && isValidModelId(body.model) ? body.model : undefined;
+      if (!installModel) installModel = resolveSelectedModel(id, manifest.id);
+      if (installModel) {
+        setServiceConfig(id, { selectedModel: installModel });
+      }
+
+      // Prep the env that the install child will inherit.
+      const env: Record<string, string> = { ...process.env } as Record<string, string>;
+      normalizeProxyEnv(env);
+      if (installModel) {
+        const envKey = MODEL_ENV_VARS[id];
+        if (envKey) env[envKey] = installModel;
+      }
+      const portEnv = PORT_ENV_VARS[id];
+      if (portEnv) env[portEnv] = String(resolvedPort);
+
+      // From here on we own the in-flight flag; every exit path must clear it.
+      // The actual install work (ensurePython → pre-install uninstall →
+      // install spawn → autostart) is now FULLY backgrounded so the HTTP
+      // response returns immediately with state.status='installing'. UI
+      // tracks progress via the 3s transitional poll and the per-service
+      // log endpoint.
       setInstalling(id, true);
-      try {
-        // python-bootstrap (D-plan): make sure a working Python 3.12+ interpreter
-        // is installed BEFORE we spawn the service install script. ensurePython
-        // is idempotent and process-shared:
-        //   - already installed → returns immediately
-        //   - install in flight → awaits the same Promise (no duplicate spawn
-        //     when whisper / tts / embed / llm are clicked in parallel)
-        //   - last attempt failed → throws → we 422 here so the user sees the
-        //     real failure and doesn't trigger a second per-service spawn
-        // Also mirror python-bootstrap progress into THIS service's log so the
-        // UI card stops showing the previous failed install's last line
-        // ("Failed to install X dependencies") while python-bootstrap runs.
+      setServiceConfig(id, {
+        installStatus: 'installing',
+        lastInstallError: undefined,
+        lastInstallTroubleshootHint: undefined,
+      });
+
+      const markFailed = (errMsg: string, hint?: string | null): void => {
+        request.log.error({ serviceId: id, errMsg }, `service install failed: ${manifest.name}`);
+        setServiceConfig(id, {
+          installStatus: 'failed',
+          lastInstallError: errMsg,
+          lastInstallTroubleshootHint: hint ?? undefined,
+        });
+        setInstalling(id, false);
+      };
+
+      void (async () => {
         try {
-          const { ensurePython } = await import('../domains/services/python-bootstrap.js');
-          appendLog(id, '\n[install] preparing Python 3.12+ runtime...\n');
-          await ensurePython(request.log, (chunk) => appendLog(id, chunk));
-          appendLog(id, '[install] Python ready, installing service dependencies...\n');
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          appendLog(id, `[install] python-bootstrap failed: ${msg}\n`);
-          request.log.error({ err: msg }, 'python-bootstrap failed');
-          reply.status(422);
-          return {
-            ok: false,
-            error: 'Python 3.12+ bootstrap failed — service install cannot proceed',
-            detail: msg,
-          };
-        }
-
-        const env: Record<string, string> = { ...process.env } as Record<string, string>;
-        normalizeProxyEnv(env);
-        // Resolve which model to install: explicit body.model > stored
-        // cfg.selectedModel > matrix recommendation default. Persisting
-        // the resolved choice means subsequent start/autostart sees it
-        // even if the user never changes the picker.
-        let installModel = body.model && isValidModelId(body.model) ? body.model : undefined;
-        if (!installModel) installModel = resolveSelectedModel(id, manifest.id);
-        if (installModel) {
-          const envKey = MODEL_ENV_VARS[id];
-          if (envKey) env[envKey] = installModel;
-          // Persist so the start path picks the same model without re-resolving.
-          setServiceConfig(id, { selectedModel: installModel });
-        }
-
-        // Decide on the port this service will bind to:
-        //   1. body.port (user explicitly chose in the install dialog)
-        //   2. getServiceConfig(id).port (already saved from a prior install)
-        //   3. allocateAvailablePort(manifest.port) (auto — first free port)
-        // The chosen port is persisted to services.json so subsequent
-        // start / autostart / status routes use the same value.
-        let resolvedPort: number | undefined = body.port;
-        if (typeof resolvedPort === 'number' && (resolvedPort < 1 || resolvedPort > 65535)) {
-          reply.status(400);
-          return { error: 'Invalid port (expected 1..65535)' };
-        }
-        if (!resolvedPort) {
-          const existing = getServiceConfig(id).port;
-          resolvedPort = existing ?? (await allocateAvailablePort(manifest.port ?? 9000));
-        }
-        setServiceConfig(id, { port: resolvedPort });
-        const portEnv = PORT_ENV_VARS[id];
-        if (portEnv) env[portEnv] = String(resolvedPort);
-
-        // Always run uninstall first to guarantee a clean venv. The uninstall
-        // script is idempotent (rm -rf of a non-existent venv is fine), so this
-        // is safe for first-time installs and corrects any state left behind by
-        // a failed previous attempt (e.g. partial pip install, locked .pyd).
-        // Sentinel logs around the call so the service log shows whether the
-        // pre-install uninstall actually ran (debugging "venv not deleted"
-        // reports — silent spawn failures previously hid this whole step).
-        if (manifest.scripts.uninstall) {
-          const uninstallPath = resolveScriptPath(manifest.scripts.uninstall);
-          if (existsSync(uninstallPath)) {
-            appendLog(id, '\n[install] running pre-install uninstall to clean any stale venv...\n');
-            const { command: uCmd, args: uArgs } = resolveSpawnCommand(manifest.scripts.uninstall);
-            await new Promise<void>((resolve) => {
-              const child = spawn(uCmd, uArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
-              child.stdout?.on('data', (d: Buffer) => appendLog(id, d.toString()));
-              child.stderr?.on('data', (d: Buffer) => appendLog(id, d.toString()));
-              child.on('error', (err) => {
-                appendLog(id, `[install] pre-install uninstall spawn errored: ${err.message}\n`);
-                request.log.warn({ serviceId: id, err: err.message }, 'pre-install uninstall errored (continuing)');
-                resolve();
-              });
-              child.on('close', (code) => {
-                appendLog(id, `[install] pre-install uninstall finished (exit ${code ?? 'null'})\n`);
-                if (code !== 0) {
-                  request.log.warn(
-                    { serviceId: id, exitCode: code },
-                    'pre-install uninstall exited non-zero (continuing — install will rebuild)',
-                  );
-                }
-                resolve();
-              });
-            });
-          } else {
-            appendLog(id, `[install] pre-install uninstall skipped: script not found at ${uninstallPath}\n`);
+          // python-bootstrap: idempotent, can be multi-minute on first run.
+          // Failures here used to leak setInstalling=true permanently.
+          try {
+            const { ensurePython } = await import('../domains/services/python-bootstrap.js');
+            appendLog(id, '\n[install] preparing Python 3.12+ runtime...\n');
+            await ensurePython(request.log, (chunk) => appendLog(id, chunk));
+            appendLog(id, '[install] Python ready, installing service dependencies...\n');
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            appendLog(id, `[install] python-bootstrap failed: ${msg}\n`);
+            markFailed(`Python 3.12+ bootstrap failed: ${msg}`);
+            return;
           }
-        } else {
-          appendLog(id, '[install] pre-install uninstall skipped: manifest has no uninstall script\n');
-        }
 
-        // Spawn install child + handle its lifecycle ASYNCHRONOUSLY so this
-        // HTTP handler can return the in-flight state to the client right
-        // away. Previously the handler awaited the entire install (could be
-        // many minutes), forcing the frontend to keep an `acting` Set as a
-        // shadow source of truth. Single-source design: client POST returns
-        // a state snapshot showing status='installing', then frontend tracks
-        // completion via /api/services polling (the existing 3s transitional
-        // poll already covers this).
-        try {
-          const { command: installCmd, args: installArgs } = resolveSpawnCommand(manifest.scripts.install);
-          const child = spawn(installCmd, installArgs, {
-            stdio: ['pipe', 'pipe', 'pipe'],
-            env,
-          });
+          // Pre-install uninstall: guarantee clean venv. Failures here are
+          // warnings (the install script will rebuild), don't fail install.
+          if (manifest.scripts.uninstall) {
+            const uninstallPath = resolveScriptPath(manifest.scripts.uninstall);
+            if (existsSync(uninstallPath)) {
+              appendLog(id, '\n[install] running pre-install uninstall to clean any stale venv...\n');
+              const { command: uCmd, args: uArgs } = resolveSpawnCommand(manifest.scripts.uninstall);
+              await new Promise<void>((resolve) => {
+                const cleanupChild = spawn(uCmd, uArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+                cleanupChild.stdout?.on('data', (d: Buffer) => appendLog(id, d.toString()));
+                cleanupChild.stderr?.on('data', (d: Buffer) => appendLog(id, d.toString()));
+                cleanupChild.on('error', (err) => {
+                  appendLog(id, `[install] pre-install uninstall spawn errored: ${err.message}\n`);
+                  request.log.warn({ serviceId: id, err: err.message }, 'pre-install uninstall errored (continuing)');
+                  resolve();
+                });
+                cleanupChild.on('close', (code) => {
+                  appendLog(id, `[install] pre-install uninstall finished (exit ${code ?? 'null'})\n`);
+                  if (code !== 0) {
+                    request.log.warn(
+                      { serviceId: id, exitCode: code },
+                      'pre-install uninstall exited non-zero (continuing — install will rebuild)',
+                    );
+                  }
+                  resolve();
+                });
+              });
+            } else {
+              appendLog(id, `[install] pre-install uninstall skipped: script not found at ${uninstallPath}\n`);
+            }
+          } else {
+            appendLog(id, '[install] pre-install uninstall skipped: manifest has no uninstall script\n');
+          }
+
+          // Spawn install child. The outer sync handler already guaranteed
+          // manifest.scripts.install is set; the assertion narrows for TS
+          // inside the background async closure (TS loses the narrow
+          // across the closure boundary).
+          // biome-ignore lint/style/noNonNullAssertion: pre-checked above
+          const { command: installCmd, args: installArgs } = resolveSpawnCommand(manifest.scripts.install!);
+          let child: ReturnType<typeof spawn>;
+          try {
+            child = spawn(installCmd, installArgs, { stdio: ['pipe', 'pipe', 'pipe'], env });
+          } catch (err) {
+            markFailed(`Failed to spawn install script: ${err instanceof Error ? err.message : String(err)}`);
+            return;
+          }
+
           let output = '';
           const MAX_OUTPUT = 8192;
           const appendOutput = (s: string) => {
@@ -689,17 +691,8 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
             appendLog(id, s);
           });
 
-          // Fire-and-forget close handler: writes final status to service config
-          // so /api/services polling surfaces success / failure (with
-          // lastInstallError / lastInstallTroubleshootHint).
           child.on('error', (err) => {
-            request.log.error({ serviceId: id, err: err.message }, `service install spawn errored: ${manifest.name}`);
-            setServiceConfig(id, {
-              installStatus: 'failed',
-              lastInstallError: err.message,
-              lastInstallTroubleshootHint: undefined,
-            });
-            setInstalling(id, false);
+            markFailed(`install spawn errored: ${err.message}`);
           });
           child.on('close', (code) => {
             try {
@@ -757,31 +750,17 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
               setInstalling(id, false);
             }
           });
-
-          // Return in-flight state immediately. installingServices already set,
-          // so getServiceState reports status='installing'.
-          return { ok: true, state: await getServiceState(manifest) };
-        } catch (err) {
-          // synchronous spawn failure (rare — usually fires the 'error' event
-          // we handle above, but cover the case where spawn() itself throws)
-          setInstalling(id, false);
-          setServiceConfig(id, {
-            installStatus: 'failed',
-            lastInstallError: err instanceof Error ? err.message : String(err),
-          });
-          reply.status(500);
-          return { ok: false, error: `Failed to run install script for ${manifest.name}` };
+        } catch (outerErr) {
+          // Outer safety — any error path that escaped the inner try/catch
+          // still clears installing so the UI doesn't get stuck.
+          const msg = outerErr instanceof Error ? outerErr.message : String(outerErr);
+          markFailed(`unexpected install error: ${msg}`);
         }
-      } catch (outerErr) {
-        // Outer wrapper safety — inner try/catch already handles spawn errors,
-        // but defensively clear the in-flight flag if something unexpected
-        // propagates past it.
-        setInstalling(id, false);
-        const msg = outerErr instanceof Error ? outerErr.message : String(outerErr);
-        setServiceConfig(id, { installStatus: 'failed', lastInstallError: msg });
-        reply.status(500);
-        return { ok: false, error: msg };
-      }
+      })();
+
+      // Return the in-flight state synchronously. installingServices already
+      // set, installStatus='installing' persisted — UI gets a clean snapshot.
+      return { ok: true, state: await getServiceState(manifest) };
     },
   );
 

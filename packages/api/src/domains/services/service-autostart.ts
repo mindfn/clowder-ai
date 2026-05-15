@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { getAllServiceConfigs } from './service-config.js';
+import { getAllServiceConfigs, setServiceConfig } from './service-config.js';
 import { fireServiceEvent } from './service-hooks.js';
 import { resolveScriptPath, resolveSpawnCommand, wireUpSidecarReadyListener } from './service-logs.js';
 import type { ServiceManifest } from './service-manifest.js';
@@ -40,7 +40,32 @@ function watchAndAnnounceReady(manifest: ServiceManifest, log: Logger): void {
   })();
 }
 
+/**
+ * Sweep services.json on API startup: any service stuck in
+ * installStatus='installing' is from a previous API process that died
+ * during the install (Ctrl+C / crash / OS reboot) — the in-memory
+ * installingServices Set was cleared with the process, but the persisted
+ * config retained 'installing'. Surface it as 'failed' so the UI doesn't
+ * show a card permanently stuck on '安装中' until the user happens to
+ * notice and click again.
+ */
+function clearStaleInstallingState(log: Logger): void {
+  const configs = getAllServiceConfigs();
+  for (const [id, cfg] of Object.entries(configs)) {
+    if (cfg.installStatus === 'installing') {
+      log.warn(`[services] ${id} was 'installing' on startup — marking failed (previous API process died mid-install)`);
+      setServiceConfig(id, {
+        installStatus: 'failed',
+        lastInstallError: 'API restarted while install was in progress — please click 安装 again.',
+        lastInstallTroubleshootHint: undefined,
+      });
+    }
+  }
+}
+
 export async function autoStartEnabledServices(log: Logger): Promise<void> {
+  clearStaleInstallingState(log);
+
   const configs = getAllServiceConfigs();
   const services = getKnownServices();
 

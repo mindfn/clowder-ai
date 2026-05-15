@@ -41,7 +41,7 @@ interface ServiceManifest {
 }
 
 type ServiceStatus = 'running' | 'starting' | 'installing' | 'uninstalling' | 'stopped' | 'unknown' | 'error';
-type InstallStatus = 'none' | 'installed' | 'failed';
+type InstallStatus = 'none' | 'installing' | 'installed' | 'failed';
 
 interface ServiceState {
   manifest: ServiceManifest;
@@ -53,6 +53,10 @@ interface ServiceState {
   lastChecked: number | null;
   healthDetail?: Record<string, unknown>;
   error?: string;
+  /** Set by the async install close handler when exit code !== 0. */
+  lastInstallError?: string;
+  /** Human-readable remediation hint from detectInstallFailureHint(). */
+  lastInstallTroubleshootHint?: string;
 }
 
 const STATUS_CONFIG: Record<ServiceStatus, { dot: string; label: string }> = {
@@ -166,6 +170,31 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
       else if (!inFlight && ref.has(id)) stopLogPoll(id);
     }
   }, [services, startLogPoll, stopLogPoll]);
+
+  // Detect installStatus transition 'installing' → 'failed' and toast the
+  // captured failure tail + troubleshoot hint once. Because /install is
+  // async (returns immediately with status='installing'), the failure
+  // never comes back in the POST response itself — we surface it here
+  // via the 3s polling.
+  const prevInstallStatusRef = useRef<Record<string, InstallStatus | undefined>>({});
+  useEffect(() => {
+    const prev = prevInstallStatusRef.current;
+    for (const s of services) {
+      const id = s.manifest.id;
+      const prevStatus = prev[id];
+      if (prevStatus === 'installing' && s.installStatus === 'failed' && s.lastInstallError) {
+        const detail = s.lastInstallError;
+        const message = s.lastInstallTroubleshootHint ? `${detail}\n\n${s.lastInstallTroubleshootHint}` : detail;
+        addToast({
+          type: 'error',
+          title: `${s.manifest.name} 安装失败`,
+          message,
+          duration: s.lastInstallTroubleshootHint ? 15000 : 8000,
+        });
+      }
+      prev[id] = s.installStatus;
+    }
+  }, [services, addToast]);
 
   // Auto-refetch /api/services every 3s while any service is transitioning
   // (installing / uninstalling / starting). Otherwise the user has to
