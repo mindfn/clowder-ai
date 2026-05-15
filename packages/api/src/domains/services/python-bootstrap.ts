@@ -29,7 +29,7 @@
 import { spawn } from 'node:child_process';
 import { getServiceConfig, setServiceConfig } from './service-config.js';
 import { fireServiceEvent, onServiceEvent } from './service-hooks.js';
-import { appendLog, openLogFd, resolveRepoRoot, resolveSpawnCommand } from './service-logs.js';
+import { appendLog, resolveRepoRoot, resolveSpawnCommand } from './service-logs.js';
 
 const PYTHON_BOOTSTRAP_ID = 'python-bootstrap';
 
@@ -141,8 +141,10 @@ function spawnBootstrap(logger?: BootstrapLogger): Promise<ResolvedPython> {
     let stderrBuf = '';
     const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
-    // Mirror to per-service log file so the UI / debugger can tail it.
-    const logFd = openLogFd(PYTHON_BOOTSTRAP_ID);
+    // Note: we don't keep a long-lived log FD here — appendLog opens and
+    // closes its own descriptor per write. An earlier version called
+    // openLogFd() and never used or closed the descriptor, leaking one
+    // FD per install attempt (eventual EMFILE). Removed (codex P2).
 
     child.stdout?.on('data', (d: Buffer) => {
       const s = d.toString();
@@ -171,11 +173,6 @@ function spawnBootstrap(logger?: BootstrapLogger): Promise<ResolvedPython> {
       }
     });
     child.on('error', (err) => {
-      try {
-        if (logFd != null) {
-          // best-effort close — appendLog is using its own fd path
-        }
-      } catch {}
       setServiceConfig(PYTHON_BOOTSTRAP_ID, { installStatus: 'failed' });
       rejectResult(err);
     });
