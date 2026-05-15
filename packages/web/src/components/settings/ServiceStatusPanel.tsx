@@ -570,14 +570,19 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
             const id = installPreview.id;
             const name = installPreview.name;
             setInstallPreview(null);
-            const ok = await handleAction(id, 'install', { model: selectedModel, name, port });
-            if (ok) {
-              await apiFetch(`/api/services/${id}/toggle`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enabled: true, ...(selectedModel ? { model: selectedModel } : {}) }),
-              });
-            }
+            // Install always lands in `disabled` state — both entry paths
+            // (toggle ON → install modal, direct install button → modal)
+            // require the user to explicitly toggle on afterwards. This is
+            // the clean semantic from 6c4a0d08; later commits f0dec501 +
+            // c34e8969 added auto-toggle to chain install→start in the
+            // toggle-ON path, but users found the inconsistency between
+            // entry paths confusing and preferred a single rule: install
+            // = prepare environment, toggle = enable + start.
+            //
+            // selectedModel is already persisted by the install endpoint
+            // (services.ts line ~577 setServiceConfig({ selectedModel })),
+            // so we don't need a separate /toggle POST to record it.
+            await handleAction(id, 'install', { model: selectedModel, name, port });
             await fetchServices();
           }}
           onCancel={() => setInstallPreview(null)}
