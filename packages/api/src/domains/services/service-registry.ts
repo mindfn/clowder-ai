@@ -198,7 +198,15 @@ function resolveVenvPath(venvPath: string): string {
 
 export function checkInstalled(manifest: ServiceManifest): boolean {
   const config = getServiceConfig(manifest.id);
-  if (config.installStatus) return config.installStatus === 'installed';
+  // Trust explicit states from install/uninstall flows.
+  if (config.installStatus === 'installed') return true;
+  if (config.installStatus === 'failed' || config.installStatus === 'installing') {
+    return false;
+  }
+  // installStatus='none' or undefined — no explicit state recorded
+  // (services.json never written or set to 'none' by uninstall). Fall
+  // through to venv probe so manual / offline / script installs are
+  // recovered instead of being permanently shown as not-installed.
   const venv = manifest.prerequisites?.venvPath;
   if (!venv) return true;
   return existsSync(resolveVenvPath(venv));
@@ -206,7 +214,10 @@ export function checkInstalled(manifest: ServiceManifest): boolean {
 
 export function getInstallStatus(manifest: ServiceManifest): InstallStatus {
   const config = getServiceConfig(manifest.id);
-  if (config.installStatus) return config.installStatus;
+  // Trust explicit states. Only 'none' / undefined fall through to
+  // venv probe (mirrors checkInstalled fallback so the two functions
+  // agree on every state).
+  if (config.installStatus && config.installStatus !== 'none') return config.installStatus;
   const venv = manifest.prerequisites?.venvPath;
   if (!venv) return 'installed';
   return existsSync(resolveVenvPath(venv)) ? 'installed' : 'none';
