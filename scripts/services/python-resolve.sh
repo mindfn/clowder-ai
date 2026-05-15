@@ -39,7 +39,21 @@ RESOLVED_PYTHON=""
 RESOLVED_PYTHON_ARCH=""   # native | x86_64 (== amd64) | unknown
 RESOLVED_PYTHON_SOURCE="" # system | uv | pyenv | brew | project
 
-_CAT_CAFE_HOME="${HOME}/.cat-cafe"
+# Single source of truth for the cat-cafe data dir. Mirrors the Windows
+# Redis convention (install-windows-helpers.ps1 line 104 places its
+# portable Redis under <ProjectRoot>/.cat-cafe/redis/windows/) — Python
+# + venvs + Piper voice models all live under the same project-rooted
+# .cat-cafe/ so uninstall = delete the project dir, no cross-instance
+# pollution in $HOME.
+#
+# Resolution priority:
+#   1. CAT_CAFE_HOME env (caller override — e.g. a CI environment that
+#      wants its own scratch path)
+#   2. <repo-root>/.cat-cafe (derived from this script's location:
+#      scripts/services/python-resolve.sh → repo-root is two levels up)
+_RESOLVER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+_CAT_CAFE_HOME="${CAT_CAFE_HOME:-${_RESOLVER_REPO_ROOT}/.cat-cafe}"
+export CAT_CAFE_HOME="$_CAT_CAFE_HOME"   # exported so child install scripts can reuse the same path
 _PROJECT_PYTHON_DIR="${_CAT_CAFE_HOME}/python"
 
 # Pinned python-build-standalone release. Same kind of portable Python

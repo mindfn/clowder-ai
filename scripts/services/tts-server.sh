@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-VENV_DIR="${HOME}/.cat-cafe/tts-venv"
+VENV_DIR="${CAT_CAFE_HOME}/tts-venv"
 MODEL="${TTS_MODEL:-${1:-}}"
 if [ -z "$MODEL" ]; then
   echo "ERROR: TTS_MODEL env var (or positional arg) required — backend specifies model, no fallback default." >&2

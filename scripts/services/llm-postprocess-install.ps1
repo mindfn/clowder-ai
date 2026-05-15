@@ -20,7 +20,7 @@ Assert-Python310 -Bootstrap $BootstrapPython
 Assert-DiskSpace -RequiredGB 8
 Assert-Network
 
-$VenvDir = Join-Path $HOME ".cat-cafe\llm-venv"
+$VenvDir = Join-Path $env:CAT_CAFE_HOME "llm-venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 
 if (-not (Test-Path $VenvPython)) {

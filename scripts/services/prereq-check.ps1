@@ -51,7 +51,10 @@ function Assert-Python310 {
 
 function Assert-DiskSpace {
     param([int]$RequiredGB = 2)
-    $targetDir = Join-Path $HOME ".cat-cafe"
+    # $env:CAT_CAFE_HOME is exported by python-resolve.ps1 (sourced via
+    # Resolve-BootstrapPython before disk space gets checked). Fall back to
+    # legacy ~/.cat-cafe if a caller invokes Assert-DiskSpace standalone.
+    $targetDir = if ($env:CAT_CAFE_HOME) { $env:CAT_CAFE_HOME } else { Join-Path $HOME ".cat-cafe" }
     if (-not (Test-Path $targetDir)) { New-Item -ItemType Directory -Path $targetDir -Force | Out-Null }
     $drive = (Resolve-Path $targetDir).Drive
     $freeGB = [math]::Floor((Get-PSDrive $drive.Name).Free / 1GB)

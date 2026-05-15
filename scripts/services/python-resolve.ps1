@@ -9,15 +9,31 @@
       win-arm64 wheels. On ARM64 hardware the AMD64 build runs under the
       built-in Prism emulator.
     - Fallback installer downloads python-3.12.x-amd64.exe from python.org
-      and silent-installs to %USERPROFILE%\.cat-cafe\python\
+      and silent-installs to <ProjectRoot>\.cat-cafe\python\
+      (project-rooted; mirrors the portable-Redis convention in
+      install-windows-helpers.ps1 — keeps every install isolated to
+      the source tree it was built for).
       with PrependPath=0 so the system PATH stays untouched.
 .EXAMPLE
   . "$PSScriptRoot\python-resolve.ps1"
   $py = Resolve-Python312
-  & $py.Path @($py.PrefixArgs + @('-m', 'venv', "$HOME\.cat-cafe\whisper-venv"))
+  & $py.Path @($py.PrefixArgs + @('-m', 'venv', "$env:CAT_CAFE_HOME\whisper-venv"))
 #>
 
-$script:CatCafeHome = Join-Path $HOME ".cat-cafe"
+# Single source of truth for the cat-cafe data dir. Mirrors the Windows
+# Redis convention (install-windows-helpers.ps1 line 104 places its
+# portable Redis under <ProjectRoot>/.cat-cafe/redis/windows/) — Python
+# + venvs + Piper voice models all live under the same project-rooted
+# .cat-cafe/ so uninstall = delete the project dir, no cross-instance
+# pollution in $env:USERPROFILE.
+#
+# Resolution priority:
+#   1. $env:CAT_CAFE_HOME (caller override — CI, integration tests, etc.)
+#   2. <repo-root>/.cat-cafe (derived from $PSScriptRoot:
+#      scripts/services/python-resolve.ps1 → repo-root is two levels up)
+$script:ResolverRepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$script:CatCafeHome = if ($env:CAT_CAFE_HOME) { $env:CAT_CAFE_HOME } else { Join-Path $script:ResolverRepoRoot '.cat-cafe' }
+$env:CAT_CAFE_HOME = $script:CatCafeHome   # exported so child install scripts can reuse the same path
 $script:ProjectPythonDir = Join-Path $script:CatCafeHome "python"
 
 function Get-PythonBinaryArch {

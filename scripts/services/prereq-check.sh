@@ -24,7 +24,10 @@ check_python3() {
 
 check_disk_space() {
   local required_gb="${1:-2}"
-  local target_dir="${HOME}/.cat-cafe"
+  # CAT_CAFE_HOME exported by python-resolve.sh — falls back to legacy
+  # ${HOME}/.cat-cafe only if the resolver hasn't been sourced yet (e.g.
+  # check_disk_space called from a context without check_python3 above it).
+  local target_dir="${CAT_CAFE_HOME:-${HOME}/.cat-cafe}"
   mkdir -p "$target_dir" 2>/dev/null || true
   local avail_kb
   if [ "$(uname -s)" = "Darwin" ]; then

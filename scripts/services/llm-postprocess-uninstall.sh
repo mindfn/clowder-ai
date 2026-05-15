@@ -3,7 +3,7 @@
 # Remove LLM post-processing service virtual environment and dependencies.
 set -euo pipefail
 
-VENV_DIR="${HOME}/.cat-cafe/llm-venv"
+VENV_DIR="${CAT_CAFE_HOME}/llm-venv"
 
 if [ ! -d "$VENV_DIR" ]; then
   echo "虚拟环境不存在: $VENV_DIR"

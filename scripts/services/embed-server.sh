@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-VENV_DIR="${HOME}/.cat-cafe/embed-venv"
+VENV_DIR="${CAT_CAFE_HOME}/embed-venv"
 PORT="${EMBED_PORT:-9880}"
 MODEL="${EMBED_MODEL:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

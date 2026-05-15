@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-VENV_DIR="${HOME}/.cat-cafe/llm-venv"
+VENV_DIR="${CAT_CAFE_HOME}/llm-venv"
 MODEL="${LLM_POSTPROCESS_MODEL:-${1:-}}"
 if [ -z "$MODEL" ]; then
   echo "ERROR: LLM_POSTPROCESS_MODEL env var (or positional arg) required — backend specifies model, no fallback default." >&2

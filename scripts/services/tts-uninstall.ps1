@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-$VenvDir = Join-Path $HOME ".cat-cafe\tts-venv"
+$VenvDir = Join-Path $env:CAT_CAFE_HOME "tts-venv"
 
 if (-not (Test-Path $VenvDir)) {
     Write-Host "Venv not found: $VenvDir"

@@ -11,7 +11,7 @@ check_network
 source "$SCRIPT_DIR/../download-source-overrides.sh"
 apply_manual_download_source_overrides
 
-VENV_DIR="${HOME}/.cat-cafe/llm-venv"
+VENV_DIR="${CAT_CAFE_HOME}/llm-venv"
 PLATFORM="$(uname -s)"
 ARCH="$(uname -m)"
 

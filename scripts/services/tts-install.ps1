@@ -17,7 +17,7 @@ Assert-Python310 -Bootstrap $BootstrapPython
 Assert-DiskSpace -RequiredGB 1
 Assert-Network
 
-$VenvDir = Join-Path $HOME ".cat-cafe\tts-venv"
+$VenvDir = Join-Path $env:CAT_CAFE_HOME "tts-venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 
 if (-not (Test-Path $VenvPython)) {
@@ -63,7 +63,7 @@ if ($IsPiper) {
     & $VenvPython @piperArgs
     if ($LASTEXITCODE -ne 0) { throw "Failed to install piper-tts" }
 
-    $PiperDir = Join-Path $HOME ".cat-cafe\piper-models"
+    $PiperDir = Join-Path $env:CAT_CAFE_HOME "piper-models"
     if (-not (Test-Path $PiperDir)) { New-Item -ItemType Directory -Path $PiperDir | Out-Null }
 
     $voiceBase = switch ($Voice) {

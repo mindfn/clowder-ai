@@ -17,7 +17,7 @@ $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-$VenvDir = Join-Path $HOME ".cat-cafe\llm-venv"
+$VenvDir = Join-Path $env:CAT_CAFE_HOME "llm-venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $ApiScript = Join-Path $PSScriptRoot "llm-postprocess-api.py"
 

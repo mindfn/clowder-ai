@@ -11,7 +11,7 @@ check_network
 source "$SCRIPT_DIR/../download-source-overrides.sh"
 apply_manual_download_source_overrides
 
-VENV_DIR="${HOME}/.cat-cafe/tts-venv"
+VENV_DIR="${CAT_CAFE_HOME}/tts-venv"
 PLATFORM="$(uname -s)"
 ARCH="$(uname -m)"
 
@@ -60,7 +60,7 @@ else
       echo "  安装 piper-tts + 下载离线语音模型: $VOICE ..."
       pip install --quiet piper-tts
 
-      PIPER_DIR="${HOME}/.cat-cafe/piper-models"
+      PIPER_DIR="${CAT_CAFE_HOME}/piper-models"
       mkdir -p "$PIPER_DIR"
 
       case "$VOICE" in

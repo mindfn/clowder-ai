@@ -30,7 +30,7 @@ $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-$VenvDir = Join-Path $HOME ".cat-cafe\embed-venv"
+$VenvDir = Join-Path $env:CAT_CAFE_HOME "embed-venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $ApiScript = Join-Path $PSScriptRoot "embed-api.py"
 
