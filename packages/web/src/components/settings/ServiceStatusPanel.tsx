@@ -457,7 +457,8 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
                   <p className="mt-1 truncate text-[11px] text-cafe-secondary font-mono">{progress.get(m.id)}</p>
                 )}
                 {s.error && <p className="mt-0.5 truncate text-[11px] text-conn-red-text">{s.error}</p>}
-                {installFailed && s.lastInstallError && (
+                {installFailed &&
+                  s.lastInstallError &&
                   // Persistent install-failure detail. Toast also fires once on the
                   // installing → failed transition (see useEffect above); this
                   // block keeps the detail visible after page refresh / 关闭浏览器
@@ -507,8 +508,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
                         )}
                       </div>
                     );
-                  })()
-                )}
+                  })()}
               </div>
               <div className={settingsResourceActionGroupClass}>
                 {notInstalled || installFailed ? (
