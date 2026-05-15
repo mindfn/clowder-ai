@@ -311,12 +311,30 @@ function Assert-Network {
     # missing sentence-transformers), pip falls back to extra-index-url.
     # Without this, an internal-only mirror is a dead end for any package
     # the IT team didn't pre-mirror.
-    #
-    # Source selection reuses $publicPipUrl from the probe chain above —
-    # whichever public mirror won (pypi → Tsinghua) is the one pip falls
-    # back to. Avoid injecting the same URL the user already set.
-    if ($env:PIP_INDEX_URL -and -not $env:PIP_EXTRA_INDEX_URL -and $publicPipUrl -and $env:PIP_INDEX_URL -ne $publicPipUrl) {
-        $env:PIP_EXTRA_INDEX_URL = $publicPipUrl
-        Write-Host "  Injected PIP_EXTRA_INDEX_URL = $publicPipUrl (public fallback; user already set PIP_INDEX_URL=$env:PIP_INDEX_URL)"
+    if ($env:PIP_INDEX_URL -and -not $env:PIP_EXTRA_INDEX_URL) {
+        $fbUrl = $null
+        $fbReason = $null
+        if ($publicPipUrl -and $env:PIP_INDEX_URL -ne $publicPipUrl) {
+            # Primary probe found a reachable public mirror — use that.
+            # Strong signal path: HEAD probe confirmed reachability.
+            $fbUrl = $publicPipUrl
+            $fbReason = "primary probe"
+        } elseif ($env:PIP_INDEX_URL -ne 'https://pypi.org/simple' -and $env:PIP_INDEX_URL -ne 'https://pypi.org/simple/') {
+            # Probe found nothing reachable OR the only reachable mirror is
+            # what the user already set. Fall back to pypi.org as a
+            # LAST-RESORT default — our HEAD probe can't see through
+            # Windows system proxies or transparent corp gateways, but pip
+            # running in the same shell often can. Worst case pip also
+            # fails and the user gets the same error they would get
+            # without any fallback at all.
+            $fbUrl = 'https://pypi.org/simple'
+            $fbReason = "last-resort (HEAD probe failed; pip may still reach via system/transparent proxy)"
+        }
+        if ($fbUrl) {
+            $env:PIP_EXTRA_INDEX_URL = $fbUrl
+            Write-Host "  Injected PIP_EXTRA_INDEX_URL = $fbUrl ($fbReason; user PIP_INDEX_URL=$env:PIP_INDEX_URL)"
+        } else {
+            Write-Host "  PIP_EXTRA_INDEX_URL not injected (user PIP_INDEX_URL=$env:PIP_INDEX_URL already equals pypi.org)"
+        }
     }
 }

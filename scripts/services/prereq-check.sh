@@ -213,16 +213,30 @@ check_network() {
   # missing sentence-transformers), pip falls back to extra-index-url.
   # Without this, an internal-only mirror is a dead end for any package
   # the IT team didn't pre-mirror.
-  #
-  # Source selection reuses public_pip_url from the probe chain above —
-  # whichever public mirror won (pypi → Tsinghua) is the one pip falls
-  # back to. Avoid injecting the same URL the user already set (e.g.
-  # user PIP_INDEX_URL=Tsinghua + probe picked Tsinghua → no-op).
-  if [ -n "${PIP_INDEX_URL:-}" ] \
-     && [ -z "${PIP_EXTRA_INDEX_URL:-}" ] \
-     && [ -n "$public_pip_url" ] \
-     && [ "$PIP_INDEX_URL" != "$public_pip_url" ]; then
-    export PIP_EXTRA_INDEX_URL="$public_pip_url"
-    echo "  注入 PIP_EXTRA_INDEX_URL=$public_pip_url（公共 fallback，用户已设 PIP_INDEX_URL=$PIP_INDEX_URL）"
+  if [ -n "${PIP_INDEX_URL:-}" ] && [ -z "${PIP_EXTRA_INDEX_URL:-}" ]; then
+    local fb_url=""
+    local fb_reason=""
+    if [ -n "$public_pip_url" ] && [ "$PIP_INDEX_URL" != "$public_pip_url" ]; then
+      # Primary probe found a reachable public mirror — use that. This is
+      # the strong signal path: curl confirmed reachability so pip will
+      # almost certainly reach it too.
+      fb_url="$public_pip_url"
+      fb_reason="主探测可达"
+    elif [ "$PIP_INDEX_URL" != "https://pypi.org/simple" ] && [ "$PIP_INDEX_URL" != "https://pypi.org/simple/" ]; then
+      # Probe found nothing reachable OR the only reachable mirror is what
+      # the user already set. Fall back to pypi.org as a LAST-RESORT
+      # default — our curl probe can't see through Windows system proxies
+      # or transparent corp gateways, but pip running in the same shell
+      # often can. Worst case pip also fails and the user gets the same
+      # error they'd get without any fallback at all.
+      fb_url="https://pypi.org/simple"
+      fb_reason="last-resort（curl 探测未通；pip 可能能通过系统代理/透明代理 reach）"
+    fi
+    if [ -n "$fb_url" ]; then
+      export PIP_EXTRA_INDEX_URL="$fb_url"
+      echo "  注入 PIP_EXTRA_INDEX_URL=$fb_url（$fb_reason；用户 PIP_INDEX_URL=$PIP_INDEX_URL）"
+    else
+      echo "  PIP_EXTRA_INDEX_URL 未注入（用户 PIP_INDEX_URL=$PIP_INDEX_URL 已等于 pypi.org，注入会重复）"
+    fi
   fi
 }
