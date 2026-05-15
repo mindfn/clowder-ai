@@ -170,8 +170,13 @@ export class PluginResourceActivator {
 
     const yamlPath = join(this.deps.pluginsDir, manifest.id, resource.path);
     const node = await this.deps.limbAdapterFactory(manifest.id, yamlPath);
-    await this.deps.limbRegistry.register(node);
     await this.upsertCapabilityEntry(manifest, resource, true);
+    try {
+      await this.deps.limbRegistry.register(node);
+    } catch (err) {
+      await this.removeCapabilityEntry(manifest, resource);
+      throw err;
+    }
   }
 
   private async deactivateLimb(manifest: PluginManifest, resource: PluginResourceDef): Promise<void> {
