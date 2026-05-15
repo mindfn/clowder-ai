@@ -98,6 +98,7 @@ async function watchForRunningAndFire(
   id: string,
   manifest: import('../domains/services/service-manifest.js').ServiceManifest,
   log: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void },
+  isAlreadyFired?: () => boolean,
 ): Promise<void> {
   const POLL_INTERVAL_MS = 5_000;
   const MAX_ATTEMPTS = 60; // 5 min
@@ -116,9 +117,16 @@ async function watchForRunningAndFire(
   try {
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      // If the push-based ready marker already won the race, the watcher
+      // role is done. Without this guard the watcher would re-fire
+      // 'started' and run every always-on hook (e.g. embedding catch-up
+      // registered with unregisterOnSuccess=false) a second time
+      // concurrently with the marker-path dispatch (codex P2 3251557957).
+      if (isAlreadyFired?.()) return;
       try {
         const probe = await probeServiceHealth(manifest);
         if (probe.status === 'running') {
+          if (isAlreadyFired?.()) return; // re-check after async probe
           log.info(`[services] /start ${id} watcher: healthy after ${((attempt + 1) * POLL_INTERVAL_MS) / 1000}s`);
           await fireServiceEvent(id, 'started');
           log.info(`[services] /start ${id} fired 'started' event`);
@@ -376,7 +384,15 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         stdio: ['ignore', 'pipe', 'pipe'],
         env,
       });
+      // Coordinate push-based ready marker with the polling watcher so
+      // exactly one logical 'started' fires per spawn. Without this flag,
+      // a fast spawn fires from marker AND watcher (~5s later) — running
+      // every always-on hook twice concurrently. Codex P2 3251557957 /
+      // same shape as f5fc234f autostart fix.
+      let markerFired = false;
       wireUpSidecarReadyListener(child, id, () => {
+        if (markerFired) return; // wireUpSidecarReadyListener has its own internal guard too
+        markerFired = true;
         request.log.info(`[services] /start ${id} → ready marker seen, firing 'started' event`);
         void fireServiceEvent(id, 'started');
         // After readiness, release the parent-side pipe FDs so the child
@@ -434,7 +450,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
             request.log.info(
               `[services] /start ${id} → spawned (earlyExit=0, probe=${rawProbe.status}), watcher polling for running`,
             );
-            void watchForRunningAndFire(id, manifest, request.log);
+            void watchForRunningAndFire(id, manifest, request.log, () => markerFired);
             return { ok: true, message: `${manifest.name} start initiated`, state: await getServiceState(manifest) };
           }
         }
