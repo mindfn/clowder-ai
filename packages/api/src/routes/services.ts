@@ -414,21 +414,37 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     // 1) Try stored PID (most reliable — recorded at start time)
     const storedPid = getServicePid(id);
     if (storedPid) {
-      try {
-        if (process.platform === 'win32') {
-          winTaskKill(storedPid);
-        } else {
-          process.kill(-storedPid, 'SIGTERM');
+      // Validate the PID still belongs to our service before killing it.
+      // PIDs are recycled by the OS — if our spawned process exited and
+      // the OS later assigned the same PID to an unrelated process, a
+      // blind SIGTERM would kill that innocent process. isServiceProcess
+      // inspects the cmdline (ps / Get-CimInstance) and checks for our
+      // start script path / basename, so a recycled PID misses and is
+      // treated as stale.
+      if (!isServiceProcess(storedPid, manifest)) {
+        // Stale stored PID — original child gone, PID either dead or
+        // recycled to something we don't own. Clear and fall through
+        // to stop-script / port-based kill which can still terminate
+        // the real running daemon (if any).
+        clearServicePid(id);
+        // FALL THROUGH (no return) — next branches try other strategies.
+      } else {
+        try {
+          if (process.platform === 'win32') {
+            winTaskKill(storedPid);
+          } else {
+            process.kill(-storedPid, 'SIGTERM');
+          }
+        } catch {
+          /* already gone */
         }
-      } catch {
-        /* already gone */
+        clearServicePid(id);
+        return {
+          ok: true,
+          message: `${manifest.name} stopped (pid ${storedPid})`,
+          state: await getServiceState(manifest),
+        };
       }
-      clearServicePid(id);
-      return {
-        ok: true,
-        message: `${manifest.name} stopped (pid ${storedPid})`,
-        state: await getServiceState(manifest),
-      };
     }
 
     // 2) Try stop script if defined

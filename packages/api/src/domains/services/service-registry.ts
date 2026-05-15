@@ -111,15 +111,38 @@ export function resolveServiceEndpoint(idOrManifest: string | ServiceManifest): 
   const manifest = typeof idOrManifest === 'string' ? KNOWN_SERVICES.find((s) => s.id === idOrManifest) : idOrManifest;
   if (!manifest) return null;
 
+  // Priority (highest → lowest):
+  //   1. env is a full URL (http://...) — strongest user intent, typically
+  //      "point at a remote server, don't run local sidecar at all" (e.g.
+  //      EMBED_URL=http://embedding.corp:8080). services.json port should
+  //      NOT silently override that intent.
+  //   2. services.json cfg.port — console's most-recent user intent. When
+  //      user changes port in the UI, health check must follow immediately.
+  //      Previously env-as-port masked this — that was the codex P2 finding.
+  //   3. env as port number — .env-set default port (no full URL, just a
+  //      number like EMBED_PORT=9881). Static config, lower priority than
+  //      console state.
+  //   4. manifest.port — hardcoded default fallback.
+
+  // 1. env full URL
   for (const envVar of manifest.configVars) {
     const val = process.env[envVar];
     if (val?.startsWith('http')) return val;
+  }
+
+  // 2. services.json port
+  const cfg = getServiceConfig(manifest.id);
+  if (cfg.port) return `http://127.0.0.1:${cfg.port}`;
+
+  // 3. env port number
+  for (const envVar of manifest.configVars) {
+    const val = process.env[envVar];
     const parsed = val ? Number.parseInt(val, 10) : Number.NaN;
     if (Number.isFinite(parsed) && parsed > 0) return `http://127.0.0.1:${parsed}`;
   }
 
-  const port = resolveServicePort(manifest);
-  if (port) return `http://127.0.0.1:${port}`;
+  // 4. manifest default
+  if (manifest.port) return `http://127.0.0.1:${manifest.port}`;
 
   return null;
 }
