@@ -786,38 +786,14 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
                 lastInstallError: undefined,
                 lastInstallTroubleshootHint: undefined,
               });
-              if (manifest.scripts.start && getServiceConfig(id).enabled) {
-                const startScript = resolveScriptPath(manifest.scripts.start);
-                if (existsSync(startScript)) {
-                  const startEnv: Record<string, string> = { ...process.env } as Record<string, string>;
-                  normalizeProxyEnv(startEnv);
-                  const startSelected = resolveSelectedModel(id, manifest.id);
-                  if (startSelected) {
-                    const ek = MODEL_ENV_VARS[id];
-                    if (ek) startEnv[ek] = startSelected;
-                  }
-                  const cfg = getServiceConfig(id);
-                  if (cfg.port) {
-                    const pk = PORT_ENV_VARS[id];
-                    if (pk) startEnv[pk] = String(cfg.port);
-                  }
-                  const { command: autoStartCmd, args: autoStartArgs } = resolveSpawnCommand(manifest.scripts.start);
-                  const startChild = spawn(autoStartCmd, autoStartArgs, {
-                    detached: process.platform !== 'win32',
-                    stdio: ['ignore', 'pipe', 'pipe'],
-                    env: startEnv,
-                  });
-                  startChild.on('error', () => {});
-                  if (startChild.pid) setServicePid(id, startChild.pid);
-                  setStarting(id, true);
-                  wireUpSidecarReadyListener(startChild, id, () => {
-                    request.log.info(`[services] install→autostart ${id} → ready marker seen, firing 'started' event`);
-                    void fireServiceEvent(id, 'started');
-                  });
-                  startChild.unref();
-                  void watchForRunningAndFire(id, manifest, request.log);
-                }
-              }
+              // Install = install only. Start = user clicks start.
+              // The previous install→autostart-when-enabled chain shipped
+              // confused UX: when enabled=true persisted from a prior
+              // session, install would attempt to spawn the sidecar in
+              // the background — but failures were silent (no console
+              // surface), leaving users with enabled=true + status=stopped
+              // and no diagnostic. Per user decision: keep install scoped
+              // to "prepare environment", let the user explicitly start.
             } finally {
               setInstalling(id, false);
             }
