@@ -188,16 +188,10 @@ services:
           description: 本地轻量高质量语音合成（MLX，推荐）
           requirements: { ramGb: 2, diskGb: 0.5 }
           performance: 实时 5x+
-        - name: edge-tts
-          size: ~20MB
-          description: 微软云端，备选（需联网）
-          requirements: { ramGb: 1, diskGb: 0.1 }
-          performance: 取决于网络
       customModelHint:
-        description: 'MLX-Audio 后端：mlx-community 下的 TTS 模型（Kokoro / StyleTTS2 量化版）；或填关键字 edge-tts 走云端'
+        description: 'MLX-Audio 后端：mlx-community 下的 TTS 模型（Kokoro / StyleTTS2 量化版）。本地、离线、Apple Silicon GPU 加速——首选方案'
         links:
           - { label: 'mlx-community / TTS 模型', url: 'https://huggingface.co/mlx-community?search_models=tts' }
-          - { label: 'edge-tts voice 列表', url: 'https://github.com/rany2/edge-tts#changing-voices' }
 
     - match: { os: darwin, arch: x64 }
       models:
