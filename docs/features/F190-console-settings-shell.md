@@ -120,6 +120,7 @@ ServiceManifest 类型 / ServiceConfig 持久化 / service-registry 运行时 / 
 - 日志流（current: per-service log file 通过 `readLogTail` 拉，不流式）
 - 依赖排序（current: 无显式依赖图，sidecars 互相独立）
 - 模型下载进度（current: stdout 经 `appendLog` 写入 service log，UI 不解析进度条）
+- **统一 install pipeline → F198**（4 个 install scripts 共 336 行大部分重复——抽 template + per-service manifest，让"单 service smoke = 整套环境绿"成立，消除 ad-hoc fix 散落 4 处的 copy-paste tax）
 
 ## Open Questions
 
