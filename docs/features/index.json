@@ -1157,6 +1157,12 @@
       "name": "Console Settings Shell — 全局导航 + 设置面板骨架",
       "status": "Implemented (branch), pending merge | **Owner**: Ragdoll | **Priority**: P0",
       "file": "F190-console-settings-shell.md"
+    },
+    {
+      "id": "F197",
+      "name": "Plugin Framework — 声明式插件注册与资源编排",
+      "status": "spec (rev4 — 整合 @codex 三轮复核)",
+      "file": "F197-plugin-framework.md"
     }
   ]
 }
