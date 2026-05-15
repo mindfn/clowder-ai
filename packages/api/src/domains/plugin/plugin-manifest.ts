@@ -77,7 +77,9 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
   if (Array.isArray(rawConfig)) {
     for (const c of rawConfig) {
       const rc = c as Record<string, unknown>;
-      if (!rc['envName'] || !rc['label']) continue;
+      if (!rc['envName'] || !rc['label']) {
+        throw new Error(`Invalid config entry in ${yamlPath}: each entry must have envName and label`);
+      }
       const envName = rc['envName'] as string;
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(envName)) {
         throw new Error(`Invalid envName '${envName}': must be a valid shell variable name`);

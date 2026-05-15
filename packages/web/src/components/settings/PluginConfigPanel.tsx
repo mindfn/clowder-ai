@@ -5,6 +5,14 @@ import { useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { ExternalLinkIcon, StepBadge } from '../HubConfigIcons';
 
+function safeHostname(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
 interface Props {
   plugin: PluginInfo;
   onUpdated: () => void;
@@ -84,7 +92,7 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
               <div className="ml-[26px]">
                 <a href={plugin.docsUrl} target="_blank" rel="noopener noreferrer" className="console-inline-link">
                   <ExternalLinkIcon />
-                  <span>{new URL(plugin.docsUrl).hostname} → 查看官方文档</span>
+                  <span>{safeHostname(plugin.docsUrl)} → 查看官方文档</span>
                 </a>
               </div>
             )}
@@ -94,7 +102,7 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
       {!hasSteps && plugin.docsUrl && (
         <a href={plugin.docsUrl} target="_blank" rel="noopener noreferrer" className="console-inline-link">
           <ExternalLinkIcon />
-          <span>{new URL(plugin.docsUrl).hostname} → 查看官方文档</span>
+          <span>{safeHostname(plugin.docsUrl)} → 查看官方文档</span>
         </a>
       )}
 

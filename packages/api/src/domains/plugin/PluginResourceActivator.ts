@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { lstat, mkdir, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type {
@@ -132,6 +133,9 @@ export class PluginResourceActivator {
     if (!resource.path) throw new Error('Skill resource must have a path');
 
     const skillSourceDir = join(this.deps.pluginsDir, manifest.id, resource.path);
+    if (!existsSync(skillSourceDir)) {
+      throw new Error(`Skill source not found: ${skillSourceDir}`);
+    }
     const skillName = resource.path.split('/').pop()!;
 
     for (const providerDir of PROVIDER_DIRS) {
@@ -182,6 +186,9 @@ export class PluginResourceActivator {
   }
 
   private async activateMcp(manifest: PluginManifest, resource: PluginResourceDef): Promise<void> {
+    if (!resource.command) {
+      throw new Error('MCP resource must declare a command');
+    }
     await this.upsertCapabilityEntry(manifest, resource, true);
   }
 
