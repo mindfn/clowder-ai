@@ -234,11 +234,32 @@ _install_project_python_locked() {
   local tmpdir
   tmpdir=$(mktemp -d) || return 1
   echo "  Downloading portable Python ${_PBS_VERSION} (${triple}) from python-build-standalone..."
-  if ! curl -fLs "$tar_url" -o "${tmpdir}/python.tar.gz"; then
+  echo "  URL: $tar_url"
+  # IMPORTANT: drop `-s` (silent) — it swallows the actual curl error
+  # text ("Could not resolve host" / "Connection timed out" / 403 / ...).
+  # Keep --silent for the progress bar but use --show-error so failures
+  # surface to stderr (and via install-endpoint to the service log).
+  # Also print HTTP status / proxy env so users can self-diagnose what
+  # path the request actually took.
+  echo "  HTTP_PROXY=${HTTP_PROXY:-<unset>}  HTTPS_PROXY=${HTTPS_PROXY:-<unset>}  NO_PROXY=${NO_PROXY:-<unset>}"
+  local curl_log
+  curl_log=$(mktemp) || curl_log=""
+  if ! curl -fL --silent --show-error -o "${tmpdir}/python.tar.gz" -w "  HTTP status: %{http_code}  time: %{time_total}s  size: %{size_download} bytes\n" "$tar_url" 2>"${curl_log:-/dev/null}"; then
     echo "  Failed to download $tar_url" >&2
+    if [ -n "$curl_log" ] && [ -s "$curl_log" ]; then
+      echo "  curl error detail:" >&2
+      sed 's/^/    /' "$curl_log" >&2
+      rm -f "$curl_log"
+    fi
+    # Quick connectivity probes so the user can tell apart "GitHub
+    # unreachable" from "this specific release missing".
+    echo "  Connectivity probes:" >&2
+    if curl -sIL --max-time 5 "https://github.com" -o /dev/null -w "    github.com -> HTTP %{http_code}\n" 2>&1 >&2; then :; fi
+    if curl -sIL --max-time 5 "https://api.github.com" -o /dev/null -w "    api.github.com -> HTTP %{http_code}\n" 2>&1 >&2; then :; fi
     rm -rf "$tmpdir"
     return 1
   fi
+  [ -n "$curl_log" ] && rm -f "$curl_log"
   mkdir -p "$_PROJECT_PYTHON_DIR"
   # Tarball extracts into a top-level "python/" directory — strip that one
   # component so files land directly in $_PROJECT_PYTHON_DIR.
