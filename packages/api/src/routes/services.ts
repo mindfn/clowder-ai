@@ -469,21 +469,41 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         clearServicePid(id);
         // FALL THROUGH (no return) — next branches try other strategies.
       } else {
+        // winTaskKill returns false on failure (doesn't throw); SIGTERM
+        // to a negative pgid can throw if the group is gone. Distinguish
+        // confirmed kill vs failed kill — only return early on confirmed.
+        // On failure, fall through to stop-script / port-based kill
+        // (codex P2 3249737122).
+        let killed = false;
         try {
           if (process.platform === 'win32') {
-            winTaskKill(storedPid);
+            killed = winTaskKill(storedPid);
           } else {
             process.kill(-storedPid, 'SIGTERM');
+            killed = true;
           }
         } catch {
-          /* already gone */
+          // Process group already gone — same effect as kill succeeded
+          // (the sidecar is no longer running under that PID).
+          killed = true;
         }
+        if (killed) {
+          clearServicePid(id);
+          return {
+            ok: true,
+            message: `${manifest.name} stopped (pid ${storedPid})`,
+            state: await getServiceState(manifest),
+          };
+        }
+        // Kill call returned false (Windows taskkill refused, e.g.
+        // permissions or stuck process) — clear the stored PID so we
+        // don't retarget the same dead handle, and fall through to the
+        // next strategy.
         clearServicePid(id);
-        return {
-          ok: true,
-          message: `${manifest.name} stopped (pid ${storedPid})`,
-          state: await getServiceState(manifest),
-        };
+        request.log.warn(
+          { serviceId: id, storedPid },
+          'stored-PID kill returned false — falling through to stop-script / port-based kill',
+        );
       }
     }
 
@@ -849,13 +869,23 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     try {
       const storedPid = getServicePid(id);
       let stopped = false;
+      // winTaskKill returns false on failure (e.g. permission denied,
+      // process gone in racy way) instead of throwing; SIGTERM may throw
+      // when the group is already dead (same effect as success). Only
+      // mark `stopped` on a confirmed kill — otherwise fall through to
+      // the port-based fallback below, which uses fresh isServiceProcess
+      // probes to find lingering sidecars (codex P2 3249737130).
       if (storedPid && isServiceProcess(storedPid, manifest)) {
         try {
-          if (process.platform === 'win32') winTaskKill(storedPid);
-          else process.kill(-storedPid, 'SIGTERM');
-          stopped = true;
+          if (process.platform === 'win32') {
+            stopped = winTaskKill(storedPid);
+          } else {
+            process.kill(-storedPid, 'SIGTERM');
+            stopped = true;
+          }
         } catch {
-          /* already dead */
+          // Process group already gone — same observable result.
+          stopped = true;
         }
         clearServicePid(id);
       } else if (storedPid) {
@@ -868,9 +898,12 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
           for (const pid of candidatePids) {
             if (!isServiceProcess(pid, manifest)) continue;
             try {
-              if (process.platform === 'win32') winTaskKill(pid);
-              else process.kill(pid, 'SIGTERM');
-              stopped = true;
+              if (process.platform === 'win32') {
+                if (winTaskKill(pid)) stopped = true;
+              } else {
+                process.kill(pid, 'SIGTERM');
+                stopped = true;
+              }
             } catch {
               /* skip */
             }
