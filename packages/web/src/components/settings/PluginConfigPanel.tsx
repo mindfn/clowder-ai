@@ -5,6 +5,15 @@ import { useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { ExternalLinkIcon, StepBadge } from '../HubConfigIcons';
 
+function isSafeUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 function safeHostname(url: string): string {
   try {
     return new URL(url).hostname;
@@ -88,7 +97,7 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
               <StepBadge num={idx + 1} />
               <span className="text-[13px] font-medium text-cafe">{step}</span>
             </div>
-            {idx === 0 && plugin.docsUrl && (
+            {idx === 0 && plugin.docsUrl && isSafeUrl(plugin.docsUrl) && (
               <div className="ml-[26px]">
                 <a href={plugin.docsUrl} target="_blank" rel="noopener noreferrer" className="console-inline-link">
                   <ExternalLinkIcon />
@@ -99,7 +108,7 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
           </div>
         ))}
 
-      {!hasSteps && plugin.docsUrl && (
+      {!hasSteps && plugin.docsUrl && isSafeUrl(plugin.docsUrl) && (
         <a href={plugin.docsUrl} target="_blank" rel="noopener noreferrer" className="console-inline-link">
           <ExternalLinkIcon />
           <span>{safeHostname(plugin.docsUrl)} → 查看官方文档</span>
