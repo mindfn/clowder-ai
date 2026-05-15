@@ -185,7 +185,7 @@ _install_template_load_model() {
 
   case "$loader" in
     snapshot)
-      "${hf_proxy_env[@]}" "$venv_dir/bin/python" -c "
+      "${hf_proxy_env[@]+"${hf_proxy_env[@]}"}" "$venv_dir/bin/python" -c "
 import sys, time, os
 os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '60')
 from huggingface_hub import snapshot_download
@@ -206,7 +206,7 @@ sys.exit(1)
 " "$model_id"
       ;;
     faster_whisper)
-      "${hf_proxy_env[@]}" "$venv_dir/bin/python" -c "
+      "${hf_proxy_env[@]+"${hf_proxy_env[@]}"}" "$venv_dir/bin/python" -c "
 import sys, time, os
 os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '60')
 from faster_whisper import WhisperModel
