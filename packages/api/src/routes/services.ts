@@ -694,12 +694,24 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
       const markFailed = (errMsg: string, hint?: string | null): void => {
         request.log.error({ serviceId: id, errMsg }, `service install failed: ${manifest.name}`);
-        setServiceConfig(id, {
-          installStatus: 'failed',
-          lastInstallError: errMsg,
-          lastInstallTroubleshootHint: hint ?? undefined,
-        });
-        setInstalling(id, false);
+        // Release the in-memory install lock unconditionally, even if
+        // persisting failure state throws (disk full / perm denied /
+        // bad path). Without finally, `setServiceConfig` throwing here
+        // would leave installingServices.has(id) true forever, so every
+        // subsequent /install would short-circuit as "already installing"
+        // until the API restarts (codex P2 3249837227).
+        try {
+          setServiceConfig(id, {
+            installStatus: 'failed',
+            lastInstallError: errMsg,
+            lastInstallTroubleshootHint: hint ?? undefined,
+          });
+        } catch (cfgErr) {
+          const msg = cfgErr instanceof Error ? cfgErr.message : String(cfgErr);
+          request.log.error({ serviceId: id, err: msg }, 'failed to persist install failure state');
+        } finally {
+          setInstalling(id, false);
+        }
       };
 
       void (async () => {
