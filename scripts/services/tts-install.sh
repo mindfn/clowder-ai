@@ -2,7 +2,7 @@
 # scripts/services/tts-install.sh
 # Install dependencies for TTS (venv + mlx-audio on Darwin arm64;
 # edge-tts cloud / piper offline on other platforms).
-# Declarative -- install-template.sh handles common pipeline (F198).
+# Declarative -- install-template.sh handles common pipeline (F190 service-install sub-scope).
 # Non-arm64 path skips the generic snapshot_download loader because
 # piper voice files don't live on HuggingFace as a HF repo -- they're
 # raw .onnx / .onnx.json blobs. POST_INSTALL_HOOK_OTHER handles that.

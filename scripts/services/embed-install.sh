@@ -2,7 +2,7 @@
 # scripts/services/embed-install.sh
 # Install dependencies for Embedding service (venv + mlx-embeddings /
 # sentence-transformers). Pure declarative -- install-template.sh
-# handles the actual pipeline (F198).
+# handles the actual pipeline (F190 service-install sub-scope).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

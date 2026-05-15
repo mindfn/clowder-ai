@@ -1157,12 +1157,6 @@
       "name": "Console Settings Shell — 全局导航 + 设置面板骨架",
       "status": "Implemented (branch), pending merge | **Owner**: Ragdoll | **Priority**: P0",
       "file": "F190-console-settings-shell.md"
-    },
-    {
-      "id": "F198",
-      "name": "Unified Service Install Pipeline — 抽象通用安装流程，service 只声明差异",
-      "status": "in-progress (implemented in PR #674, pending merge) | **Owner**: Ragdoll | **Priority**: P1 — user explicit \"no follow-up\" decision: 一次性做完不留 followup",
-      "file": "F198-service-install-pipeline.md"
     }
   ]
 }

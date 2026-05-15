@@ -230,7 +230,7 @@ function Invoke-ModelDownloadWithRetry {
     # HF_HUB_DOWNLOAD_TIMEOUT=60). Previously each *-install.ps1 had
     # its own bare 'snapshot_download(...)' or 'WhisperModel(...)' call
     # with no retry -- one ConnectTimeout = install failed even when
-    # the next attempt would've worked. F198 fixes this fan-out by
+    # the next attempt would've worked. F190 service-install sub-scope fixes this fan-out by
     # collapsing the retry path into one place.
     param(
         [Parameter(Mandatory=$true)][string]$VenvPython,

@@ -120,7 +120,7 @@ ServiceManifest 类型 / ServiceConfig 持久化 / service-registry 运行时 / 
 - 日志流（current: per-service log file 通过 `readLogTail` 拉，不流式）
 - 依赖排序（current: 无显式依赖图，sidecars 互相独立）
 - 模型下载进度（current: stdout 经 `appendLog` 写入 service log，UI 不解析进度条）
-- **F198 统一 install pipeline ✅** 已在本 PR 实施：`.sh` 端 4 service 收编到 `install-template.sh` + declarative inputs（embed 67→22, whisper 97→24, tts 102→67, llm 70→19 lines）；`.ps1` 端 retry 集中到 prereq-check.ps1 的 `Invoke-ModelDownloadWithRetry` helper。F198 spec doc 标记为 done
+- **统一 install pipeline ✅** 已在本 PR 实施：`.sh` 端 4 service 收编到 `install-template.sh` + declarative inputs（embed 67→22, whisper 97→24, tts 102→67, llm 70→19 lines）；`.ps1` 端 retry 集中到 prereq-check.ps1 的 `Invoke-ModelDownloadWithRetry` helper。此前曾用 F198 编号；与 cat-cafe main 已分配的 F198（claude-code-subscription-carrier）冲突，PR #674 review 中收回，pipeline scope 折叠到本 F190 sub-scope 范围。
 
 ## Open Questions
 

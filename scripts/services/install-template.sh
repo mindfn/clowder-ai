@@ -12,7 +12,7 @@
 # ~85% duplicate. Each bug fix had to land in 4 places, and one
 # inconsistency (e.g. retry policy in 3 of 4) caused real user-visible
 # bugs ("embedding installs fine but whisper fails on same machine").
-# F198 collapses the duplication so one pipeline change = all services
+# F190 service-install sub-scope collapses the duplication so one pipeline change = all services
 # get it.
 #
 # CONTRACT (caller exports BEFORE sourcing):
