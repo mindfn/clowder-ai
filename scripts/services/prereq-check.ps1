@@ -228,6 +228,35 @@ function Assert-Network {
     $candidate = Get-SystemProxyCandidate
     $needProxyInjection = $false
 
+    # FIRST: classify the user's PIP_INDEX_URL (if set) the same way we
+    # classify public mirrors. Internal corporate mirrors typically
+    # don't need (and often break behind) the system proxy — adding
+    # HTTP_PROXY because some public source needs it would route the
+    # user's primary through the proxy too, breaking direct-only
+    # internals. Per-source NO_PROXY classification fixes this: we tell
+    # pip exactly which hosts bypass the proxy and which go through it,
+    # instead of forcing one global choice.
+    if ($env:PIP_INDEX_URL) {
+        try {
+            $userIdxUri = [System.Uri]::new($env:PIP_INDEX_URL)
+            $userIdxHost = $userIdxUri.Host
+            if ($userIdxHost) {
+                $userIdxMode = Test-SourceMode -Url $env:PIP_INDEX_URL -TimeoutSec 5 -CandidateProxy $candidate
+                if ($userIdxMode -eq 'direct') {
+                    Write-Host "  User PIP_INDEX_URL reachable [OK] (direct, $userIdxHost) — adding to NO_PROXY so pip bypasses HTTP_PROXY"
+                    Add-NoProxyHost $userIdxHost
+                } elseif ($userIdxMode -eq 'proxy') {
+                    Write-Host "  User PIP_INDEX_URL reachable [OK] (via proxy: $candidate, $userIdxHost) — NOT adding to NO_PROXY"
+                    $needProxyInjection = $true
+                } else {
+                    Write-Host "  WARNING: User PIP_INDEX_URL unreachable both direct and via proxy ($userIdxHost)"
+                }
+            }
+        } catch {
+            Write-Host "  WARNING: Could not parse PIP_INDEX_URL=$env:PIP_INDEX_URL as URL"
+        }
+    }
+
     # Probe BOTH public pip sources (pypi.org and Tsinghua mirror), no
     # short-circuit. Collect every reachable URL into $publicPipUrls
     # (priority order: pypi → Tsinghua). pip natively supports multiple

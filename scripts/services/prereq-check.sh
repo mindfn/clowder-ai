@@ -123,6 +123,41 @@ check_network() {
     return
   fi
 
+  # FIRST: classify the user's PIP_INDEX_URL (if set) the same way we
+  # classify public mirrors. Internal corporate mirrors typically don't
+  # need (and often break behind) the system proxy — adding HTTP_PROXY
+  # because some public source needs it would route the user's primary
+  # through the proxy too, breaking direct-only internals. Per-source
+  # NO_PROXY classification fixes this: we tell pip exactly which hosts
+  # bypass the proxy and which go through it, instead of forcing one
+  # global choice.
+  if [ -n "${PIP_INDEX_URL:-}" ]; then
+    # Extract host from URL using bash native string ops (portable
+    # across bash/dash, no sed BSD/GNU divergence). Handles
+    # credentials and port: https://user:pass@host:port/path → host.
+    local user_idx_host
+    user_idx_host="${PIP_INDEX_URL#*://}"   # strip scheme
+    user_idx_host="${user_idx_host%%/*}"    # keep up to first /
+    user_idx_host="${user_idx_host#*@}"     # strip user:pass@
+    user_idx_host="${user_idx_host%:*}"     # strip :port
+    if [ -n "$user_idx_host" ] && [ "$user_idx_host" != "$PIP_INDEX_URL" ]; then
+      local user_idx_mode
+      user_idx_mode=$(_test_source_mode "$PIP_INDEX_URL" "$timeout")
+      case "$user_idx_mode" in
+        direct)
+          echo "  用户主源 PIP_INDEX_URL 直连可达 ($user_idx_host) — 加入 NO_PROXY，pip 不走代理 reach"
+          _add_no_proxy_host "$user_idx_host"
+          ;;
+        proxy)
+          echo "  用户主源 PIP_INDEX_URL 需走代理 ($user_idx_host) — 不加 NO_PROXY，pip 走 HTTP_PROXY reach"
+          ;;
+        unreachable)
+          echo "WARNING: 用户主源 PIP_INDEX_URL direct + via proxy 都不可达 ($user_idx_host)"
+          ;;
+      esac
+    fi
+  fi
+
   # Probe BOTH public pip sources (pypi.org and Tsinghua mirror), no
   # short-circuit. Collect every reachable URL into public_pip_urls
   # (space-separated, priority order). pip natively supports multiple
