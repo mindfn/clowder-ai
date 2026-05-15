@@ -288,7 +288,7 @@ if (-not $configuredEmbedUrl) {
 Write-Step "Check ports"
 Stop-PortProcess -Port ([int]$ApiPort) -Name "API" -PidFile $ApiPidFile -ProjectRoot $ProjectRoot
 Stop-PortProcess -Port ([int]$WebPort) -Name "Frontend" -PidFile $WebPidFile -ProjectRoot $ProjectRoot
-if ($embedIsLocal) {
+if ($embedEnabled -and $embedIsLocal) {
     Stop-PortProcess -Port ([int]$EmbedPort) -Name "Embedding" -PidFile (Join-Path $RunDir "embed-$EmbedPort.pid") -ProjectRoot $ProjectRoot
 }
 
