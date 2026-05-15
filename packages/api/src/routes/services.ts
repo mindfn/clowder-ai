@@ -101,19 +101,45 @@ async function watchForRunningAndFire(
 ): Promise<void> {
   const POLL_INTERVAL_MS = 5_000;
   const MAX_ATTEMPTS = 60; // 5 min
+  // Use the RAW probe (probeServiceHealth) instead of getServiceState
+  // here. getServiceState rewrites every non-running probe to 'starting'
+  // whenever startingServices is set (which the /start endpoint set
+  // before spawning), so if the sidecar crashed or never bound, this
+  // loop would see 'starting' forever and only exit after the 5-min
+  // timeout. With the raw probe we can observe true 'stopped' / 'error'
+  // and bail early on definitive failure — but we tolerate a small
+  // window of 'stopped' (uvicorn binding the port can ECONNREFUSED for
+  // the first few seconds), so we only treat it as terminal after
+  // STOPPED_TERMINAL_COUNT consecutive stopped/error probes.
+  const STOPPED_TERMINAL_COUNT = 3; // 15s of consecutive failure → bail
+  let stoppedStreak = 0;
   try {
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
       try {
-        const state = await getServiceState(manifest);
-        if (state.status === 'running') {
+        const probe = await probeServiceHealth(manifest);
+        if (probe.status === 'running') {
           log.info(`[services] /start ${id} watcher: healthy after ${((attempt + 1) * POLL_INTERVAL_MS) / 1000}s`);
           await fireServiceEvent(id, 'started');
           log.info(`[services] /start ${id} fired 'started' event`);
           return;
         }
+        if (probe.status === 'stopped' || probe.status === 'error') {
+          stoppedStreak += 1;
+          if (stoppedStreak >= STOPPED_TERMINAL_COUNT) {
+            log.warn(
+              `[services] /start ${id} watcher: probe='${probe.status}' for ${stoppedStreak} consecutive checks (${(stoppedStreak * POLL_INTERVAL_MS) / 1000}s) — sidecar appears not to have come up, bailing early`,
+            );
+            return;
+          }
+        } else {
+          // 'starting' (sidecar /health returned status='loading') or
+          // 'unknown' — reset the streak; sidecar is responding,
+          // just not ready yet.
+          stoppedStreak = 0;
+        }
       } catch {
-        /* transient probe failure — try again next tick */
+        /* transient probe failure — try again next tick, don't count as stopped */
       }
     }
     log.warn(
