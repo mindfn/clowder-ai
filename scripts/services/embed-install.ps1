@@ -83,8 +83,7 @@ Stemmer = SnowballStemmer
     }
     $Model = $env:EMBED_MODEL
     Write-Host "  Pre-downloading ONNX model: $Model ..."
-    & $VenvPython -c "from fastembed import TextEmbedding; TextEmbedding(model_name='$Model'); print('Model download complete.')"
-    if ($LASTEXITCODE -ne 0) { throw "Failed to download model: $Model" }
+    Invoke-ModelDownloadWithRetry -VenvPython $VenvPython -ModelId $Model -Loader "fastembed"
 
 } else {
     $hasCuda = $false
@@ -115,8 +114,7 @@ Stemmer = SnowballStemmer
     }
     $Model = $env:EMBED_MODEL
     Write-Host "  Pre-downloading model: $Model ..."
-    & $VenvPython -c "from huggingface_hub import snapshot_download; snapshot_download('$Model'); print('Model download complete.')"
-    if ($LASTEXITCODE -ne 0) { throw "Failed to download model: $Model" }
+    Invoke-ModelDownloadWithRetry -VenvPython $VenvPython -ModelId $Model -Loader "snapshot"
 }
 
 Write-Host "Installation complete."

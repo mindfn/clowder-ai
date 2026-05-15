@@ -90,7 +90,6 @@ if (-not $env:LLM_POSTPROCESS_MODEL) {
 }
 $LlmModel = $env:LLM_POSTPROCESS_MODEL
 Write-Host "  Pre-downloading model: $LlmModel ..."
-& $VenvPython -c "from huggingface_hub import snapshot_download; snapshot_download('$LlmModel')"
-if ($LASTEXITCODE -ne 0) { throw "Failed to download model: $LlmModel" }
+Invoke-ModelDownloadWithRetry -VenvPython $VenvPython -ModelId $LlmModel -Loader "snapshot"
 
 Write-Host "Installation complete."

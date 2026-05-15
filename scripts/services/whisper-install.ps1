@@ -75,7 +75,6 @@ if (-not $env:WHISPER_MODEL) {
 }
 $WhisperModel = $env:WHISPER_MODEL
 Write-Host "  Pre-downloading model: $WhisperModel ..."
-& $VenvPython -c "from faster_whisper import WhisperModel; WhisperModel('$WhisperModel', device='cpu', compute_type='int8')"
-if ($LASTEXITCODE -ne 0) { throw "Failed to download model: $WhisperModel" }
+Invoke-ModelDownloadWithRetry -VenvPython $VenvPython -ModelId $WhisperModel -Loader "faster_whisper"
 
 Write-Host "Installation complete."

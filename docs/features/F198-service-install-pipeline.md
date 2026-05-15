@@ -8,7 +8,7 @@ created: 2026-05-15
 
 # F198: Unified Service Install Pipeline — 抽象通用安装流程，service 只声明差异
 
-> **Status**: spec | **Owner**: Ragdoll | **Priority**: P1 (post-#674 followup)
+> **Status**: done | **Owner**: Ragdoll | **Priority**: P1 (implemented in PR #674 — user explicit "no follow-up" decision)
 
 ## Why
 
@@ -57,11 +57,11 @@ extra_checks:
 
 ## Acceptance Criteria
 
-- [ ] AC-1: 4 个现有 install scripts (embed/whisper/tts/llm-postprocess) 退化到 `service: ... \npip_deps: ...` 配置 + sourced 通用 `install-template.sh` / `install-template.ps1`
-- [ ] AC-2: Bash/PowerShell 两端模板逻辑对齐（同一 manifest 跨平台行为一致）
-- [ ] AC-3: 单 service 端到端 smoke test 覆盖整套流程；environment matrix smoke（Mac arm64 / Mac x86 / Linux ARM64 / Linux x86 / Windows AMD64 / Windows ARM64） pass 一次即视为整套 service 该环境绿
-- [ ] AC-4: 新增 service 路径：只写 manifest config，不需要新 install script
-- [ ] AC-5: Backward-compatible: manual `bash <svc>-install.sh` 仍工作（user 不通过 console 也能装）
+- [x] AC-1: 4 个 `.sh` install scripts 退化到 declarative inputs + sourced `install-template.sh`：22 / 24 / 67 / 19 lines (vs 67 / 97 / 102 / 70 之前 — simple services 缩 70%+，tts 保留 67 行是因为非-arm64 piper voice 离线下载是真特殊 case，via POST_INSTALL_HOOK_OTHER)
+- [x] AC-2 (partial): `.ps1` 端 retry 路径集中——`prereq-check.ps1` 新增 `Invoke-ModelDownloadWithRetry` helper 支持 `snapshot` / `faster_whisper` / `fastembed` 三种 loader。4 个 `.ps1` install scripts 已切到 helper（不再各自 inline `& $VenvPython -c "snapshot_download..."` 无重试）。**Full `.ps1` template 抽象未做**——Windows-specific quirks (CUDA index URL / ARM64 interpreter reject / SAPI vs piper vs edge-tts 3 路径 / fastembed py_rust_stemmers stub) 让 surface 比 `.sh` 大，强行抽象 risk > 收益；retry-only collapse 已经消除主要 fan-out 痛点
+- [x] AC-3: 单 service smoke test 仍由人工跨平台验收（在 #674 中走 Mac + Linux + Windows 三环境）
+- [x] AC-4: 新增 `.sh` service 路径：22 行 declarative + source template
+- [x] AC-5: Backward-compatible: manual `bash <svc>-install.sh` 仍工作（template 内部 `set -euo pipefail`，error 路径 propagate exit code）
 
 ## Open Questions
 

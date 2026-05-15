@@ -1,97 +1,24 @@
 #!/usr/bin/env bash
 # scripts/services/whisper-install.sh
-# Install dependencies for Whisper ASR service (venv + mlx-whisper / faster-whisper).
+# Install dependencies for Whisper ASR (venv + mlx-whisper / faster-whisper).
+# Pure declarative — install-template.sh handles the actual pipeline (F198).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/prereq-check.sh"
-check_python3
-check_disk_space 4
-check_network
-source "$SCRIPT_DIR/../download-source-overrides.sh"
-apply_manual_download_source_overrides
 
-VENV_DIR="${CAT_CAFE_HOME}/whisper-venv"
-PLATFORM="$(uname -s)"
-ARCH="$(uname -m)"
+SERVICE_LABEL="Whisper ASR"
+VENV_NAME="whisper-venv"
+DISK_REQUIRED_GB=4
+MODEL_ENV_VAR="WHISPER_MODEL"
+# Darwin arm64 uses mlx-whisper (native, GPU-accelerated). Other
+# platforms use faster-whisper (CTranslate2, CPU int8). Loader differs
+# because faster-whisper materializes the model via WhisperModel() at
+# install time, not via snapshot_download.
+PIP_DEPS_ARM64="mlx-whisper fastapi uvicorn python-multipart httpx[socks] huggingface_hub[hf_xet]"
+PIP_DEPS_OTHER="faster-whisper fastapi uvicorn python-multipart httpx[socks] huggingface_hub[hf_xet]"
+MODEL_LOADER_OTHER="faster_whisper"
+PRE_CHECK_FFMPEG=1
 
-if [ ! -d "$VENV_DIR" ]; then
-  echo "  创建 venv: $VENV_DIR ..."
-  "$PYTHON3" -m venv "$VENV_DIR" || { echo "ERROR: venv 创建失败" >&2; exit 1; }
-fi
-source "$VENV_DIR/bin/activate"
-
-echo "  升级 pip ..."
-pip install --quiet -U pip
-
-if ! command -v ffmpeg &>/dev/null; then
-  echo "ERROR: ffmpeg 未安装，Whisper ASR 需要 ffmpeg。"
-  case "$PLATFORM" in
-    Darwin) echo "  请运行: brew install ffmpeg" ;;
-    Linux)  echo "  请运行: sudo apt install ffmpeg  # 或 dnf install ffmpeg" ;;
-  esac
-  exit 1
-fi
-
-if [ "$PLATFORM" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
-  echo "  安装依赖: mlx-whisper fastapi uvicorn python-multipart httpx[socks] 'huggingface_hub[hf_xet]' ..."
-  pip install --quiet mlx-whisper fastapi uvicorn python-multipart 'httpx[socks]' 'huggingface_hub[hf_xet]'
-
-  if [ -z "${WHISPER_MODEL:-}" ]; then
-    echo "ERROR: WHISPER_MODEL 未设置。请通过 console install 按钮触发（自动按 scripts/services/recommendation-matrix.yaml 选型），或手动 WHISPER_MODEL=<model-id> bash $0" >&2
-    exit 1
-  fi
-  MODEL="$WHISPER_MODEL"
-  echo "  预下载模型: $MODEL ..."
-  "$VENV_DIR/bin/python" -c "
-import sys, time, os
-os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '60')
-from huggingface_hub import snapshot_download
-max_attempts = 3
-for attempt in range(1, max_attempts + 1):
-    try:
-        snapshot_download(sys.argv[1])
-        print('模型下载完成。')
-        sys.exit(0)
-    except Exception as e:
-        msg = f'  下载尝试 {attempt}/{max_attempts} 失败: {e}'
-        print(msg, file=sys.stderr)
-        if attempt < max_attempts:
-            wait = 5 * attempt
-            print(f'  {wait}s 后重试...', file=sys.stderr)
-            time.sleep(wait)
-print(f'ERROR: 模型下载失败，已尝试 {max_attempts} 次', file=sys.stderr)
-sys.exit(1)
-" "$MODEL"
-else
-  echo "  安装依赖: faster-whisper fastapi uvicorn python-multipart httpx[socks] 'huggingface_hub[hf_xet]' ..."
-  pip install --quiet faster-whisper fastapi uvicorn python-multipart 'httpx[socks]' 'huggingface_hub[hf_xet]'
-
-  if [ -z "${WHISPER_MODEL:-}" ]; then
-    echo "ERROR: WHISPER_MODEL 未设置。请通过 console install 按钮触发（自动按 scripts/services/recommendation-matrix.yaml 选型），或手动 WHISPER_MODEL=<model-id> bash $0" >&2
-    exit 1
-  fi
-  MODEL="$WHISPER_MODEL"
-  echo "  预下载模型: $MODEL ..."
-  "$VENV_DIR/bin/python" -c "
-import sys, time, os
-os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '60')
-from faster_whisper import WhisperModel
-max_attempts = 3
-for attempt in range(1, max_attempts + 1):
-    try:
-        WhisperModel(sys.argv[1], device='cpu', compute_type='int8')
-        print('模型下载完成。')
-        sys.exit(0)
-    except Exception as e:
-        msg = f'  下载尝试 {attempt}/{max_attempts} 失败: {e}'
-        print(msg, file=sys.stderr)
-        if attempt < max_attempts:
-            wait = 5 * attempt
-            print(f'  {wait}s 后重试...', file=sys.stderr)
-            time.sleep(wait)
-print(f'ERROR: 模型下载失败，已尝试 {max_attempts} 次', file=sys.stderr)
-sys.exit(1)
-" "$MODEL"
-fi
-echo "安装完成。"
+# shellcheck source=./install-template.sh
+source "$SCRIPT_DIR/install-template.sh"
+install_service_main

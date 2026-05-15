@@ -219,6 +219,89 @@ function Add-NoProxyHost {
     $env:NO_PROXY = ($entries | Where-Object { $_ } | Select-Object -Unique) -join ','
 }
 
+function Invoke-ModelDownloadWithRetry {
+    # Shared model-preload helper for all *-install.ps1 scripts.
+    # Mirrors the .sh _install_template_load_model retry loop so .ps1
+    # services get the same robustness (3 attempts, 5s/10s backoff,
+    # HF_HUB_DOWNLOAD_TIMEOUT=60). Previously each *-install.ps1 had
+    # its own bare 'snapshot_download(...)' or 'WhisperModel(...)' call
+    # with no retry — one ConnectTimeout = install failed even when
+    # the next attempt would've worked. F198 fixes this fan-out by
+    # collapsing the retry path into one place.
+    param(
+        [Parameter(Mandatory=$true)][string]$VenvPython,
+        [Parameter(Mandatory=$true)][string]$ModelId,
+        # "snapshot" (default) = huggingface_hub.snapshot_download
+        # "faster_whisper"    = faster_whisper.WhisperModel
+        # "fastembed"         = fastembed.TextEmbedding
+        [string]$Loader = "snapshot"
+    )
+
+    $script = switch ($Loader) {
+        "snapshot" { @"
+import sys, time, os
+os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '60')
+from huggingface_hub import snapshot_download
+max_attempts = 3
+for attempt in range(1, max_attempts + 1):
+    try:
+        snapshot_download(sys.argv[1])
+        print('模型下载完成。')
+        sys.exit(0)
+    except Exception as e:
+        print(f'  下载尝试 {attempt}/{max_attempts} 失败: {e}', file=sys.stderr)
+        if attempt < max_attempts:
+            wait = 5 * attempt
+            print(f'  {wait}s 后重试...', file=sys.stderr)
+            time.sleep(wait)
+print(f'ERROR: 模型下载失败，已尝试 {max_attempts} 次', file=sys.stderr)
+sys.exit(1)
+"@ }
+        "faster_whisper" { @"
+import sys, time, os
+os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '60')
+from faster_whisper import WhisperModel
+max_attempts = 3
+for attempt in range(1, max_attempts + 1):
+    try:
+        WhisperModel(sys.argv[1], device='cpu', compute_type='int8')
+        print('模型下载完成。')
+        sys.exit(0)
+    except Exception as e:
+        print(f'  下载尝试 {attempt}/{max_attempts} 失败: {e}', file=sys.stderr)
+        if attempt < max_attempts:
+            wait = 5 * attempt
+            print(f'  {wait}s 后重试...', file=sys.stderr)
+            time.sleep(wait)
+print(f'ERROR: 模型下载失败，已尝试 {max_attempts} 次', file=sys.stderr)
+sys.exit(1)
+"@ }
+        "fastembed" { @"
+import sys, time, os
+os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '60')
+from fastembed import TextEmbedding
+max_attempts = 3
+for attempt in range(1, max_attempts + 1):
+    try:
+        TextEmbedding(model_name=sys.argv[1])
+        print('模型下载完成。')
+        sys.exit(0)
+    except Exception as e:
+        print(f'  下载尝试 {attempt}/{max_attempts} 失败: {e}', file=sys.stderr)
+        if attempt < max_attempts:
+            wait = 5 * attempt
+            print(f'  {wait}s 后重试...', file=sys.stderr)
+            time.sleep(wait)
+print(f'ERROR: 模型下载失败，已尝试 {max_attempts} 次', file=sys.stderr)
+sys.exit(1)
+"@ }
+        default { throw "Invoke-ModelDownloadWithRetry: unknown loader '$Loader'" }
+    }
+
+    & $VenvPython -c $script $ModelId
+    if ($LASTEXITCODE -ne 0) { throw "Failed to download model: $ModelId" }
+}
+
 function Assert-Network {
     Sync-SystemProxy   # back-compat: informational + clears .NET DefaultWebProxy
 
