@@ -186,8 +186,19 @@ _install_template_load_model() {
   case "$loader" in
     snapshot)
       "${hf_proxy_env[@]+"${hf_proxy_env[@]}"}" "$venv_dir/bin/python" -c "
-import sys, time, os
+import sys, time, os, traceback
 os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '60')
+# Diagnostic: surface the env vars that affect HF download path so log
+# users can see exactly what the child saw. Stop blaming network until
+# this evidence rules out script-side env propagation gaps.
+print('[hf-download diag] env snapshot:', file=sys.stderr)
+for _k in ('HF_ENDPOINT', 'HF_HUB_ENDPOINT', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'HF_HUB_DOWNLOAD_TIMEOUT'):
+    print(f'[hf-download diag]   {_k}={os.environ.get(_k, \"<unset>\")}', file=sys.stderr)
+try:
+    import huggingface_hub as _hh
+    print(f'[hf-download diag] huggingface_hub={_hh.__version__}', file=sys.stderr)
+except Exception:
+    pass
 from huggingface_hub import snapshot_download
 max_attempts = 3
 for attempt in range(1, max_attempts + 1):
@@ -196,7 +207,8 @@ for attempt in range(1, max_attempts + 1):
         print('模型下载完成。')
         sys.exit(0)
     except Exception as e:
-        print(f'  下载尝试 {attempt}/{max_attempts} 失败: {e}', file=sys.stderr)
+        print(f'  下载尝试 {attempt}/{max_attempts} 失败: {type(e).__name__}: {e}', file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         if attempt < max_attempts:
             wait = 5 * attempt
             print(f'  {wait}s 后重试...', file=sys.stderr)
@@ -207,8 +219,16 @@ sys.exit(1)
       ;;
     faster_whisper)
       "${hf_proxy_env[@]+"${hf_proxy_env[@]}"}" "$venv_dir/bin/python" -c "
-import sys, time, os
+import sys, time, os, traceback
 os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '60')
+print('[hf-download diag] env snapshot:', file=sys.stderr)
+for _k in ('HF_ENDPOINT', 'HF_HUB_ENDPOINT', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'HF_HUB_DOWNLOAD_TIMEOUT'):
+    print(f'[hf-download diag]   {_k}={os.environ.get(_k, \"<unset>\")}', file=sys.stderr)
+try:
+    import huggingface_hub as _hh
+    print(f'[hf-download diag] huggingface_hub={_hh.__version__}', file=sys.stderr)
+except Exception:
+    pass
 from faster_whisper import WhisperModel
 max_attempts = 3
 for attempt in range(1, max_attempts + 1):
@@ -217,7 +237,8 @@ for attempt in range(1, max_attempts + 1):
         print('模型下载完成。')
         sys.exit(0)
     except Exception as e:
-        print(f'  下载尝试 {attempt}/{max_attempts} 失败: {e}', file=sys.stderr)
+        print(f'  下载尝试 {attempt}/{max_attempts} 失败: {type(e).__name__}: {e}', file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         if attempt < max_attempts:
             wait = 5 * attempt
             print(f'  {wait}s 后重试...', file=sys.stderr)
