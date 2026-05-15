@@ -374,53 +374,26 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
         const cfg = STATUS_CONFIG[s.status] ?? STATUS_CONFIG.unknown;
         const installFailed = s.installStatus === 'failed';
         const notInstalled = !s.installed && !installFailed;
-        // Bridge the in-flight gap between "user clicked" and "server returned
-        // and we refetched": frontend's `acting` set flips the button instantly
-        // (e.g. button text → '安装中...'), but `s.status` / `s.installStatus`
-        // come from the server's last fetch and lag a few seconds while the
-        // POST is in flight. Without these acting-derived synthetic labels the
-        // status row used to say '安装失败' or '未启动' while the button next to
-        // it already said '安装中...' / '启动中...' — confusing for users (the
-        // "two sources of truth" issue: button = acting, status = server).
-        const actingInstall = acting.has(`${m.id}:install`);
-        const actingStart = acting.has(`${m.id}:start`);
-        const actingUninstall = acting.has(`${m.id}:uninstall`);
-        const actingStop = acting.has(`${m.id}:stop`);
-        const synthLabel = actingInstall
-          ? '安装中'
-          : actingUninstall
-            ? '卸载中'
-            : actingStart
-              ? '启动中'
-              : actingStop
-                ? '停止中'
-                : null;
-        const statusLabel = synthLabel
-          ? synthLabel
-          : isTransitional
-            ? cfg.label
-            : installFailed
-              ? '安装失败'
-              : notInstalled
-                ? '未安装'
-                : cfg.label;
-        // The "in-flight" dot styling mirrors the transitional config dot so
-        // the visual matches the synthesized text label.
-        const transitionalDotForActing =
-          actingInstall || actingUninstall
-            ? STATUS_CONFIG.installing?.dot
-            : actingStart || actingStop
-              ? STATUS_CONFIG.starting?.dot
-              : null;
-        const statusDot = transitionalDotForActing
-          ? transitionalDotForActing
-          : isTransitional
-            ? cfg.dot
-            : installFailed
-              ? 'bg-conn-red-text'
-              : notInstalled
-                ? 'bg-cafe-surface-sunken'
-                : cfg.dot;
+        // In-flight install/uninstall wins over stale 'failed' label. When
+        // the user retries after a failed install, status flips to
+        // 'installing' but installStatus stays 'failed' until the new spawn
+        // either succeeds or fails — without this priority the card would
+        // simultaneously show '安装失败' (label) and '安装中...' (button),
+        // which is confusing.
+        const statusLabel = isTransitional
+          ? cfg.label
+          : installFailed
+            ? '安装失败'
+            : notInstalled
+              ? '未安装'
+              : cfg.label;
+        const statusDot = isTransitional
+          ? cfg.dot
+          : installFailed
+            ? 'bg-conn-red-text'
+            : notInstalled
+              ? 'bg-cafe-surface-sunken'
+              : cfg.dot;
         const toggleDisabled = busy || isTransitional;
 
         return (
