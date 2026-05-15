@@ -57,7 +57,7 @@ tts_install_non_arm64_extras() {
       echo "  Piper 语音模型就绪: $piper_dir/${voice}.onnx"
       ;;
     *)
-      echo "  TTS 后端: $TTS_MODEL（云端服务，无需本地模型下载）"
+      echo "  TTS 后端: ${TTS_MODEL}（云端服务，无需本地模型下载）"
       ;;
   esac
 }

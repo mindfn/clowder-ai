@@ -369,7 +369,7 @@ check_network() {
        [ "${user_idx_mode:-}" = "proxy" ]; then
       export HTTP_PROXY="$sys_proxy_candidate"
       export HTTPS_PROXY="$sys_proxy_candidate"
-      echo "  注入 HTTP_PROXY / HTTPS_PROXY = $sys_proxy_candidate（至少一个源需要走代理才能 reach；让 pip / huggingface_hub 也用这个代理）"
+      echo "  注入 HTTP_PROXY / HTTPS_PROXY = ${sys_proxy_candidate}（至少一个源需要走代理才能 reach；让 pip / huggingface_hub 也用这个代理）"
     fi
   fi
 
@@ -431,7 +431,7 @@ check_network() {
 
     if [ -n "$fb_url" ]; then
       export PIP_EXTRA_INDEX_URL="$fb_url"
-      echo "  注入 PIP_EXTRA_INDEX_URL=\"$fb_url\"（$fb_reason；用户 PIP_INDEX_URL=${PIP_INDEX_URL:-<未设/由 pip.conf 等管理>}）"
+      echo "  注入 PIP_EXTRA_INDEX_URL=\"${fb_url}\"（${fb_reason}；用户 PIP_INDEX_URL=${PIP_INDEX_URL:-<未设/由 pip.conf 等管理>}）"
     elif [ -z "${HTTP_PROXY:-}${HTTPS_PROXY:-}${http_proxy:-}${https_proxy:-}" ]; then
       echo "  PIP_EXTRA_INDEX_URL 未注入（curl 探测公共源不通 + 无 HTTP_PROXY 配置 → pip 大概率也通不了，跳过避免噪音）"
     else
