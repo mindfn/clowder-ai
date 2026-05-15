@@ -806,7 +806,7 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     }
 
     setUninstalling(id, true);
-    appendLog(id, `\n[uninstall] starting ${manifest.scripts.uninstall} ...\n`);
+    appendLog(id, `\n[uninstall] starting ${scriptPath} ...\n`);
     try {
       const uninstallEnv: Record<string, string> = { ...process.env } as Record<string, string>;
       normalizeProxyEnv(uninstallEnv);
