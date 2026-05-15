@@ -645,52 +645,61 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       // setInstalling(id, false) explicitly OR let the background async
       // IIFE's markFailed clear it. Sync failures below clean up
       // explicitly; the IIFE handles its own cleanup.
-      if (!resolvedPort) {
-        // Use the same priority chain as resolveServiceEndpoint /
-        // resolveServicePort: services.json > env port > manifest.
-        // Without this, a deployment with EMBED_PORT=9999 set in .env
-        // would silently be rewritten to manifest.port (e.g. 9880) in
-        // services.json during install, then drift across start/health/
-        // stop (codex P2 finding 3249156659).
-        const resolvedFromChain = resolveServicePort(manifest);
-        try {
+      //
+      // All three sync setServiceConfig writes are wrapped in a single
+      // try so any sync throw (disk full, permission, corrupt path)
+      // releases the in-memory lock before propagating the error.
+      // Without this, a thrown write would leave installingServices.has(id)
+      // true forever and every later /install short-circuits as "already
+      // installing" until API restart (codex P2 3249880345).
+      let installModel: string | undefined;
+      let env: Record<string, string>;
+      try {
+        if (!resolvedPort) {
+          // Use the same priority chain as resolveServiceEndpoint /
+          // resolveServicePort: services.json > env port > manifest.
+          // Without this, a deployment with EMBED_PORT=9999 set in .env
+          // would silently be rewritten to manifest.port (e.g. 9880) in
+          // services.json during install, then drift across start/health/
+          // stop (codex P2 finding 3249156659).
+          const resolvedFromChain = resolveServicePort(manifest);
           resolvedPort = resolvedFromChain ?? (await allocateAvailablePort(manifest.port ?? 9000));
-        } catch (err) {
-          setInstalling(id, false);
-          throw err;
         }
-      }
-      setServiceConfig(id, { port: resolvedPort });
+        setServiceConfig(id, { port: resolvedPort });
 
-      // Resolve install model (sync — no async/IO).
-      let installModel = body.model && isValidModelId(body.model) ? body.model : undefined;
-      if (!installModel) installModel = resolveSelectedModel(id, manifest.id);
-      if (installModel) {
-        setServiceConfig(id, { selectedModel: installModel });
-      }
+        // Resolve install model (sync — no async/IO).
+        installModel = body.model && isValidModelId(body.model) ? body.model : undefined;
+        if (!installModel) installModel = resolveSelectedModel(id, manifest.id);
+        if (installModel) {
+          setServiceConfig(id, { selectedModel: installModel });
+        }
 
-      // Prep the env that the install child will inherit.
-      const env: Record<string, string> = { ...process.env } as Record<string, string>;
-      normalizeProxyEnv(env);
-      if (installModel) {
-        const envKey = MODEL_ENV_VARS[id];
-        if (envKey) env[envKey] = installModel;
-      }
-      const portEnv = PORT_ENV_VARS[id];
-      if (portEnv) env[portEnv] = String(resolvedPort);
+        // Prep the env that the install child will inherit.
+        env = { ...process.env } as Record<string, string>;
+        normalizeProxyEnv(env);
+        if (installModel) {
+          const envKey = MODEL_ENV_VARS[id];
+          if (envKey) env[envKey] = installModel;
+        }
+        const portEnv = PORT_ENV_VARS[id];
+        if (portEnv) env[portEnv] = String(resolvedPort);
 
-      // In-flight lock already acquired earlier via tryAcquireInstallLock.
-      // Persist installStatus = 'installing' so /api/services reflects it
-      // even if the user refreshes the page mid-install (the lock is
-      // process-local; installStatus is persistent in services.json).
-      // The actual install work (ensurePython → pre-install uninstall →
-      // install spawn → autostart) is FULLY backgrounded so the HTTP
-      // response returns immediately with state.status='installing'.
-      setServiceConfig(id, {
-        installStatus: 'installing',
-        lastInstallError: undefined,
-        lastInstallTroubleshootHint: undefined,
-      });
+        // In-flight lock already acquired earlier via tryAcquireInstallLock.
+        // Persist installStatus = 'installing' so /api/services reflects it
+        // even if the user refreshes the page mid-install (the lock is
+        // process-local; installStatus is persistent in services.json).
+        // The actual install work (ensurePython → pre-install uninstall →
+        // install spawn → autostart) is FULLY backgrounded so the HTTP
+        // response returns immediately with state.status='installing'.
+        setServiceConfig(id, {
+          installStatus: 'installing',
+          lastInstallError: undefined,
+          lastInstallTroubleshootHint: undefined,
+        });
+      } catch (preflightErr) {
+        setInstalling(id, false);
+        throw preflightErr;
+      }
 
       const markFailed = (errMsg: string, hint?: string | null): void => {
         request.log.error({ serviceId: id, errMsg }, `service install failed: ${manifest.name}`);
