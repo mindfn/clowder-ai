@@ -262,16 +262,24 @@ check_network() {
       ;;
   esac
 
-  # Public fallback when user already has PIP_INDEX_URL set (e.g. an
-  # internal corporate mirror). pip honors PIP_EXTRA_INDEX_URL natively
-  # and accepts space-separated multi-values — when the primary source
-  # misses a package (e.g. internal mirror without sentence-transformers)
-  # pip walks the extra-index list in order. Inject EVERY reachable
-  # public mirror (minus duplicates of the user's primary) so coverage
-  # is maximised.
-  if [ -n "${PIP_INDEX_URL:-}" ] && [ -z "${PIP_EXTRA_INDEX_URL:-}" ]; then
+  # Always inject PIP_EXTRA_INDEX_URL (unless user already set it
+  # explicitly). pip's primary index resolution falls back through
+  # multiple sources: command-line --index-url > $PIP_INDEX_URL env >
+  # pip.conf > pip default (pypi.org). The previous guard "only inject
+  # if $PIP_INDEX_URL is set" missed the pip.conf case — if the user
+  # has an index-url in ~/.pip/pip.conf (corporate mirror), pip uses it
+  # but we can't see it from env, so we'd skip injecting EXTRA and
+  # leave pip with no public fallback when the corp mirror misses a
+  # package.
+  #
+  # Fix: inject our mirror policy as PIP_EXTRA_INDEX_URL regardless of
+  # whether $PIP_INDEX_URL is set in env. pip.conf primary stays
+  # primary, env EXTRA (us) is the fallback list. Direct-first
+  # ordering and per-host NO_PROXY classification are preserved.
+  if [ -z "${PIP_EXTRA_INDEX_URL:-}" ]; then
     # Normalize user URL for dedup comparison (strip trailing slash).
-    local user_idx="${PIP_INDEX_URL%/}"
+    local user_idx="${PIP_INDEX_URL:-}"
+    user_idx="${user_idx%/}"
     # Build dedup candidate list from probe results.
     local candidates=""
     local url
@@ -312,11 +320,11 @@ check_network() {
 
     if [ -n "$fb_url" ]; then
       export PIP_EXTRA_INDEX_URL="$fb_url"
-      echo "  注入 PIP_EXTRA_INDEX_URL=\"$fb_url\"（$fb_reason；用户 PIP_INDEX_URL=$PIP_INDEX_URL）"
+      echo "  注入 PIP_EXTRA_INDEX_URL=\"$fb_url\"（$fb_reason；用户 PIP_INDEX_URL=${PIP_INDEX_URL:-<未设/由 pip.conf 等管理>}）"
     elif [ -z "${HTTP_PROXY:-}${HTTPS_PROXY:-}${http_proxy:-}${https_proxy:-}" ]; then
       echo "  PIP_EXTRA_INDEX_URL 未注入（curl 探测公共源不通 + 无 HTTP_PROXY 配置 → pip 大概率也通不了，跳过避免噪音）"
     else
-      echo "  PIP_EXTRA_INDEX_URL 未注入（用户 PIP_INDEX_URL=$PIP_INDEX_URL 已覆盖所有候选公共源）"
+      echo "  PIP_EXTRA_INDEX_URL 未注入（用户已覆盖所有候选公共源，PIP_INDEX_URL=${PIP_INDEX_URL:-<未设>}）"
     fi
   fi
 }

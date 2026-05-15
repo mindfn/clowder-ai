@@ -341,16 +341,22 @@ function Assert-Network {
         Write-Host "  Injected HTTP_PROXY / HTTPS_PROXY = $candidate (needed for at least one source)"
     }
 
-    # Public fallback when user already has PIP_INDEX_URL set (e.g. an
-    # internal corporate mirror). pip honors PIP_EXTRA_INDEX_URL natively
-    # and accepts space-separated multi-values — when the primary source
-    # misses a package (e.g. internal mirror without sentence-transformers)
-    # pip walks the extra-index list in order. Inject EVERY reachable
-    # public mirror (minus duplicates of the user's primary) so coverage
-    # is maximised.
-    if ($env:PIP_INDEX_URL -and -not $env:PIP_EXTRA_INDEX_URL) {
+    # Always inject PIP_EXTRA_INDEX_URL (unless user already set it
+    # explicitly). pip's primary index resolution falls back through
+    # multiple sources: command-line --index-url > $PIP_INDEX_URL env
+    # > pip.conf/pip.ini > pip default (pypi.org). Previous guard
+    # "only inject if $PIP_INDEX_URL is set" missed the pip.conf case
+    # — if the user has an index-url in pip.conf (corporate mirror),
+    # pip uses it but we can't see it from env, so we'd skip injecting
+    # EXTRA and leave pip with no public fallback when the corp mirror
+    # misses a package.
+    #
+    # Fix: inject our mirror policy as PIP_EXTRA_INDEX_URL regardless
+    # of whether $env:PIP_INDEX_URL is set. pip.conf primary stays
+    # primary, env EXTRA (us) is the fallback list.
+    if (-not $env:PIP_EXTRA_INDEX_URL) {
         # Normalize user URL for dedup comparison (strip trailing slash).
-        $userIdx = $env:PIP_INDEX_URL.TrimEnd('/')
+        $userIdx = if ($env:PIP_INDEX_URL) { $env:PIP_INDEX_URL.TrimEnd('/') } else { '' }
         $candidates = New-Object System.Collections.ArrayList
         foreach ($url in $publicPipUrls) {
             if ($url.TrimEnd('/') -ne $userIdx) {
@@ -388,13 +394,14 @@ function Assert-Network {
         # fallback. Injecting URLs pip can't reach just inflates error
         # log noise without changing the outcome.
 
+        $userIdxDisplay = if ($env:PIP_INDEX_URL) { $env:PIP_INDEX_URL } else { '<unset / managed by pip.conf>' }
         if ($fbUrl) {
             $env:PIP_EXTRA_INDEX_URL = $fbUrl
-            Write-Host "  Injected PIP_EXTRA_INDEX_URL = `"$fbUrl`" ($fbReason; user PIP_INDEX_URL=$env:PIP_INDEX_URL)"
+            Write-Host "  Injected PIP_EXTRA_INDEX_URL = `"$fbUrl`" ($fbReason; user PIP_INDEX_URL=$userIdxDisplay)"
         } elseif (-not $env:HTTP_PROXY -and -not $env:HTTPS_PROXY) {
             Write-Host "  PIP_EXTRA_INDEX_URL not injected (HEAD probe failed + no HTTP_PROXY -> pip likely can't reach public mirrors either; skipping to avoid noise)"
         } else {
-            Write-Host "  PIP_EXTRA_INDEX_URL not injected (user PIP_INDEX_URL=$env:PIP_INDEX_URL already covers every candidate)"
+            Write-Host "  PIP_EXTRA_INDEX_URL not injected (user already covers every candidate; PIP_INDEX_URL=$userIdxDisplay)"
         }
     }
 }
