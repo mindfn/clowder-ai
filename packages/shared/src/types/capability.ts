@@ -66,6 +66,8 @@ export interface CapabilityEntry {
   probeState?: ProbeState;
   /** F197: Plugin that owns this capability (for plugin-managed resources) */
   pluginId?: string;
+  /** F197: Limb node ID (for type: 'limb') — enables deregistration when YAML is unreadable */
+  limbNodeId?: string;
 }
 
 /** Root schema for .cat-cafe/capabilities.json */
