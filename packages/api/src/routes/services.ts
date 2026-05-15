@@ -273,12 +273,31 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     }
     const profile = getEnvironmentProfile(true);
     const recommendation = buildRecommendation(id, profile);
-    // Suggest a port for the install dialog to pre-fill. Honors any port
-    // already saved in services.json (legacy fixed-port behaviour), otherwise
-    // scans for the first free port starting at the manifest default.
+    // Suggest a port for the install dialog to pre-fill. Priority chain
+    // mirrors the install handler (cf. commit 3480a27f), so confirming
+    // the modal never silently rewrites operator-configured ports
+    // (codex P2 3250305307):
+    //   1. services.json cfg.port    — console's previous user intent
+    //   2. env port (EMBED_PORT etc.) — operator's .env override
+    //   3. allocateAvailablePort(manifest.port ?? 9000)
     const cfg = getServiceConfig(id);
-    const defaultPort = manifest.port ?? 9000;
-    const suggestedPort = cfg.port ?? (await allocateAvailablePort(defaultPort));
+    let suggestedPort: number | undefined = cfg.port;
+    if (!suggestedPort) {
+      for (const envVar of manifest.configVars) {
+        const val = process.env[envVar];
+        if (!val || val.startsWith('http')) continue;
+        const trimmed = val.trim();
+        if (!/^\d+$/.test(trimmed)) continue;
+        const n = Number.parseInt(trimmed, 10);
+        if (Number.isFinite(n) && n > 0 && n <= 65535) {
+          suggestedPort = n;
+          break;
+        }
+      }
+    }
+    if (!suggestedPort) {
+      suggestedPort = await allocateAvailablePort(manifest.port ?? 9000);
+    }
     return { profile, recommendation, suggestedPort };
   });
 
