@@ -836,6 +836,58 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
 
     setUninstalling(id, true);
     appendLog(id, `\n[uninstall] starting ${scriptPath} ...\n`);
+
+    // Stop the running sidecar BEFORE removing its venv. Without this, the
+    // uninstall script just deletes ~/.cat-cafe/<service>-venv on disk but
+    // the running Python process keeps serving on the port — and the
+    // already-in-memory model means it survives a venv delete. The user
+    // then reinstalls, sees status='running' immediately, and reasonably
+    // assumes install auto-started the service. It didn't — the stale PID
+    // from a previous start is still alive. Best-effort here: try stored
+    // PID → stop script → port-based kill. Errors swallowed because
+    // uninstall should proceed regardless of whether stop succeeds.
+    try {
+      const storedPid = getServicePid(id);
+      let stopped = false;
+      if (storedPid && isServiceProcess(storedPid, manifest)) {
+        try {
+          if (process.platform === 'win32') winTaskKill(storedPid);
+          else process.kill(-storedPid, 'SIGTERM');
+          stopped = true;
+        } catch {
+          /* already dead */
+        }
+        clearServicePid(id);
+      } else if (storedPid) {
+        clearServicePid(id); // stale, drop record
+      }
+      if (!stopped) {
+        const stopPort = resolveServicePort(manifest);
+        if (stopPort) {
+          const candidatePids = await findPidsByPort(stopPort);
+          for (const pid of candidatePids) {
+            if (!isServiceProcess(pid, manifest)) continue;
+            try {
+              if (process.platform === 'win32') winTaskKill(pid);
+              else process.kill(pid, 'SIGTERM');
+              stopped = true;
+            } catch {
+              /* skip */
+            }
+          }
+        }
+      }
+      if (stopped) {
+        appendLog(id, '[uninstall] stopped running sidecar before venv removal\n');
+        // Brief grace so the process actually releases the port + file
+        // handles before rm -rf the venv that holds its python binary.
+        await new Promise((res) => setTimeout(res, 300));
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      appendLog(id, `[uninstall] pre-stop best-effort errored (continuing): ${msg}\n`);
+    }
+
     try {
       const uninstallEnv: Record<string, string> = { ...process.env } as Record<string, string>;
       normalizeProxyEnv(uninstallEnv);
