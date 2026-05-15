@@ -83,6 +83,15 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
   const [progress, setProgress] = useState<Map<string, string>>(new Map());
   const pollRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
   const [installPreview, setInstallPreview] = useState<ServiceManifest | null>(null);
+  const [expandedErrorIds, setExpandedErrorIds] = useState<Set<string>>(new Set());
+  const toggleErrorExpand = useCallback((id: string) => {
+    setExpandedErrorIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   const fetchServices = useCallback(async () => {
     try {
@@ -450,19 +459,55 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
                 {s.error && <p className="mt-0.5 truncate text-[11px] text-conn-red-text">{s.error}</p>}
                 {installFailed && s.lastInstallError && (
                   // Persistent install-failure detail. Toast also fires once on the
-                  // installing → failed transition (see useEffect on line 175); this
-                  // line keeps the detail visible after page refresh / 关闭浏览器
+                  // installing → failed transition (see useEffect above); this
+                  // block keeps the detail visible after page refresh / 关闭浏览器
                   // / API-startup stale-state sweep, so users always see why.
-                  <p
-                    className="mt-0.5 truncate text-[11px] text-conn-red-text"
-                    title={
-                      s.lastInstallTroubleshootHint
-                        ? `${s.lastInstallError}\n\n${s.lastInstallTroubleshootHint}`
-                        : s.lastInstallError
-                    }
-                  >
-                    {s.lastInstallError}
-                  </p>
+                  //
+                  // Collapsed default: single line — prefer the backend's
+                  // extracted troubleshoot hint (friendly), fall back to the
+                  // last non-empty line of lastInstallError (install scripts
+                  // typically end with the actual ERROR / 修复建议). A 2000-char
+                  // log truncated to one line hid the most important hint at
+                  // the END of the string — this exposes it instead.
+                  // Expanded: full lastInstallError + hint in a pre-wrap block.
+                  (() => {
+                    const expanded = expandedErrorIds.has(m.id);
+                    const lines = s.lastInstallError.split(/\r?\n/).filter((l) => l.trim());
+                    const lastLine = lines[lines.length - 1] ?? s.lastInstallError;
+                    const summary = s.lastInstallTroubleshootHint || lastLine;
+                    return (
+                      <div className="mt-0.5 text-[11px] text-conn-red-text">
+                        {expanded ? (
+                          <>
+                            <pre className="max-h-48 overflow-auto rounded bg-conn-red-soft/40 p-1.5 whitespace-pre-wrap break-words font-mono">
+                              {s.lastInstallError}
+                            </pre>
+                            {s.lastInstallTroubleshootHint && (
+                              <p className="mt-1 font-medium">建议: {s.lastInstallTroubleshootHint}</p>
+                            )}
+                            <button
+                              type="button"
+                              className="mt-1 underline hover:no-underline"
+                              onClick={() => toggleErrorExpand(m.id)}
+                            >
+                              ▴ 收起
+                            </button>
+                          </>
+                        ) : (
+                          <div className="flex items-baseline gap-1">
+                            <span className="truncate">{summary}</span>
+                            <button
+                              type="button"
+                              className="shrink-0 underline hover:no-underline"
+                              onClick={() => toggleErrorExpand(m.id)}
+                            >
+                              ▾ 展开
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()
                 )}
               </div>
               <div className={settingsResourceActionGroupClass}>
