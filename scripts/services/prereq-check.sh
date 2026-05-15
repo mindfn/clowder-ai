@@ -123,15 +123,25 @@ check_network() {
     return
   fi
 
+  # Track the first reachable PUBLIC pip index URL (follows the same
+  # pypi → Tsinghua probe order used to pick PIP_INDEX_URL above). This
+  # is reused by the PIP_EXTRA_INDEX_URL fallback at the bottom so the
+  # fallback follows our standard mirror policy instead of hard-coding
+  # a single mirror — if we ever add another mirror to the probe chain
+  # (e.g. aliyun), the fallback inherits it automatically.
+  local public_pip_url=""
+
   local pypi_mode
   pypi_mode=$(_test_source_mode "https://pypi.org/simple/" "$timeout")
   case "$pypi_mode" in
     direct)
       echo "  PyPI 连接 ✓ (direct)"
       _add_no_proxy_host "pypi.org"
+      public_pip_url="https://pypi.org/simple"
       ;;
     proxy)
       echo "  PyPI 连接 ✓ (via env proxy)"
+      public_pip_url="https://pypi.org/simple"
       ;;
     unreachable)
       echo "WARNING: 无法连接 PyPI (https://pypi.org)，pip install 可能会失败"
@@ -145,6 +155,7 @@ check_network() {
           fi
           _add_no_proxy_host "pypi.tuna.tsinghua.edu.cn"
           _add_no_proxy_host "mirrors.tuna.tsinghua.edu.cn"
+          public_pip_url="https://pypi.tuna.tsinghua.edu.cn/simple"
           ;;
         proxy)
           if [ -z "${PIP_INDEX_URL:-}" ]; then
@@ -152,6 +163,7 @@ check_network() {
             echo "  自动启用清华 pip 镜像 (via env proxy): $PIP_INDEX_URL"
           fi
           # Deliberately NOT adding to NO_PROXY so pip honors HTTP_PROXY.
+          public_pip_url="https://pypi.tuna.tsinghua.edu.cn/simple"
           ;;
         unreachable)
           _print_proxy_guidance "pypi.org 和清华镜像在 direct + via proxy 两种模式下都不可达。"
@@ -201,17 +213,16 @@ check_network() {
   # missing sentence-transformers), pip falls back to extra-index-url.
   # Without this, an internal-only mirror is a dead end for any package
   # the IT team didn't pre-mirror.
-  if [ -n "${PIP_INDEX_URL:-}" ] && [ -z "${PIP_EXTRA_INDEX_URL:-}" ]; then
-    if [ "$pypi_mode" = "direct" ] || [ "$pypi_mode" = "proxy" ]; then
-      export PIP_EXTRA_INDEX_URL="https://pypi.org/simple"
-      echo "  注入 PIP_EXTRA_INDEX_URL=https://pypi.org/simple（公共 fallback，用户已设 PIP_INDEX_URL=$PIP_INDEX_URL）"
-    else
-      local tsinghua_fb_mode
-      tsinghua_fb_mode=$(_test_source_mode "https://pypi.tuna.tsinghua.edu.cn/simple/" "$timeout")
-      if [ "$tsinghua_fb_mode" = "direct" ] || [ "$tsinghua_fb_mode" = "proxy" ]; then
-        export PIP_EXTRA_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple"
-        echo "  注入 PIP_EXTRA_INDEX_URL=清华镜像（公共 fallback，用户已设 PIP_INDEX_URL=$PIP_INDEX_URL）"
-      fi
-    fi
+  #
+  # Source selection reuses public_pip_url from the probe chain above —
+  # whichever public mirror won (pypi → Tsinghua) is the one pip falls
+  # back to. Avoid injecting the same URL the user already set (e.g.
+  # user PIP_INDEX_URL=Tsinghua + probe picked Tsinghua → no-op).
+  if [ -n "${PIP_INDEX_URL:-}" ] \
+     && [ -z "${PIP_EXTRA_INDEX_URL:-}" ] \
+     && [ -n "$public_pip_url" ] \
+     && [ "$PIP_INDEX_URL" != "$public_pip_url" ]; then
+    export PIP_EXTRA_INDEX_URL="$public_pip_url"
+    echo "  注入 PIP_EXTRA_INDEX_URL=$public_pip_url（公共 fallback，用户已设 PIP_INDEX_URL=$PIP_INDEX_URL）"
   fi
 }

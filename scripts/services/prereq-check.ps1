@@ -228,28 +228,45 @@ function Assert-Network {
     $candidate = Get-SystemProxyCandidate
     $needProxyInjection = $false
 
+    # Track the first reachable PUBLIC pip index URL (follows the same
+    # pypi → Tsinghua probe order used to pick $env:PIP_INDEX_URL). Reused
+    # by the PIP_EXTRA_INDEX_URL fallback at the bottom so the fallback
+    # follows our standard mirror policy instead of hard-coding a single
+    # mirror — if we ever add another mirror to the probe chain (e.g.
+    # aliyun), the fallback inherits it automatically.
+    $publicPipUrl = $null
+
     # Probe each candidate source twice (direct + via candidate proxy).
     $pypiMode = Test-SourceMode -Url "https://pypi.org/simple/" -TimeoutSec 5 -CandidateProxy $candidate
     if ($pypiMode -eq 'direct') {
         Write-Host "  PyPI connectivity [OK] (direct)"
         Add-NoProxyHost "pypi.org"
+        $publicPipUrl = "https://pypi.org/simple"
     } elseif ($pypiMode -eq 'proxy') {
         Write-Host "  PyPI connectivity [OK] (via proxy: $candidate)"
         $needProxyInjection = $true
+        $publicPipUrl = "https://pypi.org/simple"
     } else {
         Write-Host "  PyPI unreachable both direct and via proxy — switching to mirror"
         $tsinghuaMode = Test-SourceMode -Url "https://pypi.tuna.tsinghua.edu.cn/simple/" -TimeoutSec 5 -CandidateProxy $candidate
         if ($tsinghuaMode -eq 'direct') {
             Write-Host "  Tsinghua mirror reachable (direct) — pip will bypass proxy"
-            $env:PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple/"
-            $env:PIP_TRUSTED_HOST = "pypi.tuna.tsinghua.edu.cn"
+            # Guard: don't overwrite a user-supplied PIP_INDEX_URL (matches .sh).
+            if (-not $env:PIP_INDEX_URL) {
+                $env:PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+                $env:PIP_TRUSTED_HOST = "pypi.tuna.tsinghua.edu.cn"
+            }
             Add-NoProxyHost "pypi.tuna.tsinghua.edu.cn"
             Add-NoProxyHost "mirrors.tuna.tsinghua.edu.cn"
+            $publicPipUrl = "https://pypi.tuna.tsinghua.edu.cn/simple/"
         } elseif ($tsinghuaMode -eq 'proxy') {
             Write-Host "  Tsinghua mirror reachable (via proxy: $candidate) — pip will route through proxy"
-            $env:PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple/"
-            $env:PIP_TRUSTED_HOST = "pypi.tuna.tsinghua.edu.cn"
+            if (-not $env:PIP_INDEX_URL) {
+                $env:PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+                $env:PIP_TRUSTED_HOST = "pypi.tuna.tsinghua.edu.cn"
+            }
             $needProxyInjection = $true
+            $publicPipUrl = "https://pypi.tuna.tsinghua.edu.cn/simple/"
         } else {
             Write-ProxyGuidance -Context "pypi.org 和清华镜像在 direct + via proxy 两种模式下都不可达，pip install 一定会失败。"
         }
@@ -294,16 +311,12 @@ function Assert-Network {
     # missing sentence-transformers), pip falls back to extra-index-url.
     # Without this, an internal-only mirror is a dead end for any package
     # the IT team didn't pre-mirror.
-    if ($env:PIP_INDEX_URL -and -not $env:PIP_EXTRA_INDEX_URL) {
-        if ($pypiMode -eq 'direct' -or $pypiMode -eq 'proxy') {
-            $env:PIP_EXTRA_INDEX_URL = 'https://pypi.org/simple'
-            Write-Host "  Injected PIP_EXTRA_INDEX_URL = https://pypi.org/simple (public fallback; user already set PIP_INDEX_URL=$env:PIP_INDEX_URL)"
-        } else {
-            $fbMode = Test-SourceMode -Url 'https://pypi.tuna.tsinghua.edu.cn/simple/' -TimeoutSec 5 -CandidateProxy $candidate
-            if ($fbMode -eq 'direct' -or $fbMode -eq 'proxy') {
-                $env:PIP_EXTRA_INDEX_URL = 'https://pypi.tuna.tsinghua.edu.cn/simple'
-                Write-Host "  Injected PIP_EXTRA_INDEX_URL = Tsinghua mirror (public fallback; user already set PIP_INDEX_URL=$env:PIP_INDEX_URL)"
-            }
-        }
+    #
+    # Source selection reuses $publicPipUrl from the probe chain above —
+    # whichever public mirror won (pypi → Tsinghua) is the one pip falls
+    # back to. Avoid injecting the same URL the user already set.
+    if ($env:PIP_INDEX_URL -and -not $env:PIP_EXTRA_INDEX_URL -and $publicPipUrl -and $env:PIP_INDEX_URL -ne $publicPipUrl) {
+        $env:PIP_EXTRA_INDEX_URL = $publicPipUrl
+        Write-Host "  Injected PIP_EXTRA_INDEX_URL = $publicPipUrl (public fallback; user already set PIP_INDEX_URL=$env:PIP_INDEX_URL)"
     }
 }
