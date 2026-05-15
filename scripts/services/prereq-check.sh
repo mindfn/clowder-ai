@@ -369,11 +369,12 @@ check_network() {
   # NO_PROXY also didn't reliably bypass pip's proxy logic across
   # pip / requests / urllib3 versions.
   #
-  # Instead: trust the OS-level proxy stack. macOS urllib /
-  # huggingface_hub reads system proxy via system facilities; curl
-  # probes above used -x explicitly so we get accurate per-source
-  # reachability without forcing the user's tooling to follow our
-  # decision. User can still .env-export HTTP_PROXY if they want
+  # Instead: leave HTTP_PROXY unset for pip. Model download is
+  # handled separately — install-template.sh's Python loader uses
+  # urllib.request.getproxies() to bridge macOS system proxy into
+  # os.environ so requests/huggingface_hub can reach HuggingFace.
+  # (requests does NOT auto-detect macOS system proxy — only stdlib
+  # urllib does.) User can still .env-export HTTP_PROXY if they want
   # everything tunneled — that path is unchanged.
   #
   # .ps1 equivalent (Windows Assert-Network) still injects because

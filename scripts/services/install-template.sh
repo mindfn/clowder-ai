@@ -174,6 +174,14 @@ _install_template_load_model() {
       "$venv_dir/bin/python" -c "
 import sys, time, os
 os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '60')
+# requests (used by huggingface_hub) only reads HTTP(S)_PROXY env vars,
+# not macOS system proxy. Bridge via stdlib getproxies().
+import urllib.request
+for _k in ('https', 'http'):
+    _ek = _k.upper() + '_PROXY'
+    _sv = urllib.request.getproxies().get(_k, '')
+    if _sv and not os.environ.get(_ek):
+        os.environ[_ek] = _sv
 from huggingface_hub import snapshot_download
 max_attempts = 3
 for attempt in range(1, max_attempts + 1):
@@ -195,6 +203,12 @@ sys.exit(1)
       "$venv_dir/bin/python" -c "
 import sys, time, os
 os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '60')
+import urllib.request
+for _k in ('https', 'http'):
+    _ek = _k.upper() + '_PROXY'
+    _sv = urllib.request.getproxies().get(_k, '')
+    if _sv and not os.environ.get(_ek):
+        os.environ[_ek] = _sv
 from faster_whisper import WhisperModel
 max_attempts = 3
 for attempt in range(1, max_attempts + 1):
