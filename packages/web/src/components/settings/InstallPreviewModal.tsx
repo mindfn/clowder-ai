@@ -295,7 +295,29 @@ export function InstallPreviewModal({
   const allModels: ModelOption[] = rec?.models ?? [];
   const finalModel = useCustom ? customModel.trim() : selectedModel;
   const isUnsupported = !!rec?.unsupported;
-  const canConfirm = !loading && !error && !isUnsupported && (allModels.length === 0 || finalModel.length > 0);
+
+  // Parse and validate the port field. Number.parseInt silently truncates
+  // "9876.5" → 9876 and "1e4" → 1, so use Number() + Number.isInteger to
+  // reject any non-integer text and surface the error inline rather than
+  // sending an unintended port through to bind/health/stop. Codex P2
+  // 3252115599. Empty string means "auto" → undefined, falls back to
+  // server suggestion.
+  const trimmedPort = portInput.trim();
+  let portValue: number | undefined;
+  let portError: string | null = null;
+  if (trimmedPort.length > 0) {
+    const n = Number(trimmedPort);
+    if (!Number.isInteger(n)) {
+      portError = '端口必须是整数（1-65535）';
+    } else if (n < 1 || n > 65535) {
+      portError = '端口需在 1-65535 范围内';
+    } else {
+      portValue = n;
+    }
+  }
+
+  const canConfirm =
+    !loading && !error && !isUnsupported && !portError && (allModels.length === 0 || finalModel.length > 0);
 
   return (
     <div
@@ -374,12 +396,13 @@ export function InstallPreviewModal({
                   placeholder={suggestedPort ? String(suggestedPort) : '自动'}
                   className="w-32 border border-[var(--console-border-soft)] rounded-md px-2 py-1 text-xs bg-[var(--console-card-bg)] focus:outline-none focus:ring-1 focus:ring-conn-sky-ring"
                 />
-                {suggestedPort && (
+                {suggestedPort && !portError && (
                   <span className="text-[11px] text-cafe-muted">
                     系统已为你扫描到可用端口 {suggestedPort}，留空则使用该值
                   </span>
                 )}
               </div>
+              {portError && <p className="text-[11px] text-conn-rose-text">{portError}</p>}
             </div>
           )}
 
@@ -405,13 +428,9 @@ export function InstallPreviewModal({
         <div className="flex justify-end pt-4">
           <button
             onClick={() => {
-              const trimmedPort = portInput.trim();
-              const parsedPort = trimmedPort ? Number.parseInt(trimmedPort, 10) : Number.NaN;
-              const port =
-                Number.isFinite(parsedPort) && parsedPort >= 1 && parsedPort <= 65535 ? parsedPort : undefined;
               onConfirm({
                 model: allModels.length > 0 ? finalModel : undefined,
-                port,
+                port: portValue,
               });
             }}
             disabled={!canConfirm}
