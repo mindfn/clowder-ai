@@ -90,28 +90,29 @@ export function onServiceEvent(
 }
 
 /**
- * Fire all registered hooks for a service/event pair. Successful hooks with
- * unregisterOnSuccess=true (default) are dropped; failed and "always-on"
- * hooks stay registered for future fires.
+ * Internal: dispatch a specific subset of hooks for a (serviceId, event)
+ * pair. The external `fireServiceEvent` calls this with the full current
+ * list; the late-registration microtask calls it with ONLY the hooks
+ * registered during the previous dispatch, so survivors aren't re-fired.
  */
-export async function fireServiceEvent(serviceId: string, event: ServiceEvent): Promise<void> {
+async function dispatchHooks(serviceId: string, event: ServiceEvent, toFire: HookEntry[]): Promise<void> {
   const k = key(serviceId, event);
   fired.add(k);
-
-  const list = hooks.get(k) ?? [];
-  if (list.length === 0) return;
+  if (toFire.length === 0) return;
 
   inFlight.add(k);
   try {
-    // Snapshot before iteration. Hooks registered during dispatch are
-    // detected after the loop (by identity diff against snapshot) and
-    // re-fired on the next microtask so they don't have to wait for an
-    // external fire-cycle that may never come (codex P2 3249229014).
-    const snapshot = [...list];
+    // Capture pre-dispatch state. `preNotFired` lets us preserve hooks
+    // that were registered BEFORE this dispatch but aren't ours to fire
+    // (an outer survivor when this is a microtask replay). Without this
+    // separation, the recursive late-hook microtask would re-fire outer
+    // survivors via newList rebuilding.
+    const preList = hooks.get(k) ?? [];
+    const preSet = new Set(preList);
     const survivors: HookEntry[] = [];
     const ctx: ServiceEventContext = { serviceId, event };
 
-    for (const entry of snapshot) {
+    for (const entry of toFire) {
       let ok = false;
       try {
         await entry.fn(ctx);
@@ -128,29 +129,47 @@ export async function fireServiceEvent(serviceId: string, event: ServiceEvent): 
       }
     }
 
-    // Hooks registered during this dispatch are present in the live list
-    // but absent from snapshot. Merge them into the survivor set so the
-    // hooks.set/delete below doesn't silently drop them, and queue a
-    // microtask to fire them (the event already happened — fired.add(k)
-    // is at the top of this function, so late subscribers should run).
+    // Reclassify post-dispatch registry into three buckets:
+    //   - survivors:      ones WE fired that should stay
+    //   - preNotFired:    pre-existing hooks we didn't fire (outer survivors
+    //                     when this is a microtask replay)
+    //   - lateRegistered: hooks that appeared DURING our dispatch — these
+    //                     missed this fire-cycle and need a microtask replay
     const current = hooks.get(k) ?? [];
-    const lateRegistered = current.filter((e) => !snapshot.includes(e));
-    const merged = survivors.length > 0 || lateRegistered.length > 0 ? [...survivors, ...lateRegistered] : [];
+    const lateRegistered = current.filter((e) => !preSet.has(e));
+    const preNotFired = preList.filter((e) => !toFire.includes(e));
+    const newList = [...survivors, ...preNotFired, ...lateRegistered];
 
-    if (merged.length > 0) {
-      hooks.set(k, merged);
+    if (newList.length > 0) {
+      hooks.set(k, newList);
     } else {
       hooks.delete(k);
     }
 
+    // Replay ONLY the late-registered hooks. Survivors already ran in this
+    // cycle; preNotFired weren't ours to fire. Codex P2 3252047840 — the
+    // previous implementation called fireServiceEvent(...) recursively,
+    // which re-fired survivors (e.g. always-on hooks with
+    // unregisterOnSuccess:false).
     if (lateRegistered.length > 0) {
       queueMicrotask(() => {
-        void fireServiceEvent(serviceId, event);
+        void dispatchHooks(serviceId, event, lateRegistered);
       });
     }
   } finally {
     inFlight.delete(k);
   }
+}
+
+/**
+ * Fire all registered hooks for a service/event pair. Successful hooks with
+ * unregisterOnSuccess=true (default) are dropped; failed and "always-on"
+ * hooks stay registered for future fires.
+ */
+export async function fireServiceEvent(serviceId: string, event: ServiceEvent): Promise<void> {
+  const k = key(serviceId, event);
+  const list = hooks.get(k) ?? [];
+  await dispatchHooks(serviceId, event, list);
 }
 
 // ─── Backward-compatibility aliases (started event) ───────────────────────

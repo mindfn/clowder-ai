@@ -733,8 +733,18 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
           } else {
             // Check env port via the strict parser (same source of truth
             // as resolveServicePort, but without the manifest fallback).
+            // Scan manifest.configVars first, then PORT_ENV_VARS[id] —
+            // mirrors resolveServicePort's order so install defaulting
+            // honors the dedicated *_PORT env (e.g. LLM_POSTPROCESS_PORT)
+            // even when the manifest's configVars doesn't list it.
+            // Codex P2 3252047839.
             let envPort: number | undefined;
-            for (const envVar of manifest.configVars) {
+            const envCandidates: string[] = [...manifest.configVars];
+            const dedicatedPortEnv = PORT_ENV_VARS[id];
+            if (dedicatedPortEnv && !envCandidates.includes(dedicatedPortEnv)) {
+              envCandidates.push(dedicatedPortEnv);
+            }
+            for (const envVar of envCandidates) {
               const val = process.env[envVar];
               if (!val || val.startsWith('http')) continue;
               const trimmed = val.trim();
