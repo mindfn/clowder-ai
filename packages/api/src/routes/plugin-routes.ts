@@ -148,6 +148,13 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
         return { error: 'Missing or empty updates array' };
       }
 
+      for (const u of body.updates) {
+        if (typeof u.name !== 'string' || (u.value !== null && typeof u.value !== 'string')) {
+          reply.status(400);
+          return { error: 'Each update must have a string name and a string|null value' };
+        }
+      }
+
       const allowedEnvNames = new Set(manifest.config.map((f) => f.envName));
       for (const u of body.updates) {
         if (!allowedEnvNames.has(u.name)) {
