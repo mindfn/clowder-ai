@@ -76,6 +76,11 @@ export class EmbeddingService implements IEmbeddingService {
     if (modelId) this.modelId = modelId;
   }
 
+  async reprobeIfNeeded(): Promise<void> {
+    if (this.ready) return;
+    await this.load();
+  }
+
   getModelInfo(): EmbedModelInfo {
     return {
       modelId: this.modelId || this.config.embedModel,

@@ -19,6 +19,7 @@ import type {
 // Re-export for backward compatibility — external code imports KIND_DIRS from IndexBuilder
 export { KIND_DIRS } from './CatCafeScanner.js';
 
+import { embedIndexedItems } from './embed-utils.js';
 import type { SqliteEvidenceStore } from './SqliteEvidenceStore.js';
 import { SIGNAL_FLAGS } from './summary-config.js';
 import type { VectorStore } from './VectorStore.js';
@@ -408,8 +409,29 @@ export class IndexBuilder implements IIndexBuilder {
       }
     }
 
-    // Phase C: generate embeddings for indexed items
-    await this.embedIndexedItems(indexedItems);
+    // Phase C: generate embeddings for indexed items (shared utility with batch splitting)
+    if (this.embedDeps) {
+      const { embedding, vectorStore } = this.embedDeps;
+      const consistency = vectorStore.checkMetaConsistency(embedding.getModelInfo());
+      let toEmbed = indexedItems;
+      if (!consistency.consistent) {
+        vectorStore.clearAll();
+        const db = this.store.getDb();
+        const allDocs = db.prepare('SELECT anchor, title, summary FROM evidence_docs').all() as Array<{
+          anchor: string;
+          title: string;
+          summary: string | null;
+        }>;
+        toEmbed = allDocs.map(
+          (d) => ({ anchor: d.anchor, title: d.title, summary: d.summary ?? undefined }) as EvidenceItem,
+        );
+      }
+      try {
+        await embedIndexedItems(toEmbed, embedding, vectorStore);
+      } catch {
+        // fail-open: embedding errors don't block indexing
+      }
+    }
 
     // Persist current indexing version so next startup can detect changes
     await this.storeIndexingVersion();
@@ -564,7 +586,7 @@ export class IndexBuilder implements IIndexBuilder {
       (d) => ({ anchor: d.anchor, title: d.title, summary: d.summary ?? undefined }) as EvidenceItem,
     );
 
-    await this.embedIndexedItems(items);
+    await embedIndexedItems(items, embedding, vectorStore);
 
     // Count how many are still pending after the batch (could remain if embed
     // threw mid-batch; embedIndexedItems already logs the warn).
@@ -598,64 +620,6 @@ export class IndexBuilder implements IIndexBuilder {
   }
 
   // ── Private ──────────────────────────────────────────────────────
-
-  /**
-   * Batch-embed indexed items when embedding service is ready.
-   * AC-C6: check meta consistency — if model changed, clearAll + re-embed all docs.
-   *
-   * Meta-stamp invariant: as long as the embedding service is ready, we always
-   * record the model info in embedding_meta — even when items.length === 0 (a
-   * no-op rebuild). This is what makes the console's "Embedding" stat appear
-   * the first time after the embedding service comes online, instead of
-   * waiting for the next doc-change rebuild.
-   */
-  private async embedIndexedItems(items: EvidenceItem[]): Promise<void> {
-    if (!this.embedDeps?.embedding.isReady()) return;
-
-    const { embedding, vectorStore } = this.embedDeps;
-    const modelInfo = embedding.getModelInfo();
-
-    // Version anchor check: model/dim change → full re-embed
-    const consistency = vectorStore.checkMetaConsistency(modelInfo);
-    let itemsToEmbed = items;
-    if (!consistency.consistent) {
-      vectorStore.clearAll();
-      // Re-embed ALL docs in store, not just newly indexed ones
-      const db = this.store.getDb();
-      const allDocs = db.prepare('SELECT anchor, title, summary FROM evidence_docs').all() as Array<{
-        anchor: string;
-        title: string;
-        summary: string | null;
-      }>;
-      itemsToEmbed = allDocs.map(
-        (d) => ({ anchor: d.anchor, title: d.title, summary: d.summary ?? undefined }) as EvidenceItem,
-      );
-    }
-
-    // Stamp meta even if itemsToEmbed is empty — surfaces the model to the
-    // console immediately after the embedding service is ready.
-    try {
-      vectorStore.initMeta(modelInfo);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[IndexBuilder] failed to stamp embedding_meta: ${msg}`);
-    }
-
-    if (itemsToEmbed.length === 0) return;
-
-    try {
-      const texts = itemsToEmbed.map((i) => `${i.title} ${i.summary ?? ''}`);
-      const vectors = await embedding.embed(texts);
-      for (let i = 0; i < itemsToEmbed.length; i++) {
-        vectorStore.upsert(itemsToEmbed[i].anchor, vectors[i]);
-      }
-    } catch (err) {
-      // fail-open: embedding errors don't block indexing, but DO log so we
-      // can tell why "Embedding" appeared but search degraded.
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[IndexBuilder] embedding batch failed (vector search may degrade): ${msg}`);
-    }
-  }
 
   /** F152: Bridge — delegate single-file parsing to scanner (for incrementalUpdate) */
   private parseSingleFile(filePath: string): EvidenceItem | null {
