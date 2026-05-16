@@ -966,7 +966,6 @@ describe('TaskRunnerV2 — cron setTimeout overflow (#605)', () => {
     // After stop, timers.has(task.id) returns false, so even if a chunk
     // callback somehow fired it would not reschedule or execute.
     assert.equal(executeCount, 0, 'execute must not run after stop');
-    assert.ok(!runner.getRegisteredTasks().includes('cancel-yearly') || true, 'task should be inert after stop');
   });
 });
 
