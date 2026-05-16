@@ -1,11 +1,13 @@
 export type EnvOs = 'darwin' | 'win32' | 'linux';
-export type EnvArch = 'arm64' | 'x64';
+export type EnvArch = 'arm64' | 'x64' | 'unsupported';
 export type EnvGpu = 'apple' | 'cuda' | 'rocm' | 'none';
 export type PythonArch = 'native' | 'x86-emulated' | 'missing';
 
 export interface EnvironmentProfile {
   os: EnvOs;
   arch: EnvArch;
+  /** Original `process.arch` value — populated when arch is 'unsupported' so error messages can report what was detected. */
+  archRaw?: string;
   gpu: EnvGpu;
   gpuDetail?: string;
   pythonArch: PythonArch;

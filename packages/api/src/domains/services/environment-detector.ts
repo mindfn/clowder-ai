@@ -13,8 +13,15 @@ function resolveOs(): EnvOs {
 }
 
 function resolveArch(): EnvArch {
+  // Previously coerced everything-not-arm64 to 'x64', so 32-bit hosts
+  // (ia32, arm) and exotic arches (mips, ppc64, riscv64, s390x) passed
+  // install gating and only failed deep inside the install scripts with
+  // confusing wheel-resolution errors. Codex P2 3252087645 — return an
+  // explicit 'unsupported' so buildRecommendation can fail fast with a
+  // CPU-aware message.
   if (process.arch === 'arm64') return 'arm64';
-  return 'x64';
+  if (process.arch === 'x64') return 'x64';
+  return 'unsupported';
 }
 
 function runQuiet(command: string, args: string[] = [], timeout = 3000): string | null {
@@ -105,7 +112,8 @@ function listCandidatePythons(os: EnvOs): Array<{ command: string; args: string[
 function isNativeMachine(machine: string, arch: EnvArch): boolean {
   const m = machine.toLowerCase();
   if (arch === 'arm64') return m === 'arm64' || m === 'aarch64';
-  return m === 'x86_64' || m === 'amd64';
+  if (arch === 'x64') return m === 'x86_64' || m === 'amd64';
+  return false; // 'unsupported' — no native interpreter qualifies
 }
 
 /**
@@ -178,6 +186,7 @@ export function detectEnvironmentSync(): EnvironmentProfile {
   return {
     os,
     arch,
+    archRaw: arch === 'unsupported' ? process.arch : undefined,
     gpu,
     gpuDetail,
     pythonArch,
