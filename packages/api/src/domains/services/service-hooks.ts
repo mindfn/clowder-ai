@@ -112,7 +112,15 @@ async function dispatchHooks(serviceId: string, event: ServiceEvent, toFire: Hoo
     const survivors: HookEntry[] = [];
     const ctx: ServiceEventContext = { serviceId, event };
 
-    for (const entry of toFire) {
+    // Snapshot toFire BEFORE iteration. Callers like fireServiceEvent
+    // pass `hooks.get(k)` as a live reference; an in-flight hook that
+    // calls onServiceEvent would push to that same array, and the
+    // for-of loop would then iterate the new entry — firing the late
+    // hook once here AND once via the microtask replay below. Copy to
+    // pin the iteration set.
+    const toFireSnapshot = [...toFire];
+
+    for (const entry of toFireSnapshot) {
       let ok = false;
       try {
         await entry.fn(ctx);
@@ -137,7 +145,11 @@ async function dispatchHooks(serviceId: string, event: ServiceEvent, toFire: Hoo
     //                     missed this fire-cycle and need a microtask replay
     const current = hooks.get(k) ?? [];
     const lateRegistered = current.filter((e) => !preSet.has(e));
-    const preNotFired = preList.filter((e) => !toFire.includes(e));
+    // Use snapshot (what we actually fired), not `toFire` — when toFire is
+    // a live `hooks.get(k)` reference, it may have been mutated by an
+    // in-flight onServiceEvent push and would then incorrectly classify
+    // late-registered hooks as "ours to fire".
+    const preNotFired = preList.filter((e) => !toFireSnapshot.includes(e));
     const newList = [...survivors, ...preNotFired, ...lateRegistered];
 
     if (newList.length > 0) {
