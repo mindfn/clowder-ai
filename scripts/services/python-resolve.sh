@@ -53,6 +53,14 @@ RESOLVED_PYTHON_SOURCE="" # system | uv | pyenv | brew | project
 #      scripts/services/python-resolve.sh -> repo-root is two levels up)
 _RESOLVER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 _CAT_CAFE_HOME="${CAT_CAFE_HOME:-${_RESOLVER_REPO_ROOT}/.cat-cafe}"
+# Expand leading ~ -- bash parameter expansion does NOT tilde-expand, so a
+# value like CAT_CAFE_HOME=~/.cat-cafe-shared coming from a .env file or
+# config (where the shell didnt get to expand at assignment time) would
+# stay literal and resolve to <cwd>/~/.cat-cafe-shared. Codex P2 3251761227.
+case "$_CAT_CAFE_HOME" in
+  "~") _CAT_CAFE_HOME="$HOME" ;;
+  "~/"*) _CAT_CAFE_HOME="${HOME}/${_CAT_CAFE_HOME#~/}" ;;
+esac
 export CAT_CAFE_HOME="$_CAT_CAFE_HOME"   # exported so child install scripts can reuse the same path
 _PROJECT_PYTHON_DIR="${_CAT_CAFE_HOME}/python"
 

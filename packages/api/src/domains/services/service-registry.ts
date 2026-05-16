@@ -7,6 +7,19 @@ import type { ServiceRecommendation } from './recommendation-types.js';
 import { getServiceConfig } from './service-config.js';
 import { resolveRepoRoot, resolveScriptPath } from './service-logs.js';
 import type { InstallStatus, ServiceManifest, ServiceState, ServiceStatus } from './service-manifest.js';
+import { PORT_ENV_VARS } from './service-manifest.js';
+
+/**
+ * Expand a leading `~` to $HOME. Node's path module never does this; values
+ * coming from `.env` files via non-shell loaders (Node `--env-file`, dotenv,
+ * etc.) keep the literal `~`, so a config like CAT_CAFE_HOME=~/.cat-cafe-shared
+ * would yield `<cwd>/~/.cat-cafe-shared`. Codex P2 3251761227.
+ */
+function expandTilde(p: string): string {
+  if (p === '~') return homedir();
+  if (p.startsWith('~/')) return resolve(homedir(), p.slice(2));
+  return p;
+}
 
 const KNOWN_SERVICES: ServiceManifest[] = [
   {
@@ -132,6 +145,18 @@ export function resolveServicePort(manifest: ServiceManifest): number | null {
     const port = parseStrictPort(process.env[envVar]);
     if (port) return port;
   }
+  // Also honor the dedicated *_PORT env that each server script reads — not
+  // every manifest lists it in configVars (e.g. llm-postprocess only exposes
+  // NEXT_PUBLIC_LLM_POSTPROCESS_URL), so without this lookup an operator
+  // setting LLM_POSTPROCESS_PORT in .env would have the sidecar bind to the
+  // override (autostart injects via PORT_ENV_VARS) but health/stop logic
+  // would probe manifest.port — same kind of port-drift the configVars path
+  // already handles (codex P2 3251761229).
+  const portEnv = PORT_ENV_VARS[manifest.id];
+  if (portEnv) {
+    const port = parseStrictPort(process.env[portEnv]);
+    if (port) return port;
+  }
   if (manifest.port) return manifest.port;
   return null;
 }
@@ -167,6 +192,13 @@ export function resolveServiceEndpoint(idOrManifest: string | ServiceManifest): 
   //    `EMBED_URL=127.0.0.1:9880` resolving to port 127)
   for (const envVar of manifest.configVars) {
     const port = parseStrictPort(process.env[envVar]);
+    if (port) return `http://127.0.0.1:${port}`;
+  }
+  // Also honor the dedicated *_PORT env (PORT_ENV_VARS map) — see
+  // resolveServicePort for the same rationale (codex P2 3251761229).
+  const portEnv = PORT_ENV_VARS[manifest.id];
+  if (portEnv) {
+    const port = parseStrictPort(process.env[portEnv]);
     if (port) return `http://127.0.0.1:${port}`;
   }
 
@@ -260,7 +292,7 @@ function resolveVenvPath(venvPath: string): string {
     // attempts and autostart spawn against $CAT_CAFE_HOME and fail).
     // Don't fall through (codex P2 3250354116).
     if (process.env.CAT_CAFE_HOME) {
-      return resolve(process.env.CAT_CAFE_HOME, subPath);
+      return resolve(expandTilde(process.env.CAT_CAFE_HOME), subPath);
     }
     // No explicit override — probe the default locations the scripts
     // would use in that case:
