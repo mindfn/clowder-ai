@@ -291,7 +291,18 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     const cfg = getServiceConfig(id);
     let suggestedPort: number | undefined = cfg.port;
     if (!suggestedPort) {
-      for (const envVar of manifest.configVars) {
+      // Scan manifest.configVars first, then PORT_ENV_VARS[id] as a final
+      // env source — mirrors the install handler so opening the preview
+      // and clicking confirm doesn't silently rewrite operator-configured
+      // ports for services whose manifest doesn't list the dedicated
+      // *_PORT (e.g. llm-postprocess, whisper-stt, mlx-tts). Codex P2
+      // 3252138418.
+      const envCandidates: string[] = [...manifest.configVars];
+      const dedicatedPortEnv = PORT_ENV_VARS[id];
+      if (dedicatedPortEnv && !envCandidates.includes(dedicatedPortEnv)) {
+        envCandidates.push(dedicatedPortEnv);
+      }
+      for (const envVar of envCandidates) {
         const val = process.env[envVar];
         if (!val || val.startsWith('http')) continue;
         const trimmed = val.trim();

@@ -72,12 +72,21 @@ function clearStaleInstallingState(log: Logger): void {
         setServiceConfig(id, { installStatus: 'installed' });
         continue;
       }
-      log.warn(`[services] ${id} was 'installing' on startup — marking failed (previous API process died mid-install)`);
-      setServiceConfig(id, {
-        installStatus: 'failed',
-        lastInstallError: 'API restarted while install was in progress — please click 安装 again.',
-        lastInstallTroubleshootHint: undefined,
-      });
+      // No on-disk venv locally. Previously this immediately wrote
+      // installStatus='failed' with a "please retry" error, but in
+      // multi-instance / shared-storage setups (e.g. two API workers
+      // pointing at the same CAT_CAFE_HOME) the other instance may
+      // STILL be installing. A terminal 'failed' there would surface a
+      // false UI error and let the user kick off a second install
+      // against shared artifacts. Codex P2 3252138414.
+      //
+      // Leave the state non-terminal at 'none'. The user can re-trigger
+      // 安装 if they want — tryAcquireInstallLock will block a real
+      // concurrent install, and a same-instance crash-recovery just
+      // results in the user clicking install once more.
+      log.warn(
+        `[services] ${id} was 'installing' on startup — left at 'none' (crash mid-install OR another instance still installing; install lock will guard against collisions)`,
+      );
     }
   }
 }
