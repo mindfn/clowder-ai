@@ -111,7 +111,7 @@ export function PluginsContent() {
 
             {isExpanded &&
               (plugin.id === 'github' ? (
-                <GithubConfigPanel />
+                <GithubConfigPanel plugin={plugin} />
               ) : (
                 <PluginConfigPanel plugin={plugin} onUpdated={fetchPlugins} />
               ))}
