@@ -443,7 +443,7 @@ export type {
   ResolverType,
   WorkflowAction,
 } from './pack.js';
-// Plugin Framework types (F197 声明式插件注册)
+// Plugin Framework types (F202 声明式插件注册)
 export type {
   PluginConfigField,
   PluginHealthCheck,
