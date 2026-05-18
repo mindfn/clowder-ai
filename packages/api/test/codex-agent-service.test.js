@@ -130,71 +130,27 @@ test('uses exec resume when sessionId is provided', async () => {
   assert.ok(!args.includes('approval_policy=\\"on-request\\"'), 'argv should not contain literal backslash escapes');
 });
 
-test('injects cat-cafe MCP config when workingDirectory contains mcp-server', async () => {
-  const tmpRoot = mkdtempSync(join(import.meta.dirname ?? '.', '.tmp-mcp-test-'));
-  const mcpDistDir = join(tmpRoot, 'packages', 'mcp-server', 'dist');
-  mkdirSync(mcpDistDir, { recursive: true });
-  for (const entrypoint of ['index.js', 'collab.js', 'memory.js', 'signals.js']) {
-    writeFileSync(join(mcpDistDir, entrypoint), '// stub');
-  }
-
+test('#712: no longer injects MCP config args — config comes from .codex/config.toml', async () => {
   const proc = createMockProcess();
   const spawnFn = createMockSpawnFn(proc);
   const service = new CodexAgentService({ spawnFn, model: 'gpt-5.3-codex' });
 
-  try {
-    const promise = collect(
-      service.invoke('hello from outside cwd', {
-        workingDirectory: tmpRoot,
-        callbackEnv: {
-          CAT_CAFE_API_URL: 'http://127.0.0.1:3004',
-          CAT_CAFE_INVOCATION_ID: 'inv-test-1',
-          CAT_CAFE_CALLBACK_TOKEN: 'tok-test-1',
-          CAT_CAFE_USER_ID: 'user-test-1\nline2',
-          CAT_CAFE_CAT_ID: 'codex',
-          CAT_CAFE_SIGNAL_USER: 'codex',
-        },
-      }),
-    );
-    emitCodexEvents(proc, [{ type: 'thread.started', thread_id: 't-mcp-fallback' }]);
-    await promise;
+  const promise = collect(
+    service.invoke('hello', {
+      callbackEnv: {
+        CAT_CAFE_API_URL: 'http://127.0.0.1:3004',
+        CAT_CAFE_INVOCATION_ID: 'inv-test-1',
+        CAT_CAFE_CALLBACK_TOKEN: 'tok-test-1',
+        CAT_CAFE_CAT_ID: 'codex',
+      },
+    }),
+  );
+  emitCodexEvents(proc, [{ type: 'thread.started', thread_id: 't-no-mcp' }]);
+  await promise;
 
-    const args = spawnFn.mock.calls[0].arguments[1];
-    assert.ok(args.includes('mcp_servers.cat-cafe.command="node"'));
-    const mcpArgsConfig = args.find((arg) => arg.startsWith('mcp_servers.cat-cafe.args=['));
-    assert.ok(mcpArgsConfig, 'must inject cat-cafe mcp args config');
-    assert.match(mcpArgsConfig, /packages\/mcp-server\/dist\/index\.js/);
-    assert.ok(args.includes('mcp_servers.cat-cafe.enabled=true'));
-    assert.ok(args.includes('mcp_servers.cat-cafe.env.CAT_CAFE_API_URL="http://127.0.0.1:3004"'));
-    assert.ok(args.includes('mcp_servers.cat-cafe.env.CAT_CAFE_INVOCATION_ID="inv-test-1"'));
-    assert.ok(args.includes('mcp_servers.cat-cafe.env.CAT_CAFE_CALLBACK_TOKEN="tok-test-1"'));
-    assert.ok(args.includes('mcp_servers.cat-cafe.env.CAT_CAFE_USER_ID="user-test-1\\nline2"'));
-    assert.ok(
-      args.includes('mcp_servers.cat-cafe.env.CAT_CAFE_CAT_ID="codex"'),
-      'must inject CAT_CAFE_CAT_ID for game action auth',
-    );
-    assert.ok(args.includes('mcp_servers.cat-cafe.env.CAT_CAFE_SIGNAL_USER="codex"'));
-
-    assert.ok(args.includes('mcp_servers.cat-cafe-collab.command="node"'));
-    const collabArgsConfig = args.find((arg) => arg.startsWith('mcp_servers.cat-cafe-collab.args=['));
-    assert.ok(collabArgsConfig, 'must inject cat-cafe-collab mcp args config');
-    assert.match(collabArgsConfig, /packages\/mcp-server\/dist\/collab\.js/);
-    assert.ok(args.includes('mcp_servers.cat-cafe-collab.enabled=true'));
-    assert.ok(args.includes('mcp_servers.cat-cafe-collab.env.CAT_CAFE_API_URL="http://127.0.0.1:3004"'));
-    assert.ok(args.includes('mcp_servers.cat-cafe-collab.env.CAT_CAFE_INVOCATION_ID="inv-test-1"'));
-    assert.ok(args.includes('mcp_servers.cat-cafe-collab.env.CAT_CAFE_CALLBACK_TOKEN="tok-test-1"'));
-
-    // Codex ≥0.130: each Cat Cafe MCP server must have auto-approve to avoid
-    // "user cancelled MCP tool call" in non-interactive codex exec mode.
-    for (const serverName of ['cat-cafe', 'cat-cafe-collab', 'cat-cafe-memory', 'cat-cafe-signals']) {
-      assert.ok(
-        args.includes(`mcp_servers.${serverName}.default_tools_approval_mode="approve"`),
-        `${serverName} must have default_tools_approval_mode="approve"`,
-      );
-    }
-  } finally {
-    rmSync(tmpRoot, { recursive: true, force: true });
-  }
+  const args = spawnFn.mock.calls[0].arguments[1];
+  const hasMcpServerArg = args.some((a) => typeof a === 'string' && a.startsWith('mcp_servers.'));
+  assert.ok(!hasMcpServerArg, 'should not inject mcp_servers.* config args (now via .codex/config.toml)');
 });
 
 test('does not include resume when no sessionId', async () => {

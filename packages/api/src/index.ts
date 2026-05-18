@@ -12,11 +12,7 @@ import cors from '@fastify/cors';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyReply } from 'fastify';
 import { resolveAnthropicRuntimeProfile, resolveForClient } from './config/account-resolver.js';
-import {
-  bootstrapCapabilities,
-  generateCliConfigs,
-  readCapabilitiesConfig,
-} from './config/capabilities/capability-orchestrator.js';
+import { orchestrate } from './config/capabilities/capability-orchestrator.js';
 import { resolveStartupCliConfigContext } from './config/capabilities/startup-cli-config.js';
 import { resolveBoundAccountRefForCat } from './config/cat-account-binding.js';
 import { getCatContextBudget } from './config/cat-budgets.js';
@@ -2198,24 +2194,24 @@ async function main(): Promise<void> {
     app.log.warn(`[api] Audit log write failed (best-effort): ${String(err)}`);
   }
 
-  // #712: Bootstrap capabilities.json on startup if missing, then regenerate CLI configs.
+  // #712: Full orchestration at startup — bootstrap if missing, run migrations
+  // for existing configs (add limb, remove monolith, realign paths), regenerate CLI configs.
   try {
     const { projectRoot, paths } = resolveStartupCliConfigContext(process.cwd());
-    let capConfig = await readCapabilitiesConfig(projectRoot);
-    if (!capConfig) {
-      capConfig = await bootstrapCapabilities(projectRoot, {
+    await orchestrate(
+      projectRoot,
+      {
         claudeConfig: paths.anthropic,
         codexConfig: paths.openai,
         geminiConfig: paths.google,
         kimiConfig: paths.kimi,
         antigravityConfig: paths.antigravity,
-      });
-      app.log.info('[api] capabilities.json bootstrapped at startup');
-    }
-    await generateCliConfigs(capConfig, paths);
-    app.log.info('[api] CLI configs regenerated at startup');
+      },
+      paths,
+    );
+    app.log.info('[api] capabilities orchestrated at startup');
   } catch (err) {
-    app.log.warn(`[api] CLI config regeneration failed (best-effort): ${String(err)}`);
+    app.log.warn(`[api] Capabilities orchestration failed (best-effort): ${String(err)}`);
   }
 
   // clowder-ai#340: Account startup — fail-fast (LL-043 / migration conflict / corrupt credentials).

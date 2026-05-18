@@ -713,6 +713,9 @@ test('falls back to default MCP path when CAT_CAFE_MCP_SERVER_PATH is empty', as
   mkdirSync(apiCwd, { recursive: true });
   mkdirSync(mcpDistDir, { recursive: true });
   writeFileSync(join(mcpDistDir, 'index.js'), 'export {};', 'utf8');
+  for (const f of ['collab.js', 'memory.js', 'signals.js', 'limb.js']) {
+    writeFileSync(join(mcpDistDir, f), 'export {};', 'utf8');
+  }
 
   const previousCwd = process.cwd();
   const previousEnv = process.env.CAT_CAFE_MCP_SERVER_PATH;
@@ -740,7 +743,20 @@ test('falls back to default MCP path when CAT_CAFE_MCP_SERVER_PATH is empty', as
     const mcpConfigIdx = args.indexOf('--mcp-config');
     assert.ok(mcpConfigIdx >= 0, '--mcp-config should be present when fallback resolves');
     const parsed = JSON.parse(args[mcpConfigIdx + 1]);
-    assert.equal(realpathSync(parsed.mcpServers['cat-cafe'].args[0]), realpathSync(join(mcpDistDir, 'index.js')));
+    assert.ok(!parsed.mcpServers['cat-cafe'], 'monolith cat-cafe should not be injected');
+    assert.equal(
+      realpathSync(parsed.mcpServers['cat-cafe-collab'].args[0]),
+      realpathSync(join(mcpDistDir, 'collab.js')),
+    );
+    assert.equal(
+      realpathSync(parsed.mcpServers['cat-cafe-memory'].args[0]),
+      realpathSync(join(mcpDistDir, 'memory.js')),
+    );
+    assert.equal(
+      realpathSync(parsed.mcpServers['cat-cafe-signals'].args[0]),
+      realpathSync(join(mcpDistDir, 'signals.js')),
+    );
+    assert.equal(realpathSync(parsed.mcpServers['cat-cafe-limb'].args[0]), realpathSync(join(mcpDistDir, 'limb.js')));
   } finally {
     process.chdir(previousCwd);
     if (previousEnv === undefined) {
