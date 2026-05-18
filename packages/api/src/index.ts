@@ -1524,7 +1524,7 @@ async function main(): Promise<void> {
 
     const monorepoRoot = findMonorepoRoot(process.cwd());
     const pluginsDir = join(monorepoRoot, 'plugins');
-    const { loadAllPluginConfigs, getPluginConfigValue } = await import('./domains/plugin/plugin-config-store.js');
+    const { loadAllPluginConfigs, readPluginConfig } = await import('./domains/plugin/plugin-config-store.js');
     const pluginRegistry = new PluginRegistry(pluginsDir);
     pluginRegistry.scan();
     const scannedManifests = pluginRegistry.getAllManifests();
@@ -1533,11 +1533,14 @@ async function main(): Promise<void> {
       `[api] F202: PluginRegistry scanned ${scannedManifests.length} plugin(s), loaded ${loadedEnvKeys} config key(s)`,
     );
 
-    const limbAdapterRegistry = new Map<string, (yamlPath: string) => Promise<ILimbNode>>();
+    const limbAdapterRegistry = new Map<
+      string,
+      (yamlPath: string, pluginConfig: Record<string, string>) => Promise<ILimbNode>
+    >();
 
-    limbAdapterRegistry.set('weixin-mp', async (yamlPath) => {
+    limbAdapterRegistry.set('weixin-mp', async (yamlPath, pluginConfig) => {
       const decl = loadLimbDeclaration(yamlPath);
-      return new WeixinMpLimbNode({ capabilities: decl.capabilities, redis, resolveEnv: getPluginConfigValue });
+      return new WeixinMpLimbNode({ capabilities: decl.capabilities, redis, pluginConfig });
     });
 
     const pluginActivator = new PluginResourceActivator({
@@ -1552,7 +1555,7 @@ async function main(): Promise<void> {
         await generateCliConfigs(config, paths);
       },
       withCapabilityLock: (fn) => withCapabilityLock(resolveActiveProjectRoot(), fn),
-      limbAdapterFactory: async (pluginId, limbYamlPath) => {
+      limbAdapterFactory: async (pluginId, limbYamlPath, pluginConfig) => {
         const factory = limbAdapterRegistry.get(pluginId);
         if (!factory) {
           throw new Error(
@@ -1560,7 +1563,7 @@ async function main(): Promise<void> {
               `Limb resources require a concrete adapter (see Phase 2 for examples).`,
           );
         }
-        return factory(limbYamlPath);
+        return factory(limbYamlPath, pluginConfig);
       },
     });
 
@@ -1582,7 +1585,8 @@ async function main(): Promise<void> {
         }
         try {
           const yamlPath = join(pluginsDir, manifest.id, limbResource.path);
-          const node = await factory(yamlPath);
+          const pluginConfig = readPluginConfig(resolveActiveProjectRoot(), manifest.id);
+          const node = await factory(yamlPath, pluginConfig);
           await limbRegistry.register(node);
           app.log.info(`[api] F202: Rehydrated limb for plugin '${manifest.id}'`);
         } catch (err) {
