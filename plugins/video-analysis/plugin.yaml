@@ -1,7 +1,7 @@
 id: video-analysis
 name: 视频分析
 version: "1.0.0"
-description: 声明式视频理解与分析 — 通过视频协议模板适配 Gemini、智谱 VLM 等
+description: 声明式视频理解与分析 — 通过视频协议模板适配 Gemini、智谱等
 icon: monitor-wave
 iconBg: "#0ea5e9"
 
@@ -16,10 +16,10 @@ config:
         label: Gemini
         hint: 在 Google AI Studio 获取 API Key
         docsUrl: https://ai.google.dev/gemini-api/docs
-      - value: zhipu-vlm
-        label: 智谱 VLM
+      - value: zhipu
+        label: 智谱
         hint: 在智谱开放平台注册，获取 API Key
-        docsUrl: https://open.bigmodel.cn/dev/api/multimodal
+        docsUrl: https://docs.bigmodel.cn/cn/guide/models/vlm
 
   - envName: VIDEO_ANALYSIS_AUTH_TYPE
     label: 认证方式
@@ -30,7 +30,7 @@ config:
       - value: apikey
         label: API Key
         supportedBy:
-          VIDEO_ANALYSIS_PROVIDER: [gemini, zhipu-vlm]
+          VIDEO_ANALYSIS_PROVIDER: [gemini, zhipu]
       - value: query-param
         label: Query Parameter
         supportedBy:
