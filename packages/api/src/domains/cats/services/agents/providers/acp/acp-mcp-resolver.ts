@@ -11,6 +11,7 @@
 
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { CAT_CAFE_SPLIT_ENTRYPOINTS } from '../../../../../../config/capabilities/capability-orchestrator.js';
 import { createModuleLogger } from '../../../../../../infrastructure/logger.js';
 import type { AcpMcpServer, AcpMcpServerStdio } from './types.js';
 
@@ -20,18 +21,9 @@ const log = createModuleLogger('acp-mcp-resolver');
 
 const MCP_SERVER_DIST = 'packages/mcp-server/dist';
 
-/** Canonical builtin cat-cafe MCP servers: name → dist filename. */
-const BUILTIN_CAT_CAFE_SERVERS: ReadonlyMap<string, string> = new Map([
-  ['cat-cafe', 'index.js'],
-  ['cat-cafe-collab', 'collab.js'],
-  ['cat-cafe-memory', 'memory.js'],
-  ['cat-cafe-signals', 'signals.js'],
-  ['cat-cafe-limb', 'limb.js'],
-]);
-
 /** Returns the dist entrypoint filename for a canonical builtin, or null. */
 function builtinEntrypoint(name: string): string | null {
-  return BUILTIN_CAT_CAFE_SERVERS.get(name) ?? null;
+  return CAT_CAFE_SPLIT_ENTRYPOINTS.get(name) ?? null;
 }
 
 /**

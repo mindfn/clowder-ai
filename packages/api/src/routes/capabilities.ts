@@ -37,12 +37,11 @@ import {
   type DiscoveryPaths,
   deduplicateDiscoveredMcpServers,
   discoverExternalMcpServers,
-  ensureCatCafeMainServer,
+  ensureSplitServerCompleteness,
   generateCliConfigs,
   migrateLegacyCatCafeCapability,
   migrateResolverBackedCapabilities,
   readCapabilitiesConfig,
-  readResolvedMcpState,
   realignManagedCatCafeServerPaths,
   resolveServersForCat,
   toCapabilityEntry,
@@ -548,9 +547,9 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
     } else {
       const migrated = migrateLegacyCatCafeCapability(config, { catCafeRepoRoot });
       const resolverMigrated = migrateResolverBackedCapabilities(migrated.config);
-      const mainServerMigrated = ensureCatCafeMainServer(resolverMigrated.config, { catCafeRepoRoot });
-      const pathRealigned = realignManagedCatCafeServerPaths(mainServerMigrated.config, { catCafeRepoRoot });
-      if (migrated.migrated || resolverMigrated.migrated || mainServerMigrated.migrated || pathRealigned.migrated) {
+      const splitComplete = ensureSplitServerCompleteness(resolverMigrated.config, { catCafeRepoRoot });
+      const pathRealigned = realignManagedCatCafeServerPaths(splitComplete.config, { catCafeRepoRoot });
+      if (migrated.migrated || resolverMigrated.migrated || splitComplete.migrated || pathRealigned.migrated) {
         config = pathRealigned.config;
         await writeCapabilitiesConfig(projectRoot, config);
       } else {
@@ -757,8 +756,6 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
     // 5. Build board items from capabilities.json
     const catIds = catRegistry.getAllIds().map((id) => id as string);
     const items: CapabilityBoardItem[] = [];
-    const resolvedMcpState = await readResolvedMcpState(projectRoot);
-
     // MCP capabilities
     for (const cap of config.capabilities) {
       if (cap.type !== 'mcp') continue;
@@ -782,16 +779,12 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
       if (mcpDesc) mcpItem.description = mcpDesc;
       if (cap.mcpServer) {
         const { env, headers, ...safe } = cap.mcpServer;
-        const resolved = resolvedMcpState[cap.id];
         mcpItem.mcpServer = {
           ...safe,
           args: sanitizeArgsForDisplay(safe.args ?? []),
           ...(safe.url ? { url: sanitizeUrlForDisplay(safe.url) } : {}),
           envKeys: env ? Object.keys(env) : [],
           headerKeys: headers ? Object.keys(headers) : [],
-          ...(resolved?.status === 'resolved' && resolved.command
-            ? { resolvedCommand: resolved.command, resolvedArgs: sanitizeArgsForDisplay(resolved.args ?? []) }
-            : {}),
         };
       }
       items.push(mcpItem);

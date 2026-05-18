@@ -17,7 +17,6 @@
 
 import { existsSync } from 'node:fs';
 import { dirname, join, parse, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { type CatId, createCatId } from '@cat-cafe/shared';
 import { getCatContextWindowConfig, getCatEffort } from '../../../../../config/cat-config-loader.js';
 import { getCatModel } from '../../../../../config/cat-models.js';
@@ -139,72 +138,8 @@ function toTomlString(value: string): string {
   return `"${escaped}"`;
 }
 
-/**
- * F041/F043 root fix:
- * Ensure Codex subprocess always receives cat-cafe MCP server config
- * based on the current thread working directory.
- */
-// index.js registers ALL tools (collab+memory+signals+limb) via registerFullToolset.
-// Running it alongside the split servers causes duplicate tool names, which breaks
-// codex CLI MCP loading. Use index.js only until the split servers exclude duplicates.
-const CAT_CAFE_MCP_SERVER_ENTRIES = [
-  ['cat-cafe-collab', 'collab.js'],
-  ['cat-cafe-memory', 'memory.js'],
-  ['cat-cafe-signals', 'signals.js'],
-  ['cat-cafe-limb', 'limb.js'],
-] as const;
-
-function buildCatCafeMcpConfigArgs(workingDirectory?: string, callbackEnv?: Record<string, string>): string[] {
-  const fileDir = dirname(fileURLToPath(import.meta.url));
-  const candidateRoots: string[] = [process.cwd(), resolve(fileDir, '../../../../../../../..')];
-
-  let mcpDistDir: string | undefined;
-  for (const root of candidateRoots) {
-    const candidate = resolve(root, 'packages/mcp-server/dist');
-    if (existsSync(resolve(candidate, 'index.js'))) {
-      mcpDistDir = candidate;
-      break;
-    }
-  }
-  if (!mcpDistDir) return [];
-
-  const args: string[] = [];
-
-  const callbackKeys = [
-    'CAT_CAFE_API_URL',
-    'CAT_CAFE_INVOCATION_ID',
-    'CAT_CAFE_CALLBACK_TOKEN',
-    'CAT_CAFE_USER_ID',
-    'CAT_CAFE_CAT_ID',
-    'CAT_CAFE_SIGNAL_USER',
-  ] as const;
-  for (const [serverName, entrypoint] of CAT_CAFE_MCP_SERVER_ENTRIES) {
-    const serverPath = resolve(mcpDistDir, entrypoint);
-    if (!existsSync(serverPath)) continue;
-
-    args.push(
-      '--config',
-      `mcp_servers.${serverName}.command="node"`,
-      '--config',
-      `mcp_servers.${serverName}.args=[${toTomlString(serverPath)}]`,
-      '--config',
-      `mcp_servers.${serverName}.enabled=true`,
-      // Codex ≥0.130: auto-approve MCP tool calls for trusted Cat Cafe servers.
-      // Without this, non-interactive `codex exec` has no UI to approve and
-      // write tools get auto-cancelled ("user cancelled MCP tool call").
-      '--config',
-      `mcp_servers.${serverName}.default_tools_approval_mode="approve"`,
-    );
-
-    for (const key of callbackKeys) {
-      const value = callbackEnv?.[key];
-      if (!value) continue;
-      args.push('--config', `mcp_servers.${serverName}.env.${key}=${toTomlString(value)}`);
-    }
-  }
-
-  return args;
-}
+// #712: Codex now gets MCP config exclusively from .codex/config.toml
+// (written by generateCliConfigs). No more hardcoded injection here.
 
 export function isGitRepositoryPath(workingDirectory: string): boolean {
   let current = resolve(workingDirectory);
@@ -278,7 +213,6 @@ export class CodexAgentService implements AgentService {
           `model_auto_compact_token_limit=${ctxConfig.autoCompactTokenLimit}`,
         ]
       : [];
-    const catCafeMcpArgs = buildCatCafeMcpConfigArgs(options?.workingDirectory, options?.callbackEnv);
     const gitRepoArgs = buildGitRepoArgs(options?.workingDirectory);
     // User-defined CLI args from the member editor (#567) — passed as-is, no implicit wrapping.
     // Each entry is split by whitespace (e.g. "--config model_reasoning_effort=\"low\"").
@@ -377,7 +311,7 @@ export class CodexAgentService implements AgentService {
           ...userConfigArgs,
           ...developerInstructionsArgs,
           ...gitRepoArgs,
-          ...catCafeMcpArgs,
+          // #712: MCP config from .codex/config.toml (generateCliConfigs)
           ...imageArgs,
           ...promptArgs,
         ]
@@ -396,7 +330,7 @@ export class CodexAgentService implements AgentService {
           ...userConfigArgs,
           ...developerInstructionsArgs,
           ...gitRepoArgs,
-          ...catCafeMcpArgs,
+          // #712: MCP config from .codex/config.toml (generateCliConfigs)
           ...imageArgs,
           ...promptArgs,
         ];

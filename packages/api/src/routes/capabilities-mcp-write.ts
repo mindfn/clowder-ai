@@ -13,7 +13,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import { appendAuditEntry, readAuditLog } from '../config/capabilities/capability-audit.js';
 import { buildInstallPreview } from '../config/capabilities/capability-install.js';
 import {
-  ensureCatCafeMainServer,
+  ensureSplitServerCompleteness,
   generateCliConfigs,
   readCapabilitiesConfig,
   realignManagedCatCafeServerPaths,
@@ -117,7 +117,7 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
         config = { version: 1, capabilities: [] };
       }
       const catCafeRepoRoot = await resolveMainRepoPath();
-      config = ensureCatCafeMainServer(config, { catCafeRepoRoot }).config;
+      config = ensureSplitServerCompleteness(config, { catCafeRepoRoot }).config;
       config = realignManagedCatCafeServerPaths(config, { catCafeRepoRoot }).config;
 
       const existingIdx = config.capabilities.findIndex((c) => c.id === body.id && c.type === 'mcp');
@@ -315,7 +315,7 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
         return { error: 'capabilities.json not found' };
       }
       const catCafeRepoRoot = await resolveMainRepoPath();
-      let nextConfig = ensureCatCafeMainServer(config, { catCafeRepoRoot }).config;
+      let nextConfig = ensureSplitServerCompleteness(config, { catCafeRepoRoot }).config;
       nextConfig = realignManagedCatCafeServerPaths(nextConfig, { catCafeRepoRoot }).config;
 
       const idx = nextConfig.capabilities.findIndex((c) => c.id === id && c.type === 'mcp');
@@ -392,7 +392,7 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
         return { error: 'capabilities.json not found' };
       }
       const catCafeRepoRoot = await resolveMainRepoPath();
-      let nextConfig = ensureCatCafeMainServer(config, { catCafeRepoRoot }).config;
+      let nextConfig = ensureSplitServerCompleteness(config, { catCafeRepoRoot }).config;
       nextConfig = realignManagedCatCafeServerPaths(nextConfig, { catCafeRepoRoot }).config;
 
       const idx = nextConfig.capabilities.findIndex((c) => c.id === id && c.type === 'skill');

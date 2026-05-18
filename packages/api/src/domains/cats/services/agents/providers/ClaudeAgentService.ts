@@ -17,8 +17,9 @@
 
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { type CatId, createCatId } from '@cat-cafe/shared';
+import { CAT_CAFE_SPLIT_ENTRYPOINTS } from '../../../../../config/capabilities/capability-orchestrator.js';
 import { getCatEffort } from '../../../../../config/cat-config-loader.js';
 import { getCatModel } from '../../../../../config/cat-models.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
@@ -224,34 +225,28 @@ export class ClaudeAgentService implements AgentService {
       args.push('--add-dir', dir);
     }
 
-    // Add MCP server config when callback env is present
-    // On Windows, Claude CLI treats inline JSON as a file path — write to temp file instead.
-    // The file is cached per-instance so concurrent invocations share one file (no temp spam).
+    // #712: Inject split MCP servers so per-server enabled/disabled works.
+    // On Windows, Claude CLI treats inline JSON as a file path — write to temp file.
     if (options?.callbackEnv && this.mcpServerPath) {
-      if (IS_WINDOWS) {
-        if (!this.mcpConfigFilePath || !existsSync(this.mcpConfigFilePath)) {
-          const dir = mkdtempSync(join(tmpdir(), 'cat-cafe-mcp-'));
-          this.mcpConfigFilePath = join(dir, 'mcp-config.json');
-          writeFileSync(
-            this.mcpConfigFilePath,
-            JSON.stringify({
-              mcpServers: {
-                'cat-cafe': { command: 'node', args: [this.mcpServerPath] },
-              },
-            }),
-            'utf-8',
-          );
+      const distDir = dirname(this.mcpServerPath);
+      const mcpServers: Record<string, { command: string; args: string[] }> = {};
+      for (const [name, entrypoint] of CAT_CAFE_SPLIT_ENTRYPOINTS) {
+        const entrypointPath = join(distDir, entrypoint);
+        if (existsSync(entrypointPath)) {
+          mcpServers[name] = { command: 'node', args: [entrypointPath] };
         }
-        args.push('--mcp-config', this.mcpConfigFilePath);
-      } else {
-        args.push(
-          '--mcp-config',
-          JSON.stringify({
-            mcpServers: {
-              'cat-cafe': { command: 'node', args: [this.mcpServerPath] },
-            },
-          }),
-        );
+      }
+      if (Object.keys(mcpServers).length > 0) {
+        if (IS_WINDOWS) {
+          if (!this.mcpConfigFilePath || !existsSync(this.mcpConfigFilePath)) {
+            const dir = mkdtempSync(join(tmpdir(), 'cat-cafe-mcp-'));
+            this.mcpConfigFilePath = join(dir, 'mcp-config.json');
+            writeFileSync(this.mcpConfigFilePath, JSON.stringify({ mcpServers }), 'utf-8');
+          }
+          args.push('--mcp-config', this.mcpConfigFilePath);
+        } else {
+          args.push('--mcp-config', JSON.stringify({ mcpServers }));
+        }
       }
     }
 
