@@ -2,12 +2,21 @@
  * Plugin Framework Types — F202 声明式插件注册与资源编排
  */
 
+/** Option for select-type config fields */
+export interface PluginConfigOption {
+  value: string;
+  label: string;
+}
+
 /** Plugin config field declaration (from plugin.yaml) */
 export interface PluginConfigField {
   envName: string;
   label: string;
   sensitive: boolean;
   required: boolean;
+  type?: 'text' | 'select';
+  options?: PluginConfigOption[];
+  oneOf?: Record<string, PluginConfigField[]>;
 }
 
 /** Plugin health check declaration */

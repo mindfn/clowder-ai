@@ -1,5 +1,11 @@
 import { readFileSync } from 'node:fs';
-import type { PluginConfigField, PluginHealthCheck, PluginManifest, PluginResourceDef } from '@cat-cafe/shared';
+import type {
+  PluginConfigField,
+  PluginConfigOption,
+  PluginHealthCheck,
+  PluginManifest,
+  PluginResourceDef,
+} from '@cat-cafe/shared';
 import { parse as parseYaml } from 'yaml';
 import { resourceCapId } from './PluginRegistry.js';
 
@@ -17,7 +23,7 @@ const SYSTEM_ENV_DENYLIST_PREFIXES = [
 
 const SYSTEM_ENV_DENYLIST_EXACT = new Set(['NODE_OPTIONS', 'NODE_ENV', 'PATH', 'HOME', 'SHELL', 'PORT']);
 
-const SUPPORTED_RESOURCE_TYPES = new Set(['skill', 'mcp', 'limb']);
+const SUPPORTED_RESOURCE_TYPES = new Set(['skill', 'mcp', 'limb', 'protocol']);
 const DEFERRED_RESOURCE_TYPES = new Set(['schedule']);
 
 export const BUILTIN_PLUGIN_IDS = new Set<string>();
@@ -85,11 +91,38 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(envName)) {
         throw new Error(`Invalid envName '${envName}': must be a valid shell variable name`);
       }
+      const fieldType = rc['type'] === 'select' ? 'select' : 'text';
+      let options: PluginConfigOption[] | undefined;
+      if (fieldType === 'select' && Array.isArray(rc['options'])) {
+        options = (rc['options'] as Record<string, unknown>[])
+          .filter((o) => typeof o['value'] === 'string' && typeof o['label'] === 'string')
+          .map((o) => ({ value: o['value'] as string, label: o['label'] as string }));
+      }
+
+      let oneOf: Record<string, PluginConfigField[]> | undefined;
+      if (rc['oneOf'] && typeof rc['oneOf'] === 'object') {
+        oneOf = {};
+        for (const [key, fields] of Object.entries(rc['oneOf'] as Record<string, unknown>)) {
+          if (!Array.isArray(fields)) continue;
+          oneOf[key] = (fields as Record<string, unknown>[])
+            .filter((f) => typeof f['envName'] === 'string' && typeof f['label'] === 'string')
+            .map((f) => ({
+              envName: f['envName'] as string,
+              label: f['label'] as string,
+              sensitive: f['sensitive'] === true,
+              required: f['required'] !== false,
+            }));
+        }
+      }
+
       config.push({
         envName,
         label: rc['label'],
         sensitive: rc['sensitive'] === true,
         required: rc['required'] !== false,
+        ...(fieldType !== 'text' ? { type: fieldType } : {}),
+        ...(options ? { options } : {}),
+        ...(oneOf ? { oneOf } : {}),
       });
     }
   }
