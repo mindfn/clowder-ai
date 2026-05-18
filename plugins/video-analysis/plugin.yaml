@@ -38,18 +38,12 @@ config:
     oneOf:
       apikey:
         - { envName: VIDEO_ANALYSIS_API_KEY, label: API Key, sensitive: true }
+        - { envName: VIDEO_ANALYSIS_BASE_URL, label: Base URL, sensitive: false, required: false }
+        - { envName: VIDEO_ANALYSIS_MODEL, label: 模型名称, sensitive: false, required: false }
       query-param:
         - { envName: VIDEO_ANALYSIS_API_KEY, label: API Key, sensitive: true }
-
-  - envName: VIDEO_ANALYSIS_BASE_URL
-    label: Base URL
-    sensitive: false
-    required: false
-
-  - envName: VIDEO_ANALYSIS_MODEL
-    label: 模型名称
-    sensitive: false
-    required: false
+        - { envName: VIDEO_ANALYSIS_BASE_URL, label: Base URL, sensitive: false, required: false }
+        - { envName: VIDEO_ANALYSIS_MODEL, label: 模型名称, sensitive: false, required: false }
 
 resources:
   - type: mcp

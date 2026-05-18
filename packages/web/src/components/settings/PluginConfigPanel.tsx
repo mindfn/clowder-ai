@@ -1,7 +1,7 @@
 'use client';
 
 import type { PluginConfigField, PluginInfo } from '@cat-cafe/shared';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { ExternalLinkIcon, StepBadge } from '../HubConfigIcons';
 
@@ -46,6 +46,25 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
     }
     return fields;
   }, [plugin.config]);
+
+  useEffect(() => {
+    const val = (envName: string) =>
+      fieldValues[envName] ?? plugin.config.find((c) => c.envName === envName)?.currentValue ?? '';
+    const updates: Record<string, string> = {};
+    for (const f of plugin.config) {
+      if (f.type !== 'select' || !f.options) continue;
+      const visible = f.options.filter((o) => {
+        if (!o.supportedBy) return true;
+        return Object.entries(o.supportedBy).every(([dep, allowed]) => !val(dep) || allowed.includes(val(dep)));
+      });
+      if (visible.length === 1 && val(f.envName) !== visible[0].value) {
+        updates[f.envName] = visible[0].value;
+      }
+    }
+    if (Object.keys(updates).length > 0) {
+      setFieldValues((prev) => ({ ...prev, ...updates }));
+    }
+  }, [fieldValues, plugin.config]);
 
   const handleSave = async () => {
     const updates = allConfigFields
