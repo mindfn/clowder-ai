@@ -8,7 +8,7 @@ capabilities:
       method: POST
       path: /api/paas/v4/chat/completions
       body:
-        model: "{{model | default:glm-4v-flash}}"
+        model: "{{model | default:glm-4.6v-flash}}"
         messages:
           - role: user
             content:
