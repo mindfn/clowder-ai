@@ -178,6 +178,47 @@ describe('parsePluginManifest security', () => {
     assert.equal(manifest.healthCheck, undefined);
   });
 
+  it('rejects MCP resource without name', () => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
+    const yamlPath = writeTmpManifest(
+      tmpDir,
+      'no-name-mcp',
+      [
+        'id: no-name-mcp',
+        'name: NoName',
+        'version: 1.0.0',
+        'resources:',
+        '  - type: mcp',
+        '    command: node',
+        '    args: [server.js]',
+      ].join('\n'),
+    );
+    assert.throws(() => parsePluginManifest(yamlPath), /must have a 'name' field/);
+  });
+
+  it('rejects duplicate MCP resource names within same plugin', () => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
+    const yamlPath = writeTmpManifest(
+      tmpDir,
+      'dup-mcp',
+      [
+        'id: dup-mcp',
+        'name: DupMcp',
+        'version: 1.0.0',
+        'resources:',
+        '  - type: mcp',
+        '    name: shared',
+        '    command: node',
+        '    args: [a.js]',
+        '  - type: mcp',
+        '    name: shared',
+        '    command: node',
+        '    args: [b.js]',
+      ].join('\n'),
+    );
+    assert.throws(() => parsePluginManifest(yamlPath), /Duplicate resource capability ID/);
+  });
+
   it('rejects envName with newline injection', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
     const yamlPath = writeTmpManifest(
