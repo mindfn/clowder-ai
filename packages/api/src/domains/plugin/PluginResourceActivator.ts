@@ -334,8 +334,9 @@ export class PluginResourceActivator {
       const actual = await readlink(linkPath);
       if (actual !== expectedTarget) return;
       await rm(linkPath);
-    } catch {
-      // Doesn't exist
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw err;
     }
   }
 }
