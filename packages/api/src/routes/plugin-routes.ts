@@ -177,6 +177,8 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
       const projectRoot = resolveActiveProjectRoot();
       writePluginConfig(projectRoot, id, body.updates);
 
+      await pluginActivator.syncPluginEnv(manifest);
+
       try {
         const auditLog = getEventAuditLog();
         await auditLog.append({

@@ -31,6 +31,7 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const [result, setResult] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
 
   const handleSave = async () => {
@@ -64,6 +65,25 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
       setResult({ type: 'error', msg: '网络错误' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleToggle = async (action: 'enable' | 'disable') => {
+    setToggling(true);
+    setResult(null);
+    try {
+      const res = await apiFetch(`/api/plugins/${plugin.id}/${action}`, { method: 'POST' });
+      const data = (await res.json()) as { status?: string; error?: string };
+      if (res.ok) {
+        setResult({ type: 'success', msg: action === 'enable' ? '插件已启用' : '插件已停用' });
+        onUpdated();
+      } else {
+        setResult({ type: 'error', msg: data.error ?? `${action === 'enable' ? '启用' : '停用'}失败` });
+      }
+    } catch {
+      setResult({ type: 'error', msg: '网络错误' });
+    } finally {
+      setToggling(false);
     }
   };
 
@@ -174,6 +194,27 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
       )}
 
       <div className="flex items-center justify-end gap-2">
+        {isEnabled ? (
+          <button
+            type="button"
+            onClick={() => void handleToggle('disable')}
+            disabled={toggling}
+            className="console-button-secondary text-compact disabled:opacity-50"
+            data-testid="plugin-disable-btn"
+          >
+            {toggling ? '处理中...' : '停用'}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void handleToggle('enable')}
+            disabled={toggling}
+            className="console-button-secondary text-compact disabled:opacity-50"
+            data-testid="plugin-enable-btn"
+          >
+            {toggling ? '处理中...' : '启用'}
+          </button>
+        )}
         {plugin.hasHealthCheck && isEnabled && (
           <button
             type="button"

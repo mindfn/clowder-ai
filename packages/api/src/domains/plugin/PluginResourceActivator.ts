@@ -10,6 +10,7 @@ import type {
 } from '@cat-cafe/shared';
 import type { LimbRegistry } from '../limb/LimbRegistry.js';
 import { resourceCapId } from './PluginRegistry.js';
+import { resolvePluginEnv } from './plugin-config-store.js';
 
 const PROVIDER_DIRS = ['.claude/skills', '.codex/skills', '.gemini/skills', '.kimi/skills'];
 
@@ -239,6 +240,7 @@ export class PluginResourceActivator {
             command: resource.command,
             args: resource.args ?? [],
             transport: (resource.transport as 'stdio' | 'streamableHttp') ?? 'stdio',
+            ...this.buildMcpEnv(manifest),
           };
         }
       } else {
@@ -256,6 +258,7 @@ export class PluginResourceActivator {
             command: resource.command,
             args: resource.args ?? [],
             transport: (resource.transport as 'stdio' | 'streamableHttp') ?? 'stdio',
+            ...this.buildMcpEnv(manifest),
           };
         }
 
@@ -275,6 +278,33 @@ export class PluginResourceActivator {
       config.capabilities = config.capabilities.filter((c) => c.id !== capId);
       await this.deps.writeCapabilities(config);
     });
+  }
+
+  async syncPluginEnv(manifest: PluginManifest): Promise<void> {
+    await this.deps.withCapabilityLock(async () => {
+      const config = await this.deps.readCapabilities();
+      if (!config) return;
+
+      const mcpEnv = this.buildMcpEnv(manifest);
+      let changed = false;
+      for (const cap of config.capabilities) {
+        if (cap.pluginId !== manifest.id || cap.type !== 'mcp' || !cap.mcpServer) continue;
+        cap.mcpServer.env = mcpEnv.env;
+        changed = true;
+      }
+      if (changed) await this.deps.writeCapabilities(config);
+    });
+  }
+
+  private buildMcpEnv(manifest: PluginManifest): { env?: Record<string, string> } {
+    if (manifest.config.length === 0) return {};
+    const resolved = resolvePluginEnv([manifest]);
+    const env: Record<string, string> = {};
+    for (const field of manifest.config) {
+      const val = resolved[field.envName];
+      if (val) env[field.envName] = val;
+    }
+    return Object.keys(env).length > 0 ? { env } : {};
   }
 
   private async ensureSymlink(linkPath: string, target: string): Promise<void> {
