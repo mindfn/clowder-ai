@@ -99,27 +99,19 @@ export function GithubConfigPanel({ plugin }: { plugin: PluginInfo }) {
     <div className="space-y-3.5 px-4 pb-4 pt-3">
       {hasSteps &&
         plugin.setupSteps?.map((step, idx) => (
-          <div key={step} className="space-y-1.5">
-            <div className="flex items-center gap-1.5">
-              <StepBadge num={idx + 1} />
-              <span className="text-[13px] font-medium text-cafe">{step}</span>
-            </div>
-            {idx === 0 && plugin.docsUrl && isSafeUrl(plugin.docsUrl) && (
-              <div className="ml-[26px]">
-                <a href={plugin.docsUrl} target="_blank" rel="noopener noreferrer" className="console-inline-link">
-                  <ExternalLinkIcon />
-                  <span>{safeHostname(plugin.docsUrl)} → 查看官方文档</span>
-                </a>
-              </div>
-            )}
+          <div key={step} className="flex items-center gap-1.5">
+            <StepBadge num={idx + 1} />
+            <span className="text-[13px] font-medium text-cafe">{step}</span>
           </div>
         ))}
 
-      {!hasSteps && plugin.docsUrl && isSafeUrl(plugin.docsUrl) && (
-        <a href={plugin.docsUrl} target="_blank" rel="noopener noreferrer" className="console-inline-link">
-          <ExternalLinkIcon />
-          <span>{safeHostname(plugin.docsUrl)} → 查看官方文档</span>
-        </a>
+      {plugin.docsUrl && isSafeUrl(plugin.docsUrl) && (
+        <div className={hasSteps ? 'ml-[26px]' : ''}>
+          <a href={plugin.docsUrl} target="_blank" rel="noopener noreferrer" className="console-inline-link">
+            <ExternalLinkIcon />
+            <span>{safeHostname(plugin.docsUrl)} → 查看官方文档</span>
+          </a>
+        </div>
       )}
 
       <div>
