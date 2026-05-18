@@ -12,8 +12,14 @@ config:
     sensitive: false
     required: true
     options:
-      - { value: gemini, label: Gemini }
-      - { value: zhipu-vlm, label: 智谱 VLM }
+      - value: gemini
+        label: Gemini
+        hint: 在 Google AI Studio 获取 API Key
+        docsUrl: https://ai.google.dev/gemini-api/docs
+      - value: zhipu-vlm
+        label: 智谱 VLM
+        hint: 在智谱开放平台注册，获取 API Key
+        docsUrl: https://open.bigmodel.cn/dev/api/multimodal
 
   - envName: VIDEO_ANALYSIS_AUTH_TYPE
     label: 认证方式
