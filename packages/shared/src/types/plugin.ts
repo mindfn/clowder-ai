@@ -8,6 +8,7 @@ export interface PluginConfigOption {
   label: string;
   hint?: string;
   docsUrl?: string;
+  supportedBy?: Record<string, string[]>;
 }
 
 /** Plugin config field declaration (from plugin.yaml) */
