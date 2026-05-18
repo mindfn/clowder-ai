@@ -23,7 +23,7 @@ config:
       - value: jimeng
         label: 即梦 (火山引擎)
         hint: 在火山引擎控制台注册，获取 Access Key + Secret Key
-        docsUrl: https://www.volcengine.com/product/jimeng
+        docsUrl: https://www.volcengine.com/docs/85621/1777001
 
   - envName: VIDEO_GEN_AUTH_TYPE
     label: 认证方式
