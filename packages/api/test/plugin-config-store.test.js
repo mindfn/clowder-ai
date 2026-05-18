@@ -55,7 +55,10 @@ describe('plugin-config-store', () => {
     assert.equal(stored.TEST_PLUGIN_SECRET, 'secret456');
 
     const manifest = {
-      id: 'test-plugin', name: 'Test', version: '1.0.0', builtin: false,
+      id: 'test-plugin',
+      name: 'Test',
+      version: '1.0.0',
+      builtin: false,
       config: [
         { envName: 'TEST_PLUGIN_KEY', label: 'Key', sensitive: false, required: true },
         { envName: 'TEST_PLUGIN_SECRET', label: 'Secret', sensitive: true, required: true },
@@ -83,7 +86,10 @@ describe('plugin-config-store', () => {
     trackEnv('TEST_PLUGIN_REMOVE');
 
     const manifest = {
-      id: 'test-plugin', name: 'Test', version: '1.0.0', builtin: false,
+      id: 'test-plugin',
+      name: 'Test',
+      version: '1.0.0',
+      builtin: false,
       config: [{ envName: 'TEST_PLUGIN_REMOVE', label: 'Remove', sensitive: false, required: false }],
       resources: [],
     };
