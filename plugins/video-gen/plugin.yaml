@@ -1,7 +1,7 @@
 id: video-gen
 name: 视频生成
 version: "1.0.0"
-description: 声明式视频/图片生成 — 通过协议模板适配多视频协议（CogVideoX、可灵、即梦等）
+description: 声明式视频/图片生成 — 通过协议模板适配多视频协议（智谱、可灵、即梦等）
 icon: video
 iconBg: "#6366f1"
 
@@ -12,18 +12,18 @@ config:
     sensitive: false
     required: true
     options:
-      - value: cogvideox
-        label: CogVideoX (智谱)
+      - value: zhipu
+        label: 智谱
         hint: 在智谱开放平台注册，获取 API Key
-        docsUrl: https://open.bigmodel.cn/dev/api/videomodel/cogvideox
+        docsUrl: https://docs.bigmodel.cn/cn/guide/models/video-generation
       - value: kling
         label: 可灵
         hint: 在可灵 AI 开放平台注册，获取 Access Key + Secret Key
-        docsUrl: https://platform.klingai.com/docs
+        docsUrl: https://klingapi.com/docs
       - value: jimeng
         label: 即梦 (火山引擎)
         hint: 在火山引擎控制台注册，获取 Access Key + Secret Key
-        docsUrl: https://www.volcengine.com/docs/6791
+        docsUrl: https://www.volcengine.com/product/jimeng
 
   - envName: VIDEO_GEN_AUTH_TYPE
     label: 认证方式
@@ -34,7 +34,7 @@ config:
       - value: apikey
         label: API Key
         supportedBy:
-          VIDEO_GEN_PROVIDER: [cogvideox, kling]
+          VIDEO_GEN_PROVIDER: [zhipu, kling]
       - value: jwt-hs256
         label: JWT (Access Key + Secret)
         supportedBy:
