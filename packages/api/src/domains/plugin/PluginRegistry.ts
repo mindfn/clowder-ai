@@ -156,10 +156,10 @@ export class PluginRegistry {
   }
 }
 
-export function resourceCapId(pluginId: string, resource: { type: string; path?: string; name?: string; command?: string }): string {
+export function resourceCapId(pluginId: string, resource: { type: string; path?: string; name?: string }): string {
   if (resource.type === 'skill' && resource.path) {
     return resource.path.split('/').pop()!;
   }
-  const suffix = resource.path ?? resource.name ?? resource.command ?? resource.type;
+  const suffix = resource.path ?? resource.name ?? resource.type;
   return `plugin:${pluginId}:${suffix}`;
 }

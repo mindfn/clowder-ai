@@ -124,10 +124,15 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
         throw new Error(`Invalid resource command in ${yamlPath}: must be a string`);
       }
 
+      const name = rr['name'] as string | undefined;
+      if (type === 'mcp' && !name) {
+        throw new Error(`MCP resource in ${yamlPath} must have a 'name' field for unique capability ID`);
+      }
+
       resources.push({
         type: type as PluginResourceDef['type'],
         path,
-        name: rr['name'] as string | undefined,
+        name,
         command: command as string | undefined,
         args,
         transport: rr['transport'] as string | undefined,
