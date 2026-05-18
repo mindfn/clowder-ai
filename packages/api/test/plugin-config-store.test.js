@@ -6,6 +6,7 @@ import { after, beforeEach, describe, it } from 'node:test';
 import {
   loadAllPluginConfigs,
   readPluginConfig,
+  resolvePluginEnv,
   writePluginConfig,
 } from '../dist/domains/plugin/plugin-config-store.js';
 
@@ -34,9 +35,11 @@ describe('plugin-config-store', () => {
     assert.deepEqual(result, {});
   });
 
-  it('writePluginConfig creates JSON file and updates process.env', () => {
+  it('writePluginConfig creates JSON file and populates configCache (not process.env)', () => {
     trackEnv('TEST_PLUGIN_KEY');
     trackEnv('TEST_PLUGIN_SECRET');
+    delete process.env.TEST_PLUGIN_KEY;
+    delete process.env.TEST_PLUGIN_SECRET;
 
     const { changedKeys } = writePluginConfig(tmpDir, 'test-plugin', [
       { name: 'TEST_PLUGIN_KEY', value: 'abc123' },
@@ -44,12 +47,24 @@ describe('plugin-config-store', () => {
     ]);
 
     assert.deepEqual(changedKeys, ['TEST_PLUGIN_KEY', 'TEST_PLUGIN_SECRET']);
-    assert.equal(process.env.TEST_PLUGIN_KEY, 'abc123');
-    assert.equal(process.env.TEST_PLUGIN_SECRET, 'secret456');
+    assert.equal(process.env.TEST_PLUGIN_KEY, undefined, 'must not write process.env');
+    assert.equal(process.env.TEST_PLUGIN_SECRET, undefined, 'must not write process.env');
 
     const stored = readPluginConfig(tmpDir, 'test-plugin');
     assert.equal(stored.TEST_PLUGIN_KEY, 'abc123');
     assert.equal(stored.TEST_PLUGIN_SECRET, 'secret456');
+
+    const manifest = {
+      id: 'test-plugin', name: 'Test', version: '1.0.0', builtin: false,
+      config: [
+        { envName: 'TEST_PLUGIN_KEY', label: 'Key', sensitive: false, required: true },
+        { envName: 'TEST_PLUGIN_SECRET', label: 'Secret', sensitive: true, required: true },
+      ],
+      resources: [],
+    };
+    const env = resolvePluginEnv([manifest]);
+    assert.equal(env.TEST_PLUGIN_KEY, 'abc123');
+    assert.equal(env.TEST_PLUGIN_SECRET, 'secret456');
   });
 
   it('writePluginConfig merges with existing config', () => {
@@ -64,14 +79,22 @@ describe('plugin-config-store', () => {
     assert.equal(stored.TEST_PLUGIN_B, 'second');
   });
 
-  it('writePluginConfig removes key when value is null', () => {
+  it('writePluginConfig tombstones key when value is null', () => {
     trackEnv('TEST_PLUGIN_REMOVE');
 
+    const manifest = {
+      id: 'test-plugin', name: 'Test', version: '1.0.0', builtin: false,
+      config: [{ envName: 'TEST_PLUGIN_REMOVE', label: 'Remove', sensitive: false, required: false }],
+      resources: [],
+    };
+
     writePluginConfig(tmpDir, 'test-plugin', [{ name: 'TEST_PLUGIN_REMOVE', value: 'exists' }]);
-    assert.equal(process.env.TEST_PLUGIN_REMOVE, 'exists');
+    let env = resolvePluginEnv([manifest]);
+    assert.equal(env.TEST_PLUGIN_REMOVE, 'exists');
 
     writePluginConfig(tmpDir, 'test-plugin', [{ name: 'TEST_PLUGIN_REMOVE', value: null }]);
-    assert.equal(process.env.TEST_PLUGIN_REMOVE, undefined);
+    env = resolvePluginEnv([manifest]);
+    assert.equal(env.TEST_PLUGIN_REMOVE, undefined, 'null tombstone hides value');
 
     const stored = readPluginConfig(tmpDir, 'test-plugin');
     assert.equal(stored.TEST_PLUGIN_REMOVE, undefined);
@@ -88,7 +111,7 @@ describe('plugin-config-store', () => {
     assert.deepEqual(changedKeys, []);
   });
 
-  it('loadAllPluginConfigs populates process.env for manifest-declared keys only', () => {
+  it('loadAllPluginConfigs populates configCache for manifest-declared keys only', () => {
     trackEnv('LOAD_TEST_KEY');
     trackEnv('LOAD_TEST_ROGUE');
 
@@ -109,16 +132,18 @@ describe('plugin-config-store', () => {
     };
     const count = loadAllPluginConfigs(tmpDir, [manifest]);
     assert.equal(count, 1);
-    assert.equal(process.env.LOAD_TEST_KEY, 'loaded');
-    assert.equal(process.env.LOAD_TEST_ROGUE, undefined, 'undeclared key must not be loaded');
+    assert.equal(process.env.LOAD_TEST_KEY, undefined, 'must not write process.env');
+
+    const env = resolvePluginEnv([manifest]);
+    assert.equal(env.LOAD_TEST_KEY, 'loaded');
+    assert.equal(env.LOAD_TEST_ROGUE, undefined, 'undeclared key must not be resolved');
   });
 
-  it('loadAllPluginConfigs applies null tombstone to override dotenv residue', () => {
+  it('resolvePluginEnv null tombstone overrides dotenv residue', () => {
     trackEnv('TOMBSTONE_KEY');
 
     process.env.TOMBSTONE_KEY = 'from-dotenv';
     writePluginConfig(tmpDir, 'tomb-test', [{ name: 'TOMBSTONE_KEY', value: null }]);
-    process.env.TOMBSTONE_KEY = 'from-dotenv';
 
     const manifest = {
       id: 'tomb-test',
@@ -129,7 +154,9 @@ describe('plugin-config-store', () => {
       resources: [],
     };
     loadAllPluginConfigs(tmpDir, [manifest]);
-    assert.equal(process.env.TOMBSTONE_KEY, undefined, 'null tombstone must delete env var');
+    const env = resolvePluginEnv([manifest]);
+    assert.equal(env.TOMBSTONE_KEY, undefined, 'null tombstone must suppress env fallback');
+    assert.equal(process.env.TOMBSTONE_KEY, 'from-dotenv', 'process.env must not be mutated');
   });
 
   it('JSON file has restricted permissions (0o600)', () => {
