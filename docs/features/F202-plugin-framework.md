@@ -339,6 +339,7 @@ Settings > MCP 管理
 
 1. **OpenClaw bundle 类型整合** — OpenClaw 目录当前只有 `mcp_server` 条目。支持 `skill` / `bundle` 类型的搜索安装，bundle 安装后自动注册为 F202 插件（skill + mcp 组合）
 2. **Bundle 原子管理** — bundle 类型插件在插件管理面板完整回显所含资源。只允许从插件管理整体卸载，禁止从 Console 单独卸载其中的 skill 或 mcp 组件（铲屎官决策 2026-05-18）
+3. **Schedule resource type 激活** — `DEFERRED_RESOURCE_TYPES` 已预留 `schedule` 类型但 scan 时跳过。实现后 GitHub 插件可将 PR tracking / reconciliation scan / CI check 声明为 schedule resources，获得统一的 enable/disable toggle（铲屎官决策 2026-05-18）
 
 ## 现有基础设施复用
 
