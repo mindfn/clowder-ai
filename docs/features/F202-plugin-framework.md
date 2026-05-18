@@ -336,7 +336,6 @@ Settings > MCP 管理
 
 1. **OpenClaw bundle 类型整合** — OpenClaw 目录当前只有 `mcp_server` 条目。支持 `skill` / `bundle` 类型的搜索安装，bundle 安装后自动注册为 F202 插件（skill + mcp 组合）
 2. **Bundle 原子管理** — bundle 类型插件在插件管理面板完整回显所含资源。只允许从插件管理整体卸载，禁止从 Console 单独卸载其中的 skill 或 mcp 组件（铲屎官决策 2026-05-18）
-3. **微信公众号插件适配** — PR #688，待 maintainer 分配 feat ID（复用 F202 或独立编号）
 
 ## 现有基础设施复用
 
