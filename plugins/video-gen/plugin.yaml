@@ -1,0 +1,17 @@
+id: video-gen
+name: 视频生成
+version: "1.0.0"
+description: 声明式视频/图片生成 — 通过协议模板适配多 provider（CogVideoX、可灵、即梦等）
+icon: video
+
+config:
+  - envName: VIDEO_GEN_DEFAULT_PROVIDER
+    label: 默认 Provider ID
+    sensitive: false
+    required: false
+
+resources:
+  - type: mcp
+    name: video-gen-toolset
+  - type: protocol
+    path: protocols/

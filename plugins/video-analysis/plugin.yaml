@@ -1,0 +1,17 @@
+id: video-analysis
+name: 视频分析
+version: "1.0.0"
+description: 声明式视频理解与分析 — 通过协议模板适配多 provider（Gemini、智谱 VLM 等）
+icon: search
+
+config:
+  - envName: VIDEO_ANALYSIS_DEFAULT_PROVIDER
+    label: 默认 Provider ID
+    sensitive: false
+    required: false
+
+resources:
+  - type: mcp
+    name: video-analysis-toolset
+  - type: protocol
+    path: protocols/

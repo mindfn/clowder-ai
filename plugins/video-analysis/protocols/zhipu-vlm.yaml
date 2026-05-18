@@ -1,0 +1,24 @@
+name: zhipu-vlm
+version: 1
+mode: sync
+
+capabilities:
+  analyze:
+    request:
+      method: POST
+      path: /api/paas/v4/chat/completions
+      body:
+        model: "{{model | default:glm-4v-flash}}"
+        messages:
+          - role: user
+            content:
+              - type: text
+                text: "{{prompt}}"
+              - type: video_url
+                video_url:
+                  url: "{{videoUrl}}"
+        temperature: 0.2
+        response_format:
+          type: json_object
+      response:
+        result: $.choices[0].message.content

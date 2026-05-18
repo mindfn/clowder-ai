@@ -1,0 +1,44 @@
+name: gemini-video-analysis
+version: 1
+mode: sync
+
+auth:
+  method: query-param
+  paramName: key
+
+capabilities:
+  analyze:
+    request:
+      method: POST
+      path: /v1beta/models/{{model | default:gemini-2.0-flash}}:generateContent
+      body:
+        contents:
+          - role: user
+            parts:
+              - inlineData:
+                  mimeType: "{{mimeType | default:video/mp4}}"
+                  data: "{{videoData | base64}}"
+              - text: "{{prompt}}"
+        generationConfig:
+          temperature: 0.2
+          responseMimeType: application/json
+      response:
+        result: $.candidates[0].content.parts[0].text
+
+  analyze_url:
+    request:
+      method: POST
+      path: /v1beta/models/{{model | default:gemini-2.0-flash}}:generateContent
+      body:
+        contents:
+          - role: user
+            parts:
+              - fileData:
+                  mimeType: "{{mimeType | default:video/mp4}}"
+                  fileUri: "{{videoUrl}}"
+              - text: "{{prompt}}"
+        generationConfig:
+          temperature: 0.2
+          responseMimeType: application/json
+      response:
+        result: $.candidates[0].content.parts[0].text
