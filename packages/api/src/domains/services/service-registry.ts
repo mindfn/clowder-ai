@@ -310,8 +310,18 @@ function resolveVenvPath(venvPath: string): string {
 
 export function checkInstalled(manifest: ServiceManifest): boolean {
   const config = getServiceConfig(manifest.id);
-  // Trust explicit states from install/uninstall flows.
-  if (config.installStatus === 'installed') return true;
+  const venv = manifest.prerequisites?.venvPath;
+
+  if (config.installStatus === 'installed') {
+    // Revalidate against on-disk venv. Persisted 'installed' can drift
+    // from reality if CAT_CAFE_HOME was changed, the venv was removed
+    // out-of-band (rm -rf, manual cleanup), or the services.json was
+    // restored from another machine. Without the probe, the UI hides
+    // the install path while start / autostart fail against a missing
+    // runtime. Codex P2 3256075417.
+    if (!venv) return true; // service has no venv (e.g. binary type) — trust the flag
+    return existsSync(resolveVenvPath(venv));
+  }
   if (config.installStatus === 'failed' || config.installStatus === 'installing') {
     return false;
   }
@@ -319,18 +329,22 @@ export function checkInstalled(manifest: ServiceManifest): boolean {
   // (services.json never written or set to 'none' by uninstall). Fall
   // through to venv probe so manual / offline / script installs are
   // recovered instead of being permanently shown as not-installed.
-  const venv = manifest.prerequisites?.venvPath;
   if (!venv) return true;
   return existsSync(resolveVenvPath(venv));
 }
 
 export function getInstallStatus(manifest: ServiceManifest): InstallStatus {
   const config = getServiceConfig(manifest.id);
-  // Trust explicit states. Only 'none' / undefined fall through to
-  // venv probe (mirrors checkInstalled fallback so the two functions
-  // agree on every state).
-  if (config.installStatus && config.installStatus !== 'none') return config.installStatus;
   const venv = manifest.prerequisites?.venvPath;
+
+  // Revalidate persisted 'installed' against on-disk venv — same drift
+  // concern as checkInstalled (codex P2 3256075417). 'failed' and
+  // 'installing' are transition states we still trust as authoritative.
+  if (config.installStatus === 'installed') {
+    if (!venv) return 'installed';
+    return existsSync(resolveVenvPath(venv)) ? 'installed' : 'none';
+  }
+  if (config.installStatus && config.installStatus !== 'none') return config.installStatus;
   if (!venv) return 'installed';
   return existsSync(resolveVenvPath(venv)) ? 'installed' : 'none';
 }
