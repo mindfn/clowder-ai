@@ -1,5 +1,5 @@
 /**
- * Plugin Routes — F197 Plugin Framework
+ * Plugin Routes — F202 Plugin Framework
  *
  * Dynamic plugin discovery, configuration, and resource lifecycle management.
  */

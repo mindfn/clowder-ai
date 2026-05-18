@@ -1,5 +1,5 @@
 /**
- * Plugin Framework Types — F197 声明式插件注册与资源编排
+ * Plugin Framework Types — F202 声明式插件注册与资源编排
  */
 
 /** Plugin config field declaration (from plugin.yaml) */

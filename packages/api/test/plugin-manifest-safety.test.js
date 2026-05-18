@@ -1,5 +1,5 @@
 /**
- * F197: Plugin manifest security boundary tests
+ * F202: Plugin manifest security boundary tests
  */
 
 import assert from 'node:assert/strict';
