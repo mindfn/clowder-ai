@@ -1,7 +1,7 @@
 'use client';
 
-import type { PluginInfo } from '@cat-cafe/shared';
-import { useState } from 'react';
+import type { PluginConfigField, PluginInfo } from '@cat-cafe/shared';
+import { useMemo, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { ExternalLinkIcon, StepBadge } from '../HubConfigIcons';
 import { ConfigFieldRenderer } from './primitives/ConfigFieldRenderer';
@@ -38,8 +38,21 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
 
+  const allConfigFields = useMemo(() => {
+    const fields: PluginConfigField[] = [];
+    for (const f of plugin.config) {
+      fields.push(f);
+      if (f.oneOf) {
+        for (const group of Object.values(f.oneOf)) {
+          fields.push(...group);
+        }
+      }
+    }
+    return fields;
+  }, [plugin.config]);
+
   const handleSave = async () => {
-    const updates = plugin.config
+    const updates = allConfigFields
       .filter((f) => fieldValues[f.envName] !== undefined)
       .map((f) => {
         const v = fieldValues[f.envName] as string;

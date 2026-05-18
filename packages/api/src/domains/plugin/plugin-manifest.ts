@@ -19,7 +19,7 @@ const SYSTEM_ENV_DENYLIST_PREFIXES = [
 
 const SYSTEM_ENV_DENYLIST_EXACT = new Set(['NODE_OPTIONS', 'NODE_ENV', 'PATH', 'HOME', 'SHELL', 'PORT']);
 
-const SUPPORTED_RESOURCE_TYPES = new Set(['skill', 'mcp', 'limb', 'schedule']);
+const SUPPORTED_RESOURCE_TYPES = new Set(['skill', 'mcp', 'limb', 'schedule', 'protocol']);
 const DEFERRED_RESOURCE_TYPES = new Set<string>();
 
 export const BUILTIN_PLUGIN_IDS = new Set<string>();
