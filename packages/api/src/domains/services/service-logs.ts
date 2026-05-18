@@ -113,23 +113,35 @@ export function wireUpSidecarReadyListener(child: ChildLike, serviceId: string, 
       /* swallow — caller's onReady is itself idempotent / safe */
     }
   };
-  const handleChunk = (chunk: Buffer | string): void => {
-    const text = chunk.toString('utf-8');
-    // Mirror stdout/stderr into the service log so users still see install/
-    // start output via readLogTail.
-    appendLog(serviceId, text);
-    if (fired) return;
-    if (text.includes(READY_MARKER)) {
-      trigger('explicit marker');
-      return;
-    }
-    for (const pattern of FALLBACK_MARKERS) {
-      if (pattern.test(text)) {
-        trigger(`uvicorn pattern: ${pattern.source}`);
+  // Stream chunking is arbitrary — marker text can be split across two
+  // chunks (e.g. "...__CATCAFE" + "_SIDECAR_READY__..."). Per-stream
+  // rolling buffers let includes()/regex match across that boundary.
+  // Bounded length so unbounded sidecar output doesn't leak memory;
+  // 256 chars comfortably covers the longest marker (~28 chars for
+  // "Application startup complete") plus prefix slack. Codex P2 3256102827.
+  const MAX_BUFFER = 256;
+  const makeHandler = (): ((chunk: Buffer | string) => void) => {
+    let buffer = '';
+    return (chunk: Buffer | string): void => {
+      const text = chunk.toString('utf-8');
+      // Mirror stdout/stderr into the service log so users still see
+      // install/start output via readLogTail.
+      appendLog(serviceId, text);
+      if (fired) return;
+      buffer += text;
+      if (buffer.includes(READY_MARKER)) {
+        trigger('explicit marker');
         return;
       }
-    }
+      for (const pattern of FALLBACK_MARKERS) {
+        if (pattern.test(buffer)) {
+          trigger(`uvicorn pattern: ${pattern.source}`);
+          return;
+        }
+      }
+      if (buffer.length > MAX_BUFFER) buffer = buffer.slice(-MAX_BUFFER);
+    };
   };
-  child.stdout?.on('data', handleChunk);
-  child.stderr?.on('data', handleChunk);
+  child.stdout?.on('data', makeHandler());
+  child.stderr?.on('data', makeHandler());
 }
