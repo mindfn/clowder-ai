@@ -56,7 +56,7 @@ describe('PluginsContent GitHub configuration', () => {
     vi.clearAllMocks();
   });
 
-  it('opens editable GitHub config fields and saves changed values', async () => {
+  it('opens editable GitHub config fields and saves via connector path', async () => {
     mockApiFetch.mockImplementation(async (url, init) => {
       if (url === '/api/plugins') {
         return jsonResponse({
@@ -69,7 +69,18 @@ describe('PluginsContent GitHub configuration', () => {
               iconBg: '#24292e',
               status: 'configured',
               hasHealthCheck: false,
-              config: [
+              config: [],
+              resources: [],
+            },
+          ],
+        });
+      }
+      if (url === '/api/connector/status') {
+        return jsonResponse({
+          platforms: [
+            {
+              id: 'github',
+              fields: [
                 {
                   envName: 'GITHUB_TOKEN',
                   label: 'Personal Access Token',
@@ -83,12 +94,11 @@ describe('PluginsContent GitHub configuration', () => {
                   currentValue: 'chatgpt-codex-connector[bot]',
                 },
               ],
-              resources: [],
             },
           ],
         });
       }
-      if (url === '/api/plugins/github/config' && init?.method === 'POST') {
+      if (url === '/api/config/secrets' && init?.method === 'POST') {
         return jsonResponse({ ok: true });
       }
       return jsonResponse({}, 404);
@@ -124,7 +134,7 @@ describe('PluginsContent GitHub configuration', () => {
     });
 
     const save = Array.from(container.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('保存配置'),
+      button.textContent?.includes('保存 GitHub 配置'),
     );
     expect(save).toBeTruthy();
 
@@ -133,7 +143,7 @@ describe('PluginsContent GitHub configuration', () => {
     });
     await flushEffects();
 
-    const saveCall = mockApiFetch.mock.calls.find((call) => call[0] === '/api/plugins/github/config');
+    const saveCall = mockApiFetch.mock.calls.find((call) => call[0] === '/api/config/secrets');
     expect(saveCall).toBeTruthy();
     expect(JSON.parse((saveCall?.[1] as { body: string }).body)).toEqual({
       updates: [
