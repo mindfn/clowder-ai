@@ -214,6 +214,28 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
                         data-testid={`field-${f.envName}`}
                       />
                     )}
+                    {f.type === 'select' &&
+                      f.options?.find((o) => o.value === selectedValue) &&
+                      (() => {
+                        const sel = f.options!.find((o) => o.value === selectedValue)!;
+                        if (!sel.hint && !sel.docsUrl) return null;
+                        return (
+                          <div className="mt-1.5 space-y-1">
+                            {sel.hint && <p className="text-xs text-cafe-secondary">{sel.hint}</p>}
+                            {sel.docsUrl && isSafeUrl(sel.docsUrl) && (
+                              <a
+                                href={sel.docsUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="console-inline-link"
+                              >
+                                <ExternalLinkIcon />
+                                <span>{safeHostname(sel.docsUrl)} → 查看文档</span>
+                              </a>
+                            )}
+                          </div>
+                        );
+                      })()}
                   </div>
                   {activeOneOf?.map((sub) => (
                     <div key={sub.envName}>

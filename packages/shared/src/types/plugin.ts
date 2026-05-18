@@ -6,6 +6,8 @@
 export interface PluginConfigOption {
   value: string;
   label: string;
+  hint?: string;
+  docsUrl?: string;
 }
 
 /** Plugin config field declaration (from plugin.yaml) */

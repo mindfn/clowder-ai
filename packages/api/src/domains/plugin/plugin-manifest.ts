@@ -96,7 +96,12 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
       if (fieldType === 'select' && Array.isArray(rc['options'])) {
         options = (rc['options'] as Record<string, unknown>[])
           .filter((o) => typeof o['value'] === 'string' && typeof o['label'] === 'string')
-          .map((o) => ({ value: o['value'] as string, label: o['label'] as string }));
+          .map((o) => ({
+            value: o['value'] as string,
+            label: o['label'] as string,
+            ...(typeof o['hint'] === 'string' ? { hint: o['hint'] } : {}),
+            ...(typeof o['docsUrl'] === 'string' ? { docsUrl: o['docsUrl'] } : {}),
+          }));
       }
 
       let oneOf: Record<string, PluginConfigField[]> | undefined;
