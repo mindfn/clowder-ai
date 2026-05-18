@@ -27,7 +27,11 @@ export interface ActivatePluginResult {
   resources: ActivationResult[];
 }
 
-export type LimbAdapterFactory = (pluginId: string, limbYamlPath: string) => Promise<ILimbNode>;
+export type LimbAdapterFactory = (
+  pluginId: string,
+  limbYamlPath: string,
+  pluginConfig: Record<string, string>,
+) => Promise<ILimbNode>;
 
 export interface PluginResourceActivatorDeps {
   resolveProjectRoot: () => string;
@@ -170,7 +174,8 @@ export class PluginResourceActivator {
     }
 
     const yamlPath = join(this.deps.pluginsDir, manifest.id, resource.path);
-    const node = await this.deps.limbAdapterFactory(manifest.id, yamlPath);
+    const pluginConfig = readPluginConfig(this.deps.resolveProjectRoot(), manifest.id);
+    const node = await this.deps.limbAdapterFactory(manifest.id, yamlPath, pluginConfig);
     await this.upsertCapabilityEntry(manifest, resource, true, node.nodeId);
     try {
       await this.deps.limbRegistry.register(node);
