@@ -64,9 +64,9 @@ export interface CapabilityEntry {
   lockVersion?: LockVersion;
   /** F146-C: Persistent probe state (AC-C3/C4/C6) */
   probeState?: ProbeState;
-  /** F197: Plugin that owns this capability (for plugin-managed resources) */
+  /** F202: Plugin that owns this capability (for plugin-managed resources) */
   pluginId?: string;
-  /** F197: Limb node ID (for type: 'limb') — enables deregistration when YAML is unreadable */
+  /** F202: Limb node ID (for type: 'limb') — enables deregistration when YAML is unreadable */
   limbNodeId?: string;
 }
 
@@ -128,7 +128,7 @@ export interface CapabilityBoardItem {
   ecosystem?: MarketplaceEcosystem;
   /** F146-D: Version lock info (from Phase C install governance) */
   lockVersion?: LockVersion;
-  /** F197: Plugin that owns this capability */
+  /** F202: Plugin that owns this capability */
   pluginId?: string;
 }
 
