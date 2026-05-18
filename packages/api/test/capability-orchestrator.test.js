@@ -1160,6 +1160,40 @@ describe('ensureSplitServerCompleteness', () => {
     assert.equal(result.migrated, false);
   });
 
+  it('monolith-only: removes monolith and backfills all splits', () => {
+    const config = makeConfig([
+      {
+        id: 'cat-cafe',
+        type: 'mcp',
+        enabled: false,
+        source: 'cat-cafe',
+        overrides: [{ catId: 'codex', enabled: true }],
+        mcpServer: { command: 'node', args: ['index.js'] },
+      },
+      {
+        id: 'pencil',
+        type: 'mcp',
+        enabled: true,
+        source: 'external',
+        mcpServer: { command: 'node', args: ['pencil.js'] },
+      },
+    ]);
+
+    const result = ensureSplitServerCompleteness(config, { projectRoot: '/repo' });
+    assert.equal(result.migrated, true);
+    assert.ok(!result.config.capabilities.find((c) => c.id === 'cat-cafe'), 'monolith removed');
+    const splits = result.config.capabilities.filter((c) => c.source === 'cat-cafe');
+    assert.equal(splits.length, 4, 'all 4 splits backfilled');
+    for (const s of splits) {
+      assert.equal(s.enabled, false, 'inherits monolith disabled state');
+      assert.deepEqual(s.overrides, [{ catId: 'codex', enabled: true }]);
+    }
+    assert.ok(
+      result.config.capabilities.find((c) => c.id === 'pencil'),
+      'external untouched',
+    );
+  });
+
   it('no-op when no split servers exist', () => {
     const config = makeConfig([
       {

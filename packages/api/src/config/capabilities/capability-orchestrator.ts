@@ -692,24 +692,29 @@ export function ensureSplitServerCompleteness(
   let migrated = false;
   const capabilities = [...config.capabilities];
 
-  // Remove legacy monolith — per-server enabled/disabled cannot work with index.js
+  // Remove legacy monolith — per-server enabled/disabled cannot work with index.js.
+  // Save settings so we can inherit them when backfilling splits (monolith-only upgrade).
   const monolithIdx = capabilities.findIndex(
     (cap) => cap.type === 'mcp' && cap.id === 'cat-cafe' && cap.source === 'cat-cafe',
   );
+  let monolithEntry: CapabilityEntry | undefined;
   if (monolithIdx >= 0) {
+    monolithEntry = capabilities[monolithIdx];
     capabilities.splice(monolithIdx, 1);
     migrated = true;
   }
 
-  // Add any missing split servers only if at least one split already exists
+  // Add missing split servers when at least one split exists OR we just removed
+  // the monolith (defense: write routes call this without migrateLegacy first).
   const splitIdSet = new Set<string>(CAT_CAFE_SPLIT_SERVER_IDS);
   const existingIds = new Set(capabilities.map((cap) => cap.id));
   const hasAnySplit = capabilities.some((cap) => splitIdSet.has(cap.id));
-  const missingSplits = hasAnySplit ? CAT_CAFE_SPLIT_SERVER_IDS.filter((id) => !existingIds.has(id)) : [];
+  const shouldBackfill = hasAnySplit || !!monolithEntry;
+  const missingSplits = shouldBackfill ? CAT_CAFE_SPLIT_SERVER_IDS.filter((id) => !existingIds.has(id)) : [];
   if (missingSplits.length > 0) {
     const binaryRoot = resolveBinaryRoot(opts?.catCafeRepoRoot);
     const allDescriptors = buildCatCafeSplitMcpDescriptors(binaryRoot);
-    const firstSplit = capabilities.find((cap) => splitIdSet.has(cap.id));
+    const firstSplit = capabilities.find((cap) => splitIdSet.has(cap.id)) ?? monolithEntry;
     for (const id of missingSplits) {
       const descriptor = allDescriptors.find((d) => d.name === id);
       if (!descriptor) continue;
