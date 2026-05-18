@@ -1,7 +1,7 @@
 'use client';
 
-import type { PluginInfo } from '@cat-cafe/shared';
-import { useState } from 'react';
+import type { PluginConfigField, PluginInfo } from '@cat-cafe/shared';
+import { useMemo, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { ExternalLinkIcon, StepBadge } from '../HubConfigIcons';
 
@@ -34,8 +34,21 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
   const [toggling, setToggling] = useState(false);
   const [result, setResult] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
 
+  const allConfigFields = useMemo(() => {
+    const fields: PluginConfigField[] = [];
+    for (const f of plugin.config) {
+      fields.push(f);
+      if (f.oneOf) {
+        for (const group of Object.values(f.oneOf)) {
+          fields.push(...group);
+        }
+      }
+    }
+    return fields;
+  }, [plugin.config]);
+
   const handleSave = async () => {
-    const updates = plugin.config
+    const updates = allConfigFields
       .filter((f) => fieldValues[f.envName] !== undefined)
       .map((f) => ({
         name: f.envName,
@@ -156,24 +169,72 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
             </div>
           )}
           <div className={hasSteps ? 'ml-[26px] space-y-2.5' : 'space-y-2.5'}>
-            {plugin.config.map((f) => (
-              <div key={f.envName}>
-                <label htmlFor={`plugin-${f.envName}`} className="mb-1 block text-xs font-medium text-cafe-secondary">
-                  {f.label}
-                </label>
-                <input
-                  id={`plugin-${f.envName}`}
-                  type={f.sensitive ? 'password' : 'text'}
-                  placeholder={
-                    f.sensitive ? (f.currentValue ? '已设置（输入新值覆盖）' : '未设置') : (f.currentValue ?? '未设置')
-                  }
-                  value={fieldValues[f.envName] ?? ''}
-                  onChange={(e) => setFieldValues((prev) => ({ ...prev, [f.envName]: e.target.value }))}
-                  className="console-form-input py-2.5 text-[13px]"
-                  data-testid={`field-${f.envName}`}
-                />
-              </div>
-            ))}
+            {plugin.config.map((f) => {
+              const selectedValue = fieldValues[f.envName] ?? f.currentValue ?? '';
+              const activeOneOf = f.oneOf && selectedValue ? f.oneOf[selectedValue] : undefined;
+
+              return (
+                <div key={f.envName} className="space-y-2.5">
+                  <div>
+                    <label
+                      htmlFor={`plugin-${f.envName}`}
+                      className="mb-1 block text-xs font-medium text-cafe-secondary"
+                    >
+                      {f.label}
+                    </label>
+                    {f.type === 'select' && f.options ? (
+                      <select
+                        id={`plugin-${f.envName}`}
+                        value={fieldValues[f.envName] ?? f.currentValue ?? ''}
+                        onChange={(e) => setFieldValues((prev) => ({ ...prev, [f.envName]: e.target.value }))}
+                        className="console-form-input py-2.5 text-[13px]"
+                        data-testid={`field-${f.envName}`}
+                      >
+                        <option value="">请选择</option>
+                        {f.options.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        id={`plugin-${f.envName}`}
+                        type={f.sensitive ? 'password' : 'text'}
+                        placeholder={
+                          f.sensitive
+                            ? (f.currentValue ? '已设置（输入新值覆盖）' : '未设置')
+                            : (f.currentValue ?? '未设置')
+                        }
+                        value={fieldValues[f.envName] ?? ''}
+                        onChange={(e) => setFieldValues((prev) => ({ ...prev, [f.envName]: e.target.value }))}
+                        className="console-form-input py-2.5 text-[13px]"
+                        data-testid={`field-${f.envName}`}
+                      />
+                    )}
+                  </div>
+                  {activeOneOf?.map((sub) => (
+                    <div key={sub.envName}>
+                      <label
+                        htmlFor={`plugin-${sub.envName}`}
+                        className="mb-1 block text-xs font-medium text-cafe-secondary"
+                      >
+                        {sub.label}
+                      </label>
+                      <input
+                        id={`plugin-${sub.envName}`}
+                        type={sub.sensitive ? 'password' : 'text'}
+                        placeholder={sub.sensitive ? '未设置' : '未设置'}
+                        value={fieldValues[sub.envName] ?? ''}
+                        onChange={(e) => setFieldValues((prev) => ({ ...prev, [sub.envName]: e.target.value }))}
+                        className="console-form-input py-2.5 text-[13px]"
+                        data-testid={`field-${sub.envName}`}
+                      />
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

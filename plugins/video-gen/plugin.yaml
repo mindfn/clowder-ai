@@ -3,10 +3,47 @@ name: 视频生成
 version: "1.0.0"
 description: 声明式视频/图片生成 — 通过协议模板适配多 provider（CogVideoX、可灵、即梦等）
 icon: video
+iconBg: "#6366f1"
 
 config:
-  - envName: VIDEO_GEN_DEFAULT_PROVIDER
-    label: 默认 Provider ID
+  - envName: VIDEO_GEN_PROVIDER
+    label: Provider
+    type: select
+    sensitive: false
+    required: true
+    options:
+      - { value: cogvideox, label: CogVideoX (智谱) }
+      - { value: kling, label: 可灵 }
+      - { value: jimeng, label: 即梦 (火山引擎) }
+
+  - envName: VIDEO_GEN_AUTH_TYPE
+    label: 认证方式
+    type: select
+    sensitive: false
+    required: true
+    options:
+      - { value: apikey, label: API Key }
+      - { value: jwt-hs256, label: JWT (Access Key + Secret) }
+      - { value: hmac-sha256-v4, label: HMAC-SHA256 V4 }
+    oneOf:
+      apikey:
+        - { envName: VIDEO_GEN_API_KEY, label: API Key, sensitive: true }
+      jwt-hs256:
+        - { envName: VIDEO_GEN_ACCESS_KEY, label: Access Key, sensitive: true }
+        - { envName: VIDEO_GEN_SECRET_KEY, label: Secret Key, sensitive: true }
+      hmac-sha256-v4:
+        - { envName: VIDEO_GEN_ACCESS_KEY, label: Access Key, sensitive: true }
+        - { envName: VIDEO_GEN_SECRET_KEY, label: Secret Key, sensitive: true }
+        - { envName: VIDEO_GEN_REGION, label: Region, sensitive: false, required: false }
+        - { envName: VIDEO_GEN_SERVICE, label: Service, sensitive: false, required: false }
+
+  - envName: VIDEO_GEN_BASE_URL
+    label: Base URL
+    sensitive: false
+    required: false
+
+  - envName: VIDEO_GEN_MODEL
+    label: 模型名称
     sensitive: false
     required: false
 
