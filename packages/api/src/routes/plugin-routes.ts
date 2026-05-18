@@ -13,7 +13,7 @@ import type { LimbRegistry } from '../domains/limb/LimbRegistry.js';
 import { loadLimbDeclaration } from '../domains/limb/limb-yaml-loader.js';
 import type { PluginRegistry } from '../domains/plugin/PluginRegistry.js';
 import type { PluginResourceActivator } from '../domains/plugin/PluginResourceActivator.js';
-import { writePluginConfig } from '../domains/plugin/plugin-config-store.js';
+import { resolvePluginEnv, writePluginConfig } from '../domains/plugin/plugin-config-store.js';
 import { validateEnvSafety } from '../domains/plugin/plugin-manifest.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
@@ -35,9 +35,8 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
     const capabilities = await readCapabilitiesConfig(projectRoot);
     const manifests = pluginRegistry.getAllManifests();
 
-    const plugins: PluginInfo[] = manifests.map((m) =>
-      pluginRegistry.getPluginInfo(m, capabilities, process.env as Record<string, string | undefined>),
-    );
+    const envSnapshot = resolvePluginEnv(manifests);
+    const plugins: PluginInfo[] = manifests.map((m) => pluginRegistry.getPluginInfo(m, capabilities, envSnapshot));
 
     return { plugins };
   });
@@ -52,7 +51,8 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
 
     const projectRoot = resolveActiveProjectRoot();
     const capabilities = await readCapabilitiesConfig(projectRoot);
-    return pluginRegistry.getPluginInfo(manifest, capabilities, process.env as Record<string, string | undefined>);
+    const envSnapshot = resolvePluginEnv([manifest]);
+    return pluginRegistry.getPluginInfo(manifest, capabilities, envSnapshot);
   });
 
   app.post<{ Params: { id: string } }>('/api/plugins/:id/enable', async (request, reply) => {
