@@ -31,9 +31,18 @@ config:
     sensitive: false
     required: true
     options:
-      - { value: apikey, label: API Key }
-      - { value: jwt-hs256, label: JWT (Access Key + Secret) }
-      - { value: hmac-sha256-v4, label: HMAC-SHA256 V4 }
+      - value: apikey
+        label: API Key
+        supportedBy:
+          VIDEO_GEN_PROVIDER: [cogvideox, kling]
+      - value: jwt-hs256
+        label: JWT (Access Key + Secret)
+        supportedBy:
+          VIDEO_GEN_PROVIDER: [kling]
+      - value: hmac-sha256-v4
+        label: HMAC-SHA256 V4
+        supportedBy:
+          VIDEO_GEN_PROVIDER: [jimeng]
     oneOf:
       apikey:
         - { envName: VIDEO_GEN_API_KEY, label: API Key, sensitive: true }

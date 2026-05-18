@@ -39,6 +39,16 @@ function isSystemEnv(envName: string): boolean {
   return SYSTEM_ENV_DENYLIST_PREFIXES.some((p) => upper.startsWith(p));
 }
 
+function parseSupportedBy(raw: Record<string, unknown>): Record<string, string[]> {
+  const result: Record<string, string[]> = {};
+  for (const [key, val] of Object.entries(raw)) {
+    if (Array.isArray(val) && val.every((v) => typeof v === 'string')) {
+      result[key] = val as string[];
+    }
+  }
+  return result;
+}
+
 export function validateEnvSafety(manifest: PluginManifest, existingClaims: Map<string, string>): EnvSafetyResult {
   const errors: string[] = [];
   const pluginPrefix = manifest.id.toUpperCase().replace(/-/g, '_') + '_';
@@ -101,6 +111,9 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
             label: o['label'] as string,
             ...(typeof o['hint'] === 'string' ? { hint: o['hint'] } : {}),
             ...(typeof o['docsUrl'] === 'string' ? { docsUrl: o['docsUrl'] } : {}),
+            ...(o['supportedBy'] && typeof o['supportedBy'] === 'object'
+              ? { supportedBy: parseSupportedBy(o['supportedBy'] as Record<string, unknown>) }
+              : {}),
           }));
       }
 

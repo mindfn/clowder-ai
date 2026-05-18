@@ -2,7 +2,7 @@ id: video-analysis
 name: 视频分析
 version: "1.0.0"
 description: 声明式视频理解与分析 — 通过视频协议模板适配 Gemini、智谱 VLM 等
-icon: search-pulse
+icon: monitor-wave
 iconBg: "#0ea5e9"
 
 config:
@@ -27,8 +27,14 @@ config:
     sensitive: false
     required: true
     options:
-      - { value: apikey, label: API Key }
-      - { value: query-param, label: Query Parameter }
+      - value: apikey
+        label: API Key
+        supportedBy:
+          VIDEO_ANALYSIS_PROVIDER: [gemini, zhipu-vlm]
+      - value: query-param
+        label: Query Parameter
+        supportedBy:
+          VIDEO_ANALYSIS_PROVIDER: [gemini]
     oneOf:
       apikey:
         - { envName: VIDEO_ANALYSIS_API_KEY, label: API Key, sensitive: true }

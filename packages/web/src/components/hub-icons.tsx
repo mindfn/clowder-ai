@@ -68,7 +68,8 @@ const ICON_PATHS: Record<string, string> = {
   'at-sign': 'M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0zM16 12v1.5a2.5 2.5 0 0 0 5 0V12a9 9 0 1 0-5.5 8.28',
   video:
     'M5 6h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zM15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14v-4zM9 3l.5 1.5L11 5l-1.5.5L9 7l-.5-1.5L7 5l1.5-.5L9 3z',
-  'search-pulse': 'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35M8 11h1.5l1-2 1 4 1-2h1.5',
+  'monitor-wave':
+    'M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM7 11h1.5l1.5-2.5 2 5 1.5-2.5H15M9 20h6M12 18v2',
 };
 
 export function HubIcon({ name, className = 'w-5 h-5' }: { name: string; className?: string }) {
