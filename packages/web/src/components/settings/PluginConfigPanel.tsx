@@ -203,7 +203,9 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
                         type={f.sensitive ? 'password' : 'text'}
                         placeholder={
                           f.sensitive
-                            ? (f.currentValue ? '已设置（输入新值覆盖）' : '未设置')
+                            ? f.currentValue
+                              ? '已设置（输入新值覆盖）'
+                              : '未设置'
                             : (f.currentValue ?? '未设置')
                         }
                         value={fieldValues[f.envName] ?? ''}
