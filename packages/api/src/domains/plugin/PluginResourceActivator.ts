@@ -276,9 +276,7 @@ export class PluginResourceActivator {
       if (!config) return;
 
       const capId = resourceCapId(manifest.id, resource);
-      config.capabilities = config.capabilities.filter(
-        (c) => !(c.id === capId && c.pluginId === manifest.id),
-      );
+      config.capabilities = config.capabilities.filter((c) => !(c.id === capId && c.pluginId === manifest.id));
       await this.deps.writeCapabilities(config);
     });
   }
