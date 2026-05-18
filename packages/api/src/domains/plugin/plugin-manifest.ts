@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type { PluginConfigField, PluginHealthCheck, PluginManifest, PluginResourceDef } from '@cat-cafe/shared';
 import { parse as parseYaml } from 'yaml';
+import { resourceCapId } from './PluginRegistry.js';
 
 const SYSTEM_ENV_DENYLIST_PREFIXES = [
   'CAT_CAFE_',
@@ -138,6 +139,15 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
         transport: rr['transport'] as string | undefined,
       });
     }
+  }
+
+  const seenCapIds = new Set<string>();
+  for (const res of resources) {
+    const capId = resourceCapId(id, res);
+    if (seenCapIds.has(capId)) {
+      throw new Error(`Duplicate resource capability ID '${capId}' in ${yamlPath}`);
+    }
+    seenCapIds.add(capId);
   }
 
   let healthCheck: PluginHealthCheck | undefined;
