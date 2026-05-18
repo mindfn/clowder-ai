@@ -10,7 +10,7 @@ import type {
 } from '@cat-cafe/shared';
 import type { LimbRegistry } from '../limb/LimbRegistry.js';
 import { resourceCapId } from './PluginRegistry.js';
-import { resolvePluginEnv } from './plugin-config-store.js';
+import { readPluginConfig } from './plugin-config-store.js';
 
 const PROVIDER_DIRS = ['.claude/skills', '.codex/skills', '.gemini/skills', '.kimi/skills'];
 
@@ -298,10 +298,11 @@ export class PluginResourceActivator {
 
   private buildMcpEnv(manifest: PluginManifest): { env?: Record<string, string> } {
     if (manifest.config.length === 0) return {};
-    const resolved = resolvePluginEnv([manifest]);
+    const projectRoot = this.deps.resolveProjectRoot();
+    const stored = readPluginConfig(projectRoot, manifest.id);
     const env: Record<string, string> = {};
     for (const field of manifest.config) {
-      const val = resolved[field.envName];
+      const val = stored[field.envName];
       if (val) env[field.envName] = val;
     }
     return Object.keys(env).length > 0 ? { env } : {};
