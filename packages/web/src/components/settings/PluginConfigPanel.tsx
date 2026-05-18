@@ -4,7 +4,6 @@ import type { PluginConfigField, PluginInfo } from '@cat-cafe/shared';
 import { useMemo, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { ExternalLinkIcon, StepBadge } from '../HubConfigIcons';
-import { ConfigFieldRenderer } from './primitives/ConfigFieldRenderer';
 
 function isSafeUrl(url: string): boolean {
   try {
@@ -146,15 +145,79 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
             </div>
           )}
           <div className={hasSteps ? 'ml-[26px] space-y-2.5' : 'space-y-2.5'}>
-            {plugin.config.map((f) => (
-              <ConfigFieldRenderer
-                key={f.envName}
-                field={f}
-                value={fieldValues[f.envName] ?? ''}
-                onChange={(envName, val) => setFieldValues((prev) => ({ ...prev, [envName]: val }))}
-                idPrefix="plugin"
-              />
-            ))}
+            {plugin.config.map((f) => {
+              const selectedValue = fieldValues[f.envName] ?? f.currentValue ?? '';
+              const activeOneOf = f.oneOf && selectedValue ? f.oneOf[selectedValue] : undefined;
+
+              return (
+                <div key={f.envName} className="space-y-2.5">
+                  <div>
+                    <label
+                      htmlFor={`plugin-${f.envName}`}
+                      className="mb-1 block font-medium"
+                      style={{ fontSize: 'var(--console-font-xs)', color: 'var(--cafe-text-secondary)' }}
+                    >
+                      {f.label}
+                    </label>
+                    {f.type === 'select' && f.options ? (
+                      <select
+                        id={`plugin-${f.envName}`}
+                        value={fieldValues[f.envName] ?? f.currentValue ?? ''}
+                        onChange={(e) => setFieldValues((prev) => ({ ...prev, [f.envName]: e.target.value }))}
+                        className="console-form-input"
+                        style={{ paddingBlock: '0.625rem', fontSize: 'var(--console-font-compact)' }}
+                        data-testid={`field-${f.envName}`}
+                      >
+                        <option value="">请选择</option>
+                        {f.options.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        id={`plugin-${f.envName}`}
+                        type={f.sensitive ? 'password' : 'text'}
+                        placeholder={
+                          f.sensitive
+                            ? f.currentValue
+                              ? '已设置（输入新值覆盖）'
+                              : '未设置'
+                            : (f.currentValue ?? '未设置')
+                        }
+                        value={fieldValues[f.envName] ?? ''}
+                        onChange={(e) => setFieldValues((prev) => ({ ...prev, [f.envName]: e.target.value }))}
+                        className="console-form-input"
+                        style={{ paddingBlock: '0.625rem', fontSize: 'var(--console-font-compact)' }}
+                        data-testid={`field-${f.envName}`}
+                      />
+                    )}
+                  </div>
+                  {activeOneOf?.map((sub) => (
+                    <div key={sub.envName}>
+                      <label
+                        htmlFor={`plugin-${sub.envName}`}
+                        className="mb-1 block font-medium"
+                        style={{ fontSize: 'var(--console-font-xs)', color: 'var(--cafe-text-secondary)' }}
+                      >
+                        {sub.label}
+                      </label>
+                      <input
+                        id={`plugin-${sub.envName}`}
+                        type={sub.sensitive ? 'password' : 'text'}
+                        placeholder={sub.sensitive ? '未设置' : '未设置'}
+                        value={fieldValues[sub.envName] ?? ''}
+                        onChange={(e) => setFieldValues((prev) => ({ ...prev, [sub.envName]: e.target.value }))}
+                        className="console-form-input"
+                        style={{ paddingBlock: '0.625rem', fontSize: 'var(--console-font-compact)' }}
+                        data-testid={`field-${sub.envName}`}
+                      />
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
