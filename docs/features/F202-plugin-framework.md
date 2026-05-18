@@ -27,15 +27,18 @@ plugins/
 │   ├── limbs/
 │   │   └── weixin-mp.yml     # Limb 定义
 │   └── skills/
-│       └── weixin-mp.md      # Skill 文件
+│       └── weixin-mp/        # Skill 目录（scanner 需要 SKILL.md）
+│           └── SKILL.md
 ├── github/
 │   ├── plugin.yaml
 │   └── skills/
-│       └── github-ops.md
+│       └── github-ops/
+│           └── SKILL.md
 └── community-example/        # 社区用户的插件
     ├── plugin.yaml
     └── skills/
-        └── custom-workflow.md
+        └── custom-workflow/
+            └── SKILL.md
 ```
 
 ### plugin.yaml Schema
