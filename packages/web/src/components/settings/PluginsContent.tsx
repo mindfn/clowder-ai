@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { HubIcon } from '../hub-icons';
 import {
+  SettingsResourceToggleSwitch,
   settingsResourceActionGroupClass,
   settingsResourceAvatarClass,
   settingsResourceCardClass,
@@ -24,6 +25,7 @@ export function PluginsContent() {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const fetchPlugins = useCallback(async () => {
     try {
@@ -36,6 +38,21 @@ export function PluginsContent() {
       setLoading(false);
     }
   }, []);
+
+  const handleToggle = useCallback(
+    async (plugin: PluginInfo) => {
+      const isEnabled = plugin.status === 'enabled' || plugin.status === 'partial';
+      const action = isEnabled ? 'disable' : 'enable';
+      setTogglingId(plugin.id);
+      try {
+        await apiFetch(`/api/plugins/${plugin.id}/${action}`, { method: 'POST' });
+        await fetchPlugins();
+      } finally {
+        setTogglingId(null);
+      }
+    },
+    [fetchPlugins],
+  );
 
   useEffect(() => {
     void fetchPlugins();
@@ -79,6 +96,16 @@ export function PluginsContent() {
                 >
                   {statusCfg.label}
                 </span>
+                {plugin.resources.length > 0 && plugin.configured && (
+                  <SettingsResourceToggleSwitch
+                    enabled={plugin.status === 'enabled' || plugin.status === 'partial'}
+                    busy={togglingId === plugin.id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleToggle(plugin);
+                    }}
+                  />
+                )}
               </div>
             </button>
 
