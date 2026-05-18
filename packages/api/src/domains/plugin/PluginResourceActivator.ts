@@ -175,6 +175,7 @@ export class PluginResourceActivator {
     try {
       await this.deps.limbRegistry.register(node);
     } catch (err) {
+      if (err instanceof Error && err.message.includes('already registered')) return;
       await this.removeCapabilityEntry(manifest, resource);
       throw err;
     }
