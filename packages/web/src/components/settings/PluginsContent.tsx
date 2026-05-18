@@ -10,6 +10,7 @@ import {
   settingsResourceCardClass,
   settingsResourceRowClass,
 } from '../SettingsResourceCard';
+import { GithubConfigPanel } from './GithubConfigPanel';
 import { PluginConfigPanel } from './PluginConfigPanel';
 
 const STATUS_CONFIG: Record<PluginStatus, { label: string; bg: string; text: string }> = {
@@ -81,7 +82,12 @@ export function PluginsContent() {
               </div>
             </button>
 
-            {isExpanded && <PluginConfigPanel plugin={plugin} onUpdated={fetchPlugins} />}
+            {isExpanded &&
+              (plugin.id === 'github' ? (
+                <GithubConfigPanel />
+              ) : (
+                <PluginConfigPanel plugin={plugin} onUpdated={fetchPlugins} />
+              ))}
           </article>
         );
       })}
