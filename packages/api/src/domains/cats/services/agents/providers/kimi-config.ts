@@ -291,6 +291,7 @@ export function writeMcpConfigFile(
   }
 
   delete currentServers['cat-cafe'];
+  for (const splitId of CAT_CAFE_SPLIT_ENTRYPOINTS.keys()) delete currentServers[splitId];
   for (const [name, entrypoint] of CAT_CAFE_SPLIT_ENTRYPOINTS) {
     if (enabledNames && !enabledNames.has(name)) continue;
     const entrypointPath = join(distDir, entrypoint);
