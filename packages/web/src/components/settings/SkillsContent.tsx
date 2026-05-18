@@ -99,9 +99,10 @@ export function SkillsContent() {
                   <ToggleSwitch
                     enabled={item.enabled}
                     busy={busy}
+                    disabled={pluginOwned}
                     onClick={(e) => {
                       e.stopPropagation();
-                      cap.handleToggle(item, !item.enabled);
+                      if (!pluginOwned) cap.handleToggle(item, !item.enabled);
                     }}
                   />
                   {item.source === 'external' && (
@@ -125,7 +126,7 @@ export function SkillsContent() {
                   catFamilies={cap.catFamilies}
                   toggling={cap.toggling}
                   onToggle={cap.handleToggle}
-                  disabled={false}
+                  disabled={pluginOwned}
                 />
               )}
             </div>
