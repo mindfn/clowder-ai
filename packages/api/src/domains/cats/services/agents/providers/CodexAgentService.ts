@@ -148,17 +148,15 @@ function toTomlString(value: string): string {
 // Running it alongside the split servers causes duplicate tool names, which breaks
 // codex CLI MCP loading. Use index.js only until the split servers exclude duplicates.
 const CAT_CAFE_MCP_SERVER_ENTRIES = [
-  ['cat-cafe', 'index.js'],
+  ['cat-cafe-collab', 'collab.js'],
+  ['cat-cafe-memory', 'memory.js'],
+  ['cat-cafe-signals', 'signals.js'],
+  ['cat-cafe-limb', 'limb.js'],
 ] as const;
 
 function buildCatCafeMcpConfigArgs(workingDirectory?: string, callbackEnv?: Record<string, string>): string[] {
-  // Cat Cafe MCP servers are part of this runtime — resolve from the API's
-  // own repo, not the thread's workingDirectory (which may lack node_modules).
   const fileDir = dirname(fileURLToPath(import.meta.url));
-  const candidateRoots: string[] = [
-    process.cwd(),
-    resolve(fileDir, '../../../../../../../..'),
-  ];
+  const candidateRoots: string[] = [process.cwd(), resolve(fileDir, '../../../../../../../..')];
 
   let mcpDistDir: string | undefined;
   for (const root of candidateRoots) {
@@ -191,6 +189,11 @@ function buildCatCafeMcpConfigArgs(workingDirectory?: string, callbackEnv?: Reco
       `mcp_servers.${serverName}.args=[${toTomlString(serverPath)}]`,
       '--config',
       `mcp_servers.${serverName}.enabled=true`,
+      // Codex ≥0.130: auto-approve MCP tool calls for trusted Cat Cafe servers.
+      // Without this, non-interactive `codex exec` has no UI to approve and
+      // write tools get auto-cancelled ("user cancelled MCP tool call").
+      '--config',
+      `mcp_servers.${serverName}.default_tools_approval_mode="approve"`,
     );
 
     for (const key of callbackKeys) {

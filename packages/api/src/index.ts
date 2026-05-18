@@ -1930,10 +1930,13 @@ async function main(): Promise<void> {
     if (!libraryStores.has('project:cat-cafe')) libraryStores.set('project:cat-cafe', memoryServices.store);
     if (memoryServices.globalStore && !libraryStores.has('global:methods'))
       libraryStores.set('global:methods', memoryServices.globalStore);
+    const embedMode = process.env.EMBED_MODE as 'shadow' | 'on' | undefined;
     await app.register(libraryRoutes, {
       catalog: memoryServices.catalog,
       stores: libraryStores,
       dataDir: memoryServices.dataDir,
+      embeddingService: memoryServices.embeddingService,
+      embedMode: embedMode && embedMode !== ('off' as string) ? embedMode : undefined,
     });
   }
 
@@ -2549,6 +2552,26 @@ async function main(): Promise<void> {
         if (!msg) return null;
         const resolved = msg instanceof Promise ? await msg : msg;
         return resolved ? { source: resolved.source } : null;
+      },
+      async getByThread(threadId: string, limit?: number) {
+        const msgs = await messageStore.getByThread(threadId, limit);
+        return msgs.map((m) => ({
+          catId: m.catId,
+          userId: m.userId,
+          content: m.content,
+          timestamp: m.timestamp,
+          source: m.source as string | undefined,
+        }));
+      },
+      async getByThreadBefore(threadId: string, timestamp: number, limit?: number) {
+        const msgs = await messageStore.getByThreadBefore(threadId, timestamp, limit);
+        return msgs.map((m) => ({
+          catId: m.catId,
+          userId: m.userId,
+          content: m.content,
+          timestamp: m.timestamp,
+          source: m.source as string | undefined,
+        }));
       },
     },
     threadStore,
