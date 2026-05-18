@@ -260,11 +260,11 @@ export class ClaudeAgentService implements AgentService {
       }
       if (Object.keys(mcpServers).length > 0) {
         if (IS_WINDOWS) {
-          if (!this.mcpConfigFilePath || !existsSync(this.mcpConfigFilePath)) {
+          if (!this.mcpConfigFilePath) {
             const dir = mkdtempSync(join(tmpdir(), 'cat-cafe-mcp-'));
             this.mcpConfigFilePath = join(dir, 'mcp-config.json');
-            writeFileSync(this.mcpConfigFilePath, JSON.stringify({ mcpServers }), 'utf-8');
           }
+          writeFileSync(this.mcpConfigFilePath, JSON.stringify({ mcpServers }), 'utf-8');
           args.push('--mcp-config', this.mcpConfigFilePath);
         } else {
           args.push('--mcp-config', JSON.stringify({ mcpServers }));
