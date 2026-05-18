@@ -106,14 +106,16 @@ describe('resolveAcpMcpServers — builtin auto-provision (F145 Phase C)', () =>
     temps.length = 0;
   });
 
-  it('auto-generates cat-cafe main server from projectRoot (no .mcp.json needed)', () => {
+  it('expands legacy "cat-cafe" monolith to all split servers (#712)', () => {
     const root = makeTempRoot(); // no .mcp.json
     const result = resolveAcpMcpServers(root, ['cat-cafe']);
 
-    assert.equal(result.length, 1);
-    assert.equal(result[0].name, 'cat-cafe');
-    assert.equal(result[0].command, 'node');
-    assert.ok(result[0].args[0].endsWith('packages/mcp-server/dist/index.js'));
+    assert.equal(result.length, 4, 'monolith expands to 4 split servers');
+    const names = new Set(result.map((s) => s.name));
+    assert.ok(names.has('cat-cafe-collab'));
+    assert.ok(names.has('cat-cafe-memory'));
+    assert.ok(names.has('cat-cafe-signals'));
+    assert.ok(names.has('cat-cafe-limb'));
   });
 
   it('auto-generates cat-cafe-collab from projectRoot', () => {
@@ -126,16 +128,33 @@ describe('resolveAcpMcpServers — builtin auto-provision (F145 Phase C)', () =>
     assert.ok(result[0].args[0].endsWith('packages/mcp-server/dist/collab.js'));
   });
 
-  it('auto-generates all four builtin cat-cafe servers', () => {
+  it('auto-generates all four builtin split servers', () => {
     const root = makeTempRoot(); // no .mcp.json
-    const result = resolveAcpMcpServers(root, ['cat-cafe', 'cat-cafe-collab', 'cat-cafe-memory', 'cat-cafe-signals']);
+    const result = resolveAcpMcpServers(root, [
+      'cat-cafe-collab',
+      'cat-cafe-memory',
+      'cat-cafe-signals',
+      'cat-cafe-limb',
+    ]);
 
     assert.equal(result.length, 4);
     const names = result.map((s) => s.name);
-    assert.deepStrictEqual(names, ['cat-cafe', 'cat-cafe-collab', 'cat-cafe-memory', 'cat-cafe-signals']);
+    assert.deepStrictEqual(names, ['cat-cafe-collab', 'cat-cafe-memory', 'cat-cafe-signals', 'cat-cafe-limb']);
 
     const entrypoints = result.map((s) => s.args[0].split('/').pop());
-    assert.deepStrictEqual(entrypoints, ['index.js', 'collab.js', 'memory.js', 'signals.js']);
+    assert.deepStrictEqual(entrypoints, ['collab.js', 'memory.js', 'signals.js', 'limb.js']);
+  });
+
+  it('deduplicates when whitelist has both monolith and split names (#712)', () => {
+    const root = makeTempRoot(); // no .mcp.json
+    const result = resolveAcpMcpServers(root, ['cat-cafe', 'cat-cafe-collab', 'cat-cafe-memory', 'cat-cafe-signals']);
+
+    assert.equal(result.length, 4, 'monolith expands but dedupes with explicit splits');
+    const names = new Set(result.map((s) => s.name));
+    assert.ok(names.has('cat-cafe-collab'));
+    assert.ok(names.has('cat-cafe-memory'));
+    assert.ok(names.has('cat-cafe-signals'));
+    assert.ok(names.has('cat-cafe-limb'), 'limb added from monolith expansion');
   });
 
   it('falls back to .mcp.json for non-builtin servers', () => {
@@ -158,7 +177,7 @@ describe('resolveAcpMcpServers — builtin auto-provision (F145 Phase C)', () =>
   it('does not throw when .mcp.json missing and only builtins requested', () => {
     const root = makeTempRoot(); // no .mcp.json
     // Should NOT throw — builtins don't need .mcp.json
-    const result = resolveAcpMcpServers(root, ['cat-cafe', 'cat-cafe-memory']);
+    const result = resolveAcpMcpServers(root, ['cat-cafe-collab', 'cat-cafe-memory']);
     assert.equal(result.length, 2);
   });
 
@@ -214,9 +233,9 @@ describe('resolveAcpMcpServers — per-project MCP (F145 Phase E)', () => {
       },
     });
 
-    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe'], userRoot);
+    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe-collab'], userRoot);
     assert.equal(result.length, 3); // 1 builtin + 2 user project
-    assert.equal(result[0].name, 'cat-cafe'); // builtin first
+    assert.equal(result[0].name, 'cat-cafe-collab'); // builtin first
 
     const db = result.find((s) => s.name === 'my-database');
     assert.ok(db, 'user project server my-database should be included');
@@ -233,15 +252,15 @@ describe('resolveAcpMcpServers — per-project MCP (F145 Phase E)', () => {
     const projectRoot = makeTempRoot();
     const userRoot = makeTempRoot({
       mcpServers: {
-        'cat-cafe': { command: 'python', args: ['fake.py'] },
+        'cat-cafe-collab': { command: 'python', args: ['fake.py'] },
         'my-tool': { command: 'node', args: ['tool.js'] },
       },
     });
 
-    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe'], userRoot);
-    const catCafe = result.find((s) => s.name === 'cat-cafe');
-    assert.equal(catCafe.command, 'node'); // builtin, not python
-    assert.ok(catCafe.args[0].endsWith('packages/mcp-server/dist/index.js'));
+    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe-collab'], userRoot);
+    const collab = result.find((s) => s.name === 'cat-cafe-collab');
+    assert.equal(collab.command, 'node'); // builtin, not python
+    assert.ok(collab.args[0].endsWith('packages/mcp-server/dist/collab.js'));
     assert.ok(
       result.find((s) => s.name === 'my-tool'),
       'non-conflicting user server still included',
@@ -262,7 +281,7 @@ describe('resolveAcpMcpServers — per-project MCP (F145 Phase E)', () => {
       },
     });
 
-    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe', 'pencil'], userRoot);
+    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe-collab', 'pencil'], userRoot);
     const pencil = result.find((s) => s.name === 'pencil');
     assert.deepStrictEqual(pencil.args, ['/correct/pencil']); // from whitelist
     assert.ok(
@@ -276,18 +295,18 @@ describe('resolveAcpMcpServers — per-project MCP (F145 Phase E)', () => {
     const projectRoot = makeTempRoot();
     const userRoot = makeTempRoot(); // no .mcp.json
 
-    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe'], userRoot);
+    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe-collab'], userRoot);
     assert.equal(result.length, 1);
-    assert.equal(result[0].name, 'cat-cafe');
+    assert.equal(result[0].name, 'cat-cafe-collab');
   });
 
   // AC-E4: undefined userProjectRoot = same as before
   it('undefined userProjectRoot has no effect (backward-compatible)', () => {
     const projectRoot = makeTempRoot();
 
-    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe'], undefined);
+    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe-collab'], undefined);
     assert.equal(result.length, 1);
-    assert.equal(result[0].name, 'cat-cafe');
+    assert.equal(result[0].name, 'cat-cafe-collab');
   });
 
   // AC-E5: different userProjectRoot = different servers
@@ -300,8 +319,8 @@ describe('resolveAcpMcpServers — per-project MCP (F145 Phase E)', () => {
       mcpServers: { 'tool-b': { command: 'b' } },
     });
 
-    const resultA = resolveAcpMcpServers(projectRoot, ['cat-cafe'], userRootA);
-    const resultB = resolveAcpMcpServers(projectRoot, ['cat-cafe'], userRootB);
+    const resultA = resolveAcpMcpServers(projectRoot, ['cat-cafe-collab'], userRootA);
+    const resultB = resolveAcpMcpServers(projectRoot, ['cat-cafe-collab'], userRootB);
 
     assert.ok(resultA.some((s) => s.name === 'tool-a'));
     assert.ok(!resultA.some((s) => s.name === 'tool-b'));
@@ -319,7 +338,7 @@ describe('resolveAcpMcpServers — per-project MCP (F145 Phase E)', () => {
       },
     });
 
-    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe'], userRoot);
+    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe-collab'], userRoot);
     const webapi = result.find((s) => s.name === 'webapi');
     assert.ok(webapi, 'HTTP server should be merged');
     assert.equal(webapi.type, 'http');
@@ -336,7 +355,7 @@ describe('resolveAcpMcpServers — per-project MCP (F145 Phase E)', () => {
     const projectRoot = makeTempRoot();
     const userRoot = makeTempRoot({ version: 1 }); // valid JSON, no mcpServers
 
-    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe'], userRoot);
+    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe-collab'], userRoot);
     assert.equal(result.length, 1); // just the builtin, no crash
   });
 });

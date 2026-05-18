@@ -2123,6 +2123,26 @@ async function main(): Promise<void> {
     f101RecoveryPlayer?.stopAllLoops();
   });
 
+  // #712: Full orchestration before listen — bootstrap if missing, run migrations
+  // for existing configs (add limb, remove monolith, realign paths), regenerate CLI configs.
+  try {
+    const { projectRoot, paths } = resolveStartupCliConfigContext(process.cwd());
+    await orchestrate(
+      projectRoot,
+      {
+        claudeConfig: paths.anthropic,
+        codexConfig: paths.openai,
+        geminiConfig: paths.google,
+        kimiConfig: paths.kimi,
+        antigravityConfig: paths.antigravity,
+      },
+      paths,
+    );
+    app.log.info('[api] capabilities orchestrated at startup');
+  } catch (err) {
+    app.log.warn(`[api] Capabilities orchestration failed (best-effort): ${String(err)}`);
+  }
+
   // #603: Preload governance overlay (.local / .local-override)
   // Start listening
   let address: string;
@@ -2215,26 +2235,6 @@ async function main(): Promise<void> {
     });
   } catch (err) {
     app.log.warn(`[api] Audit log write failed (best-effort): ${String(err)}`);
-  }
-
-  // #712: Full orchestration at startup — bootstrap if missing, run migrations
-  // for existing configs (add limb, remove monolith, realign paths), regenerate CLI configs.
-  try {
-    const { projectRoot, paths } = resolveStartupCliConfigContext(process.cwd());
-    await orchestrate(
-      projectRoot,
-      {
-        claudeConfig: paths.anthropic,
-        codexConfig: paths.openai,
-        geminiConfig: paths.google,
-        kimiConfig: paths.kimi,
-        antigravityConfig: paths.antigravity,
-      },
-      paths,
-    );
-    app.log.info('[api] capabilities orchestrated at startup');
-  } catch (err) {
-    app.log.warn(`[api] Capabilities orchestration failed (best-effort): ${String(err)}`);
   }
 
   // clowder-ai#340: Account startup — fail-fast (LL-043 / migration conflict / corrupt credentials).

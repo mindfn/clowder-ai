@@ -127,12 +127,23 @@ export function resolveAcpMcpServers(
 ): AcpMcpServer[] {
   if (!whitelist.length && !userProjectRoot) return [];
 
+  // Expand legacy monolith "cat-cafe" to split server IDs so old catalogs
+  // resolve to builtins instead of falling through to .mcp.json lookup.
+  const expanded = new Set<string>();
+  for (const name of whitelist) {
+    if (name === 'cat-cafe') {
+      for (const splitId of CAT_CAFE_SPLIT_ENTRYPOINTS.keys()) expanded.add(splitId);
+    } else {
+      expanded.add(name);
+    }
+  }
+
   const disabled = opts?.disabledServerIds;
   const servers: AcpMcpServer[] = [];
   const externalNames: string[] = [];
 
   // Phase 1: resolve builtins from projectRoot (no .mcp.json needed)
-  for (const name of whitelist) {
+  for (const name of expanded) {
     if (disabled?.has(name)) {
       log.info({ name }, 'Skipping disabled server (capabilities.json)');
       continue;
