@@ -170,7 +170,22 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
           )}
           <div className={hasSteps ? 'ml-[26px] space-y-2.5' : 'space-y-2.5'}>
             {plugin.config.map((f) => {
-              const selectedValue = fieldValues[f.envName] ?? f.currentValue ?? '';
+              const rawValue = fieldValues[f.envName] ?? f.currentValue ?? '';
+
+              const visibleOptions =
+                f.type === 'select' && f.options
+                  ? f.options.filter((o) => {
+                      if (!o.supportedBy) return true;
+                      return Object.entries(o.supportedBy).every(([depEnv, allowed]) => {
+                        const depVal =
+                          fieldValues[depEnv] ?? plugin.config.find((c) => c.envName === depEnv)?.currentValue ?? '';
+                        return !depVal || allowed.includes(depVal);
+                      });
+                    })
+                  : [];
+
+              const selectedValue =
+                f.type === 'select' && visibleOptions.some((o) => o.value === rawValue) ? rawValue : rawValue;
               const activeOneOf = f.oneOf && selectedValue ? f.oneOf[selectedValue] : undefined;
 
               return (
@@ -185,13 +200,13 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
                     {f.type === 'select' && f.options ? (
                       <select
                         id={`plugin-${f.envName}`}
-                        value={fieldValues[f.envName] ?? f.currentValue ?? ''}
+                        value={visibleOptions.some((o) => o.value === rawValue) ? rawValue : ''}
                         onChange={(e) => setFieldValues((prev) => ({ ...prev, [f.envName]: e.target.value }))}
                         className="console-form-input py-2.5 text-[13px]"
                         data-testid={`field-${f.envName}`}
                       >
                         <option value="">请选择</option>
-                        {f.options.map((o) => (
+                        {visibleOptions.map((o) => (
                           <option key={o.value} value={o.value}>
                             {o.label}
                           </option>
@@ -215,9 +230,9 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
                       />
                     )}
                     {f.type === 'select' &&
-                      f.options?.find((o) => o.value === selectedValue) &&
+                      visibleOptions.find((o) => o.value === selectedValue) &&
                       (() => {
-                        const sel = f.options!.find((o) => o.value === selectedValue)!;
+                        const sel = visibleOptions.find((o) => o.value === selectedValue)!;
                         if (!sel.hint && !sel.docsUrl) return null;
                         return (
                           <div className="mt-1.5 space-y-1">
