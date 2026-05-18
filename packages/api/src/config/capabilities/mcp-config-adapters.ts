@@ -257,7 +257,12 @@ export async function writeClaudeMcpConfig(filePath: string, servers: McpServerD
     }
   }
 
-  // Keep user entries not in managed list untouched (they're already in existingServers)
+  // #712: Remove legacy monolith if not in managed list — capabilities.json
+  // no longer includes it, but it may linger from pre-split configs.
+  if (!servers.some((s) => s.name === 'cat-cafe')) {
+    delete existingServers['cat-cafe'];
+  }
+
   await ensureDir(filePath);
   await writeFile(filePath, `${JSON.stringify({ mcpServers: existingServers }, null, 2)}\n`, 'utf-8');
 }
@@ -296,6 +301,7 @@ export async function writeCodexMcpConfig(filePath: string, servers: McpServerDe
     existingMcp[s.name] = entry;
   }
 
+  if (!servers.some((s) => s.name === 'cat-cafe')) delete existingMcp['cat-cafe'];
   existing.mcp_servers = existingMcp;
   await ensureDir(filePath);
   await writeFile(filePath, `${stringifyToml(existing)}\n`, 'utf-8');
@@ -341,8 +347,9 @@ export async function writeGeminiMcpConfig(filePath: string, servers: McpServerD
     }
   }
 
-  // Keep legacy cat-cafe entries functional even when they are preserved as
-  // non-managed servers (e.g. migration leftovers in user's settings).
+  if (!servers.some((s) => s.name === 'cat-cafe')) delete existingMcp['cat-cafe'];
+
+  // Ensure split cat-cafe-* entries have required Gemini env placeholders.
   for (const [name, value] of Object.entries(existingMcp)) {
     if (!isCatCafeServer(name)) continue;
     if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
@@ -451,6 +458,8 @@ export async function writeKimiMcpConfig(filePath: string, servers: McpServerDes
     existingMcp[s.name] = entry;
   }
 
+  if (!servers.some((s) => s.name === 'cat-cafe')) delete existingMcp['cat-cafe'];
+
   for (const [name, value] of Object.entries(existingMcp)) {
     if (!isCatCafeServer(name)) continue;
     if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
@@ -494,6 +503,8 @@ export async function writeAntigravityMcpConfig(filePath: string, servers: McpSe
     if (s.workingDir) entry.cwd = s.workingDir;
     existingMcp[s.name] = entry;
   }
+
+  if (!servers.some((s) => s.name === 'cat-cafe')) delete existingMcp['cat-cafe'];
 
   for (const [name, value] of Object.entries(existingMcp)) {
     if (!isCatCafeServer(name)) continue;

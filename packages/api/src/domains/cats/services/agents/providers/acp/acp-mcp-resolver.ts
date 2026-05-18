@@ -181,7 +181,8 @@ export function resolveAcpMcpServers(
     );
   }
 
-  if (whitelist.length > 0 && servers.length === 0) {
+  const hasDisabled = disabled && disabled.size > 0;
+  if (whitelist.length > 0 && servers.length === 0 && !hasDisabled) {
     throw new Error(
       `All ${whitelist.length} MCP whitelist entries [${whitelist.join(', ')}] are missing. ` +
         'ACP agent would start with zero MCP servers — aborting to prevent silent tool-call stalls.',

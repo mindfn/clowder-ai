@@ -7,7 +7,11 @@
 
 import { existsSync, promises as fs, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, normalize, resolve } from 'node:path';
+import { dirname, join, normalize, resolve } from 'node:path';
+import {
+  CAT_CAFE_SPLIT_ENTRYPOINTS,
+  resolveServersForCat,
+} from '../../../../../config/capabilities/capability-orchestrator.js';
 
 export const DEFAULT_KIMI_BASE_URL = 'https://api.moonshot.ai/v1';
 export const DEFAULT_KIMI_MODEL_ALIAS = 'kimi-code/kimi-for-coding';
@@ -267,11 +271,37 @@ export function writeMcpConfigFile(
   const catCafeEnv = Object.fromEntries(
     CAT_CAFE_CALLBACK_ENV_KEYS.map((key) => [key, callbackEnv[key]]).filter(([, value]) => Boolean(value)),
   );
-  currentServers['cat-cafe'] = {
-    command: 'node',
-    args: [mcpServerPath],
-    ...(Object.keys(catCafeEnv).length > 0 ? { env: catCafeEnv } : {}),
-  };
+  const distDir = dirname(mcpServerPath);
+  const projectRoot = resolve(distDir, '../../..');
+  const catId = callbackEnv.CAT_CAFE_CAT_ID;
+
+  let enabledNames: Set<string> | null = null;
+  try {
+    const raw = readFileSync(join(projectRoot, '.cat-cafe', 'capabilities.json'), 'utf-8');
+    const capConfig = JSON.parse(raw);
+    if (capConfig?.version === 1 && catId) {
+      enabledNames = new Set(
+        resolveServersForCat(capConfig, catId)
+          .filter((s: { enabled: boolean; name: string }) => s.enabled && CAT_CAFE_SPLIT_ENTRYPOINTS.has(s.name))
+          .map((s: { name: string }) => s.name),
+      );
+    }
+  } catch {
+    // best-effort
+  }
+
+  delete currentServers['cat-cafe'];
+  for (const [name, entrypoint] of CAT_CAFE_SPLIT_ENTRYPOINTS) {
+    if (enabledNames && !enabledNames.has(name)) continue;
+    const entrypointPath = join(distDir, entrypoint);
+    if (existsSync(entrypointPath)) {
+      currentServers[name] = {
+        command: 'node',
+        args: [entrypointPath],
+        ...(Object.keys(catCafeEnv).length > 0 ? { env: catCafeEnv } : {}),
+      };
+    }
+  }
   const nextConfig = { ...config, mcpServers: currentServers };
   const shareDir = resolveKimiShareDir(callbackEnv);
   mkdirSync(shareDir, { recursive: true });

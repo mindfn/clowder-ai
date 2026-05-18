@@ -1,5 +1,9 @@
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import {
+  CAT_CAFE_SPLIT_ENTRYPOINTS,
+  resolveServersForCat,
+} from '../../../../../config/capabilities/capability-orchestrator.js';
 
 /**
  * opencode Config Template Generator
@@ -104,6 +108,8 @@ export interface OpenCodeRuntimeConfigOptions {
   hasBaseUrl?: boolean;
   /** Absolute path to Clowder AI MCP server entry (packages/mcp-server/dist/index.js). */
   mcpServerPath?: string;
+  /** Cat ID for capabilities.json enabled-state filtering. */
+  catId?: string;
 }
 
 export interface OpenCodeRuntimeConfigDebugSummary {
@@ -152,7 +158,7 @@ export function safeProviderName(name: string): string {
 }
 
 export function generateOpenCodeRuntimeConfig(options: OpenCodeRuntimeConfigOptions): OpenCodeConfig {
-  const { providerName, models, defaultModel, apiType = 'openai', hasBaseUrl = false, mcpServerPath } = options;
+  const { providerName, models, defaultModel, apiType = 'openai', hasBaseUrl = false, mcpServerPath, catId } = options;
 
   const configName = safeProviderName(providerName);
 
@@ -184,12 +190,30 @@ export function generateOpenCodeRuntimeConfig(options: OpenCodeRuntimeConfigOpti
   };
 
   if (mcpServerPath) {
-    config.mcp = {
-      'cat-cafe': {
-        type: 'local',
-        command: ['node', mcpServerPath],
-      },
-    };
+    const distDir = dirname(mcpServerPath);
+    const projectRoot = resolve(distDir, '../../..');
+
+    let enabledNames: Set<string> | null = null;
+    try {
+      const raw = readFileSync(join(projectRoot, '.cat-cafe', 'capabilities.json'), 'utf-8');
+      const capConfig = JSON.parse(raw);
+      if (capConfig?.version === 1 && catId) {
+        enabledNames = new Set(
+          resolveServersForCat(capConfig, catId)
+            .filter((s: { enabled: boolean; name: string }) => s.enabled && CAT_CAFE_SPLIT_ENTRYPOINTS.has(s.name))
+            .map((s: { name: string }) => s.name),
+        );
+      }
+    } catch {
+      // best-effort
+    }
+
+    const mcp: Record<string, { type: string; command: string[] }> = {};
+    for (const [name, entrypoint] of CAT_CAFE_SPLIT_ENTRYPOINTS) {
+      if (enabledNames && !enabledNames.has(name)) continue;
+      mcp[name] = { type: 'local', command: ['node', join(distDir, entrypoint)] };
+    }
+    if (Object.keys(mcp).length > 0) config.mcp = mcp;
   }
 
   return config;
@@ -249,7 +273,7 @@ export function writeOpenCodeRuntimeConfig(
   mkdirSync(configDir, { recursive: true });
   const configPath = join(configDir, 'opencode.json');
   const tempPath = `${configPath}.tmp-${process.pid}`;
-  const config = generateOpenCodeRuntimeConfig(options);
+  const config = generateOpenCodeRuntimeConfig({ ...options, catId: options.catId ?? catId });
   writeFileSync(tempPath, JSON.stringify(config, null, 2), 'utf-8');
   renameSync(tempPath, configPath);
   return configPath;
