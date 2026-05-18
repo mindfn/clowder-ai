@@ -24,10 +24,6 @@ config:
         label: 即梦 (火山引擎)
         hint: 在火山引擎控制台注册，获取 Access Key + Secret Key
         docsUrl: https://www.volcengine.com/docs/6791
-    oneOf:
-      cogvideox:
-        - { envName: VIDEO_GEN_BASE_URL, label: Base URL（自定义端点）, sensitive: false, required: false }
-        - { envName: VIDEO_GEN_MODEL, label: 模型名称, sensitive: false, required: false }
 
   - envName: VIDEO_GEN_AUTH_TYPE
     label: 认证方式
@@ -50,12 +46,18 @@ config:
     oneOf:
       apikey:
         - { envName: VIDEO_GEN_API_KEY, label: API Key, sensitive: true }
+        - { envName: VIDEO_GEN_BASE_URL, label: Base URL, sensitive: false, required: false }
+        - { envName: VIDEO_GEN_MODEL, label: 模型名称, sensitive: false, required: false }
       jwt-hs256:
         - { envName: VIDEO_GEN_ACCESS_KEY, label: Access Key, sensitive: true }
         - { envName: VIDEO_GEN_SECRET_KEY, label: Secret Key, sensitive: true }
+        - { envName: VIDEO_GEN_BASE_URL, label: Base URL, sensitive: false, required: false }
+        - { envName: VIDEO_GEN_MODEL, label: 模型名称, sensitive: false, required: false }
       hmac-sha256-v4:
         - { envName: VIDEO_GEN_ACCESS_KEY, label: Access Key, sensitive: true }
         - { envName: VIDEO_GEN_SECRET_KEY, label: Secret Key, sensitive: true }
+        - { envName: VIDEO_GEN_BASE_URL, label: Base URL, sensitive: false, required: false }
+        - { envName: VIDEO_GEN_MODEL, label: 模型名称, sensitive: false, required: false }
 
 resources:
   - type: mcp
