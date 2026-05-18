@@ -204,7 +204,13 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
                   : [];
 
               const selectedValue =
-                f.type === 'select' && visibleOptions.some((o) => o.value === rawValue) ? rawValue : rawValue;
+                f.type === 'select'
+                  ? visibleOptions.length === 1
+                    ? visibleOptions[0].value
+                    : visibleOptions.some((o) => o.value === rawValue)
+                      ? rawValue
+                      : ''
+                  : rawValue;
               const activeOneOf = f.oneOf && selectedValue ? f.oneOf[selectedValue] : undefined;
 
               return (
@@ -219,7 +225,7 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
                     {f.type === 'select' && f.options ? (
                       <select
                         id={`plugin-${f.envName}`}
-                        value={visibleOptions.some((o) => o.value === rawValue) ? rawValue : ''}
+                        value={selectedValue}
                         onChange={(e) => setFieldValues((prev) => ({ ...prev, [f.envName]: e.target.value }))}
                         className="console-form-input py-2.5 text-[13px]"
                         data-testid={`field-${f.envName}`}
