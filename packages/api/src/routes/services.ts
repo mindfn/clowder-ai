@@ -795,8 +795,20 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
         // The actual install work (ensurePython → pre-install uninstall →
         // install spawn → autostart) is FULLY backgrounded so the HTTP
         // response returns immediately with state.status='installing'.
+        //
+        // Also reset enabled=false defensively. Per the agreed design
+        // (a4ae8db3): install = "prepare environment", toggle = "enable +
+        // start". The install button is only rendered when !installed,
+        // so the service can't be actively running here, but a stale
+        // `enabled: true` from an earlier session (e.g. left over from a
+        // prior build that auto-enabled, or a manual services.json edit)
+        // would otherwise persist past install and surface the confusing
+        // "toggle shows enabled but status is stopped" state the user
+        // reported. Reset guarantees post-install lands in disabled state
+        // regardless of prior services.json contents.
         setServiceConfig(id, {
           installStatus: 'installing',
+          enabled: false,
           lastInstallError: undefined,
           lastInstallTroubleshootHint: undefined,
         });
