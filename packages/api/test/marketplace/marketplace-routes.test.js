@@ -96,7 +96,7 @@ describe('Marketplace Routes', () => {
     }
   });
 
-  it('GET /api/marketplace/search returns 200 without q param (browse mode)', async () => {
+  it('GET /api/marketplace/search returns all items when q is omitted (browse)', async () => {
     const res = await app.inject({
       method: 'GET',
       url: '/api/marketplace/search',
@@ -104,6 +104,7 @@ describe('Marketplace Routes', () => {
     assert.strictEqual(res.statusCode, 200);
     const body = res.json();
     assert.ok(Array.isArray(body.results));
+    assert.ok(body.results.length >= 3, `expected >=3 items for browse, got ${body.results.length}`);
   });
 
   it('POST /api/marketplace/install/plan returns install plan', async () => {
