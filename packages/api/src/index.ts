@@ -1457,7 +1457,7 @@ async function main(): Promise<void> {
   const limbPairingStore = new LimbPairingStore();
   registerLimbNodeRoutes(app, { limbRegistry, pairingStore: limbPairingStore });
 
-  // F197: Plugin framework — discovery + config + resource activation
+  // F202: Plugin framework — discovery + config + resource activation
   {
     const { join } = await import('node:path');
     const { PluginRegistry, resourceCapId } = await import('./domains/plugin/PluginRegistry.js');
@@ -1477,7 +1477,7 @@ async function main(): Promise<void> {
     const scannedManifests = pluginRegistry.getAllManifests();
     const loadedEnvKeys = loadAllPluginConfigs(resolveActiveProjectRoot(), scannedManifests);
     app.log.info(
-      `[api] F197: PluginRegistry scanned ${scannedManifests.length} plugin(s), loaded ${loadedEnvKeys} config key(s)`,
+      `[api] F202: PluginRegistry scanned ${scannedManifests.length} plugin(s), loaded ${loadedEnvKeys} config key(s)`,
     );
 
     const limbAdapterRegistry = new Map<string, (yamlPath: string) => Promise<ILimbNode>>();
@@ -1519,16 +1519,16 @@ async function main(): Promise<void> {
         if (!limbResource?.path) continue;
         const factory = limbAdapterRegistry.get(manifest.id);
         if (!factory) {
-          app.log.info(`[api] F197: Skipping limb rehydration for '${manifest.id}' (no adapter registered)`);
+          app.log.info(`[api] F202: Skipping limb rehydration for '${manifest.id}' (no adapter registered)`);
           continue;
         }
         try {
           const yamlPath = join(pluginsDir, manifest.id, limbResource.path);
           const node = await factory(yamlPath);
           await limbRegistry.register(node);
-          app.log.info(`[api] F197: Rehydrated limb for plugin '${manifest.id}'`);
+          app.log.info(`[api] F202: Rehydrated limb for plugin '${manifest.id}'`);
         } catch (err) {
-          app.log.warn(`[api] F197: Failed to rehydrate limb for plugin '${manifest.id}': ${(err as Error).message}`);
+          app.log.warn(`[api] F202: Failed to rehydrate limb for plugin '${manifest.id}': ${(err as Error).message}`);
         }
       }
     }

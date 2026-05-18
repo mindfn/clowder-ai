@@ -1159,10 +1159,10 @@
       "file": "F190-console-settings-shell.md"
     },
     {
-      "id": "F197",
+      "id": "F202",
       "name": "Plugin Framework — 声明式插件注册与资源编排",
       "status": "spec (rev4 — 整合 @codex 三轮复核)",
-      "file": "F197-plugin-framework.md"
+      "file": "F202-plugin-framework.md"
     }
   ]
 }

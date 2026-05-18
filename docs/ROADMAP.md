@@ -7,7 +7,7 @@ created: 2026-02-26
 
 # Cat Cafe Feature Roadmap
 
-> 维护者：三猫 | 最后更新：2026-05-15（F197 立项）
+> 维护者：三猫 | 最后更新：2026-05-15（F202 立项）
 >
 > **规则**：只放活跃 Feature（idea/spec/in-progress/review），done 后移除。
 > 详细信息见 `docs/features/Fxxx-*.md`。
@@ -64,4 +64,4 @@ created: 2026-02-26
 | F181 | Reserved Feature Slot — 待补充需求锚点 | idea | 待定 | internal | [F181](features/F181-reserved-feature-slot.md) |
 | F187 | Thread Labels — 用户自定义标签 + Sidebar 筛选 + 猫猫辅助分类 | spec | Ragdoll | internal | [F187](features/F187-thread-labels.md) |
 | F190 | Console Settings Shell — 全局导航 + 设置面板 + 设计体系迁移 | in-progress | Ragdoll | internal [#662](https://github.com/zts212653/clowder-ai/pull/662) [#669](https://github.com/zts212653/clowder-ai/pull/669) | [F190](features/F190-console-settings-shell.md) |
-| F197 | Plugin Framework — 声明式插件注册与资源编排 | in-progress | Ragdoll | internal [#686](https://github.com/zts212653/clowder-ai/pull/686) | [F197](features/F197-plugin-framework.md) |
+| F202 | Plugin Framework — 声明式插件注册与资源编排 | in-progress | Ragdoll | internal [#686](https://github.com/zts212653/clowder-ai/pull/686) | [F202](features/F202-plugin-framework.md) |

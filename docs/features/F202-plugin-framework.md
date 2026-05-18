@@ -1,4 +1,4 @@
-# F197: Plugin Framework — 声明式插件注册与资源编排
+# F202: Plugin Framework — 声明式插件注册与资源编排
 
 > **Status**: spec (rev4 — 整合 @codex 三轮复核)
 > **Owner**: Ragdoll (宪宪/Opus-46)
