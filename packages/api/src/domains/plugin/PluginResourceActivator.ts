@@ -183,16 +183,17 @@ export class PluginResourceActivator {
   private async deactivateLimb(manifest: PluginManifest, resource: PluginResourceDef): Promise<void> {
     if (!resource.path) return;
 
-    let nodeId: string | undefined;
-    try {
-      const yamlPath = join(this.deps.pluginsDir, manifest.id, resource.path);
-      const { loadLimbDeclaration } = await import('../limb/limb-yaml-loader.js');
-      const decl = loadLimbDeclaration(yamlPath);
-      nodeId = decl.nodeId;
-    } catch {
-      const capId = resourceCapId(manifest.id, resource);
-      const config = await this.deps.readCapabilities();
-      nodeId = config?.capabilities.find((c) => c.id === capId)?.limbNodeId;
+    const capId = resourceCapId(manifest.id, resource);
+    const config = await this.deps.readCapabilities();
+    let nodeId = config?.capabilities.find((c) => c.id === capId)?.limbNodeId;
+    if (!nodeId) {
+      try {
+        const yamlPath = join(this.deps.pluginsDir, manifest.id, resource.path);
+        const { loadLimbDeclaration } = await import('../limb/limb-yaml-loader.js');
+        nodeId = loadLimbDeclaration(yamlPath).nodeId;
+      } catch {
+        /* YAML unreadable and no persisted nodeId — skip deregister */
+      }
     }
 
     if (nodeId) {
@@ -275,7 +276,9 @@ export class PluginResourceActivator {
       if (!config) return;
 
       const capId = resourceCapId(manifest.id, resource);
-      config.capabilities = config.capabilities.filter((c) => c.id !== capId);
+      config.capabilities = config.capabilities.filter(
+        (c) => !(c.id === capId && c.pluginId === manifest.id),
+      );
       await this.deps.writeCapabilities(config);
     });
   }
