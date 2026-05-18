@@ -169,7 +169,13 @@ export async function autoStartEnabledServices(log: Logger): Promise<void> {
     try {
       const { command, args } = resolveSpawnCommand(manifest.scripts.start);
       const child = spawn(command, args, {
-        detached: process.platform !== 'win32',
+        // detached: true on all platforms so the sidecar survives API
+        // restart/exit (same rationale as services.ts:/start spawn —
+        // codex P1 3256038319). On Unix this is a new process group;
+        // on Windows it's a new console (hidden via windowsHide so no
+        // visible cmd.exe pops up).
+        detached: true,
+        windowsHide: true,
         // Pipe stdout/stderr so we can watch for the sidecar's ready
         // marker AND keep mirroring its output to the per-service log
         // (via wireUpSidecarReadyListener.appendLog inside).

@@ -389,7 +389,18 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
     try {
       const { command: spawnCmd, args: spawnArgs } = resolveSpawnCommand(manifest.scripts.start);
       const child = spawn(spawnCmd, spawnArgs, {
-        detached: process.platform !== 'win32',
+        // detached: true on all platforms so the sidecar survives API
+        // restart/exit. On Unix this means a new process group; on Windows
+        // this means a new console (hidden via windowsHide). Previously
+        // this was gated to non-win32, so Windows starts were attached to
+        // the API process console — when the API was Ctrl-C'd or restarted,
+        // Windows propagated SIGBREAK to children and the sidecars died
+        // silently. Codex P1 3256038319.
+        detached: true,
+        // Don't show a console window for the background sidecar on Windows
+        // (no-op on Unix). Without this, `detached: true` on Windows would
+        // pop a visible cmd.exe window for every started service.
+        windowsHide: true,
         // Pipe so wireUpSidecarReadyListener can watch the ready marker
         // AND mirror stdout/stderr into the per-service log via appendLog.
         stdio: ['ignore', 'pipe', 'pipe'],
