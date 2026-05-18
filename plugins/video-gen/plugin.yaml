@@ -1,13 +1,13 @@
 id: video-gen
 name: 视频生成
 version: "1.0.0"
-description: 声明式视频/图片生成 — 通过协议模板适配多 provider（CogVideoX、可灵、即梦等）
+description: 声明式视频/图片生成 — 通过协议模板适配多视频协议（CogVideoX、可灵、即梦等）
 icon: video
 iconBg: "#6366f1"
 
 config:
   - envName: VIDEO_GEN_PROVIDER
-    label: Provider
+    label: 视频协议
     type: select
     sensitive: false
     required: true
