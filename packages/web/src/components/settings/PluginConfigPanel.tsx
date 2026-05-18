@@ -31,16 +31,15 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [toggling, setToggling] = useState(false);
   const [result, setResult] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
 
   const handleSave = async () => {
     const updates = plugin.config
       .filter((f) => fieldValues[f.envName] !== undefined)
-      .map((f) => ({
-        name: f.envName,
-        value: fieldValues[f.envName] === '' ? null : fieldValues[f.envName]!,
-      }));
+      .map((f) => {
+        const v = fieldValues[f.envName] as string;
+        return { name: f.envName, value: v === '' ? null : v };
+      });
     if (updates.length === 0) {
       setResult({ type: 'error', msg: '请填写至少一个配置项' });
       return;
@@ -68,36 +67,6 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
     }
   };
 
-  const handleToggle = async (action: 'enable' | 'disable') => {
-    setToggling(true);
-    setResult(null);
-    try {
-      const res = await apiFetch(`/api/plugins/${plugin.id}/${action}`, { method: 'POST' });
-      const data = (await res.json()) as {
-        status?: 'success' | 'partial' | 'failed';
-        resources?: { type: string; ok: boolean; error?: string }[];
-        error?: string;
-      };
-      if (!res.ok) {
-        setResult({ type: 'error', msg: data.error ?? `${action === 'enable' ? '启用' : '停用'}失败` });
-      } else if (data.status === 'failed') {
-        const failedNames = data.resources?.filter((r) => !r.ok).map((r) => `${r.type}: ${r.error}`) ?? [];
-        setResult({ type: 'error', msg: `资源激活失败: ${failedNames.join('; ') || '未知错误'}` });
-      } else if (data.status === 'partial') {
-        const failedNames = data.resources?.filter((r) => !r.ok).map((r) => `${r.type}: ${r.error}`) ?? [];
-        setResult({ type: 'error', msg: `部分资源失败: ${failedNames.join('; ')}` });
-        onUpdated();
-      } else {
-        setResult({ type: 'success', msg: action === 'enable' ? '插件已启用' : '插件已停用' });
-        onUpdated();
-      }
-    } catch {
-      setResult({ type: 'error', msg: '网络错误' });
-    } finally {
-      setToggling(false);
-    }
-  };
-
   const handleTest = async () => {
     setTesting(true);
     setResult(null);
@@ -116,15 +85,13 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
     }
   };
 
-  const isEnabled = plugin.status === 'enabled' || plugin.status === 'partial';
-  const hasResources = plugin.resources.length > 0;
   const hasSteps = plugin.setupSteps && plugin.setupSteps.length > 0;
 
   return (
     <div className="space-y-3.5 px-4 pb-4">
       {hasSteps &&
-        plugin.setupSteps!.map((step, idx) => (
-          <div key={idx} className="space-y-1.5">
+        plugin.setupSteps?.map((step, idx) => (
+          <div key={step} className="space-y-1.5">
             <div className="flex items-center gap-1.5">
               <StepBadge num={idx + 1} />
               <span className="text-[13px] font-medium text-cafe">{step}</span>
@@ -151,7 +118,7 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
         <div className="space-y-2">
           {hasSteps && (
             <div className="flex items-center gap-1.5">
-              <StepBadge num={plugin.setupSteps!.length + 1} />
+              <StepBadge num={(plugin.setupSteps?.length ?? 0) + 1} />
               <span className="text-[13px] font-medium text-cafe">填写应用凭证</span>
             </div>
           )}
@@ -180,9 +147,9 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
 
       {plugin.resources.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
-          {plugin.resources.map((r, i) => (
+          {plugin.resources.map((r) => (
             <span
-              key={i}
+              key={r.type}
               className={`rounded-[13px] px-2.5 py-0.5 text-label font-medium ${
                 r.enabled ? 'bg-conn-emerald-bg text-conn-emerald-text' : 'bg-cafe-surface-sunken text-cafe-muted'
               }`}
@@ -206,29 +173,7 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
       )}
 
       <div className="flex items-center justify-end gap-2">
-        {hasResources && isEnabled && (
-          <button
-            type="button"
-            onClick={() => void handleToggle('disable')}
-            disabled={toggling}
-            className="console-button-secondary text-compact disabled:opacity-50"
-            data-testid="plugin-disable-btn"
-          >
-            {toggling ? '处理中...' : '停用'}
-          </button>
-        )}
-        {hasResources && !isEnabled && (
-          <button
-            type="button"
-            onClick={() => void handleToggle('enable')}
-            disabled={toggling}
-            className="console-button-secondary text-compact disabled:opacity-50"
-            data-testid="plugin-enable-btn"
-          >
-            {toggling ? '处理中...' : '启用'}
-          </button>
-        )}
-        {plugin.hasHealthCheck && isEnabled && (
+        {plugin.hasHealthCheck && plugin.configured && (
           <button
             type="button"
             onClick={() => void handleTest()}
