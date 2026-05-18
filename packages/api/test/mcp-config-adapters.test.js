@@ -371,7 +371,7 @@ describe('writeCodexMcpConfig', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('writes MCP servers to TOML', async () => {
+  it('writes MCP servers to TOML with approval mode for cat-cafe', async () => {
     const file = join(dir, 'config.toml');
     await writeCodexMcpConfig(file, [
       { name: 'cat_cafe', command: 'node', args: ['index.js'], enabled: true, source: 'cat-cafe' },
@@ -384,6 +384,11 @@ describe('writeCodexMcpConfig', () => {
     assert.ok(raw.includes('[mcp_servers.disabled]'));
     assert.ok(raw.includes('enabled = true'));
     assert.ok(raw.includes('enabled = false'));
+    // #712: cat-cafe source servers get auto-approve for non-interactive codex exec
+    assert.ok(raw.includes('default_tools_approval_mode = "approve"'), 'cat-cafe must have approval mode');
+    // Count occurrences — only cat-cafe server should have it, not external
+    const approveCount = (raw.match(/default_tools_approval_mode/g) || []).length;
+    assert.equal(approveCount, 1, 'only cat-cafe source servers get approval mode');
   });
 
   it('preserves existing non-MCP config', async () => {

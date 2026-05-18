@@ -15,11 +15,14 @@
  *   result/success → 跳过 (done 在循环后 yield)
  */
 
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { type CatId, createCatId } from '@cat-cafe/shared';
-import { CAT_CAFE_SPLIT_ENTRYPOINTS } from '../../../../../config/capabilities/capability-orchestrator.js';
+import {
+  CAT_CAFE_SPLIT_ENTRYPOINTS,
+  resolveServersForCat,
+} from '../../../../../config/capabilities/capability-orchestrator.js';
 import { getCatEffort } from '../../../../../config/cat-config-loader.js';
 import { getCatModel } from '../../../../../config/cat-models.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
@@ -225,12 +228,31 @@ export class ClaudeAgentService implements AgentService {
       args.push('--add-dir', dir);
     }
 
-    // #712: Inject split MCP servers so per-server enabled/disabled works.
+    // #712: Inject split MCP servers, respecting capabilities.json enabled/overrides.
     // On Windows, Claude CLI treats inline JSON as a file path — write to temp file.
     if (options?.callbackEnv && this.mcpServerPath) {
       const distDir = dirname(this.mcpServerPath);
+      const projectRoot = resolve(distDir, '../../..');
+      const catId = options.callbackEnv.CAT_CAFE_CAT_ID;
+
+      let enabledNames: Set<string> | null = null;
+      try {
+        const raw = readFileSync(join(projectRoot, '.cat-cafe', 'capabilities.json'), 'utf-8');
+        const capConfig = JSON.parse(raw);
+        if (capConfig?.version === 1 && catId) {
+          enabledNames = new Set(
+            resolveServersForCat(capConfig, catId)
+              .filter((s) => s.enabled && CAT_CAFE_SPLIT_ENTRYPOINTS.has(s.name))
+              .map((s) => s.name),
+          );
+        }
+      } catch {
+        // best-effort: if unreadable, inject all existing entrypoints
+      }
+
       const mcpServers: Record<string, { command: string; args: string[] }> = {};
       for (const [name, entrypoint] of CAT_CAFE_SPLIT_ENTRYPOINTS) {
+        if (enabledNames && !enabledNames.has(name)) continue;
         const entrypointPath = join(distDir, entrypoint);
         if (existsSync(entrypointPath)) {
           mcpServers[name] = { command: 'node', args: [entrypointPath] };

@@ -123,14 +123,20 @@ export function resolveAcpMcpServers(
   projectRoot: string,
   whitelist: string[],
   userProjectRoot?: string,
+  opts?: { disabledServerIds?: ReadonlySet<string> },
 ): AcpMcpServer[] {
   if (!whitelist.length && !userProjectRoot) return [];
 
+  const disabled = opts?.disabledServerIds;
   const servers: AcpMcpServer[] = [];
   const externalNames: string[] = [];
 
   // Phase 1: resolve builtins from projectRoot (no .mcp.json needed)
   for (const name of whitelist) {
+    if (disabled?.has(name)) {
+      log.info({ name }, 'Skipping disabled server (capabilities.json)');
+      continue;
+    }
     const builtin = resolveBuiltinCatCafeServer(projectRoot, name);
     if (builtin) {
       servers.push(builtin);

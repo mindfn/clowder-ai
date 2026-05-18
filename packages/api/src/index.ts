@@ -12,7 +12,11 @@ import cors from '@fastify/cors';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyReply } from 'fastify';
 import { resolveAnthropicRuntimeProfile, resolveForClient } from './config/account-resolver.js';
-import { orchestrate } from './config/capabilities/capability-orchestrator.js';
+import {
+  orchestrate,
+  readCapabilitiesConfig,
+  resolveServersForCat,
+} from './config/capabilities/capability-orchestrator.js';
 import { resolveStartupCliConfigContext } from './config/capabilities/startup-cli-config.js';
 import { resolveBoundAccountRefForCat } from './config/cat-account-binding.js';
 import { getCatContextBudget } from './config/cat-budgets.js';
@@ -1016,7 +1020,26 @@ async function main(): Promise<void> {
             const { resolveAcpMcpServers } = await import(
               './domains/cats/services/agents/providers/acp/acp-mcp-resolver.js'
             );
-            const mcpServers = resolveAcpMcpServers(acpProjectRoot, acpConfig.mcpWhitelist ?? []);
+            // #712: Compute disabled servers from capabilities.json for this cat
+            let disabledServerIds: Set<string> | undefined;
+            try {
+              const capConfig = await readCapabilitiesConfig(acpProjectRoot);
+              if (capConfig) {
+                disabledServerIds = new Set(
+                  resolveServersForCat(capConfig, catId)
+                    .filter((s) => !s.enabled)
+                    .map((s) => s.name),
+                );
+              }
+            } catch {
+              // best-effort
+            }
+            const mcpServers = resolveAcpMcpServers(
+              acpProjectRoot,
+              acpConfig.mcpWhitelist ?? [],
+              undefined,
+              disabledServerIds ? { disabledServerIds } : undefined,
+            );
             service = new GeminiAcpAdapter({
               catId,
               pool: acpPoolRegistry.get(id)!,

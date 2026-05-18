@@ -768,6 +768,98 @@ test('falls back to default MCP path when CAT_CAFE_MCP_SERVER_PATH is empty', as
   }
 });
 
+test('#712: respects capabilities.json disabled state for MCP injection', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'cat-cafe-mcp-cap-filter-'));
+  const apiCwd = join(root, 'packages', 'api');
+  const mcpDistDir = join(root, 'packages', 'mcp-server', 'dist');
+  mkdirSync(apiCwd, { recursive: true });
+  mkdirSync(mcpDistDir, { recursive: true });
+  writeFileSync(join(mcpDistDir, 'index.js'), 'export {};', 'utf8');
+  for (const f of ['collab.js', 'memory.js', 'signals.js', 'limb.js']) {
+    writeFileSync(join(mcpDistDir, f), 'export {};', 'utf8');
+  }
+  // Write capabilities.json with limb disabled
+  const catCafeDir = join(root, '.cat-cafe');
+  mkdirSync(catCafeDir, { recursive: true });
+  writeFileSync(
+    join(catCafeDir, 'capabilities.json'),
+    JSON.stringify({
+      version: 1,
+      capabilities: [
+        {
+          id: 'cat-cafe-collab',
+          type: 'mcp',
+          enabled: true,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['collab.js'] },
+        },
+        {
+          id: 'cat-cafe-memory',
+          type: 'mcp',
+          enabled: true,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['memory.js'] },
+        },
+        {
+          id: 'cat-cafe-signals',
+          type: 'mcp',
+          enabled: true,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['signals.js'] },
+        },
+        {
+          id: 'cat-cafe-limb',
+          type: 'mcp',
+          enabled: false,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['limb.js'] },
+        },
+      ],
+    }),
+  );
+
+  const previousCwd = process.cwd();
+  const previousEnv = process.env.CAT_CAFE_MCP_SERVER_PATH;
+  const proc = createMockProcess();
+  const spawnFn = createMockSpawnFn(proc);
+
+  try {
+    process.chdir(apiCwd);
+    process.env.CAT_CAFE_MCP_SERVER_PATH = '';
+
+    const service = new ClaudeAgentService({ spawnFn });
+    const promise = collect(
+      service.invoke('hello', {
+        callbackEnv: {
+          CAT_CAFE_API_URL: 'http://localhost:3004',
+          CAT_CAFE_INVOCATION_ID: 'inv-1',
+          CAT_CAFE_CALLBACK_TOKEN: 'token-1',
+          CAT_CAFE_CAT_ID: 'opus',
+        },
+      }),
+    );
+    emitClaudeEvents(proc, [{ type: 'result', subtype: 'success' }]);
+    await promise;
+
+    const args = spawnFn.mock.calls[0].arguments[1];
+    const mcpConfigIdx = args.indexOf('--mcp-config');
+    assert.ok(mcpConfigIdx >= 0, '--mcp-config should be present');
+    const parsed = JSON.parse(args[mcpConfigIdx + 1]);
+    assert.ok(parsed.mcpServers['cat-cafe-collab'], 'enabled collab should be injected');
+    assert.ok(parsed.mcpServers['cat-cafe-memory'], 'enabled memory should be injected');
+    assert.ok(parsed.mcpServers['cat-cafe-signals'], 'enabled signals should be injected');
+    assert.ok(!parsed.mcpServers['cat-cafe-limb'], 'disabled limb must NOT be injected');
+  } finally {
+    process.chdir(previousCwd);
+    if (previousEnv === undefined) {
+      delete process.env.CAT_CAFE_MCP_SERVER_PATH;
+    } else {
+      process.env.CAT_CAFE_MCP_SERVER_PATH = previousEnv;
+    }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('F8: result/success extracts usage into done metadata', async () => {
   const proc = createMockProcess();
   const spawnFn = createMockSpawnFn(proc);

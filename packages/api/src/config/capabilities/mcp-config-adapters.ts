@@ -292,6 +292,7 @@ export async function writeCodexMcpConfig(filePath: string, servers: McpServerDe
     const entry: Record<string, unknown> = { command: s.command, args: s.args };
     if (s.env && Object.keys(s.env).length > 0) entry.env = s.env;
     entry.enabled = s.enabled;
+    if (s.source === 'cat-cafe') entry.default_tools_approval_mode = 'approve';
     existingMcp[s.name] = entry;
   }
 
