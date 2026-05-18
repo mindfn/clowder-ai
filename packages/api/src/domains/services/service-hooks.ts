@@ -66,25 +66,31 @@ export function onServiceEvent(
 ): void {
   const k = key(serviceId, event);
   if (!hooks.has(k)) hooks.set(k, []);
-  hooks.get(k)?.push({
+  const newEntry: HookEntry = {
     fn: hook,
     unregisterOnSuccess: options?.unregisterOnSuccess ?? true,
-  });
+  };
+  hooks.get(k)?.push(newEntry);
 
   // Late-registration fast path: if the event already fired AND no
   // fireServiceEvent is currently dispatching for this key, schedule a
-  // microtask replay so the just-registered hook catches up. Previously
-  // gated on `pending.length === 1`, which incorrectly treated an
-  // already-present always-on hook (`unregisterOnSuccess: false`) as a
-  // blocker — the new hook would silently wait for a "next external
-  // fire" that may never come (codex P2 3249789190). The `inFlight`
-  // guard prevents recursive re-fire when a hook registers another hook
-  // mid-dispatch — fireServiceEvent's own snapshot-diff late-detect
-  // (commit 6fd14749) handles the in-flight case, so we only schedule
-  // here for AFTER-dispatch registrations.
+  // microtask that fires ONLY this new hook entry — not the full
+  // current list. Previously this called fireServiceEvent(...) which
+  // re-dispatched every hook registered for the key, so an already-
+  // present always-on hook (unregisterOnSuccess:false) would re-run
+  // for every late subscriber even though no new lifecycle transition
+  // happened — duplicating side effects like embed catch-up. Codex P2
+  // 3256004818. The dispatchHooks call below targets [newEntry] only;
+  // pre-existing survivors are preserved untouched via dispatchHooks'
+  // preNotFired bucket.
+  //
+  // The in-flight case (hook registers another hook mid-dispatch) is
+  // handled inside dispatchHooks itself via the lateRegistered split,
+  // so this onServiceEvent fast path only fires for AFTER-dispatch
+  // registrations.
   if (fired.has(k) && !inFlight.has(k)) {
     queueMicrotask(() => {
-      void fireServiceEvent(serviceId, event);
+      void dispatchHooks(serviceId, event, [newEntry]);
     });
   }
 }
