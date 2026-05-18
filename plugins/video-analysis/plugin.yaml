@@ -2,7 +2,7 @@ id: video-analysis
 name: 视频分析
 version: "1.0.0"
 description: 声明式视频理解与分析 — 通过视频协议模板适配 Gemini、智谱 VLM 等
-icon: search
+icon: search-pulse
 iconBg: "#0ea5e9"
 
 config:
