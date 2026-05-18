@@ -1038,6 +1038,28 @@ export const ENV_VARS: EnvDefinition[] = [
     group: 'connector-wecom',
   },
 
+  // --- WeChat MP (F204) ---
+  {
+    name: 'WEIXIN_MP_APP_ID',
+    defaultValue: '(未设置 → 不启用)',
+    description: '微信公众号 AppID（F204 微信公众号接入）',
+    category: 'connector',
+    sensitive: false,
+    restartRequired: true,
+    group: 'connector-weixin-mp',
+    dependencies: ['WEIXIN_MP_APP_SECRET'],
+  },
+  {
+    name: 'WEIXIN_MP_APP_SECRET',
+    defaultValue: '(未设置)',
+    description: '微信公众号 AppSecret',
+    category: 'connector',
+    sensitive: true,
+    restartRequired: true,
+    group: 'connector-weixin-mp',
+    dependencies: ['WEIXIN_MP_APP_ID'],
+  },
+
   // --- GitHub Repo Inbox (F141) ---
   {
     name: 'GITHUB_WEBHOOK_SECRET',
