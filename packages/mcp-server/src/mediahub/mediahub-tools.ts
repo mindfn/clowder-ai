@@ -37,7 +37,7 @@ export async function handleListProviders(): Promise<ToolResult> {
     if (providers.length === 0) {
       return successResult(
         'No providers registered. Configure at least one provider API key ' +
-          '(e.g. COGVIDEO_API_KEY) and restart the MCP server.',
+          '(e.g. MEDIAHUB_COGVIDEO_API_KEY) and restart the MCP server.',
       );
     }
     return successResult(JSON.stringify(providers, null, 2));
@@ -97,9 +97,10 @@ export async function handleGenerateVideo(args: {
       v: 1,
       title: job.status === 'failed' ? 'Generation Failed' : 'Generating...',
       tone: job.status === 'failed' ? 'danger' : 'info',
-      bodyMarkdown: job.status === 'failed'
-        ? `**${job.providerId}** / ${job.model}\n\nError: ${job.error}`
-        : `**${job.providerId}** / ${job.model}\n\nPrompt: ${args.prompt.slice(0, 100)}\n\nStatus: queued`,
+      bodyMarkdown:
+        job.status === 'failed'
+          ? `**${job.providerId}** / ${job.model}\n\nError: ${job.error}`
+          : `**${job.providerId}** / ${job.model}\n\nPrompt: ${args.prompt.slice(0, 100)}\n\nStatus: queued`,
       fields: [
         { label: 'Job', value: job.jobId.slice(0, 8) },
         { label: 'Status', value: job.status },

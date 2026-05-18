@@ -191,9 +191,16 @@ export const mediahubAccountsRoutes: FastifyPluginAsync<MediaHubAccountsRoutesOp
       const auditLog = getEventAuditLog();
       await auditLog.append({
         type: AuditEventTypes.CONFIG_UPDATED,
-        data: { target: 'mediahub-credential-bind', providerId: id, operator: userId, fields: Object.keys(credentials) },
+        data: {
+          target: 'mediahub-credential-bind',
+          providerId: id,
+          operator: userId,
+          fields: Object.keys(credentials),
+        },
       });
-    } catch { /* audit failure is non-critical */ }
+    } catch {
+      /* audit failure is non-critical */
+    }
 
     return { ok: true, providerId: id };
   });
@@ -230,7 +237,9 @@ export const mediahubAccountsRoutes: FastifyPluginAsync<MediaHubAccountsRoutesOp
         type: AuditEventTypes.CONFIG_UPDATED,
         data: { target: 'mediahub-credential-unbind', providerId: id, operator: userId },
       });
-    } catch { /* audit failure is non-critical */ }
+    } catch {
+      /* audit failure is non-critical */
+    }
 
     return { ok: true, providerId: id };
   });

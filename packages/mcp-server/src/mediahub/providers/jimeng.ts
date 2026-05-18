@@ -218,8 +218,8 @@ export class JimengProvider implements MediaProvider {
 
 /** Factory: creates provider from explicit keys or env vars */
 export function createJimengProvider(accessKey?: string, secretKey?: string): JimengProvider | null {
-  const ak = accessKey ?? process.env['VOLC_ACCESSKEY'];
-  const sk = secretKey ?? process.env['VOLC_SECRETKEY'];
+  const ak = accessKey ?? process.env['MEDIAHUB_VOLC_ACCESSKEY'] ?? process.env['VOLC_ACCESSKEY'];
+  const sk = secretKey ?? process.env['MEDIAHUB_VOLC_SECRETKEY'] ?? process.env['VOLC_SECRETKEY'];
   if (!ak || !sk) return null;
   return new JimengProvider(ak, sk);
 }

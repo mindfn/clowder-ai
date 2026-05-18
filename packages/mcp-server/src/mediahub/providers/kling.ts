@@ -210,8 +210,8 @@ function mapKlingStatus(s: string): 'queued' | 'running' | 'succeeded' | 'failed
 
 /** Factory: creates provider from explicit keys or env vars */
 export function createKlingProvider(accessKey?: string, secretKey?: string): KlingProvider | null {
-  const ak = accessKey ?? process.env['KLING_ACCESS_KEY'];
-  const sk = secretKey ?? process.env['KLING_SECRET_KEY'];
+  const ak = accessKey ?? process.env['MEDIAHUB_KLING_ACCESS_KEY'] ?? process.env['KLING_ACCESS_KEY'];
+  const sk = secretKey ?? process.env['MEDIAHUB_KLING_SECRET_KEY'] ?? process.env['KLING_SECRET_KEY'];
   if (!ak || !sk) return null;
   return new KlingProvider(ak, sk);
 }

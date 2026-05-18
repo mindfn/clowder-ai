@@ -125,11 +125,11 @@ export function registerLimbToolset(server: McpServer): void {
 }
 
 const MEDIAHUB_CREDENTIAL_ENV_KEYS = [
-  'COGVIDEO_API_KEY',
-  'KLING_ACCESS_KEY',
-  'VOLC_ACCESSKEY',
+  'MEDIAHUB_COGVIDEO_API_KEY',
+  'MEDIAHUB_KLING_ACCESS_KEY',
+  'MEDIAHUB_VOLC_ACCESSKEY',
   'MEDIAHUB_CREDENTIAL_KEY',
-  'GEMINI_API_KEY',
+  'MEDIAHUB_GEMINI_API_KEY',
 ];
 
 function isMediaHubPluginEnabled(): boolean {
@@ -139,8 +139,7 @@ function isMediaHubPluginEnabled(): boolean {
     const raw = JSON.parse(readFileSync(capPath, 'utf-8'));
     if (raw?.version !== 1 || !Array.isArray(raw?.capabilities)) return false;
     return raw.capabilities.some(
-      (c: { pluginId?: string; enabled?: boolean }) =>
-        c.pluginId === 'mediahub' && c.enabled === true,
+      (c: { pluginId?: string; enabled?: boolean }) => c.pluginId === 'mediahub' && c.enabled === true,
     );
   } catch {
     return false;

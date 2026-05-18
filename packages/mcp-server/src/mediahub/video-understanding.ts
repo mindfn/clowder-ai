@@ -66,11 +66,16 @@ export interface AnalyzeVideoOutput {
 }
 
 function getGeminiApiKey(): string | undefined {
-  return process.env['GOOGLE_AI_API_KEY'] ?? process.env['GEMINI_API_KEY'];
+  return process.env['MEDIAHUB_GEMINI_API_KEY'] ?? process.env['GOOGLE_AI_API_KEY'] ?? process.env['GEMINI_API_KEY'];
 }
 
 function getZhipuApiKey(): string | undefined {
-  return process.env['ZHIPU_API_KEY'] ?? process.env['COGVIDEO_API_KEY'] ?? process.env['BIGMODEL_API_KEY'];
+  return (
+    process.env['MEDIAHUB_COGVIDEO_API_KEY'] ??
+    process.env['ZHIPU_API_KEY'] ??
+    process.env['COGVIDEO_API_KEY'] ??
+    process.env['BIGMODEL_API_KEY']
+  );
 }
 
 function extractGeminiText(payload: GeminiResponse): string {
@@ -177,7 +182,8 @@ async function resolveVideoSource(input: AnalyzeVideoInput): Promise<{
   publicUrl?: string;
 }> {
   const inlineLimitRaw = Number(process.env['MEDIAHUB_INLINE_LIMIT_BYTES'] ?? DEFAULT_INLINE_LIMIT_BYTES);
-  const inlineLimit = Number.isFinite(inlineLimitRaw) && inlineLimitRaw > 0 ? inlineLimitRaw : DEFAULT_INLINE_LIMIT_BYTES;
+  const inlineLimit =
+    Number.isFinite(inlineLimitRaw) && inlineLimitRaw > 0 ? inlineLimitRaw : DEFAULT_INLINE_LIMIT_BYTES;
 
   if (input.localPath) {
     const fileStat = await stat(input.localPath);
@@ -196,7 +202,7 @@ async function resolveVideoSource(input: AnalyzeVideoInput): Promise<{
 
 async function analyzeWithGemini(input: AnalyzeVideoInput): Promise<AnalyzeVideoOutput> {
   const apiKey = input.apiKey ?? getGeminiApiKey();
-  if (!apiKey) throw new Error('Gemini API key missing (GEMINI_API_KEY / GOOGLE_AI_API_KEY)');
+  if (!apiKey) throw new Error('Gemini API key missing (MEDIAHUB_GEMINI_API_KEY / GOOGLE_AI_API_KEY / GEMINI_API_KEY)');
 
   const model = input.model?.trim() || process.env['MEDIAHUB_GEMINI_MODEL'] || DEFAULT_GEMINI_MODEL;
   const source = await resolveVideoSource(input);
@@ -240,10 +246,17 @@ async function analyzeWithGemini(input: AnalyzeVideoInput): Promise<AnalyzeVideo
 
 async function analyzeWithZhipu(input: AnalyzeVideoInput): Promise<AnalyzeVideoOutput> {
   const apiKey = input.apiKey ?? getZhipuApiKey();
-  if (!apiKey) throw new Error('Zhipu API key missing (ZHIPU_API_KEY / COGVIDEO_API_KEY / BIGMODEL_API_KEY)');
+  if (!apiKey)
+    throw new Error(
+      'Zhipu API key missing (MEDIAHUB_COGVIDEO_API_KEY / ZHIPU_API_KEY / COGVIDEO_API_KEY / BIGMODEL_API_KEY)',
+    );
 
   const model = input.model?.trim() || process.env['MEDIAHUB_ZHIPU_MODEL'] || DEFAULT_ZHIPU_MODEL;
-  const baseUrl = (input.baseUrl?.trim() || process.env['MEDIAHUB_ZHIPU_BASE_URL'] || 'https://open.bigmodel.cn/api/paas/v4').replace(/\/+$/, '');
+  const baseUrl = (
+    input.baseUrl?.trim() ||
+    process.env['MEDIAHUB_ZHIPU_BASE_URL'] ||
+    'https://open.bigmodel.cn/api/paas/v4'
+  ).replace(/\/+$/, '');
   const source = await resolveVideoSource(input);
 
   // Zhipu multimodal currently works best with URL-style input.

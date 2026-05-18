@@ -3,7 +3,7 @@
  * F139: Free unlimited video generation via CogVideoX-Flash.
  *
  * API docs: https://bigmodel.cn/dev/api/videoGeneration/cogvideox
- * Auth: API key via COGVIDEO_API_KEY env var
+ * Auth: API key via MEDIAHUB_COGVIDEO_API_KEY env var (fallback: COGVIDEO_API_KEY)
  * Model: cogvideox-flash (free, 1440x960, ~6s)
  * Pattern: async task — submit → poll → download
  */
@@ -109,9 +109,9 @@ export class CogVideoXProvider implements MediaProvider {
   }
 }
 
-/** Factory: creates provider from explicit key or COGVIDEO_API_KEY env var */
+/** Factory: creates provider from explicit key or MEDIAHUB_COGVIDEO_API_KEY env var */
 export function createCogVideoXProvider(apiKey?: string): CogVideoXProvider | null {
-  const key = apiKey ?? process.env['COGVIDEO_API_KEY'];
+  const key = apiKey ?? process.env['MEDIAHUB_COGVIDEO_API_KEY'] ?? process.env['COGVIDEO_API_KEY'];
   if (!key) return null;
   return new CogVideoXProvider(key);
 }
