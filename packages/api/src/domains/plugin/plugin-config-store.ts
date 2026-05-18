@@ -6,6 +6,8 @@ import { configEventBus, createChangeSetId } from '../../config/config-event-bus
 const CONFIG_DIR = '.cat-cafe';
 const PLUGIN_CONFIG_SUBDIR = 'plugin-config';
 
+const configCache = new Map<string, StoredValues>();
+
 function resolvePluginConfigDir(projectRoot: string): string {
   return resolve(projectRoot, CONFIG_DIR, PLUGIN_CONFIG_SUBDIR);
 }
@@ -84,10 +86,7 @@ export function writePluginConfig(
   const configPath = resolvePluginConfigPath(projectRoot, pluginId);
   writeFileAtomic(configPath, `${JSON.stringify(existing, null, 2)}\n`);
 
-  for (const { name, value } of updates) {
-    if (value == null || value === '') delete process.env[name];
-    else process.env[name] = value;
-  }
+  configCache.set(pluginId, { ...existing });
 
   if (changedKeys.length > 0) {
     configEventBus.emitChange({
@@ -107,15 +106,32 @@ export function loadAllPluginConfigs(projectRoot: string, manifests: PluginManif
   for (const manifest of manifests) {
     const allowedEnvNames = new Set(manifest.config.map((f) => f.envName));
     const raw = readRawConfig(projectRoot, manifest.id);
+    const filtered: StoredValues = {};
     for (const [name, value] of Object.entries(raw)) {
       if (!allowedEnvNames.has(name)) continue;
-      if (typeof value === 'string') {
-        process.env[name] = value;
-        loaded++;
-      } else if (value === null) {
-        delete process.env[name];
+      filtered[name] = value;
+      if (typeof value === 'string') loaded++;
+    }
+    configCache.set(manifest.id, filtered);
+  }
+  return loaded;
+}
+
+export function resolvePluginEnv(manifests: PluginManifest[]): Record<string, string | undefined> {
+  const result: Record<string, string | undefined> = {};
+  for (const manifest of manifests) {
+    const cached = configCache.get(manifest.id);
+    for (const field of manifest.config) {
+      const fromStore = cached?.[field.envName];
+      if (typeof fromStore === 'string') {
+        result[field.envName] = fromStore;
+      } else if (fromStore === null) {
+        result[field.envName] = undefined;
+      } else {
+        const fromEnv = process.env[field.envName];
+        if (fromEnv) result[field.envName] = fromEnv;
       }
     }
   }
-  return loaded;
+  return result;
 }
