@@ -733,8 +733,8 @@ describe('bootstrapCapabilities', () => {
     });
 
     assert.equal(config.version, 1);
-    // cat-cafe main(1) + split(3) + filesystem
-    assert.equal(config.capabilities.length, 5);
+    // cat-cafe main(1) + split(4) + filesystem
+    assert.equal(config.capabilities.length, 6);
 
     const catCafeMain = config.capabilities.find((c) => c.id === 'cat-cafe');
     assert.ok(catCafeMain);
@@ -754,6 +754,10 @@ describe('bootstrapCapabilities', () => {
     assert.ok(catCafeSignals);
     assert.equal(catCafeSignals.source, 'cat-cafe');
 
+    const catCafeLimb = config.capabilities.find((c) => c.id === 'cat-cafe-limb');
+    assert.ok(catCafeLimb);
+    assert.equal(catCafeLimb.source, 'cat-cafe');
+
     const fs = config.capabilities.find((c) => c.id === 'filesystem');
     assert.ok(fs);
     assert.equal(fs.source, 'external');
@@ -761,7 +765,7 @@ describe('bootstrapCapabilities', () => {
     // Also persisted to disk
     const persisted = await readCapabilitiesConfig(dir);
     assert.ok(persisted);
-    assert.equal(persisted.capabilities.length, 5);
+    assert.equal(persisted.capabilities.length, 6);
   });
 
   it('normalizes pencil into a resolver-backed capability on bootstrap', async () => {

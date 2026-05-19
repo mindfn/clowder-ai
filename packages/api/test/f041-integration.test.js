@@ -423,8 +423,8 @@ describe('F041 Discovery Consistency', () => {
       geminiConfig: join(dir, 'nonexistent.json'),
     });
 
-    // Should have: cat-cafe main(1) + split(3) + pencil + jetbrains (discovered)
-    assert.equal(config.capabilities.length, 6);
+    // Should have: cat-cafe main(1) + split(4) + pencil + jetbrains (discovered)
+    assert.equal(config.capabilities.length, 7);
 
     const catCafeMain = config.capabilities.find((c) => c.id === 'cat-cafe');
     assert.ok(catCafeMain);
@@ -435,6 +435,7 @@ describe('F041 Discovery Consistency', () => {
     assert.equal(catCafeCollab.source, 'cat-cafe');
     assert.ok(config.capabilities.find((c) => c.id === 'cat-cafe-memory'));
     assert.ok(config.capabilities.find((c) => c.id === 'cat-cafe-signals'));
+    assert.ok(config.capabilities.find((c) => c.id === 'cat-cafe-limb'));
 
     const pencil = config.capabilities.find((c) => c.id === 'pencil');
     assert.ok(pencil);
