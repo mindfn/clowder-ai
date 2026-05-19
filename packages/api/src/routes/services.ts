@@ -488,7 +488,13 @@ export const servicesRoutes: FastifyPluginAsync = async (app) => {
       setServicePid(id, child.pid);
       watcherStarted = true;
       request.log.info(`[services] /start ${id} → spawned (pid=${child.pid}), watcher polling for running`);
-      void watchForRunningAndFire(id, manifest, request.log);
+      // Pass the markerFired guard so the watcher no-ops if the
+      // ready-marker callback already fired 'started'. Without this,
+      // marker-fired-then-watcher-fired-again dual-dispatches the
+      // event and re-runs always-on hooks (e.g. embedding catch-up)
+      // — same shape as the early-exit branch above (line 464) and
+      // codex P2 3251557957 / c6d91a34 fix. Codex P2 3264216495.
+      void watchForRunningAndFire(id, manifest, request.log, () => markerFired);
       // (background watcher fire-and-forget; setStarting handled inside)
       return {
         ok: true,
