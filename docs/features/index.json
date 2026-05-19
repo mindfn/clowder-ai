@@ -1155,7 +1155,7 @@
     {
       "id": "F188",
       "name": "Library Stewardship — 图书馆管护与成长",
-      "status": "in-progress (Phase A/B/C/Graph readability/Graph Query/F/G merged) | **Owner**: Ragdoll | **Priority**: P1",
+      "status": "in-progress (Phase A/B/C/Graph readability/Graph Query/F/G/I/D merged; Phase E superseded by F200; Phase H remaining) | **Owner**: Ragdoll | **Priority**: P1",
       "file": "F188-library-stewardship.md"
     },
     {
@@ -1221,7 +1221,7 @@
     {
       "id": "F201",
       "name": "Antigravity Reliability Contract — 孟加拉猫可靠可用性闭环",
-      "status": "in-progress | **Owner**: Maine Coon（Maine Coon） | **Reviewer**: Ragdoll Opus 4.6 + Ragdoll Opus 4.7 | **Priority**: P0",
+      "status": "done | **Owner**: Maine Coon（Maine Coon） | **Reviewer**: Ragdoll Opus 4.6 + Ragdoll Opus 4.7 | **Priority**: P0",
       "file": "F201-antigravity-reliability-contract.md"
     },
     {
