@@ -24,10 +24,10 @@ function safeHostname(url: string): string {
 }
 
 function fieldPlaceholder(f: PluginConfigField & { currentValue?: string | null }): string {
-  const note = f.notes?.zh ?? f.notes?.en ?? Object.values(f.notes ?? {})[0];
-  if (note) return note;
   if (f.sensitive) return f.currentValue ? '已设置（输入新值覆盖）' : '未设置';
-  return f.currentValue ?? '未设置';
+  if (f.currentValue) return '';
+  const note = f.notes?.zh ?? f.notes?.en ?? Object.values(f.notes ?? {})[0];
+  return note ?? '未设置';
 }
 
 interface Props {
@@ -250,7 +250,7 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
                         id={`plugin-${f.envName}`}
                         type={f.sensitive ? 'password' : 'text'}
                         placeholder={fieldPlaceholder(f)}
-                        value={fieldValues[f.envName] ?? ''}
+                        value={fieldValues[f.envName] ?? (!f.sensitive && f.currentValue ? f.currentValue : '')}
                         onChange={(e) => setFieldValues((prev) => ({ ...prev, [f.envName]: e.target.value }))}
                         className="console-form-input py-2.5 text-[13px]"
                         data-testid={`field-${f.envName}`}
@@ -291,7 +291,7 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
                         id={`plugin-${sub.envName}`}
                         type={sub.sensitive ? 'password' : 'text'}
                         placeholder={fieldPlaceholder(sub)}
-                        value={fieldValues[sub.envName] ?? ''}
+                        value={fieldValues[sub.envName] ?? (!sub.sensitive && sub.currentValue ? sub.currentValue : '')}
                         onChange={(e) => setFieldValues((prev) => ({ ...prev, [sub.envName]: e.target.value }))}
                         className="console-form-input py-2.5 text-[13px]"
                         data-testid={`field-${sub.envName}`}

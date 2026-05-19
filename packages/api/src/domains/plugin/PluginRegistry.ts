@@ -12,8 +12,7 @@ import { BUILTIN_PLUGIN_IDS, parsePluginManifest, validateEnvSafety } from './pl
 function maskValue(raw: string | undefined, sensitive: boolean): string | null {
   if (!raw) return null;
   if (sensitive) return '••••••';
-  if (raw.length <= 6) return raw;
-  return `${raw.slice(0, 6)}****`;
+  return raw;
 }
 
 export class PluginRegistry {
