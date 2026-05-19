@@ -123,6 +123,19 @@ export class PluginRegistry {
     const configWithValues = manifest.config.map((f) => ({
       ...f,
       currentValue: maskValue(env[f.envName], f.sensitive),
+      ...(f.oneOf
+        ? {
+            oneOf: Object.fromEntries(
+              Object.entries(f.oneOf).map(([key, fields]) => [
+                key,
+                fields.map((sub) => ({
+                  ...sub,
+                  currentValue: maskValue(env[sub.envName], sub.sensitive),
+                })),
+              ]),
+            ),
+          }
+        : {}),
     }));
 
     const resourceStatuses: PluginResourceStatus[] = manifest.resources.map((r) => {
