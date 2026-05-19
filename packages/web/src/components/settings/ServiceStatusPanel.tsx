@@ -99,15 +99,24 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
     }
   }
 
-  async function executeAction(serviceId: string, action: string, model?: string) {
+  async function executeAction(serviceId: string, action: string, model?: string, port?: number) {
     setActing((prev) => new Set(prev).add(serviceId));
     setActionError(null);
     if (action === 'install' || action === 'start') startLogPoll(serviceId);
     try {
+      // Serialize model + port for install (codex P2 3266352848 — install
+      // modal accepts a port input but executeAction was previously dropping
+      // it on the floor, so user-entered ports silently collided with the
+      // default/env-derived port).
+      const installBody: { model?: string; port?: number } = {};
+      if (model) installBody.model = model;
+      if (typeof port === 'number') installBody.port = port;
+      const body =
+        action === 'install' && (model || typeof port === 'number') ? JSON.stringify(installBody) : '{}';
       const res = await apiFetch(`/api/services/${serviceId}/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: action === 'install' && model ? JSON.stringify({ model }) : '{}',
+        body,
       });
       const data = (await res.json()) as { ok?: boolean; error?: string };
       if (!data.ok) {
@@ -230,10 +239,10 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
           serviceId={installTarget.id}
           serviceName={installTarget.name}
           estimatedMinutes={installTarget.prerequisites?.estimatedMinutes}
-          onConfirm={({ model }) => {
+          onConfirm={({ model, port }) => {
             const id = installTarget.id;
             setInstallTarget(null);
-            void executeAction(id, 'install', model);
+            void executeAction(id, 'install', model, port);
           }}
           onCancel={() => setInstallTarget(null)}
         />
