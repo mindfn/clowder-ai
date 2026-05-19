@@ -565,7 +565,7 @@ export function buildCatCafeMcpDescriptor(projectRoot: string): McpServerDescrip
   };
 }
 
-const CAT_CAFE_SPLIT_SERVER_IDS = ['cat-cafe-collab', 'cat-cafe-memory', 'cat-cafe-signals'] as const;
+const CAT_CAFE_SPLIT_SERVER_IDS = ['cat-cafe-collab', 'cat-cafe-memory', 'cat-cafe-signals', 'cat-cafe-limb'] as const;
 
 /**
  * Resolve the runtime binary root (where Clowder AI MCP server code lives).
@@ -613,6 +613,13 @@ function buildCatCafeSplitMcpDescriptors(binaryRoot: string): McpServerDescripto
       name: 'cat-cafe-signals',
       command: 'node',
       args: [resolve(binaryRoot, 'packages/mcp-server/dist/signals.js')],
+      enabled: true,
+      source: 'cat-cafe',
+    },
+    {
+      name: 'cat-cafe-limb',
+      command: 'node',
+      args: [resolve(binaryRoot, 'packages/mcp-server/dist/limb.js')],
       enabled: true,
       source: 'cat-cafe',
     },
@@ -766,6 +773,31 @@ export function ensureCatCafeMainServer(
   capabilities.splice(firstSplitIdx, 0, mainEntry);
 
   return { migrated: true, config: { ...config, capabilities } };
+}
+
+const ALL_BUILTIN_IDS = ['cat-cafe', ...CAT_CAFE_SPLIT_SERVER_IDS] as const;
+
+export function ensureCatCafeBuiltinServers(
+  config: CapabilitiesConfig,
+  opts?: { catCafeRepoRoot?: string },
+): { migrated: boolean; config: CapabilitiesConfig } {
+  const binaryRoot = resolveBinaryRoot(opts?.catCafeRepoRoot);
+  const presentIds = new Set(
+    config.capabilities.filter((c) => c.type === 'mcp' && c.source === 'cat-cafe').map((c) => c.id),
+  );
+  const missing = ALL_BUILTIN_IDS.filter((id) => !presentIds.has(id));
+  if (missing.length === 0) return { migrated: false, config };
+
+  const descriptorMap = new Map<string, McpServerDescriptor>([
+    ['cat-cafe', buildCatCafeMcpDescriptor(binaryRoot)],
+    ...buildCatCafeSplitMcpDescriptors(binaryRoot).map((d) => [d.name, d] as const),
+  ]);
+
+  const additions = missing.map((id) => toCapabilityEntry(descriptorMap.get(id)!));
+  return {
+    migrated: true,
+    config: { ...config, capabilities: [...additions, ...config.capabilities] },
+  };
 }
 
 /**

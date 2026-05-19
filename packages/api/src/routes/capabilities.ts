@@ -37,6 +37,7 @@ import {
   type DiscoveryPaths,
   deduplicateDiscoveredMcpServers,
   discoverExternalMcpServers,
+  ensureCatCafeBuiltinServers,
   ensureCatCafeMainServer,
   generateCliConfigs,
   migrateLegacyCatCafeCapability,
@@ -548,9 +549,16 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
     } else {
       const migrated = migrateLegacyCatCafeCapability(config, { catCafeRepoRoot });
       const resolverMigrated = migrateResolverBackedCapabilities(migrated.config);
-      const mainServerMigrated = ensureCatCafeMainServer(resolverMigrated.config, { catCafeRepoRoot });
+      const builtinsMigrated = ensureCatCafeBuiltinServers(resolverMigrated.config, { catCafeRepoRoot });
+      const mainServerMigrated = ensureCatCafeMainServer(builtinsMigrated.config, { catCafeRepoRoot });
       const pathRealigned = realignManagedCatCafeServerPaths(mainServerMigrated.config, { catCafeRepoRoot });
-      if (migrated.migrated || resolverMigrated.migrated || mainServerMigrated.migrated || pathRealigned.migrated) {
+      if (
+        migrated.migrated ||
+        resolverMigrated.migrated ||
+        builtinsMigrated.migrated ||
+        mainServerMigrated.migrated ||
+        pathRealigned.migrated
+      ) {
         config = pathRealigned.config;
         await writeCapabilitiesConfig(projectRoot, config);
       } else {
