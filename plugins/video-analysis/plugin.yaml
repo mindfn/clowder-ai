@@ -38,12 +38,12 @@ config:
     oneOf:
       apikey:
         - { envName: VIDEO_ANALYSIS_API_KEY, label: API Key, sensitive: true }
-        - { envName: VIDEO_ANALYSIS_BASE_URL, label: Base URL, sensitive: false, required: false, zh_notes: "留空使用默认地址" }
-        - { envName: VIDEO_ANALYSIS_MODEL, label: 模型名称, sensitive: false, required: false, zh_notes: "如 glm-4.6v-flash、gemini-2.0-flash" }
+        - { envName: VIDEO_ANALYSIS_BASE_URL, label: Base URL, sensitive: false, required: false, zh_notes: "https://open.bigmodel.cn" }
+        - { envName: VIDEO_ANALYSIS_MODEL, label: 模型名称, sensitive: false, required: false, zh_notes: "glm-4.6v-flash" }
       query-param:
         - { envName: VIDEO_ANALYSIS_API_KEY, label: API Key, sensitive: true }
-        - { envName: VIDEO_ANALYSIS_BASE_URL, label: Base URL, sensitive: false, required: false, zh_notes: "留空使用默认地址" }
-        - { envName: VIDEO_ANALYSIS_MODEL, label: 模型名称, sensitive: false, required: false, zh_notes: "如 gemini-2.0-flash" }
+        - { envName: VIDEO_ANALYSIS_BASE_URL, label: Base URL, sensitive: false, required: false, zh_notes: "https://generativelanguage.googleapis.com" }
+        - { envName: VIDEO_ANALYSIS_MODEL, label: 模型名称, sensitive: false, required: false, zh_notes: "gemini-2.0-flash" }
 
 resources:
   - type: mcp
