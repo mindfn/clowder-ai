@@ -1,10 +1,12 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { getEnvironmentProfile } from '../domains/services/environment-detector.js';
 import { buildRecommendation } from '../domains/services/recommendation-matrix.js';
+import { getServiceConfig } from '../domains/services/service-config.js';
 import {
   type FetchServiceHealth,
   getServiceManifest,
   maskServiceEndpoint,
+  PORT_ENV_VARS,
   resolveServiceEndpoint,
   resolveServiceEndpointMap,
   resolveServiceState,
@@ -64,7 +66,28 @@ export const servicesRoutes: FastifyPluginAsync<ServicesRouteOptions> = async (a
     }
     const profile = getEnvironmentProfile(true);
     const recommendation = buildRecommendation(id, profile);
-    return { profile, recommendation };
+
+    // Suggest a port for the modal to pre-fill. Priority chain:
+    //   1. services.json cfg.port  — persisted user intent from prior install
+    //   2. PORT_ENV_VARS[id] env  — operator's static .env override
+    //   3. undefined              — let modal show "auto" (server allocates default)
+    // Codex P2 3268623657 — modal reads `suggestedPort` to prefill; without
+    // it, users defaulting to blank silently install on whatever the script
+    // resolves at runtime, defeating the collision-avoidance path.
+    let suggestedPort: number | undefined;
+    const cfg = getServiceConfig(id);
+    if (typeof cfg.port === 'number' && cfg.port > 0) {
+      suggestedPort = cfg.port;
+    } else {
+      const portEnvKey = PORT_ENV_VARS[id];
+      const envVal = portEnvKey ? (options.env ?? process.env)[portEnvKey]?.trim() : undefined;
+      if (envVal && /^\d+$/.test(envVal)) {
+        const n = Number.parseInt(envVal, 10);
+        if (n > 0 && n <= 65535) suggestedPort = n;
+      }
+    }
+
+    return { profile, recommendation, suggestedPort };
   });
 
   app.get<{ Params: { id: string } }>('/api/services/:id/health', async (request, reply) => {
