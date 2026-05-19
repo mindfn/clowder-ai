@@ -123,11 +123,15 @@ export {
   runPerspectiveInputSchema,
 } from './perspective-tools.js';
 export {
+  buildCredentialsFromEnv,
+  buildProviderFromEnv,
+  createProtocolTools,
+} from './protocol-tools.js';
+export {
   handleListRecent,
   listRecentInputSchema,
   recentTools,
 } from './recent-tools.js';
-// F193 Phase D AC-D1: reflect-tools removed (deprecated)
 export {
   handleGetRichBlockRules,
   richBlockRulesInputSchema,
