@@ -16,6 +16,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${CAT_CAFE_HOME:=$(cd "$SCRIPT_DIR/../.." && pwd)/.cat-cafe}"
+# Expand leading ~ -- bash parameter expansion doesnt tilde-expand, so a
+# value like CAT_CAFE_HOME=~/.cat-cafe-shared from .env / Node passes
+# through literal and resolves to <cwd>/~/.cat-cafe-shared. python-resolve.sh
+# already handles this for install; mirror here for runtime start.
+# Codex P2 3264135134.
+case "$CAT_CAFE_HOME" in
+  "~") CAT_CAFE_HOME="$HOME" ;;
+  "~/"*) CAT_CAFE_HOME="${HOME}/${CAT_CAFE_HOME#~/}" ;;
+esac
 export CAT_CAFE_HOME
 
 VENV_DIR="${CAT_CAFE_HOME}/embed-venv"

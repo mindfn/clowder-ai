@@ -9,6 +9,12 @@ set -euo pipefail
 # so `set -u` doesn't trip on the unbound variable.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${CAT_CAFE_HOME:=$(cd "$SCRIPT_DIR/../.." && pwd)/.cat-cafe}"
+# Expand leading ~ -- bash parameter expansion doesnt tilde-expand
+# (codex P2 3264135134; matches python-resolve.sh install-time fix).
+case "$CAT_CAFE_HOME" in
+  "~") CAT_CAFE_HOME="$HOME" ;;
+  "~/"*) CAT_CAFE_HOME="${HOME}/${CAT_CAFE_HOME#~/}" ;;
+esac
 export CAT_CAFE_HOME
 
 VENV_DIR="${CAT_CAFE_HOME}/embed-venv"
