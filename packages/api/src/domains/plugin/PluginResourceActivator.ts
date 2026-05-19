@@ -109,6 +109,9 @@ export class PluginResourceActivator {
       case 'mcp':
         await this.activateMcp(manifest, resource);
         break;
+      case 'protocol':
+      case 'schedule':
+        break;
       default:
         throw new Error(`Unsupported resource type: ${resource.type}`);
     }
@@ -124,6 +127,9 @@ export class PluginResourceActivator {
         break;
       case 'mcp':
         await this.deactivateMcp(manifest, resource);
+        break;
+      case 'protocol':
+      case 'schedule':
         break;
       default:
         throw new Error(`Unsupported resource type: ${resource.type}`);
@@ -205,9 +211,7 @@ export class PluginResourceActivator {
   }
 
   private async activateMcp(manifest: PluginManifest, resource: PluginResourceDef): Promise<void> {
-    if (!resource.command) {
-      throw new Error('MCP resource must declare a command');
-    }
+    if (!resource.command) return;
     await this.upsertCapabilityEntry(manifest, resource, true);
   }
 
