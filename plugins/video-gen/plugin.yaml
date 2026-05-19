@@ -62,5 +62,7 @@ config:
 resources:
   - type: mcp
     name: video-gen-toolset
+    command: node
+    args: ["packages/mcp-server/dist/protocol-server.js", "--prefix", "VIDEO_GEN", "--protocols-dir", "plugins/video-gen/protocols"]
   - type: protocol
     path: protocols/

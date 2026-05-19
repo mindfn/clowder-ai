@@ -307,9 +307,17 @@ export class PluginResourceActivator {
     const projectRoot = this.deps.resolveProjectRoot();
     const stored = readPluginConfig(projectRoot, manifest.id);
     const env: Record<string, string> = {};
+    const setIfPresent = (envName: string) => {
+      const val = stored[envName];
+      if (val) env[envName] = val;
+    };
     for (const field of manifest.config) {
-      const val = stored[field.envName];
-      if (val) env[field.envName] = val;
+      setIfPresent(field.envName);
+      if (field.oneOf) {
+        for (const group of Object.values(field.oneOf)) {
+          for (const sub of group) setIfPresent(sub.envName);
+        }
+      }
     }
     return Object.keys(env).length > 0 ? { env } : {};
   }

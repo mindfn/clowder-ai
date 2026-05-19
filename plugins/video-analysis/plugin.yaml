@@ -48,5 +48,7 @@ config:
 resources:
   - type: mcp
     name: video-analysis-toolset
+    command: node
+    args: ["packages/mcp-server/dist/protocol-server.js", "--prefix", "VIDEO_ANALYSIS", "--protocols-dir", "plugins/video-analysis/protocols"]
   - type: protocol
     path: protocols/
