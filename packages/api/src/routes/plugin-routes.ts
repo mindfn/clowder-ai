@@ -222,33 +222,34 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
     }
 
     if (manifest.healthCheck.limbCommand) {
-      const limbResource = manifest.resources.find((r) => r.type === 'limb');
-      if (!limbResource?.path) {
+      const limbResources = manifest.resources.filter((r) => r.type === 'limb' && r.path);
+      if (limbResources.length === 0) {
         reply.status(400);
         return { error: 'Plugin declares limbCommand but has no limb resource' };
       }
 
-      const yamlPath = join(pluginsDir, id, limbResource.path);
-      const decl = (() => {
+      let matchedDecl: ReturnType<typeof loadLimbDeclaration> | null = null;
+      for (const lr of limbResources) {
         try {
-          return loadLimbDeclaration(yamlPath);
+          const d = loadLimbDeclaration(join(pluginsDir, id, lr.path!));
+          const cmds = d.capabilities.flatMap((c) => c.commands);
+          if (cmds.includes(manifest.healthCheck.limbCommand)) {
+            matchedDecl = d;
+            break;
+          }
         } catch {
-          return null;
+          continue;
         }
-      })();
-      if (!decl) {
-        return { ok: false, status: 'offline', error: 'Failed to load limb declaration' };
       }
 
-      const allCommands = decl.capabilities.flatMap((c) => c.commands);
-      if (!allCommands.includes(manifest.healthCheck.limbCommand)) {
+      if (!matchedDecl) {
         reply.status(400);
         return {
-          error: `limbCommand '${manifest.healthCheck.limbCommand}' not found in plugin's limb capabilities`,
+          error: `limbCommand '${manifest.healthCheck.limbCommand}' not found in any limb resource`,
         };
       }
 
-      const nodeId = decl.nodeId;
+      const nodeId = matchedDecl.nodeId;
 
       const handle = limbRegistry.getNodeHandle(nodeId);
       if (!handle) {
