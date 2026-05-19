@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { getEnvironmentProfile } from '../domains/services/environment-detector.js';
 import { buildRecommendation } from '../domains/services/recommendation-matrix.js';
@@ -56,6 +59,23 @@ export const servicesRoutes: FastifyPluginAsync<ServicesRouteOptions> = async (a
   // reason if the env is incompatible. Restored from F190 followup
   // pre-sync work after upstream sync #720 inadvertently removed the
   // env-detection + recommendation layer.
+  // Serve the offline-install guide from the local repo so the help link
+  // in InstallPreviewModal works in offline / air-gapped environments.
+  // The HTML is pre-rendered and checked in at docs/services-offline-install.html
+  // (regenerate from the .md source when it changes). Restored from
+  // pre-sync F190 work — codex P2 3268952331.
+  app.get('/api/services/docs/offline-install', async (_request, reply) => {
+    const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
+    const htmlPath = resolve(repoRoot, 'docs/services-offline-install.html');
+    if (!existsSync(htmlPath)) {
+      reply.status(404);
+      return { error: 'docs/services-offline-install.html not found — regenerate from the .md source' };
+    }
+    reply.header('cache-control', 'no-cache');
+    reply.type('text/html; charset=utf-8');
+    return readFileSync(htmlPath, 'utf-8');
+  });
+
   app.get<{ Params: { id: string } }>('/api/services/:id/install-preview', async (request, reply) => {
     if (!requireIdentity(request, reply)) return { error: 'Authentication required' };
     const { id } = request.params;
