@@ -159,6 +159,15 @@ export async function registerServiceLifecycleRoutes(
         return { error: envResult.error };
       }
 
+      // Persist the user-selected port so subsequent /start spawns can read
+      // it from config rather than relying on env state at start time
+      // (codex P2 3266466931 — install accepts a port but the next start
+      // could otherwise re-derive from process.env / manifest default).
+      // buildLifecycleEnv already validated the port is an integer in range.
+      if (typeof request.body?.port === 'number') {
+        serviceConfigStore.set(service.id, { port: request.body.port });
+      }
+
       return withLock(service.id, reply, async () => {
         const result = await runForeground({
           serviceId: service.id,
