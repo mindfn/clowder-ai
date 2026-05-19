@@ -124,12 +124,30 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
           if (!Array.isArray(fields)) continue;
           oneOf[key] = (fields as Record<string, unknown>[])
             .filter((f) => typeof f['envName'] === 'string' && typeof f['label'] === 'string')
-            .map((f) => ({
-              envName: f['envName'] as string,
-              label: f['label'] as string,
-              sensitive: f['sensitive'] === true,
-              required: f['required'] !== false,
-            }));
+            .map((f) => {
+              let subNotes: Record<string, string> | undefined;
+              for (const [k, v] of Object.entries(f)) {
+                if (k.endsWith('_notes') && typeof v === 'string') {
+                  subNotes ??= {};
+                  subNotes[k.slice(0, -6)] = v;
+                }
+              }
+              return {
+                envName: f['envName'] as string,
+                label: f['label'] as string,
+                sensitive: f['sensitive'] === true,
+                required: f['required'] !== false,
+                ...(subNotes ? { notes: subNotes } : {}),
+              };
+            });
+        }
+      }
+
+      let notes: Record<string, string> | undefined;
+      for (const [k, v] of Object.entries(rc)) {
+        if (k.endsWith('_notes') && typeof v === 'string') {
+          notes ??= {};
+          notes[k.slice(0, -6)] = v;
         }
       }
 
@@ -141,6 +159,7 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
         ...(fieldType !== 'text' ? { type: fieldType } : {}),
         ...(options ? { options } : {}),
         ...(oneOf ? { oneOf } : {}),
+        ...(notes ? { notes } : {}),
       });
     }
   }

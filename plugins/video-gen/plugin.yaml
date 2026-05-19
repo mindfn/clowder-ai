@@ -46,18 +46,18 @@ config:
     oneOf:
       apikey:
         - { envName: VIDEO_GEN_API_KEY, label: API Key, sensitive: true }
-        - { envName: VIDEO_GEN_BASE_URL, label: Base URL, sensitive: false, required: false }
-        - { envName: VIDEO_GEN_MODEL, label: 模型名称, sensitive: false, required: false }
+        - { envName: VIDEO_GEN_BASE_URL, label: Base URL, sensitive: false, required: false, zh_notes: "留空使用默认地址" }
+        - { envName: VIDEO_GEN_MODEL, label: 模型名称, sensitive: false, required: false, zh_notes: "如 cogvideox-flash、vidu2-image" }
       jwt-hs256:
         - { envName: VIDEO_GEN_ACCESS_KEY, label: Access Key, sensitive: true }
         - { envName: VIDEO_GEN_SECRET_KEY, label: Secret Key, sensitive: true }
-        - { envName: VIDEO_GEN_BASE_URL, label: Base URL, sensitive: false, required: false }
-        - { envName: VIDEO_GEN_MODEL, label: 模型名称, sensitive: false, required: false }
+        - { envName: VIDEO_GEN_BASE_URL, label: Base URL, sensitive: false, required: false, zh_notes: "留空使用默认地址" }
+        - { envName: VIDEO_GEN_MODEL, label: 模型名称, sensitive: false, required: false, zh_notes: "如 kling-v2.6-pro" }
       hmac-sha256-v4:
         - { envName: VIDEO_GEN_ACCESS_KEY, label: Access Key, sensitive: true }
         - { envName: VIDEO_GEN_SECRET_KEY, label: Secret Key, sensitive: true }
-        - { envName: VIDEO_GEN_BASE_URL, label: Base URL, sensitive: false, required: false }
-        - { envName: VIDEO_GEN_MODEL, label: 模型名称, sensitive: false, required: false }
+        - { envName: VIDEO_GEN_BASE_URL, label: Base URL, sensitive: false, required: false, zh_notes: "留空使用默认地址" }
+        - { envName: VIDEO_GEN_MODEL, label: 模型名称, sensitive: false, required: false, zh_notes: "如 jimeng_t2v_v30" }
 
 resources:
   - type: mcp

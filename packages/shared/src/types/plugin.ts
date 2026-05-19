@@ -20,6 +20,7 @@ export interface PluginConfigField {
   type?: 'text' | 'select';
   options?: PluginConfigOption[];
   oneOf?: Record<string, PluginConfigField[]>;
+  notes?: Record<string, string>;
 }
 
 /** Plugin health check declaration */
