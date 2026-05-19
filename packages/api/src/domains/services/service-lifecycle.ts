@@ -35,7 +35,12 @@ export type ServiceLifecycleRunner = (input: ServiceLifecycleRunInput) => Promis
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../..');
 const SERVICE_SCRIPT_DIR = resolve(REPO_ROOT, 'scripts/services');
-const MODEL_ID_PATTERN = /^[a-zA-Z0-9_-]+\/[a-zA-Z0-9._-]+$/;
+// Accept both Hugging Face org/name form (e.g. mlx-community/whisper-large-v3-turbo)
+// AND library-native shorthand (e.g. faster-whisper's `large-v3-turbo`, `base`).
+// The recommendation matrix uses shorthand for faster-whisper on non-Apple-Silicon
+// platforms — see codex P1 3269025145. Both forms are safe under the
+// `[a-zA-Z0-9._-]+` char class (no path traversal, no shell metachars).
+const MODEL_ID_PATTERN = /^([a-zA-Z0-9_-]+\/)?[a-zA-Z0-9._-]+$/;
 const MAX_CAPTURED_OUTPUT = 8192;
 
 function isPathInside(parent: string, child: string): boolean {
