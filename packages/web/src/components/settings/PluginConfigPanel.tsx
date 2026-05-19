@@ -4,6 +4,7 @@ import type { PluginConfigField, PluginInfo } from '@cat-cafe/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { ExternalLinkIcon, StepBadge } from '../HubConfigIcons';
+import { SettingsResourceToggleSwitch } from '../SettingsResourceCard';
 
 function isSafeUrl(url: string): boolean {
   try {
@@ -332,27 +333,12 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
       )}
 
       <div className="flex items-center justify-end gap-2">
-        {hasResources && isEnabled && (
-          <button
-            type="button"
-            onClick={() => void handleToggle('disable')}
-            disabled={toggling}
-            className="console-button-secondary text-compact disabled:opacity-50"
-            data-testid="plugin-disable-btn"
-          >
-            {toggling ? '处理中...' : '停用'}
-          </button>
-        )}
-        {hasResources && !isEnabled && (
-          <button
-            type="button"
-            onClick={() => void handleToggle('enable')}
-            disabled={toggling}
-            className="console-button-secondary text-compact disabled:opacity-50"
-            data-testid="plugin-enable-btn"
-          >
-            {toggling ? '处理中...' : '启用'}
-          </button>
+        {hasResources && (
+          <SettingsResourceToggleSwitch
+            enabled={isEnabled}
+            busy={toggling}
+            onClick={() => void handleToggle(isEnabled ? 'disable' : 'enable')}
+          />
         )}
         {plugin.hasHealthCheck && isEnabled && (
           <button
