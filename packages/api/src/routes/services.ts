@@ -1,4 +1,6 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import { getEnvironmentProfile } from '../domains/services/environment-detector.js';
+import { buildRecommendation } from '../domains/services/recommendation-matrix.js';
 import {
   type FetchServiceHealth,
   getServiceManifest,
@@ -44,6 +46,25 @@ export const servicesRoutes: FastifyPluginAsync<ServicesRouteOptions> = async (a
     return {
       endpoints: resolveServiceEndpointMap(options.env),
     };
+  });
+
+  // Env-aware install preview: detects the host environment (OS / arch /
+  // GPU / Python) and returns the recommendation matrix entry for the
+  // service — models that work on this machine, plus any unsupported
+  // reason if the env is incompatible. Restored from F190 followup
+  // pre-sync work after upstream sync #720 inadvertently removed the
+  // env-detection + recommendation layer.
+  app.get<{ Params: { id: string } }>('/api/services/:id/install-preview', async (request, reply) => {
+    if (!requireIdentity(request, reply)) return { error: 'Authentication required' };
+    const { id } = request.params;
+    const service = getServiceManifest(id);
+    if (!service) {
+      reply.status(404);
+      return { error: `Service "${id}" not found` };
+    }
+    const profile = getEnvironmentProfile(true);
+    const recommendation = buildRecommendation(id, profile);
+    return { profile, recommendation };
   });
 
   app.get<{ Params: { id: string } }>('/api/services/:id/health', async (request, reply) => {

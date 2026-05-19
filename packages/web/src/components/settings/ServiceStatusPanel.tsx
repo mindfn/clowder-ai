@@ -224,11 +224,13 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
         );
       })}
 
-      {installTarget?.prerequisites && (
+      {installTarget && (
         <InstallPreviewModal
+          open={true}
+          serviceId={installTarget.id}
           serviceName={installTarget.name}
-          prerequisites={installTarget.prerequisites}
-          onConfirm={(model) => {
+          estimatedMinutes={installTarget.prerequisites?.estimatedMinutes}
+          onConfirm={({ model }) => {
             const id = installTarget.id;
             setInstallTarget(null);
             void executeAction(id, 'install', model);
