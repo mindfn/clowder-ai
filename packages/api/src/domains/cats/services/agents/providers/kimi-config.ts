@@ -7,20 +7,18 @@
 
 import { existsSync, promises as fs, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, normalize, resolve } from 'node:path';
+import { dirname, join, normalize, resolve } from 'node:path';
+import {
+  CAT_CAFE_SPLIT_ENTRYPOINTS,
+  MCP_CALLBACK_ENV_KEYS,
+  resolvePencilCommand,
+  resolveServersForCat,
+} from '../../../../../config/capabilities/capability-orchestrator.js';
 
 export const DEFAULT_KIMI_BASE_URL = 'https://api.moonshot.ai/v1';
 export const DEFAULT_KIMI_MODEL_ALIAS = 'kimi-code/kimi-for-coding';
 
-export const CAT_CAFE_CALLBACK_ENV_KEYS = [
-  'CAT_CAFE_API_URL',
-  'CAT_CAFE_INVOCATION_ID',
-  'CAT_CAFE_CALLBACK_TOKEN',
-  'CAT_CAFE_USER_ID',
-  'CAT_CAFE_THREAD_ID',
-  'CAT_CAFE_RUN_TYPE',
-  'CAT_CAFE_AUDIT_TOPIC',
-];
+export { MCP_CALLBACK_ENV_KEYS as CAT_CAFE_CALLBACK_ENV_KEYS };
 
 const KIMI_CONTEXT_TAIL_BYTES = 64 * 1024;
 
@@ -244,11 +242,11 @@ export function buildApiKeyEnv(model: string, callbackEnv?: Record<string, strin
   };
 }
 
-export function writeMcpConfigFile(
+export async function writeMcpConfigFile(
   workingDirectory: string,
   mcpServerPath: string,
   callbackEnv?: Record<string, string>,
-): string | null {
+): Promise<string | null> {
   if (!callbackEnv || !mcpServerPath) return null;
   const existingPath = join(workingDirectory, '.kimi', 'mcp.json');
   let config: Record<string, unknown> = {};
@@ -265,13 +263,80 @@ export function writeMcpConfigFile(
       ? { ...(config.mcpServers as Record<string, unknown>) }
       : {};
   const catCafeEnv = Object.fromEntries(
-    CAT_CAFE_CALLBACK_ENV_KEYS.map((key) => [key, callbackEnv[key]]).filter(([, value]) => Boolean(value)),
+    MCP_CALLBACK_ENV_KEYS.map((key) => [key, callbackEnv[key]]).filter(([, value]) => Boolean(value)),
   );
-  currentServers['cat-cafe'] = {
-    command: 'node',
-    args: [mcpServerPath],
-    ...(Object.keys(catCafeEnv).length > 0 ? { env: catCafeEnv } : {}),
-  };
+  const hasCallbackEnv = Object.keys(catCafeEnv).length > 0;
+  const distDir = dirname(mcpServerPath);
+  const projectRoot = resolve(distDir, '../../..');
+  const catId = callbackEnv.CAT_CAFE_CAT_ID;
+
+  // Remove legacy entries before rebuilding
+  delete currentServers['cat-cafe'];
+  for (const splitId of CAT_CAFE_SPLIT_ENTRYPOINTS.keys()) delete currentServers[splitId];
+
+  let resolved = false;
+  try {
+    const raw = readFileSync(join(projectRoot, '.cat-cafe', 'capabilities.json'), 'utf-8');
+    const capConfig = JSON.parse(raw);
+    if (capConfig?.version === 1 && catId) {
+      const servers = resolveServersForCat(capConfig, catId) as Array<{
+        name: string;
+        enabled: boolean;
+        command: string;
+        args: string[];
+        env?: Record<string, string>;
+        resolver?: string;
+        transport?: string;
+        url?: string;
+        headers?: Record<string, string>;
+        workingDir?: string;
+      }>;
+      for (const s of servers) delete currentServers[s.name];
+      for (const s of servers) {
+        if (!s.enabled) continue;
+        if (CAT_CAFE_SPLIT_ENTRYPOINTS.has(s.name)) {
+          const ep = CAT_CAFE_SPLIT_ENTRYPOINTS.get(s.name)!;
+          const epPath = join(distDir, ep);
+          if (existsSync(epPath)) {
+            currentServers[s.name] = {
+              command: 'node',
+              args: [epPath],
+              ...(hasCallbackEnv ? { env: catCafeEnv } : {}),
+            };
+          }
+        } else if (s.resolver === 'pencil') {
+          const pencil = await resolvePencilCommand({ projectRoot });
+          if (pencil) currentServers[s.name] = { command: pencil.command, args: pencil.args };
+        } else if (s.transport === 'streamableHttp' && s.url) {
+          const entry: Record<string, unknown> = { type: 'http', url: s.url };
+          if (s.headers && Object.keys(s.headers).length > 0) entry.headers = s.headers;
+          currentServers[s.name] = entry;
+        } else if (s.command) {
+          const entry: Record<string, unknown> = { command: s.command, args: s.args };
+          if (s.env && Object.keys(s.env).length > 0) entry.env = s.env;
+          if (s.workingDir) entry.cwd = s.workingDir;
+          currentServers[s.name] = entry;
+        }
+      }
+      resolved = true;
+    }
+  } catch {
+    // best-effort fallback below
+  }
+
+  if (!resolved) {
+    for (const [name, entrypoint] of CAT_CAFE_SPLIT_ENTRYPOINTS) {
+      const entrypointPath = join(distDir, entrypoint);
+      if (existsSync(entrypointPath)) {
+        currentServers[name] = {
+          command: 'node',
+          args: [entrypointPath],
+          ...(hasCallbackEnv ? { env: catCafeEnv } : {}),
+        };
+      }
+    }
+  }
+
   const nextConfig = { ...config, mcpServers: currentServers };
   const shareDir = resolveKimiShareDir(callbackEnv);
   mkdirSync(shareDir, { recursive: true });

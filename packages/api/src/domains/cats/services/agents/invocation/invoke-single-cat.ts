@@ -1049,11 +1049,12 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         hasBaseUrl: Boolean(resolvedAccount.baseUrl),
         mcpServerPath,
       } as const;
-      openCodeRuntimeConfigPath = writeOpenCodeRuntimeConfig(
+      openCodeRuntimeConfigPath = await writeOpenCodeRuntimeConfig(
         projectRoot,
         catId as string,
         invocationId,
         runtimeConfigOptions,
+        workingDirectory,
       );
       callbackEnv.OPENCODE_CONFIG = openCodeRuntimeConfigPath;
       if (resolvedAccount.apiKey) callbackEnv[OC_API_KEY_ENV] = resolvedAccount.apiKey;

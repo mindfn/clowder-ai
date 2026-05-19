@@ -24,9 +24,7 @@ const {
   orchestrate,
 } = await import('../dist/config/capabilities/capability-orchestrator.js');
 
-const { readClaudeMcpConfig, readCodexMcpConfig, readGeminiMcpConfig } = await import(
-  '../dist/config/capabilities/mcp-config-adapters.js'
-);
+const { readGeminiMcpConfig } = await import('../dist/config/capabilities/mcp-config-adapters.js');
 
 const { needsMcpInjection, buildMcpCallbackInstructions } = await import(
   '../dist/domains/cats/services/agents/invocation/McpPromptInjector.js'
@@ -92,36 +90,18 @@ describe('F041 Config Round-Trip', () => {
     };
     await generateCliConfigs(config, paths);
 
-    // Read back each CLI config
-    const claudeServers = await readClaudeMcpConfig(paths.anthropic);
-    const codexServers = await readCodexMcpConfig(paths.openai);
+    // #712: generateCliConfigs only writes Gemini (+ Antigravity). Claude/Codex/Kimi inject at invoke time.
     const geminiServers = await readGeminiMcpConfig(paths.google);
-
-    // Claude/Gemini: only enabled servers (no 'enabled' field in these formats)
-    assert.ok(
-      claudeServers.find((s) => s.name === 'cat-cafe'),
-      'Claude should have cat-cafe',
-    );
-    assert.ok(
-      claudeServers.find((s) => s.name === 'filesystem'),
-      'Claude should have filesystem',
-    );
-    assert.ok(!claudeServers.find((s) => s.name === 'disabled-tool'), 'Claude should NOT have disabled tool');
 
     assert.ok(
       geminiServers.find((s) => s.name === 'cat-cafe'),
       'Gemini should have cat-cafe',
     );
-    assert.ok(!geminiServers.find((s) => s.name === 'disabled-tool'), 'Gemini should NOT have disabled tool');
-
-    // Codex: all servers with explicit enabled field
     assert.ok(
-      codexServers.find((s) => s.name === 'cat-cafe'),
-      'Codex should have cat-cafe',
+      geminiServers.find((s) => s.name === 'filesystem'),
+      'Gemini should have filesystem',
     );
-    const disabledInCodex = codexServers.find((s) => s.name === 'disabled-tool');
-    assert.ok(disabledInCodex, 'Codex should have disabled-tool (with enabled=false)');
-    assert.equal(disabledInCodex.enabled, false, 'disabled-tool should be disabled in Codex');
+    assert.ok(!geminiServers.find((s) => s.name === 'disabled-tool'), 'Gemini should NOT have disabled tool');
   });
 
   it('orchestrate idempotent: run twice with same config = same output', async () => {
@@ -177,17 +157,7 @@ describe('F041 Cloud P1-1: bootstrap generates CLI configs', () => {
     // CLI configs should be generated after bootstrap
     await generateCliConfigs(config, cliPaths);
 
-    // Verify CLI configs contain split cat-cafe servers
-    const claudeServers = await readClaudeMcpConfig(cliPaths.anthropic);
-    assert.ok(claudeServers.find((s) => s.name === 'cat-cafe-collab'));
-    assert.ok(claudeServers.find((s) => s.name === 'cat-cafe-memory'));
-    assert.ok(claudeServers.find((s) => s.name === 'cat-cafe-signals'));
-
-    const codexServers = await readCodexMcpConfig(cliPaths.openai);
-    assert.ok(codexServers.find((s) => s.name === 'cat-cafe-collab'));
-    assert.ok(codexServers.find((s) => s.name === 'cat-cafe-memory'));
-    assert.ok(codexServers.find((s) => s.name === 'cat-cafe-signals'));
-
+    // #712: generateCliConfigs only writes Gemini (+ Antigravity). Claude/Codex/Kimi inject at invoke time.
     const geminiServers = await readGeminiMcpConfig(cliPaths.google);
     const collab = geminiServers.find((s) => s.name === 'cat-cafe-collab');
     const memory = geminiServers.find((s) => s.name === 'cat-cafe-memory');
@@ -201,7 +171,11 @@ describe('F041 Cloud P1-1: bootstrap generates CLI configs', () => {
         CAT_CAFE_INVOCATION_ID: '${CAT_CAFE_INVOCATION_ID}',
         CAT_CAFE_CALLBACK_TOKEN: '${CAT_CAFE_CALLBACK_TOKEN}',
         CAT_CAFE_USER_ID: '${CAT_CAFE_USER_ID}',
+        CAT_CAFE_CAT_ID: '${CAT_CAFE_CAT_ID}',
+        CAT_CAFE_THREAD_ID: '${CAT_CAFE_THREAD_ID}',
         CAT_CAFE_SIGNAL_USER: '${CAT_CAFE_SIGNAL_USER}',
+        CAT_CAFE_RUN_TYPE: '${CAT_CAFE_RUN_TYPE}',
+        CAT_CAFE_AUDIT_TOPIC: '${CAT_CAFE_AUDIT_TOPIC}',
       });
     }
   });
@@ -251,11 +225,11 @@ describe('F041 Hot-Reload: toggle → CLI config regenerated', () => {
     };
     await generateCliConfigs(config, paths);
 
-    // Verify both present
-    let claude = await readClaudeMcpConfig(paths.anthropic);
+    // Verify both present in Gemini
+    let gemini = await readGeminiMcpConfig(paths.google);
     assert.ok(
-      claude.find((s) => s.name === 'filesystem'),
-      'filesystem should be in Claude config',
+      gemini.find((s) => s.name === 'filesystem'),
+      'filesystem should be in Gemini config',
     );
 
     // 2. PATCH: disable filesystem globally
@@ -267,28 +241,17 @@ describe('F041 Hot-Reload: toggle → CLI config regenerated', () => {
     await writeCapabilitiesConfig(dir, updated);
     await generateCliConfigs(updated, paths);
 
-    // 3. Verify: filesystem removed from Claude/Gemini configs
-    claude = await readClaudeMcpConfig(paths.anthropic);
-    assert.ok(
-      !claude.find((s) => s.name === 'filesystem'),
-      'filesystem should be REMOVED from Claude config after disable',
-    );
-    assert.ok(
-      claude.find((s) => s.name === 'cat-cafe'),
-      'cat-cafe should still be present',
-    );
-
-    const gemini = await readGeminiMcpConfig(paths.google);
+    // 3. Verify: filesystem removed from Gemini config
+    // #712: Claude/Codex configs no longer written by generateCliConfigs
+    gemini = await readGeminiMcpConfig(paths.google);
     assert.ok(
       !gemini.find((s) => s.name === 'filesystem'),
       'filesystem should be REMOVED from Gemini config after disable',
     );
-
-    // Codex: should have filesystem with enabled=false
-    const codex = await readCodexMcpConfig(paths.openai);
-    const fsCodex = codex.find((s) => s.name === 'filesystem');
-    assert.ok(fsCodex, 'Codex should still list filesystem');
-    assert.equal(fsCodex.enabled, false, 'filesystem should be disabled in Codex');
+    assert.ok(
+      gemini.find((s) => s.name === 'cat-cafe'),
+      'cat-cafe should still be present',
+    );
   });
 
   it('re-enabling MCP tool via PATCH restores it in CLI configs', async () => {
@@ -321,9 +284,9 @@ describe('F041 Hot-Reload: toggle → CLI config regenerated', () => {
     };
     await generateCliConfigs(config, paths);
 
-    // Verify filesystem not in Claude
-    let claude = await readClaudeMcpConfig(paths.anthropic);
-    assert.ok(!claude.find((s) => s.name === 'filesystem'), 'filesystem starts disabled in Claude');
+    // Verify filesystem not in Gemini (disabled)
+    let gemini = await readGeminiMcpConfig(paths.google);
+    assert.ok(!gemini.find((s) => s.name === 'filesystem'), 'filesystem starts disabled in Gemini');
 
     // 2. PATCH: re-enable filesystem
     const updated = await readCapabilitiesConfig(dir);
@@ -334,14 +297,9 @@ describe('F041 Hot-Reload: toggle → CLI config regenerated', () => {
     await writeCapabilitiesConfig(dir, updated);
     await generateCliConfigs(updated, paths);
 
-    // 3. Verify: filesystem restored in all configs
-    claude = await readClaudeMcpConfig(paths.anthropic);
-    assert.ok(
-      claude.find((s) => s.name === 'filesystem'),
-      'filesystem should be RESTORED in Claude config after re-enable',
-    );
-
-    const gemini = await readGeminiMcpConfig(paths.google);
+    // 3. Verify: filesystem restored in Gemini config
+    // #712: Claude/Codex configs no longer written by generateCliConfigs
+    gemini = await readGeminiMcpConfig(paths.google);
     assert.ok(
       gemini.find((s) => s.name === 'filesystem'),
       'filesystem should be RESTORED in Gemini config after re-enable',
@@ -423,11 +381,10 @@ describe('F041 Discovery Consistency', () => {
       geminiConfig: join(dir, 'nonexistent.json'),
     });
 
-    // F193 Phase C: 4 splits (collab/memory/signals/limb) + pencil + jetbrains. No legacy 'cat-cafe'.
+    // Should have: split(4) + pencil + jetbrains (discovered) — no monolith
     assert.equal(config.capabilities.length, 6);
 
-    const catCafeLegacy = config.capabilities.find((c) => c.id === 'cat-cafe');
-    assert.equal(catCafeLegacy, undefined, 'legacy cat-cafe must not be bootstrapped (Phase C)');
+    assert.ok(!config.capabilities.find((c) => c.id === 'cat-cafe'), 'monolith cat-cafe must not be present');
 
     const catCafeCollab = config.capabilities.find((c) => c.id === 'cat-cafe-collab');
     assert.ok(catCafeCollab);

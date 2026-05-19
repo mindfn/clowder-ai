@@ -65,7 +65,7 @@ export class KimiAgentService implements AgentService {
     const workingDirectory = options?.workingDirectory ?? process.cwd();
     const apiKeyEnv = buildApiKeyEnv(effectiveModel, options?.callbackEnv);
     const tempMcpConfig = this.mcpServerPath
-      ? writeMcpConfigFile(workingDirectory, this.mcpServerPath, options?.callbackEnv)
+      ? await writeMcpConfigFile(workingDirectory, this.mcpServerPath, options?.callbackEnv)
       : null;
     const modelConfig = readKimiModelConfigInfo(effectiveModel, options?.callbackEnv);
     const supportsThinking =

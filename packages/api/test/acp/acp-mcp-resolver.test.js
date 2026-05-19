@@ -1,9 +1,10 @@
 /**
- * acp-mcp-resolver — unit tests for MCP whitelist → AcpMcpServerStdio resolution.
+ * acp-mcp-resolver — unit tests for MCP whitelist → AcpMcpServer resolution.
+ * #712: Phase 2 externals now read from capabilities.json (not .mcp.json).
  */
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
@@ -12,36 +13,55 @@ const { resolveAcpMcpServers, resolveUserProjectMcpServers } = await import(
   '../../dist/domains/cats/services/agents/providers/acp/acp-mcp-resolver.js'
 );
 
+function toCapabilities(serverMap) {
+  return {
+    version: 1,
+    capabilities: Object.entries(serverMap).map(([name, config]) => ({
+      id: name,
+      type: 'mcp',
+      enabled: true,
+      source: 'external',
+      mcpServer: config,
+    })),
+  };
+}
+
+function makeTempDir(temps, { capabilities, mcpJson } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'acp-mcp-'));
+  temps.push(dir);
+  if (capabilities !== undefined) {
+    mkdirSync(join(dir, '.cat-cafe'), { recursive: true });
+    writeFileSync(join(dir, '.cat-cafe', 'capabilities.json'), JSON.stringify(capabilities));
+  }
+  if (mcpJson !== undefined) {
+    writeFileSync(join(dir, '.mcp.json'), JSON.stringify(mcpJson));
+  }
+  return dir;
+}
+
 describe('resolveAcpMcpServers', () => {
   const temps = [];
-  function makeTempRoot(mcpJson) {
-    const dir = mkdtempSync(join(tmpdir(), 'acp-mcp-'));
-    temps.push(dir);
-    if (mcpJson !== undefined) {
-      writeFileSync(join(dir, '.mcp.json'), JSON.stringify(mcpJson));
-    }
-    return dir;
-  }
+  const makeTempRoot = (opts) => makeTempDir(temps, opts);
 
   afterEach(() => {
     for (const d of temps) rmSync(d, { recursive: true, force: true });
     temps.length = 0;
   });
 
-  it('returns [] for empty whitelist', () => {
-    const result = resolveAcpMcpServers('/nonexistent', []);
+  it('returns [] for empty whitelist', async () => {
+    const result = await resolveAcpMcpServers('/nonexistent', []);
     assert.deepStrictEqual(result, []);
   });
 
-  it('resolves external whitelist entries from .mcp.json', () => {
+  it('#712: resolves external whitelist entries from capabilities.json', async () => {
     const root = makeTempRoot({
-      mcpServers: {
+      capabilities: toCapabilities({
         pencil: { command: 'node', args: ['pencil.js'] },
         playwright: { command: 'npx', args: ['@playwright/mcp'], env: { FOO: 'bar' } },
-      },
+      }),
     });
 
-    const result = resolveAcpMcpServers(root, ['pencil', 'playwright']);
+    const result = await resolveAcpMcpServers(root, ['pencil', 'playwright']);
     assert.equal(result.length, 2);
 
     assert.deepStrictEqual(result[0], {
@@ -58,67 +78,89 @@ describe('resolveAcpMcpServers', () => {
     });
   });
 
-  it('skips missing external entries but returns the rest (builtins + found externals)', () => {
+  it('skips missing external entries but returns the rest (builtins + found externals)', async () => {
     const root = makeTempRoot({
-      mcpServers: {
+      capabilities: toCapabilities({
         pencil: { command: 'node', args: ['pencil.js'] },
-      },
+      }),
     });
 
-    const result = resolveAcpMcpServers(root, ['cat-cafe-collab', 'pencil', 'nonexistent']);
+    const result = await resolveAcpMcpServers(root, ['cat-cafe-collab', 'pencil', 'nonexistent']);
     assert.equal(result.length, 2);
     assert.equal(result[0].name, 'cat-cafe-collab');
     assert.equal(result[1].name, 'pencil');
   });
 
-  it('throws when ALL external whitelist entries are missing (zero resolved)', () => {
-    const root = makeTempRoot({ mcpServers: { unrelated: { command: 'x' } } });
+  it('throws when ALL external whitelist entries are missing (zero resolved)', async () => {
+    const root = makeTempRoot({
+      capabilities: toCapabilities({
+        unrelated: { command: 'x' },
+      }),
+    });
 
-    assert.throws(() => resolveAcpMcpServers(root, ['missing-a', 'missing-b']), /All 2 MCP whitelist entries.*missing/);
+    await assert.rejects(
+      () => resolveAcpMcpServers(root, ['missing-a', 'missing-b']),
+      /All 2 MCP whitelist entries.*missing/,
+    );
   });
 
-  it('throws when .mcp.json is missing and external servers requested', () => {
-    const root = makeTempRoot(); // no .mcp.json written
+  it('throws when capabilities.json is missing and external servers requested', async () => {
+    const root = makeTempRoot(); // no capabilities.json
 
-    assert.throws(() => resolveAcpMcpServers(root, ['pencil']), /MCP whitelist entries.*missing/);
+    await assert.rejects(() => resolveAcpMcpServers(root, ['pencil']), /MCP whitelist entries.*missing/);
   });
 
-  it('throws when .mcp.json has no mcpServers key and external servers requested', () => {
-    const root = makeTempRoot({ version: 1 });
+  it('throws when capabilities.json has invalid version and external servers requested', async () => {
+    const root = makeTempRoot({
+      capabilities: { version: 999, capabilities: [] },
+    });
 
-    assert.throws(() => resolveAcpMcpServers(root, ['pencil']), /MCP whitelist entries.*missing/);
+    await assert.rejects(() => resolveAcpMcpServers(root, ['pencil']), /MCP whitelist entries.*missing/);
+  });
+
+  it('#712: resolves streamableHttp externals as AcpMcpServerHttp', async () => {
+    const root = makeTempRoot({
+      capabilities: toCapabilities({
+        'remote-api': {
+          transport: 'streamableHttp',
+          url: 'https://api.example.com/mcp',
+          headers: { Authorization: 'Bearer tok' },
+        },
+      }),
+    });
+
+    const result = await resolveAcpMcpServers(root, ['remote-api']);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].type, 'http');
+    assert.equal(result[0].url, 'https://api.example.com/mcp');
+    assert.deepStrictEqual(result[0].headers, [{ name: 'Authorization', value: 'Bearer tok' }]);
   });
 });
 
 describe('resolveAcpMcpServers — builtin auto-provision (F145 Phase C)', () => {
   const temps = [];
-  function makeTempRoot(mcpJson) {
-    const dir = mkdtempSync(join(tmpdir(), 'acp-mcp-'));
-    temps.push(dir);
-    if (mcpJson !== undefined) {
-      writeFileSync(join(dir, '.mcp.json'), JSON.stringify(mcpJson));
-    }
-    return dir;
-  }
+  const makeTempRoot = (opts) => makeTempDir(temps, opts);
 
   afterEach(() => {
     for (const d of temps) rmSync(d, { recursive: true, force: true });
     temps.length = 0;
   });
 
-  it('auto-generates cat-cafe main server from projectRoot (no .mcp.json needed)', () => {
-    const root = makeTempRoot(); // no .mcp.json
-    const result = resolveAcpMcpServers(root, ['cat-cafe']);
+  it('expands legacy "cat-cafe" monolith to all split servers (#712)', async () => {
+    const root = makeTempRoot();
+    const result = await resolveAcpMcpServers(root, ['cat-cafe']);
 
-    assert.equal(result.length, 1);
-    assert.equal(result[0].name, 'cat-cafe');
-    assert.equal(result[0].command, 'node');
-    assert.ok(result[0].args[0].endsWith('packages/mcp-server/dist/index.js'));
+    assert.equal(result.length, 4, 'monolith expands to 4 split servers');
+    const names = new Set(result.map((s) => s.name));
+    assert.ok(names.has('cat-cafe-collab'));
+    assert.ok(names.has('cat-cafe-memory'));
+    assert.ok(names.has('cat-cafe-signals'));
+    assert.ok(names.has('cat-cafe-limb'));
   });
 
-  it('auto-generates cat-cafe-collab from projectRoot', () => {
-    const root = makeTempRoot(); // no .mcp.json
-    const result = resolveAcpMcpServers(root, ['cat-cafe-collab']);
+  it('auto-generates cat-cafe-collab from projectRoot', async () => {
+    const root = makeTempRoot();
+    const result = await resolveAcpMcpServers(root, ['cat-cafe-collab']);
 
     assert.equal(result.length, 1);
     assert.equal(result[0].name, 'cat-cafe-collab');
@@ -126,9 +168,9 @@ describe('resolveAcpMcpServers — builtin auto-provision (F145 Phase C)', () =>
     assert.ok(result[0].args[0].endsWith('packages/mcp-server/dist/collab.js'));
   });
 
-  it('auto-generates cat-cafe-limb from projectRoot (F193 Phase C)', () => {
-    const root = makeTempRoot(); // no .mcp.json
-    const result = resolveAcpMcpServers(root, ['cat-cafe-limb']);
+  it('auto-generates cat-cafe-limb from projectRoot', async () => {
+    const root = makeTempRoot();
+    const result = await resolveAcpMcpServers(root, ['cat-cafe-limb']);
 
     assert.equal(result.length, 1);
     assert.equal(result[0].name, 'cat-cafe-limb');
@@ -136,9 +178,9 @@ describe('resolveAcpMcpServers — builtin auto-provision (F145 Phase C)', () =>
     assert.ok(result[0].args[0].endsWith('packages/mcp-server/dist/limb.js'));
   });
 
-  it('auto-generates all canonical 4-split builtins (F193 Phase C)', () => {
-    const root = makeTempRoot(); // no .mcp.json
-    const result = resolveAcpMcpServers(root, [
+  it('auto-generates all four builtin split servers', async () => {
+    const root = makeTempRoot();
+    const result = await resolveAcpMcpServers(root, [
       'cat-cafe-collab',
       'cat-cafe-memory',
       'cat-cafe-signals',
@@ -153,51 +195,65 @@ describe('resolveAcpMcpServers — builtin auto-provision (F145 Phase C)', () =>
     assert.deepStrictEqual(entrypoints, ['collab.js', 'memory.js', 'signals.js', 'limb.js']);
   });
 
-  it('falls back to .mcp.json for non-builtin servers', () => {
+  it('deduplicates when whitelist has both monolith and split names (#712)', async () => {
+    const root = makeTempRoot();
+    const result = await resolveAcpMcpServers(root, [
+      'cat-cafe',
+      'cat-cafe-collab',
+      'cat-cafe-memory',
+      'cat-cafe-signals',
+    ]);
+
+    assert.equal(result.length, 4, 'monolith expands but dedupes with explicit splits');
+    const names = new Set(result.map((s) => s.name));
+    assert.ok(names.has('cat-cafe-collab'));
+    assert.ok(names.has('cat-cafe-memory'));
+    assert.ok(names.has('cat-cafe-signals'));
+    assert.ok(names.has('cat-cafe-limb'), 'limb added from monolith expansion');
+  });
+
+  it('#712: resolves non-builtin servers from capabilities.json', async () => {
     const root = makeTempRoot({
-      mcpServers: {
+      capabilities: toCapabilities({
         pencil: { command: 'node', args: ['/path/to/pencil'] },
-      },
+      }),
     });
 
-    const result = resolveAcpMcpServers(root, ['cat-cafe-collab', 'pencil']);
+    const result = await resolveAcpMcpServers(root, ['cat-cafe-collab', 'pencil']);
     assert.equal(result.length, 2);
 
     const collab = result.find((s) => s.name === 'cat-cafe-collab');
     assert.ok(collab.args[0].endsWith('packages/mcp-server/dist/collab.js'), 'builtin auto-generated');
 
     const pencil = result.find((s) => s.name === 'pencil');
-    assert.deepStrictEqual(pencil.args, ['/path/to/pencil'], 'external from .mcp.json');
+    assert.deepStrictEqual(pencil.args, ['/path/to/pencil'], 'external from capabilities.json');
   });
 
-  it('does not throw when .mcp.json missing and only builtins requested', () => {
-    const root = makeTempRoot(); // no .mcp.json
-    // Should NOT throw — builtins don't need .mcp.json
-    const result = resolveAcpMcpServers(root, ['cat-cafe', 'cat-cafe-memory']);
+  it('does not throw when capabilities.json missing and only builtins requested', async () => {
+    const root = makeTempRoot();
+    const result = await resolveAcpMcpServers(root, ['cat-cafe-collab', 'cat-cafe-memory']);
     assert.equal(result.length, 2);
   });
 
-  it('builtin servers have empty env (callbackEnv injected later by acp-session-env)', () => {
+  it('builtin servers have empty env (callbackEnv injected later by acp-session-env)', async () => {
     const root = makeTempRoot();
-    const result = resolveAcpMcpServers(root, ['cat-cafe-collab']);
+    const result = await resolveAcpMcpServers(root, ['cat-cafe-collab']);
     assert.deepStrictEqual(result[0].env, []);
   });
 
-  it('does not treat typo cat-cafe-collabb as builtin (P1 fail-fast)', () => {
-    const root = makeTempRoot(); // no .mcp.json
-    // Typo should NOT be treated as builtin — should throw because no servers resolved
-    assert.throws(() => resolveAcpMcpServers(root, ['cat-cafe-collabb']), /MCP whitelist entries.*missing/);
+  it('does not treat typo cat-cafe-collabb as builtin (P1 fail-fast)', async () => {
+    const root = makeTempRoot();
+    await assert.rejects(() => resolveAcpMcpServers(root, ['cat-cafe-collabb']), /MCP whitelist entries.*missing/);
   });
 
-  it('does not treat cat-cafeteria as builtin', () => {
+  it('does not treat cat-cafeteria as builtin', async () => {
     const root = makeTempRoot({
-      mcpServers: {
+      capabilities: toCapabilities({
         'cat-cafeteria': { command: 'node', args: ['cafeteria.js'] },
-      },
+      }),
     });
 
-    const result = resolveAcpMcpServers(root, ['cat-cafeteria']);
-    // Should come from .mcp.json, not auto-generated
+    const result = await resolveAcpMcpServers(root, ['cat-cafeteria']);
     assert.equal(result[0].name, 'cat-cafeteria');
     assert.deepStrictEqual(result[0].args, ['cafeteria.js']);
   });
@@ -205,14 +261,7 @@ describe('resolveAcpMcpServers — builtin auto-provision (F145 Phase C)', () =>
 
 describe('resolveAcpMcpServers — per-project MCP (F145 Phase E)', () => {
   const temps = [];
-  function makeTempRoot(mcpJson) {
-    const dir = mkdtempSync(join(tmpdir(), 'acp-mcp-'));
-    temps.push(dir);
-    if (mcpJson !== undefined) {
-      writeFileSync(join(dir, '.mcp.json'), JSON.stringify(mcpJson));
-    }
-    return dir;
-  }
+  const makeTempRoot = (opts) => makeTempDir(temps, opts);
 
   afterEach(() => {
     for (const d of temps) rmSync(d, { recursive: true, force: true });
@@ -220,18 +269,20 @@ describe('resolveAcpMcpServers — per-project MCP (F145 Phase E)', () => {
   });
 
   // AC-E1: accepts userProjectRoot, reads user project .mcp.json
-  it('merges user project .mcp.json servers when userProjectRoot provided', () => {
-    const projectRoot = makeTempRoot(); // monorepo root, no .mcp.json
+  it('merges user project .mcp.json servers when userProjectRoot provided', async () => {
+    const projectRoot = makeTempRoot();
     const userRoot = makeTempRoot({
-      mcpServers: {
-        'my-database': { command: 'node', args: ['db-mcp.js'] },
-        'my-docker': { command: 'docker', args: ['mcp'], env: { DOCKER_HOST: 'unix:///var/run/docker.sock' } },
+      mcpJson: {
+        mcpServers: {
+          'my-database': { command: 'node', args: ['db-mcp.js'] },
+          'my-docker': { command: 'docker', args: ['mcp'], env: { DOCKER_HOST: 'unix:///var/run/docker.sock' } },
+        },
       },
     });
 
-    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe'], userRoot);
+    const result = await resolveAcpMcpServers(projectRoot, ['cat-cafe-collab'], userRoot);
     assert.equal(result.length, 3); // 1 builtin + 2 user project
-    assert.equal(result[0].name, 'cat-cafe'); // builtin first
+    assert.equal(result[0].name, 'cat-cafe-collab'); // builtin first
 
     const db = result.find((s) => s.name === 'my-database');
     assert.ok(db, 'user project server my-database should be included');
@@ -244,19 +295,21 @@ describe('resolveAcpMcpServers — per-project MCP (F145 Phase E)', () => {
   });
 
   // AC-E3: builtin cat-cafe-* takes priority over same-name user project server
-  it('builtin cat-cafe-* takes priority over same-name user project server', () => {
+  it('builtin cat-cafe-* takes priority over same-name user project server', async () => {
     const projectRoot = makeTempRoot();
     const userRoot = makeTempRoot({
-      mcpServers: {
-        'cat-cafe': { command: 'python', args: ['fake.py'] },
-        'my-tool': { command: 'node', args: ['tool.js'] },
+      mcpJson: {
+        mcpServers: {
+          'cat-cafe-collab': { command: 'python', args: ['fake.py'] },
+          'my-tool': { command: 'node', args: ['tool.js'] },
+        },
       },
     });
 
-    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe'], userRoot);
-    const catCafe = result.find((s) => s.name === 'cat-cafe');
-    assert.equal(catCafe.command, 'node'); // builtin, not python
-    assert.ok(catCafe.args[0].endsWith('packages/mcp-server/dist/index.js'));
+    const result = await resolveAcpMcpServers(projectRoot, ['cat-cafe-collab'], userRoot);
+    const collab = result.find((s) => s.name === 'cat-cafe-collab');
+    assert.equal(collab.command, 'node'); // builtin, not python
+    assert.ok(collab.args[0].endsWith('packages/mcp-server/dist/collab.js'));
     assert.ok(
       result.find((s) => s.name === 'my-tool'),
       'non-conflicting user server still included',
@@ -264,20 +317,22 @@ describe('resolveAcpMcpServers — per-project MCP (F145 Phase E)', () => {
   });
 
   // AC-E3: whitelist external > user project for same name
-  it('whitelist external server takes priority over same-name user project server', () => {
+  it('whitelist external server takes priority over same-name user project server', async () => {
     const projectRoot = makeTempRoot({
-      mcpServers: {
+      capabilities: toCapabilities({
         pencil: { command: 'node', args: ['/correct/pencil'] },
-      },
+      }),
     });
     const userRoot = makeTempRoot({
-      mcpServers: {
-        pencil: { command: 'node', args: ['/wrong/pencil'] },
-        'my-figma': { command: 'figma-mcp' },
+      mcpJson: {
+        mcpServers: {
+          pencil: { command: 'node', args: ['/wrong/pencil'] },
+          'my-figma': { command: 'figma-mcp' },
+        },
       },
     });
 
-    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe', 'pencil'], userRoot);
+    const result = await resolveAcpMcpServers(projectRoot, ['cat-cafe-collab', 'pencil'], userRoot);
     const pencil = result.find((s) => s.name === 'pencil');
     assert.deepStrictEqual(pencil.args, ['/correct/pencil']); // from whitelist
     assert.ok(
@@ -287,36 +342,36 @@ describe('resolveAcpMcpServers — per-project MCP (F145 Phase E)', () => {
   });
 
   // AC-E4: no user .mcp.json = graceful degrade
-  it('gracefully degrades when user project has no .mcp.json', () => {
+  it('gracefully degrades when user project has no .mcp.json', async () => {
     const projectRoot = makeTempRoot();
     const userRoot = makeTempRoot(); // no .mcp.json
 
-    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe'], userRoot);
+    const result = await resolveAcpMcpServers(projectRoot, ['cat-cafe-collab'], userRoot);
     assert.equal(result.length, 1);
-    assert.equal(result[0].name, 'cat-cafe');
+    assert.equal(result[0].name, 'cat-cafe-collab');
   });
 
   // AC-E4: undefined userProjectRoot = same as before
-  it('undefined userProjectRoot has no effect (backward-compatible)', () => {
+  it('undefined userProjectRoot has no effect (backward-compatible)', async () => {
     const projectRoot = makeTempRoot();
 
-    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe'], undefined);
+    const result = await resolveAcpMcpServers(projectRoot, ['cat-cafe-collab'], undefined);
     assert.equal(result.length, 1);
-    assert.equal(result[0].name, 'cat-cafe');
+    assert.equal(result[0].name, 'cat-cafe-collab');
   });
 
   // AC-E5: different userProjectRoot = different servers
-  it('different userProjectRoot yields different MCP server sets', () => {
+  it('different userProjectRoot yields different MCP server sets', async () => {
     const projectRoot = makeTempRoot();
     const userRootA = makeTempRoot({
-      mcpServers: { 'tool-a': { command: 'a' } },
+      mcpJson: { mcpServers: { 'tool-a': { command: 'a' } } },
     });
     const userRootB = makeTempRoot({
-      mcpServers: { 'tool-b': { command: 'b' } },
+      mcpJson: { mcpServers: { 'tool-b': { command: 'b' } } },
     });
 
-    const resultA = resolveAcpMcpServers(projectRoot, ['cat-cafe'], userRootA);
-    const resultB = resolveAcpMcpServers(projectRoot, ['cat-cafe'], userRootB);
+    const resultA = await resolveAcpMcpServers(projectRoot, ['cat-cafe-collab'], userRootA);
+    const resultB = await resolveAcpMcpServers(projectRoot, ['cat-cafe-collab'], userRootB);
 
     assert.ok(resultA.some((s) => s.name === 'tool-a'));
     assert.ok(!resultA.some((s) => s.name === 'tool-b'));
@@ -325,16 +380,18 @@ describe('resolveAcpMcpServers — per-project MCP (F145 Phase E)', () => {
   });
 
   // P1 review fix: HTTP user project server produces AcpMcpServerHttp, not broken stdio
-  it('merges type:http user project server as AcpMcpServerHttp (not pseudo-stdio)', () => {
+  it('merges type:http user project server as AcpMcpServerHttp (not pseudo-stdio)', async () => {
     const projectRoot = makeTempRoot();
     const userRoot = makeTempRoot({
-      mcpServers: {
-        webapi: { type: 'http', url: 'http://<local-browser-automation-endpoint>/mcp' },
-        'my-stdio': { command: 'node', args: ['tool.js'] },
+      mcpJson: {
+        mcpServers: {
+          webapi: { type: 'http', url: 'http://<local-browser-automation-endpoint>/mcp' },
+          'my-stdio': { command: 'node', args: ['tool.js'] },
+        },
       },
     });
 
-    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe'], userRoot);
+    const result = await resolveAcpMcpServers(projectRoot, ['cat-cafe-collab'], userRoot);
     const webapi = result.find((s) => s.name === 'webapi');
     assert.ok(webapi, 'HTTP server should be merged');
     assert.equal(webapi.type, 'http');
@@ -347,11 +404,11 @@ describe('resolveAcpMcpServers — per-project MCP (F145 Phase E)', () => {
   });
 
   // Edge: user project .mcp.json has no mcpServers key
-  it('handles user project .mcp.json with no mcpServers key', () => {
+  it('handles user project .mcp.json with no mcpServers key', async () => {
     const projectRoot = makeTempRoot();
-    const userRoot = makeTempRoot({ version: 1 }); // valid JSON, no mcpServers
+    const userRoot = makeTempRoot({ mcpJson: { version: 1 } }); // valid JSON, no mcpServers
 
-    const result = resolveAcpMcpServers(projectRoot, ['cat-cafe'], userRoot);
+    const result = await resolveAcpMcpServers(projectRoot, ['cat-cafe-collab'], userRoot);
     assert.equal(result.length, 1); // just the builtin, no crash
   });
 });

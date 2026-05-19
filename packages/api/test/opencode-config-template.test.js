@@ -292,7 +292,7 @@ describe('generateOpenCodeRuntimeConfig', () => {
     assert.equal(config.provider.test.npm, '@ai-sdk/openai-compatible');
   });
 
-  test('mcpServerPath injects mcp.cat-cafe section into config', () => {
+  test('#712: mcpServerPath injects split MCP servers into config', () => {
     const config = generateOpenCodeRuntimeConfig({
       providerName: 'anthropic',
       models: ['anthropic/claude-opus-4-6'],
@@ -302,10 +302,12 @@ describe('generateOpenCodeRuntimeConfig', () => {
     });
 
     assert.ok(config.mcp, 'config must have mcp section when mcpServerPath is provided');
-    assert.deepStrictEqual(config.mcp['cat-cafe'], {
-      type: 'local',
-      command: ['node', '/absolute/path/to/packages/mcp-server/dist/index.js'],
-    });
+    assert.equal(config.mcp['cat-cafe'], undefined, 'monolith should not be injected');
+    const names = Object.keys(config.mcp);
+    assert.ok(
+      names.some((n) => n.startsWith('cat-cafe-')),
+      'split servers should be injected',
+    );
   });
 
   test('mcp section is absent when mcpServerPath is not provided', () => {
@@ -343,10 +345,10 @@ describe('generateOpenCodeRuntimeConfig', () => {
 });
 
 describe('writeOpenCodeRuntimeConfig', () => {
-  test('writes invocation-scoped runtime config file under .cat-cafe (OPENCODE_CONFIG)', () => {
+  test('writes invocation-scoped runtime config file under .cat-cafe (OPENCODE_CONFIG)', async () => {
     const tmpRoot = mkdtempSync(join(tmpdir(), 'oc-runtime-config-'));
     try {
-      const configPath = writeOpenCodeRuntimeConfig(tmpRoot, 'opencode-maas', 'inv-123', {
+      const configPath = await writeOpenCodeRuntimeConfig(tmpRoot, 'opencode-maas', 'inv-123', {
         providerName: 'maas',
         models: ['maas/glm-5'],
         defaultModel: 'maas/glm-5',
@@ -364,11 +366,11 @@ describe('writeOpenCodeRuntimeConfig', () => {
     }
   });
 
-  test('persists mcp.cat-cafe section to disk when mcpServerPath is provided', () => {
+  test('#712: persists split MCP servers to disk when mcpServerPath is provided', async () => {
     const tmpRoot = mkdtempSync(join(tmpdir(), 'oc-runtime-mcp-'));
     try {
       const mcpPath = '/opt/cat-cafe/packages/mcp-server/dist/index.js';
-      const configPath = writeOpenCodeRuntimeConfig(tmpRoot, 'opencode', 'inv-game-001', {
+      const configPath = await writeOpenCodeRuntimeConfig(tmpRoot, 'opencode', 'inv-game-001', {
         providerName: 'anthropic',
         models: ['anthropic/claude-opus-4-6'],
         defaultModel: 'anthropic/claude-opus-4-6',
@@ -377,9 +379,11 @@ describe('writeOpenCodeRuntimeConfig', () => {
       });
 
       const content = JSON.parse(readFileSync(configPath, 'utf-8'));
-      assert.deepStrictEqual(content.mcp, {
-        'cat-cafe': { type: 'local', command: ['node', mcpPath] },
-      });
+      assert.ok(content.mcp, 'mcp section should be present');
+      assert.equal(content.mcp['cat-cafe'], undefined, 'monolith should not appear');
+      const names = Object.keys(content.mcp);
+      assert.ok(names.includes('cat-cafe-collab'), 'collab split expected');
+      assert.ok(names.includes('cat-cafe-memory'), 'memory split expected');
     } finally {
       rmSync(tmpRoot, { recursive: true, force: true });
     }

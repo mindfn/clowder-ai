@@ -34,6 +34,7 @@ import { parse as parseYaml } from 'yaml';
 import { appendAuditEntry } from '../config/capabilities/capability-audit.js';
 import {
   bootstrapCapabilities,
+  CAT_CAFE_SPLIT_ENTRYPOINTS,
   type DiscoveryPaths,
   deduplicateDiscoveredMcpServers,
   discoverExternalMcpServers,
@@ -606,15 +607,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
     const discoveredServers = deduplicateDiscoveredMcpServers([...projectLevelServers, ...userLevelServers]);
     // Skip legacy Cat Cafe names — a stale 'cat-cafe' entry in user config should
     // not be re-added alongside the split 'cat-cafe-*' built-in entries.
-    // F193 Phase C: include 'cat-cafe-limb' so discovery doesn't re-add it
-    // either (cloud round 5 P1).
-    const CAT_CAFE_BUILTIN_NAMES = new Set([
-      'cat-cafe',
-      'cat-cafe-collab',
-      'cat-cafe-memory',
-      'cat-cafe-signals',
-      'cat-cafe-limb',
-    ]);
+    const CAT_CAFE_BUILTIN_NAMES = new Set(['cat-cafe', ...CAT_CAFE_SPLIT_ENTRYPOINTS.keys()]);
     for (const server of discoveredServers) {
       if (CAT_CAFE_BUILTIN_NAMES.has(server.name)) continue;
       const exists = config.capabilities.some((c) => c.type === 'mcp' && c.id === server.name);

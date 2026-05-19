@@ -6,20 +6,11 @@
  * This module merges callbackEnv into cat-cafe* servers before newSession().
  */
 
+import { MCP_CALLBACK_ENV_KEYS } from '../../../../../../config/capabilities/capability-orchestrator.js';
 import type { AcpMcpServer, AcpMcpServerStdio } from './types.js';
 
 /** Prefix for Clowder AI MCP servers that need callback env injection. */
 const CAT_CAFE_SERVER_PREFIX = 'cat-cafe';
-
-/** Callback env keys injected per-invocation into cat-cafe MCP servers. */
-const CALLBACK_ENV_KEYS = [
-  'CAT_CAFE_API_URL',
-  'CAT_CAFE_INVOCATION_ID',
-  'CAT_CAFE_CALLBACK_TOKEN',
-  'CAT_CAFE_USER_ID',
-  'CAT_CAFE_CAT_ID',
-  'CAT_CAFE_SIGNAL_USER',
-] as const;
 
 function isCatCafeStdioServer(server: AcpMcpServer): server is AcpMcpServerStdio {
   return (
@@ -37,7 +28,7 @@ function mergeCallbackEnv(
   callbackEnv: Record<string, string>,
 ): Array<{ name: string; value: string }> {
   const envMap = new Map(existingEnv.map((e) => [e.name, e.value]));
-  for (const key of CALLBACK_ENV_KEYS) {
+  for (const key of MCP_CALLBACK_ENV_KEYS) {
     if (key in callbackEnv) {
       envMap.set(key, callbackEnv[key]);
     }

@@ -14,21 +14,11 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { McpServerDescriptor } from '@cat-cafe/shared';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
+import { MCP_CALLBACK_ENV_KEYS } from './mcp-constants.js';
 
-const GEMINI_CAT_CAFE_ENV_PLACEHOLDERS: Readonly<Record<string, string>> = {
-  CAT_CAFE_API_URL: '${CAT_CAFE_API_URL}',
-  CAT_CAFE_INVOCATION_ID: '${CAT_CAFE_INVOCATION_ID}',
-  CAT_CAFE_CALLBACK_TOKEN: '${CAT_CAFE_CALLBACK_TOKEN}',
-  CAT_CAFE_USER_ID: '${CAT_CAFE_USER_ID}',
-  CAT_CAFE_SIGNAL_USER: '${CAT_CAFE_SIGNAL_USER}',
-};
-const KIMI_CAT_CAFE_ENV_PLACEHOLDERS: Readonly<Record<string, string>> = {
-  CAT_CAFE_API_URL: '${CAT_CAFE_API_URL}',
-  CAT_CAFE_INVOCATION_ID: '${CAT_CAFE_INVOCATION_ID}',
-  CAT_CAFE_CALLBACK_TOKEN: '${CAT_CAFE_CALLBACK_TOKEN}',
-  CAT_CAFE_USER_ID: '${CAT_CAFE_USER_ID}',
-  CAT_CAFE_SIGNAL_USER: '${CAT_CAFE_SIGNAL_USER}',
-};
+const CAT_CAFE_ENV_PLACEHOLDERS: Readonly<Record<string, string>> = Object.fromEntries(
+  MCP_CALLBACK_ENV_KEYS.map((key) => [key, `\${${key}}`]),
+);
 
 /**
  * Resolve the workspace root that Bengal will operate inside (where pwd/git
@@ -108,7 +98,7 @@ function isCatCafeServer(name: string): boolean {
 function ensureGeminiCatCafeEnv(name: string, env?: Record<string, string>): Record<string, string> | undefined {
   if (!isCatCafeServer(name)) return env;
   return {
-    ...GEMINI_CAT_CAFE_ENV_PLACEHOLDERS,
+    ...CAT_CAFE_ENV_PLACEHOLDERS,
     ...(env ?? {}),
   };
 }
@@ -116,7 +106,7 @@ function ensureGeminiCatCafeEnv(name: string, env?: Record<string, string>): Rec
 function ensureKimiCatCafeEnv(name: string, env?: Record<string, string>): Record<string, string> | undefined {
   if (!isCatCafeServer(name)) return env;
   return {
-    ...KIMI_CAT_CAFE_ENV_PLACEHOLDERS,
+    ...CAT_CAFE_ENV_PLACEHOLDERS,
     ...(env ?? {}),
   };
 }
@@ -257,7 +247,12 @@ export async function writeClaudeMcpConfig(filePath: string, servers: McpServerD
     }
   }
 
-  // Keep user entries not in managed list untouched (they're already in existingServers)
+  // #712: Remove legacy monolith if not in managed list — capabilities.json
+  // no longer includes it, but it may linger from pre-split configs.
+  if (!servers.some((s) => s.name === 'cat-cafe')) {
+    delete existingServers['cat-cafe'];
+  }
+
   await ensureDir(filePath);
   await writeFile(filePath, `${JSON.stringify({ mcpServers: existingServers }, null, 2)}\n`, 'utf-8');
 }
@@ -292,9 +287,11 @@ export async function writeCodexMcpConfig(filePath: string, servers: McpServerDe
     const entry: Record<string, unknown> = { command: s.command, args: s.args };
     if (s.env && Object.keys(s.env).length > 0) entry.env = s.env;
     entry.enabled = s.enabled;
+    if (s.source === 'cat-cafe') entry.default_tools_approval_mode = 'approve';
     existingMcp[s.name] = entry;
   }
 
+  if (!servers.some((s) => s.name === 'cat-cafe')) delete existingMcp['cat-cafe'];
   existing.mcp_servers = existingMcp;
   await ensureDir(filePath);
   await writeFile(filePath, `${stringifyToml(existing)}\n`, 'utf-8');
@@ -340,8 +337,9 @@ export async function writeGeminiMcpConfig(filePath: string, servers: McpServerD
     }
   }
 
-  // Keep legacy cat-cafe entries functional even when they are preserved as
-  // non-managed servers (e.g. migration leftovers in user's settings).
+  if (!servers.some((s) => s.name === 'cat-cafe')) delete existingMcp['cat-cafe'];
+
+  // Ensure split cat-cafe-* entries have required Gemini env placeholders.
   for (const [name, value] of Object.entries(existingMcp)) {
     if (!isCatCafeServer(name)) continue;
     if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
@@ -450,6 +448,8 @@ export async function writeKimiMcpConfig(filePath: string, servers: McpServerDes
     existingMcp[s.name] = entry;
   }
 
+  if (!servers.some((s) => s.name === 'cat-cafe')) delete existingMcp['cat-cafe'];
+
   for (const [name, value] of Object.entries(existingMcp)) {
     if (!isCatCafeServer(name)) continue;
     if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
@@ -493,6 +493,8 @@ export async function writeAntigravityMcpConfig(filePath: string, servers: McpSe
     if (s.workingDir) entry.cwd = s.workingDir;
     existingMcp[s.name] = entry;
   }
+
+  if (!servers.some((s) => s.name === 'cat-cafe')) delete existingMcp['cat-cafe'];
 
   for (const [name, value] of Object.entries(existingMcp)) {
     if (!isCatCafeServer(name)) continue;

@@ -23,10 +23,7 @@ import {
   readGeminiMcpConfig,
   readKimiMcpConfig,
   writeAntigravityMcpConfig,
-  writeClaudeMcpConfig,
-  writeCodexMcpConfig,
   writeGeminiMcpConfig,
-  writeKimiMcpConfig,
 } from './mcp-config-adapters.js';
 
 // ────────── F146: Per-project mutex for capability config writes ──────────
@@ -48,7 +45,6 @@ export function withCapabilityLock<T>(projectRoot: string, fn: () => Promise<T>)
 
 const CAPABILITIES_FILENAME = 'capabilities.json';
 const CONFIG_SUBDIR = '.cat-cafe';
-const MCP_RESOLVED_FILENAME = 'mcp-resolved.json';
 
 const PENCIL_EXTENSIONS_DIR = resolve(homedir(), '.antigravity/extensions');
 const VSCODE_EXTENSIONS_DIR = resolve(homedir(), '.vscode/extensions');
@@ -87,17 +83,6 @@ export function getPencilBinarySuffix(): string {
 }
 /** @internal Exported for testing only */
 export const PENCIL_BINARY_SUFFIX = getPencilBinarySuffix();
-
-type ResolvedMcpStatus = 'resolved' | 'unresolved';
-
-export interface ResolvedMcpStateEntry {
-  resolver: string;
-  status: ResolvedMcpStatus;
-  command?: string;
-  args?: string[];
-}
-
-export type ResolvedMcpState = Record<string, ResolvedMcpStateEntry>;
 
 interface PencilResolveOptions {
   env?: NodeJS.ProcessEnv;
@@ -143,13 +128,12 @@ export function comparePencilDirs(a: string, b: string): number {
   return 0;
 }
 
-/** Provider → CLI config writer mapping */
+/** Provider → CLI config writer mapping.
+ * #712: Claude/Codex/Kimi inject all MCP servers at invoke time from capabilities.json.
+ * Only Gemini + Antigravity still need file-based config (cwd-based discovery). */
 const PROVIDER_WRITERS = {
-  anthropic: writeClaudeMcpConfig,
-  openai: writeCodexMcpConfig,
   google: writeGeminiMcpConfig,
   antigravity: writeAntigravityMcpConfig,
-  kimi: writeKimiMcpConfig,
 } as const;
 
 /** Check if a descriptor has a usable transport (stdio command, local resolver, or streamableHttp URL). */
@@ -503,24 +487,6 @@ export async function writeCapabilitiesConfig(projectRoot: string, config: Capab
   await writeFile(filePath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
 }
 
-export async function readResolvedMcpState(projectRoot: string): Promise<ResolvedMcpState> {
-  const filePath = safePath(projectRoot, CONFIG_SUBDIR, MCP_RESOLVED_FILENAME);
-  try {
-    const raw = await readFile(filePath, 'utf-8');
-    const data = JSON.parse(raw) as ResolvedMcpState;
-    return data && typeof data === 'object' ? data : {};
-  } catch {
-    return {};
-  }
-}
-
-export async function writeResolvedMcpState(projectRoot: string, state: ResolvedMcpState): Promise<void> {
-  const dir = safePath(projectRoot, CONFIG_SUBDIR);
-  await mkdir(dir, { recursive: true });
-  const filePath = safePath(projectRoot, CONFIG_SUBDIR, MCP_RESOLVED_FILENAME);
-  await writeFile(filePath, `${JSON.stringify(state, null, 2)}\n`, 'utf-8');
-}
-
 // ────────── Discovery: Bootstrap from existing CLI configs ──────────
 
 export interface DiscoveryPaths {
@@ -550,25 +516,17 @@ export async function discoverExternalMcpServers(paths: DiscoveryPaths): Promise
   );
 }
 
-/**
- * Build the Cat Cafe own MCP server descriptor.
- * Uses the same resolution logic as ClaudeAgentService.
- */
-export function buildCatCafeMcpDescriptor(projectRoot: string): McpServerDescriptor {
-  const serverPath = resolve(projectRoot, 'packages/mcp-server/dist/index.js');
-  return {
-    name: 'cat-cafe',
-    command: 'node',
-    args: [serverPath],
-    enabled: true,
-    source: 'cat-cafe',
-  };
-}
-
-// F193 Phase C: split-only — add cat-cafe-limb (was previously hosted by all-in-one
-// `cat-cafe` server only via registerFullToolset). 4 split servers replace the legacy
-// 3-split + 1 all-in-one topology.
 const CAT_CAFE_SPLIT_SERVER_IDS = ['cat-cafe-collab', 'cat-cafe-memory', 'cat-cafe-signals', 'cat-cafe-limb'] as const;
+
+export { MCP_CALLBACK_ENV_KEYS } from './mcp-constants.js';
+
+/** Canonical map: split server id → dist entrypoint filename (single source of truth). */
+export const CAT_CAFE_SPLIT_ENTRYPOINTS: ReadonlyMap<string, string> = new Map([
+  ['cat-cafe-collab', 'collab.js'],
+  ['cat-cafe-memory', 'memory.js'],
+  ['cat-cafe-signals', 'signals.js'],
+  ['cat-cafe-limb', 'limb.js'],
+]);
 
 /**
  * Resolve the runtime binary root (where Clowder AI MCP server code lives).
@@ -597,37 +555,13 @@ export function resolveBinaryRoot(explicit?: string): string {
 }
 
 function buildCatCafeSplitMcpDescriptors(binaryRoot: string): McpServerDescriptor[] {
-  return [
-    {
-      name: 'cat-cafe-collab',
-      command: 'node',
-      args: [resolve(binaryRoot, 'packages/mcp-server/dist/collab.js')],
-      enabled: true,
-      source: 'cat-cafe',
-    },
-    {
-      name: 'cat-cafe-memory',
-      command: 'node',
-      args: [resolve(binaryRoot, 'packages/mcp-server/dist/memory.js')],
-      enabled: true,
-      source: 'cat-cafe',
-    },
-    {
-      name: 'cat-cafe-signals',
-      command: 'node',
-      args: [resolve(binaryRoot, 'packages/mcp-server/dist/signals.js')],
-      enabled: true,
-      source: 'cat-cafe',
-    },
-    {
-      // F193 Phase C: limb tools get their own namespace (布偶猫专属能力).
-      name: 'cat-cafe-limb',
-      command: 'node',
-      args: [resolve(binaryRoot, 'packages/mcp-server/dist/limb.js')],
-      enabled: true,
-      source: 'cat-cafe',
-    },
-  ];
+  return [...CAT_CAFE_SPLIT_ENTRYPOINTS.entries()].map(([name, entrypoint]) => ({
+    name,
+    command: 'node',
+    args: [resolve(binaryRoot, 'packages/mcp-server/dist', entrypoint)],
+    enabled: true,
+    source: 'cat-cafe' as const,
+  }));
 }
 
 export function toCapabilityEntry(server: McpServerDescriptor): CapabilityEntry {
@@ -775,7 +709,7 @@ export function migrateResolverBackedCapabilities(config: CapabilitiesConfig): {
  * still call this function under its old name — Phase D follow-up may rename.
  * For Phase C, behavior change is what matters.
  */
-export function ensureCatCafeMainServer(
+export function ensureSplitServerCompleteness(
   config: CapabilitiesConfig,
   opts?: { catCafeRepoRoot?: string; projectRoot?: string },
 ): { migrated: boolean; config: CapabilitiesConfig } {
@@ -909,10 +843,9 @@ export function realignManagedCatCafeServerPaths(
   }
   const binaryRoot = resolveBinaryRoot(opts?.catCafeRepoRoot);
 
-  const desiredById = new Map<string, McpServerDescriptor>([
-    ['cat-cafe', buildCatCafeMcpDescriptor(binaryRoot)],
-    ...buildCatCafeSplitMcpDescriptors(binaryRoot).map((descriptor) => [descriptor.name, descriptor] as const),
-  ]);
+  const desiredById = new Map<string, McpServerDescriptor>(
+    buildCatCafeSplitMcpDescriptors(binaryRoot).map((descriptor) => [descriptor.name, descriptor] as const),
+  );
 
   let migrated = false;
   const capabilities = config.capabilities.map((cap) => {
@@ -976,7 +909,6 @@ export async function bootstrapCapabilities(
   // Add discovered external MCP servers
   const splitNames = new Set(catCafeServers.map((s) => s.name));
   for (const ext of externals) {
-    // Skip built-in server names if already discovered from existing config
     if (ext.name === 'cat-cafe' || splitNames.has(ext.name)) continue;
     capabilities.push(toCapabilityEntry(ext));
   }
@@ -1002,7 +934,7 @@ export async function bootstrapCapabilities(
  * Order matters:
  *   1. migrateLegacyCatCafeCapability — legacy 1-server → 4 split servers
  *   2. migrateResolverBackedCapabilities — pencil resolver-backed paths
- *   3. ensureCatCafeMainServer — Phase C topology (remove legacy, add limb)
+ *   3. ensureSplitServerCompleteness — Phase C topology (remove legacy, add limb)
  *   4. realignManagedCatCafeServerPaths — stable binary path realignment
  */
 export function healCatCafeMcpTopology(
@@ -1011,7 +943,7 @@ export function healCatCafeMcpTopology(
 ): { migrated: boolean; config: CapabilitiesConfig } {
   const a = migrateLegacyCatCafeCapability(config, opts);
   const b = migrateResolverBackedCapabilities(a.config);
-  const c = ensureCatCafeMainServer(b.config, opts);
+  const c = ensureSplitServerCompleteness(b.config, opts);
   const d = realignManagedCatCafeServerPaths(c.config, opts);
   return {
     migrated: a.migrated || b.migrated || c.migrated || d.migrated,
@@ -1117,7 +1049,6 @@ export async function resolveMachineSpecificServers(
     resolvePencilCommandFn?: PencilCommandResolver;
   } = {},
 ): Promise<void> {
-  const resolvedState: ResolvedMcpState = {};
   const resolvePencil = options.resolvePencilCommandFn ?? resolvePencilCommand;
   const needsPencilResolution = Object.values(perProvider).some((servers) =>
     servers.some((server) => server.name === 'pencil' || server.resolver === 'pencil'),
@@ -1133,24 +1064,13 @@ export async function resolveMachineSpecificServers(
         server.args = [];
         server.enabled = false;
         server.resolver = 'pencil';
-        resolvedState[server.name] = { resolver: 'pencil', status: 'unresolved' };
         continue;
       }
 
       server.command = pencilResolved.command;
       server.args = pencilResolved.args;
       server.resolver = 'pencil';
-      resolvedState[server.name] = {
-        resolver: 'pencil',
-        status: 'resolved',
-        command: pencilResolved.command,
-        args: pencilResolved.args,
-      };
     }
-  }
-
-  if (options.projectRoot) {
-    await writeResolvedMcpState(options.projectRoot, resolvedState);
   }
 }
 

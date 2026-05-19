@@ -15,10 +15,16 @@
  *   result/success → 跳过 (done 在循环后 yield)
  */
 
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { type CatId, createCatId } from '@cat-cafe/shared';
+import {
+  CAT_CAFE_SPLIT_ENTRYPOINTS,
+  MCP_CALLBACK_ENV_KEYS,
+  resolvePencilCommand,
+  resolveServersForCat,
+} from '../../../../../config/capabilities/capability-orchestrator.js';
 import { getCatEffort } from '../../../../../config/cat-config-loader.js';
 import { getCatModel } from '../../../../../config/cat-models.js';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
@@ -270,34 +276,81 @@ export class ClaudeAgentService implements AgentService {
       args.push('--add-dir', dir);
     }
 
-    // Add MCP server config when callback env is present
-    // On Windows, Claude CLI treats inline JSON as a file path — write to temp file instead.
-    // The file is cached per-instance so concurrent invocations share one file (no temp spam).
+    // #712: Inject ALL enabled MCP servers from capabilities.json at invoke time.
+    // Built-in cat-cafe servers resolve paths from distDir; externals use descriptor values.
+    // On Windows, Claude CLI treats inline JSON as a file path — write to temp file.
     if (options?.callbackEnv && this.mcpServerPath) {
-      if (IS_WINDOWS) {
-        if (!this.mcpConfigFilePath || !existsSync(this.mcpConfigFilePath)) {
-          const dir = mkdtempSync(join(tmpdir(), 'cat-cafe-mcp-'));
-          this.mcpConfigFilePath = join(dir, 'mcp-config.json');
-          writeFileSync(
-            this.mcpConfigFilePath,
-            JSON.stringify({
-              mcpServers: {
-                'cat-cafe': { command: 'node', args: [this.mcpServerPath] },
-              },
-            }),
-            'utf-8',
-          );
+      const distDir = dirname(this.mcpServerPath);
+      const projectRoot = resolve(distDir, '../../..');
+      const catId = options.callbackEnv.CAT_CAFE_CAT_ID;
+
+      const callbackEnvEntries: Record<string, string> = {};
+      for (const key of MCP_CALLBACK_ENV_KEYS) {
+        const val = options.callbackEnv![key];
+        if (val) callbackEnvEntries[key] = val;
+      }
+      const hasCallbackEnv = Object.keys(callbackEnvEntries).length > 0;
+
+      const mcpServers: Record<string, Record<string, unknown>> = {};
+      let resolved = false;
+      try {
+        const raw = readFileSync(join(projectRoot, '.cat-cafe', 'capabilities.json'), 'utf-8');
+        const capConfig = JSON.parse(raw);
+        if (capConfig?.version === 1 && catId) {
+          for (const s of resolveServersForCat(capConfig, catId)) {
+            if (!s.enabled) continue;
+            if (CAT_CAFE_SPLIT_ENTRYPOINTS.has(s.name)) {
+              const ep = CAT_CAFE_SPLIT_ENTRYPOINTS.get(s.name)!;
+              const epPath = join(distDir, ep);
+              if (existsSync(epPath)) {
+                mcpServers[s.name] = {
+                  command: 'node',
+                  args: [epPath],
+                  ...(hasCallbackEnv ? { env: callbackEnvEntries } : {}),
+                };
+              }
+            } else if (s.resolver === 'pencil') {
+              const pencil = await resolvePencilCommand({ projectRoot });
+              if (pencil) mcpServers[s.name] = { command: pencil.command, args: pencil.args };
+            } else if (s.transport === 'streamableHttp' && s.url) {
+              const entry: Record<string, unknown> = { type: 'http', url: s.url };
+              if (s.headers && Object.keys(s.headers).length > 0) entry.headers = s.headers;
+              mcpServers[s.name] = entry;
+            } else if (s.command) {
+              const entry: Record<string, unknown> = { command: s.command, args: s.args };
+              if (s.env && Object.keys(s.env).length > 0) entry.env = s.env;
+              if (s.workingDir) entry.cwd = s.workingDir;
+              mcpServers[s.name] = entry;
+            }
+          }
+          resolved = true;
         }
-        args.push('--mcp-config', this.mcpConfigFilePath);
-      } else {
-        args.push(
-          '--mcp-config',
-          JSON.stringify({
-            mcpServers: {
-              'cat-cafe': { command: 'node', args: [this.mcpServerPath] },
-            },
-          }),
-        );
+      } catch {
+        // best-effort fallback below
+      }
+      if (!resolved) {
+        for (const [name, ep] of CAT_CAFE_SPLIT_ENTRYPOINTS) {
+          const epPath = join(distDir, ep);
+          if (existsSync(epPath)) {
+            mcpServers[name] = {
+              command: 'node',
+              args: [epPath],
+              ...(hasCallbackEnv ? { env: callbackEnvEntries } : {}),
+            };
+          }
+        }
+      }
+      if (Object.keys(mcpServers).length > 0) {
+        if (IS_WINDOWS) {
+          if (!this.mcpConfigFilePath) {
+            const dir = mkdtempSync(join(tmpdir(), 'cat-cafe-mcp-'));
+            this.mcpConfigFilePath = join(dir, 'mcp-config.json');
+          }
+          writeFileSync(this.mcpConfigFilePath, JSON.stringify({ mcpServers }), 'utf-8');
+          args.push('--mcp-config', this.mcpConfigFilePath);
+        } else {
+          args.push('--mcp-config', JSON.stringify({ mcpServers }));
+        }
       }
     }
 

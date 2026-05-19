@@ -2,7 +2,7 @@
  * Resolves MCP server configs for ACP sessions.
  *
  * Built-in cat-cafe* servers: auto-generated from projectRoot (zero config).
- * External servers (pencil, etc.): read from .mcp.json fallback.
+ * External servers (pencil, etc.): read from capabilities.json (#712).
  * User project servers: merged from userProjectRoot/.mcp.json (F145 Phase E).
  *
  * F145 Phase C: community users can clone + pnpm install without hand-writing .mcp.json.
@@ -11,6 +11,11 @@
 
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import type { CapabilitiesConfig, CapabilityEntry } from '@cat-cafe/shared';
+import {
+  CAT_CAFE_SPLIT_ENTRYPOINTS,
+  resolvePencilCommand,
+} from '../../../../../../config/capabilities/capability-orchestrator.js';
 import { createModuleLogger } from '../../../../../../infrastructure/logger.js';
 import type { AcpMcpServer, AcpMcpServerStdio } from './types.js';
 
@@ -20,27 +25,9 @@ const log = createModuleLogger('acp-mcp-resolver');
 
 const MCP_SERVER_DIST = 'packages/mcp-server/dist';
 
-/**
- * Canonical builtin cat-cafe MCP servers: name → dist filename.
- *
- * F193 Phase C: `cat-cafe-limb` added as the 4th canonical split (cloud
- * round 5 P1). Legacy `cat-cafe` is preserved here for ACP backward
- * compatibility — F145 Phase E callers (per-project MCP whitelist) may
- * still explicitly request it. The orchestrator removes legacy from the
- * default capabilities.json instead, so Phase C migration runs at the
- * canonical config layer.
- */
-const BUILTIN_CAT_CAFE_SERVERS: ReadonlyMap<string, string> = new Map([
-  ['cat-cafe', 'index.js'],
-  ['cat-cafe-collab', 'collab.js'],
-  ['cat-cafe-memory', 'memory.js'],
-  ['cat-cafe-signals', 'signals.js'],
-  ['cat-cafe-limb', 'limb.js'],
-]);
-
 /** Returns the dist entrypoint filename for a canonical builtin, or null. */
 function builtinEntrypoint(name: string): string | null {
-  return BUILTIN_CAT_CAFE_SERVERS.get(name) ?? null;
+  return CAT_CAFE_SPLIT_ENTRYPOINTS.get(name) ?? null;
 }
 
 /**
@@ -58,7 +45,44 @@ export function resolveBuiltinCatCafeServer(projectRoot: string, name: string): 
   };
 }
 
-// ─── .mcp.json fallback for external servers ─────────────────────
+// ─── capabilities.json reader for external servers (#712) ────────
+
+function readCapabilitiesConfigSync(projectRoot: string): CapabilitiesConfig | null {
+  try {
+    const raw = readFileSync(join(projectRoot, '.cat-cafe', 'capabilities.json'), 'utf-8');
+    const data = JSON.parse(raw) as CapabilitiesConfig;
+    if (data.version !== 1 || !Array.isArray(data.capabilities)) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function capabilityEntryToAcpMcpServer(
+  name: string,
+  mcpServer: NonNullable<CapabilityEntry['mcpServer']>,
+): AcpMcpServer | null {
+  if (mcpServer.transport === 'streamableHttp' && mcpServer.url) {
+    return {
+      type: 'http' as const,
+      name,
+      url: mcpServer.url,
+      headers: mcpServer.headers ? Object.entries(mcpServer.headers).map(([k, v]) => ({ name: k, value: v })) : [],
+    };
+  }
+  if (mcpServer.command) {
+    return {
+      name,
+      command: mcpServer.command,
+      args: mcpServer.args ?? [],
+      env: mcpServer.env ? Object.entries(mcpServer.env).map(([k, v]) => ({ name: k, value: v })) : [],
+    };
+  }
+  log.warn({ name }, 'Capability entry has no usable transport — skipping');
+  return null;
+}
+
+// ─── .mcp.json parsing — user project servers only ──────────────
 
 interface McpJsonEntry {
   command?: string;
@@ -127,7 +151,7 @@ function readMcpJson(mcpJsonPath: string): Record<string, McpJsonEntry> {
  *
  * Three-layer priority (F145 Phase E):
  *   1. Built-in cat-cafe* — auto-generated from projectRoot (highest)
- *   2. Whitelist externals — from projectRoot/.mcp.json
+ *   2. Whitelist externals — from projectRoot/.cat-cafe/capabilities.json (#712)
  *   3. User project servers — from userProjectRoot/.mcp.json (lowest, additive)
  *
  * @param projectRoot — monorepo root
@@ -136,18 +160,35 @@ function readMcpJson(mcpJsonPath: string): Record<string, McpJsonEntry> {
  * @returns AcpMcpServer[] ready for newSession()
  * @throws when whitelist is non-empty but zero servers could be resolved
  */
-export function resolveAcpMcpServers(
+export async function resolveAcpMcpServers(
   projectRoot: string,
   whitelist: string[],
   userProjectRoot?: string,
-): AcpMcpServer[] {
+  opts?: { disabledServerIds?: ReadonlySet<string> },
+): Promise<AcpMcpServer[]> {
   if (!whitelist.length && !userProjectRoot) return [];
 
+  // Expand legacy monolith "cat-cafe" to split server IDs so old catalogs
+  // resolve to builtins instead of falling through to .mcp.json lookup.
+  const expanded = new Set<string>();
+  for (const name of whitelist) {
+    if (name === 'cat-cafe') {
+      for (const splitId of CAT_CAFE_SPLIT_ENTRYPOINTS.keys()) expanded.add(splitId);
+    } else {
+      expanded.add(name);
+    }
+  }
+
+  const disabled = opts?.disabledServerIds;
   const servers: AcpMcpServer[] = [];
   const externalNames: string[] = [];
 
   // Phase 1: resolve builtins from projectRoot (no .mcp.json needed)
-  for (const name of whitelist) {
+  for (const name of expanded) {
+    if (disabled?.has(name)) {
+      log.info({ name }, 'Skipping disabled server (capabilities.json)');
+      continue;
+    }
     const builtin = resolveBuiltinCatCafeServer(projectRoot, name);
     if (builtin) {
       servers.push(builtin);
@@ -156,34 +197,49 @@ export function resolveAcpMcpServers(
     }
   }
 
-  // Phase 2: resolve externals from .mcp.json (only if needed)
+  // Phase 2: resolve externals from capabilities.json (#712)
   const missing: string[] = [];
   if (externalNames.length > 0) {
-    const mcpJsonPath = join(projectRoot, '.mcp.json');
-    const mcpServers = readMcpJson(mcpJsonPath);
-
-    for (const name of externalNames) {
-      const entry = mcpServers[name];
-      if (!entry) {
-        missing.push(name);
-        continue;
+    const capConfig = readCapabilitiesConfigSync(projectRoot);
+    if (capConfig) {
+      for (const name of externalNames) {
+        const cap = capConfig.capabilities.find((c) => c.type === 'mcp' && c.id === name);
+        if (!cap?.mcpServer) {
+          missing.push(name);
+          continue;
+        }
+        if (cap.mcpServer.resolver === 'pencil') {
+          const resolved = await resolvePencilCommand({ projectRoot });
+          if (resolved) {
+            servers.push({ name, command: resolved.command, args: resolved.args, env: [] });
+          } else {
+            missing.push(name);
+            log.warn({ name }, 'Pencil resolver found no installation — server unavailable');
+          }
+          continue;
+        }
+        const server = capabilityEntryToAcpMcpServer(name, cap.mcpServer);
+        if (server) servers.push(server);
+        else missing.push(name);
       }
-      const server = toAcpMcpServer(name, entry);
-      if (server) servers.push(server);
-      else missing.push(name);
+    } else {
+      missing.push(...externalNames);
+      log.warn('capabilities.json not found — external MCP servers unavailable');
     }
   }
 
   if (missing.length > 0) {
     log.error(
       { missing, resolved: servers.map((s) => s.name) },
-      'MCP whitelist entries not found in .mcp.json — these servers will NOT be available to ACP agent',
+      'MCP whitelist entries not found in capabilities.json — these servers will NOT be available to ACP agent',
     );
   }
 
-  if (whitelist.length > 0 && servers.length === 0) {
+  const disabledFromWhitelist = disabled ? [...expanded].filter((n) => disabled.has(n)).length : 0;
+  if (whitelist.length > 0 && servers.length === 0 && (disabledFromWhitelist === 0 || missing.length > 0)) {
     throw new Error(
       `All ${whitelist.length} MCP whitelist entries [${whitelist.join(', ')}] are missing. ` +
+        `Active missing: [${missing.join(', ')}], disabled: ${disabledFromWhitelist}. ` +
         'ACP agent would start with zero MCP servers — aborting to prevent silent tool-call stalls.',
     );
   }

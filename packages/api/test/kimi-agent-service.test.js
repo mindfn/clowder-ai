@@ -331,6 +331,9 @@ test('injects cat-cafe MCP config file when callback env is present', async () =
       'utf8',
     );
     writeFileSync(join(mcpServerDir, 'index.js'), '// stub', 'utf8');
+    for (const entry of ['collab.js', 'memory.js', 'signals.js', 'limb.js']) {
+      writeFileSync(join(mcpServerDir, entry), '// stub', 'utf8');
+    }
 
     const promise = collect(
       service.invoke('Hello', {
@@ -348,12 +351,14 @@ test('injects cat-cafe MCP config file when callback env is present', async () =
     assert.ok(mcpFlagIndex >= 0);
     const mcpPath = args[mcpFlagIndex + 1];
     const mcpConfig = JSON.parse(readFileSync(mcpPath, 'utf8'));
-    assert.ok(mcpConfig.mcpServers['cat-cafe']);
+    assert.ok(mcpConfig.mcpServers['cat-cafe-collab'], 'split server cat-cafe-collab expected');
+    assert.ok(mcpConfig.mcpServers['cat-cafe-memory'], 'split server cat-cafe-memory expected');
     assert.ok(mcpConfig.mcpServers.filesystem);
-    assert.equal(mcpConfig.mcpServers['cat-cafe'].command, 'node');
-    assert.equal(mcpConfig.mcpServers['cat-cafe'].env.CAT_CAFE_API_URL, 'http://127.0.0.1:3004');
-    assert.equal(mcpConfig.mcpServers['cat-cafe'].env.CAT_CAFE_INVOCATION_ID, 'invoke-123');
-    assert.equal(mcpConfig.mcpServers['cat-cafe'].env.CAT_CAFE_CALLBACK_TOKEN, 'token-123');
+    assert.equal(mcpConfig.mcpServers['cat-cafe-collab'].command, 'node');
+    assert.equal(mcpConfig.mcpServers['cat-cafe-collab'].env.CAT_CAFE_API_URL, 'http://127.0.0.1:3004');
+    assert.equal(mcpConfig.mcpServers['cat-cafe-collab'].env.CAT_CAFE_INVOCATION_ID, 'invoke-123');
+    assert.equal(mcpConfig.mcpServers['cat-cafe-collab'].env.CAT_CAFE_CALLBACK_TOKEN, 'token-123');
+    assert.equal(mcpConfig.mcpServers['cat-cafe'], undefined, 'monolith must not be injected');
 
     emitKimiEvents(proc, [{ role: 'assistant', content: 'ok' }]);
     await promise;
@@ -379,6 +384,9 @@ test('creates Kimi share dir before writing temp MCP config on fresh setups', as
 
   try {
     writeFileSync(join(mcpServerDir, 'index.js'), '// stub', 'utf8');
+    for (const entry of ['collab.js', 'memory.js', 'signals.js', 'limb.js']) {
+      writeFileSync(join(mcpServerDir, entry), '// stub', 'utf8');
+    }
     const promise = collect(
       service.invoke('Hello', {
         workingDirectory: projectDir,
@@ -395,7 +403,9 @@ test('creates Kimi share dir before writing temp MCP config on fresh setups', as
     const mcpFlagIndex = args.indexOf('--mcp-config-file');
     assert.ok(mcpFlagIndex >= 0);
     const mcpPath = args[mcpFlagIndex + 1];
-    assert.ok(readFileSync(mcpPath, 'utf8').includes('cat-cafe'));
+    const content = readFileSync(mcpPath, 'utf8');
+    assert.ok(content.includes('cat-cafe-collab'), 'split server expected in config');
+    assert.ok(!content.includes('"cat-cafe"'), 'monolith must not appear in config');
 
     emitKimiEvents(proc, [{ role: 'assistant', content: 'ok' }]);
     const msgs = await promise;

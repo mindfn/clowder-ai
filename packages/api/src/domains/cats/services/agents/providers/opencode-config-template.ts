@@ -1,5 +1,10 @@
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import {
+  CAT_CAFE_SPLIT_ENTRYPOINTS,
+  resolvePencilCommand,
+  resolveServersForCat,
+} from '../../../../../config/capabilities/capability-orchestrator.js';
 
 /**
  * opencode Config Template Generator
@@ -104,6 +109,8 @@ export interface OpenCodeRuntimeConfigOptions {
   hasBaseUrl?: boolean;
   /** Absolute path to Clowder AI MCP server entry (packages/mcp-server/dist/index.js). */
   mcpServerPath?: string;
+  /** Cat ID for capabilities.json enabled-state filtering. */
+  catId?: string;
 }
 
 export interface OpenCodeRuntimeConfigDebugSummary {
@@ -152,7 +159,7 @@ export function safeProviderName(name: string): string {
 }
 
 export function generateOpenCodeRuntimeConfig(options: OpenCodeRuntimeConfigOptions): OpenCodeConfig {
-  const { providerName, models, defaultModel, apiType = 'openai', hasBaseUrl = false, mcpServerPath } = options;
+  const { providerName, models, defaultModel, apiType = 'openai', hasBaseUrl = false, mcpServerPath, catId } = options;
 
   const configName = safeProviderName(providerName);
 
@@ -184,15 +191,64 @@ export function generateOpenCodeRuntimeConfig(options: OpenCodeRuntimeConfigOpti
   };
 
   if (mcpServerPath) {
-    config.mcp = {
-      'cat-cafe': {
-        type: 'local',
-        command: ['node', mcpServerPath],
-      },
-    };
+    const mcp = buildOpenCodeMcpSync(mcpServerPath, catId);
+    if (Object.keys(mcp).length > 0) config.mcp = mcp;
   }
 
   return config;
+}
+
+function buildOpenCodeMcpSync(
+  mcpServerPath: string,
+  catId?: string,
+): Record<string, { type: string; command: string[] }> {
+  const distDir = dirname(mcpServerPath);
+  const projectRoot = resolve(distDir, '../../..');
+  const mcp: Record<string, { type: string; command: string[]; environment?: Record<string, string> }> = {};
+
+  let resolved = false;
+  try {
+    const raw = readFileSync(join(projectRoot, '.cat-cafe', 'capabilities.json'), 'utf-8');
+    const capConfig = JSON.parse(raw);
+    if (capConfig?.version === 1 && catId) {
+      for (const s of resolveServersForCat(capConfig, catId) as Array<{
+        name: string;
+        enabled: boolean;
+        command: string;
+        args: string[];
+        resolver?: string;
+        transport?: string;
+        env?: Record<string, string>;
+      }>) {
+        if (!s.enabled) continue;
+        if (s.transport === 'streamableHttp') continue;
+        if (CAT_CAFE_SPLIT_ENTRYPOINTS.has(s.name)) {
+          const ep = CAT_CAFE_SPLIT_ENTRYPOINTS.get(s.name)!;
+          const epPath = join(distDir, ep);
+          if (existsSync(epPath)) mcp[s.name] = { type: 'local', command: ['node', epPath] };
+        } else if (s.resolver === 'pencil') {
+          // Pencil needs async resolution — handled in writeOpenCodeRuntimeConfig
+        } else if (s.command) {
+          const entry: { type: string; command: string[]; environment?: Record<string, string> } = {
+            type: 'local',
+            command: [s.command, ...s.args],
+          };
+          if (s.env && Object.keys(s.env).length > 0) entry.environment = s.env;
+          mcp[s.name] = entry;
+        }
+      }
+      resolved = true;
+    }
+  } catch {
+    // best-effort fallback below
+  }
+
+  if (!resolved) {
+    for (const [name, entrypoint] of CAT_CAFE_SPLIT_ENTRYPOINTS) {
+      mcp[name] = { type: 'local', command: ['node', join(distDir, entrypoint)] };
+    }
+  }
+  return mcp;
 }
 
 function summarizeEnvPlaceholder(value: string | undefined): string | undefined {
@@ -237,19 +293,69 @@ function sanitizePathSegment(value: string): string {
  * is reserved for the `.opencode/`-style config directory structure.
  * Returns the `opencode.json` file path (set it as `OPENCODE_CONFIG`).
  */
-export function writeOpenCodeRuntimeConfig(
+export async function writeOpenCodeRuntimeConfig(
   projectRoot: string,
   catId: string,
   invocationId: string,
   options: OpenCodeRuntimeConfigOptions,
-): string {
+  workingDirectory?: string,
+): Promise<string> {
   const safeCatId = sanitizePathSegment(catId);
   const safeInvocationId = sanitizePathSegment(invocationId);
   const configDir = join(projectRoot, '.cat-cafe', `oc-config-${safeCatId}-${safeInvocationId}`);
   mkdirSync(configDir, { recursive: true });
   const configPath = join(configDir, 'opencode.json');
   const tempPath = `${configPath}.tmp-${process.pid}`;
-  const config = generateOpenCodeRuntimeConfig(options);
+  const config = generateOpenCodeRuntimeConfig({ ...options, catId: options.catId ?? catId });
+
+  // Resolve pencil at invoke time (async) — only if enabled in capabilities.json
+  if (options.mcpServerPath) {
+    const mcpProjectRoot = resolve(dirname(options.mcpServerPath), '../../..');
+    const effectiveCatId = options.catId ?? catId;
+    let pencilEnabled = false;
+    try {
+      const raw = readFileSync(join(mcpProjectRoot, '.cat-cafe', 'capabilities.json'), 'utf-8');
+      const capConfig = JSON.parse(raw);
+      if (capConfig?.version === 1 && effectiveCatId) {
+        pencilEnabled = (
+          resolveServersForCat(capConfig, effectiveCatId) as Array<{
+            name: string;
+            enabled: boolean;
+            resolver?: string;
+          }>
+        ).some((s) => s.resolver === 'pencil' && s.enabled);
+      }
+    } catch {
+      /* best-effort */
+    }
+    if (pencilEnabled) {
+      try {
+        const pencil = await resolvePencilCommand({ projectRoot: mcpProjectRoot });
+        if (pencil) {
+          if (!config.mcp) config.mcp = {};
+          config.mcp.pencil = { type: 'local', command: [pencil.command, ...pencil.args] };
+        }
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+
+  if (workingDirectory) {
+    const userConfigPath = join(workingDirectory, 'opencode.json');
+    try {
+      if (existsSync(userConfigPath)) {
+        const userConfig = JSON.parse(readFileSync(userConfigPath, 'utf-8')) as { mcp?: Record<string, unknown> };
+        if (userConfig.mcp && typeof userConfig.mcp === 'object') {
+          const merged = { ...userConfig.mcp, ...(config.mcp ?? {}) };
+          config.mcp = merged;
+        }
+      }
+    } catch {
+      // best-effort: if user config unreadable, proceed with our config only
+    }
+  }
+
   writeFileSync(tempPath, JSON.stringify(config, null, 2), 'utf-8');
   renameSync(tempPath, configPath);
   return configPath;

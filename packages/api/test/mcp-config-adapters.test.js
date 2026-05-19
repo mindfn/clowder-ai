@@ -371,7 +371,7 @@ describe('writeCodexMcpConfig', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('writes MCP servers to TOML', async () => {
+  it('writes MCP servers to TOML with approval mode for cat-cafe', async () => {
     const file = join(dir, 'config.toml');
     await writeCodexMcpConfig(file, [
       { name: 'cat_cafe', command: 'node', args: ['index.js'], enabled: true, source: 'cat-cafe' },
@@ -384,6 +384,11 @@ describe('writeCodexMcpConfig', () => {
     assert.ok(raw.includes('[mcp_servers.disabled]'));
     assert.ok(raw.includes('enabled = true'));
     assert.ok(raw.includes('enabled = false'));
+    // #712: cat-cafe source servers get auto-approve for non-interactive codex exec
+    assert.ok(raw.includes('default_tools_approval_mode = "approve"'), 'cat-cafe must have approval mode');
+    // Count occurrences — only cat-cafe server should have it, not external
+    const approveCount = (raw.match(/default_tools_approval_mode/g) || []).length;
+    assert.equal(approveCount, 1, 'only cat-cafe source servers get approval mode');
   });
 
   it('preserves existing non-MCP config', async () => {
@@ -440,16 +445,17 @@ describe('writeGeminiMcpConfig', () => {
     ]);
 
     const data = JSON.parse(await readFile(file, 'utf-8'));
-    assert.deepEqual(data.mcpServers['cat-cafe-collab'].env, {
-      CAT_CAFE_API_URL: '${CAT_CAFE_API_URL}',
-      CAT_CAFE_INVOCATION_ID: '${CAT_CAFE_INVOCATION_ID}',
-      CAT_CAFE_CALLBACK_TOKEN: '${CAT_CAFE_CALLBACK_TOKEN}',
-      CAT_CAFE_USER_ID: '${CAT_CAFE_USER_ID}',
-      CAT_CAFE_SIGNAL_USER: '${CAT_CAFE_SIGNAL_USER}',
-    });
+    const geminiEnv = data.mcpServers['cat-cafe-collab'].env;
+    assert.equal(geminiEnv.CAT_CAFE_API_URL, '${CAT_CAFE_API_URL}');
+    assert.equal(geminiEnv.CAT_CAFE_INVOCATION_ID, '${CAT_CAFE_INVOCATION_ID}');
+    assert.equal(geminiEnv.CAT_CAFE_CALLBACK_TOKEN, '${CAT_CAFE_CALLBACK_TOKEN}');
+    assert.equal(geminiEnv.CAT_CAFE_USER_ID, '${CAT_CAFE_USER_ID}');
+    assert.equal(geminiEnv.CAT_CAFE_CAT_ID, '${CAT_CAFE_CAT_ID}');
+    assert.equal(geminiEnv.CAT_CAFE_THREAD_ID, '${CAT_CAFE_THREAD_ID}');
+    assert.equal(geminiEnv.CAT_CAFE_SIGNAL_USER, '${CAT_CAFE_SIGNAL_USER}');
   });
 
-  it('injects callback env placeholders for preserved legacy cat-cafe server', async () => {
+  it('#712: removes legacy cat-cafe monolith from existing config', async () => {
     const file = join(dir, 'settings.json');
     await writeFile(
       file,
@@ -465,13 +471,8 @@ describe('writeGeminiMcpConfig', () => {
     ]);
 
     const data = JSON.parse(await readFile(file, 'utf-8'));
-    assert.deepEqual(data.mcpServers['cat-cafe'].env, {
-      CAT_CAFE_API_URL: '${CAT_CAFE_API_URL}',
-      CAT_CAFE_INVOCATION_ID: '${CAT_CAFE_INVOCATION_ID}',
-      CAT_CAFE_CALLBACK_TOKEN: '${CAT_CAFE_CALLBACK_TOKEN}',
-      CAT_CAFE_USER_ID: '${CAT_CAFE_USER_ID}',
-      CAT_CAFE_SIGNAL_USER: '${CAT_CAFE_SIGNAL_USER}',
-    });
+    assert.equal(data.mcpServers['cat-cafe'], undefined, 'monolith should be removed');
+    assert.ok(data.mcpServers['cat-cafe-collab'], 'split server should be written');
   });
 
   it('keeps project-level pencil entry when a resolved command is available', async () => {
@@ -558,13 +559,14 @@ describe('writeKimiMcpConfig', () => {
     ]);
 
     const raw = JSON.parse(await readFile(file, 'utf-8'));
-    assert.deepEqual(raw.mcpServers['cat-cafe'].env, {
-      CAT_CAFE_API_URL: '${CAT_CAFE_API_URL}',
-      CAT_CAFE_INVOCATION_ID: '${CAT_CAFE_INVOCATION_ID}',
-      CAT_CAFE_CALLBACK_TOKEN: '${CAT_CAFE_CALLBACK_TOKEN}',
-      CAT_CAFE_USER_ID: '${CAT_CAFE_USER_ID}',
-      CAT_CAFE_SIGNAL_USER: '${CAT_CAFE_SIGNAL_USER}',
-    });
+    const kimiEnv = raw.mcpServers['cat-cafe'].env;
+    assert.equal(kimiEnv.CAT_CAFE_API_URL, '${CAT_CAFE_API_URL}');
+    assert.equal(kimiEnv.CAT_CAFE_INVOCATION_ID, '${CAT_CAFE_INVOCATION_ID}');
+    assert.equal(kimiEnv.CAT_CAFE_CALLBACK_TOKEN, '${CAT_CAFE_CALLBACK_TOKEN}');
+    assert.equal(kimiEnv.CAT_CAFE_USER_ID, '${CAT_CAFE_USER_ID}');
+    assert.equal(kimiEnv.CAT_CAFE_CAT_ID, '${CAT_CAFE_CAT_ID}');
+    assert.equal(kimiEnv.CAT_CAFE_THREAD_ID, '${CAT_CAFE_THREAD_ID}');
+    assert.equal(kimiEnv.CAT_CAFE_SIGNAL_USER, '${CAT_CAFE_SIGNAL_USER}');
   });
 });
 
@@ -655,83 +657,24 @@ describe('writeAntigravityMcpConfig', () => {
     }
   });
 
-  it('preserves legacy cat-cafe entry while backfilling readonly env', async () => {
+  it('#712: removes legacy cat-cafe monolith from antigravity config', async () => {
     const file = join(dir, 'mcp_config.json');
-    const originalAwd = process.env.ALLOWED_WORKSPACE_DIRS;
-    const originalWsr = process.env.CAT_CAFE_WORKSPACE_ROOT;
-    delete process.env.ALLOWED_WORKSPACE_DIRS;
-    delete process.env.CAT_CAFE_WORKSPACE_ROOT;
-    try {
-      await writeFile(
-        file,
-        JSON.stringify({
-          mcpServers: {
-            'cat-cafe': { command: 'node', args: ['legacy-index.js'] },
-          },
-        }),
-      );
+    await writeFile(
+      file,
+      JSON.stringify({
+        mcpServers: {
+          'cat-cafe': { command: 'node', args: ['legacy-index.js'] },
+        },
+      }),
+    );
 
-      await writeAntigravityMcpConfig(file, [
-        { name: 'cat-cafe-memory', command: 'node', args: ['memory.js'], enabled: true, source: 'cat-cafe' },
-      ]);
+    await writeAntigravityMcpConfig(file, [
+      { name: 'cat-cafe-memory', command: 'node', args: ['memory.js'], enabled: true, source: 'cat-cafe' },
+    ]);
 
-      const servers = await readAntigravityMcpConfig(file);
-      const legacy = servers.find((s) => s.name === 'cat-cafe');
-      assert.ok(legacy);
-      assert.deepEqual(legacy.env, {
-        CAT_CAFE_API_URL: expectedAntigravityApiUrl(),
-        CAT_CAFE_READONLY: 'true',
-        ALLOWED_WORKSPACE_DIRS: process.cwd(),
-      });
-    } finally {
-      if (originalAwd === undefined) delete process.env.ALLOWED_WORKSPACE_DIRS;
-      else process.env.ALLOWED_WORKSPACE_DIRS = originalAwd;
-      if (originalWsr === undefined) delete process.env.CAT_CAFE_WORKSPACE_ROOT;
-      else process.env.CAT_CAFE_WORKSPACE_ROOT = originalWsr;
-    }
-  });
-
-  it('forces readonly env keys over legacy antigravity values while preserving unrelated env', async () => {
-    const file = join(dir, 'mcp_config.json');
-    const originalAwd = process.env.ALLOWED_WORKSPACE_DIRS;
-    const originalWsr = process.env.CAT_CAFE_WORKSPACE_ROOT;
-    delete process.env.ALLOWED_WORKSPACE_DIRS;
-    delete process.env.CAT_CAFE_WORKSPACE_ROOT;
-    try {
-      await writeFile(
-        file,
-        JSON.stringify({
-          mcpServers: {
-            'cat-cafe': {
-              command: 'node',
-              args: ['legacy-index.js'],
-              env: {
-                CAT_CAFE_API_URL: 'http://legacy.invalid:9999',
-                CAT_CAFE_READONLY: 'false',
-                EXTRA_FLAG: 'keep-me',
-              },
-            },
-          },
-        }),
-      );
-
-      await writeAntigravityMcpConfig(file, [
-        { name: 'cat-cafe-memory', command: 'node', args: ['memory.js'], enabled: true, source: 'cat-cafe' },
-      ]);
-
-      const raw = JSON.parse(await readFile(file, 'utf-8'));
-      assert.deepEqual(raw.mcpServers['cat-cafe'].env, {
-        CAT_CAFE_API_URL: expectedAntigravityApiUrl(),
-        CAT_CAFE_READONLY: 'true',
-        ALLOWED_WORKSPACE_DIRS: process.cwd(),
-        EXTRA_FLAG: 'keep-me',
-      });
-    } finally {
-      if (originalAwd === undefined) delete process.env.ALLOWED_WORKSPACE_DIRS;
-      else process.env.ALLOWED_WORKSPACE_DIRS = originalAwd;
-      if (originalWsr === undefined) delete process.env.CAT_CAFE_WORKSPACE_ROOT;
-      else process.env.CAT_CAFE_WORKSPACE_ROOT = originalWsr;
-    }
+    const raw = JSON.parse(await readFile(file, 'utf-8'));
+    assert.equal(raw.mcpServers['cat-cafe'], undefined, 'monolith should be removed');
+    assert.ok(raw.mcpServers['cat-cafe-memory'], 'split server should be written');
   });
 
   it('F061 Bug-F: respects ALLOWED_WORKSPACE_DIRS env override when set', async () => {

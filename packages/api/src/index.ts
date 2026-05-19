@@ -12,7 +12,7 @@ import cors from '@fastify/cors';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyReply } from 'fastify';
 import { resolveAnthropicRuntimeProfile, resolveForClient } from './config/account-resolver.js';
-import { generateCliConfigs, readCapabilitiesConfig } from './config/capabilities/capability-orchestrator.js';
+import { orchestrate, readCapabilitiesConfig } from './config/capabilities/capability-orchestrator.js';
 import { resolveStartupCliConfigContext } from './config/capabilities/startup-cli-config.js';
 import { resolveBoundAccountRefForCat } from './config/cat-account-binding.js';
 import { getCatContextBudget } from './config/cat-budgets.js';
@@ -1043,7 +1043,33 @@ async function main(): Promise<void> {
             const { resolveAcpMcpServers } = await import(
               './domains/cats/services/agents/providers/acp/acp-mcp-resolver.js'
             );
-            const mcpServers = resolveAcpMcpServers(acpProjectRoot, acpConfig.mcpWhitelist ?? []);
+            // #712: Compute disabled servers from raw capability enabled/override state.
+            // Don't use resolveServersForCat here — its CLI transport gating would
+            // incorrectly mark streamableHttp servers as disabled for google/ACP,
+            // even though ACP supports HTTP transport natively.
+            let disabledServerIds: Set<string> | undefined;
+            try {
+              const capConfig = await readCapabilitiesConfig(acpProjectRoot);
+              if (capConfig) {
+                disabledServerIds = new Set(
+                  capConfig.capabilities
+                    .filter((cap) => cap.type === 'mcp')
+                    .filter((cap) => {
+                      const override = cap.overrides?.find((o) => o.catId === catId);
+                      return !(override ? override.enabled : cap.enabled);
+                    })
+                    .map((cap) => cap.id),
+                );
+              }
+            } catch {
+              // best-effort
+            }
+            const mcpServers = await resolveAcpMcpServers(
+              acpProjectRoot,
+              acpConfig.mcpWhitelist ?? [],
+              undefined,
+              disabledServerIds ? { disabledServerIds } : undefined,
+            );
             service = new GeminiAcpAdapter({
               catId,
               pool: acpPoolRegistry.get(id)!,
@@ -1101,6 +1127,27 @@ async function main(): Promise<void> {
     }
     if (router) router.refreshFromRegistry(agentRegistry);
   };
+
+  // #712: Orchestrate capabilities BEFORE first syncAgentRegistry so ACP adapters
+  // see the healed/bootstrapped config (split-server migration, path realignment).
+  try {
+    const { projectRoot, paths } = resolveStartupCliConfigContext(process.cwd());
+    await orchestrate(
+      projectRoot,
+      {
+        claudeConfig: paths.anthropic,
+        codexConfig: paths.openai,
+        geminiConfig: paths.google,
+        kimiConfig: paths.kimi,
+        antigravityConfig: paths.antigravity,
+      },
+      paths,
+    );
+    app.log.info('[api] capabilities orchestrated at startup');
+  } catch (err) {
+    app.log.warn(`[api] Capabilities orchestration failed (best-effort): ${String(err)}`);
+  }
+
   await syncAgentRegistry(catRegistry.getAllConfigs());
 
   // F136 Phase 3A: Cat catalog subscriber — syncs AgentRegistry when cats CRUD emits cat-config events
@@ -2201,19 +2248,6 @@ async function main(): Promise<void> {
     });
   } catch (err) {
     app.log.warn(`[api] Audit log write failed (best-effort): ${String(err)}`);
-  }
-
-  // Best-effort: regenerate CLI configs at startup so runtime-derived env
-  // (Gemini placeholders, Antigravity sidecar key files) reaches CLI config.
-  try {
-    const { projectRoot, paths } = resolveStartupCliConfigContext(process.cwd());
-    const capConfig = await readCapabilitiesConfig(projectRoot);
-    if (capConfig) {
-      await generateCliConfigs(capConfig, paths);
-      app.log.info('[api] CLI configs regenerated at startup');
-    }
-  } catch (err) {
-    app.log.warn(`[api] CLI config regeneration failed (best-effort): ${String(err)}`);
   }
 
   // clowder-ai#340: Account startup — fail-fast (LL-043 / migration conflict / corrupt credentials).

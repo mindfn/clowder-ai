@@ -15,10 +15,16 @@
  *   turn.started / turn.completed / 其余 item 事件 → 跳过
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, parse, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { type CatId, createCatId } from '@cat-cafe/shared';
+import {
+  CAT_CAFE_SPLIT_ENTRYPOINTS,
+  MCP_CALLBACK_ENV_KEYS,
+  resolveBinaryRoot,
+  resolvePencilCommand,
+  resolveServersForCat,
+} from '../../../../../config/capabilities/capability-orchestrator.js';
 import { getCatContextWindowConfig, getCatEffort } from '../../../../../config/cat-config-loader.js';
 import { getCatModel } from '../../../../../config/cat-models.js';
 import { getCodexApprovalPolicy, getCodexSandboxMode } from '../../../../../config/codex-cli.js';
@@ -176,34 +182,12 @@ function stripReservedSystemConfigs(args: string[], catId: string): string[] {
   return out;
 }
 
-/**
- * F041/F043 root fix:
- * Ensure Codex subprocess always receives cat-cafe MCP server config
- * based on the current thread working directory.
- */
-// F193 Phase C: split-only. Legacy `cat-cafe` (all-in-one via
-// registerFullToolset) is no longer auto-provisioned because it exposes
-// limb tools that `cat-cafe-limb` now hosts directly — keeping both would
-// duplicate the limb tool surface in Codex sessions (cloud round 6 P1).
-const CAT_CAFE_MCP_SERVER_ENTRIES = [
-  ['cat-cafe-collab', 'collab.js'],
-  ['cat-cafe-memory', 'memory.js'],
-  ['cat-cafe-signals', 'signals.js'],
-  ['cat-cafe-limb', 'limb.js'],
-] as const;
+async function buildCatCafeMcpArgs(callbackEnv?: Record<string, string>): Promise<string[]> {
+  if (!callbackEnv) return [];
 
-function buildCatCafeMcpConfigArgs(_workingDirectory?: string, callbackEnv?: Record<string, string>): string[] {
-  const fileDir = dirname(fileURLToPath(import.meta.url));
-  // The thread workingDirectory is the user's project/workspace. Cat Cafe MCP
-  // binaries are runtime-owned, so resolving from workingDirectory can pick a
-  // fork checkout with incomplete node_modules and silently drop all MCP tools.
-  const candidateRoots = [
-    process.env.CAT_CAFE_RUNTIME_ROOT?.trim(),
-    process.cwd(),
-    // file path: packages/api/src/domains/cats/services/agents/providers/CodexAgentService.ts
-    // repo root = dirname(fileURLToPath(import.meta.url)) up to .../cat-cafe
-    resolve(fileDir, '../../../../../../../..'),
-  ].filter((root): root is string => !!root);
+  const runtimeRoot = resolveBinaryRoot();
+  const fileRoot = resolve(dirname(import.meta.url.replace('file://', '')), '../../../../../../../..');
+  const candidateRoots = [runtimeRoot, fileRoot];
 
   let mcpDistDir: string | undefined;
   for (const root of candidateRoots) {
@@ -215,38 +199,100 @@ function buildCatCafeMcpConfigArgs(_workingDirectory?: string, callbackEnv?: Rec
   }
   if (!mcpDistDir) return [];
 
+  const projectRoot = resolve(mcpDistDir, '../../..');
+  const catId = callbackEnv.CAT_CAFE_CAT_ID;
   const args: string[] = [];
 
-  const callbackKeys = [
-    'CAT_CAFE_API_URL',
-    'CAT_CAFE_INVOCATION_ID',
-    'CAT_CAFE_CALLBACK_TOKEN',
-    'CAT_CAFE_USER_ID',
-    'CAT_CAFE_CAT_ID',
-    'CAT_CAFE_SIGNAL_USER',
-  ] as const;
-  for (const [serverName, entrypoint] of CAT_CAFE_MCP_SERVER_ENTRIES) {
-    const serverPath = resolve(mcpDistDir, entrypoint);
-    if (!existsSync(serverPath)) continue;
+  let resolved = false;
+  try {
+    const raw = readFileSync(join(projectRoot, '.cat-cafe', 'capabilities.json'), 'utf-8');
+    const capConfig = JSON.parse(raw);
+    if (capConfig?.version === 1 && catId) {
+      for (const s of resolveServersForCat(capConfig, catId) as Array<{
+        name: string;
+        enabled: boolean;
+        command: string;
+        args: string[];
+        env?: Record<string, string>;
+        resolver?: string;
+        transport?: string;
+        source: string;
+      }>) {
+        if (!s.enabled) continue;
+        // Codex only supports stdio — skip streamableHttp
+        if (s.transport === 'streamableHttp') continue;
 
-    args.push(
-      '--config',
-      `mcp_servers.${serverName}.command="node"`,
-      '--config',
-      `mcp_servers.${serverName}.args=[${toTomlString(serverPath)}]`,
-      '--config',
-      `mcp_servers.${serverName}.enabled=true`,
-      '--config',
-      `mcp_servers.${serverName}.default_tools_approval_mode="approve"`,
-    );
+        let cmd: string | undefined;
+        let cmdArgs: string[] | undefined;
+        let envEntries: Record<string, string> | undefined;
+        const isCatCafe = CAT_CAFE_SPLIT_ENTRYPOINTS.has(s.name);
 
-    for (const key of callbackKeys) {
-      const value = callbackEnv?.[key];
-      if (!value) continue;
-      args.push('--config', `mcp_servers.${serverName}.env.${key}=${toTomlString(value)}`);
+        if (isCatCafe) {
+          const ep = CAT_CAFE_SPLIT_ENTRYPOINTS.get(s.name)!;
+          const epPath = resolve(mcpDistDir!, ep);
+          if (!existsSync(epPath)) continue;
+          cmd = 'node';
+          cmdArgs = [epPath];
+        } else if (s.resolver === 'pencil') {
+          const pencil = await resolvePencilCommand({ projectRoot });
+          if (!pencil) continue;
+          cmd = pencil.command;
+          cmdArgs = pencil.args;
+        } else if (s.command) {
+          cmd = s.command;
+          cmdArgs = s.args;
+          if (s.env && Object.keys(s.env).length > 0) envEntries = s.env;
+        }
+        if (!cmd) continue;
+
+        const tomlName = s.name;
+        args.push(
+          '--config',
+          `mcp_servers.${tomlName}.command=${toTomlString(cmd)}`,
+          '--config',
+          `mcp_servers.${tomlName}.args=[${cmdArgs!.map(toTomlString).join(', ')}]`,
+          '--config',
+          `mcp_servers.${tomlName}.enabled=true`,
+        );
+        if (isCatCafe) {
+          args.push('--config', `mcp_servers.${tomlName}.default_tools_approval_mode="approve"`);
+          for (const key of MCP_CALLBACK_ENV_KEYS) {
+            const value = callbackEnv[key];
+            if (value) args.push('--config', `mcp_servers.${tomlName}.env.${key}=${toTomlString(value)}`);
+          }
+        } else if (envEntries) {
+          for (const [k, v] of Object.entries(envEntries)) {
+            if (v) args.push('--config', `mcp_servers.${tomlName}.env.${k}=${toTomlString(v)}`);
+          }
+        }
+      }
+      resolved = true;
     }
+  } catch {
+    // best-effort fallback below
   }
 
+  if (!resolved) {
+    for (const [serverName, entrypoint] of CAT_CAFE_SPLIT_ENTRYPOINTS) {
+      const serverPath = resolve(mcpDistDir, entrypoint);
+      if (!existsSync(serverPath)) continue;
+      args.push(
+        '--config',
+        `mcp_servers.${serverName}.command="node"`,
+        '--config',
+        `mcp_servers.${serverName}.args=[${toTomlString(serverPath)}]`,
+        '--config',
+        `mcp_servers.${serverName}.enabled=true`,
+        '--config',
+        `mcp_servers.${serverName}.default_tools_approval_mode="approve"`,
+      );
+      for (const key of MCP_CALLBACK_ENV_KEYS) {
+        const value = callbackEnv[key];
+        if (!value) continue;
+        args.push('--config', `mcp_servers.${serverName}.env.${key}=${toTomlString(value)}`);
+      }
+    }
+  }
   return args;
 }
 
@@ -350,7 +396,6 @@ export class CodexAgentService implements AgentService {
           `model_auto_compact_token_limit=${ctxConfig.autoCompactTokenLimit}`,
         ]
       : [];
-    const catCafeMcpArgs = buildCatCafeMcpConfigArgs(options?.workingDirectory, options?.callbackEnv);
     const gitRepoArgs = buildGitRepoArgs(options?.workingDirectory);
     // User-defined CLI args from the member editor (#567) — passed as-is, no implicit wrapping.
     // Each entry is split by whitespace (e.g. "--config model_reasoning_effort=\"low\"").
@@ -458,6 +503,9 @@ export class CodexAgentService implements AgentService {
       return out;
     };
 
+    // #712: Inject ALL enabled MCP servers from capabilities.json at invoke time.
+    const mcpCallbackArgs = await buildCatCafeMcpArgs(options?.callbackEnv);
+
     const args: string[] = options?.sessionId
       ? [
           'exec',
@@ -470,9 +518,9 @@ export class CodexAgentService implements AgentService {
           ...dedup(approvalArgs),
           ...dedup(developerInstructionsArgs),
           ...dedup(customProviderArgs),
+          ...mcpCallbackArgs,
           ...userConfigArgs,
           ...gitRepoArgs,
-          ...catCafeMcpArgs,
           ...imageArgs,
           ...promptArgs,
         ]
@@ -489,9 +537,9 @@ export class CodexAgentService implements AgentService {
           ...dedup(approvalArgs),
           ...dedup(developerInstructionsArgs),
           ...dedup(customProviderArgs),
+          ...mcpCallbackArgs,
           ...userConfigArgs,
           ...gitRepoArgs,
-          ...catCafeMcpArgs,
           ...imageArgs,
           ...promptArgs,
         ];

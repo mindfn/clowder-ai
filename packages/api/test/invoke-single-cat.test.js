@@ -4252,6 +4252,9 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     const mcpDir = join(root, 'packages', 'mcp-server', 'dist');
     await mkdir(mcpDir, { recursive: true });
     await writeFile(join(mcpDir, 'index.js'), '// stub mcp server', 'utf-8');
+    for (const entry of ['collab.js', 'memory.js', 'signals.js', 'limb.js']) {
+      await writeFile(join(mcpDir, entry), '// stub split server', 'utf-8');
+    }
 
     const anthropicProfile = await createProviderProfile(root, {
       provider: 'anthropic',
@@ -4326,13 +4329,15 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     assert.equal(callbackEnv.CAT_CAFE_OC_API_KEY, 'sk-ant-mcp-key');
     assert.ok(seenRuntimeConfig, 'runtime config must be parseable');
     assert.ok(seenRuntimeConfig.mcp, 'runtime config must contain mcp section');
-    const mcpCafe = seenRuntimeConfig.mcp['cat-cafe'];
-    assert.equal(mcpCafe.type, 'local');
-    assert.equal(mcpCafe.command.length, 2);
-    assert.equal(mcpCafe.command[0], 'node');
+    assert.equal(seenRuntimeConfig.mcp['cat-cafe'], undefined, 'monolith must not be injected');
+    const mcpCollab = seenRuntimeConfig.mcp['cat-cafe-collab'];
+    assert.ok(mcpCollab, 'split server cat-cafe-collab expected');
+    assert.equal(mcpCollab.type, 'local');
+    assert.equal(mcpCollab.command.length, 2);
+    assert.equal(mcpCollab.command[0], 'node');
     assert.ok(
-      mcpCafe.command[1].endsWith('/packages/mcp-server/dist/index.js'),
-      `mcp command[1] must point to mcp-server entry: ${mcpCafe.command[1]}`,
+      mcpCollab.command[1].endsWith('/packages/mcp-server/dist/collab.js'),
+      `mcp command[1] must point to split entrypoint: ${mcpCollab.command[1]}`,
     );
     // Config file should be cleaned up after invocation
     await assert.rejects(readFile(seenConfigPath, 'utf-8'));
@@ -4353,6 +4358,9 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n', 'utf-8');
       const envMcpPath = join(externalMcpDir, 'index.js');
       await writeFile(envMcpPath, '// stub mcp server from env', 'utf-8');
+      for (const entry of ['collab.js', 'memory.js', 'signals.js', 'limb.js']) {
+        await writeFile(join(externalMcpDir, entry), '// stub split server', 'utf-8');
+      }
 
       const anthropicProfile = await createProviderProfile(root, {
         provider: 'anthropic',
@@ -4435,10 +4443,12 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       assert.equal(callbackEnv.CAT_CAFE_OC_API_KEY, 'sk-ant-mcp-env-key');
       assert.ok(seenRuntimeConfig, 'runtime config must be parseable');
       assert.ok(seenRuntimeConfig.mcp, 'runtime config must contain mcp section');
-      const mcpCafe = seenRuntimeConfig.mcp['cat-cafe'];
-      assert.equal(mcpCafe.type, 'local');
-      assert.equal(mcpCafe.command[0], 'node');
-      assert.equal(mcpCafe.command[1], envMcpPath);
+      assert.equal(seenRuntimeConfig.mcp['cat-cafe'], undefined, 'monolith must not be injected');
+      const mcpCollab = seenRuntimeConfig.mcp['cat-cafe-collab'];
+      assert.ok(mcpCollab, 'split server cat-cafe-collab expected');
+      assert.equal(mcpCollab.type, 'local');
+      assert.equal(mcpCollab.command[0], 'node');
+      assert.ok(mcpCollab.command[1].endsWith('collab.js'), 'must point to split entrypoint');
       await assert.rejects(readFile(seenConfigPath, 'utf-8'));
     },
   );
