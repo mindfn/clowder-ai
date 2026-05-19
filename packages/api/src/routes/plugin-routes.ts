@@ -155,7 +155,15 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
         }
       }
 
-      const allowedEnvNames = new Set(manifest.config.map((f) => f.envName));
+      const allowedEnvNames = new Set<string>();
+      for (const f of manifest.config) {
+        allowedEnvNames.add(f.envName);
+        if (f.oneOf) {
+          for (const group of Object.values(f.oneOf)) {
+            for (const sub of group) allowedEnvNames.add(sub.envName);
+          }
+        }
+      }
       for (const u of body.updates) {
         if (!allowedEnvNames.has(u.name)) {
           reply.status(400);
@@ -166,7 +174,14 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
       const envClaims = new Map<string, string>();
       for (const m of pluginRegistry.getAllManifests()) {
         if (m.id === id) continue;
-        for (const f of m.config) envClaims.set(f.envName, m.id);
+        for (const f of m.config) {
+          envClaims.set(f.envName, m.id);
+          if (f.oneOf) {
+            for (const group of Object.values(f.oneOf)) {
+              for (const sub of group) envClaims.set(sub.envName, m.id);
+            }
+          }
+        }
       }
       const safety = validateEnvSafety(manifest, envClaims);
       if (!safety.ok) {
