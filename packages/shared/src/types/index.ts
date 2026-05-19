@@ -189,6 +189,14 @@ export type {
 } from './cat-breed.js';
 // F182: Cat routing error types
 export type { CatAlternative, CatRoutingError } from './cat-routing.js';
+// Client provider registry (#585 / #718: dynamic client list)
+export type { ClientProtocol, ClientProviderDef } from './client-provider-registry.js';
+export {
+  CLIENT_PROVIDER_DEFS,
+  getAllClientIds,
+  getClientOptions,
+  getClientProviderDef,
+} from './client-provider-registry.js';
 export type { BuiltinAccountClient } from './client-routing.js';
 export {
   builtinAccountFamilyForClient,

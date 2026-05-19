@@ -8,6 +8,7 @@ import { resolve } from 'node:path';
 import {
   type CatConfig,
   CLI_EFFORT_VALUES,
+  CLIENT_PROVIDER_DEFS,
   type CliConfig,
   type ClientId,
   type ContextBudget,
@@ -34,6 +35,7 @@ import { resolveProjectTemplatePath } from '../config/project-template-path.js';
 import { getResolvedCats } from '../config/resolved-cats.js';
 import { createRuntimeCat, deleteRuntimeCat, updateRuntimeCat } from '../config/runtime-cat-catalog.js';
 import { deleteRuntimeOverride, getRuntimeOverride, setRuntimeOverride } from '../config/session-strategy-overrides.js';
+import { detectAvailableClients } from '../domains/cats/services/first-run-quest/client-detection.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
 
@@ -57,7 +59,8 @@ const cliSchema = z.object({
   effort: cliEffortSchema.nullable().optional(),
 });
 
-const clientSchema = z.enum(['anthropic', 'openai', 'google', 'kimi', 'dare', 'antigravity', 'opencode', 'catagent']);
+const clientIds = CLIENT_PROVIDER_DEFS.map((d) => d.clientId) as [string, ...string[]];
+const clientSchema = z.enum(clientIds);
 const catIdSchema = z
   .string()
   .min(1)
@@ -104,7 +107,7 @@ const baseCatSchema = z.object({
 const modelSchema = z.string().transform((v) => v.replace(/\/+$/, ''));
 
 const createNormalCatSchema = baseCatSchema.extend({
-  clientId: clientSchema.exclude(['antigravity']),
+  clientId: clientSchema.exclude(['antigravity', 'acp']),
   defaultModel: modelSchema,
   mcpSupport: z.boolean().optional(),
   cli: cliSchema.optional(),
@@ -119,7 +122,30 @@ const createAntigravityCatSchema = baseCatSchema.extend({
   commandArgs: z.array(z.string().min(1)).min(1).optional(),
 });
 
-const createCatSchema = z.discriminatedUnion('clientId', [createNormalCatSchema, createAntigravityCatSchema]);
+const acpConfigSchema = z.object({
+  command: z.string().min(1),
+  startupArgs: z.array(z.string()).optional(),
+  mcpWhitelist: z.array(z.string()).optional(),
+  pool: z
+    .object({
+      maxLiveProcesses: z.number().int().positive().optional(),
+      idleTtlMs: z.number().int().positive().optional(),
+    })
+    .optional(),
+});
+
+const createAcpCatSchema = baseCatSchema.extend({
+  clientId: z.literal('acp'),
+  defaultModel: modelSchema,
+  mcpSupport: z.boolean().optional(),
+  acp: acpConfigSchema,
+});
+
+const createCatSchema = z.discriminatedUnion('clientId', [
+  createNormalCatSchema,
+  createAntigravityCatSchema,
+  createAcpCatSchema,
+]);
 
 const updateCatSchema = z.object({
   name: z.string().min(1).optional(),
@@ -145,6 +171,7 @@ const updateCatSchema = z.object({
   commandArgs: z.array(z.string().min(1)).optional(),
   cliConfigArgs: z.array(z.string().min(1)).optional(),
   provider: z.string().min(1).nullable().optional(),
+  acp: acpConfigSchema.optional(),
   voiceConfig: z
     .object({
       voice: z.string().min(1),
@@ -312,10 +339,10 @@ async function validateAccountBindingOrThrow(
   options?: { legacyCompat?: boolean },
 ): Promise<void> {
   const trimmedAccountRef = accountRef?.trim();
-  if (client === 'antigravity' && trimmedAccountRef) {
-    throw new Error('antigravity client does not support accountRef');
+  if ((client === 'antigravity' || client === 'acp') && trimmedAccountRef) {
+    throw new Error(`${client} client does not support accountRef`);
   }
-  if (client !== 'antigravity' && !trimmedAccountRef) {
+  if (client !== 'antigravity' && client !== 'acp' && !trimmedAccountRef) {
     throw new Error(`client "${client}" requires a provider binding`);
   }
   if (!trimmedAccountRef) return;
@@ -382,7 +409,14 @@ async function toCatResponse(
         }
       : null,
     voiceConfig: cat.voiceConfig ?? undefined,
-    adapterMode: cat.clientId === 'google' ? (getAcpConfig(cat.id as string) ? 'acp' : 'cli') : undefined,
+    adapterMode:
+      cat.clientId === 'acp'
+        ? 'acp'
+        : cat.clientId === 'google'
+          ? getAcpConfig(cat.id as string)
+            ? 'acp'
+            : 'cli'
+          : undefined,
   };
 }
 
@@ -412,6 +446,26 @@ interface CatsRoutesOptions {
 }
 
 export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opts) => {
+  // GET /api/cats/client-providers — #585/#718: dynamic client provider list with CLI detection
+  app.get('/api/cats/client-providers', async () => {
+    const detected = await detectAvailableClients();
+    const detectedMap = new Map(detected.map((d) => [d.client, d]));
+    return {
+      providers: CLIENT_PROVIDER_DEFS.map((def) => {
+        const cli = def.cliName ? detectedMap.get(def.cliName as (typeof detected)[number]['client']) : undefined;
+        return {
+          clientId: def.clientId,
+          label: def.label,
+          protocol: def.protocol,
+          needsCommandConfig: def.needsCommandConfig ?? false,
+          installed: cli?.installed ?? null,
+          version: cli?.version ?? null,
+          hasApiKey: cli?.hasApiKey ?? null,
+        };
+      }),
+    };
+  });
+
   // GET /api/cat-templates - 获取角色模板（纯灵魂层，不含 client/model 绑定）
   app.get('/api/cat-templates', async () => {
     try {
@@ -538,6 +592,30 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
             ...(body.commandArgs ? { defaultArgs: body.commandArgs } : {}),
           },
           commandArgs: body.commandArgs,
+          ...(body.voiceConfig ? { voiceConfig: body.voiceConfig } : {}),
+        });
+      } else if (body.clientId === 'acp') {
+        createRuntimeCat(projectRoot, {
+          catId: body.catId,
+          name: body.name,
+          displayName: body.displayName,
+          variantLabel: body.variantLabel,
+          nickname: body.nickname,
+          avatar: resolvedAvatar,
+          color: body.color,
+          mentionPatterns: body.mentionPatterns,
+          contextBudget: body.contextBudget,
+          roleDescription: body.roleDescription,
+          personality: body.personality,
+          teamStrengths: body.teamStrengths,
+          caution: body.caution,
+          strengths: body.strengths,
+          sessionChain: body.sessionChain,
+          clientId: 'acp',
+          defaultModel: body.defaultModel,
+          mcpSupport: body.mcpSupport ?? true,
+          cli: defaultCliForClient('acp'),
+          acp: body.acp,
           ...(body.voiceConfig ? { voiceConfig: body.voiceConfig } : {}),
         });
       } else {

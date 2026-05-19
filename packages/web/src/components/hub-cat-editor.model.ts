@@ -3,14 +3,16 @@ import {
   CLI_EFFORT_VALUES,
   type CliEffortValue,
   getCliEffortOptionsForProvider,
+  type ClientId as SharedClientId,
   builtinAccountIdForClient as sharedBuiltinAccountIdForClient,
+  getClientOptions as sharedGetClientOptions,
 } from '@cat-cafe/shared';
 import type { CatData } from '@/hooks/useCatData';
 import type { BuiltinAccountClient, ProfileItem } from './hub-accounts.types';
 import type { CatStrategyEntry, StrategyType } from './hub-strategy-types';
 
 /** clowder-ai#340 P5: Renamed from ClientValue → ClientId (aligned with shared type). */
-export type ClientId = 'anthropic' | 'openai' | 'google' | 'kimi' | 'dare' | 'opencode' | 'antigravity' | 'catagent';
+export type ClientId = SharedClientId;
 /** @deprecated clowder-ai#340: Use {@link ClientId} instead. */
 export type ClientValue = ClientId;
 export type SessionChainValue = 'true' | 'false';
@@ -86,16 +88,7 @@ export interface CodexRuntimeSettings {
   authMode: CodexAuthMode;
 }
 
-export const CLIENT_OPTIONS: Array<{ value: ClientId; label: string }> = [
-  { value: 'anthropic', label: 'Claude' },
-  { value: 'openai', label: 'Codex' },
-  { value: 'google', label: 'Gemini' },
-  { value: 'kimi', label: 'Kimi' },
-  { value: 'dare', label: 'Dare' },
-  { value: 'opencode', label: 'OpenCode' },
-  { value: 'antigravity', label: 'Antigravity' },
-  { value: 'catagent', label: 'CatAgent' },
-];
+export const CLIENT_OPTIONS: Array<{ value: ClientId; label: string }> = sharedGetClientOptions();
 
 export const SESSION_CHAIN_OPTIONS: Array<{ value: SessionChainValue; label: string }> = [
   { value: 'true', label: 'true' },

@@ -137,6 +137,24 @@ export function buildCatPayload(form: HubCatEditorFormState, cat?: CatData | nul
     };
   }
 
+  if (form.clientId === 'acp') {
+    const acpCommandRaw = trimText(form.commandArgs);
+    const acpParts = splitCommandArgs(acpCommandRaw);
+    const acpCommand = acpParts[0] ?? acpCommandRaw;
+    const acpStartupArgs = acpParts.slice(1);
+    return {
+      ...common,
+      ...(cat ? { name: updateName } : { catId: trimText(form.catId), name: createName }),
+      clientId: 'acp' as const,
+      ...mcpSupportPatch,
+      defaultModel: trimText(form.defaultModel),
+      acp: {
+        command: acpCommand,
+        ...(acpStartupArgs.length > 0 ? { startupArgs: acpStartupArgs } : {}),
+      },
+    };
+  }
+
   return {
     ...common,
     ...(cat ? { name: updateName } : { catId: trimText(form.catId), name: createName }),

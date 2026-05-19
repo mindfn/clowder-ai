@@ -52,6 +52,12 @@ export interface RuntimeCatInput {
     instruct?: string;
     temperature?: number;
   };
+  acp?: {
+    command: string;
+    startupArgs?: string[];
+    mcpWhitelist?: string[];
+    pool?: { maxLiveProcesses?: number; idleTtlMs?: number };
+  };
 }
 
 export interface RuntimeCatUpdate {
@@ -87,6 +93,12 @@ export interface RuntimeCatUpdate {
     refText?: string;
     instruct?: string;
     temperature?: number;
+  } | null;
+  acp?: {
+    command: string;
+    startupArgs?: string[];
+    mcpWhitelist?: string[];
+    pool?: { maxLiveProcesses?: number; idleTtlMs?: number };
   } | null;
 }
 
@@ -249,6 +261,7 @@ function createBreedFromInput(input: RuntimeCatInput): CatBreed {
           : {}),
         ...(input.strengths ? { strengths: input.strengths } : {}),
         ...(input.voiceConfig ? { voiceConfig: input.voiceConfig } : {}),
+        ...(input.acp ? { acp: input.acp } : {}),
       },
     ],
   } as unknown as CatBreed;
@@ -444,6 +457,13 @@ export function updateRuntimeCat(projectRoot: string, catId: string, patch: Runt
       variant.voiceConfig = patch.voiceConfig;
     } else {
       delete variant.voiceConfig;
+    }
+  }
+  if (patch.acp !== undefined) {
+    if (patch.acp) {
+      variant.acp = patch.acp;
+    } else {
+      delete variant.acp;
     }
   }
   if (patch.available !== undefined && catalog.version === 2) {

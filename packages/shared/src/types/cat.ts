@@ -19,6 +19,7 @@ export type ClientId =
   | 'dare'
   | 'antigravity'
   | 'opencode'
+  | 'acp'
   | 'a2a'
   | 'catagent';
 

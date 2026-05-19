@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { CatData } from '@/hooks/useCatData';
+import { useClientProviders } from '@/hooks/useClientProviders';
 import { apiFetch } from '@/utils/api-client';
 import type { ConfigData } from './config-viewer-types';
 import type { TemplateCard } from './first-run-quest/TemplateStep';
@@ -56,6 +57,7 @@ export function HubCatEditor({
   hideDelete = false,
 }: HubCatEditorProps) {
   const confirm = useConfirm();
+  const { providers: clientProviders } = useClientProviders();
   const [profiles, setProfiles] = useState<ProfileItem[]>([]);
   const [loadingProfiles, setLoadingProfiles] = useState(false);
   const [loadingStrategy, setLoadingStrategy] = useState(false);
@@ -82,7 +84,7 @@ export function HubCatEditor({
     [availableProfiles, form.accountRef],
   );
   const modelOptions = useMemo(() => {
-    if (form.clientId === 'antigravity') return [];
+    if (form.clientId === 'antigravity' || form.clientId === 'acp') return [];
     return selectedProfile?.models ?? [];
   }, [form.clientId, selectedProfile]);
   const showCodexSettings = form.clientId === 'openai';
@@ -666,6 +668,7 @@ export function HubCatEditor({
         modelOptions={modelOptions}
         availableProfiles={availableProfiles}
         loadingProfiles={loadingProfiles}
+        clientProviders={clientProviders}
         onChange={patchForm}
       />
       <RoutingSection

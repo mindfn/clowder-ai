@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import type { CatData } from '@/hooks/useCatData';
+import type { ClientProviderInfo } from '@/hooks/useClientProviders';
 import { AvatarImageWithFallback } from './AvatarImageWithFallback';
 import type { ProfileItem } from './hub-accounts.types';
 import {
@@ -447,12 +448,23 @@ function buildCallHint(
   return { label: `${info.cli} CLI 实际调用: `, url: fullUrl, warning };
 }
 
+function buildClientOptionsWithStatus(clientProviders: ClientProviderInfo[]): Array<{ value: string; label: string }> {
+  if (clientProviders.length === 0) return CLIENT_OPTIONS;
+  return clientProviders.map((p) => {
+    let suffix = '';
+    if (p.installed === true && p.version) suffix = ` (${p.version})`;
+    else if (p.installed === false) suffix = ' (未安装)';
+    return { value: p.clientId, label: `${p.label}${suffix}` };
+  });
+}
+
 export function AccountSection({
   form,
   hasError,
   modelOptions,
   availableProfiles,
   loadingProfiles,
+  clientProviders,
   onChange,
 }: {
   form: HubCatEditorFormState;
@@ -460,6 +472,7 @@ export function AccountSection({
   modelOptions: string[];
   availableProfiles: ProfileItem[];
   loadingProfiles: boolean;
+  clientProviders?: ClientProviderInfo[];
   onChange: (patch: FormPatch) => void;
 }) {
   const accountOptions = availableProfiles;
@@ -469,6 +482,9 @@ export function AccountSection({
     () => buildProviderSuggestions(selectedProfile?.models ?? []),
     [selectedProfile?.models],
   );
+  const clientOptions = useMemo(() => buildClientOptionsWithStatus(clientProviders ?? []), [clientProviders]);
+
+  const needsCommandConfig = form.clientId === 'antigravity' || form.clientId === 'acp';
 
   return (
     <SectionCard title="认证与模型" tone={hasError ? 'error' : 'neutral'} data-guide-id="member-editor.auth-config">
@@ -476,21 +492,21 @@ export function AccountSection({
         <SelectField
           label="Client"
           value={form.clientId}
-          options={CLIENT_OPTIONS}
+          options={clientOptions}
           onChange={(value) =>
             onChange({ clientId: value as HubCatEditorFormState['clientId'], provider: '', cliEffort: '' })
           }
           required
         />
 
-        {form.clientId === 'antigravity' ? (
+        {needsCommandConfig ? (
           <>
             <TextField
-              label="CLI Command"
+              label={form.clientId === 'acp' ? 'ACP 启动命令' : 'CLI Command'}
               value={form.commandArgs}
               onChange={(value) => onChange({ commandArgs: value })}
               required
-              placeholder="启动命令参数"
+              placeholder={form.clientId === 'acp' ? '如 gemini --acp 或自定义 ACP agent 命令' : '启动命令参数'}
             />
             <TextField
               label="Model"

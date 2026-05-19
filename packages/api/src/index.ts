@@ -1043,6 +1043,49 @@ async function main(): Promise<void> {
         case 'opencode':
           service = new OpenCodeAgentService({ catId });
           break;
+        case 'acp': {
+          const acpConfig = getAcpConfig(id);
+          if (!acpConfig) {
+            app.log.warn(`[api] ACP cat "${id}" has no acp config. It will not be routable.`);
+            continue;
+          }
+          const { GeminiAcpAdapter } = await import('./domains/cats/services/agents/providers/acp/GeminiAcpAdapter.js');
+          const { AcpProcessPool } = await import('./domains/cats/services/agents/providers/acp/AcpProcessPool.js');
+          const { AcpClient } = await import('./domains/cats/services/agents/providers/acp/AcpClient.js');
+          const acpRoot = findMonorepoRoot();
+          const acpCmd = resolveAcpBootstrapCommand(acpRoot, acpConfig.command);
+          const acpStartArgs = resolveAcpBootstrapArgs(acpRoot, acpConfig.startupArgs);
+          const acpKey = { projectPath: acpRoot, providerProfile: id };
+          if (!acpPoolRegistry.has(id)) {
+            const pool = new AcpProcessPool(
+              {
+                maxLiveProcesses: acpConfig.pool?.maxLiveProcesses ?? 3,
+                idleTtlMs: acpConfig.pool?.idleTtlMs ?? 5 * 60 * 1000,
+                healthCheckIntervalMs: 30_000,
+              },
+              acpConfig,
+              () =>
+                new AcpClient({
+                  command: acpCmd,
+                  args: acpStartArgs,
+                  cwd: resolveAcpBootstrapCwd(acpRoot, id),
+                }),
+            );
+            acpPoolRegistry.set(id, pool);
+          }
+          const { resolveAcpMcpServers } = await import(
+            './domains/cats/services/agents/providers/acp/acp-mcp-resolver.js'
+          );
+          const acpMcpSrvs = resolveAcpMcpServers(acpRoot, acpConfig.mcpWhitelist ?? []);
+          service = new GeminiAcpAdapter({
+            catId,
+            pool: acpPoolRegistry.get(id)!,
+            poolKey: acpKey,
+            projectRoot: acpRoot,
+            mcpServers: acpMcpSrvs,
+          });
+          break;
+        }
         case 'catagent': {
           const { CatAgentService } = await import(
             './domains/cats/services/agents/providers/catagent/CatAgentService.js'
