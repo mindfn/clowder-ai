@@ -965,9 +965,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '微信公众号 AppID（F204 微信公众号接入）',
     category: 'connector',
     sensitive: false,
-    restartRequired: true,
-    group: 'connector-weixin-mp',
-    dependencies: ['WEIXIN_MP_APP_SECRET'],
   },
   {
     name: 'WEIXIN_MP_APP_SECRET',
@@ -975,9 +972,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '微信公众号 AppSecret',
     category: 'connector',
     sensitive: true,
-    restartRequired: true,
-    group: 'connector-weixin-mp',
-    dependencies: ['WEIXIN_MP_APP_ID'],
   },
 
   // --- GitHub Repo Inbox (F141) ---
