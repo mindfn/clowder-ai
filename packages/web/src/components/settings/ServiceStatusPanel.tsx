@@ -111,8 +111,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
       const installBody: { model?: string; port?: number } = {};
       if (model) installBody.model = model;
       if (typeof port === 'number') installBody.port = port;
-      const body =
-        action === 'install' && (model || typeof port === 'number') ? JSON.stringify(installBody) : '{}';
+      const body = action === 'install' && (model || typeof port === 'number') ? JSON.stringify(installBody) : '{}';
       const res = await apiFetch(`/api/services/${serviceId}/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
