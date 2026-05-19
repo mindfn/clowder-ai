@@ -135,7 +135,7 @@ export async function registerServiceLifecycleRoutes(
     return { ok: true, message: `${input.action} completed` };
   }
 
-  app.post<{ Params: { id: string }; Body: { model?: unknown } }>(
+  app.post<{ Params: { id: string }; Body: { model?: unknown; port?: unknown } }>(
     '/api/services/:id/install',
     async (request, reply) => {
       const operator = requireLifecycleOwner(request, reply);
@@ -148,7 +148,12 @@ export async function registerServiceLifecycleRoutes(
       const installScript = service.scripts?.install;
       if (!installScript) return { ok: true, message: `${service.name} has no install script` };
 
-      const envResult = buildLifecycleEnv(options.env ?? process.env, service.id, request.body?.model);
+      const envResult = buildLifecycleEnv(
+        options.env ?? process.env,
+        service.id,
+        request.body?.model,
+        request.body?.port,
+      );
       if (!envResult.ok) {
         reply.status(400);
         return { error: envResult.error };
