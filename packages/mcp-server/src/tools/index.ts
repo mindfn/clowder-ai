@@ -149,11 +149,15 @@ export {
 // F192 Phase H AC-H4: cat_cafe_publish_verdict tool
 export { handlePublishVerdict, publishVerdictInputSchema, publishVerdictTools } from './publish-verdict-tool.js';
 export {
+  buildCredentialsFromEnv,
+  buildProviderFromEnv,
+  createProtocolTools,
+} from './protocol-tools.js';
+export {
   handleListRecent,
   listRecentInputSchema,
   recentTools,
 } from './recent-tools.js';
-// F193 Phase D AC-D1: reflect-tools removed (deprecated)
 export {
   handleGetRichBlockRules,
   richBlockRulesInputSchema,
