@@ -219,13 +219,7 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
                       <input
                         id={`plugin-${f.envName}`}
                         type={f.sensitive ? 'password' : 'text'}
-                        placeholder={
-                          f.sensitive
-                            ? f.currentValue
-                              ? '已设置（输入新值覆盖）'
-                              : '未设置'
-                            : (f.currentValue ?? '未设置')
-                        }
+                        placeholder={fieldPlaceholder(f)}
                         value={fieldValues[f.envName] ?? ''}
                         onChange={(e) => setFieldValues((prev) => ({ ...prev, [f.envName]: e.target.value }))}
                         className="console-form-input"
@@ -268,7 +262,7 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
                       <input
                         id={`plugin-${sub.envName}`}
                         type={sub.sensitive ? 'password' : 'text'}
-                        placeholder={sub.sensitive ? '未设置' : '未设置'}
+                        placeholder={fieldPlaceholder(sub)}
                         value={fieldValues[sub.envName] ?? ''}
                         onChange={(e) => setFieldValues((prev) => ({ ...prev, [sub.envName]: e.target.value }))}
                         className="console-form-input"
