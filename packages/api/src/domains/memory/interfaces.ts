@@ -115,8 +115,16 @@ export interface EvidenceItem {
   worldId?: string;
   /** F093 Phase A (KD-16): scene scope — derived canon evidence */
   sceneId?: string;
+  /** F200 Phase C: first indexed timestamp (epoch ms) for 14d grace period */
+  firstIndexedAt?: number;
   /** F186: collection-level review status */
   reviewStatus?: ReviewStatus;
+  /** F200 v1.1 DF-3: explains why this result matched (anchor/title/summary/keyword/content) */
+  matchReason?: string;
+  /** F200 v1.1 DF-3: ranking factor breakdown when explain=true */
+  rankingFactors?: { bm25Score?: number; consumptionPrior?: number; mmrPenalty?: number };
+  /** F200 v1.1 DF-7: calibrated relevance confidence [0,1] */
+  confidence?: number;
   /** AC-I9: passage-level detail when depth=raw */
   passages?: Array<{
     passageId: string;
@@ -140,7 +148,10 @@ export type EdgeRelation =
   | 'related_to'
   | 'supersedes'
   | 'invalidates'
-  | 'promoted_from';
+  | 'promoted_from'
+  | 'wikilink'
+  | 'doc_link'
+  | 'feature_ref';
 
 export interface Edge {
   fromAnchor: string;
@@ -149,7 +160,7 @@ export interface Edge {
   fromCollectionId?: string;
   toCollectionId?: string;
   edgeSensitivity?: CollectionSensitivity;
-  provenance?: 'frontmatter' | 'wikilink' | 'promote' | 'manual';
+  provenance?: 'frontmatter' | 'wikilink' | 'promote' | 'manual' | 'content';
   createdAt?: string;
 }
 
@@ -198,6 +209,8 @@ export interface SearchOptions {
   worldId?: string;
   /** F093 Phase A (KD-16): filter to a specific scene within a world */
   sceneId?: string;
+  /** F200 v1.1 DF-3: include explainability fields in results */
+  explain?: boolean;
 }
 
 export interface MarkerFilter {
@@ -263,18 +276,12 @@ export interface IEvidenceStore {
   initialize(): Promise<void>;
 }
 
+export type RebuildProgressCallback = (phase: string, percent: number) => void;
+
 export interface IIndexBuilder {
-  rebuild(options?: { force?: boolean }): Promise<RebuildResult>;
+  rebuild(options?: { force?: boolean; onProgress?: RebuildProgressCallback }): Promise<RebuildResult>;
   incrementalUpdate(changedPaths: string[]): Promise<void>;
   checkConsistency(): Promise<ConsistencyReport>;
-  /**
-   * Re-probe embedding service readiness, then embed any evidence_docs that
-   * have no row in evidence_vectors. Idempotent — safe to call in a poll
-   * loop until either the service comes up or the operator gives up.
-   * Returns { probed: true } once the embedding service is reachable,
-   * { embedded } counts only newly-vectorized docs.
-   */
-  embedPending(): Promise<{ probed: boolean; embedded: number; pending: number }>;
 }
 
 export interface IMarkerQueue {
@@ -300,13 +307,7 @@ export interface IKnowledgeResolver {
 
 export interface EmbedConfig {
   embedMode: 'off' | 'shadow' | 'on';
-  // Free-form: the actual model id comes from the sidecar's /health probe
-  // (EmbeddingService.load() / markReady(modelId)) and from the user's
-  // selectedModel in services.json (recommendation-matrix.yaml).
-  // The value stored here is only used as a fallback display label when
-  // the sidecar probe hasn't succeeded yet — see EmbeddingService.modelId
-  // and IndexBuilder.embedIndexedItems -> vectorStore.initMeta.
-  embedModel: string;
+  embedModel: 'qwen3-embedding-0.6b' | 'multilingual-e5-small';
   embedDim: number;
   maxModelMemMb: number;
   embedTimeoutMs: number;
@@ -324,30 +325,20 @@ export interface IEmbeddingService {
   isReady(): boolean;
   reprobeIfNeeded(): Promise<void>;
   getModelInfo(): EmbedModelInfo;
-  /**
-   * Externally mark the service ready — used when the service lifecycle bus
-   * (service-hooks 'started' event) has already verified the sidecar is
-   * healthy. Avoids a redundant local /health probe that may disagree with
-   * the bus due to different parsing rules or timing.
-   */
-  markReady(modelId?: string): void;
   dispose(): void;
 }
 
 const VALID_EMBED_MODES = new Set(['off', 'shadow', 'on']);
+const VALID_EMBED_MODELS = new Set(['qwen3-embedding-0.6b', 'multilingual-e5-small']);
 
 export function resolveEmbedConfig(partial?: Partial<EmbedConfig>): EmbedConfig {
   const mode = partial?.embedMode ?? 'off';
   if (!VALID_EMBED_MODES.has(mode)) throw new Error(`Invalid embedMode: ${mode}`);
-  // No model-id whitelist: the runtime authority is the sidecar's /health
-  // probe + services.json selectedModel (driven by recommendation-matrix.yaml).
-  // 'unknown' is a sentinel — IndexBuilder will overwrite embedding_meta as
-  // soon as EmbeddingService.load() / markReady(actualId) reports the real
-  // model. Was hardcoded to 'qwen3-embedding-0.6b' which surfaced as a
-  // bogus label in the memory console on non-MLX platforms.
+  const model = partial?.embedModel ?? 'qwen3-embedding-0.6b';
+  if (!VALID_EMBED_MODELS.has(model)) throw new Error(`Invalid embedModel: ${model}`);
   return {
     embedMode: mode as EmbedConfig['embedMode'],
-    embedModel: partial?.embedModel ?? 'unknown',
+    embedModel: model as EmbedConfig['embedModel'],
     embedDim: partial?.embedDim ?? 768, // LL-034: 768 is sweet spot for CJK bilingual; 256 too low
     maxModelMemMb: partial?.maxModelMemMb ?? 800,
     embedTimeoutMs: partial?.embedTimeoutMs ?? 3000,

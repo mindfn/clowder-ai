@@ -18,8 +18,6 @@ export type EnvCategory =
   | 'server'
   | 'storage'
   | 'budget'
-  | 'a2a'
-  | 'governance'
   | 'cli'
   | 'proxy'
   | 'connector'
@@ -28,6 +26,7 @@ export type EnvCategory =
   | 'gemini'
   | 'kimi'
   | 'tts'
+  | 'stt'
   | 'frontend'
   | 'push'
   | 'signal'
@@ -35,7 +34,8 @@ export type EnvCategory =
   | 'evidence'
   | 'quota'
   | 'telemetry'
-  | 'antigravity';
+  | 'antigravity'
+  | 'audio';
 
 export interface EnvDefinition {
   /** The env var name, e.g. 'REDIS_URL' */
@@ -54,24 +54,16 @@ export interface EnvDefinition {
   hubVisible?: boolean;
   /** If false, value is bootstrap-only and cannot be edited at runtime from Hub */
   runtimeEditable?: boolean;
-  /** If true, changes take effect only after service restart */
-  restartRequired?: boolean;
-  /** UI grouping key — vars with the same group render together (e.g. 'connector-feishu') */
-  group?: string;
-  /** Related var names that should be configured together (e.g. APP_ID ↔ APP_SECRET) */
-  dependencies?: string[];
   /** If true, this var should appear in .env.example (enforced by check:env-example) */
   exampleRecommended?: boolean;
-  /** If set, this var is deprecated — value explains the replacement */
-  deprecated?: string;
+  /** Explicit allowed values for cycle-style toggles (e.g. ['off','shadow','on']) */
+  allowedValues?: string[];
 }
 
 export const ENV_CATEGORIES: Record<EnvCategory, string> = {
   server: '服务器',
   storage: '存储',
   budget: '猫猫预算',
-  a2a: 'A2A 猫猫互调',
-  governance: '治理 & 降级',
   cli: 'CLI',
   proxy: 'Anthropic 代理网关',
   connector: '平台接入 (Telegram/飞书)',
@@ -80,6 +72,7 @@ export const ENV_CATEGORIES: Record<EnvCategory, string> = {
   gemini: '暹罗猫 (Gemini)',
   kimi: 'Kimi',
   tts: '语音合成 (TTS)',
+  stt: '语音识别 (STT)',
   frontend: '前端',
   push: '推送通知',
   signal: 'Signal 信号源',
@@ -88,6 +81,7 @@ export const ENV_CATEGORIES: Record<EnvCategory, string> = {
   quota: '额度监控',
   telemetry: '可观测性 (OTel)',
   antigravity: '孟加拉猫 (Antigravity)',
+  audio: '会中实时智囊 (F195)',
 };
 
 export const ENV_VARS: EnvDefinition[] = [
@@ -108,7 +102,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'server',
     sensitive: false,
     runtimeEditable: true,
-    restartRequired: true,
   },
   {
     name: 'API_SERVER_HOST',
@@ -116,7 +109,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'API 监听地址（改为 0.0.0.0 可让手机/平板通过局域网或 Tailscale 访问）',
     category: 'server',
     sensitive: false,
-    restartRequired: true,
   },
   {
     name: 'CORS_ALLOW_PRIVATE_NETWORK',
@@ -128,14 +120,7 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
     exampleRecommended: true,
   },
-  {
-    name: 'UPLOAD_DIR',
-    defaultValue: './uploads',
-    description: '文件上传目录',
-    category: 'server',
-    sensitive: false,
-    restartRequired: true,
-  },
+  { name: 'UPLOAD_DIR', defaultValue: './uploads', description: '文件上传目录', category: 'server', sensitive: false },
   {
     name: 'PROJECT_ALLOWED_ROOTS',
     defaultValue: '(未设置 — 使用 denylist 模式，仅拦截系统目录)',
@@ -166,7 +151,6 @@ export const ENV_VARS: EnvDefinition[] = [
       '前端固定地址（有反向代理或固定域名时设置，如 https://cafe.example.com）。本机和局域网直连通常不需要改',
     category: 'server',
     sensitive: false,
-    restartRequired: true,
   },
   {
     name: 'FRONTEND_PORT',
@@ -174,7 +158,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '前端端口',
     category: 'server',
     sensitive: false,
-    restartRequired: true,
   },
   {
     name: 'DEFAULT_OWNER_USER_ID',
@@ -261,6 +244,15 @@ export const ENV_VARS: EnvDefinition[] = [
     name: 'CAT_CAFE_TEST_REAL_HOME',
     defaultValue: '(未设置)',
     description: '测试真实 HOME 路径快照（用于阻止测试写回宿主 HOME）',
+    category: 'server',
+    sensitive: false,
+    hubVisible: false,
+    runtimeEditable: false,
+  },
+  {
+    name: 'CAT_CAFE_SERVICES_CONFIG',
+    defaultValue: '(自动：~/.cat-cafe/services.json)',
+    description: '服务 lifecycle UI 的启用状态配置文件路径（测试/隔离环境可覆盖）',
     category: 'server',
     sensitive: false,
     hubVisible: false,
@@ -531,35 +523,7 @@ export const ENV_VARS: EnvDefinition[] = [
     name: 'MAX_A2A_DEPTH',
     defaultValue: '15',
     description: 'A2A 猫猫互调最大深度',
-    category: 'a2a',
-    sensitive: false,
-  },
-  {
-    name: 'A2A_ENABLED',
-    defaultValue: 'true',
-    description: 'A2A 猫猫互调总开关',
-    category: 'a2a',
-    sensitive: false,
-  },
-  {
-    name: 'GOVERNANCE_DEGRADATION_ENABLED',
-    defaultValue: 'true',
-    description: '降级策略总开关',
-    category: 'governance',
-    sensitive: false,
-  },
-  {
-    name: 'GOVERNANCE_DONE_TIMEOUT_MS',
-    defaultValue: '300000',
-    description: 'Done 超时（毫秒）',
-    category: 'governance',
-    sensitive: false,
-  },
-  {
-    name: 'GOVERNANCE_HEARTBEAT_INTERVAL_MS',
-    defaultValue: '30000',
-    description: 'Heartbeat 间隔（毫秒）',
-    category: 'governance',
+    category: 'budget',
     sensitive: false,
   },
   {
@@ -838,8 +802,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'Telegram Bot Token',
     category: 'connector',
     sensitive: true,
-    restartRequired: true,
-    group: 'connector-telegram',
   },
   {
     name: 'FEISHU_APP_ID',
@@ -847,9 +809,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '飞书应用 App ID',
     category: 'connector',
     sensitive: false,
-    restartRequired: true,
-    group: 'connector-feishu',
-    dependencies: ['FEISHU_APP_SECRET'],
   },
   {
     name: 'FEISHU_APP_SECRET',
@@ -857,9 +816,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '飞书应用 App Secret',
     category: 'connector',
     sensitive: true,
-    restartRequired: true,
-    group: 'connector-feishu',
-    dependencies: ['FEISHU_APP_ID'],
   },
   {
     name: 'FEISHU_VERIFICATION_TOKEN',
@@ -867,8 +823,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '飞书 webhook 验证 token（仅 webhook 模式需要）',
     category: 'connector',
     sensitive: true,
-    restartRequired: true,
-    group: 'connector-feishu',
   },
   {
     name: 'FEISHU_CONNECTION_MODE',
@@ -876,8 +830,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '飞书连接模式：webhook（需公网 URL）或 websocket（长连接，无需公网）',
     category: 'connector',
     sensitive: false,
-    restartRequired: true,
-    group: 'connector-feishu',
   },
   {
     name: 'DINGTALK_APP_KEY',
@@ -885,9 +837,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '钉钉应用 AppKey',
     category: 'connector',
     sensitive: false,
-    restartRequired: true,
-    group: 'connector-dingtalk',
-    dependencies: ['DINGTALK_APP_SECRET'],
   },
   {
     name: 'DINGTALK_APP_SECRET',
@@ -895,9 +844,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '钉钉应用 AppSecret',
     category: 'connector',
     sensitive: true,
-    restartRequired: true,
-    group: 'connector-dingtalk',
-    dependencies: ['DINGTALK_APP_KEY'],
   },
   {
     name: 'XIAOYI_AK',
@@ -905,7 +851,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '华为小艺 OpenClaw Access Key',
     category: 'connector',
     sensitive: false,
-    restartRequired: true,
   },
   {
     name: 'XIAOYI_SK',
@@ -913,7 +858,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '华为小艺 OpenClaw Secret Key',
     category: 'connector',
     sensitive: true,
-    restartRequired: true,
   },
   {
     name: 'XIAOYI_AGENT_ID',
@@ -921,7 +865,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '华为小艺 Agent ID',
     category: 'connector',
     sensitive: false,
-    restartRequired: true,
   },
   {
     name: 'FEISHU_BOT_OPEN_ID',
@@ -929,7 +872,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '飞书机器人 Open ID（接收消息的 bot 身份标识）',
     category: 'connector',
     sensitive: false,
-    restartRequired: true,
   },
   {
     name: 'FEISHU_ADMIN_OPEN_IDS',
@@ -937,7 +879,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '飞书管理员 Open ID 列表（逗号分隔）',
     category: 'connector',
     sensitive: false,
-    restartRequired: true,
   },
   {
     name: 'WEIXIN_VOICE_ITEM_MODE',
@@ -946,7 +887,6 @@ export const ENV_VARS: EnvDefinition[] = [
       '微信语音消息 voice_item 模式（minimal/playtime/playtime-sec，危险实验模式见 WEIXIN_ENABLE_UNSAFE_VOICE_MODES）',
     category: 'connector',
     sensitive: false,
-    restartRequired: true,
   },
   {
     name: 'WEIXIN_ENABLE_UNSAFE_VOICE_MODES',
@@ -955,7 +895,6 @@ export const ENV_VARS: EnvDefinition[] = [
       '是否允许危险语音实验模式（1=允许 playtime-encode/metadata，0=自动回退 playtime，避免“语音完全收不到”）',
     category: 'connector',
     sensitive: false,
-    restartRequired: true,
   },
   {
     name: 'WEIXIN_CAPTURE_INBOUND_VOICE_MEDIA',
@@ -963,7 +902,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '是否抓取入站微信语音媒体（1=把 voice media 当文件附件落盘，便于 SILK 二进制对比；0=保持当前行为）',
     category: 'connector',
     sensitive: false,
-    restartRequired: true,
   },
   {
     name: 'WEIXIN_BOT_TOKEN',
@@ -971,8 +909,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '微信机器人 Token（F137 微信个人网关）',
     category: 'connector',
     sensitive: true,
-    restartRequired: true,
-    group: 'connector-wechat',
   },
   {
     name: 'WECOM_BOT_ID',
@@ -981,9 +917,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: false,
     exampleRecommended: true,
-    restartRequired: true,
-    group: 'connector-wecom',
-    dependencies: ['WECOM_BOT_SECRET'],
   },
   {
     name: 'WECOM_BOT_SECRET',
@@ -992,9 +925,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: true,
     exampleRecommended: true,
-    restartRequired: true,
-    group: 'connector-wecom',
-    dependencies: ['WECOM_BOT_ID'],
   },
   {
     name: 'WECOM_CORP_ID',
@@ -1003,8 +933,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: false,
     exampleRecommended: true,
-    restartRequired: true,
-    group: 'connector-wecom',
   },
   {
     name: 'WECOM_AGENT_ID',
@@ -1013,8 +941,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: false,
     exampleRecommended: true,
-    restartRequired: true,
-    group: 'connector-wecom',
   },
   {
     name: 'WECOM_AGENT_SECRET',
@@ -1023,8 +949,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: true,
     exampleRecommended: true,
-    restartRequired: true,
-    group: 'connector-wecom',
   },
   {
     name: 'WECOM_TOKEN',
@@ -1033,8 +957,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: true,
     exampleRecommended: true,
-    restartRequired: true,
-    group: 'connector-wecom',
   },
   {
     name: 'WECOM_ENCODING_AES_KEY',
@@ -1043,8 +965,6 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'connector',
     sensitive: true,
     exampleRecommended: true,
-    restartRequired: true,
-    group: 'connector-wecom',
   },
 
   // --- GitHub Repo Inbox (F141) ---
@@ -1054,7 +974,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'GitHub webhook HMAC-SHA256 shared secret（F141 Repo Inbox）',
     category: 'connector',
     sensitive: true,
-    restartRequired: true,
   },
   {
     name: 'GITHUB_REPO_ALLOWLIST',
@@ -1062,7 +981,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '允许的仓库列表，逗号分隔（如 zts212653/clowder-ai）',
     category: 'connector',
     sensitive: false,
-    restartRequired: true,
   },
   {
     name: 'GITHUB_REPO_INBOX_CAT_ID',
@@ -1070,7 +988,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '接收 Repo Inbox 事件的猫 ID',
     category: 'connector',
     sensitive: false,
-    restartRequired: true,
   },
   {
     name: 'GITHUB_AUTHORITATIVE_REVIEW_LOGINS',
@@ -1079,7 +996,6 @@ export const ENV_VARS: EnvDefinition[] = [
       '[DEPRECATED] F140 Phase E.2 cutover (2026-04-24): Rule B authoritative-source skip removed; this var now only serves as backward-compat fallback for GITHUB_SETUP_NOISE_BOT_LOGINS. Will be removed in a follow-up release.',
     category: 'connector',
     sensitive: false,
-    restartRequired: true,
   },
   {
     name: 'GITHUB_SETUP_NOISE_BOT_LOGINS',
@@ -1088,7 +1004,15 @@ export const ENV_VARS: EnvDefinition[] = [
       'Comma-separated GitHub bot logins whose conversation comments may contain Codex setup-only guidance. F140 polling-side setup-noise filter skips those (bot + conversation + setup-only body, no codex review content). Falls back to GITHUB_AUTHORITATIVE_REVIEW_LOGINS for backward compat.',
     category: 'connector',
     sensitive: false,
-    restartRequired: true,
+  },
+  {
+    name: 'GITHUB_SELF_LOGIN',
+    defaultValue: '(未设置 → gh api /user 自动解析)',
+    description:
+      'F140 echo filter: GitHub 登录名，用于过滤自己发的 PR comment 避免回流消息总线。设置后跳过 gh api /user 解析，适用于 gh CLI 不可用的环境',
+    category: 'connector',
+    sensitive: false,
+    runtimeEditable: false,
   },
   {
     name: 'GITHUB_TOKEN',
@@ -1096,7 +1020,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'GitHub Personal Access Token（Scheduler 仓库活跃度模板 HTTP 请求鉴权）',
     category: 'connector',
     sensitive: true,
-    restartRequired: true,
   },
 
   // --- codex ---
@@ -1198,10 +1121,9 @@ export const ENV_VARS: EnvDefinition[] = [
   {
     name: 'TTS_URL',
     defaultValue: 'http://localhost:9879',
-    description: 'TTS 服务地址（由 Service Manifest 管理）',
+    description: 'TTS 服务地址 (Qwen3-TTS)',
     category: 'tts',
     sensitive: false,
-    hubVisible: false,
   },
   {
     name: 'TTS_CACHE_DIR',
@@ -1216,7 +1138,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: 'GPT-SoVITS 角色模型目录',
     category: 'tts',
     sensitive: false,
-    deprecated: '使用 CHARACTER_VOICE_DIR 替代（优先级更高，支持多角色目录）',
   },
   {
     name: 'CHARACTER_VOICE_DIR',
@@ -1226,24 +1147,13 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
   },
 
-  // --- stt (managed by Service Manifest) ---
+  // --- stt ---
   {
     name: 'WHISPER_URL',
     defaultValue: 'http://localhost:9876',
-    description: 'Whisper STT 服务地址（由 Service Manifest 管理）',
-    category: 'tts',
+    description: 'Whisper STT 服务地址（服务端）',
+    category: 'stt',
     sensitive: false,
-    hubVisible: false,
-  },
-
-  // --- service management ---
-  {
-    name: 'CAT_CAFE_SERVICES_CONFIG',
-    defaultValue: '.cat-cafe/services.json',
-    description: '本地服务状态配置文件路径',
-    category: 'server',
-    sensitive: false,
-    hubVisible: false,
   },
 
   // --- connector media ---
@@ -1253,7 +1163,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '连接器媒体下载目录',
     category: 'connector',
     sensitive: false,
-    restartRequired: true,
   },
 
   // --- frontend ---
@@ -1261,6 +1170,22 @@ export const ENV_VARS: EnvDefinition[] = [
     name: 'NEXT_PUBLIC_API_URL',
     defaultValue: 'http://localhost:3004',
     description: '前端连接的 API 地址',
+    category: 'frontend',
+    sensitive: false,
+    runtimeEditable: false,
+  },
+  {
+    name: 'NEXT_PUBLIC_WHISPER_URL',
+    defaultValue: 'http://localhost:9876',
+    description: 'Whisper ASR 服务地址',
+    category: 'frontend',
+    sensitive: false,
+    runtimeEditable: false,
+  },
+  {
+    name: 'NEXT_PUBLIC_LLM_POSTPROCESS_URL',
+    defaultValue: 'http://localhost:9878',
+    description: 'LLM 后处理服务地址',
     category: 'frontend',
     sensitive: false,
     runtimeEditable: false,
@@ -1382,6 +1307,7 @@ export const ENV_VARS: EnvDefinition[] = [
       '显式设了 shadow/on 会覆盖，但 EMBED_MODE=off 不会关掉已经在 console 启用的服务（防 foot-gun）。',
     category: 'evidence',
     sensitive: false,
+    allowedValues: ['off', 'shadow', 'on'],
   },
   {
     name: 'F102_ABSTRACTIVE',
@@ -1404,6 +1330,16 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'evidence',
     sensitive: false,
   },
+  // --- F200 Recall Telemetry ---
+  {
+    name: 'F200_CONSUMPTION_RERANK',
+    defaultValue: 'off',
+    description: 'F200 consumption-weighted rerank (off/shadow/on)',
+    category: 'evidence',
+    sensitive: false,
+    runtimeEditable: true,
+    allowedValues: ['off', 'shadow', 'on'],
+  },
   // --- F163 记忆熵减实验框架 ---
   {
     name: 'F163_AUTHORITY_BOOST',
@@ -1412,6 +1348,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'evidence',
     sensitive: false,
     runtimeEditable: true,
+    allowedValues: ['off', 'shadow', 'on'],
   },
   {
     name: 'F163_ALWAYS_ON_INJECTION',
@@ -1420,6 +1357,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'evidence',
     sensitive: false,
     runtimeEditable: true,
+    allowedValues: ['off', 'shadow', 'on'],
   },
   {
     name: 'F163_RETRIEVAL_RERANK',
@@ -1428,6 +1366,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'evidence',
     sensitive: false,
     runtimeEditable: true,
+    allowedValues: ['off', 'shadow', 'on'],
   },
   {
     name: 'F163_COMPRESSION',
@@ -1436,6 +1375,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'evidence',
     sensitive: false,
     runtimeEditable: true,
+    allowedValues: ['off', 'suggest', 'apply'],
   },
   {
     name: 'F163_PROMOTION_GATE',
@@ -1444,6 +1384,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'evidence',
     sensitive: false,
     runtimeEditable: true,
+    allowedValues: ['off', 'suggest', 'apply'],
   },
   {
     name: 'F163_CONTRADICTION_DETECTION',
@@ -1452,6 +1393,7 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'evidence',
     sensitive: false,
     runtimeEditable: true,
+    allowedValues: ['off', 'suggest', 'apply'],
   },
   {
     name: 'F163_REVIEW_QUEUE',
@@ -1460,22 +1402,14 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'evidence',
     sensitive: false,
     runtimeEditable: true,
+    allowedValues: ['off', 'suggest', 'apply'],
   },
   {
     name: 'EMBED_URL',
     defaultValue: 'http://127.0.0.1:9880',
-    description: 'Embedding 服务地址（由 Service Manifest 管理）',
+    description: 'Embedding 服务地址（独立 Python GPU 进程 scripts/embed-api.py）',
     category: 'evidence',
     sensitive: false,
-    hubVisible: false,
-  },
-  {
-    name: 'EMBED_PORT',
-    defaultValue: '9880',
-    description: 'Embedding 服务端口（由 Service Manifest 管理）',
-    category: 'evidence',
-    sensitive: false,
-    hubVisible: false,
   },
   {
     name: 'EVIDENCE_DB',
@@ -1512,6 +1446,13 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'evidence',
     sensitive: true,
     runtimeEditable: true,
+  },
+  {
+    name: 'EMBED_PORT',
+    defaultValue: '9880',
+    description: 'Embedding 服务端口（仅在 EMBED_URL 未设置时使用）',
+    category: 'evidence',
+    sensitive: false,
   },
 
   // --- quota ---
@@ -1659,6 +1600,28 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
   },
   {
+    name: 'ANTIGRAVITY_AUTO_RESUME',
+    defaultValue: 'true',
+    description: 'AC-G6 自动续跑：按 resume tier 在 fresh cascade 注入 resumeContext（设 false 关闭）',
+    category: 'antigravity',
+    sensitive: false,
+  },
+  {
+    name: 'ANTIGRAVITY_YOLO_RUN_COMMAND',
+    defaultValue: 'true',
+    description:
+      'YOLO 模式：run_command 即使 SafeToAutoRun=false/missing 也走 native execution + writeback（设 false 回退 approval_pending）',
+    category: 'antigravity',
+    sensitive: false,
+  },
+  {
+    name: 'ANTIGRAVITY_RUN_COMMAND_TIMEOUT_MS',
+    defaultValue: '600000',
+    description: '受控 YOLO run_command 单次原生命令执行超时（毫秒，1..3600000）；无效值回退默认值',
+    category: 'antigravity',
+    sensitive: false,
+  },
+  {
     name: 'ANTIGRAVITY_TRACE_RAW',
     defaultValue: '(未设置 → 关闭)',
     description: '设为 1 启用 Antigravity 原始轨迹 dump（rpc raw response + step shape snapshot）',
@@ -1677,6 +1640,21 @@ export const ENV_VARS: EnvDefinition[] = [
     defaultValue: '(未设置 → 全量注册)',
     description: 'MCP Server 只读模式：跳过 post_message 等写操作工具注册（Antigravity 持久 MCP 用）',
     category: 'antigravity',
+    sensitive: false,
+  },
+  // --- audio (F195 会中实时智囊) ---
+  {
+    name: 'AUDIO_SERVICE_URL',
+    defaultValue: 'http://127.0.0.1:9881',
+    description: 'F195 Audio Capture Service 地址（Python aiohttp，管理音频采集 + ASR 转录）',
+    category: 'audio',
+    sensitive: false,
+  },
+  {
+    name: 'TRANSCRIPT_DIR',
+    defaultValue: 'scripts/meeting-copilot/transcripts',
+    description: 'F195 Phase D 转写持久化目录（Python 写 MD + meta.json，Node 读 meta 做路径注入）',
+    category: 'audio',
     sensitive: false,
   },
 ];

@@ -48,7 +48,7 @@
     "check:scripts-ascii-only": "node scripts/check-scripts-ascii-only.mjs",
     "check:guides": "node scripts/gen-guide-catalog.mjs",
     "check:fix": "pnpm biome check --write .",
-    "test": "pnpm -r --if-present run test",
+    "test": "pnpm -r --workspace-concurrency=1 --if-present run test",
     "test:api:redis": "pnpm --filter @cat-cafe/api run test:redis",
     "test:api:redis:repeat": "pnpm --filter @cat-cafe/api run test:redis:repeat",
     "check:dir-size": "bash scripts/check-dir-size.sh",
