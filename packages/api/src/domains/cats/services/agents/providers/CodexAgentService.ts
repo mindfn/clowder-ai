@@ -245,7 +245,7 @@ async function buildCatCafeMcpArgs(callbackEnv?: Record<string, string>): Promis
         }
         if (!cmd) continue;
 
-        const tomlName = s.name;
+        const tomlName = /^[A-Za-z0-9_-]+$/.test(s.name) ? s.name : `"${s.name}"`;
         args.push(
           '--config',
           `mcp_servers.${tomlName}.command=${toTomlString(cmd)}`,
