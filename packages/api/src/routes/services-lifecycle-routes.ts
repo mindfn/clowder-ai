@@ -226,11 +226,18 @@ export async function registerServiceLifecycleRoutes(
       reply.status(400);
       return { error: `Service "${service.id}" has no start script` };
     }
-    const portProbe = await partitionServicePids(service);
+    // Probe the EFFECTIVE port: cfg.port if user installed on a custom
+    // port, otherwise the manifest default. Without this, /start could
+    // reject because the manifest's default port is busy (irrelevant —
+    // we're not going to use it) or miss the actual port the script will
+    // bind to (cfg.port). Codex P1 3268801298.
+    const startEffectiveCfg = getServiceConfig(service.id);
+    const startProbeService = { ...service, port: startEffectiveCfg.port ?? service.port };
+    const portProbe = await partitionServicePids(startProbeService);
     if (!portProbe.ok) {
       reply.status(503);
       await audit({ serviceId: service.id, action: 'start', operator, status: 'rejected', reason: portProbe.reason });
-      return servicePortProbeUnavailableError(service.port);
+      return servicePortProbeUnavailableError(startProbeService.port);
     }
     if (portProbe.foreign.length > 0) {
       reply.status(409);
@@ -241,7 +248,7 @@ export async function registerServiceLifecycleRoutes(
         status: 'rejected',
         reason: 'foreign-port-owner',
       });
-      return { error: `Service port ${service.port} is already owned by another process` };
+      return { error: `Service port ${startProbeService.port} is already owned by another process` };
     }
     if (portProbe.owned.length > 0) {
       await audit({
@@ -333,11 +340,16 @@ export async function registerServiceLifecycleRoutes(
       return { error: `Service "${request.params.id}" not found` };
     }
     return withLock(service.id, reply, async () => {
-      const portProbe = await partitionServicePids(service);
+      // Probe the EFFECTIVE port (cfg.port ?? service.port) so /stop
+      // finds the actually-listening sidecar after a custom-port
+      // install (codex P1 3268801298).
+      const stopEffectiveCfg = getServiceConfig(service.id);
+      const stopProbeService = { ...service, port: stopEffectiveCfg.port ?? service.port };
+      const portProbe = await partitionServicePids(stopProbeService);
       if (!portProbe.ok) {
         reply.status(503);
         await audit({ serviceId: service.id, action: 'stop', operator, status: 'rejected', reason: portProbe.reason });
-        return servicePortProbeUnavailableError(service.port);
+        return servicePortProbeUnavailableError(stopProbeService.port);
       }
       if (portProbe.foreign.length > 0) {
         reply.status(409);
@@ -348,7 +360,7 @@ export async function registerServiceLifecycleRoutes(
           status: 'rejected',
           reason: 'foreign-port-owner',
         });
-        return { error: `Service port ${service.port} is owned by another process` };
+        return { error: `Service port ${stopProbeService.port} is owned by another process` };
       }
       const stopped: number[] = [];
       const failed: number[] = [];
