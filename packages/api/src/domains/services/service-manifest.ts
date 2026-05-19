@@ -1,4 +1,5 @@
 import { maskUrlCredentials } from '../../config/env-registry.js';
+import { getServiceConfig } from './service-config.js';
 
 export type ServiceStatus = 'healthy' | 'unhealthy' | 'not_configured';
 
@@ -248,6 +249,15 @@ export function resolveServiceEndpoint(service: ServiceManifest, env: NodeJS.Pro
     if (value) return value;
   }
   if (service.portFallback) {
+    // Persisted user-chosen port (from install modal) takes precedence
+    // over the manifest default but defers to explicit env URL overrides
+    // above. Without this, /api/services and /health probe the manifest
+    // default even after a custom-port install — the sidecar is on
+    // cfg.port but the dashboard reports it unhealthy. Codex P2 3268869300.
+    const cfgPort = getServiceConfig(service.id).port;
+    if (typeof cfgPort === 'number' && cfgPort > 0) {
+      return `${service.portFallback.host.replace(/\/+$/, '')}:${cfgPort}`;
+    }
     const port = env[service.portFallback.envVar]?.trim();
     if (port) return `${service.portFallback.host.replace(/\/+$/, '')}:${port}`;
   }

@@ -51,4 +51,4 @@ elif [ "$PROVIDER" = "edge-tts" ]; then
 fi
 
 echo "Starting TTS server: provider=$PROVIDER, model=$MODEL, port=$PORT"
-TTS_PROVIDER="$PROVIDER" python3 "$SCRIPT_DIR/tts-api.py" --model "$MODEL" --port "$PORT"
+TTS_PROVIDER="$PROVIDER" python3 "$SCRIPT_DIR/services/tts-api.py" --model "$MODEL" --port "$PORT"

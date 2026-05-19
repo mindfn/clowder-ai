@@ -38,4 +38,4 @@ if ! python3 -c "import mlx_whisper" 2>/dev/null; then
   pip install --quiet mlx-whisper fastapi uvicorn
 fi
 
-python3 "$SCRIPT_DIR/whisper-api.py" --model "$MODEL" --port "$PORT"
+python3 "$SCRIPT_DIR/services/whisper-api.py" --model "$MODEL" --port "$PORT"

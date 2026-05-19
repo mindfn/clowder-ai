@@ -51,4 +51,4 @@ else
 fi
 
 echo "Starting Embedding server: port=$PORT"
-python3 "$SCRIPT_DIR/embed-api.py" --port "$PORT"
+python3 "$SCRIPT_DIR/services/embed-api.py" --port "$PORT"
