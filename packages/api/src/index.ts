@@ -13,6 +13,7 @@ import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyReply } from 'fastify';
 import { resolveAnthropicRuntimeProfile, resolveForClient } from './config/account-resolver.js';
 import {
+  generateCliConfigs,
   orchestrate,
   readCapabilitiesConfig,
   resolveServersForCat,
