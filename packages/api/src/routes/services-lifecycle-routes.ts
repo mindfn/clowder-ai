@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import type { FastifyInstance } from 'fastify';
 import { getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
-import { setServiceConfig } from '../domains/services/service-config.js';
+import { getServiceConfig, setServiceConfig } from '../domains/services/service-config.js';
 import {
   findPidsByPort,
   readProcessCommand,
@@ -194,12 +194,19 @@ export async function registerServiceLifecycleRoutes(
     if (!uninstallScript) return { ok: true, message: `${service.name} has no uninstall script` };
 
     return withLock(service.id, reply, async () => {
+      // Mirror /start: inject persisted selectedModel + port so uninstall
+      // scripts that probe the install-time venv can find it (codex P1
+      // 3265033601 / 3268690489). Fall back to bare env if persisted
+      // config is invalid (uninstall should be tolerant of stale state).
+      const cfg = getServiceConfig(service.id);
+      const uninstallEnvResult = buildLifecycleEnv(options.env ?? process.env, service.id, cfg.selectedModel, cfg.port);
+      const uninstallEnv = uninstallEnvResult.ok ? uninstallEnvResult.env : { ...(options.env ?? process.env) };
       const result = await runForeground({
         serviceId: service.id,
         action: 'uninstall',
         script: uninstallScript,
         operator,
-        env: { ...(options.env ?? process.env) },
+        env: uninstallEnv,
       });
       if (!result.ok) reply.status(lifecycleFailureStatus(result.error));
       return result;
@@ -257,11 +264,31 @@ export async function registerServiceLifecycleRoutes(
           return { error: `Start script not found: ${scriptPath}` };
         }
         await audit({ serviceId: service.id, action: 'start', operator, status: 'started' });
+        // Inject persisted selectedModel + port from serviceConfig so the
+        // start script sees the same env that install did. Without this,
+        // services with required MODEL_ENV_VARS (whisper-stt, mlx-tts,
+        // embedding-model, llm-postprocess) fail immediately at start if
+        // the operator hadn't pre-defined WHISPER_MODEL / etc. in .env —
+        // install succeeded but start can't read the choice. Codex P1
+        // 3265033601 / 3268690489.
+        const cfg = getServiceConfig(service.id);
+        const startEnvResult = buildLifecycleEnv(options.env ?? process.env, service.id, cfg.selectedModel, cfg.port);
+        if (!startEnvResult.ok) {
+          reply.status(500);
+          await audit({
+            serviceId: service.id,
+            action: 'start',
+            operator,
+            status: 'failed',
+            reason: 'invalid-persisted-config',
+          });
+          return { ok: false, error: `Invalid persisted service config: ${startEnvResult.error}` };
+        }
         const result = await runWithTimeout(runner, {
           serviceId: service.id,
           action: 'start',
           scriptPath,
-          env: { ...(options.env ?? process.env) },
+          env: startEnvResult.env,
           detached: true,
           timeoutMs: lifecycleTimeoutMs,
         });
