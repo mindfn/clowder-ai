@@ -105,6 +105,13 @@ export function loadAllPluginConfigs(projectRoot: string, manifests: PluginManif
   let loaded = 0;
   for (const manifest of manifests) {
     const allowedEnvNames = new Set(manifest.config.map((f) => f.envName));
+    for (const f of manifest.config) {
+      if (f.oneOf) {
+        for (const group of Object.values(f.oneOf)) {
+          for (const sub of group) allowedEnvNames.add(sub.envName);
+        }
+      }
+    }
     const raw = readRawConfig(projectRoot, manifest.id);
     const filtered: StoredValues = {};
     for (const [name, value] of Object.entries(raw)) {
@@ -119,17 +126,25 @@ export function loadAllPluginConfigs(projectRoot: string, manifests: PluginManif
 
 export function resolvePluginEnv(manifests: PluginManifest[]): Record<string, string | undefined> {
   const result: Record<string, string | undefined> = {};
+  const resolveField = (cached: StoredValues | undefined, envName: string) => {
+    const fromStore = cached?.[envName];
+    if (typeof fromStore === 'string') {
+      result[envName] = fromStore;
+    } else if (fromStore === null) {
+      result[envName] = undefined;
+    } else {
+      const fromEnv = process.env[envName];
+      if (fromEnv) result[envName] = fromEnv;
+    }
+  };
   for (const manifest of manifests) {
     const cached = configCache.get(manifest.id);
     for (const field of manifest.config) {
-      const fromStore = cached?.[field.envName];
-      if (typeof fromStore === 'string') {
-        result[field.envName] = fromStore;
-      } else if (fromStore === null) {
-        result[field.envName] = undefined;
-      } else {
-        const fromEnv = process.env[field.envName];
-        if (fromEnv) result[field.envName] = fromEnv;
+      resolveField(cached, field.envName);
+      if (field.oneOf) {
+        for (const group of Object.values(field.oneOf)) {
+          for (const sub of group) resolveField(cached, sub.envName);
+        }
       }
     }
   }
