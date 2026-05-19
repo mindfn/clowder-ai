@@ -31,7 +31,7 @@ export interface PluginHealthCheck {
 
 /** Plugin resource declaration */
 export interface PluginResourceDef {
-  type: 'skill' | 'mcp' | 'limb' | 'schedule';
+  type: 'skill' | 'mcp' | 'limb' | 'schedule' | 'protocol';
   path?: string;
   name?: string;
   command?: string;
