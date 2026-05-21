@@ -29,7 +29,9 @@ import {
   hasSensitiveEditableVars,
   isEditableEnvVarName,
 } from '../config/env-registry.js';
-import { resolveAuditLogsDir, resolveCliRawArchiveDir } from '../config/data-dirs.js';
+import { describeDataPaths, resolveAuditLogsDir, resolveCliRawArchiveDir } from '../config/data-dirs.js';
+import { buildMigrationPlan, defaultDiskSpaceProbe, runDataDirsMigration } from '../config/data-dirs-migration.js';
+import { findMonorepoRoot } from '../utils/monorepo-root.js';
 import { updateRuntimeCoCreator } from '../config/runtime-cat-catalog.js';
 import { isValidTimeZone } from '../config/time-zone.js';
 import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
@@ -288,6 +290,82 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
           uploads: getDefaultUploadDir(),
         },
       },
+    };
+  });
+
+  // #671: Inspect current data-dirs layout + pending migration work
+  app.get('/api/config/data-dirs', async (request) => {
+    const cwd = process.cwd();
+    const probeRepoRoot = existsSync(resolve(cwd, 'docs', 'features'))
+      ? cwd
+      : existsSync(resolve(cwd, '..', '..', 'docs', 'features'))
+        ? resolve(cwd, '..', '..')
+        : cwd;
+    const opts = { repoRoot: probeRepoRoot, monorepoRoot: findMonorepoRoot(cwd) };
+    const specs = describeDataPaths(opts);
+    const plan = await buildMigrationPlan(opts);
+    return {
+      roots: {
+        DATA_DIR: process.env.DATA_DIR ?? null,
+        CACHE_DIR: process.env.CACHE_DIR ?? null,
+        LOG_DIR: process.env.LOG_DIR ?? null,
+      },
+      paths: specs.map((s) => ({
+        key: s.key,
+        root: s.root,
+        subPath: s.subPath,
+        legacyPath: s.legacyPath,
+        rootBasedPath: s.rootBasedPath,
+        currentPath: s.currentPath,
+        isFile: s.isFile,
+      })),
+      pendingMigration: {
+        hasWork: plan.hasWork,
+        totalBytes: plan.totalBytes,
+        items: plan.items
+          .filter((i) => i.eligible)
+          .map((i) => ({
+            key: i.spec.key,
+            from: i.spec.legacyPath,
+            to: i.spec.rootBasedPath,
+            bytes: i.sourceBytes,
+          })),
+      },
+    };
+  });
+
+  // #671: Trigger a runtime migration (e.g. after a startup retry, or post-Settings update).
+  // SQLite holds open handles to the legacy path until restart, so movedAny + isFile
+  // surfaces a restart recommendation in the response.
+  app.post('/api/config/data-dirs/migrate', async (request, reply) => {
+    const operator = resolveHeaderUserId(request);
+    if (!operator) {
+      reply.status(400);
+      return { error: 'Identity required (X-Cat-Cafe-User header)' };
+    }
+    const ownerId = process.env.DEFAULT_OWNER_USER_ID?.trim();
+    if (!ownerId || operator !== ownerId) {
+      reply.status(403);
+      return { error: 'Data-dirs migration requires owner identity (DEFAULT_OWNER_USER_ID)' };
+    }
+    const cwd = process.cwd();
+    const probeRepoRoot = existsSync(resolve(cwd, 'docs', 'features'))
+      ? cwd
+      : existsSync(resolve(cwd, '..', '..', 'docs', 'features'))
+        ? resolve(cwd, '..', '..')
+        : cwd;
+    const result = await runDataDirsMigration({
+      repoRoot: probeRepoRoot,
+      monorepoRoot: findMonorepoRoot(cwd),
+      trigger: 'runtime',
+      io: { diskFree: defaultDiskSpaceProbe, logger: request.log },
+    });
+    return {
+      attempted: result.attempted,
+      allSucceeded: result.allSucceeded,
+      restartRecommended: result.restartRecommended,
+      abortedReason: result.abortedReason,
+      items: result.items,
     };
   });
 

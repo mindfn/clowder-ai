@@ -3,7 +3,8 @@
  * 后端 API 入口
  */
 
-import { join } from 'node:path';
+import { existsSync as fsExistsSync } from 'node:fs';
+import { join, resolve as pathResolve } from 'node:path';
 import { type CatConfig, type CatId, CORE_COMMANDS, catRegistry, type ILimbNode } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import { createRedisClient, SessionStore } from '@cat-cafe/shared/utils';
@@ -237,6 +238,7 @@ import {
   resolveTtsCacheDir,
   resolveWorldDbPath,
 } from './config/data-dirs.js';
+import { defaultDiskSpaceProbe, runDataDirsMigration } from './config/data-dirs-migration.js';
 import { findMonorepoRoot } from './utils/monorepo-root.js';
 import { resolveUserId } from './utils/request-identity.js';
 import { getDefaultUploadDir } from './utils/upload-paths.js';
@@ -278,6 +280,35 @@ async function main(): Promise<void> {
 
   if (isDebugMode) {
     app.log.info({ logDir: LOG_DIR_PATH }, '[api] Debug mode enabled (--debug flag)');
+  }
+
+  // #671: Migrate legacy data paths to DATA_DIR/CACHE_DIR before any consumer
+  // opens connections (SQLite, transcript writer, etc.). Logs are excluded.
+  {
+    const cwd = process.cwd();
+    const probeRepoRoot = fsExistsSync(pathResolve(cwd, 'docs', 'features'))
+      ? cwd
+      : fsExistsSync(pathResolve(cwd, '..', '..', 'docs', 'features'))
+        ? pathResolve(cwd, '..', '..')
+        : cwd;
+    const migrationResult = await runDataDirsMigration({
+      repoRoot: probeRepoRoot,
+      monorepoRoot: findMonorepoRoot(cwd),
+      trigger: 'startup',
+      io: { diskFree: defaultDiskSpaceProbe, logger: app.log },
+    });
+    if (migrationResult.attempted) {
+      app.log.info(
+        {
+          movedCount: migrationResult.items.filter((i) => i.status === 'moved').length,
+          skippedCount: migrationResult.items.filter((i) => i.status === 'skipped').length,
+          failedCount: migrationResult.items.filter((i) => i.status === 'failed').length,
+          allSucceeded: migrationResult.allSucceeded,
+          abortedReason: migrationResult.abortedReason,
+        },
+        '[#671] Data-dirs migration completed',
+      );
+    }
   }
 
   // CORS for frontend
