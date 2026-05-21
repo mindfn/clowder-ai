@@ -1,6 +1,8 @@
 import { execSync } from 'node:child_process';
 import { existsSync, statfsSync } from 'node:fs';
 import { homedir, totalmem } from 'node:os';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { EnvArch, EnvGpu, EnvironmentProfile, EnvOs, PythonArch } from './recommendation-types.js';
 
 const CACHE_TTL_MS = 30_000;
@@ -167,8 +169,49 @@ function detectRamGb(): number {
   return Math.round((totalmem() / 1024 / 1024 / 1024) * 10) / 10;
 }
 
+/**
+ * Resolve the disk volume installs will actually write to. Mirrors the
+ * resolution in python-resolve.sh and resolveVenvPath:
+ *   1. process.env.CAT_CAFE_HOME (with leading-~ expansion for .env-loaded
+ *      values that escape shell expansion)
+ *   2. <repoRoot>/.cat-cafe (default, Redis-convention layout)
+ *   3. ~/.cat-cafe (legacy pre-a34ab1f2 install location)
+ *   4. homedir() or / as last-resort
+ *
+ * Without this, install-preview probes homedir() but installs go to
+ * CAT_CAFE_HOME — on containers / mounted workspaces those are
+ * different filesystems, so the modal overestimates available disk and
+ * lets users select models that fail install-time disk checks.
+ * Codex P2 3279103375.
+ */
+function resolveCatCafeHome(): string {
+  const raw = process.env.CAT_CAFE_HOME?.trim();
+  if (raw) {
+    // Expand leading ~ for values that came from .env / Node without shell
+    // tilde-expansion (same pattern as python-resolve.sh case statement).
+    if (raw === '~') return homedir();
+    if (raw.startsWith('~/')) return resolve(homedir(), raw.slice(2));
+    return raw;
+  }
+  // Default: <repoRoot>/.cat-cafe (mirrors python-resolve.sh derivation
+  // via SCRIPT_DIR/../..).
+  const here = dirname(fileURLToPath(import.meta.url));
+  // ../../../../.. from packages/api/src/domains/services/ → repo root
+  return resolve(here, '../../../../..', '.cat-cafe');
+}
+
 function detectDiskFreeGb(): number {
-  const probePath = existsSync(homedir()) ? homedir() : '/';
+  // Walk down preferred install roots, falling back to homedir/'/' for
+  // first-time installs where the install dir hasn't been created yet.
+  const catCafeHome = resolveCatCafeHome();
+  const legacyHome = resolve(homedir(), '.cat-cafe');
+  const candidates = [
+    existsSync(catCafeHome) ? catCafeHome : null,
+    existsSync(legacyHome) ? legacyHome : null,
+    existsSync(homedir()) ? homedir() : null,
+    '/',
+  ];
+  const probePath = candidates.find((p): p is string => typeof p === 'string') ?? '/';
   try {
     const stat = statfsSync(probePath);
     const free = Number(stat.bavail) * Number(stat.bsize);
