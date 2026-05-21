@@ -491,21 +491,19 @@ export const ENV_VARS: EnvDefinition[] = [
     name: 'DATA_DIR',
     defaultValue: '(未设置 → 各路径沿用 legacy 默认)',
     description:
-      '持久数据根目录（issue #671）：设置后 evidence.sqlite/world.sqlite/transcripts/audit-logs/cli-raw-archive/uploads 全部移到 ${DATA_DIR}/{子目录}。未设置时各路径沿用旧默认。',
+      '持久数据根目录（issue #671）：设置后 evidence.sqlite/world.sqlite/transcripts/audit-logs/cli-raw-archive/uploads 全部移到该目录下对应子路径。未设置时各路径沿用旧默认。',
     category: 'storage',
     sensitive: false,
     restartRequired: true,
-    exampleRecommended: true,
   },
   {
     name: 'CACHE_DIR',
     defaultValue: '(未设置 → 各路径沿用 legacy 默认)',
     description:
-      '可重建缓存根目录（issue #671）：设置后 tts/connector-media 移到 ${CACHE_DIR}/{子目录}。未设置时各路径沿用旧默认。',
+      '可重建缓存根目录（issue #671）：设置后 tts/connector-media 移到该目录下对应子路径。未设置时各路径沿用旧默认。',
     category: 'storage',
     sensitive: false,
     restartRequired: true,
-    exampleRecommended: true,
   },
   {
     name: 'DOCS_ROOT',
