@@ -143,7 +143,7 @@ describe('env-registry', () => {
   it('hasSensitiveEditableVars detects whitelisted sensitive vars', () => {
     assert.ok(hasSensitiveEditableVars(['GITHUB_MCP_PAT']));
     assert.ok(hasSensitiveEditableVars(['FRONTEND_URL', 'F102_API_KEY']));
-    assert.ok(!hasSensitiveEditableVars(['FRONTEND_URL', 'AUDIT_LOG_DIR']));
+    assert.ok(!hasSensitiveEditableVars(['FRONTEND_URL', 'LOG_DIR']));
     assert.ok(!hasSensitiveEditableVars(['OPENAI_API_KEY']), 'OPENAI_API_KEY is no longer editable (#340 P6)');
   });
 

@@ -137,7 +137,6 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
     exampleRecommended: true,
   },
-  { name: 'UPLOAD_DIR', defaultValue: './uploads', description: '文件上传目录', category: 'server', sensitive: false },
   {
     name: 'PROJECT_ALLOWED_ROOTS',
     defaultValue: '(未设置 — 使用 denylist 模式，仅拦截系统目录)',
@@ -314,10 +313,11 @@ export const ENV_VARS: EnvDefinition[] = [
   },
   {
     name: 'LOG_DIR',
-    defaultValue: './data/logs/api',
-    description: 'API 日志目录（Pino 滚动日志写入路径）',
-    category: 'server',
+    defaultValue: '{cwd}/data/logs/api',
+    description: '日志根目录（issue #671：三根目录模型；Pino 滚动日志直接写入此路径，不再加子目录）',
+    category: 'storage',
     sensitive: false,
+    restartRequired: true,
     exampleRecommended: true,
   },
   {
@@ -488,11 +488,24 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
   },
   {
-    name: 'TRANSCRIPT_DATA_DIR',
-    defaultValue: './data/transcripts',
-    description: 'Session transcript 存储目录',
+    name: 'DATA_DIR',
+    defaultValue: '(未设置 → 各路径沿用 legacy 默认)',
+    description:
+      '持久数据根目录（issue #671）：设置后 evidence.sqlite/world.sqlite/transcripts/audit-logs/cli-raw-archive/uploads 全部移到 ${DATA_DIR}/{子目录}。未设置时各路径沿用旧默认。',
     category: 'storage',
     sensitive: false,
+    restartRequired: true,
+    exampleRecommended: true,
+  },
+  {
+    name: 'CACHE_DIR',
+    defaultValue: '(未设置 → 各路径沿用 legacy 默认)',
+    description:
+      '可重建缓存根目录（issue #671）：设置后 tts/connector-media 移到 ${CACHE_DIR}/{子目录}。未设置时各路径沿用旧默认。',
+    category: 'storage',
+    sensitive: false,
+    restartRequired: true,
+    exampleRecommended: true,
   },
   {
     name: 'DOCS_ROOT',
@@ -621,20 +634,6 @@ export const ENV_VARS: EnvDefinition[] = [
     name: 'CAT_CAFE_MCP_SERVER_PATH',
     defaultValue: '(自动检测)',
     description: 'MCP Server 路径',
-    category: 'cli',
-    sensitive: false,
-  },
-  {
-    name: 'AUDIT_LOG_DIR',
-    defaultValue: './data/audit-logs',
-    description: '审计日志目录',
-    category: 'cli',
-    sensitive: false,
-  },
-  {
-    name: 'CLI_RAW_ARCHIVE_DIR',
-    defaultValue: './data/cli-raw-archive',
-    description: 'CLI 原始日志归档目录',
     category: 'cli',
     sensitive: false,
   },
@@ -1209,13 +1208,6 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
   },
   {
-    name: 'TTS_CACHE_DIR',
-    defaultValue: './data/tts-cache',
-    description: 'TTS 音频缓存目录',
-    category: 'tts',
-    sensitive: false,
-  },
-  {
     name: 'GENSHIN_VOICE_DIR',
     defaultValue: '~/projects/.../genshin',
     description: 'GPT-SoVITS 角色模型目录',
@@ -1236,15 +1228,6 @@ export const ENV_VARS: EnvDefinition[] = [
     defaultValue: 'http://localhost:9876',
     description: 'Whisper STT 服务地址（服务端）',
     category: 'stt',
-    sensitive: false,
-  },
-
-  // --- connector media ---
-  {
-    name: 'CONNECTOR_MEDIA_DIR',
-    defaultValue: './data/connector-media',
-    description: '连接器媒体下载目录',
-    category: 'connector',
     sensitive: false,
   },
 
@@ -1504,23 +1487,9 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
   },
   {
-    name: 'EVIDENCE_DB',
-    defaultValue: '{repoRoot}/evidence.sqlite',
-    description: 'F102 SQLite 数据库路径',
-    category: 'evidence',
-    sensitive: false,
-  },
-  {
     name: 'GLOBAL_KNOWLEDGE_DB',
     defaultValue: '~/.cat-cafe/global_knowledge.sqlite',
     description: 'F-4: 全局知识 SQLite 路径（Skills + MEMORY.md 编译产物）',
-    category: 'evidence',
-    sensitive: false,
-  },
-  {
-    name: 'WORLD_DB',
-    defaultValue: '{repoRoot}/world.sqlite',
-    description: 'F093 World Engine SQLite 数据库路径',
     category: 'evidence',
     sensitive: false,
   },
