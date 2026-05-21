@@ -159,13 +159,24 @@ export async function registerServiceLifecycleRoutes(
         return { error: envResult.error };
       }
 
-      // Persist the user-selected port so subsequent /start spawns can read
-      // it from config rather than relying on env state at start time
-      // (codex P2 3266466931 — install accepts a port but the next start
-      // could otherwise re-derive from process.env / manifest default).
-      // buildLifecycleEnv already validated the port is an integer in range.
+      // Persist the user-selected model + port so subsequent /start and
+      // /uninstall spawns can read them from config rather than relying on
+      // process.env state (which doesn't survive API restart).
+      //   - Port: codex P2 3266466931
+      //   - Model: codex P1 3279045004 — /start and /uninstall both read
+      //     cfg.selectedModel via buildLifecycleEnv; without persisting at
+      //     install time, post-restart start fails because *_MODEL env
+      //     isn't set from process.env and config has no record either.
+      // buildLifecycleEnv already validated model + port upstream of here.
+      const persistPatch: { selectedModel?: string; port?: number } = {};
+      if (typeof request.body?.model === 'string' && request.body.model.length > 0) {
+        persistPatch.selectedModel = request.body.model;
+      }
       if (typeof request.body?.port === 'number') {
-        serviceConfigStore.set(service.id, { port: request.body.port });
+        persistPatch.port = request.body.port;
+      }
+      if (persistPatch.selectedModel !== undefined || persistPatch.port !== undefined) {
+        serviceConfigStore.set(service.id, persistPatch);
       }
 
       return withLock(service.id, reply, async () => {
