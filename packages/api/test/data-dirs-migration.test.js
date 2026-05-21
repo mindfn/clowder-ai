@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 
-const { buildMigrationPlan, measurePath, runDataDirsMigration } = await import(
+const { buildMigrationPlan, measurePath, runDataDirsMigration, shouldAbortStartupOnMigration } = await import(
   '../dist/config/data-dirs-migration.js'
 );
 
@@ -59,7 +59,7 @@ describe('data-dirs-migration', () => {
 
   describe('buildMigrationPlan', () => {
     test('reports no work when no root env var is set', async () => {
-      const plan = await buildMigrationPlan({ repoRoot: workRoot, monorepoRoot: workRoot });
+      const plan = await buildMigrationPlan({ repoRoot: workRoot, monorepoRoot: workRoot, uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy') });
       assert.equal(plan.hasWork, false);
       assert.equal(plan.totalBytes, 0);
       const reasons = new Set(plan.items.map((i) => i.skipReason));
@@ -74,7 +74,7 @@ describe('data-dirs-migration', () => {
       process.chdir(cleanCwd);
       try {
         process.env.DATA_DIR = join(workRoot, 'data');
-        const plan = await buildMigrationPlan({ repoRoot: workRoot, monorepoRoot: workRoot });
+        const plan = await buildMigrationPlan({ repoRoot: workRoot, monorepoRoot: workRoot, uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy') });
         assert.equal(plan.hasWork, false);
         for (const item of plan.items) {
           if (item.spec.root === 'DATA_DIR') {
@@ -92,7 +92,7 @@ describe('data-dirs-migration', () => {
       await writeFile(legacyDb, 'fake sqlite content', 'utf-8');
       process.env.DATA_DIR = join(workRoot, 'data');
 
-      const plan = await buildMigrationPlan({ repoRoot: workRoot, monorepoRoot: workRoot });
+      const plan = await buildMigrationPlan({ repoRoot: workRoot, monorepoRoot: workRoot, uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy') });
       assert.equal(plan.hasWork, true);
       const evidence = plan.items.find((i) => i.spec.key === 'evidenceDb');
       assert.ok(evidence);
@@ -108,7 +108,7 @@ describe('data-dirs-migration', () => {
       await writeFile(targetDb, 'existing target content', 'utf-8');
 
       process.env.DATA_DIR = join(workRoot, 'data');
-      const plan = await buildMigrationPlan({ repoRoot: workRoot, monorepoRoot: workRoot });
+      const plan = await buildMigrationPlan({ repoRoot: workRoot, monorepoRoot: workRoot, uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy') });
       const evidence = plan.items.find((i) => i.spec.key === 'evidenceDb');
       assert.equal(evidence.eligible, false);
       assert.equal(evidence.skipReason, 'target-not-empty');
@@ -148,6 +148,7 @@ describe('data-dirs-migration', () => {
       const result = await runDataDirsMigration({
         repoRoot: workRoot,
         monorepoRoot: workRoot,
+        uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
         trigger: 'startup',
         io: plentyOfSpaceIO(),
       });
@@ -168,6 +169,7 @@ describe('data-dirs-migration', () => {
       const result = await runDataDirsMigration({
         repoRoot: workRoot,
         monorepoRoot: workRoot,
+        uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
         trigger: 'startup',
         io: plentyOfSpaceIO(),
       });
@@ -206,6 +208,7 @@ describe('data-dirs-migration', () => {
         const result = await runDataDirsMigration({
           repoRoot: workRoot,
           monorepoRoot: workRoot,
+          uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
           trigger: 'startup',
           io: plentyOfSpaceIO(),
         });
@@ -230,6 +233,7 @@ describe('data-dirs-migration', () => {
       const result = await runDataDirsMigration({
         repoRoot: workRoot,
         monorepoRoot: workRoot,
+        uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
         trigger: 'startup',
         io: squeezedSpaceIO(500), // need ~1500, only have 500
       });
@@ -248,6 +252,7 @@ describe('data-dirs-migration', () => {
       const startup = await runDataDirsMigration({
         repoRoot: workRoot,
         monorepoRoot: workRoot,
+        uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
         trigger: 'startup',
         io: plentyOfSpaceIO(),
       });
@@ -260,10 +265,76 @@ describe('data-dirs-migration', () => {
       const runtime = await runDataDirsMigration({
         repoRoot: workRoot,
         monorepoRoot: workRoot,
+        uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
         trigger: 'runtime',
         io: plentyOfSpaceIO(),
       });
       assert.equal(runtime.restartRecommended, true);
+    });
+
+    test('shouldAbortStartupOnMigration: no work → no abort', () => {
+      const decision = shouldAbortStartupOnMigration({
+        attempted: false,
+        items: [],
+        allSucceeded: true,
+        restartRecommended: false,
+      });
+      assert.equal(decision.shouldAbort, false);
+    });
+
+    test('shouldAbortStartupOnMigration: all moved → no abort', () => {
+      const decision = shouldAbortStartupOnMigration({
+        attempted: true,
+        items: [
+          { key: 'evidenceDb', fromPath: '/old/e', toPath: '/new/e', bytes: 10, status: 'moved' },
+          { key: 'worldDb', fromPath: '/old/w', toPath: '/new/w', bytes: 10, status: 'moved' },
+        ],
+        allSucceeded: true,
+        restartRecommended: false,
+      });
+      assert.equal(decision.shouldAbort, false);
+    });
+
+    test('shouldAbortStartupOnMigration: aborted at planning stage → abort', () => {
+      const decision = shouldAbortStartupOnMigration({
+        attempted: false,
+        items: [],
+        allSucceeded: false,
+        restartRecommended: false,
+        abortedReason: 'insufficient-disk-space: need 1000, have 500',
+      });
+      assert.equal(decision.shouldAbort, true);
+      assert.ok(decision.reason.includes('insufficient-disk-space'));
+    });
+
+    test('shouldAbortStartupOnMigration: per-item failure → abort with leftBehind list', () => {
+      const decision = shouldAbortStartupOnMigration({
+        attempted: true,
+        items: [
+          { key: 'evidenceDb', fromPath: '/old/e', toPath: '/new/e', bytes: 10, status: 'moved' },
+          { key: 'worldDb', fromPath: '/old/w', toPath: '/new/w', bytes: 10, status: 'failed', error: 'EACCES' },
+          { key: 'auditLogs', fromPath: '/old/a', toPath: '/new/a', bytes: 0, status: 'skipped', reason: 'no-source-data' },
+        ],
+        allSucceeded: false,
+        restartRecommended: false,
+      });
+      assert.equal(decision.shouldAbort, true);
+      assert.ok(decision.reason.includes('1 data-dirs path(s) failed'));
+      assert.equal(decision.leftBehind.length, 1);
+      assert.equal(decision.leftBehind[0].key, 'worldDb');
+      assert.equal(decision.leftBehind[0].status, 'failed');
+    });
+
+    test('shouldAbortStartupOnMigration: only skipped items → no abort', () => {
+      const decision = shouldAbortStartupOnMigration({
+        attempted: true,
+        items: [
+          { key: 'evidenceDb', fromPath: '/old/e', toPath: '/old/e', bytes: 0, status: 'skipped', reason: 'no-source-data' },
+        ],
+        allSucceeded: true,
+        restartRecommended: false,
+      });
+      assert.equal(decision.shouldAbort, false);
     });
 
     test('continues other items when one fails (per-item isolation)', async () => {
@@ -282,6 +353,7 @@ describe('data-dirs-migration', () => {
       const result = await runDataDirsMigration({
         repoRoot: workRoot,
         monorepoRoot: workRoot,
+        uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
         trigger: 'startup',
         io: plentyOfSpaceIO(),
       });

@@ -238,7 +238,7 @@ import {
   resolveTtsCacheDir,
   resolveWorldDbPath,
 } from './config/data-dirs.js';
-import { defaultDiskSpaceProbe, runDataDirsMigration } from './config/data-dirs-migration.js';
+import { defaultDiskSpaceProbe, runDataDirsMigration, shouldAbortStartupOnMigration } from './config/data-dirs-migration.js';
 import { findMonorepoRoot } from './utils/monorepo-root.js';
 import { resolveUserId } from './utils/request-identity.js';
 import { getDefaultUploadDir } from './utils/upload-paths.js';
@@ -308,6 +308,24 @@ async function main(): Promise<void> {
         },
         '[#671] Data-dirs migration completed',
       );
+    }
+
+    // Fail-fast: if the migration aborted or any item failed, the resolver
+    // now points at the new root but the legacy data is still on disk.
+    // Continuing would let SQLite/transcript/audit-log consumers open empty
+    // files at the new path — silent data loss from the operator's POV.
+    const abort = shouldAbortStartupOnMigration(migrationResult);
+    if (abort.shouldAbort) {
+      app.log.fatal(
+        {
+          reason: abort.reason,
+          leftBehind: abort.leftBehind,
+          DATA_DIR: process.env.DATA_DIR ?? null,
+          CACHE_DIR: process.env.CACHE_DIR ?? null,
+        },
+        '[#671] Data-dirs migration did not complete cleanly — refusing to start to avoid silent data loss. Free space (or restore the legacy paths) and retry, or unset the root env vars to fall back to legacy locations.',
+      );
+      process.exit(1);
     }
   }
 

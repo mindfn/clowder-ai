@@ -116,12 +116,21 @@ export interface DataPathSpec {
 export interface DescribeOptions {
   readonly repoRoot: string;
   readonly monorepoRoot: string;
+  /**
+   * Override the uploads legacy path. Production code never needs this — it
+   * exists so unit tests can isolate the migration engine from the real
+   * `packages/api/uploads` directory inside the repo (the module-relative
+   * default resolves to that exact path because the module file lives there).
+   * Pass an absolute path that does NOT shadow real data.
+   */
+  readonly uploadsLegacyOverride?: string;
 }
 
 export function describeDataPaths(opts: DescribeOptions): readonly DataPathSpec[] {
   const dataRoot = readRoot('DATA_DIR');
   const cacheRoot = readRoot('CACHE_DIR');
   const logRoot = readRoot('LOG_DIR');
+  const uploadsLegacy = opts.uploadsLegacyOverride ?? MODULE_DEFAULT_UPLOAD_DIR;
 
   return [
     {
@@ -173,9 +182,11 @@ export function describeDataPaths(opts: DescribeOptions): readonly DataPathSpec[
       key: 'uploads',
       root: 'DATA_DIR',
       subPath: 'uploads',
-      legacyPath: MODULE_DEFAULT_UPLOAD_DIR,
+      legacyPath: uploadsLegacy,
       rootBasedPath: dataRoot ? joinUnder(dataRoot, 'uploads') : null,
-      currentPath: resolveUploadsDir(),
+      // Note: resolveUploadsDir() always uses MODULE_DEFAULT_UPLOAD_DIR; the
+      // override only affects the legacyPath surfaced for introspection.
+      currentPath: dataRoot ? joinUnder(dataRoot, 'uploads') : uploadsLegacy,
       isFile: false,
     },
     {

@@ -74,6 +74,54 @@ export interface MigrationResult {
   readonly abortedReason?: string;
 }
 
+export interface AbortDecision {
+  readonly shouldAbort: boolean;
+  readonly reason?: string;
+  /** Per-path details for the error message (key + which side has data). */
+  readonly leftBehind: readonly { readonly key: DataPathKey; readonly fromPath: string; readonly status: string }[];
+}
+
+/**
+ * Decide whether startup must fail-fast.
+ *
+ * The hazard: when a root env var is set, the resolver returns the new path
+ * unconditionally. If the migration aborted (insufficient space) or any item
+ * failed, the legacy data is still at the old path, but consumers will read
+ * the new (empty) path — that looks like silent data loss.
+ *
+ * Returns `{ shouldAbort: true, reason, leftBehind[] }` when:
+ *   - The migration aborted at the planning stage (e.g. disk space)
+ *   - Any eligible item failed to move
+ *
+ * Returns `{ shouldAbort: false }` when:
+ *   - No migration was attempted (no root set, or no pending work)
+ *   - All eligible items moved successfully
+ *
+ * Skipped items (target-not-empty, no-source-data) do NOT trigger abort:
+ *   their legacyPath is irrelevant (no source) or the operator already moved
+ *   data manually.
+ */
+export function shouldAbortStartupOnMigration(result: MigrationResult): AbortDecision {
+  if (result.abortedReason) {
+    return {
+      shouldAbort: true,
+      reason: result.abortedReason,
+      leftBehind: result.items
+        .filter((i) => i.status !== 'moved')
+        .map((i) => ({ key: i.key, fromPath: i.fromPath, status: i.status })),
+    };
+  }
+  const failed = result.items.filter((i) => i.status === 'failed');
+  if (failed.length > 0) {
+    return {
+      shouldAbort: true,
+      reason: `${failed.length} data-dirs path(s) failed to migrate; legacy data still on disk while resolver now points at the new root`,
+      leftBehind: failed.map((i) => ({ key: i.key, fromPath: i.fromPath, status: i.status })),
+    };
+  }
+  return { shouldAbort: false, leftBehind: [] };
+}
+
 export interface DiskSpaceProbe {
   readonly availableBytes: number;
   readonly totalBytes: number;
@@ -92,6 +140,8 @@ export interface MigrationIO {
 export interface PlanOptions {
   readonly repoRoot: string;
   readonly monorepoRoot: string;
+  /** See DescribeOptions.uploadsLegacyOverride — test-only injection. */
+  readonly uploadsLegacyOverride?: string;
 }
 
 export interface RunOptions extends PlanOptions {
