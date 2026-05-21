@@ -194,8 +194,9 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     // Wait for fire-and-forget audit writes
     await new Promise((r) => setTimeout(r, 150));
 
-    const files = await readdir(tempDir);
-    const auditContent = await readFile(join(tempDir, files[0]), 'utf-8');
+    const auditDir = join(tempDir, 'audit-logs');
+    const files = await readdir(auditDir);
+    const auditContent = await readFile(join(auditDir, files[0]), 'utf-8');
     const events = auditContent
       .trim()
       .split('\n')
@@ -662,8 +663,9 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
 
     await new Promise((r) => setTimeout(r, 150));
 
-    const files = await readdir(tempDir);
-    const auditContent = await readFile(join(tempDir, files[0]), 'utf-8');
+    const auditDir = join(tempDir, 'audit-logs');
+    const files = await readdir(auditDir);
+    const auditContent = await readFile(join(auditDir, files[0]), 'utf-8');
     const events = auditContent
       .trim()
       .split('\n')

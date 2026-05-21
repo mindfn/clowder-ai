@@ -87,10 +87,11 @@ describe('F118 finally block audit fallback (AC-C5)', () => {
     await new Promise((r) => setTimeout(r, 200));
 
     // Read audit log and check for fallback CAT_ERROR
-    const files = await readdir(tempDir);
+    const auditDir = join(tempDir, 'audit-logs');
+    const files = await readdir(auditDir);
     assert.ok(files.length > 0, 'audit log file should exist');
 
-    const auditContent = await readFile(join(tempDir, files[0]), 'utf-8');
+    const auditContent = await readFile(join(auditDir, files[0]), 'utf-8');
     const events = auditContent
       .trim()
       .split('\n')
@@ -133,8 +134,9 @@ describe('F118 finally block audit fallback (AC-C5)', () => {
     // Wait for fire-and-forget audit writes
     await new Promise((r) => setTimeout(r, 200));
 
-    const files = await readdir(tempDir);
-    const auditContent = await readFile(join(tempDir, files[0]), 'utf-8');
+    const auditDir = join(tempDir, 'audit-logs');
+    const files = await readdir(auditDir);
+    const auditContent = await readFile(join(auditDir, files[0]), 'utf-8');
     const events = auditContent
       .trim()
       .split('\n')
