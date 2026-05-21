@@ -1,4 +1,5 @@
 'use client';
+import { ServiceStatusPanel } from '../settings/ServiceStatusPanel';
 import { KnowledgeFeed } from '../workspace/KnowledgeFeed';
 import { CollectionCatalog } from './CollectionCatalog';
 import { CollectionGraph } from './CollectionGraph';
@@ -17,8 +18,8 @@ interface MemoryHubProps {
 
 export function MemoryHub({ activeTab = 'feed', initialQuery, initialReferrerThread = null }: MemoryHubProps) {
   return (
-    <div className="flex h-full flex-col bg-cafe-surface" data-testid="memory-hub">
-      <header className="flex items-start gap-3 border-b border-cafe px-4 py-3">
+    <div className="flex h-full flex-col bg-[var(--console-shell-bg)]" data-testid="memory-hub">
+      <header className="flex items-start gap-3 border-b border-[var(--console-border-soft)] px-4 py-3">
         <MemoryNav active={activeTab} initialReferrerThread={initialReferrerThread} />
       </header>
 
@@ -34,7 +35,8 @@ export function MemoryHub({ activeTab = 'feed', initialQuery, initialReferrerThr
           </div>
         )}
         {activeTab === 'status' && (
-          <div data-testid="memory-tab-status">
+          <div className="space-y-4" data-testid="memory-tab-status">
+            <ServiceStatusPanel filterFeatures={['memory-semantic-search']} title="语义搜索服务" />
             <IndexStatus />
           </div>
         )}

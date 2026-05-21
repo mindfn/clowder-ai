@@ -170,7 +170,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
           placeholder="搜索项目知识..."
-          className="flex-1 rounded-lg border border-cafe bg-white px-3 py-2 text-sm text-cafe-black placeholder:text-cafe-secondary focus:border-cafe-accent focus:outline-none"
+          className="flex-1 rounded-lg border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-3 py-2 text-sm text-cafe-black placeholder:text-cafe-secondary focus:border-[var(--console-border-strong)] focus:outline-none"
           data-testid="evidence-search-input"
         />
         <button
@@ -192,13 +192,13 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
             value={depth === 'raw' ? 'lexical' : mode}
             onChange={(e) => setMode(e.target.value as EvidenceSearchParams['mode'])}
             disabled={depth === 'raw'}
-            className="rounded border border-cafe bg-white px-1.5 py-0.5 text-xs disabled:opacity-50"
+            className="rounded border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-1.5 py-0.5 text-xs disabled:opacity-50"
           >
             <option value="hybrid">混合</option>
             <option value="lexical">精确</option>
             <option value="semantic">语义</option>
           </select>
-          {depth === 'raw' && <span className="text-[10px] text-conn-amber-text">消息级仅支持精确匹配</span>}
+          {depth === 'raw' && <span className="text-micro text-conn-amber-text">消息级仅支持精确匹配</span>}
         </label>
         <label className="flex items-center gap-1 text-cafe-secondary">
           范围:
@@ -207,7 +207,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
             onChange={(e) =>
               setScope(e.target.value === 'all' ? undefined : (e.target.value as EvidenceSearchParams['scope']))
             }
-            className="rounded border border-cafe bg-white px-1.5 py-0.5 text-xs"
+            className="rounded border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-1.5 py-0.5 text-xs"
           >
             <option value="all">全部</option>
             <option value="docs">文档</option>
@@ -223,7 +223,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
             onChange={(e) =>
               setDepth(e.target.value === 'summary' ? undefined : (e.target.value as EvidenceSearchParams['depth']))
             }
-            className="rounded border border-cafe bg-white px-1.5 py-0.5 text-xs"
+            className="rounded border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-1.5 py-0.5 text-xs"
           >
             {DEPTH_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -239,7 +239,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
             onChange={(e) =>
               setDimension(e.target.value === 'all' ? undefined : (e.target.value as EvidenceSearchParams['dimension']))
             }
-            className="rounded border border-cafe bg-white px-1.5 py-0.5 text-xs"
+            className="rounded border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] px-1.5 py-0.5 text-xs"
             data-testid="evidence-dimension-select"
           >
             <option value="all">全部</option>
@@ -258,13 +258,13 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
           <div key={item.anchor} className="rounded-lg bg-[var(--console-card-bg)] p-3">
             <div className="flex items-center gap-2 min-w-0">
               <span
-                className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${SOURCE_TYPE_COLORS[item.sourceType] ?? SOURCE_TYPE_COLORS.commit}`}
+                className={`rounded px-1.5 py-0.5 text-micro font-semibold ${SOURCE_TYPE_COLORS[item.sourceType] ?? SOURCE_TYPE_COLORS.commit}`}
               >
                 {SOURCE_TYPE_LABELS[item.sourceType] ?? item.sourceType}
               </span>
               {item.source && (
                 <span
-                  className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${item.source === 'project' ? 'bg-conn-indigo-bg text-conn-indigo-text' : 'bg-conn-cyan-bg text-conn-cyan-text'}`}
+                  className={`rounded px-1.5 py-0.5 text-micro font-semibold ${item.source === 'project' ? 'bg-conn-indigo-bg text-conn-indigo-text' : 'bg-conn-cyan-bg text-conn-cyan-text'}`}
                 >
                   {item.source === 'project' ? '项目' : '全局'}
                 </span>
@@ -283,13 +283,13 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
               className="mt-1 text-xs text-cafe-secondary"
             />
             {item.passages && item.passages.length > 0 && (
-              <div className="mt-2 space-y-1 border-l-2 border-cafe-subtle pl-2">
+              <div className="mt-2 space-y-1 border-l-2 border-[var(--console-border-soft)] pl-2">
                 {item.passages.map((p) => (
                   <div key={p.passageId} className="text-xs text-cafe-secondary">
                     {p.speaker && <span className="font-medium text-cafe-black">{p.speaker}: </span>}
                     <span className="italic">{p.content}</span>
                     {p.createdAt && (
-                      <span className="ml-1 text-[10px] text-cafe-secondary/60">
+                      <span className="ml-1 text-micro text-cafe-secondary/60">
                         {new Date(p.createdAt).toLocaleString('zh-CN', {
                           month: 'short',
                           day: 'numeric',
@@ -299,7 +299,7 @@ export function EvidenceSearch({ initialQuery }: EvidenceSearchProps = {}) {
                       </span>
                     )}
                     {p.context && p.context.length > 0 && (
-                      <div className="ml-3 mt-0.5 space-y-0.5 border-l border-cafe/30 pl-2">
+                      <div className="ml-3 mt-0.5 space-y-0.5 border-l border-[var(--console-border-soft)]/30 pl-2">
                         {p.context.map((ctx) => (
                           <div key={ctx.passageId} className="text-xs text-cafe-secondary/70">
                             {ctx.speaker && <span className="font-medium">{ctx.speaker}: </span>}

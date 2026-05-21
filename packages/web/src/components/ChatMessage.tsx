@@ -66,9 +66,10 @@ function isConnectorSystemNotice(message: ChatMessageType): boolean {
 interface ChatMessageProps {
   message: ChatMessageType;
   getCatById: (id: string) => CatData | undefined;
+  onEditCat?: (catId: string) => void;
 }
 
-export function ChatMessage({ message, getCatById }: ChatMessageProps) {
+export function ChatMessage({ message, getCatById, onEditCat }: ChatMessageProps) {
   const coCreator = useCoCreatorConfig();
   const { state: ttsState, synthesize: ttsSynthesize, activeMessageId } = useTts();
   const currentThreadId = useChatStore((s) => s.currentThreadId);
@@ -299,7 +300,14 @@ export function ChatMessage({ message, getCatById }: ChatMessageProps) {
 
   return (
     <div data-message-id={message.id} className="group flex gap-2 mb-4 items-start">
-      {catData && <CatAvatar catId={message.catId!} size={32} status={message.isStreaming ? 'streaming' : undefined} />}
+      {catData && (
+        <CatAvatar
+          catId={message.catId!}
+          size={32}
+          status={message.isStreaming ? 'streaming' : undefined}
+          onClick={onEditCat && message.catId ? () => onEditCat(message.catId!) : undefined}
+        />
+      )}
       <div className="max-w-[85%] md:max-w-[75%] min-w-0">
         {catStyle && (
           <div className="mb-1 flex flex-col gap-1 min-w-0">
@@ -364,7 +372,7 @@ export function ChatMessage({ message, getCatById }: ChatMessageProps) {
                     title={sourceId}
                     aria-label={`跳转到来源 thread ${sourceId}`}
                   >
-                    <span className="text-[10px] font-semibold" aria-hidden>
+                    <span className="text-micro font-semibold" aria-hidden>
                       📮
                     </span>
                     <span className="min-w-0 truncate">

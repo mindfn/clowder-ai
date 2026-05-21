@@ -7,7 +7,7 @@ const BUCKET_STYLES: Record<TriageBucket, { bg: string; text: string; label: str
   clarify_first: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Clarify First' },
   validate_first: { bg: 'bg-orange-100', text: 'text-orange-800', label: 'Validate First' },
   challenge: { bg: 'bg-conn-red-bg', text: 'text-red-800', label: 'Challenge' },
-  later: { bg: 'bg-cafe-surface-elevated', text: 'text-cafe-secondary', label: 'Later' },
+  later: { bg: 'bg-[var(--console-card-bg)]', text: 'text-cafe-secondary', label: 'Later' },
 };
 
 const SOURCE_STYLES: Record<SourceTag, { bg: string; text: string }> = {
@@ -23,7 +23,7 @@ export function BucketBadge({ bucket }: { bucket: TriageBucket }) {
   return (
     <span
       data-testid="bucket-badge"
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${style.bg} ${style.text}`}
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-micro font-medium ${style.bg} ${style.text}`}
     >
       {style.label}
     </span>
@@ -35,7 +35,7 @@ export function SourceBadge({ tag }: { tag: SourceTag }) {
   return (
     <span
       data-testid="source-badge"
-      className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-bold ${style.bg} ${style.text}`}
+      className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-micro font-bold ${style.bg} ${style.text}`}
     >
       {tag}
     </span>

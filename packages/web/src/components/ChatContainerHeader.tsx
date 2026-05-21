@@ -78,7 +78,7 @@ export function ChatContainerHeader({
         )}
         {authPendingCount > 0 && (
           <span
-            className="inline-flex items-center justify-center h-5 min-w-[20px] px-1 rounded-full bg-conn-amber-bg text-conn-amber-text text-[10px] font-bold animate-pulse-subtle"
+            className="inline-flex items-center justify-center h-5 min-w-[20px] px-1 rounded-full bg-conn-amber-bg text-conn-amber-text text-micro font-bold animate-pulse-subtle"
             title={`${authPendingCount} 个授权请求等待处理`}
           >
             🔐 {authPendingCount}
@@ -142,7 +142,7 @@ function DaemonActiveIndicator({ threadId }: { threadId: string }) {
     <button
       type="button"
       onClick={() => router.push('/settings?s=ops&ops=agent-sessions')}
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono text-conn-amber-text bg-conn-amber-bg hover:opacity-80 transition-colors flex-shrink-0"
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-micro font-mono text-conn-amber-text bg-conn-amber-bg hover:opacity-80 transition-colors flex-shrink-0"
       title={`Daemon ${daemonShortId} 运行中 · 点击查看后台会话`}
     >
       <span className="w-1.5 h-1.5 rounded-full bg-conn-amber-text animate-pulse" />
@@ -151,10 +151,20 @@ function DaemonActiveIndicator({ threadId }: { threadId: string }) {
   );
 }
 
+/** Tail-preserving truncation for project chip labels.
+ * The suffix usually carries the distinguishing worktree or nested directory name. */
+export function tailTruncate(name: string, maxLen = 24): string {
+  if (name.length <= maxLen) return name;
+  return `…${name.slice(-(maxLen - 1))}`;
+}
+
+const PROJECT_PATH_COPY_KEYS = new Set(['Enter', ' ']);
+
 /** Thread indicator: shows which thread you're currently chatting in */
-function ThreadIndicator({ threadId }: { threadId: string }) {
+export function ThreadIndicator({ threadId }: { threadId: string }) {
   const threads = useChatStore((s) => s.threads);
   const currentThread = threads.find((t) => t.id === threadId);
+  const [copied, setCopied] = useState(false);
 
   if (threadId === 'default') {
     return <p className="text-xs text-cafe-secondary">大厅 · Your AI team collaboration space</p>;
@@ -168,15 +178,49 @@ function ThreadIndicator({ threadId }: { threadId: string }) {
   const INTERNAL_BASENAMES = ['cat-cafe', 'cat-cafe-runtime', 'clowder-ai'];
   const brandName = process.env.NEXT_PUBLIC_BRAND_NAME ?? '';
   const projectName = INTERNAL_BASENAMES.includes(rawBasename) && brandName ? brandName : rawBasename;
+  const displayName = tailTruncate(projectName);
+  const copyPath = rawPath === 'default' ? '' : rawPath;
+
+  const handleCopyPath = () => {
+    if (!copyPath) return;
+    const cb = typeof navigator !== 'undefined' && navigator.clipboard ? navigator.clipboard : null;
+    if (!cb) return;
+    if (typeof cb.writeText !== 'function') return;
+    void Promise.resolve()
+      .then(() => cb.writeText(copyPath))
+      .then(
+        () => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        },
+        () => {},
+      );
+  };
 
   return (
-    <p
-      className="text-xs text-cafe-secondary truncate min-w-0"
-      title={`${title}${projectName ? ` · ${projectName}` : ''}`}
-    >
-      <span className="font-medium text-cafe-secondary">{title}</span>
-      {projectName && <span className="text-cafe-muted"> · {projectName}</span>}
-    </p>
+    <div className="flex min-w-0 items-baseline text-xs text-cafe-secondary">
+      <span className="truncate min-w-0 font-medium text-cafe-secondary" title={title}>
+        {title}
+      </span>
+      {projectName && (
+        <span
+          className="flex-shrink-0 max-w-[40%] sm:max-w-[200px] overflow-hidden whitespace-nowrap text-cafe-muted cursor-pointer hover:text-cafe-secondary transition-colors"
+          title={copied ? '已复制!' : copyPath}
+          onClick={handleCopyPath}
+          onKeyDown={(e) => {
+            if (PROJECT_PATH_COPY_KEYS.has(e.key)) {
+              e.preventDefault();
+              handleCopyPath();
+            }
+          }}
+          role="button"
+          tabIndex={0}
+        >
+          {' '}
+          · {displayName}
+        </span>
+      )}
+    </div>
   );
 }
 

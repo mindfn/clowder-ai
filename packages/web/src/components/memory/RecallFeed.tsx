@@ -16,29 +16,32 @@ function RecallCard({ event }: { event: RecallEvent }) {
           {event.query}
         </span>
         {event.resultCount != null && (
-          <span className="rounded bg-cafe-surface-sunken px-1.5 py-0.5 text-[10px] font-semibold text-cafe-interactive">
+          <span className="rounded bg-[var(--console-panel-bg)] px-1.5 py-0.5 text-micro font-semibold text-cafe-interactive">
             {event.resultCount} 条命中
           </span>
         )}
       </button>
       {expanded && (
-        <div className="mt-2 space-y-1 border-t border-cafe/50 pt-2 text-xs text-cafe-secondary">
+        <div className="mt-2 space-y-1 border-t border-[var(--console-border-soft)]/50 pt-2 text-xs text-cafe-secondary">
           {event.mode && <div>模式: {event.mode}</div>}
           {event.scope && <div>范围: {event.scope}</div>}
           <div>时间: {new Date(event.timestamp).toLocaleTimeString()}</div>
           {event.results && event.results.length > 0 && (
             <div className="mt-1.5 space-y-1.5">
               {event.results.map((r, i) => (
-                <div key={`${event.id}-r${i}`} className="rounded border border-cafe/40 bg-cafe-surface p-1.5">
+                <div
+                  key={`${event.id}-r${i}`}
+                  className="rounded border border-[var(--console-border-soft)]/40 bg-[var(--console-card-bg)] p-1.5"
+                >
                   <div className="flex items-center gap-1.5 min-w-0">
                     {r.sourceType && (
-                      <span className="rounded bg-cafe-surface-sunken/60 px-1 py-0.5 text-[10px] font-semibold text-cafe-interactive">
+                      <span className="rounded bg-[var(--console-panel-bg)]/60 px-1 py-0.5 text-micro font-semibold text-cafe-interactive">
                         {r.sourceType}
                       </span>
                     )}
                     <ExpandableText text={r.title} clampClass="truncate" className="font-medium text-cafe-black" />
                     {r.confidence && (
-                      <span className="ml-auto text-[10px] text-cafe-secondary/70">[{r.confidence}]</span>
+                      <span className="ml-auto text-micro text-cafe-secondary/70">[{r.confidence}]</span>
                     )}
                   </div>
                   {r.snippet && (
@@ -46,7 +49,7 @@ function RecallCard({ event }: { event: RecallEvent }) {
                       text={r.snippet}
                       as="p"
                       clampClass="line-clamp-2"
-                      className="mt-0.5 text-[10px] text-cafe-secondary/80"
+                      className="mt-0.5 text-micro text-cafe-secondary/80"
                     />
                   )}
                   {anchorToHref(r.anchor) && (
@@ -67,7 +70,7 @@ function RecallCard({ event }: { event: RecallEvent }) {
             event.results.length > 0 &&
             event.resultCount != null &&
             event.resultCount > event.results.length && (
-              <div className="mt-1 text-[10px] text-cafe-secondary/60">
+              <div className="mt-1 text-micro text-cafe-secondary/60">
                 还有 {event.resultCount - event.results.length} 条结果未显示
               </div>
             )}

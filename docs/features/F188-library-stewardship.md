@@ -8,7 +8,7 @@ created: 2026-05-06
 
 # F188: Library Stewardship — 图书馆管护与成长
 
-> **Status**: in-progress (Phase A/B/C/Graph readability/Graph Query/F/G/I/D merged; Phase E superseded by F200; Phase H remaining) | **Owner**: Ragdoll | **Priority**: P1
+> **Status**: reopened | **Completed (A-I)**: 2026-05-20 | **Reopened**: 2026-05-20 (Phase J) | **Owner**: Ragdoll | **Priority**: P1
 
 ## Why
 
@@ -33,6 +33,30 @@ team lead/猫猫能在不重启服务的情况下触发全量重建索引，并�
 Memory Health Dashboard 增强：从"有多少东西"升级到"哪里脏了、漏了、坏了"。
 
 指标：stale anchors（引用已删文件的锚点）、search miss / low-hit query（搜索质量缺口）、orphan edges（悬空图边）、replay drift（Query Replay 质量漂移趋势）、Knowledge Feed pending（等确认的知识候选积压量）、needs_review 积压。
+
+### Phase J: Health Debt Governance（2026-05-20 reopen）
+
+PR #1790 把 Health Dashboard 的问题数主动 surfacing 到 MemoryNav 后，team lead第一次在日常路径看到真实债务：
+
+- `201` 条 orphan edges：孤立边引用不存在的文档
+- `724` 篇 unverified docs：非 `observed` authority 但 `verified_at IS NULL`
+- `12` 条 Knowledge Feed pending：待处理知识动态
+
+这证明 Phase B 的 badge 在跑，但也暴露出新的闭环缺口：**指标可信以后，系统必须告诉猫猫如何治理，而不是把数字扔给team lead。** Phase J 不重做 Health Dashboard，也不改变 F200；它把 Phase B 暴露出来的两类核心 health debt（orphan edges / verification debt）变成可解释、可 dry-run、可修复、可回归的治理流程。
+
+**Maine Coon独立判断（2026-05-20）**：
+
+1. **orphan edges 是 F188 该管的结构债**：它来自 F188 Phase C edge extraction / graph health，当前抽样显示大头是 `F20` vs `F020` 这类 feature anchor canonicalization 缺失。修复必须包含一次性 migration + 写入时 normalize，不能只在 dashboard 上解释数字。
+2. **unverified 不是 F200 能自动清零的问题**：F200 consumption / trajectory 证明“这篇被用过、对导航有用”，不等于“这篇内容被验证为真”。F200 信号可以作为 review candidate / usage prior，但**不能直接写 `verified_at` 或提升 authority**。
+3. **不能盲降级 legacy authority**：`validated` / `constitutional` 且 `verified_at IS NULL` 是历史数据语义不完整，不等于内容不可信。Phase J 必须先区分 `authority`（来源/治理层级）、`verified_at`（验证事件时间）、`usage_signal`（被猫用过）三件事，再决定迁移策略。
+4. **team lead不做 724 次点击**：治理默认由猫猫批处理 / 抽样 / dry-run / 自动修复承担，只有高风险、语义冲突、跨 feature 决策才升级给team lead。
+
+**Scope**：
+
+- orphan edge detail + repair：列出具体 from/to/relation/provenance，分类 feature-ref canonicalization / true ghost / non-doc wikilink / related-field drift，支持 dry-run 和 apply。
+- edge write prevention：所有 edge writer（frontmatter `related_features`、WikiLink、Markdown link、body F-ref）统一走 canonical target resolver。
+- verification semantics cleanup：明确 authority / verification / usage 三层语义，迁移 legacy NULL `verified_at`，但不把 F200 consumption 当 truth verification。
+- cat-owned review workflow：猫猫能批量确认、标记需复查、或上升少量关键问题；team lead只看到需要愿景/事实判断的少数项。
 
 ### Phase C: Graph Fidelity ✅
 
@@ -201,6 +225,17 @@ Why: Phase F 不创建新 store/queue/router/adapter cell — graph_resolve 复�
 - [x] AC-B4: 展示 replay drift 趋势（如 Query Replay 已有数据）
 - [x] AC-B5: 展示 Knowledge Feed pending + needs_review 积压
 
+### Phase J（Health Debt Governance — reopened 2026-05-20）
+- [ ] AC-J1: Health debt semantics spec 落地：明确 `authority`（来源/治理层级）、`verified_at`（显式验证事件）、`usage_signal`（F200 consumption / trajectory）三者互不替代；F200 consumption 不得自动写 `verified_at` 或提升 authority
+- [ ] AC-J2: Orphan edge details API/UI：`orphanEdges` 不只返回 count，还能返回分页/抽样 details（from_anchor / to_anchor / relation / provenance / from_exists / to_exists / suggested_classification），Health Dashboard 可 drill down
+- [ ] AC-J3: Orphan edge repair dry-run：提供 dry-run 报告，分类至少覆盖 `feature_ref_missing_zero_padding`、`feature_ref_true_ghost`、`wikilink_non_doc_target`、`related_target_missing`；报告包含 before/after count 和拟执行 SQL/edge changes 摘要
+- [ ] AC-J4: Orphan edge repair apply：只对 dry-run 可证明安全的项自动修复（如 `F20 → F020` 且 canonical anchor 存在）；true ghost / non-doc wikilink 进入 review bucket 或按策略删除；修复同时清理 edges / vectors / derived graph read-model，不留下 dangling rows
+- [ ] AC-J5: Edge write prevention：所有 edge 写入路径统一调用 canonical target resolver；body F-ref 抽取不得把年份 `F2025`、`F32-b` 等误写成 feature anchor；regression tests 覆盖 `F20→F020`、`F020` no-op、`F2025` no edge、missing target 分类
+- [ ] AC-J6: Verification debt migration：对 `authority != observed AND verified_at IS NULL` 做迁移 dry-run，输出 buckets（trusted legacy / needs cat review / stale candidate / escalate to CVO）；禁止仅因 `verified_at IS NULL` 盲降级 `validated` / `constitutional`
+- [ ] AC-J7: Cat-owned verification workflow：猫猫可批量确认低风险 legacy docs、标记 review-needed、或上升少量高风险项；team lead不承担逐篇点击，只有语义冲突、事实判断、愿景级取舍才升级
+- [ ] AC-J8: F200 integration boundary：F200 consumption 可写入 usage fields（如 last_consumed_at / consumption_count / review_candidate_reason）或生成 review candidate，但不能作为 truth verification；F200 → F188 的接口有单向边界测试
+- [ ] AC-J9: Dogfood acceptance report：在 runtime DB 副本或 dry-run 环境验证当前 `201 orphanEdges` 和 `724 unverified` 的拆解；报告包含抽样证据、修复前后 count、不可自动修复列表、以及是否需要 CVO 介入的具体项数
+
 ### Phase C（Graph Fidelity）✅
 - [x] AC-C0a: edges 表 schema 迁移（补 from_collection_id / to_collection_id / edge_sensitivity / provenance / created_at 列）
 - [x] AC-C0b: `inferCollectionId` 对裸 anchor（无 collection 前缀）不再 silent skip，降级为 fallback collection 或 warning
@@ -263,13 +298,13 @@ Why: Phase F 不创建新 store/queue/router/adapter cell — graph_resolve 复�
 - [x] AC-G3: rewrite `list_recent` tool description（`recent-tools.ts:23` 的 scope 字段）reflect 实际边界：「threads/memory scope maps to indexed discussion/session/memory/reflection **docs** (not raw thread messages or memory store)」。Maine Coon一审 P2: 不 oversell `SCOPE_KIND_MAP` 边界（只是 evidence_docs.kind filter，非跨 surface 全量索引）
 - [x] AC-G4: F188 spec OQ-4 状态从"⬜ 待 F197 close 后开 F188 Phase F hotfix PR" → "✅ Phase G AC-G1/G2 实做完成"
 
-### Phase H（Collection-Aware Recent Selection — Design Gate 2026-05-19 通过）
-- [ ] AC-H1: Collection overlap cleanup — 同一文件只归属最具体的 collection；parent scanner 动态排除子 collection root；rebuild 清理历史残留行；测试证明 private child docs 不通过 parent 的 `list_recent` 泄出
-- [ ] AC-H2: Guaranteed Minimum selection — eligible collection（通过 visibility filter + 有结果）保底 ≥1 条；eligible > limit 时按最新 item 排序取前 limit 个各 1 条；best-of-rest 去重（同 anchor 不重复）；最终 items 保持全局 updatedAt 排序兼容 F200
-- [ ] AC-H3: 返回 `groups: SelectionGroup[]`（`type: 'collection'`，v1 只实现 collection）
-- [ ] AC-H4: MCP text footer 显示 collection 分布
-- [ ] AC-H5: Regression fixture — cross-collection burst（3 collections，1 个 50 条新 + 其他各 3 条，limit=20 → 三个都有露出）+ overlap privacy（private child docs 不通过 parent 泄出）
-- [ ] AC-H6: RecentBrowsePanel UI → N/A（证据：它只消费 `/api/library/tool-usage-metrics` 聚合数据，不渲染 list_recent item payload）
+### Phase H（Collection-Aware Recent Selection — Design Gate 2026-05-19 通过）✅
+- [x] AC-H1: Collection overlap cleanup — 同一文件只归属最具体的 collection；parent scanner 动态排除子 collection root；rebuild 清理历史残留行；测试证明 private child docs 不通过 parent 的 `list_recent` 泄出
+- [x] AC-H2: Guaranteed Minimum selection — eligible collection（通过 visibility filter + 有结果）保底 ≥1 条；eligible > limit 时按最新 item 排序取前 limit 个各 1 条；best-of-rest 去重（同 anchor 不重复）；最终 items 保持全局 updatedAt 排序兼容 F200
+- [x] AC-H3: 返回 `groups: SelectionGroup[]`（`type: 'collection'`，v1 只实现 collection）
+- [x] AC-H4: MCP text footer 显示 collection 分布
+- [x] AC-H5: Regression fixture — cross-collection burst（3 collections，1 个 50 条新 + 其他各 3 条，limit=20 → 三个都有露出）+ overlap privacy（private child docs 不通过 parent 泄出）
+- [x] AC-H6: RecentBrowsePanel UI → N/A（证据：它只消费 `/api/library/tool-usage-metrics` 聚合数据，不渲染 list_recent item payload）
 
 ### Phase I（Collection Lifecycle Management）✅
 - [x] AC-I1: Collection lifecycle 状态机实现：`registered → indexing → active → stale → blocked → archived`，manifest 持久化状态字段，状态流转有 guard（如 `archived` 不能直接 → `active`，需先 → `registered` 再 rebuild）
@@ -332,6 +367,9 @@ Why: Phase F 不创建新 store/queue/router/adapter cell — graph_resolve 复�
 | 空状态跨域扩搜引导 | 做不好都是噪音（team experience） | Health Dashboard 证明存在 repeated search miss 后再考虑，且只能 title-only / ≤3 条 |
 | 完整 Durable Job Ledger | Phase A 的最小状态表足够 | memory jobs 类型 ≥3（reindex / graph extraction / health report / replay）且最小状态表不够支撑 retry / queue / parent-child 时 |
 | GBrain compiled wiki / dream cycle 自动写回 | 永久 non-goal | 我们只做 derived read-model，不让它写回真相源。除非team lead明确推翻治理约束 |
+| F200 consumption 自动等同 truth verification | F200 明确只评估 navigation utility，不评估文档真伪/authority | 如需让 usage signal 参与 verification，必须先在 F188/F200 之间定义人工/猫审确认边界 |
+| team lead逐篇验证 unverified docs | 724 次点击不是可用 workflow，且违背 Phase E dogfood 结论 | 仅当猫猫批处理后剩下少量高风险/事实争议项，才上升给team lead |
+| 无 dry-run 直接批量改 runtime evidence DB | edge/authority migration 都可能影响 recall/graph 结果，必须可解释可回滚 | 只允许在 dry-run report + 备份/副本验证后 apply |
 
 ## Dependencies
 
@@ -361,6 +399,8 @@ Why: Phase F 不创建新 store/queue/router/adapter cell — graph_resolve 复�
 | KD-8 | **MCP visibility 边界服务端派生**：`callerCollections` / `allowedCollections` 等决定 private/restricted 可见性的 ACL 字段**必须由服务端从 agent identity / session 派生**，**禁止**作为 MCP 输入参数；client-supplied `collections` 仅作请求范围 filter，不能扩展可见性；任何 MCP wrapper 暴露 ACL 类参数 = privilege escalation = 直接 reject PR | Maine Coon 二次 review P1-1：把 `callerCollections` 写进 MCP schema = 让模型自授权 private collection visibility；GraphResolver/GraphQueryResolver 都把它当"调用方可见集合"，server-side option 不能下放到 client | 2026-05-10 |
 | KD-9 | Phase F 实现 **1 个 PR 一次合入**（不拆碎）：AC-F1~F11 + event log + harness 同步 + skill + Dashboard 全做完；baseline 采集用 4.6 review #2 (b) 单方案——event log 上线即开始采，AC-F8 的 30% 改善阈值标 **provisional**，PR merge 后首次 eval 用真实数据校准（不要 pre-launch baseline 窗口） | team lead push back（2026-05-10）：「拆碎 PR 导致原本一天的事五天才搞完」；重读 4.6 review #2 原文 (a)/(b) 是两选一不是组合，(b) 单选已够解 baseline 循环；KD-6「能力+harness 同 PR」也天然兼容 | 2026-05-10 |
 | KD-10 | Phase E 手动 Pin 关闭，Replay/feedback 闭环归 F200 | team lead指出“team lead逐条 pin 不现实，猫猫干活时也没动机 pin”；Maine Coon + 47 独立读 F200 后确认：F200 的 RecallEvent / consumption / trajectory / outputVerified pipeline 已覆盖 F188 E 的真实目标。F188 只保留 library navigation / collection 管护职责 | 2026-05-19 |
+| KD-11 | F188 reopen Phase J：Health Dashboard 指标必须走向治理闭环 | PR #1790 让 health issue count 主动可见后，team lead dogfood 看到 `201 orphanEdges` / `724 unverified` 并追问可信度与治理。结论：Phase B badge 完成 awareness，但 F188 还需要把可信诊断变成 dry-run / repair / cat-owned review workflow | 2026-05-20 |
+| KD-12 | F200 consumption 不是 truth verification | F200 明确评价 navigation utility，不评价文档真伪或 authority。消费记录可作为 usage prior / review candidate，不能直接写 `verified_at`、不能清空 unverified、不能提升 authority | 2026-05-20 |
 
 ## Review Gate
 
@@ -369,3 +409,4 @@ Why: Phase F 不创建新 store/queue/router/adapter cell — graph_resolve 复�
 - Graph Query Resolution follow-up: spec 先经 46 review；实现前必须确认 query → candidate → graph 的 UX，不准只做 silent search fallback
 - Phase F: spec 先经Maine Coon Design Gate（重点 review eval 设计 + harness 配套清单是否齐全 + P1/P2 trigger 阈值是否可观测）；实现 PR 必须跨猫 review；close 必须通过 cold-start eval（NDCG@10 不退化 + turns-to-baton 改善 ≥30%）
 - Phase I: merged in PR #1774；Maine Coon local review + cloud review closed P1/P2，涉及 UX（AC-I5 MemoryHub UI）已纳入 merge evidence
+- Phase J: implementation 前必须先过 Design Gate（重点：verification semantics、F200 边界、orphan edge migration safety）；任何 runtime DB migration 必须 dry-run + 备份/副本验证；实现 PR 需Maine Coon review + cloud review，dogfood acceptance report 是 close gate 输入
