@@ -29,6 +29,7 @@ import {
   hasSensitiveEditableVars,
   isEditableEnvVarName,
 } from '../config/env-registry.js';
+import { resolveAuditLogsDir, resolveCliRawArchiveDir } from '../config/data-dirs.js';
 import { updateRuntimeCoCreator } from '../config/runtime-cat-catalog.js';
 import { isValidTimeZone } from '../config/time-zone.js';
 import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
@@ -266,7 +267,6 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
   });
 
   app.get('/api/config/env-summary', async () => {
-    const apiCwd = process.cwd();
     const home = os.homedir();
     return {
       categories: ENV_CATEGORIES,
@@ -275,7 +275,7 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
         projectRoot,
         homeDir: home,
         dataDirs: {
-          auditLogs: resolve(apiCwd, process.env.AUDIT_LOG_DIR ?? './data/audit-logs'),
+          auditLogs: resolveAuditLogsDir(),
           // F212 Phase F (cloud codex R3 P2 on 3083d7c5f + R4 P2-#2 on fc69597675): use
           // the path the pino destination CAPTURED at logger import. Reading process.env.
           // LOG_DIR directly would let runtime `PATCH /api/config/env` edits change what
@@ -283,9 +283,9 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
           // AC-F5 hint would then point users to a directory that has no current logs.
           // Single source of truth = LOG_DIR_PATH.
           runtimeLogs: LOG_DIR_PATH,
-          cliArchive: resolve(apiCwd, process.env.CLI_RAW_ARCHIVE_DIR ?? './data/cli-raw-archive'),
+          cliArchive: resolveCliRawArchiveDir(),
           redisDevSandbox: resolve(home, '.cat-cafe/redis-dev-sandbox'),
-          uploads: getDefaultUploadDir(process.env.UPLOAD_DIR),
+          uploads: getDefaultUploadDir(),
         },
       },
     };

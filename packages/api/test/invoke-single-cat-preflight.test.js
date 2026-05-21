@@ -76,7 +76,7 @@ describe('invokeSingleCat shared-state preflight', () => {
     delete process.env.CAT_CAFE_DISABLE_SHARED_STATE_PREFLIGHT;
     const auditDir = mkdtempSync(join(tmpdir(), 'cat-audit-'));
     tempDirs.push(auditDir);
-    process.env.AUDIT_LOG_DIR = auditDir;
+    process.env.DATA_DIR = auditDir;
     const mod = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
     invokeSingleCat = mod.invokeSingleCat;
   });

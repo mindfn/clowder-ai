@@ -30,7 +30,7 @@ let SessionChainStore;
 describe('F118 D1: failure count inheritance across cli_session_replaced', () => {
   before(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'cat-breaker-inherit-'));
-    process.env.AUDIT_LOG_DIR = tempDir;
+    process.env.DATA_DIR = tempDir;
     const mod = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
     invokeSingleCat = mod.invokeSingleCat;
     const storeMod = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');

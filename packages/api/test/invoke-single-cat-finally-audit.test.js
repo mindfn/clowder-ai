@@ -19,7 +19,7 @@ let invokeSingleCat;
 describe('F118 finally block audit fallback (AC-C5)', () => {
   before(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'cat-finally-'));
-    process.env.AUDIT_LOG_DIR = tempDir;
+    process.env.DATA_DIR = tempDir;
     const mod = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
     invokeSingleCat = mod.invokeSingleCat;
   });

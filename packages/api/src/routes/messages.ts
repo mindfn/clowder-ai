@@ -270,7 +270,7 @@ export function shouldMarkDecisionNotification(content: string): boolean {
 }
 
 export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (app, opts) => {
-  const uploadDir = getDefaultUploadDir(opts.uploadDir ?? process.env.UPLOAD_DIR);
+  const uploadDir = getDefaultUploadDir(opts.uploadDir);
 
   // Register multipart parser for image uploads
   await app.register(multipart, {

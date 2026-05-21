@@ -264,14 +264,17 @@ describe('POST /api/preview/auto-open', () => {
 describe('POST /api/preview/screenshot', () => {
   let app3;
   /** @type {string | undefined} */
-  let previousUploadDir;
+  let previousDataDir;
+  /** @type {string} */
+  let dataRoot;
   /** @type {string} */
   let customUploadDir;
 
   before(async () => {
-    customUploadDir = await mkdtemp(join(tmpdir(), 'preview-screenshot-upload-'));
-    previousUploadDir = process.env.UPLOAD_DIR;
-    process.env.UPLOAD_DIR = customUploadDir;
+    dataRoot = await mkdtemp(join(tmpdir(), 'preview-screenshot-upload-'));
+    customUploadDir = join(dataRoot, 'uploads');
+    previousDataDir = process.env.DATA_DIR;
+    process.env.DATA_DIR = dataRoot;
     app3 = Fastify();
     await app3.register(previewRoutes, {
       portDiscovery: new PortDiscoveryService(),
@@ -282,9 +285,9 @@ describe('POST /api/preview/screenshot', () => {
 
   after(async () => {
     await app3.close();
-    if (previousUploadDir === undefined) delete process.env.UPLOAD_DIR;
-    else process.env.UPLOAD_DIR = previousUploadDir;
-    await rm(customUploadDir, { recursive: true, force: true });
+    if (previousDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = previousDataDir;
+    await rm(dataRoot, { recursive: true, force: true });
   });
 
   it('accepts a data URL and returns upload path', async () => {

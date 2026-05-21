@@ -16,6 +16,7 @@ import { type CatId, type ConnectorSource, catRegistry } from '@cat-cafe/shared'
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import * as lark from '@larksuiteoapi/node-sdk';
 import type { FastifyBaseLogger } from 'fastify';
+import { resolveConnectorMediaDir, resolveTtsCacheDir } from '../../config/data-dirs.js';
 import { isCatAvailable } from '../../config/cat-config-loader.js';
 import type { ConnectorWebhookHandler, WebhookHandleResult } from '../../routes/connector-webhooks.js';
 import { getDefaultUploadDir } from '../../utils/upload-paths.js';
@@ -259,7 +260,7 @@ export function loadConnectorGatewayConfig(): ConnectorGatewayConfig {
     wecomEncodingAesKey: process.env.WECOM_ENCODING_AES_KEY,
     coCreatorUserId: process.env.DEFAULT_OWNER_USER_ID,
     whisperUrl: process.env.WHISPER_URL,
-    connectorMediaDir: process.env.CONNECTOR_MEDIA_DIR,
+    connectorMediaDir: resolveConnectorMediaDir(),
     xiaoyiAk: process.env.XIAOYI_AK,
     xiaoyiSk: process.env.XIAOYI_SK,
     xiaoyiAgentId: process.env.XIAOYI_AGENT_ID,
@@ -962,8 +963,8 @@ export async function startConnectorGateway(
   stopFns.push(async () => weixin.stopPolling());
 
   // R3-P1: Resolve route URLs to local file paths for real media delivery
-  const uploadDir = getDefaultUploadDir(process.env.UPLOAD_DIR);
-  const ttsCacheDir = resolve(process.env.TTS_CACHE_DIR ?? './data/tts-cache');
+  const uploadDir = getDefaultUploadDir();
+  const ttsCacheDir = resolveTtsCacheDir();
   const resolvedMediaDir = resolve(mediaDir);
   const webPublicDir = resolve(process.env.WEB_PUBLIC_DIR ?? '../web/public');
   const mediaPathResolver = (url: string): string | undefined => {

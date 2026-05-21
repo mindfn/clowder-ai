@@ -25,7 +25,7 @@ let invokeSingleCat;
 describe('anthropic protocol model override from account.models', () => {
   before(async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'anthro-model-audit-'));
-    process.env.AUDIT_LOG_DIR = tempDir;
+    process.env.DATA_DIR = tempDir;
     const mod = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
     invokeSingleCat = mod.invokeSingleCat;
   });

@@ -230,6 +230,13 @@ import { previewRoutes } from './routes/preview.js';
 import { terminalRoutes } from './routes/terminal.js';
 import { threadExportRoutes } from './routes/thread-export.js';
 import { ApiInstanceLease, type ApiInstanceLeaseInvalidation } from './services/ApiInstanceLease.js';
+import {
+  resolveConnectorMediaDir,
+  resolveEvidenceDbPath,
+  resolveTranscriptsDir,
+  resolveTtsCacheDir,
+  resolveWorldDbPath,
+} from './config/data-dirs.js';
 import { findMonorepoRoot } from './utils/monorepo-root.js';
 import { resolveUserId } from './utils/request-identity.js';
 import { getDefaultUploadDir } from './utils/upload-paths.js';
@@ -544,8 +551,8 @@ async function main(): Promise<void> {
   const sessionChainStore = createSessionChainStore(redis);
   const runtimeSessionStore = createRuntimeSessionStore(redis);
   // F24: Transcript Writer/Reader for session chain
-  // E7 fix: resolve relative to monorepo root, not CWD (same fix as docsRoot in PR #524)
-  const transcriptDataDir = process.env.TRANSCRIPT_DATA_DIR ?? `${findMonorepoRoot(process.cwd())}/data/transcripts`;
+  // #671: DATA_DIR/transcripts when set; otherwise monorepo-relative legacy default.
+  const transcriptDataDir = resolveTranscriptsDir(findMonorepoRoot(process.cwd()));
   const transcriptWriter = new TranscriptWriter({ dataDir: transcriptDataDir });
   const transcriptReader = new TranscriptReader({ dataDir: transcriptDataDir });
   // F065 Phase C: HandoffConfig for LLM-generated digest on seal
@@ -622,7 +629,7 @@ async function main(): Promise<void> {
   );
   const memoryServices = await createMemoryServices({
     type: 'sqlite',
-    sqlitePath: process.env.EVIDENCE_DB ?? resolve(repoRoot, 'evidence.sqlite'),
+    sqlitePath: resolveEvidenceDbPath(repoRoot),
     docsRoot: process.env.DOCS_ROOT ?? resolve(repoRoot, 'docs'),
     markersDir: resolve(repoRoot, 'docs', 'markers'),
     transcriptDataDir, // reuse the same resolved path as Writer/Reader (line 282)
@@ -1319,7 +1326,7 @@ async function main(): Promise<void> {
   const { WorldRuntimeCoordinator } = await import('./domains/world/WorldRuntimeCoordinator.js');
   const { WorldContextProvider } = await import('./domains/world/WorldContextProvider.js');
   const { WorldKnowledgeAdapter } = await import('./domains/world/WorldKnowledgeAdapter.js');
-  const worldDbPath = process.env.WORLD_DB ?? resolve(repoRoot, 'world.sqlite');
+  const worldDbPath = resolveWorldDbPath(repoRoot);
   const worldStore = new SqliteWorldStore(worldDbPath);
   await worldStore.initialize();
   const worldCoordinator = new WorldRuntimeCoordinator(worldStore);
@@ -2546,12 +2553,12 @@ async function main(): Promise<void> {
   });
 
   // Serve uploaded files (images)
-  const uploadDir = getDefaultUploadDir(process.env.UPLOAD_DIR);
+  const uploadDir = getDefaultUploadDir();
   await app.register(uploadsRoutes, { uploadDir });
   await app.register(refAudioUploadRoutes);
 
   // F088: Serve downloaded connector media files
-  const connectorMediaDir = process.env.CONNECTOR_MEDIA_DIR ?? './data/connector-media';
+  const connectorMediaDir = resolveConnectorMediaDir();
   await app.register(connectorMediaRoutes, { mediaDir: connectorMediaDir });
 
   // F34: TTS Provider (mlx-audio → Python TTS server)
@@ -2562,7 +2569,7 @@ async function main(): Promise<void> {
   // because resolveServiceEndpoint reads endpointEnvVars first.
   const ttsRegistry = new TtsRegistry();
   ttsRegistry.register(new MlxAudioTtsProvider());
-  const ttsCacheDir = process.env.TTS_CACHE_DIR ?? './data/tts-cache';
+  const ttsCacheDir = resolveTtsCacheDir();
   await app.register(ttsRoutes, { ttsRegistry, cacheDir: ttsCacheDir });
   initVoiceBlockSynthesizer(ttsRegistry, ttsCacheDir);
   initStreamingTtsRegistry(ttsRegistry);

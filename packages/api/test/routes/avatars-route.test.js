@@ -39,14 +39,17 @@ describe('POST /api/uploads/avatar', () => {
   /** @type {import('fastify').FastifyInstance} */
   let app;
   /** @type {string} */
+  let dataRoot;
+  /** @type {string} */
   let uploadDir;
   /** @type {string | undefined} */
-  let prevUploadDir;
+  let prevDataDir;
 
   before(async () => {
-    uploadDir = await mkdtemp(join(tmpdir(), 'avatars-route-'));
-    prevUploadDir = process.env.UPLOAD_DIR;
-    process.env.UPLOAD_DIR = uploadDir;
+    dataRoot = await mkdtemp(join(tmpdir(), 'avatars-route-'));
+    uploadDir = join(dataRoot, 'uploads');
+    prevDataDir = process.env.DATA_DIR;
+    process.env.DATA_DIR = dataRoot;
     app = Fastify();
     await app.register(avatarsRoutes);
     await app.ready();
@@ -54,9 +57,9 @@ describe('POST /api/uploads/avatar', () => {
 
   after(async () => {
     await app.close();
-    if (prevUploadDir === undefined) delete process.env.UPLOAD_DIR;
-    else process.env.UPLOAD_DIR = prevUploadDir;
-    await rm(uploadDir, { recursive: true, force: true });
+    if (prevDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = prevDataDir;
+    await rm(dataRoot, { recursive: true, force: true });
   });
 
   it('accepts a 7 MiB PNG and persists it to UPLOAD_DIR', async () => {

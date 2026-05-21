@@ -6,20 +6,22 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 
 describe('publishGeneratedImage', () => {
   let sourceDir;
+  let dataRoot;
   let uploadDir;
-  let previousUploadDir;
+  let previousDataDir;
 
   beforeEach(async () => {
     sourceDir = await mkdtemp(join(tmpdir(), 'cat-cafe-generated-image-source-'));
-    uploadDir = await mkdtemp(join(tmpdir(), 'cat-cafe-generated-image-upload-'));
-    previousUploadDir = process.env.UPLOAD_DIR;
+    dataRoot = await mkdtemp(join(tmpdir(), 'cat-cafe-generated-image-data-'));
+    uploadDir = join(dataRoot, 'uploads');
+    previousDataDir = process.env.DATA_DIR;
   });
 
   afterEach(async () => {
     if (sourceDir) await rm(sourceDir, { recursive: true, force: true });
-    if (uploadDir) await rm(uploadDir, { recursive: true, force: true });
-    if (previousUploadDir === undefined) delete process.env.UPLOAD_DIR;
-    else process.env.UPLOAD_DIR = previousUploadDir;
+    if (dataRoot) await rm(dataRoot, { recursive: true, force: true });
+    if (previousDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = previousDataDir;
   });
 
   it('publishes a generated image as a canonical /uploads artifact with media_gallery block', async () => {
@@ -169,12 +171,12 @@ describe('publishGeneratedImage', () => {
     assert.equal((await readdir(uploadDir)).length, 2);
   });
 
-  it('uses UPLOAD_DIR when uploadDir override is omitted', async () => {
+  it('uses DATA_DIR/uploads when uploadDir override is omitted', async () => {
     const { publishGeneratedImage } = await import(
       '../dist/domains/cats/services/agents/providers/generated-image-publication.js'
     );
 
-    process.env.UPLOAD_DIR = uploadDir;
+    process.env.DATA_DIR = dataRoot;
 
     const sourcePath = join(sourceDir, 'cat.png');
     await writeFile(sourcePath, Buffer.from('fake-png'));
