@@ -560,3 +560,19 @@ services:
         description: 'transformers 后端 (CPU)：HuggingFace 上的因果语言模型。纯 CPU 建议 ≤3B'
         links:
           - { label: 'HF text-generation 模型', url: 'https://huggingface.co/models?pipeline_tag=text-generation&sort=likes' }
+
+  # F195 会议音频采集。无 ML 模型概念（仅录音 + HTTP API），跨平台都用
+  # sounddevice (PortAudio binding，三大平台都有 prebuilt wheel)。
+  audio-capture:
+    - match: { os: darwin }
+      models: []
+      notes:
+        - macOS：首次启动需在 系统设置 → 隐私 → 麦克风 授权
+    - match: { os: linux }
+      models: []
+      notes:
+        - Linux：可能需安装 portaudio 系统包 (apt install portaudio19-dev / dnf install portaudio-devel)
+    - match: { os: win32 }
+      models: []
+      notes:
+        - Windows：sounddevice 走 WASAPI / DirectSound，无需额外配置

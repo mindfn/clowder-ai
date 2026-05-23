@@ -311,12 +311,7 @@ export async function registerServiceLifecycleRoutes(
         // model-only injection — buildLifecycleEnv handles model + port +
         // strict validation in one call.)
         const cfg = getServiceConfig(service.id);
-        const startEnvResult = buildLifecycleEnv(
-          options.env ?? process.env,
-          service.id,
-          cfg?.selectedModel,
-          cfg?.port,
-        );
+        const startEnvResult = buildLifecycleEnv(options.env ?? process.env, service.id, cfg?.selectedModel, cfg?.port);
         if (!startEnvResult.ok) {
           reply.status(500);
           await audit({

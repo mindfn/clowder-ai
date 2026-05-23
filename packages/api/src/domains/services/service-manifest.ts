@@ -90,6 +90,7 @@ export const PORT_ENV_VARS: Record<string, string> = {
   'mlx-tts': 'TTS_PORT',
   'embedding-model': 'EMBED_PORT',
   'llm-postprocess': 'LLM_POSTPROCESS_PORT',
+  'audio-capture': 'AUDIO_SERVICE_PORT',
 };
 
 type ServiceModel = NonNullable<NonNullable<ServiceManifest['prerequisites']>['models']>[number];
@@ -227,13 +228,27 @@ export const SERVICE_MANIFESTS: readonly ServiceManifest[] = [
     name: 'Audio Capture',
     description: 'Meeting audio capture and transcript endpoint',
     category: 'audio',
-    type: 'node',
+    type: 'python',
     port: 9881,
     features: ['meeting-copilot', 'live-transcript'],
     envVars: ['AUDIO_SERVICE_URL'],
     endpointEnvVars: ['AUDIO_SERVICE_URL'],
     defaultEndpoint: 'http://127.0.0.1:9881',
     healthPath: '/status',
+    prerequisites: {
+      runtime: 'python3.10+',
+      venvPath: '~/.cat-cafe/audio-capture-venv',
+      packages: ['sounddevice', 'fastapi', 'uvicorn', 'numpy'],
+      // No models — audio-capture has no ML inference. Modal still shows
+      // install button (allModels.length === 0 short-circuits canConfirm).
+      models: [],
+      estimatedMinutes: 2,
+    },
+    scripts: {
+      install: 'scripts/services/audio-capture-install.sh',
+      start: 'scripts/services/audio-capture-server.sh',
+      uninstall: 'scripts/services/audio-capture-uninstall.sh',
+    },
   },
 ];
 
