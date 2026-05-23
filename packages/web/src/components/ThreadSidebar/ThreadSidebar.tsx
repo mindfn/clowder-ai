@@ -756,7 +756,7 @@ export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="搜索对话、项目或 ID..."
-              className="flex-1 min-w-0 rounded-lg bg-[var(--console-hover-bg)] px-2.5 py-1.5 text-xs text-cafe-secondary placeholder:text-cafe-muted focus:outline-none focus:ring-1 focus:ring-[var(--console-input-stroke)]"
+              className="flex-1 min-w-0 rounded-lg bg-[var(--console-card-soft-bg)] px-2.5 py-1.5 text-xs text-cafe-secondary placeholder:text-cafe-muted focus:outline-none focus:ring-1 focus:ring-[var(--console-input-stroke)]"
             />
             {unreadIds.size > 0 && (
               <button
@@ -977,7 +977,7 @@ export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
           <button
             type="button"
             onClick={handleToggleTrash}
-            className="flex w-full items-center gap-2 h-9 px-2.5 rounded-xl bg-[var(--console-hover-bg)] text-xs text-cafe-secondary hover:text-cafe-accent transition-colors"
+            className="flex w-full items-center gap-2 h-9 px-2.5 rounded-xl bg-[var(--console-card-soft-bg)] text-xs text-cafe-secondary hover:text-cafe-accent transition-colors"
             data-testid="trash-bin-toggle"
           >
             <svg

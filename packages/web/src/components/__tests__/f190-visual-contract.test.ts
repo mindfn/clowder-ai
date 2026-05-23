@@ -671,10 +671,10 @@ describe('#723 cross-page typography consistency', () => {
     expect(src).toContain('focus:bg-[var(--console-card-bg)]');
   });
 
-  it('homepage inputs (ThreadSidebar search) use quiet bg, no default border', () => {
+  it('homepage inputs (ThreadSidebar search) use deeper bg token, no default border', () => {
     const src = readSrc('ThreadSidebar/ThreadSidebar.tsx');
     expect(src).not.toMatch(/搜索[\s\S]{0,200}bg-\[var\(--console-field-bg\)\]/);
-    expect(src).toContain('bg-[var(--console-hover-bg)]');
+    expect(src).toContain('bg-[var(--console-card-soft-bg)]');
     expect(src).not.toMatch(/搜索[\s\S]{0,80}border border-/);
   });
 
