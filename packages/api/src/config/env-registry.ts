@@ -54,6 +54,8 @@ export interface EnvDefinition {
   hubVisible?: boolean;
   /** If false, value is bootstrap-only and cannot be edited at runtime from Hub */
   runtimeEditable?: boolean;
+  /** If true, changes take effect only after service restart */
+  restartRequired?: boolean;
   /** If true, this var should appear in .env.example (enforced by check:env-example) */
   exampleRecommended?: boolean;
   /** Explicit allowed values for cycle-style toggles (e.g. ['off','shadow','on']) */
