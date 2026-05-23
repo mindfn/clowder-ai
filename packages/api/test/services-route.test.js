@@ -444,8 +444,28 @@ describe('services routes', () => {
     }
   });
 
-  it('scriptless service (audio-capture) treated as installed when enabled', async () => {
-    setServiceConfig('audio-capture', { enabled: true });
+  it('audio-capture (scripted) requires install before treated as installed', async () => {
+    setServiceConfig('audio-capture', { installed: false, enabled: true });
+    const app = await buildApp({
+      env: { AUDIO_SERVICE_URL: 'http://127.0.0.1:19995/healthy' },
+      fetchHealth: async () => ({ ok: true, status: 200, error: null }),
+    });
+    try {
+      const listRes = await app.inject({
+        method: 'GET',
+        url: '/api/services',
+        headers: SESSION_HEADERS,
+      });
+      const audioCap = JSON.parse(listRes.payload).services.find((s) => s.id === 'audio-capture');
+      assert.equal(audioCap.installable, true, 'audio-capture now has install scripts');
+      assert.equal(audioCap.installed, false, 'scripted service not installed until config.installed=true');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('audio-capture treated as installed and probed when both installed and enabled', async () => {
+    setServiceConfig('audio-capture', { installed: true, enabled: true });
     let probed = false;
     const app = await buildApp({
       env: { AUDIO_SERVICE_URL: 'http://127.0.0.1:19995/healthy' },
@@ -462,39 +482,7 @@ describe('services routes', () => {
       });
       assert.equal(res.statusCode, 200, res.payload);
       assert.equal(JSON.parse(res.payload).status, 'healthy');
-      assert.equal(probed, true, 'should probe health for scriptless enabled service');
-
-      const listRes = await app.inject({
-        method: 'GET',
-        url: '/api/services',
-        headers: SESSION_HEADERS,
-      });
-      const audioCap = JSON.parse(listRes.payload).services.find((s) => s.id === 'audio-capture');
-      assert.equal(audioCap.installed, true, 'scriptless services treated as installed');
-      assert.equal(audioCap.installable, false, 'audio-capture has no install scripts');
-    } finally {
-      await app.close();
-    }
-  });
-
-  it('scriptless service probed when endpoint configured even if enabled=false', async () => {
-    setServiceConfig('audio-capture', { enabled: false });
-    let probed = false;
-    const app = await buildApp({
-      env: { AUDIO_SERVICE_URL: 'http://127.0.0.1:19995/healthy' },
-      fetchHealth: async () => {
-        probed = true;
-        return { ok: true, status: 200, error: null };
-      },
-    });
-    try {
-      const res = await app.inject({
-        method: 'GET',
-        url: '/api/services/audio-capture/health',
-        headers: SESSION_HEADERS,
-      });
-      assert.equal(res.statusCode, 200, res.payload);
-      assert.equal(probed, true, 'scriptless service should be probed regardless of enabled flag');
+      assert.equal(probed, true, 'should probe health for installed+enabled service');
     } finally {
       await app.close();
     }

@@ -21,9 +21,12 @@ function makeProfile(overrides = {}) {
 }
 
 describe('recommendation matrix — service coverage', () => {
-  test('matrix covers all 4 core services', () => {
+  test('matrix covers all 5 core services', () => {
     const ids = getMatrixServiceIds();
-    assert.deepEqual(ids.sort(), ['whisper-stt', 'mlx-tts', 'embedding-model', 'llm-postprocess'].sort());
+    assert.deepEqual(
+      ids.sort(),
+      ['whisper-stt', 'mlx-tts', 'embedding-model', 'llm-postprocess', 'audio-capture'].sort(),
+    );
   });
 });
 
