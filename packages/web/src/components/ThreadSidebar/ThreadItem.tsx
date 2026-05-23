@@ -161,10 +161,6 @@ export function ThreadItem({
           {id !== 'default' && onUpdatePreferredCats && !isEditing && (
             <ThreadCatSettings threadId={id} currentCats={preferredCats ?? []} onSave={onUpdatePreferredCats} />
           )}
-          {/* Label picker button */}
-          {id !== 'default' && onUpdateLabels && !isEditing && (
-            <ThreadLabelPicker threadId={id} currentLabels={threadLabels ?? []} onSave={onUpdateLabels} />
-          )}
           {/* Rename button */}
           {canRename && !isEditing && (
             <button
@@ -222,6 +218,10 @@ export function ThreadItem({
                 />
               </svg>
             </button>
+          )}
+          {/* Label picker — stateful, stays visible when labels assigned */}
+          {id !== 'default' && onUpdateLabels && !isEditing && (
+            <ThreadLabelPicker threadId={id} currentLabels={threadLabels ?? []} onSave={onUpdateLabels} />
           )}
           {/* Pin button — stateful, stays visible when active */}
           {canPin && !isEditing && (
