@@ -101,7 +101,7 @@ export function ChatInputActionButton({
         </div>
       )}
 
-      {/* Stop button: visible alongside queue send during active invocation (not when disabled — primary stop covers it) */}
+      {/* Stop button: hidden alongside queue send until hover or focus (primary stop covers disabled state) */}
       {hasActiveInvocation && !disabled && onStop && (
         <button
           onClick={() => onStop()}
