@@ -25,16 +25,20 @@ async function collect(iterable) {
 
 let tempDir;
 let invokeSingleCat;
+let prevDataDir;
 
 describe('F198-C P2-1: status messages treated as non-substantive', () => {
   before(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'cat-bg-status-'));
-    process.env.AUDIT_LOG_DIR = tempDir;
+    prevDataDir = process.env.DATA_DIR;
+    process.env.DATA_DIR = tempDir;
     const mod = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
     invokeSingleCat = mod.invokeSingleCat;
   });
 
   after(async () => {
+    if (prevDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = prevDataDir;
     await rm(tempDir, { recursive: true, force: true }).catch(() => {});
   });
 

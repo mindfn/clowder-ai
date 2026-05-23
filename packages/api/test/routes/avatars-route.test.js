@@ -62,7 +62,7 @@ describe('POST /api/uploads/avatar', () => {
     await rm(dataRoot, { recursive: true, force: true });
   });
 
-  it('accepts a 7 MiB PNG and persists it to UPLOAD_DIR', async () => {
+  it('accepts a 7 MiB PNG and persists it to DATA_DIR/uploads', async () => {
     const rawBytes = 7 * 1024 * 1024;
     const buffer = makePngBuffer(rawBytes);
     const { payload, contentType } = buildMultipartPayload({

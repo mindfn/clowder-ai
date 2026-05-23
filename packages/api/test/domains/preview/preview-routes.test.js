@@ -315,7 +315,7 @@ describe('POST /api/preview/screenshot', () => {
     assert.equal(res.statusCode, 400);
   });
 
-  it('writes screenshot files to UPLOAD_DIR when customized', async () => {
+  it('writes screenshot files to DATA_DIR/uploads when customized', async () => {
     const dataUrl =
       'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
     const res = await app3.inject({

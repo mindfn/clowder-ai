@@ -8,27 +8,30 @@ import { resolveRefAudioPath } from '../dist/config/cat-voices.js';
 
 describe('resolveRefAudioPath', () => {
   /** @type {string} */
+  let dataRoot;
+  /** @type {string} */
   let uploadDir;
   /** @type {string} */
   let characterDir;
   /** @type {string | undefined} */
-  let prevUploadDir;
+  let prevDataDir;
 
   before(async () => {
-    uploadDir = await mkdtemp(join(tmpdir(), 'cat-cafe-ref-audio-uploads-'));
+    dataRoot = await mkdtemp(join(tmpdir(), 'cat-cafe-ref-audio-data-'));
+    uploadDir = join(dataRoot, 'uploads');
     characterDir = await mkdtemp(join(tmpdir(), 'cat-cafe-character-voices-'));
-    prevUploadDir = process.env.UPLOAD_DIR;
-    process.env.UPLOAD_DIR = uploadDir;
+    prevDataDir = process.env.DATA_DIR;
+    process.env.DATA_DIR = dataRoot;
   });
 
   after(async () => {
-    if (prevUploadDir === undefined) delete process.env.UPLOAD_DIR;
-    else process.env.UPLOAD_DIR = prevUploadDir;
-    await rm(uploadDir, { recursive: true, force: true });
+    if (prevDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = prevDataDir;
+    await rm(dataRoot, { recursive: true, force: true });
     await rm(characterDir, { recursive: true, force: true });
   });
 
-  it('resolves uploaded refAudio URLs inside UPLOAD_DIR', () => {
+  it('resolves uploaded refAudio URLs inside DATA_DIR/uploads', () => {
     assert.equal(resolveRefAudioPath('/uploads/ref-audio-1.wav', characterDir), join(uploadDir, 'ref-audio-1.wav'));
   });
 
@@ -36,11 +39,11 @@ describe('resolveRefAudioPath', () => {
     assert.equal(resolveRefAudioPath('魈/vo_xiao.wav', characterDir), join(characterDir, '魈/vo_xiao.wav'));
   });
 
-  it('rejects uploaded refAudio traversal outside UPLOAD_DIR', () => {
+  it('rejects uploaded refAudio traversal outside DATA_DIR/uploads', () => {
     assert.equal(resolveRefAudioPath('/uploads/../secret.wav', characterDir), join(uploadDir, 'invalid-ref'));
   });
 
-  it('rejects nested uploaded refAudio traversal even when normalized path stays inside UPLOAD_DIR', () => {
+  it('rejects nested uploaded refAudio traversal even when normalized path stays inside DATA_DIR/uploads', () => {
     assert.equal(resolveRefAudioPath('/uploads/sub/../secret.wav', characterDir), join(uploadDir, 'invalid-ref'));
   });
 

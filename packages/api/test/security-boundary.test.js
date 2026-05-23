@@ -131,7 +131,7 @@ test('API binds to 127.0.0.1 by default', async (t) => {
     PREVIEW_GATEWAY_ENABLED: '0',
     PREVIEW_GATEWAY_PORT: '0',
     DOCS_ROOT: tempRoot,
-    EVIDENCE_DB: path.join(tempRoot, 'evidence.sqlite'),
+    DATA_DIR: tempRoot,
   };
   delete childEnv.API_SERVER_HOST;
   delete childEnv.REDIS_URL;

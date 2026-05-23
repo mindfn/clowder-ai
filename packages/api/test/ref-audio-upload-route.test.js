@@ -56,16 +56,19 @@ describe('POST /api/uploads/ref-audio', () => {
   /** @type {import('fastify').FastifyInstance} */
   let app;
   /** @type {string} */
+  let dataRoot;
+  /** @type {string} */
   let uploadDir;
   /** @type {string | undefined} */
-  let prevUploadDir;
+  let prevDataDir;
   let trackedFileReads = 0;
   let trackedBufferDrains = 0;
 
   before(async () => {
-    uploadDir = await mkdtemp(join(tmpdir(), 'ref-audio-route-'));
-    prevUploadDir = process.env.UPLOAD_DIR;
-    process.env.UPLOAD_DIR = uploadDir;
+    dataRoot = await mkdtemp(join(tmpdir(), 'ref-audio-route-'));
+    uploadDir = join(dataRoot, 'uploads');
+    prevDataDir = process.env.DATA_DIR;
+    process.env.DATA_DIR = dataRoot;
     app = Fastify();
     app.addHook('preHandler', async (request) => {
       const sessionUser = request.headers['x-test-session-user'];
@@ -93,9 +96,9 @@ describe('POST /api/uploads/ref-audio', () => {
 
   after(async () => {
     await app.close();
-    if (prevUploadDir === undefined) delete process.env.UPLOAD_DIR;
-    else process.env.UPLOAD_DIR = prevUploadDir;
-    await rm(uploadDir, { recursive: true, force: true });
+    if (prevDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = prevDataDir;
+    await rm(dataRoot, { recursive: true, force: true });
   });
 
   it('rejects trusted Origin fallback without a real session', async () => {
@@ -146,7 +149,7 @@ describe('POST /api/uploads/ref-audio', () => {
     assert.deepEqual(await readdir(uploadDir), filesBefore);
   });
 
-  it('accepts a sniffed WAV reference audio file and persists it under UPLOAD_DIR', async () => {
+  it('accepts a sniffed WAV reference audio file and persists it under DATA_DIR/uploads', async () => {
     const { payload, contentType } = buildMultipartPayload({
       buffer: makeWavBuffer(),
       filename: '../voice.wav',
