@@ -26,7 +26,7 @@ import { type PlaybackState, useVoiceSessionStore } from '@/stores/voiceSessionS
  *  permitted by the browser.
  *
  *  Returns true if the play() promise resolved, false otherwise. */
-function unlockAutoplay(): boolean {
+export function unlockAutoplay(): boolean {
   try {
     // Minimal valid WAV: 44-byte header + 1 sample of silence
     // prettier-ignore

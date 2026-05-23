@@ -421,6 +421,24 @@ describe('F190 visual contract — no hard borders in card/panel components', ()
     const src = readSrc('ThreadSidebar/ThreadSidebar.tsx');
     expect(src).not.toMatch(/<aside[^>]*console-divider-r/);
   });
+
+  it('Chat page uses settings-style three-zone colors without a static left separator line', () => {
+    const appShell = readSrc('AppShell.tsx');
+    const threadSidebar = readSrc('ThreadSidebar/ThreadSidebar.tsx');
+
+    expect(threadSidebar).toContain('bg-[var(--console-panel-bg)]');
+    expect(appShell).toContain('label="左侧对话栏"');
+    expect(appShell).toContain('showLine={false}');
+  });
+
+  it('Chat voice entries stay beside the export action in the conversation header', () => {
+    const header = readSrc('ChatContainerHeader.tsx');
+    const input = readSrc('ChatInput.tsx');
+
+    expect(header).toContain('<ExportButton threadId={threadId} />');
+    expect(header).toContain('<ChatVoiceFeatureControls threadId={threadId} defaultCatId={defaultCatId} />');
+    expect(input).not.toContain('ChatVoiceFeatureControls');
+  });
 });
 
 describe('F190 typography guard — no hardcoded font sizes in console scope', () => {
@@ -730,10 +748,10 @@ describe('#723 interactive button guard — no grey pill on action/toggle contro
     expect(src).toContain('bg-transparent');
   });
 
-  it('ChatContainerHeader: LiveAudioToggle inactive has no console-pill-bg', () => {
-    const src = readSrc('ChatContainerHeader.tsx');
+  it('ChatVoiceFeatureControls: inactive voice entries have no console-pill-bg', () => {
+    const src = readSrc('ChatVoiceFeatureControls.tsx');
     expect(src).not.toContain('console-pill-bg');
-    expect(src).toContain('bg-transparent');
+    expect(src).toContain('text-cafe-secondary');
   });
 
   it('ChatContainerHeader: RightPanelToggle text color in conditional branches, no cascade conflict', () => {

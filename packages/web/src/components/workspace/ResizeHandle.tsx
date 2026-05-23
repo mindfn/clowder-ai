@@ -15,6 +15,7 @@ interface ResizeHandleProps {
   onCollapse?: () => void;
   onDoubleClick?: () => void;
   label?: string;
+  showLine?: boolean;
 }
 
 const COLLAPSE_KEYS = new Set(['Enter', ' ']);
@@ -23,7 +24,14 @@ const KEYBOARD_DELTAS: Record<ResizeHandleProps['direction'], Record<string, num
   vertical: { ArrowUp: -16, ArrowDown: 16 },
 };
 
-export function ResizeHandle({ direction, onResize, onCollapse, onDoubleClick, label = '面板' }: ResizeHandleProps) {
+export function ResizeHandle({
+  direction,
+  onResize,
+  onCollapse,
+  onDoubleClick,
+  label = '面板',
+  showLine = true,
+}: ResizeHandleProps) {
   const [dragging, setDragging] = useState(false);
   const startPos = useRef(0);
   const movedDuringDrag = useRef(false);
@@ -129,7 +137,9 @@ export function ResizeHandle({ direction, onResize, onCollapse, onDoubleClick, l
       <div
         className={`absolute ${
           isH ? 'inset-y-0 left-1/2 -translate-x-1/2 w-px' : 'inset-x-0 top-1/2 -translate-y-1/2 h-px'
-        } bg-[var(--console-border-soft)] group-hover:bg-cafe-accent/60 transition-colors ${dragging ? 'bg-cafe-accent/60' : ''}`}
+        } ${
+          showLine ? 'bg-[var(--console-border-soft)]' : 'bg-transparent'
+        } group-hover:bg-cafe-accent/60 transition-colors ${dragging ? 'bg-cafe-accent/60' : ''}`}
       />
     </div>
   );
