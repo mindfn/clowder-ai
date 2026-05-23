@@ -11,7 +11,7 @@ import {
   type ServiceLifecycleAction,
   type ServiceLifecycleRunner,
 } from '../domains/services/service-lifecycle.js';
-import { getServiceManifest, MODEL_ENV_VARS } from '../domains/services/service-manifest.js';
+import { getServiceManifest, MODEL_ENV_VARS, type ServiceConfig } from '../domains/services/service-manifest.js';
 import {
   registerServiceLifecycleAuditRoutes,
   SERVICE_LIFECYCLE_AUDIT_TYPE,
@@ -36,13 +36,10 @@ export interface ServiceLifecycleRouteOptions {
   findPidsByPort?: (port: number) => Promise<number[]>;
   readProcessCommand?: (pid: number) => Promise<string | null>;
   killPid?: (pid: number, signal: NodeJS.Signals) => void;
-  serviceConfig?: {
-    get(id: string): { enabled: boolean; selectedModel?: string; port?: number };
-    set(
-      id: string,
-      patch: { installed?: boolean; enabled?: boolean; selectedModel?: string; port?: number },
-    ): { installed?: boolean; enabled: boolean; selectedModel?: string; port?: number };
-  };
+  serviceConfig?: Partial<{
+    get(id: string): ServiceConfig | undefined;
+    set(id: string, patch: Partial<ServiceConfig>): ServiceConfig;
+  }>;
   auditLog?: ServiceLifecycleAuditLog;
 }
 
@@ -60,7 +57,10 @@ export async function registerServiceLifecycleRoutes(
   const lookupProcessCommand = options.lifecycle?.readProcessCommand ?? readProcessCommand;
   const terminatePid =
     options.lifecycle?.killPid ?? ((pid: number, signal: NodeJS.Signals) => process.kill(pid, signal));
-  const serviceConfigStore = options.lifecycle?.serviceConfig ?? { get: getServiceConfig, set: setServiceConfig };
+  const serviceConfigStore = {
+    get: options.lifecycle?.serviceConfig?.get ?? getServiceConfig,
+    set: options.lifecycle?.serviceConfig?.set ?? setServiceConfig,
+  };
   const auditLog = options.lifecycle?.auditLog ?? getEventAuditLog();
   const { withLock } = createServiceLifecycleLock();
   const partitionServicePids = createServicePortPartitioner({

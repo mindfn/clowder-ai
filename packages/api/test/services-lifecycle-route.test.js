@@ -428,6 +428,40 @@ describe('service lifecycle write routes', () => {
     }
   });
 
+  it('supports set-only serviceConfig overrides on start', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map();
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        runScript: async () => ({ code: 0, output: 'ok' }),
+        findPidsByPort: async () => [],
+        readProcessCommand: async () => null,
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/start',
+        headers: SESSION_HEADERS,
+      });
+
+      assert.equal(res.statusCode, 200, res.payload);
+      assert.equal(configs.get('whisper-stt').installed, true);
+      assert.equal(configs.get('whisper-stt').enabled, true);
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
   it('persists enabled=false after successful stop', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';
