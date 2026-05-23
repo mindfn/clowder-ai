@@ -116,7 +116,7 @@ describe('ChatVoiceFeatureControls', () => {
     expect(useVoiceSessionStore.getState().session?.activeCatId).toBe('opus');
   });
 
-  it('uses toggle to enable scriptless audio-capture before opening transcript mode', async () => {
+  it('opens transcript mode directly for config-presence audio-capture without calling toggle', async () => {
     apiFetchMock.mockImplementation(async (path: string) => {
       if (path === '/api/services') {
         return jsonResponse({
@@ -131,7 +131,6 @@ describe('ChatVoiceFeatureControls', () => {
           ],
         });
       }
-      if (path === '/api/services/audio-capture/toggle') return jsonResponse({ ok: true });
       return jsonResponse({ error: `unexpected ${path}` }, false);
     });
     render();
@@ -140,11 +139,7 @@ describe('ChatVoiceFeatureControls', () => {
       button('音频采集').click();
     });
 
-    expect(apiFetchMock).toHaveBeenCalledWith('/api/services/audio-capture/toggle', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: true }),
-    });
+    expect(apiFetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/toggle'), expect.anything());
     expect(useChatStore.getState().rightPanelMode).toBe('transcript');
   });
 

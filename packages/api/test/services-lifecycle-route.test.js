@@ -530,6 +530,37 @@ describe('service lifecycle write routes', () => {
     }
   });
 
+  it('GET /api/services/:id/health reads from injected serviceConfig store', async () => {
+    const configs = new Map();
+    configs.set('whisper-stt', { installed: true, enabled: true });
+    const app = await buildApp({
+      fetchHealth: async () => ({ ok: true, status: 200, error: null }),
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id),
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/services/whisper-stt/health',
+        headers: SESSION_HEADERS,
+      });
+      assert.equal(res.statusCode, 200, res.payload);
+      const body = JSON.parse(res.payload);
+      assert.equal(body.status, 'healthy', 'injected config enabled=true triggers health check instead of idle');
+      assert.equal(body.configured, true);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('keeps service script paths inside the repository services directory', () => {
     assert.match(
       resolveServiceScriptPath('scripts/services/whisper-install.sh'),
