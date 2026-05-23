@@ -11,6 +11,8 @@ import {
 } from './antigravity-cascade-health.js';
 import { discoverAntigravityLS } from './antigravity-ls-discovery.js';
 import { diffDeliveredSteps } from './antigravity-step-delta.js';
+import { isReadOnlyMcpTool } from './antigravity-step-effects.js';
+import { isLsOwnedApprovalTool, toolNameFromWaitingStep } from './antigravity-tool-surface.js';
 import { RAW_RESPONSE_CAP, TRACE_ENABLED, TRACED_METHODS, traceLog } from './antigravity-trace.js';
 import type { AntigravityToolExecutor, AuditSink, ExecutorResult } from './executors/AntigravityToolExecutor.js';
 import type { ExecutorRegistry } from './executors/ExecutorRegistry.js';
@@ -83,6 +85,12 @@ export interface TrajectoryStep {
       metadataIndex?: number;
       cascadeId?: string;
     };
+    [key: string]: unknown;
+  };
+  requestedInteraction?: {
+    permission?: unknown;
+    filePermission?: unknown;
+    approvalInteraction?: unknown;
     [key: string]: unknown;
   };
   runCommand?: {
@@ -192,6 +200,13 @@ function parseJsonObject(raw: string | undefined): Record<string, unknown> | nul
   }
 }
 
+function formatNativeToolInvocation(toolName: string, input: Record<string, unknown>): string {
+  const serialized = JSON.stringify(input);
+  if (serialized === '{}') return toolName;
+  const max = 500;
+  return `${toolName} ${serialized.length > max ? `${serialized.slice(0, max)}…` : serialized}`;
+}
+
 function objectRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -286,10 +301,16 @@ export class AntigravityBridge {
     if (!this.executorRegistry || !this.executorAudit) return false;
     if (step.status !== 'CORTEX_STEP_STATUS_WAITING') return false;
 
+    const waitingToolName = toolNameFromWaitingStep(step);
+    if (isLsOwnedApprovalTool(waitingToolName)) {
+      log.info(`nativeExecuteAndPush: routing LS-owned tool ${waitingToolName} to approval flow`);
+      return 'approval_pending' as const;
+    }
+
     const executor = this.executorRegistry.resolve(step);
     if (!executor) return 'no_executor' as const;
 
-    const argsJson = step.metadata?.toolCall?.argumentsJson;
+    const argsJson = nonEmptyString(step.metadata?.toolCall?.argumentsJson) ?? nonEmptyString(step.toolCall?.input);
     const args = parseJsonObject(argsJson);
 
     const trajectoryId = step.metadata?.sourceTrajectoryStepInfo?.trajectoryId ?? '';
@@ -303,6 +324,14 @@ export class AntigravityBridge {
 
     if (executor.toolName === 'call_mcp_tool') {
       return await this.nativeExecuteMcpToolAndPush(step, args ?? {}, executor, opts, trajectoryId, stepIndex);
+    }
+
+    if (executor.toolName !== 'run_command') {
+      if (!isReadOnlyMcpTool(executor.toolName)) {
+        log.error(`nativeExecuteAndPush: refusing generic native executor for non-read-only tool ${executor.toolName}`);
+        return 'no_executor' as const;
+      }
+      return await this.nativeExecuteGenericToolAndPush(args ?? {}, executor, opts, trajectoryId, stepIndex);
     }
 
     if (!argsJson || !args) return false;
@@ -333,6 +362,32 @@ export class AntigravityBridge {
       stepIndex,
       result,
       { commandLine: `${input.serverName}/${input.toolName}`, cwd: opts.cwd },
+      opts.modelName,
+    );
+    return true;
+  }
+
+  private async nativeExecuteGenericToolAndPush(
+    input: Record<string, unknown>,
+    executor: AntigravityToolExecutor,
+    opts: { cascadeId: string; cwd: string; modelName?: string },
+    trajectoryId: string,
+    stepIndex: number,
+  ): Promise<true | false> {
+    if (!this.executorAudit) return false;
+    const result = await executor.execute(input, {
+      cascadeId: opts.cascadeId,
+      trajectoryId,
+      stepIndex,
+      cwd: opts.cwd,
+      audit: this.executorAudit,
+    });
+
+    await this.pushToolResult(
+      opts.cascadeId,
+      stepIndex,
+      result,
+      { commandLine: formatNativeToolInvocation(executor.toolName, input), cwd: opts.cwd },
       opts.modelName,
     );
     return true;
@@ -380,7 +435,7 @@ export class AntigravityBridge {
     // If the hint RPC itself fails, still continue to the writeback fallback path.
     try {
       await this.approveInteraction(opts.cascadeId, {
-        permission: { allowed: true },
+        permission: { allow: true },
         trajectoryId,
         stepIndex,
       });
@@ -702,6 +757,53 @@ export class AntigravityBridge {
   async resolveOutstandingSteps(cascadeId: string): Promise<void> {
     await this.rpcSafe('ResolveOutstandingSteps', { cascadeId });
     log.info(`resolved outstanding steps for cascade ${cascadeId}`);
+  }
+
+  async approvePendingInteraction(cascadeId: string, step: TrajectoryStep): Promise<void> {
+    if (step.type === 'CORTEX_STEP_TYPE_CODE_ACTION') {
+      await this.approveCodeActionStep(cascadeId, step);
+      return;
+    }
+    await this.resolveOutstandingSteps(cascadeId);
+  }
+
+  private async approveCodeActionStep(cascadeId: string, step: TrajectoryStep): Promise<void> {
+    const sourceStepInfo = step.metadata?.sourceTrajectoryStepInfo;
+    const stepIndex = sourceStepInfo?.stepIndex;
+    if (typeof stepIndex !== 'number') {
+      throw new Error('CODE_ACTION approval requires sourceTrajectoryStepInfo stepIndex');
+    }
+
+    if (objectRecord(step.requestedInteraction?.permission)) {
+      const trajectoryId = nonEmptyString(sourceStepInfo?.trajectoryId);
+      if (!trajectoryId) {
+        throw new Error('CODE_ACTION permission approval requires sourceTrajectoryStepInfo trajectoryId');
+      }
+      await this.approveInteraction(cascadeId, {
+        permission: { allow: true },
+        trajectoryId,
+        stepIndex,
+      });
+      log.info(`approved code action permission for cascade ${cascadeId} step ${stepIndex}`);
+      return;
+    }
+
+    await this.acknowledgeCodeActionStep(cascadeId, step);
+  }
+
+  private async acknowledgeCodeActionStep(cascadeId: string, step: TrajectoryStep): Promise<void> {
+    const stepIndex = step.metadata?.sourceTrajectoryStepInfo?.stepIndex;
+    if (typeof stepIndex !== 'number') {
+      throw new Error('CODE_ACTION acknowledgement requires sourceTrajectoryStepInfo stepIndex');
+    }
+    const payload: Record<string, unknown> = { cascadeId, accept: true };
+    payload.stepIndices = [stepIndex];
+    await this.rpcSafe('AcknowledgeCodeActionStep', payload);
+    log.info(
+      `acknowledged code action step for cascade ${cascadeId}${
+        typeof stepIndex === 'number' ? ` step ${stepIndex}` : ''
+      }`,
+    );
   }
 
   async approveInteraction(cascadeId: string, interaction: Record<string, unknown>): Promise<void> {

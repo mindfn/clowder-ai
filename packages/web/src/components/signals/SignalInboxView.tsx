@@ -35,6 +35,9 @@ const initialFilters: SignalArticleFilters = {
   tier: 'all',
 };
 
+const CONTENT_SURFACE_CLASS =
+  'rounded-2xl border border-[var(--console-border-soft)] bg-[var(--console-card-bg)] p-[18px] shadow-[0_12px_30px_rgba(43,33,26,0.06)]';
+
 function uniqueSources(items: readonly SignalArticle[]): readonly string[] {
   return Array.from(new Set(items.map((item) => item.source))).sort();
 }
@@ -277,55 +280,57 @@ export function SignalInboxView({ initialReferrerThread = null }: { initialRefer
   }, []);
 
   return (
-    <div className="flex h-full flex-col bg-[var(--console-panel-bg)]">
-      <div className="flex flex-1 flex-col overflow-hidden rounded-[18px] bg-[var(--console-shell-bg)] shadow-[var(--console-shadow-soft)] m-3 gap-5 px-9 py-8">
-        <header className="flex items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-cafe-black">信号</h1>
-            <p className="mt-1 text-sm text-cafe-secondary">浏览、筛选和研读信号文章</p>
+    <div className="flex h-full flex-col bg-[var(--console-shell-bg)]">
+      <main className="flex min-h-0 flex-1 p-5">
+        <div
+          className={`flex min-h-0 flex-1 flex-col gap-4 overflow-hidden ${CONTENT_SURFACE_CLASS}`}
+          data-testid="signal-inbox-content-surface"
+        >
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h1 className="text-lg font-bold text-cafe">信号</h1>
+              <p className="mt-0.5 text-xs text-cafe-secondary">浏览、筛选和研读信号文章</p>
+            </div>
+            <SignalNav active="signals" initialReferrerThread={initialReferrerThread} />
           </div>
-          <SignalNav active="signals" initialReferrerThread={initialReferrerThread} />
-        </header>
+          <SignalStatsCards stats={stats} />
 
-        <SignalStatsCards stats={stats} />
+          {error && (
+            <div className="rounded-lg bg-conn-red-bg px-3 py-2 text-sm text-red-700 shadow-[0_1px_3px_rgba(43,33,26,0.06)]">
+              请求失败: {error}
+            </div>
+          )}
 
-        {error && (
-          <div className="rounded-lg bg-conn-red-bg px-3 py-2 text-sm text-red-700 shadow-[0_1px_3px_rgba(43,33,26,0.06)]">
-            请求失败: {error}
-          </div>
-        )}
-
-        <div className="flex min-h-0 flex-1 gap-[18px]">
-          <div className="flex w-[420px] shrink-0 flex-col gap-1 overflow-y-auto rounded-[18px] bg-[var(--console-panel-bg)] p-2">
-            <SignalFilterBar
-              filters={filters}
-              onFilterChange={(patch) => setFilters((cur) => ({ ...cur, ...patch }))}
-              onStatusTab={handleStatusTab}
-              onSubmit={handleSearchSubmit}
-              sources={sources}
-              ime={ime}
-            />
-            <div className="flex items-center justify-between px-2 pb-1">
-              <p className="text-xs font-semibold text-cafe-muted">
-                {loading ? '加载中...' : `共 ${filteredItems.length} 篇`}
-              </p>
-              <BatchActionBar
+          <div className="flex min-h-0 flex-1 gap-4">
+            <div className="flex w-[420px] shrink-0 flex-col gap-1 overflow-y-auto border-r border-[var(--console-border-soft)] pr-4">
+              <SignalFilterBar
+                filters={filters}
+                onFilterChange={(patch) => setFilters((cur) => ({ ...cur, ...patch }))}
+                onStatusTab={handleStatusTab}
+                onSubmit={handleSearchSubmit}
+                sources={sources}
+                ime={ime}
+              />
+              <div className="flex items-center justify-between px-2 pb-1">
+                <p className="text-xs font-semibold text-cafe-muted">
+                  {loading ? '加载中...' : `共 ${filteredItems.length} 篇`}
+                </p>
+                <BatchActionBar
+                  selectedIds={batchSelected}
+                  onClear={() => setBatchSelected(new Set())}
+                  onComplete={() => void refreshInbox()}
+                />
+              </div>
+              <SignalArticleList
+                items={filteredItems}
+                selectedArticleId={selectedArticleId}
+                onSelect={handleSelectArticle}
+                onStatusChange={handleStatusChange}
                 selectedIds={batchSelected}
-                onClear={() => setBatchSelected(new Set())}
-                onComplete={() => void refreshInbox()}
+                onToggleSelect={toggleBatchSelect}
               />
             </div>
-            <SignalArticleList
-              items={filteredItems}
-              selectedArticleId={selectedArticleId}
-              onSelect={handleSelectArticle}
-              onStatusChange={handleStatusChange}
-              selectedIds={batchSelected}
-              onToggleSelect={toggleBatchSelect}
-            />
-          </div>
-          <div className="flex min-w-0 flex-1 flex-col gap-[18px] overflow-y-auto">
-            <div className="rounded-2xl bg-[var(--console-card-bg)] p-[22px] shadow-[0_10px_28px_rgba(43,33,26,0.04)]">
+            <div className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto">
               <SignalArticleDetailPanel
                 article={selectedArticle}
                 isLoading={detailLoading}
@@ -337,11 +342,11 @@ export function SignalInboxView({ initialReferrerThread = null }: { initialRefer
                 onAddToCollection={handleAddToCollection}
                 onCreateCollection={handleCreateCollection}
               />
+              <StudyTimeline />
             </div>
-            <StudyTimeline />
           </div>
         </div>
-      </div>
+      </main>
     </div>
   );
 }

@@ -70,6 +70,11 @@ export {
   searchEvidenceInputSchema,
 } from './evidence-tools.js';
 export {
+  fileSliceTools,
+  handleReadFileSlice,
+  readFileSliceInputSchema,
+} from './file-tools.js';
+export {
   gameActionTools,
   handleSubmitGameAction,
   submitGameActionInputSchema,
@@ -85,12 +90,14 @@ export {
   handleLibraryDryRun,
   handleLibraryList,
   handleLibraryRebuild,
+  handleLibraryVerify,
   libraryArchiveInputSchema,
   libraryCreateInputSchema,
   libraryDryRunInputSchema,
   libraryLifecycleTools,
   libraryListInputSchema,
   libraryRebuildInputSchema,
+  libraryVerifyInputSchema,
 } from './library-lifecycle-tools.js';
 export {
   handleLimbInvoke,

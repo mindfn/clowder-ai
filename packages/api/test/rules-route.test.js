@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-const { isLegacySkillProjectPath, readL0Prompts, loadAvailableCatsForL0 } = await import('../dist/routes/rules.js');
+const { isLegacySkillProjectPath, readL0Prompts, loadAvailableCatsForL0, readRulesPayload } = await import(
+  '../dist/routes/rules.js'
+);
 
 function findProjectRoot() {
   let dir = dirname(fileURLToPath(import.meta.url));
@@ -118,13 +121,24 @@ describe('readL0Prompts helper (F203 Phase F)', () => {
     // template defaults. The no-arg loadCatConfig() runtime path merges
     // template (base) + catalog (overlay), so even with no catalog the
     // template defaults populate the cat list (KD-13 / SystemPromptBuilder).
-    const cats = loadAvailableCatsForL0();
-    assert.ok(Array.isArray(cats), 'returns an array');
-    assert.ok(cats.length > 0, `must return ≥1 cat from template defaults; got ${cats.length}`);
-    assert.ok(
-      cats.every((c) => typeof c.catId === 'string' && typeof c.displayName === 'string'),
-      'each entry has catId + displayName',
-    );
+    const isolatedRoot = join(tmpdir(), `cat-cafe-rules-l0-${process.pid}-${Date.now()}`);
+    const previousTemplatePath = process.env.CAT_TEMPLATE_PATH;
+    mkdirSync(isolatedRoot, { recursive: true });
+    cpSync(join(root, 'cat-template.json'), join(isolatedRoot, 'cat-template.json'));
+    process.env.CAT_TEMPLATE_PATH = join(isolatedRoot, 'cat-template.json');
+    try {
+      const cats = loadAvailableCatsForL0();
+      assert.ok(Array.isArray(cats), 'returns an array');
+      assert.ok(cats.length > 0, `must return ≥1 cat from template defaults; got ${cats.length}`);
+      assert.ok(
+        cats.every((c) => typeof c.catId === 'string' && typeof c.displayName === 'string'),
+        'each entry has catId + displayName',
+      );
+    } finally {
+      if (previousTemplatePath === undefined) delete process.env.CAT_TEMPLATE_PATH;
+      else process.env.CAT_TEMPLATE_PATH = previousTemplatePath;
+      rmSync(isolatedRoot, { recursive: true, force: true });
+    }
   });
 
   it('per-cat compile failure captured in error field, does not throw (砚砚 plan-review)', async () => {
@@ -144,5 +158,38 @@ describe('readL0Prompts helper (F203 Phase F)', () => {
     assert.equal(result.compiledByCat[0].error, null);
     assert.equal(result.compiledByCat[1].compiled, '');
     assert.match(result.compiledByCat[1].error, /simulated compile failure/);
+  });
+});
+
+describe('rules consumption metadata (#749)', () => {
+  const root = findProjectRoot();
+
+  it('labels actual prompt vs reference documents in /api/rules payload', async () => {
+    const result = await readRulesPayload(root, {
+      availableCats: [{ catId: 'codex', displayName: '缅因猫 GPT-5.5(codex)' }],
+      compileL0: async () => 'COMPILED-L0-FOR-codex',
+    });
+
+    const sharedRules = result.sharedRules.find((f) => f.path === 'cat-cafe-skills/refs/shared-rules.md');
+    assert.equal(sharedRules?.consumption.kind, 'actual-prompt');
+    assert.match(sharedRules?.consumption.detail ?? '', /shared-rules\.md.*governance L0.*native\/fallback/);
+    assert.ok(sharedRules?.consumption.consumers.includes('compile-system-prompt-l0.mjs'));
+    assert.ok(sharedRules?.consumption.consumers.includes('SystemPromptBuilder'));
+
+    const sop = result.sharedRules.find((f) => f.path === 'docs/SOP.md');
+    assert.equal(sop?.consumption.kind, 'reference');
+    assert.match(sop?.consumption.detail ?? '', /not injected/i);
+
+    const l0Template = result.l0Prompts.template;
+    assert.equal(l0Template.consumption.kind, 'actual-prompt');
+    assert.match(l0Template.consumption.detail, /native system role/);
+
+    const compiledCodex = result.l0Prompts.compiledByCat[0];
+    assert.equal(compiledCodex.consumption.kind, 'actual-prompt');
+    assert.equal(compiledCodex.compiled, 'COMPILED-L0-FOR-codex');
+
+    const codexGuide = result.providerGuides.find((g) => g.provider === 'codex');
+    assert.equal(codexGuide?.consumption.kind, 'harness-injected');
+    assert.match(codexGuide?.consumption.detail ?? '', /Codex CLI/i);
   });
 });

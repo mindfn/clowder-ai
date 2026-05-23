@@ -719,6 +719,25 @@ excluded:
       );
     });
 
+    it('sync-manifest exports public harness eval fixtures used by test:public', () => {
+      const managedFiles = readYamlTopLevelList('sync-manifest.yaml', 'managed_files');
+      const fixturePaths = [
+        'docs/harness-feedback/eval-domains/eval-a2a.yaml',
+        'docs/harness-feedback/verdicts/fixtures/2026-05-21-eval-a2a-contract-demo.md',
+        'docs/features/assets/F210/agy-conversation-resume.txt',
+        'docs/features/assets/F210/agy-print-timeout.txt',
+        'docs/features/assets/F210/agy-real-home-no-default-model.txt',
+        'docs/features/assets/F210/agy-real-home-print-success.txt',
+      ];
+
+      for (const fixturePath of fixturePaths) {
+        assert.ok(
+          managedFiles.includes(fixturePath),
+          `sync-manifest should export ${fixturePath} because packages/api test:public loads it`,
+        );
+      }
+    });
+
     it('sync-manifest marks the F203 native L0 template as a sanitized transform', () => {
       const transformTargets = readYamlTransformTargets('sync-manifest.yaml');
 
@@ -787,11 +806,59 @@ excluded:
       }
     });
 
-    // F180 agent hook sync tests removed: scripts/sync-system-prompts.ts is
-    // referenced by upstream cat-cafe but was never synced into clowder-ai,
-    // so the install.sh call was dead code that printed ERR_MODULE_NOT_FOUND
-    // on every install. install.sh / setup.sh no longer invoke it; Hub
-    // reconciles hooks on startup instead. Re-add these once the .ts ships.
+    it('source install/setup attempts F180 agent hook sync as a nonfatal step', () => {
+      const install = readFileSync(resolve(ROOT, 'scripts/install.sh'), 'utf-8');
+      const setup = readFileSync(resolve(ROOT, 'scripts/setup.sh'), 'utf-8');
+
+      for (const [name, content] of [
+        ['install.sh', install],
+        ['setup.sh', setup],
+      ]) {
+        assert.match(content, /sync_agent_hooks_best_effort\(\)/, `${name} should call the shared hook sync step`);
+        assert.match(
+          content,
+          /pnpm exec tsx scripts\/sync-system-prompts\.ts --apply --agent-hooks-only/,
+          `${name} should reuse sync-system-prompts hook targets without syncing non-hook prompts`,
+        );
+        assert.match(
+          content,
+          /Agent CLI hook sync failed[\s\S]*continuing/,
+          `${name} should warn and continue when hook sync fails`,
+        );
+      }
+    });
+
+    it('F210 source installer provisions Antigravity CLI through native bootstrapper', () => {
+      const install = readFileSync(resolve(ROOT, 'scripts/install.sh'), 'utf-8');
+      const installPs = readFileSync(resolve(ROOT, 'scripts/install.ps1'), 'utf-8');
+
+      assert.match(install, /install_antigravity_cli\(\)/);
+      assert.match(install, /https:\/\/antigravity\.google\/cli\/install\.sh/);
+      assert.match(install, /MISSING_AGENTS\+=\("agy"\)/);
+      assert.match(install, /agy\)\s+install_antigravity_cli/s);
+      assert.doesNotMatch(install, /install_npm_cli "Gemini CLI" "gemini" "@google\/gemini-cli"/);
+
+      assert.match(installPs, /Name = "Antigravity"; Label = "Antigravity CLI"; Cmd = "agy"/);
+      assert.match(installPs, /InstallKind = "antigravity-native"/);
+      assert.match(installPs, /https:\/\/antigravity\.google\/cli\/install\.cmd/);
+      assert.match(installPs, /Resolve-ToolCommandWithRetry -Name "agy" -Attempts 6/);
+      assert.doesNotMatch(installPs, /Name = "Gemini"; Label = "Gemini"; Cmd = "gemini"; Pkg = "@google\/gemini-cli"/);
+    });
+
+    it('sync-system-prompts agent hook mode also configures Claude settings', () => {
+      const content = readFileSync(resolve(ROOT, 'scripts/sync-system-prompts.ts'), 'utf-8');
+
+      assert.match(
+        content,
+        /syncClaudeSettings/,
+        'agent hook sync CLI should reuse the same Claude settings merge helper as the Hub sync API',
+      );
+      assert.match(
+        content,
+        /if\s*\(\s*isAgentHooksOnly\s*&&\s*!isDryRun\s*\)[\s\S]*await syncClaudeSettings\(syncTargetRoot\)/,
+        '--agent-hooks-only --apply must configure Claude settings, not only copy hook scripts and Codex hooks',
+      );
+    });
 
     it('desktop installer bundles F180 hook truth source and offline sync helper', () => {
       const inno = readFileSync(resolve(ROOT, 'desktop/installer/cat-cafe.iss'), 'utf-8');

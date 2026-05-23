@@ -127,7 +127,7 @@ describe('AntigravityBridge.nativeExecuteAndPush', () => {
     assert.deepEqual(payload, {
       cascadeId: 'c1',
       interaction: {
-        permission: { allowed: true },
+        permission: { allow: true },
         trajectoryId: 'traj-1',
         stepIndex: 23,
       },
@@ -214,6 +214,109 @@ describe('AntigravityBridge.nativeExecuteAndPush', () => {
     assert.equal(rpcMock.mock.callCount(), 0);
   });
 
+  test('routes LS-owned file write tools to approval_pending instead of native writeback', async () => {
+    const lsOwnedTools = ['write_to_file', 'write_file', 'replace_file_content', 'multi_replace_file_content'];
+    for (const toolName of lsOwnedTools) {
+      const { bridge, rpcMock } = makeBridge();
+      const step = {
+        type: 'CORTEX_STEP_TYPE_CODE_ACTION',
+        status: 'CORTEX_STEP_STATUS_WAITING',
+        metadata: {
+          toolCall: {
+            id: `toolu_${toolName}`,
+            name: toolName,
+            argumentsJson: JSON.stringify({ Path: 'src/index.ts', Content: 'unsafe' }),
+          },
+          sourceTrajectoryStepInfo: { trajectoryId: 'traj-1', stepIndex: 9, cascadeId: 'c1' },
+        },
+      };
+
+      const handled = await bridge.nativeExecuteAndPush(step, {
+        cascadeId: 'c1',
+        cwd: '/tmp',
+        modelName: 'claude-opus-4-6',
+      });
+
+      assert.equal(handled, 'approval_pending', `${toolName} must be approved by Antigravity LS, not executed here`);
+      assert.equal(rpcMock.mock.callCount(), 0, `${toolName} must not call RunCommand or pushToolResult RPCs`);
+      assert.equal(bridge.sendMessage.mock.callCount(), 0, `${toolName} must not synthetic-writeback a file result`);
+    }
+  });
+
+  test('approves CODE_ACTION write permissions through Antigravity user interaction RPC', async () => {
+    const { bridge, rpcMock } = makeBridge();
+    const step = {
+      type: 'CORTEX_STEP_TYPE_CODE_ACTION',
+      status: 'CORTEX_STEP_STATUS_WAITING',
+      metadata: {
+        toolCall: {
+          id: 'toolu_write_to_file',
+          name: 'write_to_file',
+          argumentsJson: JSON.stringify({ Path: 'src/index.ts', Content: 'safe probe' }),
+        },
+        sourceTrajectoryStepInfo: { trajectoryId: 'traj-1', stepIndex: 9, cascadeId: 'c1' },
+      },
+      requestedInteraction: {
+        permission: {
+          resource: {
+            action: 'write_file',
+            target: '/tmp/src/index.ts',
+          },
+        },
+      },
+    };
+
+    await bridge.approvePendingInteraction('c1', step);
+
+    const methods = rpcMock.mock.calls.map((c) => {
+      const args = c.arguments;
+      return typeof args[0] === 'string' ? args[0] : args[1];
+    });
+    assert.deepEqual(methods, ['HandleCascadeUserInteraction']);
+
+    const payload = rpcMock.mock.calls[0].arguments[2];
+    assert.deepEqual(payload, {
+      cascadeId: 'c1',
+      interaction: {
+        permission: { allow: true },
+        trajectoryId: 'traj-1',
+        stepIndex: 9,
+      },
+    });
+    assert.equal(bridge.sendMessage.mock.callCount(), 0, 'code action approval must not synthetic-writeback');
+  });
+
+  test('acknowledges non-permission CODE_ACTION steps without requiring trajectoryId', async () => {
+    const { bridge, rpcMock } = makeBridge();
+    const step = {
+      type: 'CORTEX_STEP_TYPE_CODE_ACTION',
+      status: 'CORTEX_STEP_STATUS_WAITING',
+      metadata: {
+        toolCall: {
+          id: 'toolu_code_action_ack',
+          name: 'show_diff',
+          argumentsJson: JSON.stringify({ Path: 'src/index.ts' }),
+        },
+        sourceTrajectoryStepInfo: { stepIndex: 4, cascadeId: 'c1' },
+      },
+    };
+
+    await bridge.approvePendingInteraction('c1', step);
+
+    const methods = rpcMock.mock.calls.map((c) => {
+      const args = c.arguments;
+      return typeof args[0] === 'string' ? args[0] : args[1];
+    });
+    assert.deepEqual(methods, ['AcknowledgeCodeActionStep']);
+
+    const payload = rpcMock.mock.calls[0].arguments[2];
+    assert.deepEqual(payload, {
+      cascadeId: 'c1',
+      accept: true,
+      stepIndices: [4],
+    });
+  });
+
   test('executes Antigravity 2.x call_mcp_tool wrapper using the nested MCP tool payload', async () => {
     const storePath = tempStorePath();
     cleanupPaths.push(storePath);
@@ -293,6 +396,180 @@ describe('AntigravityBridge.nativeExecuteAndPush', () => {
     const textArg = bridge.sendMessage.mock.calls[0].arguments[1];
     assert.match(textArg, /\[native-executor result for: cat-cafe-memory\/cat_cafe_list_session_chain\]/);
     assert.match(textArg, /ok/);
+  });
+
+  test('executes Antigravity IDE read-only tools through their native executor', async () => {
+    const storePath = tempStorePath();
+    cleanupPaths.push(storePath);
+    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'antigravity-audit-'));
+    cleanupDirs.push(logDir);
+    const bridge = new AntigravityBridge(
+      { port: 1234, csrfToken: 't', useTls: false },
+      { sessionStorePath: storePath },
+    );
+    mock.method(bridge, 'ensureConnected', async () => ({ port: 1234, csrfToken: 't', useTls: false }));
+    const rpcMock = mock.fn(async () => ({}));
+    Object.getPrototypeOf(bridge).rpc = rpcMock;
+    mock.method(bridge, 'sendMessage', async () => 1);
+
+    const executeMock = mock.fn(async () => ({
+      status: 'success',
+      output: 'src/index.ts:1:needle',
+      stdout: 'src/index.ts:1:needle',
+      durationMs: 1,
+    }));
+    const registry = new ExecutorRegistry();
+    registry.register({
+      toolName: 'grep_search',
+      canHandle: (step) => step.metadata?.toolCall?.name === 'grep_search',
+      execute: executeMock,
+    });
+    bridge.attachExecutors(registry, new AuditLogger(logDir));
+
+    const step = {
+      type: 'CORTEX_STEP_TYPE_GREP_SEARCH',
+      status: 'CORTEX_STEP_STATUS_WAITING',
+      metadata: {
+        toolCall: {
+          id: 'toolu_grep',
+          name: 'grep_search',
+          argumentsJson: JSON.stringify({ Pattern: 'needle', Path: 'src' }),
+        },
+        sourceTrajectoryStepInfo: { trajectoryId: 'traj-1', stepIndex: 7, cascadeId: 'c1' },
+      },
+    };
+
+    const handled = await bridge.nativeExecuteAndPush(step, {
+      cascadeId: 'c1',
+      cwd: '/tmp',
+      modelName: 'claude-opus-4-6',
+    });
+
+    assert.equal(handled, true);
+    assert.equal(executeMock.mock.callCount(), 1);
+    assert.deepEqual(executeMock.mock.calls[0].arguments[0], { Pattern: 'needle', Path: 'src' });
+    const methods = rpcMock.mock.calls.map((c) => {
+      const args = c.arguments;
+      return typeof args[0] === 'string' ? args[0] : args[1];
+    });
+    assert.equal(
+      methods.includes('HandleCascadeUserInteraction'),
+      false,
+      'read-only IDE tools should not approve LS permission',
+    );
+    assert.ok(methods.includes('CancelCascadeSteps'), 'read-only IDE result writeback must cancel the waiting step');
+    assert.equal(bridge.sendMessage.mock.callCount(), 1);
+    const textArg = bridge.sendMessage.mock.calls[0].arguments[1];
+    assert.match(textArg, /\[native-executor result for: grep_search/);
+    assert.match(textArg, /src\/index\.ts:1:needle/);
+  });
+
+  test('falls back to toolCall.input when IDE read tool metadata arguments are blank', async () => {
+    const storePath = tempStorePath();
+    cleanupPaths.push(storePath);
+    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'antigravity-audit-'));
+    cleanupDirs.push(logDir);
+    const bridge = new AntigravityBridge(
+      { port: 1234, csrfToken: 't', useTls: false },
+      { sessionStorePath: storePath },
+    );
+    mock.method(bridge, 'ensureConnected', async () => ({ port: 1234, csrfToken: 't', useTls: false }));
+    const rpcMock = mock.fn(async () => ({}));
+    Object.getPrototypeOf(bridge).rpc = rpcMock;
+    mock.method(bridge, 'sendMessage', async () => 1);
+
+    const executeMock = mock.fn(async () => ({
+      status: 'success',
+      output: 'src/index.ts:1:needle',
+      stdout: 'src/index.ts:1:needle',
+      durationMs: 1,
+    }));
+    const registry = new ExecutorRegistry();
+    registry.register({
+      toolName: 'grep_search',
+      canHandle: (step) => step.metadata?.toolCall?.name === 'grep_search',
+      execute: executeMock,
+    });
+    bridge.attachExecutors(registry, new AuditLogger(logDir));
+
+    const step = {
+      type: 'CORTEX_STEP_TYPE_GREP_SEARCH',
+      status: 'CORTEX_STEP_STATUS_WAITING',
+      metadata: {
+        toolCall: {
+          id: 'toolu_grep',
+          name: 'grep_search',
+          argumentsJson: '',
+        },
+        sourceTrajectoryStepInfo: { trajectoryId: 'traj-1', stepIndex: 7, cascadeId: 'c1' },
+      },
+      toolCall: {
+        input: JSON.stringify({ Pattern: 'needle', Path: 'src' }),
+      },
+    };
+
+    const handled = await bridge.nativeExecuteAndPush(step, {
+      cascadeId: 'c1',
+      cwd: '/tmp',
+      modelName: 'claude-opus-4-6',
+    });
+
+    assert.equal(handled, true);
+    assert.equal(executeMock.mock.callCount(), 1);
+    assert.deepEqual(executeMock.mock.calls[0].arguments[0], { Pattern: 'needle', Path: 'src' });
+  });
+
+  test('refuses generic native writeback for non-read-only executors', async () => {
+    const storePath = tempStorePath();
+    cleanupPaths.push(storePath);
+    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'antigravity-audit-'));
+    cleanupDirs.push(logDir);
+    const bridge = new AntigravityBridge(
+      { port: 1234, csrfToken: 't', useTls: false },
+      { sessionStorePath: storePath },
+    );
+    mock.method(bridge, 'ensureConnected', async () => ({ port: 1234, csrfToken: 't', useTls: false }));
+    const rpcMock = mock.fn(async () => ({}));
+    Object.getPrototypeOf(bridge).rpc = rpcMock;
+    mock.method(bridge, 'sendMessage', async () => 1);
+
+    const executeMock = mock.fn(async () => ({
+      status: 'success',
+      output: 'wrote',
+      stdout: 'wrote',
+      durationMs: 1,
+    }));
+    const registry = new ExecutorRegistry();
+    registry.register({
+      toolName: 'delete_file',
+      canHandle: (step) => step.metadata?.toolCall?.name === 'delete_file',
+      execute: executeMock,
+    });
+    bridge.attachExecutors(registry, new AuditLogger(logDir));
+
+    const step = {
+      type: 'CORTEX_STEP_TYPE_DELETE_FILE',
+      status: 'CORTEX_STEP_STATUS_WAITING',
+      metadata: {
+        toolCall: {
+          id: 'toolu_delete',
+          name: 'delete_file',
+          argumentsJson: JSON.stringify({ Path: 'src/index.ts' }),
+        },
+        sourceTrajectoryStepInfo: { trajectoryId: 'traj-1', stepIndex: 8, cascadeId: 'c1' },
+      },
+    };
+
+    const handled = await bridge.nativeExecuteAndPush(step, {
+      cascadeId: 'c1',
+      cwd: '/tmp',
+      modelName: 'claude-opus-4-6',
+    });
+
+    assert.equal(handled, 'no_executor');
+    assert.equal(executeMock.mock.callCount(), 0);
+    assert.equal(bridge.sendMessage.mock.callCount(), 0);
+    assert.equal(rpcMock.mock.callCount(), 0);
   });
 
   test('falls back to wrapper MCP payload when nested MCP fields are empty strings', async () => {
