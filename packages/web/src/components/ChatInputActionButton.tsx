@@ -105,7 +105,7 @@ export function ChatInputActionButton({
       {hasActiveInvocation && !disabled && onStop && (
         <button
           onClick={() => onStop()}
-          className="p-2 rounded-lg bg-conn-red-text/80 text-white hover:bg-conn-red-hover transition-colors"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-conn-red-text text-white opacity-0 transition-all hover:bg-conn-red-hover hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-conn-red-text/40"
           title="停止生成"
           aria-label="Stop generation"
         >

@@ -135,3 +135,22 @@ describe('ChatInput textarea auto-grow', () => {
     expect(height).toBeLessThanOrEqual(120);
   });
 });
+
+describe('ChatInput composer layout', () => {
+  it('vertically centers the right-side controls with the textarea', () => {
+    render();
+
+    const row = container.querySelector('[data-testid="chat-input-composer-row"]');
+    expect(row?.className).toContain('items-center');
+    expect(row?.className).not.toContain('items-end');
+  });
+
+  it('keeps the active invocation stop affordance invisible until hover or keyboard focus', () => {
+    render({ hasActiveInvocation: true, onStop: vi.fn() });
+
+    const stopButton = container.querySelector('button[aria-label="Stop generation"]');
+    expect(stopButton?.className).toContain('opacity-0');
+    expect(stopButton?.className).toContain('hover:opacity-100');
+    expect(stopButton?.className).toContain('focus-visible:opacity-100');
+  });
+});
