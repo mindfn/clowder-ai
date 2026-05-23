@@ -1895,7 +1895,7 @@ describe('HubCatEditor', () => {
     expect(mockApiFetch).not.toHaveBeenCalledWith('/api/cats', expect.objectContaining({ method: 'POST' }));
   });
 
-  it('does not show delete action inside the editor modal (delete lives on member list)', async () => {
+  it('shows delete action inside editor for existing members', async () => {
     const existingCat: CatData = {
       id: 'runtime-antigravity',
       name: '运行时桥接猫',
@@ -1929,8 +1929,8 @@ describe('HubCatEditor', () => {
     });
     await flushEffects();
 
-    expect(container.querySelector('button[aria-label="删除成员"]')).toBeNull();
-    expect(container.textContent).not.toContain('删除成员');
+    expect(container.querySelector('button[aria-label="删除成员"]')).not.toBeNull();
+    expect(container.textContent).toContain('删除成员');
   });
 
   it('prompts before closing when there are unsaved edits', async () => {
@@ -1970,7 +1970,7 @@ describe('HubCatEditor', () => {
     mockConfirm.mockResolvedValue(true);
   });
 
-  it('does not show delete action inside editor for any member type', async () => {
+  it('shows delete action inside editor for any member type', async () => {
     const existingCat: CatData = {
       id: 'codex',
       name: '缅因猫',
@@ -2007,7 +2007,7 @@ describe('HubCatEditor', () => {
     });
     await flushEffects();
 
-    expect(container.querySelector('button[aria-label="删除成员"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="删除成员"]')).not.toBeNull();
   });
 
   it('loads runtime controls for an existing member and saves strategy separately', async () => {
@@ -2174,7 +2174,7 @@ describe('HubCatEditor', () => {
     expect(queryField<HTMLSelectElement>(container, 'select[aria-label^="Codex Auth Mode"]').disabled).toBe(false);
     expect(container.textContent).toContain('运行时持久化');
     expect(container.textContent).toContain('保存');
-    expect(container.textContent).not.toContain('删除成员');
+    expect(container.textContent).toContain('删除成员');
     expect(container.textContent).not.toContain('账号与运行方式');
     expect(container.textContent).not.toContain('Primary');
     expect(container.textContent).not.toContain('Secondary');

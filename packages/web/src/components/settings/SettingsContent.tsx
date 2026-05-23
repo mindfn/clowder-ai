@@ -177,7 +177,14 @@ export function SettingsContent({ section, initialEditCatId }: SettingsContentPr
         return (
           <div className="space-y-6">
             <ServiceStatusPanel
-              filterFeatures={['voice-input', 'voice-output', 'voice-companion', 'voice-postprocess']}
+              filterFeatures={[
+                'voice-input',
+                'voice-output',
+                'voice-companion',
+                'voice-postprocess',
+                'meeting-copilot',
+                'live-transcript',
+              ]}
               title="语音服务"
             />
             <VoiceSettingsPanel />

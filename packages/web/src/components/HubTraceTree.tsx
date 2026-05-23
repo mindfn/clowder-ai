@@ -89,7 +89,8 @@ export function TraceBrowser() {
         <button
           type="button"
           onClick={fetchTraces}
-          className="rounded-lg bg-cafe-accent px-3 py-1.5 text-xs font-semibold text-[var(--cafe-surface)] transition-colors hover:bg-cafe-accent-hover"
+          disabled={!search.trim()}
+          className="rounded-lg bg-cafe-accent px-3 py-1.5 text-xs font-semibold text-[var(--cafe-surface)] transition-colors hover:bg-cafe-accent-hover disabled:opacity-50"
         >
           Search
         </button>

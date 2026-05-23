@@ -9,7 +9,6 @@ import {
 } from '../SettingsResourceCard';
 import { GithubConfigPanel } from './GithubConfigPanel';
 import { SettingsBadge, SettingsText } from './primitives';
-import { ServiceStatusPanel } from './ServiceStatusPanel';
 
 export function PluginsContent() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -45,7 +44,6 @@ export function PluginsContent() {
         </button>
         {expandedId === 'github' && <GithubConfigPanel />}
       </article>
-      <ServiceStatusPanel filterFeatures={['meeting-copilot', 'live-transcript']} title="其他服务" />
     </div>
   );
 }
