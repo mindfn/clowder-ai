@@ -219,12 +219,12 @@ describe('McpManageContent', () => {
     expect(container.textContent).not.toContain('DEFAULT_OWNER_USER_ID');
   });
 
-  it('keeps existing external MCP soft-delete behavior', async () => {
+  it('hard-deletes external MCP on uninstall', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     await renderContent();
 
-    const trashButtons = Array.from(container.querySelectorAll('button[title="禁用此 MCP"]'));
+    const trashButtons = Array.from(container.querySelectorAll('button[title="卸载此 MCP"]'));
     expect(trashButtons.length).toBe(1);
 
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) }).mockResolvedValueOnce(ITEMS_RESPONSE);
@@ -238,7 +238,7 @@ describe('McpManageContent', () => {
     );
     expect(deleteCalls).toHaveLength(1);
     expect(deleteCalls[0][0]).toContain('/api/capabilities/mcp/custom-mcp?');
-    expect(deleteCalls[0][0]).not.toContain('hard=true');
+    expect(deleteCalls[0][0]).toContain('hard=true');
 
     confirmSpy.mockRestore();
   });

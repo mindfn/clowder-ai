@@ -168,12 +168,12 @@ export function McpManageContent() {
                       disabled={removing}
                       onClick={(event) => {
                         event.stopPropagation();
-                        if (window.confirm(`确认禁用 MCP "${item.id}"？配置会保留，可稍后重新启用。`)) {
+                        if (window.confirm(`确认卸载 MCP "${item.id}"？配置将被移除，不可撤销。`)) {
                           cap.handleRemoveMcp(item);
                         }
                       }}
-                      title="禁用此 MCP"
-                      aria-label="禁用此 MCP"
+                      title="卸载此 MCP"
+                      aria-label="卸载此 MCP"
                       tone="danger"
                     >
                       <HubIcon name="trash" className="h-4 w-4" />
