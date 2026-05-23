@@ -498,6 +498,38 @@ describe('service lifecycle write routes', () => {
     }
   });
 
+  it('GET /api/services reads from injected serviceConfig store, not hardcoded getServiceConfig', async () => {
+    const configs = new Map();
+    configs.set('whisper-stt', { installed: true, enabled: true, selectedModel: 'test/model' });
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id),
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/services',
+        headers: SESSION_HEADERS,
+      });
+      assert.equal(res.statusCode, 200, res.payload);
+      const { services } = JSON.parse(res.payload);
+      const whisper = services.find((s) => s.id === 'whisper-stt');
+      assert.ok(whisper, 'whisper-stt should be in the response');
+      assert.equal(whisper.installed, true, 'should reflect injected config installed=true');
+      assert.equal(whisper.enabled, true, 'should reflect injected config enabled=true');
+    } finally {
+      await app.close();
+    }
+  });
+
   it('keeps service script paths inside the repository services directory', () => {
     assert.match(
       resolveServiceScriptPath('scripts/services/whisper-install.sh'),

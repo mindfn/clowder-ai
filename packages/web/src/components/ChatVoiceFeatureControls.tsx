@@ -64,12 +64,12 @@ async function ensureVoiceServiceEnabled(feature: VoiceFeature): Promise<boolean
       return false;
     }
     if (service.enabled) return true;
+    if (!service.installable) return true;
 
-    const action = service.installable ? 'start' : 'toggle';
-    const enableRes = await apiFetch(`/api/services/${serviceId}/${action}`, {
+    const enableRes = await apiFetch(`/api/services/${serviceId}/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: service.installable ? '{}' : JSON.stringify({ enabled: true }),
+      body: '{}',
     });
     const enablePayload = (await enableRes.json().catch(() => ({}))) as { ok?: boolean; error?: string };
     if (!enableRes.ok || enablePayload.ok === false) {
