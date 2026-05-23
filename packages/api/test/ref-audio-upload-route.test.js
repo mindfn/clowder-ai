@@ -1,6 +1,6 @@
 // @ts-check
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
@@ -67,6 +67,7 @@ describe('POST /api/uploads/ref-audio', () => {
   before(async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'ref-audio-route-'));
     uploadDir = join(dataRoot, 'uploads');
+    await mkdir(uploadDir, { recursive: true });
     prevDataDir = process.env.DATA_DIR;
     process.env.DATA_DIR = dataRoot;
     app = Fastify();
