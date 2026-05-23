@@ -569,14 +569,35 @@ async function main(): Promise<void> {
   initRepoIdentity(repoRoot);
 
   const { createMemoryServices } = await import('./domains/memory/factory.js');
+  // Resolve embed mode. Priority:
+  //   1. If the user enabled the Embedding service in console (service.enabled=true),
+  //      force the in-process mode to 'on' (or honor an explicit 'shadow' / 'on' env
+  //      override). UI toggle is the most direct expression of user intent — letting
+  //      a stale EMBED_MODE=off in .env silently disable catch-up would be a foot-gun
+  //      (sidecar runs, but evidence_vectors stays empty + catch-up logs probed=false).
+  //   2. Otherwise, an explicit EMBED_MODE env wins.
+  //   3. Otherwise, default 'off' (service disabled in console, no env → no
+  //      embedding services wired up).
+  const { getServiceConfig: getEmbedSvcCfg } = await import('./domains/services/service-config.js');
+  const resolvedEmbedMode: 'off' | 'shadow' | 'on' = (() => {
+    const envMode = process.env.EMBED_MODE;
+    const svcEnabled = getEmbedSvcCfg('embedding-model').enabled;
+    if (svcEnabled) {
+      return envMode === 'shadow' || envMode === 'on' ? envMode : 'on';
+    }
+    if (envMode === 'off' || envMode === 'shadow' || envMode === 'on') return envMode;
+    return 'off';
+  })();
+  app.log.info(
+    `[api] F102: embed mode = ${resolvedEmbedMode} (EMBED_MODE=${process.env.EMBED_MODE ?? '(unset)'}, service.enabled=${getEmbedSvcCfg('embedding-model').enabled})`,
+  );
   const memoryServices = await createMemoryServices({
     type: 'sqlite',
     sqlitePath: process.env.EVIDENCE_DB ?? resolve(repoRoot, 'evidence.sqlite'),
     docsRoot: process.env.DOCS_ROOT ?? resolve(repoRoot, 'docs'),
     markersDir: resolve(repoRoot, 'docs', 'markers'),
     transcriptDataDir, // reuse the same resolved path as Writer/Reader (line 282)
-    // Gap-1: expose EMBED_MODE env variable (Phase C infra ready, default off for open-source)
-    embed: process.env.EMBED_MODE ? { embedMode: process.env.EMBED_MODE as 'off' | 'shadow' | 'on' } : undefined,
+    embed: { embedMode: resolvedEmbedMode },
     // Phase E-2: message passage indexing — provide a callback that reads thread messages
     messageListFn: async (threadId: string, limit?: number) => {
       const messages = await messageStore.getByThread(threadId, limit ?? 2000, 'default-user');
@@ -1910,14 +1931,16 @@ async function main(): Promise<void> {
     if (!libraryStores.has('project:cat-cafe')) libraryStores.set('project:cat-cafe', memoryServices.store);
     if (memoryServices.globalStore && !libraryStores.has('global:methods'))
       libraryStores.set('global:methods', memoryServices.globalStore);
-    const embedMode = process.env.EMBED_MODE as 'shadow' | 'on' | undefined;
+    // Use the resolvedEmbedMode computed above (service.enabled overrides EMBED_MODE=off).
+    const libraryEmbedMode: 'shadow' | 'on' | undefined =
+      resolvedEmbedMode === 'shadow' || resolvedEmbedMode === 'on' ? resolvedEmbedMode : undefined;
     await app.register(libraryRoutes, {
       catalog: memoryServices.catalog,
       stores: libraryStores,
       dataDir: memoryServices.dataDir,
       managedVaultBase: memoryServices.dataDir,
       embeddingService: memoryServices.embeddingService,
-      embedMode: embedMode && embedMode !== ('off' as string) ? embedMode : undefined,
+      embedMode: libraryEmbedMode,
       // F188 Phase F AC-F9: pass redis for tool-usage-metrics endpoint (砚砚 review P1-2)
       ...(redisClient ? { redis: redisClient } : {}),
       // AC-H1 P1 R3: runtime exclude updates for parent IndexBuilder

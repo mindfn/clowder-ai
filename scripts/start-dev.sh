@@ -260,9 +260,14 @@ apply_profile_defaults() {
     case "$profile" in
         dev)
             _PROF_ANTHROPIC_PROXY_ENABLED=1
-            _PROF_ASR_ENABLED=1
-            _PROF_TTS_ENABLED=1
-            _PROF_LLM_POSTPROCESS_ENABLED=1
+            # Sidecar lifecycle is owned by API autoStartEnabledServices() — dev
+            # profile keeps proxy ON but no longer auto-spawns ML sidecars here.
+            # Enable services in console; API starts them via /api/services/:id/start.
+            # Setting these to 1 only re-enables the legacy script-based path and
+            # will double-start sidecars (one via this script, one via API).
+            _PROF_ASR_ENABLED=0
+            _PROF_TTS_ENABLED=0
+            _PROF_LLM_POSTPROCESS_ENABLED=0
             _PROF_AUDIO_SERVICE_ENABLED=0
             _PROF_MESSAGE_TTL_SECONDS=0
             _PROF_THREAD_TTL_SECONDS=0
