@@ -37,11 +37,14 @@ function requireIdentity(request: FastifyRequest, reply: FastifyReply): boolean 
 }
 
 export const servicesRoutes: FastifyPluginAsync<ServicesRouteOptions> = async (app, options) => {
+  const getConfig = options.lifecycle?.serviceConfig?.get ?? getServiceConfig;
+
   app.get('/api/services', async (request, reply) => {
     if (!requireIdentity(request, reply)) return { error: 'Authentication required' };
     const services = await resolveServiceStates({
       env: options.env,
       fetchHealth: options.fetchHealth,
+      getConfig,
     });
     return { services };
   });
@@ -96,7 +99,7 @@ export const servicesRoutes: FastifyPluginAsync<ServicesRouteOptions> = async (a
     // resolves at runtime, defeating the collision-avoidance path.
     let suggestedPort: number | undefined;
     const cfg = getServiceConfig(id);
-    if (typeof cfg.port === 'number' && cfg.port > 0) {
+    if (cfg && typeof cfg.port === 'number' && cfg.port > 0) {
       suggestedPort = cfg.port;
     } else {
       const portEnvKey = PORT_ENV_VARS[id];
@@ -121,6 +124,7 @@ export const servicesRoutes: FastifyPluginAsync<ServicesRouteOptions> = async (a
     const state = await resolveServiceState(service, {
       env: options.env,
       fetchHealth: options.fetchHealth,
+      config: getConfig(request.params.id),
     });
     return {
       id: state.id,
