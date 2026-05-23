@@ -534,33 +534,6 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
     }
   };
 
-  const handleDelete = async () => {
-    if (!cat) return;
-    const ok = await confirm({
-      title: '删除确认',
-      message: `确认删除成员「${cat.displayName}」吗？此操作不可撤销。`,
-      variant: 'danger',
-      confirmLabel: '删除',
-    });
-    if (!ok) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const res = await apiFetch(`/api/cats/${cat.id}`, { method: 'DELETE' });
-      if (!res.ok) {
-        const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-        setError((payload.error as string) ?? `删除失败 (${res.status})`);
-        return;
-      }
-      await onSaved();
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '删除失败');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   return (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-[var(--console-overlay-medium)] px-4"
@@ -671,20 +644,7 @@ export function HubCatEditor({ cat, draft, existingCats, open, onClose, onSaved 
           {error ? <p className="rounded-2xl bg-conn-red-bg px-4 py-3 text-sm text-conn-red-text">{error}</p> : null}
         </div>
 
-        <div className="flex items-center justify-between px-7 pb-5 pt-4">
-          <div>
-            {cat && (
-              <button
-                type="button"
-                onClick={handleDelete}
-                disabled={saving}
-                aria-label="删除成员"
-                className="h-8 rounded-[10px] px-4 text-compact font-extrabold text-conn-red-text transition hover:bg-conn-red-bg disabled:opacity-50"
-              >
-                删除成员
-              </button>
-            )}
-          </div>
+        <div className="flex items-center justify-end px-7 pb-5 pt-4">
           <button
             type="button"
             onClick={handleSave}
