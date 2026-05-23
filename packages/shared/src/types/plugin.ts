@@ -21,6 +21,7 @@ export interface PluginConfigField {
   options?: PluginConfigOption[];
   oneOf?: Record<string, PluginConfigField[]>;
   notes?: Record<string, string>;
+  currentValue?: string | null;
 }
 
 /** Plugin health check declaration */
@@ -80,7 +81,7 @@ export interface PluginInfo {
   setupSteps?: string[];
   status: PluginStatus;
   configured: boolean;
-  config: (PluginConfigField & { currentValue: string | null })[];
+  config: PluginConfigField[];
   healthCheck?: PluginHealthCheck;
   resources: PluginResourceStatus[];
   hasHealthCheck: boolean;

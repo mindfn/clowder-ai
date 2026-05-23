@@ -23,7 +23,7 @@ function safeHostname(url: string): string {
   }
 }
 
-function fieldPlaceholder(f: PluginConfigField & { currentValue?: string | null }): string {
+function fieldPlaceholder(f: PluginConfigField): string {
   if (f.sensitive) return f.currentValue ? '已设置（输入新值覆盖）' : '未设置';
   if (f.currentValue) return '';
   const note = f.notes?.zh ?? f.notes?.en ?? Object.values(f.notes ?? {})[0];
