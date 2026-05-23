@@ -374,22 +374,17 @@ resolve_config "REDIS_PROFILE"
 : "${REDIS_PROFILE:=dev}"
 
 derive_embed_enabled() {
+    # EMBED_MODE only controls the API in-process embedding mode (off/shadow/on).
+    # Sidecar lifecycle is owned by API autoStartEnabledServices() — this script
+    # no longer derives EMBED_ENABLED=1 from EMBED_MODE. The legacy direct-spawn
+    # path is gated separately by CAT_CAFE_LEGACY_DIRECT_SIDECARS=1 (see below).
     local explicit="${EMBED_ENABLED-}"
-    local mode="${EMBED_MODE:-off}"
     if [ -n "$explicit" ]; then
         _SRC_EMBED_ENABLED="env/.env override"
         return
     fi
-
-    case "$mode" in
-        on|shadow)
-            EMBED_ENABLED=1
-            ;;
-        *)
-            EMBED_ENABLED=0
-            ;;
-    esac
-    _SRC_EMBED_ENABLED="derived from EMBED_MODE=${mode}"
+    EMBED_ENABLED=0
+    _SRC_EMBED_ENABLED="default 0 (sidecar managed by API lifecycle)"
 }
 
 derive_embed_enabled
@@ -1372,6 +1367,27 @@ main() {
     _STATE_LLM_PP=disabled
     _STATE_EMBED=disabled
     _STATE_AUDIO=disabled
+
+    # Legacy direct-spawn gate. Sidecar lifecycle is owned by API
+    # autoStartEnabledServices() reading .cat-cafe/services.json. Enable
+    # services in Console; the API will spawn them via /api/services/:id/start.
+    # Set CAT_CAFE_LEGACY_DIRECT_SIDECARS=1 only if you need the pre-Console
+    # direct-spawn path (e.g. legacy .env with EMBED_MODE=on/ASR_ENABLED=1).
+    # WARNING: legacy path runs root scripts/*-server.sh which do not pass
+    # --model; will collide with embed-api.py --model required=True.
+    if [ "${CAT_CAFE_LEGACY_DIRECT_SIDECARS:-0}" != "1" ]; then
+        if [ "${ASR_ENABLED:-0}" = "1" ] || [ "${TTS_ENABLED:-0}" = "1" ] \
+           || [ "${LLM_POSTPROCESS_ENABLED:-0}" = "1" ] || [ "${EMBED_ENABLED:-0}" = "1" ] \
+           || [ "${AUDIO_SERVICE_ENABLED:-0}" = "1" ]; then
+            echo "[start-dev] *_ENABLED detected but CAT_CAFE_LEGACY_DIRECT_SIDECARS=0 — skipping legacy sidecar spawn."
+            echo "[start-dev] Sidecar lifecycle is owned by API autoStartEnabledServices(); enable services in console."
+        fi
+        ASR_ENABLED=0
+        TTS_ENABLED=0
+        LLM_POSTPROCESS_ENABLED=0
+        EMBED_ENABLED=0
+        AUDIO_SERVICE_ENABLED=0
+    fi
 
     # Qwen3-ASR Server (语音输入 — 替代 Whisper，同端口 drop-in)
     if [ "${ASR_ENABLED:-0}" = "1" ]; then

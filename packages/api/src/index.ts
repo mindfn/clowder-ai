@@ -579,17 +579,17 @@ async function main(): Promise<void> {
   //   3. Otherwise, default 'off' (service disabled in console, no env → no
   //      embedding services wired up).
   const { getServiceConfig: getEmbedSvcCfg } = await import('./domains/services/service-config.js');
+  const embedSvcEnabled = getEmbedSvcCfg('embedding-model')?.enabled ?? false;
   const resolvedEmbedMode: 'off' | 'shadow' | 'on' = (() => {
     const envMode = process.env.EMBED_MODE;
-    const svcEnabled = getEmbedSvcCfg('embedding-model').enabled;
-    if (svcEnabled) {
+    if (embedSvcEnabled) {
       return envMode === 'shadow' || envMode === 'on' ? envMode : 'on';
     }
     if (envMode === 'off' || envMode === 'shadow' || envMode === 'on') return envMode;
     return 'off';
   })();
   app.log.info(
-    `[api] F102: embed mode = ${resolvedEmbedMode} (EMBED_MODE=${process.env.EMBED_MODE ?? '(unset)'}, service.enabled=${getEmbedSvcCfg('embedding-model').enabled})`,
+    `[api] F102: embed mode = ${resolvedEmbedMode} (EMBED_MODE=${process.env.EMBED_MODE ?? '(unset)'}, service.enabled=${embedSvcEnabled})`,
   );
   const memoryServices = await createMemoryServices({
     type: 'sqlite',
