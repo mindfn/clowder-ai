@@ -671,11 +671,11 @@ describe('#723 cross-page typography consistency', () => {
     expect(src).toContain('focus:bg-[var(--console-card-bg)]');
   });
 
-  it('homepage inputs (ThreadSidebar search) use soft border + transparent bg', () => {
+  it('homepage inputs (ThreadSidebar search) use quiet bg, no default border', () => {
     const src = readSrc('ThreadSidebar/ThreadSidebar.tsx');
     expect(src).not.toMatch(/搜索[\s\S]{0,200}bg-\[var\(--console-field-bg\)\]/);
-    expect(src).toContain('border-[var(--console-border-soft)]');
-    expect(src).toContain('bg-transparent');
+    expect(src).toContain('bg-[var(--console-hover-bg)]');
+    expect(src).not.toMatch(/搜索[\s\S]{0,80}border border-/);
   });
 
   it('MessageNavigator has 1px connecting rail, no extra viewport thumb or raw grey', () => {
