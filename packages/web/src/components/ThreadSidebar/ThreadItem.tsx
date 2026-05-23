@@ -223,23 +223,6 @@ export function ThreadItem({
           {id !== 'default' && onUpdateLabels && !isEditing && (
             <ThreadLabelPicker threadId={id} currentLabels={threadLabels ?? []} onSave={onUpdateLabels} />
           )}
-          {/* Pin button — stateful, stays visible when active */}
-          {canPin && !isEditing && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                void onTogglePin(id, !isPinned);
-              }}
-              className={`p-0.5 rounded transition-all ${
-                isPinned
-                  ? 'text-cafe-accent'
-                  : 'opacity-0 group-hover:opacity-100 text-cafe-muted hover:text-cafe-accent'
-              }`}
-              title={isPinned ? '取消置顶' : '置顶'}
-            >
-              <PinIcon />
-            </button>
-          )}
           {/* Favorite button — stateful, stays visible when active */}
           {canFavorite && !isEditing && (
             <button
@@ -255,6 +238,23 @@ export function ThreadItem({
               title={isFavorited ? '取消收藏' : '收藏'}
             >
               <StarIcon filled={isFavorited} />
+            </button>
+          )}
+          {/* Pin button — stateful, rightmost (highest frequency) */}
+          {canPin && !isEditing && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                void onTogglePin(id, !isPinned);
+              }}
+              className={`p-0.5 rounded transition-all ${
+                isPinned
+                  ? 'text-cafe-accent'
+                  : 'opacity-0 group-hover:opacity-100 text-cafe-muted hover:text-cafe-accent'
+              }`}
+              title={isPinned ? '取消置顶' : '置顶'}
+            >
+              <PinIcon />
             </button>
           )}
         </div>
