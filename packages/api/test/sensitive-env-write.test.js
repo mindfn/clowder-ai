@@ -184,6 +184,42 @@ describe('PATCH /api/config/env — sensitive env owner gate', () => {
     }
   });
 
+  it('sensitive write audit uses session identity, not forgeable header', async () => {
+    const { configRoutes } = await import('../dist/routes/config.js');
+    const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
+    const envFilePath = resolve(tempRoot, '.env');
+    writeFileSync(envFilePath, 'F102_API_KEY=sk-old\n', 'utf8');
+    setEnv('DEFAULT_OWNER_USER_ID', 'you');
+    const auditEvents = [];
+
+    const app = Fastify({ logger: false });
+    addSessionHook(app);
+    try {
+      await configRoutes(app, {
+        projectRoot: tempRoot,
+        envFilePath,
+        auditLog: { append: async (event) => auditEvents.push(event) },
+      });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/config/env',
+        headers: { 'x-test-session-user': 'you', 'x-cat-cafe-user': 'attacker' },
+        payload: { updates: [{ name: 'F102_API_KEY', value: 'sk-new' }] },
+      });
+
+      assert.equal(res.statusCode, 200);
+      assert.equal(auditEvents.length, 2);
+      assert.equal(auditEvents[0].data.operator, 'you', 'CONFIG_UPDATED must use session identity');
+      assert.equal(auditEvents[1].data.operator, 'you', 'ENV_SENSITIVE_WRITE must use session identity');
+      assert.notEqual(auditEvents[0].data.operator, 'attacker', 'forged header must not appear in audit');
+    } finally {
+      await app.close();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it('rejects DEFAULT_OWNER_USER_ID edits (trust anchor protection, P1 fix)', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));

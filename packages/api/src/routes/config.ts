@@ -280,6 +280,8 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
       reply.status(400);
       return { error: 'Identity required (X-Cat-Cafe-User header)' };
     }
+    const sessionUserId = (request as FastifyRequest & { sessionUserId?: string }).sessionUserId;
+    const sessionOperator = typeof sessionUserId === 'string' && sessionUserId.trim() ? sessionUserId.trim() : null;
 
     const updates = new Map<string, string | null>();
     for (const update of parsed.data.updates) {
@@ -293,8 +295,6 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
     // Sensitive env writes require session-auth (not forgeable header identity)
     const touchesSensitive = hasSensitiveEditableVars(updates.keys());
     if (touchesSensitive) {
-      const sessionUserId = (request as FastifyRequest & { sessionUserId?: string }).sessionUserId;
-      const sessionOperator = typeof sessionUserId === 'string' && sessionUserId.trim() ? sessionUserId.trim() : null;
       if (!sessionOperator) {
         reply.status(401);
         return { error: 'Sensitive env writes require session authentication' };
@@ -339,22 +339,22 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
       });
     }
 
+    const auditOperator = touchesSensitive ? sessionOperator! : (sessionOperator ?? operator);
     try {
       await auditLog.append({
         type: AuditEventTypes.CONFIG_UPDATED,
         data: {
           target: '.env',
           keys: [...updates.keys()],
-          operator,
+          operator: auditOperator,
         },
       });
-      // Separate audit trail for sensitive env writes (sensitive keys only, no values)
       if (touchesSensitive) {
         await auditLog.append({
           type: AuditEventTypes.ENV_SENSITIVE_WRITE,
           data: {
             keys: filterSensitiveEditableKeys(updates.keys()),
-            operator,
+            operator: auditOperator,
           },
         });
       }
