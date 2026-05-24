@@ -10,7 +10,7 @@ import type {
 } from '@cat-cafe/shared';
 import type { LimbRegistry } from '../limb/LimbRegistry.js';
 import { resourceCapId } from './PluginRegistry.js';
-import { readPluginConfig } from './plugin-config-store.js';
+import { resolvePluginEnv } from './plugin-config-store.js';
 
 const PROVIDER_DIRS = ['.claude/skills', '.codex/skills', '.gemini/skills', '.kimi/skills'];
 
@@ -37,6 +37,20 @@ export interface PluginResourceActivatorDeps {
   writeCapabilities: (config: CapabilitiesConfig) => Promise<void>;
   withCapabilityLock: <T>(fn: () => Promise<T>) => Promise<T>;
   limbAdapterFactory?: LimbAdapterFactory;
+}
+
+export function withPersistedLimbNodeId<T extends ILimbNode>(node: T, persistedNodeId?: string): T {
+  if (!persistedNodeId || persistedNodeId === node.nodeId) return node;
+
+  const clone = Object.create(Object.getPrototypeOf(node));
+  const descriptors: PropertyDescriptorMap = { ...Object.getOwnPropertyDescriptors(node) };
+  descriptors.nodeId = {
+    value: persistedNodeId,
+    enumerable: true,
+    configurable: true,
+  };
+  Object.defineProperties(clone, descriptors);
+  return clone as T;
 }
 
 export class PluginResourceActivator {
@@ -148,14 +162,13 @@ export class PluginResourceActivator {
         const linkPath = join(skillsDir, skillName);
         if (await this.ensureSymlink(linkPath, skillSourceDir)) createdLinks.push(linkPath);
       }
+      await this.upsertCapabilityEntry(manifest, resource, true);
     } catch (err) {
       for (const linkPath of createdLinks) {
         await this.removeOwnedSymlink(linkPath, skillSourceDir);
       }
       throw err;
     }
-
-    await this.upsertCapabilityEntry(manifest, resource, true);
   }
 
   private async deactivateSkill(manifest: PluginManifest, resource: PluginResourceDef): Promise<void> {
@@ -231,7 +244,8 @@ export class PluginResourceActivator {
   ): Promise<void> {
     await this.deps.withCapabilityLock(async () => {
       const config = await this.deps.readCapabilities();
-      const cap: CapabilitiesConfig = config ?? { version: 1, capabilities: [] };
+      const previous = config ? structuredClone(config) : null;
+      const cap: CapabilitiesConfig = config ? structuredClone(config) : { version: 1, capabilities: [] };
       const capId = resourceCapId(manifest.id, resource);
 
       const existing = cap.capabilities.find((c) => c.id === capId);
@@ -246,12 +260,7 @@ export class PluginResourceActivator {
         existing.pluginId = manifest.id;
         if (limbNodeId) existing.limbNodeId = limbNodeId;
         if (resource.type === 'mcp' && resource.command) {
-          existing.mcpServer = {
-            command: resource.command,
-            args: resource.args ?? [],
-            transport: (resource.transport as 'stdio' | 'streamableHttp') ?? 'stdio',
-            ...this.buildMcpEnv(manifest),
-          };
+          existing.mcpServer = this.buildMcpServer(manifest, resource);
         }
       } else {
         const entry: CapabilityEntry = {
@@ -264,18 +273,13 @@ export class PluginResourceActivator {
         };
 
         if (resource.type === 'mcp' && resource.command) {
-          entry.mcpServer = {
-            command: resource.command,
-            args: resource.args ?? [],
-            transport: (resource.transport as 'stdio' | 'streamableHttp') ?? 'stdio',
-            ...this.buildMcpEnv(manifest),
-          };
+          entry.mcpServer = this.buildMcpServer(manifest, resource);
         }
 
         cap.capabilities.push(entry);
       }
 
-      await this.deps.writeCapabilities(cap);
+      await this.writeCapabilitiesWithRollback(previous, cap);
     });
   }
 
@@ -283,10 +287,12 @@ export class PluginResourceActivator {
     await this.deps.withCapabilityLock(async () => {
       const config = await this.deps.readCapabilities();
       if (!config) return;
+      const previous = structuredClone(config);
+      const next = structuredClone(config);
 
       const capId = resourceCapId(manifest.id, resource);
-      config.capabilities = config.capabilities.filter((c) => !(c.id === capId && c.pluginId === manifest.id));
-      await this.deps.writeCapabilities(config);
+      next.capabilities = next.capabilities.filter((c) => !(c.id === capId && c.pluginId === manifest.id));
+      await this.writeCapabilitiesWithRollback(previous, next);
     });
   }
 
@@ -294,28 +300,59 @@ export class PluginResourceActivator {
     await this.deps.withCapabilityLock(async () => {
       const config = await this.deps.readCapabilities();
       if (!config) return;
+      const previous = structuredClone(config);
+      const next = structuredClone(config);
 
       const mcpEnv = this.buildMcpEnv(manifest);
       let changed = false;
-      for (const cap of config.capabilities) {
+      for (const cap of next.capabilities) {
         if (cap.pluginId !== manifest.id || cap.type !== 'mcp' || !cap.mcpServer) continue;
         cap.mcpServer.env = mcpEnv.env;
         changed = true;
       }
-      if (changed) await this.deps.writeCapabilities(config);
+      if (changed) await this.writeCapabilitiesWithRollback(previous, next);
     });
+  }
+
+  private buildMcpServer(
+    manifest: PluginManifest,
+    resource: PluginResourceDef,
+  ): NonNullable<CapabilityEntry['mcpServer']> {
+    return {
+      command: resource.command!,
+      args: resource.args ?? [],
+      transport: (resource.transport as 'stdio' | 'streamableHttp') ?? 'stdio',
+      workingDir: join(this.deps.pluginsDir, manifest.id),
+      ...this.buildMcpEnv(manifest),
+    };
   }
 
   private buildMcpEnv(manifest: PluginManifest): { env?: Record<string, string> } {
     if (manifest.config.length === 0) return {};
-    const projectRoot = this.deps.resolveProjectRoot();
-    const stored = readPluginConfig(projectRoot, manifest.id);
+    const resolved = resolvePluginEnv([manifest]);
     const env: Record<string, string> = {};
     for (const field of manifest.config) {
-      const val = stored[field.envName];
+      const val = resolved[field.envName];
       if (val) env[field.envName] = val;
     }
     return Object.keys(env).length > 0 ? { env } : {};
+  }
+
+  private async writeCapabilitiesWithRollback(
+    previous: CapabilitiesConfig | null,
+    next: CapabilitiesConfig,
+  ): Promise<void> {
+    try {
+      await this.deps.writeCapabilities(next);
+    } catch (err) {
+      const rollback = previous ?? { version: 1, capabilities: [] };
+      try {
+        await this.deps.writeCapabilities(structuredClone(rollback));
+      } catch {
+        /* If regeneration fails after writing, the rollback write still restores persisted state. */
+      }
+      throw err;
+    }
   }
 
   private async shouldSkipDirectoryLevelSkillsSymlink(skillsDir: string, expectedRoot: string): Promise<boolean> {

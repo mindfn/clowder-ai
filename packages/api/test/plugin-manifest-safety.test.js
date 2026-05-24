@@ -7,9 +7,11 @@ import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from '
 import os from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
+import Fastify from 'fastify';
 import { PluginRegistry, resourceCapId } from '../dist/domains/plugin/PluginRegistry.js';
-import { PluginResourceActivator } from '../dist/domains/plugin/PluginResourceActivator.js';
+import { PluginResourceActivator, withPersistedLimbNodeId } from '../dist/domains/plugin/PluginResourceActivator.js';
 import { BUILTIN_PLUGIN_IDS, parsePluginManifest, validateEnvSafety } from '../dist/domains/plugin/plugin-manifest.js';
+import { registerPluginRoutes } from '../dist/routes/plugin-routes.js';
 
 function writeTmpManifest(dir, id, yaml) {
   const pluginDir = join(dir, id);
@@ -206,6 +208,61 @@ describe('parsePluginManifest security', () => {
     const manifest = parsePluginManifest(yamlPath);
     assert.equal(manifest.resources.length, 1, 'schedule should be filtered');
     assert.equal(manifest.resources[0].type, 'skill');
+  });
+
+  it('rejects unknown resource types instead of silently dropping them', () => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
+    const yamlPath = writeTmpManifest(
+      tmpDir,
+      'typo-plugin',
+      ['id: typo-plugin', 'name: Typo', 'version: 1.0.0', 'resources:', '  - type: skll', '    path: skills/test'].join(
+        '\n',
+      ),
+    );
+    assert.throws(() => parsePluginManifest(yamlPath), /Unsupported resource type 'skll'/);
+  });
+
+  it('rejects absolute Windows resource paths', () => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
+    const yamlPath = writeTmpManifest(
+      tmpDir,
+      'win-path-plugin',
+      [
+        'id: win-path-plugin',
+        'name: WinPath',
+        'version: 1.0.0',
+        'resources:',
+        '  - type: skill',
+        '    path: "C:\\\\secret\\\\skill"',
+      ].join('\n'),
+    );
+    assert.throws(() => parsePluginManifest(yamlPath), /must be relative without/);
+  });
+
+  it('rejects resource entries missing type-specific required fields', () => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
+    const missingSkillPath = writeTmpManifest(
+      tmpDir,
+      'missing-skill-path',
+      ['id: missing-skill-path', 'name: MissingSkillPath', 'version: 1.0.0', 'resources:', '  - type: skill'].join(
+        '\n',
+      ),
+    );
+    assert.throws(() => parsePluginManifest(missingSkillPath), /Skill resource .* must have a 'path'/);
+
+    const missingMcpCommand = writeTmpManifest(
+      tmpDir,
+      'missing-mcp-command',
+      [
+        'id: missing-mcp-command',
+        'name: MissingMcpCommand',
+        'version: 1.0.0',
+        'resources:',
+        '  - type: mcp',
+        '    name: local',
+      ].join('\n'),
+    );
+    assert.throws(() => parsePluginManifest(missingMcpCommand), /MCP resource .* must have a 'command'/);
   });
 
   it('parses healthCheck from YAML', () => {
@@ -431,6 +488,182 @@ describe('PluginResourceActivator skill safety', () => {
     assert.equal(result.status, 'failed');
     assert.match(result.resources[0].error, /directory-level skills symlink/);
     assert.equal(existsSync(join(sharedSkillsDir, 'plugin-skill')), false);
+  });
+
+  it('rolls back capability state and symlinks when CLI regeneration fails', async () => {
+    const root = mkdtempSync(join(os.tmpdir(), 'plugin-activator-root-'));
+    const pluginsDir = join(root, 'plugins');
+    const projectRoot = join(root, 'project');
+    const skillSourceDir = join(pluginsDir, 'test-plugin', 'skills', 'plugin-skill');
+    mkdirSync(skillSourceDir, { recursive: true });
+
+    let persisted = {
+      version: 1,
+      capabilities: [{ id: 'existing', type: 'skill', enabled: true, source: 'cat-cafe' }],
+    };
+    let writes = 0;
+    const activator = new PluginResourceActivator({
+      resolveProjectRoot: () => projectRoot,
+      pluginsDir,
+      limbRegistry: {},
+      readCapabilities: async () => structuredClone(persisted),
+      writeCapabilities: async (config) => {
+        persisted = structuredClone(config);
+        if (writes++ === 0) throw new Error('generateCliConfigs failed');
+      },
+      withCapabilityLock: async (fn) => fn(),
+    });
+
+    const result = await activator.enablePlugin({
+      id: 'test-plugin',
+      name: 'Test Plugin',
+      version: '1.0.0',
+      builtin: false,
+      config: [],
+      resources: [{ type: 'skill', path: 'skills/plugin-skill' }],
+    });
+
+    assert.equal(result.status, 'failed');
+    assert.deepEqual(
+      persisted.capabilities.map((c) => c.id),
+      ['existing'],
+    );
+    assert.equal(existsSync(join(projectRoot, '.codex', 'skills', 'plugin-skill')), false);
+  });
+
+  it('persists plugin MCP workingDir and env from resolved config sources', async () => {
+    const root = mkdtempSync(join(os.tmpdir(), 'plugin-activator-root-'));
+    const pluginsDir = join(root, 'plugins');
+    const projectRoot = join(root, 'project');
+    process.env.TEST_PLUGIN_TOKEN = 'from-env';
+    let persisted = { version: 1, capabilities: [] };
+    try {
+      const activator = new PluginResourceActivator({
+        resolveProjectRoot: () => projectRoot,
+        pluginsDir,
+        limbRegistry: {},
+        readCapabilities: async () => structuredClone(persisted),
+        writeCapabilities: async (config) => {
+          persisted = structuredClone(config);
+        },
+        withCapabilityLock: async (fn) => fn(),
+      });
+
+      const result = await activator.enablePlugin({
+        id: 'test-plugin',
+        name: 'Test Plugin',
+        version: '1.0.0',
+        builtin: false,
+        config: [{ envName: 'TEST_PLUGIN_TOKEN', label: 'Token', sensitive: true, required: true }],
+        resources: [{ type: 'mcp', name: 'local', command: 'node', args: ['server.js'] }],
+      });
+
+      assert.equal(result.status, 'success');
+      assert.equal(persisted.capabilities[0].mcpServer.workingDir, join(pluginsDir, 'test-plugin'));
+      assert.deepEqual(persisted.capabilities[0].mcpServer.env, { TEST_PLUGIN_TOKEN: 'from-env' });
+    } finally {
+      delete process.env.TEST_PLUGIN_TOKEN;
+    }
+  });
+});
+
+describe('PluginResourceActivator limb startup safety', () => {
+  it('registers rehydrated limb nodes under the persisted node id', () => {
+    const node = {
+      nodeId: 'yaml-node',
+      displayName: 'YAML Node',
+      platform: 'test',
+      capabilities: [],
+      register: async () => {},
+      invoke: async () => ({ ok: true }),
+      healthCheck: async () => 'online',
+      deregister: async () => {},
+    };
+
+    const rehydrated = withPersistedLimbNodeId(node, 'persisted-node');
+    assert.equal(rehydrated.nodeId, 'persisted-node');
+    assert.equal(node.nodeId, 'yaml-node');
+  });
+});
+
+describe('plugin routes safety', () => {
+  function createRouteDeps() {
+    const manifest = {
+      id: 'test-plugin',
+      name: 'Test Plugin',
+      version: '1.0.0',
+      builtin: false,
+      config: [],
+      resources: [],
+    };
+    let scanCount = 0;
+    const pluginRegistry = {
+      scan() {
+        scanCount += 1;
+        return [manifest];
+      },
+      get scanCount() {
+        return scanCount;
+      },
+      getAllManifests() {
+        return [manifest];
+      },
+      getManifest(id) {
+        return id === manifest.id ? manifest : undefined;
+      },
+      getPluginInfo(m) {
+        return { id: m.id, name: m.name, version: m.version, status: 'configured', configured: true, resources: [] };
+      },
+    };
+    const pluginActivator = {
+      enablePlugin: async () => ({ status: 'success', resources: [] }),
+      disablePlugin: async () => ({ status: 'success', resources: [] }),
+      syncPluginEnv: async () => {},
+    };
+    return { manifest, pluginRegistry, pluginActivator };
+  }
+
+  it('refreshes plugin registry before serving plugin list', async () => {
+    const app = Fastify();
+    const deps = createRouteDeps();
+    registerPluginRoutes(app, {
+      pluginRegistry: deps.pluginRegistry,
+      pluginActivator: deps.pluginActivator,
+      limbRegistry: {},
+      pluginsDir: '/tmp/plugins',
+    });
+    await app.ready();
+    try {
+      const res = await app.inject({ method: 'GET', url: '/api/plugins' });
+      assert.equal(res.statusCode, 200);
+      assert.equal(deps.pluginRegistry.scanCount, 1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects plugin writes proxied through loopback with a public Host header', async () => {
+    const app = Fastify();
+    const deps = createRouteDeps();
+    registerPluginRoutes(app, {
+      pluginRegistry: deps.pluginRegistry,
+      pluginActivator: deps.pluginActivator,
+      limbRegistry: {},
+      pluginsDir: '/tmp/plugins',
+    });
+    await app.ready();
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/plugins/test-plugin/enable',
+        headers: { host: 'cafe.example.com', 'x-cat-cafe-user': 'local-user' },
+        remoteAddress: '127.0.0.1',
+      });
+      assert.equal(res.statusCode, 403);
+      assert.match(res.payload, /local API host/);
+    } finally {
+      await app.close();
+    }
   });
 });
 

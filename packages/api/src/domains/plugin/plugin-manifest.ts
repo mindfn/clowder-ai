@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { posix, win32 } from 'node:path';
 import type { PluginConfigField, PluginHealthCheck, PluginManifest, PluginResourceDef } from '@cat-cafe/shared';
 import { parse as parseYaml } from 'yaml';
 import { resourceCapId } from './PluginRegistry.js';
@@ -31,6 +32,10 @@ function isSystemEnv(envName: string): boolean {
   const upper = envName.toUpperCase();
   if (SYSTEM_ENV_DENYLIST_EXACT.has(upper)) return true;
   return SYSTEM_ENV_DENYLIST_PREFIXES.some((p) => upper.startsWith(p));
+}
+
+function isUnsafeResourcePath(path: string): boolean {
+  return posix.isAbsolute(path) || win32.isAbsolute(path) || path.split(/[\\/]+/).includes('..');
 }
 
 export function validateEnvSafety(manifest: PluginManifest, existingClaims: Map<string, string>): EnvSafetyResult {
@@ -99,15 +104,25 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
   if (Array.isArray(rawResources)) {
     for (const r of rawResources) {
       const rr = r as Record<string, unknown>;
-      const type = rr['type'] as string;
+      const rawType = rr['type'];
+      if (typeof rawType !== 'string') {
+        throw new Error(`Invalid resource entry in ${yamlPath}: type must be a string`);
+      }
+      const type = rawType;
       if (DEFERRED_RESOURCE_TYPES.has(type)) {
         console.warn(`[PluginManifest] resource type '${type}' not yet supported, skipping`);
         continue;
       }
-      if (!SUPPORTED_RESOURCE_TYPES.has(type)) continue;
+      if (!SUPPORTED_RESOURCE_TYPES.has(type)) {
+        throw new Error(`Unsupported resource type '${type}' in ${yamlPath}`);
+      }
 
-      const path = rr['path'] as string | undefined;
-      if (path && (path.includes('..') || path.startsWith('/'))) {
+      const rawPath = rr['path'];
+      if (rawPath != null && typeof rawPath !== 'string') {
+        throw new Error(`Invalid resource path in ${yamlPath}: must be a string`);
+      }
+      const path = rawPath as string | undefined;
+      if (path && isUnsafeResourcePath(path)) {
         throw new Error(`Invalid resource path '${path}': must be relative without '..'`);
       }
 
@@ -125,9 +140,20 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
         throw new Error(`Invalid resource command in ${yamlPath}: must be a string`);
       }
 
-      const name = rr['name'] as string | undefined;
+      const rawName = rr['name'];
+      if (rawName != null && typeof rawName !== 'string') {
+        throw new Error(`Invalid resource name in ${yamlPath}: must be a string`);
+      }
+      const name = rawName as string | undefined;
+      if ((type === 'skill' || type === 'limb') && !path) {
+        const label = type === 'skill' ? 'Skill' : 'Limb';
+        throw new Error(`${label} resource in ${yamlPath} must have a 'path' field`);
+      }
       if (type === 'mcp' && !name) {
         throw new Error(`MCP resource in ${yamlPath} must have a 'name' field for unique capability ID`);
+      }
+      if (type === 'mcp' && !command) {
+        throw new Error(`MCP resource in ${yamlPath} must have a 'command' field`);
       }
 
       resources.push({

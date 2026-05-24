@@ -13,12 +13,11 @@ import type { LimbRegistry } from '../domains/limb/LimbRegistry.js';
 import { loadLimbDeclaration } from '../domains/limb/limb-yaml-loader.js';
 import type { PluginRegistry } from '../domains/plugin/PluginRegistry.js';
 import type { PluginResourceActivator } from '../domains/plugin/PluginResourceActivator.js';
-import { resolvePluginEnv, writePluginConfig } from '../domains/plugin/plugin-config-store.js';
+import { loadAllPluginConfigs, resolvePluginEnv, writePluginConfig } from '../domains/plugin/plugin-config-store.js';
 import { validateEnvSafety } from '../domains/plugin/plugin-manifest.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
+import { isTrustedLocalApiRequest } from '../utils/loopback-request.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
-
-const LOOPBACK_ADDRS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
 interface PluginRoutesOpts {
   pluginRegistry: PluginRegistry;
@@ -27,13 +26,19 @@ interface PluginRoutesOpts {
   pluginsDir: string;
 }
 
+function refreshPluginRegistry(pluginRegistry: PluginRegistry) {
+  const manifests = pluginRegistry.scan();
+  loadAllPluginConfigs(resolveActiveProjectRoot(), manifests);
+  return manifests;
+}
+
 export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpts): void {
   const { pluginRegistry, pluginActivator, limbRegistry, pluginsDir } = opts;
 
   app.get('/api/plugins', async () => {
+    const manifests = refreshPluginRegistry(pluginRegistry);
     const projectRoot = resolveActiveProjectRoot();
     const capabilities = await readCapabilitiesConfig(projectRoot);
-    const manifests = pluginRegistry.getAllManifests();
 
     const envSnapshot = resolvePluginEnv(manifests);
     const plugins: PluginInfo[] = manifests.map((m) => pluginRegistry.getPluginInfo(m, capabilities, envSnapshot));
@@ -43,6 +48,7 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
 
   app.get<{ Params: { id: string } }>('/api/plugins/:id', async (request, reply) => {
     const { id } = request.params;
+    refreshPluginRegistry(pluginRegistry);
     const manifest = pluginRegistry.getManifest(id);
     if (!manifest) {
       reply.status(404);
@@ -56,9 +62,9 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
   });
 
   app.post<{ Params: { id: string } }>('/api/plugins/:id/enable', async (request, reply) => {
-    if (!LOOPBACK_ADDRS.has(request.ip)) {
+    if (!isTrustedLocalApiRequest(request)) {
       reply.status(403);
-      return { error: 'Plugin write endpoint is loopback-only' };
+      return { error: 'Plugin write endpoint requires a local API host' };
     }
     const operator = resolveHeaderUserId(request);
     if (!operator) {
@@ -67,6 +73,7 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
     }
 
     const { id } = request.params;
+    refreshPluginRegistry(pluginRegistry);
     const manifest = pluginRegistry.getManifest(id);
     if (!manifest) {
       reply.status(404);
@@ -89,9 +96,9 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
   });
 
   app.post<{ Params: { id: string } }>('/api/plugins/:id/disable', async (request, reply) => {
-    if (!LOOPBACK_ADDRS.has(request.ip)) {
+    if (!isTrustedLocalApiRequest(request)) {
       reply.status(403);
-      return { error: 'Plugin write endpoint is loopback-only' };
+      return { error: 'Plugin write endpoint requires a local API host' };
     }
     const operator = resolveHeaderUserId(request);
     if (!operator) {
@@ -100,6 +107,7 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
     }
 
     const { id } = request.params;
+    refreshPluginRegistry(pluginRegistry);
     const manifest = pluginRegistry.getManifest(id);
     if (!manifest) {
       reply.status(404);
@@ -124,9 +132,9 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
   app.post<{ Params: { id: string }; Body: { updates: { name: string; value: string | null }[] } }>(
     '/api/plugins/:id/config',
     async (request, reply) => {
-      if (!LOOPBACK_ADDRS.has(request.ip)) {
+      if (!isTrustedLocalApiRequest(request)) {
         reply.status(403);
-        return { error: 'Plugin config endpoint is loopback-only' };
+        return { error: 'Plugin config endpoint requires a local API host' };
       }
 
       const operator = resolveHeaderUserId(request);
@@ -136,6 +144,7 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
       }
 
       const { id } = request.params;
+      refreshPluginRegistry(pluginRegistry);
       const manifest = pluginRegistry.getManifest(id);
       if (!manifest) {
         reply.status(404);
@@ -199,9 +208,9 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
   );
 
   app.post<{ Params: { id: string } }>('/api/plugins/:id/test', async (request, reply) => {
-    if (!LOOPBACK_ADDRS.has(request.ip)) {
+    if (!isTrustedLocalApiRequest(request)) {
       reply.status(403);
-      return { error: 'Plugin test endpoint is loopback-only' };
+      return { error: 'Plugin test endpoint requires a local API host' };
     }
     const operator = resolveHeaderUserId(request);
     if (!operator) {
@@ -210,6 +219,7 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
     }
 
     const { id } = request.params;
+    refreshPluginRegistry(pluginRegistry);
     const manifest = pluginRegistry.getManifest(id);
     if (!manifest) {
       reply.status(404);
@@ -237,9 +247,7 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
             matchedDecl = d;
             break;
           }
-        } catch {
-          continue;
-        }
+        } catch {}
       }
 
       if (!matchedDecl) {

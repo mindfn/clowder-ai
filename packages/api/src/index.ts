@@ -1588,7 +1588,9 @@ async function main(): Promise<void> {
   {
     const { join } = await import('node:path');
     const { PluginRegistry, resourceCapId } = await import('./domains/plugin/PluginRegistry.js');
-    const { PluginResourceActivator } = await import('./domains/plugin/PluginResourceActivator.js');
+    const { PluginResourceActivator, withPersistedLimbNodeId } = await import(
+      './domains/plugin/PluginResourceActivator.js'
+    );
     const { registerPluginRoutes } = await import('./routes/plugin-routes.js');
     const { readCapabilitiesConfig, writeCapabilitiesConfig, withCapabilityLock } = await import(
       './config/capabilities/capability-orchestrator.js'
@@ -1651,7 +1653,7 @@ async function main(): Promise<void> {
         }
         try {
           const yamlPath = join(pluginsDir, manifest.id, limbResource.path);
-          const node = await factory(yamlPath);
+          const node = withPersistedLimbNodeId(await factory(yamlPath), cap.limbNodeId);
           await limbRegistry.register(node);
           app.log.info(`[api] F202: Rehydrated limb for plugin '${manifest.id}'`);
         } catch (err) {
