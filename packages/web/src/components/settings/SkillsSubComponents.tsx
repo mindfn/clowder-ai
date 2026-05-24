@@ -128,11 +128,12 @@ export function SkillRow({
               <SettingsResourceToggleSwitch
                 enabled={skill.controls.enabled}
                 busy={isGlobalToggling}
+                disabled={!!skill.pluginId}
                 onClick={(e) => {
                   e.stopPropagation();
                   onToggle(skill.id, !skill.controls?.enabled);
                 }}
-                title={skill.controls.enabled ? '全局禁用' : '全局启用'}
+                title={skill.pluginId ? '由插件管理' : skill.controls.enabled ? '全局禁用' : '全局启用'}
               />
               {catFamilies.length > 0 && Object.keys(skill.controls.cats).length > 0 && (
                 <SettingsIconButton
