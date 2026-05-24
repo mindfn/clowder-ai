@@ -61,6 +61,26 @@ function isLoopbackHost(value: string): boolean {
   return value === 'localhost' || value === '127.0.0.1' || value === '::1';
 }
 
+const PROXY_FORWARDING_HEADERS = [
+  'forwarded',
+  'x-forwarded-for',
+  'x-forwarded-host',
+  'x-forwarded-proto',
+  'x-real-ip',
+  'x-client-ip',
+  'cf-connecting-ip',
+  'true-client-ip',
+] as const;
+
+function hasHeaderValue(value: string | string[] | undefined): boolean {
+  if (Array.isArray(value)) return value.some((item) => item.trim().length > 0);
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function hasProxyForwardingHeaders(request: FastifyRequest): boolean {
+  return PROXY_FORWARDING_HEADERS.some((header) => hasHeaderValue(request.headers[header]));
+}
+
 function hasTrustedLocalOrigin(value: string | undefined): boolean {
   if (!value) return true;
   try {
@@ -72,6 +92,7 @@ function hasTrustedLocalOrigin(value: string | undefined): boolean {
 
 export function isLocalCapabilityWriteRequest(request: FastifyRequest): boolean {
   if (!isLoopbackAddress(request.ip)) return false;
+  if (hasProxyForwardingHeaders(request)) return false;
 
   // Host is client-supplied; it only narrows requests after the peer socket is loopback.
   const host = firstHeaderValue(request.headers.host) ?? request.hostname;
