@@ -57,6 +57,13 @@ function hasStructuredSecretValues(value: unknown): boolean {
   return !!value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0;
 }
 
+function hasStoredStructuredSecrets(capability: CapabilityEntry | null | undefined): boolean {
+  return (
+    hasStructuredSecretValues(capability?.mcpServer?.env) ||
+    hasStructuredSecretValues(capability?.mcpServer?.headers)
+  );
+}
+
 function requireConfiguredOwnerForStructuredSecrets(userId: string): RouteError | null {
   return requireCapabilityWriteOwner(userId, {
     requireConfiguredOwner: true,
@@ -262,6 +269,13 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
           return {
             error: `Cannot overwrite managed MCP "${body.id}" (source=${existing.source}). Only external MCPs can be installed over.`,
           };
+        }
+        if (hasStoredStructuredSecrets(existing)) {
+          const secretOwnerError = requireConfiguredOwnerForStructuredSecrets(userId);
+          if (secretOwnerError) {
+            reply.status(secretOwnerError.status);
+            return { error: secretOwnerError.error };
+          }
         }
         afterEntry = mergeExternalMcpEntry(existing, entry, body);
         config.capabilities[existingIdx] = afterEntry;

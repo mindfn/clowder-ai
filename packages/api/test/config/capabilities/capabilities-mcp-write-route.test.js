@@ -209,6 +209,45 @@ describe('capabilities MCP write routes', () => {
     assert.deepEqual(config?.capabilities, []);
   });
 
+  it('rejects ownerless updates to MCPs that already store secrets', async () => {
+    await writeCapabilitiesConfig(projectRoot, {
+      version: 1,
+      capabilities: [
+        {
+          id: 'secret-mcp',
+          type: 'mcp',
+          enabled: true,
+          source: 'external',
+          mcpServer: {
+            command: 'node',
+            args: ['old.js'],
+            env: { API_KEY: 'real-secret' },
+            headers: { Authorization: 'Bearer real-secret' },
+          },
+        },
+      ],
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/capabilities/mcp/install',
+      headers: OWNER_HEADERS,
+      payload: {
+        id: 'secret-mcp',
+        command: 'node',
+        args: ['new.js'],
+      },
+    });
+
+    assert.equal(res.statusCode, 403, res.payload);
+    assert.match(JSON.parse(res.payload).error, /DEFAULT_OWNER_USER_ID/);
+    const config = await readCapabilitiesConfig(projectRoot);
+    const cap = config?.capabilities.find((entry) => entry.id === 'secret-mcp');
+    assert.deepEqual(cap?.mcpServer?.args, ['old.js']);
+    assert.deepEqual(cap?.mcpServer?.env, { API_KEY: 'real-secret' });
+    assert.deepEqual(cap?.mcpServer?.headers, { Authorization: 'Bearer real-secret' });
+  });
+
   it('rejects non-owner MCP deletes when DEFAULT_OWNER_USER_ID is configured', async () => {
     setEnv('DEFAULT_OWNER_USER_ID', 'you');
     await writeCapabilitiesConfig(projectRoot, {
