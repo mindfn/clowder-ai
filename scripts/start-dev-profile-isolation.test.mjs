@@ -433,12 +433,16 @@ describe('embedding sidecar startup guards', () => {
 
   it('pins embedding install dependencies away from transformers v5 drift', () => {
     const installScript = readFileSync(resolve(ROOT, 'scripts/services/embed-install.sh'), 'utf8');
+    const installPs1 = readFileSync(resolve(ROOT, 'scripts/services/embed-install.ps1'), 'utf8');
     const apiScript = readFileSync(resolve(ROOT, 'scripts/services/embed-api.py'), 'utf8');
 
     assert.match(installScript, /PIP_DEPS_ARM64=.*transformers<5/);
     assert.match(installScript, /PIP_DEPS_OTHER=.*transformers<5/);
     assert.match(installScript, /PIP_DEPS_ARM64=.*huggingface-hub\[hf_xet\]<1\.0/);
     assert.match(installScript, /PIP_DEPS_OTHER=.*huggingface-hub\[hf_xet\]<1\.0/);
+    assert.match(installScript, /PIP_DEPS_ARM64=.*httpx\[socks\]/);
+    assert.match(installScript, /PIP_DEPS_OTHER=.*httpx\[socks\]/);
+    assert.equal((installPs1.match(/'httpx\[socks\]'/g) ?? []).length, 2);
     assert.match(apiScript, /mlx_embeddings\.utils/);
     assert.match(apiScript, /attn_implementation["']:\s*["']eager/);
   });
