@@ -42,6 +42,12 @@ else
   PROVIDER="$TTS_PROVIDER"
 fi
 
+case "$PROVIDER" in
+  mlx-audio|qwen3-clone)
+    export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+    ;;
+esac
+
 if [ ! -d "$VENV_DIR" ]; then
   echo "ERROR: venv not found: $VENV_DIR"
   echo "Run install first: scripts/services/tts-install.sh"

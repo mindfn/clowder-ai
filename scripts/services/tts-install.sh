@@ -17,7 +17,52 @@ MODEL_ENV_VAR="TTS_MODEL"
 PIP_DEPS_ARM64="mlx-audio misaki[zh] fastapi uvicorn httpx[socks] num2words spacy phonemizer huggingface_hub[hf_xet]"
 PIP_DEPS_OTHER="edge-tts fastapi uvicorn httpx[socks] huggingface_hub[hf_xet]"
 MODEL_LOADER_OTHER="skip"
+POST_INSTALL_HOOK_ARM64="tts_install_arm64_warmup"
 POST_INSTALL_HOOK_OTHER="tts_install_non_arm64_extras"
+
+tts_install_arm64_warmup() {
+  case "${TTS_MODEL:-}" in
+    edge-tts|sapi|piper|zh_CN-*|en_US-*|en_GB-*|*-piper)
+      return 0
+      ;;
+  esac
+
+  local warmup_voice="${TTS_WARMUP_VOICE:-zm_yunjian}"
+  local warmup_dir
+  warmup_dir="$(mktemp -d "${TMPDIR:-/tmp}/cat-cafe-tts-warmup.XXXXXX")"
+  local hf_proxy_env=()
+  if [ -n "${_CATCAFE_HF_PROXY_FOR_DOWNLOAD:-}" ]; then
+    hf_proxy_env=(env "HTTP_PROXY=${_CATCAFE_HF_PROXY_FOR_DOWNLOAD}" "HTTPS_PROXY=${_CATCAFE_HF_PROXY_FOR_DOWNLOAD}")
+    echo "  Using HF proxy for TTS voice warmup: ${_CATCAFE_HF_PROXY_FOR_DOWNLOAD}"
+  fi
+
+  echo "  Pre-warming TTS runtime assets: model=${TTS_MODEL} voice=${warmup_voice} ..."
+  local status=0
+  "${hf_proxy_env[@]+"${hf_proxy_env[@]}"}" python - "$TTS_MODEL" "$warmup_voice" "$warmup_dir" <<'PY' || status=$?
+import os
+import sys
+
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "60")
+
+from mlx_audio.tts.generate import generate_audio
+
+model, voice, output_dir = sys.argv[1:4]
+generate_audio(
+    text="\u4f60\u597d",
+    model=model,
+    voice=voice,
+    lang_code="z",
+    output_path=output_dir,
+)
+print("TTS runtime warmup complete.")
+PY
+  rm -rf "$warmup_dir"
+  if [ "$status" -ne 0 ]; then
+    echo "ERROR: TTS runtime warmup failed for model=${TTS_MODEL} voice=${warmup_voice}" >&2
+    exit "$status"
+  fi
+  echo "  TTS runtime assets ready."
+}
 
 # Non-arm64 TTS providers: piper (offline TTS via piper-tts + voice
 # files), or cloud (edge-tts -- no local model required). Distinguishes

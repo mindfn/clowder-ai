@@ -459,6 +459,22 @@ describe('embedding sidecar startup guards', () => {
   });
 });
 
+describe('TTS sidecar startup guards', () => {
+  it('preloads runtime voice assets during install and starts from cache', () => {
+    const installScript = readFileSync(resolve(ROOT, 'scripts/services/tts-install.sh'), 'utf8');
+    const serverScript = readFileSync(resolve(ROOT, 'scripts/services/tts-server.sh'), 'utf8');
+    const apiScript = readFileSync(resolve(ROOT, 'scripts/services/tts-api.py'), 'utf8');
+
+    assert.match(installScript, /POST_INSTALL_HOOK_ARM64=["']tts_install_arm64_warmup["']/);
+    assert.match(installScript, /generate_audio/);
+    assert.match(installScript, /zm_yunjian/);
+    assert.match(installScript, /_CATCAFE_HF_PROXY_FOR_DOWNLOAD/);
+    assert.match(serverScript, /HF_HUB_OFFLINE/);
+    assert.match(serverScript, /mlx-audio\|qwen3-clone/);
+    assert.doesNotMatch(apiScript, /except Exception:\s*\n\s*pass\s+# Warmup may fail/);
+  });
+});
+
 describe('sync-to-opensource public launch transforms', { skip: !existsSync(SYNC_SCRIPT) }, () => {
   it('exports opensource-pinned direct launch wrappers and runtime startup', () => {
     const result = spawnSync('bash', [SYNC_SCRIPT, '--dry-run', '--yes'], {

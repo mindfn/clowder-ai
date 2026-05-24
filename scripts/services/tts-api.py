@@ -163,8 +163,6 @@ class MlxAudioAdapter(TtsAdapter):
                 lang_code="z",
                 output_path=str(warmup_dir),
             )
-        except Exception:
-            pass  # Warmup may fail, model is still loaded
         finally:
             shutil.rmtree(warmup_dir, ignore_errors=True)
 
@@ -432,8 +430,6 @@ class Qwen3CloneAdapter(TtsAdapter):
                 lang_code="z",
                 output_path=str(warmup_dir),
             )
-        except Exception:
-            pass  # Warmup may fail, model is still loaded
         finally:
             shutil.rmtree(warmup_dir, ignore_errors=True)
 
