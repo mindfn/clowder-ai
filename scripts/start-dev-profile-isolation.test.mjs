@@ -122,7 +122,7 @@ describe('start-dev strict profile isolation', () => {
     }
   });
 
-  it('still allows .env overrides after strict sanitize', () => {
+  it('still allows non-sidecar .env overrides after strict sanitize', () => {
     const sandboxDir = createSandbox('ASR_ENABLED=1\nMESSAGE_TTL_SECONDS=123\nREDIS_PROFILE=custom\n');
     try {
       const result = runSourceOnly({
@@ -140,7 +140,7 @@ describe('start-dev strict profile isolation', () => {
 
       assert.equal(result.status, 0, result.stderr || result.stdout);
       assert.match(result.stdout, /PROFILE=opensource/);
-      assert.match(result.stdout, /ASR=1/);
+      assert.match(result.stdout, /ASR=0/);
       assert.match(result.stdout, /EMBED=0/);
       assert.match(result.stdout, /TTL=123/);
       assert.match(result.stdout, /REDIS_PROFILE=custom/);
@@ -151,7 +151,7 @@ describe('start-dev strict profile isolation', () => {
 
   it('does NOT derive EMBED_ENABLED from EMBED_MODE (sidecar lifecycle owned by API autoStartEnabledServices)', () => {
     // EMBED_MODE only controls the API in-process embedding mode (off/shadow/on).
-    // Sidecar startup is no longer triggered by EMBED_MODE — the API spawns
+    // Sidecar startup is no longer triggered by EMBED_MODE; the API spawns
     // sidecars via /api/services/embedding-model/start based on
     // .cat-cafe/services.json (embedding-model.enabled).
     const sandboxDir = createSandbox('EMBED_MODE=on\n');
@@ -431,13 +431,16 @@ describe('embedding sidecar startup guards', () => {
     assert.match(apiScript, /SentenceTransformer fallback disabled/);
   });
 
-  it('pins the MLX embedding tokenizer stack away from transformers v5 drift', () => {
-    const embedScript = readFileSync(resolve(ROOT, 'scripts/embed-server.sh'), 'utf8');
+  it('pins embedding install dependencies away from transformers v5 drift', () => {
+    const installScript = readFileSync(resolve(ROOT, 'scripts/services/embed-install.sh'), 'utf8');
+    const apiScript = readFileSync(resolve(ROOT, 'scripts/services/embed-api.py'), 'utf8');
 
-    assert.match(embedScript, /transformers<5/);
-    assert.match(embedScript, /huggingface-hub<1\.0/);
-    assert.match(embedScript, /mlx_embeddings\.utils/);
-    assert.match(embedScript, /batch_encode_plus/);
+    assert.match(installScript, /PIP_DEPS_ARM64=.*transformers<5/);
+    assert.match(installScript, /PIP_DEPS_OTHER=.*transformers<5/);
+    assert.match(installScript, /PIP_DEPS_ARM64=.*huggingface-hub\[hf_xet\]<1\.0/);
+    assert.match(installScript, /PIP_DEPS_OTHER=.*huggingface-hub\[hf_xet\]<1\.0/);
+    assert.match(apiScript, /mlx_embeddings\.utils/);
+    assert.match(apiScript, /attn_implementation["']:\s*["']eager/);
   });
 });
 

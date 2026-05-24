@@ -14,8 +14,9 @@ MODEL_ENV_VAR="EMBED_MODEL"
 # Darwin arm64: MLX-native primary + sentence-transformers fallback so
 # the embed-api.py runtime can pick either backend at startup. Other
 # platforms: sentence-transformers + torch (CPU/CUDA).
-PIP_DEPS_ARM64="mlx mlx-embeddings sentence-transformers torch fastapi uvicorn numpy httpx[socks] huggingface_hub[hf_xet]"
-PIP_DEPS_OTHER="sentence-transformers torch fastapi uvicorn numpy httpx[socks] huggingface_hub[hf_xet]"
+# Keep transformers below v5 for mlx-embeddings tokenizer compatibility.
+PIP_DEPS_ARM64="mlx mlx-embeddings sentence-transformers torch fastapi uvicorn numpy httpx[socks] transformers<5 huggingface-hub[hf_xet]<1.0"
+PIP_DEPS_OTHER="sentence-transformers torch fastapi uvicorn numpy httpx[socks] transformers<5 huggingface-hub[hf_xet]<1.0"
 
 # shellcheck source=./install-template.sh
 source "$SCRIPT_DIR/install-template.sh"

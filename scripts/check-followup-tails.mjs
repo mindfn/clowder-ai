@@ -36,6 +36,8 @@ const BLOCKED_PATTERNS = [
 ];
 
 const EXEMPT_PREFIXES = [
+  /^Merge\b/i, // Merge subjects often include branch names such as fix/foo-followup.
+  /^docs\(F\d+\):\s*(add\s+feature\s+spec|spec\s+follow[\s-]?up|fold\b.*\bspec\b)/i,
   /^docs\(F\d+\):\s*(update|expand|refine)\s+spec\b/i,
   /\[red\]/i, // TDD red-phase commits — "stub" is placeholder for failing tests, not deferred work
 ];
