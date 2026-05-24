@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
-import { lstat, mkdir, rm, symlink } from 'node:fs/promises';
-import { join } from 'node:path';
+import { lstat, mkdir, realpath, rm, symlink } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import type {
   CapabilitiesConfig,
   CapabilityEntry,
@@ -143,6 +143,7 @@ export class PluginResourceActivator {
     try {
       for (const providerDir of PROVIDER_DIRS) {
         const skillsDir = join(this.deps.resolveProjectRoot(), providerDir);
+        if (await this.shouldSkipDirectoryLevelSkillsSymlink(skillsDir, dirname(skillSourceDir))) continue;
         await mkdir(skillsDir, { recursive: true });
         const linkPath = join(skillsDir, skillName);
         if (await this.ensureSymlink(linkPath, skillSourceDir)) createdLinks.push(linkPath);
@@ -315,6 +316,37 @@ export class PluginResourceActivator {
       if (val) env[field.envName] = val;
     }
     return Object.keys(env).length > 0 ? { env } : {};
+  }
+
+  private async shouldSkipDirectoryLevelSkillsSymlink(skillsDir: string, expectedRoot: string): Promise<boolean> {
+    try {
+      const stat = await lstat(skillsDir);
+      if (!stat.isSymbolicLink()) return false;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw err;
+    }
+
+    let mountedRoot: string;
+    let expectedRealRoot: string;
+    try {
+      mountedRoot = await realpath(skillsDir);
+      expectedRealRoot = await realpath(expectedRoot);
+    } catch (err) {
+      throw new Error(
+        `Invalid directory-level plugin skill mount at ${skillsDir}: symlink must resolve to ${expectedRoot}. ${
+          (err as Error).message
+        }`,
+      );
+    }
+
+    if (mountedRoot !== expectedRealRoot) {
+      throw new Error(
+        `Refusing to mount plugin skill into directory-level skills symlink at ${skillsDir}: resolves to ${mountedRoot}, expected ${expectedRealRoot}`,
+      );
+    }
+
+    return true;
   }
 
   private async ensureSymlink(linkPath: string, target: string): Promise<boolean> {

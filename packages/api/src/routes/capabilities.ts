@@ -63,6 +63,9 @@ import { type McpProbeResult, probeMcpCapability } from './mcp-probe.js';
 
 // ────────── Helpers ──────────
 
+const MODULE_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
+const CANONICAL_PLUGINS_DIR = join(MODULE_REPO_ROOT, 'plugins');
+
 /**
  * Returns subdirectory names.
  * - ENOENT (dir missing) → [] (normal — not all providers have skill dirs)
@@ -590,7 +593,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
         (c) =>
           c.type !== 'skill' ||
           allSkillNames.has(c.id) ||
-          (c.pluginId !== undefined && existsSync(join(projectRoot, 'plugins', c.pluginId))),
+          (c.pluginId !== undefined && existsSync(join(CANONICAL_PLUGINS_DIR, c.pluginId))),
       );
       if (config.capabilities.length !== before) configDirty = true;
     }

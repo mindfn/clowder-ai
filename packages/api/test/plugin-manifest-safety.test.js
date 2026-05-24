@@ -3,11 +3,12 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { PluginRegistry, resourceCapId } from '../dist/domains/plugin/PluginRegistry.js';
+import { PluginResourceActivator } from '../dist/domains/plugin/PluginResourceActivator.js';
 import { BUILTIN_PLUGIN_IDS, parsePluginManifest, validateEnvSafety } from '../dist/domains/plugin/plugin-manifest.js';
 
 function writeTmpManifest(dir, id, yaml) {
@@ -393,6 +394,43 @@ describe('validateEnvSafety security', () => {
     const result = validateEnvSafety(manifest, claims);
     assert.equal(result.ok, false);
     assert.ok(result.errors[0].includes('already claimed'));
+  });
+});
+
+describe('PluginResourceActivator skill safety', () => {
+  it('rejects plugin skill activation through provider skills root symlink', async () => {
+    const root = mkdtempSync(join(os.tmpdir(), 'plugin-activator-root-'));
+    const pluginsDir = join(root, 'plugins');
+    const projectRoot = join(root, 'project');
+    const sharedSkillsDir = join(root, 'shared-skills');
+    const skillSourceDir = join(pluginsDir, 'test-plugin', 'skills', 'plugin-skill');
+    mkdirSync(skillSourceDir, { recursive: true });
+    mkdirSync(sharedSkillsDir, { recursive: true });
+    mkdirSync(join(projectRoot, '.claude'), { recursive: true });
+    symlinkSync(sharedSkillsDir, join(projectRoot, '.claude', 'skills'), 'dir');
+
+    const manifest = {
+      id: 'test-plugin',
+      name: 'Test Plugin',
+      version: '1.0.0',
+      builtin: false,
+      config: [],
+      resources: [{ type: 'skill', path: 'skills/plugin-skill' }],
+    };
+    const activator = new PluginResourceActivator({
+      resolveProjectRoot: () => projectRoot,
+      pluginsDir,
+      limbRegistry: {},
+      readCapabilities: async () => ({ version: 1, capabilities: [] }),
+      writeCapabilities: async () => {},
+      withCapabilityLock: async (fn) => fn(),
+    });
+
+    const result = await activator.enablePlugin(manifest);
+
+    assert.equal(result.status, 'failed');
+    assert.match(result.resources[0].error, /directory-level skills symlink/);
+    assert.equal(existsSync(join(sharedSkillsDir, 'plugin-skill')), false);
   });
 });
 

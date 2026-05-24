@@ -1012,6 +1012,45 @@ describe('GET /api/capabilities (Fastify)', () => {
     }
   });
 
+  it('preserves plugin-owned skills using the canonical plugins directory', async () => {
+    const Fastify = (await import('fastify')).default;
+    const { capabilitiesRoutes } = await import('../dist/routes/capabilities.js');
+
+    const projectDir = await makeTmpDir('plugin-skill-canonical-root');
+    const pluginSkill = {
+      id: 'plugin:github:github',
+      type: 'skill',
+      enabled: true,
+      source: 'cat-cafe',
+      pluginId: 'github',
+    };
+    await writeCapabilitiesConfig(projectDir, {
+      version: 1,
+      capabilities: [pluginSkill],
+    });
+
+    const app = Fastify();
+    await app.register(capabilitiesRoutes);
+    await app.ready();
+
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/capabilities?projectPath=${encodeURIComponent(projectDir)}`,
+        headers: AUTH_HEADERS,
+      });
+
+      assert.equal(res.statusCode, 200, res.payload);
+      const config = await readCapabilitiesConfig(projectDir);
+      const preserved = config?.capabilities.find((item) => item.id === pluginSkill.id);
+      assert.ok(preserved, 'plugin-owned skill should survive when canonical repo plugins/github exists');
+      assert.equal(preserved.pluginId, 'github');
+    } finally {
+      await app.close();
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it('returns 400 for invalid projectPath', async () => {
     const Fastify = (await import('fastify')).default;
     const { capabilitiesRoutes } = await import('../dist/routes/capabilities.js');
