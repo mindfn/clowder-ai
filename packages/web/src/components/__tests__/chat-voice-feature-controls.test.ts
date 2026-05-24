@@ -84,6 +84,7 @@ describe('ChatVoiceFeatureControls', () => {
   });
 
   it('starts installed-but-disabled TTS service before enabling voice companion', async () => {
+    let started = false;
     apiFetchMock.mockImplementation(async (path: string) => {
       if (path === '/api/services') {
         return jsonResponse({
@@ -91,14 +92,18 @@ describe('ChatVoiceFeatureControls', () => {
             {
               id: 'mlx-tts',
               installed: true,
-              enabled: false,
+              enabled: started,
               installable: true,
+              status: started ? 'healthy' : 'not_configured',
               features: ['voice-output', 'voice-companion'],
             },
           ],
         });
       }
-      if (path === '/api/services/mlx-tts/start') return jsonResponse({ ok: true });
+      if (path === '/api/services/mlx-tts/start') {
+        started = true;
+        return jsonResponse({ ok: true });
+      }
       return jsonResponse({ error: `unexpected ${path}` }, false);
     });
     render();
@@ -112,6 +117,68 @@ describe('ChatVoiceFeatureControls', () => {
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
     });
+    expect(useVoiceSessionStore.getState().session?.boundThreadId).toBe('thread-1');
+    expect(useVoiceSessionStore.getState().session?.activeCatId).toBe('opus');
+  });
+
+  it('waits for an enabled TTS service to become healthy before enabling voice companion', async () => {
+    let servicePolls = 0;
+    let resolveHealthy: (() => void) | undefined;
+    apiFetchMock.mockImplementation(async (path: string) => {
+      if (path === '/api/services') {
+        servicePolls += 1;
+        if (servicePolls === 1) {
+          return jsonResponse({
+            services: [
+              {
+                id: 'mlx-tts',
+                installed: true,
+                enabled: true,
+                installable: true,
+                status: 'starting',
+                features: ['voice-output', 'voice-companion'],
+              },
+            ],
+          });
+        }
+        return new Promise<Response>((resolve) => {
+          resolveHealthy = () =>
+            resolve(
+              jsonResponse({
+                services: [
+                  {
+                    id: 'mlx-tts',
+                    installed: true,
+                    enabled: true,
+                    installable: true,
+                    status: 'healthy',
+                    features: ['voice-output', 'voice-companion'],
+                  },
+                ],
+              }),
+            );
+        });
+      }
+      return jsonResponse({ error: `unexpected ${path}` }, false);
+    });
+    render();
+
+    act(() => {
+      button('语音陪伴').click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(servicePolls).toBe(2);
+    expect(useVoiceSessionStore.getState().session).toBeNull();
+
+    await act(async () => {
+      resolveHealthy?.();
+      await Promise.resolve();
+    });
+
     expect(useVoiceSessionStore.getState().session?.boundThreadId).toBe('thread-1');
     expect(useVoiceSessionStore.getState().session?.activeCatId).toBe('opus');
   });

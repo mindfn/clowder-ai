@@ -16,11 +16,15 @@ interface ServicePrerequisites {
   estimatedMinutes?: number;
 }
 
+type ServiceStatus = 'healthy' | 'unhealthy' | 'not_configured' | 'installing' | 'starting';
+
 interface ServiceState {
   id: string;
   installed: boolean;
   enabled: boolean;
   installable: boolean;
+  status?: ServiceStatus;
+  error?: string | null;
   prerequisites?: ServicePrerequisites;
 }
 
@@ -32,6 +36,9 @@ const FEATURE_SERVICES: Record<VoiceFeature, { serviceId: string; serviceLabel: 
   'voice-companion': { serviceId: 'mlx-tts', serviceLabel: '语音合成' },
   'audio-capture': { serviceId: 'audio-capture', serviceLabel: '音频采集' },
 };
+
+const SERVICE_READY_TIMEOUT_MS = 10 * 60 * 1000;
+const SERVICE_READY_RETRY_MS = 1_000;
 
 interface ChatVoiceFeatureControlsProps {
   threadId?: string;
@@ -69,16 +76,81 @@ function toastServiceInstallError(feature: VoiceFeature, message: string) {
   });
 }
 
-async function ensureVoiceServiceEnabled(feature: VoiceFeature): Promise<VoiceServiceReadyResult> {
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function readVoiceService(feature: VoiceFeature): Promise<ServiceState | null> {
+  const { serviceId } = FEATURE_SERVICES[feature];
+  const servicesRes = await apiFetch('/api/services');
+  if (!servicesRes.ok) return null;
+  const servicesPayload = (await servicesRes.json().catch(() => ({}))) as { services?: ServiceState[] };
+  return servicesPayload.services?.find((item) => item.id === serviceId) ?? null;
+}
+
+async function readServiceLogTail(serviceId: string): Promise<string | null> {
+  const res = await apiFetch(`/api/services/${serviceId}/logs`).catch(() => null);
+  if (!res?.ok) return null;
+  const payload = (await res.json().catch(() => ({}))) as { lines?: string[] };
+  const lines = payload.lines?.filter((line) => line.trim().length > 0).slice(-20);
+  if (!lines?.length) return null;
+  return lines.join('\n').slice(-1600);
+}
+
+function isServiceReady(service: ServiceState): boolean {
+  return service.status === 'healthy' || (service.enabled && service.status === undefined);
+}
+
+function isServiceStarting(service: ServiceState): boolean {
+  return service.status === 'starting' || service.status === 'installing';
+}
+
+async function toastServiceStartupFailure(feature: VoiceFeature, service: ServiceState | null, fallback?: string) {
   const { serviceId, serviceLabel } = FEATURE_SERVICES[feature];
-  try {
-    const servicesRes = await apiFetch('/api/services');
-    if (!servicesRes.ok) {
+  const logTail = await readServiceLogTail(serviceId);
+  const rawError = service?.error?.trim();
+  const headline =
+    rawError && rawError !== 'fetch failed' ? rawError : (fallback ?? `${serviceLabel}启动失败，请查看服务日志。`);
+  toastServiceError(feature, logTail ? `${headline}\n${logTail}` : headline);
+}
+
+async function waitForVoiceServiceReady(feature: VoiceFeature): Promise<VoiceServiceReadyResult> {
+  const { serviceLabel } = FEATURE_SERVICES[feature];
+  const deadline = Date.now() + SERVICE_READY_TIMEOUT_MS;
+  let firstProbe = true;
+
+  while (Date.now() < deadline) {
+    if (!firstProbe) await sleep(SERVICE_READY_RETRY_MS);
+    firstProbe = false;
+
+    const service = await readVoiceService(feature);
+    if (!service) {
       toastServiceError(feature, `无法读取${serviceLabel}服务状态。`);
       return { ready: false };
     }
-    const servicesPayload = (await servicesRes.json().catch(() => ({}))) as { services?: ServiceState[] };
-    const service = servicesPayload.services?.find((item) => item.id === serviceId);
+    if (isServiceReady(service)) return { ready: true };
+    if (service.status === 'unhealthy') {
+      await toastServiceStartupFailure(feature, service);
+      return { ready: false };
+    }
+    if (!isServiceStarting(service)) {
+      toastServiceError(feature, `${serviceLabel}尚未启动完成。`);
+      return { ready: false };
+    }
+  }
+
+  await toastServiceStartupFailure(feature, null, `${serviceLabel}启动超时，请查看服务日志。`);
+  return { ready: false };
+}
+
+async function ensureVoiceServiceEnabled(feature: VoiceFeature): Promise<VoiceServiceReadyResult> {
+  const { serviceId, serviceLabel } = FEATURE_SERVICES[feature];
+  try {
+    const service = await readVoiceService(feature);
+    if (!service) {
+      toastServiceError(feature, `无法读取${serviceLabel}服务状态。`);
+      return { ready: false };
+    }
     if (!service?.installed) {
       if (service?.installable && service.prerequisites) {
         return { ready: false, installRequired: { feature, service } };
@@ -86,7 +158,15 @@ async function ensureVoiceServiceEnabled(feature: VoiceFeature): Promise<VoiceSe
       toastServiceMissing(feature);
       return { ready: false };
     }
-    if (service.enabled) return { ready: true };
+    if (service.enabled) {
+      if (isServiceReady(service)) return { ready: true };
+      if (isServiceStarting(service)) return waitForVoiceServiceReady(feature);
+      if (service.status === 'unhealthy') {
+        await toastServiceStartupFailure(feature, service);
+        return { ready: false };
+      }
+      return { ready: true };
+    }
     if (!service.installable) return { ready: true };
 
     const enableRes = await apiFetch(`/api/services/${serviceId}/start`, {
@@ -99,7 +179,7 @@ async function ensureVoiceServiceEnabled(feature: VoiceFeature): Promise<VoiceSe
       toastServiceError(feature, enablePayload.error ?? `无法启用${serviceLabel}服务。`);
       return { ready: false };
     }
-    return { ready: true };
+    return waitForVoiceServiceReady(feature);
   } catch {
     toastServiceError(feature, `无法连接${serviceLabel}服务管理接口。`);
     return { ready: false };

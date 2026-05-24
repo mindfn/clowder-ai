@@ -386,6 +386,135 @@ describe('service lifecycle write routes', () => {
     }
   });
 
+  it('keeps startup state while readiness probes fail during a slow detached start', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map([['whisper-stt', { installed: true, enabled: false }]]);
+    let ready = false;
+    const app = await buildApp({
+      lifecycle: {
+        startupGraceMs: 5,
+        startupReadinessTimeoutMs: 250,
+        startupProbeIntervalMs: 5,
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        findPidsByPort: async () => [],
+        readProcessCommand: async () => null,
+        runScript: async () => ({ code: null, pid: 4321, output: '' }),
+      },
+      fetchHealth: async () =>
+        ready ? { ok: true, status: 200, error: null } : { ok: false, status: undefined, error: 'fetch failed' },
+    });
+    try {
+      const startRes = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/start',
+        headers: SESSION_HEADERS,
+      });
+      assert.equal(startRes.statusCode, 200, startRes.payload);
+
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      const startingRes = await app.inject({
+        method: 'GET',
+        url: '/api/services',
+        headers: SESSION_HEADERS,
+      });
+      const starting = JSON.parse(startingRes.payload).services.find((service) => service.id === 'whisper-stt');
+      assert.equal(starting.status, 'starting');
+      assert.equal(starting.error, null);
+
+      ready = true;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        const healthyRes = await app.inject({
+          method: 'GET',
+          url: '/api/services',
+          headers: SESSION_HEADERS,
+        });
+        const healthy = JSON.parse(healthyRes.payload).services.find((service) => service.id === 'whisper-stt');
+        if (healthy.status === 'healthy') {
+          assert.equal(healthy.error, null);
+          return;
+        }
+      }
+      assert.fail('service should become healthy after readiness probe succeeds');
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('auto-starts enabled installed services on API startup through the lifecycle runner', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    let runCount = 0;
+    const configs = new Map([
+      [
+        'mlx-tts',
+        {
+          installed: true,
+          enabled: true,
+          selectedModel: 'mlx-community/Kokoro-82M-bf16',
+        },
+      ],
+      ['whisper-stt', { installed: true, enabled: false }],
+    ]);
+    const app = await buildApp({
+      lifecycle: {
+        autoStartEnabled: true,
+        startupReadinessTimeoutMs: 250,
+        startupProbeIntervalMs: 5,
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        findPidsByPort: async () => [],
+        readProcessCommand: async () => null,
+        runScript: async (input) => {
+          runCount += 1;
+          assert.equal(input.serviceId, 'mlx-tts');
+          assert.equal(input.action, 'start');
+          assert.equal(input.detached, true);
+          assert.equal(input.env.TTS_MODEL, 'mlx-community/Kokoro-82M-bf16');
+          return { code: null, pid: 5500 + runCount, output: '' };
+        },
+      },
+      fetchHealth: async () => ({ ok: false, status: undefined, error: 'fetch failed' }),
+    });
+    try {
+      for (let attempt = 0; attempt < 20 && runCount === 0; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(runCount, 1, 'startup reconciler should start only enabled installed services');
+
+      const listRes = await app.inject({
+        method: 'GET',
+        url: '/api/services',
+        headers: SESSION_HEADERS,
+      });
+      const services = JSON.parse(listRes.payload).services;
+      const tts = services.find((service) => service.id === 'mlx-tts');
+      const whisper = services.find((service) => service.id === 'whisper-stt');
+      assert.equal(tts.status, 'starting');
+      assert.equal(tts.error, null);
+      assert.equal(whisper.status, 'not_configured');
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
   it('captures detached runner output after the early start response', async () => {
     const logDir = mkdtempSync(join(tmpdir(), 'service-log-'));
     const previousLogDir = process.env.LOG_DIR;

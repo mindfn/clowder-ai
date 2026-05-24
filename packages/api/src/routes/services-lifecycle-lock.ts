@@ -1,9 +1,8 @@
-import type { FastifyReply } from 'fastify';
-
 const LOCK_HOLD_UNTIL = Symbol('serviceLifecycleLockHoldUntil');
 const START_LOCK_HOLD_UNTIL = Symbol('serviceLifecycleStartLockHoldUntil');
 const DEFAULT_STARTUP_LOCK_GRACE_MS = 120_000;
 export type ServiceLifecycleLockAction = 'install' | 'start' | 'stop' | 'uninstall' | 'toggle';
+type LifecycleReply = { status(code: number): unknown };
 
 export function holdLifecycleLockUntil<T extends object>(value: T, waitFor?: Promise<unknown>): T {
   if (!waitFor) return value;
@@ -58,7 +57,7 @@ export function createServiceLifecycleLock() {
 
     async withLock<T>(
       serviceId: string,
-      reply: FastifyReply,
+      reply: LifecycleReply,
       task: () => Promise<T>,
       options: { action?: ServiceLifecycleLockAction } = {},
     ): Promise<T | { error: string }> {

@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify';
 import { getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import { getServiceConfig, setServiceConfig } from '../domains/services/service-config.js';
 import {
+  appendServiceLog,
   findPidsByPort,
   readProcessCommand,
   readServiceLogTail,
@@ -11,7 +12,16 @@ import {
   type ServiceLifecycleAction,
   type ServiceLifecycleRunner,
 } from '../domains/services/service-lifecycle.js';
-import { getServiceManifest, type ServiceConfig } from '../domains/services/service-manifest.js';
+import {
+  type FetchServiceHealth,
+  fetchServiceHealth,
+  getServiceManifest,
+  resolveServiceEndpoint,
+  resolveServiceHealthUrl,
+  SERVICE_MANIFESTS,
+  type ServiceConfig,
+  type ServiceManifest,
+} from '../domains/services/service-manifest.js';
 import {
   registerServiceLifecycleAuditRoutes,
   SERVICE_LIFECYCLE_AUDIT_TYPE,
@@ -33,6 +43,9 @@ export interface ServiceLifecycleRouteOptions {
   runScript?: ServiceLifecycleRunner;
   timeoutMs?: number;
   startupGraceMs?: number;
+  startupReadinessTimeoutMs?: number;
+  startupProbeIntervalMs?: number;
+  autoStartEnabled?: boolean;
   findPidsByPort?: (port: number) => Promise<number[]>;
   readProcessCommand?: (pid: number) => Promise<string | null>;
   killPid?: (pid: number, signal: NodeJS.Signals) => void;
@@ -43,17 +56,95 @@ export interface ServiceLifecycleRouteOptions {
   auditLog?: ServiceLifecycleAuditLog;
 }
 
+type LifecycleReply = { status(code: number): unknown; statusCode?: number };
+const STARTUP_RECONCILER_OPERATOR = 'startup-reconciler';
+const DEFAULT_STARTUP_READINESS_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_STARTUP_PROBE_INTERVAL_MS = 2_000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
+
+function settleQuietly(waitFor?: Promise<unknown>): Promise<void> | undefined {
+  return waitFor?.then(
+    () => undefined,
+    () => undefined,
+  );
+}
+
+function createInternalReply(): LifecycleReply {
+  return {
+    statusCode: 200,
+    status(code: number) {
+      this.statusCode = code;
+      return this;
+    },
+  };
+}
+
+async function waitForServiceReadiness(input: {
+  service: ServiceManifest;
+  env: NodeJS.ProcessEnv;
+  getConfig: (id: string) => ServiceConfig | undefined;
+  fetchHealth: FetchServiceHealth;
+  timeoutMs: number;
+  intervalMs: number;
+  stopWhen?: Promise<unknown>;
+}): Promise<void> {
+  const timeoutMs = Math.max(0, input.timeoutMs);
+  const intervalMs = Math.max(50, input.intervalMs);
+  if (timeoutMs === 0) return;
+
+  let stopped = false;
+  void input.stopWhen?.finally(() => {
+    stopped = true;
+  });
+
+  const startedAt = Date.now();
+  while (!stopped && Date.now() - startedAt < timeoutMs) {
+    const endpoint = resolveServiceEndpoint(input.service, input.env, input.getConfig(input.service.id));
+    if (endpoint) {
+      try {
+        const health = await input.fetchHealth(resolveServiceHealthUrl(input.service, endpoint), input.service);
+        if (health.ok) return;
+      } catch {
+        // Readiness probes are internal while the service is starting. The UI
+        // should see `starting`, not a transient health-probe fetch failure.
+      }
+    }
+    const remainingMs = timeoutMs - (Date.now() - startedAt);
+    if (remainingMs <= 0) break;
+    await delay(Math.min(intervalMs, remainingMs));
+  }
+
+  if (!stopped) {
+    appendServiceLog(
+      input.service.id,
+      `[start] readiness check timed out after ${Math.round(timeoutMs / 1000)}s; service may still be starting\n`,
+    );
+  }
+}
+
 function hasErrorCode(error: unknown, code: string): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }
 
 export async function registerServiceLifecycleRoutes(
   app: FastifyInstance,
-  options: { env?: NodeJS.ProcessEnv; lifecycle?: ServiceLifecycleRouteOptions } = {},
+  options: { env?: NodeJS.ProcessEnv; fetchHealth?: FetchServiceHealth; lifecycle?: ServiceLifecycleRouteOptions } = {},
   lifecycleLock: ReturnType<typeof createServiceLifecycleLock> = createServiceLifecycleLock(),
 ): Promise<void> {
   const lifecycleTimeoutMs = options.lifecycle?.timeoutMs ?? DEFAULT_LIFECYCLE_TIMEOUT_MS;
+  const startupReadinessTimeoutMs =
+    options.lifecycle?.startupReadinessTimeoutMs ??
+    options.lifecycle?.startupGraceMs ??
+    DEFAULT_STARTUP_READINESS_TIMEOUT_MS;
+  const startupProbeIntervalMs = options.lifecycle?.startupProbeIntervalMs ?? DEFAULT_STARTUP_PROBE_INTERVAL_MS;
   const runner = options.lifecycle?.runScript ?? runServiceScript;
+  const healthProbe = options.fetchHealth ?? fetchServiceHealth;
   const lookupPidsByPort = options.lifecycle?.findPidsByPort ?? findPidsByPort;
   const lookupProcessCommand = options.lifecycle?.readProcessCommand ?? readProcessCommand;
   const terminatePid =
@@ -255,14 +346,7 @@ export async function registerServiceLifecycleRoutes(
     );
   });
 
-  app.post<{ Params: { id: string } }>('/api/services/:id/start', async (request, reply) => {
-    const operator = requireLifecycleOwner(request, reply);
-    if (!operator) return lifecycleOwnerError(reply);
-    const service = getServiceManifest(request.params.id);
-    if (!service) {
-      reply.status(404);
-      return { error: `Service "${request.params.id}" not found` };
-    }
+  async function startService(service: ServiceManifest, operator: string, reply: LifecycleReply) {
     const startScript = service.scripts?.start;
     if (!startScript) {
       reply.status(400);
@@ -273,7 +357,7 @@ export async function registerServiceLifecycleRoutes(
     // reject because the manifest's default port is busy (irrelevant —
     // we're not going to use it) or miss the actual port the script will
     // bind to (cfg.port). Codex P1 3268801298.
-    const startEffectiveCfg = getServiceConfig(service.id);
+    const startEffectiveCfg = serviceConfigStore.get(service.id);
     const startProbeService = { ...service, port: startEffectiveCfg?.port ?? service.port };
     const portProbe = await partitionServicePids(startProbeService);
     if (!portProbe.ok) {
@@ -322,7 +406,7 @@ export async function registerServiceLifecycleRoutes(
         // 3265033601 / 3268690489. (Supersedes upstream's inline
         // model-only injection — buildLifecycleEnv handles model + port +
         // strict validation in one call.)
-        const cfg = getServiceConfig(service.id);
+        const cfg = serviceConfigStore.get(service.id);
         const startEnvResult = buildLifecycleEnv(options.env ?? process.env, service.id, cfg?.selectedModel, cfg?.port);
         if (!startEnvResult.ok) {
           reply.status(500);
@@ -371,11 +455,65 @@ export async function registerServiceLifecycleRoutes(
         serviceConfigStore.set(service.id, { installed: true, enabled: true });
         await audit({ serviceId: service.id, action: 'start', operator, status: 'completed', code: result.code });
         const success = { ok: true, message: `${service.name} start initiated`, pid: result.pid };
-        return holdStartupGrace(success, options.lifecycle?.startupGraceMs, result.settlement);
+        const settlement = settleQuietly(result.settlement);
+        const readiness = waitForServiceReadiness({
+          service,
+          env: startEnvResult.env,
+          getConfig: (id) => serviceConfigStore.get(id),
+          fetchHealth: healthProbe,
+          timeoutMs: startupReadinessTimeoutMs,
+          intervalMs: startupProbeIntervalMs,
+          stopWhen: settlement,
+        });
+        const releaseWhen = settlement ? Promise.race([settlement, readiness]) : readiness;
+        return holdStartupGrace(success, startupReadinessTimeoutMs, releaseWhen);
       },
       { action: 'start' },
     );
+  }
+
+  app.post<{ Params: { id: string } }>('/api/services/:id/start', async (request, reply) => {
+    const operator = requireLifecycleOwner(request, reply);
+    if (!operator) return lifecycleOwnerError(reply);
+    const service = getServiceManifest(request.params.id);
+    if (!service) {
+      reply.status(404);
+      return { error: `Service "${request.params.id}" not found` };
+    }
+    return startService(service, operator, reply);
   });
+
+  async function autoStartEnabledServices(): Promise<void> {
+    const candidates = SERVICE_MANIFESTS.filter((service) => {
+      const cfg = serviceConfigStore.get(service.id);
+      return Boolean(service.scripts?.start && cfg?.enabled && cfg.installed !== false);
+    });
+    if (candidates.length === 0) return;
+
+    app.log.info({ count: candidates.length }, 'service startup reconciler starting enabled services');
+    await Promise.all(
+      candidates.map(async (service) => {
+        const reply = createInternalReply();
+        const result = await startService(service, STARTUP_RECONCILER_OPERATOR, reply);
+        if ((reply.statusCode ?? 200) >= 400) {
+          app.log.warn(
+            { serviceId: service.id, statusCode: reply.statusCode, result },
+            'service startup reconciler failed',
+          );
+        }
+      }),
+    );
+  }
+
+  if (options.lifecycle?.autoStartEnabled) {
+    app.addHook('onReady', async () => {
+      setImmediate(() => {
+        void autoStartEnabledServices().catch((error) => {
+          app.log.warn({ err: error }, 'service startup reconciler failed');
+        });
+      });
+    });
+  }
 
   app.post<{ Params: { id: string } }>('/api/services/:id/stop', async (request, reply) => {
     const operator = requireLifecycleOwner(request, reply);
