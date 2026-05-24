@@ -301,8 +301,14 @@ export async function runServiceScript(input: ServiceLifecycleRunInput): Promise
       const earlyExitTimer = setTimeout(() => {
         resolvedEarly = true;
         child.unref();
-        (child.stdout as { unref?: () => void } | null)?.unref?.();
-        (child.stderr as { unref?: () => void } | null)?.unref?.();
+        // Intentionally do NOT unref stdout/stderr: callers that await
+        // `settlement` (tests, lifecycle lock release) need an active
+        // handle to keep the event loop alive until the child emits
+        // 'close'. Unref'ing the streams here is what triggered the
+        // Node test runner "Promise resolution is still pending but
+        // the event loop has already resolved" cancellation in CI.
+        // The streams detach automatically when the child exits, so
+        // this does not leak in production.
         resolveRun({ code: null, pid: child.pid, output, settlement });
       }, 2000);
       child.on('close', (code, signal) => {
