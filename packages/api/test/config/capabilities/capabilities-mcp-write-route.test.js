@@ -203,6 +203,25 @@ describe('capabilities MCP write routes', () => {
     assert.deepEqual(config?.capabilities, []);
   });
 
+  it('rejects spoofed local Host headers on remote ownerless MCP installs', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/capabilities/mcp/install',
+      headers: {
+        ...OWNER_HEADERS,
+        host: 'localhost:3004',
+        'x-forwarded-host': 'localhost:3004',
+      },
+      remoteAddress: '203.0.113.10',
+      payload: { id: 'new-mcp', command: 'node', args: ['server.js'] },
+    });
+
+    assert.equal(res.statusCode, 403, res.payload);
+    assert.match(JSON.parse(res.payload).error, /DEFAULT_OWNER_USER_ID/);
+    const config = await readCapabilitiesConfig(projectRoot);
+    assert.deepEqual(config?.capabilities, []);
+  });
+
   it('rejects secret-bearing MCP install when DEFAULT_OWNER_USER_ID is not configured', async () => {
     const res = await app.inject({
       method: 'POST',

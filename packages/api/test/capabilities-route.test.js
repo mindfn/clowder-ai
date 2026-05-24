@@ -1378,6 +1378,26 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
       assert.equal(nonLocalMissingOwner.statusCode, 403);
       assert.match(JSON.parse(nonLocalMissingOwner.payload).error, /DEFAULT_OWNER_USER_ID/);
 
+      const spoofedLocalHost = await app.inject({
+        method: 'PATCH',
+        url: '/api/capabilities',
+        headers: {
+          ...OWNER_SESSION_HEADERS,
+          host: 'localhost:3004',
+          'x-forwarded-host': 'localhost:3004',
+        },
+        remoteAddress: '203.0.113.10',
+        payload: {
+          projectPath: projectDir,
+          capabilityId: 'secret-mcp',
+          capabilityType: 'mcp',
+          scope: 'global',
+          enabled: true,
+        },
+      });
+      assert.equal(spoofedLocalHost.statusCode, 403);
+      assert.match(JSON.parse(spoofedLocalHost.payload).error, /DEFAULT_OWNER_USER_ID/);
+
       process.env.DEFAULT_OWNER_USER_ID = 'you';
       const nonOwner = await patchCapability(app, projectDir, NON_OWNER_SESSION_HEADERS);
       assert.equal(nonOwner.statusCode, 403);

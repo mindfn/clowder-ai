@@ -1,4 +1,5 @@
 import type { FastifyRequest } from 'fastify';
+import { isLoopbackAddress } from '../../utils/loopback-request.js';
 import { REDACTED_CAPABILITY_SECRET } from './capability-redaction.js';
 
 export interface CapabilityWriteRouteError {
@@ -56,11 +57,28 @@ function normalizeHostForLoopbackCheck(value: string | undefined): string {
   return raw;
 }
 
+function isLoopbackHost(value: string): boolean {
+  return value === 'localhost' || value === '127.0.0.1' || value === '::1';
+}
+
+function hasTrustedLocalOrigin(value: string | undefined): boolean {
+  if (!value) return true;
+  try {
+    return isLoopbackHost(normalizeHostForLoopbackCheck(new URL(value).host));
+  } catch {
+    return false;
+  }
+}
+
 export function isLocalCapabilityWriteRequest(request: FastifyRequest): boolean {
-  const forwardedHost = firstHeaderValue(request.headers['x-forwarded-host']);
-  const host = forwardedHost ?? firstHeaderValue(request.headers.host) ?? request.hostname;
+  if (!isLoopbackAddress(request.ip)) return false;
+
+  // Host is client-supplied; it only narrows requests after the peer socket is loopback.
+  const host = firstHeaderValue(request.headers.host) ?? request.hostname;
   const normalized = normalizeHostForLoopbackCheck(host);
-  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
+  if (!isLoopbackHost(normalized)) return false;
+
+  return hasTrustedLocalOrigin(firstHeaderValue(request.headers.origin));
 }
 
 export function containsRedactedPlaceholder(value: unknown): boolean {
