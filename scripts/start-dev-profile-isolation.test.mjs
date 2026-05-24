@@ -446,6 +446,17 @@ describe('embedding sidecar startup guards', () => {
     assert.match(apiScript, /mlx_embeddings\.utils/);
     assert.match(apiScript, /attn_implementation["']:\s*["']eager/);
   });
+
+  it('keeps setup docs aligned with Console-managed embedding service lifecycle', () => {
+    const setupDoc = readFileSync(resolve(ROOT, 'SETUP.md'), 'utf8');
+    const setupZhDoc = readFileSync(resolve(ROOT, 'SETUP.zh-CN.md'), 'utf8');
+
+    assert.match(setupDoc, /install the \*\*Embedding\*\* service from Console settings/i);
+    assert.doesNotMatch(setupDoc, /scripts\/embed-server\.sh/);
+    assert.match(setupZhDoc, /Console 设置里安装并启用 \*\*Embedding\*\* 服务/);
+    assert.doesNotMatch(setupZhDoc, /EMBED_MODE.*on/);
+    assert.doesNotMatch(setupZhDoc, /scripts\/embed-server\.sh/);
+  });
 });
 
 describe('sync-to-opensource public launch transforms', { skip: !existsSync(SYNC_SCRIPT) }, () => {
@@ -475,6 +486,7 @@ describe('sync-to-opensource public launch transforms', { skip: !existsSync(SYNC
       const embedPsScript = readFileSync(resolve(exportDir, 'scripts/embed-server.ps1'), 'utf8');
       const publicEnv = readFileSync(resolve(exportDir, '.env.example'), 'utf8');
       const setupDoc = readFileSync(resolve(exportDir, 'SETUP.md'), 'utf8');
+      const setupZhDoc = readFileSync(resolve(exportDir, 'SETUP.zh-CN.md'), 'utf8');
 
       assert.match(pkg.scripts['dev:direct'], /start-entry\.mjs dev:direct --profile=opensource/);
       assert.match(pkg.scripts['start:direct'], /start-entry\.mjs start:direct --profile=opensource/);
@@ -493,7 +505,11 @@ describe('sync-to-opensource public launch transforms', { skip: !existsSync(SYNC
       assert.equal(existsSync(resolve(exportDir, 'scripts/download-source-overrides.sh')), true);
       assert.equal(existsSync(resolve(exportDir, 'scripts/start-dev-profile-isolation.test.mjs')), true);
       assert.match(publicEnv, /EMBED_MODE=off/);
-      assert.match(setupDoc, /EMBED_MODE=on/);
+      assert.match(setupDoc, /install the \*\*Embedding\*\* service from Console settings/i);
+      assert.doesNotMatch(setupDoc, /scripts\/embed-server\.sh/);
+      assert.match(setupZhDoc, /Console 设置里安装并启用 \*\*Embedding\*\* 服务/);
+      assert.doesNotMatch(setupZhDoc, /EMBED_MODE.*on/);
+      assert.doesNotMatch(setupZhDoc, /scripts\/embed-server\.sh/);
 
       assert.match(
         runtimeScript,
