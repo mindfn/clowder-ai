@@ -8,9 +8,19 @@ interface ThreadLabelPickerProps {
   threadId: string;
   currentLabels: string[];
   onSave: (threadId: string, labels: string[]) => void | Promise<void>;
+  triggerLabel?: string;
+  triggerClassName?: string;
+  triggerRole?: 'menuitem';
 }
 
-export function ThreadLabelPicker({ threadId, currentLabels, onSave }: ThreadLabelPickerProps) {
+export function ThreadLabelPicker({
+  threadId,
+  currentLabels,
+  onSave,
+  triggerLabel,
+  triggerClassName,
+  triggerRole,
+}: ThreadLabelPickerProps) {
   const { labels, fetchLabels, createLabel, deleteLabel } = useLabelStore();
   const [isOpen, setIsOpen] = useState(false);
   const [selected, setSelected] = useState<string[]>(currentLabels);
@@ -105,18 +115,23 @@ export function ThreadLabelPicker({ threadId, currentLabels, onSave }: ThreadLab
           e.stopPropagation();
           setIsOpen(!isOpen);
         }}
-        className={`p-0.5 rounded transition-all ${
-          currentLabels.length > 0
-            ? 'text-cafe-accent'
-            : 'opacity-0 group-hover:opacity-100 text-cafe-muted hover:text-cafe-accent'
-        }`}
+        className={
+          triggerClassName ??
+          `p-0.5 rounded transition-all ${
+            currentLabels.length > 0
+              ? 'text-cafe-accent'
+              : 'opacity-0 group-hover:opacity-100 text-cafe-muted hover:text-cafe-accent'
+          }`
+        }
         title="标签管理"
+        role={triggerRole}
       >
-        <LabelIcon />
+        {triggerLabel ?? <LabelIcon />}
       </button>
       {isOpen && (
         <div
           style={getPopoverStyle()}
+          data-thread-action-popover="true"
           className="bg-cafe-surface rounded-lg shadow-lg border border-cafe z-50 flex flex-col"
           onClick={(e) => e.stopPropagation()}
         >
