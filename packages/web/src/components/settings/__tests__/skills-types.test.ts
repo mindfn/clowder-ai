@@ -137,9 +137,7 @@ describe('composeSkillItems', () => {
       staleness: null,
       conflicts: [],
     };
-    const caps: CapabilityBoardItem[] = [
-      { id: 'tdd', type: 'skill', source: 'cat-cafe', enabled: true, cats: {} },
-    ];
+    const caps: CapabilityBoardItem[] = [{ id: 'tdd', type: 'skill', source: 'cat-cafe', enabled: true, cats: {} }];
     const result = composeSkillItems(governance, caps);
     expect(result[0].pluginId).toBeUndefined();
   });
