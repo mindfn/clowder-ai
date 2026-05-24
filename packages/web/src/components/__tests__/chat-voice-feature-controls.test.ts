@@ -229,6 +229,8 @@ describe('ChatVoiceFeatureControls', () => {
     expect(callLog.some((entry) => entry.startsWith('/api/services/audio-capture/install-preview'))).toBe(true);
     expect(callLog.some((entry) => entry.startsWith('/api/services/audio-capture/install:'))).toBe(false);
     expect(container.textContent).toContain('安装 音频采集');
+    expect(container.textContent).toContain('无需模型');
+    expect(container.textContent).toContain('语音识别模型请在 Whisper 服务中选择');
     expect(container.textContent).toContain('no extra model download');
 
     const confirmBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === '开始安装');

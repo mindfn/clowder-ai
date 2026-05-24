@@ -372,6 +372,17 @@ export function InstallPreviewModal({
             />
           )}
 
+          {rec && !isUnsupported && allModels.length === 0 && (
+            <div className="rounded-lg bg-[var(--console-field-bg)] px-4 py-3 space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-cafe-muted">模型选择</p>
+              <p className="text-sm font-medium text-cafe">无需模型</p>
+              <p className="text-[12px] text-cafe-secondary">
+                此服务只安装运行时依赖，不下载或选择模型。
+                {serviceId === 'audio-capture' ? '语音识别模型请在 Whisper 服务中选择。' : ''}
+              </p>
+            </div>
+          )}
+
           {rec && rec.notes.length > 0 && (
             <div className="rounded-lg border border-conn-amber-border bg-conn-amber-bg/40 px-4 py-3 space-y-1">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-conn-amber-text">注意事项</p>
