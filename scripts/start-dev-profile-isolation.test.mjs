@@ -149,7 +149,11 @@ describe('start-dev strict profile isolation', () => {
     }
   });
 
-  it('derives EMBED_ENABLED=1 from EMBED_MODE=on when no explicit override is set', () => {
+  it('does NOT derive EMBED_ENABLED from EMBED_MODE (sidecar lifecycle owned by API autoStartEnabledServices)', () => {
+    // EMBED_MODE only controls the API in-process embedding mode (off/shadow/on).
+    // Sidecar startup is no longer triggered by EMBED_MODE — the API spawns
+    // sidecars via /api/services/embedding-model/start based on
+    // .cat-cafe/services.json (embedding-model.enabled).
     const sandboxDir = createSandbox('EMBED_MODE=on\n');
     try {
       const result = runSourceOnly({
@@ -162,7 +166,7 @@ describe('start-dev strict profile isolation', () => {
 
       assert.equal(result.status, 0, result.stderr || result.stdout);
       assert.match(result.stdout, /PROFILE=opensource/);
-      assert.match(result.stdout, /EMBED=1/);
+      assert.match(result.stdout, /EMBED=0/);
     } finally {
       rmSync(sandboxDir, { recursive: true, force: true });
     }

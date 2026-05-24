@@ -389,6 +389,28 @@ derive_embed_enabled() {
 
 derive_embed_enabled
 
+# Legacy direct-spawn gate (must run BEFORE kill_managed_ports so stale
+# *_ENABLED env vars don't cause us to kill API-managed sidecar ports).
+# Sidecar lifecycle is owned by API autoStartEnabledServices() reading
+# .cat-cafe/services.json. Enable services in Console; the API spawns them
+# via /api/services/:id/start. Set CAT_CAFE_LEGACY_DIRECT_SIDECARS=1 only
+# if you need the pre-Console direct-spawn path.
+# WARNING: legacy path runs root scripts/*-server.sh; root embed-server.sh
+# now delegates to scripts/services/embed-server.sh which requires EMBED_MODEL.
+if [ "${CAT_CAFE_LEGACY_DIRECT_SIDECARS:-0}" != "1" ]; then
+    if [ "${ASR_ENABLED:-0}" = "1" ] || [ "${TTS_ENABLED:-0}" = "1" ] \
+       || [ "${LLM_POSTPROCESS_ENABLED:-0}" = "1" ] || [ "${EMBED_ENABLED:-0}" = "1" ] \
+       || [ "${AUDIO_SERVICE_ENABLED:-0}" = "1" ]; then
+        echo "[start-dev] *_ENABLED detected but CAT_CAFE_LEGACY_DIRECT_SIDECARS=0 — skipping legacy sidecar spawn + port kill."
+        echo "[start-dev] Sidecar lifecycle is owned by API autoStartEnabledServices(); enable services in console."
+    fi
+    ASR_ENABLED=0
+    TTS_ENABLED=0
+    LLM_POSTPROCESS_ENABLED=0
+    EMBED_ENABLED=0
+    AUDIO_SERVICE_ENABLED=0
+fi
+
 default_redis_storage_key() {
     local profile="${1:-$REDIS_PROFILE}"
     local port="${2:-$REDIS_PORT}"
@@ -1367,27 +1389,6 @@ main() {
     _STATE_LLM_PP=disabled
     _STATE_EMBED=disabled
     _STATE_AUDIO=disabled
-
-    # Legacy direct-spawn gate. Sidecar lifecycle is owned by API
-    # autoStartEnabledServices() reading .cat-cafe/services.json. Enable
-    # services in Console; the API will spawn them via /api/services/:id/start.
-    # Set CAT_CAFE_LEGACY_DIRECT_SIDECARS=1 only if you need the pre-Console
-    # direct-spawn path (e.g. legacy .env with EMBED_MODE=on/ASR_ENABLED=1).
-    # WARNING: legacy path runs root scripts/*-server.sh which do not pass
-    # --model; will collide with embed-api.py --model required=True.
-    if [ "${CAT_CAFE_LEGACY_DIRECT_SIDECARS:-0}" != "1" ]; then
-        if [ "${ASR_ENABLED:-0}" = "1" ] || [ "${TTS_ENABLED:-0}" = "1" ] \
-           || [ "${LLM_POSTPROCESS_ENABLED:-0}" = "1" ] || [ "${EMBED_ENABLED:-0}" = "1" ] \
-           || [ "${AUDIO_SERVICE_ENABLED:-0}" = "1" ]; then
-            echo "[start-dev] *_ENABLED detected but CAT_CAFE_LEGACY_DIRECT_SIDECARS=0 — skipping legacy sidecar spawn."
-            echo "[start-dev] Sidecar lifecycle is owned by API autoStartEnabledServices(); enable services in console."
-        fi
-        ASR_ENABLED=0
-        TTS_ENABLED=0
-        LLM_POSTPROCESS_ENABLED=0
-        EMBED_ENABLED=0
-        AUDIO_SERVICE_ENABLED=0
-    fi
 
     # Qwen3-ASR Server (语音输入 — 替代 Whisper，同端口 drop-in)
     if [ "${ASR_ENABLED:-0}" = "1" ]; then
