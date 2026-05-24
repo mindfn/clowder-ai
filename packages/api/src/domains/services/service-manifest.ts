@@ -262,23 +262,49 @@ export function getServiceManifest(id: string): ServiceManifest | null {
   return null;
 }
 
-export function resolveServiceEndpoint(service: ServiceManifest, env: NodeJS.ProcessEnv = process.env): string | null {
+function parsePort(value: string | undefined): number | null {
+  if (!value || !/^\d+$/.test(value)) return null;
+  const port = Number.parseInt(value, 10);
+  return port > 0 && port <= 65535 ? port : null;
+}
+
+function replaceEndpointPort(endpoint: string | null, port: number): string | null {
+  if (!endpoint) return null;
+  try {
+    const url = new URL(endpoint);
+    const hadTrailingSlash = endpoint.endsWith('/');
+    url.port = String(port);
+    const serialized = url.toString();
+    return !hadTrailingSlash && url.pathname === '/' ? serialized.replace(/\/$/, '') : serialized;
+  } catch {
+    return endpoint.replace(/:\d+($|[/?#])/, `:${port}$1`);
+  }
+}
+
+export function resolveServiceEndpoint(
+  service: ServiceManifest,
+  env: NodeJS.ProcessEnv = process.env,
+  config: ServiceConfig | undefined = getServiceConfig(service.id),
+): string | null {
   for (const key of service.endpointEnvVars) {
     const value = env[key]?.trim();
     if (value) return value;
   }
-  if (service.portFallback) {
-    // Persisted user-chosen port (from install modal) takes precedence
-    // over the manifest default but defers to explicit env URL overrides
-    // above. Without this, /api/services and /health probe the manifest
-    // default even after a custom-port install — the sidecar is on
-    // cfg.port but the dashboard reports it unhealthy. Codex P2 3268869300.
-    const cfgPort = getServiceConfig(service.id)?.port;
-    if (typeof cfgPort === 'number' && cfgPort > 0) {
-      return `${service.portFallback.host.replace(/\/+$/, '')}:${cfgPort}`;
+  // Persisted user-chosen port (from install modal) takes precedence over
+  // static env port overrides, while explicit URL envs above remain highest
+  // priority. This must apply to every scripted service, not just embedding,
+  // otherwise start/stop use cfg.port but /api/services health probes the
+  // manifest default and reports a healthy custom-port sidecar as broken.
+  const configuredPort =
+    typeof config?.port === 'number' && config.port > 0 && config.port <= 65535 ? config.port : null;
+  const portEnvKey = PORT_ENV_VARS[service.id];
+  const envPort = parsePort(portEnvKey ? env[portEnvKey]?.trim() : undefined);
+  const effectivePort = configuredPort ?? envPort;
+  if (effectivePort) {
+    if (service.portFallback) {
+      return `${service.portFallback.host.replace(/\/+$/, '')}:${effectivePort}`;
     }
-    const port = env[service.portFallback.envVar]?.trim();
-    if (port) return `${service.portFallback.host.replace(/\/+$/, '')}:${port}`;
+    return replaceEndpointPort(service.defaultEndpoint, effectivePort);
   }
   return service.defaultEndpoint;
 }
@@ -355,7 +381,7 @@ export async function resolveServiceState(
       ? configExists && (config.enabled || (config.selectedModel === undefined && config.port === undefined))
       : true);
   const enabled = config.enabled;
-  const endpoint = resolveServiceEndpoint(service, options.env);
+  const endpoint = resolveServiceEndpoint(service, options.env, options.config);
   const clientPrerequisites = service.prerequisites
     ? { prerequisites: (({ venvPath: _, ...r }) => r)(service.prerequisites) }
     : {};

@@ -8,9 +8,7 @@ import { getServiceConfig } from '../domains/services/service-config.js';
 import {
   type FetchServiceHealth,
   getServiceManifest,
-  maskServiceEndpoint,
   PORT_ENV_VARS,
-  resolveServiceEndpoint,
   resolveServiceEndpointMap,
   resolveServiceState,
   resolveServiceStates,
@@ -132,7 +130,7 @@ export const servicesRoutes: FastifyPluginAsync<ServicesRouteOptions> = async (a
     });
     return {
       id: state.id,
-      endpoint: maskServiceEndpoint(resolveServiceEndpoint(service, options.env)),
+      endpoint: state.endpoint,
       configured: state.configured,
       status: state.status,
       httpStatus: state.httpStatus,

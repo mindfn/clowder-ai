@@ -43,6 +43,18 @@ const SERVICE_SCRIPT_DIR = resolve(REPO_ROOT, 'scripts/services');
 const MODEL_ID_PATTERN = /^([a-zA-Z0-9_-]+\/)?[a-zA-Z0-9._-]+$/;
 const MAX_CAPTURED_OUTPUT = 8192;
 
+type ExecFileLike = (
+  file: string,
+  args: string[],
+  options: { timeout: number; windowsHide?: boolean },
+  callback: (error: (Error & { code?: unknown }) | null, stdout: string, stderr: string) => void,
+) => { on(event: 'error', listener: (error: Error) => void): unknown };
+
+interface ProbeOptions {
+  platform?: NodeJS.Platform;
+  execFile?: ExecFileLike;
+}
+
 function isPathInside(parent: string, child: string): boolean {
   const diff = relative(parent, child);
   return diff === '' || (!diff.startsWith('..') && !isAbsolute(diff));
@@ -115,9 +127,42 @@ export function isServiceProcessCommand(
   return false;
 }
 
-export async function readProcessCommand(pid: number): Promise<string | null> {
+function parsePidLines(stdout: string): number[] {
+  const currentPid = process.pid;
+  return stdout
+    .trim()
+    .split(/\r?\n/)
+    .map((value) => Number(value.trim()))
+    .filter((pid) => Number.isFinite(pid) && pid > 0 && pid !== currentPid);
+}
+
+export async function readProcessCommand(pid: number, options: ProbeOptions = {}): Promise<string | null> {
+  const platform = options.platform ?? process.platform;
+  const execFileImpl = options.execFile ?? (execFile as ExecFileLike);
+  if (platform === 'win32') {
+    return new Promise((resolveCommand) => {
+      const script = [
+        `$process = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" -ErrorAction SilentlyContinue`,
+        'if ($process -and $process.CommandLine) { $process.CommandLine } elseif ($process) { $process.ExecutablePath }',
+      ].join('; ');
+      const child = execFileImpl(
+        'powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+        { timeout: 2000, windowsHide: true },
+        (error, stdout) => {
+          if (error) {
+            resolveCommand(null);
+            return;
+          }
+          const command = stdout.trim();
+          resolveCommand(command.length > 0 ? command : null);
+        },
+      );
+      child.on('error', () => resolveCommand(null));
+    });
+  }
   return new Promise((resolveCommand) => {
-    const child = execFile('ps', ['-o', 'command=', '-p', String(pid)], { timeout: 2000 }, (error, stdout) => {
+    const child = execFileImpl('ps', ['-o', 'command=', '-p', String(pid)], { timeout: 2000 }, (error, stdout) => {
       if (error) {
         resolveCommand(null);
         return;
@@ -129,9 +174,33 @@ export async function readProcessCommand(pid: number): Promise<string | null> {
   });
 }
 
-export async function findPidsByPort(port: number): Promise<number[]> {
+export async function findPidsByPort(port: number, options: ProbeOptions = {}): Promise<number[]> {
+  const platform = options.platform ?? process.platform;
+  const execFileImpl = options.execFile ?? (execFile as ExecFileLike);
+  if (platform === 'win32') {
+    return new Promise((resolvePids, rejectPids) => {
+      const script = [
+        `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue`,
+        'Select-Object -ExpandProperty OwningProcess',
+        'Sort-Object -Unique',
+      ].join(' | ');
+      const child = execFileImpl(
+        'powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+        { timeout: 3000, windowsHide: true },
+        (error, stdout, stderr) => {
+          if (error) {
+            rejectPids(new Error(`PowerShell port probe failed for TCP:${port}: ${stderr.trim()}`));
+            return;
+          }
+          resolvePids(parsePidLines(stdout));
+        },
+      );
+      child.on('error', (error) => rejectPids(error));
+    });
+  }
   return new Promise((resolvePids, rejectPids) => {
-    const child = execFile(
+    const child = execFileImpl(
       'lsof',
       ['-ti', `TCP:${port}`, '-sTCP:LISTEN'],
       { timeout: 3000 },
@@ -146,15 +215,7 @@ export async function findPidsByPort(port: number): Promise<number[]> {
           rejectPids(new Error(`lsof port probe failed for TCP:${port}`));
           return;
         }
-        const currentPid = process.pid;
-        resolvePids(
-          stdout
-            .trim()
-            .split('\n')
-            .filter(Boolean)
-            .map((value) => Number(value))
-            .filter((pid) => Number.isFinite(pid) && pid > 0 && pid !== currentPid),
-        );
+        resolvePids(parsePidLines(stdout));
       },
     );
     child.on('error', (error) => rejectPids(error));

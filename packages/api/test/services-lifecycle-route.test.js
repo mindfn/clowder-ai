@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import Fastify from 'fastify';
 import {
+  findPidsByPort,
   isServiceProcessCommand,
+  readProcessCommand,
   resolveServiceScriptPath,
   runServiceScript,
 } from '../dist/domains/services/service-lifecycle.js';
@@ -681,13 +683,49 @@ describe('service lifecycle write routes', () => {
       resolveServiceScriptPath('scripts/services/whisper-uninstall.sh', 'win32'),
       /scripts\/services\/whisper-uninstall\.ps1$/,
     );
+    assert.match(
+      resolveServiceScriptPath('scripts/services/audio-capture-install.sh', 'win32'),
+      /scripts\/services\/audio-capture-install\.ps1$/,
+    );
+    assert.match(
+      resolveServiceScriptPath('scripts/services/audio-capture-server.sh', 'win32'),
+      /scripts\/services\/audio-capture-server\.ps1$/,
+    );
+    assert.match(
+      resolveServiceScriptPath('scripts/services/audio-capture-uninstall.sh', 'win32'),
+      /scripts\/services\/audio-capture-uninstall\.ps1$/,
+    );
   });
 
   it('keeps shell service scripts on Windows when no PowerShell counterpart exists', () => {
     assert.match(
-      resolveServiceScriptPath('scripts/services/audio-capture-install.sh', 'win32'),
-      /scripts\/services\/audio-capture-install\.sh$/,
+      resolveServiceScriptPath('scripts/services/qwen3-asr-server.sh', 'win32'),
+      /scripts\/services\/qwen3-asr-server\.sh$/,
     );
+  });
+
+  it('uses Windows-native port and command probes instead of lsof/ps', async () => {
+    const calls = [];
+    const fakeExecFile = (command, args, _options, callback) => {
+      calls.push({ command, args });
+      const commandText = args.join(' ');
+      if (commandText.includes('Get-NetTCPConnection')) {
+        callback(null, "111\r\n222\r\n''\r\n", '');
+      } else if (commandText.includes('Get-CimInstance')) {
+        callback(null, 'powershell.exe -File C:\\repo\\scripts\\services\\whisper-server.ps1\r\n', '');
+      } else {
+        callback(new Error(`unexpected command: ${command} ${args.join(' ')}`), '', '');
+      }
+      return { on: () => {} };
+    };
+
+    const pids = await findPidsByPort(9876, { platform: 'win32', execFile: fakeExecFile });
+    const command = await readProcessCommand(111, { platform: 'win32', execFile: fakeExecFile });
+
+    assert.deepEqual(pids, [111, 222]);
+    assert.equal(command, 'powershell.exe -File C:\\repo\\scripts\\services\\whisper-server.ps1');
+    assert.equal(calls[0].command, 'powershell.exe');
+    assert.equal(calls[1].command, 'powershell.exe');
   });
 
   it('matches service processes by exact script identity only', () => {
