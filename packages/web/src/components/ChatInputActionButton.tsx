@@ -101,11 +101,11 @@ export function ChatInputActionButton({
         </div>
       )}
 
-      {/* Stop button: hidden alongside queue send until hover or focus (primary stop covers disabled state) */}
+      {/* Stop button: visible alongside queue send (primary stop covers disabled state) */}
       {hasActiveInvocation && !disabled && onStop && (
         <button
           onClick={() => onStop()}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-conn-red-text text-white opacity-0 transition-all hover:bg-conn-red-hover hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-conn-red-text/40"
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-conn-red-text text-white transition-colors hover:bg-conn-red-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-conn-red-text/40"
           title="停止生成"
           aria-label="Stop generation"
         >

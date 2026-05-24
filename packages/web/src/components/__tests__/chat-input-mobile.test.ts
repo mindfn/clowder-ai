@@ -145,12 +145,13 @@ describe('ChatInput composer layout', () => {
     expect(row?.className).not.toContain('items-end');
   });
 
-  it('keeps the active invocation stop affordance invisible until hover or keyboard focus', () => {
+  it('keeps the active invocation stop affordance visible while preserving hover and keyboard focus styling', () => {
     render({ hasActiveInvocation: true, onStop: vi.fn() });
 
     const stopButton = container.querySelector('button[aria-label="Stop generation"]');
-    expect(stopButton?.className).toContain('opacity-0');
-    expect(stopButton?.className).toContain('hover:opacity-100');
-    expect(stopButton?.className).toContain('focus-visible:opacity-100');
+    expect(stopButton?.className).not.toContain('opacity-0');
+    expect(stopButton?.className).toContain('bg-conn-red-text');
+    expect(stopButton?.className).toContain('hover:bg-conn-red-hover');
+    expect(stopButton?.className).toContain('focus-visible:ring-2');
   });
 });
