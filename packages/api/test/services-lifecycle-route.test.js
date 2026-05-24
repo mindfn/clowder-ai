@@ -405,6 +405,13 @@ describe('service lifecycle write routes', () => {
       { mode: 0o755 },
     );
     chmodSync(script, 0o755);
+    // After earlyExit fires, the runner unref's child + stdout + stderr
+    // so a production API server can restart without being blocked by
+    // a long-lived sidecar's pipe handles. That leaves no active handle
+    // keeping the event loop alive while we `await result.settlement`,
+    // so the Node test runner cancels the pending promise. A test-scoped
+    // ref'd interval keeps the loop alive until settlement resolves.
+    const keepalive = setInterval(() => {}, 5_000);
     try {
       const result = await runServiceScript({
         serviceId: 'whisper-stt',
@@ -424,6 +431,7 @@ describe('service lifecycle write routes', () => {
       assert.match(readServiceLogTail('whisper-stt', 20).join('\n'), /late startup failure detail/);
       assert.match(readServiceLogTail('whisper-stt', 20).join('\n'), /\[start\] process exited with code 7/);
     } finally {
+      clearInterval(keepalive);
       if (previousLogDir === undefined) delete process.env.LOG_DIR;
       else process.env.LOG_DIR = previousLogDir;
     }
