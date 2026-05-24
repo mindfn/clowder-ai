@@ -475,6 +475,28 @@ describe('TTS sidecar startup guards', () => {
   });
 });
 
+describe('Windows Python resolver guards', () => {
+  it('does not block behind a Python install lock after another installer has finished', () => {
+    const resolver = readFileSync(resolve(ROOT, 'scripts/services/python-resolve.ps1'), 'utf8');
+    const lockFunction = resolver.match(/function Install-PythonToProjectDir \{[\s\S]*?\n\}/)?.[0] ?? '';
+
+    assert.ok(lockFunction.includes('Try-ProjectPython'), 'lock wait path must re-check project Python');
+    assert.match(lockFunction, /WaitOne\(\[TimeSpan\]::FromSeconds\(/);
+    assert.doesNotMatch(lockFunction, /WaitOne\(\[TimeSpan\]::FromMinutes\(10\)\)/);
+    assert.match(lockFunction, /Project Python already present and valid \(installed by concurrent install\)/);
+  });
+
+  it('bounds Windows portable Python downloads and retries the alternate proxy mode', () => {
+    const resolver = readFileSync(resolve(ROOT, 'scripts/services/python-resolve.ps1'), 'utf8');
+    const innerFunction = resolver.match(/function Install-PythonToProjectDirInner \{[\s\S]*?\n\}/)?.[0] ?? '';
+
+    assert.match(innerFunction, /\$downloadTimeoutSec\s*=/);
+    assert.match(innerFunction, /foreach\s*\(\$downloadMode\s+in\s+\$downloadModes\)/);
+    assert.match(innerFunction, /Invoke-WebRequest[\s\S]*-TimeoutSec\s+\$downloadTimeoutSec/);
+    assert.match(innerFunction, /Retrying Python download via/);
+  });
+});
+
 describe('sync-to-opensource public launch transforms', { skip: !existsSync(SYNC_SCRIPT) }, () => {
   it('exports opensource-pinned direct launch wrappers and runtime startup', () => {
     const result = spawnSync('bash', [SYNC_SCRIPT, '--dry-run', '--yes'], {

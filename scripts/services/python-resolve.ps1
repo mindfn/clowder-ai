@@ -206,17 +206,35 @@ function Install-PythonToProjectDir {
     }
     $acquired = $false
     try {
-        $acquired = $mutex.WaitOne([TimeSpan]::FromMinutes(10))
-    } catch [System.Threading.AbandonedMutexException] {
-        # Previous holder crashed without releasing -- we still own it now.
-        $acquired = $true
-    }
-    if (-not $acquired) {
-        [Console]::Error.WriteLine("  Python install lock timed out (>10min)")
-        $mutex.Dispose()
-        return $false
-    }
-    try {
+        $deadline = (Get-Date).AddMinutes(10)
+        while (-not $acquired) {
+            try {
+                $acquired = $mutex.WaitOne([TimeSpan]::FromSeconds(5))
+            } catch [System.Threading.AbandonedMutexException] {
+                # Previous holder crashed without releasing -- we still own it now.
+                $acquired = $true
+            }
+            if ($acquired) { break }
+
+            # A concurrent install may have finished extracting Python even if
+            # its process has not released the mutex yet. Do not block another
+            # service install behind the mutex once the shared interpreter is
+            # already usable.
+            $projectPython = Join-Path $script:ProjectPythonDir "python.exe"
+            if (Test-Path $projectPython) {
+                $existingInfo = Try-ProjectPython
+                if ($existingInfo) {
+                    [Console]::Error.WriteLine("  Project Python already present and valid (installed by concurrent install)")
+                    return $true
+                }
+            }
+
+            if ((Get-Date) -ge $deadline) {
+                [Console]::Error.WriteLine("  Python install lock timed out (>10min)")
+                return $false
+            }
+        }
+
         # Re-check inside the critical section -- another concurrent install
         # might have already finished while we were waiting on the mutex.
         # Use Try-ProjectPython (full validation), not just Test-Path --
@@ -260,7 +278,9 @@ function Install-PythonToProjectDir {
         }
         return (Install-PythonToProjectDirInner)
     } finally {
-        try { $mutex.ReleaseMutex() | Out-Null } catch {}
+        if ($acquired) {
+            try { $mutex.ReleaseMutex() | Out-Null } catch {}
+        }
         $mutex.Dispose()
     }
 }
@@ -420,25 +440,51 @@ function Install-PythonToProjectDirInner {
     # download silently routes through the registry proxy that the probe
     # explicitly avoided.
     $savedDefaultProxy = $null
+    $downloadTimeoutSec = 180
+    $downloadModes = @()
+    if ($mode -eq 'proxy' -and $candidate) {
+        $downloadModes += 'proxy'
+        $downloadModes += 'direct'
+    } else {
+        $downloadModes += 'direct'
+        if ($candidate) { $downloadModes += 'proxy' }
+    }
+    $downloaded = $false
+    $lastDownloadError = ''
+    $lastDownloadMode = $downloadModes[$downloadModes.Count - 1]
     try { $savedDefaultProxy = [System.Net.WebRequest]::DefaultWebProxy } catch {}
     try {
-        try {
-            if ($mode -eq 'proxy' -and $candidate) {
-                [Console]::Error.WriteLine("  Using proxy for download: $candidate")
-                Invoke-WebRequest -Uri $tarballUrl -OutFile $tarballPath -UseBasicParsing -Proxy $candidate -ErrorAction Stop
-            } else {
-                # direct: force .NET DefaultWebProxy to null for THIS IWR call
-                # so we don't silently route through the system proxy.
-                try { [System.Net.WebRequest]::DefaultWebProxy = $null } catch {}
-                Invoke-WebRequest -Uri $tarballUrl -OutFile $tarballPath -UseBasicParsing -ErrorAction Stop
+        foreach ($downloadMode in $downloadModes) {
+            Remove-Item -Force $tarballPath -ErrorAction SilentlyContinue
+            try {
+                if ($downloadMode -eq 'proxy' -and $candidate) {
+                    [Console]::Error.WriteLine("  Using proxy for download: $candidate")
+                    Invoke-WebRequest -Uri $tarballUrl -OutFile $tarballPath -UseBasicParsing -Proxy $candidate -TimeoutSec $downloadTimeoutSec -ErrorAction Stop
+                } else {
+                    # direct: force .NET DefaultWebProxy to null for THIS IWR
+                    # call so we don't silently route through the system proxy.
+                    try { [System.Net.WebRequest]::DefaultWebProxy = $null } catch {}
+                    [Console]::Error.WriteLine("  Using direct download (no proxy)")
+                    Invoke-WebRequest -Uri $tarballUrl -OutFile $tarballPath -UseBasicParsing -TimeoutSec $downloadTimeoutSec -ErrorAction Stop
+                }
+                $downloaded = $true
+                break
+            } catch {
+                $lastDownloadError = $_.Exception.Message
+                [Console]::Error.WriteLine("  Python download via $downloadMode failed: $lastDownloadError")
+                Remove-Item -Force $tarballPath -ErrorAction SilentlyContinue
+                if ($downloadMode -ne $lastDownloadMode) {
+                    [Console]::Error.WriteLine("  Retrying Python download via alternate network path ...")
+                }
             }
-        } catch {
-            [Console]::Error.WriteLine("  Failed to download Python tarball: $($_.Exception.Message)")
-            return $false
         }
     } finally {
         $ProgressPreference = $prevProgress
         try { [System.Net.WebRequest]::DefaultWebProxy = $savedDefaultProxy } catch {}
+    }
+    if (-not $downloaded) {
+        [Console]::Error.WriteLine("  Failed to download Python tarball: $lastDownloadError")
+        return $false
     }
     if (-not (Test-Path $tarballPath)) {
         [Console]::Error.WriteLine("  Tarball not at expected path: $tarballPath")
