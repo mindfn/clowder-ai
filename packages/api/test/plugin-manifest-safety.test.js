@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { PluginRegistry } from '../dist/domains/plugin/PluginRegistry.js';
+import { PluginRegistry, resourceCapId } from '../dist/domains/plugin/PluginRegistry.js';
 import { BUILTIN_PLUGIN_IDS, parsePluginManifest, validateEnvSafety } from '../dist/domains/plugin/plugin-manifest.js';
 
 function writeTmpManifest(dir, id, yaml) {
@@ -109,6 +109,59 @@ describe('parsePluginManifest security', () => {
     const results = registry.scan();
     assert.equal(results.length, 1, 'github is a regular scanned plugin');
     assert.equal(results[0].id, 'github');
+  });
+
+  it('reports enabled runtime state even when required config is missing later', () => {
+    const registry = new PluginRegistry('/tmp/nonexistent-plugins');
+    const resource = { type: 'skill', path: 'skills/test-plugin' };
+    const manifest = {
+      id: 'test-plugin',
+      name: 'Test',
+      version: '1.0.0',
+      builtin: false,
+      config: [{ envName: 'TEST_PLUGIN_KEY', label: 'Key', sensitive: true, required: true }],
+      resources: [resource],
+    };
+    const capabilities = {
+      version: 1,
+      capabilities: [
+        {
+          id: resourceCapId(manifest.id, resource),
+          type: 'skill',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId: manifest.id,
+        },
+      ],
+    };
+
+    assert.equal(registry.deriveStatus(manifest, capabilities, {}), 'enabled');
+  });
+
+  it('does not treat stale plugin capability entries as declared resources', () => {
+    const registry = new PluginRegistry('/tmp/nonexistent-plugins');
+    const manifest = {
+      id: 'test-plugin',
+      name: 'Test',
+      version: '1.0.0',
+      builtin: false,
+      config: [],
+      resources: [{ type: 'skill', path: 'skills/current' }],
+    };
+    const capabilities = {
+      version: 1,
+      capabilities: [
+        {
+          id: 'plugin:test-plugin:old',
+          type: 'skill',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId: manifest.id,
+        },
+      ],
+    };
+
+    assert.equal(registry.deriveStatus(manifest, capabilities, {}), 'partial');
   });
 
   it('parses limb as supported resource type', () => {

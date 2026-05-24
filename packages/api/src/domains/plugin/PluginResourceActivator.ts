@@ -139,11 +139,19 @@ export class PluginResourceActivator {
     }
     const skillName = resource.path.split('/').pop()!;
 
-    for (const providerDir of PROVIDER_DIRS) {
-      const skillsDir = join(this.deps.resolveProjectRoot(), providerDir);
-      await mkdir(skillsDir, { recursive: true });
-      const linkPath = join(skillsDir, skillName);
-      await this.ensureSymlink(linkPath, skillSourceDir);
+    const createdLinks: string[] = [];
+    try {
+      for (const providerDir of PROVIDER_DIRS) {
+        const skillsDir = join(this.deps.resolveProjectRoot(), providerDir);
+        await mkdir(skillsDir, { recursive: true });
+        const linkPath = join(skillsDir, skillName);
+        if (await this.ensureSymlink(linkPath, skillSourceDir)) createdLinks.push(linkPath);
+      }
+    } catch (err) {
+      for (const linkPath of createdLinks) {
+        await this.removeOwnedSymlink(linkPath, skillSourceDir);
+      }
+      throw err;
     }
 
     await this.upsertCapabilityEntry(manifest, resource, true);
@@ -175,7 +183,6 @@ export class PluginResourceActivator {
     try {
       await this.deps.limbRegistry.register(node);
     } catch (err) {
-      if (err instanceof Error && err.message.includes('already registered')) return;
       await this.removeCapabilityEntry(manifest, resource);
       throw err;
     }
@@ -310,13 +317,13 @@ export class PluginResourceActivator {
     return Object.keys(env).length > 0 ? { env } : {};
   }
 
-  private async ensureSymlink(linkPath: string, target: string): Promise<void> {
+  private async ensureSymlink(linkPath: string, target: string): Promise<boolean> {
     try {
       const s = await lstat(linkPath);
       if (s.isSymbolicLink()) {
         const { readlink } = await import('node:fs/promises');
         const existing = await readlink(linkPath);
-        if (existing === target) return;
+        if (existing === target) return false;
         throw new Error(`Refusing to overwrite existing symlink at ${linkPath} (current target: ${existing})`);
       } else {
         throw new Error(`Refusing to overwrite non-symlink at ${linkPath}`);
@@ -325,6 +332,7 @@ export class PluginResourceActivator {
       if (err instanceof Error && err.message.startsWith('Refusing')) throw err;
     }
     await symlink(target, linkPath);
+    return true;
   }
 
   private async removeOwnedSymlink(linkPath: string, expectedTarget: string): Promise<void> {

@@ -96,20 +96,25 @@ export class PluginRegistry {
     env: Record<string, string | undefined>,
   ): PluginStatus {
     const allConfigured = manifest.config.filter((f) => f.required).every((f) => !!env[f.envName]);
-
-    if (!allConfigured) return 'not_configured';
-
-    if (!capabilities) return 'configured';
+    if (!capabilities) return allConfigured ? 'configured' : 'not_configured';
 
     const capEntries = capabilities.capabilities.filter((c) => c.pluginId === manifest.id);
+    const declaredIds = new Set(manifest.resources.map((r) => resourceCapId(manifest.id, r)));
+    const declaredEntries = capEntries.filter((c) => declaredIds.has(c.id));
 
-    if (capEntries.length === 0) return 'configured';
+    if (capEntries.length === 0) return allConfigured ? 'configured' : 'not_configured';
 
-    const allEnabled = capEntries.every((c) => c.enabled);
-    if (allEnabled && capEntries.length >= manifest.resources.length) return 'enabled';
+    const allDeclaredEnabled =
+      manifest.resources.length > 0 &&
+      manifest.resources.every((resource) =>
+        declaredEntries.some((c) => c.id === resourceCapId(manifest.id, resource) && c.enabled),
+      );
+    if (allDeclaredEnabled) return 'enabled';
 
-    const someEnabled = capEntries.some((c) => c.enabled);
-    return someEnabled ? 'partial' : 'configured';
+    const someRuntimeEnabled = capEntries.some((c) => c.enabled);
+    if (someRuntimeEnabled) return 'partial';
+
+    return allConfigured ? 'configured' : 'not_configured';
   }
 
   getPluginInfo(

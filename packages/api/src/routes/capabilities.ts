@@ -587,7 +587,10 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
     if (allScansOk) {
       const before = config.capabilities.length;
       config.capabilities = config.capabilities.filter(
-        (c) => c.type !== 'skill' || allSkillNames.has(c.id) || c.pluginId,
+        (c) =>
+          c.type !== 'skill' ||
+          allSkillNames.has(c.id) ||
+          (c.pluginId !== undefined && existsSync(join(projectRoot, 'plugins', c.pluginId))),
       );
       if (config.capabilities.length !== before) configDirty = true;
     }
@@ -775,7 +778,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
     const mountSourceNames = new Set(
       mountSkillsSrc === catCafeSkillsDir ? (catCafeOwnSkills ?? []) : ((await listSkillSubdirs(mountSkillsSrc)) ?? []),
     );
-    const catCafeSkillItems = items.filter((i) => i.type === 'skill' && i.source === 'cat-cafe');
+    const catCafeSkillItems = items.filter((i) => i.type === 'skill' && i.source === 'cat-cafe' && !i.pluginId);
     const providerDirCandidates = buildProviderSkillDirCandidates(projectRoot, home);
     await Promise.all(
       catCafeSkillItems.map(async (item) => {
