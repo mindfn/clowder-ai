@@ -15,6 +15,7 @@ import {
   resolveServiceState,
   resolveServiceStates,
 } from '../domains/services/service-manifest.js';
+import { createServiceLifecycleLock } from './services-lifecycle-lock.js';
 import { registerServiceLifecycleRoutes, type ServiceLifecycleRouteOptions } from './services-lifecycle-routes.js';
 
 export interface ServicesRouteOptions {
@@ -38,6 +39,7 @@ function requireIdentity(request: FastifyRequest, reply: FastifyReply): boolean 
 
 export const servicesRoutes: FastifyPluginAsync<ServicesRouteOptions> = async (app, options) => {
   const getConfig = options.lifecycle?.serviceConfig?.get ?? getServiceConfig;
+  const lifecycleLock = createServiceLifecycleLock();
 
   app.get('/api/services', async (request, reply) => {
     if (!requireIdentity(request, reply)) return { error: 'Authentication required' };
@@ -45,6 +47,7 @@ export const servicesRoutes: FastifyPluginAsync<ServicesRouteOptions> = async (a
       env: options.env,
       fetchHealth: options.fetchHealth,
       getConfig,
+      getLifecycleAction: lifecycleLock.getActiveAction,
     });
     return { services };
   });
@@ -125,6 +128,7 @@ export const servicesRoutes: FastifyPluginAsync<ServicesRouteOptions> = async (a
       env: options.env,
       fetchHealth: options.fetchHealth,
       config: getConfig(request.params.id),
+      lifecycleAction: lifecycleLock.getActiveAction(request.params.id),
     });
     return {
       id: state.id,
@@ -136,5 +140,5 @@ export const servicesRoutes: FastifyPluginAsync<ServicesRouteOptions> = async (a
     };
   });
 
-  await registerServiceLifecycleRoutes(app, options);
+  await registerServiceLifecycleRoutes(app, options, lifecycleLock);
 };

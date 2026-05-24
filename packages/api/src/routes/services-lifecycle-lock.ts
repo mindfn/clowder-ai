@@ -3,6 +3,7 @@ import type { FastifyReply } from 'fastify';
 const LOCK_HOLD_UNTIL = Symbol('serviceLifecycleLockHoldUntil');
 const START_LOCK_HOLD_UNTIL = Symbol('serviceLifecycleStartLockHoldUntil');
 const DEFAULT_STARTUP_LOCK_GRACE_MS = 120_000;
+export type ServiceLifecycleLockAction = 'install' | 'start' | 'stop' | 'uninstall' | 'toggle';
 
 export function holdLifecycleLockUntil<T extends object>(value: T, waitFor?: Promise<unknown>): T {
   if (!waitFor) return value;
@@ -38,21 +39,25 @@ function getStartLockHold(value: unknown): Promise<unknown> | undefined {
 }
 
 export function createServiceLifecycleLock() {
-  const activeServices = new Set<string>();
+  const activeServices = new Map<string, ServiceLifecycleLockAction>();
   const startingServices = new Set<string>();
 
   return {
+    getActiveAction(serviceId: string): ServiceLifecycleLockAction | null {
+      return activeServices.get(serviceId) ?? (startingServices.has(serviceId) ? 'start' : null);
+    },
+
     async withLock<T>(
       serviceId: string,
       reply: FastifyReply,
       task: () => Promise<T>,
-      options: { action?: 'start' } = {},
+      options: { action?: ServiceLifecycleLockAction } = {},
     ): Promise<T | { error: string }> {
       if (activeServices.has(serviceId) || (options.action === 'start' && startingServices.has(serviceId))) {
         reply.status(409);
         return { error: `Service lifecycle operation already in progress for ${serviceId}` };
       }
-      activeServices.add(serviceId);
+      activeServices.set(serviceId, options.action ?? 'toggle');
       let releaseAfter: Promise<unknown> | undefined;
       let startReleaseAfter: Promise<unknown> | undefined;
       try {

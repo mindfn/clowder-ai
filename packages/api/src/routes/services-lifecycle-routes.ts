@@ -11,7 +11,7 @@ import {
   type ServiceLifecycleAction,
   type ServiceLifecycleRunner,
 } from '../domains/services/service-lifecycle.js';
-import { getServiceManifest, MODEL_ENV_VARS, type ServiceConfig } from '../domains/services/service-manifest.js';
+import { getServiceManifest, type ServiceConfig } from '../domains/services/service-manifest.js';
 import {
   registerServiceLifecycleAuditRoutes,
   SERVICE_LIFECYCLE_AUDIT_TYPE,
@@ -50,6 +50,7 @@ function hasErrorCode(error: unknown, code: string): boolean {
 export async function registerServiceLifecycleRoutes(
   app: FastifyInstance,
   options: { env?: NodeJS.ProcessEnv; lifecycle?: ServiceLifecycleRouteOptions } = {},
+  lifecycleLock: ReturnType<typeof createServiceLifecycleLock> = createServiceLifecycleLock(),
 ): Promise<void> {
   const lifecycleTimeoutMs = options.lifecycle?.timeoutMs ?? DEFAULT_LIFECYCLE_TIMEOUT_MS;
   const runner = options.lifecycle?.runScript ?? runServiceScript;
@@ -62,7 +63,7 @@ export async function registerServiceLifecycleRoutes(
     set: options.lifecycle?.serviceConfig?.set ?? setServiceConfig,
   };
   const auditLog = options.lifecycle?.auditLog ?? getEventAuditLog();
-  const { withLock } = createServiceLifecycleLock();
+  const { withLock } = lifecycleLock;
   const partitionServicePids = createServicePortPartitioner({
     lookupPidsByPort,
     lookupProcessCommand,
@@ -180,27 +181,32 @@ export async function registerServiceLifecycleRoutes(
         serviceConfigStore.set(service.id, persistPatch);
       }
 
-      return withLock(service.id, reply, async () => {
-        const result = await runForeground({
-          serviceId: service.id,
-          action: 'install',
-          script: installScript,
-          operator,
-          env: envResult.env,
-        });
-        if (!result.ok) {
-          serviceConfigStore.set(service.id, { installed: false, enabled: false });
-          reply.status(lifecycleFailureStatus(result.error));
-        } else {
-          const model = request.body?.model;
-          const selectedModel = typeof model === 'string' && model.length > 0 ? model : undefined;
-          serviceConfigStore.set(service.id, {
-            installed: true,
-            ...(selectedModel ? { selectedModel } : {}),
+      return withLock(
+        service.id,
+        reply,
+        async () => {
+          const result = await runForeground({
+            serviceId: service.id,
+            action: 'install',
+            script: installScript,
+            operator,
+            env: envResult.env,
           });
-        }
-        return result;
-      });
+          if (!result.ok) {
+            serviceConfigStore.set(service.id, { installed: false, enabled: false });
+            reply.status(lifecycleFailureStatus(result.error));
+          } else {
+            const model = request.body?.model;
+            const selectedModel = typeof model === 'string' && model.length > 0 ? model : undefined;
+            serviceConfigStore.set(service.id, {
+              installed: true,
+              ...(selectedModel ? { selectedModel } : {}),
+            });
+          }
+          return result;
+        },
+        { action: 'install' },
+      );
     },
   );
 
@@ -215,33 +221,38 @@ export async function registerServiceLifecycleRoutes(
     const uninstallScript = service.scripts?.uninstall;
     if (!uninstallScript) return { ok: true, message: `${service.name} has no uninstall script` };
 
-    return withLock(service.id, reply, async () => {
-      // Mirror /start: inject persisted selectedModel + port so uninstall
-      // scripts that probe the install-time venv can find it (codex P1
-      // 3265033601 / 3268690489). Fall back to bare env if persisted
-      // config is invalid (uninstall should be tolerant of stale state).
-      const cfg = getServiceConfig(service.id);
-      const uninstallEnvResult = buildLifecycleEnv(
-        options.env ?? process.env,
-        service.id,
-        cfg?.selectedModel,
-        cfg?.port,
-      );
-      const uninstallEnv = uninstallEnvResult.ok ? uninstallEnvResult.env : { ...(options.env ?? process.env) };
-      const result = await runForeground({
-        serviceId: service.id,
-        action: 'uninstall',
-        script: uninstallScript,
-        operator,
-        env: uninstallEnv,
-      });
-      if (!result.ok) {
-        reply.status(lifecycleFailureStatus(result.error));
-      } else {
-        serviceConfigStore.set(service.id, { installed: false, enabled: false });
-      }
-      return result;
-    });
+    return withLock(
+      service.id,
+      reply,
+      async () => {
+        // Mirror /start: inject persisted selectedModel + port so uninstall
+        // scripts that probe the install-time venv can find it (codex P1
+        // 3265033601 / 3268690489). Fall back to bare env if persisted
+        // config is invalid (uninstall should be tolerant of stale state).
+        const cfg = getServiceConfig(service.id);
+        const uninstallEnvResult = buildLifecycleEnv(
+          options.env ?? process.env,
+          service.id,
+          cfg?.selectedModel,
+          cfg?.port,
+        );
+        const uninstallEnv = uninstallEnvResult.ok ? uninstallEnvResult.env : { ...(options.env ?? process.env) };
+        const result = await runForeground({
+          serviceId: service.id,
+          action: 'uninstall',
+          script: uninstallScript,
+          operator,
+          env: uninstallEnv,
+        });
+        if (!result.ok) {
+          reply.status(lifecycleFailureStatus(result.error));
+        } else {
+          serviceConfigStore.set(service.id, { installed: false, enabled: false });
+        }
+        return result;
+      },
+      { action: 'uninstall' },
+    );
   });
 
   app.post<{ Params: { id: string } }>('/api/services/:id/start', async (request, reply) => {
@@ -374,61 +385,72 @@ export async function registerServiceLifecycleRoutes(
       reply.status(404);
       return { error: `Service "${request.params.id}" not found` };
     }
-    return withLock(service.id, reply, async () => {
-      // Probe the EFFECTIVE port (cfg.port ?? service.port) so /stop
-      // finds the actually-listening sidecar after a custom-port
-      // install (codex P1 3268801298).
-      const stopEffectiveCfg = getServiceConfig(service.id);
-      const stopProbeService = { ...service, port: stopEffectiveCfg?.port ?? service.port };
-      const portProbe = await partitionServicePids(stopProbeService);
-      if (!portProbe.ok) {
-        reply.status(503);
-        await audit({ serviceId: service.id, action: 'stop', operator, status: 'rejected', reason: portProbe.reason });
-        return servicePortProbeUnavailableError(stopProbeService.port);
-      }
-      if (portProbe.foreign.length > 0) {
-        reply.status(409);
-        await audit({
-          serviceId: service.id,
-          action: 'stop',
-          operator,
-          status: 'rejected',
-          reason: 'foreign-port-owner',
-        });
-        return { error: `Service port ${stopProbeService.port} is owned by another process` };
-      }
-      const stopped: number[] = [];
-      const failed: number[] = [];
-      for (const pid of portProbe.owned) {
-        try {
-          terminatePid(pid, 'SIGTERM');
-          stopped.push(pid);
-        } catch (error) {
-          if (hasErrorCode(error, 'ESRCH')) continue;
-          failed.push(pid);
-          app.log.warn({ err: error, serviceId: service.id, pid }, 'service stop terminate failed');
+    return withLock(
+      service.id,
+      reply,
+      async () => {
+        // Probe the EFFECTIVE port (cfg.port ?? service.port) so /stop
+        // finds the actually-listening sidecar after a custom-port
+        // install (codex P1 3268801298).
+        const stopEffectiveCfg = getServiceConfig(service.id);
+        const stopProbeService = { ...service, port: stopEffectiveCfg?.port ?? service.port };
+        const portProbe = await partitionServicePids(stopProbeService);
+        if (!portProbe.ok) {
+          reply.status(503);
+          await audit({
+            serviceId: service.id,
+            action: 'stop',
+            operator,
+            status: 'rejected',
+            reason: portProbe.reason,
+          });
+          return servicePortProbeUnavailableError(stopProbeService.port);
         }
-      }
-      if (failed.length > 0) {
-        reply.status(502);
-        await audit({
-          serviceId: service.id,
-          action: 'stop',
-          operator,
-          status: 'failed',
-          reason: 'terminate-failed',
-        });
-        return {
-          ok: false,
-          error: `${service.name} stop failed for ${failed.length} process(es)`,
-          stopped,
-          failed,
-        };
-      }
-      serviceConfigStore.set(service.id, { enabled: false });
-      await audit({ serviceId: service.id, action: 'stop', operator, status: 'completed' });
-      return { ok: true, message: `${service.name} stopped (${stopped.length} process(es))`, stopped };
-    });
+        if (portProbe.foreign.length > 0) {
+          reply.status(409);
+          await audit({
+            serviceId: service.id,
+            action: 'stop',
+            operator,
+            status: 'rejected',
+            reason: 'foreign-port-owner',
+          });
+          return { error: `Service port ${stopProbeService.port} is owned by another process` };
+        }
+        const stopped: number[] = [];
+        const failed: number[] = [];
+        for (const pid of portProbe.owned) {
+          try {
+            terminatePid(pid, 'SIGTERM');
+            stopped.push(pid);
+          } catch (error) {
+            if (hasErrorCode(error, 'ESRCH')) continue;
+            failed.push(pid);
+            app.log.warn({ err: error, serviceId: service.id, pid }, 'service stop terminate failed');
+          }
+        }
+        if (failed.length > 0) {
+          reply.status(502);
+          await audit({
+            serviceId: service.id,
+            action: 'stop',
+            operator,
+            status: 'failed',
+            reason: 'terminate-failed',
+          });
+          return {
+            ok: false,
+            error: `${service.name} stop failed for ${failed.length} process(es)`,
+            stopped,
+            failed,
+          };
+        }
+        serviceConfigStore.set(service.id, { enabled: false });
+        await audit({ serviceId: service.id, action: 'stop', operator, status: 'completed' });
+        return { ok: true, message: `${service.name} stopped (${stopped.length} process(es))`, stopped };
+      },
+      { action: 'stop' },
+    );
   });
 
   app.post<{ Params: { id: string }; Body: { enabled?: unknown; model?: unknown } }>(
@@ -446,21 +468,26 @@ export async function registerServiceLifecycleRoutes(
         return { error: 'Invalid body: enabled must be boolean' };
       }
       const enabled = request.body.enabled;
-      return withLock(service.id, reply, async () => {
-        const patch: { enabled: boolean; selectedModel?: string } = { enabled };
-        const model = request.body?.model;
-        const envResult = buildLifecycleEnv({}, service.id, model);
-        if (!envResult.ok) {
-          reply.status(400);
-          return { error: envResult.error };
-        }
-        if (typeof model === 'string' && model.length > 0) {
-          patch.selectedModel = model;
-        }
-        const config = serviceConfigStore.set(service.id, patch);
-        await audit({ serviceId: service.id, action: 'toggle', operator, status: 'completed' });
-        return { ok: true, config };
-      });
+      return withLock(
+        service.id,
+        reply,
+        async () => {
+          const patch: { enabled: boolean; selectedModel?: string } = { enabled };
+          const model = request.body?.model;
+          const envResult = buildLifecycleEnv({}, service.id, model);
+          if (!envResult.ok) {
+            reply.status(400);
+            return { error: envResult.error };
+          }
+          if (typeof model === 'string' && model.length > 0) {
+            patch.selectedModel = model;
+          }
+          const config = serviceConfigStore.set(service.id, patch);
+          await audit({ serviceId: service.id, action: 'toggle', operator, status: 'completed' });
+          return { ok: true, config };
+        },
+        { action: 'toggle' },
+      );
     },
   );
 

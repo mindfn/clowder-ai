@@ -130,8 +130,17 @@ describe('service lifecycle write routes', () => {
     process.env.DEFAULT_OWNER_USER_ID = 'you';
     let releaseInstall;
     let started = false;
+    const configs = new Map();
     const app = await buildApp({
       lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
         runScript: async () =>
           new Promise((resolve) => {
             started = true;
@@ -159,6 +168,57 @@ describe('service lifecycle write routes', () => {
       releaseInstall();
       assert.equal((await first).statusCode, 200);
     } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('reports installing while an install runner is still active', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    let releaseInstall;
+    let started = false;
+    const configs = new Map();
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        runScript: async () =>
+          new Promise((resolve) => {
+            started = true;
+            releaseInstall = () => resolve({ code: 0, output: 'installed' });
+          }),
+      },
+    });
+    try {
+      const install = app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/install',
+        headers: SESSION_HEADERS,
+        payload: { model: 'mlx-community/whisper-large-v3-turbo' },
+      });
+      while (!started) await new Promise((resolve) => setImmediate(resolve));
+
+      const listRes = await app.inject({
+        method: 'GET',
+        url: '/api/services',
+        headers: SESSION_HEADERS,
+      });
+
+      const whisper = JSON.parse(listRes.payload).services.find((service) => service.id === 'whisper-stt');
+      assert.equal(whisper.status, 'installing');
+      assert.equal(whisper.installed, false);
+      releaseInstall();
+      releaseInstall = null;
+      assert.equal((await install).statusCode, 200);
+    } finally {
+      releaseInstall?.();
       await app.close();
       restoreOwner(previousOwner);
     }
@@ -213,6 +273,49 @@ describe('service lifecycle write routes', () => {
       assert.equal(second.statusCode, 409, second.payload);
     } finally {
       for (const release of releases) release();
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('reports starting during detached startup grace after start returns', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map([['whisper-stt', { installed: true, enabled: false }]]);
+    const app = await buildApp({
+      lifecycle: {
+        startupGraceMs: 100,
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        findPidsByPort: async () => [],
+        readProcessCommand: async () => null,
+        runScript: async () => ({ code: null, pid: 321, output: '' }),
+      },
+    });
+    try {
+      const startRes = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/start',
+        headers: SESSION_HEADERS,
+      });
+      assert.equal(startRes.statusCode, 200, startRes.payload);
+
+      const listRes = await app.inject({
+        method: 'GET',
+        url: '/api/services',
+        headers: SESSION_HEADERS,
+      });
+      const whisper = JSON.parse(listRes.payload).services.find((service) => service.id === 'whisper-stt');
+      assert.equal(whisper.status, 'starting');
+      assert.equal(whisper.installed, true);
+      assert.equal(whisper.enabled, true);
+    } finally {
       await app.close();
       restoreOwner(previousOwner);
     }

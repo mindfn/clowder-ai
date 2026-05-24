@@ -10,7 +10,12 @@ import {
 } from '../SettingsResourceCard';
 import { InstallPreviewModal } from './InstallPreviewModal';
 import { SettingsText } from './primitives';
-import { adaptServiceState, type HomeServiceState, type ServiceUiState } from './service-ui-adapter';
+import {
+  adaptServiceState,
+  type HomeServiceState,
+  type ServiceUiState,
+  type ServiceUiStatus,
+} from './service-ui-adapter';
 
 const STATUS_DOT_COLOR: Record<string, string> = {
   running: 'var(--conn-emerald-text)',
@@ -23,6 +28,7 @@ const STATUS_DOT_COLOR: Record<string, string> = {
 
 const ROW_STYLE = { paddingInline: '1.25rem', paddingBlock: '0.75rem' } as const;
 const LOG_POLL_MS = 2000;
+const LIFECYCLE_BUSY_STATUSES = new Set<ServiceUiStatus>(['installing', 'starting']);
 
 interface ServiceStatusPanelProps {
   filterFeatures?: string[];
@@ -72,29 +78,45 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
     };
   }, []);
 
-  function startLogPoll(serviceId: string) {
-    stopLogPoll(serviceId);
-    const interval = setInterval(async () => {
-      try {
-        const res = await apiFetch(`/api/services/${serviceId}/logs`);
-        if (!res.ok) return;
-        const data = (await res.json()) as { lines?: string[] };
-        const lastLine = data.lines?.filter(Boolean).pop();
-        if (lastLine) setProgress((prev) => new Map(prev).set(serviceId, lastLine));
-      } catch {
-        /* ignore polling errors */
-      }
-    }, LOG_POLL_MS);
-    pollRef.current.set(serviceId, interval);
-  }
+  const pollServiceLog = useCallback(async (serviceId: string) => {
+    try {
+      const res = await apiFetch(`/api/services/${serviceId}/logs`);
+      if (!res.ok) return;
+      const data = (await res.json()) as { lines?: string[] };
+      const lastLine = data.lines?.filter(Boolean).pop();
+      if (lastLine) setProgress((prev) => new Map(prev).set(serviceId, lastLine));
+    } catch {
+      /* ignore polling errors */
+    }
+  }, []);
 
-  function stopLogPoll(serviceId: string) {
+  const stopLogPoll = useCallback((serviceId: string) => {
     const existing = pollRef.current.get(serviceId);
     if (existing) {
       clearInterval(existing);
       pollRef.current.delete(serviceId);
     }
-  }
+  }, []);
+
+  const startLogPoll = useCallback(
+    (serviceId: string) => {
+      stopLogPoll(serviceId);
+      void pollServiceLog(serviceId);
+      const interval = setInterval(() => {
+        void pollServiceLog(serviceId);
+      }, LOG_POLL_MS);
+      pollRef.current.set(serviceId, interval);
+    },
+    [pollServiceLog, stopLogPoll],
+  );
+
+  useEffect(() => {
+    const busyIds = new Set(services.filter((service) => LIFECYCLE_BUSY_STATUSES.has(service.status)).map((s) => s.id));
+    for (const serviceId of busyIds) startLogPoll(serviceId);
+    for (const serviceId of pollRef.current.keys()) {
+      if (!busyIds.has(serviceId) && !acting.has(serviceId)) stopLogPoll(serviceId);
+    }
+  }, [acting, services, startLogPoll, stopLogPoll]);
 
   async function executeAction(serviceId: string, action: string, model?: string, port?: number) {
     setActing((prev) => new Set(prev).add(serviceId));
@@ -162,7 +184,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
       )}
       {services.map((service) => {
         const dotColor = STATUS_DOT_COLOR[service.status] ?? STATUS_DOT_COLOR.not_configured;
-        const isBusy = acting.has(service.id);
+        const isBusy = acting.has(service.id) || LIFECYCLE_BUSY_STATUSES.has(service.status);
         const error = actionError?.id === service.id ? actionError.message : null;
         const logLine = progress.get(service.id);
 
@@ -206,7 +228,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
                     onClick={() => handleAction(service, 'install')}
                     className="rounded-lg bg-cafe-accent px-3 py-1.5 text-xs font-semibold text-[var(--cafe-surface)] transition-colors hover:bg-cafe-accent-hover disabled:opacity-50"
                   >
-                    {isBusy ? '...' : '安装'}
+                    {service.status === 'installing' ? '安装中' : isBusy ? '...' : '安装'}
                   </button>
                 )}
                 {service.installed && service.installable && (

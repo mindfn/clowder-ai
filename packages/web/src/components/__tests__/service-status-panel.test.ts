@@ -359,4 +359,48 @@ describe('ServiceStatusPanel', () => {
       await Promise.resolve();
     });
   });
+
+  it('restores installing state and log polling after remount', async () => {
+    const installingPayload = {
+      services: [
+        {
+          id: 'mlx-tts',
+          name: 'MLX TTS',
+          description: 'Text to speech',
+          category: 'voice',
+          features: ['voice-output'],
+          endpoint: null,
+          configured: false,
+          status: 'installing',
+          error: null,
+          installed: false,
+          enabled: false,
+          installable: true,
+        },
+      ],
+    };
+    mockFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/services') {
+        return { ok: true, json: async () => installingPayload };
+      }
+      if (path === '/api/services/mlx-tts/logs') {
+        return {
+          ok: true,
+          json: async () => ({ serviceId: 'mlx-tts', lines: ['Downloading model...', 'Installing deps...'] }),
+        };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+
+    await render(React.createElement(ServiceStatusPanel, { filterFeatures: ['voice-output'], title: 'TTS' }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('安装中');
+    expect(container.textContent).toContain('Installing deps...');
+    const installBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === '安装中');
+    expect(installBtn).toBeTruthy();
+    expect(installBtn?.disabled).toBe(true);
+  });
 });

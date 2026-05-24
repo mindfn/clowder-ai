@@ -1,4 +1,4 @@
-type HomeServiceStatus = 'healthy' | 'unhealthy' | 'not_configured';
+type HomeServiceStatus = 'healthy' | 'unhealthy' | 'not_configured' | 'installing' | 'starting';
 
 interface ModelOption {
   name: string;
@@ -73,7 +73,9 @@ export function adaptServiceState(home: HomeServiceState): ServiceUiState {
   const running = home.status === 'healthy';
 
   let status: ServiceUiStatus;
-  if (!installed) {
+  if (home.status === 'installing' || home.status === 'starting') {
+    status = home.status;
+  } else if (!installed) {
     status = 'not_configured';
   } else if (!home.installable) {
     status = running ? 'running' : home.configured ? 'error' : 'not_configured';

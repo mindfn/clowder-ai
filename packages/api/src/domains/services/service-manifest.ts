@@ -1,7 +1,8 @@
 import { maskUrlCredentials } from '../../config/env-registry.js';
 import { getServiceConfig } from './service-config.js';
 
-export type ServiceStatus = 'healthy' | 'unhealthy' | 'not_configured';
+export type ServiceLifecycleStateAction = 'install' | 'start' | 'stop' | 'uninstall' | 'toggle';
+export type ServiceStatus = 'healthy' | 'unhealthy' | 'not_configured' | 'installing' | 'starting';
 
 export interface ServiceManifest {
   id: string;
@@ -342,6 +343,7 @@ export async function resolveServiceState(
     env?: NodeJS.ProcessEnv;
     fetchHealth?: FetchServiceHealth;
     config?: ServiceConfig;
+    lifecycleAction?: ServiceLifecycleStateAction | null;
   } = {},
 ): Promise<ServiceState> {
   const configExists = options.config !== undefined;
@@ -354,6 +356,23 @@ export async function resolveServiceState(
       : true);
   const enabled = config.enabled;
   const endpoint = resolveServiceEndpoint(service, options.env);
+  const clientPrerequisites = service.prerequisites
+    ? { prerequisites: (({ venvPath: _, ...r }) => r)(service.prerequisites) }
+    : {};
+  if (options.lifecycleAction === 'install' || options.lifecycleAction === 'start') {
+    return {
+      ...buildClientServiceManifest(service),
+      endpoint: endpoint ? maskServiceEndpoint(endpoint) : null,
+      configured: !!endpoint,
+      status: options.lifecycleAction === 'install' ? 'installing' : 'starting',
+      httpStatus: null,
+      error: null,
+      installed: options.lifecycleAction === 'start' ? true : installed,
+      enabled: options.lifecycleAction === 'start' ? true : enabled,
+      installable,
+      ...clientPrerequisites,
+    };
+  }
   if (!endpoint) {
     return {
       ...buildClientServiceManifest(service),
@@ -365,7 +384,7 @@ export async function resolveServiceState(
       installed,
       enabled,
       installable,
-      ...(service.prerequisites ? { prerequisites: (({ venvPath: _, ...r }) => r)(service.prerequisites) } : {}),
+      ...clientPrerequisites,
     };
   }
 
@@ -380,7 +399,7 @@ export async function resolveServiceState(
       installed,
       enabled,
       installable,
-      ...(service.prerequisites ? { prerequisites: (({ venvPath: _, ...r }) => r)(service.prerequisites) } : {}),
+      ...clientPrerequisites,
     };
   }
 
@@ -397,7 +416,7 @@ export async function resolveServiceState(
     installed,
     enabled,
     installable,
-    ...(service.prerequisites ? { prerequisites: (({ venvPath: _, ...r }) => r)(service.prerequisites) } : {}),
+    ...clientPrerequisites,
   };
 }
 
@@ -405,6 +424,7 @@ export async function resolveServiceStates(options: {
   env?: NodeJS.ProcessEnv;
   fetchHealth?: FetchServiceHealth;
   getConfig?: (id: string) => ServiceConfig | undefined;
+  getLifecycleAction?: (id: string) => ServiceLifecycleStateAction | null;
 }): Promise<ServiceState[]> {
   const getConfig = options.getConfig;
   return Promise.all(
@@ -413,6 +433,7 @@ export async function resolveServiceStates(options: {
         env: options.env,
         fetchHealth: options.fetchHealth,
         config: getConfig?.(service.id),
+        lifecycleAction: options.getLifecycleAction?.(service.id),
       }),
     ),
   );
