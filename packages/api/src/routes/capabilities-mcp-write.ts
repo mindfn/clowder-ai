@@ -59,8 +59,7 @@ function hasStructuredSecretValues(value: unknown): boolean {
 
 function hasStoredStructuredSecrets(capability: CapabilityEntry | null | undefined): boolean {
   return (
-    hasStructuredSecretValues(capability?.mcpServer?.env) ||
-    hasStructuredSecretValues(capability?.mcpServer?.headers)
+    hasStructuredSecretValues(capability?.mcpServer?.env) || hasStructuredSecretValues(capability?.mcpServer?.headers)
   );
 }
 
