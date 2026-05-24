@@ -1356,17 +1356,27 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
     }
   });
 
-  it('allows capability toggle when DEFAULT_OWNER_USER_ID is missing and rejects configured non-owners', async () => {
+  it('allows local capability toggle when DEFAULT_OWNER_USER_ID is missing and rejects non-local or configured non-owners', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     const projectDir = await seedProject();
     const app = await buildSessionApp();
 
     try {
       delete process.env.DEFAULT_OWNER_USER_ID;
-      const missingOwner = await patchCapability(app, projectDir, OWNER_SESSION_HEADERS);
+      const missingOwner = await patchCapability(app, projectDir, {
+        ...OWNER_SESSION_HEADERS,
+        host: 'localhost:3004',
+      });
       assert.equal(missingOwner.statusCode, 200, missingOwner.payload);
       let config = await readCapabilitiesConfig(projectDir);
       assert.equal(config?.capabilities[0]?.enabled, false);
+
+      const nonLocalMissingOwner = await patchCapability(app, projectDir, {
+        ...OWNER_SESSION_HEADERS,
+        host: 'staging.example.test',
+      });
+      assert.equal(nonLocalMissingOwner.statusCode, 403);
+      assert.match(JSON.parse(nonLocalMissingOwner.payload).error, /DEFAULT_OWNER_USER_ID/);
 
       process.env.DEFAULT_OWNER_USER_ID = 'you';
       const nonOwner = await patchCapability(app, projectDir, NON_OWNER_SESSION_HEADERS);

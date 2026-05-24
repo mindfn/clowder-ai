@@ -189,6 +189,20 @@ describe('capabilities MCP write routes', () => {
     assert.ok(!config?.capabilities.some((entry) => entry.id === 'secret-mcp'));
   });
 
+  it('rejects non-local non-secret MCP install when DEFAULT_OWNER_USER_ID is not configured', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/capabilities/mcp/install',
+      headers: { ...OWNER_HEADERS, host: 'staging.example.test' },
+      payload: { id: 'new-mcp', command: 'node', args: ['server.js'] },
+    });
+
+    assert.equal(res.statusCode, 403, res.payload);
+    assert.match(JSON.parse(res.payload).error, /DEFAULT_OWNER_USER_ID/);
+    const config = await readCapabilitiesConfig(projectRoot);
+    assert.deepEqual(config?.capabilities, []);
+  });
+
   it('rejects secret-bearing MCP install when DEFAULT_OWNER_USER_ID is not configured', async () => {
     const res = await app.inject({
       method: 'POST',

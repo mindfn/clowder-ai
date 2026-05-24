@@ -24,6 +24,7 @@ import {
 } from '../config/capabilities/capability-redaction.js';
 import {
   containsRedactedPlaceholder,
+  isLocalCapabilityWriteRequest,
   requireCapabilityWriteOwner,
   resolveCapabilityWriteSessionUserId,
 } from '../config/capabilities/capability-write-guards.js';
@@ -155,7 +156,9 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
       reply.status(401);
       return { error: 'Identity required (session cookie)' };
     }
-    const ownerError = requireCapabilityWriteOwner(userId);
+    const ownerError = requireCapabilityWriteOwner(userId, {
+      allowMissingOwner: isLocalCapabilityWriteRequest(request),
+    });
     if (ownerError) {
       reply.status(ownerError.status);
       return { error: ownerError.error };
@@ -202,7 +205,9 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
       reply.status(401);
       return { error: 'Identity required (session cookie)' };
     }
-    const ownerError = requireCapabilityWriteOwner(userId);
+    const ownerError = requireCapabilityWriteOwner(userId, {
+      allowMissingOwner: isLocalCapabilityWriteRequest(request),
+    });
     if (ownerError) {
       reply.status(ownerError.status);
       return { error: ownerError.error };
@@ -318,7 +323,9 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
       reply.status(401);
       return { error: 'Identity required (session cookie)' };
     }
-    const ownerError = requireCapabilityWriteOwner(userId);
+    const ownerError = requireCapabilityWriteOwner(userId, {
+      allowMissingOwner: isLocalCapabilityWriteRequest(request),
+    });
     if (ownerError) {
       reply.status(ownerError.status);
       return { error: ownerError.error };
@@ -399,7 +406,9 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
       reply.status(401);
       return { error: 'Identity required (session cookie)' };
     }
-    const ownerError = requireCapabilityWriteOwner(userId);
+    const ownerError = requireCapabilityWriteOwner(userId, {
+      allowMissingOwner: isLocalCapabilityWriteRequest(request),
+    });
     if (ownerError) {
       reply.status(ownerError.status);
       return { error: ownerError.error };

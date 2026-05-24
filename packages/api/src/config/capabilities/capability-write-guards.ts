@@ -7,6 +7,7 @@ export interface CapabilityWriteRouteError {
 }
 
 export interface CapabilityWriteOwnerOptions {
+  allowMissingOwner?: boolean;
   requireConfiguredOwner?: boolean;
   missingOwnerError?: string;
 }
@@ -22,7 +23,7 @@ export function requireCapabilityWriteOwner(
 ): CapabilityWriteRouteError | null {
   const ownerId = process.env.DEFAULT_OWNER_USER_ID?.trim();
   if (!ownerId) {
-    if (!options.requireConfiguredOwner) return null;
+    if (options.allowMissingOwner && !options.requireConfiguredOwner) return null;
     return {
       status: 403,
       error: options.missingOwnerError ?? 'Capability writes require DEFAULT_OWNER_USER_ID to be configured',
@@ -35,6 +36,31 @@ export function requireCapabilityWriteOwner(
     };
   }
   return null;
+}
+
+function firstHeaderValue(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
+
+function normalizeHostForLoopbackCheck(value: string | undefined): string {
+  const raw = value?.split(',')[0]?.trim().toLowerCase() ?? '';
+  if (!raw) return '';
+  if (raw.startsWith('[')) {
+    const end = raw.indexOf(']');
+    return end > 0 ? raw.slice(1, end) : raw;
+  }
+  if (raw.indexOf(':') === raw.lastIndexOf(':')) {
+    return raw.split(':')[0] ?? raw;
+  }
+  return raw;
+}
+
+export function isLocalCapabilityWriteRequest(request: FastifyRequest): boolean {
+  const forwardedHost = firstHeaderValue(request.headers['x-forwarded-host']);
+  const host = forwardedHost ?? firstHeaderValue(request.headers.host) ?? request.hostname;
+  const normalized = normalizeHostForLoopbackCheck(host);
+  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
 }
 
 export function containsRedactedPlaceholder(value: unknown): boolean {
