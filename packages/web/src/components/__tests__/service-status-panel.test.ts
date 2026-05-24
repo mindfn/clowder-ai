@@ -267,6 +267,98 @@ describe('ServiceStatusPanel', () => {
     expect(container.textContent).toContain('Failed to install TTS dependencies');
   });
 
+  it('opens install preview for no-model scripted services before installing', async () => {
+    const profile = {
+      os: 'win32',
+      arch: 'x64',
+      gpu: 'none',
+      pythonArch: 'native',
+      pythonVersion: '3.12',
+      ramGb: 16,
+      diskFreeGb: 80,
+      detectedAt: Date.now(),
+    };
+    const installablePayload = {
+      services: [
+        {
+          id: 'audio-capture',
+          name: 'Audio Capture',
+          description: 'System audio capture',
+          category: 'audio',
+          features: ['voice-input'],
+          endpoint: null,
+          configured: false,
+          status: 'not_configured',
+          error: null,
+          installed: false,
+          enabled: false,
+          installable: true,
+          prerequisites: {
+            runtime: 'python3.10+',
+            packages: ['sounddevice', 'fastapi', 'uvicorn', 'numpy'],
+            models: [],
+            estimatedMinutes: 2,
+          },
+        },
+      ],
+    };
+    const callLog: string[] = [];
+    mockFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+      callLog.push(`${path}:${init?.body ?? ''}`);
+      if (path === '/api/services') {
+        return { ok: true, json: async () => installablePayload };
+      }
+      if (path === '/api/services/audio-capture/install-preview') {
+        return {
+          ok: true,
+          json: async () => ({
+            profile,
+            suggestedPort: 19981,
+            recommendation: {
+              serviceId: 'audio-capture',
+              profile,
+              models: [],
+              notes: ['Windows: sounddevice uses WASAPI / DirectSound, no extra model download.'],
+            },
+          }),
+        };
+      }
+      if (path === '/api/services/audio-capture/install') {
+        return { ok: true, json: async () => ({ ok: true }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+
+    await render(React.createElement(ServiceStatusPanel, { filterFeatures: ['voice-input'], title: '音频' }));
+
+    const installBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === '安装');
+    expect(installBtn).toBeTruthy();
+
+    await act(async () => {
+      installBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(callLog.some((entry) => entry.startsWith('/api/services/audio-capture/install-preview'))).toBe(true);
+    expect(callLog.some((entry) => entry.startsWith('/api/services/audio-capture/install:'))).toBe(false);
+    expect(container.textContent).toContain('安装 音频采集');
+    expect(container.textContent).toContain('no extra model download');
+
+    const confirmBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === '开始安装');
+    expect(confirmBtn).toBeTruthy();
+
+    await act(async () => {
+      confirmBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(callLog.some((entry) => entry === '/api/services/audio-capture/install:{"port":19981}')).toBe(true);
+  });
+
   it('does not render lifecycle controls for scriptless (installable=false) services', async () => {
     const scriptlessPayload = {
       services: [

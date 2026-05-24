@@ -165,7 +165,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
   }
 
   function handleAction(service: ServiceUiState, action: string) {
-    if (action === 'install' && service.prerequisites?.models?.length) {
+    if (action === 'install' && service.prerequisites) {
       setInstallTarget(service);
       return;
     }
