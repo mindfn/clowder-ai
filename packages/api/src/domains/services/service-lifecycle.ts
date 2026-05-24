@@ -52,11 +52,19 @@ export function isValidModelId(model: string): boolean {
   return MODEL_ID_PATTERN.test(model) && model.length <= 200;
 }
 
-export function resolveServiceScriptPath(script: string): string {
+export function resolveServiceScriptPath(script: string, platform: NodeJS.Platform = process.platform): string {
   if (!script.startsWith('scripts/services/')) {
     throw new Error(`Service script path is outside scripts/services: ${script}`);
   }
-  const resolved = resolve(REPO_ROOT, script);
+  let effectiveScript = script;
+  if (platform === 'win32' && script.endsWith('.sh')) {
+    const powershellScript = `${script.slice(0, -3)}.ps1`;
+    const powershellPath = resolve(REPO_ROOT, powershellScript);
+    if (isPathInside(SERVICE_SCRIPT_DIR, powershellPath) && existsSync(powershellPath)) {
+      effectiveScript = powershellScript;
+    }
+  }
+  const resolved = resolve(REPO_ROOT, effectiveScript);
   if (!isPathInside(SERVICE_SCRIPT_DIR, resolved)) {
     throw new Error(`Service script path is outside repository services directory: ${script}`);
   }
@@ -70,11 +78,19 @@ export function resolveServiceScriptPath(script: string): string {
   return resolved;
 }
 
-export function isServiceProcessCommand(command: string, manifest: ServiceLifecycleManifest): boolean {
+export function isServiceProcessCommand(
+  command: string,
+  manifest: ServiceLifecycleManifest,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
   const startScript = manifest.scripts?.start;
   if (!startScript) return false;
-  const normalizedCommand = command.replaceAll('\\', '/');
-  const resolvedScript = resolveServiceScriptPath(startScript).replaceAll('\\', '/');
+  const normalizePath = (value: string): string => {
+    const normalized = value.replaceAll('\\', '/');
+    return platform === 'win32' ? normalized.toLowerCase() : normalized;
+  };
+  const normalizedCommand = normalizePath(command);
+  const resolvedScript = normalizePath(resolveServiceScriptPath(startScript, platform));
   const tokens = Array.from(normalizedCommand.matchAll(/"([^"]*)"|'([^']*)'|(\S+)/g), (match) => {
     return match[1] ?? match[2] ?? match[3] ?? '';
   });
@@ -91,6 +107,10 @@ export function isServiceProcessCommand(command: string, manifest: ServiceLifecy
   if (isScriptToken(executable)) return true;
   if (['bash', 'sh', 'zsh'].includes(basename(executable ?? ''))) {
     return isScriptToken(tokens[commandIndex + 1]);
+  }
+  if (['powershell.exe', 'powershell', 'pwsh.exe', 'pwsh'].includes(basename(executable ?? ''))) {
+    const fileFlagIndex = tokens.findIndex((token, index) => index > commandIndex && token === '-file');
+    return fileFlagIndex >= 0 && isScriptToken(tokens[fileFlagIndex + 1]);
   }
   return false;
 }
@@ -177,12 +197,20 @@ export function readServiceLogTail(serviceId: string, lines = 100): string[] {
 }
 
 export async function runServiceScript(input: ServiceLifecycleRunInput): Promise<ServiceLifecycleRunResult> {
+  const command =
+    process.platform === 'win32' && input.scriptPath.toLowerCase().endsWith('.ps1') ? 'powershell.exe' : 'bash';
+  const args =
+    command === 'powershell.exe'
+      ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', input.scriptPath]
+      : [input.scriptPath];
+
   if (input.detached) {
     return new Promise((resolveRun, rejectRun) => {
-      const child = spawn('bash', [input.scriptPath], {
+      const child = spawn(command, args, {
         detached: true,
         stdio: 'ignore',
         env: input.env,
+        windowsHide: true,
       });
       child.on('error', (error) => rejectRun(error));
       const earlyExitTimer = setTimeout(() => {
@@ -197,7 +225,7 @@ export async function runServiceScript(input: ServiceLifecycleRunInput): Promise
   }
 
   return new Promise((resolveRun, rejectRun) => {
-    const child = execFile('bash', [input.scriptPath], {
+    const child = execFile(command, args, {
       env: input.env,
       timeout: input.detached ? undefined : input.timeoutMs,
       windowsHide: true,

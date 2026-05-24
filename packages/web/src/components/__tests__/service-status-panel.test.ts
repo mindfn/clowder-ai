@@ -215,6 +215,58 @@ describe('ServiceStatusPanel', () => {
     expect(container.textContent).toContain('Stop failed: process busy');
   });
 
+  it('surfaces lifecycle output when install fails', async () => {
+    const installablePayload = {
+      services: [
+        {
+          id: 'mlx-tts',
+          name: 'MLX TTS',
+          description: 'Text to speech',
+          category: 'voice',
+          features: ['voice-output'],
+          endpoint: null,
+          configured: false,
+          status: 'not_configured',
+          error: null,
+          installed: false,
+          enabled: false,
+          installable: true,
+        },
+      ],
+    };
+    mockFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/services') {
+        return { ok: true, json: async () => installablePayload };
+      }
+      if (path === '/api/services/mlx-tts/install') {
+        return {
+          ok: false,
+          json: async () => ({
+            ok: false,
+            error: 'install script failed (exit 1)',
+            output: 'Failed to install TTS dependencies',
+          }),
+        };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+
+    await render(React.createElement(ServiceStatusPanel, { filterFeatures: ['voice-output'], title: 'TTS' }));
+
+    const installBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === '安装');
+    expect(installBtn).toBeTruthy();
+
+    await act(async () => {
+      installBtn?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('install script failed (exit 1)');
+    expect(container.textContent).toContain('Failed to install TTS dependencies');
+  });
+
   it('does not render lifecycle controls for scriptless (installable=false) services', async () => {
     const scriptlessPayload = {
       services: [

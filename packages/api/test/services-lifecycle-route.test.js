@@ -569,6 +569,24 @@ describe('service lifecycle write routes', () => {
     assert.throws(() => resolveServiceScriptPath('../cat-cafe-runtime/.env'), /outside/i);
   });
 
+  it('uses native PowerShell service scripts on Windows', () => {
+    assert.match(
+      resolveServiceScriptPath('scripts/services/whisper-install.sh', 'win32'),
+      /scripts\/services\/whisper-install\.ps1$/,
+    );
+    assert.match(
+      resolveServiceScriptPath('scripts/services/whisper-uninstall.sh', 'win32'),
+      /scripts\/services\/whisper-uninstall\.ps1$/,
+    );
+  });
+
+  it('keeps shell service scripts on Windows when no PowerShell counterpart exists', () => {
+    assert.match(
+      resolveServiceScriptPath('scripts/services/audio-capture-install.sh', 'win32'),
+      /scripts\/services\/audio-capture-install\.sh$/,
+    );
+  });
+
   it('matches service processes by exact script identity only', () => {
     const manifest = {
       id: 'mlx-tts',
@@ -583,6 +601,31 @@ describe('service lifecycle write routes', () => {
     assert.equal(isServiceProcessCommand(`python worker.py --payload "${resolvedScript}"`, manifest), false);
     assert.equal(isServiceProcessCommand('python -m mlx.server --port 9879', manifest), false);
     assert.equal(isServiceProcessCommand('node unrelated-tts-helper.js', manifest), false);
+  });
+
+  it('matches Windows PowerShell service processes by exact script identity', () => {
+    const manifest = {
+      id: 'whisper-stt',
+      scripts: { start: 'scripts/services/whisper-server.sh' },
+    };
+    const resolvedScript = resolveServiceScriptPath('scripts/services/whisper-server.sh', 'win32');
+
+    assert.equal(
+      isServiceProcessCommand(
+        `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${resolvedScript}"`,
+        manifest,
+        'win32',
+      ),
+      true,
+    );
+    assert.equal(
+      isServiceProcessCommand(
+        'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\tmp\\whisper-server.ps1',
+        manifest,
+        'win32',
+      ),
+      false,
+    );
   });
 
   it('marks timed-out scripts even when they emitted output before termination', async () => {

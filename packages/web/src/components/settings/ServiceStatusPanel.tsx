@@ -114,9 +114,11 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
         headers: { 'Content-Type': 'application/json' },
         body,
       });
-      const data = (await res.json()) as { ok?: boolean; error?: string };
+      const data = (await res.json()) as { ok?: boolean; error?: string; output?: string };
       if (!data.ok) {
-        setActionError({ id: serviceId, message: data.error ?? `${action} failed` });
+        const output = typeof data.output === 'string' ? data.output.trim() : '';
+        const message = data.error ?? `${action} failed`;
+        setActionError({ id: serviceId, message: output ? `${message}\n${output}` : message });
       }
       await fetchServices();
     } catch {
@@ -185,7 +187,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
                   </SettingsText>
                 )}
                 {error && (
-                  <SettingsText as="p" tone="red" className="mt-0.5">
+                  <SettingsText as="p" tone="red" className="mt-0.5 whitespace-pre-wrap break-words">
                     {error}
                   </SettingsText>
                 )}

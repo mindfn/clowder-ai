@@ -421,6 +421,31 @@ describe('services routes', () => {
     }
   });
 
+  it('model-only config from a failed install is not treated as installed', async () => {
+    const freshConfigDir = mkdtempSync(join(tmpdir(), 'services-model-only-'));
+    const prevConfig = process.env.CAT_CAFE_SERVICES_CONFIG;
+    process.env.CAT_CAFE_SERVICES_CONFIG = join(freshConfigDir, 'services.json');
+    setServiceConfig('whisper-stt', { enabled: false, selectedModel: 'mlx-community/whisper-large-v3-turbo' });
+    const app = await buildApp({
+      env: { WHISPER_URL: 'http://127.0.0.1:19999/healthy' },
+      fetchHealth: async () => ({ ok: true, status: 200, error: null }),
+    });
+    try {
+      const listRes = await app.inject({
+        method: 'GET',
+        url: '/api/services',
+        headers: SESSION_HEADERS,
+      });
+      const whisper = JSON.parse(listRes.payload).services.find((s) => s.id === 'whisper-stt');
+      assert.equal(whisper.installed, false, 'selectedModel alone records intent, not an installed service');
+      assert.equal(whisper.enabled, false);
+      assert.equal(whisper.status, 'not_configured');
+    } finally {
+      await app.close();
+      process.env.CAT_CAFE_SERVICES_CONFIG = prevConfig;
+    }
+  });
+
   it('fresh service (no config record) treated as not installed', async () => {
     const freshConfigDir = mkdtempSync(join(tmpdir(), 'services-fresh-'));
     const prevConfig = process.env.CAT_CAFE_SERVICES_CONFIG;

@@ -347,7 +347,11 @@ export async function resolveServiceState(
   const configExists = options.config !== undefined;
   const config = options.config ?? { enabled: false };
   const installable = !!service.scripts?.install;
-  const installed = config.installed ?? (installable ? configExists : true);
+  const installed =
+    config.installed ??
+    (installable
+      ? configExists && (config.enabled || (config.selectedModel === undefined && config.port === undefined))
+      : true);
   const enabled = config.enabled;
   const endpoint = resolveServiceEndpoint(service, options.env);
   if (!endpoint) {

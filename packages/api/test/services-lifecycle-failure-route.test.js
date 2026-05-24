@@ -113,9 +113,18 @@ describe('service lifecycle failure handling', () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';
     const { auditLog, events } = createAuditLog();
+    const configs = new Map();
     const app = await buildApp({
       lifecycle: {
         auditLog,
+        serviceConfig: {
+          get: (id) => configs.get(id),
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
         runScript: async () => {
           throw new Error('spawn ENOENT /private/raw/script/path');
         },
@@ -138,6 +147,16 @@ describe('service lifecycle failure handling', () => {
         ['started', 'failed'],
       );
       assert.equal(events.at(-1).data.reason, 'runner-error');
+      assert.equal(configs.get('whisper-stt').installed, false, 'failed install must not leave service installed');
+      assert.equal(configs.get('whisper-stt').enabled, false, 'failed install must leave service disabled');
+
+      const listRes = await app.inject({
+        method: 'GET',
+        url: '/api/services',
+        headers: SESSION_HEADERS,
+      });
+      const whisper = JSON.parse(listRes.payload).services.find((s) => s.id === 'whisper-stt');
+      assert.equal(whisper.installed, false, 'failed install remains installable in API list');
     } finally {
       await app.close();
       restoreOwner(previousOwner);

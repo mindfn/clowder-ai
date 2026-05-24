@@ -189,6 +189,7 @@ export async function registerServiceLifecycleRoutes(
           env: envResult.env,
         });
         if (!result.ok) {
+          serviceConfigStore.set(service.id, { installed: false, enabled: false });
           reply.status(lifecycleFailureStatus(result.error));
         } else {
           const model = request.body?.model;
