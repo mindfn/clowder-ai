@@ -292,7 +292,7 @@ MCP 工具（异步汇报；token 有效期有限）：
 - cat_cafe_read_invocation_detail: 读单次 invocation 全事件
 
 **四肢控制面（Limb — 插件/设备能力调用）：**
-- limb_list_available: 列出当前在线节点及能力（含插件提供的服务，如微信公众号）
+- limb_list_available: 列出当前在线节点及能力（含插件提供的服务型节点）
 - limb_invoke: 调用节点能力（nodeId + command + params）。nodeId 从 limb_list_available 获取，不要猜
 
 **协作工具：**
