@@ -118,6 +118,15 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
     }
   }, [acting, services, startLogPoll, stopLogPoll]);
 
+  useEffect(() => {
+    const hasBusyService = acting.size > 0 || services.some((service) => LIFECYCLE_BUSY_STATUSES.has(service.status));
+    if (!hasBusyService) return;
+    const interval = setInterval(() => {
+      void fetchServices();
+    }, LOG_POLL_MS);
+    return () => clearInterval(interval);
+  }, [acting, fetchServices, services]);
+
   async function executeAction(serviceId: string, action: string, model?: string, port?: number) {
     setActing((prev) => new Set(prev).add(serviceId));
     setActionError(null);

@@ -14,13 +14,22 @@ export function holdLifecycleLockUntil<T extends object>(value: T, waitFor?: Pro
   return value;
 }
 
-export function holdStartupGrace<T extends object>(value: T, startupGraceMs?: number): T {
+export function holdStartupGrace<T extends object>(
+  value: T,
+  startupGraceMs?: number,
+  releaseWhen?: Promise<unknown>,
+): T {
   const holdMs = Math.max(0, startupGraceMs ?? DEFAULT_STARTUP_LOCK_GRACE_MS);
   if (holdMs === 0) return value;
-  const waitFor = new Promise<void>((resolve) => {
+  const graceTimer = new Promise<void>((resolve) => {
     const timer = setTimeout(resolve, holdMs);
     timer.unref?.();
   });
+  const releaseSignal = releaseWhen?.then(
+    () => undefined,
+    () => undefined,
+  );
+  const waitFor = releaseSignal ? Promise.race([graceTimer, releaseSignal]) : graceTimer;
   Object.defineProperty(value, START_LOCK_HOLD_UNTIL, {
     value: waitFor,
     enumerable: false,

@@ -371,7 +371,7 @@ export async function registerServiceLifecycleRoutes(
         serviceConfigStore.set(service.id, { installed: true, enabled: true });
         await audit({ serviceId: service.id, action: 'start', operator, status: 'completed', code: result.code });
         const success = { ok: true, message: `${service.name} start initiated`, pid: result.pid };
-        return holdStartupGrace(success, options.lifecycle?.startupGraceMs);
+        return holdStartupGrace(success, options.lifecycle?.startupGraceMs, result.settlement);
       },
       { action: 'start' },
     );

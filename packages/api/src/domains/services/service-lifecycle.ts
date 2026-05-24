@@ -29,7 +29,10 @@ export interface ServiceLifecycleRunResult {
   pid?: number;
   timedOut?: boolean;
   runnerError?: boolean;
+  settlement?: Promise<ServiceLifecycleSettledRunResult>;
 }
+
+export type ServiceLifecycleSettledRunResult = Omit<ServiceLifecycleRunResult, 'settlement'>;
 
 export type ServiceLifecycleRunner = (input: ServiceLifecycleRunInput) => Promise<ServiceLifecycleRunResult>;
 
@@ -267,20 +270,53 @@ export async function runServiceScript(input: ServiceLifecycleRunInput): Promise
 
   if (input.detached) {
     return new Promise((resolveRun, rejectRun) => {
+      let output = '';
+      let resolvedEarly = false;
+      let resolveSettlement: (result: ServiceLifecycleSettledRunResult) => void = () => {};
+      const settlement = new Promise<ServiceLifecycleSettledRunResult>((resolve) => {
+        resolveSettlement = resolve;
+      });
+      const appendOutput = (chunk: Buffer) => {
+        const text = chunk.toString();
+        output += text;
+        if (output.length > MAX_CAPTURED_OUTPUT) output = output.slice(-MAX_CAPTURED_OUTPUT);
+        appendServiceLog(input.serviceId, text);
+      };
       const child = spawn(command, args, {
         detached: true,
-        stdio: 'ignore',
+        stdio: ['ignore', 'pipe', 'pipe'],
         env: input.env,
         windowsHide: true,
       });
-      child.on('error', (error) => rejectRun(error));
+      child.stdout?.on('data', appendOutput);
+      child.stderr?.on('data', appendOutput);
+      child.on('error', (error) => {
+        if (resolvedEarly) {
+          appendServiceLog(input.serviceId, `[${input.action}] runner error: ${error.message}\n`);
+          resolveSettlement({ code: null, output, pid: child.pid, runnerError: true });
+          return;
+        }
+        rejectRun(error);
+      });
       const earlyExitTimer = setTimeout(() => {
+        resolvedEarly = true;
         child.unref();
-        resolveRun({ code: null, pid: child.pid });
+        (child.stdout as { unref?: () => void } | null)?.unref?.();
+        (child.stderr as { unref?: () => void } | null)?.unref?.();
+        resolveRun({ code: null, pid: child.pid, output, settlement });
       }, 2000);
-      child.on('exit', (code) => {
+      child.on('close', (code, signal) => {
         clearTimeout(earlyExitTimer);
-        resolveRun({ code, pid: child.pid, output: '' });
+        if (resolvedEarly && (code !== 0 || signal)) {
+          const status = signal ? `signal ${signal}` : `code ${code ?? 'unknown'}`;
+          appendServiceLog(input.serviceId, `[${input.action}] process exited with ${status}\n`);
+        }
+        const result = { code, output, pid: child.pid };
+        resolveSettlement(result);
+        if (!resolvedEarly) {
+          resolvedEarly = true;
+          resolveRun({ ...result, settlement });
+        }
       });
     });
   }

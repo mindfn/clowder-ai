@@ -495,4 +495,73 @@ describe('ServiceStatusPanel', () => {
     expect(installBtn).toBeTruthy();
     expect(installBtn?.disabled).toBe(true);
   });
+
+  it('refreshes service state while startup is still in progress', async () => {
+    const startingPayload = {
+      services: [
+        {
+          id: 'embedding-model',
+          name: 'Embedding Model',
+          description: 'Semantic memory embedding endpoint',
+          category: 'memory',
+          features: ['memory-semantic-search'],
+          endpoint: 'http://127.0.0.1:9880',
+          configured: true,
+          status: 'starting',
+          httpStatus: null,
+          error: null,
+          installed: true,
+          enabled: true,
+          installable: true,
+        },
+      ],
+    };
+    const failedPayload = {
+      services: [
+        {
+          id: 'embedding-model',
+          name: 'Embedding Model',
+          description: 'Semantic memory embedding endpoint',
+          category: 'memory',
+          features: ['memory-semantic-search'],
+          endpoint: 'http://127.0.0.1:9880',
+          configured: true,
+          status: 'unhealthy',
+          httpStatus: null,
+          error: 'connect ECONNREFUSED 127.0.0.1:9880',
+          installed: true,
+          enabled: true,
+          installable: true,
+        },
+      ],
+    };
+
+    let serviceFetchCount = 0;
+    mockFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/services') {
+        serviceFetchCount += 1;
+        return { ok: true, json: async () => (serviceFetchCount === 1 ? startingPayload : failedPayload) };
+      }
+      if (path === '/api/services/embedding-model/logs') {
+        return {
+          ok: true,
+          json: async () => ({ serviceId: 'embedding-model', lines: ['Starting embedding server...'] }),
+        };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+
+    await render(
+      React.createElement(ServiceStatusPanel, { filterFeatures: ['memory-semantic-search'], title: '记忆服务' }),
+    );
+    expect(container.textContent).toContain('启动中');
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2100));
+    });
+
+    expect(serviceFetchCount).toBeGreaterThanOrEqual(2);
+    expect(container.textContent).toContain('异常');
+    expect(container.textContent).toContain('connect ECONNREFUSED 127.0.0.1:9880');
+  });
 });

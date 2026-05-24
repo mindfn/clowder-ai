@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
@@ -8,6 +8,7 @@ import {
   findPidsByPort,
   isServiceProcessCommand,
   readProcessCommand,
+  readServiceLogTail,
   resolveServiceScriptPath,
   runServiceScript,
 } from '../dist/domains/services/service-lifecycle.js';
@@ -320,6 +321,111 @@ describe('service lifecycle write routes', () => {
     } finally {
       await app.close();
       restoreOwner(previousOwner);
+    }
+  });
+
+  it('clears detached startup state when the runner settles before grace expires', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    let releaseRunner;
+    const configs = new Map([['whisper-stt', { installed: true, enabled: false }]]);
+    const app = await buildApp({
+      lifecycle: {
+        startupGraceMs: 60_000,
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        findPidsByPort: async () => [],
+        readProcessCommand: async () => null,
+        runScript: async () => ({
+          code: null,
+          pid: 4321,
+          output: '',
+          settlement: new Promise((resolve) => {
+            releaseRunner = () => resolve({ code: 1, pid: 4321, output: 'late startup failure' });
+          }),
+        }),
+      },
+    });
+    try {
+      const startRes = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/start',
+        headers: SESSION_HEADERS,
+      });
+      assert.equal(startRes.statusCode, 200, startRes.payload);
+
+      const startingRes = await app.inject({
+        method: 'GET',
+        url: '/api/services',
+        headers: SESSION_HEADERS,
+      });
+      const starting = JSON.parse(startingRes.payload).services.find((service) => service.id === 'whisper-stt');
+      assert.equal(starting.status, 'starting');
+
+      releaseRunner();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const settledRes = await app.inject({
+        method: 'GET',
+        url: '/api/services',
+        headers: SESSION_HEADERS,
+      });
+      const settled = JSON.parse(settledRes.payload).services.find((service) => service.id === 'whisper-stt');
+      assert.equal(settled.status, 'unhealthy');
+      assert.equal(settled.error, 'unreachable');
+    } finally {
+      releaseRunner?.();
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('captures detached runner output after the early start response', async () => {
+    const logDir = mkdtempSync(join(tmpdir(), 'service-log-'));
+    const previousLogDir = process.env.LOG_DIR;
+    process.env.LOG_DIR = logDir;
+    const dir = mkdtempSync(join(tmpdir(), 'service-start-'));
+    const script = join(dir, 'late-fail.sh');
+    writeFileSync(
+      script,
+      [
+        '#!/usr/bin/env bash',
+        'echo "boot line before readiness"',
+        'sleep 2.1',
+        'echo "late startup failure detail" >&2',
+        'exit 7',
+        '',
+      ].join('\n'),
+      { mode: 0o755 },
+    );
+    chmodSync(script, 0o755);
+    try {
+      const result = await runServiceScript({
+        serviceId: 'whisper-stt',
+        action: 'start',
+        scriptPath: script,
+        detached: true,
+        timeoutMs: 10_000,
+      });
+
+      assert.equal(result.code, null);
+      assert.equal(typeof result.pid, 'number');
+      assert.ok(result.settlement, 'detached start should expose late process settlement');
+
+      const settled = await result.settlement;
+      assert.equal(settled.code, 7);
+      assert.match(settled.output, /late startup failure detail/);
+      assert.match(readServiceLogTail('whisper-stt', 20).join('\n'), /late startup failure detail/);
+      assert.match(readServiceLogTail('whisper-stt', 20).join('\n'), /\[start\] process exited with code 7/);
+    } finally {
+      if (previousLogDir === undefined) delete process.env.LOG_DIR;
+      else process.env.LOG_DIR = previousLogDir;
     }
   });
 
