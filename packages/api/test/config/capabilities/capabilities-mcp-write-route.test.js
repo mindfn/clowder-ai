@@ -147,7 +147,7 @@ describe('capabilities MCP write routes', () => {
     assert.ok(!config?.capabilities.some((entry) => entry.id === 'new-mcp'));
   });
 
-  it('rejects MCP preview/install/delete when DEFAULT_OWNER_USER_ID is not configured', async () => {
+  it('allows non-secret MCP preview/install/delete when DEFAULT_OWNER_USER_ID is not configured', async () => {
     await writeCapabilitiesConfig(projectRoot, {
       version: 1,
       capabilities: [
@@ -161,32 +161,52 @@ describe('capabilities MCP write routes', () => {
       ],
     });
 
-    const cases = [
-      {
-        method: 'POST',
-        url: '/api/capabilities/mcp/preview',
-        payload: { id: 'new-mcp', command: 'node', args: ['server.js'] },
-      },
-      {
-        method: 'POST',
-        url: '/api/capabilities/mcp/install',
-        payload: { id: 'new-mcp', command: 'node', args: ['server.js'] },
-      },
-      {
-        method: 'DELETE',
-        url: '/api/capabilities/mcp/secret-mcp?hard=true',
-      },
-    ];
+    const preview = await app.inject({
+      method: 'POST',
+      url: '/api/capabilities/mcp/preview',
+      headers: OWNER_HEADERS,
+      payload: { id: 'new-mcp', command: 'node', args: ['server.js'] },
+    });
+    assert.equal(preview.statusCode, 200, preview.payload);
 
-    for (const testCase of cases) {
-      const res = await app.inject({
-        method: testCase.method,
-        url: testCase.url,
-        headers: OWNER_HEADERS,
-        payload: testCase.payload,
-      });
-      assert.equal(res.statusCode, 403, `${testCase.method} ${testCase.url} should fail-closed without owner`);
-    }
+    const install = await app.inject({
+      method: 'POST',
+      url: '/api/capabilities/mcp/install',
+      headers: OWNER_HEADERS,
+      payload: { id: 'new-mcp', command: 'node', args: ['server.js'] },
+    });
+    assert.equal(install.statusCode, 200, install.payload);
+
+    const deleteRes = await app.inject({
+      method: 'DELETE',
+      url: '/api/capabilities/mcp/secret-mcp?hard=true',
+      headers: OWNER_HEADERS,
+    });
+    assert.equal(deleteRes.statusCode, 200, deleteRes.payload);
+
+    const config = await readCapabilitiesConfig(projectRoot);
+    assert.ok(config?.capabilities.some((entry) => entry.id === 'new-mcp'));
+    assert.ok(!config?.capabilities.some((entry) => entry.id === 'secret-mcp'));
+  });
+
+  it('rejects secret-bearing MCP install when DEFAULT_OWNER_USER_ID is not configured', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/capabilities/mcp/install',
+      headers: OWNER_HEADERS,
+      payload: {
+        id: 'secret-mcp',
+        transport: 'streamableHttp',
+        url: 'https://mcp.example.test',
+        env: { API_KEY: 'new-secret' },
+        headers: { Authorization: 'Bearer new-secret' },
+      },
+    });
+
+    assert.equal(res.statusCode, 403, res.payload);
+    assert.match(JSON.parse(res.payload).error, /DEFAULT_OWNER_USER_ID/);
+    const config = await readCapabilitiesConfig(projectRoot);
+    assert.deepEqual(config?.capabilities, []);
   });
 
   it('rejects non-owner MCP deletes when DEFAULT_OWNER_USER_ID is configured', async () => {

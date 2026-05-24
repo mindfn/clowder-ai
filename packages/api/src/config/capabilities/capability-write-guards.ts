@@ -6,17 +6,26 @@ export interface CapabilityWriteRouteError {
   error: string;
 }
 
+export interface CapabilityWriteOwnerOptions {
+  requireConfiguredOwner?: boolean;
+  missingOwnerError?: string;
+}
+
 export function resolveCapabilityWriteSessionUserId(request: FastifyRequest): string | null {
   const sessionUserId = (request as FastifyRequest & { sessionUserId?: string }).sessionUserId;
   return typeof sessionUserId === 'string' && sessionUserId.trim() ? sessionUserId.trim() : null;
 }
 
-export function requireCapabilityWriteOwner(userId: string): CapabilityWriteRouteError | null {
+export function requireCapabilityWriteOwner(
+  userId: string,
+  options: CapabilityWriteOwnerOptions = {},
+): CapabilityWriteRouteError | null {
   const ownerId = process.env.DEFAULT_OWNER_USER_ID?.trim();
   if (!ownerId) {
+    if (!options.requireConfiguredOwner) return null;
     return {
       status: 403,
-      error: 'Capability writes require DEFAULT_OWNER_USER_ID to be configured',
+      error: options.missingOwnerError ?? 'Capability writes require DEFAULT_OWNER_USER_ID to be configured',
     };
   }
   if (userId !== ownerId) {

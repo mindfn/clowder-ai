@@ -119,7 +119,7 @@ function getProjectRoot(): string {
 
 function canReadSensitiveMcpConfig(request: FastifyRequest): boolean {
   const sessionUserId = resolveCapabilityWriteSessionUserId(request);
-  return !!sessionUserId && !requireCapabilityWriteOwner(sessionUserId);
+  return !!sessionUserId && !requireCapabilityWriteOwner(sessionUserId, { requireConfiguredOwner: true });
 }
 
 function buildBoardMcpServer(

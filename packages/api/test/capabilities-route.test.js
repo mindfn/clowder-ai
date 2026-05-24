@@ -1356,7 +1356,7 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
     }
   });
 
-  it('rejects capability toggle when DEFAULT_OWNER_USER_ID is missing and rejects configured non-owners', async () => {
+  it('allows capability toggle when DEFAULT_OWNER_USER_ID is missing and rejects configured non-owners', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     const projectDir = await seedProject();
     const app = await buildSessionApp();
@@ -1364,15 +1364,17 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
     try {
       delete process.env.DEFAULT_OWNER_USER_ID;
       const missingOwner = await patchCapability(app, projectDir, OWNER_SESSION_HEADERS);
-      assert.equal(missingOwner.statusCode, 403, missingOwner.payload);
+      assert.equal(missingOwner.statusCode, 200, missingOwner.payload);
+      let config = await readCapabilitiesConfig(projectDir);
+      assert.equal(config?.capabilities[0]?.enabled, false);
 
       process.env.DEFAULT_OWNER_USER_ID = 'you';
       const nonOwner = await patchCapability(app, projectDir, NON_OWNER_SESSION_HEADERS);
       assert.equal(nonOwner.statusCode, 403);
       assert.match(JSON.parse(nonOwner.payload).error, /owner/);
 
-      const config = await readCapabilitiesConfig(projectDir);
-      assert.equal(config?.capabilities[0]?.enabled, true);
+      config = await readCapabilitiesConfig(projectDir);
+      assert.equal(config?.capabilities[0]?.enabled, false);
     } finally {
       await app.close();
       await rm(projectDir, { recursive: true, force: true });
