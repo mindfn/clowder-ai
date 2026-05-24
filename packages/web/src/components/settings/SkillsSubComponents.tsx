@@ -135,7 +135,7 @@ export function SkillRow({
                 }}
                 title={skill.pluginId ? '由插件管理' : skill.controls.enabled ? '全局禁用' : '全局启用'}
               />
-              {catFamilies.length > 0 && Object.keys(skill.controls.cats).length > 0 && (
+              {!skill.pluginId && catFamilies.length > 0 && Object.keys(skill.controls.cats).length > 0 && (
                 <SettingsIconButton
                   onClick={(e) => {
                     e.stopPropagation();
