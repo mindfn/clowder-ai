@@ -278,7 +278,7 @@ def resolve_faster_whisper_repo_id(model_id):
     repo_id = _MODELS.get(model_id)
     if repo_id is None:
         expected = ', '.join(sorted(_MODELS.keys()))
-        raise ValueError(f\"Invalid faster-whisper model '{model_id}', expected one of: {expected}, or a HuggingFace repo id\")
+        raise ValueError(f'Invalid faster-whisper model {model_id!r}, expected one of: {expected}, or a HuggingFace repo id')
     return repo_id
 
 max_attempts = 3

@@ -552,9 +552,11 @@ describe('Whisper sidecar startup guards', () => {
     assert.match(prereqPs1, /from huggingface_hub import snapshot_download/);
     assert.match(prereqPs1, /'faster-whisper snapshot download'/);
     assert.match(prereqPs1, /snapshot_download\(repo_id,/);
+    assert.match(prereqPs1, /raise ValueError\(f'Invalid faster-whisper model \{model_id!r\},/);
     assert.match(prereqPs1, /WhisperModel\(model_path,/);
     assert.doesNotMatch(prereqPs1, /WhisperModel\(sys\.argv\[1\]/);
     assert.doesNotMatch(prereqPs1, /from faster_whisper\.utils import download_model/);
+    assert.doesNotMatch(prereqPs1, /raise ValueError\(f"Invalid faster-whisper model/);
   });
 
   it('normalizes socks proxy env before HuggingFace runtime loads', () => {
