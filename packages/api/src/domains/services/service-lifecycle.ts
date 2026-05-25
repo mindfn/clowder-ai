@@ -71,6 +71,10 @@ function formatRunnerCommandPart(value: string): string {
   return /^[A-Za-z0-9_./:-]+$/.test(value) ? value : JSON.stringify(value);
 }
 
+export function shouldDetachServiceRunner(platform: NodeJS.Platform = process.platform): boolean {
+  return platform !== 'win32';
+}
+
 function resolveServiceRuntimeScriptPaths(
   manifest: ServiceLifecycleManifest,
   platform: NodeJS.Platform = process.platform,
@@ -425,7 +429,7 @@ export async function runServiceScript(input: ServiceLifecycleRunInput): Promise
         appendServiceLog(input.serviceId, text);
       };
       const child = spawn(command, args, {
-        detached: true,
+        detached: shouldDetachServiceRunner(),
         stdio: ['ignore', 'pipe', 'pipe'],
         env: input.env,
         windowsHide: true,

@@ -11,6 +11,7 @@ import {
   readServiceLogTail,
   resolveServiceScriptPath,
   runServiceScript,
+  shouldDetachServiceRunner,
 } from '../dist/domains/services/service-lifecycle.js';
 import { servicesRoutes } from '../dist/routes/services.js';
 
@@ -1650,6 +1651,12 @@ describe('service lifecycle write routes', () => {
       ),
       false,
     );
+  });
+
+  it('does not request OS-level detached spawn for Windows service runners', () => {
+    assert.equal(shouldDetachServiceRunner('win32'), false);
+    assert.equal(shouldDetachServiceRunner('darwin'), true);
+    assert.equal(shouldDetachServiceRunner('linux'), true);
   });
 
   it('keeps Windows PowerShell service wrappers observable at the runner and Python boundary', () => {
