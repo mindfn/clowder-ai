@@ -1363,9 +1363,17 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
 
     try {
       delete process.env.DEFAULT_OWNER_USER_ID;
+      const missingOwnerWithoutOrigin = await patchCapability(app, projectDir, {
+        ...OWNER_SESSION_HEADERS,
+        host: 'localhost:3004',
+      });
+      assert.equal(missingOwnerWithoutOrigin.statusCode, 403);
+      assert.match(JSON.parse(missingOwnerWithoutOrigin.payload).error, /DEFAULT_OWNER_USER_ID/);
+
       const missingOwner = await patchCapability(app, projectDir, {
         ...OWNER_SESSION_HEADERS,
         host: 'localhost:3004',
+        origin: 'http://localhost:3003',
       });
       assert.equal(missingOwner.statusCode, 200, missingOwner.payload);
       let config = await readCapabilitiesConfig(projectDir);

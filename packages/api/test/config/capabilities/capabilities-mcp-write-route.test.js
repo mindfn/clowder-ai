@@ -164,7 +164,7 @@ describe('capabilities MCP write routes', () => {
     const preview = await app.inject({
       method: 'POST',
       url: '/api/capabilities/mcp/preview',
-      headers: OWNER_HEADERS,
+      headers: { ...OWNER_HEADERS, host: 'localhost:3004', origin: 'http://localhost:3003' },
       payload: { id: 'new-mcp', command: 'node', args: ['server.js'] },
     });
     assert.equal(preview.statusCode, 200, preview.payload);
@@ -172,7 +172,7 @@ describe('capabilities MCP write routes', () => {
     const install = await app.inject({
       method: 'POST',
       url: '/api/capabilities/mcp/install',
-      headers: OWNER_HEADERS,
+      headers: { ...OWNER_HEADERS, host: 'localhost:3004', origin: 'http://localhost:3003' },
       payload: { id: 'new-mcp', command: 'node', args: ['server.js'] },
     });
     assert.equal(install.statusCode, 200, install.payload);
@@ -180,7 +180,7 @@ describe('capabilities MCP write routes', () => {
     const deleteRes = await app.inject({
       method: 'DELETE',
       url: '/api/capabilities/mcp/secret-mcp?hard=true',
-      headers: OWNER_HEADERS,
+      headers: { ...OWNER_HEADERS, host: 'localhost:3004', origin: 'http://localhost:3003' },
     });
     assert.equal(deleteRes.statusCode, 200, deleteRes.payload);
 
@@ -194,6 +194,20 @@ describe('capabilities MCP write routes', () => {
       method: 'POST',
       url: '/api/capabilities/mcp/install',
       headers: { ...OWNER_HEADERS, host: 'staging.example.test' },
+      payload: { id: 'new-mcp', command: 'node', args: ['server.js'] },
+    });
+
+    assert.equal(res.statusCode, 403, res.payload);
+    assert.match(JSON.parse(res.payload).error, /DEFAULT_OWNER_USER_ID/);
+    const config = await readCapabilitiesConfig(projectRoot);
+    assert.deepEqual(config?.capabilities, []);
+  });
+
+  it('rejects ownerless MCP installs when loopback transport lacks local browser origin proof', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/capabilities/mcp/install',
+      headers: { ...OWNER_HEADERS, host: 'localhost:3004' },
       payload: { id: 'new-mcp', command: 'node', args: ['server.js'] },
     });
 

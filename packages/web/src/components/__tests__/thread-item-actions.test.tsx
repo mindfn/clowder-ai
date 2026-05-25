@@ -108,6 +108,7 @@ describe('ThreadItem actions', () => {
           onToggleFavorite: vi.fn(),
           onUpdatePreferredCats: vi.fn(),
           onUpdateLabels: vi.fn(),
+          projectPath: '/projects/cat-cafe',
           isPinned: false,
           isFavorited: false,
         }),
@@ -125,12 +126,20 @@ describe('ThreadItem actions', () => {
     expect(buttonByTitle('置顶')).not.toBeNull();
     expect(buttonByTitle('删除对话')).not.toBeNull();
     expect(buttonByTitle('更多操作')).not.toBeNull();
+    expect(buttonByTitle('更多操作')?.className).not.toContain('opacity-0');
 
     expect(buttonByTitle('设置默认猫猫')).toBeNull();
     expect(buttonByTitle('重命名对话')).toBeNull();
     expect(buttonByTitle('导出对话')).toBeNull();
     expect(buttonByTitle('标签管理')).toBeNull();
     expect(buttonByTitle('收藏')).toBeNull();
+  });
+
+  it('keeps the project path in the thread hover tooltip', () => {
+    renderThread();
+
+    const item = container.querySelector('[data-thread-id="thread-1"]');
+    expect(item?.getAttribute('title')).toContain('路径: /projects/cat-cafe');
   });
 
   it('shows secondary actions inside the more menu', () => {

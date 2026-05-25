@@ -82,7 +82,7 @@ function hasProxyForwardingHeaders(request: FastifyRequest): boolean {
 }
 
 function hasTrustedLocalOrigin(value: string | undefined): boolean {
-  if (!value) return true;
+  if (!value?.trim()) return false;
   try {
     return isLoopbackHost(normalizeHostForLoopbackCheck(new URL(value).host));
   } catch {
@@ -99,6 +99,7 @@ export function isLocalCapabilityWriteRequest(request: FastifyRequest): boolean 
   const normalized = normalizeHostForLoopbackCheck(host);
   if (!isLoopbackHost(normalized)) return false;
 
+  // Ownerless writes require browser-origin evidence, not just a loopback proxy hop.
   return hasTrustedLocalOrigin(firstHeaderValue(request.headers.origin));
 }
 

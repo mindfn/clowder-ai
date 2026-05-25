@@ -32,6 +32,7 @@ export interface ThreadItemProps {
   isPinned?: boolean;
   isFavorited?: boolean;
   threadState?: ThreadState;
+  projectPath?: string;
   indented?: boolean;
   preferredCats?: string[];
   threadLabels?: string[];
@@ -54,6 +55,7 @@ export function ThreadItem({
   isPinned,
   isFavorited,
   threadState,
+  projectPath,
   indented,
   preferredCats,
   threadLabels,
@@ -135,6 +137,7 @@ export function ThreadItem({
   const participantNames = participants.map((catId) => getCatById(catId)?.displayName ?? catId).join(', ');
   const tooltipLines = [displayTitle];
   if (participantNames) tooltipLines.push(`参与: ${participantNames}`);
+  if (projectPath && projectPath !== 'default') tooltipLines.push(`路径: ${projectPath}`);
   tooltipLines.push(formatRelativeTime(lastActiveAt, false));
   const tooltip = tooltipLines.join('\n');
   const hasMoreActions = id !== 'default' && !isEditing;
@@ -243,7 +246,7 @@ export function ThreadItem({
                 className={`p-0.5 rounded transition-all ${
                   isMoreOpen
                     ? 'text-cafe-secondary bg-cafe-surface-elevated'
-                    : 'opacity-0 group-hover:opacity-100 text-cafe-muted hover:text-cafe-secondary'
+                    : 'text-cafe-muted hover:text-cafe-secondary'
                 }`}
                 title="更多操作"
                 aria-haspopup="menu"
