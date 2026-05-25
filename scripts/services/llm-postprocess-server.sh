@@ -21,6 +21,8 @@ case "$CAT_CAFE_HOME" in
   "~/"*) CAT_CAFE_HOME="${HOME}/${CAT_CAFE_HOME#~/}" ;;
 esac
 export CAT_CAFE_HOME
+export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
+echo "[start] wrapper entered: service=llm-postprocess script=$0"
 
 # shellcheck source=./proxy-env.sh
 source "$SCRIPT_DIR/proxy-env.sh"
@@ -28,11 +30,13 @@ normalize_socks_proxy_env
 
 VENV_DIR="${CAT_CAFE_HOME}/llm-venv"
 MODEL="${LLM_POSTPROCESS_MODEL:-${1:-}}"
+API_SCRIPT="$SCRIPT_DIR/llm-postprocess-api.py"
 if [ -z "$MODEL" ]; then
   echo "ERROR: LLM_POSTPROCESS_MODEL env var (or positional arg) required -- backend specifies model, no fallback default." >&2
   exit 1
 fi
 PORT="${LLM_POSTPROCESS_PORT:-9878}"
+echo "[start] resolved runtime: CAT_CAFE_HOME=$CAT_CAFE_HOME; venv=$VENV_DIR; python=python3; api=$API_SCRIPT; port=$PORT"
 
 if [ ! -d "$VENV_DIR" ]; then
   echo "ERROR: venv not found: $VENV_DIR"
@@ -41,4 +45,10 @@ if [ ! -d "$VENV_DIR" ]; then
 fi
 source "$VENV_DIR/bin/activate"
 
-python3 "$SCRIPT_DIR/llm-postprocess-api.py" --model "$MODEL" --port "$PORT"
+echo "[start] launching python: python3 $API_SCRIPT --model $MODEL --port $PORT"
+set +e
+python3 "$API_SCRIPT" --model "$MODEL" --port "$PORT"
+EXIT_CODE=$?
+set -e
+echo "[start] python exited with code $EXIT_CODE"
+exit "$EXIT_CODE"

@@ -1670,6 +1670,24 @@ describe('service lifecycle write routes', () => {
     }
   });
 
+  it('keeps shell service wrappers observable at the runner and Python boundary', () => {
+    const wrappers = [
+      ['whisper-stt', 'scripts/services/whisper-server.sh'],
+      ['mlx-tts', 'scripts/services/tts-server.sh'],
+      ['embedding-model', 'scripts/services/embed-server.sh'],
+      ['llm-postprocess', 'scripts/services/llm-postprocess-server.sh'],
+      ['audio-capture', 'scripts/services/audio-capture-server.sh'],
+    ];
+
+    for (const [serviceId, scriptPath] of wrappers) {
+      const source = readFileSync(resolveServiceScriptPath(scriptPath), 'utf8');
+      assert.match(source, new RegExp(`\\[start\\] wrapper entered: service=${serviceId}`));
+      assert.match(source, /\[start\] resolved runtime:/);
+      assert.match(source, /\[start\] launching python:/);
+      assert.match(source, /\[start\] python exited with code/);
+    }
+  });
+
   it('marks timed-out scripts even when they emitted output before termination', async () => {
     const scriptDir = mkdtempSync(join(tmpdir(), 'cat-cafe-service-timeout-'));
     const scriptPath = join(scriptDir, 'slow.sh');

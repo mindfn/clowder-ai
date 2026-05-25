@@ -26,6 +26,8 @@ case "$CAT_CAFE_HOME" in
   "~/"*) CAT_CAFE_HOME="${HOME}/${CAT_CAFE_HOME#~/}" ;;
 esac
 export CAT_CAFE_HOME
+export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
+echo "[start] wrapper entered: service=embedding-model script=$0"
 
 # shellcheck source=./proxy-env.sh
 source "$SCRIPT_DIR/proxy-env.sh"
@@ -34,6 +36,8 @@ normalize_socks_proxy_env
 VENV_DIR="${CAT_CAFE_HOME}/embed-venv"
 PORT="${EMBED_PORT:-9880}"
 MODEL="${EMBED_MODEL:-}"
+API_SCRIPT="$SCRIPT_DIR/embed-api.py"
+echo "[start] resolved runtime: CAT_CAFE_HOME=$CAT_CAFE_HOME; venv=$VENV_DIR; python=python3; api=$API_SCRIPT; port=$PORT"
 
 if [ -z "$MODEL" ]; then
   echo "ERROR: EMBED_MODEL env var required -- backend must specify which model to load." >&2
@@ -49,4 +53,10 @@ fi
 source "$VENV_DIR/bin/activate"
 
 echo "Starting Embedding server: model=$MODEL, port=$PORT"
-python3 "$SCRIPT_DIR/embed-api.py" --model "$MODEL" --port "$PORT"
+echo "[start] launching python: python3 $API_SCRIPT --model $MODEL --port $PORT"
+set +e
+python3 "$API_SCRIPT" --model "$MODEL" --port "$PORT"
+EXIT_CODE=$?
+set -e
+echo "[start] python exited with code $EXIT_CODE"
+exit "$EXIT_CODE"
