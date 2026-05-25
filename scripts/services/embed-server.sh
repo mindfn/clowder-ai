@@ -27,6 +27,10 @@ case "$CAT_CAFE_HOME" in
 esac
 export CAT_CAFE_HOME
 
+# shellcheck source=./proxy-env.sh
+source "$SCRIPT_DIR/proxy-env.sh"
+normalize_socks_proxy_env
+
 VENV_DIR="${CAT_CAFE_HOME}/embed-venv"
 PORT="${EMBED_PORT:-9880}"
 MODEL="${EMBED_MODEL:-}"

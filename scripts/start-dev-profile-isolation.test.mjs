@@ -529,6 +529,42 @@ describe('Whisper sidecar startup guards', () => {
     assert.match(prereqPs1, /WhisperModel\(model_path,/);
     assert.doesNotMatch(prereqPs1, /WhisperModel\(sys\.argv\[1\]/);
   });
+
+  it('normalizes socks proxy env before HuggingFace runtime loads', () => {
+    const helperPath = resolve(ROOT, 'scripts/services/proxy-env.sh');
+    const huggingFaceServiceScripts = [
+      'scripts/services/whisper-server.sh',
+      'scripts/services/embed-server.sh',
+      'scripts/services/llm-postprocess-server.sh',
+      'scripts/services/tts-server.sh',
+      'scripts/services/install-template.sh',
+    ];
+    const result = spawnSync(
+      'bash',
+      [
+        '-lc',
+        [
+          `source "${helperPath}"`,
+          'HTTP_PROXY=socks://127.0.0.1:7897/',
+          'HTTPS_PROXY=socks://127.0.0.1:7897/',
+          'ALL_PROXY=socks5h://127.0.0.1:7897/',
+          'normalize_socks_proxy_env',
+          'printf "%s\\n%s\\n%s\\n" "$HTTP_PROXY" "$HTTPS_PROXY" "$ALL_PROXY"',
+        ].join('; '),
+      ],
+      { encoding: 'utf8' },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      result.stdout,
+      ['socks5://127.0.0.1:7897/', 'socks5://127.0.0.1:7897/', 'socks5h://127.0.0.1:7897/'].join('\n') + '\n',
+    );
+    for (const relativePath of huggingFaceServiceScripts) {
+      const script = readFileSync(resolve(ROOT, relativePath), 'utf8');
+      assert.match(script, /normalize_socks_proxy_env/, `${relativePath} must normalize inherited proxy env`);
+    }
+  });
 });
 
 describe('Windows Python resolver guards', () => {

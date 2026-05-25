@@ -21,6 +21,10 @@ case "$CAT_CAFE_HOME" in
 esac
 export CAT_CAFE_HOME
 
+# shellcheck source=./proxy-env.sh
+source "$SCRIPT_DIR/proxy-env.sh"
+normalize_socks_proxy_env
+
 VENV_DIR="${CAT_CAFE_HOME}/whisper-venv"
 MODEL="${WHISPER_MODEL:-${1:-}}"
 if [ -z "$MODEL" ]; then

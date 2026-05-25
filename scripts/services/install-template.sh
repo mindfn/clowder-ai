@@ -57,6 +57,10 @@
 
 set -euo pipefail
 
+# shellcheck source=./proxy-env.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/proxy-env.sh"
+normalize_socks_proxy_env
+
 install_service_main() {
   local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd)"
