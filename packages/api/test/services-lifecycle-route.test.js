@@ -1266,6 +1266,74 @@ describe('service lifecycle write routes', () => {
     }
   });
 
+  it('does not let startup disabled cleanup kill a concurrent user start', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const killed = [];
+    const resolvedScript = resolveServiceScriptPath('scripts/services/whisper-server.sh');
+    const configs = new Map([['whisper-stt', { installed: true, enabled: false, selectedModel: 'base' }]]);
+    let resolveStartRun;
+    const startRunEntered = new Promise((resolve) => {
+      resolveStartRun = resolve;
+    });
+    let releaseStartRun;
+    const startRunRelease = new Promise((resolve) => {
+      releaseStartRun = resolve;
+    });
+    let startPortProbeConsumed = false;
+    const app = await buildApp({
+      lifecycle: {
+        autoStartEnabled: true,
+        startupReadinessTimeoutMs: 250,
+        startupProbeIntervalMs: 5,
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        findPidsByPort: async () => {
+          if (!startPortProbeConsumed) {
+            startPortProbeConsumed = true;
+            return [];
+          }
+          return [5151];
+        },
+        readProcessCommand: async () => `/bin/bash ${resolvedScript}`,
+        killPid: (pid, signal) => {
+          killed.push({ pid, signal });
+        },
+        runScript: async (input) => {
+          if (input.serviceId !== 'whisper-stt' || input.action !== 'start') return { code: 0, output: 'noop' };
+          resolveStartRun();
+          await startRunRelease;
+          return { code: null, pid: 5515, output: '' };
+        },
+      },
+      fetchHealth: async () => ({ ok: false, status: undefined, error: 'fetch failed' }),
+    });
+    try {
+      const startResPromise = app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/start',
+        headers: SESSION_HEADERS,
+      });
+      await startRunEntered;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      assert.deepEqual(killed, [], 'startup cleanup must respect the active start lifecycle lock');
+
+      releaseStartRun();
+      const startRes = await startResPromise;
+      assert.equal(startRes.statusCode, 200, startRes.payload);
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
   it('captures detached runner output after the early start response', async () => {
     const logDir = mkdtempSync(join(tmpdir(), 'service-log-'));
     const previousLogDir = process.env.LOG_DIR;

@@ -764,47 +764,84 @@ export async function registerServiceLifecycleRoutes(
   });
 
   async function stopDisabledOwnedService(service: ServiceManifest): Promise<void> {
-    const cfg = getEffectiveConfig(service);
-    const probeService = { ...service, port: cfg?.port ?? service.port };
-    const portProbe = await partitionServicePids(probeService);
-    if (!portProbe.ok) {
-      app.log.warn(
-        { serviceId: service.id, reason: portProbe.reason },
-        'service startup reconciler could not probe disabled service',
-      );
-      return;
-    }
-    if (portProbe.foreign.length > 0) {
-      app.log.warn(
-        { serviceId: service.id, pids: portProbe.foreign },
-        'service startup reconciler found foreign listener on disabled service port',
-      );
-      return;
-    }
-    if (portProbe.owned.length === 0) return;
+    const reply = createInternalReply();
+    const result = await withLock(
+      service.id,
+      reply,
+      async () => {
+        const cfg = getEffectiveConfig(service);
+        const probeService = { ...service, port: cfg?.port ?? service.port };
+        const portProbe = await partitionServicePids(probeService);
+        if (!portProbe.ok) {
+          app.log.warn(
+            { serviceId: service.id, reason: portProbe.reason },
+            'service startup reconciler could not probe disabled service',
+          );
+          return { ok: false };
+        }
+        if (portProbe.foreign.length > 0) {
+          app.log.warn(
+            { serviceId: service.id, pids: portProbe.foreign },
+            'service startup reconciler found foreign listener on disabled service port',
+          );
+          return { ok: false };
+        }
+        if (portProbe.owned.length === 0) return { ok: true };
 
-    const stopped: number[] = [];
-    const failed: number[] = [];
-    for (const pid of portProbe.owned) {
-      try {
-        terminatePid(pid, 'SIGTERM');
-        stopped.push(pid);
-      } catch (error) {
-        if (hasErrorCode(error, 'ESRCH')) continue;
-        failed.push(pid);
-        app.log.warn({ err: error, serviceId: service.id, pid }, 'service startup reconciler terminate failed');
-      }
+        const stopped: number[] = [];
+        const failed: number[] = [];
+        for (const pid of portProbe.owned) {
+          try {
+            terminatePid(pid, 'SIGTERM');
+            stopped.push(pid);
+          } catch (error) {
+            if (hasErrorCode(error, 'ESRCH')) continue;
+            failed.push(pid);
+            app.log.warn({ err: error, serviceId: service.id, pid }, 'service startup reconciler terminate failed');
+          }
+        }
+        if (stopped.length > 0) {
+          appendServiceLog(
+            service.id,
+            `[startup-reconciler] stopped disabled orphan process(es): ${stopped.join(', ')}\n`,
+          );
+        }
+        await audit({
+          serviceId: service.id,
+          action: 'stop',
+          operator: STARTUP_RECONCILER_OPERATOR,
+          status: failed.length > 0 ? 'failed' : 'completed',
+          reason: 'disabled-startup-cleanup',
+        });
+        return { ok: failed.length === 0 };
+      },
+      { action: 'stop' },
+    );
+    if ('error' in result && reply.statusCode === 409) {
+      app.log.info(
+        { serviceId: service.id },
+        'service startup reconciler skipped disabled cleanup while lifecycle operation is active',
+      );
+      await audit({
+        serviceId: service.id,
+        action: 'stop',
+        operator: STARTUP_RECONCILER_OPERATOR,
+        status: 'rejected',
+        reason: 'lifecycle-operation-in-progress',
+      });
+      return;
     }
-    if (stopped.length > 0) {
-      appendServiceLog(service.id, `[startup-reconciler] stopped disabled orphan process(es): ${stopped.join(', ')}\n`);
+    if ('error' in result) {
+      app.log.warn({ serviceId: service.id, error: result.error }, 'service startup reconciler cleanup rejected');
+      await audit({
+        serviceId: service.id,
+        action: 'stop',
+        operator: STARTUP_RECONCILER_OPERATOR,
+        status: 'rejected',
+        reason: 'startup-cleanup-rejected',
+      });
+      return;
     }
-    await audit({
-      serviceId: service.id,
-      action: 'stop',
-      operator: STARTUP_RECONCILER_OPERATOR,
-      status: failed.length > 0 ? 'failed' : 'completed',
-      reason: 'disabled-startup-cleanup',
-    });
   }
 
   async function reconcileServiceStartup(): Promise<void> {
