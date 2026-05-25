@@ -70,10 +70,10 @@ const STARTUP_RECONCILER_OPERATOR = 'startup-reconciler';
 const DEFAULT_STARTUP_READINESS_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_STARTUP_PROBE_INTERVAL_MS = 2_000;
 
-function delay(ms: number): Promise<void> {
+function delay(ms: number, options: { ref?: boolean } = {}): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);
-    timer.unref?.();
+    if (options.ref === false) timer.unref?.();
   });
 }
 
@@ -131,7 +131,7 @@ async function waitForServiceReadiness(input: {
     }
     const remainingMs = timeoutMs - (Date.now() - startedAt);
     if (remainingMs <= 0) break;
-    await delay(Math.min(intervalMs, remainingMs));
+    await delay(Math.min(intervalMs, remainingMs), { ref: false });
   }
 
   if (!stopped) {
