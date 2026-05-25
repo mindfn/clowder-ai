@@ -34,7 +34,6 @@ import { resolveMainRepoPath } from '../utils/skill-mount.js';
 import { type McpProbeResult, probeMcpCapability } from './mcp-probe.js';
 
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const CAPABILITY_SECRET_WRITE_OWNER_ERROR = 'Capability secret writes require DEFAULT_OWNER_USER_ID to be configured';
 
 interface RouteError {
   status: number;
@@ -52,23 +51,6 @@ function rejectRedactedInstallPayload(body: McpInstallRequest): RouteError | nul
     return { status: 400, error: 'Refusing to write redacted MCP placeholder values' };
   }
   return null;
-}
-
-function hasStructuredSecretValues(value: unknown): boolean {
-  return !!value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0;
-}
-
-function hasStoredStructuredSecrets(capability: CapabilityEntry | null | undefined): boolean {
-  return (
-    hasStructuredSecretValues(capability?.mcpServer?.env) || hasStructuredSecretValues(capability?.mcpServer?.headers)
-  );
-}
-
-function requireConfiguredOwnerForStructuredSecrets(userId: string): RouteError | null {
-  return requireCapabilityWriteOwner(userId, {
-    requireConfiguredOwner: true,
-    missingOwnerError: CAPABILITY_SECRET_WRITE_OWNER_ERROR,
-  });
 }
 
 function validateEnvPatchBody(body: McpEnvPatchRequest | undefined): RouteError | null {
@@ -223,13 +205,6 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
       reply.status(redactedError.status);
       return { error: redactedError.error };
     }
-    if (hasStructuredSecretValues(body.env) || hasStructuredSecretValues(body.headers)) {
-      const secretOwnerError = requireConfiguredOwnerForStructuredSecrets(userId);
-      if (secretOwnerError) {
-        reply.status(secretOwnerError.status);
-        return { error: secretOwnerError.error };
-      }
-    }
 
     let projectRoot = getProjectRoot();
     if (body.projectPath) {
@@ -273,13 +248,6 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
           return {
             error: `Cannot overwrite managed MCP "${body.id}" (source=${existing.source}). Only external MCPs can be installed over.`,
           };
-        }
-        if (hasStoredStructuredSecrets(existing)) {
-          const secretOwnerError = requireConfiguredOwnerForStructuredSecrets(userId);
-          if (secretOwnerError) {
-            reply.status(secretOwnerError.status);
-            return { error: secretOwnerError.error };
-          }
         }
         afterEntry = mergeExternalMcpEntry(existing, entry, body);
         config.capabilities[existingIdx] = afterEntry;
@@ -416,11 +384,6 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
 
     const { id } = request.params as { id: string };
     const body = request.body as McpEnvPatchRequest | undefined;
-    const secretOwnerError = requireConfiguredOwnerForStructuredSecrets(userId);
-    if (secretOwnerError) {
-      reply.status(secretOwnerError.status);
-      return { error: secretOwnerError.error };
-    }
     const bodyError = validateEnvPatchBody(body);
     if (bodyError) {
       reply.status(bodyError.status);

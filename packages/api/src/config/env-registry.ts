@@ -168,15 +168,6 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: false,
   },
   {
-    name: 'CAT_CAFE_ALLOW_OWNERLESS_LOCAL_CAPABILITY_WRITES',
-    defaultValue: 'false',
-    description:
-      '本机开发专用开关：未配置 DEFAULT_OWNER_USER_ID 时，允许 loopback UI 执行非 secret capability 写入。反向代理/LAN/多用户部署不要开启。',
-    category: 'server',
-    sensitive: false,
-    runtimeEditable: false,
-  },
-  {
     name: 'CAT_CAFE_USER_ID',
     defaultValue: 'default-user',
     description: '当前用户 ID',

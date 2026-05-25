@@ -130,7 +130,7 @@ Phase C complete: all four high-risk slices (MCP write / Service Manifest read-o
 | # | 限制 | 当前处置 | 后续候选 |
 |---|------|----------|----------|
 | KL-1 | MCP env patch / install update 只新增或覆盖 env/header secret，不删除单个 env key | 保护现有 secret 不被 UI omit 清空；删除需求暂不混入本安全 slice | 独立设计 `DELETE /api/capabilities/mcp/:id/env/:key` 或 PATCH `null` 删除语义 |
-| KL-2 | install/delete 是 owner-configured enforcement；未配置 `DEFAULT_OWNER_USER_ID` 的多用户/LAN 部署仍沿用既有身份 gate | 保持 localhost/dev 兼容，secret env patch 已 fail-closed | UI/ops docs 明确多用户部署必须配置 `DEFAULT_OWNER_USER_ID`；可加 telemetry warning |
+| KL-2 | capability install/update/delete/env patch 在无登录本地应用中允许 direct localhost UI；多用户/LAN/反向代理部署仍要求 `DEFAULT_OWNER_USER_ID` | 避免让本机用户为自己编 owner id；session-only + loopback Host/Origin + no proxy forwarding headers 仍是写边界 | UI/ops docs 明确多用户部署必须配置 `DEFAULT_OWNER_USER_ID`；可加 telemetry warning |
 | KL-3 | Connector secret writes 在 audit append 失败时仍返回成功 | 凭据已经落盘并触发热生效，audit 是 side channel；失败会写 warn 日志但不回滚主写入 | 若引入 audit retry / queue / outbox 机制，可补偿丢失的 audit append |
 
 ## Vision Guard Evidence
