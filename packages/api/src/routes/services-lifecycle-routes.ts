@@ -5,6 +5,9 @@ import { getServiceConfig, setServiceConfig } from '../domains/services/service-
 import {
   appendServiceLog,
   findPidsByPort,
+  isServiceProcessCommand,
+  listProcesses,
+  type ProcessSnapshot,
   readProcessCommand,
   readServiceLogTail,
   resolveServiceScriptPath,
@@ -52,6 +55,7 @@ export interface ServiceLifecycleRouteOptions {
   startupProbeIntervalMs?: number;
   autoStartEnabled?: boolean;
   findPidsByPort?: (port: number) => Promise<number[]>;
+  listProcesses?: () => Promise<ProcessSnapshot[]>;
   readProcessCommand?: (pid: number) => Promise<string | null>;
   killPid?: (pid: number, signal: NodeJS.Signals) => void;
   serviceConfig?: Partial<{
@@ -167,6 +171,7 @@ export async function registerServiceLifecycleRoutes(
   const runner = options.lifecycle?.runScript ?? runServiceScript;
   const healthProbe = options.fetchHealth ?? fetchServiceHealth;
   const lookupPidsByPort = options.lifecycle?.findPidsByPort ?? findPidsByPort;
+  const lookupProcesses = options.lifecycle?.listProcesses ?? listProcesses;
   const lookupProcessCommand = options.lifecycle?.readProcessCommand ?? readProcessCommand;
   const terminatePid =
     options.lifecycle?.killPid ?? ((pid: number, signal: NodeJS.Signals) => process.kill(pid, signal));
@@ -185,6 +190,16 @@ export async function registerServiceLifecycleRoutes(
     lookupProcessCommand,
     log: app.log,
   });
+
+  async function findOwnedServiceProcessPids(service: ServiceManifest): Promise<number[]> {
+    const processes = await lookupProcesses();
+    return processes
+      .filter((processInfo) => {
+        if (!processInfo.command) return false;
+        return isServiceProcessCommand(processInfo.command, service);
+      })
+      .map((processInfo) => processInfo.pid);
+  }
 
   async function audit(input: {
     serviceId: string;
@@ -515,28 +530,25 @@ export async function registerServiceLifecycleRoutes(
             output: result.output?.slice(-2000),
           };
         }
-        if (
+        const cleanExitBeforeReady =
           typeof result.code === 'number' &&
-          !(await probeServiceReady({ service, env: startEnvResult.env, config: cfg, fetchHealth: healthProbe }))
-        ) {
-          reply.status(502);
+          result.code === 0 &&
+          !(await probeServiceReady({ service, env: startEnvResult.env, config: cfg, fetchHealth: healthProbe }));
+        if (cleanExitBeforeReady) {
+          let ownedProcessPids: number[] = [];
+          try {
+            ownedProcessPids = await findOwnedServiceProcessPids(service);
+          } catch (error) {
+            app.log.warn({ err: error, serviceId: service.id }, 'service start owned-process probe failed');
+          }
+          const detail =
+            ownedProcessPids.length > 0
+              ? `owned runtime process(es) still active: ${ownedProcessPids.join(', ')}`
+              : 'no owned runtime process visible yet';
           appendServiceLog(
             service.id,
-            `[start] script exited with code ${result.code} before service became reachable\n`,
+            `[start] launcher exited with code 0 before readiness; ${detail}; continuing readiness probes\n`,
           );
-          await audit({
-            serviceId: service.id,
-            action: 'start',
-            operator,
-            status: 'failed',
-            code: result.code,
-            reason: 'exited-before-ready',
-          });
-          return {
-            ok: false,
-            error: `start script exited before service became reachable (exit ${result.code})`,
-            output: result.output?.slice(-2000),
-          };
         }
         serviceConfigStore.set(service.id, { installed: true, enabled: true });
         await audit({ serviceId: service.id, action: 'start', operator, status: 'completed', code: result.code });
@@ -552,9 +564,9 @@ export async function registerServiceLifecycleRoutes(
           fetchHealth: healthProbe,
           timeoutMs: startupReadinessTimeoutMs,
           intervalMs: startupProbeIntervalMs,
-          stopWhen: settlement,
+          stopWhen: cleanExitBeforeReady ? undefined : settlement,
         });
-        const releaseWhen = settlement ? Promise.race([settlement, readiness]) : readiness;
+        const releaseWhen = settlement && !cleanExitBeforeReady ? Promise.race([settlement, readiness]) : readiness;
         return holdStartupGrace(success, startupReadinessTimeoutMs, releaseWhen);
       },
       { action: 'start' },

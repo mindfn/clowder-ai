@@ -33,6 +33,10 @@ export interface ServiceLifecycleRunResult {
 }
 
 export type ServiceLifecycleSettledRunResult = Omit<ServiceLifecycleRunResult, 'settlement'>;
+export interface ProcessSnapshot {
+  pid: number;
+  command: string | null;
+}
 
 export type ServiceLifecycleRunner = (input: ServiceLifecycleRunInput) => Promise<ServiceLifecycleRunResult>;
 
@@ -181,6 +185,35 @@ function parseNetstatPids(stdout: string, port: number): number[] {
   return [...pids];
 }
 
+function parsePsProcessLines(stdout: string): ProcessSnapshot[] {
+  return stdout
+    .split(/\r?\n/)
+    .map((rawLine) => {
+      const match = rawLine.match(/^\s*(\d+)\s+(.*)$/);
+      if (!match) return null;
+      const pid = Number(match[1]);
+      const command = match[2]?.trim() ?? '';
+      if (!Number.isFinite(pid) || pid <= 0) return null;
+      return { pid, command: command.length > 0 ? command : null };
+    })
+    .filter((entry): entry is ProcessSnapshot => entry !== null);
+}
+
+function parseWindowsProcessLines(stdout: string): ProcessSnapshot[] {
+  return stdout
+    .split(/\r?\n/)
+    .map((rawLine) => {
+      const line = rawLine.trim();
+      if (!line) return null;
+      const [pidValue, ...rest] = line.split('\t');
+      const pid = Number(pidValue);
+      if (!Number.isFinite(pid) || pid <= 0) return null;
+      const command = rest.join('\t').trim();
+      return { pid, command: command.length > 0 ? command : null };
+    })
+    .filter((entry): entry is ProcessSnapshot => entry !== null);
+}
+
 function execProbeCommand(
   execFileImpl: ExecFileLike,
   file: string,
@@ -302,6 +335,28 @@ export async function findPidsByPort(port: number, options: ProbeOptions = {}): 
     );
     child.on('error', (error) => rejectPids(error));
   });
+}
+
+export async function listProcesses(options: ProbeOptions = {}): Promise<ProcessSnapshot[]> {
+  const platform = options.platform ?? process.platform;
+  const execFileImpl = options.execFile ?? (execFile as ExecFileLike);
+  if (platform === 'win32') {
+    const script = [
+      'Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | ForEach-Object {',
+      '  $cmd = if ($_.CommandLine) { $_.CommandLine } elseif ($_.ExecutablePath) { $_.ExecutablePath } else { "" }',
+      '  if ($cmd) { "{0}`t{1}" -f $_.ProcessId, $cmd }',
+      '}',
+    ].join(' ');
+    const { stdout } = await execProbeCommand(
+      execFileImpl,
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+      { timeout: 3000, windowsHide: true },
+    );
+    return parseWindowsProcessLines(stdout);
+  }
+  const { stdout } = await execProbeCommand(execFileImpl, 'ps', ['-eo', 'pid=,command='], { timeout: 3000 });
+  return parsePsProcessLines(stdout);
 }
 
 function resolveLogDir(): string {

@@ -451,9 +451,156 @@ describe('service lifecycle write routes', () => {
     }
   });
 
-  it('rejects a detached start script that exits cleanly before the service is reachable', async () => {
+  it('keeps startup state when a detached start wrapper exits before readiness later succeeds', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map([
+      [
+        'whisper-stt',
+        {
+          installed: true,
+          enabled: false,
+          selectedModel: 'mlx-community/whisper-large-v3-turbo',
+        },
+      ],
+    ]);
+    let ready = false;
+    const app = await buildApp({
+      lifecycle: {
+        startupGraceMs: 120,
+        startupReadinessTimeoutMs: 120,
+        startupProbeIntervalMs: 5,
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        findPidsByPort: async () => [],
+        readProcessCommand: async () => null,
+        runScript: async () => ({
+          code: 0,
+          pid: 4401,
+          output: '',
+          settlement: Promise.resolve({ code: 0, pid: 4401, output: '' }),
+        }),
+      },
+      fetchHealth: async () =>
+        ready ? { ok: true, status: 200, error: null } : { ok: false, status: undefined, error: 'fetch failed' },
+    });
+    try {
+      const startRes = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/start',
+        headers: SESSION_HEADERS,
+      });
+      assert.equal(startRes.statusCode, 200, startRes.payload);
+
+      await new Promise((resolve) => setTimeout(resolve, 75));
+      const startingRes = await app.inject({
+        method: 'GET',
+        url: '/api/services',
+        headers: SESSION_HEADERS,
+      });
+      const starting = JSON.parse(startingRes.payload).services.find((service) => service.id === 'whisper-stt');
+      assert.equal(starting.status, 'starting');
+
+      ready = true;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        const healthyRes = await app.inject({
+          method: 'GET',
+          url: '/api/services',
+          headers: SESSION_HEADERS,
+        });
+        const healthy = JSON.parse(healthyRes.payload).services.find((service) => service.id === 'whisper-stt');
+        if (healthy.status === 'healthy') return;
+      }
+      assert.fail('service should become healthy after readiness probe succeeds');
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('surfaces an early clean-exit start as unhealthy after readiness times out', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map([
+      [
+        'whisper-stt',
+        {
+          installed: true,
+          enabled: false,
+          selectedModel: 'mlx-community/whisper-large-v3-turbo',
+        },
+      ],
+    ]);
+    const app = await buildApp({
+      lifecycle: {
+        startupGraceMs: 25,
+        startupReadinessTimeoutMs: 25,
+        startupProbeIntervalMs: 5,
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        findPidsByPort: async () => [],
+        readProcessCommand: async () => null,
+        runScript: async () => ({
+          code: 0,
+          pid: 4401,
+          output: '',
+          settlement: Promise.resolve({ code: 0, pid: 4401, output: '' }),
+        }),
+      },
+      fetchHealth: async () => ({ ok: false, status: undefined, error: 'fetch failed' }),
+    });
+    try {
+      const startRes = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/start',
+        headers: SESSION_HEADERS,
+      });
+
+      assert.equal(startRes.statusCode, 200, startRes.payload);
+
+      const startingRes = await app.inject({
+        method: 'GET',
+        url: '/api/services',
+        headers: SESSION_HEADERS,
+      });
+      const starting = JSON.parse(startingRes.payload).services.find((service) => service.id === 'whisper-stt');
+      assert.equal(starting.status, 'starting');
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const unhealthyRes = await app.inject({
+        method: 'GET',
+        url: '/api/services',
+        headers: SESSION_HEADERS,
+      });
+      const unhealthy = JSON.parse(unhealthyRes.payload).services.find((service) => service.id === 'whisper-stt');
+      assert.equal(unhealthy.status, 'unhealthy');
+      assert.equal(unhealthy.error, 'fetch failed');
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('accepts a clean-exit launcher when an owned runtime child process is still active', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const runtimeScript = resolveServiceScriptPath('scripts/services/whisper-server.sh').replace(
+      /whisper-server\.sh$/,
+      'whisper-api.py',
+    );
     const configs = new Map([
       [
         'whisper-stt',
@@ -476,9 +623,16 @@ describe('service lifecycle write routes', () => {
         },
         findPidsByPort: async () => [],
         readProcessCommand: async () => null,
+        listProcesses: async () => [
+          {
+            pid: 5512,
+            command: `python3 ${runtimeScript} --model mlx-community/whisper-large-v3-turbo --port 9876`,
+          },
+        ],
         runScript: async () => ({ code: 0, pid: 4401, output: '' }),
+        startupReadinessTimeoutMs: 0,
       },
-      fetchHealth: async () => ({ ok: false, status: undefined, error: 'fetch failed' }),
+      fetchHealth: async () => ({ ok: false, status: undefined, error: 'still starting' }),
     });
     try {
       const startRes = await app.inject({
@@ -487,9 +641,10 @@ describe('service lifecycle write routes', () => {
         headers: SESSION_HEADERS,
       });
 
-      assert.equal(startRes.statusCode, 502, startRes.payload);
-      assert.match(JSON.parse(startRes.payload).error, /exited before service became reachable/);
-      assert.equal(configs.get('whisper-stt').enabled, false);
+      assert.equal(startRes.statusCode, 200, startRes.payload);
+      assert.match(JSON.parse(startRes.payload).message, /start initiated/);
+      assert.equal(configs.get('whisper-stt').enabled, true);
+      assert.match(readServiceLogTail('whisper-stt', 20).join('\n'), /owned runtime process\(es\) still active: 5512/);
     } finally {
       await app.close();
       restoreOwner(previousOwner);
