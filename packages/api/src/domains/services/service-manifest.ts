@@ -399,9 +399,15 @@ export function resolveServiceHealthUrl(service: ServiceManifest, endpoint: stri
   }
 }
 
-export function resolveServiceEndpointMap(env: NodeJS.ProcessEnv = process.env): Record<string, string | null> {
+export function resolveServiceEndpointMap(
+  env: NodeJS.ProcessEnv = process.env,
+  getConfig: (id: string) => ServiceConfig | undefined = getServiceConfig,
+): Record<string, string | null> {
   return Object.fromEntries(
-    SERVICE_MANIFESTS.map((service) => [service.id, maskServiceEndpoint(resolveServiceEndpoint(service, env))]),
+    SERVICE_MANIFESTS.map((service) => [
+      service.id,
+      maskServiceEndpoint(resolveServiceEndpoint(service, env, getConfig(service.id))),
+    ]),
   );
 }
 

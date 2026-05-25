@@ -62,7 +62,10 @@ export const servicesRoutes: FastifyPluginAsync<ServicesRouteOptions> = async (a
   app.get('/api/services/endpoints', async (request, reply) => {
     if (!requireIdentity(request, reply)) return { error: 'Authentication required' };
     return {
-      endpoints: resolveServiceEndpointMap(options.env),
+      endpoints: resolveServiceEndpointMap(options.env, (id) => {
+        const service = getServiceManifest(id);
+        return service ? getEffectiveConfig(service) : getConfig(id);
+      }),
     };
   });
 

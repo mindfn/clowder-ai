@@ -1170,6 +1170,36 @@ describe('service lifecycle write routes', () => {
     }
   });
 
+  it('GET /api/services/endpoints reads from injected serviceConfig store', async () => {
+    const configs = new Map();
+    configs.set('whisper-stt', { installed: true, enabled: true, port: 19876 });
+    const app = await buildApp({
+      env: {},
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id),
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/services/endpoints',
+        headers: SESSION_HEADERS,
+      });
+      assert.equal(res.statusCode, 200, res.payload);
+      const { endpoints } = JSON.parse(res.payload);
+      assert.equal(endpoints['whisper-stt'], 'http://127.0.0.1:19876');
+    } finally {
+      await app.close();
+    }
+  });
+
   it('GET /api/services/:id/health reads from injected serviceConfig store', async () => {
     const configs = new Map();
     configs.set('whisper-stt', { installed: true, enabled: true });
