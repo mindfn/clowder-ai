@@ -536,19 +536,41 @@ export async function registerServiceLifecycleRoutes(
           !(await probeServiceReady({ service, env: startEnvResult.env, config: cfg, fetchHealth: healthProbe }));
         if (cleanExitBeforeReady) {
           let ownedProcessPids: number[] = [];
+          let ownedProcessProbeFailed = false;
           try {
             ownedProcessPids = await findOwnedServiceProcessPids(service);
           } catch (error) {
+            ownedProcessProbeFailed = true;
             app.log.warn({ err: error, serviceId: service.id }, 'service start owned-process probe failed');
           }
           const detail =
             ownedProcessPids.length > 0
               ? `owned runtime process(es) still active: ${ownedProcessPids.join(', ')}`
-              : 'no owned runtime process visible yet';
+              : ownedProcessProbeFailed
+                ? 'owned runtime process probe failed'
+                : 'no owned runtime process visible';
           appendServiceLog(
             service.id,
-            `[start] launcher exited with code 0 before readiness; ${detail}; continuing readiness probes\n`,
+            `[start] launcher exited with code 0 before readiness; ${detail}${
+              ownedProcessPids.length > 0 ? '; continuing readiness probes' : ''
+            }\n`,
           );
+          if (ownedProcessPids.length === 0) {
+            reply.status(502);
+            await audit({
+              serviceId: service.id,
+              action: 'start',
+              operator,
+              status: 'failed',
+              code: result.code,
+              reason: ownedProcessProbeFailed ? 'owned-process-probe-failed' : 'no-owned-runtime-process',
+            });
+            return {
+              ok: false,
+              error: `start script exited before service became reachable (exit ${result.code})`,
+              output: result.output?.slice(-2000),
+            };
+          }
         }
         serviceConfigStore.set(service.id, { installed: true, enabled: true });
         await audit({ serviceId: service.id, action: 'start', operator, status: 'completed', code: result.code });
