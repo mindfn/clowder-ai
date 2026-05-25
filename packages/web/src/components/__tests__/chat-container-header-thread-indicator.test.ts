@@ -217,6 +217,40 @@ describe('ChatContainerHeader thread indicator', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('shows click-to-copy hint and copied feedback for the project path chip', async () => {
+    vi.useFakeTimers();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    try {
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText },
+        configurable: true,
+      });
+      root = createRoot(container);
+      await act(async () => {
+        root?.render(React.createElement(ThreadIndicator, { threadId: 'thread_xyz' }));
+      });
+
+      const projectChip = container.querySelector('[role="button"]') as HTMLElement | null;
+      expect(projectChip?.getAttribute('title')).toBe('点击复制: /projects/cat-cafe');
+
+      await act(async () => {
+        projectChip?.click();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(writeText).toHaveBeenCalledWith('/projects/cat-cafe');
+      expect(projectChip?.textContent).toContain('copied!');
+
+      act(() => {
+        vi.advanceTimersByTime(1200);
+      });
+      expect(projectChip?.textContent).toContain('cat-cafe');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('tailTruncate preserves short names and leading-ellipsis truncates long names', () => {
     expect(tailTruncate('clowder-ai')).toBe('clowder-ai');
     expect(tailTruncate('a'.repeat(24))).toBe('a'.repeat(24));
