@@ -52,6 +52,8 @@ import {
   resolveCapabilityWriteSessionUserId,
 } from '../config/capabilities/capability-write-guards.js';
 import { isManagedSkill, readSkillsState } from '../config/governance/skills-state.js';
+import { resourceCapId } from '../domains/plugin/PluginRegistry.js';
+import { parsePluginManifest } from '../domains/plugin/plugin-manifest.js';
 import { validateProjectPath } from '../utils/project-path.js';
 import { resolveUserId } from '../utils/request-identity.js';
 import {
@@ -103,6 +105,40 @@ async function listSkillSubdirs(dir: string, exclude?: string[]): Promise<string
     }
   }
   return names;
+}
+
+async function readDeclaredPluginSkillIds(): Promise<Map<string, Set<string>> | null> {
+  const pluginDirs = await listSubdirs(CANONICAL_PLUGINS_DIR);
+  if (pluginDirs === null) return null;
+
+  const declaredSkillIds = new Map<string, Set<string>>();
+  for (const dirName of pluginDirs) {
+    const manifestPath = join(CANONICAL_PLUGINS_DIR, dirName, 'plugin.yaml');
+    if (!existsSync(manifestPath)) continue;
+
+    try {
+      const manifest = parsePluginManifest(manifestPath);
+      if (manifest.id !== dirName) continue;
+      declaredSkillIds.set(
+        manifest.id,
+        new Set(
+          manifest.resources
+            .filter((resource) => resource.type === 'skill')
+            .map((resource) => resourceCapId(manifest.id, resource)),
+        ),
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  return declaredSkillIds;
+}
+
+function isDeclaredPluginSkill(cap: CapabilityEntry, declaredPluginSkillIds: Map<string, Set<string>> | null): boolean {
+  if (!cap.pluginId) return false;
+  if (declaredPluginSkillIds === null) return true;
+  return declaredPluginSkillIds.get(cap.pluginId)?.has(cap.id) === true;
 }
 
 /** Walk up from CWD to find pnpm-workspace.yaml — the monorepo root. */
@@ -588,12 +624,10 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
     // Prune stale skills no longer on filesystem.
     // Guard: only prune when ALL provider scans succeeded (no null returns).
     if (allScansOk) {
+      const declaredPluginSkillIds = await readDeclaredPluginSkillIds();
       const before = config.capabilities.length;
       config.capabilities = config.capabilities.filter(
-        (c) =>
-          c.type !== 'skill' ||
-          allSkillNames.has(c.id) ||
-          (c.pluginId !== undefined && existsSync(join(CANONICAL_PLUGINS_DIR, c.pluginId))),
+        (c) => c.type !== 'skill' || allSkillNames.has(c.id) || isDeclaredPluginSkill(c, declaredPluginSkillIds),
       );
       if (config.capabilities.length !== before) configDirty = true;
     }

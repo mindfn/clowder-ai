@@ -1012,21 +1012,43 @@ describe('GET /api/capabilities (Fastify)', () => {
     }
   });
 
-  it('preserves plugin-owned skills using the canonical plugins directory', async () => {
+  it('prunes plugin-owned skills no longer declared by the canonical plugin manifest', async () => {
     const Fastify = (await import('fastify')).default;
     const { capabilitiesRoutes } = await import('../dist/routes/capabilities.js');
 
+    const pluginId = `cap-prune-${Date.now()}`;
+    const pluginDir = join(process.cwd(), 'plugins', pluginId);
+    await mkdir(join(pluginDir, 'skills', 'current'), { recursive: true });
+    await writeFile(
+      join(pluginDir, 'plugin.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: Capability Prune Test',
+        'version: "1.0.0"',
+        'resources:',
+        '  - type: skill',
+        '    path: skills/current',
+      ].join('\n'),
+    );
+
     const projectDir = await makeTmpDir('plugin-skill-canonical-root');
-    const pluginSkill = {
-      id: 'plugin:github:github',
+    const currentSkill = {
+      id: 'current',
       type: 'skill',
       enabled: true,
       source: 'cat-cafe',
-      pluginId: 'github',
+      pluginId,
+    };
+    const staleSkill = {
+      id: 'old',
+      type: 'skill',
+      enabled: true,
+      source: 'cat-cafe',
+      pluginId,
     };
     await writeCapabilitiesConfig(projectDir, {
       version: 1,
-      capabilities: [pluginSkill],
+      capabilities: [currentSkill, staleSkill],
     });
 
     const app = Fastify();
@@ -1042,12 +1064,15 @@ describe('GET /api/capabilities (Fastify)', () => {
 
       assert.equal(res.statusCode, 200, res.payload);
       const config = await readCapabilitiesConfig(projectDir);
-      const preserved = config?.capabilities.find((item) => item.id === pluginSkill.id);
-      assert.ok(preserved, 'plugin-owned skill should survive when canonical repo plugins/github exists');
-      assert.equal(preserved.pluginId, 'github');
+      const preserved = config?.capabilities.find((item) => item.id === currentSkill.id);
+      assert.ok(preserved, 'declared plugin-owned skill should survive pruning');
+      assert.equal(preserved.pluginId, pluginId);
+      const stale = config?.capabilities.find((item) => item.id === staleSkill.id);
+      assert.equal(stale, undefined, 'removed plugin-owned skill should be pruned even when plugin dir exists');
     } finally {
       await app.close();
       await rm(projectDir, { recursive: true, force: true });
+      await rm(pluginDir, { recursive: true, force: true });
     }
   });
 

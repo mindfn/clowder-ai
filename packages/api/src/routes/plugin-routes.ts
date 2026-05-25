@@ -6,8 +6,12 @@
 
 import { join } from 'node:path';
 import type { PluginInfo } from '@cat-cafe/shared';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { readCapabilitiesConfig } from '../config/capabilities/capability-orchestrator.js';
+import {
+  requireCapabilityWriteOwner,
+  resolveCapabilityWriteSessionUserId,
+} from '../config/capabilities/capability-write-guards.js';
 import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import type { LimbRegistry } from '../domains/limb/LimbRegistry.js';
 import { loadLimbDeclaration } from '../domains/limb/limb-yaml-loader.js';
@@ -16,8 +20,6 @@ import type { PluginResourceActivator } from '../domains/plugin/PluginResourceAc
 import { loadAllPluginConfigs, resolvePluginEnv, writePluginConfig } from '../domains/plugin/plugin-config-store.js';
 import { validateEnvSafety } from '../domains/plugin/plugin-manifest.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
-import { isTrustedLocalApiRequest } from '../utils/loopback-request.js';
-import { resolveHeaderUserId } from '../utils/request-identity.js';
 
 interface PluginRoutesOpts {
   pluginRegistry: PluginRegistry;
@@ -30,6 +32,31 @@ function refreshPluginRegistry(pluginRegistry: PluginRegistry) {
   const manifests = pluginRegistry.scan();
   loadAllPluginConfigs(resolveActiveProjectRoot(), manifests);
   return manifests;
+}
+
+function requirePluginWriteOwner(request: FastifyRequest, reply: FastifyReply): string | null {
+  const operator = resolveCapabilityWriteSessionUserId(request);
+  if (!operator) {
+    reply.status(401);
+    return null;
+  }
+
+  const ownerError = requireCapabilityWriteOwner(operator);
+  if (ownerError) {
+    reply.status(ownerError.status);
+    return null;
+  }
+
+  return operator;
+}
+
+function pluginWriteOwnerError(reply: FastifyReply): { error: string } {
+  return {
+    error:
+      reply.statusCode === 401
+        ? 'Plugin write endpoint requires an authenticated owner session'
+        : 'Plugin write endpoint requires configured owner authorization',
+  };
 }
 
 export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpts): void {
@@ -62,14 +89,9 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
   });
 
   app.post<{ Params: { id: string } }>('/api/plugins/:id/enable', async (request, reply) => {
-    if (!isTrustedLocalApiRequest(request)) {
-      reply.status(403);
-      return { error: 'Plugin write endpoint requires a local API host' };
-    }
-    const operator = resolveHeaderUserId(request);
+    const operator = requirePluginWriteOwner(request, reply);
     if (!operator) {
-      reply.status(400);
-      return { error: 'Identity required (X-Cat-Cafe-User header)' };
+      return pluginWriteOwnerError(reply);
     }
 
     const { id } = request.params;
@@ -96,14 +118,9 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
   });
 
   app.post<{ Params: { id: string } }>('/api/plugins/:id/disable', async (request, reply) => {
-    if (!isTrustedLocalApiRequest(request)) {
-      reply.status(403);
-      return { error: 'Plugin write endpoint requires a local API host' };
-    }
-    const operator = resolveHeaderUserId(request);
+    const operator = requirePluginWriteOwner(request, reply);
     if (!operator) {
-      reply.status(400);
-      return { error: 'Identity required (X-Cat-Cafe-User header)' };
+      return pluginWriteOwnerError(reply);
     }
 
     const { id } = request.params;
@@ -132,15 +149,9 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
   app.post<{ Params: { id: string }; Body: { updates: { name: string; value: string | null }[] } }>(
     '/api/plugins/:id/config',
     async (request, reply) => {
-      if (!isTrustedLocalApiRequest(request)) {
-        reply.status(403);
-        return { error: 'Plugin config endpoint requires a local API host' };
-      }
-
-      const operator = resolveHeaderUserId(request);
+      const operator = requirePluginWriteOwner(request, reply);
       if (!operator) {
-        reply.status(400);
-        return { error: 'Identity required (X-Cat-Cafe-User header)' };
+        return pluginWriteOwnerError(reply);
       }
 
       const { id } = request.params;
@@ -208,14 +219,9 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
   );
 
   app.post<{ Params: { id: string } }>('/api/plugins/:id/test', async (request, reply) => {
-    if (!isTrustedLocalApiRequest(request)) {
-      reply.status(403);
-      return { error: 'Plugin test endpoint requires a local API host' };
-    }
-    const operator = resolveHeaderUserId(request);
+    const operator = requirePluginWriteOwner(request, reply);
     if (!operator) {
-      reply.status(400);
-      return { error: 'Identity required (X-Cat-Cafe-User header)' };
+      return pluginWriteOwnerError(reply);
     }
 
     const { id } = request.params;

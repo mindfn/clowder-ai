@@ -642,7 +642,7 @@ describe('plugin routes safety', () => {
     }
   });
 
-  it('rejects plugin writes proxied through loopback with a public Host header', async () => {
+  it('rejects plugin writes that only spoof local headers without an owner session', async () => {
     const app = Fastify();
     const deps = createRouteDeps();
     registerPluginRoutes(app, {
@@ -656,13 +656,44 @@ describe('plugin routes safety', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/plugins/test-plugin/enable',
-        headers: { host: 'cafe.example.com', 'x-cat-cafe-user': 'local-user' },
+        headers: { host: 'localhost:3004', 'x-cat-cafe-user': 'owner-user' },
         remoteAddress: '127.0.0.1',
       });
-      assert.equal(res.statusCode, 403);
-      assert.match(res.payload, /local API host/);
+      assert.equal(res.statusCode, 401);
+      assert.match(res.payload, /owner session/);
     } finally {
       await app.close();
+    }
+  });
+
+  it('accepts plugin writes from the configured owner session', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'owner-user';
+    const app = Fastify();
+    app.addHook('preHandler', async (request) => {
+      const raw = request.headers['x-test-session-user'];
+      if (typeof raw === 'string' && raw.trim()) request.sessionUserId = raw.trim();
+    });
+    const deps = createRouteDeps();
+    registerPluginRoutes(app, {
+      pluginRegistry: deps.pluginRegistry,
+      pluginActivator: deps.pluginActivator,
+      limbRegistry: {},
+      pluginsDir: '/tmp/plugins',
+    });
+    await app.ready();
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/plugins/test-plugin/enable',
+        headers: { 'x-test-session-user': 'owner-user' },
+        remoteAddress: '127.0.0.1',
+      });
+      assert.equal(res.statusCode, 200, res.payload);
+    } finally {
+      await app.close();
+      if (previousOwner === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+      else process.env.DEFAULT_OWNER_USER_ID = previousOwner;
     }
   });
 });
