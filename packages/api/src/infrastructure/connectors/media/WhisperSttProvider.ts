@@ -2,12 +2,20 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ISttProvider, SttTranscribeRequest, SttTranscribeResult } from '@cat-cafe/shared';
 import { normalizeLoopbackUrl } from '../../../domains/services/loopback-url.js';
+import { getServiceConfig } from '../../../domains/services/service-config.js';
+import { getServiceManifest, resolveServiceEndpoint } from '../../../domains/services/service-manifest.js';
 
 export interface WhisperSttProviderOptions {
   baseUrl?: string;
   model?: string;
   /** @internal test injection */
   _fetchFn?: typeof fetch;
+}
+
+function resolveWhisperBaseUrl(): string {
+  const service = getServiceManifest('whisper-stt');
+  if (!service) return process.env.WHISPER_URL ?? 'http://127.0.0.1:9876';
+  return resolveServiceEndpoint(service, process.env, getServiceConfig('whisper-stt')) ?? 'http://127.0.0.1:9876';
 }
 
 export class WhisperSttProvider implements ISttProvider {
@@ -17,7 +25,7 @@ export class WhisperSttProvider implements ISttProvider {
   private readonly fetchFn: typeof fetch;
 
   constructor(opts?: WhisperSttProviderOptions) {
-    this.baseUrl = normalizeLoopbackUrl(opts?.baseUrl ?? process.env.WHISPER_URL ?? 'http://127.0.0.1:9876');
+    this.baseUrl = normalizeLoopbackUrl(opts?.baseUrl ?? resolveWhisperBaseUrl());
     this.model = opts?.model ?? 'whisper-large-v3';
     this.fetchFn = opts?._fetchFn ?? fetch;
   }

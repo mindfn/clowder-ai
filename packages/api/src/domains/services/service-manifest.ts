@@ -471,7 +471,12 @@ export async function resolveServiceState(
       status: activeLifecycleStatus,
       httpStatus: null,
       error: null,
-      installed: options.lifecycleAction === 'start' ? true : installed,
+      installed:
+        options.lifecycleAction === 'start'
+          ? true
+          : options.lifecycleAction === 'install'
+            ? Boolean(config.installed)
+            : installed,
       enabled:
         options.lifecycleAction === 'start'
           ? true

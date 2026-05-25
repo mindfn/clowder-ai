@@ -12,6 +12,12 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 
 . "$PSScriptRoot\prereq-check.ps1"
 
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$AudioScript = Join-Path $repoRoot "scripts\meeting-copilot\audio-service.py"
+if (-not (Test-Path $AudioScript)) {
+    throw "audio-service.py not found at $AudioScript. F195 audio-capture runtime is not bundled in this checkout; refusing to install an unusable service."
+}
+
 $BootstrapPython = Resolve-BootstrapPython
 Assert-Python310 -Bootstrap $BootstrapPython
 Assert-DiskSpace -RequiredGB 1

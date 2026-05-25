@@ -75,13 +75,13 @@ install_service_main() {
   : "${PIP_DEPS_ARM64:?install-template: PIP_DEPS_ARM64 is required (empty string OK if unused)}"
   : "${PIP_DEPS_OTHER:?install-template: PIP_DEPS_OTHER is required (empty string OK if unused)}"
 
-  # 1. Prereqs: python + disk + network (with OS system proxy detection
-  # & per-source NO_PROXY classification, see prereq-check.sh).
+  # 1. Prereqs: python + disk. Network checks run after manual
+  # download-source overrides so offline/mirror installs can preflight
+  # against the operator-selected endpoint.
   # shellcheck source=./prereq-check.sh
   source "$script_dir/prereq-check.sh"
   check_python3
   check_disk_space "$DISK_REQUIRED_GB"
-  check_network
 
   # 2. Manual download-source overrides (user-supplied PIP / HF
   # endpoint overrides via .env or env). Best-effort -- file may not
@@ -91,6 +91,7 @@ install_service_main() {
     source "$script_dir/../download-source-overrides.sh"
     apply_manual_download_source_overrides
   fi
+  check_network
 
   # 3. Platform detection -- picks the deps + model loader.
   local platform arch

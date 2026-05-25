@@ -1,8 +1,19 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, it, mock } from 'node:test';
+import { afterEach, describe, it, mock } from 'node:test';
+
+const originalServicesConfig = process.env.CAT_CAFE_SERVICES_CONFIG;
+const originalWhisperUrl = process.env.WHISPER_URL;
+
+afterEach(() => {
+  if (originalServicesConfig === undefined) delete process.env.CAT_CAFE_SERVICES_CONFIG;
+  else process.env.CAT_CAFE_SERVICES_CONFIG = originalServicesConfig;
+  if (originalWhisperUrl === undefined) delete process.env.WHISPER_URL;
+  else process.env.WHISPER_URL = originalWhisperUrl;
+});
 
 describe('WhisperSttProvider', () => {
   it('sends audio file to Whisper API and returns transcript', async () => {
@@ -81,5 +92,34 @@ describe('WhisperSttProvider', () => {
     assert.equal(capturedBody.get('language'), 'zh');
 
     await rm(tempDir, { recursive: true });
+  });
+
+  it('uses the persisted Whisper service port when baseUrl is omitted', async () => {
+    const { setServiceConfig } = await import('../dist/domains/services/service-config.js');
+    const { WhisperSttProvider } = await import('../dist/infrastructure/connectors/media/WhisperSttProvider.js');
+
+    const configDir = mkdtempSync(path.join(tmpdir(), 'whisper-provider-config-'));
+    const tempDir = await mkdtemp(path.join(tmpdir(), 'whisper-test-'));
+    const audioPath = path.join(tempDir, 'test.wav');
+    await writeFile(audioPath, Buffer.from('fake-audio'));
+    process.env.CAT_CAFE_SERVICES_CONFIG = path.join(configDir, 'services.json');
+    delete process.env.WHISPER_URL;
+    setServiceConfig('whisper-stt', { enabled: true, installed: true, port: 19981 });
+
+    const mockFetch = mock.fn(async () => ({
+      ok: true,
+      json: async () => ({ text: 'hello' }),
+      text: async () => '',
+    }));
+
+    try {
+      const provider = new WhisperSttProvider({ _fetchFn: mockFetch });
+      await provider.transcribe({ audioPath });
+
+      assert.equal(mockFetch.mock.calls[0].arguments[0], 'http://127.0.0.1:19981/v1/audio/transcriptions');
+    } finally {
+      await rm(tempDir, { recursive: true });
+      rmSync(configDir, { recursive: true, force: true });
+    }
   });
 });

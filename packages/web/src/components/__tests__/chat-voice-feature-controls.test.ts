@@ -246,6 +246,8 @@ describe('ChatVoiceFeatureControls', () => {
       detectedAt: Date.now(),
     };
     const callLog: string[] = [];
+    let audioInstalled = false;
+    let audioEnabled = false;
     apiFetchMock.mockImplementation(async (path: string, init?: RequestInit) => {
       callLog.push(`${path}:${init?.body ?? ''}`);
       if (path === '/api/services') {
@@ -253,9 +255,10 @@ describe('ChatVoiceFeatureControls', () => {
           services: [
             {
               id: 'audio-capture',
-              installed: false,
-              enabled: false,
+              installed: audioInstalled,
+              enabled: audioEnabled,
               installable: true,
+              status: audioEnabled ? 'healthy' : 'not_configured',
               features: ['meeting-copilot', 'live-transcript'],
               prerequisites: {
                 runtime: 'python3.10+',
@@ -280,6 +283,11 @@ describe('ChatVoiceFeatureControls', () => {
         });
       }
       if (path === '/api/services/audio-capture/install') {
+        audioInstalled = true;
+        return jsonResponse({ ok: true });
+      }
+      if (path === '/api/services/audio-capture/start') {
+        audioEnabled = true;
         return jsonResponse({ ok: true });
       }
       return jsonResponse({ error: `unexpected ${path}` }, false);
@@ -311,6 +319,7 @@ describe('ChatVoiceFeatureControls', () => {
     });
 
     expect(callLog.some((entry) => entry === '/api/services/audio-capture/install:{"port":19981}')).toBe(true);
+    expect(callLog.some((entry) => entry === '/api/services/audio-capture/start:{}')).toBe(true);
     expect(useChatStore.getState().rightPanelMode).toBe('transcript');
   });
 });

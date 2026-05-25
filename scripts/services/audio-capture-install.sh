@@ -6,6 +6,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+AUDIO_PY="$REPO_ROOT/scripts/meeting-copilot/audio-service.py"
+
+if [ ! -f "$AUDIO_PY" ]; then
+  echo "ERROR: audio-service.py not found at $AUDIO_PY" >&2
+  echo "F195 audio-capture runtime is not bundled in this checkout; refusing to install an unusable service." >&2
+  exit 1
+fi
 
 SERVICE_LABEL="Audio Capture"
 VENV_NAME="audio-capture-venv"

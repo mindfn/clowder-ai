@@ -8,6 +8,8 @@
 
 import type { ITtsProvider, TtsSynthesizeRequest, TtsSynthesizeResult } from '@cat-cafe/shared';
 import { normalizeLoopbackUrl } from '../../../services/loopback-url.js';
+import { getServiceConfig } from '../../../services/service-config.js';
+import { getServiceManifest, resolveServiceEndpoint } from '../../../services/service-manifest.js';
 
 export interface MlxAudioTtsProviderOptions {
   /** Base URL of the Python TTS server (default: http://localhost:9879) */
@@ -56,6 +58,12 @@ export function calculateTimeout(text: string, hasCloneParams: boolean, baseTime
   return Math.max(cappedDynamicMs, baseTimeoutMs);
 }
 
+function resolveTtsBaseUrl(): string {
+  const service = getServiceManifest('mlx-tts');
+  if (!service) return process.env.TTS_URL ?? 'http://127.0.0.1:9879';
+  return resolveServiceEndpoint(service, process.env, getServiceConfig('mlx-tts')) ?? 'http://127.0.0.1:9879';
+}
+
 export class MlxAudioTtsProvider implements ITtsProvider {
   readonly id = 'mlx-audio';
   readonly model: string;
@@ -63,7 +71,7 @@ export class MlxAudioTtsProvider implements ITtsProvider {
   private readonly timeoutMs: number;
 
   constructor(options?: MlxAudioTtsProviderOptions) {
-    this.baseUrl = normalizeLoopbackUrl(options?.baseUrl ?? process.env.TTS_URL ?? 'http://127.0.0.1:9879');
+    this.baseUrl = normalizeLoopbackUrl(options?.baseUrl ?? resolveTtsBaseUrl());
     this.model = options?.model ?? 'mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16';
     this.timeoutMs = options?.timeoutMs ?? 30_000;
   }

@@ -441,7 +441,7 @@ export function InstallPreviewModal({
             onClick={() => {
               onConfirm({
                 model: allModels.length > 0 ? finalModel : undefined,
-                port: portValue,
+                port: portValue ?? suggestedPort ?? undefined,
               });
             }}
             disabled={!canConfirm}

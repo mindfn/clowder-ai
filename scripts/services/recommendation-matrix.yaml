@@ -156,7 +156,8 @@ services:
           requirements: { ramGb: 2, diskGb: 0.5 }
       notes:
         - GPU 加速需 CUDA 12+ 或 ROCm 5.7+
-      customModelHint: '自定义必须是 faster-whisper 内置 ID（tiny / base / small / medium / large-v1~v3 / large-v3-turbo / distil-large-v3 等）或 CTranslate2 转换模型'
+      customModelHint:
+        description: '自定义必须是 faster-whisper 内置 ID（tiny / base / small / medium / large-v1~v3 / large-v3-turbo / distil-large-v3 等）或 CTranslate2 转换模型'
 
     - match: { os: [win32, linux], gpu: none }
       models:

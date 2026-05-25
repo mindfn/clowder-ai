@@ -326,6 +326,26 @@ export async function registerServiceLifecycleRoutes(
     return { ok: true, stopped, foreign: portProbe.foreign };
   }
 
+  async function waitForOwnedServicePortToClear(
+    service: ServiceManifest,
+  ): Promise<
+    | { ok: true }
+    | { ok: false; reason: 'port-probe-unavailable' | 'foreign-port-owner' | 'owned-listener-timeout'; pids?: number[] }
+  > {
+    const timeoutMs = Math.max(500, Math.min(startupReadinessTimeoutMs, 5_000));
+    const intervalMs = Math.max(50, Math.min(startupProbeIntervalMs, 500));
+    const deadline = Date.now() + timeoutMs;
+
+    for (;;) {
+      const probe = await partitionServicePids(service);
+      if (!probe.ok) return { ok: false, reason: probe.reason };
+      if (probe.foreign.length > 0) return { ok: false, reason: 'foreign-port-owner', pids: probe.foreign };
+      if (probe.owned.length === 0) return { ok: true };
+      if (Date.now() >= deadline) return { ok: false, reason: 'owned-listener-timeout', pids: probe.owned };
+      await delay(intervalMs);
+    }
+  }
+
   app.post<{ Params: { id: string }; Body: { model?: unknown; port?: unknown } }>(
     '/api/services/:id/install',
     async (request, reply) => {
@@ -353,15 +373,6 @@ export async function registerServiceLifecycleRoutes(
         return { error: envResult.error };
       }
 
-      // Persist the user-selected model + port so subsequent /start and
-      // /uninstall spawns can read them from config rather than relying on
-      // process.env state (which doesn't survive API restart).
-      //   - Port: codex P2 3266466931
-      //   - Model: codex P1 3279045004 — /start and /uninstall both read
-      //     cfg.selectedModel via buildLifecycleEnv; without persisting at
-      //     install time, post-restart start fails because *_MODEL env
-      //     isn't set from process.env and config has no record either.
-      // buildLifecycleEnv already validated model + port upstream of here.
       const persistPatch: { selectedModel?: string; port?: number } = {};
       if (typeof request.body?.model === 'string' && request.body.model.length > 0) {
         persistPatch.selectedModel = request.body.model;
@@ -369,9 +380,7 @@ export async function registerServiceLifecycleRoutes(
       if (typeof installPort === 'number') {
         persistPatch.port = installPort;
       }
-      if (persistPatch.selectedModel !== undefined || persistPatch.port !== undefined) {
-        serviceConfigStore.set(service.id, persistPatch);
-      }
+      const priorConfig = getEffectiveConfig(service);
 
       return withLock(
         service.id,
@@ -385,14 +394,14 @@ export async function registerServiceLifecycleRoutes(
             env: envResult.env,
           });
           if (!result.ok) {
-            serviceConfigStore.set(service.id, { installed: false, enabled: false });
+            if (!priorConfig?.installed) {
+              serviceConfigStore.set(service.id, { installed: false, enabled: false });
+            }
             reply.status(lifecycleFailureStatus(result.error));
           } else {
-            const model = request.body?.model;
-            const selectedModel = typeof model === 'string' && model.length > 0 ? model : undefined;
             serviceConfigStore.set(service.id, {
               installed: true,
-              ...(selectedModel ? { selectedModel } : {}),
+              ...persistPatch,
             });
           }
           return result;
@@ -538,6 +547,25 @@ export async function registerServiceLifecycleRoutes(
       }
       if (stopped.length > 0) {
         appendServiceLog(service.id, `[start] stopped unhealthy owned listener(s): ${stopped.join(', ')}\n`);
+        const clear = await waitForOwnedServicePortToClear(startProbeService);
+        if (!clear.ok) {
+          const statusCode =
+            clear.reason === 'port-probe-unavailable' ? 503 : clear.reason === 'foreign-port-owner' ? 409 : 502;
+          reply.status(statusCode);
+          await audit({
+            serviceId: service.id,
+            action: 'start',
+            operator,
+            status: 'failed',
+            reason: clear.reason,
+          });
+          return {
+            ok: false,
+            error: `${service.name} restart failed while waiting for stale listener to exit`,
+            stopped,
+            remaining: clear.pids ?? [],
+          };
+        }
       }
     }
 

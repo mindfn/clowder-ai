@@ -1,8 +1,11 @@
 // @ts-check
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
-const { detectEnvironmentSync, getEnvironmentProfile, clearEnvironmentCache } = await import(
+const { detectEnvironmentSync, getEnvironmentProfile, clearEnvironmentCache, resolveDiskProbePath } = await import(
   '../dist/domains/services/environment-detector.js'
 );
 
@@ -26,6 +29,16 @@ describe('environment detector — shape & sanity', () => {
     assert.equal(p.os, 'darwin');
     assert.equal(p.arch, 'arm64');
     assert.equal(p.gpu, 'apple');
+  });
+
+  test('disk probe uses CAT_CAFE_HOME parent filesystem before the directory exists', () => {
+    const root = mkdtempSync(join(tmpdir(), 'cat-cafe-home-probe-'));
+    try {
+      const missingHome = join(root, 'nested', '.cat-cafe');
+      assert.equal(resolveDiskProbePath(missingHome, [tmpdir()]), root);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

@@ -4,14 +4,24 @@
  */
 
 import assert from 'node:assert';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import { calculateTimeout, MlxAudioTtsProvider } from '../dist/domains/cats/services/tts/MlxAudioTtsProvider.js';
+import { setServiceConfig } from '../dist/domains/services/service-config.js';
 
 describe('MlxAudioTtsProvider', () => {
   const originalFetch = globalThis.fetch;
+  const originalServicesConfig = process.env.CAT_CAFE_SERVICES_CONFIG;
+  const originalTtsUrl = process.env.TTS_URL;
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    if (originalServicesConfig === undefined) delete process.env.CAT_CAFE_SERVICES_CONFIG;
+    else process.env.CAT_CAFE_SERVICES_CONFIG = originalServicesConfig;
+    if (originalTtsUrl === undefined) delete process.env.TTS_URL;
+    else process.env.TTS_URL = originalTtsUrl;
   });
 
   it('has correct id and model', () => {
@@ -51,6 +61,26 @@ describe('MlxAudioTtsProvider', () => {
     await p.synthesize({ text: 'hello', voice: 'vm_test' });
 
     assert.strictEqual(capturedUrl, 'http://127.0.0.1:9879/v1/audio/speech');
+  });
+
+  it('uses the persisted TTS service port when baseUrl is omitted', async () => {
+    const configDir = mkdtempSync(join(tmpdir(), 'tts-provider-config-'));
+    process.env.CAT_CAFE_SERVICES_CONFIG = join(configDir, 'services.json');
+    delete process.env.TTS_URL;
+    setServiceConfig('mlx-tts', { enabled: true, installed: true, port: 19982 });
+    let capturedUrl;
+    globalThis.fetch = async (url) => {
+      capturedUrl = url;
+      return new Response(new Uint8Array([1]), { status: 200 });
+    };
+    try {
+      const p = new MlxAudioTtsProvider();
+      await p.synthesize({ text: 'hello', voice: 'vm_test' });
+
+      assert.strictEqual(capturedUrl, 'http://127.0.0.1:19982/v1/audio/speech');
+    } finally {
+      rmSync(configDir, { recursive: true, force: true });
+    }
   });
 
   it('returns Uint8Array audio with correct metadata', async () => {

@@ -163,6 +163,45 @@ describe('service lifecycle failure handling', () => {
     }
   });
 
+  it('preserves the prior installed service state when a reinstall fails', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map([['whisper-stt', { enabled: true, installed: true, selectedModel: 'base', port: 19901 }]]);
+    const app = await buildApp({
+      lifecycle: {
+        findPidsByPort: async () => [],
+        serviceConfig: {
+          get: (id) => configs.get(id),
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        runScript: async () => ({ code: 1, output: 'pip failed' }),
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/install',
+        headers: SESSION_HEADERS,
+        payload: { model: 'large-v3-turbo', port: 19902 },
+      });
+
+      assert.equal(res.statusCode, 422, res.payload);
+      assert.deepEqual(configs.get('whisper-stt'), {
+        enabled: true,
+        installed: true,
+        selectedModel: 'base',
+        port: 19901,
+      });
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
   it('returns a controlled failure and audits start runner exceptions', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';
@@ -280,6 +319,48 @@ describe('service lifecycle failure handling', () => {
         ],
       );
     } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('waits for an unhealthy owned listener to exit before restarting', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const killed = [];
+    let portProbeCount = 0;
+    let portProbeCountAtStart = 0;
+    const resolvedScript = resolveServiceScriptPath('scripts/services/whisper-server.sh');
+    const app = await buildApp({
+      lifecycle: {
+        startupGraceMs: 10,
+        findPidsByPort: async () => {
+          portProbeCount += 1;
+          return portProbeCount === 1 ? [5151] : [];
+        },
+        readProcessCommand: async () => `/bin/bash ${resolvedScript}`,
+        killPid: (pid, signal) => {
+          killed.push({ pid, signal });
+        },
+        runScript: async () => {
+          portProbeCountAtStart = portProbeCount;
+          return { code: null, pid: 7001 };
+        },
+      },
+      fetchHealth: async () => ({ ok: false, status: 503, error: 'unreachable' }),
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/start',
+        headers: SESSION_HEADERS,
+      });
+
+      assert.equal(res.statusCode, 200, res.payload);
+      assert.deepEqual(killed, [{ pid: 5151, signal: 'SIGTERM' }]);
+      assert.equal(portProbeCountAtStart, 2, 'restart must re-probe the port after terminating stale listener');
+    } finally {
+      await new Promise((resolve) => setTimeout(resolve, 20));
       await app.close();
       restoreOwner(previousOwner);
     }

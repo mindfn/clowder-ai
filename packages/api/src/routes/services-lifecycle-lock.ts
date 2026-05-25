@@ -61,7 +61,7 @@ export function createServiceLifecycleLock() {
       task: () => Promise<T>,
       options: { action?: ServiceLifecycleLockAction } = {},
     ): Promise<T | { error: string }> {
-      if (activeServices.has(serviceId) || (options.action === 'start' && startingServices.has(serviceId))) {
+      if (activeServices.has(serviceId) || startingServices.has(serviceId)) {
         reply.status(409);
         return { error: `Service lifecycle operation already in progress for ${serviceId}` };
       }

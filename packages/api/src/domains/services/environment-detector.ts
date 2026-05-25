@@ -200,18 +200,26 @@ function resolveCatCafeHome(): string {
   return resolve(here, '../../../../..', '.cat-cafe');
 }
 
+export function resolveDiskProbePath(targetPath: string, fallbackPaths: string[] = []): string {
+  let current = resolve(targetPath);
+  for (;;) {
+    if (existsSync(current)) return current;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  for (const fallbackPath of fallbackPaths) {
+    if (existsSync(fallbackPath)) return fallbackPath;
+  }
+  return '/';
+}
+
 function detectDiskFreeGb(): number {
-  // Walk down preferred install roots, falling back to homedir/'/' for
-  // first-time installs where the install dir hasn't been created yet.
+  // Probe the filesystem that will contain CAT_CAFE_HOME even on first
+  // install, before the leaf directory exists.
   const catCafeHome = resolveCatCafeHome();
   const legacyHome = resolve(homedir(), '.cat-cafe');
-  const candidates = [
-    existsSync(catCafeHome) ? catCafeHome : null,
-    existsSync(legacyHome) ? legacyHome : null,
-    existsSync(homedir()) ? homedir() : null,
-    '/',
-  ];
-  const probePath = candidates.find((p): p is string => typeof p === 'string') ?? '/';
+  const probePath = resolveDiskProbePath(catCafeHome, [legacyHome, homedir(), '/']);
   try {
     const stat = statfsSync(probePath);
     const free = Number(stat.bavail) * Number(stat.bsize);

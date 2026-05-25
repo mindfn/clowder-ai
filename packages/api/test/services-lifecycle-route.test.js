@@ -177,6 +177,76 @@ describe('service lifecycle write routes', () => {
     }
   });
 
+  it('does not persist install model or port until the install lock is acquired and succeeds', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    let releaseInstall;
+    let started = false;
+    const configs = new Map([
+      ['whisper-stt', { enabled: false, installed: false, selectedModel: 'base', port: 19901 }],
+    ]);
+    const app = await buildApp({
+      lifecycle: {
+        findPidsByPort: async () => [],
+        serviceConfig: {
+          get: (id) => configs.get(id),
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        runScript: async () =>
+          new Promise((resolve) => {
+            started = true;
+            releaseInstall = () => resolve({ code: 0, output: 'installed' });
+          }),
+      },
+    });
+    try {
+      const first = app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/install',
+        headers: SESSION_HEADERS,
+        payload: { model: 'large-v3-turbo', port: 19902 },
+      });
+      while (!started) await new Promise((resolve) => setImmediate(resolve));
+
+      assert.deepEqual(
+        configs.get('whisper-stt'),
+        { enabled: false, installed: false, selectedModel: 'base', port: 19901 },
+        'in-flight install must not expose uncommitted model or port',
+      );
+
+      const second = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/install',
+        headers: SESSION_HEADERS,
+        payload: { model: 'medium', port: 19903 },
+      });
+
+      assert.equal(second.statusCode, 409, second.payload);
+      assert.deepEqual(
+        configs.get('whisper-stt'),
+        { enabled: false, installed: false, selectedModel: 'base', port: 19901 },
+        'rejected install must not mutate persisted service config',
+      );
+
+      releaseInstall();
+      assert.equal((await first).statusCode, 200);
+      assert.deepEqual(configs.get('whisper-stt'), {
+        enabled: false,
+        installed: true,
+        selectedModel: 'large-v3-turbo',
+        port: 19902,
+      });
+    } finally {
+      releaseInstall?.();
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
   it('reports installing while an install runner is still active', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';
@@ -920,7 +990,7 @@ describe('service lifecycle write routes', () => {
             return updated;
           },
         },
-        findPidsByPort: async () => [5151],
+        findPidsByPort: async () => (killed.length > 0 ? [] : [5151]),
         readProcessCommand: async () => `bash ${resolvedScript}`,
         killPid: (pid, signal) => killed.push({ pid, signal }),
         runScript: async () => {

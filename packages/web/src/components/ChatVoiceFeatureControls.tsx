@@ -318,7 +318,8 @@ export function ChatVoiceFeatureControls({ threadId, defaultCatId, disabled }: C
         const installed = await installVoiceService(target.feature, opts);
         if (!installed) return;
         if (target.feature === 'audio-capture') {
-          setRightPanelMode('transcript');
+          const ready = await ensureVoiceServiceEnabled(target.feature);
+          if (ready.ready) setRightPanelMode('transcript');
           return;
         }
         if (!threadId) return;
