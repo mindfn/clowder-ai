@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
@@ -1028,6 +1028,35 @@ describe('service lifecycle write routes', () => {
     }
   });
 
+  it('records the runner invocation and clean early exit in service logs', async () => {
+    const logDir = mkdtempSync(join(tmpdir(), 'service-log-'));
+    const previousLogDir = process.env.LOG_DIR;
+    process.env.LOG_DIR = logDir;
+    const dir = mkdtempSync(join(tmpdir(), 'service-start-'));
+    const script = join(dir, 'clean-exit.sh');
+    writeFileSync(script, '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
+    chmodSync(script, 0o755);
+
+    try {
+      const result = await runServiceScript({
+        serviceId: 'whisper-stt',
+        action: 'start',
+        scriptPath: script,
+        detached: true,
+        timeoutMs: 10_000,
+      });
+
+      assert.equal(result.code, 0);
+      const log = readServiceLogTail('whisper-stt', 20).join('\n');
+      assert.match(log, /\[start\] invoking runner: bash .*clean-exit\.sh/);
+      assert.match(log, /\[start\] runner pid=\d+/);
+      assert.match(log, /\[start\] runner exited with code 0/);
+    } finally {
+      if (previousLogDir === undefined) delete process.env.LOG_DIR;
+      else process.env.LOG_DIR = previousLogDir;
+    }
+  });
+
   it('refuses to start when the service port belongs to another process', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';
@@ -1621,6 +1650,24 @@ describe('service lifecycle write routes', () => {
       ),
       false,
     );
+  });
+
+  it('keeps Windows PowerShell service wrappers observable at the runner and Python boundary', () => {
+    const wrappers = [
+      ['whisper-stt', 'scripts/services/whisper-server.sh'],
+      ['mlx-tts', 'scripts/services/tts-server.sh'],
+      ['embedding-model', 'scripts/services/embed-server.sh'],
+      ['llm-postprocess', 'scripts/services/llm-postprocess-server.sh'],
+      ['audio-capture', 'scripts/services/audio-capture-server.sh'],
+    ];
+
+    for (const [serviceId, scriptPath] of wrappers) {
+      const source = readFileSync(resolveServiceScriptPath(scriptPath, 'win32'), 'utf8');
+      assert.match(source, new RegExp(`\\[start\\] wrapper entered: service=${serviceId}`));
+      assert.match(source, /\[start\] resolved runtime:/);
+      assert.match(source, /\[start\] launching python:/);
+      assert.match(source, /\[start\] python exited with code/);
+    }
   });
 
   it('marks timed-out scripts even when they emitted output before termination', async () => {

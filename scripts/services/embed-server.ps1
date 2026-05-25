@@ -29,6 +29,8 @@ if ($Port -le 0) {
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
+Write-Output "[start] wrapper entered: service=embedding-model script=$PSCommandPath"
+$env:PYTHONUNBUFFERED = "1"
 
 . (Join-Path $PSScriptRoot "proxy-env.ps1")
 Normalize-SocksProxyEnv
@@ -45,6 +47,7 @@ if (-not $env:CAT_CAFE_HOME) {
 $VenvDir = Join-Path $env:CAT_CAFE_HOME "embed-venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $ApiScript = Join-Path $PSScriptRoot "embed-api.py"
+Write-Output "[start] resolved runtime: CAT_CAFE_HOME=$($env:CAT_CAFE_HOME); venv=$VenvDir; python=$VenvPython; api=$ApiScript; port=$Port"
 
 if (-not (Test-Path $VenvPython)) {
     throw "Embedding venv not found. Run embed-install.ps1 first."
@@ -61,5 +64,8 @@ if (-not $Model) {
     exit 1
 }
 Write-Output "Starting Embedding server: model=$Model, port=$Port"
+Write-Output "[start] launching python: $VenvPython $ApiScript --model $Model --port $Port"
 & $VenvPython $ApiScript --model $Model --port $Port
-exit $LASTEXITCODE
+$ExitCode = $LASTEXITCODE
+Write-Output "[start] python exited with code $ExitCode"
+exit $ExitCode

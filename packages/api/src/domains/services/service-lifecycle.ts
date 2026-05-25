@@ -67,6 +67,10 @@ function isPathInside(parent: string, child: string): boolean {
   return diff === '' || (!diff.startsWith('..') && !isAbsolute(diff));
 }
 
+function formatRunnerCommandPart(value: string): string {
+  return /^[A-Za-z0-9_./:-]+$/.test(value) ? value : JSON.stringify(value);
+}
+
 function resolveServiceRuntimeScriptPaths(
   manifest: ServiceLifecycleManifest,
   platform: NodeJS.Platform = process.platform,
@@ -401,6 +405,10 @@ export async function runServiceScript(input: ServiceLifecycleRunInput): Promise
     command === 'powershell.exe'
       ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', input.scriptPath]
       : [input.scriptPath];
+  appendServiceLog(
+    input.serviceId,
+    `[${input.action}] invoking runner: ${[command, ...args].map(formatRunnerCommandPart).join(' ')}\n`,
+  );
 
   if (input.detached) {
     return new Promise((resolveRun, rejectRun) => {
@@ -422,6 +430,7 @@ export async function runServiceScript(input: ServiceLifecycleRunInput): Promise
         env: input.env,
         windowsHide: true,
       });
+      appendServiceLog(input.serviceId, `[${input.action}] runner pid=${child.pid ?? 'unknown'}\n`);
       child.stdout?.on('data', appendOutput);
       child.stderr?.on('data', appendOutput);
       child.on('error', (error) => {
@@ -430,6 +439,7 @@ export async function runServiceScript(input: ServiceLifecycleRunInput): Promise
           resolveSettlement({ code: null, output, pid: child.pid, runnerError: true });
           return;
         }
+        appendServiceLog(input.serviceId, `[${input.action}] runner spawn failed: ${error.message}\n`);
         rejectRun(error);
       });
       const earlyExitTimer = setTimeout(() => {
@@ -448,8 +458,9 @@ export async function runServiceScript(input: ServiceLifecycleRunInput): Promise
       }, 2000);
       child.on('close', (code, signal) => {
         clearTimeout(earlyExitTimer);
+        const status = signal ? `signal ${signal}` : `code ${code ?? 'unknown'}`;
+        appendServiceLog(input.serviceId, `[${input.action}] runner exited with ${status}\n`);
         if (resolvedEarly && (code !== 0 || signal)) {
-          const status = signal ? `signal ${signal}` : `code ${code ?? 'unknown'}`;
           appendServiceLog(input.serviceId, `[${input.action}] process exited with ${status}\n`);
         }
         const result = { code, output, pid: child.pid };
@@ -468,6 +479,7 @@ export async function runServiceScript(input: ServiceLifecycleRunInput): Promise
       timeout: input.detached ? undefined : input.timeoutMs,
       windowsHide: true,
     });
+    appendServiceLog(input.serviceId, `[${input.action}] runner pid=${child.pid ?? 'unknown'}\n`);
     let output = '';
     const appendOutput = (chunk: Buffer) => {
       const text = chunk.toString();
@@ -477,9 +489,14 @@ export async function runServiceScript(input: ServiceLifecycleRunInput): Promise
     };
     child.stdout?.on('data', appendOutput);
     child.stderr?.on('data', appendOutput);
-    child.on('error', (error) => rejectRun(error));
+    child.on('error', (error) => {
+      appendServiceLog(input.serviceId, `[${input.action}] runner spawn failed: ${error.message}\n`);
+      rejectRun(error);
+    });
     child.on('close', (code, signal) => {
       const timedOut = signal === 'SIGTERM';
+      const status = signal ? `signal ${signal}` : `code ${code ?? 'unknown'}`;
+      appendServiceLog(input.serviceId, `[${input.action}] runner exited with ${status}\n`);
       resolveRun({ code, output, pid: child.pid, timedOut });
     });
   });
