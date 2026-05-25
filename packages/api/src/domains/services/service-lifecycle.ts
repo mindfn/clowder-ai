@@ -63,6 +63,25 @@ function isPathInside(parent: string, child: string): boolean {
   return diff === '' || (!diff.startsWith('..') && !isAbsolute(diff));
 }
 
+function resolveServiceRuntimeScriptPaths(
+  manifest: ServiceLifecycleManifest,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  const startScript = manifest.scripts?.start;
+  if (!startScript) return [];
+
+  const resolvedStartScript = resolveServiceScriptPath(startScript, platform);
+  const runtimeScripts: string[] = [];
+  const serverMatch = basename(resolvedStartScript).match(/^(.+)-server\.(?:sh|ps1)$/i);
+  if (serverMatch) {
+    runtimeScripts.push(resolve(dirname(resolvedStartScript), `${serverMatch[1]}-api.py`));
+  }
+  if (manifest.id === 'audio-capture') {
+    runtimeScripts.push(resolve(REPO_ROOT, 'scripts/meeting-copilot/audio-service.py'));
+  }
+  return runtimeScripts.filter((scriptPath) => isPathInside(REPO_ROOT, scriptPath));
+}
+
 export function isValidModelId(model: string): boolean {
   return MODEL_ID_PATTERN.test(model) && model.length <= 200;
 }
@@ -126,6 +145,13 @@ export function isServiceProcessCommand(
   if (['powershell.exe', 'powershell', 'pwsh.exe', 'pwsh'].includes(basename(executable ?? ''))) {
     const fileFlagIndex = tokens.findIndex((token, index) => index > commandIndex && token === '-file');
     return fileFlagIndex >= 0 && isScriptToken(tokens[fileFlagIndex + 1]);
+  }
+  const runtimeScripts = resolveServiceRuntimeScriptPaths(manifest, platform).map((scriptPath) =>
+    normalizePath(scriptPath),
+  );
+  const isPythonExecutable = /^python(?:\d+(?:\.\d+)*)?(?:\.exe)?$/.test(basename(executable ?? ''));
+  if (isPythonExecutable && runtimeScripts.includes(tokens[commandIndex + 1] ?? '')) {
+    return true;
   }
   return false;
 }

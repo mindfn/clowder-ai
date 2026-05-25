@@ -260,7 +260,7 @@ apply_profile_defaults() {
     case "$profile" in
         dev)
             _PROF_ANTHROPIC_PROXY_ENABLED=1
-            # Sidecar lifecycle is owned by API autoStartEnabledServices() — dev
+            # Sidecar lifecycle is owned by the API startup reconciler — dev
             # profile keeps proxy ON but no longer auto-spawns ML sidecars here.
             # Enable services in console; API starts them via /api/services/:id/start.
             # Setting these to 1 only re-enables the legacy script-based path and
@@ -375,7 +375,7 @@ resolve_config "REDIS_PROFILE"
 
 derive_embed_enabled() {
     # EMBED_MODE only controls the API in-process embedding mode (off/shadow/on).
-    # Sidecar lifecycle is owned by API autoStartEnabledServices() — this script
+    # Sidecar lifecycle is owned by the API startup reconciler — this script
     # no longer derives EMBED_ENABLED=1 from EMBED_MODE. The legacy direct-spawn
     # path is gated separately by CAT_CAFE_LEGACY_DIRECT_SIDECARS=1 (see below).
     local explicit="${EMBED_ENABLED-}"
@@ -391,7 +391,7 @@ derive_embed_enabled
 
 # Legacy direct-spawn gate (must run BEFORE kill_managed_ports so stale
 # *_ENABLED env vars don't cause us to kill API-managed sidecar ports).
-# Sidecar lifecycle is owned by API autoStartEnabledServices() reading
+# Sidecar lifecycle is owned by the API startup reconciler reading
 # .cat-cafe/services.json. Enable services in Console; the API spawns them
 # via /api/services/:id/start. Set CAT_CAFE_LEGACY_DIRECT_SIDECARS=1 only
 # if you need the pre-Console direct-spawn path.
@@ -402,7 +402,7 @@ if [ "${CAT_CAFE_LEGACY_DIRECT_SIDECARS:-0}" != "1" ]; then
        || [ "${LLM_POSTPROCESS_ENABLED:-0}" = "1" ] || [ "${EMBED_ENABLED:-0}" = "1" ] \
        || [ "${AUDIO_SERVICE_ENABLED:-0}" = "1" ]; then
         echo "[start-dev] *_ENABLED detected but CAT_CAFE_LEGACY_DIRECT_SIDECARS=0 — skipping legacy sidecar spawn + port kill."
-        echo "[start-dev] Sidecar lifecycle is owned by API autoStartEnabledServices(); enable services in console."
+        echo "[start-dev] Sidecar lifecycle is owned by API startup reconciler; enable services in console."
     fi
     ASR_ENABLED=0
     TTS_ENABLED=0

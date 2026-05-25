@@ -149,7 +149,7 @@ describe('start-dev strict profile isolation', () => {
     }
   });
 
-  it('does NOT derive EMBED_ENABLED from EMBED_MODE (sidecar lifecycle owned by API autoStartEnabledServices)', () => {
+  it('does NOT derive EMBED_ENABLED from EMBED_MODE (sidecar lifecycle owned by API startup reconciler)', () => {
     // EMBED_MODE only controls the API in-process embedding mode (off/shadow/on).
     // Sidecar startup is no longer triggered by EMBED_MODE; the API spawns
     // sidecars via /api/services/embedding-model/start based on
@@ -374,7 +374,14 @@ describe('cross-platform pnpm-start profile propagation (#421)', () => {
       ps1.includes('GetEnvironmentVariable'),
       'start-windows.ps1 must check existing env before applying profile default',
     );
-    assert.ok(ps1.includes('embed-server.ps1'), 'start-windows.ps1 must launch embed-server.ps1 for local embedding');
+    assert.ok(
+      ps1.includes('API startup reconciler'),
+      'start-windows.ps1 must delegate sidecar lifecycle to the API startup reconciler',
+    );
+    assert.ok(
+      !/Start-Job[\s\S]*embed-server\.ps1/i.test(ps1),
+      'start-windows.ps1 must not directly Start-Job embed-server.ps1',
+    );
   });
 
   it('start-windows.ps1 reapplies profile defaults inside Start-Job after .env reload', () => {

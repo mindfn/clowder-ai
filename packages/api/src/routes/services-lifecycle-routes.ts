@@ -483,16 +483,63 @@ export async function registerServiceLifecycleRoutes(
     return startService(service, operator, reply);
   });
 
-  async function autoStartEnabledServices(): Promise<void> {
-    const candidates = SERVICE_MANIFESTS.filter((service) => {
-      const cfg = serviceConfigStore.get(service.id);
-      return Boolean(service.scripts?.start && cfg?.enabled && cfg.installed !== false);
+  async function stopDisabledOwnedService(service: ServiceManifest): Promise<void> {
+    const cfg = serviceConfigStore.get(service.id);
+    const probeService = { ...service, port: cfg?.port ?? service.port };
+    const portProbe = await partitionServicePids(probeService);
+    if (!portProbe.ok) {
+      app.log.warn(
+        { serviceId: service.id, reason: portProbe.reason },
+        'service startup reconciler could not probe disabled service',
+      );
+      return;
+    }
+    if (portProbe.foreign.length > 0) {
+      app.log.warn(
+        { serviceId: service.id, pids: portProbe.foreign },
+        'service startup reconciler found foreign listener on disabled service port',
+      );
+      return;
+    }
+    if (portProbe.owned.length === 0) return;
+
+    const stopped: number[] = [];
+    const failed: number[] = [];
+    for (const pid of portProbe.owned) {
+      try {
+        terminatePid(pid, 'SIGTERM');
+        stopped.push(pid);
+      } catch (error) {
+        if (hasErrorCode(error, 'ESRCH')) continue;
+        failed.push(pid);
+        app.log.warn({ err: error, serviceId: service.id, pid }, 'service startup reconciler terminate failed');
+      }
+    }
+    if (stopped.length > 0) {
+      appendServiceLog(service.id, `[startup-reconciler] stopped disabled orphan process(es): ${stopped.join(', ')}\n`);
+    }
+    await audit({
+      serviceId: service.id,
+      action: 'stop',
+      operator: STARTUP_RECONCILER_OPERATOR,
+      status: failed.length > 0 ? 'failed' : 'completed',
+      reason: 'disabled-startup-cleanup',
     });
+  }
+
+  async function reconcileServiceStartup(): Promise<void> {
+    const candidates = SERVICE_MANIFESTS.filter((service) => service.scripts?.start);
     if (candidates.length === 0) return;
 
-    app.log.info({ count: candidates.length }, 'service startup reconciler starting enabled services');
+    app.log.info({ count: candidates.length }, 'service startup reconciler checking service state');
     await Promise.all(
       candidates.map(async (service) => {
+        const cfg = serviceConfigStore.get(service.id);
+        if (cfg?.enabled === false) {
+          await stopDisabledOwnedService(service);
+          return;
+        }
+        if (!(cfg?.enabled && cfg.installed !== false)) return;
         const reply = createInternalReply();
         const result = await startService(service, STARTUP_RECONCILER_OPERATOR, reply);
         if ((reply.statusCode ?? 200) >= 400) {
@@ -508,7 +555,7 @@ export async function registerServiceLifecycleRoutes(
   if (options.lifecycle?.autoStartEnabled) {
     app.addHook('onReady', async () => {
       setImmediate(() => {
-        void autoStartEnabledServices().catch((error) => {
+        void reconcileServiceStartup().catch((error) => {
           app.log.warn({ err: error }, 'service startup reconciler failed');
         });
       });

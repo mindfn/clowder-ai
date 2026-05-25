@@ -515,6 +515,43 @@ describe('service lifecycle write routes', () => {
     }
   });
 
+  it('cleans up disabled owned service listeners on API startup', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const killed = [];
+    const resolvedScript = resolveServiceScriptPath('scripts/services/tts-server.sh');
+    const apiScript = resolvedScript.replace(/tts-server\.sh$/, 'tts-api.py');
+    const configs = new Map([['mlx-tts', { installed: true, enabled: false }]]);
+    const app = await buildApp({
+      lifecycle: {
+        autoStartEnabled: true,
+        serviceConfig: {
+          get: (id) => configs.get(id),
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        findPidsByPort: async (port) => (port === 9879 ? [5151] : []),
+        readProcessCommand: async () => `python3 ${apiScript} --model edge-tts --port 9879`,
+        killPid: (pid, signal) => {
+          killed.push({ pid, signal });
+        },
+      },
+    });
+    try {
+      for (let attempt = 0; attempt < 20 && killed.length === 0; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.deepEqual(killed, [{ pid: 5151, signal: 'SIGTERM' }]);
+      assert.deepEqual(configs.get('mlx-tts'), { installed: true, enabled: false });
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
   it('captures detached runner output after the early start response', async () => {
     const logDir = mkdtempSync(join(tmpdir(), 'service-log-'));
     const previousLogDir = process.env.LOG_DIR;
@@ -605,6 +642,36 @@ describe('service lifecycle write routes', () => {
       lifecycle: {
         findPidsByPort: async () => [5151],
         readProcessCommand: async () => `/bin/bash ${resolvedScript}`,
+        killPid: (pid, signal) => {
+          killed.push({ pid, signal });
+        },
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/stop',
+        headers: SESSION_HEADERS,
+      });
+
+      assert.equal(res.statusCode, 200, res.payload);
+      assert.deepEqual(killed, [{ pid: 5151, signal: 'SIGTERM' }]);
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('stops Python API processes launched by the service wrapper after an API restart', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const killed = [];
+    const resolvedScript = resolveServiceScriptPath('scripts/services/whisper-server.sh');
+    const apiScript = resolvedScript.replace(/whisper-server\.sh$/, 'whisper-api.py');
+    const app = await buildApp({
+      lifecycle: {
+        findPidsByPort: async () => [5151],
+        readProcessCommand: async () => `python3 ${apiScript} --model base --port 9876`,
         killPid: (pid, signal) => {
           killed.push({ pid, signal });
         },
@@ -985,6 +1052,20 @@ describe('service lifecycle write routes', () => {
     assert.equal(isServiceProcessCommand(`python worker.py --payload "${resolvedScript}"`, manifest), false);
     assert.equal(isServiceProcessCommand('python -m mlx.server --port 9879', manifest), false);
     assert.equal(isServiceProcessCommand('node unrelated-tts-helper.js', manifest), false);
+  });
+
+  it('matches service-owned Python API processes by exact runtime script identity', () => {
+    const manifest = {
+      id: 'mlx-tts',
+      scripts: { start: 'scripts/services/tts-server.sh' },
+    };
+    const resolvedScript = resolveServiceScriptPath('scripts/services/tts-server.sh');
+    const apiScript = resolvedScript.replace(/tts-server\.sh$/, 'tts-api.py');
+
+    assert.equal(isServiceProcessCommand(`python3 ${apiScript} --model edge-tts --port 9879`, manifest), true);
+    assert.equal(isServiceProcessCommand(`/opt/cat/venv/bin/python "${apiScript}" --port 9879`, manifest), true);
+    assert.equal(isServiceProcessCommand(`python worker.py --payload "${apiScript}"`, manifest), false);
+    assert.equal(isServiceProcessCommand('python /tmp/scripts/services/tts-api.py --port 9879', manifest), false);
   });
 
   it('matches Windows PowerShell service processes by exact script identity', () => {
