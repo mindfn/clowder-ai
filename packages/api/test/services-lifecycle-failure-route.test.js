@@ -251,6 +251,7 @@ describe('service lifecycle failure handling', () => {
           return { code: 0, output: 'started' };
         },
       },
+      fetchHealth: async () => ({ ok: true, status: 200, error: null }),
     });
     try {
       const res = await app.inject({

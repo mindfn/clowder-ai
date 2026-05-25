@@ -451,6 +451,103 @@ describe('service lifecycle write routes', () => {
     }
   });
 
+  it('rejects a detached start script that exits cleanly before the service is reachable', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map([
+      [
+        'whisper-stt',
+        {
+          installed: true,
+          enabled: false,
+          selectedModel: 'mlx-community/whisper-large-v3-turbo',
+        },
+      ],
+    ]);
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        findPidsByPort: async () => [],
+        readProcessCommand: async () => null,
+        runScript: async () => ({ code: 0, pid: 4401, output: '' }),
+      },
+      fetchHealth: async () => ({ ok: false, status: undefined, error: 'fetch failed' }),
+    });
+    try {
+      const startRes = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/start',
+        headers: SESSION_HEADERS,
+      });
+
+      assert.equal(startRes.statusCode, 502, startRes.payload);
+      assert.match(JSON.parse(startRes.payload).error, /exited before service became reachable/);
+      assert.equal(configs.get('whisper-stt').enabled, false);
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('restarts an owned listener when it is not service-healthy', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const resolvedScript = resolveServiceScriptPath('scripts/services/whisper-server.sh');
+    const configs = new Map([
+      [
+        'whisper-stt',
+        {
+          installed: true,
+          enabled: true,
+          selectedModel: 'mlx-community/whisper-large-v3-turbo',
+        },
+      ],
+    ]);
+    const killed = [];
+    let didRun = false;
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        findPidsByPort: async () => [5151],
+        readProcessCommand: async () => `bash ${resolvedScript}`,
+        killPid: (pid, signal) => killed.push({ pid, signal }),
+        runScript: async () => {
+          didRun = true;
+          return { code: null, pid: 4405, output: '' };
+        },
+      },
+      fetchHealth: async () => ({ ok: false, status: undefined, error: 'fetch failed' }),
+    });
+    try {
+      const startRes = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/start',
+        headers: SESSION_HEADERS,
+      });
+
+      assert.equal(startRes.statusCode, 200, startRes.payload);
+      assert.equal(didRun, true);
+      assert.deepEqual(killed, [{ pid: 5151, signal: 'SIGTERM' }]);
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
   it('auto-starts enabled installed services on API startup through the lifecycle runner', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';
@@ -828,6 +925,7 @@ describe('service lifecycle write routes', () => {
         },
         runScript: async (input) => {
           if (input.action === 'start') startEnv = input.env;
+          if (input.action === 'start') return { code: null, pid: 4402, output: '' };
           return { code: 0, output: 'ok' };
         },
         findPidsByPort: async () => [],
@@ -949,7 +1047,7 @@ describe('service lifecycle write routes', () => {
             return updated;
           },
         },
-        runScript: async () => ({ code: 0, output: 'ok' }),
+        runScript: async () => ({ code: null, pid: 4403, output: '' }),
         findPidsByPort: async () => [],
         readProcessCommand: async () => null,
       },
@@ -983,7 +1081,7 @@ describe('service lifecycle write routes', () => {
             return updated;
           },
         },
-        runScript: async () => ({ code: 0, output: 'ok' }),
+        runScript: async () => ({ code: null, pid: 4404, output: '' }),
         findPidsByPort: async () => [],
         readProcessCommand: async () => null,
       },

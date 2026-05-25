@@ -133,6 +133,22 @@ async function waitForServiceReadiness(input: {
   }
 }
 
+async function probeServiceReady(input: {
+  service: ServiceManifest;
+  env: NodeJS.ProcessEnv;
+  config: ServiceConfig | undefined;
+  fetchHealth: FetchServiceHealth;
+}): Promise<boolean> {
+  const endpoint = resolveServiceEndpoint(input.service, input.env, input.config);
+  if (!endpoint) return false;
+  try {
+    const health = await input.fetchHealth(resolveServiceHealthUrl(input.service, endpoint), input.service);
+    return health.ok;
+  } catch {
+    return false;
+  }
+}
+
 function hasErrorCode(error: unknown, code: string): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }
@@ -384,15 +400,55 @@ export async function registerServiceLifecycleRoutes(
       return { error: `Service port ${startProbeService.port} is already owned by another process` };
     }
     if (portProbe.owned.length > 0) {
-      serviceConfigStore.set(service.id, { installed: true, enabled: true });
-      await audit({
-        serviceId: service.id,
-        action: 'start',
-        operator,
-        status: 'completed',
-        reason: 'already-running',
+      const healthy = await probeServiceReady({
+        service,
+        env: lifecycleEnv,
+        config: startEffectiveCfg,
+        fetchHealth: healthProbe,
       });
-      return { ok: true, message: `${service.name} is already running`, pids: portProbe.owned };
+      if (healthy) {
+        serviceConfigStore.set(service.id, { installed: true, enabled: true });
+        await audit({
+          serviceId: service.id,
+          action: 'start',
+          operator,
+          status: 'completed',
+          reason: 'already-running',
+        });
+        return { ok: true, message: `${service.name} is already running`, pids: portProbe.owned };
+      }
+
+      const stopped: number[] = [];
+      const failed: number[] = [];
+      for (const pid of portProbe.owned) {
+        try {
+          terminatePid(pid, 'SIGTERM');
+          stopped.push(pid);
+        } catch (error) {
+          if (hasErrorCode(error, 'ESRCH')) continue;
+          failed.push(pid);
+          app.log.warn({ err: error, serviceId: service.id, pid }, 'service start stale-listener terminate failed');
+        }
+      }
+      if (failed.length > 0) {
+        reply.status(502);
+        await audit({
+          serviceId: service.id,
+          action: 'start',
+          operator,
+          status: 'failed',
+          reason: 'stale-listener-terminate-failed',
+        });
+        return {
+          ok: false,
+          error: `${service.name} restart failed for ${failed.length} stale process(es)`,
+          stopped,
+          failed,
+        };
+      }
+      if (stopped.length > 0) {
+        appendServiceLog(service.id, `[start] stopped unhealthy owned listener(s): ${stopped.join(', ')}\n`);
+      }
     }
 
     return withLock(
@@ -456,6 +512,29 @@ export async function registerServiceLifecycleRoutes(
           return {
             ok: false,
             error: result.runnerError ? 'start runner failed' : `start script failed (exit ${result.code})`,
+            output: result.output?.slice(-2000),
+          };
+        }
+        if (
+          typeof result.code === 'number' &&
+          !(await probeServiceReady({ service, env: startEnvResult.env, config: cfg, fetchHealth: healthProbe }))
+        ) {
+          reply.status(502);
+          appendServiceLog(
+            service.id,
+            `[start] script exited with code ${result.code} before service became reachable\n`,
+          );
+          await audit({
+            serviceId: service.id,
+            action: 'start',
+            operator,
+            status: 'failed',
+            code: result.code,
+            reason: 'exited-before-ready',
+          });
+          return {
+            ok: false,
+            error: `start script exited before service became reachable (exit ${result.code})`,
             output: result.output?.slice(-2000),
           };
         }
