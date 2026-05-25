@@ -437,7 +437,15 @@ function StarIcon({ filled }: { filled?: boolean }) {
   );
 }
 
-function ThreadActionMenuItem({ icon, onClick, children }: { icon: ReactNode; onClick: () => void; children: ReactNode }) {
+function ThreadActionMenuItem({
+  icon,
+  onClick,
+  children,
+}: {
+  icon: ReactNode;
+  onClick: () => void;
+  children: ReactNode;
+}) {
   return (
     <button
       type="button"
