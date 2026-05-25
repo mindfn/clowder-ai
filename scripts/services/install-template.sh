@@ -40,8 +40,11 @@
 #   MODEL_LOADER_ARM64="snapshot"    -- model loader strategy for arm64;
 #   MODEL_LOADER_OTHER="snapshot"      one of:
 #                                       "snapshot"        snapshot_download
-#                                       "faster_whisper"  WhisperModel
-#                                                         (faster_whisper)
+#                                       "faster_whisper"  snapshot_download
+#                                                         with faster-whisper
+#                                                         alias resolution,
+#                                                         then WhisperModel
+#                                                         runtime load
 #                                       "skip"            don't preload --
 #                                                         caller hook
 #                                                         handles it (tts
@@ -234,7 +237,16 @@ try:
 except Exception:
     pass
 from faster_whisper import WhisperModel
-from faster_whisper.utils import download_model
+from faster_whisper.utils import _MODELS
+from huggingface_hub import snapshot_download
+
+ALLOW_PATTERNS = [
+    'config.json',
+    'preprocessor_config.json',
+    'model.bin',
+    'tokenizer.json',
+    'vocabulary.*',
+]
 
 def run_with_heartbeat(label, fn):
     import queue
@@ -260,6 +272,15 @@ def run_with_heartbeat(label, fn):
         return value
     raise value
 
+def resolve_faster_whisper_repo_id(model_id):
+    if '/' in model_id:
+        return model_id
+    repo_id = _MODELS.get(model_id)
+    if repo_id is None:
+        expected = ', '.join(sorted(_MODELS.keys()))
+        raise ValueError(f\"Invalid faster-whisper model '{model_id}', expected one of: {expected}, or a HuggingFace repo id\")
+    return repo_id
+
 max_attempts = 3
 for attempt in range(1, max_attempts + 1):
     try:
@@ -268,7 +289,12 @@ for attempt in range(1, max_attempts + 1):
             model_path = model_id
             print(f'  Using local faster-whisper model path: {model_path}', file=sys.stderr)
         else:
-            model_path = run_with_heartbeat('faster-whisper model download', lambda: download_model(model_id))
+            repo_id = resolve_faster_whisper_repo_id(model_id)
+            print(f'  Resolved faster-whisper model repo: {repo_id}', file=sys.stderr)
+            model_path = run_with_heartbeat(
+                'faster-whisper snapshot download',
+                lambda: snapshot_download(repo_id, allow_patterns=ALLOW_PATTERNS),
+            )
             print(f'  Faster-whisper model artifacts ready: {model_path}', file=sys.stderr)
         run_with_heartbeat(
             'faster-whisper runtime load',

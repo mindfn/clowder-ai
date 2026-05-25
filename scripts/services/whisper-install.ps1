@@ -4,6 +4,7 @@
 .DESCRIPTION
   Creates ~/.cat-cafe/whisper-venv, installs faster-whisper (CTranslate2-based).
   Detects NVIDIA GPU for CUDA acceleration.
+  Keeps faster-whisper model aliases but downloads through snapshot_download.
 
   Env vars:
   - WHISPER_MODEL  (default: large-v3-turbo)

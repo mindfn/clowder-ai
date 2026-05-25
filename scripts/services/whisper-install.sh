@@ -11,9 +11,9 @@ VENV_NAME="whisper-venv"
 DISK_REQUIRED_GB=4
 MODEL_ENV_VAR="WHISPER_MODEL"
 # Darwin arm64 uses mlx-whisper (native, GPU-accelerated). Other
-# platforms use faster-whisper (CTranslate2, CPU int8). Loader differs
-# because faster-whisper materializes the model via WhisperModel() at
-# install time, not via snapshot_download.
+# platforms use faster-whisper (CTranslate2, CPU int8). The loader keeps
+# faster-whisper model aliases (for example "base") but downloads through
+# huggingface_hub.snapshot_download before validating with WhisperModel().
 PIP_DEPS_ARM64="mlx-whisper fastapi uvicorn python-multipart httpx[socks] huggingface_hub[hf_xet]"
 PIP_DEPS_OTHER="faster-whisper fastapi uvicorn python-multipart httpx[socks] huggingface_hub[hf_xet]"
 MODEL_LOADER_OTHER="faster_whisper"

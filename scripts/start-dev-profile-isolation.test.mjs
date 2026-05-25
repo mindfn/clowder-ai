@@ -536,19 +536,25 @@ describe('TTS sidecar startup guards', () => {
 });
 
 describe('Whisper sidecar startup guards', () => {
-  it('preloads faster-whisper model artifacts with heartbeat logs before runtime load', () => {
+  it('preloads faster-whisper model artifacts via snapshot_download before runtime load', () => {
     const installTemplate = readFileSync(resolve(ROOT, 'scripts/services/install-template.sh'), 'utf8');
     const prereqPs1 = readFileSync(resolve(ROOT, 'scripts/services/prereq-check.ps1'), 'utf8');
 
-    assert.match(installTemplate, /from faster_whisper\.utils import download_model/);
-    assert.match(installTemplate, /run_with_heartbeat\('faster-whisper model download'/);
+    assert.match(installTemplate, /from faster_whisper\.utils import _MODELS/);
+    assert.match(installTemplate, /from huggingface_hub import snapshot_download/);
+    assert.match(installTemplate, /'faster-whisper snapshot download'/);
+    assert.match(installTemplate, /snapshot_download\(repo_id,/);
     assert.match(installTemplate, /WhisperModel\(model_path,/);
     assert.doesNotMatch(installTemplate, /WhisperModel\(sys\.argv\[1\]/);
+    assert.doesNotMatch(installTemplate, /from faster_whisper\.utils import download_model/);
 
-    assert.match(prereqPs1, /from faster_whisper\.utils import download_model/);
-    assert.match(prereqPs1, /run_with_heartbeat\('faster-whisper model download'/);
+    assert.match(prereqPs1, /from faster_whisper\.utils import _MODELS/);
+    assert.match(prereqPs1, /from huggingface_hub import snapshot_download/);
+    assert.match(prereqPs1, /'faster-whisper snapshot download'/);
+    assert.match(prereqPs1, /snapshot_download\(repo_id,/);
     assert.match(prereqPs1, /WhisperModel\(model_path,/);
     assert.doesNotMatch(prereqPs1, /WhisperModel\(sys\.argv\[1\]/);
+    assert.doesNotMatch(prereqPs1, /from faster_whisper\.utils import download_model/);
   });
 
   it('normalizes socks proxy env before HuggingFace runtime loads', () => {
