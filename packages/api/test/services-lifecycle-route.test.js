@@ -1165,6 +1165,38 @@ describe('service lifecycle write routes', () => {
     assert.equal(calls[1].command, 'powershell.exe');
   });
 
+  it('falls back to netstat when the Windows PowerShell port probe is unavailable', async () => {
+    const calls = [];
+    const fakeExecFile = (command, args, _options, callback) => {
+      calls.push({ command, args });
+      const commandText = args.join(' ');
+      if (commandText.includes('Get-NetTCPConnection')) {
+        callback(new Error('Get-NetTCPConnection failed'), '', '');
+      } else if (command === 'netstat.exe') {
+        callback(
+          null,
+          [
+            '  Proto  Local Address          Foreign Address        State           PID',
+            '  TCP    0.0.0.0:9876           0.0.0.0:0              LISTENING       111',
+            '  TCP    [::]:9876              [::]:0                 LISTENING       222',
+            '  TCP    127.0.0.1:19876        0.0.0.0:0              LISTENING       333',
+            '  TCP    127.0.0.1:9876         127.0.0.1:50000        ESTABLISHED     444',
+          ].join('\r\n'),
+          '',
+        );
+      } else {
+        callback(new Error(`unexpected command: ${command} ${args.join(' ')}`), '', '');
+      }
+      return { on: () => {} };
+    };
+
+    const pids = await findPidsByPort(9876, { platform: 'win32', execFile: fakeExecFile });
+
+    assert.deepEqual(pids, [111, 222]);
+    assert.equal(calls[0].command, 'powershell.exe');
+    assert.equal(calls[1].command, 'netstat.exe');
+  });
+
   it('matches service processes by exact script identity only', () => {
     const manifest = {
       id: 'mlx-tts',

@@ -165,6 +165,51 @@ function parsePidLines(stdout: string): number[] {
     .filter((pid) => Number.isFinite(pid) && pid > 0 && pid !== currentPid);
 }
 
+function parseNetstatPids(stdout: string, port: number): number[] {
+  const currentPid = process.pid;
+  const pids = new Set<number>();
+  for (const rawLine of stdout.split(/\r?\n/)) {
+    const columns = rawLine.trim().split(/\s+/);
+    if (columns.length < 5 || columns[0]?.toUpperCase() !== 'TCP') continue;
+    const [, localAddress, , state, pidValue] = columns;
+    const portMatch = localAddress?.match(/:(\d+)$/);
+    if (!portMatch || Number(portMatch[1]) !== port) continue;
+    if (state?.toUpperCase() !== 'LISTENING') continue;
+    const pid = Number(pidValue);
+    if (Number.isFinite(pid) && pid > 0 && pid !== currentPid) pids.add(pid);
+  }
+  return [...pids];
+}
+
+function execProbeCommand(
+  execFileImpl: ExecFileLike,
+  file: string,
+  args: string[],
+  options: { timeout: number; windowsHide?: boolean },
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolveProbe, rejectProbe) => {
+    let settled = false;
+    const settle = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      callback();
+    };
+    const child = execFileImpl(file, args, options, (error, stdout, stderr) => {
+      settle(() => {
+        if (error) {
+          const suffix = stderr.trim().length > 0 ? `: ${stderr.trim()}` : '';
+          rejectProbe(new Error(`${error.message}${suffix}`));
+          return;
+        }
+        resolveProbe({ stdout, stderr });
+      });
+    });
+    child.on('error', (error) => {
+      settle(() => rejectProbe(error));
+    });
+  });
+}
+
 export async function readProcessCommand(pid: number, options: ProbeOptions = {}): Promise<string | null> {
   const platform = options.platform ?? process.platform;
   const execFileImpl = options.execFile ?? (execFile as ExecFileLike);
@@ -207,26 +252,34 @@ export async function findPidsByPort(port: number, options: ProbeOptions = {}): 
   const platform = options.platform ?? process.platform;
   const execFileImpl = options.execFile ?? (execFile as ExecFileLike);
   if (platform === 'win32') {
-    return new Promise((resolvePids, rejectPids) => {
-      const script = [
-        `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue`,
-        'Select-Object -ExpandProperty OwningProcess',
-        'Sort-Object -Unique',
-      ].join(' | ');
-      const child = execFileImpl(
+    const script = [
+      `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue`,
+      'Select-Object -ExpandProperty OwningProcess',
+      'Sort-Object -Unique',
+    ].join(' | ');
+    try {
+      const { stdout } = await execProbeCommand(
+        execFileImpl,
         'powershell.exe',
         ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
         { timeout: 3000, windowsHide: true },
-        (error, stdout, stderr) => {
-          if (error) {
-            rejectPids(new Error(`PowerShell port probe failed for TCP:${port}: ${stderr.trim()}`));
-            return;
-          }
-          resolvePids(parsePidLines(stdout));
-        },
       );
-      child.on('error', (error) => rejectPids(error));
-    });
+      return parsePidLines(stdout);
+    } catch (powershellError) {
+      try {
+        const { stdout } = await execProbeCommand(execFileImpl, 'netstat.exe', ['-ano', '-p', 'tcp'], {
+          timeout: 3000,
+          windowsHide: true,
+        });
+        return parseNetstatPids(stdout, port);
+      } catch (netstatError) {
+        throw new Error(
+          `Windows port probe failed for TCP:${port}: PowerShell=${(powershellError as Error).message}; netstat=${
+            (netstatError as Error).message
+          }`,
+        );
+      }
+    }
   }
   return new Promise((resolvePids, rejectPids) => {
     const child = execFileImpl(
