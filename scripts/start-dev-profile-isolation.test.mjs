@@ -449,6 +449,27 @@ describe('cross-platform pnpm-start profile propagation (#421)', () => {
     assert.ok(ps1.includes('Start-Job'), 'start-windows.ps1 must use Start-Job (which inherits parent process env)');
   });
 
+  it('start-windows.ps1 passes explicit service lifecycle flags into the API job', () => {
+    const ps1 = readFileSync(resolve(ROOT, 'scripts/start-windows.ps1'), 'utf8');
+    const overridesMatch = ps1.match(/\$runtimeEnvOverrides\s*=\s*@\{([^}]+)\}/s);
+    assert.ok(overridesMatch, 'start-windows.ps1 must define $runtimeEnvOverrides');
+    const overridesBlock = overridesMatch[1];
+
+    for (const flag of [
+      'CAT_CAFE_SERVICE_ASR_ENABLED',
+      'CAT_CAFE_SERVICE_TTS_ENABLED',
+      'CAT_CAFE_SERVICE_LLM_POSTPROCESS_ENABLED',
+      'CAT_CAFE_SERVICE_EMBED_ENABLED',
+      'CAT_CAFE_SERVICE_AUDIO_ENABLED',
+    ]) {
+      assert.match(
+        overridesBlock,
+        new RegExp(`${flag}\\s*=\\s*\\$env:${flag}`),
+        `runtimeEnvOverrides must pass ${flag} into the API job`,
+      );
+    }
+  });
+
   it('start-windows.ps1 assigns NODE_ENV inside the API Start-Job', () => {
     const ps1 = readFileSync(resolve(ROOT, 'scripts/start-windows.ps1'), 'utf8');
     const jobBlocks = ps1.match(/Start-Job[\s\S]*?-ScriptBlock\s*\{([\s\S]*?)\}\s*-ArgumentList/g);
@@ -532,6 +553,7 @@ describe('Whisper sidecar startup guards', () => {
 
   it('normalizes socks proxy env before HuggingFace runtime loads', () => {
     const helperPath = resolve(ROOT, 'scripts/services/proxy-env.sh');
+    const helperPs1Path = resolve(ROOT, 'scripts/services/proxy-env.ps1');
     const huggingFaceServiceScripts = [
       'scripts/services/whisper-server.sh',
       'scripts/services/embed-server.sh',
@@ -563,6 +585,22 @@ describe('Whisper sidecar startup guards', () => {
     for (const relativePath of huggingFaceServiceScripts) {
       const script = readFileSync(resolve(ROOT, relativePath), 'utf8');
       assert.match(script, /normalize_socks_proxy_env/, `${relativePath} must normalize inherited proxy env`);
+    }
+
+    const helperPs1 = readFileSync(helperPs1Path, 'utf8');
+    assert.match(helperPs1, /function\s+Normalize-SocksProxyEnv/);
+    assert.match(helperPs1, /socks:\/\/\*/);
+    assert.match(helperPs1, /socks5:\/\//);
+
+    for (const relativePath of [
+      'scripts/services/whisper-server.ps1',
+      'scripts/services/embed-server.ps1',
+      'scripts/services/llm-postprocess-server.ps1',
+      'scripts/services/tts-server.ps1',
+    ]) {
+      const script = readFileSync(resolve(ROOT, relativePath), 'utf8');
+      assert.match(script, /proxy-env\.ps1/, `${relativePath} must load PowerShell proxy normalization`);
+      assert.match(script, /Normalize-SocksProxyEnv/, `${relativePath} must normalize inherited proxy env`);
     }
   });
 });

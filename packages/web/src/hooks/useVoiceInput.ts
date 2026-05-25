@@ -4,8 +4,23 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { useVoiceSettingsStore } from '@/stores/voiceSettingsStore';
 import { correctTranscription, mergeTermEntries, type TermEntry } from '@/utils/transcription-corrector';
 
-const WHISPER_URL = process.env.NEXT_PUBLIC_WHISPER_URL || 'http://localhost:9876';
-const LLM_POSTPROCESS_URL = process.env.NEXT_PUBLIC_LLM_POSTPROCESS_URL || 'http://localhost:9878';
+function normalizeLoopbackUrl(endpoint: string): string {
+  try {
+    const url = new URL(endpoint);
+    if (url.hostname !== 'localhost') return endpoint;
+    const hadTrailingSlash = endpoint.endsWith('/');
+    url.hostname = '127.0.0.1';
+    const serialized = url.toString();
+    return !hadTrailingSlash && url.pathname === '/' ? serialized.replace(/\/$/, '') : serialized;
+  } catch {
+    return endpoint;
+  }
+}
+
+const WHISPER_URL = normalizeLoopbackUrl(process.env.NEXT_PUBLIC_WHISPER_URL || 'http://127.0.0.1:9876');
+const LLM_POSTPROCESS_URL = normalizeLoopbackUrl(
+  process.env.NEXT_PUBLIC_LLM_POSTPROCESS_URL || 'http://127.0.0.1:9878',
+);
 
 const DEFAULT_PROMPT =
   '这是 Clowder AI 猫猫协作项目的对话。宪宪是布偶猫（Claude Opus），砚砚是缅因猫（Codex）。' +

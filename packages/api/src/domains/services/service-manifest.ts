@@ -1,4 +1,5 @@
 import { maskUrlCredentials } from '../../config/env-registry.js';
+import { normalizeLoopbackUrl } from './loopback-url.js';
 import { getServiceConfig } from './service-config.js';
 
 export type ServiceLifecycleStateAction = 'install' | 'start' | 'stop' | 'uninstall' | 'toggle';
@@ -337,20 +338,6 @@ function replaceEndpointPort(endpoint: string | null, port: number): string | nu
   }
 }
 
-function normalizeLoopbackEndpointHost(endpoint: string | null): string | null {
-  if (!endpoint) return null;
-  try {
-    const url = new URL(endpoint);
-    if (url.hostname !== 'localhost') return endpoint;
-    const hadTrailingSlash = endpoint.endsWith('/');
-    url.hostname = '127.0.0.1';
-    const serialized = url.toString();
-    return !hadTrailingSlash && url.pathname === '/' ? serialized.replace(/\/$/, '') : serialized;
-  } catch {
-    return endpoint;
-  }
-}
-
 export function resolveServiceEndpoint(
   service: ServiceManifest,
   env: NodeJS.ProcessEnv = process.env,
@@ -358,7 +345,7 @@ export function resolveServiceEndpoint(
 ): string | null {
   for (const key of service.endpointEnvVars) {
     const value = env[key]?.trim();
-    if (value) return normalizeLoopbackEndpointHost(value);
+    if (value) return normalizeLoopbackUrl(value);
   }
   // Persisted user-chosen port (from install modal) takes precedence over
   // static env port overrides, while explicit URL envs above remain highest
@@ -374,9 +361,10 @@ export function resolveServiceEndpoint(
     if (service.portFallback) {
       return `${service.portFallback.host.replace(/\/+$/, '')}:${effectivePort}`;
     }
-    return normalizeLoopbackEndpointHost(replaceEndpointPort(service.defaultEndpoint, effectivePort));
+    const endpoint = replaceEndpointPort(service.defaultEndpoint, effectivePort);
+    return endpoint ? normalizeLoopbackUrl(endpoint) : null;
   }
-  return normalizeLoopbackEndpointHost(service.defaultEndpoint);
+  return service.defaultEndpoint ? normalizeLoopbackUrl(service.defaultEndpoint) : null;
 }
 
 function buildClientServiceManifest(service: ServiceManifest) {

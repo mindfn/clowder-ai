@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ISttProvider, SttTranscribeRequest, SttTranscribeResult } from '@cat-cafe/shared';
+import { normalizeLoopbackUrl } from '../../../domains/services/loopback-url.js';
 
 export interface WhisperSttProviderOptions {
   baseUrl?: string;
@@ -16,7 +17,7 @@ export class WhisperSttProvider implements ISttProvider {
   private readonly fetchFn: typeof fetch;
 
   constructor(opts?: WhisperSttProviderOptions) {
-    this.baseUrl = opts?.baseUrl ?? process.env.WHISPER_URL ?? 'http://localhost:9876';
+    this.baseUrl = normalizeLoopbackUrl(opts?.baseUrl ?? process.env.WHISPER_URL ?? 'http://127.0.0.1:9876');
     this.model = opts?.model ?? 'whisper-large-v3';
     this.fetchFn = opts?._fetchFn ?? fetch;
   }

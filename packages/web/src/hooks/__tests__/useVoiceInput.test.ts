@@ -330,7 +330,7 @@ describe('useVoiceInput', () => {
     });
 
     const [url, opts] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(url).toContain('/v1/audio/transcriptions');
+    expect(url).toBe('http://127.0.0.1:9876/v1/audio/transcriptions');
     expect(opts.method).toBe('POST');
     expect(opts.body).toBeInstanceOf(FormData);
     expect((opts.body as FormData).get('language')).toBe('zh');

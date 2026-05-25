@@ -40,6 +40,19 @@ describe('MlxAudioTtsProvider', () => {
     assert.strictEqual(capturedBody.lang_code, 'en');
   });
 
+  it('canonicalizes localhost baseUrl to IPv4 loopback before requesting TTS', async () => {
+    let capturedUrl;
+    globalThis.fetch = async (url) => {
+      capturedUrl = url;
+      return new Response(new Uint8Array([1]), { status: 200 });
+    };
+
+    const p = new MlxAudioTtsProvider({ baseUrl: 'http://localhost:9879' });
+    await p.synthesize({ text: 'hello', voice: 'vm_test' });
+
+    assert.strictEqual(capturedUrl, 'http://127.0.0.1:9879/v1/audio/speech');
+  });
+
   it('returns Uint8Array audio with correct metadata', async () => {
     const audioBytes = new Uint8Array([0, 1, 2, 3, 4]);
     globalThis.fetch = async () => new Response(audioBytes, { status: 200 });

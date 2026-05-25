@@ -33,7 +33,7 @@ describe('WhisperSttProvider', () => {
     assert.equal(mockFetch.mock.calls.length, 1);
 
     const [url, opts] = mockFetch.mock.calls[0].arguments;
-    assert.equal(url, 'http://localhost:9876/v1/audio/transcriptions');
+    assert.equal(url, 'http://127.0.0.1:9876/v1/audio/transcriptions');
     assert.equal(opts.method, 'POST');
 
     await rm(tempDir, { recursive: true });

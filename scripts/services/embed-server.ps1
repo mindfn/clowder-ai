@@ -30,6 +30,9 @@ $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
+. (Join-Path $PSScriptRoot "proxy-env.ps1")
+Normalize-SocksProxyEnv
+
 # Server scripts are spawned by the API without sourcing
 # python-resolve.ps1, so $env:CAT_CAFE_HOME may not be set. Mirror the
 # resolver's default (caller env override -> <repoRoot>/.cat-cafe) so
