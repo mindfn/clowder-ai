@@ -474,105 +474,112 @@ export async function registerServiceLifecycleRoutes(
       reply.status(400);
       return { error: `Service "${service.id}" has no start script` };
     }
-    // Probe the EFFECTIVE port: cfg.port if user installed on a custom
-    // port, otherwise the manifest default. Without this, /start could
-    // reject because the manifest's default port is busy (irrelevant —
-    // we're not going to use it) or miss the actual port the script will
-    // bind to (cfg.port). Codex P1 3268801298.
-    const startEffectiveCfg = getEffectiveConfig(service);
-    const startProbeService = { ...service, port: startEffectiveCfg?.port ?? service.port };
-    const portProbe = await partitionServicePids(startProbeService);
-    if (!portProbe.ok) {
-      reply.status(503);
-      await audit({ serviceId: service.id, action: 'start', operator, status: 'rejected', reason: portProbe.reason });
-      return servicePortProbeUnavailableError(startProbeService.port);
-    }
-    if (portProbe.foreign.length > 0) {
-      reply.status(409);
-      await audit({
-        serviceId: service.id,
-        action: 'start',
-        operator,
-        status: 'rejected',
-        reason: 'foreign-port-owner',
-      });
-      return { error: `Service port ${startProbeService.port} is already owned by another process` };
-    }
-    if (portProbe.owned.length > 0) {
-      const healthy = await probeServiceReady({
-        service,
-        env: lifecycleEnv,
-        config: startEffectiveCfg,
-        fetchHealth: healthProbe,
-      });
-      if (healthy) {
-        serviceConfigStore.set(service.id, { installed: true, enabled: true });
-        await audit({
-          serviceId: service.id,
-          action: 'start',
-          operator,
-          status: 'completed',
-          reason: 'already-running',
-        });
-        return { ok: true, message: `${service.name} is already running`, pids: portProbe.owned };
-      }
-
-      const stopped: number[] = [];
-      const failed: number[] = [];
-      for (const pid of portProbe.owned) {
-        try {
-          terminatePid(pid, 'SIGTERM');
-          stopped.push(pid);
-        } catch (error) {
-          if (hasErrorCode(error, 'ESRCH')) continue;
-          failed.push(pid);
-          app.log.warn({ err: error, serviceId: service.id, pid }, 'service start stale-listener terminate failed');
-        }
-      }
-      if (failed.length > 0) {
-        reply.status(502);
-        await audit({
-          serviceId: service.id,
-          action: 'start',
-          operator,
-          status: 'failed',
-          reason: 'stale-listener-terminate-failed',
-        });
-        return {
-          ok: false,
-          error: `${service.name} restart failed for ${failed.length} stale process(es)`,
-          stopped,
-          failed,
-        };
-      }
-      if (stopped.length > 0) {
-        appendServiceLog(service.id, `[start] stopped unhealthy owned listener(s): ${stopped.join(', ')}\n`);
-        const clear = await waitForOwnedServicePortToClear(startProbeService);
-        if (!clear.ok) {
-          const statusCode =
-            clear.reason === 'port-probe-unavailable' ? 503 : clear.reason === 'foreign-port-owner' ? 409 : 502;
-          reply.status(statusCode);
-          await audit({
-            serviceId: service.id,
-            action: 'start',
-            operator,
-            status: 'failed',
-            reason: clear.reason,
-          });
-          return {
-            ok: false,
-            error: `${service.name} restart failed while waiting for stale listener to exit`,
-            stopped,
-            remaining: clear.pids ?? [],
-          };
-        }
-      }
-    }
 
     return withLock(
       service.id,
       reply,
       async () => {
+        // Probe the EFFECTIVE port: cfg.port if user installed on a custom
+        // port, otherwise the manifest default. Without this, /start could
+        // reject because the manifest's default port is busy (irrelevant —
+        // we're not going to use it) or miss the actual port the script will
+        // bind to (cfg.port). Codex P1 3268801298.
+        const startEffectiveCfg = getEffectiveConfig(service);
+        const startProbeService = { ...service, port: startEffectiveCfg?.port ?? service.port };
+        const portProbe = await partitionServicePids(startProbeService);
+        if (!portProbe.ok) {
+          reply.status(503);
+          await audit({
+            serviceId: service.id,
+            action: 'start',
+            operator,
+            status: 'rejected',
+            reason: portProbe.reason,
+          });
+          return servicePortProbeUnavailableError(startProbeService.port);
+        }
+        if (portProbe.foreign.length > 0) {
+          reply.status(409);
+          await audit({
+            serviceId: service.id,
+            action: 'start',
+            operator,
+            status: 'rejected',
+            reason: 'foreign-port-owner',
+          });
+          return { error: `Service port ${startProbeService.port} is already owned by another process` };
+        }
+        if (portProbe.owned.length > 0) {
+          const healthy = await probeServiceReady({
+            service,
+            env: lifecycleEnv,
+            config: startEffectiveCfg,
+            fetchHealth: healthProbe,
+          });
+          if (healthy) {
+            serviceConfigStore.set(service.id, { installed: true, enabled: true });
+            await audit({
+              serviceId: service.id,
+              action: 'start',
+              operator,
+              status: 'completed',
+              reason: 'already-running',
+            });
+            return { ok: true, message: `${service.name} is already running`, pids: portProbe.owned };
+          }
+
+          const stopped: number[] = [];
+          const failed: number[] = [];
+          for (const pid of portProbe.owned) {
+            try {
+              terminatePid(pid, 'SIGTERM');
+              stopped.push(pid);
+            } catch (error) {
+              if (hasErrorCode(error, 'ESRCH')) continue;
+              failed.push(pid);
+              app.log.warn({ err: error, serviceId: service.id, pid }, 'service start stale-listener terminate failed');
+            }
+          }
+          if (failed.length > 0) {
+            reply.status(502);
+            await audit({
+              serviceId: service.id,
+              action: 'start',
+              operator,
+              status: 'failed',
+              reason: 'stale-listener-terminate-failed',
+            });
+            return {
+              ok: false,
+              error: `${service.name} restart failed for ${failed.length} stale process(es)`,
+              stopped,
+              failed,
+            };
+          }
+          if (stopped.length > 0) {
+            appendServiceLog(service.id, `[start] stopped unhealthy owned listener(s): ${stopped.join(', ')}\n`);
+            const clear = await waitForOwnedServicePortToClear(startProbeService);
+            if (!clear.ok) {
+              const statusCode =
+                clear.reason === 'port-probe-unavailable' ? 503 : clear.reason === 'foreign-port-owner' ? 409 : 502;
+              reply.status(statusCode);
+              await audit({
+                serviceId: service.id,
+                action: 'start',
+                operator,
+                status: 'failed',
+                reason: clear.reason,
+              });
+              return {
+                ok: false,
+                error: `${service.name} restart failed while waiting for stale listener to exit`,
+                stopped,
+                remaining: clear.pids ?? [],
+              };
+            }
+          }
+        }
+
         const scriptPath = resolveServiceScriptPath(startScript);
         if (!options.lifecycle?.runScript && !existsSync(scriptPath)) {
           reply.status(400);

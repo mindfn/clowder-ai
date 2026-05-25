@@ -366,6 +366,57 @@ describe('service lifecycle failure handling', () => {
     }
   });
 
+  it('does not terminate stale listeners when start cannot acquire the lifecycle lock', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    let releaseInstall;
+    let installStarted = false;
+    const killed = [];
+    const resolvedScript = resolveServiceScriptPath('scripts/services/whisper-server.sh');
+    const app = await buildApp({
+      lifecycle: {
+        findPidsByPort: async () => [5151],
+        readProcessCommand: async () => `/bin/bash ${resolvedScript}`,
+        killPid: (pid, signal) => {
+          killed.push({ pid, signal });
+        },
+        runScript: async ({ action }) => {
+          if (action === 'install') {
+            installStarted = true;
+            return new Promise((resolve) => {
+              releaseInstall = () => resolve({ code: 0, output: 'installed' });
+            });
+          }
+          return { code: null, pid: 7001 };
+        },
+      },
+    });
+    try {
+      const install = app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/install',
+        headers: SESSION_HEADERS,
+        payload: { model: 'base' },
+      });
+      while (!installStarted) await new Promise((resolve) => setImmediate(resolve));
+
+      const start = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/start',
+        headers: SESSION_HEADERS,
+      });
+
+      assert.equal(start.statusCode, 409, start.payload);
+      assert.deepEqual(killed, []);
+      releaseInstall();
+      assert.equal((await install).statusCode, 200);
+    } finally {
+      releaseInstall?.();
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
   it('surfaces stop failures when signaling an owned process fails', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';
