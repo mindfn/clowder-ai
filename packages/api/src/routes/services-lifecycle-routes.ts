@@ -16,6 +16,7 @@ import {
   type FetchServiceHealth,
   fetchServiceHealth,
   getServiceManifest,
+  resolveEffectiveServiceConfig,
   resolveServiceEndpoint,
   resolveServiceHealthUrl,
   SERVICE_MANIFESTS,
@@ -37,7 +38,11 @@ import {
   runWithTimeout,
 } from './services-lifecycle-helpers.js';
 import { createServiceLifecycleLock, holdLifecycleLockUntil, holdStartupGrace } from './services-lifecycle-lock.js';
-import { createServicePortPartitioner, servicePortProbeUnavailableError } from './services-lifecycle-port.js';
+import {
+  createServicePortPartitioner,
+  resolveSuggestedServicePort,
+  servicePortProbeUnavailableError,
+} from './services-lifecycle-port.js';
 
 export interface ServiceLifecycleRouteOptions {
   runScript?: ServiceLifecycleRunner;
@@ -153,6 +158,10 @@ export async function registerServiceLifecycleRoutes(
     get: options.lifecycle?.serviceConfig?.get ?? getServiceConfig,
     set: options.lifecycle?.serviceConfig?.set ?? setServiceConfig,
   };
+  const lifecycleEnv = options.env ?? process.env;
+  const getEffectiveConfig = (service: ServiceManifest) => {
+    return resolveEffectiveServiceConfig(service, serviceConfigStore.get(service.id), lifecycleEnv);
+  };
   const auditLog = options.lifecycle?.auditLog ?? getEventAuditLog();
   const { withLock } = lifecycleLock;
   const partitionServicePids = createServicePortPartitioner({
@@ -241,12 +250,15 @@ export async function registerServiceLifecycleRoutes(
       const installScript = service.scripts?.install;
       if (!installScript) return { ok: true, message: `${service.name} has no install script` };
 
-      const envResult = buildLifecycleEnv(
-        options.env ?? process.env,
-        service.id,
-        request.body?.model,
-        request.body?.port,
-      );
+      const installPort =
+        request.body?.port ??
+        (await resolveSuggestedServicePort({
+          service,
+          config: getEffectiveConfig(service),
+          env: lifecycleEnv,
+          lookupPidsByPort,
+        }));
+      const envResult = buildLifecycleEnv(lifecycleEnv, service.id, request.body?.model, installPort);
       if (!envResult.ok) {
         reply.status(400);
         return { error: envResult.error };
@@ -265,8 +277,8 @@ export async function registerServiceLifecycleRoutes(
       if (typeof request.body?.model === 'string' && request.body.model.length > 0) {
         persistPatch.selectedModel = request.body.model;
       }
-      if (typeof request.body?.port === 'number') {
-        persistPatch.port = request.body.port;
+      if (typeof installPort === 'number') {
+        persistPatch.port = installPort;
       }
       if (persistPatch.selectedModel !== undefined || persistPatch.port !== undefined) {
         serviceConfigStore.set(service.id, persistPatch);
@@ -320,14 +332,9 @@ export async function registerServiceLifecycleRoutes(
         // scripts that probe the install-time venv can find it (codex P1
         // 3265033601 / 3268690489). Fall back to bare env if persisted
         // config is invalid (uninstall should be tolerant of stale state).
-        const cfg = getServiceConfig(service.id);
-        const uninstallEnvResult = buildLifecycleEnv(
-          options.env ?? process.env,
-          service.id,
-          cfg?.selectedModel,
-          cfg?.port,
-        );
-        const uninstallEnv = uninstallEnvResult.ok ? uninstallEnvResult.env : { ...(options.env ?? process.env) };
+        const cfg = getEffectiveConfig(service);
+        const uninstallEnvResult = buildLifecycleEnv(lifecycleEnv, service.id, cfg?.selectedModel, cfg?.port);
+        const uninstallEnv = uninstallEnvResult.ok ? uninstallEnvResult.env : { ...lifecycleEnv };
         const result = await runForeground({
           serviceId: service.id,
           action: 'uninstall',
@@ -357,7 +364,7 @@ export async function registerServiceLifecycleRoutes(
     // reject because the manifest's default port is busy (irrelevant —
     // we're not going to use it) or miss the actual port the script will
     // bind to (cfg.port). Codex P1 3268801298.
-    const startEffectiveCfg = serviceConfigStore.get(service.id);
+    const startEffectiveCfg = getEffectiveConfig(service);
     const startProbeService = { ...service, port: startEffectiveCfg?.port ?? service.port };
     const portProbe = await partitionServicePids(startProbeService);
     if (!portProbe.ok) {
@@ -406,8 +413,8 @@ export async function registerServiceLifecycleRoutes(
         // 3265033601 / 3268690489. (Supersedes upstream's inline
         // model-only injection — buildLifecycleEnv handles model + port +
         // strict validation in one call.)
-        const cfg = serviceConfigStore.get(service.id);
-        const startEnvResult = buildLifecycleEnv(options.env ?? process.env, service.id, cfg?.selectedModel, cfg?.port);
+        const cfg = getEffectiveConfig(service);
+        const startEnvResult = buildLifecycleEnv(lifecycleEnv, service.id, cfg?.selectedModel, cfg?.port);
         if (!startEnvResult.ok) {
           reply.status(500);
           await audit({
@@ -459,7 +466,10 @@ export async function registerServiceLifecycleRoutes(
         const readiness = waitForServiceReadiness({
           service,
           env: startEnvResult.env,
-          getConfig: (id) => serviceConfigStore.get(id),
+          getConfig: (id) => {
+            const target = getServiceManifest(id);
+            return target ? getEffectiveConfig(target) : serviceConfigStore.get(id);
+          },
           fetchHealth: healthProbe,
           timeoutMs: startupReadinessTimeoutMs,
           intervalMs: startupProbeIntervalMs,
@@ -484,7 +494,7 @@ export async function registerServiceLifecycleRoutes(
   });
 
   async function stopDisabledOwnedService(service: ServiceManifest): Promise<void> {
-    const cfg = serviceConfigStore.get(service.id);
+    const cfg = getEffectiveConfig(service);
     const probeService = { ...service, port: cfg?.port ?? service.port };
     const portProbe = await partitionServicePids(probeService);
     if (!portProbe.ok) {
@@ -534,7 +544,7 @@ export async function registerServiceLifecycleRoutes(
     app.log.info({ count: candidates.length }, 'service startup reconciler checking service state');
     await Promise.all(
       candidates.map(async (service) => {
-        const cfg = serviceConfigStore.get(service.id);
+        const cfg = getEffectiveConfig(service);
         if (cfg?.enabled === false) {
           await stopDisabledOwnedService(service);
           return;
@@ -577,7 +587,7 @@ export async function registerServiceLifecycleRoutes(
         // Probe the EFFECTIVE port (cfg.port ?? service.port) so /stop
         // finds the actually-listening sidecar after a custom-port
         // install (codex P1 3268801298).
-        const stopEffectiveCfg = getServiceConfig(service.id);
+        const stopEffectiveCfg = getEffectiveConfig(service);
         const stopProbeService = { ...service, port: stopEffectiveCfg?.port ?? service.port };
         const portProbe = await partitionServicePids(stopProbeService);
         if (!portProbe.ok) {

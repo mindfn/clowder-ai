@@ -5,15 +5,17 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { getEnvironmentProfile } from '../domains/services/environment-detector.js';
 import { buildRecommendation } from '../domains/services/recommendation-matrix.js';
 import { getServiceConfig } from '../domains/services/service-config.js';
+import { findPidsByPort } from '../domains/services/service-lifecycle.js';
 import {
   type FetchServiceHealth,
   getServiceManifest,
-  PORT_ENV_VARS,
+  resolveEffectiveServiceConfig,
   resolveServiceEndpointMap,
   resolveServiceState,
   resolveServiceStates,
 } from '../domains/services/service-manifest.js';
 import { createServiceLifecycleLock } from './services-lifecycle-lock.js';
+import { resolveSuggestedServicePort } from './services-lifecycle-port.js';
 import { registerServiceLifecycleRoutes, type ServiceLifecycleRouteOptions } from './services-lifecycle-routes.js';
 
 export interface ServicesRouteOptions {
@@ -37,14 +39,21 @@ function requireIdentity(request: FastifyRequest, reply: FastifyReply): boolean 
 
 export const servicesRoutes: FastifyPluginAsync<ServicesRouteOptions> = async (app, options) => {
   const getConfig = options.lifecycle?.serviceConfig?.get ?? getServiceConfig;
+  const lookupPidsByPort = options.lifecycle?.findPidsByPort ?? findPidsByPort;
   const lifecycleLock = createServiceLifecycleLock();
+  const getEffectiveConfig = (service: NonNullable<ReturnType<typeof getServiceManifest>>) => {
+    return resolveEffectiveServiceConfig(service, getConfig(service.id), options.env ?? process.env);
+  };
 
   app.get('/api/services', async (request, reply) => {
     if (!requireIdentity(request, reply)) return { error: 'Authentication required' };
     const services = await resolveServiceStates({
       env: options.env,
       fetchHealth: options.fetchHealth,
-      getConfig,
+      getConfig: (id) => {
+        const service = getServiceManifest(id);
+        return service ? getEffectiveConfig(service) : getConfig(id);
+      },
       getLifecycleAction: lifecycleLock.getActiveAction,
     });
     return { services };
@@ -91,25 +100,16 @@ export const servicesRoutes: FastifyPluginAsync<ServicesRouteOptions> = async (a
     const profile = getEnvironmentProfile(true);
     const recommendation = buildRecommendation(id, profile);
 
-    // Suggest a port for the modal to pre-fill. Priority chain:
-    //   1. services.json cfg.port  — persisted user intent from prior install
-    //   2. PORT_ENV_VARS[id] env  — operator's static .env override
-    //   3. undefined              — let modal show "auto" (server allocates default)
-    // Codex P2 3268623657 — modal reads `suggestedPort` to prefill; without
-    // it, users defaulting to blank silently install on whatever the script
-    // resolves at runtime, defeating the collision-avoidance path.
-    let suggestedPort: number | undefined;
-    const cfg = getServiceConfig(id);
-    if (cfg && typeof cfg.port === 'number' && cfg.port > 0) {
-      suggestedPort = cfg.port;
-    } else {
-      const portEnvKey = PORT_ENV_VARS[id];
-      const envVal = portEnvKey ? (options.env ?? process.env)[portEnvKey]?.trim() : undefined;
-      if (envVal && /^\d+$/.test(envVal)) {
-        const n = Number.parseInt(envVal, 10);
-        if (n > 0 && n <= 65535) suggestedPort = n;
-      }
-    }
+    // Suggest a concrete port for the modal to pre-fill. If neither
+    // services.json nor *_PORT env pins one, scan from the manifest default
+    // so the eventual install persists a findable port instead of leaving
+    // "auto" as transient UI state.
+    const suggestedPort = await resolveSuggestedServicePort({
+      service,
+      config: getEffectiveConfig(service),
+      env: options.env ?? process.env,
+      lookupPidsByPort,
+    });
 
     return { profile, recommendation, suggestedPort };
   });
@@ -125,7 +125,7 @@ export const servicesRoutes: FastifyPluginAsync<ServicesRouteOptions> = async (a
     const state = await resolveServiceState(service, {
       env: options.env,
       fetchHealth: options.fetchHealth,
-      config: getConfig(request.params.id),
+      config: getEffectiveConfig(service),
       lifecycleAction: lifecycleLock.getActiveAction(request.params.id),
     });
     return {

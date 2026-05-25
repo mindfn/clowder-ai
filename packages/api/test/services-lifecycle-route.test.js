@@ -515,6 +515,91 @@ describe('service lifecycle write routes', () => {
     }
   });
 
+  it('auto-starts explicitly enabled legacy env services when services.json is missing', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    let startedEnv = null;
+    const configs = new Map();
+    const app = await buildApp({
+      env: {
+        CAT_CAFE_SERVICE_ASR_ENABLED: '1',
+        WHISPER_MODEL: 'base',
+        WHISPER_PORT: '19976',
+      },
+      lifecycle: {
+        autoStartEnabled: true,
+        startupReadinessTimeoutMs: 250,
+        startupProbeIntervalMs: 5,
+        serviceConfig: {
+          get: (id) => configs.get(id),
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        findPidsByPort: async () => [],
+        readProcessCommand: async () => null,
+        runScript: async (input) => {
+          startedEnv = input.env;
+          assert.equal(input.serviceId, 'whisper-stt');
+          assert.equal(input.action, 'start');
+          return { code: null, pid: 5510, output: '' };
+        },
+      },
+      fetchHealth: async () => ({ ok: false, status: undefined, error: 'fetch failed' }),
+    });
+    try {
+      for (let attempt = 0; attempt < 20 && startedEnv === null; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(startedEnv?.WHISPER_MODEL, 'base');
+      assert.equal(startedEnv?.WHISPER_PORT, '19976');
+      assert.equal(configs.get('whisper-stt').enabled, true);
+      assert.equal(configs.get('whisper-stt').installed, true);
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('does not treat profile default legacy flags as explicit service enables', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    let runCount = 0;
+    const app = await buildApp({
+      env: {
+        CAT_CAFE_PROFILE: 'dev',
+        ASR_ENABLED: '1',
+        WHISPER_MODEL: 'base',
+      },
+      lifecycle: {
+        autoStartEnabled: true,
+        serviceConfig: {
+          get: () => undefined,
+          set: () => ({ enabled: true }),
+        },
+        findPidsByPort: async () => [],
+        readProcessCommand: async () => null,
+        runScript: async () => {
+          runCount += 1;
+          return { code: 0, output: 'unexpected' };
+        },
+      },
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.equal(
+        runCount,
+        0,
+        'profile default ASR_ENABLED=1 must not auto-start without CAT_CAFE_SERVICE_ASR_ENABLED',
+      );
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
   it('cleans up disabled owned service listeners on API startup', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';
@@ -768,6 +853,48 @@ describe('service lifecycle write routes', () => {
       });
       assert.equal(startRes.statusCode, 200, startRes.payload);
       assert.equal(startEnv?.WHISPER_MODEL, 'mlx-community/whisper-large-v3-turbo');
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('persists an auto-selected service port during install', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map();
+    let installEnv = null;
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id),
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        findPidsByPort: async (port) => (port === 9876 ? [5151] : []),
+        readProcessCommand: async () => null,
+        runScript: async (input) => {
+          if (input.action === 'install') installEnv = input.env;
+          return { code: 0, output: 'installed' };
+        },
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/install',
+        headers: SESSION_HEADERS,
+        payload: { model: 'mlx-community/whisper-large-v3-turbo' },
+      });
+
+      assert.equal(res.statusCode, 200, res.payload);
+      assert.equal(installEnv?.WHISPER_PORT, '9877');
+      assert.equal(configs.get('whisper-stt').port, 9877);
+      assert.equal(configs.get('whisper-stt').selectedModel, 'mlx-community/whisper-large-v3-turbo');
+      assert.equal(configs.get('whisper-stt').installed, true);
     } finally {
       await app.close();
       restoreOwner(previousOwner);

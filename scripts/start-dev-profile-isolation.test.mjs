@@ -149,6 +149,34 @@ describe('start-dev strict profile isolation', () => {
     }
   });
 
+  it('preserves explicit .env sidecar flags for API lifecycle without enabling legacy direct spawn', () => {
+    const sandboxDir = createSandbox('ASR_ENABLED=1\nTTS_ENABLED=1\nWHISPER_PORT=19976\n');
+    try {
+      const command = [
+        'source scripts/start-dev.sh --source-only -- --profile=opensource',
+        'printf "ASR=%s\\nTTS=%s\\nLEGACY_ASR=%s\\nLEGACY_TTS=%s\\n" "$ASR_ENABLED" "$TTS_ENABLED" "${CAT_CAFE_SERVICE_ASR_ENABLED:-}" "${CAT_CAFE_SERVICE_TTS_ENABLED:-}"',
+      ].join('; ');
+      const result = spawnSync('bash', ['-lc', command], {
+        cwd: sandboxDir,
+        env: {
+          PATH: process.env.PATH ?? '',
+          HOME: process.env.HOME ?? '',
+          TERM: process.env.TERM ?? 'xterm-256color',
+          CAT_CAFE_STRICT_PROFILE_DEFAULTS: '1',
+        },
+        encoding: 'utf8',
+      });
+
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.match(result.stdout, /ASR=0/);
+      assert.match(result.stdout, /TTS=0/);
+      assert.match(result.stdout, /LEGACY_ASR=1/);
+      assert.match(result.stdout, /LEGACY_TTS=1/);
+    } finally {
+      rmSync(sandboxDir, { recursive: true, force: true });
+    }
+  });
+
   it('does NOT derive EMBED_ENABLED from EMBED_MODE (sidecar lifecycle owned by API startup reconciler)', () => {
     // EMBED_MODE only controls the API in-process embedding mode (off/shadow/on).
     // Sidecar startup is no longer triggered by EMBED_MODE; the API spawns
@@ -381,6 +409,10 @@ describe('cross-platform pnpm-start profile propagation (#421)', () => {
     assert.ok(
       !/Start-Job[\s\S]*embed-server\.ps1/i.test(ps1),
       'start-windows.ps1 must not directly Start-Job embed-server.ps1',
+    );
+    assert.ok(
+      ps1.includes('CAT_CAFE_SERVICE_ASR_ENABLED') && ps1.includes('CAT_CAFE_SERVICE_TTS_ENABLED'),
+      'start-windows.ps1 must preserve explicit .env sidecar flags for API startup lifecycle',
     );
   });
 

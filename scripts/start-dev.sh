@@ -397,13 +397,27 @@ derive_embed_enabled
 # if you need the pre-Console direct-spawn path.
 # WARNING: legacy path runs root scripts/*-server.sh; root embed-server.sh
 # now delegates to scripts/services/embed-server.sh which requires EMBED_MODEL.
+preserve_explicit_service_flag_for_api() {
+    local source_var="$1"
+    local api_var="$2"
+    local src_meta="_SRC_${source_var}"
+    if [ "${!src_meta:-}" = ".env override" ] && [ -n "${!source_var:-}" ]; then
+        export "${api_var}=${!source_var}"
+    fi
+}
+
 if [ "${CAT_CAFE_LEGACY_DIRECT_SIDECARS:-0}" != "1" ]; then
     if [ "${ASR_ENABLED:-0}" = "1" ] || [ "${TTS_ENABLED:-0}" = "1" ] \
        || [ "${LLM_POSTPROCESS_ENABLED:-0}" = "1" ] || [ "${EMBED_ENABLED:-0}" = "1" ] \
        || [ "${AUDIO_SERVICE_ENABLED:-0}" = "1" ]; then
         echo "[start-dev] *_ENABLED detected but CAT_CAFE_LEGACY_DIRECT_SIDECARS=0 — skipping legacy sidecar spawn + port kill."
-        echo "[start-dev] Sidecar lifecycle is owned by API startup reconciler; enable services in console."
+        echo "[start-dev] Sidecar lifecycle is owned by API startup reconciler; explicit .env flags are handed to API lifecycle."
     fi
+    preserve_explicit_service_flag_for_api "ASR_ENABLED" "CAT_CAFE_SERVICE_ASR_ENABLED"
+    preserve_explicit_service_flag_for_api "TTS_ENABLED" "CAT_CAFE_SERVICE_TTS_ENABLED"
+    preserve_explicit_service_flag_for_api "LLM_POSTPROCESS_ENABLED" "CAT_CAFE_SERVICE_LLM_POSTPROCESS_ENABLED"
+    preserve_explicit_service_flag_for_api "EMBED_ENABLED" "CAT_CAFE_SERVICE_EMBED_ENABLED"
+    preserve_explicit_service_flag_for_api "AUDIO_SERVICE_ENABLED" "CAT_CAFE_SERVICE_AUDIO_ENABLED"
     ASR_ENABLED=0
     TTS_ENABLED=0
     LLM_POSTPROCESS_ENABLED=0

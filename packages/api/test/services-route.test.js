@@ -124,6 +124,29 @@ describe('services routes', () => {
     }
   });
 
+  it('install preview suggests an available default service port', async () => {
+    const app = await buildApp({
+      lifecycle: {
+        findPidsByPort: async (port) => (port === 9876 ? [5151] : []),
+        serviceConfig: {
+          get: () => undefined,
+        },
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/services/whisper-stt/install-preview',
+        headers: SESSION_HEADERS,
+      });
+
+      assert.equal(res.statusCode, 200, res.payload);
+      assert.equal(JSON.parse(res.payload).suggestedPort, 9877);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('redacts URL credentials from client-visible service endpoints', async () => {
     const app = await buildApp({
       env: {

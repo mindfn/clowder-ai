@@ -94,6 +94,22 @@ export const PORT_ENV_VARS: Record<string, string> = {
   'audio-capture': 'AUDIO_SERVICE_PORT',
 };
 
+export const LEGACY_SERVICE_ENABLED_ENV_VARS: Record<string, string> = {
+  'whisper-stt': 'ASR_ENABLED',
+  'mlx-tts': 'TTS_ENABLED',
+  'embedding-model': 'EMBED_ENABLED',
+  'llm-postprocess': 'LLM_POSTPROCESS_ENABLED',
+  'audio-capture': 'AUDIO_SERVICE_ENABLED',
+};
+
+export const API_SERVICE_ENABLED_ENV_VARS: Record<string, string> = {
+  'whisper-stt': 'CAT_CAFE_SERVICE_ASR_ENABLED',
+  'mlx-tts': 'CAT_CAFE_SERVICE_TTS_ENABLED',
+  'embedding-model': 'CAT_CAFE_SERVICE_EMBED_ENABLED',
+  'llm-postprocess': 'CAT_CAFE_SERVICE_LLM_POSTPROCESS_ENABLED',
+  'audio-capture': 'CAT_CAFE_SERVICE_AUDIO_ENABLED',
+};
+
 type ServiceModel = NonNullable<NonNullable<ServiceManifest['prerequisites']>['models']>[number];
 
 function serviceModel(name: string, size: string, description: string, isDefault = false): ServiceModel {
@@ -262,10 +278,50 @@ export function getServiceManifest(id: string): ServiceManifest | null {
   return null;
 }
 
-function parsePort(value: string | undefined): number | null {
+export function parseServicePort(value: string | undefined): number | null {
   if (!value || !/^\d+$/.test(value)) return null;
   const port = Number.parseInt(value, 10);
   return port > 0 && port <= 65535 ? port : null;
+}
+
+function parseEnabledEnv(value: string | undefined): boolean | null {
+  if (value === undefined) return null;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off', ''].includes(normalized)) return false;
+  return null;
+}
+
+export function deriveLegacyServiceConfig(
+  service: ServiceManifest,
+  env: NodeJS.ProcessEnv = process.env,
+): ServiceConfig | undefined {
+  const apiKey = API_SERVICE_ENABLED_ENV_VARS[service.id];
+  const legacyKey = LEGACY_SERVICE_ENABLED_ENV_VARS[service.id];
+  const apiEnabled = parseEnabledEnv(apiKey ? env[apiKey] : undefined);
+  // start-dev/start-windows set CAT_CAFE_SERVICE_* only for explicit .env
+  // legacy flags. When a profile is active, ignore raw *_ENABLED values so
+  // profile defaults do not unexpectedly auto-start ML sidecars.
+  const legacyEnabled =
+    apiEnabled ?? (env.CAT_CAFE_PROFILE ? null : parseEnabledEnv(legacyKey ? env[legacyKey] : undefined));
+  if (legacyEnabled !== true) return undefined;
+
+  const config: ServiceConfig = { installed: true, enabled: true };
+  const modelKey = MODEL_ENV_VARS[service.id];
+  const model = modelKey ? env[modelKey]?.trim() : undefined;
+  if (model) config.selectedModel = model;
+  const portKey = PORT_ENV_VARS[service.id];
+  const port = parseServicePort(portKey ? env[portKey]?.trim() : undefined);
+  if (port) config.port = port;
+  return config;
+}
+
+export function resolveEffectiveServiceConfig(
+  service: ServiceManifest,
+  config: ServiceConfig | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): ServiceConfig | undefined {
+  return config ?? deriveLegacyServiceConfig(service, env);
 }
 
 function replaceEndpointPort(endpoint: string | null, port: number): string | null {
@@ -298,7 +354,7 @@ export function resolveServiceEndpoint(
   const configuredPort =
     typeof config?.port === 'number' && config.port > 0 && config.port <= 65535 ? config.port : null;
   const portEnvKey = PORT_ENV_VARS[service.id];
-  const envPort = parsePort(portEnvKey ? env[portEnvKey]?.trim() : undefined);
+  const envPort = parseServicePort(portEnvKey ? env[portEnvKey]?.trim() : undefined);
   const effectivePort = configuredPort ?? envPort;
   if (effectivePort) {
     if (service.portFallback) {

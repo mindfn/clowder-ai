@@ -86,6 +86,20 @@ if (Test-Path $envFile) {
     Write-Warn ".env not found - using defaults"
 }
 
+function Preserve-ServiceFlagForApiLifecycle {
+    param([string]$SourceName, [string]$TargetName)
+    $value = [System.Environment]::GetEnvironmentVariable($SourceName, "Process")
+    if ($null -ne $value -and $value -ne "") {
+        [System.Environment]::SetEnvironmentVariable($TargetName, $value, "Process")
+    }
+}
+
+Preserve-ServiceFlagForApiLifecycle -SourceName "ASR_ENABLED" -TargetName "CAT_CAFE_SERVICE_ASR_ENABLED"
+Preserve-ServiceFlagForApiLifecycle -SourceName "TTS_ENABLED" -TargetName "CAT_CAFE_SERVICE_TTS_ENABLED"
+Preserve-ServiceFlagForApiLifecycle -SourceName "LLM_POSTPROCESS_ENABLED" -TargetName "CAT_CAFE_SERVICE_LLM_POSTPROCESS_ENABLED"
+Preserve-ServiceFlagForApiLifecycle -SourceName "EMBED_ENABLED" -TargetName "CAT_CAFE_SERVICE_EMBED_ENABLED"
+Preserve-ServiceFlagForApiLifecycle -SourceName "AUDIO_SERVICE_ENABLED" -TargetName "CAT_CAFE_SERVICE_AUDIO_ENABLED"
+
 # -- Apply profile defaults (mirrors start-dev.sh apply_profile_defaults) --
 # Profile defaults are fallbacks: .env value wins if set, otherwise profile default applies.
 $profileDefaults = @{}
