@@ -676,6 +676,70 @@ describe('service lifecycle write routes', () => {
     }
   });
 
+  it('fires the service ready hook after startup readiness succeeds', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map([
+      [
+        'embedding-model',
+        {
+          installed: true,
+          enabled: false,
+          selectedModel: 'mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ',
+        },
+      ],
+    ]);
+    const readyEvents = [];
+    let ready = false;
+    const app = await buildApp({
+      lifecycle: {
+        startupGraceMs: 5,
+        startupReadinessTimeoutMs: 250,
+        startupProbeIntervalMs: 5,
+        onServiceReady: (event) => {
+          readyEvents.push({ serviceId: event.service.id, operator: event.operator, reason: event.reason });
+        },
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        findPidsByPort: async () => [],
+        readProcessCommand: async () => null,
+        runScript: async () => ({ code: null, pid: 4321, output: '' }),
+      },
+      fetchHealth: async () =>
+        ready ? { ok: true, status: 200, error: null } : { ok: false, status: undefined, error: 'fetch failed' },
+    });
+    try {
+      const startRes = await app.inject({
+        method: 'POST',
+        url: '/api/services/embedding-model/start',
+        headers: SESSION_HEADERS,
+      });
+      assert.equal(startRes.statusCode, 200, startRes.payload);
+
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      assert.deepEqual(readyEvents, [], 'hook should wait for actual readiness');
+
+      ready = true;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        if (readyEvents.length > 0) {
+          assert.deepEqual(readyEvents, [{ serviceId: 'embedding-model', operator: 'you', reason: 'readiness' }]);
+          return;
+        }
+      }
+      assert.fail('service ready hook should fire after readiness probe succeeds');
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
   it('keeps startup state when a detached start wrapper exits before readiness later succeeds', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';

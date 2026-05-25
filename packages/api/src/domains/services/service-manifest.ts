@@ -82,6 +82,7 @@ export interface ServiceState {
   error: string | null;
   installed: boolean;
   enabled: boolean;
+  selectedModel?: string;
   installable: boolean;
   prerequisites?: Omit<NonNullable<ServiceManifest['prerequisites']>, 'venvPath'>;
 }
@@ -453,6 +454,10 @@ export async function resolveServiceState(
       : true);
   const enabled = config.enabled;
   const endpoint = resolveServiceEndpoint(service, options.env, options.config);
+  const selectedModel =
+    typeof config.selectedModel === 'string' && config.selectedModel.trim().length > 0
+      ? config.selectedModel
+      : undefined;
   const clientPrerequisites = service.prerequisites
     ? { prerequisites: (({ venvPath: _, ...r }) => r)(service.prerequisites) }
     : {};
@@ -483,6 +488,7 @@ export async function resolveServiceState(
           : options.lifecycleAction === 'stop' || options.lifecycleAction === 'uninstall'
             ? false
             : enabled,
+      ...(selectedModel ? { selectedModel } : {}),
       installable,
       ...clientPrerequisites,
     };
@@ -497,6 +503,7 @@ export async function resolveServiceState(
       error: null,
       installed,
       enabled,
+      ...(selectedModel ? { selectedModel } : {}),
       installable,
       ...clientPrerequisites,
     };
@@ -512,6 +519,7 @@ export async function resolveServiceState(
       error: null,
       installed,
       enabled,
+      ...(selectedModel ? { selectedModel } : {}),
       installable,
       ...clientPrerequisites,
     };
@@ -529,6 +537,7 @@ export async function resolveServiceState(
     error: typeof health.error === 'string' ? health.error : null,
     installed,
     enabled,
+    ...(selectedModel ? { selectedModel } : {}),
     installable,
     ...clientPrerequisites,
   };

@@ -33,6 +33,7 @@ export interface HomeServiceState {
   features: string[];
   installed: boolean;
   enabled: boolean;
+  selectedModel?: string;
   installable: boolean;
   prerequisites?: ServicePrerequisites;
   error?: string | null;
@@ -59,6 +60,7 @@ export interface ServiceUiState {
   statusLabel: string;
   installed: boolean;
   enabled: boolean;
+  selectedModel?: string;
   installable: boolean;
   running: boolean;
   prerequisites?: ServicePrerequisites;
@@ -120,6 +122,7 @@ export function adaptServiceState(home: HomeServiceState): ServiceUiState {
     statusLabel: STATUS_LABELS[status],
     installed,
     enabled,
+    selectedModel: home.selectedModel,
     installable: home.installable,
     running,
     prerequisites: home.prerequisites,

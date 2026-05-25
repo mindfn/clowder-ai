@@ -44,6 +44,7 @@ const servicesPayload = {
       error: 'HTTP 503',
       installed: true,
       enabled: true,
+      selectedModel: 'mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ',
       installable: true,
     },
   ],
@@ -108,6 +109,7 @@ describe('ServiceStatusPanel', () => {
     expect(container.textContent).toContain('记忆服务');
     expect(container.textContent).toContain('嵌入模型');
     expect(container.textContent).toContain('异常');
+    expect(container.textContent).toContain('mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ');
     expect(container.textContent).toContain('http://127.0.0.1:9880');
     expect(container.textContent).toContain('HTTP 503');
     expect(container.textContent).not.toContain('语音识别 (Whisper)');

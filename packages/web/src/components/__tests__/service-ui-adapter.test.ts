@@ -104,6 +104,11 @@ describe('adaptServiceState', () => {
     expect(result.installable).toBe(false);
   });
 
+  it('passes through selected model metadata', () => {
+    const result = adaptServiceState(makeHome({ selectedModel: 'mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ' }));
+    expect(result.selectedModel).toBe('mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ');
+  });
+
   it('healthy does not override installed/enabled from API', () => {
     const result = adaptServiceState(makeHome({ status: 'healthy', installed: false, enabled: false }));
     expect(result.running).toBe(true);

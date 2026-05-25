@@ -535,6 +535,37 @@ describe('services routes', () => {
     }
   });
 
+  it('exposes the persisted selected model for installed services', async () => {
+    const freshConfigDir = mkdtempSync(join(tmpdir(), 'services-selected-model-'));
+    const prevConfig = process.env.CAT_CAFE_SERVICES_CONFIG;
+    process.env.CAT_CAFE_SERVICES_CONFIG = join(freshConfigDir, 'services.json');
+    setServiceConfig('embedding-model', {
+      installed: true,
+      enabled: false,
+      selectedModel: 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
+      port: 19993,
+    });
+    const app = await buildApp();
+    try {
+      const listRes = await app.inject({
+        method: 'GET',
+        url: '/api/services',
+        headers: SESSION_HEADERS,
+      });
+      const embedding = JSON.parse(listRes.payload).services.find((s) => s.id === 'embedding-model');
+      assert.equal(
+        embedding.selectedModel,
+        'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
+        'UI needs the installed model persisted in services.json',
+      );
+      assert.equal(embedding.installed, true);
+      assert.equal(embedding.enabled, false);
+    } finally {
+      await app.close();
+      process.env.CAT_CAFE_SERVICES_CONFIG = prevConfig;
+    }
+  });
+
   it('fresh service (no config record) treated as not installed', async () => {
     const freshConfigDir = mkdtempSync(join(tmpdir(), 'services-fresh-'));
     const prevConfig = process.env.CAT_CAFE_SERVICES_CONFIG;

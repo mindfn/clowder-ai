@@ -216,6 +216,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
                 </SettingsText>
                 <SettingsText as="p" tone="muted" className="mt-0.5 truncate">
                   {service.category} · {service.statusLabel}
+                  {service.selectedModel ? ` · ${service.selectedModel}` : ''}
                   {service.endpoint ? ` · ${service.endpoint}` : ''}
                 </SettingsText>
                 {service.error && (

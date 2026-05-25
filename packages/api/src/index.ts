@@ -101,6 +101,7 @@ import { shouldTrackApiActivity } from './domains/health/activity-route-filter.j
 import { PortDiscoveryService } from './domains/preview/port-discovery.js';
 import { collectRuntimePorts } from './domains/preview/port-validator.js';
 import { PreviewGateway } from './domains/preview/preview-gateway.js';
+import { appendServiceLog } from './domains/services/service-lifecycle.js';
 import { createSignalArticleLookup } from './domains/signals/services/signal-thread-lookup.js';
 import { AgentPaneRegistry } from './domains/terminal/agent-pane-registry.js';
 import { TmuxGateway } from './domains/terminal/tmux-gateway.js';
@@ -1785,7 +1786,37 @@ async function main(): Promise<void> {
   await app.register(configSecretsRoutes);
   await app.register(rulesRoutes);
   await app.register(servicesRoutes, {
-    lifecycle: { autoStartEnabled: true },
+    lifecycle: {
+      autoStartEnabled: true,
+      onServiceReady: ({ service, operator, reason }) => {
+        if (service.id !== 'embedding-model' || !memoryServices.indexBuilder) return;
+        appendServiceLog(service.id, `[start] embedding service ready (${reason}); scheduling evidence rebuild\n`);
+        app.log.info(
+          { serviceId: service.id, operator, reason },
+          '[api] F102: embedding service ready; scheduling evidence rebuild',
+        );
+        const startedAt = Date.now();
+        void memoryServices.indexBuilder
+          .rebuild({ force: true })
+          .then((result) => {
+            const elapsedMs = Date.now() - startedAt;
+            appendServiceLog(
+              service.id,
+              `[start] evidence rebuild completed: ${result.docsIndexed} indexed, ${result.docsSkipped} skipped (${elapsedMs}ms)\n`,
+            );
+            app.log.info(
+              `[api] F102: embedding service catch-up rebuild completed - ${result.docsIndexed} indexed, ${result.docsSkipped} skipped (${elapsedMs}ms)`,
+            );
+          })
+          .catch((error) => {
+            appendServiceLog(service.id, `[start] evidence rebuild failed: ${String(error)}\n`);
+            app.log.warn(
+              { err: error, serviceId: service.id },
+              '[api] F102: embedding service catch-up rebuild failed',
+            );
+          });
+      },
+    },
   });
   await app.register(featureDocDetailRoutes);
   await app.register(accountsRoutes);

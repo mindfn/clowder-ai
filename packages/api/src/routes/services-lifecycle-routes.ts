@@ -54,6 +54,11 @@ export interface ServiceLifecycleRouteOptions {
   startupReadinessTimeoutMs?: number;
   startupProbeIntervalMs?: number;
   autoStartEnabled?: boolean;
+  onServiceReady?: (event: {
+    service: ServiceManifest;
+    operator: string;
+    reason: 'already-running' | 'readiness';
+  }) => void | Promise<void>;
   findPidsByPort?: (port: number) => Promise<number[]>;
   listProcesses?: () => Promise<ProcessSnapshot[]>;
   readProcessCommand?: (pid: number) => Promise<string | null>;
@@ -103,10 +108,10 @@ async function waitForServiceReadiness(input: {
   intervalMs: number;
   stopWhen?: Promise<unknown>;
   stopIf?: () => Promise<boolean>;
-}): Promise<void> {
+}): Promise<boolean> {
   const timeoutMs = Math.max(0, input.timeoutMs);
   const intervalMs = Math.max(50, input.intervalMs);
-  if (timeoutMs === 0) return;
+  if (timeoutMs === 0) return false;
 
   let stopped = false;
   void input.stopWhen?.finally(() => {
@@ -119,7 +124,7 @@ async function waitForServiceReadiness(input: {
     if (endpoint) {
       try {
         const health = await input.fetchHealth(resolveServiceHealthUrl(input.service, endpoint), input.service);
-        if (health.ok) return;
+        if (health.ok) return true;
       } catch {
         // Readiness probes are internal while the service is starting. The UI
         // should see `starting`, not a transient health-probe fetch failure.
@@ -140,6 +145,7 @@ async function waitForServiceReadiness(input: {
       `[start] readiness check timed out after ${Math.round(timeoutMs / 1000)}s; service may still be starting\n`,
     );
   }
+  return false;
 }
 
 async function probeServiceReady(input: {
@@ -225,6 +231,22 @@ export async function registerServiceLifecycleRoutes(
   }
 
   await registerServiceLifecycleAuditRoutes(app, auditLog);
+
+  function notifyServiceReady(
+    service: ServiceManifest,
+    operator: string,
+    reason: 'already-running' | 'readiness',
+  ): void {
+    const hook = options.lifecycle?.onServiceReady;
+    if (!hook) return;
+    try {
+      void Promise.resolve(hook({ service, operator, reason })).catch((error) => {
+        app.log.warn({ err: error, serviceId: service.id, reason }, 'service ready hook failed');
+      });
+    } catch (error) {
+      app.log.warn({ err: error, serviceId: service.id, reason }, 'service ready hook failed');
+    }
+  }
 
   async function runForeground(input: {
     serviceId: string;
@@ -525,6 +547,7 @@ export async function registerServiceLifecycleRoutes(
               status: 'completed',
               reason: 'already-running',
             });
+            notifyServiceReady(service, operator, 'already-running');
             return { ok: true, message: `${service.name} is already running`, pids: portProbe.owned };
           }
 
@@ -718,6 +741,9 @@ export async function registerServiceLifecycleRoutes(
           intervalMs: startupProbeIntervalMs,
           stopWhen: cleanExitBeforeReady ? undefined : settlement,
           stopIf: stopIfNoOwnedRuntimeProcess,
+        }).then((ready) => {
+          if (ready) notifyServiceReady(service, operator, 'readiness');
+          return ready;
         });
         const releaseWhen = settlement && !cleanExitBeforeReady ? Promise.race([settlement, readiness]) : readiness;
         return holdStartupGrace(success, startupReadinessTimeoutMs, releaseWhen);
