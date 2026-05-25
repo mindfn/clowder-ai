@@ -230,10 +230,46 @@ try:
 except Exception:
     pass
 from faster_whisper import WhisperModel
+from faster_whisper.utils import download_model
+
+def run_with_heartbeat(label, fn):
+    import queue
+    import threading
+    done = queue.Queue(maxsize=1)
+
+    def worker():
+        try:
+            done.put((True, fn()))
+        except BaseException as exc:
+            done.put((False, exc))
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    elapsed = 0
+    while thread.is_alive():
+        thread.join(timeout=15)
+        if thread.is_alive():
+            elapsed += 15
+            print(f'  {label} still in progress ({elapsed}s elapsed)...', file=sys.stderr, flush=True)
+    ok, value = done.get()
+    if ok:
+        return value
+    raise value
+
 max_attempts = 3
 for attempt in range(1, max_attempts + 1):
     try:
-        WhisperModel(sys.argv[1], device='cpu', compute_type='int8')
+        model_id = sys.argv[1]
+        if os.path.isdir(model_id):
+            model_path = model_id
+            print(f'  Using local faster-whisper model path: {model_path}', file=sys.stderr)
+        else:
+            model_path = run_with_heartbeat('faster-whisper model download', lambda: download_model(model_id))
+            print(f'  Faster-whisper model artifacts ready: {model_path}', file=sys.stderr)
+        run_with_heartbeat(
+            'faster-whisper runtime load',
+            lambda: WhisperModel(model_path, device='cpu', compute_type='int8'),
+        )
         print('Model download complete.')
         sys.exit(0)
     except Exception as e:

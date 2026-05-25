@@ -475,6 +475,23 @@ describe('TTS sidecar startup guards', () => {
   });
 });
 
+describe('Whisper sidecar startup guards', () => {
+  it('preloads faster-whisper model artifacts with heartbeat logs before runtime load', () => {
+    const installTemplate = readFileSync(resolve(ROOT, 'scripts/services/install-template.sh'), 'utf8');
+    const prereqPs1 = readFileSync(resolve(ROOT, 'scripts/services/prereq-check.ps1'), 'utf8');
+
+    assert.match(installTemplate, /from faster_whisper\.utils import download_model/);
+    assert.match(installTemplate, /run_with_heartbeat\('faster-whisper model download'/);
+    assert.match(installTemplate, /WhisperModel\(model_path,/);
+    assert.doesNotMatch(installTemplate, /WhisperModel\(sys\.argv\[1\]/);
+
+    assert.match(prereqPs1, /from faster_whisper\.utils import download_model/);
+    assert.match(prereqPs1, /run_with_heartbeat\('faster-whisper model download'/);
+    assert.match(prereqPs1, /WhisperModel\(model_path,/);
+    assert.doesNotMatch(prereqPs1, /WhisperModel\(sys\.argv\[1\]/);
+  });
+});
+
 describe('Windows Python resolver guards', () => {
   it('does not block behind a Python install lock after another installer has finished', () => {
     const resolver = readFileSync(resolve(ROOT, 'scripts/services/python-resolve.ps1'), 'utf8');
