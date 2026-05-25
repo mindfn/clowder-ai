@@ -1368,7 +1368,7 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
         host: 'localhost:3004',
       });
       assert.equal(missingOwnerWithoutOrigin.statusCode, 403);
-      assert.match(JSON.parse(missingOwnerWithoutOrigin.payload).error, /DEFAULT_OWNER_USER_ID/);
+      assert.match(JSON.parse(missingOwnerWithoutOrigin.payload).error, /direct localhost/i);
 
       const missingOwner = await patchCapability(app, projectDir, {
         ...OWNER_SESSION_HEADERS,
@@ -1384,7 +1384,7 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
         host: 'staging.example.test',
       });
       assert.equal(nonLocalMissingOwner.statusCode, 403);
-      assert.match(JSON.parse(nonLocalMissingOwner.payload).error, /DEFAULT_OWNER_USER_ID/);
+      assert.match(JSON.parse(nonLocalMissingOwner.payload).error, /direct localhost/i);
 
       const spoofedLocalHost = await app.inject({
         method: 'PATCH',
@@ -1404,7 +1404,7 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
         },
       });
       assert.equal(spoofedLocalHost.statusCode, 403);
-      assert.match(JSON.parse(spoofedLocalHost.payload).error, /DEFAULT_OWNER_USER_ID/);
+      assert.match(JSON.parse(spoofedLocalHost.payload).error, /direct localhost/i);
 
       const forwardedLocalHost = await app.inject({
         method: 'PATCH',
@@ -1425,12 +1425,23 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
         },
       });
       assert.equal(forwardedLocalHost.statusCode, 403);
-      assert.match(JSON.parse(forwardedLocalHost.payload).error, /DEFAULT_OWNER_USER_ID/);
+      assert.match(JSON.parse(forwardedLocalHost.payload).error, /direct localhost/i);
 
       process.env.DEFAULT_OWNER_USER_ID = 'you';
-      const nonOwner = await patchCapability(app, projectDir, NON_OWNER_SESSION_HEADERS);
+      const nonOwner = await patchCapability(app, projectDir, {
+        ...NON_OWNER_SESSION_HEADERS,
+        host: 'localhost:3004',
+        origin: 'http://localhost:3003',
+      });
       assert.equal(nonOwner.statusCode, 403);
       assert.match(JSON.parse(nonOwner.payload).error, /owner/);
+
+      const ownerNonLocal = await patchCapability(app, projectDir, {
+        ...OWNER_SESSION_HEADERS,
+        host: 'staging.example.test',
+      });
+      assert.equal(ownerNonLocal.statusCode, 403);
+      assert.match(JSON.parse(ownerNonLocal.payload).error, /direct localhost/i);
 
       config = await readCapabilitiesConfig(projectDir);
       assert.equal(config?.capabilities[0]?.enabled, false);
@@ -1449,7 +1460,11 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
     const app = await buildSessionApp();
 
     try {
-      const res = await patchCapability(app, projectDir, OWNER_SESSION_HEADERS);
+      const res = await patchCapability(app, projectDir, {
+        ...OWNER_SESSION_HEADERS,
+        host: 'localhost:3004',
+        origin: 'http://localhost:3003',
+      });
       assert.equal(res.statusCode, 200, res.payload);
       assert.doesNotMatch(res.payload, /raw-secret/);
       assert.equal(res.json().capability.mcpServer.env.API_KEY, REDACTED_SECRET);

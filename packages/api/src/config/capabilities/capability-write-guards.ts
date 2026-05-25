@@ -13,6 +13,8 @@ export interface CapabilityWriteOwnerOptions {
   missingOwnerError?: string;
 }
 
+const LOCAL_CAPABILITY_WRITE_ERROR = 'Capability writes require direct localhost Hub access';
+
 export function resolveCapabilityWriteSessionUserId(request: FastifyRequest): string | null {
   const sessionUserId = (request as FastifyRequest & { sessionUserId?: string }).sessionUserId;
   return typeof sessionUserId === 'string' && sessionUserId.trim() ? sessionUserId.trim() : null;
@@ -99,8 +101,13 @@ export function isLocalCapabilityWriteRequest(request: FastifyRequest): boolean 
   const normalized = normalizeHostForLoopbackCheck(host);
   if (!isLoopbackHost(normalized)) return false;
 
-  // Ownerless writes are an explicit local-dev escape hatch; headers only narrow that opt-in.
+  // Capability writes are a direct-local Hub surface; headers narrow the loopback peer check.
   return hasTrustedLocalOrigin(firstHeaderValue(request.headers.origin));
+}
+
+export function requireLocalCapabilityWriteRequest(request: FastifyRequest): CapabilityWriteRouteError | null {
+  if (isLocalCapabilityWriteRequest(request)) return null;
+  return { status: 403, error: LOCAL_CAPABILITY_WRITE_ERROR };
 }
 
 export function containsRedactedPlaceholder(value: unknown): boolean {

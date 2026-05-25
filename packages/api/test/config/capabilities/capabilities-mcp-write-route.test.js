@@ -14,6 +14,8 @@ import { capabilitiesMcpWriteRoutes } from '../../../dist/routes/capabilities-mc
 const HEADER_ONLY_OWNER_HEADERS = { 'x-cat-cafe-user': 'you' };
 const OWNER_HEADERS = { 'x-test-session-user': 'you' };
 const NON_OWNER_HEADERS = { 'x-test-session-user': 'codex' };
+const LOCAL_OWNER_HEADERS = { ...OWNER_HEADERS, host: 'localhost:3004', origin: 'http://localhost:3003' };
+const LOCAL_NON_OWNER_HEADERS = { ...NON_OWNER_HEADERS, host: 'localhost:3004', origin: 'http://localhost:3003' };
 const REDACTED_SECRET = '••••••';
 
 const savedEnv = new Map();
@@ -81,7 +83,7 @@ describe('capabilities MCP write routes', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/capabilities/mcp/install',
-      headers: NON_OWNER_HEADERS,
+      headers: LOCAL_NON_OWNER_HEADERS,
       payload: {
         id: 'external-mcp',
         resolver: 'chrome-extension',
@@ -90,6 +92,25 @@ describe('capabilities MCP write routes', () => {
 
     assert.equal(res.statusCode, 403);
     assert.match(JSON.parse(res.payload).error, /owner/);
+    const config = await readCapabilitiesConfig(projectRoot);
+    assert.deepEqual(config?.capabilities, []);
+  });
+
+  it('rejects configured-owner MCP writes outside direct localhost Hub access', async () => {
+    setEnv('DEFAULT_OWNER_USER_ID', 'you');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/capabilities/mcp/install',
+      headers: { ...OWNER_HEADERS, host: 'staging.example.test' },
+      payload: {
+        id: 'external-mcp',
+        resolver: 'chrome-extension',
+      },
+    });
+
+    assert.equal(res.statusCode, 403);
+    assert.match(JSON.parse(res.payload).error, /direct localhost/i);
     const config = await readCapabilitiesConfig(projectRoot);
     assert.deepEqual(config?.capabilities, []);
   });
@@ -164,7 +185,7 @@ describe('capabilities MCP write routes', () => {
     const preview = await app.inject({
       method: 'POST',
       url: '/api/capabilities/mcp/preview',
-      headers: { ...OWNER_HEADERS, host: 'localhost:3004', origin: 'http://localhost:3003' },
+      headers: LOCAL_OWNER_HEADERS,
       payload: { id: 'new-mcp', command: 'node', args: ['server.js'] },
     });
     assert.equal(preview.statusCode, 200, preview.payload);
@@ -172,7 +193,7 @@ describe('capabilities MCP write routes', () => {
     const install = await app.inject({
       method: 'POST',
       url: '/api/capabilities/mcp/install',
-      headers: { ...OWNER_HEADERS, host: 'localhost:3004', origin: 'http://localhost:3003' },
+      headers: LOCAL_OWNER_HEADERS,
       payload: { id: 'new-mcp', command: 'node', args: ['server.js'] },
     });
     assert.equal(install.statusCode, 200, install.payload);
@@ -180,7 +201,7 @@ describe('capabilities MCP write routes', () => {
     const deleteRes = await app.inject({
       method: 'DELETE',
       url: '/api/capabilities/mcp/secret-mcp?hard=true',
-      headers: { ...OWNER_HEADERS, host: 'localhost:3004', origin: 'http://localhost:3003' },
+      headers: LOCAL_OWNER_HEADERS,
     });
     assert.equal(deleteRes.statusCode, 200, deleteRes.payload);
 
@@ -198,7 +219,7 @@ describe('capabilities MCP write routes', () => {
     });
 
     assert.equal(res.statusCode, 403, res.payload);
-    assert.match(JSON.parse(res.payload).error, /DEFAULT_OWNER_USER_ID/);
+    assert.match(JSON.parse(res.payload).error, /direct localhost/i);
     const config = await readCapabilitiesConfig(projectRoot);
     assert.deepEqual(config?.capabilities, []);
   });
@@ -212,7 +233,7 @@ describe('capabilities MCP write routes', () => {
     });
 
     assert.equal(res.statusCode, 403, res.payload);
-    assert.match(JSON.parse(res.payload).error, /DEFAULT_OWNER_USER_ID/);
+    assert.match(JSON.parse(res.payload).error, /direct localhost/i);
     const config = await readCapabilitiesConfig(projectRoot);
     assert.deepEqual(config?.capabilities, []);
   });
@@ -231,7 +252,7 @@ describe('capabilities MCP write routes', () => {
     });
 
     assert.equal(res.statusCode, 403, res.payload);
-    assert.match(JSON.parse(res.payload).error, /DEFAULT_OWNER_USER_ID/);
+    assert.match(JSON.parse(res.payload).error, /direct localhost/i);
     const config = await readCapabilitiesConfig(projectRoot);
     assert.deepEqual(config?.capabilities, []);
   });
@@ -251,7 +272,7 @@ describe('capabilities MCP write routes', () => {
     });
 
     assert.equal(res.statusCode, 403, res.payload);
-    assert.match(JSON.parse(res.payload).error, /DEFAULT_OWNER_USER_ID/);
+    assert.match(JSON.parse(res.payload).error, /direct localhost/i);
     const config = await readCapabilitiesConfig(projectRoot);
     assert.deepEqual(config?.capabilities, []);
   });
@@ -260,7 +281,7 @@ describe('capabilities MCP write routes', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/capabilities/mcp/install',
-      headers: { ...OWNER_HEADERS, host: 'localhost:3004', origin: 'http://localhost:3003' },
+      headers: LOCAL_OWNER_HEADERS,
       payload: {
         id: 'secret-mcp',
         transport: 'streamableHttp',
@@ -302,7 +323,7 @@ describe('capabilities MCP write routes', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/capabilities/mcp/install',
-      headers: { ...OWNER_HEADERS, host: 'localhost:3004', origin: 'http://localhost:3003' },
+      headers: LOCAL_OWNER_HEADERS,
       payload: {
         id: 'secret-mcp',
         command: 'node',
@@ -336,7 +357,7 @@ describe('capabilities MCP write routes', () => {
     const res = await app.inject({
       method: 'DELETE',
       url: '/api/capabilities/mcp/external-mcp?hard=true',
-      headers: NON_OWNER_HEADERS,
+      headers: LOCAL_NON_OWNER_HEADERS,
     });
 
     assert.equal(res.statusCode, 403);
@@ -350,7 +371,7 @@ describe('capabilities MCP write routes', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/capabilities/mcp/install',
-      headers: OWNER_HEADERS,
+      headers: LOCAL_OWNER_HEADERS,
       payload: {
         id: 'secret-mcp',
         resolver: 'chrome-extension',
@@ -384,7 +405,7 @@ describe('capabilities MCP write routes', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/capabilities/mcp/install',
-        headers: OWNER_HEADERS,
+        headers: LOCAL_OWNER_HEADERS,
         payload,
       });
       assert.equal(res.statusCode, 400);
@@ -418,7 +439,7 @@ describe('capabilities MCP write routes', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/capabilities/mcp/install',
-      headers: OWNER_HEADERS,
+      headers: LOCAL_OWNER_HEADERS,
       payload: {
         id: 'secret-mcp',
         command: 'node',
@@ -464,7 +485,7 @@ describe('capabilities MCP write routes', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/capabilities/mcp/install',
-      headers: OWNER_HEADERS,
+      headers: LOCAL_OWNER_HEADERS,
       payload: {
         id: 'stdio-mcp',
       },
@@ -493,7 +514,7 @@ describe('capabilities MCP write routes', () => {
     const preview = await app.inject({
       method: 'POST',
       url: '/api/capabilities/mcp/preview',
-      headers: OWNER_HEADERS,
+      headers: LOCAL_OWNER_HEADERS,
       payload,
     });
     assert.equal(preview.statusCode, 200, preview.payload);
@@ -504,7 +525,7 @@ describe('capabilities MCP write routes', () => {
     const install = await app.inject({
       method: 'POST',
       url: '/api/capabilities/mcp/install',
-      headers: OWNER_HEADERS,
+      headers: LOCAL_OWNER_HEADERS,
       payload,
     });
     assert.equal(install.statusCode, 200, install.payload);
@@ -539,7 +560,7 @@ describe('capabilities MCP write routes', () => {
     const res = await app.inject({
       method: 'PATCH',
       url: '/api/capabilities/mcp/secret-mcp/env',
-      headers: { ...OWNER_HEADERS, host: 'localhost:3004', origin: 'http://localhost:3003' },
+      headers: LOCAL_OWNER_HEADERS,
       payload: { env: { API_KEY: 'new-secret' } },
     });
 
@@ -557,7 +578,7 @@ describe('capabilities MCP write routes', () => {
       const res = await app.inject({
         method: 'PATCH',
         url: '/api/capabilities/mcp/secret-mcp/env',
-        headers: OWNER_HEADERS,
+        headers: LOCAL_OWNER_HEADERS,
         payload,
       });
       assert.equal(res.statusCode, 400);
@@ -574,7 +595,7 @@ describe('capabilities MCP write routes', () => {
     const res = await app.inject({
       method: 'PATCH',
       url: '/api/capabilities/mcp/missing-mcp/env',
-      headers: OWNER_HEADERS,
+      headers: LOCAL_OWNER_HEADERS,
       payload: { env: { API_KEY: 'new-secret' } },
     });
 
@@ -604,7 +625,7 @@ describe('capabilities MCP write routes', () => {
     const res = await app.inject({
       method: 'PATCH',
       url: '/api/capabilities/mcp/managed-mcp/env',
-      headers: OWNER_HEADERS,
+      headers: LOCAL_OWNER_HEADERS,
       payload: { env: { API_KEY: 'new-secret' } },
     });
 
@@ -636,7 +657,7 @@ describe('capabilities MCP write routes', () => {
     const nonOwner = await app.inject({
       method: 'PATCH',
       url: '/api/capabilities/mcp/secret-mcp/env',
-      headers: NON_OWNER_HEADERS,
+      headers: LOCAL_NON_OWNER_HEADERS,
       payload: { env: { API_KEY: 'attacker-secret' } },
     });
     assert.equal(nonOwner.statusCode, 403);
@@ -644,7 +665,7 @@ describe('capabilities MCP write routes', () => {
     const invalid = await app.inject({
       method: 'PATCH',
       url: '/api/capabilities/mcp/secret-mcp/env',
-      headers: OWNER_HEADERS,
+      headers: LOCAL_OWNER_HEADERS,
       payload: { env: { 'BAD-KEY': 'value' } },
     });
     assert.equal(invalid.statusCode, 400);
@@ -653,7 +674,7 @@ describe('capabilities MCP write routes', () => {
     const redacted = await app.inject({
       method: 'PATCH',
       url: '/api/capabilities/mcp/secret-mcp/env',
-      headers: OWNER_HEADERS,
+      headers: LOCAL_OWNER_HEADERS,
       payload: { env: { API_KEY: '••••••' } },
     });
     assert.equal(redacted.statusCode, 400);
@@ -662,7 +683,7 @@ describe('capabilities MCP write routes', () => {
     const owner = await app.inject({
       method: 'PATCH',
       url: '/api/capabilities/mcp/secret-mcp/env',
-      headers: OWNER_HEADERS,
+      headers: LOCAL_OWNER_HEADERS,
       payload: { env: { API_KEY: 'new-secret', NEW_TOKEN: 'token' } },
     });
     assert.equal(owner.statusCode, 200, owner.payload);

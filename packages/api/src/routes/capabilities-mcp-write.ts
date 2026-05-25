@@ -24,8 +24,8 @@ import {
 } from '../config/capabilities/capability-redaction.js';
 import {
   containsRedactedPlaceholder,
-  isLocalCapabilityWriteRequest,
   requireCapabilityWriteOwner,
+  requireLocalCapabilityWriteRequest,
   resolveCapabilityWriteSessionUserId,
 } from '../config/capabilities/capability-write-guards.js';
 import { validateProjectPath } from '../utils/project-path.js';
@@ -138,8 +138,13 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
       reply.status(401);
       return { error: 'Identity required (session cookie)' };
     }
+    const localError = requireLocalCapabilityWriteRequest(request);
+    if (localError) {
+      reply.status(localError.status);
+      return { error: localError.error };
+    }
     const ownerError = requireCapabilityWriteOwner(userId, {
-      allowMissingOwner: isLocalCapabilityWriteRequest(request),
+      allowMissingOwner: true,
     });
     if (ownerError) {
       reply.status(ownerError.status);
@@ -187,8 +192,13 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
       reply.status(401);
       return { error: 'Identity required (session cookie)' };
     }
+    const localError = requireLocalCapabilityWriteRequest(request);
+    if (localError) {
+      reply.status(localError.status);
+      return { error: localError.error };
+    }
     const ownerError = requireCapabilityWriteOwner(userId, {
-      allowMissingOwner: isLocalCapabilityWriteRequest(request),
+      allowMissingOwner: true,
     });
     if (ownerError) {
       reply.status(ownerError.status);
@@ -291,8 +301,13 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
       reply.status(401);
       return { error: 'Identity required (session cookie)' };
     }
+    const localError = requireLocalCapabilityWriteRequest(request);
+    if (localError) {
+      reply.status(localError.status);
+      return { error: localError.error };
+    }
     const ownerError = requireCapabilityWriteOwner(userId, {
-      allowMissingOwner: isLocalCapabilityWriteRequest(request),
+      allowMissingOwner: true,
     });
     if (ownerError) {
       reply.status(ownerError.status);
@@ -374,8 +389,13 @@ export const capabilitiesMcpWriteRoutes: FastifyPluginAsync<{
       reply.status(401);
       return { error: 'Identity required (session cookie)' };
     }
+    const localError = requireLocalCapabilityWriteRequest(request);
+    if (localError) {
+      reply.status(localError.status);
+      return { error: localError.error };
+    }
     const ownerError = requireCapabilityWriteOwner(userId, {
-      allowMissingOwner: isLocalCapabilityWriteRequest(request),
+      allowMissingOwner: true,
     });
     if (ownerError) {
       reply.status(ownerError.status);

@@ -47,8 +47,8 @@ import {
 } from '../config/capabilities/capability-orchestrator.js';
 import { sanitizeCapabilityForResponse } from '../config/capabilities/capability-redaction.js';
 import {
-  isLocalCapabilityWriteRequest,
   requireCapabilityWriteOwner,
+  requireLocalCapabilityWriteRequest,
   resolveCapabilityWriteSessionUserId,
 } from '../config/capabilities/capability-write-guards.js';
 import { isManagedSkill, readSkillsState } from '../config/governance/skills-state.js';
@@ -833,8 +833,13 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
       reply.status(401);
       return { error: 'Identity required (session cookie)' };
     }
+    const localError = requireLocalCapabilityWriteRequest(request);
+    if (localError) {
+      reply.status(localError.status);
+      return { error: localError.error };
+    }
     const ownerError = requireCapabilityWriteOwner(userId, {
-      allowMissingOwner: isLocalCapabilityWriteRequest(request),
+      allowMissingOwner: true,
     });
     if (ownerError) {
       reply.status(ownerError.status);
