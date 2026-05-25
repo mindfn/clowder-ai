@@ -20,6 +20,7 @@ import type { PluginResourceActivator } from '../domains/plugin/PluginResourceAc
 import { loadAllPluginConfigs, resolvePluginEnv, writePluginConfig } from '../domains/plugin/plugin-config-store.js';
 import { validateEnvSafety } from '../domains/plugin/plugin-manifest.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
+import { isLoopbackAddress } from '../utils/loopback-request.js';
 
 interface PluginRoutesOpts {
   pluginRegistry: PluginRegistry;
@@ -34,29 +35,36 @@ function refreshPluginRegistry(pluginRegistry: PluginRegistry) {
   return manifests;
 }
 
-function requirePluginWriteOwner(request: FastifyRequest, reply: FastifyReply): string | null {
+interface PluginWriteAccess {
+  operator: string;
+}
+
+interface PluginWriteAccessError {
+  status: number;
+  error: string;
+}
+
+function requirePluginWriteAccess(request: FastifyRequest): PluginWriteAccess | PluginWriteAccessError {
+  if (!isLoopbackAddress(request.ip)) {
+    return { status: 403, error: 'Plugin write endpoint is loopback-only' };
+  }
+
   const operator = resolveCapabilityWriteSessionUserId(request);
   if (!operator) {
-    reply.status(401);
-    return null;
+    return { status: 401, error: 'Plugin write endpoint requires an authenticated owner session' };
   }
 
   const ownerError = requireCapabilityWriteOwner(operator);
   if (ownerError) {
-    reply.status(ownerError.status);
-    return null;
+    return { status: ownerError.status, error: 'Plugin write endpoint requires configured owner authorization' };
   }
 
-  return operator;
+  return { operator };
 }
 
-function pluginWriteOwnerError(reply: FastifyReply): { error: string } {
-  return {
-    error:
-      reply.statusCode === 401
-        ? 'Plugin write endpoint requires an authenticated owner session'
-        : 'Plugin write endpoint requires configured owner authorization',
-  };
+function pluginWriteAccessError(reply: FastifyReply, error: PluginWriteAccessError): { error: string } {
+  reply.status(error.status);
+  return { error: error.error };
 }
 
 export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpts): void {
@@ -89,10 +97,11 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
   });
 
   app.post<{ Params: { id: string } }>('/api/plugins/:id/enable', async (request, reply) => {
-    const operator = requirePluginWriteOwner(request, reply);
-    if (!operator) {
-      return pluginWriteOwnerError(reply);
+    const access = requirePluginWriteAccess(request);
+    if ('error' in access) {
+      return pluginWriteAccessError(reply, access);
     }
+    const { operator } = access;
 
     const { id } = request.params;
     refreshPluginRegistry(pluginRegistry);
@@ -118,10 +127,11 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
   });
 
   app.post<{ Params: { id: string } }>('/api/plugins/:id/disable', async (request, reply) => {
-    const operator = requirePluginWriteOwner(request, reply);
-    if (!operator) {
-      return pluginWriteOwnerError(reply);
+    const access = requirePluginWriteAccess(request);
+    if ('error' in access) {
+      return pluginWriteAccessError(reply, access);
     }
+    const { operator } = access;
 
     const { id } = request.params;
     refreshPluginRegistry(pluginRegistry);
@@ -149,10 +159,11 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
   app.post<{ Params: { id: string }; Body: { updates: { name: string; value: string | null }[] } }>(
     '/api/plugins/:id/config',
     async (request, reply) => {
-      const operator = requirePluginWriteOwner(request, reply);
-      if (!operator) {
-        return pluginWriteOwnerError(reply);
+      const access = requirePluginWriteAccess(request);
+      if ('error' in access) {
+        return pluginWriteAccessError(reply, access);
       }
+      const { operator } = access;
 
       const { id } = request.params;
       refreshPluginRegistry(pluginRegistry);
@@ -219,10 +230,11 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
   );
 
   app.post<{ Params: { id: string } }>('/api/plugins/:id/test', async (request, reply) => {
-    const operator = requirePluginWriteOwner(request, reply);
-    if (!operator) {
-      return pluginWriteOwnerError(reply);
+    const access = requirePluginWriteAccess(request);
+    if ('error' in access) {
+      return pluginWriteAccessError(reply, access);
     }
+    const { operator } = access;
 
     const { id } = request.params;
     refreshPluginRegistry(pluginRegistry);
