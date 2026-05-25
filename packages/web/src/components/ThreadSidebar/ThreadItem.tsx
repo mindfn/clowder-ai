@@ -139,7 +139,7 @@ export function ThreadItem({
   const tooltip = tooltipLines.join('\n');
   const hasMoreActions = id !== 'default' && !isEditing;
   const menuTriggerClassName =
-    'block w-full text-left px-3 py-1.5 text-xs text-cafe-secondary hover:bg-cafe-surface-elevated transition-colors';
+    'flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-cafe-secondary hover:bg-cafe-surface-elevated transition-colors';
 
   const startRename = useCallback(() => {
     setIsMoreOpen(false);
@@ -264,25 +264,33 @@ export function ThreadItem({
                       threadId={id}
                       currentCats={preferredCats ?? []}
                       onSave={onUpdatePreferredCats}
+                      triggerIcon={<DefaultCatIcon />}
                       triggerLabel="设置默认猫猫"
                       triggerClassName={menuTriggerClassName}
                       triggerRole="menuitem"
                     />
                   )}
-                  {canRename && <ThreadActionMenuItem onClick={startRename}>重命名对话</ThreadActionMenuItem>}
-                  <ThreadActionMenuItem onClick={exportThread}>导出对话</ThreadActionMenuItem>
+                  {canRename && (
+                    <ThreadActionMenuItem icon={<RenameIcon />} onClick={startRename}>
+                      重命名对话
+                    </ThreadActionMenuItem>
+                  )}
+                  <ThreadActionMenuItem icon={<ExportIcon />} onClick={exportThread}>
+                    导出对话
+                  </ThreadActionMenuItem>
                   {onUpdateLabels && (
                     <ThreadLabelPicker
                       threadId={id}
                       currentLabels={threadLabels ?? []}
                       onSave={onUpdateLabels}
+                      triggerIcon={<LabelIcon />}
                       triggerLabel="标签管理"
                       triggerClassName={menuTriggerClassName}
                       triggerRole="menuitem"
                     />
                   )}
                   {canFavorite && (
-                    <ThreadActionMenuItem onClick={toggleFavorite}>
+                    <ThreadActionMenuItem icon={<StarIcon filled={isFavorited} />} onClick={toggleFavorite}>
                       {isFavorited ? '取消收藏' : '收藏'}
                     </ThreadActionMenuItem>
                   )}
@@ -376,15 +384,69 @@ function MoreVerticalIcon() {
   );
 }
 
-function ThreadActionMenuItem({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+function DefaultCatIcon() {
+  return (
+    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M8 1C4.7 1 2 3.2 2 6c0 1.4.7 2.6 1.7 3.5-.1.8-.4 1.6-.9 2.3a.5.5 0 00.4.8c1.2 0 2.3-.5 3.1-1.1.5.1 1.1.2 1.7.2 3.3 0 6-2.2 6-5S11.3 1 8 1z" />
+    </svg>
+  );
+}
+
+function RenameIcon() {
+  return (
+    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M11.013 1.427a1.75 1.75 0 112.474 2.474l-7.2 7.2a2 2 0 01-.84.49l-2.22.634a.75.75 0 01-.926-.926l.634-2.22a2 2 0 01.49-.84l7.588-7.588zm1.414 1.06a.25.25 0 00-.353 0L11.2 3.36l1.44 1.44.874-.874a.25.25 0 000-.353l-1.086-1.086zM11.58 5.86l-1.44-1.44-6.072 6.072a.5.5 0 00-.123.21l-.303 1.06 1.06-.303a.5.5 0 00.21-.123l6.668-6.668z" />
+      <path d="M2.25 13A.75.75 0 013 12.25v-.5a.75.75 0 011.5 0v.5c0 .138.112.25.25.25h8a.75.75 0 010 1.5h-8A1.75 1.75 0 012.25 13z" />
+    </svg>
+  );
+}
+
+function ExportIcon() {
+  return (
+    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M2.75 14A1.75 1.75 0 011 12.25v-2.5a.75.75 0 011.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 00.25-.25v-2.5a.75.75 0 011.5 0v2.5A1.75 1.75 0 0113.25 14H2.75z" />
+      <path d="M7.25 7.689V2a.75.75 0 011.5 0v5.689l1.97-1.969a.749.749 0 111.06 1.06l-3.25 3.25a.749.749 0 01-1.06 0L4.22 6.78a.749.749 0 111.06-1.06l1.97 1.969z" />
+    </svg>
+  );
+}
+
+function LabelIcon() {
+  return (
+    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path
+        fillRule="evenodd"
+        d="M2.5 1A1.5 1.5 0 001 2.5v4.586a1.5 1.5 0 00.44 1.06l6.414 6.414a1.5 1.5 0 002.122 0l4.586-4.586a1.5 1.5 0 000-2.122L8.148 1.44A1.5 1.5 0 007.086 1H2.5zM5 4a1 1 0 11-2 0 1 1 0 012 0z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+
+function StarIcon({ filled }: { filled?: boolean }) {
+  return (
+    <svg
+      className="w-3 h-3"
+      viewBox="0 0 16 16"
+      fill={filled ? 'currentColor' : 'none'}
+      stroke="currentColor"
+      strokeWidth="1.2"
+      aria-hidden="true"
+    >
+      <path d="M8 1.5l2.09 4.26 4.71.68-3.41 3.32.8 4.69L8 12.26l-4.19 2.19.8-4.69L1.2 6.44l4.71-.68L8 1.5z" />
+    </svg>
+  );
+}
+
+function ThreadActionMenuItem({ icon, onClick, children }: { icon: ReactNode; onClick: () => void; children: ReactNode }) {
   return (
     <button
       type="button"
       role="menuitem"
       onClick={onClick}
-      className="block w-full px-3 py-1.5 text-left text-xs text-cafe-secondary transition-colors hover:bg-cafe-surface-elevated"
+      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-cafe-secondary transition-colors hover:bg-cafe-surface-elevated"
     >
-      {children}
+      <span className="inline-flex h-3 w-3 flex-shrink-0 items-center justify-center text-cafe-muted">{icon}</span>
+      <span>{children}</span>
     </button>
   );
 }

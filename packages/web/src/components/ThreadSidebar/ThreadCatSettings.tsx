@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { CatSelector } from './CatSelector';
 
 interface ThreadCatSettingsProps {
@@ -8,6 +8,7 @@ interface ThreadCatSettingsProps {
   currentCats: string[];
   onSave: (threadId: string, cats: string[]) => void | Promise<void>;
   triggerLabel?: string;
+  triggerIcon?: ReactNode;
   triggerClassName?: string;
   triggerRole?: 'menuitem';
 }
@@ -21,6 +22,7 @@ export function ThreadCatSettings({
   currentCats,
   onSave,
   triggerLabel,
+  triggerIcon,
   triggerClassName,
   triggerRole,
 }: ThreadCatSettingsProps) {
@@ -96,7 +98,12 @@ export function ThreadCatSettings({
         title="设置默认猫猫"
         role={triggerRole}
       >
-        {triggerLabel ?? (
+        {triggerLabel ? (
+          <>
+            {triggerIcon}
+            <span>{triggerLabel}</span>
+          </>
+        ) : (
           <svg className="w-3 h-3" viewBox="0 0 16 16" fill="currentColor">
             <path d="M8 1C4.7 1 2 3.2 2 6c0 1.4.7 2.6 1.7 3.5-.1.8-.4 1.6-.9 2.3a.5.5 0 00.4.8c1.2 0 2.3-.5 3.1-1.1.5.1 1.1.2 1.7.2 3.3 0 6-2.2 6-5S11.3 1 8 1z" />
           </svg>

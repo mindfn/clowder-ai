@@ -20,13 +20,39 @@ vi.mock('@/components/ThreadCatStatus', () => ({
 }));
 
 vi.mock('@/components/ThreadSidebar/ThreadCatSettings', () => ({
-  ThreadCatSettings: ({ triggerLabel }: { triggerLabel?: string }) =>
-    React.createElement('button', { title: '设置默认猫猫', type: 'button' }, triggerLabel ?? '设置默认猫猫'),
+  ThreadCatSettings: ({
+    triggerIcon,
+    triggerLabel,
+    triggerRole,
+  }: {
+    triggerIcon?: React.ReactNode;
+    triggerLabel?: string;
+    triggerRole?: 'menuitem';
+  }) =>
+    React.createElement(
+      'button',
+      { role: triggerRole, title: '设置默认猫猫', type: 'button' },
+      triggerIcon,
+      React.createElement('span', null, triggerLabel ?? '设置默认猫猫'),
+    ),
 }));
 
 vi.mock('@/components/ThreadSidebar/ThreadLabelPicker', () => ({
-  ThreadLabelPicker: ({ triggerLabel }: { triggerLabel?: string }) =>
-    React.createElement('button', { title: '标签管理', type: 'button' }, triggerLabel ?? '标签管理'),
+  ThreadLabelPicker: ({
+    triggerIcon,
+    triggerLabel,
+    triggerRole,
+  }: {
+    triggerIcon?: React.ReactNode;
+    triggerLabel?: string;
+    triggerRole?: 'menuitem';
+  }) =>
+    React.createElement(
+      'button',
+      { role: triggerRole, title: '标签管理', type: 'button' },
+      triggerIcon,
+      React.createElement('span', null, triggerLabel ?? '标签管理'),
+    ),
 }));
 
 vi.mock('@/components/icons/HubIcon', () => ({
@@ -120,5 +146,26 @@ describe('ThreadItem actions', () => {
     expect(menu?.textContent).toContain('导出对话');
     expect(menu?.textContent).toContain('标签管理');
     expect(menu?.textContent).toContain('收藏');
+  });
+
+  it('renders secondary actions as icon plus text menu items', () => {
+    renderThread();
+
+    act(() => {
+      buttonByTitle('更多操作')?.click();
+    });
+
+    const menu = container.querySelector('[role="menu"]');
+    expect(menu).not.toBeNull();
+
+    for (const label of ['设置默认猫猫', '重命名对话', '导出对话', '标签管理', '收藏']) {
+      const item = Array.from(menu!.querySelectorAll('[role="menuitem"]')).find((el) =>
+        el.textContent?.includes(label),
+      );
+      expect(item, `${label} menu item`).not.toBeUndefined();
+      const first = item!.firstElementChild;
+      expect(first?.querySelector('svg[aria-hidden="true"]') ?? first?.matches('svg[aria-hidden="true"]')).toBeTruthy();
+      expect(item!.textContent).toContain(label);
+    }
   });
 });

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { useIMEGuard } from '@/hooks/useIMEGuard';
 import { type ThreadLabel, useLabelStore } from '@/stores/label-store';
 
@@ -9,6 +9,7 @@ interface ThreadLabelPickerProps {
   currentLabels: string[];
   onSave: (threadId: string, labels: string[]) => void | Promise<void>;
   triggerLabel?: string;
+  triggerIcon?: ReactNode;
   triggerClassName?: string;
   triggerRole?: 'menuitem';
 }
@@ -18,6 +19,7 @@ export function ThreadLabelPicker({
   currentLabels,
   onSave,
   triggerLabel,
+  triggerIcon,
   triggerClassName,
   triggerRole,
 }: ThreadLabelPickerProps) {
@@ -126,7 +128,14 @@ export function ThreadLabelPicker({
         title="标签管理"
         role={triggerRole}
       >
-        {triggerLabel ?? <LabelIcon />}
+        {triggerLabel ? (
+          <>
+            {triggerIcon}
+            <span>{triggerLabel}</span>
+          </>
+        ) : (
+          <LabelIcon />
+        )}
       </button>
       {isOpen && (
         <div
