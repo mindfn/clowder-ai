@@ -163,8 +163,21 @@ export class PluginRegistry {
 
 export function resourceCapId(pluginId: string, resource: { type: string; path?: string; name?: string }): string {
   if (resource.type === 'skill' && resource.path) {
-    return resource.path.split('/').pop()!;
+    return resourcePathBasename(resource.path);
   }
   const suffix = resource.path ?? resource.name ?? resource.type;
   return `plugin:${pluginId}:${suffix}`;
+}
+
+export function resourcePathSegments(resourcePath: string): string[] {
+  return resourcePath.split(/[\\/]+/).filter(Boolean);
+}
+
+export function resourcePathBasename(resourcePath: string): string {
+  const segments = resourcePathSegments(resourcePath);
+  return segments.at(-1) ?? resourcePath;
+}
+
+export function resolvePluginResourcePath(pluginsDir: string, pluginId: string, resourcePath: string): string {
+  return join(pluginsDir, pluginId, ...resourcePathSegments(resourcePath));
 }

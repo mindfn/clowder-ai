@@ -9,7 +9,7 @@ import type {
   PluginResourceDef,
 } from '@cat-cafe/shared';
 import type { LimbRegistry } from '../limb/LimbRegistry.js';
-import { resourceCapId } from './PluginRegistry.js';
+import { resolvePluginResourcePath, resourceCapId, resourcePathBasename } from './PluginRegistry.js';
 import { resolvePluginEnv } from './plugin-config-store.js';
 
 const PROVIDER_DIRS = ['.claude/skills', '.codex/skills', '.gemini/skills', '.kimi/skills'];
@@ -147,11 +147,11 @@ export class PluginResourceActivator {
   private async activateSkill(manifest: PluginManifest, resource: PluginResourceDef): Promise<void> {
     if (!resource.path) throw new Error('Skill resource must have a path');
 
-    const skillSourceDir = join(this.deps.pluginsDir, manifest.id, resource.path);
+    const skillSourceDir = resolvePluginResourcePath(this.deps.pluginsDir, manifest.id, resource.path);
     if (!existsSync(skillSourceDir)) {
       throw new Error(`Skill source not found: ${skillSourceDir}`);
     }
-    const skillName = resource.path.split('/').pop()!;
+    const skillName = resourcePathBasename(resource.path);
 
     const createdLinks: string[] = [];
     try {
@@ -174,8 +174,8 @@ export class PluginResourceActivator {
   private async deactivateSkill(manifest: PluginManifest, resource: PluginResourceDef): Promise<void> {
     if (!resource.path) return;
 
-    const skillSourceDir = join(this.deps.pluginsDir, manifest.id, resource.path);
-    const skillName = resource.path.split('/').pop()!;
+    const skillSourceDir = resolvePluginResourcePath(this.deps.pluginsDir, manifest.id, resource.path);
+    const skillName = resourcePathBasename(resource.path);
 
     for (const providerDir of PROVIDER_DIRS) {
       const linkPath = join(this.deps.resolveProjectRoot(), providerDir, skillName);
@@ -191,7 +191,7 @@ export class PluginResourceActivator {
       throw new Error('No limb adapter factory configured');
     }
 
-    const yamlPath = join(this.deps.pluginsDir, manifest.id, resource.path);
+    const yamlPath = resolvePluginResourcePath(this.deps.pluginsDir, manifest.id, resource.path);
     const node = await this.deps.limbAdapterFactory(manifest.id, yamlPath);
     await this.upsertCapabilityEntry(manifest, resource, true, node.nodeId);
     try {
@@ -210,7 +210,7 @@ export class PluginResourceActivator {
     let nodeId = config?.capabilities.find((c) => c.id === capId)?.limbNodeId;
     if (!nodeId) {
       try {
-        const yamlPath = join(this.deps.pluginsDir, manifest.id, resource.path);
+        const yamlPath = resolvePluginResourcePath(this.deps.pluginsDir, manifest.id, resource.path);
         const { loadLimbDeclaration } = await import('../limb/limb-yaml-loader.js');
         nodeId = loadLimbDeclaration(yamlPath).nodeId;
       } catch {

@@ -3,7 +3,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
@@ -455,6 +455,50 @@ describe('validateEnvSafety security', () => {
 });
 
 describe('PluginResourceActivator skill safety', () => {
+  it('normalizes Windows-style skill resource paths for activation and disable cleanup', async () => {
+    const root = mkdtempSync(join(os.tmpdir(), 'plugin-activator-root-'));
+    const pluginsDir = join(root, 'plugins');
+    const projectRoot = join(root, 'project');
+    const skillSourceDir = join(pluginsDir, 'test-plugin', 'skills', 'plugin-skill');
+    mkdirSync(skillSourceDir, { recursive: true });
+
+    let persisted = { version: 1, capabilities: [] };
+    const activator = new PluginResourceActivator({
+      resolveProjectRoot: () => projectRoot,
+      pluginsDir,
+      limbRegistry: {},
+      readCapabilities: async () => structuredClone(persisted),
+      writeCapabilities: async (config) => {
+        persisted = structuredClone(config);
+      },
+      withCapabilityLock: async (fn) => fn(),
+    });
+    const manifest = {
+      id: 'test-plugin',
+      name: 'Test Plugin',
+      version: '1.0.0',
+      builtin: false,
+      config: [],
+      resources: [{ type: 'skill', path: 'skills\\plugin-skill' }],
+    };
+
+    const enableResult = await activator.enablePlugin(manifest);
+
+    assert.equal(enableResult.status, 'success');
+    const codexLink = join(projectRoot, '.codex', 'skills', 'plugin-skill');
+    assert.equal(readlinkSync(codexLink), skillSourceDir);
+    assert.equal(existsSync(join(projectRoot, '.codex', 'skills', 'skills')), false);
+    assert.equal(persisted.capabilities[0].id, 'plugin-skill');
+    assert.equal(persisted.capabilities[0].enabled, true);
+
+    const disableResult = await activator.disablePlugin(manifest);
+
+    assert.equal(disableResult.status, 'success');
+    assert.equal(existsSync(codexLink), false);
+    assert.equal(persisted.capabilities[0].id, 'plugin-skill');
+    assert.equal(persisted.capabilities[0].enabled, false);
+  });
+
   it('rejects plugin skill activation through provider skills root symlink', async () => {
     const root = mkdtempSync(join(os.tmpdir(), 'plugin-activator-root-'));
     const pluginsDir = join(root, 'plugins');
