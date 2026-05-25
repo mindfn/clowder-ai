@@ -282,6 +282,117 @@ describe('service lifecycle write routes', () => {
     }
   });
 
+  it('reports uninstalling while an uninstall runner is still active', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const previousLogDir = process.env.LOG_DIR;
+    process.env.LOG_DIR = mkdtempSync(join(tmpdir(), 'service-uninstall-log-'));
+    let releaseUninstall;
+    let started = false;
+    const configs = new Map([['whisper-stt', { installed: true, enabled: false }]]);
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        runScript: async () =>
+          new Promise((resolve) => {
+            started = true;
+            releaseUninstall = () => resolve({ code: 0, output: 'uninstalled' });
+          }),
+      },
+    });
+    try {
+      const uninstall = app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/uninstall',
+        headers: SESSION_HEADERS,
+      });
+      while (!started) await new Promise((resolve) => setImmediate(resolve));
+
+      const listRes = await app.inject({
+        method: 'GET',
+        url: '/api/services',
+        headers: SESSION_HEADERS,
+      });
+
+      const whisper = JSON.parse(listRes.payload).services.find((service) => service.id === 'whisper-stt');
+      assert.equal(whisper.status, 'uninstalling');
+      assert.equal(whisper.installed, true);
+      assert.equal(whisper.enabled, false);
+      assert.match(readServiceLogTail('whisper-stt', 20).join('\n'), /\[uninstall\] started/);
+
+      releaseUninstall();
+      releaseUninstall = null;
+      assert.equal((await uninstall).statusCode, 200);
+    } finally {
+      releaseUninstall?.();
+      await app.close();
+      if (previousLogDir === undefined) delete process.env.LOG_DIR;
+      else process.env.LOG_DIR = previousLogDir;
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('stops owned service listeners before running uninstall', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const previousLogDir = process.env.LOG_DIR;
+    process.env.LOG_DIR = mkdtempSync(join(tmpdir(), 'service-uninstall-log-'));
+    const killed = [];
+    let didRun = false;
+    const resolvedScript = resolveServiceScriptPath('scripts/services/whisper-server.sh');
+    const configs = new Map([['whisper-stt', { installed: true, enabled: true }]]);
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        findPidsByPort: async (port) => (port === 9876 ? [5151] : []),
+        readProcessCommand: async () => `/bin/bash ${resolvedScript}`,
+        killPid: (pid, signal) => {
+          assert.equal(didRun, false, 'uninstall script must not run before pre-stop completes');
+          killed.push({ pid, signal });
+        },
+        runScript: async () => {
+          didRun = true;
+          return { code: 0, output: 'uninstalled' };
+        },
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/uninstall',
+        headers: SESSION_HEADERS,
+      });
+
+      assert.equal(res.statusCode, 200, res.payload);
+      assert.deepEqual(killed, [{ pid: 5151, signal: 'SIGTERM' }]);
+      assert.equal(didRun, true);
+      assert.deepEqual(configs.get('whisper-stt'), { installed: false, enabled: false });
+      assert.match(
+        readServiceLogTail('whisper-stt', 20).join('\n'),
+        /stopped owned process\(es\) before uninstall: 5151/,
+      );
+    } finally {
+      await app.close();
+      if (previousLogDir === undefined) delete process.env.LOG_DIR;
+      else process.env.LOG_DIR = previousLogDir;
+      restoreOwner(previousOwner);
+    }
+  });
+
   it('reports starting during detached startup grace after start returns', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';

@@ -496,6 +496,53 @@ describe('ServiceStatusPanel', () => {
     expect(installBtn?.disabled).toBe(true);
   });
 
+  it('restores uninstalling state and log polling after remount', async () => {
+    const uninstallingPayload = {
+      services: [
+        {
+          id: 'mlx-tts',
+          name: 'MLX TTS',
+          description: 'Text to speech',
+          category: 'voice',
+          features: ['voice-output'],
+          endpoint: 'http://localhost:9879',
+          configured: true,
+          status: 'uninstalling',
+          error: null,
+          installed: true,
+          enabled: false,
+          installable: true,
+        },
+      ],
+    };
+    mockFetch.mockImplementation(async (path: string) => {
+      if (path === '/api/services') {
+        return { ok: true, json: async () => uninstallingPayload };
+      }
+      if (path === '/api/services/mlx-tts/logs') {
+        return {
+          ok: true,
+          json: async () => ({
+            serviceId: 'mlx-tts',
+            lines: ['[uninstall] stopped owned process(es) before uninstall: 5151'],
+          }),
+        };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+
+    await render(React.createElement(ServiceStatusPanel, { filterFeatures: ['voice-output'], title: 'TTS' }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('卸载中');
+    expect(container.textContent).toContain('[uninstall] stopped owned process(es) before uninstall: 5151');
+    const trashBtn = Array.from(container.querySelectorAll('button')).find((b) => b.title === '卸载');
+    expect(trashBtn).toBeTruthy();
+    expect(trashBtn?.disabled).toBe(true);
+  });
+
   it('refreshes service state while startup is still in progress', async () => {
     const startingPayload = {
       services: [

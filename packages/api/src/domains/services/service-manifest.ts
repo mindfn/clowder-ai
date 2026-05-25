@@ -3,7 +3,14 @@ import { normalizeLoopbackUrl } from './loopback-url.js';
 import { getServiceConfig } from './service-config.js';
 
 export type ServiceLifecycleStateAction = 'install' | 'start' | 'stop' | 'uninstall' | 'toggle';
-export type ServiceStatus = 'healthy' | 'unhealthy' | 'not_configured' | 'installing' | 'starting';
+export type ServiceStatus =
+  | 'healthy'
+  | 'unhealthy'
+  | 'not_configured'
+  | 'installing'
+  | 'starting'
+  | 'stopping'
+  | 'uninstalling';
 
 export interface ServiceManifest {
   id: string;
@@ -449,16 +456,28 @@ export async function resolveServiceState(
   const clientPrerequisites = service.prerequisites
     ? { prerequisites: (({ venvPath: _, ...r }) => r)(service.prerequisites) }
     : {};
-  if (options.lifecycleAction === 'install' || options.lifecycleAction === 'start') {
+  const lifecycleStatus: Partial<Record<ServiceLifecycleStateAction, ServiceStatus>> = {
+    install: 'installing',
+    start: 'starting',
+    stop: 'stopping',
+    uninstall: 'uninstalling',
+  };
+  const activeLifecycleStatus = options.lifecycleAction ? lifecycleStatus[options.lifecycleAction] : undefined;
+  if (activeLifecycleStatus) {
     return {
       ...buildClientServiceManifest(service),
       endpoint: endpoint ? maskServiceEndpoint(endpoint) : null,
       configured: !!endpoint,
-      status: options.lifecycleAction === 'install' ? 'installing' : 'starting',
+      status: activeLifecycleStatus,
       httpStatus: null,
       error: null,
       installed: options.lifecycleAction === 'start' ? true : installed,
-      enabled: options.lifecycleAction === 'start' ? true : enabled,
+      enabled:
+        options.lifecycleAction === 'start'
+          ? true
+          : options.lifecycleAction === 'stop' || options.lifecycleAction === 'uninstall'
+            ? false
+            : enabled,
       installable,
       ...clientPrerequisites,
     };

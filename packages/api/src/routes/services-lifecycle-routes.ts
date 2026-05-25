@@ -237,6 +237,7 @@ export async function registerServiceLifecycleRoutes(
     if (!options.lifecycle?.runScript && !existsSync(scriptPath)) {
       return { ok: false, error: `${input.action} script not found: ${scriptPath}` };
     }
+    appendServiceLog(input.serviceId, `[${input.action}] started: ${scriptPath}\n`);
     await audit({ serviceId: input.serviceId, action: input.action, operator: input.operator, status: 'started' });
     const result = await runWithTimeout(runner, {
       serviceId: input.serviceId,
@@ -246,6 +247,10 @@ export async function registerServiceLifecycleRoutes(
       timeoutMs: lifecycleTimeoutMs,
     });
     if (result.timedOut) {
+      appendServiceLog(
+        input.serviceId,
+        `[${input.action}] timed out after ${Math.round(lifecycleTimeoutMs / 1000)}s\n`,
+      );
       await audit({ serviceId: input.serviceId, action: input.action, operator: input.operator, status: 'timed_out' });
       return holdLifecycleLockUntil(
         { ok: false, error: `${input.action} script timed out after ${Math.round(lifecycleTimeoutMs / 1000)}s` },
@@ -253,6 +258,10 @@ export async function registerServiceLifecycleRoutes(
       );
     }
     if (result.runnerError || result.code !== 0) {
+      appendServiceLog(
+        input.serviceId,
+        `[${input.action}] failed${typeof result.code === 'number' ? ` with exit ${result.code}` : ''}\n`,
+      );
       await audit({
         serviceId: input.serviceId,
         action: input.action,
@@ -269,8 +278,52 @@ export async function registerServiceLifecycleRoutes(
         output: result.output?.slice(-2000),
       };
     }
+    appendServiceLog(input.serviceId, `[${input.action}] completed\n`);
     await audit({ serviceId: input.serviceId, action: input.action, operator: input.operator, status: 'completed' });
     return { ok: true, message: `${input.action} completed` };
+  }
+
+  async function stopOwnedServiceProcessesForUninstall(
+    service: ServiceManifest,
+  ): Promise<
+    | { ok: true; stopped: number[]; foreign: number[] }
+    | { ok: false; reason: string; statusCode: number; stopped: number[]; failed: number[] }
+  > {
+    const cfg = getEffectiveConfig(service);
+    const probeService = { ...service, port: cfg?.port ?? service.port };
+    const portProbe = await partitionServicePids(probeService);
+    if (!portProbe.ok) {
+      appendServiceLog(service.id, `[uninstall] pre-stop probe failed: ${portProbe.reason}\n`);
+      return { ok: false, reason: portProbe.reason, statusCode: 503, stopped: [], failed: [] };
+    }
+
+    const stopped: number[] = [];
+    const failed: number[] = [];
+    for (const pid of portProbe.owned) {
+      try {
+        terminatePid(pid, 'SIGTERM');
+        stopped.push(pid);
+      } catch (error) {
+        if (hasErrorCode(error, 'ESRCH')) continue;
+        failed.push(pid);
+        app.log.warn({ err: error, serviceId: service.id, pid }, 'service uninstall pre-stop terminate failed');
+      }
+    }
+    if (failed.length > 0) {
+      appendServiceLog(service.id, `[uninstall] failed to stop owned process(es): ${failed.join(', ')}\n`);
+      return { ok: false, reason: 'terminate-failed', statusCode: 502, stopped, failed };
+    }
+    if (stopped.length > 0) {
+      appendServiceLog(service.id, `[uninstall] stopped owned process(es) before uninstall: ${stopped.join(', ')}\n`);
+      await delay(300);
+    }
+    if (portProbe.foreign.length > 0) {
+      appendServiceLog(
+        service.id,
+        `[uninstall] foreign listener(s) left untouched on service port: ${portProbe.foreign.join(', ')}\n`,
+      );
+    }
+    return { ok: true, stopped, foreign: portProbe.foreign };
   }
 
   app.post<{ Params: { id: string }; Body: { model?: unknown; port?: unknown } }>(
@@ -364,6 +417,24 @@ export async function registerServiceLifecycleRoutes(
       service.id,
       reply,
       async () => {
+        const preStop = await stopOwnedServiceProcessesForUninstall(service);
+        if (!preStop.ok) {
+          reply.status(preStop.statusCode);
+          await audit({
+            serviceId: service.id,
+            action: 'uninstall',
+            operator,
+            status: 'failed',
+            reason: preStop.reason,
+          });
+          return {
+            ok: false,
+            error: `${service.name} uninstall could not stop running service process(es)`,
+            stopped: preStop.stopped,
+            failed: preStop.failed,
+          };
+        }
+        serviceConfigStore.set(service.id, { enabled: false });
         // Mirror /start: inject persisted selectedModel + port so uninstall
         // scripts that probe the install-time venv can find it (codex P1
         // 3265033601 / 3268690489). Fall back to bare env if persisted

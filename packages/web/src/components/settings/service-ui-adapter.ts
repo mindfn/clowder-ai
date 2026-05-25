@@ -1,4 +1,11 @@
-type HomeServiceStatus = 'healthy' | 'unhealthy' | 'not_configured' | 'installing' | 'starting';
+type HomeServiceStatus =
+  | 'healthy'
+  | 'unhealthy'
+  | 'not_configured'
+  | 'installing'
+  | 'starting'
+  | 'stopping'
+  | 'uninstalling';
 
 interface ModelOption {
   name: string;
@@ -31,7 +38,15 @@ export interface HomeServiceState {
   error?: string | null;
 }
 
-export type ServiceUiStatus = 'running' | 'stopped' | 'not_configured' | 'error' | 'installing' | 'starting';
+export type ServiceUiStatus =
+  | 'running'
+  | 'stopped'
+  | 'not_configured'
+  | 'error'
+  | 'installing'
+  | 'starting'
+  | 'stopping'
+  | 'uninstalling';
 
 export interface ServiceUiState {
   id: string;
@@ -57,6 +72,8 @@ const STATUS_LABELS: Record<ServiceUiStatus, string> = {
   error: '异常',
   installing: '安装中',
   starting: '启动中',
+  stopping: '停止中',
+  uninstalling: '卸载中',
 };
 
 const DISPLAY_NAMES: Record<string, string> = {
@@ -73,7 +90,12 @@ export function adaptServiceState(home: HomeServiceState): ServiceUiState {
   const running = home.status === 'healthy';
 
   let status: ServiceUiStatus;
-  if (home.status === 'installing' || home.status === 'starting') {
+  if (
+    home.status === 'installing' ||
+    home.status === 'starting' ||
+    home.status === 'stopping' ||
+    home.status === 'uninstalling'
+  ) {
     status = home.status;
   } else if (!installed) {
     status = 'not_configured';

@@ -16,7 +16,14 @@ interface ServicePrerequisites {
   estimatedMinutes?: number;
 }
 
-type ServiceStatus = 'healthy' | 'unhealthy' | 'not_configured' | 'installing' | 'starting';
+type ServiceStatus =
+  | 'healthy'
+  | 'unhealthy'
+  | 'not_configured'
+  | 'installing'
+  | 'starting'
+  | 'stopping'
+  | 'uninstalling';
 
 interface ServiceState {
   id: string;

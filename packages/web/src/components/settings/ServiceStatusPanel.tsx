@@ -24,11 +24,13 @@ const STATUS_DOT_COLOR: Record<string, string> = {
   error: 'var(--conn-red-text)',
   installing: 'var(--conn-amber-text)',
   starting: 'var(--conn-amber-text)',
+  stopping: 'var(--conn-amber-text)',
+  uninstalling: 'var(--conn-amber-text)',
 };
 
 const ROW_STYLE = { paddingInline: '1.25rem', paddingBlock: '0.75rem' } as const;
 const LOG_POLL_MS = 2000;
-const LIFECYCLE_BUSY_STATUSES = new Set<ServiceUiStatus>(['installing', 'starting']);
+const LIFECYCLE_BUSY_STATUSES = new Set<ServiceUiStatus>(['installing', 'starting', 'stopping', 'uninstalling']);
 
 interface ServiceStatusPanelProps {
   filterFeatures?: string[];
@@ -130,7 +132,9 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
   async function executeAction(serviceId: string, action: string, model?: string, port?: number) {
     setActing((prev) => new Set(prev).add(serviceId));
     setActionError(null);
-    if (action === 'install' || action === 'start') startLogPoll(serviceId);
+    if (action === 'install' || action === 'start' || action === 'stop' || action === 'uninstall') {
+      startLogPoll(serviceId);
+    }
     try {
       // Serialize model + port for install (codex P2 3266352848 — install
       // modal accepts a port input but executeAction was previously dropping
