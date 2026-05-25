@@ -115,6 +115,25 @@ describe('capabilities MCP write routes', () => {
     assert.deepEqual(config?.capabilities, []);
   });
 
+  it('rejects local-looking MCP writes when the API is bound for LAN access', async () => {
+    setEnv('API_SERVER_HOST', '0.0.0.0');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/capabilities/mcp/install',
+      headers: LOCAL_OWNER_HEADERS,
+      payload: {
+        id: 'external-mcp',
+        resolver: 'chrome-extension',
+      },
+    });
+
+    assert.equal(res.statusCode, 403);
+    assert.match(JSON.parse(res.payload).error, /direct localhost/i);
+    const config = await readCapabilitiesConfig(projectRoot);
+    assert.deepEqual(config?.capabilities, []);
+  });
+
   it('rejects header-only identity for every MCP write route', async () => {
     setEnv('DEFAULT_OWNER_USER_ID', 'you');
     await writeCapabilitiesConfig(projectRoot, {
