@@ -1358,11 +1358,22 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
 
   it('allows local capability toggle when DEFAULT_OWNER_USER_ID is missing and rejects non-local or configured non-owners', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    const previousOwnerlessLocalWrites = process.env.CAT_CAFE_ALLOW_OWNERLESS_LOCAL_CAPABILITY_WRITES;
     const projectDir = await seedProject();
     const app = await buildSessionApp();
 
     try {
       delete process.env.DEFAULT_OWNER_USER_ID;
+      delete process.env.CAT_CAFE_ALLOW_OWNERLESS_LOCAL_CAPABILITY_WRITES;
+      const missingOwnerWithoutExplicitFallback = await patchCapability(app, projectDir, {
+        ...OWNER_SESSION_HEADERS,
+        host: 'localhost:3004',
+        origin: 'http://localhost:3003',
+      });
+      assert.equal(missingOwnerWithoutExplicitFallback.statusCode, 403);
+      assert.match(JSON.parse(missingOwnerWithoutExplicitFallback.payload).error, /DEFAULT_OWNER_USER_ID/);
+
+      process.env.CAT_CAFE_ALLOW_OWNERLESS_LOCAL_CAPABILITY_WRITES = '1';
       const missingOwnerWithoutOrigin = await patchCapability(app, projectDir, {
         ...OWNER_SESSION_HEADERS,
         host: 'localhost:3004',
@@ -1439,6 +1450,9 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
       await rm(projectDir, { recursive: true, force: true });
       if (previousOwner === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
       else process.env.DEFAULT_OWNER_USER_ID = previousOwner;
+      if (previousOwnerlessLocalWrites === undefined)
+        delete process.env.CAT_CAFE_ALLOW_OWNERLESS_LOCAL_CAPABILITY_WRITES;
+      else process.env.CAT_CAFE_ALLOW_OWNERLESS_LOCAL_CAPABILITY_WRITES = previousOwnerlessLocalWrites;
     }
   });
 

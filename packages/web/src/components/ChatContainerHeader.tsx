@@ -158,6 +158,16 @@ export function ThreadIndicator({ threadId }: { threadId: string }) {
   const currentThread = threads.find((t) => t.id === threadId);
   const [copied, setCopied] = useState(false);
   const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const title = currentThread?.title ?? '未命名对话';
+  const rawPath = currentThread?.projectPath ?? '';
+
+  useEffect(() => {
+    if (copyResetTimerRef.current) {
+      clearTimeout(copyResetTimerRef.current);
+      copyResetTimerRef.current = null;
+    }
+    setCopied(false);
+  }, [threadId, rawPath]);
 
   useEffect(() => {
     return () => {
@@ -169,8 +179,6 @@ export function ThreadIndicator({ threadId }: { threadId: string }) {
     return <p className="text-xs text-cafe-secondary">大厅 · Your AI team collaboration space</p>;
   }
 
-  const title = currentThread?.title ?? '未命名对话';
-  const rawPath = currentThread?.projectPath ?? '';
   // 'default' is a sentinel for threads without a real projectPath — match exact value, not basename
   const rawBasename = rawPath === 'default' ? '' : (rawPath.split(/[/\\]/).pop() ?? '');
   // Map known internal repo basenames to brand name; preserve real project paths for multi-workspace

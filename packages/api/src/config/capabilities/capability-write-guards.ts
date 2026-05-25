@@ -72,6 +72,15 @@ const PROXY_FORWARDING_HEADERS = [
   'true-client-ip',
 ] as const;
 
+function isTruthyEnv(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+function allowOwnerlessLocalCapabilityWrites(): boolean {
+  return isTruthyEnv(process.env.CAT_CAFE_ALLOW_OWNERLESS_LOCAL_CAPABILITY_WRITES);
+}
+
 function hasHeaderValue(value: string | string[] | undefined): boolean {
   if (Array.isArray(value)) return value.some((item) => item.trim().length > 0);
   return typeof value === 'string' && value.trim().length > 0;
@@ -91,6 +100,7 @@ function hasTrustedLocalOrigin(value: string | undefined): boolean {
 }
 
 export function isLocalCapabilityWriteRequest(request: FastifyRequest): boolean {
+  if (!allowOwnerlessLocalCapabilityWrites()) return false;
   if (!isLoopbackAddress(request.ip)) return false;
   if (hasProxyForwardingHeaders(request)) return false;
 
@@ -99,7 +109,7 @@ export function isLocalCapabilityWriteRequest(request: FastifyRequest): boolean 
   const normalized = normalizeHostForLoopbackCheck(host);
   if (!isLoopbackHost(normalized)) return false;
 
-  // Ownerless writes require browser-origin evidence, not just a loopback proxy hop.
+  // Ownerless writes are an explicit local-dev escape hatch; headers only narrow that opt-in.
   return hasTrustedLocalOrigin(firstHeaderValue(request.headers.origin));
 }
 

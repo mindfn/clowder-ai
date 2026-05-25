@@ -148,6 +148,7 @@ describe('capabilities MCP write routes', () => {
   });
 
   it('allows non-secret MCP preview/install/delete when DEFAULT_OWNER_USER_ID is not configured', async () => {
+    setEnv('CAT_CAFE_ALLOW_OWNERLESS_LOCAL_CAPABILITY_WRITES', '1');
     await writeCapabilitiesConfig(projectRoot, {
       version: 1,
       capabilities: [
@@ -203,7 +204,22 @@ describe('capabilities MCP write routes', () => {
     assert.deepEqual(config?.capabilities, []);
   });
 
+  it('rejects ownerless MCP installs unless the local fallback is explicitly enabled', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/capabilities/mcp/install',
+      headers: { ...OWNER_HEADERS, host: 'localhost:3004', origin: 'http://localhost:3003' },
+      payload: { id: 'new-mcp', command: 'node', args: ['server.js'] },
+    });
+
+    assert.equal(res.statusCode, 403, res.payload);
+    assert.match(JSON.parse(res.payload).error, /DEFAULT_OWNER_USER_ID/);
+    const config = await readCapabilitiesConfig(projectRoot);
+    assert.deepEqual(config?.capabilities, []);
+  });
+
   it('rejects ownerless MCP installs when loopback transport lacks local browser origin proof', async () => {
+    setEnv('CAT_CAFE_ALLOW_OWNERLESS_LOCAL_CAPABILITY_WRITES', '1');
     const res = await app.inject({
       method: 'POST',
       url: '/api/capabilities/mcp/install',
@@ -218,6 +234,7 @@ describe('capabilities MCP write routes', () => {
   });
 
   it('rejects spoofed local Host headers on remote ownerless MCP installs', async () => {
+    setEnv('CAT_CAFE_ALLOW_OWNERLESS_LOCAL_CAPABILITY_WRITES', '1');
     const res = await app.inject({
       method: 'POST',
       url: '/api/capabilities/mcp/install',
@@ -237,6 +254,7 @@ describe('capabilities MCP write routes', () => {
   });
 
   it('rejects forwarded ownerless MCP installs even when the proxy peer is loopback', async () => {
+    setEnv('CAT_CAFE_ALLOW_OWNERLESS_LOCAL_CAPABILITY_WRITES', '1');
     const res = await app.inject({
       method: 'POST',
       url: '/api/capabilities/mcp/install',
