@@ -102,6 +102,7 @@ async function waitForServiceReadiness(input: {
   timeoutMs: number;
   intervalMs: number;
   stopWhen?: Promise<unknown>;
+  stopIf?: () => Promise<boolean>;
 }): Promise<void> {
   const timeoutMs = Math.max(0, input.timeoutMs);
   const intervalMs = Math.max(50, input.intervalMs);
@@ -123,6 +124,10 @@ async function waitForServiceReadiness(input: {
         // Readiness probes are internal while the service is starting. The UI
         // should see `starting`, not a transient health-probe fetch failure.
       }
+    }
+    if (input.stopIf && (await input.stopIf())) {
+      stopped = true;
+      break;
     }
     const remainingMs = timeoutMs - (Date.now() - startedAt);
     if (remainingMs <= 0) break;
@@ -576,6 +581,26 @@ export async function registerServiceLifecycleRoutes(
         await audit({ serviceId: service.id, action: 'start', operator, status: 'completed', code: result.code });
         const success = { ok: true, message: `${service.name} start initiated`, pid: result.pid };
         const settlement = settleQuietly(result.settlement);
+        let runtimeLivenessProbeFailed = false;
+        const stopIfNoOwnedRuntimeProcess = cleanExitBeforeReady
+          ? async () => {
+              try {
+                const ownedProcessPids = await findOwnedServiceProcessPids(service);
+                if (ownedProcessPids.length > 0) return false;
+                appendServiceLog(
+                  service.id,
+                  '[start] owned runtime process exited before readiness; clearing startup state\n',
+                );
+                return true;
+              } catch (error) {
+                if (!runtimeLivenessProbeFailed) {
+                  runtimeLivenessProbeFailed = true;
+                  app.log.warn({ err: error, serviceId: service.id }, 'service start runtime-liveness probe failed');
+                }
+                return false;
+              }
+            }
+          : undefined;
         const readiness = waitForServiceReadiness({
           service,
           env: startEnvResult.env,
@@ -587,6 +612,7 @@ export async function registerServiceLifecycleRoutes(
           timeoutMs: startupReadinessTimeoutMs,
           intervalMs: startupProbeIntervalMs,
           stopWhen: cleanExitBeforeReady ? undefined : settlement,
+          stopIf: stopIfNoOwnedRuntimeProcess,
         });
         const releaseWhen = settlement && !cleanExitBeforeReady ? Promise.race([settlement, readiness]) : readiness;
         return holdStartupGrace(success, startupReadinessTimeoutMs, releaseWhen);
