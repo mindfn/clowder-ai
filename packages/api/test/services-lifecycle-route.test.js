@@ -393,6 +393,49 @@ describe('service lifecycle write routes', () => {
     }
   });
 
+  it('preserves the prior enabled state when uninstall script fails', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map([['whisper-stt', { installed: true, enabled: true }]]);
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        findPidsByPort: async () => [],
+        runScript: async () => ({ code: 7, output: 'failed to remove venv' }),
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/uninstall',
+        headers: SESSION_HEADERS,
+      });
+
+      assert.equal(res.statusCode, 422, res.payload);
+      assert.deepEqual(configs.get('whisper-stt'), { installed: true, enabled: true });
+
+      const listRes = await app.inject({
+        method: 'GET',
+        url: '/api/services',
+        headers: SESSION_HEADERS,
+      });
+      const whisper = JSON.parse(listRes.payload).services.find((service) => service.id === 'whisper-stt');
+      assert.equal(whisper.installed, true);
+      assert.equal(whisper.enabled, true);
+      assert.equal(whisper.status, 'unhealthy');
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
   it('reports starting during detached startup grace after start returns', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';

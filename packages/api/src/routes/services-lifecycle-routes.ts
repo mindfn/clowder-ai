@@ -434,7 +434,6 @@ export async function registerServiceLifecycleRoutes(
             failed: preStop.failed,
           };
         }
-        serviceConfigStore.set(service.id, { enabled: false });
         // Mirror /start: inject persisted selectedModel + port so uninstall
         // scripts that probe the install-time venv can find it (codex P1
         // 3265033601 / 3268690489). Fall back to bare env if persisted
