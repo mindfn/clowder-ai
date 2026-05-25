@@ -155,7 +155,7 @@ export function isServiceProcessCommand(
     return isScriptToken(tokens[commandIndex + 1]);
   }
   if (['powershell.exe', 'powershell', 'pwsh.exe', 'pwsh'].includes(basename(executable ?? ''))) {
-    const fileFlagIndex = tokens.findIndex((token, index) => index > commandIndex && token === '-file');
+    const fileFlagIndex = tokens.findIndex((token, index) => index > commandIndex && token.toLowerCase() === '-file');
     return fileFlagIndex >= 0 && isScriptToken(tokens[fileFlagIndex + 1]);
   }
   const runtimeScripts = resolveServiceRuntimeScriptPaths(manifest, platform).map((scriptPath) =>

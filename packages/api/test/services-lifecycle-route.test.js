@@ -1869,6 +1869,14 @@ describe('service lifecycle write routes', () => {
     );
     assert.equal(
       isServiceProcessCommand(
+        `powershell.exe -NoProfile -ExecutionPolicy Bypass -FILE "${resolvedScript}"`,
+        manifest,
+        'win32',
+      ),
+      true,
+    );
+    assert.equal(
+      isServiceProcessCommand(
         'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\tmp\\whisper-server.ps1',
         manifest,
         'win32',
