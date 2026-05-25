@@ -337,6 +337,20 @@ function replaceEndpointPort(endpoint: string | null, port: number): string | nu
   }
 }
 
+function normalizeLoopbackEndpointHost(endpoint: string | null): string | null {
+  if (!endpoint) return null;
+  try {
+    const url = new URL(endpoint);
+    if (url.hostname !== 'localhost') return endpoint;
+    const hadTrailingSlash = endpoint.endsWith('/');
+    url.hostname = '127.0.0.1';
+    const serialized = url.toString();
+    return !hadTrailingSlash && url.pathname === '/' ? serialized.replace(/\/$/, '') : serialized;
+  } catch {
+    return endpoint;
+  }
+}
+
 export function resolveServiceEndpoint(
   service: ServiceManifest,
   env: NodeJS.ProcessEnv = process.env,
@@ -344,7 +358,7 @@ export function resolveServiceEndpoint(
 ): string | null {
   for (const key of service.endpointEnvVars) {
     const value = env[key]?.trim();
-    if (value) return value;
+    if (value) return normalizeLoopbackEndpointHost(value);
   }
   // Persisted user-chosen port (from install modal) takes precedence over
   // static env port overrides, while explicit URL envs above remain highest
@@ -360,9 +374,9 @@ export function resolveServiceEndpoint(
     if (service.portFallback) {
       return `${service.portFallback.host.replace(/\/+$/, '')}:${effectivePort}`;
     }
-    return replaceEndpointPort(service.defaultEndpoint, effectivePort);
+    return normalizeLoopbackEndpointHost(replaceEndpointPort(service.defaultEndpoint, effectivePort));
   }
-  return service.defaultEndpoint;
+  return normalizeLoopbackEndpointHost(service.defaultEndpoint);
 }
 
 function buildClientServiceManifest(service: ServiceManifest) {

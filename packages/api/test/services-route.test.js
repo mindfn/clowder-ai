@@ -252,12 +252,48 @@ describe('services routes', () => {
 
       assert.equal(res.statusCode, 200, res.payload);
       assert.deepEqual(JSON.parse(res.payload).endpoints, {
-        'whisper-stt': 'http://localhost:19981',
-        'mlx-tts': 'http://localhost:19982',
+        'whisper-stt': 'http://127.0.0.1:19981',
+        'mlx-tts': 'http://127.0.0.1:19982',
         'embedding-model': 'http://127.0.0.1:19983',
-        'llm-postprocess': 'http://localhost:19984',
+        'llm-postprocess': 'http://127.0.0.1:19984',
         'audio-capture': 'http://127.0.0.1:19985',
       });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('normalizes localhost sidecar URLs to IPv4 loopback before health probes', async () => {
+    for (const id of ['whisper-stt', 'mlx-tts', 'llm-postprocess']) {
+      setServiceConfig(id, { installed: true, enabled: true });
+    }
+    const probedUrls = new Map();
+    const app = await buildApp({
+      env: {
+        WHISPER_URL: 'http://localhost:19991',
+        TTS_URL: 'http://localhost:19992',
+        NEXT_PUBLIC_LLM_POSTPROCESS_URL: 'http://localhost:19994',
+      },
+      fetchHealth: async (url, service) => {
+        probedUrls.set(service.id, url);
+        return { ok: true, status: 200, error: null };
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/services',
+        headers: SESSION_HEADERS,
+      });
+
+      assert.equal(res.statusCode, 200, res.payload);
+      const services = Object.fromEntries(JSON.parse(res.payload).services.map((service) => [service.id, service]));
+      assert.equal(services['whisper-stt'].endpoint, 'http://127.0.0.1:19991');
+      assert.equal(services['mlx-tts'].endpoint, 'http://127.0.0.1:19992');
+      assert.equal(services['llm-postprocess'].endpoint, 'http://127.0.0.1:19994');
+      assert.equal(probedUrls.get('whisper-stt'), 'http://127.0.0.1:19991/health');
+      assert.equal(probedUrls.get('mlx-tts'), 'http://127.0.0.1:19992/health');
+      assert.equal(probedUrls.get('llm-postprocess'), 'http://127.0.0.1:19994/health');
     } finally {
       await app.close();
     }
@@ -591,16 +627,16 @@ describe('services routes', () => {
 
       assert.equal(res.statusCode, 200, res.payload);
       const services = Object.fromEntries(JSON.parse(res.payload).services.map((service) => [service.id, service]));
-      assert.equal(services['whisper-stt'].endpoint, 'http://localhost:19991');
-      assert.equal(services['mlx-tts'].endpoint, 'http://localhost:19992');
+      assert.equal(services['whisper-stt'].endpoint, 'http://127.0.0.1:19991');
+      assert.equal(services['mlx-tts'].endpoint, 'http://127.0.0.1:19992');
       assert.equal(services['embedding-model'].endpoint, 'http://127.0.0.1:19993');
-      assert.equal(services['llm-postprocess'].endpoint, 'http://localhost:19994');
+      assert.equal(services['llm-postprocess'].endpoint, 'http://127.0.0.1:19994');
       assert.equal(services['audio-capture'].endpoint, 'http://127.0.0.1:19995');
       assert.deepEqual(Object.fromEntries(probedUrls), {
-        'whisper-stt': 'http://localhost:19991/health',
-        'mlx-tts': 'http://localhost:19992/health',
+        'whisper-stt': 'http://127.0.0.1:19991/health',
+        'mlx-tts': 'http://127.0.0.1:19992/health',
         'embedding-model': 'http://127.0.0.1:19993/health',
-        'llm-postprocess': 'http://localhost:19994/health',
+        'llm-postprocess': 'http://127.0.0.1:19994/health',
         'audio-capture': 'http://127.0.0.1:19995/status',
       });
     } finally {
