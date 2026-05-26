@@ -1022,6 +1022,72 @@ describe('GET /api/capabilities (Fastify)', () => {
     }
   });
 
+  it('uses selected project plugin manifests for plugin-owned skill pruning', async () => {
+    const Fastify = (await import('fastify')).default;
+    const { capabilitiesRoutes } = await import('../dist/routes/capabilities.js');
+
+    const pluginId = `project-plugin-${Date.now()}`;
+    const projectDir = await makeTmpDir('project-plugin-skill-prune');
+    const pluginDir = join(projectDir, 'plugins', pluginId);
+    await mkdir(join(pluginDir, 'skills', 'project-skill'), { recursive: true });
+    await writeFile(join(pluginDir, 'skills', 'project-skill', 'SKILL.md'), '# project skill\n');
+    await mkdir(join(projectDir, '.claude', 'skills', 'old-project-skill'), { recursive: true });
+    await writeFile(join(projectDir, '.claude', 'skills', 'old-project-skill', 'SKILL.md'), '# stale skill\n');
+    await writeFile(
+      join(pluginDir, 'plugin.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: Project Plugin',
+        'version: "1.0.0"',
+        'resources:',
+        '  - type: skill',
+        '    path: skills/project-skill',
+      ].join('\n'),
+    );
+    await writeCapabilitiesConfig(projectDir, {
+      version: 1,
+      capabilities: [
+        {
+          id: 'project-skill',
+          type: 'skill',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId,
+        },
+        {
+          id: 'old-project-skill',
+          type: 'skill',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId,
+        },
+      ],
+    });
+
+    const app = Fastify();
+    await app.register(capabilitiesRoutes);
+    await app.ready();
+
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/capabilities?projectPath=${encodeURIComponent(projectDir)}`,
+        headers: AUTH_HEADERS,
+      });
+
+      assert.equal(res.statusCode, 200, res.payload);
+      const config = await readCapabilitiesConfig(projectDir);
+      const preserved = config?.capabilities.find((item) => item.id === 'project-skill');
+      assert.ok(preserved, 'project-local declared plugin-owned skill should survive pruning');
+      assert.equal(preserved.pluginId, pluginId);
+      const stale = config?.capabilities.find((item) => item.id === 'old-project-skill');
+      assert.equal(stale, undefined, 'project-local undeclared plugin-owned skill should still be pruned');
+    } finally {
+      await app.close();
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it('prunes plugin-owned skills no longer declared by the canonical plugin manifest', async () => {
     const Fastify = (await import('fastify')).default;
     const { capabilitiesRoutes } = await import('../dist/routes/capabilities.js');

@@ -107,29 +107,45 @@ async function listSkillSubdirs(dir: string, exclude?: string[]): Promise<string
   return names;
 }
 
-async function readDeclaredPluginSkillIds(): Promise<Map<string, Set<string>> | null> {
-  const pluginDirs = await listSubdirs(CANONICAL_PLUGINS_DIR);
-  if (pluginDirs === null) return null;
+async function collectDeclaredPluginSkillIds(
+  pluginsDir: string,
+  declaredSkillIds: Map<string, Set<string>>,
+): Promise<boolean> {
+  const pluginDirs = await listSubdirs(pluginsDir);
+  if (pluginDirs === null) return false;
 
-  const declaredSkillIds = new Map<string, Set<string>>();
   for (const dirName of pluginDirs) {
-    const manifestPath = join(CANONICAL_PLUGINS_DIR, dirName, 'plugin.yaml');
+    const manifestPath = join(pluginsDir, dirName, 'plugin.yaml');
     if (!existsSync(manifestPath)) continue;
 
     try {
       const manifest = parsePluginManifest(manifestPath);
       if (manifest.id !== dirName) continue;
-      declaredSkillIds.set(
-        manifest.id,
-        new Set(
-          manifest.resources
-            .filter((resource) => resource.type === 'skill')
-            .map((resource) => resourceCapId(manifest.id, resource)),
-        ),
+      const skillIds = new Set(
+        manifest.resources
+          .filter((resource) => resource.type === 'skill')
+          .map((resource) => resourceCapId(manifest.id, resource)),
       );
+      declaredSkillIds.set(manifest.id, skillIds);
     } catch {
-      return null;
+      return false;
     }
+  }
+
+  return true;
+}
+
+async function readDeclaredPluginSkillIds(projectRoot: string): Promise<Map<string, Set<string>> | null> {
+  const declaredSkillIds = new Map<string, Set<string>>();
+  const pluginsDirs = [CANONICAL_PLUGINS_DIR];
+  const projectPluginsDir = join(projectRoot, 'plugins');
+  if (resolve(projectPluginsDir) !== resolve(CANONICAL_PLUGINS_DIR)) {
+    pluginsDirs.push(projectPluginsDir);
+  }
+
+  for (const pluginsDir of pluginsDirs) {
+    const ok = await collectDeclaredPluginSkillIds(pluginsDir, declaredSkillIds);
+    if (!ok) return null;
   }
 
   return declaredSkillIds;
@@ -138,7 +154,9 @@ async function readDeclaredPluginSkillIds(): Promise<Map<string, Set<string>> | 
 function isDeclaredPluginSkill(cap: CapabilityEntry, declaredPluginSkillIds: Map<string, Set<string>> | null): boolean {
   if (!cap.pluginId) return false;
   if (declaredPluginSkillIds === null) return true;
-  return declaredPluginSkillIds.get(cap.pluginId)?.has(cap.id) === true;
+  const declaredIds = declaredPluginSkillIds.get(cap.pluginId);
+  if (!declaredIds) return true;
+  return declaredIds.has(cap.id);
 }
 
 function shouldKeepSkillCapability(
@@ -634,7 +652,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
     // Prune stale skills no longer on filesystem.
     // Guard: only prune when ALL provider scans succeeded (no null returns).
     if (allScansOk) {
-      const declaredPluginSkillIds = await readDeclaredPluginSkillIds();
+      const declaredPluginSkillIds = await readDeclaredPluginSkillIds(projectRoot);
       const before = config.capabilities.length;
       config.capabilities = config.capabilities.filter((c) =>
         shouldKeepSkillCapability(c, allSkillNames, declaredPluginSkillIds),
