@@ -311,8 +311,13 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
         return { ok: false, status: 'offline', error: 'Limb node not registered' };
       }
 
-      const status = await handle.healthCheck();
-      return { ok: status === 'online', status };
+      try {
+        const status = await handle.healthCheck();
+        return { ok: status === 'online', status };
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        return { ok: false, status: 'error', error };
+      }
     }
 
     if (manifest.healthCheck.mcpProbe) {

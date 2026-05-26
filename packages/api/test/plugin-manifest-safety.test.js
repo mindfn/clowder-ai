@@ -1263,6 +1263,79 @@ describe('plugin routes safety', () => {
       else process.env.CAT_CAFE_CONFIG_ROOT = previousConfigRoot;
     }
   });
+
+  it('returns structured failure when limb health-check throws', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    const previousConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    process.env.DEFAULT_OWNER_USER_ID = 'owner-user';
+    const root = mkdtempSync(join(os.tmpdir(), 'plugin-route-health-'));
+    const projectRoot = join(root, 'project');
+    const pluginsDir = join(root, 'plugins');
+    mkdirSync(projectRoot, { recursive: true });
+    mkdirSync(join(pluginsDir, 'test-plugin', 'limbs'), { recursive: true });
+    process.env.CAT_CAFE_CONFIG_ROOT = projectRoot;
+    writeFileSync(
+      join(pluginsDir, 'test-plugin', 'limbs', 'node.yaml'),
+      [
+        'nodeId: yaml-node',
+        'displayName: YAML Node',
+        'platform: test',
+        'capabilities:',
+        '  - cap: health',
+        '    commands: [check_status]',
+        '    authLevel: free',
+      ].join('\n'),
+    );
+    const app = Fastify();
+    app.addHook('preHandler', async (request) => {
+      const raw = request.headers['x-test-session-user'];
+      if (typeof raw === 'string' && raw.trim()) request.sessionUserId = raw.trim();
+    });
+    const deps = createRouteDeps({
+      healthCheck: { limbCommand: 'check_status' },
+      resources: [{ type: 'limb', path: 'limbs/node.yaml' }],
+    });
+    registerPluginRoutes(app, {
+      pluginRegistry: deps.pluginRegistry,
+      pluginActivator: deps.pluginActivator,
+      limbRegistry: {
+        getNodeHandle(nodeId) {
+          if (nodeId !== 'yaml-node') return null;
+          return {
+            healthCheck: async () => {
+              throw new Error('adapter timeout');
+            },
+          };
+        },
+      },
+      pluginsDir,
+    });
+    await app.ready();
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/plugins/test-plugin/test',
+        headers: {
+          host: 'localhost:3004',
+          origin: 'http://localhost:5173',
+          'x-test-session-user': 'owner-user',
+        },
+        remoteAddress: '127.0.0.1',
+      });
+      assert.equal(res.statusCode, 200, res.payload);
+      assert.deepEqual(JSON.parse(res.payload), {
+        ok: false,
+        status: 'error',
+        error: 'adapter timeout',
+      });
+    } finally {
+      await app.close();
+      if (previousOwner === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+      else process.env.DEFAULT_OWNER_USER_ID = previousOwner;
+      if (previousConfigRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousConfigRoot;
+    }
+  });
 });
 
 describe('BUILTIN_PLUGIN_IDS', () => {
