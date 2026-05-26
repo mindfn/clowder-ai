@@ -295,6 +295,46 @@ describe('SkillsContent', () => {
     expect(body.scope).toBe('global');
   });
 
+  it('renders plugin-owned skills as readonly and routes management to plugins', async () => {
+    mockBothApis(undefined, {
+      ...capabilitiesPayload,
+      items: capabilitiesPayload.items.map((item) =>
+        item.id === 'browser-preview' ? { ...item, pluginId: 'preview-plugin' } : item,
+      ),
+    });
+
+    await render(React.createElement(SkillsContent));
+
+    const cards = Array.from(container.querySelectorAll('.settings-resource-card'));
+    const pluginCard = cards.find((card) => card.textContent?.includes('browser-preview'));
+    expect(pluginCard).toBeTruthy();
+    expect(pluginCard?.textContent).toContain('由插件 preview-plugin 管理');
+
+    const pluginToggle = pluginCard?.querySelector('.settings-resource-toggle') as HTMLButtonElement | null;
+    expect(pluginToggle?.disabled).toBe(true);
+    expect(pluginCard?.querySelector('a[href="/settings?s=plugins"]')).toBeTruthy();
+
+    mockFetch.mockClear();
+    mockBothApis();
+
+    await act(async () => {
+      pluginToggle?.click();
+      (
+        Array.from(pluginCard?.querySelectorAll('button') ?? []).find((button) =>
+          button.textContent?.includes('browser-preview'),
+        ) as HTMLButtonElement | undefined
+      )?.click();
+    });
+    await flushEffects();
+
+    expect(
+      mockFetch.mock.calls.some(
+        (c: unknown[]) => String(c[0]) === '/api/capabilities' && (c[1] as { method?: string })?.method === 'PATCH',
+      ),
+    ).toBe(false);
+    expect(mockFetch.mock.calls.some((c: unknown[]) => String(c[0]).startsWith('/api/rules/skill/'))).toBe(false);
+  });
+
   it('per-cat toggle posts capabilityType skill with scope cat and catId', async () => {
     await render(React.createElement(SkillsContent));
 

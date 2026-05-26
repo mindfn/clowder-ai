@@ -6,6 +6,7 @@ import {
   settingsResourceCardClass,
   settingsResourceRowClass,
 } from '../SettingsResourceCard';
+import { PluginManagedLink } from './capability-settings-ui';
 import {
   SettingsBadge,
   SettingsCard,
@@ -92,14 +93,18 @@ export function SkillRow({
   const allMounted = skill.governance.mountedCount === PROVIDER_KEYS.length;
   const isExpanded = expandedCats === skill.id;
   const isGlobalToggling = toggling === skill.id;
+  const pluginId = skill.pluginId;
+  const pluginManaged = !!pluginId;
 
   return (
     <div className={settingsResourceCardClass}>
       <div className={settingsResourceRowClass}>
         <button
           type="button"
-          onClick={onPreview}
-          className="flex min-w-0 flex-1 items-center gap-4"
+          disabled={pluginManaged}
+          onClick={pluginManaged ? undefined : onPreview}
+          title={pluginManaged ? `由插件 ${pluginId} 管理` : undefined}
+          className="flex min-w-0 flex-1 items-center gap-4 disabled:cursor-default"
           style={{ textAlign: 'left' }}
         >
           <div className={settingsResourceAvatarClass}>{skill.name.charAt(0).toUpperCase()}</div>
@@ -117,6 +122,15 @@ export function SkillRow({
         </button>
 
         <div className="flex shrink-0 items-center gap-2">
+          {pluginManaged && (
+            <SettingsBadge
+              tone="blue"
+              size="xxs"
+              className="inline-block max-w-[9rem] truncate align-middle sm:max-w-[12rem]"
+            >
+              由插件 {pluginId} 管理
+            </SettingsBadge>
+          )}
           <SettingsBadge tone={allMounted ? 'emerald' : 'amber'}>
             {allMounted ? '全部挂载' : `${skill.governance.mountedCount}/${PROVIDER_KEYS.length} 已挂载`}
           </SettingsBadge>
@@ -128,14 +142,15 @@ export function SkillRow({
               <SettingsResourceToggleSwitch
                 enabled={skill.controls.enabled}
                 busy={isGlobalToggling}
-                disabled={!!skill.pluginId}
+                disabled={pluginManaged}
                 onClick={(e) => {
                   e.stopPropagation();
                   onToggle(skill.id, !skill.controls?.enabled);
                 }}
-                title={skill.pluginId ? '由插件管理' : skill.controls.enabled ? '全局禁用' : '全局启用'}
+                title={pluginManaged ? `由插件 ${pluginId} 管理` : skill.controls.enabled ? '全局禁用' : '全局启用'}
               />
-              {!skill.pluginId && catFamilies.length > 0 && Object.keys(skill.controls.cats).length > 0 && (
+              {pluginId && <PluginManagedLink pluginId={pluginId} />}
+              {!pluginManaged && catFamilies.length > 0 && Object.keys(skill.controls.cats).length > 0 && (
                 <SettingsIconButton
                   onClick={(e) => {
                     e.stopPropagation();
@@ -165,7 +180,7 @@ export function SkillRow({
         </div>
       )}
 
-      {isExpanded && skill.controls && catFamilies.length > 0 && (
+      {isExpanded && !pluginManaged && skill.controls && catFamilies.length > 0 && (
         <PerCatSkillToggles
           skillId={skill.id}
           cats={skill.controls.cats}
