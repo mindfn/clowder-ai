@@ -392,6 +392,13 @@ describe('parsePluginManifest security', () => {
     assert.throws(() => parsePluginManifest(yamlPath), /Duplicate resource capability ID/);
   });
 
+  it('uses MCP resource name as the stable capability ID even when path is present', () => {
+    assert.equal(
+      resourceCapId('test-plugin', { type: 'mcp', name: 'local', path: 'servers/local.yaml', command: 'node' }),
+      'plugin:test-plugin:local',
+    );
+  });
+
   it('rejects envName with newline injection', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
     const yamlPath = writeTmpManifest(
@@ -685,6 +692,77 @@ describe('PluginResourceActivator skill safety', () => {
     } finally {
       delete process.env.TEST_PLUGIN_TOKEN;
     }
+  });
+
+  it('removes stale plugin-owned MCP and limb capabilities during disable', async () => {
+    const root = mkdtempSync(join(os.tmpdir(), 'plugin-activator-root-'));
+    const pluginsDir = join(root, 'plugins');
+    const projectRoot = join(root, 'project');
+    const deregistered = [];
+    let persisted = {
+      version: 1,
+      capabilities: [
+        {
+          id: 'plugin:test-plugin:current',
+          type: 'mcp',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId: 'test-plugin',
+        },
+        {
+          id: 'plugin:test-plugin:old-mcp',
+          type: 'mcp',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId: 'test-plugin',
+        },
+        {
+          id: 'plugin:test-plugin:old-limb',
+          type: 'limb',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId: 'test-plugin',
+          limbNodeId: 'old-node',
+        },
+        {
+          id: 'plugin:other-plugin:keep',
+          type: 'mcp',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId: 'other-plugin',
+        },
+      ],
+    };
+    const activator = new PluginResourceActivator({
+      resolveProjectRoot: () => projectRoot,
+      pluginsDir,
+      limbRegistry: {
+        deregister: (nodeId) => {
+          deregistered.push(nodeId);
+        },
+      },
+      readCapabilities: async () => structuredClone(persisted),
+      writeCapabilities: async (config) => {
+        persisted = structuredClone(config);
+      },
+      withCapabilityLock: async (fn) => fn(),
+    });
+
+    const result = await activator.disablePlugin({
+      id: 'test-plugin',
+      name: 'Test Plugin',
+      version: '1.0.0',
+      builtin: false,
+      config: [],
+      resources: [{ type: 'mcp', name: 'current', command: 'node' }],
+    });
+
+    assert.equal(result.status, 'success');
+    assert.deepEqual(
+      persisted.capabilities.map((c) => c.id),
+      ['plugin:other-plugin:keep'],
+    );
+    assert.deepEqual(deregistered, ['old-node']);
   });
 });
 

@@ -166,6 +166,9 @@ export function resourceCapId(pluginId: string, resource: { type: string; path?:
   if (resource.type === 'skill' && resource.path) {
     return resourcePathBasename(resource.path);
   }
+  if (resource.type === 'mcp' && resource.name) {
+    return `plugin:${pluginId}:${resource.name}`;
+  }
   const suffix = resource.path ?? resource.name ?? resource.type;
   return `plugin:${pluginId}:${suffix}`;
 }

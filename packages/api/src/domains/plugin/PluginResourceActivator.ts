@@ -122,6 +122,7 @@ export class PluginResourceActivator {
 
   async disablePlugin(manifest: PluginManifest): Promise<ActivatePluginResult> {
     const results: ActivationResult[] = [];
+    const declaredIds = new Set(manifest.resources.map((resource) => resourceCapId(manifest.id, resource)));
 
     for (const resource of manifest.resources) {
       try {
@@ -136,6 +137,12 @@ export class PluginResourceActivator {
           error: (err as Error).message,
         });
       }
+    }
+
+    try {
+      await this.removeOrphanedPluginEntries(manifest, declaredIds);
+    } catch (err) {
+      results.push({ type: 'orphan', ok: false, error: (err as Error).message });
     }
 
     const allOk = results.every((r) => r.ok);
@@ -325,6 +332,30 @@ export class PluginResourceActivator {
       next.capabilities = next.capabilities.filter((c) => !(c.id === capId && c.pluginId === manifest.id));
       await this.writeCapabilitiesWithRollback(previous, next);
     });
+  }
+
+  private async removeOrphanedPluginEntries(manifest: PluginManifest, declaredIds: Set<string>): Promise<void> {
+    const limbNodeIds: string[] = [];
+    await this.deps.withCapabilityLock(async () => {
+      const config = await this.deps.readCapabilities();
+      if (!config) return;
+      const orphaned = config.capabilities.filter((c) => c.pluginId === manifest.id && !declaredIds.has(c.id));
+      if (orphaned.length === 0) return;
+
+      const previous = structuredClone(config);
+      const next = structuredClone(config);
+      for (const cap of orphaned) {
+        if (cap.type === 'limb' && cap.enabled && cap.limbNodeId) {
+          limbNodeIds.push(cap.limbNodeId);
+        }
+      }
+      next.capabilities = next.capabilities.filter((c) => !(c.pluginId === manifest.id && !declaredIds.has(c.id)));
+      await this.writeCapabilitiesWithRollback(previous, next);
+    });
+
+    for (const nodeId of limbNodeIds) {
+      this.deps.limbRegistry.deregister(nodeId);
+    }
   }
 
   async syncPluginEnv(manifest: PluginManifest): Promise<void> {
