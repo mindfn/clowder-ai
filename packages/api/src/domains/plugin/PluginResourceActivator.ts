@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { lstat, mkdir, realpath, rm, symlink } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import type {
   CapabilitiesConfig,
   CapabilityEntry,
@@ -192,6 +192,7 @@ export class PluginResourceActivator {
     if (!existsSync(skillSourceDir)) {
       throw new Error(`Skill source not found: ${skillSourceDir}`);
     }
+    await this.assertPluginResourceInsideRoot(manifest, skillSourceDir, 'Skill resource');
     const skillName = resourcePathBasename(resource.path);
 
     const createdLinks: string[] = [];
@@ -299,11 +300,19 @@ export class PluginResourceActivator {
         if (existing.pluginId === undefined) {
           throw new Error(`Capability '${capId}' exists as a non-plugin entry and cannot be claimed`);
         }
+        existing.type = resource.type as 'mcp' | 'skill' | 'limb';
         existing.enabled = enabled;
         existing.pluginId = manifest.id;
-        if (limbNodeId) existing.limbNodeId = limbNodeId;
         if (resource.type === 'mcp') {
+          delete existing.limbNodeId;
           existing.mcpServer = this.buildMcpServer(manifest, resource);
+        } else {
+          delete existing.mcpServer;
+          if (resource.type === 'limb' && limbNodeId !== undefined) {
+            existing.limbNodeId = limbNodeId;
+          } else {
+            delete existing.limbNodeId;
+          }
         }
       } else {
         const entry: CapabilityEntry = {
@@ -413,6 +422,19 @@ export class PluginResourceActivator {
       if (val) env[field.envName] = val;
     }
     return Object.keys(env).length > 0 ? { env } : {};
+  }
+
+  private async assertPluginResourceInsideRoot(
+    manifest: PluginManifest,
+    resourcePath: string,
+    label: string,
+  ): Promise<void> {
+    const pluginRoot = join(this.deps.pluginsDir, manifest.id);
+    const [pluginRootReal, resourceReal] = await Promise.all([realpath(pluginRoot), realpath(resourcePath)]);
+    const rel = relative(pluginRootReal, resourceReal);
+    if (rel.startsWith('..') || isAbsolute(rel)) {
+      throw new Error(`${label} must resolve inside plugin root ${pluginRootReal}: ${resourceReal}`);
+    }
   }
 
   private async writeCapabilitiesWithRollback(

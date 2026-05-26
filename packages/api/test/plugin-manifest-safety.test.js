@@ -681,6 +681,43 @@ describe('PluginResourceActivator skill safety', () => {
     assert.equal(existsSync(join(sharedSkillsDir, 'plugin-skill')), false);
   });
 
+  it('rejects plugin skill source symlinks that escape the plugin root', async () => {
+    const root = mkdtempSync(join(os.tmpdir(), 'plugin-activator-root-'));
+    const pluginsDir = join(root, 'plugins');
+    const projectRoot = join(root, 'project');
+    const externalSkillDir = join(root, 'external-skill');
+    const skillLinkPath = join(pluginsDir, 'test-plugin', 'skills', 'plugin-skill');
+    mkdirSync(externalSkillDir, { recursive: true });
+    mkdirSync(join(pluginsDir, 'test-plugin', 'skills'), { recursive: true });
+    symlinkSync(externalSkillDir, skillLinkPath, 'dir');
+
+    let persisted = { version: 1, capabilities: [] };
+    const activator = new PluginResourceActivator({
+      resolveProjectRoot: () => projectRoot,
+      pluginsDir,
+      limbRegistry: {},
+      readCapabilities: async () => structuredClone(persisted),
+      writeCapabilities: async (config) => {
+        persisted = structuredClone(config);
+      },
+      withCapabilityLock: async (fn) => fn(),
+    });
+
+    const result = await activator.enablePlugin({
+      id: 'test-plugin',
+      name: 'Test Plugin',
+      version: '1.0.0',
+      builtin: false,
+      config: [],
+      resources: [{ type: 'skill', path: 'skills/plugin-skill' }],
+    });
+
+    assert.equal(result.status, 'failed');
+    assert.match(result.resources[0].error, /must resolve inside plugin root/);
+    assert.equal(existsSync(join(projectRoot, '.codex', 'skills', 'plugin-skill')), false);
+    assert.deepEqual(persisted.capabilities, []);
+  });
+
   it('rolls back capability state and symlinks when CLI regeneration fails', async () => {
     const root = mkdtempSync(join(os.tmpdir(), 'plugin-activator-root-'));
     const pluginsDir = join(root, 'plugins');
@@ -873,6 +910,57 @@ describe('PluginResourceActivator limb activation safety', () => {
       deregister: async () => {},
     };
   }
+
+  it('updates capability type when reusing a plugin-owned entry', async () => {
+    const root = mkdtempSync(join(os.tmpdir(), 'plugin-limb-activator-'));
+    const pluginsDir = join(root, 'plugins');
+    const projectRoot = join(root, 'project');
+    let persisted = {
+      version: 1,
+      capabilities: [
+        {
+          id: 'plugin:test-plugin:shared',
+          type: 'mcp',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId: 'test-plugin',
+          mcpServer: { command: 'node', args: ['old.js'], transport: 'stdio' },
+        },
+      ],
+    };
+    const registered = [];
+
+    const activator = new PluginResourceActivator({
+      resolveProjectRoot: () => projectRoot,
+      pluginsDir,
+      limbRegistry: {
+        register: async (node) => {
+          registered.push(node.nodeId);
+        },
+      },
+      readCapabilities: async () => structuredClone(persisted),
+      writeCapabilities: async (config) => {
+        persisted = structuredClone(config);
+      },
+      withCapabilityLock: async (fn) => fn(),
+      limbAdapterFactory: async () => testLimbNode('new-node'),
+    });
+
+    const result = await activator.enablePlugin({
+      id: 'test-plugin',
+      name: 'Test Plugin',
+      version: '1.0.0',
+      builtin: false,
+      config: [],
+      resources: [{ type: 'limb', path: 'shared' }],
+    });
+
+    assert.equal(result.status, 'success');
+    assert.deepEqual(registered, ['new-node']);
+    assert.equal(persisted.capabilities[0].type, 'limb');
+    assert.equal(persisted.capabilities[0].limbNodeId, 'new-node');
+    assert.equal(persisted.capabilities[0].mcpServer, undefined);
+  });
 
   it('preserves an existing limb capability entry when re-enable registration fails', async () => {
     const root = mkdtempSync(join(os.tmpdir(), 'plugin-limb-activator-'));
