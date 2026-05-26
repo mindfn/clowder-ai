@@ -149,4 +149,60 @@ describe('EmbeddingService (HTTP client to embed-api.py)', () => {
     await Promise.all([svc.load(), svc.load(), svc.load()]);
     assert.ok(loadCount >= 1, 'load should run at least once');
   });
+
+  // codex P1 2026-05-24 (outdated): the embed client must follow the
+  // persisted service port. /start injects cfg.port into the sidecar env,
+  // so the API process needs to resolve baseUrl from manifest + persisted
+  // config — not from a cached env-only snapshot. Otherwise a long-lived
+  // API still posts embeddings to 9880 while the sidecar binds to the
+  // custom port, silently degrading semantic search to lexical-only.
+  it('resolves embedding endpoint from persisted service port on each request', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { setServiceConfig } = await import('../../dist/domains/services/service-config.js');
+    const { EmbeddingService } = await import('../../dist/domains/memory/EmbeddingService.js');
+
+    const configDir = mkdtempSync(join(tmpdir(), 'embed-service-reconfig-'));
+    process.env.CAT_CAFE_SERVICES_CONFIG = join(configDir, 'services.json');
+    delete process.env.EMBED_URL;
+    delete process.env.EMBED_PORT;
+    setServiceConfig('embedding-model', { enabled: true, installed: true, port: 19880 });
+
+    const originalFetch = globalThis.fetch;
+    const capturedUrls = [];
+    globalThis.fetch = async (url) => {
+      capturedUrls.push(String(url));
+      return new Response(JSON.stringify({ status: 'ok', model: 'qwen3-embedding-0.6b', dim: 256 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+
+    try {
+      const svc = new EmbeddingService({
+        embedModel: 'qwen3-embedding-0.6b',
+        embedDim: 256,
+        embedTimeoutMs: 3000,
+        maxModelMemMb: 800,
+      });
+      await svc.load();
+
+      // Simulate /reconfigure persisting a new port while the service
+      // instance is still alive.
+      setServiceConfig('embedding-model', { enabled: true, installed: true, port: 19881 });
+      await svc.load();
+
+      assert.equal(capturedUrls[0], 'http://127.0.0.1:19880/health');
+      assert.equal(
+        capturedUrls[1],
+        'http://127.0.0.1:19881/health',
+        'EmbeddingService must follow the persisted service port without API restart',
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete process.env.CAT_CAFE_SERVICES_CONFIG;
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
 });

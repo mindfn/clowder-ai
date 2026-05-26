@@ -21,13 +21,21 @@ function resolveWhisperBaseUrl(): string {
 export class WhisperSttProvider implements ISttProvider {
   readonly id = 'whisper-local';
   readonly model: string;
-  private readonly baseUrl: string;
+  // Caller-supplied baseUrl is treated as an explicit override (mostly
+  // tests). When omitted, resolve on every transcribe so /reconfigure-driven
+  // port changes flow into the next request without restarting the API
+  // (codex P1 2026-05-25, outdated thread).
+  private readonly baseUrlOverride: string | undefined;
   private readonly fetchFn: typeof fetch;
 
   constructor(opts?: WhisperSttProviderOptions) {
-    this.baseUrl = normalizeLoopbackUrl(opts?.baseUrl ?? resolveWhisperBaseUrl());
+    this.baseUrlOverride = opts?.baseUrl ? normalizeLoopbackUrl(opts.baseUrl) : undefined;
     this.model = opts?.model ?? 'whisper-large-v3';
     this.fetchFn = opts?._fetchFn ?? fetch;
+  }
+
+  private resolveBaseUrl(): string {
+    return this.baseUrlOverride ?? normalizeLoopbackUrl(resolveWhisperBaseUrl());
   }
 
   async transcribe(request: SttTranscribeRequest): Promise<SttTranscribeResult> {
@@ -40,7 +48,7 @@ export class WhisperSttProvider implements ISttProvider {
     formData.append('model', this.model);
     if (request.language) formData.append('language', request.language);
 
-    const response = await this.fetchFn(`${this.baseUrl}/v1/audio/transcriptions`, {
+    const response = await this.fetchFn(`${this.resolveBaseUrl()}/v1/audio/transcriptions`, {
       method: 'POST',
       body: formData,
     });
