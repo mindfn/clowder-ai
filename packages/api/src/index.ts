@@ -26,6 +26,18 @@ import {
   toAllCatConfigs,
 } from './config/cat-config-loader.js';
 import { configEventBus } from './config/config-event-bus.js';
+import {
+  resolveConnectorMediaDir,
+  resolveEvidenceDbPath,
+  resolveTranscriptsDir,
+  resolveTtsCacheDir,
+  resolveWorldDbPath,
+} from './config/data-dirs.js';
+import {
+  defaultDiskSpaceProbe,
+  runDataDirsMigration,
+  shouldAbortStartupOnMigration,
+} from './config/data-dirs-migration.js';
 import { resolveFrontendBaseUrl, resolveFrontendCorsOrigins } from './config/frontend-origin.js';
 import { initRuntimeOverrides } from './config/session-strategy-overrides.js';
 import { assertStorageReady } from './config/storage-guard.js';
@@ -231,14 +243,6 @@ import { previewRoutes } from './routes/preview.js';
 import { terminalRoutes } from './routes/terminal.js';
 import { threadExportRoutes } from './routes/thread-export.js';
 import { ApiInstanceLease, type ApiInstanceLeaseInvalidation } from './services/ApiInstanceLease.js';
-import {
-  resolveConnectorMediaDir,
-  resolveEvidenceDbPath,
-  resolveTranscriptsDir,
-  resolveTtsCacheDir,
-  resolveWorldDbPath,
-} from './config/data-dirs.js';
-import { defaultDiskSpaceProbe, runDataDirsMigration, shouldAbortStartupOnMigration } from './config/data-dirs-migration.js';
 import { findMonorepoRoot } from './utils/monorepo-root.js';
 import { resolveUserId } from './utils/request-identity.js';
 import { getDefaultUploadDir } from './utils/upload-paths.js';

@@ -16,8 +16,8 @@ import { type CatId, type ConnectorSource, catRegistry } from '@cat-cafe/shared'
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import * as lark from '@larksuiteoapi/node-sdk';
 import type { FastifyBaseLogger } from 'fastify';
-import { resolveConnectorMediaDir, resolveTtsCacheDir } from '../../config/data-dirs.js';
 import { isCatAvailable } from '../../config/cat-config-loader.js';
+import { resolveConnectorMediaDir, resolveTtsCacheDir } from '../../config/data-dirs.js';
 import type { ConnectorWebhookHandler, WebhookHandleResult } from '../../routes/connector-webhooks.js';
 import { getDefaultUploadDir } from '../../utils/upload-paths.js';
 import { deliverConnectorMessage } from '../email/deliver-connector-message.js';

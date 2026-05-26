@@ -22,6 +22,8 @@ import {
 } from '../config/cat-config-loader.js';
 import { configEventBus, createChangeSetId } from '../config/config-event-bus.js';
 import type { ConfigSnapshot } from '../config/config-snapshot.js';
+import { describeDataPaths, resolveAuditLogsDir, resolveCliRawArchiveDir } from '../config/data-dirs.js';
+import { buildMigrationPlan, defaultDiskSpaceProbe, runDataDirsMigration } from '../config/data-dirs-migration.js';
 import {
   buildEnvSummary,
   ENV_CATEGORIES,
@@ -29,9 +31,6 @@ import {
   hasSensitiveEditableVars,
   isEditableEnvVarName,
 } from '../config/env-registry.js';
-import { describeDataPaths, resolveAuditLogsDir, resolveCliRawArchiveDir } from '../config/data-dirs.js';
-import { buildMigrationPlan, defaultDiskSpaceProbe, runDataDirsMigration } from '../config/data-dirs-migration.js';
-import { findMonorepoRoot } from '../utils/monorepo-root.js';
 import { updateRuntimeCoCreator } from '../config/runtime-cat-catalog.js';
 import { isValidTimeZone } from '../config/time-zone.js';
 import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
@@ -42,6 +41,7 @@ import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orch
 import { LOG_DIR_PATH } from '../infrastructure/logger.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
 import { isDirectLoopbackRequest } from '../utils/loopback-request.js';
+import { findMonorepoRoot } from '../utils/monorepo-root.js';
 import { resolveOwnerGate } from '../utils/owner-gate.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
 import { getDefaultUploadDir } from '../utils/upload-paths.js';

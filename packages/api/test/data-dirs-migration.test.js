@@ -59,7 +59,11 @@ describe('data-dirs-migration', () => {
 
   describe('buildMigrationPlan', () => {
     test('reports no work when no root env var is set', async () => {
-      const plan = await buildMigrationPlan({ repoRoot: workRoot, monorepoRoot: workRoot, uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy') });
+      const plan = await buildMigrationPlan({
+        repoRoot: workRoot,
+        monorepoRoot: workRoot,
+        uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
+      });
       assert.equal(plan.hasWork, false);
       assert.equal(plan.totalBytes, 0);
       const reasons = new Set(plan.items.map((i) => i.skipReason));
@@ -74,7 +78,11 @@ describe('data-dirs-migration', () => {
       process.chdir(cleanCwd);
       try {
         process.env.DATA_DIR = join(workRoot, 'data');
-        const plan = await buildMigrationPlan({ repoRoot: workRoot, monorepoRoot: workRoot, uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy') });
+        const plan = await buildMigrationPlan({
+          repoRoot: workRoot,
+          monorepoRoot: workRoot,
+          uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
+        });
         assert.equal(plan.hasWork, false);
         for (const item of plan.items) {
           if (item.spec.root === 'DATA_DIR') {
@@ -92,7 +100,11 @@ describe('data-dirs-migration', () => {
       await writeFile(legacyDb, 'fake sqlite content', 'utf-8');
       process.env.DATA_DIR = join(workRoot, 'data');
 
-      const plan = await buildMigrationPlan({ repoRoot: workRoot, monorepoRoot: workRoot, uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy') });
+      const plan = await buildMigrationPlan({
+        repoRoot: workRoot,
+        monorepoRoot: workRoot,
+        uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
+      });
       assert.equal(plan.hasWork, true);
       const evidence = plan.items.find((i) => i.spec.key === 'evidenceDb');
       assert.ok(evidence);
@@ -108,7 +120,11 @@ describe('data-dirs-migration', () => {
       await writeFile(targetDb, 'existing target content', 'utf-8');
 
       process.env.DATA_DIR = join(workRoot, 'data');
-      const plan = await buildMigrationPlan({ repoRoot: workRoot, monorepoRoot: workRoot, uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy') });
+      const plan = await buildMigrationPlan({
+        repoRoot: workRoot,
+        monorepoRoot: workRoot,
+        uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
+      });
       const evidence = plan.items.find((i) => i.spec.key === 'evidenceDb');
       assert.equal(evidence.eligible, false);
       assert.equal(evidence.skipReason, 'target-not-empty');
@@ -313,7 +329,14 @@ describe('data-dirs-migration', () => {
         items: [
           { key: 'evidenceDb', fromPath: '/old/e', toPath: '/new/e', bytes: 10, status: 'moved' },
           { key: 'worldDb', fromPath: '/old/w', toPath: '/new/w', bytes: 10, status: 'failed', error: 'EACCES' },
-          { key: 'auditLogs', fromPath: '/old/a', toPath: '/new/a', bytes: 0, status: 'skipped', reason: 'no-source-data' },
+          {
+            key: 'auditLogs',
+            fromPath: '/old/a',
+            toPath: '/new/a',
+            bytes: 0,
+            status: 'skipped',
+            reason: 'no-source-data',
+          },
         ],
         allSucceeded: false,
         restartRecommended: false,
@@ -329,7 +352,14 @@ describe('data-dirs-migration', () => {
       const decision = shouldAbortStartupOnMigration({
         attempted: true,
         items: [
-          { key: 'evidenceDb', fromPath: '/old/e', toPath: '/old/e', bytes: 0, status: 'skipped', reason: 'no-source-data' },
+          {
+            key: 'evidenceDb',
+            fromPath: '/old/e',
+            toPath: '/old/e',
+            bytes: 0,
+            status: 'skipped',
+            reason: 'no-source-data',
+          },
         ],
         allSucceeded: true,
         restartRecommended: false,

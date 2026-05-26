@@ -25,7 +25,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { copyFile, mkdir, readdir, rename, rm, stat, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { describeDataPaths, type DataPathKey, type DataPathSpec } from './data-dirs.js';
+import { type DataPathKey, type DataPathSpec, describeDataPaths } from './data-dirs.js';
 
 /** SQLite sidecar suffixes that must move alongside the main DB file. */
 const SQLITE_SIDECARS = ['-wal', '-shm', '-journal'];
@@ -511,7 +511,9 @@ export const defaultDiskSpaceProbe: MigrationIO['diskFree'] = async (path: strin
   // statfs is available since Node 18.15 — fall back to a generous estimate if missing
   try {
     const fsPromises = await import('node:fs/promises');
-    const statfsFn = (fsPromises as unknown as { statfs?: (p: string) => Promise<{ bavail: bigint; blocks: bigint; bsize: number }> }).statfs;
+    const statfsFn = (
+      fsPromises as unknown as { statfs?: (p: string) => Promise<{ bavail: bigint; blocks: bigint; bsize: number }> }
+    ).statfs;
     if (typeof statfsFn === 'function') {
       const result = await statfsFn(cursor);
       const blockSize = result.bsize;
