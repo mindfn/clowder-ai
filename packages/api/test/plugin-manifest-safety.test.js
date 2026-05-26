@@ -688,6 +688,115 @@ describe('PluginResourceActivator skill safety', () => {
   });
 });
 
+describe('PluginResourceActivator limb activation safety', () => {
+  function testLimbNode(nodeId) {
+    return {
+      nodeId,
+      displayName: 'Test Limb',
+      platform: 'test',
+      capabilities: [],
+      register: async () => {},
+      invoke: async () => ({ ok: true }),
+      healthCheck: async () => 'online',
+      deregister: async () => {},
+    };
+  }
+
+  it('preserves an existing limb capability entry when re-enable registration fails', async () => {
+    const root = mkdtempSync(join(os.tmpdir(), 'plugin-limb-activator-'));
+    const pluginsDir = join(root, 'plugins');
+    const projectRoot = join(root, 'project');
+    const resource = { type: 'limb', path: 'limbs/node.yaml' };
+    const existingEntry = {
+      id: 'plugin:test-plugin:limbs/node.yaml',
+      type: 'limb',
+      enabled: true,
+      source: 'cat-cafe',
+      pluginId: 'test-plugin',
+      limbNodeId: 'existing-node',
+    };
+    let persisted = { version: 1, capabilities: [existingEntry] };
+    const before = structuredClone(persisted);
+
+    const activator = new PluginResourceActivator({
+      resolveProjectRoot: () => projectRoot,
+      pluginsDir,
+      limbRegistry: {
+        register: async () => {
+          throw new Error('node already registered');
+        },
+      },
+      readCapabilities: async () => structuredClone(persisted),
+      writeCapabilities: async (config) => {
+        persisted = structuredClone(config);
+      },
+      withCapabilityLock: async (fn) => fn(),
+      limbAdapterFactory: async () => testLimbNode('existing-node'),
+    });
+
+    const result = await activator.enablePlugin({
+      id: 'test-plugin',
+      name: 'Test Plugin',
+      version: '1.0.0',
+      builtin: false,
+      config: [],
+      resources: [resource],
+    });
+
+    assert.equal(result.status, 'failed');
+    assert.match(result.resources[0].error, /already registered/);
+    assert.deepEqual(persisted, before, 'failed limb re-enable must restore the previous capability entry');
+  });
+
+  it('does not deregister a limb unless the plugin owns an enabled capability entry', async () => {
+    const root = mkdtempSync(join(os.tmpdir(), 'plugin-limb-activator-'));
+    const pluginsDir = join(root, 'plugins');
+    const projectRoot = join(root, 'project');
+    mkdirSync(join(pluginsDir, 'test-plugin', 'limbs'), { recursive: true });
+    writeFileSync(
+      join(pluginsDir, 'test-plugin', 'limbs', 'node.yaml'),
+      [
+        'nodeId: shared-node',
+        'displayName: Shared Node',
+        'platform: test',
+        'capabilities:',
+        '  - cap: shared',
+        '    commands: [ping]',
+        '    authLevel: free',
+      ].join('\n'),
+    );
+
+    const deregistered = [];
+    let persisted = { version: 1, capabilities: [] };
+    const activator = new PluginResourceActivator({
+      resolveProjectRoot: () => projectRoot,
+      pluginsDir,
+      limbRegistry: {
+        deregister: (nodeId) => {
+          deregistered.push(nodeId);
+        },
+      },
+      readCapabilities: async () => structuredClone(persisted),
+      writeCapabilities: async (config) => {
+        persisted = structuredClone(config);
+      },
+      withCapabilityLock: async (fn) => fn(),
+    });
+
+    const result = await activator.disablePlugin({
+      id: 'test-plugin',
+      name: 'Test Plugin',
+      version: '1.0.0',
+      builtin: false,
+      config: [],
+      resources: [{ type: 'limb', path: 'limbs/node.yaml' }],
+    });
+
+    assert.equal(result.status, 'success');
+    assert.deepEqual(deregistered, [], 'disable must not deregister a node without owned enabled state');
+  });
+});
+
 describe('PluginResourceActivator limb startup safety', () => {
   it('normalizes Windows-style limb paths during startup rehydration', async () => {
     const root = mkdtempSync(join(os.tmpdir(), 'plugin-rehydrate-root-'));

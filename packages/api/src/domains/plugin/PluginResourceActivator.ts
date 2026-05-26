@@ -227,11 +227,11 @@ export class PluginResourceActivator {
 
     const yamlPath = resolvePluginResourcePath(this.deps.pluginsDir, manifest.id, resource.path);
     const node = await this.deps.limbAdapterFactory(manifest.id, yamlPath);
-    await this.upsertCapabilityEntry(manifest, resource, true, node.nodeId);
+    const previous = await this.upsertCapabilityEntry(manifest, resource, true, node.nodeId);
     try {
       await this.deps.limbRegistry.register(node);
     } catch (err) {
-      await this.removeCapabilityEntry(manifest, resource);
+      await this.restoreCapabilitySnapshot(previous);
       throw err;
     }
   }
@@ -241,16 +241,10 @@ export class PluginResourceActivator {
 
     const capId = resourceCapId(manifest.id, resource);
     const config = await this.deps.readCapabilities();
-    let nodeId = config?.capabilities.find((c) => c.id === capId)?.limbNodeId;
-    if (!nodeId) {
-      try {
-        const yamlPath = resolvePluginResourcePath(this.deps.pluginsDir, manifest.id, resource.path);
-        const { loadLimbDeclaration } = await import('../limb/limb-yaml-loader.js');
-        nodeId = loadLimbDeclaration(yamlPath).nodeId;
-      } catch {
-        /* YAML unreadable and no persisted nodeId — skip deregister */
-      }
-    }
+    const ownedEntry = config?.capabilities.find(
+      (c) => c.id === capId && c.type === 'limb' && c.pluginId === manifest.id && c.enabled,
+    );
+    const nodeId = ownedEntry?.limbNodeId;
 
     if (nodeId) {
       this.deps.limbRegistry.deregister(nodeId);
@@ -275,8 +269,8 @@ export class PluginResourceActivator {
     resource: PluginResourceDef,
     enabled: boolean,
     limbNodeId?: string,
-  ): Promise<void> {
-    await this.deps.withCapabilityLock(async () => {
+  ): Promise<CapabilitiesConfig | null> {
+    return this.deps.withCapabilityLock(async () => {
       const config = await this.deps.readCapabilities();
       const previous = config ? structuredClone(config) : null;
       const cap: CapabilitiesConfig = config ? structuredClone(config) : { version: 1, capabilities: [] };
@@ -314,6 +308,7 @@ export class PluginResourceActivator {
       }
 
       await this.writeCapabilitiesWithRollback(previous, cap);
+      return previous;
     });
   }
 
@@ -386,6 +381,17 @@ export class PluginResourceActivator {
         /* If regeneration fails after writing, the rollback write still restores persisted state. */
       }
       throw err;
+    }
+  }
+
+  private async restoreCapabilitySnapshot(snapshot: CapabilitiesConfig | null): Promise<void> {
+    try {
+      await this.deps.withCapabilityLock(async () => {
+        const next = snapshot ?? { version: 1, capabilities: [] };
+        await this.deps.writeCapabilities(structuredClone(next));
+      });
+    } catch {
+      /* Preserve the original activation error; best-effort rollback already attempted. */
     }
   }
 
