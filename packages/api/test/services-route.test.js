@@ -147,7 +147,7 @@ describe('services routes', () => {
     }
   });
 
-  it('redacts URL credentials from client-visible service endpoints', async () => {
+  it('redacts URL credentials from display surfaces but keeps them on /endpoints', async () => {
     const app = await buildApp({
       env: {
         WHISPER_URL: 'https://user:secret@example.com/healthy',
@@ -180,12 +180,18 @@ describe('services routes', () => {
       const endpointMapValue = JSON.parse(endpointsRes.payload).endpoints['whisper-stt'];
       const healthEndpoint = JSON.parse(healthRes.payload).endpoint;
 
+      // Display surfaces (status panel + health probe response) stay masked.
       assert.equal(serviceEndpoint, 'https://***@example.com/healthy');
-      assert.equal(endpointMapValue, 'https://***@example.com/healthy');
       assert.equal(healthEndpoint, 'https://***@example.com/healthy');
       assert.equal(serviceEndpoint.includes('secret'), false);
-      assert.equal(endpointMapValue.includes('secret'), false);
       assert.equal(healthEndpoint.includes('secret'), false);
+
+      // /api/services/endpoints is the consumption surface (useVoiceInput
+      // posts STT/LLM-postprocess requests against the returned URL), so it
+      // must keep credentials intact. Otherwise authenticated upstreams
+      // configured via WHISPER_URL=https://user:pass@host would fail with
+      // "***" in the wire request (codex P2 2026-05-26).
+      assert.equal(endpointMapValue, 'https://user:secret@example.com/healthy');
     } finally {
       await app.close();
     }

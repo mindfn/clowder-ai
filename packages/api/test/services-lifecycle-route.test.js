@@ -796,6 +796,86 @@ describe('service lifecycle write routes', () => {
     }
   });
 
+  // codex P2 2026-05-26: malformed payload field types must 400 instead of
+  // silently coercing to undefined and returning "configuration unchanged".
+  it('rejects reconfigure with non-string model payload', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map([
+      ['whisper-stt', { installed: true, enabled: false, selectedModel: 'large-v3-turbo', port: 19876 }],
+    ]);
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/reconfigure',
+        headers: SESSION_HEADERS,
+        payload: { model: 42 },
+      });
+      assert.equal(res.statusCode, 400, res.payload);
+      assert.match(JSON.parse(res.payload).error, /model.*string/);
+      assert.deepEqual(configs.get('whisper-stt'), {
+        installed: true,
+        enabled: false,
+        selectedModel: 'large-v3-turbo',
+        port: 19876,
+      });
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('rejects reconfigure with non-number port payload', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map([
+      ['whisper-stt', { installed: true, enabled: false, selectedModel: 'large-v3-turbo', port: 19876 }],
+    ]);
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/reconfigure',
+        headers: SESSION_HEADERS,
+        payload: { port: '19999' },
+      });
+      assert.equal(res.statusCode, 400, res.payload);
+      assert.match(JSON.parse(res.payload).error, /port.*number/);
+      assert.deepEqual(configs.get('whisper-stt'), {
+        installed: true,
+        enabled: false,
+        selectedModel: 'large-v3-turbo',
+        port: 19876,
+      });
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
   it('reconfigures a model-less service by updating only the port', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';

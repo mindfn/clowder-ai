@@ -473,9 +473,23 @@ export async function registerServiceLifecycleRoutes(
         return { error: `${service.name} must be stopped (disabled) before reconfiguring` };
       }
 
-      const requestedModel =
-        typeof request.body?.model === 'string' && request.body.model.length > 0 ? request.body.model : undefined;
-      const requestedPort = typeof request.body?.port === 'number' ? request.body.port : undefined;
+      // Fail fast on malformed payload field types instead of silently
+      // coercing to undefined. Without these guards `{"port": "19999"}` or
+      // `{"model": 42}` would fall through and return 200 "configuration
+      // unchanged", which masks client bugs and misleads operators about
+      // whether the reconfigure actually applied (codex P2 2026-05-26).
+      const rawModel = request.body?.model;
+      if (rawModel !== undefined && rawModel !== null && typeof rawModel !== 'string') {
+        reply.status(400);
+        return { error: 'Invalid reconfigure payload: "model" must be a string when provided' };
+      }
+      const rawPort = request.body?.port;
+      if (rawPort !== undefined && rawPort !== null && typeof rawPort !== 'number') {
+        reply.status(400);
+        return { error: 'Invalid reconfigure payload: "port" must be a number when provided' };
+      }
+      const requestedModel = typeof rawModel === 'string' && rawModel.length > 0 ? rawModel : undefined;
+      const requestedPort = typeof rawPort === 'number' ? rawPort : undefined;
       const modelChanged = requestedModel !== undefined && requestedModel !== priorConfig?.selectedModel;
       const portChanged = requestedPort !== undefined && requestedPort !== priorConfig?.port;
 

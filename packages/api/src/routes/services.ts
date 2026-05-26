@@ -61,11 +61,19 @@ export const servicesRoutes: FastifyPluginAsync<ServicesRouteOptions> = async (a
 
   app.get('/api/services/endpoints', async (request, reply) => {
     if (!requireIdentity(request, reply)) return { error: 'Authentication required' };
+    // unmasked: this route is consumed by useVoiceInput / chat-voice to
+    // actually issue STT/TTS/LLM-postprocess requests, so credential-in-URL
+    // setups (e.g. WHISPER_URL=https://user:pass@host) must round-trip
+    // intact. Auth at this route prevents anonymous credential exposure.
     return {
-      endpoints: resolveServiceEndpointMap(options.env, (id) => {
-        const service = getServiceManifest(id);
-        return service ? getEffectiveConfig(service) : getConfig(id);
-      }),
+      endpoints: resolveServiceEndpointMap(
+        options.env,
+        (id) => {
+          const service = getServiceManifest(id);
+          return service ? getEffectiveConfig(service) : getConfig(id);
+        },
+        { mask: false },
+      ),
     };
   });
 

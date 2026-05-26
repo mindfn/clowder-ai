@@ -412,15 +412,24 @@ export function resolveServiceHealthUrl(service: ServiceManifest, endpoint: stri
   }
 }
 
+// Endpoint map returned by `/api/services/endpoints`. By default the
+// returned URLs are credential-masked so they are safe for display surfaces
+// (status panels, audit logs). Callers that need to actually issue a request
+// against the endpoint must pass `{ mask: false }` so URL auth (e.g.
+// `https://user:pass@host`) survives intact — otherwise the masked
+// `***@host` value will be sent to the wire and the request will fail even
+// though the configured upstream is healthy (codex P2 2026-05-26).
 export function resolveServiceEndpointMap(
   env: NodeJS.ProcessEnv = process.env,
   getConfig: (id: string) => ServiceConfig | undefined = getServiceConfig,
+  options: { mask?: boolean } = {},
 ): Record<string, string | null> {
+  const mask = options.mask !== false;
   return Object.fromEntries(
-    SERVICE_MANIFESTS.map((service) => [
-      service.id,
-      maskServiceEndpoint(resolveServiceEndpoint(service, env, getConfig(service.id))),
-    ]),
+    SERVICE_MANIFESTS.map((service) => {
+      const endpoint = resolveServiceEndpoint(service, env, getConfig(service.id));
+      return [service.id, mask ? maskServiceEndpoint(endpoint) : endpoint];
+    }),
   );
 }
 
