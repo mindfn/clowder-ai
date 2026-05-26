@@ -795,6 +795,58 @@ describe('PluginResourceActivator limb activation safety', () => {
     assert.equal(result.status, 'success');
     assert.deepEqual(deregistered, [], 'disable must not deregister a node without owned enabled state');
   });
+
+  it('preserves concurrent capability updates during limb rollback', async () => {
+    const root = mkdtempSync(join(os.tmpdir(), 'plugin-limb-concurrent-'));
+    const pluginsDir = join(root, 'plugins');
+    const projectRoot = join(root, 'project');
+    mkdirSync(join(pluginsDir, 'plugin-a', 'limbs'), { recursive: true });
+    writeFileSync(
+      join(pluginsDir, 'plugin-a', 'limbs', 'node.yaml'),
+      ['nodeId: node-a', 'displayName: A', 'platform: test', 'capabilities: []'].join('\n'),
+    );
+
+    const concurrentEntry = {
+      id: 'plugin:plugin-b:skill',
+      type: 'skill',
+      enabled: true,
+      source: 'cat-cafe',
+      pluginId: 'plugin-b',
+    };
+    let persisted = { version: 1, capabilities: [] };
+
+    const activator = new PluginResourceActivator({
+      resolveProjectRoot: () => projectRoot,
+      pluginsDir,
+      limbRegistry: {
+        register: async () => {
+          persisted.capabilities.push(structuredClone(concurrentEntry));
+          throw new Error('register failed');
+        },
+      },
+      readCapabilities: async () => structuredClone(persisted),
+      writeCapabilities: async (config) => {
+        persisted = structuredClone(config);
+      },
+      withCapabilityLock: async (fn) => fn(),
+      limbAdapterFactory: async () => testLimbNode('node-a'),
+    });
+
+    const result = await activator.enablePlugin({
+      id: 'plugin-a',
+      name: 'Plugin A',
+      version: '1.0.0',
+      builtin: false,
+      config: [],
+      resources: [{ type: 'limb', path: 'limbs/node.yaml' }],
+    });
+
+    assert.equal(result.status, 'failed');
+    const bEntry = persisted.capabilities.find((c) => c.pluginId === 'plugin-b');
+    assert.ok(bEntry, 'concurrent capability update from plugin-b must survive rollback');
+    const aEntry = persisted.capabilities.find((c) => c.pluginId === 'plugin-a');
+    assert.equal(aEntry, undefined, 'failed plugin-a entry must be removed by rollback');
+  });
 });
 
 describe('PluginResourceActivator limb startup safety', () => {

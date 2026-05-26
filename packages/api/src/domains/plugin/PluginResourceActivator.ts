@@ -228,10 +228,12 @@ export class PluginResourceActivator {
     const yamlPath = resolvePluginResourcePath(this.deps.pluginsDir, manifest.id, resource.path);
     const node = await this.deps.limbAdapterFactory(manifest.id, yamlPath);
     const previous = await this.upsertCapabilityEntry(manifest, resource, true, node.nodeId);
+    const capId = resourceCapId(manifest.id, resource);
+    const previousEntry = previous?.capabilities.find((c) => c.id === capId && c.pluginId === manifest.id);
     try {
       await this.deps.limbRegistry.register(node);
     } catch (err) {
-      await this.restoreCapabilitySnapshot(previous);
+      await this.rollbackCapabilityEntry(manifest, resource, previousEntry);
       throw err;
     }
   }
@@ -384,11 +386,23 @@ export class PluginResourceActivator {
     }
   }
 
-  private async restoreCapabilitySnapshot(snapshot: CapabilitiesConfig | null): Promise<void> {
+  private async rollbackCapabilityEntry(
+    manifest: PluginManifest,
+    resource: PluginResourceDef,
+    previousEntry?: CapabilityEntry,
+  ): Promise<void> {
     try {
       await this.deps.withCapabilityLock(async () => {
-        const next = snapshot ?? { version: 1, capabilities: [] };
-        await this.deps.writeCapabilities(structuredClone(next));
+        const config = await this.deps.readCapabilities();
+        if (!config) return;
+        const capId = resourceCapId(manifest.id, resource);
+        if (previousEntry) {
+          const idx = config.capabilities.findIndex((c) => c.id === capId && c.pluginId === manifest.id);
+          if (idx >= 0) config.capabilities[idx] = previousEntry;
+        } else {
+          config.capabilities = config.capabilities.filter((c) => !(c.id === capId && c.pluginId === manifest.id));
+        }
+        await this.deps.writeCapabilities(config);
       });
     } catch {
       /* Preserve the original activation error; best-effort rollback already attempted. */
