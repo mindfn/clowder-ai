@@ -1592,7 +1592,7 @@ async function main(): Promise<void> {
       './domains/plugin/PluginResourceActivator.js'
     );
     const { registerPluginRoutes } = await import('./routes/plugin-routes.js');
-    const { readCapabilitiesConfig, writeCapabilitiesConfig, withCapabilityLock } = await import(
+    const { generateCliConfigs, readCapabilitiesConfig, writeCapabilitiesConfig, withCapabilityLock } = await import(
       './config/capabilities/capability-orchestrator.js'
     );
     const { resolveStartupCliConfigContext } = await import('./config/capabilities/startup-cli-config.js');
