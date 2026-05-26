@@ -312,6 +312,8 @@ describe('SkillsContent', () => {
 
     const pluginToggle = pluginCard?.querySelector('.settings-resource-toggle') as HTMLButtonElement | null;
     expect(pluginToggle?.disabled).toBe(true);
+    expect(pluginToggle?.className).toContain('bg-[var(--console-border-soft)]');
+    expect(pluginToggle?.className).not.toContain('bg-[var(--cafe-accent');
     expect(pluginCard?.querySelector('a[href="/settings?s=plugins"]')).toBeTruthy();
 
     mockFetch.mockClear();
