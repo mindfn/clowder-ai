@@ -53,6 +53,40 @@ export function withPersistedLimbNodeId<T extends ILimbNode>(node: T, persistedN
   return clone as T;
 }
 
+export interface PluginLimbRehydrationDeps {
+  capabilities: CapabilitiesConfig | null;
+  pluginRegistry: Pick<import('./PluginRegistry.js').PluginRegistry, 'getManifest'>;
+  pluginsDir: string;
+  limbAdapterRegistry: Map<string, (yamlPath: string) => Promise<ILimbNode>>;
+  limbRegistry: Pick<LimbRegistry, 'register'>;
+  log?: Pick<Console, 'info' | 'warn'>;
+}
+
+export async function rehydrateEnabledPluginLimbs(deps: PluginLimbRehydrationDeps): Promise<void> {
+  if (!deps.capabilities) return;
+
+  const enabledLimbs = deps.capabilities.capabilities.filter((c) => c.type === 'limb' && c.enabled && c.pluginId);
+  for (const cap of enabledLimbs) {
+    const manifest = deps.pluginRegistry.getManifest(cap.pluginId!);
+    if (!manifest) continue;
+    const limbResource = manifest.resources.find((r) => r.type === 'limb' && resourceCapId(manifest.id, r) === cap.id);
+    if (!limbResource?.path) continue;
+    const factory = deps.limbAdapterRegistry.get(manifest.id);
+    if (!factory) {
+      deps.log?.info(`[api] F202: Skipping limb rehydration for '${manifest.id}' (no adapter registered)`);
+      continue;
+    }
+    try {
+      const yamlPath = resolvePluginResourcePath(deps.pluginsDir, manifest.id, limbResource.path);
+      const node = withPersistedLimbNodeId(await factory(yamlPath), cap.limbNodeId);
+      await deps.limbRegistry.register(node);
+      deps.log?.info(`[api] F202: Rehydrated limb for plugin '${manifest.id}'`);
+    } catch (err) {
+      deps.log?.warn(`[api] F202: Failed to rehydrate limb for plugin '${manifest.id}': ${(err as Error).message}`);
+    }
+  }
+}
+
 export class PluginResourceActivator {
   private readonly deps: PluginResourceActivatorDeps;
 

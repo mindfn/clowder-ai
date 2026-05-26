@@ -1587,8 +1587,8 @@ async function main(): Promise<void> {
   // F202: Plugin framework — discovery + config + resource activation
   {
     const { join } = await import('node:path');
-    const { PluginRegistry, resourceCapId } = await import('./domains/plugin/PluginRegistry.js');
-    const { PluginResourceActivator, withPersistedLimbNodeId } = await import(
+    const { PluginRegistry } = await import('./domains/plugin/PluginRegistry.js');
+    const { PluginResourceActivator, rehydrateEnabledPluginLimbs } = await import(
       './domains/plugin/PluginResourceActivator.js'
     );
     const { registerPluginRoutes } = await import('./routes/plugin-routes.js');
@@ -1635,32 +1635,15 @@ async function main(): Promise<void> {
       },
     });
 
-    // Rehydrate enabled limb plugins on startup
     const startupCaps = await readCapabilitiesConfig(resolveActiveProjectRoot());
-    if (startupCaps) {
-      const enabledLimbs = startupCaps.capabilities.filter((c) => c.type === 'limb' && c.enabled && c.pluginId);
-      for (const cap of enabledLimbs) {
-        const manifest = pluginRegistry.getManifest(cap.pluginId!);
-        if (!manifest) continue;
-        const limbResource = manifest.resources.find(
-          (r) => r.type === 'limb' && resourceCapId(manifest.id, r) === cap.id,
-        );
-        if (!limbResource?.path) continue;
-        const factory = limbAdapterRegistry.get(manifest.id);
-        if (!factory) {
-          app.log.info(`[api] F202: Skipping limb rehydration for '${manifest.id}' (no adapter registered)`);
-          continue;
-        }
-        try {
-          const yamlPath = join(pluginsDir, manifest.id, limbResource.path);
-          const node = withPersistedLimbNodeId(await factory(yamlPath), cap.limbNodeId);
-          await limbRegistry.register(node);
-          app.log.info(`[api] F202: Rehydrated limb for plugin '${manifest.id}'`);
-        } catch (err) {
-          app.log.warn(`[api] F202: Failed to rehydrate limb for plugin '${manifest.id}': ${(err as Error).message}`);
-        }
-      }
-    }
+    await rehydrateEnabledPluginLimbs({
+      capabilities: startupCaps,
+      pluginRegistry,
+      pluginsDir,
+      limbAdapterRegistry,
+      limbRegistry,
+      log: app.log,
+    });
 
     registerPluginRoutes(app, { pluginRegistry, pluginActivator, limbRegistry, pluginsDir });
   }
