@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
   CapabilitiesConfig,
@@ -42,7 +42,7 @@ export class PluginRegistry {
     for (const entry of entries) {
       const pluginDir = join(this.pluginsDir, entry);
       try {
-        if (!statSync(pluginDir).isDirectory()) continue;
+        if (!lstatSync(pluginDir).isDirectory()) continue;
       } catch {
         continue;
       }

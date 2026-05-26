@@ -122,6 +122,33 @@ describe('parsePluginManifest security', () => {
     assert.equal(results[0].id, 'github');
   });
 
+  it('rejects symlinked plugin directories during scan', () => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
+    const externalDir = mkdtempSync(join(os.tmpdir(), 'plugin-external-'));
+    writeTmpManifest(
+      externalDir,
+      'linked-plugin',
+      [
+        'id: linked-plugin',
+        'name: Linked Plugin',
+        'version: 1.0.0',
+        'resources:',
+        '  - type: skill',
+        '    path: skills/linked',
+      ].join('\n'),
+    );
+    symlinkSync(join(externalDir, 'linked-plugin'), join(tmpDir, 'linked-plugin'), 'dir');
+
+    const registry = new PluginRegistry(tmpDir);
+    const results = registry.scan();
+
+    assert.deepEqual(
+      results.map((manifest) => manifest.id),
+      [],
+      'plugin discovery must not follow plugin root directory symlinks',
+    );
+  });
+
   it('applies env-claim validation in deterministic plugin id order', async () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
     writeTmpManifest(
