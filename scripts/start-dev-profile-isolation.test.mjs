@@ -658,8 +658,12 @@ describe('sync-to-opensource public launch transforms', { skip: !existsSync(SYNC
     try {
       const pkg = JSON.parse(readFileSync(resolve(exportDir, 'package.json'), 'utf8'));
       const runtimeScript = readFileSync(resolve(exportDir, 'scripts/runtime-worktree.sh'), 'utf8');
-      const embedScript = readFileSync(resolve(exportDir, 'scripts/embed-server.sh'), 'utf8');
-      const embedPsScript = readFileSync(resolve(exportDir, 'scripts/embed-server.ps1'), 'utf8');
+      // The canonical sidecar launchers live under scripts/services/; the
+      // top-level scripts/{embed,tts,whisper,llm-postprocess,qwen3-asr}-server.*
+      // legacy wrappers were removed because the Console-managed service
+      // lifecycle has fully replaced the direct-spawn path.
+      const canonicalEmbedScript = readFileSync(resolve(exportDir, 'scripts/services/embed-server.sh'), 'utf8');
+      const canonicalEmbedPsScript = readFileSync(resolve(exportDir, 'scripts/services/embed-server.ps1'), 'utf8');
       const publicEnv = readFileSync(resolve(exportDir, '.env.example'), 'utf8');
       const setupDoc = readFileSync(resolve(exportDir, 'SETUP.md'), 'utf8');
       const setupZhDoc = readFileSync(resolve(exportDir, 'SETUP.zh-CN.md'), 'utf8');
@@ -667,11 +671,20 @@ describe('sync-to-opensource public launch transforms', { skip: !existsSync(SYNC
       assert.match(pkg.scripts['dev:direct'], /start-entry\.mjs dev:direct --profile=opensource/);
       assert.match(pkg.scripts['start:direct'], /start-entry\.mjs start:direct --profile=opensource/);
       assert.equal(existsSync(resolve(exportDir, 'scripts/start-entry.mjs')), true);
-      assert.equal(existsSync(resolve(exportDir, 'scripts/embed-api.py')), true);
-      assert.equal(existsSync(resolve(exportDir, 'scripts/embed-server.sh')), true);
-      assert.equal(existsSync(resolve(exportDir, 'scripts/embed-server.ps1')), true);
-      assert.match(embedScript, /sentence-transformers/);
-      assert.match(embedPsScript, /sentence-transformers/);
+      assert.equal(existsSync(resolve(exportDir, 'scripts/services/embed-server.sh')), true);
+      assert.equal(existsSync(resolve(exportDir, 'scripts/services/embed-server.ps1')), true);
+      assert.equal(
+        existsSync(resolve(exportDir, 'scripts/embed-server.sh')),
+        false,
+        'top-level scripts/embed-server.sh must not be re-exported after the legacy direct-spawn path was removed',
+      );
+      assert.equal(
+        existsSync(resolve(exportDir, 'scripts/embed-server.ps1')),
+        false,
+        'top-level scripts/embed-server.ps1 must not be re-exported after the legacy direct-spawn path was removed',
+      );
+      assert.match(canonicalEmbedScript, /EMBED_MODEL/);
+      assert.match(canonicalEmbedPsScript, /EMBED_MODEL/);
       assert.equal(
         pkg.scripts['check:start-profile-isolation'],
         'node --test scripts/start-dev-profile-isolation.test.mjs',
