@@ -813,6 +813,10 @@ describe('plugin routes safety', () => {
 
   it('refreshes plugin registry before serving plugin list', async () => {
     const app = Fastify();
+    app.addHook('preHandler', async (request) => {
+      const raw = request.headers['x-test-session-user'];
+      if (typeof raw === 'string' && raw.trim()) request.sessionUserId = raw.trim();
+    });
     const deps = createRouteDeps();
     registerPluginRoutes(app, {
       pluginRegistry: deps.pluginRegistry,
@@ -822,9 +826,48 @@ describe('plugin routes safety', () => {
     });
     await app.ready();
     try {
-      const res = await app.inject({ method: 'GET', url: '/api/plugins' });
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/plugins',
+        headers: { 'x-test-session-user': 'viewer-user' },
+      });
       assert.equal(res.statusCode, 200);
       assert.equal(deps.pluginRegistry.scanCount, 1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects plugin reads without a session identity', async () => {
+    const app = Fastify();
+    app.addHook('preHandler', async (request) => {
+      const raw = request.headers['x-test-session-user'];
+      if (typeof raw === 'string' && raw.trim()) request.sessionUserId = raw.trim();
+    });
+    const deps = createRouteDeps();
+    registerPluginRoutes(app, {
+      pluginRegistry: deps.pluginRegistry,
+      pluginActivator: deps.pluginActivator,
+      limbRegistry: {},
+      pluginsDir: '/tmp/plugins',
+    });
+    await app.ready();
+    try {
+      const listRes = await app.inject({
+        method: 'GET',
+        url: '/api/plugins',
+        headers: { 'x-cat-cafe-user': 'spoofed-user' },
+      });
+      assert.equal(listRes.statusCode, 401);
+      assert.match(listRes.payload, /session/);
+
+      const detailRes = await app.inject({
+        method: 'GET',
+        url: '/api/plugins/test-plugin',
+        headers: { 'x-cat-cafe-user': 'spoofed-user' },
+      });
+      assert.equal(detailRes.statusCode, 401);
+      assert.match(detailRes.payload, /session/);
     } finally {
       await app.close();
     }

@@ -45,6 +45,15 @@ interface PluginWriteAccessError {
   error: string;
 }
 
+function requirePluginReadAccess(request: FastifyRequest): PluginWriteAccess | PluginWriteAccessError {
+  const operator = resolveCapabilityWriteSessionUserId(request);
+  if (!operator) {
+    return { status: 401, error: 'Plugin read endpoint requires an authenticated session' };
+  }
+
+  return { operator };
+}
+
 function requirePluginWriteAccess(request: FastifyRequest): PluginWriteAccess | PluginWriteAccessError {
   const localError = requireLocalCapabilityWriteRequest(request);
   if (localError) {
@@ -64,7 +73,7 @@ function requirePluginWriteAccess(request: FastifyRequest): PluginWriteAccess | 
   return { operator };
 }
 
-function pluginWriteAccessError(reply: FastifyReply, error: PluginWriteAccessError): { error: string } {
+function pluginAccessError(reply: FastifyReply, error: PluginWriteAccessError): { error: string } {
   reply.status(error.status);
   return { error: error.error };
 }
@@ -72,7 +81,12 @@ function pluginWriteAccessError(reply: FastifyReply, error: PluginWriteAccessErr
 export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpts): void {
   const { pluginRegistry, pluginActivator, limbRegistry, pluginsDir } = opts;
 
-  app.get('/api/plugins', async () => {
+  app.get('/api/plugins', async (request, reply) => {
+    const access = requirePluginReadAccess(request);
+    if ('error' in access) {
+      return pluginAccessError(reply, access);
+    }
+
     const manifests = refreshPluginRegistry(pluginRegistry);
     const projectRoot = resolveActiveProjectRoot();
     const capabilities = await readCapabilitiesConfig(projectRoot);
@@ -84,6 +98,11 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
   });
 
   app.get<{ Params: { id: string } }>('/api/plugins/:id', async (request, reply) => {
+    const access = requirePluginReadAccess(request);
+    if ('error' in access) {
+      return pluginAccessError(reply, access);
+    }
+
     const { id } = request.params;
     refreshPluginRegistry(pluginRegistry);
     const manifest = pluginRegistry.getManifest(id);
@@ -101,7 +120,7 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
   app.post<{ Params: { id: string } }>('/api/plugins/:id/enable', async (request, reply) => {
     const access = requirePluginWriteAccess(request);
     if ('error' in access) {
-      return pluginWriteAccessError(reply, access);
+      return pluginAccessError(reply, access);
     }
     const { operator } = access;
 
@@ -131,7 +150,7 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
   app.post<{ Params: { id: string } }>('/api/plugins/:id/disable', async (request, reply) => {
     const access = requirePluginWriteAccess(request);
     if ('error' in access) {
-      return pluginWriteAccessError(reply, access);
+      return pluginAccessError(reply, access);
     }
     const { operator } = access;
 
@@ -163,7 +182,7 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
     async (request, reply) => {
       const access = requirePluginWriteAccess(request);
       if ('error' in access) {
-        return pluginWriteAccessError(reply, access);
+        return pluginAccessError(reply, access);
       }
       const { operator } = access;
 
@@ -234,7 +253,7 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
   app.post<{ Params: { id: string } }>('/api/plugins/:id/test', async (request, reply) => {
     const access = requirePluginWriteAccess(request);
     if ('error' in access) {
-      return pluginWriteAccessError(reply, access);
+      return pluginAccessError(reply, access);
     }
     const { operator } = access;
 
