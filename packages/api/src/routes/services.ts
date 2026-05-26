@@ -14,6 +14,7 @@ import {
   resolveServiceState,
   resolveServiceStates,
 } from '../domains/services/service-manifest.js';
+import { lifecycleOwnerError, requireLifecycleOwner } from './services-lifecycle-helpers.js';
 import { createServiceLifecycleLock } from './services-lifecycle-lock.js';
 import { resolveSuggestedServicePort } from './services-lifecycle-port.js';
 import { registerServiceLifecycleRoutes, type ServiceLifecycleRouteOptions } from './services-lifecycle-routes.js';
@@ -60,11 +61,15 @@ export const servicesRoutes: FastifyPluginAsync<ServicesRouteOptions> = async (a
   });
 
   app.get('/api/services/endpoints', async (request, reply) => {
-    if (!requireIdentity(request, reply)) return { error: 'Authentication required' };
     // unmasked: this route is consumed by useVoiceInput / chat-voice to
     // actually issue STT/TTS/LLM-postprocess requests, so credential-in-URL
     // setups (e.g. WHISPER_URL=https://user:pass@host) must round-trip
-    // intact. Auth at this route prevents anonymous credential exposure.
+    // intact. That makes the response a privilege-escalation surface --
+    // any non-owner authenticated user otherwise reads upstream secrets.
+    // Gate behind the same owner check used for lifecycle writes so the
+    // unmasked URL never leaves the owner's session boundary
+    // (codex P1 2026-05-26).
+    if (!requireLifecycleOwner(request, reply)) return lifecycleOwnerError(reply);
     return {
       endpoints: resolveServiceEndpointMap(
         options.env,

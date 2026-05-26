@@ -147,6 +147,41 @@ describe('services routes', () => {
     }
   });
 
+  it('gates /api/services/endpoints behind the lifecycle owner check', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'owner';
+    const app = await buildApp({
+      env: { WHISPER_URL: 'https://user:secret@example.com/healthy' },
+    });
+    try {
+      // Non-owner authenticated session: 403, no credentials returned.
+      const nonOwnerRes = await app.inject({
+        method: 'GET',
+        url: '/api/services/endpoints',
+        headers: { 'x-test-session-user': 'someone-else' },
+      });
+      assert.equal(nonOwnerRes.statusCode, 403, nonOwnerRes.payload);
+      assert.equal(nonOwnerRes.payload.includes('secret'), false);
+
+      // Anonymous: 401.
+      const anonRes = await app.inject({ method: 'GET', url: '/api/services/endpoints' });
+      assert.equal(anonRes.statusCode, 401, anonRes.payload);
+
+      // Owner: 200 with unmasked URL.
+      const ownerRes = await app.inject({
+        method: 'GET',
+        url: '/api/services/endpoints',
+        headers: { 'x-test-session-user': 'owner' },
+      });
+      assert.equal(ownerRes.statusCode, 200, ownerRes.payload);
+      assert.equal(JSON.parse(ownerRes.payload).endpoints['whisper-stt'], 'https://user:secret@example.com/healthy');
+    } finally {
+      await app.close();
+      if (previousOwner === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+      else process.env.DEFAULT_OWNER_USER_ID = previousOwner;
+    }
+  });
+
   it('redacts URL credentials from display surfaces but keeps them on /endpoints', async () => {
     const app = await buildApp({
       env: {
