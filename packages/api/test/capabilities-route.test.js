@@ -1088,6 +1088,48 @@ describe('GET /api/capabilities (Fastify)', () => {
     }
   });
 
+  it('prunes plugin-owned skills with no manifest and no filesystem backing', async () => {
+    const Fastify = (await import('fastify')).default;
+    const { capabilitiesRoutes } = await import('../dist/routes/capabilities.js');
+
+    const projectDir = await makeTmpDir('plugin-skill-missing-manifest');
+    await writeCapabilitiesConfig(projectDir, {
+      version: 1,
+      capabilities: [
+        {
+          id: 'orphan-plugin-skill',
+          type: 'skill',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId: 'missing-plugin',
+        },
+      ],
+    });
+
+    const app = Fastify();
+    await app.register(capabilitiesRoutes);
+    await app.ready();
+
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/capabilities?projectPath=${encodeURIComponent(projectDir)}`,
+        headers: AUTH_HEADERS,
+      });
+
+      assert.equal(res.statusCode, 200, res.payload);
+      const config = await readCapabilitiesConfig(projectDir);
+      assert.equal(
+        config?.capabilities.some((item) => item.id === 'orphan-plugin-skill'),
+        false,
+        'plugin-owned skill without manifest or filesystem backing should be pruned',
+      );
+    } finally {
+      await app.close();
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it('prunes plugin-owned skills no longer declared by the canonical plugin manifest', async () => {
     const Fastify = (await import('fastify')).default;
     const { capabilitiesRoutes } = await import('../dist/routes/capabilities.js');

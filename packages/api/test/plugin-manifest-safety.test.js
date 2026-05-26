@@ -176,7 +176,7 @@ describe('parsePluginManifest security', () => {
     }
   });
 
-  it('reports enabled runtime state even when required config is missing later', () => {
+  it('reports partial runtime state when required config is missing later', () => {
     const registry = new PluginRegistry('/tmp/nonexistent-plugins');
     const resource = { type: 'skill', path: 'skills/test-plugin' };
     const manifest = {
@@ -200,7 +200,7 @@ describe('parsePluginManifest security', () => {
       ],
     };
 
-    assert.equal(registry.deriveStatus(manifest, capabilities, {}), 'enabled');
+    assert.equal(registry.deriveStatus(manifest, capabilities, {}), 'partial');
   });
 
   it('does not treat stale plugin capability entries as declared resources', () => {

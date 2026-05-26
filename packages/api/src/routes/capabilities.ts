@@ -151,11 +151,15 @@ async function readDeclaredPluginSkillIds(projectRoot: string): Promise<Map<stri
   return declaredSkillIds;
 }
 
-function isDeclaredPluginSkill(cap: CapabilityEntry, declaredPluginSkillIds: Map<string, Set<string>> | null): boolean {
+function isDeclaredPluginSkill(
+  cap: CapabilityEntry,
+  allSkillNames: Set<string>,
+  declaredPluginSkillIds: Map<string, Set<string>> | null,
+): boolean {
   if (!cap.pluginId) return false;
   if (declaredPluginSkillIds === null) return true;
   const declaredIds = declaredPluginSkillIds.get(cap.pluginId);
-  if (!declaredIds) return true;
+  if (!declaredIds) return allSkillNames.has(cap.id);
   return declaredIds.has(cap.id);
 }
 
@@ -165,7 +169,7 @@ function shouldKeepSkillCapability(
   declaredPluginSkillIds: Map<string, Set<string>> | null,
 ): boolean {
   if (cap.type !== 'skill') return true;
-  if (cap.pluginId) return isDeclaredPluginSkill(cap, declaredPluginSkillIds);
+  if (cap.pluginId) return isDeclaredPluginSkill(cap, allSkillNames, declaredPluginSkillIds);
   return allSkillNames.has(cap.id);
 }
 

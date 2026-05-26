@@ -110,7 +110,7 @@ export class PluginRegistry {
       manifest.resources.every((resource) =>
         declaredEntries.some((c) => c.id === resourceCapId(manifest.id, resource) && c.enabled),
       );
-    if (allDeclaredEnabled) return 'enabled';
+    if (allDeclaredEnabled) return allConfigured ? 'enabled' : 'partial';
 
     const someRuntimeEnabled = capEntries.some((c) => c.enabled);
     if (someRuntimeEnabled) return 'partial';
