@@ -585,7 +585,12 @@ function Resolve-Python312 {
     $info = Try-LegacyProjectPython
     if ($info) { return $info }
 
-    # 5. Last resort: install a project-owned Python.
+    # 5. Last resort: install a project-owned Python. Print a reason line
+    #    first so the user understands why a Python download is starting --
+    #    otherwise the log jumps straight to "Downloading portable Python"
+    #    and people worry we're touching their system interpreter.
+    [Console]::Error.WriteLine("  No Python 3.12+ (AMD64) found on this machine (checked: system PATH, uv, project-local cache).")
+    [Console]::Error.WriteLine("  Installing a project-local Python under `$CAT_CAFE_HOME\python\ -- does not modify system PATH or affect any existing Python.")
     if (Install-PythonToProjectDir) {
         $info = Try-ProjectPython
         if ($info) { return $info }

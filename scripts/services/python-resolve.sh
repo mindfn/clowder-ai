@@ -368,7 +368,12 @@ resolve_python_312() {
   # from re-downloading python-build-standalone over an unreliable
   # GitHub connection just because we moved the default path).
   _try_legacy_project_python && return 0
-  # Last resort: download a portable interpreter to the project path.
+  # Last resort: explain why we're falling back to a project-local Python
+  # download so the user understands what just happened. Without this line
+  # the install log jumps straight to "Downloading portable Python..." and
+  # users worry we're touching their system interpreter.
+  echo "  No Python 3.12+ found on this machine (checked: system PATH, uv, pyenv, brew, project-local cache)." >&2
+  echo "  Installing a project-local Python under \${CAT_CAFE_HOME}/python/ -- does not modify system PATH or affect any existing Python." >&2
   if _install_project_python && _try_project_python; then return 0; fi
   echo "ERROR: no Python 3.12+ interpreter found and the portable Python fallback also failed." >&2
   echo "  You can install one manually:" >&2

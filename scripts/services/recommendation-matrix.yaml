@@ -111,7 +111,6 @@ services:
           description: faster-whisper turbo（仅推荐高内存机器）
           requirements: { ramGb: 4, diskGb: 2 }
       notes:
-        - '⚠ 未检测到 Python。点击安装后会自动获取 Python 3.12 到 ~/.cat-cafe/python/，不修改系统 PATH 也不影响已有 Python。'
         - 'ARM64 上 faster-whisper 依赖的 PyAV / ctranslate2 没有 ARM 版本，所以会装 64-bit 通用版本，通过 Windows 内置 emulator 运行。'
       customModelHint:
         requirement: 'faster-whisper 内置短名 或 HF 上 CTranslate2 转换的 whisper 模型'
@@ -242,7 +241,6 @@ services:
           description: Windows 内置语音，离线可用
           requirements: { ramGb: 1, diskGb: 0.1 }
       notes:
-        - '⚠ 未检测到 Python。点击安装后会自动获取 Python 3.12 到 ~/.cat-cafe/python/，不修改系统 PATH 也不影响已有 Python。'
         - 'ARM64 上 edge-tts 依赖的 aiohttp 没有 ARM 版本，所以会装 64-bit 通用版本，通过 Windows 内置 emulator 运行。'
       customModelHint:
         requirement: 'edge-tts voice 名 或 Windows SAPI 内置音色'
@@ -547,7 +545,6 @@ services:
           requirements: { ramGb: 8, diskGb: 7 }
           performance: CPU 偏慢
       notes:
-        - '⚠ 未检测到 Python。点击安装后会自动获取 Python 3.12 到 ~/.cat-cafe/python/，不修改系统 PATH 也不影响已有 Python。'
         - 'ARM64 上 transformers / safetensors 没有 ARM 版本，所以会装 64-bit 通用版本，通过 Windows 内置 emulator 运行。'
       customModelHint:
         requirement: 'HuggingFace 上的 CausalLM 因果语言模型（建议 ≤3B）'
