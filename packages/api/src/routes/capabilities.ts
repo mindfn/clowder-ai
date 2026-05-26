@@ -141,6 +141,16 @@ function isDeclaredPluginSkill(cap: CapabilityEntry, declaredPluginSkillIds: Map
   return declaredPluginSkillIds.get(cap.pluginId)?.has(cap.id) === true;
 }
 
+function shouldKeepSkillCapability(
+  cap: CapabilityEntry,
+  allSkillNames: Set<string>,
+  declaredPluginSkillIds: Map<string, Set<string>> | null,
+): boolean {
+  if (cap.type !== 'skill') return true;
+  if (cap.pluginId) return isDeclaredPluginSkill(cap, declaredPluginSkillIds);
+  return allSkillNames.has(cap.id);
+}
+
 /** Walk up from CWD to find pnpm-workspace.yaml — the monorepo root. */
 function findMonorepoRoot(): string {
   let dir = process.cwd();
@@ -626,8 +636,8 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
     if (allScansOk) {
       const declaredPluginSkillIds = await readDeclaredPluginSkillIds();
       const before = config.capabilities.length;
-      config.capabilities = config.capabilities.filter(
-        (c) => c.type !== 'skill' || allSkillNames.has(c.id) || isDeclaredPluginSkill(c, declaredPluginSkillIds),
+      config.capabilities = config.capabilities.filter((c) =>
+        shouldKeepSkillCapability(c, allSkillNames, declaredPluginSkillIds),
       );
       if (config.capabilities.length !== before) configDirty = true;
     }

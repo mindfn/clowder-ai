@@ -4,9 +4,10 @@
 
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readlinkSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import Fastify from 'fastify';
 import { PluginRegistry, resourceCapId } from '../dist/domains/plugin/PluginRegistry.js';
 import {
@@ -16,6 +17,9 @@ import {
 } from '../dist/domains/plugin/PluginResourceActivator.js';
 import { BUILTIN_PLUGIN_IDS, parsePluginManifest, validateEnvSafety } from '../dist/domains/plugin/plugin-manifest.js';
 import { registerPluginRoutes } from '../dist/routes/plugin-routes.js';
+
+const require = createRequire(import.meta.url);
+const fsModule = require('node:fs');
 
 function writeTmpManifest(dir, id, yaml) {
   const pluginDir = join(dir, id);
@@ -116,6 +120,60 @@ describe('parsePluginManifest security', () => {
     const results = registry.scan();
     assert.equal(results.length, 1, 'github is a regular scanned plugin');
     assert.equal(results[0].id, 'github');
+  });
+
+  it('applies env-claim validation in deterministic plugin id order', async () => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
+    writeTmpManifest(
+      tmpDir,
+      'foo-bar',
+      [
+        'id: foo-bar',
+        'name: Foo Bar',
+        'version: 1.0.0',
+        'config:',
+        '  - envName: FOO_BAR_TOKEN',
+        '    label: Token',
+        '    sensitive: true',
+      ].join('\n'),
+    );
+    writeTmpManifest(
+      tmpDir,
+      'foo',
+      [
+        'id: foo',
+        'name: Foo',
+        'version: 1.0.0',
+        'config:',
+        '  - envName: FOO_BAR_TOKEN',
+        '    label: Token',
+        '    sensitive: true',
+      ].join('\n'),
+    );
+
+    const originalReaddirSync = fsModule.readdirSync;
+    const readdirMock = mock.method(fsModule, 'readdirSync', (dir, ...args) => {
+      if (dir === tmpDir) return ['foo-bar', 'foo'];
+      return originalReaddirSync.call(fsModule, dir, ...args);
+    });
+    syncBuiltinESMExports();
+
+    try {
+      const { PluginRegistry: FreshPluginRegistry } = await import(
+        `../dist/domains/plugin/PluginRegistry.js?scan-order=${Date.now()}`
+      );
+      const registry = new FreshPluginRegistry(tmpDir);
+      const results = registry.scan();
+
+      assert.deepEqual(
+        results.map((manifest) => manifest.id),
+        ['foo'],
+        'env collision winner should not depend on filesystem scan order',
+      );
+    } finally {
+      readdirMock.mock.restore();
+      syncBuiltinESMExports();
+    }
   });
 
   it('reports enabled runtime state even when required config is missing later', () => {

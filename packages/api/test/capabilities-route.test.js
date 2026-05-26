@@ -7,9 +7,10 @@
  */
 import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 
 import { readAuditLog } from '../dist/config/capabilities/capability-audit.js';
@@ -28,6 +29,15 @@ async function makeTmpDir(prefix) {
   const dir = join(tmpdir(), `cap-route-test-${prefix}-${Date.now()}`);
   await mkdir(dir, { recursive: true });
   return dir;
+}
+
+function findRepoRoot() {
+  let dir = process.cwd();
+  while (dir !== dirname(dir)) {
+    if (existsSync(join(dir, 'pnpm-workspace.yaml'))) return dir;
+    dir = dirname(dir);
+  }
+  return process.cwd();
 }
 
 // ────────── PATCH logic (unit-level, no Fastify needed) ──────────
@@ -1017,7 +1027,8 @@ describe('GET /api/capabilities (Fastify)', () => {
     const { capabilitiesRoutes } = await import('../dist/routes/capabilities.js');
 
     const pluginId = `cap-prune-${Date.now()}`;
-    const pluginDir = join(process.cwd(), 'plugins', pluginId);
+    const repoRoot = findRepoRoot();
+    const pluginDir = join(repoRoot, 'plugins', pluginId);
     await mkdir(join(pluginDir, 'skills', 'current'), { recursive: true });
     await writeFile(
       join(pluginDir, 'plugin.yaml'),
@@ -1032,6 +1043,8 @@ describe('GET /api/capabilities (Fastify)', () => {
     );
 
     const projectDir = await makeTmpDir('plugin-skill-canonical-root');
+    await mkdir(join(projectDir, '.claude', 'skills', 'old'), { recursive: true });
+    await writeFile(join(projectDir, '.claude', 'skills', 'old', 'SKILL.md'), '# stale mounted plugin skill\n');
     const currentSkill = {
       id: 'current',
       type: 'skill',

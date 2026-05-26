@@ -34,7 +34,7 @@ export class PluginRegistry {
 
     let entries: string[];
     try {
-      entries = readdirSync(this.pluginsDir);
+      entries = readdirSync(this.pluginsDir).sort((a, b) => a.localeCompare(b));
     } catch {
       return [];
     }
@@ -66,6 +66,7 @@ export class PluginRegistry {
       }
     }
 
+    candidates.sort((a, b) => a.id.localeCompare(b.id));
     for (const { id, manifest, yamlPath } of candidates) {
       const safety = validateEnvSafety(manifest, envClaims);
       if (!safety.ok) {
