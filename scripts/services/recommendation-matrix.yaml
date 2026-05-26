@@ -31,10 +31,13 @@
 #           userAction: <what user should do>
 #           retryHint: <how to retry>
 #         notes: [<text>, ...]        # general guidance (was "caveats")
-#         customModelHint:            # shown beside the "custom model"
-#           description: <text>       # what kind of model is acceptable
-#                                     # in this env (architecture family,
-#                                     # backend constraints, resource hint)
+#         customModelHint:            # shown beside the "custom model" input
+#           requirement: <text>       # one-sentence format requirement on
+#                                     # this env (no implementation jargon)
+#           example: <text>           # one or more concrete model IDs that
+#                                     # satisfy `requirement`
+#           unsupported: <text>       # optional — format(s) that will cause
+#                                     # sidecar start to fail in this env
 #           links:                    # where to look up valid IDs
 #             - label: <text>
 #               url: <url>
@@ -61,7 +64,9 @@ services:
           description: 轻量版，低配机器可用
           requirements: { ramGb: 2, diskGb: 1 }
       customModelHint:
-        description: 'MLX 后端：mlx-community 下的 whisper 量化模型（MLX 张量格式）'
+        requirement: 'mlx-community 命名空间下的 whisper MLX 量化模型（Apple Silicon GPU 加速）'
+        example: 'mlx-community/whisper-large-v3-turbo、mlx-community/whisper-medium-mlx'
+        unsupported: 'faster-whisper 短名（base / large-v3-turbo）、HF 上 CTranslate2 转换的 whisper'
         links:
           - { label: 'mlx-community / whisper 列表', url: 'https://huggingface.co/mlx-community?search_models=whisper' }
 
@@ -84,7 +89,9 @@ services:
       notes:
         - Intel Mac 不支持 MLX，使用 faster-whisper 后端
       customModelHint:
-        description: 'faster-whisper 后端：内置 ID（tiny/base/small/medium/large-v1~v3/large-v3-turbo/distil-large-v3）或 HF 上 CTranslate2 转换的 whisper 模型'
+        requirement: 'faster-whisper 内置短名 或 HuggingFace 上 CTranslate2 库标注的 whisper 模型（Intel Mac 走 CTranslate2 CPU 推理）'
+        example: 'base、large-v3-turbo、distil-large-v3、Systran/faster-whisper-large-v3'
+        unsupported: 'MLX 张量格式（mlx-community/whisper-*）'
         links:
           - { label: 'faster-whisper 内置模型列表', url: 'https://github.com/SYSTRAN/faster-whisper#available-models' }
           - { label: 'HF CTranslate2 whisper 模型', url: 'https://huggingface.co/models?library=ctranslate2&search=whisper' }
@@ -107,7 +114,9 @@ services:
         - '⚠ 未检测到 Python。点击安装后会自动获取 Python 3.12 到 ~/.cat-cafe/python/，不修改系统 PATH 也不影响已有 Python。'
         - 'ARM64 上 faster-whisper 依赖的 PyAV / ctranslate2 没有 ARM 版本，所以会装 64-bit 通用版本，通过 Windows 内置 emulator 运行。'
       customModelHint:
-        description: 'faster-whisper 后端（待安装 Python）：内置 ID（tiny/base/small/medium/large-v1~v3/large-v3-turbo/distil-large-v3）'
+        requirement: 'faster-whisper 内置短名（待安装 Python，会通过 winget 自动拉取 x64 Python）'
+        example: 'base、large-v3-turbo、distil-large-v3'
+        unsupported: 'MLX 张量格式（mlx-community/whisper-*）'
         links:
           - { label: 'Python 64-bit installer', url: 'https://www.python.org/downloads/' }
 
@@ -135,7 +144,9 @@ services:
       notes:
         - x86 Python 运行在 ARM 模拟层上，性能比原生略低
       customModelHint:
-        description: 'faster-whisper 后端：内置 ID（tiny/base/small/medium/large-v1~v3/large-v3-turbo/distil-large-v3）'
+        requirement: 'faster-whisper 内置短名（Windows ARM64 native Python 走 x86 emulation 跑 CTranslate2）'
+        example: 'base、large-v3-turbo、distil-large-v3'
+        unsupported: 'MLX 张量格式（mlx-community/whisper-*）'
         links:
           - { label: 'faster-whisper 内置模型列表', url: 'https://github.com/SYSTRAN/faster-whisper#available-models' }
 
@@ -157,7 +168,9 @@ services:
       notes:
         - GPU 加速需 CUDA 12+ 或 ROCm 5.7+
       customModelHint:
-        description: '自定义必须是 faster-whisper 内置 ID（tiny / base / small / medium / large-v1~v3 / large-v3-turbo / distil-large-v3 等）或 CTranslate2 转换模型'
+        requirement: 'faster-whisper 内置短名 或 HF 上 CTranslate2 转换的 whisper 模型（GPU 加速）'
+        example: 'large-v3-turbo、large-v3、Systran/faster-whisper-large-v3'
+        unsupported: 'MLX 张量格式'
 
     - match: { os: [win32, linux], gpu: none }
       models:
@@ -174,7 +187,9 @@ services:
       notes:
         - 纯 CPU 上 large 模型偏慢，默认 base
       customModelHint:
-        description: 'faster-whisper 后端：内置 ID（tiny/base/small/medium/large-v1~v3/distil-large-v3）。纯 CPU 推荐 base 或 small'
+        requirement: 'faster-whisper 内置短名 或 HF 上 CTranslate2 转换的 whisper 模型（纯 CPU 推理，推荐 ≤ small）'
+        example: 'base、small、distil-large-v3'
+        unsupported: 'MLX 张量格式'
         links:
           - { label: 'faster-whisper 内置模型列表', url: 'https://github.com/SYSTRAN/faster-whisper#available-models' }
 
@@ -190,7 +205,9 @@ services:
           requirements: { ramGb: 2, diskGb: 0.5 }
           performance: 实时 5x+
       customModelHint:
-        description: 'MLX-Audio 后端：mlx-community 下的 TTS 模型（Kokoro / StyleTTS2 量化版）。本地、离线、Apple Silicon GPU 加速——首选方案'
+        requirement: 'mlx-community 命名空间下的 TTS MLX 量化模型（本地、离线、Apple Silicon GPU 加速）'
+        example: 'mlx-community/Kokoro-82M、mlx-community/StyleTTS2'
+        unsupported: 'edge-tts voice 名（本环境跑本地 MLX 推理，不调云端）'
         links:
           - { label: 'mlx-community / TTS 模型', url: 'https://huggingface.co/mlx-community?search_models=tts' }
 
@@ -204,7 +221,9 @@ services:
       notes:
         - Intel Mac 不支持 MLX-Audio，使用 edge-tts
       customModelHint:
-        description: 'edge-tts 云端服务（无本地模型下载），通过 voice 名选择音色'
+        requirement: 'edge-tts voice 名（云端推理，无本地模型下载）'
+        example: 'zh-CN-XiaoxiaoNeural、en-US-AvaMultilingualNeural'
+        unsupported: 'HuggingFace 模型 ID（本环境不跑本地 TTS 推理）'
         links:
           - { label: 'edge-tts voice 列表', url: 'https://github.com/rany2/edge-tts#changing-voices' }
 
@@ -225,7 +244,9 @@ services:
         - '⚠ 未检测到 Python。点击安装后会自动获取 Python 3.12 到 ~/.cat-cafe/python/，不修改系统 PATH 也不影响已有 Python。'
         - 'ARM64 上 edge-tts 依赖的 aiohttp 没有 ARM 版本，所以会装 64-bit 通用版本，通过 Windows 内置 emulator 运行。'
       customModelHint:
-        description: 'edge-tts 云端服务 / SAPI Windows 内置（待安装 Python）'
+        requirement: 'edge-tts voice 名 或 Windows SAPI 内置音色（待安装 Python，会通过 winget 自动拉取 x64 Python）'
+        example: 'zh-CN-XiaoxiaoNeural、Microsoft Huihui Desktop'
+        unsupported: 'HuggingFace 模型 ID'
         links:
           - { label: 'Python 64-bit installer', url: 'https://www.python.org/downloads/' }
 
@@ -244,7 +265,9 @@ services:
       notes:
         - 'ARM64 上 edge-tts / piper 受 pip wheel 限制装不上。如需更高质量请安装 x86 Python（参考 LLM 服务的 x86 安装引导）。'
       customModelHint:
-        description: 'SAPI 后端（Windows 内置 TTS）：通过 pyttsx3 调用，无云端依赖；音色由 Windows 系统决定'
+        requirement: 'Windows 系统已安装的 SAPI 语音名（pyttsx3 调用，离线、零额外下载）'
+        example: 'Microsoft Huihui Desktop、Microsoft Zira Desktop'
+        unsupported: 'edge-tts / HuggingFace 模型（ARM64 native Python 装不上 aiohttp / piper_phonemize）'
 
     - match: { os: win32, arch: arm64, pythonArch: x86-emulated }
       models:
@@ -260,7 +283,9 @@ services:
       notes:
         - x86 Python 运行在 ARM 模拟层上，性能比原生略低；edge-tts 与 sapi 都基本不受影响
       customModelHint:
-        description: 'edge-tts 云端服务 / sapi Windows 内置'
+        requirement: 'edge-tts voice 名 或 Windows SAPI 内置音色'
+        example: 'zh-CN-XiaoxiaoNeural、Microsoft Huihui Desktop'
+        unsupported: 'HuggingFace 模型 ID'
         links:
           - { label: 'edge-tts voice 列表', url: 'https://github.com/rany2/edge-tts#changing-voices' }
 
@@ -284,7 +309,9 @@ services:
       notes:
         - edge-tts 需要联网；piper/sapi 完全离线
       customModelHint:
-        description: '可填 piper voice ID（zh_CN-huayan-medium / en_US-amy-medium 等）、edge-tts（云端）、sapi（Windows 内置）'
+        requirement: 'piper voice ID（本地）/ edge-tts voice 名（云端）/ Windows SAPI 音色（系统内置）'
+        example: 'zh_CN-huayan-medium、en_US-amy-medium、zh-CN-XiaoxiaoNeural'
+        unsupported: 'HuggingFace 模型 ID'
         links:
           - { label: 'piper voice 全列表', url: 'https://github.com/rhasspy/piper/blob/master/VOICES.md' }
           - { label: 'edge-tts voice 列表', url: 'https://github.com/rany2/edge-tts#changing-voices' }
@@ -304,7 +331,9 @@ services:
       notes:
         - 离线选项 piper 默认下载中文 huayan-medium 模型；可手填 en_US-amy-medium 等
       customModelHint:
-        description: '可填 piper voice ID（zh_CN-huayan-medium / en_US-amy-medium 等）或 edge-tts（云端）'
+        requirement: 'piper voice ID（本地）或 edge-tts voice 名（云端）'
+        example: 'zh_CN-huayan-medium、en_US-amy-medium、zh-CN-XiaoxiaoNeural'
+        unsupported: 'HuggingFace 模型 ID'
         links:
           - { label: 'piper voice 全列表', url: 'https://github.com/rhasspy/piper/blob/master/VOICES.md' }
           - { label: 'edge-tts voice 列表', url: 'https://github.com/rany2/edge-tts#changing-voices' }
@@ -331,7 +360,9 @@ services:
           requirements: { ramGb: 16, diskGb: 6 }
           performance: 实时
       customModelHint:
-        description: 'MLX 后端：mlx-community 下的 embedding 量化模型（4bit-DWQ / mxfp8）'
+        requirement: 'mlx-community 命名空间下的 embedding MLX 量化模型（Apple Silicon GPU 加速，BERT-family encoder）'
+        example: 'mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ、mlx-community/BAAI-bge-large-zh-v1.5-mxfp8'
+        unsupported: '生成式 LLM（CausalLM）模型、纯解码器模型'
         links:
           - { label: 'mlx-community / embedding 模型', url: 'https://huggingface.co/mlx-community?search_models=embedding' }
 
@@ -356,7 +387,9 @@ services:
         - Intel Mac 不支持 MLX，使用 sentence-transformers 后端
         - 中英文都支持
       customModelHint:
-        description: 'sentence-transformers 后端：HuggingFace 上任意 sentence-transformers 兼容的 embedding 模型（BERT-family encoder，输出固定维度向量）'
+        requirement: 'HuggingFace 上任意 sentence-transformers 兼容的 embedding 模型（BERT-family encoder，CPU/MPS 推理）'
+        example: 'BAAI/bge-large-zh-v1.5、jinaai/jina-embeddings-v2-base-zh、intfloat/multilingual-e5-large'
+        unsupported: '生成式 LLM（CausalLM）模型、MLX 张量格式'
         links:
           - { label: 'HF sentence-transformers 模型', url: 'https://huggingface.co/models?library=sentence-transformers&sort=likes' }
 
@@ -394,7 +427,9 @@ services:
         - 'ARM64 走 fastembed 后端，受白名单限制（已对照 fastembed.TextEmbedding.list_supported_models() 选型）'
         - '如需更高质量请安装 x86 Python（参考 LLM 服务的 x86 安装引导），切换到 sentence-transformers 后端'
       customModelHint:
-        description: 'fastembed 后端：受白名单限制，只能填 fastembed.TextEmbedding.list_supported_models() 返回的模型 ID（即 fastembed 已转换并打包成 ONNX 的那批）'
+        requirement: 'fastembed 已打包成 ONNX 的 embedding 模型（受 fastembed 白名单限制，Windows ARM64 唯一可装路径）'
+        example: 'jinaai/jina-embeddings-v2-base-zh、intfloat/multilingual-e5-large、BAAI/bge-small-zh-v1.5'
+        unsupported: '白名单外的 HuggingFace 模型、MLX 张量格式、sentence-transformers 模型'
         links:
           - { label: 'fastembed 支持的 text embedding 模型', url: 'https://qdrant.github.io/fastembed/examples/Supported_Models/' }
 
@@ -414,7 +449,9 @@ services:
       notes:
         - 中英文都支持
       customModelHint:
-        description: 'sentence-transformers 后端：HuggingFace 上任意 sentence-transformers 兼容的 embedding 模型（BERT-family encoder）；GPU 推荐 768/1024 dim 多语言模型'
+        requirement: 'HuggingFace 上任意 sentence-transformers 兼容的 embedding 模型（BERT-family encoder，GPU 加速）'
+        example: 'BAAI/bge-large-zh-v1.5（1024 dim）、intfloat/multilingual-e5-large、Qwen/Qwen3-Embedding-0.6B'
+        unsupported: '生成式 LLM（CausalLM）模型、MLX 张量格式'
         links:
           - { label: 'HF sentence-transformers 模型', url: 'https://huggingface.co/models?library=sentence-transformers&sort=likes' }
 
@@ -444,7 +481,9 @@ services:
         - 中英文都支持
         - '⚠ 切换模型后维度变化 (BGE 512 / jina 768 / e5-large 1024)，需重建 memory 索引'
       customModelHint:
-        description: 'sentence-transformers 后端：HuggingFace 上任意 sentence-transformers 兼容的 embedding 模型（BERT-family encoder）；CPU 建议 ≤768 dim，1024 dim 偏慢'
+        requirement: 'HuggingFace 上任意 sentence-transformers 兼容的 embedding 模型（CPU 推理，建议 ≤768 dim）'
+        example: 'BAAI/bge-base-zh-v1.5（768 dim）、jinaai/jina-embeddings-v2-base-zh、intfloat/multilingual-e5-base'
+        unsupported: '生成式 LLM（CausalLM）模型、MLX 张量格式（1024 dim 模型在 CPU 上偏慢）'
         links:
           - { label: 'HF sentence-transformers 模型', url: 'https://huggingface.co/models?library=sentence-transformers&sort=likes' }
 
@@ -470,7 +509,9 @@ services:
       notes:
         - Qwen3.5-35B 需要 48GB+ 统一内存
       customModelHint:
-        description: 'MLX 后端：mlx-community 下的 Instruct / Chat 量化模型（CausalLM）。4bit 量化模型内存占用 ≈ 参数量 × 0.5'
+        requirement: 'mlx-community 命名空间下的 Instruct/Chat CausalLM MLX 量化模型（Apple Silicon GPU 加速；4bit 量化内存占用 ≈ 参数量 × 0.5）'
+        example: 'mlx-community/Qwen2.5-3B-Instruct-4bit、mlx-community/Llama-3.2-3B-Instruct-4bit'
+        unsupported: 'Embedding 类模型（BERT-family encoder）、纯 transformers 格式'
         links:
           - { label: 'mlx-community / text-generation 模型', url: 'https://huggingface.co/mlx-community?pipeline_tag=text-generation&sort=likes' }
 
@@ -488,7 +529,9 @@ services:
       notes:
         - Intel Mac 不支持 MLX，使用 transformers 后端
       customModelHint:
-        description: 'transformers 后端：HuggingFace 上的因果语言模型（CausalLM，pipeline_tag=text-generation）。CPU 推荐 ≤3B'
+        requirement: 'HuggingFace 上的 CausalLM 因果语言模型（pipeline_tag=text-generation，CPU 推理）'
+        example: 'Qwen/Qwen2.5-3B-Instruct、meta-llama/Llama-3.2-3B-Instruct'
+        unsupported: 'Embedding 模型、MLX 张量格式；CPU 建议 ≤3B'
         links:
           - { label: 'HF text-generation 模型', url: 'https://huggingface.co/models?pipeline_tag=text-generation&sort=likes' }
 
@@ -506,7 +549,9 @@ services:
         - '⚠ 未检测到 Python。点击安装后会自动获取 Python 3.12 到 ~/.cat-cafe/python/，不修改系统 PATH 也不影响已有 Python。'
         - 'ARM64 上 transformers / safetensors 没有 ARM 版本，所以会装 64-bit 通用版本，通过 Windows 内置 emulator 运行。'
       customModelHint:
-        description: 'transformers 后端（待安装 Python）：HuggingFace 上的因果语言模型；建议 ≤3B'
+        requirement: 'HuggingFace 上的 CausalLM 因果语言模型（待安装 Python，emulation 性能较低）'
+        example: 'Qwen/Qwen2.5-3B-Instruct、meta-llama/Llama-3.2-3B-Instruct'
+        unsupported: 'Embedding 模型、MLX 张量格式；建议 ≤3B'
         links:
           - { label: 'Python 64-bit installer', url: 'https://www.python.org/downloads/' }
 
@@ -526,7 +571,9 @@ services:
       notes:
         - x86 Python 运行在 ARM 模拟层上，性能比原生略低
       customModelHint:
-        description: 'transformers 后端：HuggingFace 上的因果语言模型；建议 ≤3B（emulation 性能较低）'
+        requirement: 'HuggingFace 上的 CausalLM 因果语言模型（Windows ARM64 走 x86 emulation）'
+        example: 'Qwen/Qwen2.5-3B-Instruct、meta-llama/Llama-3.2-3B-Instruct'
+        unsupported: 'Embedding 模型、MLX 张量格式；emulation 性能较低，建议 ≤3B'
         links:
           - { label: 'HF text-generation 模型', url: 'https://huggingface.co/models?pipeline_tag=text-generation&sort=likes' }
 
@@ -544,7 +591,9 @@ services:
       notes:
         - 7B 模型需 ≥12GB 显存
       customModelHint:
-        description: 'transformers 后端 (GPU)：HuggingFace 上的因果语言模型。FP16 模型 GB ≈ 参数量 × 2，需匹配显存'
+        requirement: 'HuggingFace 上的 CausalLM 因果语言模型（GPU 加速；FP16 模型显存 ≈ 参数量 × 2）'
+        example: 'Qwen/Qwen2.5-7B-Instruct、meta-llama/Llama-3.1-8B-Instruct'
+        unsupported: 'Embedding 模型、MLX 张量格式'
         links:
           - { label: 'HF text-generation 模型', url: 'https://huggingface.co/models?pipeline_tag=text-generation&sort=likes' }
 
@@ -558,7 +607,9 @@ services:
       notes:
         - 纯 CPU 上 3B 模型生成偏慢
       customModelHint:
-        description: 'transformers 后端 (CPU)：HuggingFace 上的因果语言模型。纯 CPU 建议 ≤3B'
+        requirement: 'HuggingFace 上的 CausalLM 因果语言模型（纯 CPU 推理，建议 ≤3B）'
+        example: 'Qwen/Qwen2.5-3B-Instruct、meta-llama/Llama-3.2-3B-Instruct'
+        unsupported: 'Embedding 模型、MLX 张量格式'
         links:
           - { label: 'HF text-generation 模型', url: 'https://huggingface.co/models?pipeline_tag=text-generation&sort=likes' }
 

@@ -36,7 +36,12 @@ interface EnvironmentProfile {
 }
 
 interface CustomModelHint {
-  description: string;
+  // Three-line structured hint; see CustomModelHint in
+  // packages/api/src/domains/services/recommendation-types.ts for the
+  // contract behind each field.
+  requirement: string;
+  example: string;
+  unsupported?: string;
   links?: Array<{ label: string; url: string }>;
 }
 
@@ -212,7 +217,20 @@ function ModelSelector(props: ModelSelectorProps) {
                 />
                 {customModelHint && (
                   <div className="mt-1 space-y-0.5">
-                    <p className="text-[11px] text-cafe-muted leading-relaxed">{customModelHint.description}</p>
+                    <p className="text-[11px] text-cafe-muted leading-relaxed">
+                      <span className="font-semibold text-cafe">格式要求：</span>
+                      {customModelHint.requirement}
+                    </p>
+                    <p className="text-[11px] text-cafe-muted leading-relaxed">
+                      <span className="font-semibold text-cafe">示例：</span>
+                      {customModelHint.example}
+                    </p>
+                    {customModelHint.unsupported && (
+                      <p className="text-[11px] leading-relaxed text-conn-amber-text">
+                        <span className="font-semibold">不支持：</span>
+                        {customModelHint.unsupported}（启动会失败）
+                      </p>
+                    )}
                     {customModelHint.links && customModelHint.links.length > 0 && (
                       <div className="flex flex-wrap gap-x-2 gap-y-0.5">
                         {customModelHint.links.map((link) => (

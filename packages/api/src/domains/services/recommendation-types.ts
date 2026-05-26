@@ -45,7 +45,16 @@ export interface MatchCriteria {
 }
 
 export interface CustomModelHint {
-  description: string;
+  // Three-line structured hint shown beside the custom-model input. The
+  // modal renders them in fixed order with bold labels so the user can
+  // scan "what's expected / what's a good ID / what will fail".
+  // - requirement: one-sentence description of the format/family the
+  //   sidecar can load on this environment (no implementation jargon)
+  // - example: one or more concrete model IDs that satisfy `requirement`
+  // - unsupported: format(s) that will cause sidecar start to fail here
+  requirement: string;
+  example: string;
+  unsupported?: string;
   links?: Array<{ label: string; url: string }>;
 }
 
