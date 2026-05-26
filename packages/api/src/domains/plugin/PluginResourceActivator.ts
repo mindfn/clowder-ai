@@ -53,6 +53,20 @@ export function withPersistedLimbNodeId<T extends ILimbNode>(node: T, persistedN
   return clone as T;
 }
 
+async function assertPluginResourceInsideRoot(
+  pluginsDir: string,
+  manifest: PluginManifest,
+  resourcePath: string,
+  label: string,
+): Promise<void> {
+  const pluginRoot = join(pluginsDir, manifest.id);
+  const [pluginRootReal, resourceReal] = await Promise.all([realpath(pluginRoot), realpath(resourcePath)]);
+  const rel = relative(pluginRootReal, resourceReal);
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    throw new Error(`${label} must resolve inside plugin root ${pluginRootReal}: ${resourceReal}`);
+  }
+}
+
 export interface PluginLimbRehydrationDeps {
   capabilities: CapabilitiesConfig | null;
   pluginRegistry: Pick<import('./PluginRegistry.js').PluginRegistry, 'getManifest'>;
@@ -78,6 +92,7 @@ export async function rehydrateEnabledPluginLimbs(deps: PluginLimbRehydrationDep
     }
     try {
       const yamlPath = resolvePluginResourcePath(deps.pluginsDir, manifest.id, limbResource.path);
+      await assertPluginResourceInsideRoot(deps.pluginsDir, manifest, yamlPath, 'Limb resource');
       const node = withPersistedLimbNodeId(await factory(yamlPath), cap.limbNodeId);
       await deps.limbRegistry.register(node);
       deps.log?.info(`[api] F202: Rehydrated limb for plugin '${manifest.id}'`);
@@ -192,7 +207,7 @@ export class PluginResourceActivator {
     if (!existsSync(skillSourceDir)) {
       throw new Error(`Skill source not found: ${skillSourceDir}`);
     }
-    await this.assertPluginResourceInsideRoot(manifest, skillSourceDir, 'Skill resource');
+    await assertPluginResourceInsideRoot(this.deps.pluginsDir, manifest, skillSourceDir, 'Skill resource');
     const skillName = resourcePathBasename(resource.path);
 
     const createdLinks: string[] = [];
@@ -234,6 +249,7 @@ export class PluginResourceActivator {
     }
 
     const yamlPath = resolvePluginResourcePath(this.deps.pluginsDir, manifest.id, resource.path);
+    await assertPluginResourceInsideRoot(this.deps.pluginsDir, manifest, yamlPath, 'Limb resource');
     const node = await this.deps.limbAdapterFactory(manifest.id, yamlPath);
     const previous = await this.upsertCapabilityEntry(manifest, resource, true, node.nodeId);
     const capId = resourceCapId(manifest.id, resource);
@@ -249,18 +265,13 @@ export class PluginResourceActivator {
   private async deactivateLimb(manifest: PluginManifest, resource: PluginResourceDef): Promise<void> {
     if (!resource.path) return;
 
-    const capId = resourceCapId(manifest.id, resource);
-    const config = await this.deps.readCapabilities();
-    const ownedEntry = config?.capabilities.find(
-      (c) => c.id === capId && c.type === 'limb' && c.pluginId === manifest.id && c.enabled,
-    );
+    const removedEntries = await this.removeCapabilityEntry(manifest, resource);
+    const ownedEntry = removedEntries.find((c) => c.type === 'limb' && c.pluginId === manifest.id && c.enabled);
     const nodeId = ownedEntry?.limbNodeId;
 
     if (nodeId) {
       this.deps.limbRegistry.deregister(nodeId);
     }
-
-    await this.removeCapabilityEntry(manifest, resource);
   }
 
   private async activateMcp(manifest: PluginManifest, resource: PluginResourceDef): Promise<void> {
@@ -336,16 +347,21 @@ export class PluginResourceActivator {
     });
   }
 
-  private async removeCapabilityEntry(manifest: PluginManifest, resource: PluginResourceDef): Promise<void> {
-    await this.deps.withCapabilityLock(async () => {
+  private async removeCapabilityEntry(
+    manifest: PluginManifest,
+    resource: PluginResourceDef,
+  ): Promise<CapabilityEntry[]> {
+    return this.deps.withCapabilityLock(async () => {
       const config = await this.deps.readCapabilities();
-      if (!config) return;
+      if (!config) return [];
       const previous = structuredClone(config);
       const next = structuredClone(config);
 
       const capId = resourceCapId(manifest.id, resource);
+      const removedEntries = next.capabilities.filter((c) => c.id === capId && c.pluginId === manifest.id);
       next.capabilities = next.capabilities.filter((c) => !(c.id === capId && c.pluginId === manifest.id));
       await this.writeCapabilitiesWithRollback(previous, next);
+      return removedEntries;
     });
   }
 
@@ -422,19 +438,6 @@ export class PluginResourceActivator {
       if (val) env[field.envName] = val;
     }
     return Object.keys(env).length > 0 ? { env } : {};
-  }
-
-  private async assertPluginResourceInsideRoot(
-    manifest: PluginManifest,
-    resourcePath: string,
-    label: string,
-  ): Promise<void> {
-    const pluginRoot = join(this.deps.pluginsDir, manifest.id);
-    const [pluginRootReal, resourceReal] = await Promise.all([realpath(pluginRoot), realpath(resourcePath)]);
-    const rel = relative(pluginRootReal, resourceReal);
-    if (rel.startsWith('..') || isAbsolute(rel)) {
-      throw new Error(`${label} must resolve inside plugin root ${pluginRootReal}: ${resourceReal}`);
-    }
   }
 
   private async writeCapabilitiesWithRollback(

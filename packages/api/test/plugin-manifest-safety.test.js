@@ -915,6 +915,8 @@ describe('PluginResourceActivator limb activation safety', () => {
     const root = mkdtempSync(join(os.tmpdir(), 'plugin-limb-activator-'));
     const pluginsDir = join(root, 'plugins');
     const projectRoot = join(root, 'project');
+    mkdirSync(join(pluginsDir, 'test-plugin'), { recursive: true });
+    writeFileSync(join(pluginsDir, 'test-plugin', 'shared'), 'nodeId: new-node\n');
     let persisted = {
       version: 1,
       capabilities: [
@@ -962,11 +964,59 @@ describe('PluginResourceActivator limb activation safety', () => {
     assert.equal(persisted.capabilities[0].mcpServer, undefined);
   });
 
+  it('rejects plugin limb source symlinks that escape the plugin root', async () => {
+    const root = mkdtempSync(join(os.tmpdir(), 'plugin-limb-activator-'));
+    const pluginsDir = join(root, 'plugins');
+    const projectRoot = join(root, 'project');
+    const pluginLimbDir = join(pluginsDir, 'test-plugin', 'limbs');
+    const outsideDir = join(root, 'outside');
+    mkdirSync(pluginLimbDir, { recursive: true });
+    mkdirSync(outsideDir, { recursive: true });
+    const outsideYaml = join(outsideDir, 'node.yaml');
+    writeFileSync(outsideYaml, ['nodeId: outside-node', 'displayName: Outside', 'platform: test'].join('\n'));
+    symlinkSync(outsideYaml, join(pluginLimbDir, 'node.yaml'));
+
+    let adapterCalled = false;
+    let persisted = { version: 1, capabilities: [] };
+    const activator = new PluginResourceActivator({
+      resolveProjectRoot: () => projectRoot,
+      pluginsDir,
+      limbRegistry: {
+        register: async () => {},
+      },
+      readCapabilities: async () => structuredClone(persisted),
+      writeCapabilities: async (config) => {
+        persisted = structuredClone(config);
+      },
+      withCapabilityLock: async (fn) => fn(),
+      limbAdapterFactory: async () => {
+        adapterCalled = true;
+        return testLimbNode('outside-node');
+      },
+    });
+
+    const result = await activator.enablePlugin({
+      id: 'test-plugin',
+      name: 'Test Plugin',
+      version: '1.0.0',
+      builtin: false,
+      config: [],
+      resources: [{ type: 'limb', path: 'limbs/node.yaml' }],
+    });
+
+    assert.equal(result.status, 'failed');
+    assert.match(result.resources[0].error, /must resolve inside plugin root/);
+    assert.equal(adapterCalled, false, 'escaping limb resource must be rejected before adapter load');
+    assert.deepEqual(persisted.capabilities, [], 'escaping limb resource must not persist enabled state');
+  });
+
   it('preserves an existing limb capability entry when re-enable registration fails', async () => {
     const root = mkdtempSync(join(os.tmpdir(), 'plugin-limb-activator-'));
     const pluginsDir = join(root, 'plugins');
     const projectRoot = join(root, 'project');
     const resource = { type: 'limb', path: 'limbs/node.yaml' };
+    mkdirSync(join(pluginsDir, 'test-plugin', 'limbs'), { recursive: true });
+    writeFileSync(join(pluginsDir, 'test-plugin', 'limbs', 'node.yaml'), 'nodeId: existing-node\n');
     const existingEntry = {
       id: 'plugin:test-plugin:limbs/node.yaml',
       type: 'limb',
@@ -1056,6 +1106,55 @@ describe('PluginResourceActivator limb activation safety', () => {
     assert.deepEqual(deregistered, [], 'disable must not deregister a node without owned enabled state');
   });
 
+  it('does not deregister a limb when persisted disable state fails to write', async () => {
+    const root = mkdtempSync(join(os.tmpdir(), 'plugin-limb-activator-'));
+    const pluginsDir = join(root, 'plugins');
+    const projectRoot = join(root, 'project');
+    const deregistered = [];
+    const persisted = {
+      version: 1,
+      capabilities: [
+        {
+          id: 'plugin:test-plugin:limbs/node.yaml',
+          type: 'limb',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId: 'test-plugin',
+          limbNodeId: 'persisted-node',
+        },
+      ],
+    };
+    const before = structuredClone(persisted);
+    const activator = new PluginResourceActivator({
+      resolveProjectRoot: () => projectRoot,
+      pluginsDir,
+      limbRegistry: {
+        deregister: (nodeId) => {
+          deregistered.push(nodeId);
+        },
+      },
+      readCapabilities: async () => structuredClone(persisted),
+      writeCapabilities: async () => {
+        throw new Error('disk write failed');
+      },
+      withCapabilityLock: async (fn) => fn(),
+    });
+
+    const result = await activator.disablePlugin({
+      id: 'test-plugin',
+      name: 'Test Plugin',
+      version: '1.0.0',
+      builtin: false,
+      config: [],
+      resources: [{ type: 'limb', path: 'limbs/node.yaml' }],
+    });
+
+    assert.equal(result.status, 'failed');
+    assert.match(result.resources[0].error, /disk write failed/);
+    assert.deepEqual(deregistered, [], 'runtime node must stay registered if persisted disable state fails');
+    assert.deepEqual(persisted, before);
+  });
+
   it('preserves concurrent capability updates during limb rollback', async () => {
     const root = mkdtempSync(join(os.tmpdir(), 'plugin-limb-concurrent-'));
     const pluginsDir = join(root, 'plugins');
@@ -1114,6 +1213,8 @@ describe('PluginResourceActivator limb startup safety', () => {
     const root = mkdtempSync(join(os.tmpdir(), 'plugin-rehydrate-root-'));
     const pluginsDir = join(root, 'plugins');
     const expectedYamlPath = join(pluginsDir, 'test-plugin', 'limbs', 'node.yaml');
+    mkdirSync(join(pluginsDir, 'test-plugin', 'limbs'), { recursive: true });
+    writeFileSync(expectedYamlPath, 'nodeId: yaml-node\n');
     const seenYamlPaths = [];
     const registeredNodes = [];
 
