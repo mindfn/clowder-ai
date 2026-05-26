@@ -716,7 +716,7 @@ describe('PluginResourceActivator limb startup safety', () => {
 });
 
 describe('plugin routes safety', () => {
-  function createRouteDeps() {
+  function createRouteDeps(manifestOverrides = {}) {
     const manifest = {
       id: 'test-plugin',
       name: 'Test Plugin',
@@ -724,6 +724,7 @@ describe('plugin routes safety', () => {
       builtin: false,
       config: [],
       resources: [],
+      ...manifestOverrides,
     };
     let scanCount = 0;
     const pluginRegistry = {
@@ -900,6 +901,156 @@ describe('plugin routes safety', () => {
       await app.close();
       if (previousOwner === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
       else process.env.DEFAULT_OWNER_USER_ID = previousOwner;
+    }
+  });
+
+  it('resolves Windows-style limb resource paths before loading health-check YAML', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    const previousConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    process.env.DEFAULT_OWNER_USER_ID = 'owner-user';
+    const root = mkdtempSync(join(os.tmpdir(), 'plugin-route-health-'));
+    const projectRoot = join(root, 'project');
+    const pluginsDir = join(root, 'plugins');
+    mkdirSync(projectRoot, { recursive: true });
+    mkdirSync(join(pluginsDir, 'test-plugin', 'limbs'), { recursive: true });
+    process.env.CAT_CAFE_CONFIG_ROOT = projectRoot;
+    writeFileSync(
+      join(pluginsDir, 'test-plugin', 'limbs', 'node.yaml'),
+      [
+        'nodeId: yaml-node',
+        'displayName: YAML Node',
+        'platform: test',
+        'capabilities:',
+        '  - cap: health',
+        '    commands: [check_status]',
+        '    authLevel: free',
+      ].join('\n'),
+    );
+    const app = Fastify();
+    app.addHook('preHandler', async (request) => {
+      const raw = request.headers['x-test-session-user'];
+      if (typeof raw === 'string' && raw.trim()) request.sessionUserId = raw.trim();
+    });
+    const deps = createRouteDeps({
+      healthCheck: { limbCommand: 'check_status' },
+      resources: [{ type: 'limb', path: 'limbs\\node.yaml' }],
+    });
+    registerPluginRoutes(app, {
+      pluginRegistry: deps.pluginRegistry,
+      pluginActivator: deps.pluginActivator,
+      limbRegistry: {
+        getNodeHandle(nodeId) {
+          if (nodeId !== 'yaml-node') return null;
+          return { healthCheck: async () => 'online' };
+        },
+      },
+      pluginsDir,
+    });
+    await app.ready();
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/plugins/test-plugin/test',
+        headers: {
+          host: 'localhost:3004',
+          origin: 'http://localhost:5173',
+          'x-test-session-user': 'owner-user',
+        },
+        remoteAddress: '127.0.0.1',
+      });
+      assert.equal(res.statusCode, 200, res.payload);
+      assert.deepEqual(JSON.parse(res.payload), { ok: true, status: 'online' });
+    } finally {
+      await app.close();
+      if (previousOwner === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+      else process.env.DEFAULT_OWNER_USER_ID = previousOwner;
+      if (previousConfigRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousConfigRoot;
+    }
+  });
+
+  it('looks up health-check limb handles by persisted limb node id before YAML node id', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    const previousConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    process.env.DEFAULT_OWNER_USER_ID = 'owner-user';
+    const root = mkdtempSync(join(os.tmpdir(), 'plugin-route-health-'));
+    const projectRoot = join(root, 'project');
+    const pluginsDir = join(root, 'plugins');
+    mkdirSync(join(projectRoot, '.cat-cafe'), { recursive: true });
+    mkdirSync(join(pluginsDir, 'test-plugin', 'limbs'), { recursive: true });
+    process.env.CAT_CAFE_CONFIG_ROOT = projectRoot;
+    writeFileSync(
+      join(pluginsDir, 'test-plugin', 'limbs', 'node.yaml'),
+      [
+        'nodeId: yaml-node',
+        'displayName: YAML Node',
+        'platform: test',
+        'capabilities:',
+        '  - cap: health',
+        '    commands: [check_status]',
+        '    authLevel: free',
+      ].join('\n'),
+    );
+    writeFileSync(
+      join(projectRoot, '.cat-cafe', 'capabilities.json'),
+      `${JSON.stringify(
+        {
+          version: 1,
+          capabilities: [
+            {
+              id: 'plugin:test-plugin:limbs/node.yaml',
+              type: 'limb',
+              enabled: true,
+              source: 'cat-cafe',
+              pluginId: 'test-plugin',
+              limbNodeId: 'persisted-node',
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const app = Fastify();
+    app.addHook('preHandler', async (request) => {
+      const raw = request.headers['x-test-session-user'];
+      if (typeof raw === 'string' && raw.trim()) request.sessionUserId = raw.trim();
+    });
+    const deps = createRouteDeps({
+      healthCheck: { limbCommand: 'check_status' },
+      resources: [{ type: 'limb', path: 'limbs/node.yaml' }],
+    });
+    registerPluginRoutes(app, {
+      pluginRegistry: deps.pluginRegistry,
+      pluginActivator: deps.pluginActivator,
+      limbRegistry: {
+        getNodeHandle(nodeId) {
+          if (nodeId !== 'persisted-node') return null;
+          return { healthCheck: async () => 'online' };
+        },
+      },
+      pluginsDir,
+    });
+    await app.ready();
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/plugins/test-plugin/test',
+        headers: {
+          host: 'localhost:3004',
+          origin: 'http://localhost:5173',
+          'x-test-session-user': 'owner-user',
+        },
+        remoteAddress: '127.0.0.1',
+      });
+      assert.equal(res.statusCode, 200, res.payload);
+      assert.deepEqual(JSON.parse(res.payload), { ok: true, status: 'online' });
+    } finally {
+      await app.close();
+      if (previousOwner === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+      else process.env.DEFAULT_OWNER_USER_ID = previousOwner;
+      if (previousConfigRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousConfigRoot;
     }
   });
 });

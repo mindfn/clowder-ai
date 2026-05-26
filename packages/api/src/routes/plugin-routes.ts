@@ -17,6 +17,7 @@ import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orch
 import type { LimbRegistry } from '../domains/limb/LimbRegistry.js';
 import { loadLimbDeclaration } from '../domains/limb/limb-yaml-loader.js';
 import type { PluginRegistry } from '../domains/plugin/PluginRegistry.js';
+import { resolvePluginResourcePath, resourceCapId } from '../domains/plugin/PluginRegistry.js';
 import type { PluginResourceActivator } from '../domains/plugin/PluginResourceActivator.js';
 import { loadAllPluginConfigs, resolvePluginEnv, writePluginConfig } from '../domains/plugin/plugin-config-store.js';
 import { validateEnvSafety } from '../domains/plugin/plugin-manifest.js';
@@ -258,12 +259,14 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
       }
 
       let matchedDecl: ReturnType<typeof loadLimbDeclaration> | null = null;
+      let matchedResource: (typeof limbResources)[number] | null = null;
       for (const lr of limbResources) {
         try {
-          const d = loadLimbDeclaration(join(pluginsDir, id, lr.path!));
+          const d = loadLimbDeclaration(resolvePluginResourcePath(pluginsDir, id, lr.path!));
           const cmds = d.capabilities.flatMap((c) => c.commands);
           if (cmds.includes(manifest.healthCheck.limbCommand)) {
             matchedDecl = d;
+            matchedResource = lr;
             break;
           }
         } catch {}
@@ -276,7 +279,13 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
         };
       }
 
-      const nodeId = matchedDecl.nodeId;
+      const projectRoot = resolveActiveProjectRoot();
+      const capabilities = await readCapabilitiesConfig(projectRoot);
+      const capId = matchedResource ? resourceCapId(manifest.id, matchedResource) : null;
+      const persistedNodeId = capabilities?.capabilities.find(
+        (c) => c.type === 'limb' && c.pluginId === manifest.id && c.id === capId,
+      )?.limbNodeId;
+      const nodeId = persistedNodeId ?? matchedDecl.nodeId;
 
       const handle = limbRegistry.getNodeHandle(nodeId);
       if (!handle) {
