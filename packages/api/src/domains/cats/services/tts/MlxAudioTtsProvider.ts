@@ -67,17 +67,27 @@ function resolveTtsBaseUrl(): string {
 export class MlxAudioTtsProvider implements ITtsProvider {
   readonly id = 'mlx-audio';
   readonly model: string;
-  private readonly baseUrl: string;
+  // When the caller passes an explicit baseUrl (mostly tests, also legacy
+  // hard-coded env wiring), freeze it. When omitted, leave undefined so
+  // synthesize() resolves the URL from the service manifest + persisted
+  // config on every request — that way /reconfigure-driven port changes
+  // take effect on the next call without restarting the API process
+  // (codex P1 2026-05-26).
+  private readonly baseUrlOverride: string | undefined;
   private readonly timeoutMs: number;
 
   constructor(options?: MlxAudioTtsProviderOptions) {
-    this.baseUrl = normalizeLoopbackUrl(options?.baseUrl ?? resolveTtsBaseUrl());
+    this.baseUrlOverride = options?.baseUrl ? normalizeLoopbackUrl(options.baseUrl) : undefined;
     this.model = options?.model ?? 'mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16';
     this.timeoutMs = options?.timeoutMs ?? 30_000;
   }
 
+  private resolveBaseUrl(): string {
+    return this.baseUrlOverride ?? normalizeLoopbackUrl(resolveTtsBaseUrl());
+  }
+
   async synthesize(request: TtsSynthesizeRequest): Promise<TtsSynthesizeResult> {
-    const url = `${this.baseUrl}/v1/audio/speech`;
+    const url = `${this.resolveBaseUrl()}/v1/audio/speech`;
 
     // F066: Build request body with optional clone params for Qwen3-TTS Base
     const body = JSON.stringify({

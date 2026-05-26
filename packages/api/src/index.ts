@@ -2114,9 +2114,13 @@ async function main(): Promise<void> {
   await app.register(connectorMediaRoutes, { mediaDir: connectorMediaDir });
 
   // F34: TTS Provider (mlx-audio → Python TTS server)
+  // Drop the eager baseUrl injection so the provider resolves the TTS
+  // endpoint via service manifest + persisted config on every request.
+  // /reconfigure-driven port changes therefore apply without restarting
+  // the API (codex P1 2026-05-26). Explicit TTS_URL env is still honored
+  // because resolveServiceEndpoint reads endpointEnvVars first.
   const ttsRegistry = new TtsRegistry();
-  const ttsUrl = process.env.TTS_URL ?? 'http://localhost:9879';
-  ttsRegistry.register(new MlxAudioTtsProvider({ baseUrl: ttsUrl }));
+  ttsRegistry.register(new MlxAudioTtsProvider());
   const ttsCacheDir = process.env.TTS_CACHE_DIR ?? './data/tts-cache';
   await app.register(ttsRoutes, { ttsRegistry, cacheDir: ttsCacheDir });
   initVoiceBlockSynthesizer(ttsRegistry, ttsCacheDir);
