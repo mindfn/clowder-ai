@@ -42,15 +42,14 @@ export interface PluginResourceActivatorDeps {
 export function withPersistedLimbNodeId<T extends ILimbNode>(node: T, persistedNodeId?: string): T {
   if (!persistedNodeId || persistedNodeId === node.nodeId) return node;
 
-  const clone = Object.create(Object.getPrototypeOf(node));
-  const descriptors: PropertyDescriptorMap = { ...Object.getOwnPropertyDescriptors(node) };
-  descriptors.nodeId = {
+  const descriptor = Object.getOwnPropertyDescriptor(node, 'nodeId');
+  Object.defineProperty(node, 'nodeId', {
     value: persistedNodeId,
-    enumerable: true,
-    configurable: true,
-  };
-  Object.defineProperties(clone, descriptors);
-  return clone as T;
+    enumerable: descriptor?.enumerable ?? true,
+    configurable: descriptor?.configurable ?? true,
+    writable: descriptor && 'writable' in descriptor ? descriptor.writable : true,
+  });
+  return node;
 }
 
 async function assertPluginResourceInsideRoot(

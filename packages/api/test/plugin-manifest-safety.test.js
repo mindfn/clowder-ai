@@ -1277,21 +1277,39 @@ describe('PluginResourceActivator limb startup safety', () => {
     assert.equal(registeredNodes[0].nodeId, 'persisted-node');
   });
 
-  it('registers rehydrated limb nodes under the persisted node id', () => {
-    const node = {
-      nodeId: 'yaml-node',
-      displayName: 'YAML Node',
-      platform: 'test',
-      capabilities: [],
-      register: async () => {},
-      invoke: async () => ({ ok: true }),
-      healthCheck: async () => 'online',
-      deregister: async () => {},
-    };
+  it('registers rehydrated limb nodes under the persisted node id without cloning class instances', async () => {
+    class ClassBasedLimbNode {
+      #status = 'online';
+
+      constructor(nodeId) {
+        this.nodeId = nodeId;
+        this.displayName = 'YAML Node';
+        this.platform = 'test';
+        this.capabilities = [];
+      }
+
+      async register() {}
+
+      async invoke() {
+        return { ok: this.#status === 'online' };
+      }
+
+      async healthCheck() {
+        return this.#status;
+      }
+
+      async deregister() {}
+    }
+
+    const node = new ClassBasedLimbNode('yaml-node');
 
     const rehydrated = withPersistedLimbNodeId(node, 'persisted-node');
+
+    assert.equal(await rehydrated.healthCheck(), 'online');
+    assert.equal((await rehydrated.invoke()).ok, true);
     assert.equal(rehydrated.nodeId, 'persisted-node');
-    assert.equal(node.nodeId, 'yaml-node');
+    assert.equal(node.nodeId, 'persisted-node');
+    assert.equal(rehydrated, node);
   });
 });
 
