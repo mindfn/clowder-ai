@@ -456,6 +456,21 @@ describe('validateEnvSafety security', () => {
     assert.equal(result.ok, false);
     assert.ok(result.errors[0].includes('already claimed'));
   });
+
+  it('rejects cross-plugin env collision with case-insensitive names', () => {
+    const manifest = {
+      id: 'my-plugin',
+      name: 'Mine',
+      version: '1.0.0',
+      builtin: false,
+      config: [{ envName: 'my_plugin_key', label: 'Key', sensitive: true, required: true }],
+      resources: [],
+    };
+    const claims = new Map([['MY_PLUGIN_KEY', 'other-plugin']]);
+    const result = validateEnvSafety(manifest, claims);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors[0].includes('already claimed'));
+  });
 });
 
 describe('PluginResourceActivator skill safety', () => {
@@ -770,7 +785,7 @@ describe('plugin routes safety', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/plugins/test-plugin/enable',
-        headers: { host: 'localhost:3004', 'x-cat-cafe-user': 'owner-user' },
+        headers: { host: 'localhost:3004', origin: 'http://localhost:5173', 'x-cat-cafe-user': 'owner-user' },
         remoteAddress: '127.0.0.1',
       });
       assert.equal(res.statusCode, 401);
@@ -800,7 +815,11 @@ describe('plugin routes safety', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/plugins/test-plugin/enable',
-        headers: { 'x-test-session-user': 'owner-user' },
+        headers: {
+          host: 'localhost:3004',
+          origin: 'http://localhost:5173',
+          'x-test-session-user': 'owner-user',
+        },
         remoteAddress: '127.0.0.1',
       });
       assert.equal(res.statusCode, 200, res.payload);
@@ -831,11 +850,52 @@ describe('plugin routes safety', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/plugins/test-plugin/enable',
-        headers: { 'x-test-session-user': 'owner-user' },
+        headers: {
+          host: 'localhost:3004',
+          origin: 'http://localhost:5173',
+          'x-test-session-user': 'owner-user',
+        },
         remoteAddress: '203.0.113.10',
       });
       assert.equal(res.statusCode, 403);
-      assert.match(res.payload, /loopback-only/);
+      assert.match(res.payload, /direct localhost Hub access/);
+    } finally {
+      await app.close();
+      if (previousOwner === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+      else process.env.DEFAULT_OWNER_USER_ID = previousOwner;
+    }
+  });
+
+  it('rejects plugin writes forwarded through a local proxy even with an owner session', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'owner-user';
+    const app = Fastify();
+    app.addHook('preHandler', async (request) => {
+      const raw = request.headers['x-test-session-user'];
+      if (typeof raw === 'string' && raw.trim()) request.sessionUserId = raw.trim();
+    });
+    const deps = createRouteDeps();
+    registerPluginRoutes(app, {
+      pluginRegistry: deps.pluginRegistry,
+      pluginActivator: deps.pluginActivator,
+      limbRegistry: {},
+      pluginsDir: '/tmp/plugins',
+    });
+    await app.ready();
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/plugins/test-plugin/enable',
+        headers: {
+          host: 'localhost:3004',
+          origin: 'http://localhost:5173',
+          'x-forwarded-for': '203.0.113.10',
+          'x-test-session-user': 'owner-user',
+        },
+        remoteAddress: '127.0.0.1',
+      });
+      assert.equal(res.statusCode, 403);
+      assert.match(res.payload, /direct localhost Hub access/);
     } finally {
       await app.close();
       if (previousOwner === undefined) delete process.env.DEFAULT_OWNER_USER_ID;

@@ -38,9 +38,17 @@ function isUnsafeResourcePath(path: string): boolean {
   return posix.isAbsolute(path) || win32.isAbsolute(path) || path.split(/[\\/]+/).includes('..');
 }
 
+function envClaimKey(envName: string): string {
+  return envName.toUpperCase();
+}
+
 export function validateEnvSafety(manifest: PluginManifest, existingClaims: Map<string, string>): EnvSafetyResult {
   const errors: string[] = [];
   const pluginPrefix = manifest.id.toUpperCase().replace(/-/g, '_') + '_';
+  const normalizedClaims = new Map<string, string>();
+  for (const [envName, pluginId] of existingClaims) {
+    normalizedClaims.set(envClaimKey(envName), pluginId);
+  }
 
   for (const field of manifest.config) {
     if (isSystemEnv(field.envName)) {
@@ -53,7 +61,7 @@ export function validateEnvSafety(manifest: PluginManifest, existingClaims: Map<
       continue;
     }
 
-    const owner = existingClaims.get(field.envName);
+    const owner = normalizedClaims.get(envClaimKey(field.envName));
     if (owner && owner !== manifest.id) {
       errors.push(`'${field.envName}' already claimed by plugin '${owner}'`);
     }
