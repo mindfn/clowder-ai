@@ -613,16 +613,18 @@ services:
 
   # F195 会议音频采集。无 ML 模型概念（仅录音 + HTTP API），跨平台都用
   # sounddevice (PortAudio binding，三大平台都有 prebuilt wheel)。
+  #
+  # 当前状态：runtime (scripts/meeting-copilot/audio-service.py) 尚未在此
+  # 仓库 bundle 进来——F195 会议音频采集的 Python 服务文件仍只在 home
+  # repo (cat-cafe) 里。安装脚本本身已经就绪 (audio-capture-install.{sh,ps1}
+  # / audio-capture-server.{sh,ps1} / audio-capture-uninstall.{sh,ps1})
+  # 但点击安装会因为找不到 audio-service.py 而 fail-fast。在 F195 runtime
+  # port 到 clowder-ai 之前，把 audio-capture 在 modal 里标成
+  # unsupported——这样用户看到的是清晰的 "暂不支持" panel 而不是一个
+  # 看起来能装但实际 100% 失败的服务（codex P1 2026-05-26）。
   audio-capture:
-    - match: { os: darwin }
-      models: []
-      notes:
-        - macOS：首次启动需在 系统设置 → 隐私 → 麦克风 授权
-    - match: { os: linux }
-      models: []
-      notes:
-        - Linux：可能需安装 portaudio 系统包 (apt install portaudio19-dev / dnf install portaudio-devel)
-    - match: { os: win32 }
-      models: []
-      notes:
-        - Windows：sounddevice 走 WASAPI / DirectSound，无需额外配置
+    - match: {}
+      unsupported:
+        reason: F195 会议音频采集的运行时（scripts/meeting-copilot/audio-service.py）尚未在 clowder-ai 仓库 bundle，暂时无法安装。
+        userAction: 等待 F195 runtime port-over 完成后再启用此服务；当前可以使用浏览器自带的 MediaRecorder 接口做基础录音。
+        retryHint: F195 runtime 落地后，重新打开此弹窗会自动显示安装入口。

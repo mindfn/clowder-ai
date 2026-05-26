@@ -28,6 +28,29 @@ describe('recommendation matrix — service coverage', () => {
       ['whisper-stt', 'mlx-tts', 'embedding-model', 'llm-postprocess', 'audio-capture'].sort(),
     );
   });
+
+  // codex P1 2026-05-26: audio-capture exposes install/start scripts but
+  // the F195 runtime (scripts/meeting-copilot/audio-service.py) is not in
+  // this repo, so install would fail 100% on every platform. Marking the
+  // service unsupported in the matrix is what gates the modal install
+  // button — this test locks that contract so a future matrix tweak that
+  // accidentally re-enables audio-capture without bundling the runtime
+  // will be caught at CI.
+  test('audio-capture is unsupported on every platform until F195 runtime is bundled', () => {
+    const platforms = [
+      makeProfile({ os: 'darwin', arch: 'arm64', gpu: 'apple' }),
+      makeProfile({ os: 'darwin', arch: 'x64', gpu: 'none' }),
+      makeProfile({ os: 'linux', arch: 'x64', gpu: 'cuda' }),
+      makeProfile({ os: 'linux', arch: 'x64', gpu: 'none' }),
+      makeProfile({ os: 'win32', arch: 'arm64', pythonArch: 'native', gpu: 'none' }),
+      makeProfile({ os: 'win32', arch: 'x64', gpu: 'none' }),
+    ];
+    for (const profile of platforms) {
+      const rec = buildRecommendation('audio-capture', profile);
+      assert.ok(rec.unsupported, `audio-capture should be unsupported on ${profile.os}/${profile.arch}`);
+      assert.match(rec.unsupported.reason, /F195|audio-service\.py|runtime/i);
+    }
+  });
 });
 
 describe('recommendation matrix — macOS arm64', () => {
