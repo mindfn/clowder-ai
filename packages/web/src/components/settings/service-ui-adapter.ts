@@ -34,6 +34,7 @@ export interface HomeServiceState {
   installed: boolean;
   enabled: boolean;
   selectedModel?: string;
+  port?: number;
   installable: boolean;
   prerequisites?: ServicePrerequisites;
   error?: string | null;
@@ -61,6 +62,7 @@ export interface ServiceUiState {
   installed: boolean;
   enabled: boolean;
   selectedModel?: string;
+  port?: number;
   installable: boolean;
   running: boolean;
   prerequisites?: ServicePrerequisites;
@@ -123,6 +125,7 @@ export function adaptServiceState(home: HomeServiceState): ServiceUiState {
     installed,
     enabled,
     selectedModel: home.selectedModel,
+    port: home.port,
     installable: home.installable,
     running,
     prerequisites: home.prerequisites,

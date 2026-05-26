@@ -506,6 +506,361 @@ describe('service lifecycle write routes', () => {
     }
   });
 
+  it('rejects reconfigure when the service is not installed', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map();
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        runScript: async () => {
+          throw new Error('reconfigure must not run a script for an uninstalled service');
+        },
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/reconfigure',
+        headers: SESSION_HEADERS,
+        payload: { port: 19999 },
+      });
+      assert.equal(res.statusCode, 409, res.payload);
+      assert.match(JSON.parse(res.payload).error, /installed/i);
+      assert.equal(configs.has('whisper-stt'), false);
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('rejects reconfigure when the service is enabled (must stop first)', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map([
+      ['whisper-stt', { installed: true, enabled: true, selectedModel: 'large-v3-turbo', port: 19876 }],
+    ]);
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        runScript: async () => {
+          throw new Error('reconfigure must not run a script while the service is enabled');
+        },
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/reconfigure',
+        headers: SESSION_HEADERS,
+        payload: { port: 19999 },
+      });
+      assert.equal(res.statusCode, 409, res.payload);
+      assert.match(JSON.parse(res.payload).error, /stop|disable/i);
+      assert.deepEqual(configs.get('whisper-stt'), {
+        installed: true,
+        enabled: true,
+        selectedModel: 'large-v3-turbo',
+        port: 19876,
+      });
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('applies a port-only reconfigure without running the install script', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const previousLogDir = process.env.LOG_DIR;
+    process.env.LOG_DIR = mkdtempSync(join(tmpdir(), 'service-reconfigure-log-'));
+    const configs = new Map([
+      ['whisper-stt', { installed: true, enabled: false, selectedModel: 'large-v3-turbo', port: 19876 }],
+    ]);
+    let scriptRan = false;
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        runScript: async () => {
+          scriptRan = true;
+          return { code: 0, output: 'unreachable' };
+        },
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/reconfigure',
+        headers: SESSION_HEADERS,
+        payload: { port: 19999 },
+      });
+      assert.equal(res.statusCode, 200, res.payload);
+      assert.equal(scriptRan, false, 'port-only reconfigure must not invoke the install script');
+      assert.deepEqual(configs.get('whisper-stt'), {
+        installed: true,
+        enabled: false,
+        selectedModel: 'large-v3-turbo',
+        port: 19999,
+      });
+      assert.match(readServiceLogTail('whisper-stt', 20).join('\n'), /\[reconfigure\].*19876.*19999/);
+    } finally {
+      await app.close();
+      if (previousLogDir === undefined) delete process.env.LOG_DIR;
+      else process.env.LOG_DIR = previousLogDir;
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('runs the install script and persists the new model on reconfigure', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map([
+      ['whisper-stt', { installed: true, enabled: false, selectedModel: 'large-v3-turbo', port: 19876 }],
+    ]);
+    const observedEnvs = [];
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        runScript: async (input) => {
+          observedEnvs.push(input.env);
+          return { code: 0, output: 'model downloaded' };
+        },
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/reconfigure',
+        headers: SESSION_HEADERS,
+        payload: { model: 'mlx-community/whisper-small-mlx', port: 18887 },
+      });
+      assert.equal(res.statusCode, 200, res.payload);
+      assert.equal(observedEnvs.length, 1, 'install script must run exactly once on model change');
+      assert.equal(observedEnvs[0]?.WHISPER_MODEL, 'mlx-community/whisper-small-mlx');
+      assert.equal(observedEnvs[0]?.WHISPER_PORT, '18887');
+      assert.deepEqual(configs.get('whisper-stt'), {
+        installed: true,
+        enabled: false,
+        selectedModel: 'mlx-community/whisper-small-mlx',
+        port: 18887,
+      });
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('preserves prior model and port when reconfigure model download fails', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map([
+      ['whisper-stt', { installed: true, enabled: false, selectedModel: 'large-v3-turbo', port: 19876 }],
+    ]);
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        runScript: async () => ({ code: 1, output: 'huggingface download failed' }),
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/reconfigure',
+        headers: SESSION_HEADERS,
+        payload: { model: 'mlx-community/whisper-small-mlx', port: 18887 },
+      });
+      assert.equal(res.statusCode, 422, res.payload);
+      assert.deepEqual(configs.get('whisper-stt'), {
+        installed: true,
+        enabled: false,
+        selectedModel: 'large-v3-turbo',
+        port: 19876,
+      });
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('returns a no-op 200 when reconfigure receives identical model and port', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map([
+      ['whisper-stt', { installed: true, enabled: false, selectedModel: 'large-v3-turbo', port: 19876 }],
+    ]);
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        runScript: async () => {
+          throw new Error('no-op reconfigure must not invoke install script');
+        },
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/reconfigure',
+        headers: SESSION_HEADERS,
+        payload: { model: 'large-v3-turbo', port: 19876 },
+      });
+      assert.equal(res.statusCode, 200, res.payload);
+      assert.deepEqual(configs.get('whisper-stt'), {
+        installed: true,
+        enabled: false,
+        selectedModel: 'large-v3-turbo',
+        port: 19876,
+      });
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('rejects reconfigure with an out-of-range port', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map([
+      ['whisper-stt', { installed: true, enabled: false, selectedModel: 'large-v3-turbo', port: 19876 }],
+    ]);
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/services/whisper-stt/reconfigure',
+        headers: SESSION_HEADERS,
+        payload: { port: 70000 },
+      });
+      assert.equal(res.statusCode, 400, res.payload);
+      assert.deepEqual(configs.get('whisper-stt'), {
+        installed: true,
+        enabled: false,
+        selectedModel: 'large-v3-turbo',
+        port: 19876,
+      });
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('reconfigures a model-less service by updating only the port', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map([['audio-capture', { installed: true, enabled: false, port: 9879 }]]);
+    let scriptRan = false;
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: (id, patch) => {
+            const updated = { ...(configs.get(id) ?? { enabled: false }), ...patch };
+            configs.set(id, updated);
+            return updated;
+          },
+        },
+        runScript: async () => {
+          scriptRan = true;
+          return { code: 0, output: '' };
+        },
+      },
+    });
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/services/audio-capture/reconfigure',
+        headers: SESSION_HEADERS,
+        payload: { port: 9888 },
+      });
+      assert.equal(res.statusCode, 200, res.payload);
+      assert.equal(scriptRan, false);
+      assert.deepEqual(configs.get('audio-capture'), { installed: true, enabled: false, port: 9888 });
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
+  it('exposes the persisted port in /api/services so the modal can pre-fill it', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const configs = new Map([
+      ['whisper-stt', { installed: true, enabled: false, selectedModel: 'large-v3-turbo', port: 19876 }],
+    ]);
+    const app = await buildApp({
+      lifecycle: {
+        serviceConfig: {
+          get: (id) => configs.get(id) ?? { enabled: false },
+          set: () => {
+            throw new Error('GET /api/services must not write');
+          },
+        },
+      },
+    });
+    try {
+      const res = await app.inject({ method: 'GET', url: '/api/services', headers: SESSION_HEADERS });
+      assert.equal(res.statusCode, 200);
+      const whisper = JSON.parse(res.payload).services.find((service) => service.id === 'whisper-stt');
+      assert.equal(whisper.port, 19876, 'service DTO must expose the persisted port');
+      assert.equal(whisper.selectedModel, 'large-v3-turbo');
+    } finally {
+      await app.close();
+      restoreOwner(previousOwner);
+    }
+  });
+
   it('reports starting during detached startup grace after start returns', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';

@@ -433,6 +433,142 @@ export async function registerServiceLifecycleRoutes(
     },
   );
 
+  // POST /api/services/:id/reconfigure
+  //
+  // Adjust persisted model and/or port on an already-installed service
+  // without rebuilding the venv. The user flow is "service installed +
+  // disabled" → open install modal in edit mode → change model/port →
+  // confirm. Implementation:
+  //
+  //   - port-only change: persist new port to services.json, no script run.
+  //     Toggling the service later re-binds to the new port via start env.
+  //   - model change (with or without port change): re-run the install
+  //     script with new MODEL env injected. venv/pip steps are idempotent
+  //     (venv exists, pip says "already satisfied"); only the snapshot
+  //     download actually does work. On failure we keep the prior
+  //     selectedModel/port so the user is not left in a broken half-state.
+  //
+  // The service MUST be installed and disabled. Enabled services must be
+  // stopped first so we do not change the port out from under a running
+  // sidecar (the disabled gate is what makes the "no restart juggling"
+  // contract honest).
+  app.post<{ Params: { id: string }; Body: { model?: unknown; port?: unknown } }>(
+    '/api/services/:id/reconfigure',
+    async (request, reply) => {
+      const operator = requireLifecycleOwner(request, reply);
+      if (!operator) return lifecycleOwnerError(reply);
+      const service = getServiceManifest(request.params.id);
+      if (!service) {
+        reply.status(404);
+        return { error: `Service "${request.params.id}" not found` };
+      }
+
+      const priorConfig = getEffectiveConfig(service);
+      if (!priorConfig?.installed) {
+        reply.status(409);
+        return { error: `${service.name} must be installed before reconfiguring` };
+      }
+      if (priorConfig?.enabled) {
+        reply.status(409);
+        return { error: `${service.name} must be stopped (disabled) before reconfiguring` };
+      }
+
+      const requestedModel =
+        typeof request.body?.model === 'string' && request.body.model.length > 0 ? request.body.model : undefined;
+      const requestedPort = typeof request.body?.port === 'number' ? request.body.port : undefined;
+      const modelChanged = requestedModel !== undefined && requestedModel !== priorConfig?.selectedModel;
+      const portChanged = requestedPort !== undefined && requestedPort !== priorConfig?.port;
+
+      if (!modelChanged && !portChanged) {
+        return { ok: true, message: `${service.name} configuration unchanged` };
+      }
+
+      // Validate inputs eagerly so we fail before grabbing the lock.
+      const validateEnv = buildLifecycleEnv(
+        lifecycleEnv,
+        service.id,
+        requestedModel ?? priorConfig?.selectedModel,
+        requestedPort ?? priorConfig?.port,
+      );
+      if (!validateEnv.ok) {
+        reply.status(400);
+        return { error: validateEnv.error };
+      }
+
+      // Port-only path: pure config write, no script. Audio-capture and
+      // similar model-less services land here on every reconfigure.
+      if (!modelChanged) {
+        return withLock(
+          service.id,
+          reply,
+          async () => {
+            const targetPort = requestedPort as number;
+            serviceConfigStore.set(service.id, { port: targetPort });
+            appendServiceLog(service.id, `[reconfigure] port: ${priorConfig?.port ?? 'unset'} -> ${targetPort}\n`);
+            await audit({
+              serviceId: service.id,
+              action: 'install',
+              operator,
+              status: 'completed',
+              reason: 'reconfigure-port-only',
+            });
+            return { ok: true, message: `${service.name} port updated to ${targetPort}` };
+          },
+          { action: 'install' },
+        );
+      }
+
+      // Model change: re-run install script. venv/pip idempotent; the only
+      // real work is the model snapshot download.
+      const installScript = service.scripts?.install;
+      if (!installScript) {
+        reply.status(409);
+        return { error: `${service.name} has no install script; cannot change model` };
+      }
+
+      return withLock(
+        service.id,
+        reply,
+        async () => {
+          appendServiceLog(
+            service.id,
+            `[reconfigure] model: ${priorConfig?.selectedModel ?? 'unset'} -> ${requestedModel}` +
+              (portChanged ? `, port: ${priorConfig?.port ?? 'unset'} -> ${requestedPort}` : '') +
+              '\n',
+          );
+          const result = await runForeground({
+            serviceId: service.id,
+            action: 'install',
+            script: installScript,
+            operator,
+            env: validateEnv.env,
+          });
+          if (!result.ok) {
+            reply.status(lifecycleFailureStatus(result.error));
+            appendServiceLog(
+              service.id,
+              `[reconfigure] failed; prior model=${priorConfig?.selectedModel ?? 'unset'} port=${priorConfig?.port ?? 'unset'} preserved\n`,
+            );
+            return result;
+          }
+          const patch: Partial<ServiceConfig> = { installed: true };
+          if (requestedModel) patch.selectedModel = requestedModel;
+          if (typeof requestedPort === 'number') patch.port = requestedPort;
+          serviceConfigStore.set(service.id, patch);
+          await audit({
+            serviceId: service.id,
+            action: 'install',
+            operator,
+            status: 'completed',
+            reason: 'reconfigure-model-change',
+          });
+          return { ok: true, message: `${service.name} reconfigured` };
+        },
+        { action: 'install' },
+      );
+    },
+  );
+
   app.post<{ Params: { id: string } }>('/api/services/:id/uninstall', async (request, reply) => {
     const operator = requireLifecycleOwner(request, reply);
     if (!operator) return lifecycleOwnerError(reply);

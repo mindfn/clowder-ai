@@ -83,6 +83,11 @@ export interface ServiceState {
   installed: boolean;
   enabled: boolean;
   selectedModel?: string;
+  // Persisted port (from services.json); the reconfigure modal needs this
+  // to pre-fill the port input. endpoint already encodes the port in its
+  // URL, but parsing strings client-side just to recover an int we already
+  // have is fragile under masked endpoints and portFallback hosts.
+  port?: number;
   installable: boolean;
   prerequisites?: Omit<NonNullable<ServiceManifest['prerequisites']>, 'venvPath'>;
 }
@@ -458,6 +463,8 @@ export async function resolveServiceState(
     typeof config.selectedModel === 'string' && config.selectedModel.trim().length > 0
       ? config.selectedModel
       : undefined;
+  const persistedPort =
+    typeof config.port === 'number' && config.port > 0 && config.port <= 65535 ? config.port : undefined;
   const clientPrerequisites = service.prerequisites
     ? { prerequisites: (({ venvPath: _, ...r }) => r)(service.prerequisites) }
     : {};
@@ -489,6 +496,7 @@ export async function resolveServiceState(
             ? false
             : enabled,
       ...(selectedModel ? { selectedModel } : {}),
+      ...(persistedPort ? { port: persistedPort } : {}),
       installable,
       ...clientPrerequisites,
     };
@@ -504,6 +512,7 @@ export async function resolveServiceState(
       installed,
       enabled,
       ...(selectedModel ? { selectedModel } : {}),
+      ...(persistedPort ? { port: persistedPort } : {}),
       installable,
       ...clientPrerequisites,
     };
@@ -520,6 +529,7 @@ export async function resolveServiceState(
       installed,
       enabled,
       ...(selectedModel ? { selectedModel } : {}),
+      ...(persistedPort ? { port: persistedPort } : {}),
       installable,
       ...clientPrerequisites,
     };
@@ -538,6 +548,7 @@ export async function resolveServiceState(
     installed,
     enabled,
     ...(selectedModel ? { selectedModel } : {}),
+    ...(persistedPort ? { port: persistedPort } : {}),
     installable,
     ...clientPrerequisites,
   };

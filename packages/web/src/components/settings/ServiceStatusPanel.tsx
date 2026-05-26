@@ -50,6 +50,7 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
   const [acting, setActing] = useState<Set<string>>(new Set());
   const [actionError, setActionError] = useState<{ id: string; message: string } | null>(null);
   const [installTarget, setInstallTarget] = useState<ServiceUiState | null>(null);
+  const [reconfigureTarget, setReconfigureTarget] = useState<ServiceUiState | null>(null);
   const [progress, setProgress] = useState<Map<string, string>>(new Map());
   const pollRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
@@ -142,10 +143,13 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
       // modal accepts a port input but executeAction was previously dropping
       // it on the floor, so user-entered ports silently collided with the
       // default/env-derived port).
+      // reconfigure shares the same body shape (model? + port?) so the
+      // backend can do port-only vs. model-change branching server-side.
       const installBody: { model?: string; port?: number } = {};
       if (model) installBody.model = model;
       if (typeof port === 'number') installBody.port = port;
-      const body = action === 'install' && (model || typeof port === 'number') ? JSON.stringify(installBody) : '{}';
+      const sendsBody = (action === 'install' || action === 'reconfigure') && (model || typeof port === 'number');
+      const body = sendsBody ? JSON.stringify(installBody) : '{}';
       const res = await apiFetch(`/api/services/${serviceId}/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -256,14 +260,23 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
                       title={service.enabled ? '停止服务' : '启动服务'}
                     />
                     {!service.enabled && (
-                      <SettingsResourceIconButton
-                        tone="danger"
-                        disabled={isBusy}
-                        onClick={() => void executeAction(service.id, 'uninstall')}
-                        title="卸载"
-                      >
-                        <HubIcon name="trash" className="h-3.5 w-3.5" />
-                      </SettingsResourceIconButton>
+                      <>
+                        <SettingsResourceIconButton
+                          disabled={isBusy}
+                          onClick={() => setReconfigureTarget(service)}
+                          title="修改端口或模型"
+                        >
+                          <HubIcon name="settings" className="h-3.5 w-3.5" />
+                        </SettingsResourceIconButton>
+                        <SettingsResourceIconButton
+                          tone="danger"
+                          disabled={isBusy}
+                          onClick={() => void executeAction(service.id, 'uninstall')}
+                          title="卸载"
+                        >
+                          <HubIcon name="trash" className="h-3.5 w-3.5" />
+                        </SettingsResourceIconButton>
+                      </>
                     )}
                   </>
                 )}
@@ -285,6 +298,23 @@ export function ServiceStatusPanel({ filterFeatures, title }: ServiceStatusPanel
             void executeAction(id, 'install', model, port);
           }}
           onCancel={() => setInstallTarget(null)}
+        />
+      )}
+
+      {reconfigureTarget && (
+        <InstallPreviewModal
+          open={true}
+          mode="reconfigure"
+          serviceId={reconfigureTarget.id}
+          serviceName={reconfigureTarget.name}
+          initialModel={reconfigureTarget.selectedModel}
+          initialPort={reconfigureTarget.port}
+          onConfirm={({ model, port }) => {
+            const id = reconfigureTarget.id;
+            setReconfigureTarget(null);
+            void executeAction(id, 'reconfigure', model, port);
+          }}
+          onCancel={() => setReconfigureTarget(null)}
         />
       )}
     </div>

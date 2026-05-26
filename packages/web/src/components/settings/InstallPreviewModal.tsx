@@ -56,6 +56,13 @@ interface InstallPreviewModalProps {
   estimatedMinutes?: number;
   onConfirm: (opts: { model?: string; port?: number }) => void;
   onCancel: () => void;
+  // Edit mode reuses this modal for the post-install reconfigure flow.
+  // When mode === 'reconfigure', the modal pre-fills with the persisted
+  // model/port, swaps wording to "修改 / 保存修改", and skips the install
+  // time estimate (reconfigure only redownloads the model when changed).
+  mode?: 'install' | 'reconfigure';
+  initialModel?: string;
+  initialPort?: number;
 }
 
 const OS_LABEL: Record<EnvironmentProfile['os'], string> = {
@@ -240,7 +247,11 @@ export function InstallPreviewModal({
   estimatedMinutes,
   onConfirm,
   onCancel,
+  mode = 'install',
+  initialModel,
+  initialPort,
 }: InstallPreviewModalProps) {
+  const isReconfigure = mode === 'reconfigure';
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rec, setRec] = useState<ServiceRecommendation | null>(null);
@@ -257,7 +268,7 @@ export function InstallPreviewModal({
     setRec(null);
     setUseCustom(false);
     setCustomModel('');
-    setPortInput('');
+    setPortInput(typeof initialPort === 'number' ? String(initialPort) : '');
     setSuggestedPort(null);
     apiFetch(`/api/services/${serviceId}/install-preview`)
       .then(async (res) => {
@@ -271,15 +282,36 @@ export function InstallPreviewModal({
           suggestedPort?: number;
         };
         setRec(data.recommendation);
-        setSelectedModel(data.recommendation.models[0]?.name ?? '');
+        // In reconfigure mode, pre-fill the radio with the persisted model
+        // when it matches one of the recommendation entries; otherwise
+        // surface it through the custom-model input so the user sees what
+        // is currently installed and can override it.
+        const firstModel = data.recommendation.models[0]?.name ?? '';
+        if (initialModel) {
+          const matchesPreset = data.recommendation.models.some((m) => m.name === initialModel);
+          if (matchesPreset) {
+            setSelectedModel(initialModel);
+          } else {
+            setSelectedModel(firstModel);
+            setUseCustom(true);
+            setCustomModel(initialModel);
+          }
+        } else {
+          setSelectedModel(firstModel);
+        }
+        // Only honor the server-suggested port when the caller didn't
+        // already provide one (reconfigure: use the persisted port; fresh
+        // install: use the scanned port).
         if (data.suggestedPort) {
           setSuggestedPort(data.suggestedPort);
-          setPortInput(String(data.suggestedPort));
+          if (typeof initialPort !== 'number') {
+            setPortInput(String(data.suggestedPort));
+          }
         }
       })
       .catch(() => setError('检测失败：网络错误'))
       .finally(() => setLoading(false));
-  }, [open, serviceId]);
+  }, [open, serviceId, initialModel, initialPort]);
 
   useEffect(() => {
     if (!open) return;
@@ -329,7 +361,9 @@ export function InstallPreviewModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-base font-semibold text-[var(--console-modal-title)]">安装 {serviceName}</h3>
+          <h3 className="text-base font-semibold text-[var(--console-modal-title)]">
+            {isReconfigure ? `修改 ${serviceName}` : `安装 ${serviceName}`}
+          </h3>
           <button
             onClick={onCancel}
             className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--console-modal-close-bg)] text-[var(--console-modal-close-fg)] hover:opacity-80 transition-opacity"
@@ -417,8 +451,14 @@ export function InstallPreviewModal({
             </div>
           )}
 
-          {estimatedMinutes && !isUnsupported && (
+          {estimatedMinutes && !isUnsupported && !isReconfigure && (
             <p className="text-[11px] text-cafe-muted">预计耗时 ~{estimatedMinutes} 分钟（取决于网络速度）</p>
+          )}
+
+          {isReconfigure && !isUnsupported && (
+            <p className="text-[11px] text-cafe-muted">
+              修改不会重建虚拟环境；端口仅写入配置，下次启用生效；切换模型会重新下载，但不重装依赖。
+            </p>
           )}
 
           {!isUnsupported && (
@@ -447,7 +487,7 @@ export function InstallPreviewModal({
             disabled={!canConfirm}
             className="console-button-primary px-5 py-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {isUnsupported ? '暂不支持' : '开始安装'}
+            {isUnsupported ? '暂不支持' : isReconfigure ? '保存修改' : '开始安装'}
           </button>
         </div>
       </div>

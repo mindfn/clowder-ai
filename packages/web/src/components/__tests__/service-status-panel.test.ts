@@ -115,6 +115,89 @@ describe('ServiceStatusPanel', () => {
     expect(container.textContent).not.toContain('语音识别 (Whisper)');
   });
 
+  it('shows a 修改 button next to trash when service is installed and disabled', async () => {
+    const stoppedPayload = {
+      services: [
+        {
+          id: 'whisper-stt',
+          name: 'Whisper STT',
+          description: 'Local speech-to-text endpoint',
+          category: 'voice',
+          features: ['voice-input'],
+          endpoint: 'http://localhost:19876',
+          configured: true,
+          status: 'unhealthy',
+          httpStatus: null,
+          error: null,
+          installed: true,
+          enabled: false,
+          selectedModel: 'mlx-community/whisper-large-v3-turbo',
+          port: 19876,
+          installable: true,
+        },
+      ],
+    };
+    mockFetch.mockResolvedValue({ ok: true, json: async () => stoppedPayload });
+
+    await render(React.createElement(ServiceStatusPanel, { filterFeatures: ['voice-input'], title: '语音服务' }));
+
+    const reconfigureBtn = Array.from(container.querySelectorAll('button')).find((b) => b.title === '修改端口或模型');
+    expect(reconfigureBtn).toBeTruthy();
+    const trashBtn = Array.from(container.querySelectorAll('button')).find((b) => b.title === '卸载');
+    expect(trashBtn).toBeTruthy();
+  });
+
+  it('hides the 修改 button when service is enabled', async () => {
+    await render(React.createElement(ServiceStatusPanel, { filterFeatures: ['voice-input'], title: '语音服务' }));
+
+    const reconfigureBtn = Array.from(container.querySelectorAll('button')).find((b) => b.title === '修改端口或模型');
+    expect(reconfigureBtn).toBeFalsy();
+  });
+
+  it('does not call /reconfigure until the modal is confirmed', async () => {
+    const stoppedPayload = {
+      services: [
+        {
+          id: 'whisper-stt',
+          name: 'Whisper STT',
+          description: 'Local speech-to-text endpoint',
+          category: 'voice',
+          features: ['voice-input'],
+          endpoint: 'http://localhost:19876',
+          configured: true,
+          status: 'unhealthy',
+          httpStatus: null,
+          error: null,
+          installed: true,
+          enabled: false,
+          selectedModel: 'mlx-community/whisper-large-v3-turbo',
+          port: 19876,
+          installable: true,
+        },
+      ],
+    };
+    const calls: string[] = [];
+    mockFetch.mockImplementation(async (path: string) => {
+      calls.push(path);
+      if (path === '/api/services') return { ok: true, json: async () => stoppedPayload };
+      return { ok: true, json: async () => ({}) };
+    });
+
+    await render(React.createElement(ServiceStatusPanel, { filterFeatures: ['voice-input'], title: '语音服务' }));
+
+    const reconfigureBtn = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.title === '修改端口或模型',
+    ) as HTMLButtonElement;
+    expect(reconfigureBtn).toBeTruthy();
+
+    await act(async () => {
+      reconfigureBtn.click();
+    });
+
+    expect(calls.some((p) => p.includes('/reconfigure'))).toBe(false);
+    expect(calls.some((p) => p.includes('install-preview'))).toBe(true);
+  });
+
   it('shows toggle ON and no trash for enabled+unhealthy service', async () => {
     const unhealthyEnabledPayload = {
       services: [
