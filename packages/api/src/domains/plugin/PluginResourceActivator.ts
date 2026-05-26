@@ -263,7 +263,13 @@ export class PluginResourceActivator {
   }
 
   private async activateMcp(manifest: PluginManifest, resource: PluginResourceDef): Promise<void> {
-    if (!resource.command) {
+    if (resource.transport && resource.transport !== 'stdio' && resource.transport !== 'streamableHttp') {
+      throw new Error(`Unsupported MCP transport '${resource.transport}'`);
+    }
+    if (resource.transport === 'streamableHttp' && !resource.url) {
+      throw new Error('MCP streamableHttp resource must declare a url');
+    }
+    if (resource.transport !== 'streamableHttp' && !resource.command) {
       throw new Error('MCP resource must declare a command');
     }
     await this.upsertCapabilityEntry(manifest, resource, true);
@@ -296,7 +302,7 @@ export class PluginResourceActivator {
         existing.enabled = enabled;
         existing.pluginId = manifest.id;
         if (limbNodeId) existing.limbNodeId = limbNodeId;
-        if (resource.type === 'mcp' && resource.command) {
+        if (resource.type === 'mcp') {
           existing.mcpServer = this.buildMcpServer(manifest, resource);
         }
       } else {
@@ -309,7 +315,7 @@ export class PluginResourceActivator {
           ...(limbNodeId ? { limbNodeId } : {}),
         };
 
-        if (resource.type === 'mcp' && resource.command) {
+        if (resource.type === 'mcp') {
           entry.mcpServer = this.buildMcpServer(manifest, resource);
         }
 
@@ -380,6 +386,15 @@ export class PluginResourceActivator {
     manifest: PluginManifest,
     resource: PluginResourceDef,
   ): NonNullable<CapabilityEntry['mcpServer']> {
+    if (resource.transport === 'streamableHttp') {
+      return {
+        command: '',
+        args: [],
+        transport: 'streamableHttp',
+        url: resource.url,
+      };
+    }
+
     return {
       command: resource.command!,
       args: resource.args ?? [],

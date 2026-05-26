@@ -148,6 +148,20 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
         throw new Error(`Invalid resource command in ${yamlPath}: must be a string`);
       }
 
+      const rawTransport = rr['transport'];
+      if (rawTransport != null && typeof rawTransport !== 'string') {
+        throw new Error(`Invalid resource transport in ${yamlPath}: must be a string`);
+      }
+      const transport = rawTransport as PluginResourceDef['transport'] | undefined;
+      if (type === 'mcp' && transport && transport !== 'stdio' && transport !== 'streamableHttp') {
+        throw new Error(`Invalid MCP resource transport in ${yamlPath}: must be 'stdio' or 'streamableHttp'`);
+      }
+
+      const url = rr['url'];
+      if (url != null && typeof url !== 'string') {
+        throw new Error(`Invalid resource url in ${yamlPath}: must be a string`);
+      }
+
       const rawName = rr['name'];
       if (rawName != null && typeof rawName !== 'string') {
         throw new Error(`Invalid resource name in ${yamlPath}: must be a string`);
@@ -160,7 +174,10 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
       if (type === 'mcp' && !name) {
         throw new Error(`MCP resource in ${yamlPath} must have a 'name' field for unique capability ID`);
       }
-      if (type === 'mcp' && !command) {
+      if (type === 'mcp' && transport === 'streamableHttp' && (!url || url.trim().length === 0)) {
+        throw new Error(`MCP streamableHttp resource in ${yamlPath} must have a 'url' field`);
+      }
+      if (type === 'mcp' && transport !== 'streamableHttp' && !command) {
         throw new Error(`MCP resource in ${yamlPath} must have a 'command' field`);
       }
 
@@ -170,7 +187,8 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
         name,
         command: command as string | undefined,
         args,
-        transport: rr['transport'] as string | undefined,
+        transport,
+        url: url as string | undefined,
       });
     }
   }

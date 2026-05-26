@@ -1197,6 +1197,87 @@ describe('GET /api/capabilities (Fastify)', () => {
     }
   });
 
+  it('continues plugin-owned skill pruning when one selected-project plugin manifest is invalid', async () => {
+    const Fastify = (await import('fastify')).default;
+    const { capabilitiesRoutes } = await import('../dist/routes/capabilities.js');
+
+    const pluginId = `valid-prune-${Date.now()}`;
+    const projectDir = await makeTmpDir('plugin-skill-invalid-manifest');
+    const validPluginDir = join(projectDir, 'plugins', pluginId);
+    const invalidPluginDir = join(projectDir, 'plugins', 'bad-plugin');
+    await mkdir(join(validPluginDir, 'skills', 'current'), { recursive: true });
+    await writeFile(
+      join(validPluginDir, 'plugin.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: Valid Prune Plugin',
+        'version: "1.0.0"',
+        'resources:',
+        '  - type: skill',
+        '    path: skills/current',
+      ].join('\n'),
+    );
+    await mkdir(invalidPluginDir, { recursive: true });
+    await writeFile(
+      join(invalidPluginDir, 'plugin.yaml'),
+      [
+        'id: bad-plugin',
+        'name: Bad Plugin',
+        'version: "1.0.0"',
+        'resources:',
+        '  - type: skill',
+        '    path: ../escape',
+      ].join('\n'),
+    );
+
+    await writeCapabilitiesConfig(projectDir, {
+      version: 1,
+      capabilities: [
+        {
+          id: 'current',
+          type: 'skill',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId,
+        },
+        {
+          id: 'old',
+          type: 'skill',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId,
+        },
+      ],
+    });
+
+    const app = Fastify();
+    await app.register(capabilitiesRoutes);
+    await app.ready();
+
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/capabilities?projectPath=${encodeURIComponent(projectDir)}`,
+        headers: AUTH_HEADERS,
+      });
+
+      assert.equal(res.statusCode, 200, res.payload);
+      const config = await readCapabilitiesConfig(projectDir);
+      assert.ok(
+        config?.capabilities.find((item) => item.id === 'current'),
+        'valid plugin skill should survive',
+      );
+      assert.equal(
+        config?.capabilities.some((item) => item.id === 'old'),
+        false,
+        'invalid sibling plugin manifest should not disable pruning for valid plugin skills',
+      );
+    } finally {
+      await app.close();
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it('returns 400 for invalid projectPath', async () => {
     const Fastify = (await import('fastify')).default;
     const { capabilitiesRoutes } = await import('../dist/routes/capabilities.js');

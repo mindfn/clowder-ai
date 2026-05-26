@@ -327,6 +327,69 @@ describe('parsePluginManifest security', () => {
     assert.throws(() => parsePluginManifest(missingMcpCommand), /MCP resource .* must have a 'command'/);
   });
 
+  it('rejects invalid MCP transport declarations', () => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
+    const invalidTransport = writeTmpManifest(
+      tmpDir,
+      'invalid-mcp-transport',
+      [
+        'id: invalid-mcp-transport',
+        'name: InvalidMcpTransport',
+        'version: 1.0.0',
+        'resources:',
+        '  - type: mcp',
+        '    name: remote',
+        '    command: node',
+        '    transport: websocket',
+      ].join('\n'),
+    );
+    assert.throws(() => parsePluginManifest(invalidTransport), /Invalid MCP resource transport/);
+
+    const streamableWithoutUrl = writeTmpManifest(
+      tmpDir,
+      'streamable-mcp-no-url',
+      [
+        'id: streamable-mcp-no-url',
+        'name: StreamableMcpNoUrl',
+        'version: 1.0.0',
+        'resources:',
+        '  - type: mcp',
+        '    name: remote',
+        '    transport: streamableHttp',
+      ].join('\n'),
+    );
+    assert.throws(() => parsePluginManifest(streamableWithoutUrl), /must have a 'url' field/);
+  });
+
+  it('parses streamableHttp MCP resources with URL transport metadata', () => {
+    tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
+    const yamlPath = writeTmpManifest(
+      tmpDir,
+      'streamable-mcp',
+      [
+        'id: streamable-mcp',
+        'name: StreamableMcp',
+        'version: 1.0.0',
+        'resources:',
+        '  - type: mcp',
+        '    name: remote',
+        '    transport: streamableHttp',
+        '    url: https://example.test/mcp',
+      ].join('\n'),
+    );
+
+    const manifest = parsePluginManifest(yamlPath);
+    assert.deepEqual(manifest.resources[0], {
+      type: 'mcp',
+      path: undefined,
+      name: 'remote',
+      command: undefined,
+      args: undefined,
+      transport: 'streamableHttp',
+      url: 'https://example.test/mcp',
+    });
+  });
+
   it('parses healthCheck from YAML', () => {
     tmpDir = mkdtempSync(join(os.tmpdir(), 'plugin-test-'));
     const yamlPath = writeTmpManifest(
@@ -692,6 +755,37 @@ describe('PluginResourceActivator skill safety', () => {
     } finally {
       delete process.env.TEST_PLUGIN_TOKEN;
     }
+  });
+
+  it('persists plugin streamableHttp MCP URL descriptors', async () => {
+    const root = mkdtempSync(join(os.tmpdir(), 'plugin-activator-root-'));
+    const pluginsDir = join(root, 'plugins');
+    const projectRoot = join(root, 'project');
+    let persisted = { version: 1, capabilities: [] };
+    const activator = new PluginResourceActivator({
+      resolveProjectRoot: () => projectRoot,
+      pluginsDir,
+      limbRegistry: {},
+      readCapabilities: async () => structuredClone(persisted),
+      writeCapabilities: async (config) => {
+        persisted = structuredClone(config);
+      },
+      withCapabilityLock: async (fn) => fn(),
+    });
+
+    const result = await activator.enablePlugin({
+      id: 'test-plugin',
+      name: 'Test Plugin',
+      version: '1.0.0',
+      builtin: false,
+      config: [],
+      resources: [{ type: 'mcp', name: 'remote', transport: 'streamableHttp', url: 'https://example.test/mcp' }],
+    });
+
+    assert.equal(result.status, 'success');
+    assert.equal(persisted.capabilities[0].mcpServer.transport, 'streamableHttp');
+    assert.equal(persisted.capabilities[0].mcpServer.url, 'https://example.test/mcp');
+    assert.equal(persisted.capabilities[0].mcpServer.command, '');
   });
 
   it('removes stale plugin-owned MCP and limb capabilities during disable', async () => {

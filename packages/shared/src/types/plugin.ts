@@ -24,6 +24,7 @@ export interface PluginResourceDef {
   command?: string;
   args?: string[];
   transport?: string;
+  url?: string;
 }
 
 /** Parsed plugin manifest (from plugin.yaml) */

@@ -128,7 +128,7 @@ async function collectDeclaredPluginSkillIds(
       );
       declaredSkillIds.set(manifest.id, skillIds);
     } catch {
-      return false;
+      continue;
     }
   }
 
