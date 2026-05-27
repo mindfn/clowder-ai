@@ -205,7 +205,7 @@ export function BootcampListModal({ open, onClose, currentThreadId }: BootcampLi
                   {/* Progress bar */}
                   <div className="w-full h-1.5 rounded-full bg-cafe-surface-elevated">
                     <div
-                      className={`h-1.5 rounded-full transition-all ${isCompleted ? 'bg-green-400' : 'bg-amber-400'}`}
+                      className={`h-1.5 rounded-full transition-all ${isCompleted ? 'bg-[var(--semantic-success)]' : 'bg-[var(--semantic-warning)]'}`}
                       style={{ width: `${progress}%` }}
                     />
                   </div>
@@ -221,7 +221,7 @@ export function BootcampListModal({ open, onClose, currentThreadId }: BootcampLi
             type="button"
             onClick={handleCreate}
             disabled={isCreating}
-            className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-amber-500 text-white font-semibold hover:bg-amber-600 disabled:opacity-40 transition-colors"
+            className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-[var(--semantic-warning)] text-[var(--cafe-surface)] font-semibold hover:opacity-90 disabled:opacity-40 transition-colors"
             data-testid="bootcamp-list-create"
           >
             <svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

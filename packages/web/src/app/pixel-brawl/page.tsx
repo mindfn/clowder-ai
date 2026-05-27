@@ -1,5 +1,9 @@
 'use client';
 
+/* eslint-disable cafe/no-hardcoded-colors -- Pixel-art game UI palette is intentionally
+ * fixed 8-bit retro colors that do not participate in the F056 theme system.
+ * The whole page is a self-contained demo, not part of the chat shell. */
+
 import localFont from 'next/font/local';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { type FighterId, PIXEL_FONT_SIZES } from '@/games/pixel-brawl/types';

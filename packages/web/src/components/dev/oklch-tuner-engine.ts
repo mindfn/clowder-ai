@@ -1,0 +1,340 @@
+/*
+ * F056 OKLCH Tuner — engine (types, defaults, CSS generation, export)
+ *
+ * Separated from UI component to keep each file under 350-line hard limit.
+ * buildCSS() generates a single <style> that overrides:
+ *   1. --accent-hue / --accent-chroma   → cascades to ALL accent-* tokens
+ *   2. --cafe-surface-*                 → 4-level page elevation
+ *   3. --color-{slug}-* per-cat tokens  → static cat accent / surface / text / ring
+ *   4. .cat-persona-derived msg tokens  → runtime message bubble colors
+ *   5. (optional) --msg-hue/chroma force → unify all cat hue/chroma
+ */
+
+/* ── Types ── */
+export interface TierP {
+  L: number;
+  Cmul: number;
+}
+export interface FixedP {
+  L: number;
+  C: number;
+}
+export interface SurfaceP {
+  sunken: number;
+  base: number;
+  elevated: number;
+  canvas: number;
+}
+export interface ModeP {
+  primary: TierP;
+  surface: TierP;
+  text: TierP;
+  inset: TierP;
+  ring: TierP;
+  insetText: FixedP;
+  elev: SurfaceP;
+}
+export interface SemanticP {
+  criticalH: number;
+  successH: number;
+  warningH: number;
+  infoH: number;
+  L: number;
+  C: number;
+  surfL: number;
+  surfC: number;
+}
+export interface QueueP {
+  H: number;
+  C: number;
+  L: number;
+}
+export interface NeutralP {
+  textL: number;
+  secondaryL: number;
+  mutedL: number;
+  interactiveL: number;
+  borderL: number;
+  borderSubtleL: number;
+}
+export type Mode = 'light' | 'dark';
+export interface TunerState {
+  accentHue: number;
+  accentChroma: number;
+  light: ModeP;
+  dark: ModeP;
+  semanticLight: SemanticP;
+  semanticDark: SemanticP;
+  queue: QueueP;
+  neutralHue: number;
+  neutralChroma: number;
+  neutralLight: NeutralP;
+  neutralDark: NeutralP;
+  /* Cat name text — unified across all cats (not per-cat hue derived) */
+  catTextH: number;
+  catTextC: number;
+  catTextLightL: number;
+  catTextDarkL: number;
+}
+export interface HcOverride {
+  on: boolean;
+  hue: number;
+  chroma: number;
+}
+
+/* ── Constants ── */
+export const CAT_TIERS = ['primary', 'surface', 'text', 'inset', 'ring'] as const;
+export type CatTier = (typeof CAT_TIERS)[number];
+const SLUGS = ['opus', 'sonnet', 'codex', 'gemini', 'kimi', 'dare', 'cocreator'] as const;
+export const SURF_KEYS = ['sunken', 'base', 'elevated', 'canvas'] as const;
+export const SEMANTIC_KEYS = ['critical', 'success', 'warning', 'info'] as const;
+export type SemanticKey = (typeof SEMANTIC_KEYS)[number];
+export const SEMANTIC_LABELS: Record<SemanticKey, string> = {
+  critical: '危险/错误 (删除/失败)',
+  success: '成功/健康 (通过/完成)',
+  warning: '警告 (静默/降级)',
+  info: '信息/蓝 (跨帖/链接)',
+};
+export const SEMANTIC_H_FIELD: Record<SemanticKey, keyof SemanticP> = {
+  critical: 'criticalH',
+  success: 'successH',
+  warning: 'warningH',
+  info: 'infoH',
+};
+
+export const TIER_LABELS: Record<CatTier | 'insetText', string> = {
+  primary: '主色 (图标/头像环)',
+  surface: '消息气泡背景',
+  text: '猫名文字',
+  inset: '嵌套块 (Thinking/CLI)',
+  ring: '聚焦环线',
+  insetText: '嵌套块文字',
+};
+
+export const SURF_LABELS: Record<keyof SurfaceP, string> = {
+  sunken: '层 1 · 最深',
+  base: '层 2 · 基础',
+  elevated: '层 3 · 抬升',
+  canvas: '层 4 · 浮出',
+};
+
+export const NEUTRAL_ROWS: [keyof NeutralP, string][] = [
+  ['textL', '正文'],
+  ['secondaryL', '二级'],
+  ['mutedL', '弱/三级'],
+  ['interactiveL', '交互'],
+  ['borderL', '边框'],
+  ['borderSubtleL', '细线'],
+];
+
+/* ── Defaults (match cat-persona-tokens.css + theme-tokens.css exactly) ── */
+export const INIT: TunerState = {
+  accentHue: 35,
+  accentChroma: 0.15,
+  light: {
+    primary: { L: 0.62, Cmul: 1.0 },
+    surface: { L: 0.9, Cmul: 0.5 },
+    text: { L: 0.24, Cmul: 0.8 },
+    inset: { L: 0.3, Cmul: 0.1 },
+    ring: { L: 0.55, Cmul: 1.1 },
+    insetText: { L: 0.85, C: 0.03 },
+    elev: { sunken: 0.92, base: 0.95, elevated: 0.985, canvas: 0.996 },
+  },
+  dark: {
+    primary: { L: 0.68, Cmul: 0.85 },
+    surface: { L: 0.28, Cmul: 0.25 },
+    text: { L: 0.88, Cmul: 0.6 },
+    inset: { L: 0.24, Cmul: 0.1 },
+    ring: { L: 0.7, Cmul: 1.0 },
+    insetText: { L: 0.72, C: 0.01 },
+    elev: { sunken: 0.12, base: 0.18, elevated: 0.24, canvas: 0.3 },
+  },
+  /* Semantic status — light/dark hues differ (铲屎官 2026-05-27 调优) */
+  semanticLight: { criticalH: 38, successH: 135, warningH: 46, infoH: 209, L: 0.57, C: 0.12, surfL: 0.96, surfC: 0.03 },
+  semanticDark: { criticalH: 25, successH: 145, warningH: 70, infoH: 230, L: 0.7, C: 0.17, surfL: 0.25, surfC: 0.05 },
+  /* Queue accent — OKLCH approximation of #9B7EBD */
+  queue: { H: 290, C: 0.1, L: 0.62 },
+  /* Neutral text/border — from theme-tokens.css neutral scale */
+  neutralHue: 30,
+  neutralChroma: 0.005,
+  neutralLight: { textL: 0.2, secondaryL: 0.45, mutedL: 0.56, interactiveL: 0.36, borderL: 0.84, borderSubtleL: 0.915 },
+  neutralDark: { textL: 0.94, secondaryL: 0.76, mutedL: 0.66, interactiveL: 0.84, borderL: 0.32, borderSubtleL: 0.24 },
+  /* Cat name text — green-neutral, unified across all cats */
+  catTextH: 139,
+  catTextC: 0.005,
+  catTextLightL: 0.24,
+  catTextDarkL: 0.88,
+};
+
+export const STYLE_ID = 'oklch-tuner-override';
+
+/* ── CSS generation ── */
+export function buildCSS(p: TunerState, hc: HcOverride): string {
+  const ok = (m: ModeP, t: CatTier, h: string, c: string) => `oklch(${m[t].L} calc(${c} * ${m[t].Cmul}) ${h})`;
+  const it = (m: ModeP) => `oklch(${m.insetText.L} ${m.insetText.C} 250)`;
+
+  // 1. Accent — cascades to all --accent-* in theme-tokens.css
+  const accent = `:root{--accent-hue:${p.accentHue};--accent-chroma:${p.accentChroma};}`;
+
+  // 2. Surface elevation (chroma/hue pattern matches theme-tokens.css)
+  const surf = (e: SurfaceP, dark: boolean) => {
+    const sel = dark ? '[data-theme="dark"]' : ':root';
+    const ch = dark ? [0.015, 0.015, 0.012, 0.008] : [0.015, 0.012, 0.005, 0.003];
+    const hu = dark ? [80, 80, 80, 85] : [80, 80, 85, 90];
+    return (
+      `${sel}{` +
+      `--cafe-surface-sunken:oklch(${e.sunken} ${ch[0]} ${hu[0]});` +
+      `--cafe-surface:oklch(${e.base} ${ch[1]} ${hu[1]});` +
+      `--cafe-surface-elevated:oklch(${e.elevated} ${ch[2]} ${hu[2]});` +
+      `--cafe-surface-canvas:oklch(${e.canvas} ${ch[3]} ${hu[3]});}`
+    );
+  };
+
+  // 3. Per-cat static tokens (7 slugs x 8 tokens x 2 modes)
+  const catTkn = (m: ModeP, s: string, h: string, c: string) =>
+    `--color-${s}-bubble:${ok(m, 'primary', h, c)};` +
+    `--color-${s}-surface:${ok(m, 'surface', h, c)};` +
+    `--color-${s}-text:${ok(m, 'text', h, c)};` +
+    `--color-${s}-ring:${ok(m, 'ring', h, c)};` +
+    `--color-${s}-primary:var(--color-${s}-bubble);` +
+    `--color-${s}-light:var(--color-${s}-surface);` +
+    `--color-${s}-dark:var(--color-${s}-text);` +
+    `--color-${s}-bg:var(--color-${s}-surface);`;
+  const catBlk = (m: ModeP, dark: boolean) => {
+    const body = SLUGS.map((s) => {
+      const h = hc.on ? `${hc.hue}` : `var(--${s}-hue)`;
+      const c = hc.on ? `${hc.chroma}` : `var(--${s}-chroma)`;
+      return catTkn(m, s, h, c);
+    }).join('');
+    return dark ? `[data-theme="dark"]{${body}}` : `:root{${body}}`;
+  };
+
+  // 3b. Primary → accent (铲屎官: "直接用主题色，不需要单独定义")
+  const accentPri = (dark: boolean) => {
+    const sel = dark ? '[data-theme="dark"]' : ':root';
+    return `${sel}{${SLUGS.map((s) => `--color-${s}-bubble:var(--cafe-accent);--color-${s}-primary:var(--cafe-accent);`).join('')}}`;
+  };
+
+  // 3c. Unified cat name text (铲屎官: "H L C 统一，不跟成员主题色变")
+  const catTxt = (dark: boolean) => {
+    const l = dark ? p.catTextDarkL : p.catTextLightL;
+    const v = `oklch(${l} ${p.catTextC} ${p.catTextH})`;
+    const sel = dark ? '[data-theme="dark"]' : ':root';
+    return `${sel}{${SLUGS.map((s) => `--color-${s}-text:${v};--color-${s}-dark:${v};`).join('')}}`;
+  };
+
+  // 4. Runtime message derived (.cat-persona-derived)
+  const mH = hc.on ? `${hc.hue}` : 'var(--msg-hue,297)';
+  const mC = hc.on ? `${hc.chroma}` : 'var(--msg-chroma,0.1)';
+  const drv = (m: ModeP, dark: boolean) => {
+    const sel = dark ? '[data-theme="dark"] .cat-persona-derived' : '.cat-persona-derived';
+    return (
+      `${sel}{` +
+      `--cat-msg-bubble:${ok(m, 'primary', mH, mC)};` +
+      `--cat-msg-surface:${ok(m, 'surface', mH, mC)};` +
+      `--cat-msg-inset:${ok(m, 'inset', mH, mC)};` +
+      `--cat-msg-inset-text:${it(m)};` +
+      `--cat-msg-ring:${ok(m, 'ring', mH, mC)};}`
+    );
+  };
+
+  // 5. Force all cats to same H/C (!important to beat inline styles)
+  const force = hc.on ? `.cat-persona-derived{--msg-hue:${hc.hue}!important;--msg-chroma:${hc.chroma}!important;}` : '';
+
+  // 6. Semantic status colors (critical / success / warning / info + surface variants)
+  const semCSS = (s: SemanticP, dark: boolean) => {
+    const sel = dark ? '[data-theme="dark"]' : ':root';
+    return (
+      `${sel}{` +
+      `--semantic-critical:oklch(${s.L} ${s.C} ${s.criticalH});` +
+      `--semantic-success:oklch(${s.L} ${s.C} ${s.successH});` +
+      `--semantic-warning:oklch(${s.L} ${s.C} ${s.warningH});` +
+      `--semantic-info:oklch(${s.L} ${s.C} ${s.infoH});` +
+      `--semantic-spotlight:oklch(${s.L + 0.1} ${s.C} ${s.warningH});` +
+      `--semantic-critical-surface:oklch(${s.surfL} ${s.surfC} ${s.criticalH});` +
+      `--semantic-success-surface:oklch(${s.surfL} ${s.surfC} ${s.successH});` +
+      `--semantic-warning-surface:oklch(${s.surfL} ${s.surfC + 0.01} ${s.warningH});` +
+      `--semantic-info-surface:oklch(${s.surfL} ${s.surfC} ${s.infoH});` +
+      `--semantic-spotlight-surface:oklch(${s.surfL} ${s.surfC + 0.01} ${s.warningH});}`
+    );
+  };
+
+  // 7. Queue accent (overrides fixed hex with OKLCH)
+  const q = p.queue;
+  const qLight =
+    `:root{--queue-accent:oklch(${q.L} ${q.C} ${q.H});` +
+    `--queue-accent-hover:oklch(${q.L - 0.06} ${q.C + 0.01} ${q.H});` +
+    `--queue-accent-surface:oklch(0.96 ${q.C * 0.2} ${q.H});` +
+    `--queue-on-accent:oklch(1 0 0);}`;
+  const qDark =
+    `[data-theme="dark"]{--queue-accent:oklch(${q.L + 0.16} ${q.C + 0.02} ${q.H});` +
+    `--queue-accent-hover:oklch(${q.L + 0.22} ${q.C + 0.04} ${q.H});` +
+    `--queue-accent-surface:oklch(0.25 ${q.C * 0.4} ${q.H});` +
+    `--queue-on-accent:oklch(0.18 0.03 ${q.H});}`;
+
+  // 8. Neutral text/border (overrides --cafe-text/border aliases)
+  const nCSS = (n: NeutralP, dark: boolean) => {
+    const sel = dark ? '[data-theme="dark"]' : ':root';
+    const o = (l: number) => `oklch(${l} ${p.neutralChroma} ${p.neutralHue})`;
+    return `${sel}{--cafe-text:${o(n.textL)};--cafe-text-secondary:${o(n.secondaryL)};--cafe-text-muted:${o(n.mutedL)};--cafe-interactive:${o(n.interactiveL)};--cafe-border:${o(n.borderL)};--cafe-border-subtle:${o(n.borderSubtleL)};}`;
+  };
+
+  return [
+    accent,
+    surf(p.light.elev, false),
+    surf(p.dark.elev, true),
+    catBlk(p.light, false),
+    catBlk(p.dark, true),
+    accentPri(false),
+    accentPri(true),
+    catTxt(false),
+    catTxt(true),
+    drv(p.light, false),
+    drv(p.dark, true),
+    force,
+    semCSS(p.semanticLight, false),
+    semCSS(p.semanticDark, true),
+    qLight,
+    qDark,
+    nCSS(p.neutralLight, false),
+    nCSS(p.neutralDark, true),
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/* ── Export text (Copy button) ── */
+export function exportText(p: TunerState): string {
+  const row = (mode: Mode, t: CatTier) =>
+    `  ${t.padEnd(9)} L=${p[mode][t].L.toFixed(2)}  C*${p[mode][t].Cmul.toFixed(2)}`;
+  const itRow = (mode: Mode) => `  insetText L=${p[mode].insetText.L.toFixed(2)}  C=${p[mode].insetText.C.toFixed(3)}`;
+  const elevRow = (mode: Mode) => {
+    const e = p[mode].elev;
+    return `  surface: ${e.sunken}/${e.base}/${e.elevated}/${e.canvas}`;
+  };
+  const block = (mode: Mode) =>
+    `${mode}:\n${CAT_TIERS.map((t) => row(mode, t)).join('\n')}\n${itRow(mode)}\n${elevRow(mode)}`;
+  const semRow = (s: SemanticP) =>
+    `  critical H=${s.criticalH}  success H=${s.successH}  warning H=${s.warningH}  info H=${s.infoH}\n` +
+    `  main L=${s.L.toFixed(2)} C=${s.C.toFixed(3)}  surface L=${s.surfL.toFixed(2)} C=${s.surfC.toFixed(3)}`;
+  return [
+    'OKLCH Token Values',
+    `accentHue=${p.accentHue} accentChroma=${p.accentChroma}`,
+    '='.repeat(30),
+    block('light'),
+    '',
+    block('dark'),
+    '',
+    'semantic (light):',
+    semRow(p.semanticLight),
+    'semantic (dark):',
+    semRow(p.semanticDark),
+    `queue: H=${p.queue.H} C=${p.queue.C} L=${p.queue.L}`,
+    '',
+    `neutral: H=${p.neutralHue} C=${p.neutralChroma}`,
+    `  light: text=${p.neutralLight.textL} sec=${p.neutralLight.secondaryL} muted=${p.neutralLight.mutedL} int=${p.neutralLight.interactiveL} bdr=${p.neutralLight.borderL} sub=${p.neutralLight.borderSubtleL}`,
+    `  dark:  text=${p.neutralDark.textL} sec=${p.neutralDark.secondaryL} muted=${p.neutralDark.mutedL} int=${p.neutralDark.interactiveL} bdr=${p.neutralDark.borderL} sub=${p.neutralDark.borderSubtleL}`,
+    '',
+    `catText: H=${p.catTextH} C=${p.catTextC} lightL=${p.catTextLightL} darkL=${p.catTextDarkL}`,
+  ].join('\n');
+}

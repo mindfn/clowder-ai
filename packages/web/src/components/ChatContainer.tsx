@@ -980,7 +980,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
             })()}
 
           {isResearchMode && (
-            <div className="mx-4 mb-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+            <div className="mx-4 mb-2 rounded-lg border border-[var(--semantic-success)] bg-[var(--semantic-success-surface)] px-3 py-2 text-xs text-conn-emerald-text">
               多猫研究模式 — 文章上下文已注入。请输入研究问题，猫猫会自动调用 multi_mention 邀请其他猫参与分析。
             </div>
           )}
@@ -1018,7 +1018,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
           {isGameActive && overlayMinimized && gameView?.threadId === threadId && (
             <button
               onClick={() => useGameStore.getState().restoreOverlay()}
-              className="mx-4 mb-2 flex items-center justify-center gap-2 rounded-lg border border-purple-300 bg-purple-50 px-3 py-2 text-sm text-purple-700 hover:bg-purple-100 transition-colors"
+              className="mx-4 mb-2 flex items-center justify-center gap-2 rounded-lg border border-[var(--color-cafe-accent)] bg-[var(--accent-50)] px-3 py-2 text-sm text-[var(--color-cafe-accent)] hover:bg-[var(--color-cocreator-surface)] transition-colors"
             >
               🎮 返回游戏
             </button>
@@ -1148,22 +1148,22 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
             className="w-full max-w-md rounded-2xl border border-conn-amber-ring bg-[var(--console-card-bg)] p-6 shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
-            <h3 className="text-lg font-semibold text-gray-900">开始猫猫新手教程？</h3>
-            <p className="mt-2 text-sm text-gray-600">
+            <h3 className="text-lg font-semibold text-cafe">开始猫猫新手教程？</h3>
+            <p className="mt-2 text-sm text-cafe-secondary">
               当前还没有可用成员。我们可以先带你创建第一只猫猫，再开始首个协作任务。
             </p>
             <div className="mt-5 flex justify-end gap-3">
               <button
                 type="button"
                 onClick={handleSkipFirstRunQuest}
-                className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                className="rounded-lg border border-[var(--console-border-soft)] px-3 py-2 text-sm text-cafe-secondary hover:bg-[var(--console-hover-bg)]"
               >
                 跳过
               </button>
               <button
                 type="button"
                 onClick={handleStartFirstRunQuest}
-                className="rounded-lg bg-amber-500 px-3 py-2 text-sm font-medium text-white hover:bg-amber-600"
+                className="rounded-lg bg-[var(--semantic-warning)] px-3 py-2 text-sm font-medium text-[var(--cafe-surface)] hover:opacity-90"
               >
                 开始教程
               </button>

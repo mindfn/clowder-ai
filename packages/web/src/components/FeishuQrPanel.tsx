@@ -147,7 +147,7 @@ export function FeishuQrPanel({ configured, onConfirmed, onDisconnected }: Feish
             type="button"
             onClick={handleDisconnect}
             disabled={disconnecting}
-            className="ml-auto text-xs font-medium text-conn-red-text hover:text-red-700 transition-colors disabled:opacity-50"
+            className="ml-auto text-xs font-medium text-conn-red-text hover:text-conn-red-text transition-colors disabled:opacity-50"
             data-testid="feishu-disconnect"
           >
             {disconnecting ? 'Disconnecting...' : 'Disconnect'}
@@ -170,7 +170,8 @@ export function FeishuQrPanel({ configured, onConfirmed, onDisconnected }: Feish
           <button
             type="button"
             onClick={handleFetchQr}
-            className="flex items-center gap-1.5 rounded-lg bg-[#3370FF] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#295ad6]"
+            // eslint-disable-next-line cafe/no-hardcoded-colors -- Feishu/Lark brand blue (#3370FF) is a fixed brand identity color, not theme-driven
+            className="flex items-center gap-1.5 rounded-lg bg-[#3370FF] px-4 py-2 text-sm font-semibold text-[var(--cafe-surface)] transition-colors hover:opacity-90"
             data-testid="feishu-generate-qr"
           >
             <QrCodeIcon />

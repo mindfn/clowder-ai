@@ -36,6 +36,29 @@ const BREED_STYLES: Record<string, { radius: string; font?: string }> = {
   'dragon-li': { radius: 'rounded-lg rounded-tl-sm', font: 'font-mono' },
 };
 const DEFAULT_BREED_STYLE = { radius: 'rounded-2xl' };
+
+/* F056 catId → Tuner persona slug map. Slugs match cat-persona-tokens.css
+ * --{slug}-hue / --{slug}-chroma anchors and the SLUGS array in
+ * oklch-tuner-engine.ts. Falls back to catId itself so unmapped cats still
+ * resolve to a CSS var (may hit a fallback in cat-persona-tokens.css). */
+const CAT_ID_TO_SLUG: Record<string, string> = {
+  'opus-default': 'opus',
+  'opus-sonnet': 'sonnet',
+  'opus-45': 'opus-45',
+  'opus-47': 'opus-47',
+  'codex-default': 'codex',
+  'codex-gpt52': 'gpt52',
+  'codex-spark': 'spark',
+  'gemini-default': 'gemini',
+  'gemini-25': 'gemini25',
+  'dare-default': 'dare',
+  'kimi-default': 'kimi',
+  cocreator: 'cocreator',
+};
+function catSlug(catId: string | undefined): string {
+  if (!catId) return 'opus';
+  return CAT_ID_TO_SLUG[catId] ?? catId;
+}
 const SCHEDULER_ACCENT_BADGE_CLASS =
   'inline-flex w-fit items-center gap-1.5 rounded-full border border-conn-amber-ring bg-conn-amber-bg px-2.5 py-1 text-xs font-semibold text-conn-amber-text shadow-sm';
 const SCHEDULER_ACCENT_BUBBLE_CLASS =
@@ -100,11 +123,18 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
         const breed = BREED_STYLES[catData.breedId ?? ''] ?? DEFAULT_BREED_STYLE;
         const label = formatCatName(catData);
         const isCallback = message.origin === 'callback';
+        /* F056: Route bubble background through CSS vars so the OKLCH Tuner
+         * (which writes --color-{slug}-surface) actually controls bubble color.
+         * Previously bgColor was catData.color.secondary (raw catalog hex),
+         * which bypassed the F056 token system entirely. */
+        const slug = catSlug(catData.id);
         return {
           label,
           radius: breed.radius,
           font: breed.font,
-          bgColor: isCallback ? tintedLight(catData.color.primary, 0.08) : catData.color.secondary,
+          bgColor: isCallback
+            ? tintedLight(catData.color.primary, 0.08)
+            : `var(--color-${slug}-surface)`,
           borderColor: isCallback ? hexToRgba(catData.color.primary, 0.12) : hexToRgba(catData.color.primary, 0.3),
         };
       })()
@@ -251,16 +281,20 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
     const toneClass = isTool
       ? 'text-cafe-muted bg-cafe-surface-elevated/50 font-mono text-xs py-1'
       : isFollowup
-        ? 'text-purple-700 bg-purple-50 border border-purple-200'
+        ? 'text-[var(--color-cafe-accent)] bg-[var(--accent-50)] border border-purple-200'
         : isError
           ? 'text-conn-red-text bg-conn-red-bg rounded-full'
-          : 'text-blue-700 bg-conn-blue-bg';
+          : 'text-[var(--semantic-info)] bg-conn-blue-bg';
     return (
       <div data-message-id={message.id} className={`flex justify-center ${isTool ? 'mb-1' : 'mb-3'}`}>
         <div className={`text-sm px-4 py-2 rounded-lg whitespace-pre-wrap text-left max-w-[85%] ${toneClass}`}>
           {isFollowup && <span className="mr-1">🔗</span>}
           {message.content}
-          {isFollowup && <span className="block mt-1 text-xs text-purple-500">输入 @猫名 跟进 来发起 follow-up</span>}
+          {isFollowup && (
+            <span className="block mt-1 text-xs text-[var(--color-cocreator-primary)]">
+              输入 @猫名 跟进 来发起 follow-up
+            </span>
+          )}
         </div>
       </div>
     );
@@ -276,6 +310,10 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
   if (isUser) {
     const coCreatorPrimary = coCreator.color?.primary ?? '#815b5b';
     const coCreatorSecondary = coCreator.color?.secondary ?? '#FFDDD2';
+    /* F056: route cocreator bubble bg through CSS var so Tuner controls it.
+     * surface 由 OKLCH 派生公式算出（cat-persona-tokens.css），Tuner buildCSS 覆盖。 */
+    const coCreatorBubbleBg = 'var(--color-cocreator-surface)';
+    const coCreatorBubbleText = 'var(--color-cocreator-text)';
     return (
       <div data-message-id={message.id} className="group flex justify-end gap-2 mb-4 items-start">
         <div className="max-w-[75%]">
@@ -305,8 +343,8 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
             style={
               !isWhisper || isRevealed
                 ? {
-                    backgroundColor: coCreatorSecondary,
-                    color: coCreatorPrimary,
+                    backgroundColor: coCreatorBubbleBg,
+                    color: coCreatorBubbleText,
                   }
                 : undefined
             }
@@ -319,7 +357,7 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
           </div>
         </div>
         <div
-          className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 ring-2 flex items-center justify-center text-xs font-bold text-white"
+          className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 ring-2 flex items-center justify-center text-xs font-bold text-[var(--cafe-surface)]"
           style={{ backgroundColor: coCreatorPrimary, boxShadow: `0 0 0 2px ${coCreatorSecondary}` }}
         >
           {coCreator.avatar ? (
@@ -427,7 +465,7 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
                       e.stopPropagation();
                       pushThreadRouteWithHistory(sourceId, typeof window !== 'undefined' ? window : undefined);
                     }}
-                    className="inline-flex items-center gap-1.5 border px-3 py-1 rounded-full bg-[#FDF6ED] border-[#E8DCCF] text-[#8D6E63] hover:bg-[#F5EDE0] transition-colors cursor-pointer w-fit max-w-full"
+                    className="inline-flex items-center gap-1.5 border px-3 py-1 rounded-full bg-cafe-surface border-cafe text-cafe hover:bg-cafe-surface-sunken transition-colors cursor-pointer w-fit max-w-full"
                     title={sourceId}
                     aria-label={`跳转到来源 thread ${sourceId}`}
                   >

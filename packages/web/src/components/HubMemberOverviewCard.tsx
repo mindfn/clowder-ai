@@ -76,7 +76,7 @@ function getStatusBadge(cat: CatData): { enabled: boolean; label: string; tone: 
 function formatMentionPreview(patterns: string[], max = 3) {
   const visible = patterns.slice(0, max);
   const rest = patterns.length - visible.length;
-  return rest > 0 ? `${visible.join('  ')}  +${rest}` : visible.join('  ');
+  return rest > 0 ? `${visible.join('')}  +${rest}` : visible.join('');
 }
 
 function OwnerBadge() {
@@ -101,7 +101,7 @@ function OwnerAvatar({ coCreator }: { coCreator: CoCreatorConfig }) {
   return (
     <div
       className="flex h-8 w-8 items-center justify-center overflow-hidden text-xs font-bold"
-      style={{ backgroundColor: primary, color: '#fff', borderRadius: '9999px' }}
+      style={{ backgroundColor: primary, color: 'var(--cafe-surface)', borderRadius: '9999px' }}
     >
       {avatarSrc ? (
         <AvatarImageWithFallback

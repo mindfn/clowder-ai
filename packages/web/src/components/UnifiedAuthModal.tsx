@@ -241,7 +241,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
             type="button"
             onClick={() => !isEdit && setAuthMode('oauth')}
             className={`flex-1 rounded-md py-1.5 text-xs font-medium transition ${
-              isOAuth ? 'bg-cafe-accent text-white shadow-sm' : 'text-cafe-secondary'
+              isOAuth ? 'bg-cafe-accent text-[var(--cafe-surface)] shadow-sm' : 'text-cafe-secondary'
             } ${isEdit ? 'cursor-not-allowed' : !isOAuth ? 'hover:bg-[var(--console-hover-bg)]' : ''}`}
             disabled={isEdit}
           >
@@ -251,7 +251,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
             type="button"
             onClick={() => !isEdit && setAuthMode('api_key')}
             className={`flex-1 rounded-md py-1.5 text-xs font-medium transition ${
-              !isOAuth ? 'bg-cafe-accent text-white shadow-sm' : 'text-cafe-secondary'
+              !isOAuth ? 'bg-cafe-accent text-[var(--cafe-surface)] shadow-sm' : 'text-cafe-secondary'
             } ${isEdit ? 'cursor-not-allowed' : isOAuth ? 'hover:bg-[var(--console-hover-bg)]' : ''}`}
             disabled={isEdit}
           >
@@ -385,7 +385,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                         placeholder="KEY"
                         className={`w-[38%] font-mono ${
                           entry.key.trim() && !isValidEnvKey(entry.key.trim())
-                            ? `${formInputClass} !border-red-300 !bg-conn-red-bg !text-conn-red-text`
+                            ? `${formInputClass} !border-conn-red-ring !bg-conn-red-bg !text-conn-red-text`
                             : formInputClass
                         }`}
                       />
@@ -438,7 +438,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
             data-guide-id="accounts.create-submit"
             onClick={handleSubmit}
             disabled={saving || !canSubmit}
-            className="rounded-lg bg-cafe-accent px-5 py-2 text-sm font-semibold text-white transition hover:bg-cafe-accent-hover disabled:opacity-50"
+            className="rounded-lg bg-cafe-accent px-5 py-2 text-sm font-semibold text-[var(--cafe-surface)] transition hover:bg-cafe-accent-hover disabled:opacity-50"
           >
             {saving ? '保存中...' : '保存'}
           </button>

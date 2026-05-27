@@ -110,7 +110,9 @@ export function ProjectSetupCard({
               className="flex-shrink-0 object-contain"
             />
             <div className="flex-1 min-w-0">
-              <p className={`text-sm font-medium ${state === 'done' ? 'text-green-800' : 'text-conn-amber-text'}`}>
+              <p
+                className={`text-sm font-medium ${state === 'done' ? 'text-conn-emerald-text' : 'text-conn-amber-text'}`}
+              >
                 项目{' '}
                 <code
                   className={`px-1 py-0.5 rounded text-xs ${state === 'done' ? 'bg-conn-green-bg' : 'bg-conn-amber-bg'}`}
@@ -151,7 +153,7 @@ export function ProjectSetupCard({
           />
           <div>
             <p className="text-sm font-medium text-cafe-black">发现了一片新大陆！</p>
-            <p className="text-xs text-gray-500 mt-0.5">
+            <p className="text-xs text-cafe-muted mt-0.5">
               项目 <code className="px-1 py-0.5 bg-cafe-surface rounded text-micro">{dirName}</code>{' '}
               {isEmptyDir ? '是空目录，' : ''}需要初始化后猫猫才能工作。
             </p>
@@ -183,7 +185,7 @@ export function ProjectSetupCard({
               />
             )}
 
-            <p className="text-xs text-gray-500 font-medium">请选择你的开荒方式：</p>
+            <p className="text-xs text-cafe-muted font-medium">请选择你的开荒方式：</p>
 
             {/* Option 1: Clone (recommended) */}
             {isEmptyDir && gitAvailable && !isGitRepo && (
@@ -197,7 +199,7 @@ export function ProjectSetupCard({
                     </span>
                   </div>
                 </div>
-                <p className="text-xs text-gray-500 mb-3 ml-8">将现有的代码宝藏搬到新营地，包含完整历史记录。</p>
+                <p className="text-xs text-cafe-muted mb-3 ml-8">将现有的代码宝藏搬到新营地，包含完整历史记录。</p>
                 <div className="flex gap-2 ml-8">
                   <input
                     type="text"
@@ -206,7 +208,7 @@ export function ProjectSetupCard({
                     onCompositionStart={ime.onCompositionStart}
                     onCompositionEnd={ime.onCompositionEnd}
                     placeholder="https:// 或 git@..."
-                    className="flex-1 text-xs px-3 py-2 rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-1 focus:ring-cafe-accent"
+                    className="flex-1 text-xs px-3 py-2 rounded-lg border border-[var(--console-border-soft)] bg-cafe-surface-canvas focus:outline-none focus:ring-1 focus:ring-cafe-accent"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && ime.isComposing()) {
                         e.preventDefault();
@@ -219,7 +221,7 @@ export function ProjectSetupCard({
                     type="button"
                     onClick={() => handleSetup('clone')}
                     disabled={!cloneUrl.trim()}
-                    className="min-w-[6.5rem] px-4 py-2 rounded-lg bg-cafe-accent hover:bg-cafe-interactive text-white text-xs font-medium transition-colors disabled:opacity-40"
+                    className="min-w-[6.5rem] px-4 py-2 rounded-lg bg-cafe-accent hover:bg-cafe-interactive text-[var(--cafe-surface)] text-xs font-medium transition-colors disabled:opacity-40"
                   >
                     立即拉取
                   </button>
@@ -234,12 +236,12 @@ export function ProjectSetupCard({
                   <HubIcon name="terminal" className="h-5 w-5 text-cafe-accent" />
                   <div className="flex-1">
                     <span className="text-sm font-semibold text-cafe-black">初始化全新项目</span>
-                    <p className="text-xs text-gray-500 mt-0.5">从零开始，为你铺设标准的协作规则和猫砂盆。</p>
+                    <p className="text-xs text-cafe-muted mt-0.5">从零开始，为你铺设标准的协作规则和猫砂盆。</p>
                   </div>
                   <button
                     type="button"
                     onClick={() => handleSetup('init')}
-                    className="min-w-[6.5rem] px-4 py-2 rounded-lg bg-cafe-accent hover:bg-cafe-interactive text-white text-xs font-medium transition-colors"
+                    className="min-w-[6.5rem] px-4 py-2 rounded-lg bg-cafe-accent hover:bg-cafe-interactive text-[var(--cafe-surface)] text-xs font-medium transition-colors"
                   >
                     初始化
                   </button>
@@ -255,14 +257,14 @@ export function ProjectSetupCard({
                   <span className="text-sm font-semibold text-cafe-black">
                     {isGitRepo ? '初始化协作配置' : '跳过 Git，仅初始化协作'}
                   </span>
-                  <p className="text-xs text-gray-500 mt-0.5">
+                  <p className="text-xs text-cafe-muted mt-0.5">
                     {isGitRepo ? '已检测到 Git，仅需铺设协作规则。' : '无版本控制，时光回溯和代码审查功能将不可用。'}
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => handleSetup('skip')}
-                  className="min-w-[6.5rem] px-4 py-2 rounded-lg bg-cafe-accent hover:bg-cafe-interactive text-white text-xs font-medium transition-colors"
+                  className="min-w-[6.5rem] px-4 py-2 rounded-lg bg-cafe-accent hover:bg-cafe-interactive text-[var(--cafe-surface)] text-xs font-medium transition-colors"
                 >
                   {isGitRepo ? '初始化' : '跳过'}
                 </button>
@@ -270,7 +272,7 @@ export function ProjectSetupCard({
             </div>
 
             {/* Explanation */}
-            <p className="text-micro text-gray-400 px-1 mt-1">
+            <p className="text-micro text-cafe-muted px-1 mt-1">
               初始化将写入协作规则（CLAUDE.md 等）、Skills 链接和方法论模板。已有文件不会被覆盖。
             </p>
           </div>
