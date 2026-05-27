@@ -295,7 +295,7 @@ describe('SkillsContent', () => {
     expect(body.scope).toBe('global');
   });
 
-  it('renders plugin-owned skills as readonly and routes management to plugins', async () => {
+  it('renders plugin-owned skills with same controls as regular skills', async () => {
     mockBothApis(undefined, {
       ...capabilitiesPayload,
       items: capabilitiesPayload.items.map((item) =>
@@ -308,24 +308,18 @@ describe('SkillsContent', () => {
     const cards = Array.from(container.querySelectorAll('.settings-resource-card'));
     const pluginCard = cards.find((card) => card.textContent?.includes('browser-preview'));
     expect(pluginCard).toBeTruthy();
-    expect(pluginCard?.textContent).toContain('由插件 preview-plugin 管理');
 
+    // Plugin skill has same toggle as regular skills — not disabled
     const pluginToggle = pluginCard?.querySelector('.settings-resource-toggle') as HTMLButtonElement | null;
-    expect(pluginToggle?.disabled).toBe(true);
-    expect(pluginToggle?.className).toContain('bg-[var(--console-border-soft)]');
-    expect(pluginToggle?.className).not.toContain('bg-[var(--cafe-accent');
-    expect(pluginCard?.querySelector('a[href="/settings?s=plugins"]')).toBeTruthy();
+    expect(pluginToggle).toBeTruthy();
+    expect(pluginToggle?.disabled).not.toBe(true);
 
+    // Clicking toggle fires the same PATCH as regular skills
     mockFetch.mockClear();
     mockBothApis();
 
     await act(async () => {
       pluginToggle?.click();
-      (
-        Array.from(pluginCard?.querySelectorAll('button') ?? []).find((button) =>
-          button.textContent?.includes('browser-preview'),
-        ) as HTMLButtonElement | undefined
-      )?.click();
     });
     await flushEffects();
 
@@ -333,8 +327,23 @@ describe('SkillsContent', () => {
       mockFetch.mock.calls.some(
         (c: unknown[]) => String(c[0]) === '/api/capabilities' && (c[1] as { method?: string })?.method === 'PATCH',
       ),
-    ).toBe(false);
-    expect(mockFetch.mock.calls.some((c: unknown[]) => String(c[0]).startsWith('/api/rules/skill/'))).toBe(false);
+    ).toBe(true);
+
+    // Preview click works — fires skill preview fetch
+    mockFetch.mockClear();
+    mockBothApis();
+
+    const previewButton = Array.from(pluginCard?.querySelectorAll('button') ?? []).find((button) =>
+      button.textContent?.includes('browser-preview'),
+    ) as HTMLButtonElement | undefined;
+    expect(previewButton?.disabled).not.toBe(true);
+
+    await act(async () => {
+      previewButton?.click();
+    });
+    await flushEffects();
+
+    expect(mockFetch.mock.calls.some((c: unknown[]) => String(c[0]).startsWith('/api/rules/skill/'))).toBe(true);
   });
 
   it('per-cat toggle posts capabilityType skill with scope cat and catId', async () => {
