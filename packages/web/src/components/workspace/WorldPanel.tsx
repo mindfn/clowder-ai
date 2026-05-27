@@ -73,7 +73,7 @@ export function WorldPanel({ worldId, apiBase = '' }: WorldPanelProps) {
               onClick={() => setMode(m)}
               className={`px-2 py-0.5 rounded text-xs transition-colors ${
                 mode === m
-                  ? 'bg-cafe-primary text-white'
+                  ? 'bg-cafe-primary text-[var(--cafe-surface)]'
                   : 'bg-cafe-surface hover:bg-cafe-primary/10 text-cafe-secondary'
               }`}
             >

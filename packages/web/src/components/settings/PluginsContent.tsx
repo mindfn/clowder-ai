@@ -22,6 +22,7 @@ export function PluginsContent() {
           style={{ textAlign: 'left' }}
           onClick={() => setExpandedId(expandedId === 'github' ? null : 'github')}
         >
+          {/* eslint-disable-next-line cafe/no-hardcoded-colors -- GitHub brand near-black (#24292e), fixed brand identity */}
           <div className={settingsResourceAvatarClass} style={{ backgroundColor: '#24292e' }}>
             <span style={{ color: 'var(--cafe-surface)' }}>
               <HubIcon name="key" className="h-5 w-5" />

@@ -1,23 +1,25 @@
 import { hexToRgba } from '@/lib/color-utils';
 
-// Neutral gray fallback when a session belongs to a cat that's no longer in
-// cat-config.json (legacy session, removed cat). Tailwind gray-400 so it sits
-// between the active-status indicator and the surface tones.
 const FALLBACK_PRIMARY = '#9CA3AF';
 const FALLBACK_SECONDARY = '#E5E7EB';
 
 export interface SessionColors {
-  border: string;
   badgeBg: string;
   badgeText: string;
+  /** Per-cat tinted card shadow — gives each cat visual identity on session cards. */
+  cardShadow: string;
 }
 
-export function deriveSessionColors(primary: string | undefined, secondary: string | undefined): SessionColors {
+export function deriveSessionColors(primary?: string, secondary?: string): SessionColors {
   const p = primary ?? FALLBACK_PRIMARY;
   const s = secondary ?? FALLBACK_SECONDARY;
+  // F056: badge 背景用实色（alpha=1）。半透明背景在 dark 模式深色卡片上
+  // 会混色塌缩、文字几乎不可读 —— 实色让 badge 在 light/dark 都清晰。
+  const tint = hexToRgba(p, 0.12);
+  const soft = hexToRgba(p, 0.06);
   return {
-    border: hexToRgba(p, 0.4),
-    badgeBg: s,
+    badgeBg: hexToRgba(s, 1),
     badgeText: p,
+    cardShadow: `0 2px 8px ${tint}, 0 0 2px ${soft}`,
   };
 }

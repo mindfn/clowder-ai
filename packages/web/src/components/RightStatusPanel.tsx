@@ -18,11 +18,8 @@ import {
   modeLabel,
   statusLabel,
   statusTone,
-  truncateId,
 } from './status-helpers';
 import { CatInvocationTime, CollapsibleIds } from './status-panel-parts';
-
-const SIDEBAR_CARD = settingsResourceCardClass;
 
 export interface RightStatusPanelProps {
   intentMode: IntentMode;
@@ -39,8 +36,10 @@ export interface RightStatusPanelProps {
     evidence: number;
     followup: number;
   };
-  /** Panel width in px (clowder-ai#28: drag-to-resize). Falls back to 288 (w-72). */
+  /** Panel width in px (clowder-ai#28: drag-to-resize). Falls back to 304. */
   width?: number;
+  /** Allow tests to render history section expanded (SSR default: collapsed). */
+  initialHistoryOpen?: boolean;
 }
 
 /* ── Cat invocation card (shared between active/history) ──── */
@@ -60,18 +59,18 @@ function CatInvocationCard({
   const dotColor = cat?.color.primary ?? 'var(--console-cat-fallback)';
   return (
     <div className="text-xs">
-      <div className="flex items-center gap-1.5 mb-1">
+      <div className="flex items-center gap-1.5 mb-1 min-w-0">
         <span
-          className={`inline-block h-2.5 w-2.5 rounded-full ${isActive ? 'animate-pulse' : ''}`}
+          className={`shrink-0 inline-block h-2.5 w-2.5 rounded-full ${isActive ? 'animate-pulse' : ''}`}
           style={{ backgroundColor: dotColor }}
         />
-        <span className="font-medium text-cafe-secondary">{cat ? formatCatName(cat) : catId}</span>
+        <span className="truncate min-w-0 font-medium text-cafe-secondary">{cat ? formatCatName(cat) : catId}</span>
         {inv.sessionSeq !== undefined && (
           <span
-            className={`text-micro px-1 py-0.5 rounded ${
+            className={`shrink-0 text-[10px] px-1 py-0.5 rounded ${
               inv.sessionSealed
                 ? 'bg-conn-amber-bg text-conn-amber-text'
-                : 'bg-[var(--console-field-bg)] text-cafe-secondary'
+                : 'bg-cafe-surface-elevated text-cafe-secondary'
             }`}
             title={inv.sessionSealed ? `会话 #${inv.sessionSeq} 已封存` : `会话 #${inv.sessionSeq}`}
           >
@@ -124,13 +123,13 @@ function ThinkingModeToggle({ threadId }: { threadId: string }) {
   }, [threadId, isDebug, mode, updateLocal]);
 
   return (
-    <div className="flex items-center justify-between">
-      <span>
+    <div className="flex items-center justify-between gap-2 min-w-0">
+      <span className="truncate min-w-0">
         心里话: <span className="font-medium">{isDebug ? '调试' : '游戏'}</span>
       </span>
       <button
         onClick={toggle}
-        className="rounded-full px-3 py-1 text-xs text-cafe-secondary transition-colors hover:text-cafe-accent"
+        className="shrink-0 console-pill rounded-full px-3 py-1 text-[11px] transition-colors hover:text-cafe"
         title={isDebug ? '切换到游戏模式（猫猫互相看不到心里话）' : '切换到调试模式（猫猫互相分享心里话）'}
       >
         {isDebug ? '切换游戏' : '切换调试'}
@@ -205,14 +204,14 @@ function BubbleDisplayToggle({
   }, [threadId, field, next, current, updateLocal, bubbleRestorePending]);
 
   return (
-    <div className="flex items-center justify-between">
-      <span>
+    <div className="flex items-center justify-between gap-2 min-w-0">
+      <span className="truncate min-w-0">
         {label}: <span className="font-medium">{currentLabel}</span>
       </span>
       <button
         onClick={cycle}
         disabled={bubbleRestorePending}
-        className="rounded-full px-3 py-1 text-xs text-cafe-secondary transition-colors hover:text-cafe-accent"
+        className="shrink-0 console-pill rounded-full px-3 py-1 text-[11px] transition-colors hover:text-cafe"
       >
         {bubbleRestorePending ? '恢复中...' : BUBBLE_LABELS[next as keyof typeof BUBBLE_LABELS]}
       </button>
@@ -266,15 +265,15 @@ function RevealWhispersButton({ threadId }: { threadId: string }) {
   }, [threadId, status]);
 
   return (
-    <div className="flex items-center justify-between">
-      <span>悄悄话:</span>
+    <div className="flex items-center justify-between gap-2 min-w-0">
+      <span className="shrink-0">悄悄话:</span>
       {status === 'done' ? (
-        <span className="text-xs text-conn-emerald-text">已揭秘 {revealedCount} 条</span>
+        <span className="shrink-0 text-[11px] text-conn-emerald-text">已揭秘 {revealedCount} 条</span>
       ) : (
         <button
           onClick={handleReveal}
           disabled={status === 'pending'}
-          className="rounded-full px-3 py-1 text-xs text-conn-amber-text hover:opacity-90 transition-colors disabled:opacity-50"
+          className="shrink-0 console-pill rounded-full px-3 py-1 text-[11px] text-conn-amber-text transition-colors hover:opacity-90 disabled:opacity-50"
           title="揭晓本线程所有悄悄话"
         >
           {status === 'pending' ? '揭秘中...' : '揭秘全部'}
@@ -285,6 +284,7 @@ function RevealWhispersButton({ threadId }: { threadId: string }) {
 }
 
 const LOGS_DIR = 'packages/api/data/logs/api';
+const SIDEBAR_CARD = settingsResourceCardClass;
 
 function parseLogFilename(name: string): { date: string; seq: number } | null {
   const m = name.match(/^api\.(\d{4}-\d{2}-\d{2})\.(\d+)\.log$/);
@@ -336,17 +336,15 @@ function RuntimeLogsButton() {
   }, [setRevealPath, setOpenFile]);
 
   return (
-    <section className={`${SIDEBAR_CARD} px-3 py-2`}>
-      <div className="flex items-center justify-between">
-        <h3 className="text-label font-bold text-cafe">运行日志</h3>
-        <button
-          onClick={handleClick}
-          className="text-label font-bold text-cafe transition-colors hover:text-cafe"
-          title="在 Workspace 面板中打开运行日志目录"
-        >
-          查看日志
-        </button>
-      </div>
+    <section className={`${SIDEBAR_CARD} flex items-center justify-between px-3 py-2`}>
+      <h3 className="text-[11px] font-bold text-cafe-secondary">运行日志</h3>
+      <button
+        onClick={handleClick}
+        className="text-[11px] font-bold text-cafe-secondary transition-colors hover:text-cafe"
+        title="在 Workspace 面板中打开运行日志目录"
+      >
+        查看日志
+      </button>
     </section>
   );
 }
@@ -361,21 +359,19 @@ export function RightStatusPanel({
   threadId,
   messageSummary,
   width,
+  initialHistoryOpen = false,
 }: RightStatusPanelProps) {
   // F26: Split into active (working now) vs history (appeared before)
   const { activeCats, historyCats } = useMemo(() => {
     const snapshotCats = collectSnapshotActiveCats(catInvocations);
-    // F194 Phase Z5 AC-Z15 R7 (cloud Codex P2): 跨 panel coherence — ideate mode 下
-    // 也要走 UNION，否则 ParallelStatusBar 显示 union、Right/Mobile panel slot-first
-    // → cat 完成清 slot 后 Right/Mobile 卡片消失，跨面板 active-cat 集合不一致。
-    const active = deriveActiveCats({ targetCats, snapshotCats, activeInvocations, hasActiveInvocation, intentMode });
+    const active = deriveActiveCats({ targetCats, snapshotCats, activeInvocations, hasActiveInvocation });
     const allParticipants = new Set([...active, ...Object.keys(catInvocations)]);
     const history = [...allParticipants].filter((c) => !active.includes(c));
     return { activeCats: active, historyCats: history };
-  }, [targetCats, catInvocations, activeInvocations, hasActiveInvocation, intentMode]);
+  }, [targetCats, catInvocations, activeInvocations, hasActiveInvocation]);
 
   const { getCatById } = useCatData();
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(initialHistoryOpen);
   const [viewSession, setViewSession] = useState<{ id: string; catId?: string } | null>(null);
 
   // Clear session viewer when switching threads
@@ -392,27 +388,28 @@ export function RightStatusPanel({
     <aside
       className="hidden lg:flex flex-col gap-3 overflow-y-auto px-4 py-[18px]"
       data-console-panel="status"
-      style={{ width: width ?? 304, flexShrink: 0, background: 'var(--console-shell-bg)' }}
+      style={{
+        width: width ?? 304,
+        flexShrink: 0,
+        background: 'var(--console-shell-bg)',
+      }}
     >
       <div className="px-0.5 pb-1">
-        <p className="text-sm font-bold text-cafe">状态栏</p>
-        <span className="text-micro text-cafe-secondary">
-          当前模式：<span className="font-medium">{modeLabel(intentMode)}</span>
-        </span>
+        <p className="text-[15px] font-bold text-cafe">状态栏</p>
+        <span className="text-[10px] text-cafe-secondary">当前模式：{modeLabel(intentMode)}</span>
       </div>
 
-      {/* ── Active cats: currently working ──────────────── */}
       <section className={`${SIDEBAR_CARD} p-2.5`}>
-        <h3 className="text-label font-bold text-cafe mb-2">{activeCats.length > 0 ? '当前调用' : '猫猫状态'}</h3>
-        {activeCats.length > 0 ? (
-          <div className="space-y-3">
-            {activeCats.map((catId) => {
+        <h3 className="text-[11px] font-bold text-cafe mb-2">猫猫状态</h3>
+        <div className="space-y-2">
+          {activeCats.length > 0 ? (
+            activeCats.map((catId) => {
               const cat = getCatById(catId);
               const dotColor = cat?.color.primary ?? 'var(--console-cat-fallback)';
               const status = catStatuses[catId] ?? 'pending';
               const inv = catInvocations[catId];
               return (
-                <div key={catId}>
+                <div key={catId} className="console-list-card rounded-xl p-2 shadow-[0_4px_16px_rgba(43,33,26,0.06)]">
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">
                       <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: dotColor }} />
@@ -423,25 +420,32 @@ export function RightStatusPanel({
                   {inv && <CatInvocationCard catId={catId} inv={inv} onCopy={copyText} isActive />}
                 </div>
               );
-            })}
-          </div>
-        ) : (
-          <div className="text-label text-cafe-muted">空闲</div>
-        )}
+            })
+          ) : (
+            <div className="text-[11px] text-cafe-secondary">空闲</div>
+          )}
+        </div>
       </section>
 
-      {/* ── History cats: appeared before but not in current round ── */}
       {historyCats.length > 0 && (
         <section className={`${SIDEBAR_CARD} p-2.5`}>
           <button
             onClick={() => setHistoryOpen((v) => !v)}
-            className="w-full flex items-center justify-between text-label font-bold text-cafe hover:text-cafe"
+            className="flex w-full items-center justify-between text-[11px] font-bold text-cafe hover:text-cafe-secondary"
           >
             <span>历史参与 ({historyCats.length})</span>
-            <span className="text-micro">{historyOpen ? '▲' : '▼'}</span>
+            <svg
+              className={`w-3 h-3 transition-transform ${historyOpen ? 'rotate-180' : ''}`}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M6 9l6 6 6-6" />
+            </svg>
           </button>
           {historyOpen && (
-            <div className="mt-2 space-y-2">
+            <div className="p-2.5 space-y-2">
               {historyCats.map((catId) => {
                 const inv = catInvocations[catId];
                 if (!inv) {
@@ -463,20 +467,16 @@ export function RightStatusPanel({
         </section>
       )}
 
-      {/* ── Message stats (collapsible) ───────────────── */}
       <section className={`${SIDEBAR_CARD} p-2.5`}>
-        <h3 className="text-label font-bold text-cafe mb-2">消息统计</h3>
-        <div className="grid grid-cols-2 gap-2 text-label text-cafe-secondary">
-          <div>总数</div>
-          <div className="text-right font-medium">{messageSummary.total}</div>
-          <div>猫猫消息</div>
-          <div className="text-right font-medium">{messageSummary.assistant}</div>
-          <div>系统消息</div>
-          <div className="text-right font-medium">{messageSummary.system}</div>
-          <div>Evidence</div>
-          <div className="text-right font-medium">{messageSummary.evidence}</div>
-          <div>Follow-up</div>
-          <div className="text-right font-medium">{messageSummary.followup}</div>
+        <h3 className="text-[11px] font-bold text-cafe mb-2">消息统计</h3>
+        <div className="console-list-card rounded-xl p-2.5 shadow-[0_4px_16px_rgba(43,33,26,0.06)] text-[11px] text-cafe-secondary space-y-1">
+          <div>
+            总数 {messageSummary.total} 猫猫消息 {messageSummary.assistant}
+          </div>
+          <div>
+            系统消息 {messageSummary.system} Evidence {messageSummary.evidence}
+          </div>
+          <div>Follow-up {messageSummary.followup}</div>
         </div>
       </section>
 
@@ -489,22 +489,21 @@ export function RightStatusPanel({
       />
 
       <section className={`${SIDEBAR_CARD} p-2.5`}>
-        <h3 className="text-label font-bold text-cafe mb-2">对话信息</h3>
-        <div className="text-label text-cafe-secondary space-y-2">
-          <div>
-            Thread:{' '}
+        <h3 className="text-[11px] font-bold text-cafe mb-2">对话信息</h3>
+        <div className="console-list-card rounded-xl p-2.5 shadow-[0_4px_16px_rgba(43,33,26,0.06)] text-[11px] text-cafe-secondary space-y-1.5">
+          <div className="flex items-baseline gap-1 min-w-0">
+            <span className="shrink-0">Thread:</span>
             <button
-              className="text-cafe-secondary font-mono hover:text-cafe cursor-pointer transition-colors"
+              className="truncate min-w-0 text-cafe-secondary font-mono hover:text-cafe cursor-pointer transition-colors"
               title={`点击复制: ${threadId}`}
               onClick={() => copyText(threadId)}
             >
-              {truncateId(threadId, 12)}
+              {threadId}
             </button>
           </div>
           <BubbleDisplayToggle threadId={threadId} label="Thinking" field="bubbleThinking" />
           <BubbleDisplayToggle threadId={threadId} label="CLI 气泡" field="bubbleCli" />
           <ThinkingModeToggle threadId={threadId} />
-
           <RevealWhispersButton threadId={threadId} />
         </div>
       </section>
@@ -517,7 +516,6 @@ export function RightStatusPanel({
         onCloseSession={() => setViewSession(null)}
       />
 
-      {/* ── F130: Runtime logs quick-access ────────────── */}
       <RuntimeLogsButton />
     </aside>
   );

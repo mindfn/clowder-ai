@@ -27,7 +27,7 @@ const MESSAGES: Record<1 | 2 | 3, { catId: string; nickname: string; text: strin
 
 const LEVEL_STYLE: Record<1 | 2 | 3, { border: string; bg: string; title: string }> = {
   1: { border: 'border-conn-amber-ring', bg: 'bg-conn-amber-bg', title: '休息时间到啦！' },
-  2: { border: 'border-orange-400', bg: 'bg-orange-50', title: '猫猫们有点担心你了！' },
+  2: { border: 'border-orange-400', bg: 'bg-[var(--semantic-warning-surface)]', title: '猫猫们有点担心你了！' },
   3: { border: 'border-conn-red-ring', bg: 'bg-conn-red-bg', title: '三猫紧急拦截！' },
 };
 
@@ -181,7 +181,7 @@ export function BrakeModal() {
             type="button"
             onClick={() => checkin('rest')}
             disabled={submitting}
-            className="w-full py-2.5 rounded-xl text-sm font-medium text-white bg-conn-green-text hover:bg-conn-green-hover transition-colors disabled:opacity-50"
+            className="w-full py-2.5 rounded-xl text-sm font-medium text-[var(--cafe-surface)] bg-conn-green-text hover:bg-conn-green-hover transition-colors disabled:opacity-50"
           >
             立刻休息（5 分钟）
           </button>
@@ -189,7 +189,7 @@ export function BrakeModal() {
             type="button"
             onClick={() => checkin('wrap_up')}
             disabled={submitting}
-            className="w-full py-2.5 rounded-xl text-sm font-medium text-white bg-amber-500 hover:bg-amber-600 transition-colors disabled:opacity-50"
+            className="w-full py-2.5 rounded-xl text-sm font-medium text-[var(--cafe-surface)] bg-[var(--semantic-warning)] hover:opacity-90 transition-colors disabled:opacity-50"
           >
             收尾（10 分钟）
           </button>

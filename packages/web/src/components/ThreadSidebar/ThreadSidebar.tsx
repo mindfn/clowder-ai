@@ -1152,7 +1152,7 @@ function DeleteConfirmDialog({
           <button
             onClick={onConfirm}
             disabled={!confirmed}
-            className={`px-3 py-1.5 text-sm rounded-lg text-white transition-colors ${
+            className={`px-3 py-1.5 text-sm rounded-lg text-[var(--cafe-surface)] transition-colors ${
               isSystem
                 ? 'bg-conn-red-text hover:bg-conn-red-hover disabled:bg-conn-red-ring disabled:cursor-not-allowed'
                 : 'bg-conn-amber-text hover:bg-conn-amber-hover'
