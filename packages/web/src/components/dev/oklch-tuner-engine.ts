@@ -298,14 +298,22 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
 
   return [
     accent,
+    /* F056: --cat-{tier}-l/cmul gradient feeds cat-persona-tokens.css's
+     * per-slug derivation formulas (and CatHueInjector's dynamic stylesheet),
+     * so all cats follow Tuner uniformly while each keeps its own hue/chroma.
+     * The old per-slug `catBlk` hardcoded oklch(L Cmul·c hue) which would
+     * shadow the new var-based formulas, so it's intentionally removed. */
     catGrads(p.light, false),
     catGrads(p.dark, true),
     surf(p.light.elev, false),
     surf(p.dark.elev, true),
-    catBlk(p.light, false),
-    catBlk(p.dark, true),
-    accentPri(false),
-    accentPri(true),
+    /* F056 (铲屎官 2026-05-28 architecture clarification): bubble/primary
+     * should derive from each cat's own hue/chroma (not be flattened to a
+     * single --cafe-accent). The per-slug --color-{slug}-bubble in
+     * cat-persona-tokens.css already does this via --cat-bubble-l/cmul gradient,
+     * so the accentPri override that forced bubble=cafe-accent is removed.
+     * catTxt kept: cat-name labels (small text next to avatars) still use a
+     * unified green-neutral tone (catTextH/L/C), not per-cat hue. */
     catTxt(false),
     catTxt(true),
     drv(p.light, false),
