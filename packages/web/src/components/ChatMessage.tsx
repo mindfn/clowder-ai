@@ -4,7 +4,7 @@ import type { CSSProperties } from 'react';
 import { type CatData, formatCatName } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { useTts } from '@/hooks/useTts';
-import { catColorMix, catColorVar, catSlug } from '@/lib/cat-slug';
+import { catColorVar, catSlug } from '@/lib/cat-slug';
 import { hexToOklch } from '@/lib/color-utils';
 import { getMentionRe, getMentionToCat } from '@/lib/mention-highlight';
 import { parseDirection } from '@/lib/parse-direction';
@@ -256,7 +256,6 @@ export function ChatMessage({ message, getCatById, onEditCat }: ChatMessageProps
 
   if (isUser) {
     const coCreatorPrimary = coCreator.color?.primary ?? '#815b5b';
-    const coCreatorSecondary = coCreator.color?.secondary ?? '#FFDDD2';
     /* F056: cocreator slug-keyed (cocreator is in SLUGS, has its own per-cat
      * --color-cocreator-surface in cat-persona-tokens.css that follows the
      * shared --cat-surface-l/cmul gradient — same Tuner control surface as
@@ -373,9 +372,7 @@ export function ChatMessage({ message, getCatById, onEditCat }: ChatMessageProps
        * msg-chroma come from the CSS var defaults in cat-persona-tokens.css. */
       className="group flex gap-2 mb-4 items-start cat-persona-derived"
       style={
-        catStyle
-          ? ({ '--msg-hue': catStyle.msgHue, '--msg-chroma': catStyle.msgChroma } as CSSProperties)
-          : undefined
+        catStyle ? ({ '--msg-hue': catStyle.msgHue, '--msg-chroma': catStyle.msgChroma } as CSSProperties) : undefined
       }
     >
       {catData && (

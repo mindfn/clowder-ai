@@ -128,7 +128,10 @@ function CatRow({
         }}
       />
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-semibold flex items-center gap-1.5" style={{ color: catColorVar(cat.id, 'primary') }}>
+        <div
+          className="text-sm font-semibold flex items-center gap-1.5"
+          style={{ color: catColorVar(cat.id, 'primary') }}
+        >
           {formatCatName(cat)}
           {isSelected && (
             <svg className="w-3.5 h-3.5 text-conn-amber-text shrink-0" viewBox="0 0 20 20" fill="currentColor">
