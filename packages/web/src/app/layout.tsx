@@ -11,6 +11,7 @@ import { ConfirmProvider } from '@/components/useConfirm';
 import '@xterm/xterm/css/xterm.css';
 import './theme-tokens.css';
 import './cat-persona-tokens.css';
+import './cat-persona-derived.css';
 import './connector-tokens.css';
 import './theme-extras.css';
 import './globals.css';
