@@ -23,6 +23,34 @@ import { TunerExtraSections } from './oklch-tuner-extra';
 import { Slider } from './oklch-tuner-slider';
 import { PaletteIcon } from '../ThemeMenu';
 
+/* ── Section header SVG icons (replace emoji per maintainer feedback) ── */
+const IC = 'w-3 h-3 shrink-0';
+function LayersIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={IC}>
+      <title>页面层次</title>
+      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function BubbleIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={IC}>
+      <title>气泡</title>
+      <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function TagIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={IC}>
+      <title>标签</title>
+      <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="7" cy="7" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 /* Only surface (bubble bg) and inset (thinking block) are user-tunable;
  * primary → accent, text → unified section below, ring → unused token */
 const TUNER_TIERS: readonly CatTier[] = ['surface', 'inset'];
@@ -182,7 +210,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
 
         {/* ── 2. Surface elevation ── */}
         <div className="space-y-1 pb-2 border-b border-[var(--console-border-soft)]">
-          <div className="text-[10px] text-cafe-muted font-bold">📐 页面层次 ({mode})</div>
+          <div className="text-[10px] text-cafe-muted font-bold flex items-center gap-1"><LayersIcon /> 页面层次 ({mode})</div>
           {SURF_KEYS.map((k) => (
             <div key={k} className="flex items-center gap-1.5">
               <div
@@ -207,7 +235,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
 
         {/* ── 3. Bubble / inset tier (L/Cmul 派生) ── */}
         <div className="space-y-1.5 pb-2 border-b border-[var(--console-border-soft)]">
-          <div className="text-[10px] text-cafe-muted font-bold">💬 气泡/嵌套 ({mode})</div>
+          <div className="text-[10px] text-cafe-muted font-bold flex items-center gap-1"><BubbleIcon /> 气泡/嵌套 ({mode})</div>
           {TUNER_TIERS.map((tier) => (
             <div key={tier} className="space-y-0.5">
               <div className="flex items-center gap-2 pl-4">
@@ -266,7 +294,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
         {/* ── 5. Cat name text (unified H/L/C — 所有猫共用，不跟成员主题色) ── */}
         <div className="space-y-0.5 pb-2 border-b border-[var(--console-border-soft)]">
           <div className="flex items-center gap-2">
-            <div className="text-[10px] text-cafe-muted font-bold">🏷️ 猫名文字 (统一)</div>
+            <div className="text-[10px] text-cafe-muted font-bold flex items-center gap-1"><TagIcon /> 猫名文字 (统一)</div>
             <div
               className="w-4 h-4 rounded border border-[var(--console-border-soft)] shrink-0 ml-auto"
               style={{
