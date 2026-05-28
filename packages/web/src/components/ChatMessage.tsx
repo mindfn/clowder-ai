@@ -433,7 +433,11 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
   return (
     <div
       data-message-id={message.id}
-      className={`group flex gap-2 mb-4 items-start${catStyle ? ' cat-persona-derived' : ''}`}
+      /* F056: always add cat-persona-derived so nested ThinkingContent/CliOutputBlock
+       * have valid --cat-msg-{inset,inset-text,...} tokens even when catData is
+       * undefined (e.g. stream messages without resolved catId). Fallback msg-hue/
+       * msg-chroma come from the CSS var defaults in cat-persona-tokens.css. */
+      className="group flex gap-2 mb-4 items-start cat-persona-derived"
       style={
         catStyle
           ? ({ '--msg-hue': catStyle.msgHue, '--msg-chroma': catStyle.msgChroma } as CSSProperties)
