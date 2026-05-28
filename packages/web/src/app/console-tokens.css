@@ -11,15 +11,17 @@
 :root {
   /* ============ Structural surfaces — cafe-surface 4 档（铲屎官指定梯度） ============
    * 基于 develop_base 实测 hex 反推 OKLCH：
-   *   sunken   #EEE5DB / dark 0.12 → ActivityBar / code / field
-   *   surface  #F6EFE7 / dark 0.18 → ThreadSidebar / RightPanel (:root)
-   *   elevated #FCFAF8 / dark 0.24 → Chat 主区
-   *   canvas   #FFFDFB / dark 0.30 → Card 浮起
-   * Dark: panel-bg 取 surface/elevated 中点 ~0.21（见底部 override） */
+   *   sunken   (层1·基底) → ActivityBar / code / field
+   *   surface  (层2·承载) → ThreadSidebar / RightPanel
+   *   elevated (层3·抬升) → Chat 主区
+   *   canvas   (层4·浮出) → Card 浮起
+   * Light/Dark 统一映射，不再镜像（铲屎官 2026-05-28 改版）。 */
   --console-shell-bg: var(--cafe-surface-elevated);
   --console-panel-bg: var(--cafe-surface);
   --console-card-bg: var(--cafe-surface-canvas);
-  --console-card-soft-bg: var(--cafe-surface-sunken);
+  /* Search/trash derive from base (层2) with fixed darker offset, NOT from sunken.
+   * This decouples them from the sunken slider — they track the thread panel. */
+  --console-card-soft-bg: color-mix(in oklch, var(--cafe-surface), black 5%);
   --console-code-bg: var(--cafe-surface-sunken);
   --console-pill-bg: var(--cafe-surface);
   --console-field-bg: var(--cafe-surface-sunken);
@@ -158,18 +160,15 @@
 }
 
 /* ============================================================
- * Dark override — 三栏镜像 light（铲屎官 2026-05-22 拍板）
+ * Dark override — 统一三栏映射（铲屎官 2026-05-28 改版）
  *
- * Light:  ActivityBar(sunken 最深) → ThreadSidebar(surface) → Chat(elevated 最浅)
- * Dark:   镜像「原本越亮越暗」—— ActivityBar 最浅、Chat 最深：
- *         rail ↔ shell 对调；panel 不覆盖（= :root surface，居中）；
- *         card 不覆盖（= canvas，浮起最浅，不参与 mirror）。
- * rail 底变亮后，活跃 nav 项浮到 canvas 才能 pop。
+ * Light/Dark 共用同一 token→区域 映射，不再镜像：
+ *   sunken (层1·基底)  → ActivityBar / code field
+ *   surface (层2·承载) → ThreadSidebar / RightPanel
+ *   elevated (层3·抬升) → Chat 主区
+ *   canvas (层4·浮出)  → Card 浮起
  * ============================================================ */
 [data-theme="dark"] {
-  --console-rail-bg: var(--cafe-surface-elevated); /* ActivityBar → 三栏最浅 */
-  --console-shell-bg: var(--cafe-surface-sunken); /* Chat 主区 → 最深 */
-  --console-rail-active: var(--cafe-surface-canvas); /* 活跃 nav 项浮起 pop */
   /* Dark rail shadow — deeper, no brown tint to avoid muddy look on dark surfaces */
   --console-rail-shadow: 0 5px 14px oklch(0 0 0 / 0.4), inset 0 1px 0 oklch(1 0 0 / 0.08);
 

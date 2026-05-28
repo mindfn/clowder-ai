@@ -216,13 +216,13 @@
   --avatar-fallback-7: oklch(0.55 0.13 300);
   --avatar-fallback-8: oklch(0.55 0.13 345);
 
-  /* --- Surface 四档（dark: L 反转，6 点等间距 0.12→0.18→0.24→0.30） ---
-   * sunken=0.12 / surface=0.18 / elevated=0.24 / canvas=0.30
-   * 空间映射见 console-tokens.css（dark 模式 shell/panel 翻转） */
+  /* --- Surface 四档（dark L: 6 点等间距 0.12→0.18→0.24→0.30）---
+   * Chroma unified with light (0.015/0.012/0.005/0.003) — no dark-specific override.
+   * 空间映射见 console-tokens.css（light/dark 统一，不再镜像） */
   --cafe-surface-sunken: oklch(0.12 0.015 var(--accent-hue));
-  --cafe-surface: oklch(0.18 0.015 var(--accent-hue));
-  --cafe-surface-elevated: oklch(0.24 0.012 var(--accent-hue));
-  --cafe-surface-canvas: oklch(0.3 0.008 var(--accent-hue));
+  --cafe-surface: oklch(0.18 0.012 var(--accent-hue));
+  --cafe-surface-elevated: oklch(0.24 0.005 var(--accent-hue));
+  --cafe-surface-canvas: oklch(0.3 0.003 var(--accent-hue));
 
   /* --- Cafe semantic shortcuts dark（重新映射 Neutral） --- */
   --cafe-text: var(--neutral-900);

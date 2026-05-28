@@ -107,8 +107,8 @@ export const TIER_LABELS: Record<CatTier | 'insetText' | 'msgText', string> = {
 };
 
 export const SURF_LABELS: Record<keyof SurfaceP, string> = {
-  sunken: '层 1 · 最深',
-  base: '层 2 · 基础',
+  sunken: '层 1 · 基底',
+  base: '层 2 · 承载',
   elevated: '层 3 · 抬升',
   canvas: '层 4 · 浮出',
 };
@@ -193,9 +193,10 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
   };
 
   // 2. Surface elevation — hue follows accent (KD-34 rev: surfaces tint with brand)
+  //    Chroma unified across light/dark so Tuner behavior is consistent in both modes.
   const surf = (e: SurfaceP, dark: boolean) => {
     const sel = dark ? '[data-theme="dark"]' : ':root';
-    const ch = dark ? [0.015, 0.015, 0.012, 0.008] : [0.015, 0.012, 0.005, 0.003];
+    const ch = [0.015, 0.012, 0.005, 0.003]; // unified — no dark-specific chroma
     const h = p.accentHue;
     return (
       `${sel}{` +
