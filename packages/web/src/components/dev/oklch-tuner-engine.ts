@@ -74,8 +74,6 @@ export interface HcOverride {
 /* ── Constants ── */
 export const CAT_TIERS = ['primary', 'surface', 'text', 'inset', 'ring'] as const;
 export type CatTier = (typeof CAT_TIERS)[number];
-// biome-ignore format: compact slug list (file-size limit)
-const SLUGS = ['opus','sonnet','opus-45','opus-47','codex','gpt52','spark','gemini','gemini25','kimi','dare','cocreator'] as const;
 export const SURF_KEYS = ['sunken', 'base', 'elevated', 'canvas'] as const;
 export const SEMANTIC_KEYS = ['critical', 'success', 'warning', 'info'] as const;
 export type SemanticKey = (typeof SEMANTIC_KEYS)[number];
@@ -199,6 +197,10 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
     const sel = dark ? '[data-theme="dark"]' : ':root';
     /* Defensive: old persisted data may lack msgText */
     const msg = m.msgText ?? (dark ? INIT.dark.msgText : INIT.light.msgText);
+    /* Cat name text: unified H/L/C across all cats. CSS formulas in
+     * cat-persona-tokens.css consume --cat-name-l/c/h (not per-cat hue).
+     * This avoids fragile source-order override of final --color-{slug}-text. */
+    const nameL = dark ? p.catTextDarkL : p.catTextLightL;
     return (
       `${sel}{` +
       `--cat-bubble-l:${m.primary.L};--cat-bubble-cmul:${m.primary.Cmul};` +
@@ -207,7 +209,8 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
       `--cat-ring-l:${m.ring.L};--cat-ring-cmul:${m.ring.Cmul};` +
       `--cat-inset-l:${m.inset.L};--cat-inset-cmul:${m.inset.Cmul};` +
       `--cat-inset-text-l:${m.insetText.L};--cat-inset-text-c:${m.insetText.C};` +
-      `--cat-msg-text-l:${msg.L};--cat-msg-text-c:${msg.C};}`
+      `--cat-msg-text-l:${msg.L};--cat-msg-text-c:${msg.C};` +
+      `--cat-name-l:${nameL};--cat-name-c:${p.catTextC};--cat-name-h:${p.catTextH};}`
     );
   };
 
@@ -225,15 +228,7 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
     );
   };
 
-  // 3. Unified cat name text (H/L/C — all cats share, not per-cat hue derived)
-  const catTxt = (dark: boolean) => {
-    const l = dark ? p.catTextDarkL : p.catTextLightL;
-    const v = `oklch(${l} ${p.catTextC} ${p.catTextH})`;
-    const sel = dark ? '[data-theme="dark"]' : ':root';
-    return `${sel}{${SLUGS.map((s) => `--color-${s}-text:${v};--color-${s}-dark:${v};`).join('')}}`;
-  };
-
-  // 4. Runtime message derived (.cat-persona-derived)
+  // 3. Runtime message derived (.cat-persona-derived)
   const mH = hc.on ? `${hc.hue}` : 'var(--msg-hue,297)';
   const mC = hc.on ? `${hc.chroma}` : 'var(--msg-chroma,0.1)';
   const drv = (m: ModeP, dark: boolean) => {
@@ -297,9 +292,6 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
     catGrads(p.dark, true),
     surf(p.light.elev, false),
     surf(p.dark.elev, true),
-    // catTxt: unified green-neutral cat-name labels (not per-cat hue)
-    catTxt(false),
-    catTxt(true),
     drv(p.light, false),
     drv(p.dark, true),
     force,
