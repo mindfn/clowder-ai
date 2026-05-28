@@ -359,7 +359,9 @@ describe('F190 visual contract — no hard borders in card/panel components', ()
     expect(tokens.fontSizePx).toHaveProperty('compact');
     expect(tokens.fontSizePx).toHaveProperty('label');
     expect(config).toContain("require('./src/styles/typography-tokens.json')");
-    expect(config).toContain('fontSize: typographyTokens.fontSize');
+    /* F056: fontSize expanded to object with spread + caption alias;
+       verify the spread wiring is intact (not the old direct assignment). */
+    expect(config).toContain('...typographyTokens.fontSize');
     expect(config).toContain('--console-font-');
     expect(config).toContain('fontSizePx');
     const css = readFileSync(resolve(testDir, '..', '..', 'app', 'console-shell.css'), 'utf8');
