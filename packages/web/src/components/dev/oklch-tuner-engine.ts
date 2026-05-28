@@ -116,18 +116,21 @@ export const NEUTRAL_ROWS: [keyof NeutralP, string][] = [
   ['borderSubtleL', '细线'],
 ];
 
-export const INIT: TunerState = {
-  accentHue: 35,
+/* ── Per-theme INIT defaults (CVO-tuned 2026-05-28) ──
+ * Light and Dark themes have different accent hue, inset/msgText tuning,
+ * surface elevation, and catText color. INIT = INIT_DARK (migration fallback). */
+export const INIT_LIGHT: TunerState = {
+  accentHue: 50,
   accentChroma: 0.12,
   light: {
     primary: { L: 0.62, Cmul: 1.0 },
     surface: { L: 0.9, Cmul: 0.5 },
     text: { L: 0.24, Cmul: 0.8 },
-    inset: { L: 0.3, Cmul: 0.1 },
+    inset: { L: 0.3, Cmul: 0.15 },
     ring: { L: 0.55, Cmul: 1.1 },
-    insetText: { L: 0.85, C: 0.03 },
-    msgText: { L: 0.2, C: 0.005 },
-    elev: { sunken: 0.92, base: 0.95, elevated: 0.985, canvas: 0.996 },
+    insetText: { L: 0.75, C: 0.03 },
+    msgText: { L: 0.3, C: 0.01 },
+    elev: { sunken: 0.9, base: 0.95, elevated: 0.985, canvas: 0.99 },
   },
   dark: {
     primary: { L: 0.68, Cmul: 0.85 },
@@ -147,11 +150,51 @@ export const INIT: TunerState = {
   neutralChroma: 0.005,
   neutralLight: { textL: 0.2, secondaryL: 0.45, mutedL: 0.56, interactiveL: 0.36, borderL: 0.84, borderSubtleL: 0.915 },
   neutralDark: { textL: 0.94, secondaryL: 0.76, mutedL: 0.66, interactiveL: 0.84, borderL: 0.32, borderSubtleL: 0.24 },
-  catTextH: 139,
-  catTextC: 0.005,
-  catTextLightL: 0.24,
+  catTextH: 5,
+  catTextC: 0.025,
+  catTextLightL: 0.15,
   catTextDarkL: 0.88,
 };
+
+export const INIT_DARK: TunerState = {
+  accentHue: 35,
+  accentChroma: 0.12,
+  light: {
+    primary: { L: 0.62, Cmul: 1.0 },
+    surface: { L: 0.9, Cmul: 0.5 },
+    text: { L: 0.24, Cmul: 0.8 },
+    inset: { L: 0.3, Cmul: 0.1 },
+    ring: { L: 0.55, Cmul: 1.1 },
+    insetText: { L: 0.85, C: 0.03 },
+    msgText: { L: 0.2, C: 0.005 },
+    elev: { sunken: 0.92, base: 0.95, elevated: 0.985, canvas: 0.996 },
+  },
+  dark: {
+    primary: { L: 0.68, Cmul: 0.85 },
+    surface: { L: 0.3, Cmul: 0.25 },
+    text: { L: 0.88, Cmul: 0.6 },
+    inset: { L: 0.24, Cmul: 0.1 },
+    ring: { L: 0.7, Cmul: 1.0 },
+    insetText: { L: 0.8, C: 0.02 },
+    msgText: { L: 0.75, C: 0.04 },
+    elev: { sunken: 0.4, base: 0.25, elevated: 0.1, canvas: 0.2 },
+  },
+  // biome-ignore format: compact INIT block
+  semanticLight: { criticalH: 38, successH: 135, warningH: 46, infoH: 209, L: 0.57, C: 0.12, surfL: 0.96, surfC: 0.03 },
+  semanticDark: { criticalH: 25, successH: 145, warningH: 70, infoH: 230, L: 0.7, C: 0.17, surfL: 0.25, surfC: 0.05 },
+  queue: { H: 290, C: 0.1, L: 0.62 },
+  neutralHue: 30,
+  neutralChroma: 0.005,
+  neutralLight: { textL: 0.2, secondaryL: 0.45, mutedL: 0.56, interactiveL: 0.36, borderL: 0.84, borderSubtleL: 0.915 },
+  neutralDark: { textL: 0.94, secondaryL: 0.76, mutedL: 0.66, interactiveL: 0.84, borderL: 0.32, borderSubtleL: 0.24 },
+  catTextH: 35,
+  catTextC: 0.095,
+  catTextLightL: 0.24,
+  catTextDarkL: 0.9,
+};
+
+/** Migration fallback — used by migrateTunerState() to patch missing fields. */
+export const INIT = INIT_DARK;
 
 export const STYLE_ID = 'oklch-tuner-override';
 

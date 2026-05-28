@@ -7,7 +7,7 @@
  * inset = 气泡内嵌套块（Thinking / CLI 折叠块）背景，比 surface 沉一档（KD-29）。
  * 公式（L 档位 / chroma 乘数）：
  *   light: bubble L=0.62 C×1.0 / surface L=0.94 C×0.3 / inset L=0.29 C×0.13 (tintedDark-matched) / ring L=0.55 C×1.1
- *   dark:  bubble L=0.68 C×0.85 / surface L=0.28 C×0.25 / inset L=0.24 C×0.10 / ring L=0.70 C×1.0
+ *   dark:  bubble L=0.68 C×0.85 / surface L=0.30 C×0.25 / inset L=0.24 C×0.10 / ring L=0.70 C×1.0
  *   inset-text: oklch(0.72 0.01 250) — neutral light gray for readability on dark inset backgrounds
  *   text 走中性 --cafe-text（不带猫色相）
  * chroma 乘数校准依据：develop_base hex 原色反算 OKLCH，surface C×0.3 + L=0.94（降 L 让色调显现）。

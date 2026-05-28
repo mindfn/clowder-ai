@@ -9,7 +9,8 @@ import { create } from 'zustand';
 import {
   buildCSS,
   type HcOverride,
-  INIT,
+  INIT_DARK,
+  INIT_LIGHT,
   migrateTunerState,
   STYLE_ID,
   type TunerState,
@@ -22,7 +23,7 @@ const NO_HC: HcOverride = { on: false, hue: 0, chroma: 0 };
 /* Bump when INIT defaults change in a way that user's persisted built-in
  * overrides should be discarded (so they see the new defaults instead of
  * stale tuner edits from an older INIT). Custom themes are preserved. */
-const INIT_VERSION = '2026-05-28-dark-tuned';
+const INIT_VERSION = '2026-05-28-per-theme-init';
 
 export interface ThemePreset {
   id: string;
@@ -161,8 +162,8 @@ export async function restoreFromServer(): Promise<boolean> {
 }
 
 const mkBuiltIn = (): ThemePreset[] => [
-  { id: 'light', name: 'Light', base: 'light', params: structuredClone(INIT), builtIn: true },
-  { id: 'dark', name: 'Dark', base: 'dark', params: structuredClone(INIT), builtIn: true },
+  { id: 'light', name: 'Light', base: 'light', params: structuredClone(INIT_LIGHT), builtIn: true },
+  { id: 'dark', name: 'Dark', base: 'dark', params: structuredClone(INIT_DARK), builtIn: true },
 ];
 
 /* ── Store ── */
@@ -214,7 +215,9 @@ export const useThemeStore = create<ThemeState>((set, get) => {
 
     resetTheme: () => {
       const { activeId: aid, themes } = get();
-      const updated = themes.map((t) => (t.id === aid ? { ...t, params: structuredClone(INIT) } : t));
+      const updated = themes.map((t) =>
+        t.id === aid ? { ...t, params: structuredClone(t.base === 'light' ? INIT_LIGHT : INIT_DARK) } : t,
+      );
       set({ themes: updated });
       writeLS(updated, aid);
     },
