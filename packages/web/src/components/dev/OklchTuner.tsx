@@ -21,6 +21,7 @@ import {
 } from './oklch-tuner-engine';
 import { TunerExtraSections } from './oklch-tuner-extra';
 import { Slider } from './oklch-tuner-slider';
+import { PaletteIcon } from '../ThemeMenu';
 
 /* Only surface (bubble bg) and inset (thinking block) are user-tunable;
  * primary → accent, text → unified section below, ring → unused token */
@@ -114,7 +115,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
         className="flex items-center justify-between px-3 py-2 border-b border-[var(--console-border-soft)] sticky top-0 bg-cafe-surface-sunken z-10 cursor-grab active:cursor-grabbing select-none"
         onPointerDown={onPointerDown}
       >
-        <span className="font-bold text-sm">🎨 OKLCH Tuner — {active.name}</span>
+        <span className="font-bold text-sm flex items-center gap-1"><PaletteIcon className="w-4 h-4 inline-block" /> OKLCH Tuner — {active.name}</span>
         <div className="flex gap-1.5">
           <button
             type="button"
@@ -144,7 +145,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
         {/* ── 1. Accent (accent-hue → ALL buttons/links/highlights) ── */}
         <div className="space-y-1 pb-2 border-b border-[var(--console-border-soft)]">
           <div className="flex items-center gap-2">
-            <div className="text-[10px] text-cafe-muted font-bold">🎨 全局主题色 (按钮/链接/高亮/品牌)</div>
+            <div className="text-[10px] text-cafe-muted font-bold flex items-center gap-1"><PaletteIcon className="w-3 h-3" /> 全局主题色 (按钮/链接/高亮/品牌)</div>
             <div
               className="w-4 h-4 rounded border border-[var(--console-border-soft)] shrink-0 ml-auto"
               style={{ background: `oklch(0.65 ${params.accentChroma} ${params.accentHue})` }}
