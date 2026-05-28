@@ -19,6 +19,37 @@ import {
 } from './oklch-tuner-engine';
 import { Slider } from './oklch-tuner-slider';
 
+/* ── Section header SVG icons (replace emoji per maintainer feedback) ── */
+const IC = 'w-3 h-3 shrink-0';
+function TrafficLightIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={IC}>
+      <title>语义状态色</title>
+      <rect x="6" y="2" width="12" height="20" rx="3" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12" cy="8" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="16" r="1.5" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+function InboxIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={IC}>
+      <title>队列强调色</title>
+      <path d="M22 12h-6l-2 3h-4l-2-3H2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function TypeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={IC}>
+      <title>文字/边框</title>
+      <path d="M4 7V4h16v3M9 20h6M12 4v16" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 interface Props {
   mode: Mode;
   params: TunerState;
@@ -35,7 +66,7 @@ export function TunerExtraSections({ mode, params, onSemantic, onQueue, onNeutra
     <>
       {/* ── 6. Semantic status colors ── */}
       <div className="space-y-1 pb-2 border-b border-[var(--console-border-soft)]">
-        <div className="text-[10px] text-cafe-muted font-bold">🚦 语义状态色 ({mode})</div>
+        <div className="text-[10px] text-cafe-muted font-bold flex items-center gap-1"><TrafficLightIcon /> 语义状态色 ({mode})</div>
         <div className="flex gap-0.5 pl-4">
           {SEMANTIC_KEYS.map((k) => {
             const h = sp[SEMANTIC_H_FIELD[k] as keyof SemanticP] as number;
@@ -98,7 +129,7 @@ export function TunerExtraSections({ mode, params, onSemantic, onQueue, onNeutra
 
       {/* ── 7. Queue accent ── */}
       <div className="space-y-1 pb-2 border-b border-[var(--console-border-soft)]">
-        <div className="text-[10px] text-cafe-muted font-bold">📬 队列强调色</div>
+        <div className="text-[10px] text-cafe-muted font-bold flex items-center gap-1"><InboxIcon /> 队列强调色</div>
         <div className="flex gap-0.5 pl-4">
           {[0, -0.06, 0.34].map((dL, i) => (
             <div
@@ -141,7 +172,7 @@ export function TunerExtraSections({ mode, params, onSemantic, onQueue, onNeutra
 
       {/* ── 8. Text/Border (also drives console tokens via alias) ── */}
       <div className="space-y-1">
-        <div className="text-[10px] text-cafe-muted font-bold">📝 文字/边框 ({mode})</div>
+        <div className="text-[10px] text-cafe-muted font-bold flex items-center gap-1"><TypeIcon /> 文字/边框 ({mode})</div>
         {NEUTRAL_ROWS.map(([f, lbl]) => (
           <div key={f} className="flex items-center gap-1.5 pl-4">
             <div
