@@ -2,9 +2,15 @@
 import { execSync } from 'node:child_process';
 /**
  * F056 — Batch migrate hardcoded Tailwind colors → semantic tokens.
- * Run: node scripts/migrate-hardcoded-colors.mjs
+ * Run: node scripts/migrate-hardcoded-colors.mjs (from anywhere — cwd derived from import.meta.url)
  */
 import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/* Derive packages/web from this script's location so any developer (or CI) can run it. */
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const WEB_ROOT = resolve(SCRIPT_DIR, '..');
 
 // ── Deterministic replacement map (order matters: longer matches first) ──
 const REPLACEMENTS = [
@@ -363,7 +369,7 @@ const DARK_PATTERN = /\bdark:[a-z]+-[a-z]+-[a-z0-9/]+\b\s*/g;
 
 // ── Get file list from lint output ──
 const lintOut = execSync('pnpm --filter @cat-cafe/web lint 2>&1 | grep "cafe/no-hardcoded" -B1 | grep "^\\./"', {
-  cwd: '/Users/lang/workspace/github-lab/clowder-ai-f056-oklch/packages/web',
+  cwd: WEB_ROOT,
   encoding: 'utf8',
   maxBuffer: 1024 * 1024,
 });
@@ -376,7 +382,7 @@ const files = [
       .map((l) => l.trim()),
   ),
 ];
-const basePath = '/Users/lang/workspace/github-lab/clowder-ai-f056-oklch/packages/web';
+const basePath = WEB_ROOT;
 
 let totalReplacements = 0;
 let filesModified = 0;

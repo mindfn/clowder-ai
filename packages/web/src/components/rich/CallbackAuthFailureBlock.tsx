@@ -132,15 +132,15 @@ export function CallbackAuthFailureBlock({ block }: { block: RichCardBlock }) {
 
       <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs" style={{ color: 'var(--cafe-text)' }}>
         <span>
-          <span style={{ color: 'var(--cafe-muted)' }}>TOOL · </span>
+          <span style={{ color: 'var(--cafe-text-muted)' }}>TOOL · </span>
           <span className="font-mono">{meta.tool}</span>
         </span>
         <span>
-          <span style={{ color: 'var(--cafe-muted)' }}>CAT · </span>
+          <span style={{ color: 'var(--cafe-text-muted)' }}>CAT · </span>
           <span className="font-mono">{meta.catId}</span>
         </span>
         <span>
-          <span style={{ color: 'var(--cafe-muted)' }}>WHEN · </span>
+          <span style={{ color: 'var(--cafe-text-muted)' }}>WHEN · </span>
           <span className="font-mono">{formatRelative(meta.failedAt)}</span>
         </span>
       </div>
@@ -184,7 +184,7 @@ export function CallbackAuthFailureBlock({ block }: { block: RichCardBlock }) {
           disabled={hidden || hidePending}
           className="text-xs disabled:cursor-not-allowed"
           style={{
-            color: hidden ? 'var(--semantic-success)' : 'var(--cafe-muted)',
+            color: hidden ? 'var(--semantic-success)' : 'var(--cafe-text-muted)',
             textDecoration: hidden ? 'none' : 'underline',
           }}
           onClick={handleHide}

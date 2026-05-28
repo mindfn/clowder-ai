@@ -363,13 +363,17 @@ export function RightStatusPanel({
   initialHistoryOpen = false,
 }: RightStatusPanelProps) {
   // F26: Split into active (working now) vs history (appeared before)
+  // review-#784 P2 + AC-Z15: pass intentMode so deriveActiveCats preserves the
+  // full targetCats union during ideate rounds (matches ParallelStatusBar /
+  // MobileStatusSheet behavior; without this, finished-cat slots get demoted
+  // to history while the round is still running).
   const { activeCats, historyCats } = useMemo(() => {
     const snapshotCats = collectSnapshotActiveCats(catInvocations);
-    const active = deriveActiveCats({ targetCats, snapshotCats, activeInvocations, hasActiveInvocation });
+    const active = deriveActiveCats({ targetCats, snapshotCats, activeInvocations, hasActiveInvocation, intentMode });
     const allParticipants = new Set([...active, ...Object.keys(catInvocations)]);
     const history = [...allParticipants].filter((c) => !active.includes(c));
     return { activeCats: active, historyCats: history };
-  }, [targetCats, catInvocations, activeInvocations, hasActiveInvocation]);
+  }, [targetCats, catInvocations, activeInvocations, hasActiveInvocation, intentMode]);
 
   const { getCatById } = useCatData();
   const [historyOpen, setHistoryOpen] = useState(initialHistoryOpen);

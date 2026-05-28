@@ -17,6 +17,7 @@ import './globals.css';
 import './console-tokens.css';
 import './console-shell.css';
 import './console-controls.css';
+import './werewolf-theme.css';
 
 export const viewport: Viewport = {
   width: 'device-width',

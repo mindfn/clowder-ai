@@ -129,7 +129,7 @@ export function ThinkingIndicator({ onCancel, threadId }: ThinkingIndicatorProps
               <span className="text-sm font-semibold" style={{ color: 'var(--cafe-text)' }}>
                 {name} 静默等待中… {elapsed}
               </span>
-              <span className="text-xs" style={{ color: 'var(--cafe-secondary)' }}>
+              <span className="text-xs" style={{ color: 'var(--cafe-text-secondary)' }}>
                 {warning.state === 'busy-silent'
                   ? '进程存活且 CPU 活跃，可能正在执行工具或等待 API 响应'
                   : '进程存活，等待响应中'}
@@ -172,7 +172,7 @@ export function ThinkingIndicator({ onCancel, threadId }: ThinkingIndicatorProps
               <span className="text-sm font-semibold" style={{ color: 'var(--cafe-text)' }}>
                 {name} 可能卡住了 — {elapsed} 无输出
               </span>
-              <span className="text-xs" style={{ color: 'var(--cafe-secondary)' }}>
+              <span className="text-xs" style={{ color: 'var(--cafe-text-secondary)' }}>
                 {warning.state === 'idle-silent'
                   ? '进程存活但 CPU 平坦，未检测到工具执行或 API 活动'
                   : '进程可能无响应'}

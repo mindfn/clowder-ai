@@ -192,6 +192,7 @@ module.exports = {
           surface: 'var(--cafe-surface)',
           'surface-elevated': 'var(--cafe-surface-elevated)',
           'surface-sunken': 'var(--cafe-surface-sunken)',
+          'surface-canvas': 'var(--cafe-surface-canvas)',
           accent: 'var(--cafe-accent)',
           'accent-hover': 'var(--cafe-accent-hover)',
           crosspost: 'var(--cafe-crosspost)',
@@ -199,6 +200,7 @@ module.exports = {
           /* F174 D2b-2: cat callback-auth status dot palette (烁烁 visual review). */
           'status-healthy': '#22C55E',
           'status-degraded': '#F59E0B',
+          'status-active': '#3B82F6',
           'status-broken': '#EF4444',
           'status-unknown': '#A89386',
         },
@@ -318,6 +320,17 @@ module.exports = {
           '0%': { backgroundPosition: '-200% 0' },
           '100%': { backgroundPosition: '200% 0' },
         },
+        'pulse-subtle': {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0.75', boxShadow: '0 0 8px rgba(245, 158, 11, 0.3)' },
+        },
+        shake: {
+          '0%, 100%': { transform: 'translateX(0)' },
+          '20%': { transform: 'translateX(-4px)' },
+          '40%': { transform: 'translateX(4px)' },
+          '60%': { transform: 'translateX(-3px)' },
+          '80%': { transform: 'translateX(2px)' },
+        },
       },
       animation: {
         'fade-in': 'fade-in 0.3s ease-out',
@@ -330,6 +343,8 @@ module.exports = {
         'slide-in-right': 'slide-in-right 0.2s ease-out',
         'tree-expand': 'tree-expand 0.15s ease-out',
         shimmer: 'shimmer 1.5s ease-in-out infinite',
+        'pulse-subtle': 'pulse-subtle 2s ease-in-out infinite',
+        shake: 'shake 0.3s ease-in-out',
       },
     },
   },

@@ -35,8 +35,28 @@ interface ThemeState {
 }
 
 /* ── Persistence helpers ── */
+function readNextThemesPreference(): 'light' | 'dark' | null {
+  /* Migration path (review-#784 P2): upgrading users from old ActivityBar theme
+   * toggle have a persisted next-themes value but no `cat-cafe:themes` key yet.
+   * Default activeId to whatever next-themes recorded so we don't silently flip
+   * returning dark users back to light on first load. */
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem('theme');
+    if (raw === 'dark' || raw === 'light') return raw;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function readLS(): { custom: ThemePreset[]; activeId: string; builtInOverrides: Record<string, TunerState> } {
-  const empty = { custom: [] as ThemePreset[], activeId: 'light', builtInOverrides: {} as Record<string, TunerState> };
+  const fallback = readNextThemesPreference() ?? 'light';
+  const empty = {
+    custom: [] as ThemePreset[],
+    activeId: fallback,
+    builtInOverrides: {} as Record<string, TunerState>,
+  };
   if (typeof window === 'undefined') return empty;
   try {
     const raw = localStorage.getItem(LS_KEY);
@@ -60,7 +80,7 @@ function readLS(): { custom: ThemePreset[]; activeId: string; builtInOverrides: 
     }
     return {
       custom: Array.isArray(d.custom) ? d.custom.slice(0, MAX_CUSTOM) : [],
-      activeId: d.activeId ?? 'light',
+      activeId: d.activeId ?? fallback,
       builtInOverrides:
         versionMismatch || !d.builtInOverrides || typeof d.builtInOverrides !== 'object' ? {} : d.builtInOverrides,
     };
