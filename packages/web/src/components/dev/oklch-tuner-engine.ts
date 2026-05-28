@@ -206,17 +206,17 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
     );
   };
 
-  // 2. Surface elevation (chroma/hue pattern matches theme-tokens.css)
+  // 2. Surface elevation — hue follows accent (KD-34 rev: surfaces tint with brand)
   const surf = (e: SurfaceP, dark: boolean) => {
     const sel = dark ? '[data-theme="dark"]' : ':root';
     const ch = dark ? [0.015, 0.015, 0.012, 0.008] : [0.015, 0.012, 0.005, 0.003];
-    const hu = dark ? [80, 80, 80, 85] : [80, 80, 85, 90];
+    const h = p.accentHue;
     return (
       `${sel}{` +
-      `--cafe-surface-sunken:oklch(${e.sunken} ${ch[0]} ${hu[0]});` +
-      `--cafe-surface:oklch(${e.base} ${ch[1]} ${hu[1]});` +
-      `--cafe-surface-elevated:oklch(${e.elevated} ${ch[2]} ${hu[2]});` +
-      `--cafe-surface-canvas:oklch(${e.canvas} ${ch[3]} ${hu[3]});}`
+      `--cafe-surface-sunken:oklch(${e.sunken} ${ch[0]} ${h});` +
+      `--cafe-surface:oklch(${e.base} ${ch[1]} ${h});` +
+      `--cafe-surface-elevated:oklch(${e.elevated} ${ch[2]} ${h});` +
+      `--cafe-surface-canvas:oklch(${e.canvas} ${ch[3]} ${h});}`
     );
   };
 

@@ -106,10 +106,10 @@
    *   surface  #F6EFE7 ThreadSidebar / RightPanel
    *   elevated #FCFAF8 Chat 主区
    *   canvas   #FFFDFB Card 浮起 */
-  --cafe-surface-sunken: oklch(0.92 0.015 80);
-  --cafe-surface: oklch(0.95 0.012 80);
-  --cafe-surface-elevated: oklch(0.985 0.005 85);
-  --cafe-surface-canvas: oklch(0.996 0.003 90);
+  --cafe-surface-sunken: oklch(0.92 0.015 var(--accent-hue));
+  --cafe-surface: oklch(0.95 0.012 var(--accent-hue));
+  --cafe-surface-elevated: oklch(0.985 0.005 var(--accent-hue));
+  --cafe-surface-canvas: oklch(0.996 0.003 var(--accent-hue));
 
   /* --- Cafe semantic shortcuts（映射到 Neutral / App Accent / Semantic） --- */
   --cafe-text: var(--neutral-900);
@@ -219,10 +219,10 @@
   /* --- Surface 四档（dark: L 反转，6 点等间距 0.12→0.18→0.24→0.30） ---
    * sunken=0.12 / surface=0.18 / elevated=0.24 / canvas=0.30
    * 空间映射见 console-tokens.css（dark 模式 shell/panel 翻转） */
-  --cafe-surface-sunken: oklch(0.12 0.015 80);
-  --cafe-surface: oklch(0.18 0.015 80);
-  --cafe-surface-elevated: oklch(0.24 0.012 80);
-  --cafe-surface-canvas: oklch(0.3 0.008 85);
+  --cafe-surface-sunken: oklch(0.12 0.015 var(--accent-hue));
+  --cafe-surface: oklch(0.18 0.015 var(--accent-hue));
+  --cafe-surface-elevated: oklch(0.24 0.012 var(--accent-hue));
+  --cafe-surface-canvas: oklch(0.3 0.008 var(--accent-hue));
 
   /* --- Cafe semantic shortcuts dark（重新映射 Neutral） --- */
   --cafe-text: var(--neutral-900);

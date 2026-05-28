@@ -215,7 +215,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
             <div key={k} className="flex items-center gap-1.5">
               <div
                 className="w-3 h-3 rounded border border-[var(--console-border-soft)] shrink-0"
-                style={{ background: `oklch(${mp.elev[k]} 0.012 80)` }}
+                style={{ background: `oklch(${mp.elev[k]} 0.012 ${params.accentHue})` }}
               />
               <span className="w-20 text-[9px] text-cafe-muted shrink-0">{SURF_LABELS[k]}</span>
               <input
