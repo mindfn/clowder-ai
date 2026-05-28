@@ -3,6 +3,7 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { type CatData, formatCatName, useCatData } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
+import { catColorVar } from '@/lib/cat-slug';
 import type { ChatMessage as ChatMessageData } from '@/stores/chatStore';
 import { scrollToMessage } from '@/utils/scrollToMessage';
 
@@ -160,7 +161,7 @@ export function MessageNavigator({ messages, scrollContainerRef }: MessageNaviga
           const style = isOwner
             ? undefined
             : cat
-              ? { backgroundColor: cat.color.primary }
+              ? { backgroundColor: catColorVar(cat.id, 'primary') }
               : fallback
                 ? { backgroundColor: fallback.color }
                 : undefined;

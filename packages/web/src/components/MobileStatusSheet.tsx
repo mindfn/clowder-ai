@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { formatCatName, useCatData } from '@/hooks/useCatData';
+import { catColorVar } from '@/lib/cat-slug';
 import { CatTokenUsage } from './CatTokenUsage';
 import type { RightStatusPanelProps } from './RightStatusPanel';
 import {
@@ -97,7 +98,7 @@ export function MobileStatusSheet({
               <div className="space-y-2">
                 {activeCats.map((catId) => {
                   const cat = getCatById(catId);
-                  const dotColor = cat?.color.primary ?? '#9CA3AF';
+                  const dotColor = catColorVar(catId, 'primary');
                   const status = catStatuses[catId] ?? 'pending';
                   const inv = catInvocations[catId];
                   return (
@@ -129,7 +130,7 @@ export function MobileStatusSheet({
                     <div key={catId} className="flex items-center gap-2 text-xs text-cafe-secondary">
                       <span
                         className="inline-block h-2 w-2 rounded-full opacity-60"
-                        style={{ backgroundColor: cat?.color.primary ?? '#9CA3AF' }}
+                        style={{ backgroundColor: catColorVar(catId, 'primary') }}
                       />
                       {cat ? formatCatName(cat) : catId}
                     </div>

@@ -1,11 +1,12 @@
 import type { CatData } from '@/hooks/useCatData';
+import { catColorVar } from '@/lib/cat-slug';
 
 export interface CatOption {
   id: string;
   label: string;
   desc: string;
   insert: string;
-  color: string; // hex color (for inline style)
+  color: string; // CSS color (var or hex) for inline style
   avatar: string;
   /** Group mention (e.g. @thread, @all) — renders group icon instead of cat avatar */
   isGroup?: boolean;
@@ -46,7 +47,7 @@ function buildBreedGroupOptions(cats: CatData[]): CatOption[] {
     } else {
       breedMap.set(cat.breedId, {
         displayName: cat.breedDisplayName ?? cat.displayName,
-        color: cat.color.primary,
+        color: catColorVar(cat.id, 'primary'),
         count: 1,
       });
     }
@@ -84,7 +85,7 @@ export function buildCatOptions(cats: CatData[]): CatOption[] {
       label: formatCatLabel(cat),
       desc: cat.roleDescription,
       insert: `@${cat.mentionPatterns[0].replace(/^@/, '')} `,
-      color: cat.color.primary,
+      color: catColorVar(cat.id, 'primary'),
       avatar: cat.avatar,
     }));
   return [...STATIC_GROUP_MENTIONS, ...breedGroups, ...individuals];

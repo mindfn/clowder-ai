@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { type CatData, formatCatName } from '@/hooks/useCatData';
+import { catColorVar } from '@/lib/cat-slug';
 
 interface WhisperCatSelectorProps {
   cats: CatData[];
@@ -76,7 +77,7 @@ export function WhisperTargetChips({
           type="button"
           onClick={() => onToggle(cat.id)}
           className="text-xs px-2 py-0.5 rounded-full border border-current bg-conn-amber-bg font-medium transition-colors hover:opacity-70"
-          style={{ color: cat.color.primary }}
+          style={{ color: catColorVar(cat.id, 'primary') }}
         >
           {formatCatName(cat)} ×
         </button>
@@ -127,7 +128,7 @@ function CatRow({
         }}
       />
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-semibold flex items-center gap-1.5" style={{ color: cat.color.primary }}>
+        <div className="text-sm font-semibold flex items-center gap-1.5" style={{ color: catColorVar(cat.id, 'primary') }}>
           {formatCatName(cat)}
           {isSelected && (
             <svg className="w-3.5 h-3.5 text-conn-amber-text shrink-0" viewBox="0 0 20 20" fill="currentColor">

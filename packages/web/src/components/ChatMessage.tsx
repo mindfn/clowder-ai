@@ -4,7 +4,8 @@ import type { CSSProperties } from 'react';
 import { type CatData, formatCatName } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { useTts } from '@/hooks/useTts';
-import { hexToOklch, hexToRgba } from '@/lib/color-utils';
+import { catColorMix, catColorVar, catSlug } from '@/lib/cat-slug';
+import { hexToOklch } from '@/lib/color-utils';
 import { getMentionRe, getMentionToCat } from '@/lib/mention-highlight';
 import { parseDirection } from '@/lib/parse-direction';
 import { type ChatMessage as ChatMessageType, resolveBubbleExpanded, useChatStore } from '@/stores/chatStore';
@@ -38,28 +39,7 @@ const BREED_STYLES: Record<string, { radius: string; font?: string }> = {
 };
 const DEFAULT_BREED_STYLE = { radius: 'rounded-2xl' };
 
-/* F056 catId → Tuner persona slug map. Slugs match cat-persona-tokens.css
- * --{slug}-hue / --{slug}-chroma anchors and the SLUGS array in
- * oklch-tuner-engine.ts. Falls back to catId itself so unmapped cats still
- * resolve to a CSS var (may hit a fallback in cat-persona-tokens.css). */
-const CAT_ID_TO_SLUG: Record<string, string> = {
-  'opus-default': 'opus',
-  'opus-sonnet': 'sonnet',
-  'opus-45': 'opus-45',
-  'opus-47': 'opus-47',
-  'codex-default': 'codex',
-  'codex-gpt52': 'gpt52',
-  'codex-spark': 'spark',
-  'gemini-default': 'gemini',
-  'gemini-25': 'gemini25',
-  'dare-default': 'dare',
-  'kimi-default': 'kimi',
-  cocreator: 'cocreator',
-};
-function catSlug(catId: string | undefined): string {
-  if (!catId) return 'opus';
-  return CAT_ID_TO_SLUG[catId] ?? catId;
-}
+/* catSlug helper moved to '@/lib/cat-slug' so other components can share it. */
 const SCHEDULER_ACCENT_BADGE_CLASS =
   'inline-flex w-fit items-center gap-1.5 rounded-full border border-conn-amber-ring bg-conn-amber-bg px-2.5 py-1 text-xs font-semibold text-conn-amber-text shadow-sm';
 const SCHEDULER_ACCENT_BUBBLE_CLASS =
@@ -154,11 +134,12 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
            * bypassed the F056 token chain, so callback bubbles didn't follow
            * Tuner. Unified now: per-cat slug-keyed token drives both kinds. */
           bgColor: `var(--color-${slug}-surface)`,
-          /* Border still hex-derived from cat primary for now — borderColor
-           * isn't on the Tuner-controlled gradient, but Tuner doesn't expose
-           * border tier either. If you want borders to follow Tuner too, we
-           * can add --cat-border-l/cmul and a per-slug --color-{slug}-border. */
-          borderColor: isCallback ? hexToRgba(catData.color.primary, 0.12) : hexToRgba(catData.color.primary, 0.3),
+          /* F056: borderColor also routed through token via color-mix so Tuner
+           * gradient propagates to bubble outline as well. Uses --color-{slug}-
+           * ring (the existing ring tier already follows --cat-ring-l/cmul). */
+          borderColor: isCallback
+            ? `color-mix(in srgb, ${catColorVar(catData.id, 'ring')} 12%, transparent)`
+            : `color-mix(in srgb, ${catColorVar(catData.id, 'ring')} 30%, transparent)`,
           msgHue,
           msgChroma,
         };
@@ -374,7 +355,7 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
             )}
             <span className="text-xs text-cafe-muted">{formatDualTime(message.timestamp, message.deliveredAt)}</span>
             <CopyIdButton messageId={message.id} />
-            <span className="text-xs font-semibold" style={{ color: coCreatorPrimary }}>
+            <span className="text-xs font-semibold" style={{ color: 'var(--color-cocreator-primary)' }}>
               {coCreator.name}
             </span>
           </div>
@@ -402,7 +383,10 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
         </div>
         <div
           className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 ring-2 flex items-center justify-center text-xs font-bold text-[var(--cafe-surface)]"
-          style={{ backgroundColor: coCreatorPrimary, boxShadow: `0 0 0 2px ${coCreatorSecondary}` }}
+          style={{
+            backgroundColor: 'var(--color-cocreator-primary)',
+            boxShadow: '0 0 0 2px var(--color-cocreator-surface)',
+          }}
         >
           {coCreator.avatar ? (
             // eslint-disable-next-line @next/next/no-img-element
