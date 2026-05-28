@@ -17,10 +17,23 @@ const PREVIEW_MODES = [
  * 实时回显 light/dark 派生效果——改一个色，两个 mode 同步可见。
  */
 export function CatColorField({ value, onChange }: { value: string; onChange: (hex: string) => void }) {
-  const { c, h } = hexToOklch(value);
+  /* F056 KD-18: guard against catalog entries with non-hex primary — schemas only
+   * require a non-empty string, so manual edits / external API clients can persist
+   * invalid values. Fall back to neutral hue/chroma instead of throwing during render. */
+  let oklchHue = 297;
+  let oklchChroma = 0.1;
+  try {
+    const { c, h } = hexToOklch(value);
+    if (Number.isFinite(h) && Number.isFinite(c)) {
+      oklchHue = h;
+      oklchChroma = c;
+    }
+  } catch {
+    /* invalid hex — keep neutral fallback; user can correct via picker */
+  }
   const bubbleStyle = {
-    '--msg-hue': h,
-    '--msg-chroma': c,
+    '--msg-hue': oklchHue,
+    '--msg-chroma': oklchChroma,
     background: 'var(--cat-msg-surface)',
     color: 'var(--cat-msg-text)',
   } as CSSProperties;

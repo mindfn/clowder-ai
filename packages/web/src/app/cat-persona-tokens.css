@@ -208,6 +208,59 @@
   --color-cocreator-light: var(--color-cocreator-surface);
   --color-cocreator-dark: var(--color-cocreator-text);
   --color-cocreator-bg: var(--color-cocreator-surface);
+
+  /* Variant slugs — opus-47 / spark / gemini25 use same single-hue derivation
+   * formula. Hue/chroma anchors defined at top of file. (review-#784 P2) */
+  --color-opus-47-bubble: oklch(
+    var(--cat-bubble-l, 0.62) calc(var(--opus-47-chroma) * var(--cat-bubble-cmul, 1)) var(--opus-47-hue)
+  );
+  --color-opus-47-surface: oklch(
+    var(--cat-surface-l, 0.94) calc(var(--opus-47-chroma) * var(--cat-surface-cmul, 0.3)) var(--opus-47-hue)
+  );
+  --color-opus-47-text: oklch(
+    var(--cat-text-l, 0.24) calc(var(--opus-47-chroma) * var(--cat-text-cmul, 0.8)) var(--opus-47-hue)
+  );
+  --color-opus-47-ring: oklch(
+    var(--cat-ring-l, 0.55) calc(var(--opus-47-chroma) * var(--cat-ring-cmul, 1.1)) var(--opus-47-hue)
+  );
+  --color-opus-47-primary: var(--color-opus-47-bubble);
+  --color-opus-47-light: var(--color-opus-47-surface);
+  --color-opus-47-dark: var(--color-opus-47-text);
+  --color-opus-47-bg: var(--color-opus-47-surface);
+
+  --color-spark-bubble: oklch(
+    var(--cat-bubble-l, 0.62) calc(var(--spark-chroma) * var(--cat-bubble-cmul, 1)) var(--spark-hue)
+  );
+  --color-spark-surface: oklch(
+    var(--cat-surface-l, 0.94) calc(var(--spark-chroma) * var(--cat-surface-cmul, 0.3)) var(--spark-hue)
+  );
+  --color-spark-text: oklch(
+    var(--cat-text-l, 0.24) calc(var(--spark-chroma) * var(--cat-text-cmul, 0.8)) var(--spark-hue)
+  );
+  --color-spark-ring: oklch(
+    var(--cat-ring-l, 0.55) calc(var(--spark-chroma) * var(--cat-ring-cmul, 1.1)) var(--spark-hue)
+  );
+  --color-spark-primary: var(--color-spark-bubble);
+  --color-spark-light: var(--color-spark-surface);
+  --color-spark-dark: var(--color-spark-text);
+  --color-spark-bg: var(--color-spark-surface);
+
+  --color-gemini25-bubble: oklch(
+    var(--cat-bubble-l, 0.62) calc(var(--gemini25-chroma) * var(--cat-bubble-cmul, 1)) var(--gemini25-hue)
+  );
+  --color-gemini25-surface: oklch(
+    var(--cat-surface-l, 0.94) calc(var(--gemini25-chroma) * var(--cat-surface-cmul, 0.3)) var(--gemini25-hue)
+  );
+  --color-gemini25-text: oklch(
+    var(--cat-text-l, 0.24) calc(var(--gemini25-chroma) * var(--cat-text-cmul, 0.8)) var(--gemini25-hue)
+  );
+  --color-gemini25-ring: oklch(
+    var(--cat-ring-l, 0.55) calc(var(--gemini25-chroma) * var(--cat-ring-cmul, 1.1)) var(--gemini25-hue)
+  );
+  --color-gemini25-primary: var(--color-gemini25-bubble);
+  --color-gemini25-light: var(--color-gemini25-surface);
+  --color-gemini25-dark: var(--color-gemini25-text);
+  --color-gemini25-bg: var(--color-gemini25-surface);
 }
 
 /* DARK — bubble L=0.68 / surface L=0.28 C×0.25 / text L=0.88 / ring L=0.70 */
@@ -358,6 +411,58 @@
   --color-cocreator-light: var(--color-cocreator-surface);
   --color-cocreator-dark: var(--color-cocreator-text);
   --color-cocreator-bg: var(--color-cocreator-surface);
+
+  /* Variant slugs (dark) — opus-47 / spark / gemini25 dark-mode counterparts. */
+  --color-opus-47-bubble: oklch(
+    var(--cat-bubble-l, 0.68) calc(var(--opus-47-chroma) * var(--cat-bubble-cmul, 0.85)) var(--opus-47-hue)
+  );
+  --color-opus-47-surface: oklch(
+    var(--cat-surface-l, 0.28) calc(var(--opus-47-chroma) * var(--cat-surface-cmul, 0.25)) var(--opus-47-hue)
+  );
+  --color-opus-47-text: oklch(
+    var(--cat-text-l, 0.88) calc(var(--opus-47-chroma) * var(--cat-text-cmul, 0.6)) var(--opus-47-hue)
+  );
+  --color-opus-47-ring: oklch(
+    var(--cat-ring-l, 0.7) calc(var(--opus-47-chroma) * var(--cat-ring-cmul, 1)) var(--opus-47-hue)
+  );
+  --color-opus-47-primary: var(--color-opus-47-bubble);
+  --color-opus-47-light: var(--color-opus-47-surface);
+  --color-opus-47-dark: var(--color-opus-47-text);
+  --color-opus-47-bg: var(--color-opus-47-surface);
+
+  --color-spark-bubble: oklch(
+    var(--cat-bubble-l, 0.68) calc(var(--spark-chroma) * var(--cat-bubble-cmul, 0.85)) var(--spark-hue)
+  );
+  --color-spark-surface: oklch(
+    var(--cat-surface-l, 0.28) calc(var(--spark-chroma) * var(--cat-surface-cmul, 0.25)) var(--spark-hue)
+  );
+  --color-spark-text: oklch(
+    var(--cat-text-l, 0.88) calc(var(--spark-chroma) * var(--cat-text-cmul, 0.6)) var(--spark-hue)
+  );
+  --color-spark-ring: oklch(
+    var(--cat-ring-l, 0.7) calc(var(--spark-chroma) * var(--cat-ring-cmul, 1)) var(--spark-hue)
+  );
+  --color-spark-primary: var(--color-spark-bubble);
+  --color-spark-light: var(--color-spark-surface);
+  --color-spark-dark: var(--color-spark-text);
+  --color-spark-bg: var(--color-spark-surface);
+
+  --color-gemini25-bubble: oklch(
+    var(--cat-bubble-l, 0.68) calc(var(--gemini25-chroma) * var(--cat-bubble-cmul, 0.85)) var(--gemini25-hue)
+  );
+  --color-gemini25-surface: oklch(
+    var(--cat-surface-l, 0.28) calc(var(--gemini25-chroma) * var(--cat-surface-cmul, 0.25)) var(--gemini25-hue)
+  );
+  --color-gemini25-text: oklch(
+    var(--cat-text-l, 0.88) calc(var(--gemini25-chroma) * var(--cat-text-cmul, 0.6)) var(--gemini25-hue)
+  );
+  --color-gemini25-ring: oklch(
+    var(--cat-ring-l, 0.7) calc(var(--gemini25-chroma) * var(--cat-ring-cmul, 1)) var(--gemini25-hue)
+  );
+  --color-gemini25-primary: var(--color-gemini25-bubble);
+  --color-gemini25-light: var(--color-gemini25-surface);
+  --color-gemini25-dark: var(--color-gemini25-text);
+  --color-gemini25-bg: var(--color-gemini25-surface);
 }
 
 /* ============================================================

@@ -141,8 +141,15 @@ export function IdentitySection({
 
       {/* F056 KD-18 / AC-E4: single-hue input — secondary 由 OKLCH 派生公式自动算
        * (cat-persona-tokens.css)，编辑器不再暴露 secondary picker。下方双预览
-       * 实时回显 light/dark 模式效果。 */}
-      <CatColorField value={form.colorPrimary} onChange={(hex) => onChange({ colorPrimary: hex })} />
+       * 实时回显 light/dark 模式效果。
+       *
+       * review-#784 P2: payload still sends form.colorSecondary to /api/cats and
+       * legacy consumers (deriveSessionColors) read cat.color.secondary, so mirror
+       * primary → secondary here to prevent stale secondary surviving edits. */}
+      <CatColorField
+        value={form.colorPrimary}
+        onChange={(hex) => onChange({ colorPrimary: hex, colorSecondary: hex })}
+      />
 
       <TextField
         label="擅长领域"

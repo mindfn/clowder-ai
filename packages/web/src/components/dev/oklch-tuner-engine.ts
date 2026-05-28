@@ -85,7 +85,20 @@ export interface HcOverride {
 /* ── Constants ── */
 export const CAT_TIERS = ['primary', 'surface', 'text', 'inset', 'ring'] as const;
 export type CatTier = (typeof CAT_TIERS)[number];
-const SLUGS = ['opus', 'sonnet', 'codex', 'gemini', 'kimi', 'dare', 'cocreator'] as const;
+const SLUGS = [
+  'opus',
+  'sonnet',
+  'opus-45',
+  'opus-47',
+  'codex',
+  'gpt52',
+  'spark',
+  'gemini',
+  'gemini25',
+  'kimi',
+  'dare',
+  'cocreator',
+] as const;
 export const SURF_KEYS = ['sunken', 'base', 'elevated', 'canvas'] as const;
 export const SEMANTIC_KEYS = ['critical', 'success', 'warning', 'info'] as const;
 export type SemanticKey = (typeof SEMANTIC_KEYS)[number];
