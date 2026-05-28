@@ -9,13 +9,25 @@
  */
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useCafeTheme } from '@/hooks/useCafeTheme';
-import { applyThemeCSS, getActiveTheme, useThemeStore } from '@/stores/themeStore';
+import { applyThemeCSS, getActiveTheme, restoreFromServer, useThemeStore } from '@/stores/themeStore';
 
 export function ThemeApplier() {
   const { setTheme } = useCafeTheme();
   const active = useThemeStore((s) => getActiveTheme(s));
+  const recoveryAttempted = useRef(false);
+
+  /* On mount: if localStorage was empty, try recovering from server */
+  useEffect(() => {
+    if (recoveryAttempted.current) return;
+    recoveryAttempted.current = true;
+    const hasLocal = typeof window !== 'undefined' && !!localStorage.getItem('cat-cafe:themes');
+    if (hasLocal) return;
+    restoreFromServer().then((restored) => {
+      if (restored) window.location.reload(); // reload to re-initialize store from recovered data
+    });
+  }, []);
 
   /* Sync base mode to next-themes (manages data-theme attribute on <html>) */
   useEffect(() => {

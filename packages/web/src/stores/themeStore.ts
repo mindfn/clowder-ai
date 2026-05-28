@@ -7,6 +7,7 @@
  */
 import { create } from 'zustand';
 import { buildCSS, type HcOverride, INIT, STYLE_ID, type TunerState } from '@/components/dev/oklch-tuner-engine';
+import { apiFetch } from '@/utils/api-client';
 
 const LS_KEY = 'cat-cafe:themes';
 const MAX_CUSTOM = 2;
@@ -100,6 +101,44 @@ function writeLS(themes: ThemePreset[], activeId: string) {
     localStorage.setItem(LS_KEY, JSON.stringify({ version: INIT_VERSION, activeId, custom, builtInOverrides }));
   } catch {
     /* noop — quota exceeded or private mode */
+  }
+  syncToServer(themes, activeId);
+}
+
+/* ── Server-side persistence (survive browser cache clears) ── */
+const ENV_KEY = 'THEME_CONFIG';
+let serverSyncTimer: ReturnType<typeof setTimeout> | null = null;
+
+function syncToServer(themes: ThemePreset[], activeId: string) {
+  if (typeof window === 'undefined') return;
+  if (serverSyncTimer) clearTimeout(serverSyncTimer);
+  serverSyncTimer = setTimeout(() => {
+    const custom = themes.filter((t) => !t.builtIn);
+    const builtInOverrides: Record<string, TunerState> = {};
+    for (const t of themes) {
+      if (t.builtIn) builtInOverrides[t.id] = t.params;
+    }
+    const payload = JSON.stringify({ version: INIT_VERSION, activeId, custom, builtInOverrides });
+    apiFetch('/api/config/env', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ updates: [{ name: ENV_KEY, value: payload }] }),
+    }).catch(() => {/* best-effort — localStorage is primary */});
+  }, 2000); // debounce 2s to avoid spamming on rapid slider drags
+}
+
+/** Restore theme from server when localStorage is empty (e.g. after cache clear). */
+export async function restoreFromServer(): Promise<boolean> {
+  try {
+    const res = await apiFetch('/api/config/env-summary');
+    if (!res.ok) return false;
+    const data = (await res.json()) as { variables?: Array<{ name: string; currentValue: string | null }> };
+    const entry = data.variables?.find((v) => v.name === ENV_KEY);
+    if (!entry?.currentValue) return false;
+    localStorage.setItem(LS_KEY, entry.currentValue);
+    return true;
+  } catch {
+    return false;
   }
 }
 
