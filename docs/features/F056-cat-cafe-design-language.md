@@ -578,6 +578,8 @@ Phase E 主提交（`62c93fc5`）落地后，9 个 follow-up commit 处理 bubbl
 | KD-30 | Phase E Sweep — cat bubble routing 全部走 CSS var（callback / nested inset 不再 hex-derived），`.cat-persona-derived` always wired 在 cat message wrapper 上，Tuner 仅控制全局 `--cat-{tier}-l/cmul`（不出 per-slug overrides） | KD-29 落地后 callback bubbles + ThinkingContent inset 仍有 `tintedLight(hex)` 路径绕过 Tuner gradient；改造后单一 Tuner 全局生效，每只猫保留自己的 hue/chroma，无 hex 旁路 | 2026-05-25 |
 | KD-31 | `cat-persona-tokens.css` 525 → 264 + `cat-persona-derived.css` 272，split point 在 `:root` light 结束 / dark override 开始处 | `global-css-architecture.test.ts` 350-line hard limit 测试守护单文件大小；split 仅按 selector 边界拆，无逻辑/语义改动；entrypoint + `layout.tsx` import + test assertion 同步更新 | 2026-05-28 |
 | KD-32 | Variant slug 显式枚举：`opus-47 / spark / gemini25` 加入 `cat-persona-tokens.css` 派生 + Tuner SLUGS（共 12 slugs，覆盖所有 catalog 内 variant cat） | PR #784 codex P2 揭示：`STATIC_SLUGS` 集合包含但 `cat-persona-tokens.css` 没定义 → 走 `var(--color-{slug}-surface)` 拿不到值，气泡背景 fail；Tuner unified-text override 也漏 variants；显式列举 12 slugs 是当前 catalog 范围的真相源 | 2026-05-28 |
+| KD-33 | 主题持久化：当前 localStorage（`cat-cafe:themes`），服务端持久化为 follow-up | OklchTuner 已从纯开发者工具演进为用户自定义主题入口。`themeStore.ts` 通过 Zustand + localStorage 持久化：activeId / built-in overrides / 自建主题（最多 2 个）/ 版本迁移。清浏览器数据会丢。服务端持久化（存到 `/api/config` 用户设置）独立 scope，当前 localStorage 已覆盖"同一浏览器日常使用" | 2026-05-28 |
+| KD-34 | Surface 层不跟 accent hue 派生——固定中性暖色调（hue 80~90, chroma ≤0.015） | 页面背景应保持视觉中性，accent 只影响交互元素（按钮/链接/高亮）。如果 surface 跟 accent hue 走，换成蓝色主题后整个页面会偏蓝，视觉噪音大。这是设计系统的标准做法（Material Design / Radix / GitHub Primer 的 surface 均为 neutral）。Surface 唯一的调节维度是 lightness（通过 Tuner "页面层次" 四档滑条） | 2026-05-28 |
 
 ## Dependencies
 
