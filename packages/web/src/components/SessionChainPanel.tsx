@@ -115,7 +115,7 @@ export function SessionChainPanel({ threadId, catInvocations, onViewSession }: S
 
   const colorsForCat = (catId: string): SessionColors => {
     const cat = getCatById(catId);
-    return deriveSessionColors(cat?.color?.primary, cat?.color?.secondary);
+    return deriveSessionColors(cat?.color?.primary);
   };
 
   // Badge 显示猫名（与主对话气泡一致）；未知 catId 回落到原始 id。
