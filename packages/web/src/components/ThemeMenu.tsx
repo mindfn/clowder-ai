@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useThemeStore } from '@/stores/themeStore';
 
-function PaletteIcon({ className = 'w-5 h-5' }: { className?: string }) {
+export function PaletteIcon({ className = 'w-5 h-5' }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className={className}>
       <title>主题</title>
