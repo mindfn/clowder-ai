@@ -102,7 +102,7 @@ export function ThinkingContent({
           userInteracted.current = true;
           setExpanded((v) => !v);
         }}
-        className="w-full flex items-center gap-2 text-[11px] font-mono transition-colors"
+        className="w-full flex items-center gap-2 text-xs font-mono transition-colors"
         style={{ padding: '8px 12px', backgroundColor: 'var(--cat-msg-inset)' }}
       >
         <span style={{ color: breedColor || 'var(--cat-msg-inset-text)' }}>

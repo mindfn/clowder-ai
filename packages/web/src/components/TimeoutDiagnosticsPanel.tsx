@@ -103,7 +103,7 @@ export function TimeoutDiagnosticsPanel({ errorMessage, diagnostics, description
       >
         <CircleXIcon className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--conn-amber-text)' }} />
         <div className="flex flex-col gap-0.5 min-w-0">
-          <span className="text-[13px] font-semibold" style={{ color: 'var(--cafe-text)' }}>
+          <span className="text-sm font-semibold" style={{ color: 'var(--cafe-text)' }}>
             {errorMessage}
           </span>
           {description && (
@@ -139,11 +139,11 @@ export function TimeoutDiagnosticsPanel({ errorMessage, diagnostics, description
           <div className="flex flex-col gap-1">
             {rows.map((row) => (
               <div key={row.key} className="flex gap-2 min-w-0">
-                <span className="shrink-0 text-[11px] font-medium" style={{ color: 'var(--cafe-text-muted)' }}>
+                <span className="shrink-0 text-xs font-medium" style={{ color: 'var(--cafe-text-muted)' }}>
                   {row.key}
                 </span>
                 <span
-                  className="truncate min-w-0 text-[11px]"
+                  className="truncate min-w-0 text-xs"
                   style={{ color: row.purple ? 'var(--console-diag-key)' : 'var(--console-diag-val)' }}
                   title={row.value}
                 >

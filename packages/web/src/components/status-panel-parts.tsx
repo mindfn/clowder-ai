@@ -34,7 +34,7 @@ export function CollapsibleIds({
     <div className="ml-3.5 mt-1">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="text-[10px] text-cafe-muted hover:text-cafe-secondary transition-colors cursor-pointer select-none"
+        className="text-micro text-cafe-muted hover:text-cafe-secondary transition-colors cursor-pointer select-none"
       >
         {open ? '▾' : '▸'} IDs
       </button>
@@ -42,9 +42,9 @@ export function CollapsibleIds({
         <div className="mt-0.5 space-y-0.5 animate-fade-in">
           {sessionId && (
             <div className="flex items-baseline min-w-0">
-              <span className="shrink-0 text-[10px] text-cafe-muted mr-1">session:</span>
+              <span className="shrink-0 text-micro text-cafe-muted mr-1">session:</span>
               <button
-                className="truncate min-w-0 text-[10px] text-cafe-muted font-mono hover:text-cafe-secondary cursor-pointer transition-colors"
+                className="truncate min-w-0 text-micro text-cafe-muted font-mono hover:text-cafe-secondary cursor-pointer transition-colors"
                 title={`点击复制: ${sessionId}`}
                 onClick={() => onCopy(sessionId)}
               >
@@ -54,9 +54,9 @@ export function CollapsibleIds({
           )}
           {invocationId && (
             <div className="flex items-baseline min-w-0">
-              <span className="shrink-0 text-[10px] text-cafe-muted mr-1">invocation:</span>
+              <span className="shrink-0 text-micro text-cafe-muted mr-1">invocation:</span>
               <button
-                className="truncate min-w-0 text-[10px] text-cafe-muted font-mono hover:text-cafe-secondary cursor-pointer transition-colors"
+                className="truncate min-w-0 text-micro text-cafe-muted font-mono hover:text-cafe-secondary cursor-pointer transition-colors"
                 title={`点击复制: ${invocationId}`}
                 onClick={() => onCopy(invocationId)}
               >
