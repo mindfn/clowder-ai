@@ -25,12 +25,15 @@ function badgeBackground(hex: string): string {
 }
 
 /** Derive text color that contrasts with the badge background.
- * Uses the color's OKLCH hue/chroma but shifts lightness to ensure readability.
- * Light bg → dark text; dark bg → light text. */
+ * Uses the color's OKLCH hue/chroma but derives lightness from the badge bg
+ * (which is always light, L≥0.55) to guarantee ΔL≥0.40. */
 function contrastingText(hex: string): string {
   try {
     const { l, c, h } = hexToOklch(hex);
-    const textL = l > 0.5 ? Math.max(0.15, l - 0.45) : Math.min(0.92, l + 0.45);
+    // Must match badgeBackground formula to stay in sync
+    const bgL = Math.min(0.92, l * 0.6 + 0.55);
+    // Always dark text against the always-light badge bg
+    const textL = Math.max(0.15, bgL - 0.45);
     return `oklch(${textL.toFixed(2)} ${c.toFixed(3)} ${h.toFixed(0)})`;
   } catch {
     return FALLBACK_COLOR;

@@ -198,6 +198,17 @@ export const INIT = INIT_DARK;
 
 export const STYLE_ID = 'oklch-tuner-override';
 
+/** Deep-merge SurfaceP to handle fields added after a user saved their theme. */
+function migrateElev(e: Partial<SurfaceP> | undefined, fallback: SurfaceP): SurfaceP {
+  if (!e) return fallback;
+  return {
+    sunken: e.sunken ?? fallback.sunken,
+    base: e.base ?? fallback.base,
+    elevated: e.elevated ?? fallback.elevated,
+    canvas: e.canvas ?? fallback.canvas,
+  };
+}
+
 /** Patch missing ModeP fields from INIT (forward-compat for schema additions). */
 function migrateModeP(m: Partial<ModeP>, fallback: ModeP): ModeP {
   return {
@@ -208,7 +219,7 @@ function migrateModeP(m: Partial<ModeP>, fallback: ModeP): ModeP {
     ring: m.ring ?? fallback.ring,
     insetText: m.insetText ?? fallback.insetText,
     msgText: m.msgText ?? fallback.msgText,
-    elev: m.elev ?? fallback.elev,
+    elev: migrateElev(m.elev as Partial<SurfaceP> | undefined, fallback.elev),
   };
 }
 
