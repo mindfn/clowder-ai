@@ -1,14 +1,6 @@
-/*
- * F056 OKLCH Tuner — engine (types, defaults, CSS generation, export)
- *
- * Separated from UI component to keep each file under 350-line hard limit.
- * buildCSS() generates a single <style> that overrides:
- *   1. --accent-hue / --accent-chroma   → cascades to ALL accent-* tokens
- *   2. --cafe-surface-*                 → 4-level page elevation
- *   3. --color-{slug}-* per-cat tokens  → static cat accent / surface / text / ring
- *   4. .cat-persona-derived msg tokens  → runtime message bubble colors
- *   5. (optional) --msg-hue/chroma force → unify all cat hue/chroma
- */
+/* F056 OKLCH Tuner — engine: types, defaults, CSS generation, export.
+ * buildCSS() generates overrides for accent, surface elevation, per-cat tokens,
+ * .cat-persona-derived msg tokens, and optional hue/chroma force. */
 
 /* ── Types ── */
 export interface TierP {
@@ -32,6 +24,7 @@ export interface ModeP {
   inset: TierP;
   ring: TierP;
   insetText: FixedP;
+  msgText: FixedP;
   elev: SurfaceP;
 }
 export interface SemanticP {
@@ -85,20 +78,8 @@ export interface HcOverride {
 /* ── Constants ── */
 export const CAT_TIERS = ['primary', 'surface', 'text', 'inset', 'ring'] as const;
 export type CatTier = (typeof CAT_TIERS)[number];
-const SLUGS = [
-  'opus',
-  'sonnet',
-  'opus-45',
-  'opus-47',
-  'codex',
-  'gpt52',
-  'spark',
-  'gemini',
-  'gemini25',
-  'kimi',
-  'dare',
-  'cocreator',
-] as const;
+// biome-ignore format: compact slug list (file-size limit)
+const SLUGS = ['opus','sonnet','opus-45','opus-47','codex','gpt52','spark','gemini','gemini25','kimi','dare','cocreator'] as const;
 export const SURF_KEYS = ['sunken', 'base', 'elevated', 'canvas'] as const;
 export const SEMANTIC_KEYS = ['critical', 'success', 'warning', 'info'] as const;
 export type SemanticKey = (typeof SEMANTIC_KEYS)[number];
@@ -115,13 +96,14 @@ export const SEMANTIC_H_FIELD: Record<SemanticKey, keyof SemanticP> = {
   info: 'infoH',
 };
 
-export const TIER_LABELS: Record<CatTier | 'insetText', string> = {
+export const TIER_LABELS: Record<CatTier | 'insetText' | 'msgText', string> = {
   primary: '主色 (图标/头像环)',
   surface: '消息气泡背景',
   text: '猫名文字',
   inset: '嵌套块 (Thinking/CLI)',
   ring: '聚焦环线',
   insetText: '嵌套块文字',
+  msgText: '消息文字',
 };
 
 export const SURF_LABELS: Record<keyof SurfaceP, string> = {
@@ -151,6 +133,7 @@ export const INIT: TunerState = {
     inset: { L: 0.3, Cmul: 0.1 },
     ring: { L: 0.55, Cmul: 1.1 },
     insetText: { L: 0.85, C: 0.03 },
+    msgText: { L: 0.2, C: 0.005 },
     elev: { sunken: 0.92, base: 0.95, elevated: 0.985, canvas: 0.996 },
   },
   dark: {
@@ -160,6 +143,7 @@ export const INIT: TunerState = {
     inset: { L: 0.24, Cmul: 0.1 },
     ring: { L: 0.7, Cmul: 1.0 },
     insetText: { L: 0.72, C: 0.01 },
+    msgText: { L: 0.94, C: 0.005 },
     elev: { sunken: 0.12, base: 0.18, elevated: 0.24, canvas: 0.3 },
   },
   /* Semantic status — light/dark hues differ (铲屎官 2026-05-27 调优) */
@@ -185,6 +169,7 @@ export const STYLE_ID = 'oklch-tuner-override';
 export function buildCSS(p: TunerState, hc: HcOverride): string {
   const ok = (m: ModeP, t: CatTier, h: string, c: string) => `oklch(${m[t].L} calc(${c} * ${m[t].Cmul}) ${h})`;
   const it = (m: ModeP) => `oklch(${m.insetText.L} ${m.insetText.C} 250)`;
+  const mt = (m: ModeP) => `oklch(${m.msgText.L} ${m.msgText.C} ${p.neutralHue})`;
 
   // 1. Accent — cascades to all --accent-* in theme-tokens.css
   const accent = `:root{--accent-hue:${p.accentHue};--accent-chroma:${p.accentChroma};}`;
@@ -202,7 +187,8 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
       `--cat-text-l:${m.text.L};--cat-text-cmul:${m.text.Cmul};` +
       `--cat-ring-l:${m.ring.L};--cat-ring-cmul:${m.ring.Cmul};` +
       `--cat-inset-l:${m.inset.L};--cat-inset-cmul:${m.inset.Cmul};` +
-      `--cat-inset-text-l:${m.insetText.L};--cat-inset-text-c:${m.insetText.C};}`
+      `--cat-inset-text-l:${m.insetText.L};--cat-inset-text-c:${m.insetText.C};` +
+      `--cat-msg-text-l:${m.msgText.L};--cat-msg-text-c:${m.msgText.C};}`
     );
   };
 
@@ -243,6 +229,7 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
       `--cat-msg-surface:${ok(m, 'surface', mH, mC)};` +
       `--cat-msg-inset:${ok(m, 'inset', mH, mC)};` +
       `--cat-msg-inset-text:${it(m)};` +
+      `--cat-msg-text:${mt(m)};` +
       `--cat-msg-ring:${ok(m, 'ring', mH, mC)};}`
     );
   };
@@ -324,36 +311,34 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
 
 /* ── Export text (Copy button) ── */
 export function exportText(p: TunerState): string {
-  const row = (mode: Mode, t: CatTier) =>
+  const r = (mode: Mode, t: CatTier) =>
     `  ${t.padEnd(9)} L=${p[mode][t].L.toFixed(2)}  C*${p[mode][t].Cmul.toFixed(2)}`;
-  const itRow = (mode: Mode) => `  insetText L=${p[mode].insetText.L.toFixed(2)}  C=${p[mode].insetText.C.toFixed(3)}`;
-  const elevRow = (mode: Mode) => {
+  const fx = (mode: Mode, k: 'insetText' | 'msgText') =>
+    `  ${k.padEnd(9)} L=${p[mode][k].L.toFixed(2)}  C=${p[mode][k].C.toFixed(3)}`;
+  const el = (mode: Mode) => {
     const e = p[mode].elev;
     return `  surface: ${e.sunken}/${e.base}/${e.elevated}/${e.canvas}`;
   };
-  const block = (mode: Mode) =>
-    `${mode}:\n${CAT_TIERS.map((t) => row(mode, t)).join('\n')}\n${itRow(mode)}\n${elevRow(mode)}`;
-  const semRow = (s: SemanticP) =>
-    `  critical H=${s.criticalH}  success H=${s.successH}  warning H=${s.warningH}  info H=${s.infoH}\n` +
-    `  main L=${s.L.toFixed(2)} C=${s.C.toFixed(3)}  surface L=${s.surfL.toFixed(2)} C=${s.surfC.toFixed(3)}`;
+  const blk = (mode: Mode) =>
+    `${mode}:\n${CAT_TIERS.map((t) => r(mode, t)).join('\n')}\n${fx(mode, 'insetText')}\n${fx(mode, 'msgText')}\n${el(mode)}`;
+  const sem = (s: SemanticP) =>
+    `  H: crit=${s.criticalH} suc=${s.successH} warn=${s.warningH} info=${s.infoH}  L=${s.L.toFixed(2)} C=${s.C.toFixed(3)} surfL=${s.surfL.toFixed(2)} surfC=${s.surfC.toFixed(3)}`;
+  const n = (n: NeutralP) =>
+    `txt=${n.textL} sec=${n.secondaryL} mut=${n.mutedL} int=${n.interactiveL} bdr=${n.borderL} sub=${n.borderSubtleL}`;
   return [
     'OKLCH Token Values',
-    `accentHue=${p.accentHue} accentChroma=${p.accentChroma}`,
+    `accent H=${p.accentHue} C=${p.accentChroma}`,
     '='.repeat(30),
-    block('light'),
+    blk('light'),
     '',
-    block('dark'),
+    blk('dark'),
     '',
     'semantic (light):',
-    semRow(p.semanticLight),
+    sem(p.semanticLight),
     'semantic (dark):',
-    semRow(p.semanticDark),
+    sem(p.semanticDark),
     `queue: H=${p.queue.H} C=${p.queue.C} L=${p.queue.L}`,
-    '',
-    `neutral: H=${p.neutralHue} C=${p.neutralChroma}`,
-    `  light: text=${p.neutralLight.textL} sec=${p.neutralLight.secondaryL} muted=${p.neutralLight.mutedL} int=${p.neutralLight.interactiveL} bdr=${p.neutralLight.borderL} sub=${p.neutralLight.borderSubtleL}`,
-    `  dark:  text=${p.neutralDark.textL} sec=${p.neutralDark.secondaryL} muted=${p.neutralDark.mutedL} int=${p.neutralDark.interactiveL} bdr=${p.neutralDark.borderL} sub=${p.neutralDark.borderSubtleL}`,
-    '',
+    `neutral: H=${p.neutralHue} C=${p.neutralChroma}  light: ${n(p.neutralLight)}  dark: ${n(p.neutralDark)}`,
     `catText: H=${p.catTextH} C=${p.catTextC} lightL=${p.catTextLightL} darkL=${p.catTextDarkL}`,
   ].join('\n');
 }

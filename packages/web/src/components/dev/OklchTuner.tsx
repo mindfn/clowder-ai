@@ -53,7 +53,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
   }, [params]);
 
   const updateTier = useCallback(
-    (tier: CatTier | 'insetText', field: 'L' | 'Cmul' | 'C', value: number) => {
+    (tier: CatTier | 'insetText' | 'msgText', field: 'L' | 'Cmul' | 'C', value: number) => {
       setParams((prev) => ({
         ...prev,
         [mode]: { ...prev[mode], [tier]: { ...prev[mode][tier], [field]: value } },
@@ -246,30 +246,32 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
           ))}
         </div>
 
-        {/* ── 4. Inset text (紧跟气泡/嵌套，同为成员色推导) ── */}
-        <div className="space-y-0.5 pb-2 border-b border-[var(--console-border-soft)]">
-          <div className="pl-4">
-            <span className="text-[10px] text-cafe-muted">{TIER_LABELS.insetText}</span>
+        {/* ── 4. Fixed L/C tiers: insetText + msgText ── */}
+        {(['insetText', 'msgText'] as const).map((tier) => (
+          <div key={tier} className="space-y-0.5 pb-2 border-b border-[var(--console-border-soft)]">
+            <div className="pl-4">
+              <span className="text-[10px] text-cafe-muted">{TIER_LABELS[tier]}</span>
+            </div>
+            <Slider
+              label="L"
+              value={mp[tier].L}
+              min={0}
+              max={1}
+              step={0.01}
+              fmt={mp[tier].L.toFixed(2)}
+              onChange={(v) => updateTier(tier, 'L', v)}
+            />
+            <Slider
+              label="C"
+              value={mp[tier].C}
+              min={0}
+              max={0.1}
+              step={0.001}
+              fmt={mp[tier].C.toFixed(3)}
+              onChange={(v) => updateTier(tier, 'C', v)}
+            />
           </div>
-          <Slider
-            label="L"
-            value={mp.insetText.L}
-            min={0}
-            max={1}
-            step={0.01}
-            fmt={mp.insetText.L.toFixed(2)}
-            onChange={(v) => updateTier('insetText', 'L', v)}
-          />
-          <Slider
-            label="C"
-            value={mp.insetText.C}
-            min={0}
-            max={0.1}
-            step={0.001}
-            fmt={mp.insetText.C.toFixed(3)}
-            onChange={(v) => updateTier('insetText', 'C', v)}
-          />
-        </div>
+        ))}
 
         {/* ── 5. Cat name text (unified H/L/C — 所有猫共用，不跟成员主题色) ── */}
         <div className="space-y-0.5 pb-2 border-b border-[var(--console-border-soft)]">
