@@ -148,12 +148,14 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
           label,
           radius: breed.radius,
           font: breed.font,
-          /* F056: Use generic --cat-msg-surface (defined in .cat-persona-derived
-           * via cat-persona-tokens.css, overridden by Tuner's drv() per mode).
-           * Outer wrapper carries .cat-persona-derived + --msg-hue/--msg-chroma,
-           * so every cat — including dynamic catIds that Tuner buildCSS catBlk()
-           * doesn't know about — picks up the same Tuner-controlled surface L/Cmul. */
-          bgColor: isCallback ? tintedLight(catData.color.primary, 0.08) : 'var(--cat-msg-surface)',
+          /* F056: Per-cat slug-keyed token. cat-persona-tokens.css derives
+           * --color-{slug}-surface using oklch(var(--cat-surface-l) calc(var(--{slug}-chroma)
+           * * var(--cat-surface-cmul)) var(--{slug}-hue)). Tuner emits global
+           * --cat-{tier}-l/cmul, so every cat (static + dynamic) follows the
+           * same gradient. hue/chroma stays per-cat. */
+          bgColor: isCallback
+            ? tintedLight(catData.color.primary, 0.08)
+            : `var(--color-${slug}-surface)`,
           borderColor: isCallback ? hexToRgba(catData.color.primary, 0.12) : hexToRgba(catData.color.primary, 0.3),
           msgHue,
           msgChroma,
@@ -331,13 +333,12 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
   if (isUser) {
     const coCreatorPrimary = coCreator.color?.primary ?? '#815b5b';
     const coCreatorSecondary = coCreator.color?.secondary ?? '#FFDDD2';
-    /* F056: route cocreator bubble bg through generic --cat-msg-* var (driven
-     * by Tuner's drv() formula in .cat-persona-derived). The cocreator's hue
-     * is injected via --msg-hue on the outer div below, so the surface picks
-     * up cocreator's tone but the L/Cmul stay Tuner-controlled (same code
-     * path as cat bubbles, so Tuner changes propagate uniformly). */
-    const coCreatorBubbleBg = 'var(--cat-msg-surface)';
-    const coCreatorBubbleText = 'var(--cat-msg-text)';
+    /* F056: cocreator slug-keyed (cocreator is in SLUGS, has its own per-cat
+     * --color-cocreator-surface in cat-persona-tokens.css that follows the
+     * shared --cat-surface-l/cmul gradient — same Tuner control surface as
+     * other cats, but cocreator keeps its own hue/chroma). */
+    const coCreatorBubbleBg = 'var(--color-cocreator-surface)';
+    const coCreatorBubbleText = 'var(--color-cocreator-text)';
     /* F056: also wire cocreator hue/chroma to --msg-* so .cat-persona-derived
      * provides --cat-msg-{inset,inset-text} for nested ThinkingContent etc. */
     let coCreatorMsgHue = 40;

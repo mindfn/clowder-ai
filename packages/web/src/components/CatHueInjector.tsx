@@ -59,12 +59,16 @@ const STATIC_SLUGS = new Set([
 
 const DYNAMIC_STYLE_ID = 'f056-dynamic-cat-tokens';
 
+/* Both light and dark use the same formula, just with different fallback L/Cmul
+ * values. Tuner emits :root + [data-theme="dark"] overrides for the --cat-{tier}-
+ * L/Cmul vars, so the dark fallbacks below only kick in when Tuner hasn't run
+ * (SSR or no localStorage state). The hue/chroma are per-cat from CatHueInjector. */
 function lightDecl(id: string): string {
   return (
-    `--color-${id}-bubble:oklch(0.62 calc(var(--${id}-chroma) * 1) var(--${id}-hue));` +
-    `--color-${id}-surface:oklch(0.94 calc(var(--${id}-chroma) * 0.3) var(--${id}-hue));` +
-    `--color-${id}-text:oklch(0.24 calc(var(--${id}-chroma) * 0.8) var(--${id}-hue));` +
-    `--color-${id}-ring:oklch(0.55 calc(var(--${id}-chroma) * 1.1) var(--${id}-hue));` +
+    `--color-${id}-bubble:oklch(var(--cat-bubble-l, 0.62) calc(var(--${id}-chroma) * var(--cat-bubble-cmul, 1)) var(--${id}-hue));` +
+    `--color-${id}-surface:oklch(var(--cat-surface-l, 0.94) calc(var(--${id}-chroma) * var(--cat-surface-cmul, 0.3)) var(--${id}-hue));` +
+    `--color-${id}-text:oklch(var(--cat-text-l, 0.24) calc(var(--${id}-chroma) * var(--cat-text-cmul, 0.8)) var(--${id}-hue));` +
+    `--color-${id}-ring:oklch(var(--cat-ring-l, 0.55) calc(var(--${id}-chroma) * var(--cat-ring-cmul, 1.1)) var(--${id}-hue));` +
     `--color-${id}-primary:var(--color-${id}-bubble);` +
     `--color-${id}-light:var(--color-${id}-surface);` +
     `--color-${id}-dark:var(--color-${id}-text);` +
@@ -74,10 +78,10 @@ function lightDecl(id: string): string {
 
 function darkDecl(id: string): string {
   return (
-    `--color-${id}-bubble:oklch(0.68 calc(var(--${id}-chroma) * 0.85) var(--${id}-hue));` +
-    `--color-${id}-surface:oklch(0.28 calc(var(--${id}-chroma) * 0.25) var(--${id}-hue));` +
-    `--color-${id}-text:oklch(0.88 calc(var(--${id}-chroma) * 0.6) var(--${id}-hue));` +
-    `--color-${id}-ring:oklch(0.70 calc(var(--${id}-chroma) * 1) var(--${id}-hue));`
+    `--color-${id}-bubble:oklch(var(--cat-bubble-l, 0.68) calc(var(--${id}-chroma) * var(--cat-bubble-cmul, 0.85)) var(--${id}-hue));` +
+    `--color-${id}-surface:oklch(var(--cat-surface-l, 0.28) calc(var(--${id}-chroma) * var(--cat-surface-cmul, 0.25)) var(--${id}-hue));` +
+    `--color-${id}-text:oklch(var(--cat-text-l, 0.88) calc(var(--${id}-chroma) * var(--cat-text-cmul, 0.6)) var(--${id}-hue));` +
+    `--color-${id}-ring:oklch(var(--cat-ring-l, 0.70) calc(var(--${id}-chroma) * var(--cat-ring-cmul, 1)) var(--${id}-hue));`
   );
 }
 

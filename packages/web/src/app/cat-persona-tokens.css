@@ -56,82 +56,82 @@
 
 /* LIGHT — bubble L=0.62 / surface L=0.94 C×0.3 / text L=0.24 / ring L=0.55 */
 :root {
-  --color-opus-bubble: oklch(0.62 var(--opus-chroma) var(--opus-hue));
-  --color-opus-surface: oklch(0.94 calc(var(--opus-chroma) * 0.3) var(--opus-hue));
-  --color-opus-text: oklch(0.24 calc(var(--opus-chroma) * 0.8) var(--opus-hue));
-  --color-opus-ring: oklch(0.55 calc(var(--opus-chroma) * 1.1) var(--opus-hue));
+  --color-opus-bubble: oklch(var(--cat-bubble-l, 0.62) calc(var(--opus-chroma) * var(--cat-bubble-cmul, 1)) var(--opus-hue));
+  --color-opus-surface: oklch(var(--cat-surface-l, 0.94) calc(var(--opus-chroma) * var(--cat-surface-cmul, 0.3)) var(--opus-hue));
+  --color-opus-text: oklch(var(--cat-text-l, 0.24) calc(var(--opus-chroma) * var(--cat-text-cmul, 0.8)) var(--opus-hue));
+  --color-opus-ring: oklch(var(--cat-ring-l, 0.55) calc(var(--opus-chroma) * var(--cat-ring-cmul, 1.1)) var(--opus-hue));
   --color-opus-primary: var(--color-opus-bubble);
   --color-opus-light: var(--color-opus-surface);
   --color-opus-dark: var(--color-opus-text);
   --color-opus-bg: var(--color-opus-surface);
 
-  --color-sonnet-bubble: oklch(0.62 var(--sonnet-chroma) var(--sonnet-hue));
-  --color-sonnet-surface: oklch(0.94 calc(var(--sonnet-chroma) * 0.3) var(--sonnet-hue));
-  --color-sonnet-text: oklch(0.24 calc(var(--sonnet-chroma) * 0.8) var(--sonnet-hue));
-  --color-sonnet-ring: oklch(0.55 calc(var(--sonnet-chroma) * 1.1) var(--sonnet-hue));
+  --color-sonnet-bubble: oklch(var(--cat-bubble-l, 0.62) calc(var(--sonnet-chroma) * var(--cat-bubble-cmul, 1)) var(--sonnet-hue));
+  --color-sonnet-surface: oklch(var(--cat-surface-l, 0.94) calc(var(--sonnet-chroma) * var(--cat-surface-cmul, 0.3)) var(--sonnet-hue));
+  --color-sonnet-text: oklch(var(--cat-text-l, 0.24) calc(var(--sonnet-chroma) * var(--cat-text-cmul, 0.8)) var(--sonnet-hue));
+  --color-sonnet-ring: oklch(var(--cat-ring-l, 0.55) calc(var(--sonnet-chroma) * var(--cat-ring-cmul, 1.1)) var(--sonnet-hue));
   --color-sonnet-primary: var(--color-sonnet-bubble);
   --color-sonnet-light: var(--color-sonnet-surface);
   --color-sonnet-dark: var(--color-sonnet-text);
   --color-sonnet-bg: var(--color-sonnet-surface);
 
-  --color-codex-bubble: oklch(0.62 var(--codex-chroma) var(--codex-hue));
-  --color-codex-surface: oklch(0.94 calc(var(--codex-chroma) * 0.3) var(--codex-hue));
-  --color-codex-text: oklch(0.24 calc(var(--codex-chroma) * 0.8) var(--codex-hue));
-  --color-codex-ring: oklch(0.55 calc(var(--codex-chroma) * 1.1) var(--codex-hue));
+  --color-codex-bubble: oklch(var(--cat-bubble-l, 0.62) calc(var(--codex-chroma) * var(--cat-bubble-cmul, 1)) var(--codex-hue));
+  --color-codex-surface: oklch(var(--cat-surface-l, 0.94) calc(var(--codex-chroma) * var(--cat-surface-cmul, 0.3)) var(--codex-hue));
+  --color-codex-text: oklch(var(--cat-text-l, 0.24) calc(var(--codex-chroma) * var(--cat-text-cmul, 0.8)) var(--codex-hue));
+  --color-codex-ring: oklch(var(--cat-ring-l, 0.55) calc(var(--codex-chroma) * var(--cat-ring-cmul, 1.1)) var(--codex-hue));
   --color-codex-primary: var(--color-codex-bubble);
   --color-codex-light: var(--color-codex-surface);
   --color-codex-dark: var(--color-codex-text);
   --color-codex-bg: var(--color-codex-surface);
 
-  --color-gpt52-bubble: oklch(0.62 var(--gpt52-chroma) var(--gpt52-hue));
-  --color-gpt52-surface: oklch(0.94 calc(var(--gpt52-chroma) * 0.3) var(--gpt52-hue));
-  --color-gpt52-text: oklch(0.24 calc(var(--gpt52-chroma) * 0.8) var(--gpt52-hue));
-  --color-gpt52-ring: oklch(0.55 calc(var(--gpt52-chroma) * 1.1) var(--gpt52-hue));
+  --color-gpt52-bubble: oklch(var(--cat-bubble-l, 0.62) calc(var(--gpt52-chroma) * var(--cat-bubble-cmul, 1)) var(--gpt52-hue));
+  --color-gpt52-surface: oklch(var(--cat-surface-l, 0.94) calc(var(--gpt52-chroma) * var(--cat-surface-cmul, 0.3)) var(--gpt52-hue));
+  --color-gpt52-text: oklch(var(--cat-text-l, 0.24) calc(var(--gpt52-chroma) * var(--cat-text-cmul, 0.8)) var(--gpt52-hue));
+  --color-gpt52-ring: oklch(var(--cat-ring-l, 0.55) calc(var(--gpt52-chroma) * var(--cat-ring-cmul, 1.1)) var(--gpt52-hue));
   --color-gpt52-primary: var(--color-gpt52-bubble);
   --color-gpt52-light: var(--color-gpt52-surface);
   --color-gpt52-dark: var(--color-gpt52-text);
   --color-gpt52-bg: var(--color-gpt52-surface);
 
-  --color-opus-45-bubble: oklch(0.62 var(--opus-45-chroma) var(--opus-45-hue));
-  --color-opus-45-surface: oklch(0.94 calc(var(--opus-45-chroma) * 0.3) var(--opus-45-hue));
-  --color-opus-45-text: oklch(0.24 calc(var(--opus-45-chroma) * 0.8) var(--opus-45-hue));
-  --color-opus-45-ring: oklch(0.55 calc(var(--opus-45-chroma) * 1.1) var(--opus-45-hue));
+  --color-opus-45-bubble: oklch(var(--cat-bubble-l, 0.62) calc(var(--opus-45-chroma) * var(--cat-bubble-cmul, 1)) var(--opus-45-hue));
+  --color-opus-45-surface: oklch(var(--cat-surface-l, 0.94) calc(var(--opus-45-chroma) * var(--cat-surface-cmul, 0.3)) var(--opus-45-hue));
+  --color-opus-45-text: oklch(var(--cat-text-l, 0.24) calc(var(--opus-45-chroma) * var(--cat-text-cmul, 0.8)) var(--opus-45-hue));
+  --color-opus-45-ring: oklch(var(--cat-ring-l, 0.55) calc(var(--opus-45-chroma) * var(--cat-ring-cmul, 1.1)) var(--opus-45-hue));
   --color-opus-45-primary: var(--color-opus-45-bubble);
   --color-opus-45-light: var(--color-opus-45-surface);
   --color-opus-45-dark: var(--color-opus-45-text);
   --color-opus-45-bg: var(--color-opus-45-surface);
 
-  --color-gemini-bubble: oklch(0.62 var(--gemini-chroma) var(--gemini-hue));
-  --color-gemini-surface: oklch(0.94 calc(var(--gemini-chroma) * 0.3) var(--gemini-hue));
-  --color-gemini-text: oklch(0.24 calc(var(--gemini-chroma) * 0.8) var(--gemini-hue));
-  --color-gemini-ring: oklch(0.55 calc(var(--gemini-chroma) * 1.1) var(--gemini-hue));
+  --color-gemini-bubble: oklch(var(--cat-bubble-l, 0.62) calc(var(--gemini-chroma) * var(--cat-bubble-cmul, 1)) var(--gemini-hue));
+  --color-gemini-surface: oklch(var(--cat-surface-l, 0.94) calc(var(--gemini-chroma) * var(--cat-surface-cmul, 0.3)) var(--gemini-hue));
+  --color-gemini-text: oklch(var(--cat-text-l, 0.24) calc(var(--gemini-chroma) * var(--cat-text-cmul, 0.8)) var(--gemini-hue));
+  --color-gemini-ring: oklch(var(--cat-ring-l, 0.55) calc(var(--gemini-chroma) * var(--cat-ring-cmul, 1.1)) var(--gemini-hue));
   --color-gemini-primary: var(--color-gemini-bubble);
   --color-gemini-light: var(--color-gemini-surface);
   --color-gemini-dark: var(--color-gemini-text);
   --color-gemini-bg: var(--color-gemini-surface);
 
-  --color-kimi-bubble: oklch(0.62 var(--kimi-chroma) var(--kimi-hue));
-  --color-kimi-surface: oklch(0.94 calc(var(--kimi-chroma) * 0.3) var(--kimi-hue));
-  --color-kimi-text: oklch(0.24 calc(var(--kimi-chroma) * 0.8) var(--kimi-hue));
-  --color-kimi-ring: oklch(0.55 calc(var(--kimi-chroma) * 1.1) var(--kimi-hue));
+  --color-kimi-bubble: oklch(var(--cat-bubble-l, 0.62) calc(var(--kimi-chroma) * var(--cat-bubble-cmul, 1)) var(--kimi-hue));
+  --color-kimi-surface: oklch(var(--cat-surface-l, 0.94) calc(var(--kimi-chroma) * var(--cat-surface-cmul, 0.3)) var(--kimi-hue));
+  --color-kimi-text: oklch(var(--cat-text-l, 0.24) calc(var(--kimi-chroma) * var(--cat-text-cmul, 0.8)) var(--kimi-hue));
+  --color-kimi-ring: oklch(var(--cat-ring-l, 0.55) calc(var(--kimi-chroma) * var(--cat-ring-cmul, 1.1)) var(--kimi-hue));
   --color-kimi-primary: var(--color-kimi-bubble);
   --color-kimi-light: var(--color-kimi-surface);
   --color-kimi-dark: var(--color-kimi-text);
   --color-kimi-bg: var(--color-kimi-surface);
 
-  --color-dare-bubble: oklch(0.62 var(--dare-chroma) var(--dare-hue));
-  --color-dare-surface: oklch(0.94 calc(var(--dare-chroma) * 0.3) var(--dare-hue));
-  --color-dare-text: oklch(0.24 calc(var(--dare-chroma) * 0.8) var(--dare-hue));
-  --color-dare-ring: oklch(0.55 calc(var(--dare-chroma) * 1.1) var(--dare-hue));
+  --color-dare-bubble: oklch(var(--cat-bubble-l, 0.62) calc(var(--dare-chroma) * var(--cat-bubble-cmul, 1)) var(--dare-hue));
+  --color-dare-surface: oklch(var(--cat-surface-l, 0.94) calc(var(--dare-chroma) * var(--cat-surface-cmul, 0.3)) var(--dare-hue));
+  --color-dare-text: oklch(var(--cat-text-l, 0.24) calc(var(--dare-chroma) * var(--cat-text-cmul, 0.8)) var(--dare-hue));
+  --color-dare-ring: oklch(var(--cat-ring-l, 0.55) calc(var(--dare-chroma) * var(--cat-ring-cmul, 1.1)) var(--dare-hue));
   --color-dare-primary: var(--color-dare-bubble);
   --color-dare-light: var(--color-dare-surface);
   --color-dare-dark: var(--color-dare-text);
   --color-dare-bg: var(--color-dare-surface);
 
-  --color-cocreator-bubble: oklch(0.62 var(--cocreator-chroma) var(--cocreator-hue));
-  --color-cocreator-surface: oklch(0.94 calc(var(--cocreator-chroma) * 0.3) var(--cocreator-hue));
-  --color-cocreator-text: oklch(0.24 calc(var(--cocreator-chroma) * 0.8) var(--cocreator-hue));
-  --color-cocreator-ring: oklch(0.55 calc(var(--cocreator-chroma) * 1.1) var(--cocreator-hue));
+  --color-cocreator-bubble: oklch(var(--cat-bubble-l, 0.62) calc(var(--cocreator-chroma) * var(--cat-bubble-cmul, 1)) var(--cocreator-hue));
+  --color-cocreator-surface: oklch(var(--cat-surface-l, 0.94) calc(var(--cocreator-chroma) * var(--cat-surface-cmul, 0.3)) var(--cocreator-hue));
+  --color-cocreator-text: oklch(var(--cat-text-l, 0.24) calc(var(--cocreator-chroma) * var(--cat-text-cmul, 0.8)) var(--cocreator-hue));
+  --color-cocreator-ring: oklch(var(--cat-ring-l, 0.55) calc(var(--cocreator-chroma) * var(--cat-ring-cmul, 1.1)) var(--cocreator-hue));
   --color-cocreator-primary: var(--color-cocreator-bubble);
   --color-cocreator-light: var(--color-cocreator-surface);
   --color-cocreator-dark: var(--color-cocreator-text);
@@ -140,82 +140,82 @@
 
 /* DARK — bubble L=0.68 / surface L=0.28 C×0.25 / text L=0.88 / ring L=0.70 */
 [data-theme="dark"] {
-  --color-opus-bubble: oklch(0.68 calc(var(--opus-chroma) * 0.85) var(--opus-hue));
-  --color-opus-surface: oklch(0.28 calc(var(--opus-chroma) * 0.25) var(--opus-hue));
-  --color-opus-text: oklch(0.88 calc(var(--opus-chroma) * 0.6) var(--opus-hue));
-  --color-opus-ring: oklch(0.7 var(--opus-chroma) var(--opus-hue));
+  --color-opus-bubble: oklch(var(--cat-bubble-l, 0.68) calc(var(--opus-chroma) * var(--cat-bubble-cmul, 0.85)) var(--opus-hue));
+  --color-opus-surface: oklch(var(--cat-surface-l, 0.28) calc(var(--opus-chroma) * var(--cat-surface-cmul, 0.25)) var(--opus-hue));
+  --color-opus-text: oklch(var(--cat-text-l, 0.88) calc(var(--opus-chroma) * var(--cat-text-cmul, 0.6)) var(--opus-hue));
+  --color-opus-ring: oklch(var(--cat-ring-l, 0.7) calc(var(--opus-chroma) * var(--cat-ring-cmul, 1)) var(--opus-hue));
   --color-opus-primary: var(--color-opus-bubble);
   --color-opus-light: var(--color-opus-surface);
   --color-opus-dark: var(--color-opus-text);
   --color-opus-bg: var(--color-opus-surface);
 
-  --color-sonnet-bubble: oklch(0.68 calc(var(--sonnet-chroma) * 0.85) var(--sonnet-hue));
-  --color-sonnet-surface: oklch(0.28 calc(var(--sonnet-chroma) * 0.25) var(--sonnet-hue));
-  --color-sonnet-text: oklch(0.88 calc(var(--sonnet-chroma) * 0.6) var(--sonnet-hue));
-  --color-sonnet-ring: oklch(0.7 var(--sonnet-chroma) var(--sonnet-hue));
+  --color-sonnet-bubble: oklch(var(--cat-bubble-l, 0.68) calc(var(--sonnet-chroma) * var(--cat-bubble-cmul, 0.85)) var(--sonnet-hue));
+  --color-sonnet-surface: oklch(var(--cat-surface-l, 0.28) calc(var(--sonnet-chroma) * var(--cat-surface-cmul, 0.25)) var(--sonnet-hue));
+  --color-sonnet-text: oklch(var(--cat-text-l, 0.88) calc(var(--sonnet-chroma) * var(--cat-text-cmul, 0.6)) var(--sonnet-hue));
+  --color-sonnet-ring: oklch(var(--cat-ring-l, 0.7) calc(var(--sonnet-chroma) * var(--cat-ring-cmul, 1)) var(--sonnet-hue));
   --color-sonnet-primary: var(--color-sonnet-bubble);
   --color-sonnet-light: var(--color-sonnet-surface);
   --color-sonnet-dark: var(--color-sonnet-text);
   --color-sonnet-bg: var(--color-sonnet-surface);
 
-  --color-codex-bubble: oklch(0.68 calc(var(--codex-chroma) * 0.85) var(--codex-hue));
-  --color-codex-surface: oklch(0.28 calc(var(--codex-chroma) * 0.25) var(--codex-hue));
-  --color-codex-text: oklch(0.88 calc(var(--codex-chroma) * 0.6) var(--codex-hue));
-  --color-codex-ring: oklch(0.7 var(--codex-chroma) var(--codex-hue));
+  --color-codex-bubble: oklch(var(--cat-bubble-l, 0.68) calc(var(--codex-chroma) * var(--cat-bubble-cmul, 0.85)) var(--codex-hue));
+  --color-codex-surface: oklch(var(--cat-surface-l, 0.28) calc(var(--codex-chroma) * var(--cat-surface-cmul, 0.25)) var(--codex-hue));
+  --color-codex-text: oklch(var(--cat-text-l, 0.88) calc(var(--codex-chroma) * var(--cat-text-cmul, 0.6)) var(--codex-hue));
+  --color-codex-ring: oklch(var(--cat-ring-l, 0.7) calc(var(--codex-chroma) * var(--cat-ring-cmul, 1)) var(--codex-hue));
   --color-codex-primary: var(--color-codex-bubble);
   --color-codex-light: var(--color-codex-surface);
   --color-codex-dark: var(--color-codex-text);
   --color-codex-bg: var(--color-codex-surface);
 
-  --color-gpt52-bubble: oklch(0.68 calc(var(--gpt52-chroma) * 0.85) var(--gpt52-hue));
-  --color-gpt52-surface: oklch(0.28 calc(var(--gpt52-chroma) * 0.25) var(--gpt52-hue));
-  --color-gpt52-text: oklch(0.88 calc(var(--gpt52-chroma) * 0.6) var(--gpt52-hue));
-  --color-gpt52-ring: oklch(0.7 var(--gpt52-chroma) var(--gpt52-hue));
+  --color-gpt52-bubble: oklch(var(--cat-bubble-l, 0.68) calc(var(--gpt52-chroma) * var(--cat-bubble-cmul, 0.85)) var(--gpt52-hue));
+  --color-gpt52-surface: oklch(var(--cat-surface-l, 0.28) calc(var(--gpt52-chroma) * var(--cat-surface-cmul, 0.25)) var(--gpt52-hue));
+  --color-gpt52-text: oklch(var(--cat-text-l, 0.88) calc(var(--gpt52-chroma) * var(--cat-text-cmul, 0.6)) var(--gpt52-hue));
+  --color-gpt52-ring: oklch(var(--cat-ring-l, 0.7) calc(var(--gpt52-chroma) * var(--cat-ring-cmul, 1)) var(--gpt52-hue));
   --color-gpt52-primary: var(--color-gpt52-bubble);
   --color-gpt52-light: var(--color-gpt52-surface);
   --color-gpt52-dark: var(--color-gpt52-text);
   --color-gpt52-bg: var(--color-gpt52-surface);
 
-  --color-opus-45-bubble: oklch(0.68 calc(var(--opus-45-chroma) * 0.85) var(--opus-45-hue));
-  --color-opus-45-surface: oklch(0.28 calc(var(--opus-45-chroma) * 0.25) var(--opus-45-hue));
-  --color-opus-45-text: oklch(0.88 calc(var(--opus-45-chroma) * 0.6) var(--opus-45-hue));
-  --color-opus-45-ring: oklch(0.7 var(--opus-45-chroma) var(--opus-45-hue));
+  --color-opus-45-bubble: oklch(var(--cat-bubble-l, 0.68) calc(var(--opus-45-chroma) * var(--cat-bubble-cmul, 0.85)) var(--opus-45-hue));
+  --color-opus-45-surface: oklch(var(--cat-surface-l, 0.28) calc(var(--opus-45-chroma) * var(--cat-surface-cmul, 0.25)) var(--opus-45-hue));
+  --color-opus-45-text: oklch(var(--cat-text-l, 0.88) calc(var(--opus-45-chroma) * var(--cat-text-cmul, 0.6)) var(--opus-45-hue));
+  --color-opus-45-ring: oklch(var(--cat-ring-l, 0.7) calc(var(--opus-45-chroma) * var(--cat-ring-cmul, 1)) var(--opus-45-hue));
   --color-opus-45-primary: var(--color-opus-45-bubble);
   --color-opus-45-light: var(--color-opus-45-surface);
   --color-opus-45-dark: var(--color-opus-45-text);
   --color-opus-45-bg: var(--color-opus-45-surface);
 
-  --color-gemini-bubble: oklch(0.68 calc(var(--gemini-chroma) * 0.85) var(--gemini-hue));
-  --color-gemini-surface: oklch(0.28 calc(var(--gemini-chroma) * 0.25) var(--gemini-hue));
-  --color-gemini-text: oklch(0.88 calc(var(--gemini-chroma) * 0.6) var(--gemini-hue));
-  --color-gemini-ring: oklch(0.7 var(--gemini-chroma) var(--gemini-hue));
+  --color-gemini-bubble: oklch(var(--cat-bubble-l, 0.68) calc(var(--gemini-chroma) * var(--cat-bubble-cmul, 0.85)) var(--gemini-hue));
+  --color-gemini-surface: oklch(var(--cat-surface-l, 0.28) calc(var(--gemini-chroma) * var(--cat-surface-cmul, 0.25)) var(--gemini-hue));
+  --color-gemini-text: oklch(var(--cat-text-l, 0.88) calc(var(--gemini-chroma) * var(--cat-text-cmul, 0.6)) var(--gemini-hue));
+  --color-gemini-ring: oklch(var(--cat-ring-l, 0.7) calc(var(--gemini-chroma) * var(--cat-ring-cmul, 1)) var(--gemini-hue));
   --color-gemini-primary: var(--color-gemini-bubble);
   --color-gemini-light: var(--color-gemini-surface);
   --color-gemini-dark: var(--color-gemini-text);
   --color-gemini-bg: var(--color-gemini-surface);
 
-  --color-kimi-bubble: oklch(0.68 calc(var(--kimi-chroma) * 0.85) var(--kimi-hue));
-  --color-kimi-surface: oklch(0.28 calc(var(--kimi-chroma) * 0.25) var(--kimi-hue));
-  --color-kimi-text: oklch(0.88 calc(var(--kimi-chroma) * 0.6) var(--kimi-hue));
-  --color-kimi-ring: oklch(0.7 var(--kimi-chroma) var(--kimi-hue));
+  --color-kimi-bubble: oklch(var(--cat-bubble-l, 0.68) calc(var(--kimi-chroma) * var(--cat-bubble-cmul, 0.85)) var(--kimi-hue));
+  --color-kimi-surface: oklch(var(--cat-surface-l, 0.28) calc(var(--kimi-chroma) * var(--cat-surface-cmul, 0.25)) var(--kimi-hue));
+  --color-kimi-text: oklch(var(--cat-text-l, 0.88) calc(var(--kimi-chroma) * var(--cat-text-cmul, 0.6)) var(--kimi-hue));
+  --color-kimi-ring: oklch(var(--cat-ring-l, 0.7) calc(var(--kimi-chroma) * var(--cat-ring-cmul, 1)) var(--kimi-hue));
   --color-kimi-primary: var(--color-kimi-bubble);
   --color-kimi-light: var(--color-kimi-surface);
   --color-kimi-dark: var(--color-kimi-text);
   --color-kimi-bg: var(--color-kimi-surface);
 
-  --color-dare-bubble: oklch(0.68 calc(var(--dare-chroma) * 0.85) var(--dare-hue));
-  --color-dare-surface: oklch(0.28 calc(var(--dare-chroma) * 0.25) var(--dare-hue));
-  --color-dare-text: oklch(0.88 calc(var(--dare-chroma) * 0.6) var(--dare-hue));
-  --color-dare-ring: oklch(0.7 var(--dare-chroma) var(--dare-hue));
+  --color-dare-bubble: oklch(var(--cat-bubble-l, 0.68) calc(var(--dare-chroma) * var(--cat-bubble-cmul, 0.85)) var(--dare-hue));
+  --color-dare-surface: oklch(var(--cat-surface-l, 0.28) calc(var(--dare-chroma) * var(--cat-surface-cmul, 0.25)) var(--dare-hue));
+  --color-dare-text: oklch(var(--cat-text-l, 0.88) calc(var(--dare-chroma) * var(--cat-text-cmul, 0.6)) var(--dare-hue));
+  --color-dare-ring: oklch(var(--cat-ring-l, 0.7) calc(var(--dare-chroma) * var(--cat-ring-cmul, 1)) var(--dare-hue));
   --color-dare-primary: var(--color-dare-bubble);
   --color-dare-light: var(--color-dare-surface);
   --color-dare-dark: var(--color-dare-text);
   --color-dare-bg: var(--color-dare-surface);
 
-  --color-cocreator-bubble: oklch(0.68 calc(var(--cocreator-chroma) * 0.85) var(--cocreator-hue));
-  --color-cocreator-surface: oklch(0.28 calc(var(--cocreator-chroma) * 0.25) var(--cocreator-hue));
-  --color-cocreator-text: oklch(0.88 calc(var(--cocreator-chroma) * 0.6) var(--cocreator-hue));
-  --color-cocreator-ring: oklch(0.7 var(--cocreator-chroma) var(--cocreator-hue));
+  --color-cocreator-bubble: oklch(var(--cat-bubble-l, 0.68) calc(var(--cocreator-chroma) * var(--cat-bubble-cmul, 0.85)) var(--cocreator-hue));
+  --color-cocreator-surface: oklch(var(--cat-surface-l, 0.28) calc(var(--cocreator-chroma) * var(--cat-surface-cmul, 0.25)) var(--cocreator-hue));
+  --color-cocreator-text: oklch(var(--cat-text-l, 0.88) calc(var(--cocreator-chroma) * var(--cat-text-cmul, 0.6)) var(--cocreator-hue));
+  --color-cocreator-ring: oklch(var(--cat-ring-l, 0.7) calc(var(--cocreator-chroma) * var(--cat-ring-cmul, 1)) var(--cocreator-hue));
   --color-cocreator-primary: var(--color-cocreator-bubble);
   --color-cocreator-light: var(--color-cocreator-surface);
   --color-cocreator-dark: var(--color-cocreator-text);
@@ -230,21 +230,37 @@
  * light/dark 由 [data-theme] 自动切换。
  * ============================================================ */
 .cat-persona-derived {
-  --cat-msg-bubble: oklch(0.62 var(--msg-chroma, 0.1) var(--msg-hue, 297));
-  --cat-msg-surface: oklch(0.9 calc(var(--msg-chroma, 0.1) * 0.5) var(--msg-hue, 297));
-  --cat-msg-inset: oklch(0.3 calc(var(--msg-chroma, 0.1) * 0.1) var(--msg-hue, 297));
-  --cat-msg-inset-text: oklch(0.85 0.03 250);
+  --cat-msg-bubble: oklch(
+    var(--cat-bubble-l, 0.62) calc(var(--msg-chroma, 0.1) * var(--cat-bubble-cmul, 1)) var(--msg-hue, 297)
+  );
+  --cat-msg-surface: oklch(
+    var(--cat-surface-l, 0.9) calc(var(--msg-chroma, 0.1) * var(--cat-surface-cmul, 0.5)) var(--msg-hue, 297)
+  );
+  --cat-msg-inset: oklch(
+    var(--cat-inset-l, 0.3) calc(var(--msg-chroma, 0.1) * var(--cat-inset-cmul, 0.1)) var(--msg-hue, 297)
+  );
+  --cat-msg-inset-text: oklch(var(--cat-inset-text-l, 0.85) var(--cat-inset-text-c, 0.03) 250);
   --cat-msg-text: var(--cafe-text);
-  --cat-msg-ring: oklch(0.55 calc(var(--msg-chroma, 0.1) * 1.1) var(--msg-hue, 297));
+  --cat-msg-ring: oklch(
+    var(--cat-ring-l, 0.55) calc(var(--msg-chroma, 0.1) * var(--cat-ring-cmul, 1.1)) var(--msg-hue, 297)
+  );
 }
 
 [data-theme="dark"] .cat-persona-derived {
-  --cat-msg-bubble: oklch(0.68 calc(var(--msg-chroma, 0.1) * 0.85) var(--msg-hue, 297));
-  --cat-msg-surface: oklch(0.28 calc(var(--msg-chroma, 0.1) * 0.25) var(--msg-hue, 297));
-  --cat-msg-inset: oklch(0.24 calc(var(--msg-chroma, 0.1) * 0.1) var(--msg-hue, 297));
-  --cat-msg-inset-text: oklch(0.72 0.01 250);
+  --cat-msg-bubble: oklch(
+    var(--cat-bubble-l, 0.68) calc(var(--msg-chroma, 0.1) * var(--cat-bubble-cmul, 0.85)) var(--msg-hue, 297)
+  );
+  --cat-msg-surface: oklch(
+    var(--cat-surface-l, 0.28) calc(var(--msg-chroma, 0.1) * var(--cat-surface-cmul, 0.25)) var(--msg-hue, 297)
+  );
+  --cat-msg-inset: oklch(
+    var(--cat-inset-l, 0.24) calc(var(--msg-chroma, 0.1) * var(--cat-inset-cmul, 0.1)) var(--msg-hue, 297)
+  );
+  --cat-msg-inset-text: oklch(var(--cat-inset-text-l, 0.72) var(--cat-inset-text-c, 0.01) 250);
   --cat-msg-text: var(--cafe-text);
-  --cat-msg-ring: oklch(0.7 var(--msg-chroma, 0.1) var(--msg-hue, 297));
+  --cat-msg-ring: oklch(
+    var(--cat-ring-l, 0.7) calc(var(--msg-chroma, 0.1) * var(--cat-ring-cmul, 1)) var(--msg-hue, 297)
+  );
 }
 
 /* ── 成员编辑器 light/dark 双预览（hub-cat-editor-color-field）─────────
