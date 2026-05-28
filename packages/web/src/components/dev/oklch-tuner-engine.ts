@@ -1,8 +1,4 @@
-/* F056 OKLCH Tuner — engine: types, defaults, CSS generation, export.
- * buildCSS() generates overrides for accent, surface elevation, per-cat tokens,
- * .cat-persona-derived msg tokens, and optional hue/chroma force. */
-
-/* ── Types ── */
+/* F056 OKLCH Tuner engine — types, INIT defaults, CSS generation, export. */
 export interface TierP {
   L: number;
   Cmul: number;
@@ -122,7 +118,6 @@ export const NEUTRAL_ROWS: [keyof NeutralP, string][] = [
   ['borderSubtleL', '细线'],
 ];
 
-/* ── Defaults (match cat-persona-tokens.css + theme-tokens.css exactly) ── */
 export const INIT: TunerState = {
   accentHue: 35,
   accentChroma: 0.12,
@@ -146,17 +141,14 @@ export const INIT: TunerState = {
     msgText: { L: 0.8, C: 0.02 },
     elev: { sunken: 0.275, base: 0.18, elevated: 0.1, canvas: 0.18 },
   },
-  /* Semantic status — light/dark hues differ (铲屎官 2026-05-27 调优) */
+  // biome-ignore format: compact INIT block
   semanticLight: { criticalH: 38, successH: 135, warningH: 46, infoH: 209, L: 0.57, C: 0.12, surfL: 0.96, surfC: 0.03 },
   semanticDark: { criticalH: 25, successH: 145, warningH: 70, infoH: 230, L: 0.7, C: 0.17, surfL: 0.25, surfC: 0.05 },
-  /* Queue accent — OKLCH approximation of #9B7EBD */
   queue: { H: 290, C: 0.1, L: 0.62 },
-  /* Neutral text/border — from theme-tokens.css neutral scale */
   neutralHue: 30,
   neutralChroma: 0.005,
   neutralLight: { textL: 0.2, secondaryL: 0.45, mutedL: 0.56, interactiveL: 0.36, borderL: 0.84, borderSubtleL: 0.915 },
   neutralDark: { textL: 0.94, secondaryL: 0.76, mutedL: 0.66, interactiveL: 0.84, borderL: 0.32, borderSubtleL: 0.24 },
-  /* Cat name text — green-neutral, unified across all cats */
   catTextH: 139,
   catTextC: 0.005,
   catTextLightL: 0.24,
@@ -165,21 +157,48 @@ export const INIT: TunerState = {
 
 export const STYLE_ID = 'oklch-tuner-override';
 
+/** Patch missing ModeP fields from INIT (forward-compat for schema additions). */
+function migrateModeP(m: Partial<ModeP>, fallback: ModeP): ModeP {
+  return {
+    primary: m.primary ?? fallback.primary,
+    surface: m.surface ?? fallback.surface,
+    text: m.text ?? fallback.text,
+    inset: m.inset ?? fallback.inset,
+    ring: m.ring ?? fallback.ring,
+    insetText: m.insetText ?? fallback.insetText,
+    msgText: m.msgText ?? fallback.msgText,
+    elev: m.elev ?? fallback.elev,
+  };
+}
+
+/** Patch missing TunerState fields with INIT defaults (survives schema additions). */
+export function migrateTunerState(s: Partial<TunerState>): TunerState {
+  return {
+    ...INIT,
+    ...s,
+    light: migrateModeP((s.light as Partial<ModeP>) ?? {}, INIT.light),
+    dark: migrateModeP((s.dark as Partial<ModeP>) ?? {}, INIT.dark),
+  };
+}
+
 /* ── CSS generation ── */
 export function buildCSS(p: TunerState, hc: HcOverride): string {
   const ok = (m: ModeP, t: CatTier, h: string, c: string) => `oklch(${m[t].L} calc(${c} * ${m[t].Cmul}) ${h})`;
   const it = (m: ModeP) => `oklch(${m.insetText.L} ${m.insetText.C} 250)`;
-  const mt = (m: ModeP) => `oklch(${m.msgText.L} ${m.msgText.C} ${p.neutralHue})`;
+  /* Defensive: old persisted data may lack msgText (added mid-PR) */
+  const mt = (m: ModeP) => {
+    const msg = m.msgText ?? INIT.light.msgText;
+    return `oklch(${msg.L} ${msg.C} ${p.neutralHue})`;
+  };
 
   // 1. Accent — cascades to all --accent-* in theme-tokens.css
   const accent = `:root{--accent-hue:${p.accentHue};--accent-chroma:${p.accentChroma};}`;
 
-  // 1b. Cat tier gradients (--cat-{tier}-l/cmul). Per-cat tokens
-  // (--color-{slug}-*) in cat-persona-tokens.css consume these so all cats,
-  // including dynamically-created ones, follow Tuner's L/Cmul globally.
-  // hue/chroma still come from each cat's own --{slug}-hue/-chroma.
+  // 1b. Cat tier gradients — per-slug tokens in cat-persona-tokens.css consume these
   const catGrads = (m: ModeP, dark: boolean) => {
     const sel = dark ? '[data-theme="dark"]' : ':root';
+    /* Defensive: old persisted data may lack msgText */
+    const msg = m.msgText ?? (dark ? INIT.dark.msgText : INIT.light.msgText);
     return (
       `${sel}{` +
       `--cat-bubble-l:${m.primary.L};--cat-bubble-cmul:${m.primary.Cmul};` +
@@ -188,12 +207,11 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
       `--cat-ring-l:${m.ring.L};--cat-ring-cmul:${m.ring.Cmul};` +
       `--cat-inset-l:${m.inset.L};--cat-inset-cmul:${m.inset.Cmul};` +
       `--cat-inset-text-l:${m.insetText.L};--cat-inset-text-c:${m.insetText.C};` +
-      `--cat-msg-text-l:${m.msgText.L};--cat-msg-text-c:${m.msgText.C};}`
+      `--cat-msg-text-l:${msg.L};--cat-msg-text-c:${msg.C};}`
     );
   };
 
-  // 2. Surface elevation — hue follows accent (KD-34 rev: surfaces tint with brand)
-  //    Chroma unified across light/dark so Tuner behavior is consistent in both modes.
+  // 2. Surface elevation — hue follows accent, chroma unified light/dark
   const surf = (e: SurfaceP, dark: boolean) => {
     const sel = dark ? '[data-theme="dark"]' : ':root';
     const ch = [0.015, 0.012, 0.005, 0.003]; // unified — no dark-specific chroma
@@ -207,11 +225,7 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
     );
   };
 
-  // 3. Per-cat static tokens removed: per-slug gradient now comes from
-  //    cat-persona-tokens.css via --cat-{tier}-l/cmul (see catGrads below).
-  //    Old `catTkn`/`catBlk`/`accentPri` helpers deleted to prevent shadowing.
-
-  // 3c. Unified cat name text (铲屎官: "H L C 统一，不跟成员主题色变")
+  // 3. Unified cat name text (H/L/C — all cats share, not per-cat hue derived)
   const catTxt = (dark: boolean) => {
     const l = dark ? p.catTextDarkL : p.catTextLightL;
     const v = `oklch(${l} ${p.catTextC} ${p.catTextH})`;
@@ -278,22 +292,12 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
 
   return [
     accent,
-    /* F056: --cat-{tier}-l/cmul gradient feeds cat-persona-tokens.css's
-     * per-slug derivation formulas (and CatHueInjector's dynamic stylesheet),
-     * so all cats follow Tuner uniformly while each keeps its own hue/chroma.
-     * The old per-slug `catBlk` hardcoded oklch(L Cmul·c hue) which would
-     * shadow the new var-based formulas, so it's intentionally removed. */
+    // --cat-{tier}-l/cmul → cat-persona-tokens.css per-slug formulas + CatHueInjector
     catGrads(p.light, false),
     catGrads(p.dark, true),
     surf(p.light.elev, false),
     surf(p.dark.elev, true),
-    /* F056 (铲屎官 2026-05-28 architecture clarification): bubble/primary
-     * should derive from each cat's own hue/chroma (not be flattened to a
-     * single --cafe-accent). The per-slug --color-{slug}-bubble in
-     * cat-persona-tokens.css already does this via --cat-bubble-l/cmul gradient,
-     * so the accentPri override that forced bubble=cafe-accent is removed.
-     * catTxt kept: cat-name labels (small text next to avatars) still use a
-     * unified green-neutral tone (catTextH/L/C), not per-cat hue. */
+    // catTxt: unified green-neutral cat-name labels (not per-cat hue)
     catTxt(false),
     catTxt(true),
     drv(p.light, false),

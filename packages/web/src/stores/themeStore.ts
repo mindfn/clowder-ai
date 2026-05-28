@@ -6,7 +6,14 @@
  * The active theme's params are applied as CSS overrides via ThemeApplier.
  */
 import { create } from 'zustand';
-import { buildCSS, type HcOverride, INIT, STYLE_ID, type TunerState } from '@/components/dev/oklch-tuner-engine';
+import {
+  buildCSS,
+  type HcOverride,
+  INIT,
+  migrateTunerState,
+  STYLE_ID,
+  type TunerState,
+} from '@/components/dev/oklch-tuner-engine';
 import { apiFetch } from '@/utils/api-client';
 
 const LS_KEY = 'cat-cafe:themes';
@@ -79,11 +86,20 @@ function readLS(): { custom: ThemePreset[]; activeId: string; builtInOverrides: 
           'Discarding stale built-in tuner overrides; custom themes preserved.',
       );
     }
+    /* Migrate persisted params — forward-compat when ModeP gains fields (e.g. msgText).
+     * Custom themes and builtInOverrides both get patched with INIT defaults. */
+    const rawCustom = Array.isArray(d.custom) ? d.custom.slice(0, MAX_CUSTOM) : [];
+    const migratedCustom = rawCustom.map((t) => ({ ...t, params: migrateTunerState(t.params) }));
+    const rawOverrides =
+      versionMismatch || !d.builtInOverrides || typeof d.builtInOverrides !== 'object' ? {} : d.builtInOverrides;
+    const migratedOverrides: Record<string, TunerState> = {};
+    for (const [k, v] of Object.entries(rawOverrides)) {
+      migratedOverrides[k] = migrateTunerState(v);
+    }
     return {
-      custom: Array.isArray(d.custom) ? d.custom.slice(0, MAX_CUSTOM) : [],
+      custom: migratedCustom,
       activeId: d.activeId ?? fallback,
-      builtInOverrides:
-        versionMismatch || !d.builtInOverrides || typeof d.builtInOverrides !== 'object' ? {} : d.builtInOverrides,
+      builtInOverrides: migratedOverrides,
     };
   } catch {
     return empty;
