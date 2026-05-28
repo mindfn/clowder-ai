@@ -1,9 +1,10 @@
 'use client';
 
+import type { CSSProperties } from 'react';
 import { type CatData, formatCatName } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { useTts } from '@/hooks/useTts';
-import { hexToRgba, tintedLight } from '@/lib/color-utils';
+import { hexToOklch, hexToRgba, tintedLight } from '@/lib/color-utils';
 import { getMentionRe, getMentionToCat } from '@/lib/mention-highlight';
 import { parseDirection } from '@/lib/parse-direction';
 import { type ChatMessage as ChatMessageType, resolveBubbleExpanded, useChatStore } from '@/stores/chatStore';
@@ -116,6 +117,21 @@ export function ChatMessage({ message, getCatById, onEditCat }: ChatMessageProps
          * Previously bgColor was catData.color.secondary (raw catalog hex),
          * which bypassed the F056 token system entirely. */
         const slug = catSlug(catData.id);
+        /* F056: Compute msg-hue/-chroma for .cat-persona-derived class so the
+         * outer message wrapper provides --cat-msg-{bubble,surface,inset,...}
+         * tokens used by nested ThinkingContent/CliOutputBlock. Without this,
+         * those nested blocks render with --cat-msg-inset undefined → transparent. */
+        let msgHue = 297; // fallback
+        let msgChroma = 0.1;
+        try {
+          const oklch = hexToOklch(catData.color.primary);
+          if (Number.isFinite(oklch.h) && Number.isFinite(oklch.c)) {
+            msgHue = oklch.h;
+            msgChroma = oklch.c;
+          }
+        } catch {
+          /* fallback values already set */
+        }
         return {
           label,
           radius: breed.radius,
@@ -124,6 +140,8 @@ export function ChatMessage({ message, getCatById, onEditCat }: ChatMessageProps
             ? tintedLight(catData.color.primary, 0.08)
             : `var(--color-${slug}-surface)`,
           borderColor: isCallback ? hexToRgba(catData.color.primary, 0.12) : hexToRgba(catData.color.primary, 0.3),
+          msgHue,
+          msgChroma,
         };
       })()
     : null;
@@ -255,8 +273,25 @@ export function ChatMessage({ message, getCatById, onEditCat }: ChatMessageProps
      * surface 由 OKLCH 派生公式算出（cat-persona-tokens.css），Tuner buildCSS 覆盖。 */
     const coCreatorBubbleBg = 'var(--color-cocreator-surface)';
     const coCreatorBubbleText = 'var(--color-cocreator-text)';
+    /* F056: also wire cocreator hue/chroma to --msg-* so .cat-persona-derived
+     * provides --cat-msg-{inset,inset-text} for nested ThinkingContent etc. */
+    let coCreatorMsgHue = 40;
+    let coCreatorMsgChroma = 0.13;
+    try {
+      const oklch = hexToOklch(coCreatorPrimary);
+      if (Number.isFinite(oklch.h) && Number.isFinite(oklch.c)) {
+        coCreatorMsgHue = oklch.h;
+        coCreatorMsgChroma = oklch.c;
+      }
+    } catch {
+      /* fallback values already set */
+    }
     return (
-      <div data-message-id={message.id} className="group flex justify-end gap-2 mb-4 items-start">
+      <div
+        data-message-id={message.id}
+        className="group flex justify-end gap-2 mb-4 items-start cat-persona-derived"
+        style={{ '--msg-hue': coCreatorMsgHue, '--msg-chroma': coCreatorMsgChroma } as CSSProperties}
+      >
         <div className="max-w-[75%]">
           <div className="flex justify-end items-center gap-2 mb-1">
             {isWhisper && (
@@ -337,7 +372,15 @@ export function ChatMessage({ message, getCatById, onEditCat }: ChatMessageProps
   }
 
   return (
-    <div data-message-id={message.id} className="group flex gap-2 mb-4 items-start">
+    <div
+      data-message-id={message.id}
+      className={`group flex gap-2 mb-4 items-start${catStyle ? ' cat-persona-derived' : ''}`}
+      style={
+        catStyle
+          ? ({ '--msg-hue': catStyle.msgHue, '--msg-chroma': catStyle.msgChroma } as CSSProperties)
+          : undefined
+      }
+    >
       {catData && (
         <CatAvatar
           catId={message.catId!}
