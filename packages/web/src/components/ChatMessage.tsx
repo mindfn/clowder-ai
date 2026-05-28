@@ -324,7 +324,11 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
      * shared --cat-surface-l/cmul gradient — same Tuner control surface as
      * other cats, but cocreator keeps its own hue/chroma). */
     const coCreatorBubbleBg = 'var(--color-cocreator-surface)';
-    const coCreatorBubbleText = 'var(--color-cocreator-text)';
+    /* F056: cocreator bubble text uses the same --cat-msg-text as cat bubbles,
+     * so the "消息文字" Tuner slider controls ALL message body text uniformly.
+     * --color-cocreator-text (from catTxt/catText slider) is reserved for the
+     * cocreator name span, not the message body. */
+    const coCreatorBubbleText = 'var(--cat-msg-text)';
     /* F056: also wire cocreator hue/chroma to --msg-* so .cat-persona-derived
      * provides --cat-msg-{inset,inset-text} for nested ThinkingContent etc. */
     let coCreatorMsgHue = 40;
