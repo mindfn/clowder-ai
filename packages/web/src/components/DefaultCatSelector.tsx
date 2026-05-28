@@ -1,5 +1,6 @@
 import type { CatData } from '@/hooks/useCatData';
 import { formatCatName } from '@/hooks/useCatData';
+import { catColorVar } from '@/lib/cat-slug';
 
 interface DefaultCatSelectorProps {
   cats: CatData[];
@@ -59,7 +60,7 @@ export function DefaultCatSelector({
           {currentCat && (
             <span
               className="w-3 h-3 rounded-full flex-shrink-0"
-              style={{ backgroundColor: currentCat.color.primary }}
+              style={{ backgroundColor: catColorVar(currentCat.id, 'primary') }}
               data-testid="selected-color-dot"
             />
           )}

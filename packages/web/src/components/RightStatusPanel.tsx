@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatCatName, useCatData } from '@/hooks/useCatData';
+import { catColorVar } from '@/lib/cat-slug';
 import type { CatInvocationInfo } from '@/stores/chatStore';
 import { useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '@/utils/api-client';
@@ -56,7 +57,7 @@ function CatInvocationCard({
 }) {
   const { getCatById } = useCatData();
   const cat = getCatById(catId);
-  const dotColor = cat?.color.primary ?? 'var(--console-cat-fallback)';
+  const dotColor = catColorVar(cat?.id, 'primary');
   return (
     <div className="text-xs">
       <div className="flex items-center gap-1.5 mb-1 min-w-0">
@@ -405,7 +406,7 @@ export function RightStatusPanel({
           {activeCats.length > 0 ? (
             activeCats.map((catId) => {
               const cat = getCatById(catId);
-              const dotColor = cat?.color.primary ?? 'var(--console-cat-fallback)';
+              const dotColor = catColorVar(cat?.id, 'primary');
               const status = catStatuses[catId] ?? 'pending';
               const inv = catInvocations[catId];
               return (
@@ -454,7 +455,7 @@ export function RightStatusPanel({
                     <div key={catId} className="flex items-center gap-2 text-xs text-cafe-muted">
                       <span
                         className="inline-block h-2 w-2 rounded-full opacity-50"
-                        style={{ backgroundColor: cat?.color.primary ?? 'var(--console-cat-fallback)' }}
+                        style={{ backgroundColor: catColorVar(cat?.id, 'primary') }}
                       />
                       {cat ? formatCatName(cat) : catId}
                     </div>

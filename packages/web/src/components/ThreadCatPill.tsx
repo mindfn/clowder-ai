@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { formatCatName, useCatData } from '@/hooks/useCatData';
+import { catColorVar } from '@/lib/cat-slug';
 import { useChatStore } from '@/stores/chatStore';
 import { apiFetch } from '@/utils/api-client';
 import { CatSelector } from './ThreadSidebar/CatSelector';
@@ -157,7 +158,7 @@ export function ThreadCatPill({ threadId }: ThreadCatPillProps) {
           <>
             <span
               className="w-2 h-2 rounded-full flex-shrink-0"
-              style={{ backgroundColor: cat.color.primary }}
+              style={{ backgroundColor: catColorVar(cat.id, 'primary') }}
               data-testid="pill-dot"
             />
             <span className="text-cafe-secondary font-medium">{formatCatName(cat)}</span>
