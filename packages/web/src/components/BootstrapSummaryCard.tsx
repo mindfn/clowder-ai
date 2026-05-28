@@ -176,7 +176,7 @@ export function BootstrapSummaryCard({
             className={
               onGoToMemoryHub
                 ? 'px-3 py-1.5 rounded-lg bg-[var(--semantic-success)] hover:opacity-90 text-[var(--cafe-surface)] text-xs font-medium transition-colors inline-flex items-center gap-1'
-                : 'px-3 py-1.5 rounded-lg bg-[var(--semantic-success)]/50 text-[var(--cafe-surface)]/70 text-xs font-medium cursor-not-allowed inline-flex items-center gap-1'
+                : 'px-3 py-1.5 rounded-lg bg-[var(--semantic-success)] text-[var(--cafe-surface)] text-xs font-medium cursor-not-allowed opacity-50 inline-flex items-center gap-1'
             }
           >
             <MemoryIcon className="w-3.5 h-3.5" />
