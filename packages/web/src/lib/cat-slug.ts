@@ -1,14 +1,12 @@
 /**
  * F056 catId → CSS variable helper.
  *
- * Post-B refactor: no hardcoded slug mapping. catSlug() returns catId directly.
- * CatHueInjector generates --color-{catId}-* tokens dynamically for all cats.
- * For backward compat, CatHueInjector also generates alias tokens under the
- * short name (strip `-default` suffix) so hardcoded refs like
- * `var(--color-opus-primary)` keep working.
+ * catSlug() returns catId directly — the runtime catId (e.g. "opus", "codex")
+ * is already the CSS key. CatHueInjector generates --color-{catId}-* tokens
+ * dynamically for all cats.
  */
 
-/** Return the CSS key for a catId. Post-B: identity function (catId IS the slug). */
+/** Return the CSS key for a catId. Identity function (catId IS the slug). */
 export function catSlug(catId: string | undefined): string {
   if (!catId) return 'cocreator';
   return catId;

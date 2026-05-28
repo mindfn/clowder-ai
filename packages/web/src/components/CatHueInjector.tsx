@@ -7,9 +7,9 @@
  * :root CSS vars + generates full --color-{catId}-* derivation rules for
  * ALL cats dynamically. No static per-cat CSS rules needed.
  *
- * Backward compat: for `-default` suffixed catIds (e.g. opus-default),
- * also generates alias rules under the stripped name (opus) so hardcoded
- * refs like `var(--color-opus-primary)` keep working.
+ * cat.id at runtime is the resolved catId (e.g. "opus", "codex", "sonnet"),
+ * NOT the template variant id (e.g. "opus-default"). Resolution happens in
+ * cat-config-loader.ts: `variant.catId ?? breed.catId`.
  *
  * Truth source (KD-25): cat-template.json (seed) + .cat-cafe/cat-catalog.json
  * (overlay), via /api/cats → useCatData hook.
@@ -20,12 +20,6 @@ import { useCatData } from '@/hooks/useCatData';
 import { hexToOklch } from '@/lib/color-utils';
 
 const DYNAMIC_STYLE_ID = 'f056-dynamic-cat-tokens';
-
-/** Strip `-default` suffix → backward-compat alias (opus-default → opus).
- * Returns null if catId has no `-default` suffix. */
-function legacyAlias(catId: string): string | null {
-  return catId.endsWith('-default') ? catId.slice(0, -8) : null;
-}
 
 /* Both light and dark use the same formula, just with different fallback L/Cmul
  * values. Tuner emits :root + [data-theme="dark"] overrides for the --cat-{tier}-
@@ -59,7 +53,6 @@ export function CatHueInjector() {
   useEffect(() => {
     if (typeof document === 'undefined' || cats.length === 0) return;
     const root = document.documentElement;
-    /* Collect all IDs that need dynamic --color-{id}-* CSS rules. */
     const ruleIds: string[] = [];
 
     for (const cat of cats) {
@@ -67,22 +60,10 @@ export function CatHueInjector() {
       try {
         const { h, c } = hexToOklch(cat.color.primary);
         if (!Number.isFinite(h) || !Number.isFinite(c)) continue;
-        const hStr = h.toFixed(1);
-        const cStr = c.toFixed(3);
 
-        /* Write catId-keyed hue/chroma vars. */
-        root.style.setProperty(`--${cat.id}-hue`, hStr);
-        root.style.setProperty(`--${cat.id}-chroma`, cStr);
+        root.style.setProperty(`--${cat.id}-hue`, h.toFixed(1));
+        root.style.setProperty(`--${cat.id}-chroma`, c.toFixed(3));
         ruleIds.push(cat.id);
-
-        /* Backward compat: also write under stripped alias (opus-default → opus)
-         * so hardcoded refs like var(--color-opus-primary) keep working. */
-        const alias = legacyAlias(cat.id);
-        if (alias) {
-          root.style.setProperty(`--${alias}-hue`, hStr);
-          root.style.setProperty(`--${alias}-chroma`, cStr);
-          ruleIds.push(alias);
-        }
       } catch {
         /* 单只猫颜色坏掉不该影响其他猫——保持 fallback */
       }

@@ -17,8 +17,8 @@ describe('kimi theme regression', () => {
     // Dynamic injection uses cat.id directly as CSS key
     expect(src).toContain('cat.id');
     expect(src).toContain('hexToOklch');
-    // legacyAlias strips -default suffix for backward compat
-    expect(src).toContain('legacyAlias');
+    // No legacy compat layer needed — runtime catId is already the short name
+    expect(src).not.toMatch(/legacyAlias/);
     // No hardcoded old purple hex
     expect(src).not.toContain('#7c3aed');
   });

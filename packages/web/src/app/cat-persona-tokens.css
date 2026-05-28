@@ -17,8 +17,8 @@
  *   dark:  bubble L=0.68 C×0.85 / surface L=0.30 C×0.25 / ring L=0.70 C×1.0
  *   text 走中性 --cafe-text（不带猫色相）
  *
- * Backward compat: CatHueInjector strips `-default` suffix from catIds to
- * generate alias tokens (e.g. opus-default → also generates --color-opus-*).
+ * Runtime catId is the resolved name (e.g. "opus", "codex"), NOT the template
+ * variant id ("opus-default"). Resolution: variant.catId ?? breed.catId.
  *
  * Truth source (KD-25): cat-template.json (seed) + .cat-cafe/cat-catalog.json
  * (overlay), via /api/cats → useCatData hook → CatHueInjector.
