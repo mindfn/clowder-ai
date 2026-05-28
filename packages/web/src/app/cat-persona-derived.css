@@ -9,9 +9,9 @@
  *
  * Depends on hue/chroma anchors defined in cat-persona-tokens.css (must load after).
  *
- * F056: .cat-persona-derived also sets `color: var(--cat-msg-text)` so message
- * body text follows the Tuner's msgText L/C control. More specific selectors
- * (cat name, timestamps, code blocks, thinking blocks) override as expected.
+ * F056: message body text color is applied via inline style on the bubble div
+ * (color: var(--cat-msg-text)), NOT on .cat-persona-derived itself, to avoid
+ * leaking into cat name spans which need their own per-slug --color-{slug}-text.
  */
 
 /* DARK — bubble L=0.68 / surface L=0.28 C×0.25 / text L=0.88 / ring L=0.70 */
@@ -225,7 +225,6 @@
  * light/dark 由 [data-theme] 自动切换。
  * ============================================================ */
 .cat-persona-derived {
-  color: var(--cat-msg-text);
   --cat-msg-bubble: oklch(
     var(--cat-bubble-l, 0.62) calc(var(--msg-chroma, 0.1) * var(--cat-bubble-cmul, 1)) var(--msg-hue, 297)
   );

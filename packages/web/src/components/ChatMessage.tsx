@@ -134,6 +134,10 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
            * bypassed the F056 token chain, so callback bubbles didn't follow
            * Tuner. Unified now: per-cat slug-keyed token drives both kinds. */
           bgColor: `var(--color-${slug}-surface)`,
+          /* F056: cat name text color driven by Tuner's catText H/L/C slider.
+           * This goes on the name span; message body text uses --cat-msg-text
+           * (the msgText slider) via inline style on the bubble div instead. */
+          textColor: catColorVar(catData.id, 'text'),
           /* F056: borderColor also routed through token via color-mix so Tuner
            * gradient propagates to bubble outline as well. Uses --color-{slug}-
            * ring (the existing ring tier already follows --cat-ring-l/cmul). */
@@ -446,7 +450,7 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
         {catStyle && (
           <div className="mb-1 flex flex-col gap-1 min-w-0">
             <div className="flex items-center gap-2 min-w-0">
-              <span className="text-xs font-semibold" style={{ opacity: 0.8 }}>
+              <span className="text-xs font-semibold" style={{ color: catStyle.textColor, opacity: 0.8 }}>
                 {catStyle.label}
               </span>
               <span className="text-xs text-cafe-muted">{formatTime(message.timestamp)}</span>
@@ -522,7 +526,11 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
           className={`px-4 py-3 transition-transform hover:-translate-y-0.5 overflow-hidden ${
             catStyle ? `${catStyle.radius} ${catStyle.font ?? ''}` : 'bg-cafe-surface rounded-2xl'
           } ${showSchedulerAccent ? SCHEDULER_ACCENT_BUBBLE_CLASS : ''}`}
-          style={catStyle ? { backgroundColor: catStyle.bgColor } : undefined}
+          style={
+            catStyle
+              ? { backgroundColor: catStyle.bgColor, color: 'var(--cat-msg-text)' }
+              : { color: 'var(--cat-msg-text)' }
+          }
         >
           {hasCliBlock && isStreamOrigin ? null : !isStreamOrigin && hasBlocks ? (
             <ContentBlocks blocks={message.contentBlocks!} />
