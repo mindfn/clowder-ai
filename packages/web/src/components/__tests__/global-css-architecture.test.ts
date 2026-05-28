@@ -19,6 +19,7 @@ describe('global css architecture', () => {
       'globals.css',
       'theme-tokens.css',
       'cat-persona-tokens.css',
+      'cat-persona-derived.css',
       'connector-tokens.css',
       'theme-extras.css',
       'console-tokens.css',
@@ -36,6 +37,7 @@ describe('global css architecture', () => {
 
     expect(layoutSource).toContain("import './theme-tokens.css';");
     expect(layoutSource).toContain("import './cat-persona-tokens.css';");
+    expect(layoutSource).toContain("import './cat-persona-derived.css';");
     expect(layoutSource).toContain("import './connector-tokens.css';");
     expect(layoutSource).toContain("import './theme-extras.css';");
     expect(layoutSource).toContain("import './globals.css';");
