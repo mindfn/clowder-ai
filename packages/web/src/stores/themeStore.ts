@@ -123,7 +123,9 @@ function syncToServer(themes: ThemePreset[], activeId: string) {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ updates: [{ name: ENV_KEY, value: payload }] }),
-    }).catch(() => {/* best-effort — localStorage is primary */});
+    }).catch(() => {
+      /* best-effort — localStorage is primary */
+    });
   }, 2000); // debounce 2s to avoid spamming on rapid slider drags
 }
 
