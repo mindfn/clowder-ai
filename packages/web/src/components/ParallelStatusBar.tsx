@@ -58,7 +58,10 @@ function CatStatusCard({
       style={{ backgroundColor: bgColor ?? 'var(--console-pill-bg)' }}
     >
       <StatusDot status={status} />
-      <span className="text-xs font-medium" style={{ color: cat ? catColorVar(cat.id, 'primary') : 'var(--cafe-text-secondary)' }}>
+      <span
+        className="text-xs font-medium"
+        style={{ color: cat ? catColorVar(cat.id, 'primary') : 'var(--cafe-text-secondary)' }}
+      >
         {cat ? formatCatName(cat) : catId}
       </span>
       {timeDisplay && <span className="text-xs text-cafe-secondary ml-0.5">{timeDisplay}</span>}

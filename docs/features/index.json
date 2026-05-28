@@ -339,7 +339,7 @@
     {
       "id": "F056",
       "name": "Cat Café 设计语言 — 猫猫化不是猫化",
-      "status": "doing | **Owner**: Maine Coon/GPT-5.2 + Ragdoll 主导设计执行 + Ragdoll工程架构 + Siamese概念方向",
+      "status": "doing（Phase E 本 branch 11/12 done — AC-E12 Playwright baseline deferred 到集成验证） | **Owner**: Maine Coon/GPT-5.2 + Ragdoll 主导设计执行 + Ragdoll工程架构 + Siamese概念方向",
       "file": "F056-cat-cafe-design-language.md"
     },
     {

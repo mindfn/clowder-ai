@@ -43,7 +43,11 @@ export function catColorVar(
 
 /** Build `color-mix(...)` for a cat color with alpha. Routes through the cat
  * token, so opacity overlays still follow Tuner-controlled gradient. */
-export function catColorMix(catId: string | undefined, alpha: number, tier: 'primary' | 'surface' | 'bubble' = 'primary'): string {
+export function catColorMix(
+  catId: string | undefined,
+  alpha: number,
+  tier: 'primary' | 'surface' | 'bubble' = 'primary',
+): string {
   const pct = Math.round(alpha * 100);
   return `color-mix(in srgb, ${catColorVar(catId, tier)} ${pct}%, transparent)`;
 }

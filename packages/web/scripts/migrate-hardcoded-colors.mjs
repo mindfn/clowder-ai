@@ -1,10 +1,10 @@
 #!/usr/bin/env node
+import { execSync } from 'node:child_process';
 /**
  * F056 — Batch migrate hardcoded Tailwind colors → semantic tokens.
  * Run: node scripts/migrate-hardcoded-colors.mjs
  */
 import { readFileSync, writeFileSync } from 'node:fs';
-import { execSync } from 'node:child_process';
 
 // ── Deterministic replacement map (order matters: longer matches first) ──
 const REPLACEMENTS = [
@@ -418,8 +418,9 @@ for (const relPath of files) {
   // Old code did a global `replace(/  +/g, ' ')` which destroyed all 2-space indentation.
   // Now: only collapse runs of spaces inside string content (between two quote marks),
   // and trim trailing space before closing quote.
-  modified = modified.replace(/(["'`])([^"'`\n]*?  +[^"'`\n]*?)\1/g, (_match, q, inner) =>
-    `${q}${inner.replace(/  +/g, ' ').trimEnd()}${q}`,
+  modified = modified.replace(
+    /(["'`])([^"'`\n]*? {2,}[^"'`\n]*?)\1/g,
+    (_match, q, inner) => `${q}${inner.replace(/ {2,}/g, ' ').trimEnd()}${q}`,
   );
 
   if (modified !== content) {

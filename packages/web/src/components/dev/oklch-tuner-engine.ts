@@ -207,30 +207,9 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
     );
   };
 
-  // 3. Per-cat static tokens (7 slugs x 8 tokens x 2 modes)
-  const catTkn = (m: ModeP, s: string, h: string, c: string) =>
-    `--color-${s}-bubble:${ok(m, 'primary', h, c)};` +
-    `--color-${s}-surface:${ok(m, 'surface', h, c)};` +
-    `--color-${s}-text:${ok(m, 'text', h, c)};` +
-    `--color-${s}-ring:${ok(m, 'ring', h, c)};` +
-    `--color-${s}-primary:var(--color-${s}-bubble);` +
-    `--color-${s}-light:var(--color-${s}-surface);` +
-    `--color-${s}-dark:var(--color-${s}-text);` +
-    `--color-${s}-bg:var(--color-${s}-surface);`;
-  const catBlk = (m: ModeP, dark: boolean) => {
-    const body = SLUGS.map((s) => {
-      const h = hc.on ? `${hc.hue}` : `var(--${s}-hue)`;
-      const c = hc.on ? `${hc.chroma}` : `var(--${s}-chroma)`;
-      return catTkn(m, s, h, c);
-    }).join('');
-    return dark ? `[data-theme="dark"]{${body}}` : `:root{${body}}`;
-  };
-
-  // 3b. Primary → accent (铲屎官: "直接用主题色，不需要单独定义")
-  const accentPri = (dark: boolean) => {
-    const sel = dark ? '[data-theme="dark"]' : ':root';
-    return `${sel}{${SLUGS.map((s) => `--color-${s}-bubble:var(--cafe-accent);--color-${s}-primary:var(--cafe-accent);`).join('')}}`;
-  };
+  // 3. Per-cat static tokens removed: per-slug gradient now comes from
+  //    cat-persona-tokens.css via --cat-{tier}-l/cmul (see catGrads below).
+  //    Old `catTkn`/`catBlk`/`accentPri` helpers deleted to prevent shadowing.
 
   // 3c. Unified cat name text (铲屎官: "H L C 统一，不跟成员主题色变")
   const catTxt = (dark: boolean) => {
