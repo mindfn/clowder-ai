@@ -51,10 +51,10 @@ const STATIC_SLUGS = new Set([
   'gemini25',
   'kimi',
   'dare',
-  'antig-opus',
-  'antigravity',
-  'opencode',
   'cocreator',
+  /* antig-opus / antigravity / opencode have hue/chroma anchors in
+   * cat-persona-tokens.css but NO static --color-{slug}-* derivation rules,
+   * so they must use dynamic injection (lightDecl/darkDecl). */
 ]);
 
 const DYNAMIC_STYLE_ID = 'f056-dynamic-cat-tokens';
