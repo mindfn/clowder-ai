@@ -34,14 +34,14 @@ export function DefaultCatSelector({
   return (
     <div className="rounded-xl bg-[var(--console-card-bg)] p-4 shadow-[var(--shadow-elevation-2)]">
       {fetchError && (
-        <div className="flex items-center gap-2 mb-3 text-xs text-conn-amber-text bg-conn-amber-bg rounded-lg px-3 py-2">
+        <div className="flex items-center gap-2 mb-3 text-xs text-semantic-warning bg-semantic-warning-surface rounded-lg px-3 py-2">
           <span>加载失败，当前默认猫未知</span>
           {onRetry && (
             <button
               type="button"
               data-testid="retry-fetch"
               onClick={onRetry}
-              className="text-conn-amber-text font-medium underline hover:text-conn-amber-text"
+              className="text-semantic-warning font-medium underline hover:text-semantic-warning"
             >
               重试
             </button>
@@ -49,7 +49,9 @@ export function DefaultCatSelector({
         </div>
       )}
       {saveError && (
-        <div className="mb-3 text-xs text-conn-red-text bg-conn-red-bg rounded-lg px-3 py-2">{saveError}</div>
+        <div className="mb-3 text-xs text-semantic-critical bg-semantic-critical-surface rounded-lg px-3 py-2">
+          {saveError}
+        </div>
       )}
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0 flex-1">

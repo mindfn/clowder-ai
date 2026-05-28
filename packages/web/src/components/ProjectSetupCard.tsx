@@ -99,7 +99,7 @@ export function ProjectSetupCard({
     return (
       <div data-testid="project-setup-card" className="flex justify-center mb-3">
         <div
-          className={`max-w-[85%] w-full rounded-lg border p-4 ${state === 'done' ? 'border-conn-green-ring bg-conn-green-bg' : 'border-conn-amber-ring bg-conn-amber-bg'}`}
+          className={`max-w-[85%] w-full rounded-lg border p-4 ${state === 'done' ? 'border-semantic-success bg-semantic-success-surface' : 'border-semantic-warning bg-semantic-warning-surface'}`}
         >
           <div className="flex items-center gap-4">
             <Image
@@ -111,26 +111,26 @@ export function ProjectSetupCard({
             />
             <div className="flex-1 min-w-0">
               <p
-                className={`text-sm font-medium ${state === 'done' ? 'text-conn-emerald-text' : 'text-conn-amber-text'}`}
+                className={`text-sm font-medium ${state === 'done' ? 'text-semantic-success' : 'text-semantic-warning'}`}
               >
                 项目{' '}
                 <code
-                  className={`px-1 py-0.5 rounded text-xs ${state === 'done' ? 'bg-conn-green-bg' : 'bg-conn-amber-bg'}`}
+                  className={`px-1 py-0.5 rounded text-xs ${state === 'done' ? 'bg-semantic-success-surface' : 'bg-semantic-warning-surface'}`}
                 >
                   {dirName}
                 </code>{' '}
                 {state === 'done' ? '初始化完成' : '正在初始化'}
               </p>
-              <p className={`text-xs mt-1 ${state === 'done' ? 'text-conn-green-text' : 'text-conn-amber-text'}`}>
+              <p className={`text-xs mt-1 ${state === 'done' ? 'text-semantic-success' : 'text-semantic-warning'}`}>
                 {state === 'done'
                   ? '协作规则（CLAUDE.md 等）、Skills 链接和方法论模板已就绪。'
                   : '正在写入协作规则（CLAUDE.md 等）、Skills 链接和方法论模板...'}
               </p>
               <div className="mt-2">
                 {state === 'processing' && (
-                  <span className="text-sm text-conn-amber-text animate-pulse">正在初始化治理...</span>
+                  <span className="text-sm text-semantic-warning animate-pulse">正在初始化治理...</span>
                 )}
-                {state === 'done' && <span className="text-sm text-conn-green-text">治理初始化完成，猫猫已就绪</span>}
+                {state === 'done' && <span className="text-sm text-semantic-success">治理初始化完成，猫猫已就绪</span>}
               </div>
             </div>
           </div>
@@ -161,12 +161,12 @@ export function ProjectSetupCard({
         </div>
 
         {state === 'error' && (
-          <div className="mb-3 px-3 py-2 rounded bg-conn-red-bg border border-conn-red-ring">
-            <p className="text-xs text-conn-red-text">{errorMsg}</p>
+          <div className="mb-3 px-3 py-2 rounded bg-semantic-critical-surface border border-semantic-critical">
+            <p className="text-xs text-semantic-critical">{errorMsg}</p>
             <button
               type="button"
               onClick={() => setState('idle')}
-              className="text-xs text-conn-red-text underline mt-1"
+              className="text-xs text-semantic-critical underline mt-1"
             >
               重试
             </button>

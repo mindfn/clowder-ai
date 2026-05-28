@@ -385,7 +385,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                         placeholder="KEY"
                         className={`w-[38%] font-mono ${
                           entry.key.trim() && !isValidEnvKey(entry.key.trim())
-                            ? `${formInputClass} !border-conn-red-ring !bg-conn-red-bg !text-conn-red-text`
+                            ? `${formInputClass} !border-semantic-critical !bg-semantic-critical-surface !text-semantic-critical`
                             : formInputClass
                         }`}
                       />
@@ -403,7 +403,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                       <button
                         type="button"
                         onClick={() => setEnvEntries(envEntries.filter((_, j) => j !== i))}
-                        className="text-xs text-cafe-muted hover:text-conn-red-text"
+                        className="text-xs text-cafe-muted hover:text-semantic-critical"
                         title="删除"
                       >
                         <HubIcon name="trash" className="h-3.5 w-3.5" />
@@ -411,7 +411,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
                     </div>
                   ))}
                   {envEntries.some((e) => e.key.trim() && !isValidEnvKey(e.key.trim())) && (
-                    <p className="text-micro text-conn-red-text">
+                    <p className="text-micro text-semantic-critical">
                       {envEntries.some((e) => e.key.trim().startsWith('CAT_CAFE_')) ? 'CAT_CAFE_ 前缀为系统保留；' : ''}
                       变量名须以大写字母或下划线开头，仅含 A-Z、0-9、_
                     </p>
@@ -429,7 +429,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
           </div>
         </div>
 
-        {error && <p className="mt-3 text-xs text-conn-red-text">{error}</p>}
+        {error && <p className="mt-3 text-xs text-semantic-critical">{error}</p>}
 
         {/* Save button — bottom right */}
         <div className="mt-4 flex justify-end">

@@ -45,8 +45,8 @@ const STATUS_CONFIG: Record<
   },
   pending: {
     label: '待审',
-    className: 'ring-1 ring-conn-amber-ring/30',
-    badge: 'bg-conn-amber-bg text-conn-amber-text border-conn-amber-ring animate-pulse',
+    className: 'ring-1 ring-semantic-warning/30',
+    badge: 'bg-semantic-warning-surface text-semantic-warning border-semantic-warning animate-pulse',
   },
   published: { label: '正式', className: '', badge: '' },
   archived: { label: '归档', className: 'grayscale-[0.5] opacity-60', badge: 'bg-conn-gray-bg text-cafe-secondary' },
@@ -60,8 +60,8 @@ const CONFIDENCE_STYLES: Record<
     label: string;
   }
 > = {
-  high: { bg: 'bg-conn-emerald-bg', text: 'text-conn-emerald-text', label: '高置信度' },
-  mid: { bg: 'bg-conn-amber-bg', text: 'text-conn-amber-text', label: '中置信度' },
+  high: { bg: 'bg-semantic-success-surface', text: 'text-semantic-success', label: '高置信度' },
+  mid: { bg: 'bg-semantic-warning-surface', text: 'text-semantic-warning', label: '中置信度' },
   low: { bg: 'bg-conn-slate-bg', text: 'text-conn-slate-text', label: '低置信度' },
 };
 
