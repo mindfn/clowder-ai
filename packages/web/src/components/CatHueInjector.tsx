@@ -56,17 +56,23 @@ export function CatHueInjector() {
     const ruleIds: string[] = [];
 
     for (const cat of cats) {
-      if (!cat.id || !cat.color?.primary) continue;
-      try {
-        const { h, c } = hexToOklch(cat.color.primary);
-        if (!Number.isFinite(h) || !Number.isFinite(c)) continue;
-
-        root.style.setProperty(`--${cat.id}-hue`, h.toFixed(1));
-        root.style.setProperty(`--${cat.id}-chroma`, c.toFixed(3));
-        ruleIds.push(cat.id);
-      } catch {
-        /* 单只猫颜色坏掉不该影响其他猫——保持 fallback */
+      if (!cat.id) continue;
+      let h = 0;
+      let c = 0;
+      if (cat.color?.primary) {
+        try {
+          const oklch = hexToOklch(cat.color.primary);
+          if (Number.isFinite(oklch.h) && Number.isFinite(oklch.c)) {
+            h = oklch.h;
+            c = oklch.c;
+          }
+        } catch {
+          /* Invalid hex → neutral fallback (h=0 c=0) so tokens still exist */
+        }
       }
+      root.style.setProperty(`--${cat.id}-hue`, h.toFixed(1));
+      root.style.setProperty(`--${cat.id}-chroma`, c.toFixed(3));
+      ruleIds.push(cat.id);
     }
 
     /* Generate dynamic cat token stylesheet for ALL cats. */
