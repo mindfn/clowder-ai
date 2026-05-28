@@ -4,7 +4,7 @@ import type { CSSProperties } from 'react';
 import { type CatData, formatCatName } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { useTts } from '@/hooks/useTts';
-import { hexToOklch, hexToRgba, tintedLight } from '@/lib/color-utils';
+import { hexToOklch, hexToRgba } from '@/lib/color-utils';
 import { getMentionRe, getMentionToCat } from '@/lib/mention-highlight';
 import { parseDirection } from '@/lib/parse-direction';
 import { type ChatMessage as ChatMessageType, resolveBubbleExpanded, useChatStore } from '@/stores/chatStore';
@@ -148,14 +148,16 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
           label,
           radius: breed.radius,
           font: breed.font,
-          /* F056: Per-cat slug-keyed token. cat-persona-tokens.css derives
-           * --color-{slug}-surface using oklch(var(--cat-surface-l) calc(var(--{slug}-chroma)
-           * * var(--cat-surface-cmul)) var(--{slug}-hue)). Tuner emits global
-           * --cat-{tier}-l/cmul, so every cat (static + dynamic) follows the
-           * same gradient. hue/chroma stays per-cat. */
-          bgColor: isCallback
-            ? tintedLight(catData.color.primary, 0.08)
-            : `var(--color-${slug}-surface)`,
+          /* F056 (铲屎官 2026-05-28): post_message callback bubbles use the
+           * SAME --color-{slug}-surface as normal bubbles. Previously isCallback
+           * branched to tintedLight(hex, 0.08) — a hex-derived value that
+           * bypassed the F056 token chain, so callback bubbles didn't follow
+           * Tuner. Unified now: per-cat slug-keyed token drives both kinds. */
+          bgColor: `var(--color-${slug}-surface)`,
+          /* Border still hex-derived from cat primary for now — borderColor
+           * isn't on the Tuner-controlled gradient, but Tuner doesn't expose
+           * border tier either. If you want borders to follow Tuner too, we
+           * can add --cat-border-l/cmul and a per-slug --color-{slug}-border. */
           borderColor: isCallback ? hexToRgba(catData.color.primary, 0.12) : hexToRgba(catData.color.primary, 0.3),
           msgHue,
           msgChroma,
