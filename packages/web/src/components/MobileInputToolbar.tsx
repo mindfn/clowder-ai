@@ -48,8 +48,8 @@ export function MobileInputToolbar({
         disabled={disabled || sendDisabled}
         className={`${btnBase} ${
           whisperMode
-            ? 'text-semantic-warning bg-semantic-warning-surface border-semantic-warning'
-            : 'text-cafe-secondary bg-cafe-surface border-cafe hover:border-semantic-warning hover:text-semantic-warning'
+            ? 'text-cafe-accent bg-accent-50 border-cafe-accent'
+            : 'text-cafe-secondary bg-cafe-surface border-cafe hover:border-cafe-accent hover:text-cafe-accent'
         }`}
       >
         <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">

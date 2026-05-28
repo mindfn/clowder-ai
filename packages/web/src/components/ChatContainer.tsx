@@ -912,7 +912,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
                       <button
                         type="button"
                         onClick={() => setShowBootcampList(true)}
-                        className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-conn-amber-ring bg-conn-amber-bg text-conn-amber-text hover:bg-conn-amber-bg transition-colors text-sm font-medium"
+                        className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-cafe-accent/20 bg-accent-50 text-cafe-accent hover:bg-accent-100 transition-colors text-sm font-medium"
                         data-testid="empty-state-bootcamp-list"
                       >
                         <BootcampIcon className="w-4 h-4" />
@@ -924,7 +924,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
                     <button
                       type="button"
                       onClick={() => setShowBootcampList(true)}
-                      className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-conn-amber-ring bg-conn-amber-bg text-conn-amber-text hover:bg-conn-amber-bg transition-colors text-sm font-medium"
+                      className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-cafe-accent/20 bg-accent-50 text-cafe-accent hover:bg-accent-100 transition-colors text-sm font-medium"
                       data-testid="empty-state-bootcamp"
                     >
                       <BootcampIcon className="w-4 h-4" />

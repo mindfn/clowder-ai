@@ -126,7 +126,7 @@ export function BootcampListModal({ open, onClose, currentThreadId }: BootcampLi
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-cafe-subtle">
           <div className="flex items-center gap-2.5">
-            <BootcampIcon className="w-6 h-6 text-conn-amber-text" />
+            <BootcampIcon className="w-6 h-6 text-cafe-accent" />
             <span className="text-lg font-semibold text-cafe">我的训练营</span>
           </div>
           <button
@@ -164,10 +164,10 @@ export function BootcampListModal({ open, onClose, currentThreadId }: BootcampLi
                   disabled={isCurrent}
                   className={`w-full text-left p-4 rounded-xl border transition-colors ${
                     isCurrent
-                      ? 'border-conn-amber-ring bg-conn-amber-bg opacity-60 cursor-default'
+                      ? 'border-cafe-accent/20 bg-accent-50 opacity-60 cursor-default'
                       : isCompleted
                         ? 'border-cafe bg-cafe-surface-elevated hover:bg-cafe-surface-elevated'
-                        : 'border-conn-amber-ring bg-conn-amber-bg/50 hover:bg-conn-amber-bg'
+                        : 'border-cafe-accent/20 bg-accent-50/50 hover:bg-accent-50'
                   }`}
                   data-testid={`bootcamp-item-${t.id}`}
                 >
@@ -179,10 +179,10 @@ export function BootcampListModal({ open, onClose, currentThreadId }: BootcampLi
                     <span
                       className={`text-xs font-medium px-2.5 py-1 rounded-full ${
                         isCompleted
-                          ? 'bg-conn-green-bg text-conn-green-text'
+                          ? 'bg-semantic-success-surface text-semantic-success'
                           : isCurrent
-                            ? 'bg-conn-amber-bg text-conn-amber-text'
-                            : 'bg-conn-amber-bg text-conn-amber-text'
+                            ? 'bg-accent-50 text-cafe-accent'
+                            : 'bg-accent-50 text-cafe-accent'
                       }`}
                     >
                       {isCurrent ? '当前' : isCompleted ? '已完成' : '进行中'}

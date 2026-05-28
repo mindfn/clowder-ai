@@ -727,7 +727,7 @@ export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
             <button
               type="button"
               onClick={() => setShowBootcampList(true)}
-              className="p-1.5 rounded-lg text-conn-amber-text hover:bg-conn-amber-bg transition-colors"
+              className="p-1.5 rounded-lg text-cafe-accent hover:bg-accent-50 transition-colors"
               title="猫猫训练营"
               data-testid="sidebar-bootcamp"
               data-guide-id="sidebar.bootcamp"

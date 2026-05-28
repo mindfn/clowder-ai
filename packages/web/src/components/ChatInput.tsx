@@ -705,8 +705,8 @@ export function ChatInput({
           disabled={disabled || sendTemporarilyDisabled}
           className={`hidden md:block p-3 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
             whisperMode
-              ? 'text-semantic-warning bg-semantic-warning-surface ring-1 ring-semantic-warning'
-              : 'text-cafe-muted hover:text-semantic-warning hover:bg-cafe-surface'
+              ? 'text-cafe-accent bg-accent-50 ring-1 ring-cafe-accent'
+              : 'text-cafe-muted hover:text-cafe-accent hover:bg-cafe-surface'
           }`}
           aria-label="Whisper mode"
           title="悄悄话模式"
@@ -724,7 +724,7 @@ export function ChatInput({
           ref={gameBtnRef}
           onClick={handleGameClick}
           disabled={disabled || sendTemporarilyDisabled}
-          className="hidden md:block p-3 rounded-xl text-cafe-muted hover:text-conn-indigo-text hover:bg-cafe-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          className="hidden md:block p-3 rounded-xl text-cafe-muted hover:text-cafe-accent hover:bg-cafe-surface disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           aria-label="Game mode"
           title="游戏模式"
         >
@@ -751,7 +751,7 @@ export function ChatInput({
             }
             className={`w-full resize-none rounded-xl border p-3 text-sm focus:outline-none focus:ring-2 placeholder:text-cafe-muted ${
               whisperMode
-                ? 'border-semantic-warning/30 bg-semantic-warning-surface/50 focus:ring-semantic-warning'
+                ? 'border-cafe-accent/30 bg-accent-50/50 focus:ring-cafe-accent'
                 : 'border-[var(--console-border-soft)] bg-transparent focus:bg-[var(--console-card-bg)] focus:ring-[var(--console-input-stroke)]'
             }`}
             rows={1}
