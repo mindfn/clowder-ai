@@ -8,7 +8,7 @@ created: 2026-03-04
 
 # F056: Cat Café 设计语言 — 猫猫化不是猫化
 
-> **Status**: doing（Phase E 本 branch 11/12 done — AC-E12 Playwright baseline deferred 到集成验证） | **Owner**: Maine Coon/GPT-5.2 + Ragdoll 主导设计执行 + Ragdoll工程架构 + Siamese概念方向
+> **Status**: doing（Phase E 11/12 done + Phase E Sweep 2026-05-25~28 完成：bubble routing 统一 / variant slug 补齐 / 350-line split / PR #784 review-response — AC-E12 Playwright baseline deferred 到集成验证） | **Owner**: Maine Coon/GPT-5.2 + Ragdoll 主导设计执行 + Ragdoll工程架构 + Siamese概念方向
 > **Priority**: P1
 > **Evolved from**: F051（猫粮看板猫爪导航概念）、F052 Phase C（跨线程气泡设计打样）
 
@@ -441,6 +441,31 @@ git commit -m "test(F056-E5): Playwright baseline screenshots ≥10 pages light+
 - Cat persona text-vs-surface 对比度 ≥4.5:1（验证 R11，跟 WCAG 自动测试呼应）
 - 切换主题（light/dark）后 cat 气泡色派生正确（验证 R11 + R13）
 
+### Phase E Sweep（Post-merge polish — 2026-05-25 至 2026-05-28）
+
+Phase E 主提交（`62c93fc5`）落地后，9 个 follow-up commit 处理 bubble 体感反馈 + PR #784 codex review-bot 发现，**不改 OKLCH 架构**，只补齐缺口 + 修正旁路。
+
+**1. Bubble routing 统一（commits `63ca6239e` → `cd8694f7f`，2026-05-25/27）**
+- `.cat-persona-derived` class 现在 *always wired* 在 cat message wrapper 上（不再依赖 catData 解析） — 嵌套的 `ThinkingContent`/`CliOutputBlock` 恒有 `--cat-msg-{bubble,surface,inset,inset-text,ring}`
+- Cat 气泡 bg/border（含 callback 气泡）全走 `var(--color-{slug}-surface)` — 之前 `tintedLight(hex)` 路径绕过 Tuner gradient 控制
+- Tuner 端 `catBlk`/`accentPri` per-slug overrides 拆掉，只发 `--cat-{tier}-l/cmul` 做全局控制，`cat-persona-tokens.css` 的 var-based 公式取胜
+
+**2. PR #784 codex review-bot P2 sweep（commits `29c63db28` → `0bf72e32b`，2026-05-28）**
+- 恢复 Phase E sweep 误删但仍被消费的 tailwind token：`bg-cafe-status-active`、`animate-pulse-subtle`/`shake` keyframes、`cafe.surface-canvas` 工具
+- 修 dangling CSS var：`--cafe-secondary` → `--cafe-text-secondary`（ThinkingIndicator）、`--cafe-muted` → `--cafe-text-muted`（CallbackAuthFailureBlock）
+- 补齐 variant slug 覆盖：`--color-{opus-47,spark,gemini25}-{bubble/surface/text/ring}` 加入 cat-persona-tokens.css（light + dark）；Tuner SLUGS 扩展为 12 slugs（含 gpt52/opus-45/opus-47/spark/gemini25）
+- 恢复 `werewolf-theme.css` import（之前 `<link>` → bundled CSS 迁移时漏掉）
+- `migrate-hardcoded-colors.mjs`：用 `import.meta.url` 派生 `WEB_ROOT`（之前硬编码 author 绝对路径）
+- `hub-cat-editor-color-field.tsx`：`hexToOklch` 加 try/catch，非法 catalog `color.primary` 不再 crash 编辑器
+- `hub-cat-editor.sections.tsx`：编辑时 `colorPrimary` 镜像同步 `colorSecondary`（legacy consumer 仍读 `cat.color.secondary`）
+- `themeStore.ts`：`cat-cafe:themes` 缺失时回退读 next-themes `theme` localStorage key（升级用户的 dark 选择不再被静默重置）
+- `RightStatusPanel.tsx`：恢复 `intentMode` 参数到 `deriveActiveCats`（Phase E sweep 漏删导致 AC-Z15 ideate-round 行为退化）
+
+**3. 350-line 硬限 split（commit `0bf72e32b`，2026-05-28）**
+- `cat-persona-tokens.css` 525 → 264 行（仅 hue/chroma anchors + light-mode 派生）
+- 新 `cat-persona-derived.css` 272 行（dark override + `.cat-persona-derived` light/dark + `.cat-persona-preview-*`）
+- 两文件均 < 350 行；`global-css-architecture.test.ts` entrypoint 列表 + `layout.tsx` import 顺序 + test assertion 同步更新；split point 在 `:root` light 结束/dark override 开始处，**无逻辑改动**
+
 ---
 
 ## Acceptance Criteria
@@ -550,6 +575,9 @@ git commit -m "test(F056-E5): Playwright baseline screenshots ≥10 pages light+
 | KD-27 | 品牌色派生自 `--accent-hue` 旋钮（推翻 KD-19 / E4 的"brand 永远不变"分层）—— 换主题色时 logo/splash 一起适应 | 铲屎官 2026-05-22 拍板：白牌产品（Phase D Enterprise Kit / tenant 配色 preset）品牌色即租户品牌、必须可换；"不变"的是出厂默认 hue=35 + OKLCH 派生结构，非冻结颜色值 | 2026-05-22 |
 | KD-28 | cat 气泡正文文字回归中性 `--cafe-text`，不随 cat 主色派生彩色（推翻 cat persona "text 档 hue 派生"，气泡 surface/bubble/ring 仍派生）| 铲屎官 2026-05-22 多轮反馈气泡正文"像注释一样"、不如旧版清晰；对比 develop_base 基线确认 F056 cat persona 派生把正文文字从「继承中性近黑」改成了「带 hue 的派生彩色」—— 彩色正文无论明度多低都显淡、像次要内容；猫味落在气泡背景 surface 即可，正文文字须保持中性可读 | 2026-05-22 |
 | KD-29 | cat 气泡内嵌套块（Thinking / CLI 折叠块）背景纳入 cat-persona 派生 —— 新增 `--cat-msg-inset` 档（比 surface 沉一档，mode-aware：light 浅 / dark 深）| 旧实现 ThinkingContent / CliOutputBlock 用 tintedDark 把主色混进硬编码深 base `#1A1625`，游离在 F056 OKLCH 体系外、light 模式也恒为深色、与 light 气泡 surface 不协调；铲屎官 2026-05-22 要求气泡内文本背景跟 cat-persona 派生、light 浅 dark 深、与外层气泡协调 | 2026-05-22 |
+| KD-30 | Phase E Sweep — cat bubble routing 全部走 CSS var（callback / nested inset 不再 hex-derived），`.cat-persona-derived` always wired 在 cat message wrapper 上，Tuner 仅控制全局 `--cat-{tier}-l/cmul`（不出 per-slug overrides） | KD-29 落地后 callback bubbles + ThinkingContent inset 仍有 `tintedLight(hex)` 路径绕过 Tuner gradient；改造后单一 Tuner 全局生效，每只猫保留自己的 hue/chroma，无 hex 旁路 | 2026-05-25 |
+| KD-31 | `cat-persona-tokens.css` 525 → 264 + `cat-persona-derived.css` 272，split point 在 `:root` light 结束 / dark override 开始处 | `global-css-architecture.test.ts` 350-line hard limit 测试守护单文件大小；split 仅按 selector 边界拆，无逻辑/语义改动；entrypoint + `layout.tsx` import + test assertion 同步更新 | 2026-05-28 |
+| KD-32 | Variant slug 显式枚举：`opus-47 / spark / gemini25` 加入 `cat-persona-tokens.css` 派生 + Tuner SLUGS（共 12 slugs，覆盖所有 catalog 内 variant cat） | PR #784 codex P2 揭示：`STATIC_SLUGS` 集合包含但 `cat-persona-tokens.css` 没定义 → 走 `var(--color-{slug}-surface)` 拿不到值，气泡背景 fail；Tuner unified-text override 也漏 variants；显式列举 12 slugs 是当前 catalog 范围的真相源 | 2026-05-28 |
 
 ## Dependencies
 
