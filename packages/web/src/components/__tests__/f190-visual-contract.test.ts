@@ -886,7 +886,8 @@ describe('#723 round 4 — primitive convergence guard', () => {
     expect(src).toContain('console-border-soft');
     expect(src).toContain('console-input-stroke');
     /* F056: text-white → text-[var(--cafe-surface)] for theme-aware contrast */
-    expect(src).toMatch(/bg-cafe-accent text-(?:white|\[var\(--cafe-surface\)\])/);
+    expect(src).toContain('bg-cafe-accent text-[var(--cafe-surface)]');
+    expect(src).not.toContain('bg-cafe-accent text-white');
   });
 
   it('SettingsSearchInput uses border-soft + transparent bg + input-stroke focus', () => {
@@ -1137,7 +1138,8 @@ describe('#723 round 6 — select/toggle/button primitive convergence', () => {
       for (const btn of secondaryButtons) {
         expect(btn).not.toContain('border-[var(--console-border-soft)]');
         /* F056: raw shadow-[0_1px_3px...] → shadow-sm (tokenized) */
-        expect(btn).toMatch(/shadow-(?:sm|\[0_1px_3px)/);
+        expect(btn).toContain('shadow-sm');
+        expect(btn).not.toMatch(/shadow-\[0_1px_3px/);
       }
     }
   });
