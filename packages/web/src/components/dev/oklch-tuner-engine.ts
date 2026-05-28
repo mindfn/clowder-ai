@@ -142,8 +142,8 @@ export const INIT: TunerState = {
     text: { L: 0.88, Cmul: 0.6 },
     inset: { L: 0.24, Cmul: 0.1 },
     ring: { L: 0.7, Cmul: 1.0 },
-    insetText: { L: 0.80, C: 0.02 },
-    msgText: { L: 0.80, C: 0.02 },
+    insetText: { L: 0.8, C: 0.02 },
+    msgText: { L: 0.8, C: 0.02 },
     elev: { sunken: 0.275, base: 0.18, elevated: 0.1, canvas: 0.18 },
   },
   /* Semantic status — light/dark hues differ (铲屎官 2026-05-27 调优) */
