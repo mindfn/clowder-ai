@@ -85,7 +85,7 @@ export function Lightbox({
         <button
           type="button"
           onClick={onClose}
-          className="absolute -top-3 -right-3 bg-[var(--console-overlay-heavy)] hover:bg-[var(--console-overlay-heavy-hover)] text-[var(--cafe-surface)] rounded-full w-8 h-8 flex items-center justify-center text-lg z-10"
+          className="absolute -top-3 -right-3 bg-[var(--console-overlay-heavy)] hover:bg-[var(--console-overlay-heavy-hover)] text-[var(--neutral-50)] rounded-full w-8 h-8 flex items-center justify-center text-lg z-10"
           title="Close"
         >
           &times;
@@ -93,7 +93,7 @@ export function Lightbox({
         {/* biome-ignore lint/performance/noImgElement: data URIs from MCP cannot use next/image */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={url} alt={alt} className="max-w-full max-h-[85vh] object-contain rounded-lg" />
-        {caption && <p className="mt-2 text-sm text-[var(--cafe-surface)]/80">{caption}</p>}
+        {caption && <p className="mt-2 text-sm text-[var(--neutral-50)]/80">{caption}</p>}
         <CopyButton url={url} />
       </div>
     </div>,
