@@ -86,11 +86,11 @@ export function ChatInputActionButton({
       {voice.state === 'recording' && (
         <div className="absolute top-0 right-4 -mt-6 flex items-center gap-2">
           {voice.partialTranscript && (
-            <div className="px-2 py-0.5 bg-cafe-surface-sunken text-[var(--cafe-surface)] text-xs rounded-lg max-w-[240px] truncate opacity-80">
+            <div className="px-2 py-0.5 bg-cafe-surface-sunken text-cafe text-xs rounded-lg max-w-[240px] truncate opacity-80">
               {voice.partialTranscript}
             </div>
           )}
-          <div className="px-2 py-0.5 bg-conn-red-text text-[var(--cafe-surface)] text-xs rounded-full animate-pulse whitespace-nowrap">
+          <div className="px-2 py-0.5 bg-conn-red-text text-[var(--cafe-accent-foreground)] text-xs rounded-full animate-pulse whitespace-nowrap">
             REC {Math.floor(voice.duration / 60)}:{String(voice.duration % 60).padStart(2, '0')}
           </div>
         </div>
