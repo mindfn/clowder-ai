@@ -118,7 +118,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
         <span className="font-bold text-sm flex items-center gap-1">
           <PaletteIcon className="w-4 h-4 inline-block" /> OKLCH Tuner — {active.name}
         </span>
-        <div className="flex gap-1.5">
+        <div className="flex items-center gap-1.5">
           <button
             type="button"
             onClick={handleCopy}
@@ -128,15 +128,8 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
           </button>
           <button
             type="button"
-            onClick={handleReset}
-            className="px-2 py-0.5 rounded bg-cafe-surface-sunken hover:bg-[var(--console-hover-bg)] text-[10px]"
-          >
-            Reset
-          </button>
-          <button
-            type="button"
             onClick={onClose}
-            className="px-2 py-0.5 rounded bg-[var(--semantic-critical)] hover:opacity-90 text-[10px]"
+            className="flex h-6 w-6 items-center justify-center rounded-lg bg-[var(--console-modal-close-bg)] text-[var(--console-modal-close-fg)] hover:opacity-80 transition-opacity text-xs font-extrabold leading-none"
           >
             ✕
           </button>
@@ -325,6 +318,24 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
           onQueue={updateQueue}
           onNeutral={updateNeutral}
         />
+      </div>
+
+      {/* Footer — save + close (sticky) */}
+      <div className="sticky bottom-0 flex items-center justify-end gap-2 px-3 py-2 border-t border-[var(--console-border-soft)] bg-cafe-surface-sunken z-10">
+        <button
+          type="button"
+          onClick={handleReset}
+          className="px-3 py-1.5 rounded-lg text-[10px] text-cafe-secondary hover:bg-[var(--console-hover-bg)] transition-colors"
+        >
+          重置
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="px-3 py-1.5 rounded-lg text-[10px] bg-cafe-accent text-[var(--cafe-surface)] hover:opacity-90 transition-opacity font-medium"
+        >
+          保存并关闭
+        </button>
       </div>
     </div>
   );

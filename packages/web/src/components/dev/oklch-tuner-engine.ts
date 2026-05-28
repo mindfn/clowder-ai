@@ -125,7 +125,7 @@ export const NEUTRAL_ROWS: [keyof NeutralP, string][] = [
 /* ── Defaults (match cat-persona-tokens.css + theme-tokens.css exactly) ── */
 export const INIT: TunerState = {
   accentHue: 35,
-  accentChroma: 0.15,
+  accentChroma: 0.12,
   light: {
     primary: { L: 0.62, Cmul: 1.0 },
     surface: { L: 0.9, Cmul: 0.5 },
@@ -142,9 +142,9 @@ export const INIT: TunerState = {
     text: { L: 0.88, Cmul: 0.6 },
     inset: { L: 0.24, Cmul: 0.1 },
     ring: { L: 0.7, Cmul: 1.0 },
-    insetText: { L: 0.72, C: 0.01 },
-    msgText: { L: 0.94, C: 0.005 },
-    elev: { sunken: 0.12, base: 0.18, elevated: 0.24, canvas: 0.3 },
+    insetText: { L: 0.80, C: 0.02 },
+    msgText: { L: 0.80, C: 0.02 },
+    elev: { sunken: 0.275, base: 0.18, elevated: 0.1, canvas: 0.18 },
   },
   /* Semantic status — light/dark hues differ (铲屎官 2026-05-27 调优) */
   semanticLight: { criticalH: 38, successH: 135, warningH: 46, infoH: 209, L: 0.57, C: 0.12, surfL: 0.96, surfC: 0.03 },

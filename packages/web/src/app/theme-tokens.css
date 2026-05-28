@@ -22,7 +22,7 @@
    * 和 OKLCH 派生结构本身，不是某个冻结的颜色值。
    * ============================================================ */
   --accent-hue: 35; /* paw-pink — 唯一主题色旋钮，出厂默认 Claude 粉橙 */
-  --accent-chroma: 0.15;
+  --accent-chroma: 0.12;
   --brand-cat-cafe-pink: oklch(0.62 var(--accent-chroma) var(--accent-hue)); /* 派生 — logo / splash */
 }
 
@@ -216,13 +216,14 @@
   --avatar-fallback-7: oklch(0.55 0.13 300);
   --avatar-fallback-8: oklch(0.55 0.13 345);
 
-  /* --- Surface 四档（dark L: 6 点等间距 0.12→0.18→0.24→0.30）---
-   * Chroma unified with light (0.015/0.012/0.005/0.003) — no dark-specific override.
+  /* --- Surface 四档（dark — 铲屎官 2026-05-28 调优）---
+   * sunken=0.275 / surface=0.18 / elevated=0.1 / canvas=0.18
+   * Chroma unified with light (0.015/0.012/0.005/0.003).
    * 空间映射见 console-tokens.css（light/dark 统一，不再镜像） */
-  --cafe-surface-sunken: oklch(0.12 0.015 var(--accent-hue));
+  --cafe-surface-sunken: oklch(0.275 0.015 var(--accent-hue));
   --cafe-surface: oklch(0.18 0.012 var(--accent-hue));
-  --cafe-surface-elevated: oklch(0.24 0.005 var(--accent-hue));
-  --cafe-surface-canvas: oklch(0.3 0.003 var(--accent-hue));
+  --cafe-surface-elevated: oklch(0.1 0.005 var(--accent-hue));
+  --cafe-surface-canvas: oklch(0.18 0.003 var(--accent-hue));
 
   /* --- Cafe semantic shortcuts dark（重新映射 Neutral） --- */
   --cafe-text: var(--neutral-900);
