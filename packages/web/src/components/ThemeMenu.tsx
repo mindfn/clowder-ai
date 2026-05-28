@@ -87,7 +87,7 @@ export function ThemeMenu({ onEditTheme }: Props) {
                 >
                   <span>{t.name}</span>
                   {t.id === store.activeId && (
-                    <span className="text-[10px] font-bold ml-auto" style={{ color: accent }}>
+                    <span className="text-micro font-bold ml-auto" style={{ color: accent }}>
                       ✓
                     </span>
                   )}
@@ -108,7 +108,7 @@ export function ThemeMenu({ onEditTheme }: Props) {
                   <button
                     type="button"
                     onClick={() => store.deleteCustom(t.id)}
-                    className="p-1 rounded opacity-50 hover:opacity-100 text-[10px]"
+                    className="p-1 rounded opacity-50 hover:opacity-100 text-micro"
                     title={`删除 ${t.name}`}
                   >
                     ✕

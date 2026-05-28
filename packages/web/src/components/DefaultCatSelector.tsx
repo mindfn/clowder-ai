@@ -32,7 +32,7 @@ export function DefaultCatSelector({
   const valueInList = currentDefaultCatId && cats.some((c) => c.id === currentDefaultCatId);
 
   return (
-    <div className="rounded-xl bg-[var(--console-card-bg)] p-4 shadow-[0_8px_22px_rgba(43,33,26,0.04)]">
+    <div className="rounded-xl bg-[var(--console-card-bg)] p-4 shadow-[var(--shadow-elevation-2)]">
       {fetchError && (
         <div className="flex items-center gap-2 mb-3 text-xs text-conn-amber-text bg-conn-amber-bg rounded-lg px-3 py-2">
           <span>加载失败，当前默认猫未知</span>

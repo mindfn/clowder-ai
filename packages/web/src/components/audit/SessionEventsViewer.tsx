@@ -240,7 +240,7 @@ export function SessionEventsViewer({ sessionId, catId, onClose }: SessionEvents
             type="button"
             key={m}
             onClick={() => setView(m)}
-            className={`flex-1 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition-colors
+            className={`flex-1 py-1.5 text-micro font-semibold uppercase tracking-wider transition-colors
               ${view === m ? 'text-[var(--color-cafe-accent)] border-b-2 border-[var(--color-cafe-accent)]' : 'text-cafe-muted hover:text-cafe-secondary'}`}
           >
             {m === 'chat' ? 'Chat' : m === 'handoff' ? 'Handoff' : 'Raw'}
@@ -251,7 +251,7 @@ export function SessionEventsViewer({ sessionId, catId, onClose }: SessionEvents
       {/* Content — stale-while-revalidate: show old data with loading indicator */}
       <div className="max-h-72 overflow-y-auto p-2">
         {loading && data.length > 0 && (
-          <div className="text-[10px] text-cafe-muted text-center py-1 animate-pulse">Refreshing...</div>
+          <div className="text-micro text-cafe-muted text-center py-1 animate-pulse">Refreshing...</div>
         )}
         {loading && data.length === 0 && <div className="text-xs text-cafe-muted py-2">加载中...</div>}
         {error && <div className="text-xs text-conn-red-text py-2">加载失败</div>}
@@ -261,7 +261,7 @@ export function SessionEventsViewer({ sessionId, catId, onClose }: SessionEvents
             {(data as ChatMessage[]).map((msg, i) => (
               <div
                 key={`${msg.role}-${msg.timestamp}-${i}`}
-                className={`rounded px-2 py-1.5 text-[11px] ${
+                className={`rounded px-2 py-1.5 text-xs ${
                   msg.role === 'assistant'
                     ? assistantStyle
                     : (ROLE_STYLES[msg.role] ?? 'bg-cafe-surface-elevated text-cafe-secondary')
@@ -279,7 +279,7 @@ export function SessionEventsViewer({ sessionId, catId, onClose }: SessionEvents
             {(data as HandoffSummary[]).map((inv) => (
               <div
                 key={inv.invocationId}
-                className="rounded border border-[var(--console-border-soft)] px-2 py-1.5 text-[11px]"
+                className="rounded border border-[var(--console-border-soft)] px-2 py-1.5 text-xs"
               >
                 <div className="flex items-center gap-1.5 min-w-0">
                   <span className="truncate min-w-0 font-mono text-cafe-secondary" title={inv.invocationId}>
@@ -292,7 +292,7 @@ export function SessionEventsViewer({ sessionId, catId, onClose }: SessionEvents
                   {(inv.toolCalls ?? []).map((t, index) => (
                     <span
                       key={`${t}-${index}`}
-                      className="bg-cafe-surface-elevated text-cafe-secondary px-1 py-0.5 rounded text-[10px]"
+                      className="bg-cafe-surface-elevated text-cafe-secondary px-1 py-0.5 rounded text-micro"
                     >
                       {t}
                     </span>
@@ -311,7 +311,7 @@ export function SessionEventsViewer({ sessionId, catId, onClose }: SessionEvents
             {(data as RawEvent[]).map((evt) => (
               <div
                 key={evt.eventNo}
-                className="text-[10px] font-mono bg-cafe-surface-elevated rounded px-1.5 py-1 truncate"
+                className="text-micro font-mono bg-cafe-surface-elevated rounded px-1.5 py-1 truncate"
                 title={JSON.stringify(evt.event)}
               >
                 <span className="text-cafe-muted">#{evt.eventNo}</span>{' '}
@@ -323,7 +323,7 @@ export function SessionEventsViewer({ sessionId, catId, onClose }: SessionEvents
       </div>
 
       {/* Pagination */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-t border-[var(--console-border-soft)] text-[10px] text-cafe-muted">
+      <div className="flex items-center justify-between px-3 py-1.5 border-t border-[var(--console-border-soft)] text-micro text-cafe-muted">
         <span>{total} 条事件</span>
         <div className="flex gap-2">
           {cursorHistory.length > 0 && (

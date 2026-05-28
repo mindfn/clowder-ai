@@ -40,7 +40,7 @@ export function CatColorField({ value, onChange }: { value: string; onChange: (h
 
   return (
     <div className="flex items-center gap-[14px]">
-      <span className="w-[150px] shrink-0 text-[12px] font-bold text-cafe-secondary">Background Color</span>
+      <span className="w-[150px] shrink-0 text-xs font-bold text-cafe-secondary">Background Color</span>
       <div className="flex items-center gap-3">
         <label className="flex items-center" title="主色">
           <input
@@ -59,7 +59,7 @@ export function CatColorField({ value, onChange }: { value: string; onChange: (h
               style={bubbleStyle}
               title={`${label}模式预览`}
             >
-              <span className="text-[11px] font-bold">喵～消息</span>
+              <span className="text-label font-bold">喵～消息</span>
             </div>
           ))}
         </div>

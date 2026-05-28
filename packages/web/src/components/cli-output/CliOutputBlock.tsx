@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import type { CliEvent, CliStatus } from '@/stores/chat-types';
+import typographyTokens from '@/styles/typography-tokens.json';
 
 /* ── Helpers ── */
 
@@ -215,7 +216,7 @@ function ToolRow({
     <button
       type="button"
       data-testid={`tool-row-${event.id}`}
-      className="w-full text-left cursor-pointer rounded font-mono text-[11px] flex items-center gap-2"
+      className="w-full text-left cursor-pointer rounded font-mono text-xs flex items-center gap-2"
       style={{
         padding: '5px 8px',
         borderRadius: 4,
@@ -245,10 +246,7 @@ function ToolRow({
       {/* Detail — hidden by default, shown on click */}
       {hasResult && !rowExpanded && <ChevronIcon expanded={false} />}
       {rowExpanded && hasResult && event.detail && (
-        <div
-          className="w-full mt-1 pl-7 whitespace-pre-wrap text-[10px]"
-          style={{ color: 'var(--cat-msg-inset-text)' }}
-        >
+        <div className="w-full mt-1 pl-7 whitespace-pre-wrap text-micro" style={{ color: 'var(--cat-msg-inset-text)' }}>
           {event.detail}
         </div>
       )}
@@ -299,7 +297,7 @@ function ToolsSection({
       <button
         type="button"
         data-testid="tools-section-toggle"
-        className="w-full flex items-center gap-1.5 px-2 py-1.5 text-[11px] font-mono rounded transition-colors"
+        className="w-full flex items-center gap-1.5 px-2 py-1.5 text-xs font-mono rounded transition-colors"
         style={{ color: 'var(--cat-msg-inset-text)' }}
         onClick={() => {
           toolsUserInteracted.current = true;
@@ -407,7 +405,7 @@ export function CliOutputBlock({
       <button
         type="button"
         onClick={handleToggle}
-        className="w-full flex items-center gap-2 text-[11px] font-mono transition-colors"
+        className="w-full flex items-center gap-2 text-xs font-mono transition-colors"
         style={{ padding: '8px 12px', color: 'var(--cat-msg-inset-text)', backgroundColor: 'var(--cat-msg-inset)' }}
       >
         <span style={{ color: accent }}>
@@ -416,7 +414,7 @@ export function CliOutputBlock({
         <span className="font-medium min-w-0 truncate text-left">{summary}</span>
         <span
           className="ml-auto flex items-center gap-1 flex-shrink-0"
-          style={{ color: 'var(--cat-msg-inset-text)', fontSize: 10 }}
+          style={{ color: 'var(--cat-msg-inset-text)', fontSize: typographyTokens.fontSizePx.micro }}
         >
           {thinkingMode === 'debug' ? (
             <>
@@ -454,7 +452,7 @@ export function CliOutputBlock({
                     style={{
                       padding: '8px 12px 4px 12px',
                       fontFamily: 'JetBrains Mono, monospace',
-                      fontSize: 10,
+                      fontSize: typographyTokens.fontSizePx.micro,
                       color: 'var(--cat-msg-inset-text)',
                     }}
                   >
@@ -464,7 +462,7 @@ export function CliOutputBlock({
               )}
               <div
                 style={{ padding: '8px 12px 10px 12px' }}
-                className="font-mono text-[11px] leading-relaxed cli-output-md"
+                className="font-mono text-xs leading-relaxed cli-output-md"
               >
                 <span style={{ color: 'var(--cat-msg-inset-text)' }}>
                   <MarkdownContent content={textEvents.map((e) => e.content).join('\n')} />
