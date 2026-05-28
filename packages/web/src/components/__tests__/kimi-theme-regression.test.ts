@@ -6,18 +6,21 @@ import { describe, expect, it } from 'vitest';
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const webRoot = resolve(testDir, '..', '..', '..');
-const catPersonaTokensCssPath = resolve(webRoot, 'src', 'app', 'cat-persona-tokens.css');
+const catHueInjectorPath = resolve(webRoot, 'src', 'components', 'CatHueInjector.tsx');
 const tailwindConfigPath = resolve(webRoot, 'tailwind.config.js');
 
 describe('kimi theme regression', () => {
-  it('keeps Kimi CSS tokens defined as a low-chroma neutral 梵花猫 (F056 Phase E OKLCH)', () => {
-    const css = readFileSync(catPersonaTokensCssPath, 'utf8');
-    expect(css).toContain('--color-kimi-primary');
-    expect(css).toContain('--color-kimi-light');
-    expect(css).toContain('--color-kimi-dark');
-    expect(css).toContain('--color-kimi-bg');
-    expect(css).toMatch(/--kimi-chroma:\s*0\.0\d/);
-    expect(css).not.toContain('#7c3aed');
+  it('CatHueInjector generates tokens dynamically for ALL cats (no hardcoded slug map)', () => {
+    const src = readFileSync(catHueInjectorPath, 'utf8');
+    // Post-Option B: no hardcoded CAT_ID_TO_SLUG mapping — all cats get tokens via cat.id
+    expect(src).not.toMatch(/CAT_ID_TO_SLUG/);
+    // Dynamic injection uses cat.id directly as CSS key
+    expect(src).toContain('cat.id');
+    expect(src).toContain('hexToOklch');
+    // legacyAlias strips -default suffix for backward compat
+    expect(src).toContain('legacyAlias');
+    // No hardcoded old purple hex
+    expect(src).not.toContain('#7c3aed');
   });
 
   it('exports a kimi color family in tailwind so sidebar/session-chain classes compile', async () => {

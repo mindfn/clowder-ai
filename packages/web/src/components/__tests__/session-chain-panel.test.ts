@@ -631,7 +631,8 @@ describe('F24: SessionChainPanel', () => {
   });
 
   it('applies codex green colors from cat.color (border + badge inline style)', async () => {
-    // codex primary #5B8C5A → 91,140,90; secondary #D4E6D3 → 212,230,211
+    // codex primary #5B8C5A → 91,140,90
+    // F056: badge bg/text derived via OKLCH badgeBackground()/contrastingText()
     mockSessionsResponse([
       { id: 's1', catId: 'codex', seq: 0, status: 'active', messageCount: 3, createdAt: Date.now() },
     ]);
@@ -646,8 +647,9 @@ describe('F24: SessionChainPanel', () => {
       '[data-testid="session-badge-active"][data-cat-id="codex"]',
     ) as HTMLElement | null;
     expect(badge?.textContent).toContain('缅因猫');
-    expect(badge!.style.backgroundColor).toMatch(/rgba?\(212,\s*230,\s*211/);
-    expect(badge!.style.color).toMatch(/rgba?\(91,\s*140,\s*90/);
+    // F056: badge colors are oklch-derived from primary hex (secondary removed)
+    expect(badge!.style.backgroundColor).toMatch(/oklch\(/);
+    expect(badge!.style.color).toMatch(/oklch\(/);
   });
 
   it('applies gemini colors from cat.color', async () => {
@@ -713,7 +715,7 @@ describe('F24: SessionChainPanel', () => {
   });
 
   it('falls back to neutral gray when cat is missing from cat-config (badge background)', async () => {
-    // Fallback: primary #9CA3AF → 156,163,175; secondary #E5E7EB → 229,231,235
+    // Fallback: primary #9CA3AF. F056: badge bg/text derived via OKLCH.
     mockSessionsResponse([
       { id: 's1', catId: 'unknown-cat', seq: 0, status: 'active', messageCount: 1, createdAt: Date.now() },
     ]);
@@ -724,8 +726,9 @@ describe('F24: SessionChainPanel', () => {
     ) as HTMLElement | null;
     expect(badge).not.toBeNull();
     expect(badge!.textContent).toContain('unknown-cat');
-    expect(badge!.style.backgroundColor).toMatch(/rgba?\(229,\s*231,\s*235/);
-    expect(badge!.style.color).toMatch(/rgba?\(156,\s*163,\s*175/);
+    // F056: badge colors are oklch-derived from fallback #9CA3AF (secondary removed)
+    expect(badge!.style.backgroundColor).toMatch(/oklch\(/);
+    expect(badge!.style.color).toMatch(/oklch\(/);
   });
 
   it('discards stale response when slow thread-1 fetch resolves after thread-2 (P1 race condition)', async () => {
@@ -804,7 +807,8 @@ describe('F24: SessionChainPanel', () => {
       expect(triple).toEqual([123, 31, 162]);
     });
 
-    it('opus-47 active session badge uses cat.color.secondary as background and primary as text', async () => {
+    it('opus-47 active session badge uses oklch-derived colors from cat.color.primary', async () => {
+      // F056: secondary removed — badge bg/text derived via OKLCH from primary
       mockSessionsResponse([
         { id: 's_47', catId: 'opus-47', seq: 0, status: 'active', messageCount: 1, createdAt: Date.now() },
       ]);
@@ -814,10 +818,9 @@ describe('F24: SessionChainPanel', () => {
         '[data-testid="session-badge-active"][data-cat-id="opus-47"]',
       ) as HTMLElement | null;
       expect(badge).not.toBeNull();
-      // Secondary #E1BEE7 → 225,190,231
-      expect(rgbTripleOf(badge!.style.backgroundColor)).toEqual([225, 190, 231]);
-      // Primary #7B1FA2 → 123,31,162
-      expect(rgbTripleOf(badge!.style.color)).toEqual([123, 31, 162]);
+      // F056: badge colors are oklch-derived from primary #7B1FA2 (secondary removed)
+      expect(badge!.style.backgroundColor).toMatch(/oklch\(/);
+      expect(badge!.style.color).toMatch(/oklch\(/);
     });
 
     it('sealed session for opus-47 also uses cat.color (parity with active card)', async () => {

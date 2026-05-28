@@ -1,240 +1,25 @@
 /*
- * F056 Phase E — Cat Persona Tokens
+ * F056 Phase E — Cat Persona Tokens (stub)
  *
- * 单 hue 派生：每只猫一个 hue + chroma 锚点 → bubble / surface / inset / ring 四档自动算。
+ * Post-Option B: all per-cat hue/chroma anchors + light/dark derivation rules
+ * are generated dynamically by CatHueInjector.tsx from the cat catalog.
+ * No static per-cat CSS rules needed — new cats get tokens automatically.
+ *
+ * This file is kept as an import anchor in the CSS cascade. The comment below
+ * documents the token formula for reference:
+ *
+ * 单 hue 派生：每只猫一个 hue + chroma 锚点 → bubble / surface / text / ring 四档自动算。
  * 正文文字 text 走中性 --cafe-text（不带猫色相）—— 彩色正文会显得"像注释"、
  * 削弱可读性；猫味落在气泡背景 surface 即可（KD-28）。
- * inset = 气泡内嵌套块（Thinking / CLI 折叠块）背景，比 surface 沉一档（KD-29）。
+ *
  * 公式（L 档位 / chroma 乘数）：
- *   light: bubble L=0.62 C×1.0 / surface L=0.94 C×0.3 / inset L=0.29 C×0.13 (tintedDark-matched) / ring L=0.55 C×1.1
- *   dark:  bubble L=0.68 C×0.85 / surface L=0.30 C×0.25 / inset L=0.24 C×0.10 / ring L=0.70 C×1.0
- *   inset-text: oklch(0.72 0.01 250) — neutral light gray for readability on dark inset backgrounds
+ *   light: bubble L=0.62 C×1.0 / surface L=0.9 C×0.5 / ring L=0.55 C×1.1
+ *   dark:  bubble L=0.68 C×0.85 / surface L=0.30 C×0.25 / ring L=0.70 C×1.0
  *   text 走中性 --cafe-text（不带猫色相）
- * chroma 乘数校准依据：develop_base hex 原色反算 OKLCH，surface C×0.3 + L=0.94（降 L 让色调显现）。
  *
- * 兼容旧 token 名：--color-{slug}-primary/light/dark/bg 映射到新派生值。
+ * Backward compat: CatHueInjector strips `-default` suffix from catIds to
+ * generate alias tokens (e.g. opus-default → also generates --color-opus-*).
  *
- * Phase E2：从 cat-template.json (seed) + .cat-cafe/cat-catalog.json (runtime overlay)
- *           注入 hue/chroma（移除当前 fallback 默认值）。承接 F127 catalog overlay 设计。
+ * Truth source (KD-25): cat-template.json (seed) + .cat-cafe/cat-catalog.json
+ * (overlay), via /api/cats → useCatData hook → CatHueInjector.
  */
-
-:root {
-  /* Cat Persona hue/chroma anchors — calibrated against develop_base hex primary colors.
-   * Phase E1 fallback 值；Phase E2 由 cat-config 注入覆盖。
-   * 校准方法：原始 hex primary → sRGB→linearRGB→OKLab→OKLCH，取 C 和 H 值。 */
-  --opus-hue: 305;
-  --opus-chroma: 0.1;
-  --sonnet-hue: 300;
-  --sonnet-chroma: 0.09;
-  --opus-45-hue: 298;
-  --opus-45-chroma: 0.16;
-  --opus-47-hue: 313;
-  --opus-47-chroma: 0.2;
-  --codex-hue: 144;
-  --codex-chroma: 0.09;
-  --gpt52-hue: 145;
-  --gpt52-chroma: 0.14;
-  --spark-hue: 145;
-  --spark-chroma: 0.12;
-  --gemini-hue: 248;
-  --gemini-chroma: 0.11;
-  --gemini25-hue: 247;
-  --gemini25-chroma: 0.15;
-  --kimi-hue: 257;
-  --kimi-chroma: 0.03;
-  --dare-hue: 74;
-  --dare-chroma: 0.1;
-  --antig-opus-hue: 58;
-  --antig-opus-chroma: 0.13;
-  --antigravity-hue: 61;
-  --antigravity-chroma: 0.13;
-  --opencode-hue: 90;
-  --opencode-chroma: 0.11;
-  --cocreator-hue: 40;
-  --cocreator-chroma: 0.13;
-}
-
-/* LIGHT — bubble L=0.62 / surface L=0.9 C×0.5 / text L=0.24 / ring L=0.55 */
-:root {
-  --color-opus-bubble: oklch(
-    var(--cat-bubble-l, 0.62) calc(var(--opus-chroma) * var(--cat-bubble-cmul, 1)) var(--opus-hue)
-  );
-  --color-opus-surface: oklch(
-    var(--cat-surface-l, 0.9) calc(var(--opus-chroma) * var(--cat-surface-cmul, 0.5)) var(--opus-hue)
-  );
-  --color-opus-text: oklch(var(--cat-name-l, 0.24) var(--cat-name-c, 0.005) var(--cat-name-h, 139));
-  --color-opus-ring: oklch(
-    var(--cat-ring-l, 0.55) calc(var(--opus-chroma) * var(--cat-ring-cmul, 1.1)) var(--opus-hue)
-  );
-  --color-opus-primary: var(--color-opus-bubble);
-  --color-opus-light: var(--color-opus-surface);
-  --color-opus-dark: var(--color-opus-text);
-  --color-opus-bg: var(--color-opus-surface);
-
-  --color-sonnet-bubble: oklch(
-    var(--cat-bubble-l, 0.62) calc(var(--sonnet-chroma) * var(--cat-bubble-cmul, 1)) var(--sonnet-hue)
-  );
-  --color-sonnet-surface: oklch(
-    var(--cat-surface-l, 0.9) calc(var(--sonnet-chroma) * var(--cat-surface-cmul, 0.5)) var(--sonnet-hue)
-  );
-  --color-sonnet-text: oklch(var(--cat-name-l, 0.24) var(--cat-name-c, 0.005) var(--cat-name-h, 139));
-  --color-sonnet-ring: oklch(
-    var(--cat-ring-l, 0.55) calc(var(--sonnet-chroma) * var(--cat-ring-cmul, 1.1)) var(--sonnet-hue)
-  );
-  --color-sonnet-primary: var(--color-sonnet-bubble);
-  --color-sonnet-light: var(--color-sonnet-surface);
-  --color-sonnet-dark: var(--color-sonnet-text);
-  --color-sonnet-bg: var(--color-sonnet-surface);
-
-  --color-codex-bubble: oklch(
-    var(--cat-bubble-l, 0.62) calc(var(--codex-chroma) * var(--cat-bubble-cmul, 1)) var(--codex-hue)
-  );
-  --color-codex-surface: oklch(
-    var(--cat-surface-l, 0.9) calc(var(--codex-chroma) * var(--cat-surface-cmul, 0.5)) var(--codex-hue)
-  );
-  --color-codex-text: oklch(var(--cat-name-l, 0.24) var(--cat-name-c, 0.005) var(--cat-name-h, 139));
-  --color-codex-ring: oklch(
-    var(--cat-ring-l, 0.55) calc(var(--codex-chroma) * var(--cat-ring-cmul, 1.1)) var(--codex-hue)
-  );
-  --color-codex-primary: var(--color-codex-bubble);
-  --color-codex-light: var(--color-codex-surface);
-  --color-codex-dark: var(--color-codex-text);
-  --color-codex-bg: var(--color-codex-surface);
-
-  --color-gpt52-bubble: oklch(
-    var(--cat-bubble-l, 0.62) calc(var(--gpt52-chroma) * var(--cat-bubble-cmul, 1)) var(--gpt52-hue)
-  );
-  --color-gpt52-surface: oklch(
-    var(--cat-surface-l, 0.9) calc(var(--gpt52-chroma) * var(--cat-surface-cmul, 0.5)) var(--gpt52-hue)
-  );
-  --color-gpt52-text: oklch(var(--cat-name-l, 0.24) var(--cat-name-c, 0.005) var(--cat-name-h, 139));
-  --color-gpt52-ring: oklch(
-    var(--cat-ring-l, 0.55) calc(var(--gpt52-chroma) * var(--cat-ring-cmul, 1.1)) var(--gpt52-hue)
-  );
-  --color-gpt52-primary: var(--color-gpt52-bubble);
-  --color-gpt52-light: var(--color-gpt52-surface);
-  --color-gpt52-dark: var(--color-gpt52-text);
-  --color-gpt52-bg: var(--color-gpt52-surface);
-
-  --color-opus-45-bubble: oklch(
-    var(--cat-bubble-l, 0.62) calc(var(--opus-45-chroma) * var(--cat-bubble-cmul, 1)) var(--opus-45-hue)
-  );
-  --color-opus-45-surface: oklch(
-    var(--cat-surface-l, 0.9) calc(var(--opus-45-chroma) * var(--cat-surface-cmul, 0.5)) var(--opus-45-hue)
-  );
-  --color-opus-45-text: oklch(var(--cat-name-l, 0.24) var(--cat-name-c, 0.005) var(--cat-name-h, 139));
-  --color-opus-45-ring: oklch(
-    var(--cat-ring-l, 0.55) calc(var(--opus-45-chroma) * var(--cat-ring-cmul, 1.1)) var(--opus-45-hue)
-  );
-  --color-opus-45-primary: var(--color-opus-45-bubble);
-  --color-opus-45-light: var(--color-opus-45-surface);
-  --color-opus-45-dark: var(--color-opus-45-text);
-  --color-opus-45-bg: var(--color-opus-45-surface);
-
-  --color-gemini-bubble: oklch(
-    var(--cat-bubble-l, 0.62) calc(var(--gemini-chroma) * var(--cat-bubble-cmul, 1)) var(--gemini-hue)
-  );
-  --color-gemini-surface: oklch(
-    var(--cat-surface-l, 0.9) calc(var(--gemini-chroma) * var(--cat-surface-cmul, 0.5)) var(--gemini-hue)
-  );
-  --color-gemini-text: oklch(var(--cat-name-l, 0.24) var(--cat-name-c, 0.005) var(--cat-name-h, 139));
-  --color-gemini-ring: oklch(
-    var(--cat-ring-l, 0.55) calc(var(--gemini-chroma) * var(--cat-ring-cmul, 1.1)) var(--gemini-hue)
-  );
-  --color-gemini-primary: var(--color-gemini-bubble);
-  --color-gemini-light: var(--color-gemini-surface);
-  --color-gemini-dark: var(--color-gemini-text);
-  --color-gemini-bg: var(--color-gemini-surface);
-
-  --color-kimi-bubble: oklch(
-    var(--cat-bubble-l, 0.62) calc(var(--kimi-chroma) * var(--cat-bubble-cmul, 1)) var(--kimi-hue)
-  );
-  --color-kimi-surface: oklch(
-    var(--cat-surface-l, 0.9) calc(var(--kimi-chroma) * var(--cat-surface-cmul, 0.5)) var(--kimi-hue)
-  );
-  --color-kimi-text: oklch(var(--cat-name-l, 0.24) var(--cat-name-c, 0.005) var(--cat-name-h, 139));
-  --color-kimi-ring: oklch(
-    var(--cat-ring-l, 0.55) calc(var(--kimi-chroma) * var(--cat-ring-cmul, 1.1)) var(--kimi-hue)
-  );
-  --color-kimi-primary: var(--color-kimi-bubble);
-  --color-kimi-light: var(--color-kimi-surface);
-  --color-kimi-dark: var(--color-kimi-text);
-  --color-kimi-bg: var(--color-kimi-surface);
-
-  --color-dare-bubble: oklch(
-    var(--cat-bubble-l, 0.62) calc(var(--dare-chroma) * var(--cat-bubble-cmul, 1)) var(--dare-hue)
-  );
-  --color-dare-surface: oklch(
-    var(--cat-surface-l, 0.9) calc(var(--dare-chroma) * var(--cat-surface-cmul, 0.5)) var(--dare-hue)
-  );
-  --color-dare-text: oklch(var(--cat-name-l, 0.24) var(--cat-name-c, 0.005) var(--cat-name-h, 139));
-  --color-dare-ring: oklch(
-    var(--cat-ring-l, 0.55) calc(var(--dare-chroma) * var(--cat-ring-cmul, 1.1)) var(--dare-hue)
-  );
-  --color-dare-primary: var(--color-dare-bubble);
-  --color-dare-light: var(--color-dare-surface);
-  --color-dare-dark: var(--color-dare-text);
-  --color-dare-bg: var(--color-dare-surface);
-
-  --color-cocreator-bubble: oklch(
-    var(--cat-bubble-l, 0.62) calc(var(--cocreator-chroma) * var(--cat-bubble-cmul, 1)) var(--cocreator-hue)
-  );
-  --color-cocreator-surface: oklch(
-    var(--cat-surface-l, 0.9) calc(var(--cocreator-chroma) * var(--cat-surface-cmul, 0.5)) var(--cocreator-hue)
-  );
-  --color-cocreator-text: oklch(var(--cat-name-l, 0.24) var(--cat-name-c, 0.005) var(--cat-name-h, 139));
-  --color-cocreator-ring: oklch(
-    var(--cat-ring-l, 0.55) calc(var(--cocreator-chroma) * var(--cat-ring-cmul, 1.1)) var(--cocreator-hue)
-  );
-  --color-cocreator-primary: var(--color-cocreator-bubble);
-  --color-cocreator-light: var(--color-cocreator-surface);
-  --color-cocreator-dark: var(--color-cocreator-text);
-  --color-cocreator-bg: var(--color-cocreator-surface);
-
-  /* Variant slugs — opus-47 / spark / gemini25 use same single-hue derivation
-   * formula. Hue/chroma anchors defined at top of file. (review-#784 P2) */
-  --color-opus-47-bubble: oklch(
-    var(--cat-bubble-l, 0.62) calc(var(--opus-47-chroma) * var(--cat-bubble-cmul, 1)) var(--opus-47-hue)
-  );
-  --color-opus-47-surface: oklch(
-    var(--cat-surface-l, 0.9) calc(var(--opus-47-chroma) * var(--cat-surface-cmul, 0.5)) var(--opus-47-hue)
-  );
-  --color-opus-47-text: oklch(var(--cat-name-l, 0.24) var(--cat-name-c, 0.005) var(--cat-name-h, 139));
-  --color-opus-47-ring: oklch(
-    var(--cat-ring-l, 0.55) calc(var(--opus-47-chroma) * var(--cat-ring-cmul, 1.1)) var(--opus-47-hue)
-  );
-  --color-opus-47-primary: var(--color-opus-47-bubble);
-  --color-opus-47-light: var(--color-opus-47-surface);
-  --color-opus-47-dark: var(--color-opus-47-text);
-  --color-opus-47-bg: var(--color-opus-47-surface);
-
-  --color-spark-bubble: oklch(
-    var(--cat-bubble-l, 0.62) calc(var(--spark-chroma) * var(--cat-bubble-cmul, 1)) var(--spark-hue)
-  );
-  --color-spark-surface: oklch(
-    var(--cat-surface-l, 0.9) calc(var(--spark-chroma) * var(--cat-surface-cmul, 0.5)) var(--spark-hue)
-  );
-  --color-spark-text: oklch(var(--cat-name-l, 0.24) var(--cat-name-c, 0.005) var(--cat-name-h, 139));
-  --color-spark-ring: oklch(
-    var(--cat-ring-l, 0.55) calc(var(--spark-chroma) * var(--cat-ring-cmul, 1.1)) var(--spark-hue)
-  );
-  --color-spark-primary: var(--color-spark-bubble);
-  --color-spark-light: var(--color-spark-surface);
-  --color-spark-dark: var(--color-spark-text);
-  --color-spark-bg: var(--color-spark-surface);
-
-  --color-gemini25-bubble: oklch(
-    var(--cat-bubble-l, 0.62) calc(var(--gemini25-chroma) * var(--cat-bubble-cmul, 1)) var(--gemini25-hue)
-  );
-  --color-gemini25-surface: oklch(
-    var(--cat-surface-l, 0.9) calc(var(--gemini25-chroma) * var(--cat-surface-cmul, 0.5)) var(--gemini25-hue)
-  );
-  --color-gemini25-text: oklch(var(--cat-name-l, 0.24) var(--cat-name-c, 0.005) var(--cat-name-h, 139));
-  --color-gemini25-ring: oklch(
-    var(--cat-ring-l, 0.55) calc(var(--gemini25-chroma) * var(--cat-ring-cmul, 1.1)) var(--gemini25-hue)
-  );
-  --color-gemini25-primary: var(--color-gemini25-bubble);
-  --color-gemini25-light: var(--color-gemini25-surface);
-  --color-gemini25-dark: var(--color-gemini25-text);
-  --color-gemini25-bg: var(--color-gemini25-surface);
-}
