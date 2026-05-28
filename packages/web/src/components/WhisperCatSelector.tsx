@@ -28,7 +28,7 @@ export function WhisperCatSelector({ cats, selected, activeCatIds, onToggle }: W
 
   return (
     <div className="absolute bottom-full left-4 mb-2 bg-cafe-surface rounded-xl shadow-lg border border-cafe overflow-hidden w-64 z-10 max-h-80 flex flex-col">
-      <div className="px-4 py-1.5 text-xs text-conn-amber-text font-medium border-b border-cafe-subtle shrink-0">
+      <div className="px-4 py-1.5 text-xs text-semantic-warning font-medium border-b border-cafe-subtle shrink-0">
         悄悄话目标 · 可多选
       </div>
       <div ref={scrollRef} className="overflow-y-auto flex-1">
@@ -70,13 +70,13 @@ export function WhisperTargetChips({
   const selectedCats = cats.filter((c) => selected.has(c.id));
   return (
     <div className="px-4 pt-1 flex items-center gap-1.5 flex-wrap">
-      <span className="text-xs text-conn-amber-text shrink-0">悄悄话:</span>
+      <span className="text-xs text-semantic-warning shrink-0">悄悄话:</span>
       {selectedCats.map((cat) => (
         <button
           key={cat.id}
           type="button"
           onClick={() => onToggle(cat.id)}
-          className="text-xs px-2 py-0.5 rounded-full border border-current bg-conn-amber-bg font-medium transition-colors hover:opacity-70"
+          className="text-xs px-2 py-0.5 rounded-full border border-current bg-semantic-warning-surface font-medium transition-colors hover:opacity-70"
           style={{ color: catColorVar(cat.id, 'primary') }}
         >
           {formatCatName(cat)} ×
@@ -134,7 +134,7 @@ function CatRow({
         >
           {formatCatName(cat)}
           {isSelected && (
-            <svg className="w-3.5 h-3.5 text-conn-amber-text shrink-0" viewBox="0 0 20 20" fill="currentColor">
+            <svg className="w-3.5 h-3.5 text-semantic-warning shrink-0" viewBox="0 0 20 20" fill="currentColor">
               <path
                 fillRule="evenodd"
                 d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"

@@ -705,8 +705,8 @@ export function ChatInput({
           disabled={disabled || sendTemporarilyDisabled}
           className={`hidden md:block p-3 rounded-xl transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
             whisperMode
-              ? 'text-conn-amber-text bg-conn-amber-bg ring-1 ring-conn-amber-ring'
-              : 'text-cafe-muted hover:text-conn-amber-text hover:bg-cafe-surface'
+              ? 'text-semantic-warning bg-semantic-warning-surface ring-1 ring-semantic-warning'
+              : 'text-cafe-muted hover:text-semantic-warning hover:bg-cafe-surface'
           }`}
           aria-label="Whisper mode"
           title="悄悄话模式"
@@ -751,7 +751,7 @@ export function ChatInput({
             }
             className={`w-full resize-none rounded-xl border p-3 text-sm focus:outline-none focus:ring-2 placeholder:text-cafe-muted ${
               whisperMode
-                ? 'border-conn-amber-text/30 bg-conn-amber-bg/50 focus:ring-conn-amber-text'
+                ? 'border-semantic-warning/30 bg-semantic-warning-surface/50 focus:ring-semantic-warning'
                 : 'border-[var(--console-border-soft)] bg-transparent focus:bg-[var(--console-card-bg)] focus:ring-[var(--console-input-stroke)]'
             }`}
             rows={1}

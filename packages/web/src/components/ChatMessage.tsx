@@ -344,7 +344,7 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
           <div className="flex justify-end items-center gap-2 mb-1">
             {isWhisper && (
               <span
-                className={`text-xs px-1.5 py-0.5 rounded ${isRevealed ? 'bg-cafe-surface-elevated text-cafe-secondary' : 'bg-conn-amber-bg text-conn-amber-text'}`}
+                className={`text-xs px-1.5 py-0.5 rounded ${isRevealed ? 'bg-cafe-surface-elevated text-cafe-secondary' : 'bg-semantic-warning-surface text-semantic-warning'}`}
               >
                 {isRevealed ? '已揭秘' : `悄悄话 → ${message.whisperTo?.join(', ') ?? ''}`}
               </span>
@@ -361,7 +361,7 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
           <div
             className={`rounded-2xl rounded-br-sm px-4 py-3 transition-transform hover:-translate-y-0.5 ${
               isWhisper && !isRevealed
-                ? 'bg-conn-amber-bg text-conn-amber-text border border-dashed border-conn-amber-ring'
+                ? 'bg-semantic-warning-surface text-semantic-warning border border-dashed border-semantic-warning'
                 : ''
             }`}
             style={
@@ -453,7 +453,7 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
               <CopyIdButton messageId={message.id} />
               {isWhisper && (
                 <span
-                  className={`text-xs px-1.5 py-0.5 rounded ${isRevealed ? 'bg-cafe-surface-elevated text-cafe-secondary' : 'bg-conn-amber-bg text-conn-amber-text'}`}
+                  className={`text-xs px-1.5 py-0.5 rounded ${isRevealed ? 'bg-cafe-surface-elevated text-cafe-secondary' : 'bg-semantic-warning-surface text-semantic-warning'}`}
                 >
                   {isRevealed
                     ? '已揭秘'
