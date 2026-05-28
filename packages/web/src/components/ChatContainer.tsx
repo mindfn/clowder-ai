@@ -1163,7 +1163,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
               <button
                 type="button"
                 onClick={handleStartFirstRunQuest}
-                className="rounded-lg bg-[var(--semantic-warning)] px-3 py-2 text-sm font-medium text-[var(--cafe-surface)] hover:opacity-90"
+                className="rounded-lg bg-cafe-accent px-3 py-2 text-sm font-medium text-[var(--cafe-surface)] hover:opacity-90"
               >
                 开始教程
               </button>
