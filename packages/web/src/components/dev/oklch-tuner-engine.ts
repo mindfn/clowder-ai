@@ -176,6 +176,23 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
   // 1. Accent — cascades to all --accent-* in theme-tokens.css
   const accent = `:root{--accent-hue:${p.accentHue};--accent-chroma:${p.accentChroma};}`;
 
+  // 1b. Cat tier gradients (--cat-{tier}-l/cmul). Per-cat tokens
+  // (--color-{slug}-*) in cat-persona-tokens.css consume these so all cats,
+  // including dynamically-created ones, follow Tuner's L/Cmul globally.
+  // hue/chroma still come from each cat's own --{slug}-hue/-chroma.
+  const catGrads = (m: ModeP, dark: boolean) => {
+    const sel = dark ? '[data-theme="dark"]' : ':root';
+    return (
+      `${sel}{` +
+      `--cat-bubble-l:${m.primary.L};--cat-bubble-cmul:${m.primary.Cmul};` +
+      `--cat-surface-l:${m.surface.L};--cat-surface-cmul:${m.surface.Cmul};` +
+      `--cat-text-l:${m.text.L};--cat-text-cmul:${m.text.Cmul};` +
+      `--cat-ring-l:${m.ring.L};--cat-ring-cmul:${m.ring.Cmul};` +
+      `--cat-inset-l:${m.inset.L};--cat-inset-cmul:${m.inset.Cmul};` +
+      `--cat-inset-text-l:${m.insetText.L};--cat-inset-text-c:${m.insetText.C};}`
+    );
+  };
+
   // 2. Surface elevation (chroma/hue pattern matches theme-tokens.css)
   const surf = (e: SurfaceP, dark: boolean) => {
     const sel = dark ? '[data-theme="dark"]' : ':root';
@@ -281,6 +298,8 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
 
   return [
     accent,
+    catGrads(p.light, false),
+    catGrads(p.dark, true),
     surf(p.light.elev, false),
     surf(p.dark.elev, true),
     catBlk(p.light, false),
