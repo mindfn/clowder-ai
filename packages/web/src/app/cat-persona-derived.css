@@ -55,18 +55,19 @@
 
 /* ── 成员编辑器 light/dark 双预览（hub-cat-editor-color-field）─────────
  * 预览要在同一屏同时显示两个 mode，无法靠 [data-theme] 切换；故这两个类
- * 各自固定一档派生公式（theme-independent）。
- * ⚠️ 公式必须与上方 .cat-persona-derived 的 light / dark 段保持一致。 */
+ * 各自硬编码完整 oklch 值（theme-independent），不依赖 --cat-msg-text-l
+ * 等仅在当前 mode 可用的变量。buildCSS() 运行后会用 Tuner 实际值覆盖。
+ * ⚠️ 硬编码值必须与 INIT defaults (oklch-tuner-engine.ts) 保持一致。 */
 .cat-persona-preview-light {
   --cat-msg-surface: oklch(0.9 calc(var(--msg-chroma, 0.1) * 0.5) var(--msg-hue, 297));
   --cat-msg-inset: oklch(0.3 calc(var(--msg-chroma, 0.1) * 0.1) var(--msg-hue, 297));
   --cat-msg-inset-text: oklch(0.85 0.03 250);
-  --cat-msg-text: oklch(var(--cat-msg-text-l, 0.2) var(--cat-msg-text-c, 0.005) 30);
+  --cat-msg-text: oklch(0.2 0.005 30);
 }
 
 .cat-persona-preview-dark {
   --cat-msg-surface: oklch(0.3 calc(var(--msg-chroma, 0.1) * 0.25) var(--msg-hue, 297));
   --cat-msg-inset: oklch(0.24 calc(var(--msg-chroma, 0.1) * 0.1) var(--msg-hue, 297));
   --cat-msg-inset-text: oklch(0.8 0.02 250);
-  --cat-msg-text: oklch(var(--cat-msg-text-l, 0.8) var(--cat-msg-text-c, 0.02) 30);
+  --cat-msg-text: oklch(0.8 0.04 30);
 }

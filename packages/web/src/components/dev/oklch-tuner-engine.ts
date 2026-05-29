@@ -406,6 +406,23 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
     return `${sel}{--cafe-text:${o(n.textL)};--cafe-text-secondary:${o(n.secondaryL)};--cafe-text-muted:${o(n.mutedL)};--cafe-interactive:${o(n.interactiveL)};--cafe-border:${o(n.borderL)};--cafe-border-subtle:${o(n.borderSubtleL)};--code-bg:${codeBg};--code-text:${codeTx};}`;
   };
 
+  // 9. Hub editor preview — each preview class gets its own mode's values so light
+  //    preview always has light text/surface and dark preview always has dark text/surface,
+  //    regardless of the current [data-theme].
+  const pvw = (m: ModeP, dark: boolean): string => {
+    const cls = dark ? '.cat-persona-preview-dark' : '.cat-persona-preview-light';
+    const msg = m.msgText ?? (dark ? INIT.dark.msgText : INIT.light.msgText);
+    const mc = 'var(--msg-chroma,0.1)';
+    const mh = 'var(--msg-hue,297)';
+    return (
+      `${cls}{` +
+      `--cat-msg-surface:oklch(${m.surface.L} calc(${mc}*${m.surface.Cmul}) ${mh});` +
+      `--cat-msg-inset:oklch(${m.inset.L} calc(${mc}*${m.inset.Cmul}) ${mh});` +
+      `--cat-msg-inset-text:oklch(${m.insetText.L} ${m.insetText.C} 250);` +
+      `--cat-msg-text:oklch(${msg.L} ${msg.C} ${p.neutralHue});}`
+    );
+  };
+
   return [
     accent,
     // --cat-{tier}-l/cmul → cat-persona-tokens.css per-slug formulas + CatHueInjector
@@ -422,6 +439,8 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
     qDark,
     nCSS(p.neutralLight, false),
     nCSS(p.neutralDark, true),
+    pvw(p.light, false),
+    pvw(p.dark, true),
   ]
     .filter(Boolean)
     .join('\n');
