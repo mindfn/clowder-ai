@@ -9,7 +9,7 @@ import type {
   PluginResourceDef,
 } from '@cat-cafe/shared';
 import type { LimbRegistry } from '../limb/LimbRegistry.js';
-import { resolvePluginResourcePath, resourceCapId, resourcePathBasename } from './PluginRegistry.js';
+import { normalizeCapId, resolvePluginResourcePath, resourceCapId, resourcePathBasename } from './PluginRegistry.js';
 import { resolvePluginEnv } from './plugin-config-store.js';
 
 const PROVIDER_DIRS = ['.claude/skills', '.codex/skills', '.gemini/skills', '.kimi/skills'];
@@ -82,7 +82,10 @@ export async function rehydrateEnabledPluginLimbs(deps: PluginLimbRehydrationDep
   for (const cap of enabledLimbs) {
     const manifest = deps.pluginRegistry.getManifest(cap.pluginId!);
     if (!manifest) continue;
-    const limbResource = manifest.resources.find((r) => r.type === 'limb' && resourceCapId(manifest.id, r) === cap.id);
+    const normalizedCapId = normalizeCapId(cap.id);
+    const limbResource = manifest.resources.find(
+      (r) => r.type === 'limb' && resourceCapId(manifest.id, r) === normalizedCapId,
+    );
     if (!limbResource?.path) continue;
     const factory = deps.limbAdapterRegistry.get(manifest.id);
     if (!factory) {
@@ -373,17 +376,37 @@ export class PluginResourceActivator {
     await this.deps.withCapabilityLock(async () => {
       const config = await this.deps.readCapabilities();
       if (!config) return;
-      const orphaned = config.capabilities.filter((c) => c.pluginId === manifest.id && !declaredIds.has(c.id));
+      const isOrphan = (c: CapabilityEntry) => c.pluginId === manifest.id && !declaredIds.has(normalizeCapId(c.id));
+      const orphaned = config.capabilities.filter(isOrphan);
       if (orphaned.length === 0) return;
 
-      const previous = structuredClone(config);
-      const next = structuredClone(config);
-      for (const cap of orphaned) {
-        if (cap.type === 'limb' && cap.enabled && cap.limbNodeId) {
-          limbNodeIds.push(cap.limbNodeId);
+      // Phase 1: disable orphaned MCP entries so CLI config writers see the disabled
+      // descriptor and can delete the stale generated server entries.
+      const hasMcpOrphans = orphaned.some((c) => c.type === 'mcp' && c.enabled);
+      if (hasMcpOrphans) {
+        const disableSnap = structuredClone(config);
+        const disableNext = structuredClone(config);
+        for (const cap of disableNext.capabilities) {
+          if (isOrphan(cap) && cap.type === 'mcp' && cap.enabled) {
+            cap.enabled = false;
+          }
+        }
+        await this.writeCapabilitiesWithRollback(disableSnap, disableNext);
+      }
+
+      // Phase 2: remove all orphaned entries.
+      const freshConfig = await this.deps.readCapabilities();
+      if (!freshConfig) return;
+      const previous = structuredClone(freshConfig);
+      const next = structuredClone(freshConfig);
+      for (const cap of next.capabilities) {
+        if (isOrphan(cap)) {
+          if (cap.type === 'limb' && cap.enabled && cap.limbNodeId) {
+            limbNodeIds.push(cap.limbNodeId);
+          }
         }
       }
-      next.capabilities = next.capabilities.filter((c) => !(c.pluginId === manifest.id && !declaredIds.has(c.id)));
+      next.capabilities = next.capabilities.filter((c) => !isOrphan(c));
       await this.writeCapabilitiesWithRollback(previous, next);
     });
 

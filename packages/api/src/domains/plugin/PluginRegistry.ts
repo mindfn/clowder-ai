@@ -101,14 +101,14 @@ export class PluginRegistry {
 
     const capEntries = capabilities.capabilities.filter((c) => c.pluginId === manifest.id);
     const declaredIds = new Set(manifest.resources.map((r) => resourceCapId(manifest.id, r)));
-    const declaredEntries = capEntries.filter((c) => declaredIds.has(c.id));
+    const declaredEntries = capEntries.filter((c) => declaredIds.has(normalizeCapId(c.id)));
 
     if (capEntries.length === 0) return allConfigured ? 'configured' : 'not_configured';
 
     const allDeclaredEnabled =
       manifest.resources.length > 0 &&
       manifest.resources.every((resource) =>
-        declaredEntries.some((c) => c.id === resourceCapId(manifest.id, resource) && c.enabled),
+        declaredEntries.some((c) => normalizeCapId(c.id) === resourceCapId(manifest.id, resource) && c.enabled),
       );
     if (allDeclaredEnabled) return allConfigured ? 'enabled' : 'partial';
 
@@ -133,7 +133,7 @@ export class PluginRegistry {
 
     const resourceStatuses: PluginResourceStatus[] = manifest.resources.map((r) => {
       const capEntry = capabilities?.capabilities.find(
-        (c) => c.pluginId === manifest.id && c.id === resourceCapId(manifest.id, r),
+        (c) => c.pluginId === manifest.id && normalizeCapId(c.id) === resourceCapId(manifest.id, r),
       );
       return {
         type: r.type,
@@ -169,8 +169,17 @@ export function resourceCapId(pluginId: string, resource: { type: string; path?:
   if (resource.type === 'mcp' && resource.name) {
     return `plugin:${pluginId}:${resource.name}`;
   }
-  const suffix = resource.path ?? resource.name ?? resource.type;
+  const suffix = resource.path ? resourcePathSegments(resource.path).join('/') : (resource.name ?? resource.type);
   return `plugin:${pluginId}:${suffix}`;
+}
+
+/**
+ * Normalize a stored capability ID so that old entries with backslash path
+ * separators (e.g. `plugin:x:limbs\\node.yaml`) match the current canonical
+ * form (`plugin:x:limbs/node.yaml`). Safe to call on already-normalized IDs.
+ */
+export function normalizeCapId(capId: string): string {
+  return capId.replace(/\\/g, '/');
 }
 
 export function resourcePathSegments(resourcePath: string): string[] {

@@ -10,8 +10,11 @@
 import assert from 'node:assert/strict';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** @param {string} prefix */
 async function makeTmpDir(prefix) {
@@ -97,11 +100,7 @@ describe('/api/capabilities returns pluginId for plugin-owned MCPs', () => {
   test('MCP board items include pluginId when capability has one', async () => {
     // This is a structural test: verify that the capabilities route code
     // includes pluginId in MCP board items by checking the source
-    const { readFile: readFileSync } = await import('node:fs/promises');
-    const capabilitiesSource = await readFileSync(
-      join(process.cwd(), 'packages/api/src/routes/capabilities.ts'),
-      'utf-8',
-    );
+    const capabilitiesSource = await readFile(join(__dirname, '..', 'src', 'routes', 'capabilities.ts'), 'utf-8');
 
     // The MCP board item construction should include pluginId
     // Find the mcpItem construction block
