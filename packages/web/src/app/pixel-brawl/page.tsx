@@ -6,24 +6,25 @@
 
 import localFont from 'next/font/local';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { type FighterId, PIXEL_FONT_SIZES } from '@/games/pixel-brawl/types';
+import { type FighterId, PALETTE, PIXEL_FONT_SIZES, TEAM_COLORS } from '@/games/pixel-brawl/types';
 
 type GameMode = 'pvai' | 'aivai';
 
 const ALL_FIGHTERS: FighterId[] = ['opus46', 'opus45', 'codex', 'gpt54'];
 const PVP_FIGHTERS: FighterId[] = ['opus46', 'codex'];
 
-/** 8-bit retro game palette — intentionally outside F056 theme system */
+/** Page-level UI colors derived from the shared PALETTE (types.ts) +
+ *  two page-only additions (pageBg, btnCyanText) not in the game engine. */
 const PIXEL_PALETTE = {
-  sceneBg: '#111318',
+  sceneBg: PALETTE.ink,
   pageBg: '#000',
-  text: '#E8DFC7',
-  title: '#F1E28A',
-  caption: '#3A4658',
-  btnBg: '#1E2430',
-  btnBorder: '#3A4658',
+  text: PALETTE.bone,
+  title: PALETTE.flash,
+  caption: PALETTE.steel,
+  btnBg: PALETTE.slate,
+  btnBorder: PALETTE.steel,
   btnCyanText: '#00F0FF',
-  btnGreenText: '#2FA56E',
+  btnGreenText: TEAM_COLORS.codex,
 } as const;
 
 const pressStart2p = localFont({ src: '../../fonts/PressStart2P-Regular.woff2', weight: '400', display: 'swap' });
