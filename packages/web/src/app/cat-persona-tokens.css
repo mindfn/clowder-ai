@@ -13,8 +13,8 @@
  * 削弱可读性；猫味落在气泡背景 surface 即可（KD-28）。
  *
  * 公式（L 档位 / chroma 乘数）：
- *   light: bubble L=0.62 C×1.0 / surface L=0.9 C×0.5 / ring L=0.55 C×1.1
- *   dark:  bubble L=0.68 C×0.85 / surface L=0.30 C×0.25 / ring L=0.70 C×1.0
+ *   light: bubble L=0.62 C×1.0 / surface L=0.85 C×0.45 / ring L=0.55 C×1.1
+ *   dark:  bubble L=0.68 C×0.85 / surface L=0.28 C×0.25 / ring L=0.70 C×1.0
  *   text 走中性 --cafe-text（不带猫色相）
  *
  * Runtime catId is the resolved name (e.g. "opus", "codex"), NOT the template
@@ -37,7 +37,7 @@
     var(--cat-bubble-l, 0.62) calc(var(--cocreator-chroma) * var(--cat-bubble-cmul, 1)) var(--cocreator-hue)
   );
   --color-cocreator-surface: oklch(
-    var(--cat-surface-l, 0.9) calc(var(--cocreator-chroma) * var(--cat-surface-cmul, 0.5)) var(--cocreator-hue)
+    var(--cat-surface-l, 0.85) calc(var(--cocreator-chroma) * var(--cat-surface-cmul, 0.45)) var(--cocreator-hue)
   );
   --color-cocreator-text: oklch(var(--cat-name-l, 0.24) var(--cat-name-c, 0.005) var(--cat-name-h, 139));
   --color-cocreator-ring: oklch(
@@ -54,7 +54,7 @@
     var(--cat-bubble-l, 0.68) calc(var(--cocreator-chroma) * var(--cat-bubble-cmul, 0.85)) var(--cocreator-hue)
   );
   --color-cocreator-surface: oklch(
-    var(--cat-surface-l, 0.3) calc(var(--cocreator-chroma) * var(--cat-surface-cmul, 0.25)) var(--cocreator-hue)
+    var(--cat-surface-l, 0.28) calc(var(--cocreator-chroma) * var(--cat-surface-cmul, 0.25)) var(--cocreator-hue)
   );
   --color-cocreator-text: oklch(var(--cat-name-l, 0.88) var(--cat-name-c, 0.005) var(--cat-name-h, 139));
   --color-cocreator-ring: oklch(
