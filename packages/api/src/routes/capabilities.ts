@@ -761,6 +761,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
         cats,
         mcpServer: buildBoardMcpServer(cap, { includeLaunchFields: includeMcpLaunchFields }),
         layer: 'L1',
+        pluginId: cap.pluginId,
         ...(cap.ecosystem && { ecosystem: cap.ecosystem }),
         ...(cap.lockVersion && { lockVersion: cap.lockVersion }),
       };

@@ -18,14 +18,15 @@ import type { LimbRegistry } from '../domains/limb/LimbRegistry.js';
 import { loadLimbDeclaration } from '../domains/limb/limb-yaml-loader.js';
 import type { PluginRegistry } from '../domains/plugin/PluginRegistry.js';
 import { resolvePluginResourcePath, resourceCapId } from '../domains/plugin/PluginRegistry.js';
-import type { PluginResourceActivator } from '../domains/plugin/PluginResourceActivator.js';
+import { assertPluginResourceInsideRoot } from '../domains/plugin/PluginResourceActivator.js';
+import type { PluginResourceActivator as PluginResourceActivatorType } from '../domains/plugin/PluginResourceActivator.js';
 import { loadAllPluginConfigs, resolvePluginEnv, writePluginConfig } from '../domains/plugin/plugin-config-store.js';
 import { validateEnvSafety } from '../domains/plugin/plugin-manifest.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
 
 interface PluginRoutesOpts {
   pluginRegistry: PluginRegistry;
-  pluginActivator: PluginResourceActivator;
+  pluginActivator: PluginResourceActivatorType;
   limbRegistry: LimbRegistry;
   pluginsDir: string;
 }
@@ -281,7 +282,9 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
       let matchedResource: (typeof limbResources)[number] | null = null;
       for (const lr of limbResources) {
         try {
-          const d = loadLimbDeclaration(resolvePluginResourcePath(pluginsDir, id, lr.path!));
+          const yamlPath = resolvePluginResourcePath(pluginsDir, id, lr.path!);
+          await assertPluginResourceInsideRoot(pluginsDir, manifest, yamlPath, 'Limb health-check');
+          const d = loadLimbDeclaration(yamlPath);
           const cmds = d.capabilities.flatMap((c) => c.commands);
           if (cmds.includes(manifest.healthCheck.limbCommand)) {
             matchedDecl = d;

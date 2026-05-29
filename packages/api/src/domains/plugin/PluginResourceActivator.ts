@@ -52,7 +52,7 @@ export function withPersistedLimbNodeId<T extends ILimbNode>(node: T, persistedN
   return node;
 }
 
-async function assertPluginResourceInsideRoot(
+export async function assertPluginResourceInsideRoot(
   pluginsDir: string,
   manifest: PluginManifest,
   resourcePath: string,
@@ -287,6 +287,10 @@ export class PluginResourceActivator {
   }
 
   private async deactivateMcp(manifest: PluginManifest, resource: PluginResourceDef): Promise<void> {
+    // First disable: triggers CLI config regeneration which tells writers to delete the entry.
+    // If we only removeCapabilityEntry, the row vanishes before generateCliConfigs runs,
+    // so the CLI writer never sees the disabled server and leaves stale config behind.
+    await this.upsertCapabilityEntry(manifest, resource, false);
     await this.removeCapabilityEntry(manifest, resource);
   }
 
