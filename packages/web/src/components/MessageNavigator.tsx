@@ -2,9 +2,9 @@
 
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { type CatData, formatCatName, useCatData } from '@/hooks/useCatData';
-import { CAT_COLORS } from '@/lib/color-defaults';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { catColorVar } from '@/lib/cat-slug';
+import { CAT_COLORS } from '@/lib/color-defaults';
 import type { ChatMessage as ChatMessageData } from '@/stores/chatStore';
 import { scrollToMessage } from '@/utils/scrollToMessage';
 

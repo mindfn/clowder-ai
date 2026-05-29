@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import { formatCatName, useCatData } from '@/hooks/useCatData';
-import { NEUTRAL_DOT_COLOR } from '@/lib/color-defaults';
 import { useSendMessage } from '@/hooks/useSendMessage';
+import { NEUTRAL_DOT_COLOR } from '@/lib/color-defaults';
 import type { CatInvocationInfo } from '@/stores/chatStore';
 import { buildContinueMessage } from '@/utils/taskProgressContinue';
 import { useConfirm } from './useConfirm';

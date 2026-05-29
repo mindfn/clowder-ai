@@ -1,8 +1,8 @@
 'use client';
 
 import type { CatData } from '@/hooks/useCatData';
-import { UNKNOWN_CAT_COLOR } from '@/lib/color-defaults';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
+import { UNKNOWN_CAT_COLOR } from '@/lib/color-defaults';
 
 interface ReplyPillProps {
   replyPreview: { senderCatId: string | null; content: string; deleted?: true };

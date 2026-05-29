@@ -1,6 +1,6 @@
 import type { CatData } from '@/hooks/useCatData';
-import { GROUP_MENTION_COLOR } from '@/lib/color-defaults';
 import { catColorVar } from '@/lib/cat-slug';
+import { GROUP_MENTION_COLOR } from '@/lib/color-defaults';
 
 export interface CatOption {
   id: string;

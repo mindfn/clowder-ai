@@ -1,8 +1,8 @@
 'use client';
 
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import { DEFAULT_LABEL_COLOR } from '@/lib/color-defaults';
 import { useIMEGuard } from '@/hooks/useIMEGuard';
+import { DEFAULT_LABEL_COLOR } from '@/lib/color-defaults';
 import { type ThreadLabel, useLabelStore } from '@/stores/label-store';
 
 interface ThreadLabelPickerProps {

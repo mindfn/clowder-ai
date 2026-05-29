@@ -6,8 +6,8 @@
  */
 
 import { escapeRegExp } from '@cat-cafe/shared';
-import { CO_CREATOR_MENTION_COLOR as CO_CREATOR_MENTION } from '@/lib/color-defaults';
 import type { CatData } from '@/hooks/useCatData';
+import { CO_CREATOR_MENTION_COLOR as CO_CREATOR_MENTION } from '@/lib/color-defaults';
 
 // ── Internal builders ───────────────────────────────────
 

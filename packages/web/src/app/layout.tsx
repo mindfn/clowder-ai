@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from 'next';
-import { META_THEME_COLOR } from '@/lib/color-defaults';
 import { AppShell } from '@/components/AppShell';
 import { BrakeModal } from '@/components/BrakeModal';
 import { CatHueInjector } from '@/components/CatHueInjector';
@@ -9,6 +8,7 @@ import { ThemeApplier } from '@/components/ThemeApplier';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { ToastContainer } from '@/components/ToastContainer';
 import { ConfirmProvider } from '@/components/useConfirm';
+import { META_THEME_COLOR } from '@/lib/color-defaults';
 import '@xterm/xterm/css/xterm.css';
 import './theme-tokens.css';
 import './cat-persona-tokens.css';
