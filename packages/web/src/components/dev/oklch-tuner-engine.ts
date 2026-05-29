@@ -239,8 +239,13 @@ export const INIT_DARK: TunerState = {
   catTextDarkL: 0.95,
 };
 
-/** Migration fallback — used by migrateTunerState() to patch missing fields. */
+/** Migration fallback — used by migrateTunerState() when base is unknown. */
 export const INIT = INIT_DARK;
+
+/** Select INIT preset matching the theme's base mode. */
+export function initForBase(base: 'light' | 'dark'): TunerState {
+  return base === 'light' ? INIT_LIGHT : INIT_DARK;
+}
 
 export const STYLE_ID = 'oklch-tuner-override';
 
@@ -284,15 +289,18 @@ function migrateNeutralP(n: Partial<NeutralP> | undefined, fallback: NeutralP): 
   };
 }
 
-/** Patch missing TunerState fields with INIT defaults (survives schema additions). */
-export function migrateTunerState(s: Partial<TunerState>): TunerState {
+/** Patch missing TunerState fields with base-matched INIT defaults.
+ *  @param base — the theme's mode; when provided, uses INIT_LIGHT or INIT_DARK
+ *                so a light-based custom theme doesn't inherit dark defaults. */
+export function migrateTunerState(s: Partial<TunerState>, base?: 'light' | 'dark'): TunerState {
+  const fb = base ? initForBase(base) : INIT;
   return {
-    ...INIT,
+    ...fb,
     ...s,
-    light: migrateModeP((s.light as Partial<ModeP>) ?? {}, INIT.light),
-    dark: migrateModeP((s.dark as Partial<ModeP>) ?? {}, INIT.dark),
-    neutralLight: migrateNeutralP(s.neutralLight as Partial<NeutralP> | undefined, INIT.neutralLight),
-    neutralDark: migrateNeutralP(s.neutralDark as Partial<NeutralP> | undefined, INIT.neutralDark),
+    light: migrateModeP((s.light as Partial<ModeP>) ?? {}, fb.light),
+    dark: migrateModeP((s.dark as Partial<ModeP>) ?? {}, fb.dark),
+    neutralLight: migrateNeutralP(s.neutralLight as Partial<NeutralP> | undefined, fb.neutralLight),
+    neutralDark: migrateNeutralP(s.neutralDark as Partial<NeutralP> | undefined, fb.neutralDark),
   };
 }
 

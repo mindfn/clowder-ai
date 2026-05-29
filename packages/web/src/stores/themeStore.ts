@@ -90,12 +90,12 @@ function readLS(): { custom: ThemePreset[]; activeId: string; builtInOverrides: 
     /* Migrate persisted params — forward-compat when ModeP gains fields (e.g. msgText).
      * Custom themes and builtInOverrides both get patched with INIT defaults. */
     const rawCustom = Array.isArray(d.custom) ? d.custom.slice(0, MAX_CUSTOM) : [];
-    const migratedCustom = rawCustom.map((t) => ({ ...t, params: migrateTunerState(t.params) }));
+    const migratedCustom = rawCustom.map((t) => ({ ...t, params: migrateTunerState(t.params, t.base) }));
     const rawOverrides =
       versionMismatch || !d.builtInOverrides || typeof d.builtInOverrides !== 'object' ? {} : d.builtInOverrides;
     const migratedOverrides: Record<string, TunerState> = {};
     for (const [k, v] of Object.entries(rawOverrides)) {
-      migratedOverrides[k] = migrateTunerState(v);
+      migratedOverrides[k] = migrateTunerState(v, k === 'light' || k === 'dark' ? k : undefined);
     }
     return {
       custom: migratedCustom,
