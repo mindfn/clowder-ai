@@ -180,7 +180,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
         {/* ── 2. Surface elevation ── */}
         <div className="space-y-1 pb-2 border-b border-[var(--console-border-soft)]">
           <div className="text-[10px] text-cafe-muted font-bold flex items-center gap-1">
-            <LayersIcon /> 页面层次 ({mode})
+            <LayersIcon /> 页面层次
           </div>
           <Slider
             label="底色 H"
@@ -227,7 +227,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
         {/* ── 3. Bubble / inset tier (L/Cmul 派生) ── */}
         <div className="space-y-1.5 pb-2 border-b border-[var(--console-border-soft)]">
           <div className="text-[10px] text-cafe-muted font-bold flex items-center gap-1">
-            <BubbleIcon /> 气泡/嵌套 ({mode})
+            <BubbleIcon /> 气泡/嵌套
           </div>
           {TUNER_TIERS.map((tier) => (
             <div key={tier} className="space-y-0.5">

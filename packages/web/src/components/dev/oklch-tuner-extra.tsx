@@ -104,7 +104,7 @@ export function TunerExtraSections({ mode, params, onSemantic, onQueue, onNeutra
       {/* ── 6. Semantic status colors ── */}
       <div className="space-y-1 pb-2 border-b border-[var(--console-border-soft)]">
         <div className="text-[10px] text-cafe-muted font-bold flex items-center gap-1">
-          <TrafficLightIcon /> 语义状态色 ({mode})
+          <TrafficLightIcon /> 语义状态色
         </div>
         <div className="flex gap-0.5 pl-4">
           {SEMANTIC_KEYS.map((k) => {
@@ -214,7 +214,7 @@ export function TunerExtraSections({ mode, params, onSemantic, onQueue, onNeutra
       {/* ── 8. Text/Border (also drives console tokens via alias) ── */}
       <div className="space-y-1">
         <div className="text-[10px] text-cafe-muted font-bold flex items-center gap-1">
-          <TypeIcon /> 文字/边框 ({mode})
+          <TypeIcon /> 文字/边框 (L)
         </div>
         {NEUTRAL_ROWS.map(([f, lbl]) => (
           <div key={f} className="flex items-center gap-1.5 pl-4">
