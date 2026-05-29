@@ -136,9 +136,9 @@ export const INIT_LIGHT: TunerState = {
     text: { L: 0.24, Cmul: 0.8 },
     inset: { L: 0.3, Cmul: 0.15 },
     ring: { L: 0.55, Cmul: 1.1 },
-    insetText: { L: 0.75, C: 0.05 },
-    msgText: { L: 0.25, C: 0.01 },
-    elev: { sunken: 0.9, base: 0.95, elevated: 0.985, canvas: 0.99 },
+    insetText: { L: 0.85, C: 0.04 },
+    msgText: { L: 0.36, C: 0.03 },
+    elev: { sunken: 0.92, base: 0.95, elevated: 0.99, canvas: 0.995 },
   },
   dark: {
     primary: { L: 0.68, Cmul: 0.85 },
@@ -163,7 +163,7 @@ export const INIT_LIGHT: TunerState = {
     interactiveL: 0.36,
     borderL: 0.84,
     borderSubtleL: 0.915,
-    codeBgL: 0.95,
+    codeBgL: 0.92,
     codeTextL: 0.2,
   },
   neutralDark: {

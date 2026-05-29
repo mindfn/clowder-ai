@@ -156,6 +156,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
             step={1}
             fmt={`${params.accentHue}`}
             onChange={(v) => setParams((p) => ({ ...p, accentHue: v }))}
+            swatch={`oklch(0.65 ${params.accentChroma} ${params.accentHue})`}
           />
           <Slider
             label="C"
@@ -165,6 +166,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
             step={0.005}
             fmt={params.accentChroma.toFixed(3)}
             onChange={(v) => setParams((p) => ({ ...p, accentChroma: v }))}
+            swatch={`oklch(0.65 ${params.accentChroma} ${params.accentHue})`}
           />
           <div className="flex gap-0.5 pl-4">
             {[0.97, 0.88, 0.65, 0.55, 0.45, 0.35, 0.2].map((l) => (
@@ -190,6 +192,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
             step={1}
             fmt={`${params.surfaceHue}`}
             onChange={(v) => setParams((p) => ({ ...p, surfaceHue: v }))}
+            swatch={`oklch(${mp.elev.base} ${(0.012 * (params.surfaceChroma ?? 1)).toFixed(4)} ${params.surfaceHue})`}
           />
           <Slider
             label="C*"
@@ -199,6 +202,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
             step={0.05}
             fmt={(params.surfaceChroma ?? 1).toFixed(2)}
             onChange={(v) => setParams((p) => ({ ...p, surfaceChroma: v }))}
+            swatch={`oklch(${mp.elev.base} ${(0.012 * (params.surfaceChroma ?? 1)).toFixed(4)} ${params.surfaceHue})`}
           />
           {SURF_KEYS.map((k) => (
             <div key={k} className="flex items-center gap-1.5">

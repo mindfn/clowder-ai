@@ -68,7 +68,7 @@
   --semantic-spotlight-surface: oklch(0.96 0.04 46);
 
   /* --- 5. Code Block（github-light 风格固定 palette） --- */
-  --code-bg: oklch(0.95 0.005 30);
+  --code-bg: oklch(0.92 0.005 30);
   --code-text: oklch(0.2 0.02 30);
   --code-keyword: oklch(0.5 0.18 320);
   --code-string: oklch(0.5 0.15 140);
@@ -109,8 +109,8 @@
    *   canvas   #FFFDFB Card 浮起 */
   --cafe-surface-sunken: oklch(0.92 0.015 var(--surface-hue));
   --cafe-surface: oklch(0.95 0.012 var(--surface-hue));
-  --cafe-surface-elevated: oklch(0.985 0.005 var(--surface-hue));
-  --cafe-surface-canvas: oklch(0.996 0.003 var(--surface-hue));
+  --cafe-surface-elevated: oklch(0.99 0.005 var(--surface-hue));
+  --cafe-surface-canvas: oklch(0.995 0.003 var(--surface-hue));
 
   /* --- Cafe semantic shortcuts（映射到 Neutral / App Accent / Semantic） --- */
   --cafe-text: var(--neutral-900);
