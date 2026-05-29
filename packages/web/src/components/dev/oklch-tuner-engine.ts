@@ -103,10 +103,10 @@ export const TIER_LABELS: Record<CatTier | 'insetText' | 'msgText', string> = {
 };
 
 export const SURF_LABELS: Record<keyof SurfaceP, string> = {
-  sunken: '层 1 · 基底',
-  base: '层 2 · 承载',
-  elevated: '层 3 · 抬升',
-  canvas: '层 4 · 浮出',
+  sunken: '层 1 · 基底 (L)',
+  base: '层 2 · 承载 (L)',
+  elevated: '层 3 · 抬升 (L)',
+  canvas: '层 4 · 浮出 (L)',
 };
 
 export const NEUTRAL_ROWS: [keyof NeutralP, string][] = [

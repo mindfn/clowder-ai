@@ -183,7 +183,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
             <LayersIcon /> 页面层次
           </div>
           <Slider
-            label="底色 H"
+            label="H"
             value={params.surfaceHue}
             min={0}
             max={360}
@@ -192,7 +192,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
             onChange={(v) => setParams((p) => ({ ...p, surfaceHue: v }))}
           />
           <Slider
-            label="底色 C"
+            label="C"
             value={params.surfaceChroma ?? 1}
             min={0}
             max={3}
