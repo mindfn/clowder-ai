@@ -24,7 +24,7 @@
   --console-card-soft-bg: color-mix(in oklch, var(--cafe-surface), black 5%);
   --console-code-bg: var(--cafe-surface-sunken);
   --console-pill-bg: var(--cafe-surface);
-  --console-field-bg: var(--cafe-surface-sunken);
+  --console-field-bg: var(--cafe-surface);
   --console-rail-bg: var(--cafe-surface-sunken);
   --console-rail-item: var(--cafe-surface);
   --console-rail-active: var(--cafe-surface-elevated);
