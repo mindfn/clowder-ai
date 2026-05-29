@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useCatData } from '@/hooks/useCatData';
 import { apiFetch } from '@/utils/api-client';
 import { ClientStep, type DetectedClient } from './first-run-quest/ClientStep';
@@ -160,7 +161,7 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
     else if (step === 'client') setStep('template');
   };
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--console-overlay-medium)] px-4"
       onClick={onClose}
@@ -221,6 +222,7 @@ export function FirstRunQuestWizard({ open, onClose, onCreated }: FirstRunQuestW
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

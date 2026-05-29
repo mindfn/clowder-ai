@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useAgentHookHealth } from '@/hooks/useAgentHookHealth';
 import { useAgentMessages } from '@/hooks/useAgentMessages';
 import { useAuthorization } from '@/hooks/useAuthorization';
@@ -1142,35 +1143,37 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
         threadId={threadId}
         messageSummary={messageSummary}
       />
-      {showFirstRunQuestPrompt && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--console-overlay-medium)] px-4">
-          <div
-            className="w-full max-w-md rounded-2xl border border-conn-amber-ring bg-[var(--console-card-bg)] p-6 shadow-2xl"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <h3 className="text-lg font-semibold text-cafe">开始猫猫新手教程？</h3>
-            <p className="mt-2 text-sm text-cafe-secondary">
-              当前还没有可用成员。我们可以先带你创建第一只猫猫，再开始首个协作任务。
-            </p>
-            <div className="mt-5 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={handleSkipFirstRunQuest}
-                className="rounded-lg border border-[var(--console-border-soft)] px-3 py-2 text-sm text-cafe-secondary hover:bg-[var(--console-hover-bg)]"
-              >
-                跳过
-              </button>
-              <button
-                type="button"
-                onClick={handleStartFirstRunQuest}
-                className="rounded-lg bg-cafe-accent px-3 py-2 text-sm font-medium text-[var(--cafe-surface)] hover:opacity-90"
-              >
-                开始教程
-              </button>
+      {showFirstRunQuestPrompt &&
+        createPortal(
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--console-overlay-medium)] px-4">
+            <div
+              className="w-full max-w-md rounded-2xl border border-conn-amber-ring bg-[var(--console-card-bg)] p-6 shadow-2xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <h3 className="text-lg font-semibold text-cafe">开始猫猫新手教程？</h3>
+              <p className="mt-2 text-sm text-cafe-secondary">
+                当前还没有可用成员。我们可以先带你创建第一只猫猫，再开始首个协作任务。
+              </p>
+              <div className="mt-5 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={handleSkipFirstRunQuest}
+                  className="rounded-lg border border-[var(--console-border-soft)] px-3 py-2 text-sm text-cafe-secondary hover:bg-[var(--console-hover-bg)]"
+                >
+                  跳过
+                </button>
+                <button
+                  type="button"
+                  onClick={handleStartFirstRunQuest}
+                  className="rounded-lg bg-cafe-accent px-3 py-2 text-sm font-medium text-[var(--cafe-surface)] hover:opacity-90"
+                >
+                  开始教程
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
       <FirstRunQuestWizard
         open={showQuestWizard}
         onClose={() => setShowQuestWizard(false)}

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { apiFetch } from '@/utils/api-client';
 import type { BuiltinAccountClient, ProfileAuthType } from './hub-accounts.types';
 import { builtinClientLabel } from './hub-accounts.view';
@@ -207,7 +208,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
     }
   };
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-[80] flex items-center justify-center bg-[var(--console-overlay-medium)] px-4"
       onClick={handleClose}
@@ -444,6 +445,7 @@ export function UnifiedAuthModal({ open, onClose, onCreated, editProfile, initia
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
