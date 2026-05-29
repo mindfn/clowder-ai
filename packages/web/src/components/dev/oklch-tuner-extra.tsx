@@ -149,8 +149,8 @@ export function TunerExtraSections({ mode, params, onSemantic, onQueue, onNeutra
         <Slider
           label="L"
           value={sp.L}
-          min={0.3}
-          max={0.9}
+          min={0}
+          max={1}
           step={0.01}
           fmt={sp.L.toFixed(2)}
           onChange={(v) => onSemantic('L', v)}
@@ -195,7 +195,7 @@ export function TunerExtraSections({ mode, params, onSemantic, onQueue, onNeutra
           label="C"
           value={params.queue.C}
           min={0}
-          max={0.25}
+          max={0.3}
           step={0.005}
           fmt={params.queue.C.toFixed(3)}
           onChange={(v) => onQueue('C', v)}
@@ -203,8 +203,8 @@ export function TunerExtraSections({ mode, params, onSemantic, onQueue, onNeutra
         <Slider
           label="L"
           value={params.queue.L}
-          min={0.3}
-          max={0.85}
+          min={0}
+          max={1}
           step={0.01}
           fmt={params.queue.L.toFixed(2)}
           onChange={(v) => onQueue('L', v)}

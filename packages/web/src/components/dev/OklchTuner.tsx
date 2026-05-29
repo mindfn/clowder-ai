@@ -192,7 +192,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
             onChange={(v) => setParams((p) => ({ ...p, surfaceHue: v }))}
           />
           <Slider
-            label="C"
+            label="C*"
             value={params.surfaceChroma ?? 1}
             min={0}
             max={3}
@@ -278,8 +278,8 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
               label="C"
               value={mp[tier].C}
               min={0}
-              max={0.1}
-              step={0.001}
+              max={0.3}
+              step={0.005}
               fmt={mp[tier].C.toFixed(3)}
               onChange={(v) => updateTier(tier, 'C', v)}
             />
@@ -324,7 +324,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
             label="C"
             value={params.catTextC}
             min={0}
-            max={0.15}
+            max={0.3}
             step={0.005}
             fmt={params.catTextC.toFixed(3)}
             onChange={(v) => setParams((p) => ({ ...p, catTextC: v }))}
