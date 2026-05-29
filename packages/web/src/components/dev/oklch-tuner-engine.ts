@@ -52,7 +52,7 @@ export type Mode = 'light' | 'dark';
 export interface TunerState {
   accentHue: number;
   accentChroma: number;
-  surfaceHue: number /* warm neutral ~30, independent of accent (KD-34) */;
+  surfaceHue: number /* warm beige ~80 (light) / ~30 (dark), independent of accent (KD-34) */;
   surfaceChroma: number /* multiplier on base chroma [0.015..0.003], default 1.0 */;
   light: ModeP;
   dark: ModeP;
@@ -128,8 +128,8 @@ export const NEUTRAL_ROWS: [keyof NeutralP, string][] = [
 export const INIT_LIGHT: TunerState = {
   accentHue: 50,
   accentChroma: 0.14,
-  surfaceHue: 30,
-  surfaceChroma: 0.15,
+  surfaceHue: 80,
+  surfaceChroma: 1.0,
   light: {
     primary: { L: 0.62, Cmul: 1.0 },
     surface: { L: 0.85, Cmul: 0.45 },
@@ -307,7 +307,7 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
   };
 
   // 1. Accent + surface hue — accent cascades to --accent-*, surface hue is independent (KD-34)
-  const sH = p.surfaceHue ?? 30;
+  const sH = p.surfaceHue ?? 80;
   const accent = `:root{--accent-hue:${p.accentHue};--accent-chroma:${p.accentChroma};--surface-hue:${sH};}`;
 
   // 1b. Cat tier gradients — per-slug tokens in cat-persona-tokens.css consume these
@@ -333,7 +333,7 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
   };
 
   // 2. Surface elevation — hue + chroma independent of accent (KD-34)
-  const sCmul = p.surfaceChroma ?? 0.15;
+  const sCmul = p.surfaceChroma ?? 1;
   const surf = (e: SurfaceP, dark: boolean) => {
     const sel = dark ? '[data-theme="dark"]' : ':root';
     const ch = [0.015, 0.012, 0.005, 0.003].map((c) => +(c * sCmul).toFixed(4));

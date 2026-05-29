@@ -23,7 +23,7 @@
    * ============================================================ */
   --accent-hue: 50; /* warm gold — 品牌主色旋钮（aligned with INIT_LIGHT） */
   --accent-chroma: 0.14;
-  --surface-hue: 30; /* warm neutral — 页面底色旋钮，独立于 accent（KD-34, CVO-tuned） */
+  --surface-hue: 80; /* warm beige — 页面底色旋钮，独立于 accent（KD-34） */
   --brand-cat-cafe-pink: oklch(0.62 var(--accent-chroma) var(--accent-hue)); /* 派生 — logo / splash */
 }
 
@@ -147,9 +147,10 @@
  * DARK MODE
  * ============================================================ */
 [data-theme="dark"] {
-  /* Dark accent hue/chroma — aligned with INIT_DARK (35/0.08) */
+  /* Dark accent/surface hue/chroma — aligned with INIT_DARK */
   --accent-hue: 35;
   --accent-chroma: 0.08;
+  --surface-hue: 30;
 
   /* --- 1. Neutral 11档（dark: L 反转） --- */
   --neutral-50: oklch(0.13 0.005 30);
