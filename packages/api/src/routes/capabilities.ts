@@ -969,6 +969,16 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const cap = config.capabilities[capIndex]!;
+
+      // Plugin-owned capabilities must be toggled through /api/plugins/:id/enable|disable
+      // to keep lifecycle state (symlinks, limb nodes, CLI configs) consistent.
+      if (cap.pluginId) {
+        reply.status(409);
+        return {
+          error: `Capability "${body.capabilityId}" is managed by plugin "${cap.pluginId}". Use /api/plugins/${cap.pluginId}/enable or /disable instead.`,
+        };
+      }
+
       const beforeSnapshot = structuredClone(cap);
 
       if (body.scope === 'global') {

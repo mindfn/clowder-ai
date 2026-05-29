@@ -174,6 +174,9 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
       if (type === 'mcp' && !name) {
         throw new Error(`MCP resource in ${yamlPath} must have a 'name' field for unique capability ID`);
       }
+      if (type === 'mcp' && name && /[/\\]/.test(name)) {
+        throw new Error(`MCP resource name '${name}' in ${yamlPath} must not contain path separators (/ or \\)`);
+      }
       if (type === 'mcp' && transport === 'streamableHttp' && (!url || url.trim().length === 0)) {
         throw new Error(`MCP streamableHttp resource in ${yamlPath} must have a 'url' field`);
       }
