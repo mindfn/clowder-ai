@@ -323,6 +323,14 @@ export class PluginResourceActivator {
         if (existing.pluginId === undefined) {
           throw new Error(`Capability '${capId}' exists as a non-plugin entry and cannot be claimed`);
         }
+
+        // When transitioning away from MCP, first write a disabled MCP entry so CLI
+        // config writers see the disabled descriptor and delete the stale server config.
+        if (existing.type === 'mcp' && resource.type !== 'mcp' && existing.enabled) {
+          existing.enabled = false;
+          await this.writeCapabilitiesWithRollback(previous, structuredClone(cap));
+        }
+
         existing.type = resource.type as 'mcp' | 'skill' | 'limb';
         existing.enabled = enabled;
         existing.pluginId = manifest.id;

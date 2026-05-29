@@ -94,6 +94,59 @@ describe('plugin MCP disable removes CLI config entries', () => {
     assert.equal(writeLog[1].action, 'removed', 'second write should remove the entry');
     assert.equal(storedConfig.capabilities.length, 0, 'capabilities should be empty after disable');
   });
+
+  test('same-type MCP upsert does not trigger extra disable write', async () => {
+    const { PluginResourceActivator } = await import('../dist/domains/plugin/PluginResourceActivator.js');
+
+    const capId = 'plugin:test-plugin:my-server';
+    const pluginsDir = join(projectRoot, 'plugins');
+    await mkdir(join(pluginsDir, 'test-plugin'), { recursive: true });
+
+    // Pre-seed: an enabled MCP entry
+    /** @type {import('@cat-cafe/shared').CapabilitiesConfig} */
+    let storedConfig = {
+      version: 1,
+      capabilities: [
+        {
+          id: capId,
+          type: 'mcp',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId: 'test-plugin',
+          mcpServer: { command: 'node', args: ['server.js'] },
+        },
+      ],
+    };
+
+    let writeCount = 0;
+    const activator = new PluginResourceActivator({
+      resolveProjectRoot: () => projectRoot,
+      pluginsDir,
+      limbRegistry: /** @type {any} */ ({ register: async () => {}, deregister: () => {} }),
+      readCapabilities: async () => structuredClone(storedConfig),
+      writeCapabilities: async (config) => {
+        writeCount++;
+        storedConfig = structuredClone(config);
+      },
+      withCapabilityLock: async (fn) => fn(),
+    });
+
+    // Re-enable same MCP resource (mcp→mcp): should NOT trigger disable-first path
+    const manifest = /** @type {any} */ ({
+      id: 'test-plugin',
+      name: 'Test Plugin',
+      version: '1.0.0',
+      resources: [{ type: 'mcp', name: 'my-server', command: 'node', args: ['srv.js'] }],
+      config: [],
+    });
+
+    writeCount = 0;
+    await activator.enablePlugin(manifest);
+
+    assert.equal(writeCount, 1, 'same-type upsert should be a single write');
+    assert.equal(storedConfig.capabilities[0].type, 'mcp');
+    assert.equal(storedConfig.capabilities[0].enabled, true);
+  });
 });
 
 describe('/api/capabilities returns pluginId for plugin-owned MCPs', () => {
