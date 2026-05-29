@@ -225,7 +225,7 @@ function isMermaidPre(children: ReactNode): boolean {
 }
 
 function inlineCodeClassName(className = ''): string {
-  return `${className} bg-gray-200/50 rounded px-1 py-0.5 text-[0.85em] font-mono`;
+  return `${className} bg-[var(--code-bg)] text-[var(--code-text)] rounded px-1 py-0.5 text-[0.85em] font-mono`;
 }
 
 /* ── Markdown component overrides ──────────────────────────── */

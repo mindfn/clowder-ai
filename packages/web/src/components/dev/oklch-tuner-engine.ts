@@ -45,6 +45,8 @@ export interface NeutralP {
   interactiveL: number;
   borderL: number;
   borderSubtleL: number;
+  codeBgL: number;
+  codeTextL: number;
 }
 export type Mode = 'light' | 'dark';
 export interface TunerState {
@@ -116,6 +118,8 @@ export const NEUTRAL_ROWS: [keyof NeutralP, string][] = [
   ['interactiveL', '交互'],
   ['borderL', '边框'],
   ['borderSubtleL', '细线'],
+  ['codeBgL', '代码底'],
+  ['codeTextL', '代码字'],
 ];
 
 /* ── Per-theme INIT defaults (CVO-tuned 2026-05-28) ──
@@ -152,8 +156,26 @@ export const INIT_LIGHT: TunerState = {
   queue: { H: 290, C: 0.1, L: 0.62 },
   neutralHue: 30,
   neutralChroma: 0.005,
-  neutralLight: { textL: 0.2, secondaryL: 0.45, mutedL: 0.56, interactiveL: 0.36, borderL: 0.84, borderSubtleL: 0.915 },
-  neutralDark: { textL: 0.94, secondaryL: 0.76, mutedL: 0.66, interactiveL: 0.84, borderL: 0.32, borderSubtleL: 0.24 },
+  neutralLight: {
+    textL: 0.2,
+    secondaryL: 0.45,
+    mutedL: 0.56,
+    interactiveL: 0.36,
+    borderL: 0.84,
+    borderSubtleL: 0.915,
+    codeBgL: 0.985,
+    codeTextL: 0.22,
+  },
+  neutralDark: {
+    textL: 0.94,
+    secondaryL: 0.76,
+    mutedL: 0.66,
+    interactiveL: 0.84,
+    borderL: 0.32,
+    borderSubtleL: 0.24,
+    codeBgL: 0.2,
+    codeTextL: 0.92,
+  },
   catTextH: 5,
   catTextC: 0.025,
   catTextLightL: 0.15,
@@ -191,8 +213,26 @@ export const INIT_DARK: TunerState = {
   queue: { H: 290, C: 0.1, L: 0.62 },
   neutralHue: 30,
   neutralChroma: 0.005,
-  neutralLight: { textL: 0.2, secondaryL: 0.45, mutedL: 0.56, interactiveL: 0.36, borderL: 0.84, borderSubtleL: 0.915 },
-  neutralDark: { textL: 0.94, secondaryL: 0.76, mutedL: 0.66, interactiveL: 0.84, borderL: 0.32, borderSubtleL: 0.24 },
+  neutralLight: {
+    textL: 0.2,
+    secondaryL: 0.45,
+    mutedL: 0.56,
+    interactiveL: 0.36,
+    borderL: 0.84,
+    borderSubtleL: 0.915,
+    codeBgL: 0.985,
+    codeTextL: 0.22,
+  },
+  neutralDark: {
+    textL: 0.94,
+    secondaryL: 0.76,
+    mutedL: 0.66,
+    interactiveL: 0.84,
+    borderL: 0.32,
+    borderSubtleL: 0.24,
+    codeBgL: 0.2,
+    codeTextL: 0.92,
+  },
   catTextH: 35,
   catTextC: 0.095,
   catTextLightL: 0.24,
@@ -229,6 +269,21 @@ function migrateModeP(m: Partial<ModeP>, fallback: ModeP): ModeP {
   };
 }
 
+/** Deep-merge NeutralP to handle fields added after a user saved their theme. */
+function migrateNeutralP(n: Partial<NeutralP> | undefined, fallback: NeutralP): NeutralP {
+  if (!n) return fallback;
+  return {
+    textL: n.textL ?? fallback.textL,
+    secondaryL: n.secondaryL ?? fallback.secondaryL,
+    mutedL: n.mutedL ?? fallback.mutedL,
+    interactiveL: n.interactiveL ?? fallback.interactiveL,
+    borderL: n.borderL ?? fallback.borderL,
+    borderSubtleL: n.borderSubtleL ?? fallback.borderSubtleL,
+    codeBgL: n.codeBgL ?? fallback.codeBgL,
+    codeTextL: n.codeTextL ?? fallback.codeTextL,
+  };
+}
+
 /** Patch missing TunerState fields with INIT defaults (survives schema additions). */
 export function migrateTunerState(s: Partial<TunerState>): TunerState {
   return {
@@ -236,6 +291,8 @@ export function migrateTunerState(s: Partial<TunerState>): TunerState {
     ...s,
     light: migrateModeP((s.light as Partial<ModeP>) ?? {}, INIT.light),
     dark: migrateModeP((s.dark as Partial<ModeP>) ?? {}, INIT.dark),
+    neutralLight: migrateNeutralP(s.neutralLight as Partial<NeutralP> | undefined, INIT.neutralLight),
+    neutralDark: migrateNeutralP(s.neutralDark as Partial<NeutralP> | undefined, INIT.neutralDark),
   };
 }
 
@@ -340,11 +397,13 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
     `--queue-accent-surface:oklch(0.25 ${q.C * 0.4} ${q.H});` +
     `--queue-on-accent:oklch(0.18 0.03 ${q.H});}`;
 
-  // 8. Neutral text/border (overrides --cafe-text/border aliases)
+  // 8. Neutral text/border (overrides --cafe-text/border aliases) + code tokens
   const nCSS = (n: NeutralP, dark: boolean) => {
     const sel = dark ? '[data-theme="dark"]' : ':root';
     const o = (l: number) => `oklch(${l} ${p.neutralChroma} ${p.neutralHue})`;
-    return `${sel}{--cafe-text:${o(n.textL)};--cafe-text-secondary:${o(n.secondaryL)};--cafe-text-muted:${o(n.mutedL)};--cafe-interactive:${o(n.interactiveL)};--cafe-border:${o(n.borderL)};--cafe-border-subtle:${o(n.borderSubtleL)};}`;
+    const codeBg = `oklch(${n.codeBgL ?? (dark ? 0.2 : 0.985)} 0.005 ${p.neutralHue})`;
+    const codeTx = `oklch(${n.codeTextL ?? (dark ? 0.92 : 0.22)} 0.02 ${p.neutralHue})`;
+    return `${sel}{--cafe-text:${o(n.textL)};--cafe-text-secondary:${o(n.secondaryL)};--cafe-text-muted:${o(n.mutedL)};--cafe-interactive:${o(n.interactiveL)};--cafe-border:${o(n.borderL)};--cafe-border-subtle:${o(n.borderSubtleL)};--code-bg:${codeBg};--code-text:${codeTx};}`;
   };
 
   return [
@@ -383,7 +442,7 @@ export function exportText(p: TunerState): string {
   const sem = (s: SemanticP) =>
     `  H: crit=${s.criticalH} suc=${s.successH} warn=${s.warningH} info=${s.infoH}  L=${s.L.toFixed(2)} C=${s.C.toFixed(3)} surfL=${s.surfL.toFixed(2)} surfC=${s.surfC.toFixed(3)}`;
   const n = (n: NeutralP) =>
-    `txt=${n.textL} sec=${n.secondaryL} mut=${n.mutedL} int=${n.interactiveL} bdr=${n.borderL} sub=${n.borderSubtleL}`;
+    `txt=${n.textL} sec=${n.secondaryL} mut=${n.mutedL} int=${n.interactiveL} bdr=${n.borderL} sub=${n.borderSubtleL} codeBg=${n.codeBgL} codeTx=${n.codeTextL}`;
   return [
     'OKLCH Token Values',
     `accent H=${p.accentHue} C=${p.accentChroma}`,
