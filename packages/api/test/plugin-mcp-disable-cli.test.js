@@ -36,9 +36,7 @@ describe('plugin MCP disable removes CLI config entries', () => {
   });
 
   test('deactivateMcp disables before removing so CLI writer can clean up', async () => {
-    const { PluginResourceActivator } = await import(
-      '../dist/domains/plugin/PluginResourceActivator.js'
-    );
+    const { PluginResourceActivator } = await import('../dist/domains/plugin/PluginResourceActivator.js');
 
     /** @type {import('@cat-cafe/shared').CapabilitiesConfig} */
     let storedConfig = { version: 1, capabilities: [] };
@@ -107,23 +105,13 @@ describe('/api/capabilities returns pluginId for plugin-owned MCPs', () => {
 
     // The MCP board item construction should include pluginId
     // Find the mcpItem construction block
-    const mcpItemMatch = capabilitiesSource.match(
-      /const mcpItem:\s*CapabilityBoardItem\s*=\s*\{[\s\S]*?\};/,
-    );
+    const mcpItemMatch = capabilitiesSource.match(/const mcpItem:\s*CapabilityBoardItem\s*=\s*\{[\s\S]*?\};/);
     assert.ok(mcpItemMatch, 'should find mcpItem construction');
-    assert.ok(
-      mcpItemMatch[0].includes('pluginId'),
-      'mcpItem should include pluginId field',
-    );
+    assert.ok(mcpItemMatch[0].includes('pluginId'), 'mcpItem should include pluginId field');
 
     // Also verify the skill item has it (baseline sanity check)
-    const skillItemMatch = capabilitiesSource.match(
-      /const skillItem:\s*CapabilityBoardItem\s*=\s*\{[\s\S]*?\};/,
-    );
+    const skillItemMatch = capabilitiesSource.match(/const skillItem:\s*CapabilityBoardItem\s*=\s*\{[\s\S]*?\};/);
     assert.ok(skillItemMatch, 'should find skillItem construction');
-    assert.ok(
-      skillItemMatch[0].includes('pluginId'),
-      'skillItem should include pluginId field',
-    );
+    assert.ok(skillItemMatch[0].includes('pluginId'), 'skillItem should include pluginId field');
   });
 });

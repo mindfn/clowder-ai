@@ -127,9 +127,7 @@ async function collectDeclaredPluginSkillIds(
           .map((resource) => resourceCapId(manifest.id, resource)),
       );
       declaredSkillIds.set(manifest.id, skillIds);
-    } catch {
-      continue;
-    }
+    } catch {}
   }
 
   return true;
