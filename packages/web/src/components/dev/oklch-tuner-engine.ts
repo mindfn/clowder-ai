@@ -127,17 +127,17 @@ export const NEUTRAL_ROWS: [keyof NeutralP, string][] = [
  * surface elevation, and catText color. INIT = INIT_DARK (migration fallback). */
 export const INIT_LIGHT: TunerState = {
   accentHue: 50,
-  accentChroma: 0.12,
+  accentChroma: 0.14,
   surfaceHue: 80,
   surfaceChroma: 1.0,
   light: {
     primary: { L: 0.62, Cmul: 1.0 },
-    surface: { L: 0.9, Cmul: 0.5 },
+    surface: { L: 0.85, Cmul: 0.45 },
     text: { L: 0.24, Cmul: 0.8 },
     inset: { L: 0.3, Cmul: 0.15 },
     ring: { L: 0.55, Cmul: 1.1 },
-    insetText: { L: 0.75, C: 0.03 },
-    msgText: { L: 0.3, C: 0.01 },
+    insetText: { L: 0.75, C: 0.05 },
+    msgText: { L: 0.25, C: 0.01 },
     elev: { sunken: 0.9, base: 0.95, elevated: 0.985, canvas: 0.99 },
   },
   dark: {
@@ -163,8 +163,8 @@ export const INIT_LIGHT: TunerState = {
     interactiveL: 0.36,
     borderL: 0.84,
     borderSubtleL: 0.915,
-    codeBgL: 0.985,
-    codeTextL: 0.22,
+    codeBgL: 0.95,
+    codeTextL: 0.2,
   },
   neutralDark: {
     textL: 0.94,
@@ -184,7 +184,7 @@ export const INIT_LIGHT: TunerState = {
 
 export const INIT_DARK: TunerState = {
   accentHue: 35,
-  accentChroma: 0.12,
+  accentChroma: 0.08,
   surfaceHue: 80,
   surfaceChroma: 1.0,
   light: {
@@ -199,13 +199,13 @@ export const INIT_DARK: TunerState = {
   },
   dark: {
     primary: { L: 0.68, Cmul: 0.85 },
-    surface: { L: 0.3, Cmul: 0.25 },
+    surface: { L: 0.3, Cmul: 0.15 },
     text: { L: 0.88, Cmul: 0.6 },
     inset: { L: 0.24, Cmul: 0.1 },
     ring: { L: 0.7, Cmul: 1.0 },
     insetText: { L: 0.8, C: 0.02 },
-    msgText: { L: 0.75, C: 0.04 },
-    elev: { sunken: 0.4, base: 0.25, elevated: 0.1, canvas: 0.2 },
+    msgText: { L: 0.8, C: 0.04 },
+    elev: { sunken: 0.35, base: 0.25, elevated: 0.1, canvas: 0.2 },
   },
   // biome-ignore format: compact INIT block
   semanticLight: { criticalH: 38, successH: 135, warningH: 46, infoH: 209, L: 0.57, C: 0.12, surfL: 0.96, surfC: 0.03 },
@@ -230,13 +230,13 @@ export const INIT_DARK: TunerState = {
     interactiveL: 0.84,
     borderL: 0.32,
     borderSubtleL: 0.24,
-    codeBgL: 0.2,
-    codeTextL: 0.92,
+    codeBgL: 0.25,
+    codeTextL: 0.9,
   },
-  catTextH: 35,
-  catTextC: 0.095,
+  catTextH: 25,
+  catTextC: 0.1,
   catTextLightL: 0.24,
-  catTextDarkL: 0.9,
+  catTextDarkL: 0.95,
 };
 
 /** Migration fallback — used by migrateTunerState() to patch missing fields. */
