@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { MarkdownContent } from '@/components/MarkdownContent';
+import { UNKNOWN_CAT_COLOR } from '@/lib/color-defaults';
 import type { CliEvent, CliStatus } from '@/stores/chat-types';
 import typographyTokens from '@/styles/typography-tokens.json';
 
@@ -392,7 +393,7 @@ export function CliOutputBlock({
   const toolResults = events.filter((e) => e.kind === 'tool_result');
   const textEvents = events.filter((e) => e.kind === 'text');
   const lastToolId = status === 'streaming' ? [...events].reverse().find((e) => e.kind === 'tool_use')?.id : undefined;
-  const accent = breedColor || 'var(--cafe-accent)';
+  const accent = breedColor || UNKNOWN_CAT_COLOR.primary;
 
   const handleToggle = () => {
     userInteracted.current = true;
