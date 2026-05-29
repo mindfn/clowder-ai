@@ -325,11 +325,11 @@ Dark mode 不能简单把黑阴影换成白阴影——业界标准是 **inset �
 - 12 处未读色（`ThreadCatStatus` / `MiniThreadSidebar` / `SignalStatsCards` 等）
 - 阴影色 14 处（已在 E2 治理）
 
-**App Accent token 派生**：
+**App Accent token 派生**（per-preset 默认值见 KD-35）：
 ```css
 :root {
-  --accent-hue: 35;        /* paw-pink 暖橙 */
-  --accent-chroma: 0.15;
+  --accent-hue: 50;        /* warm gold — INIT_LIGHT default */
+  --accent-chroma: 0.14;
 
   /* 9 档派生 */
   --accent-50:  oklch(0.97 calc(var(--accent-chroma) * 0.2) var(--accent-hue));
@@ -346,11 +346,11 @@ Dark mode 不能简单把黑阴影换成白阴影——业界标准是 **inset �
 
 **Brand 色派生自旋钮**（KD-27，2026-05-22 铲屎官拍板修订 —— 推翻原"brand 永远不变"分层）：
 ```css
---accent-hue: 35;          /* 唯一主题色旋钮，出厂默认 paw-pink */
---accent-chroma: 0.15;
+--accent-hue: 50;          /* per-preset 主题色旋钮，INIT_LIGHT=50, INIT_DARK=35 */
+--accent-chroma: 0.14;     /* INIT_LIGHT=0.14, INIT_DARK=0.08 */
 --brand-cat-cafe-pink: oklch(0.62 var(--accent-chroma) var(--accent-hue));  /* 派生：换旋钮 logo/splash 一起适应 */
 ```
-> 「不变」的不是冻结颜色，而是出厂默认 `hue=35`（light 模式粉橙身份）+ OKLCH 派生结构。换主题色 → 品牌色随旋钮适应；dark 模式品牌色由同一 hue 派生出 dark variant。
+> 「不变」的不是冻结颜色，而是出厂默认值（INIT_LIGHT/INIT_DARK）+ OKLCH 派生结构。换主题色 → 品牌色随旋钮适应；Light/Dark 各有独立 accent hue/chroma（KD-35）。
 
 #### E5：Semantic / Chart / Avatar Fallback / Scrim
 
@@ -466,6 +466,20 @@ Phase E 主提交（`62c93fc5`）落地后，9 个 follow-up commit 处理 bubbl
 - 新 `cat-persona-derived.css` 272 行（dark override + `.cat-persona-derived` light/dark + `.cat-persona-preview-*`）
 - 两文件均 < 350 行；`global-css-architecture.test.ts` entrypoint 列表 + `layout.tsx` import 顺序 + test assertion 同步更新；split point 在 `:root` light 结束/dark override 开始处，**无逻辑改动**
 
+**4. PR #784 codex review-bot round 2 + CVO tuning（commits `e70c0d4c4` → `5f6b9c635`，2026-05-29）**
+- **INIT_LIGHT CVO 调参**：insetText L/C、msgText L/C、elevation sunken/elevated/canvas、neutralLight codeBgL — 全部按铲屎官实测调整
+- **Cat message preview cross-mode fix**：`.cat-persona-preview-light/dark` 用 var() 继承当前 theme 的值导致 cross-mode 预览文字不可读；buildCSS 新增 section 9 emit per-preview-class overrides + 静态 CSS fallback 硬编码
+- **Slider swatch**：Tuner Accent H/C + Surface H/C 滑块增加 w-3 h-3 实时颜色预览块
+- **Input field bg**：`--console-field-bg` 从 `--cafe-surface-sunken`(層1) 改绑 `--cafe-surface`(層2)，减少与 modal bg(層4) 的对比跨度
+- **INIT_DARK elevation tuning**：sunken 0.35→0.36、base 0.29→0.28 按铲屎官 dark mode 调参
+- **localStorage guard**：ThemeApplier 裸 `localStorage.getItem()` 加 try/catch（sandboxed/private browser 防 SecurityError crash）
+- **Static accent/surface token alignment**：`:root` accent hue/chroma 对齐 INIT_LIGHT（50/0.14）、`[data-theme="dark"]` override 对齐 INIT_DARK（35/0.08 + surface-hue 30），消除 SSR → hydration 闪色
+- **Per-preset surface defaults**：surfaceHue/surfaceChroma 改为 per-preset（Light 80/1.0、Dark 30/0.15，KD-35）
+- **Base-matched migration**：`migrateTunerState(s, base?)` 按 theme base mode 选择 INIT_LIGHT/INIT_DARK fallback，避免 light custom theme 继承 dark defaults
+- **Session badge contrast**：`contrastingText()` 公式 `max(0.15, bgL-0.45)` → `max(0.1, bgL-0.5)`，worst-case ΔL 从 0.40 提升到 0.45（~5:1 contrast）
+- **Copy current mode only**：`exportText(params, mode)` 只导出当前主题配置，增加 surfaceHue/surfaceChroma 到输出
+- 删除冗余 `migrate-hardcoded-colors.mjs`（一次性批量迁移脚本，使命已完成）
+
 ---
 
 ## Acceptance Criteria
@@ -579,7 +593,8 @@ Phase E 主提交（`62c93fc5`）落地后，9 个 follow-up commit 处理 bubbl
 | KD-31 | `cat-persona-tokens.css` 525 → 264 + `cat-persona-derived.css` 272，split point 在 `:root` light 结束 / dark override 开始处 | `global-css-architecture.test.ts` 350-line hard limit 测试守护单文件大小；split 仅按 selector 边界拆，无逻辑/语义改动；entrypoint + `layout.tsx` import + test assertion 同步更新 | 2026-05-28 |
 | KD-32 | Variant slug 显式枚举：`opus-47 / spark / gemini25` 加入 `cat-persona-tokens.css` 派生 + Tuner SLUGS（共 12 slugs，覆盖所有 catalog 内 variant cat） | PR #784 codex P2 揭示：`STATIC_SLUGS` 集合包含但 `cat-persona-tokens.css` 没定义 → 走 `var(--color-{slug}-surface)` 拿不到值，气泡背景 fail；Tuner unified-text override 也漏 variants；显式列举 12 slugs 是当前 catalog 范围的真相源 | 2026-05-28 |
 | KD-33 | 主题持久化：当前 localStorage（`cat-cafe:themes`），服务端持久化为 follow-up | OklchTuner 已从纯开发者工具演进为用户自定义主题入口。`themeStore.ts` 通过 Zustand + localStorage 持久化：activeId / built-in overrides / 自建主题（最多 2 个）/ 版本迁移。清浏览器数据会丢。服务端持久化（存到 `/api/config` 用户设置）独立 scope，当前 localStorage 已覆盖"同一浏览器日常使用" | 2026-05-28 |
-| KD-34 | Surface 层跟 accent hue 派生——微量色调（chroma ≤0.015）取自 `--accent-hue` | 铲屎官拍板：换主题色时页面背景应带同色系微微色调（如天蓝主题 → 侧边栏/对话栏微微偏蓝），不是固定中性灰。Chroma 极低（0.003~0.015）保证可读性，hue 跟 accent 走保证品牌一致性。Tuner "页面层次" 4 档控制 lightness，hue 跟全局主题色联动 | 2026-05-28 |
+| KD-34 | Surface 层 hue 独立于 accent（`--surface-hue` 独立旋钮），微量色调 chroma 由 `surfaceChroma` multiplier 控制 | 铲屎官拍板：页面背景色调可独立调整（light 默认 warm beige H=80, dark 默认 warm neutral H=30），不强制跟 accent hue 走——brand 色和底色解耦；Tuner "页面层次" 4 档控制 lightness，hue/chroma 由 surfaceHue/surfaceChroma 独立控制 | 2026-05-28 |
+| KD-35 | Per-preset INIT 默认值：Light 和 Dark 各有独立 accent/surface hue+chroma（INIT_LIGHT vs INIT_DARK），migrateTunerState 按 base mode 匹配 | Light preset: accentHue=50/C=0.14, surfaceHue=80/C*=1.0; Dark preset: accentHue=35/C=0.08, surfaceHue=30/C*=0.15。themeStore 迁移时用 `initForBase(base)` 确保 custom theme 不会继承错误 preset 的默认值 | 2026-05-29 |
 
 ## Dependencies
 
