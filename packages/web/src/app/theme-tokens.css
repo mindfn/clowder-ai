@@ -134,6 +134,10 @@
   --scrim-dim: oklch(0 0 0 / 0.4);
   --scrim-heavy: oklch(0 0 0 / 0.65);
 
+  /* --- Overlay content text（always-light on dark scrim — lightbox / modal / tooltip） --- */
+  --overlay-fg: oklch(0.98 0 0);
+  --overlay-fg-muted: oklch(0.98 0 0 / 0.8);
+
   /* --- 兼容旧通用 alias --- */
   --color-cafe-accent: var(--cafe-accent);
   --color-base-white: var(--cafe-surface);

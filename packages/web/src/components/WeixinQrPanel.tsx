@@ -151,8 +151,7 @@ export function WeixinQrPanel({ configured }: { configured: boolean }) {
             type="button"
             onClick={handleFetchQr}
             className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-[var(--cafe-surface)] rounded-lg transition-colors"
-            // eslint-disable-next-line cafe/no-hardcoded-colors -- WeChat brand green (#07C160) is fixed brand identity
-            style={{ backgroundColor: '#07C160' }}
+            style={{ backgroundColor: 'var(--conn-weixin-bg)' }}
             data-testid="weixin-generate-qr"
           >
             <QrCodeIcon />

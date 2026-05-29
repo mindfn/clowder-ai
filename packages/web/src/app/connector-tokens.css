@@ -96,6 +96,11 @@
   --conn-github-bg: #24292e;
   --conn-github-hover: #1b1f23;
 
+  /* Platform icon accent (settings panel icon foreground — unique brand shades) */
+  --conn-dingtalk-fg: #3296fa;
+  --conn-xiaoyi-fg: #e11d48;
+  --conn-icon-default: #6b7280;
+
   /* Queue agent accent (feature-level accent, not IM brand) */
   --queue-accent: #9b7ebd;
   --queue-accent-hover: #8b6fae;
@@ -176,6 +181,11 @@
   --conn-green-hover: #bbf7d0;
   --conn-green-bubble-bg: rgba(20, 83, 45, 0.35);
   --conn-green-bubble-border: rgba(21, 128, 61, 0.5);
+
+  /* Platform icon accent — dark mode (lighter for readability) */
+  --conn-dingtalk-fg: #5aadff;
+  --conn-xiaoyi-fg: #f06080;
+  --conn-icon-default: #9ca3af;
 
   /* Queue agent accent — dark mode */
   --queue-accent: #c4b5fd;

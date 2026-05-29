@@ -151,8 +151,7 @@ export function WeComBotSetupPanel({ configured, onConnected, onDisconnected }: 
         <button
           type="button"
           onClick={handleValidate}
-          // eslint-disable-next-line cafe/no-hardcoded-colors -- WeCom brand violet (#7B68EE) is a fixed brand identity color
-          className="flex items-center gap-1.5 rounded-lg bg-[#7B68EE] px-4 py-2 text-sm font-semibold text-[var(--cafe-surface)] transition-colors hover:opacity-90"
+          className="flex items-center gap-1.5 rounded-lg bg-[var(--conn-wecom-bg)] px-4 py-2 text-sm font-semibold text-[var(--cafe-surface)] transition-colors hover:opacity-90"
           data-testid="wecom-bot-validate"
         >
           <WifiIcon />

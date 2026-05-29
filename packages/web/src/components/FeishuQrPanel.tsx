@@ -170,8 +170,7 @@ export function FeishuQrPanel({ configured, onConfirmed, onDisconnected }: Feish
           <button
             type="button"
             onClick={handleFetchQr}
-            // eslint-disable-next-line cafe/no-hardcoded-colors -- Feishu/Lark brand blue (#3370FF) is a fixed brand identity color, not theme-driven
-            className="flex items-center gap-1.5 rounded-lg bg-[#3370FF] px-4 py-2 text-sm font-semibold text-[var(--cafe-surface)] transition-colors hover:opacity-90"
+            className="flex items-center gap-1.5 rounded-lg bg-[var(--conn-feishu-bg)] px-4 py-2 text-sm font-semibold text-[var(--cafe-surface)] transition-colors hover:opacity-90"
             data-testid="feishu-generate-qr"
           >
             <QrCodeIcon />

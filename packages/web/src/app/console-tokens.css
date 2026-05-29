@@ -95,6 +95,33 @@
   --console-chart-mission: var(--chart-1);
   --console-chart-user: var(--chart-3);
 
+  /* ============ CLI Diagnostics — severity banner palette (F212) ============ */
+  --cli-sev-error-bg: var(--semantic-critical-surface);
+  --cli-sev-error-border: color-mix(in srgb, var(--semantic-critical) 30%, var(--semantic-critical-surface) 70%);
+  --cli-sev-error-accent: var(--semantic-critical);
+  --cli-sev-warning-bg: var(--semantic-warning-surface);
+  --cli-sev-warning-border: color-mix(in srgb, var(--semantic-warning) 30%, var(--semantic-warning-surface) 70%);
+  --cli-sev-warning-accent: var(--semantic-warning);
+  --cli-sev-info-bg: var(--neutral-100);
+  --cli-sev-info-border: var(--neutral-300);
+  --cli-sev-info-accent: var(--neutral-600);
+  --cli-sev-cognitive-bg: color-mix(in srgb, var(--chart-5) 10%, var(--cafe-surface) 90%);
+  --cli-sev-cognitive-border: color-mix(in srgb, var(--chart-5) 25%, var(--cafe-surface) 75%);
+  --cli-sev-cognitive-accent: var(--chart-5);
+  --cli-sev-text: var(--cafe-text);
+  --cli-diag-hint: var(--cafe-text-muted);
+  --cli-diag-meta: var(--neutral-400);
+  --cli-diag-excerpt-bg: var(--neutral-950);
+  --cli-diag-excerpt-text: var(--console-diag-val);
+
+  /* ============ Data visualization (HubToolUsageTab) ============ */
+  --dataviz-native: var(--chart-5);
+  --dataviz-native-bg: color-mix(in srgb, var(--chart-5) 10%, var(--cafe-surface) 90%);
+  --dataviz-mcp: var(--chart-1);
+  --dataviz-mcp-bg: color-mix(in srgb, var(--chart-1) 10%, var(--cafe-surface) 90%);
+  --dataviz-skill: var(--chart-3);
+  --dataviz-skill-bg: color-mix(in srgb, var(--chart-3) 10%, var(--cafe-surface) 90%);
+
   /* ============ Semantic surfaces — 跟 theme-tokens.css 别名兼容 ============ */
   --semantic-success-text: var(--semantic-success);
   --semantic-warning-bg: var(--semantic-warning-surface);
