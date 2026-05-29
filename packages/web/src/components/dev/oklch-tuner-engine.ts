@@ -289,6 +289,21 @@ function migrateNeutralP(n: Partial<NeutralP> | undefined, fallback: NeutralP): 
   };
 }
 
+/** Deep-merge SemanticP to handle surfL/surfC added after initial release. */
+function migrateSemanticP(sem: Partial<SemanticP> | undefined, fallback: SemanticP): SemanticP {
+  if (!sem) return fallback;
+  return {
+    criticalH: sem.criticalH ?? fallback.criticalH,
+    successH: sem.successH ?? fallback.successH,
+    warningH: sem.warningH ?? fallback.warningH,
+    infoH: sem.infoH ?? fallback.infoH,
+    L: sem.L ?? fallback.L,
+    C: sem.C ?? fallback.C,
+    surfL: sem.surfL ?? fallback.surfL,
+    surfC: sem.surfC ?? fallback.surfC,
+  };
+}
+
 /** Patch missing TunerState fields with base-matched INIT defaults.
  *  @param base — the theme's mode; when provided, uses INIT_LIGHT or INIT_DARK
  *                so a light-based custom theme doesn't inherit dark defaults. */
@@ -301,6 +316,8 @@ export function migrateTunerState(s: Partial<TunerState>, base?: 'light' | 'dark
     dark: migrateModeP((s.dark as Partial<ModeP>) ?? {}, fb.dark),
     neutralLight: migrateNeutralP(s.neutralLight as Partial<NeutralP> | undefined, fb.neutralLight),
     neutralDark: migrateNeutralP(s.neutralDark as Partial<NeutralP> | undefined, fb.neutralDark),
+    semanticLight: migrateSemanticP(s.semanticLight as Partial<SemanticP> | undefined, fb.semanticLight),
+    semanticDark: migrateSemanticP(s.semanticDark as Partial<SemanticP> | undefined, fb.semanticDark),
   };
 }
 
