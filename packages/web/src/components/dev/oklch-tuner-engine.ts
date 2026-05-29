@@ -205,7 +205,7 @@ export const INIT_DARK: TunerState = {
     ring: { L: 0.7, Cmul: 1.0 },
     insetText: { L: 0.8, C: 0.02 },
     msgText: { L: 0.8, C: 0.04 },
-    elev: { sunken: 0.35, base: 0.25, elevated: 0.1, canvas: 0.2 },
+    elev: { sunken: 0.35, base: 0.275, elevated: 0.2, canvas: 0.23 },
   },
   // biome-ignore format: compact INIT block
   semanticLight: { criticalH: 38, successH: 135, warningH: 46, infoH: 209, L: 0.57, C: 0.12, surfL: 0.96, surfC: 0.03 },
