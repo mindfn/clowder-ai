@@ -17,7 +17,7 @@ import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orch
 import type { LimbRegistry } from '../domains/limb/LimbRegistry.js';
 import { loadLimbDeclaration } from '../domains/limb/limb-yaml-loader.js';
 import type { PluginRegistry } from '../domains/plugin/PluginRegistry.js';
-import { resolvePluginResourcePath, resourceCapId } from '../domains/plugin/PluginRegistry.js';
+import { normalizeCapId, resolvePluginResourcePath, resourceCapId } from '../domains/plugin/PluginRegistry.js';
 import type { PluginResourceActivator as PluginResourceActivatorType } from '../domains/plugin/PluginResourceActivator.js';
 import { assertPluginResourceInsideRoot } from '../domains/plugin/PluginResourceActivator.js';
 import { loadAllPluginConfigs, resolvePluginEnv, writePluginConfig } from '../domains/plugin/plugin-config-store.js';
@@ -305,7 +305,7 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
       const capabilities = await readCapabilitiesConfig(projectRoot);
       const capId = matchedResource ? resourceCapId(manifest.id, matchedResource) : null;
       const persistedNodeId = capabilities?.capabilities.find(
-        (c) => c.type === 'limb' && c.pluginId === manifest.id && c.id === capId,
+        (c) => c.type === 'limb' && c.pluginId === manifest.id && normalizeCapId(c.id) === capId,
       )?.limbNodeId;
       const nodeId = persistedNodeId ?? matchedDecl.nodeId;
 

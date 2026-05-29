@@ -255,7 +255,9 @@ export class PluginResourceActivator {
     const node = await this.deps.limbAdapterFactory(manifest.id, yamlPath);
     const previous = await this.upsertCapabilityEntry(manifest, resource, true, node.nodeId);
     const capId = resourceCapId(manifest.id, resource);
-    const previousEntry = previous?.capabilities.find((c) => c.id === capId && c.pluginId === manifest.id);
+    const previousEntry = previous?.capabilities.find(
+      (c) => normalizeCapId(c.id) === capId && c.pluginId === manifest.id,
+    );
     try {
       await this.deps.limbRegistry.register(node);
     } catch (err) {
@@ -309,7 +311,7 @@ export class PluginResourceActivator {
       const cap: CapabilitiesConfig = config ? structuredClone(config) : { version: 1, capabilities: [] };
       const capId = resourceCapId(manifest.id, resource);
 
-      const existing = cap.capabilities.find((c) => c.id === capId);
+      const existing = cap.capabilities.find((c) => normalizeCapId(c.id) === capId);
       if (existing) {
         if (existing.pluginId !== undefined && existing.pluginId !== manifest.id) {
           throw new Error(`Capability '${capId}' is already owned by plugin '${existing.pluginId}'`);
@@ -364,8 +366,12 @@ export class PluginResourceActivator {
       const next = structuredClone(config);
 
       const capId = resourceCapId(manifest.id, resource);
-      const removedEntries = next.capabilities.filter((c) => c.id === capId && c.pluginId === manifest.id);
-      next.capabilities = next.capabilities.filter((c) => !(c.id === capId && c.pluginId === manifest.id));
+      const removedEntries = next.capabilities.filter(
+        (c) => normalizeCapId(c.id) === capId && c.pluginId === manifest.id,
+      );
+      next.capabilities = next.capabilities.filter(
+        (c) => !(normalizeCapId(c.id) === capId && c.pluginId === manifest.id),
+      );
       await this.writeCapabilitiesWithRollback(previous, next);
       return removedEntries;
     });
@@ -494,10 +500,14 @@ export class PluginResourceActivator {
         if (!config) return;
         const capId = resourceCapId(manifest.id, resource);
         if (previousEntry) {
-          const idx = config.capabilities.findIndex((c) => c.id === capId && c.pluginId === manifest.id);
+          const idx = config.capabilities.findIndex(
+            (c) => normalizeCapId(c.id) === capId && c.pluginId === manifest.id,
+          );
           if (idx >= 0) config.capabilities[idx] = previousEntry;
         } else {
-          config.capabilities = config.capabilities.filter((c) => !(c.id === capId && c.pluginId === manifest.id));
+          config.capabilities = config.capabilities.filter(
+            (c) => !(normalizeCapId(c.id) === capId && c.pluginId === manifest.id),
+          );
         }
         await this.deps.writeCapabilities(config);
       });
