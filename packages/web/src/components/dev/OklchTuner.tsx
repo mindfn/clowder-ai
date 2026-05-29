@@ -191,11 +191,22 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
             fmt={`${params.surfaceHue}`}
             onChange={(v) => setParams((p) => ({ ...p, surfaceHue: v }))}
           />
+          <Slider
+            label="底色 C"
+            value={params.surfaceChroma ?? 1}
+            min={0}
+            max={3}
+            step={0.05}
+            fmt={(params.surfaceChroma ?? 1).toFixed(2)}
+            onChange={(v) => setParams((p) => ({ ...p, surfaceChroma: v }))}
+          />
           {SURF_KEYS.map((k) => (
             <div key={k} className="flex items-center gap-1.5">
               <div
                 className="w-3 h-3 rounded border border-[var(--console-border-soft)] shrink-0"
-                style={{ background: `oklch(${mp.elev[k]} 0.012 ${params.surfaceHue})` }}
+                style={{
+                  background: `oklch(${mp.elev[k]} ${(0.012 * (params.surfaceChroma ?? 1)).toFixed(4)} ${params.surfaceHue})`,
+                }}
               />
               <span className="w-20 text-[9px] text-cafe-muted shrink-0">{SURF_LABELS[k]}</span>
               <input

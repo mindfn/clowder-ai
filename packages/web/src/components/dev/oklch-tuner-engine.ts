@@ -51,6 +51,7 @@ export interface TunerState {
   accentHue: number;
   accentChroma: number;
   surfaceHue: number /* warm beige ~80, independent of accent (KD-34) */;
+  surfaceChroma: number /* multiplier on base chroma [0.015..0.003], default 1.0 */;
   light: ModeP;
   dark: ModeP;
   semanticLight: SemanticP;
@@ -124,6 +125,7 @@ export const INIT_LIGHT: TunerState = {
   accentHue: 50,
   accentChroma: 0.12,
   surfaceHue: 80,
+  surfaceChroma: 1.0,
   light: {
     primary: { L: 0.62, Cmul: 1.0 },
     surface: { L: 0.9, Cmul: 0.5 },
@@ -162,6 +164,7 @@ export const INIT_DARK: TunerState = {
   accentHue: 35,
   accentChroma: 0.12,
   surfaceHue: 80,
+  surfaceChroma: 1.0,
   light: {
     primary: { L: 0.62, Cmul: 1.0 },
     surface: { L: 0.9, Cmul: 0.5 },
@@ -272,10 +275,11 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
     );
   };
 
-  // 2. Surface elevation — hue independent of accent (KD-34), chroma unified
+  // 2. Surface elevation — hue + chroma independent of accent (KD-34)
+  const sCmul = p.surfaceChroma ?? 1;
   const surf = (e: SurfaceP, dark: boolean) => {
     const sel = dark ? '[data-theme="dark"]' : ':root';
-    const ch = [0.015, 0.012, 0.005, 0.003]; // unified — no dark-specific chroma
+    const ch = [0.015, 0.012, 0.005, 0.003].map((c) => +(c * sCmul).toFixed(4));
     const h = sH;
     return (
       `${sel}{` +
