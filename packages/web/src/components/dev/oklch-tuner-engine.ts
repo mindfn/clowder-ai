@@ -52,7 +52,7 @@ export type Mode = 'light' | 'dark';
 export interface TunerState {
   accentHue: number;
   accentChroma: number;
-  surfaceHue: number /* warm beige ~80, independent of accent (KD-34) */;
+  surfaceHue: number /* warm neutral ~30, independent of accent (KD-34) */;
   surfaceChroma: number /* multiplier on base chroma [0.015..0.003], default 1.0 */;
   light: ModeP;
   dark: ModeP;
@@ -128,8 +128,8 @@ export const NEUTRAL_ROWS: [keyof NeutralP, string][] = [
 export const INIT_LIGHT: TunerState = {
   accentHue: 50,
   accentChroma: 0.14,
-  surfaceHue: 80,
-  surfaceChroma: 1.0,
+  surfaceHue: 30,
+  surfaceChroma: 0.15,
   light: {
     primary: { L: 0.62, Cmul: 1.0 },
     surface: { L: 0.85, Cmul: 0.45 },
@@ -185,8 +185,8 @@ export const INIT_LIGHT: TunerState = {
 export const INIT_DARK: TunerState = {
   accentHue: 35,
   accentChroma: 0.08,
-  surfaceHue: 80,
-  surfaceChroma: 1.0,
+  surfaceHue: 30,
+  surfaceChroma: 0.15,
   light: {
     primary: { L: 0.62, Cmul: 1.0 },
     surface: { L: 0.9, Cmul: 0.5 },
@@ -307,7 +307,7 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
   };
 
   // 1. Accent + surface hue — accent cascades to --accent-*, surface hue is independent (KD-34)
-  const sH = p.surfaceHue ?? 80;
+  const sH = p.surfaceHue ?? 30;
   const accent = `:root{--accent-hue:${p.accentHue};--accent-chroma:${p.accentChroma};--surface-hue:${sH};}`;
 
   // 1b. Cat tier gradients — per-slug tokens in cat-persona-tokens.css consume these
@@ -333,7 +333,7 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
   };
 
   // 2. Surface elevation — hue + chroma independent of accent (KD-34)
-  const sCmul = p.surfaceChroma ?? 1;
+  const sCmul = p.surfaceChroma ?? 0.15;
   const surf = (e: SurfaceP, dark: boolean) => {
     const sel = dark ? '[data-theme="dark"]' : ':root';
     const ch = [0.015, 0.012, 0.005, 0.003].map((c) => +(c * sCmul).toFixed(4));
@@ -446,36 +446,35 @@ export function buildCSS(p: TunerState, hc: HcOverride): string {
     .join('\n');
 }
 
-/* ── Export text (Copy button) ── */
-export function exportText(p: TunerState): string {
-  const r = (mode: Mode, t: CatTier) =>
-    `  ${t.padEnd(9)} L=${p[mode][t].L.toFixed(2)}  C*${p[mode][t].Cmul.toFixed(2)}`;
-  const fx = (mode: Mode, k: 'insetText' | 'msgText') =>
-    `  ${k.padEnd(9)} L=${p[mode][k].L.toFixed(2)}  C=${p[mode][k].C.toFixed(3)}`;
-  const el = (mode: Mode) => {
-    const e = p[mode].elev;
-    return `  surface: ${e.sunken}/${e.base}/${e.elevated}/${e.canvas}`;
-  };
-  const blk = (mode: Mode) =>
-    `${mode}:\n${CAT_TIERS.map((t) => r(mode, t)).join('\n')}\n${fx(mode, 'insetText')}\n${fx(mode, 'msgText')}\n${el(mode)}`;
+/* ── Export text (Copy button) — exports current mode only ── */
+export function exportText(p: TunerState, activeMode: Mode): string {
+  const r = (t: CatTier) =>
+    `  ${t.padEnd(9)} L=${p[activeMode][t].L.toFixed(2)}  C*${p[activeMode][t].Cmul.toFixed(2)}`;
+  const fx = (k: 'insetText' | 'msgText') =>
+    `  ${k.padEnd(9)} L=${p[activeMode][k].L.toFixed(2)}  C=${p[activeMode][k].C.toFixed(3)}`;
+  const e = p[activeMode].elev;
+  const semP = activeMode === 'light' ? p.semanticLight : p.semanticDark;
+  const neuP = activeMode === 'light' ? p.neutralLight : p.neutralDark;
+  const catNameL = activeMode === 'light' ? p.catTextLightL : p.catTextDarkL;
   const sem = (s: SemanticP) =>
     `  H: crit=${s.criticalH} suc=${s.successH} warn=${s.warningH} info=${s.infoH}  L=${s.L.toFixed(2)} C=${s.C.toFixed(3)} surfL=${s.surfL.toFixed(2)} surfC=${s.surfC.toFixed(3)}`;
-  const n = (n: NeutralP) =>
-    `txt=${n.textL} sec=${n.secondaryL} mut=${n.mutedL} int=${n.interactiveL} bdr=${n.borderL} sub=${n.borderSubtleL} codeBg=${n.codeBgL} codeTx=${n.codeTextL}`;
+  const n = (np: NeutralP) =>
+    `txt=${np.textL} sec=${np.secondaryL} mut=${np.mutedL} int=${np.interactiveL} bdr=${np.borderL} sub=${np.borderSubtleL} codeBg=${np.codeBgL} codeTx=${np.codeTextL}`;
   return [
-    'OKLCH Token Values',
+    `OKLCH Token Values (${activeMode})`,
     `accent H=${p.accentHue} C=${p.accentChroma}`,
+    `surface H=${p.surfaceHue} C*=${p.surfaceChroma}`,
     '='.repeat(30),
-    blk('light'),
+    `${activeMode}:`,
+    ...CAT_TIERS.map((t) => r(t)),
+    fx('insetText'),
+    fx('msgText'),
+    `  elevation: ${e.sunken}/${e.base}/${e.elevated}/${e.canvas}`,
     '',
-    blk('dark'),
-    '',
-    'semantic (light):',
-    sem(p.semanticLight),
-    'semantic (dark):',
-    sem(p.semanticDark),
+    `semantic (${activeMode}):`,
+    sem(semP),
     `queue: H=${p.queue.H} C=${p.queue.C} L=${p.queue.L}`,
-    `neutral: H=${p.neutralHue} C=${p.neutralChroma}  light: ${n(p.neutralLight)}  dark: ${n(p.neutralDark)}`,
-    `catText: H=${p.catTextH} C=${p.catTextC} lightL=${p.catTextLightL} darkL=${p.catTextDarkL}`,
+    `neutral: H=${p.neutralHue} C=${p.neutralChroma}  ${n(neuP)}`,
+    `catText: H=${p.catTextH} C=${p.catTextC} L=${catNameL}`,
   ].join('\n');
 }

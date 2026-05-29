@@ -93,7 +93,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
   );
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(exportText(params));
+    navigator.clipboard.writeText(exportText(params, mode));
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };

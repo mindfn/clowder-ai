@@ -23,7 +23,7 @@
    * ============================================================ */
   --accent-hue: 50; /* warm gold — 品牌主色旋钮（aligned with INIT_LIGHT） */
   --accent-chroma: 0.14;
-  --surface-hue: 80; /* warm beige — 页面底色旋钮，独立于 accent（KD-34） */
+  --surface-hue: 30; /* warm neutral — 页面底色旋钮，独立于 accent（KD-34, CVO-tuned） */
   --brand-cat-cafe-pink: oklch(0.62 var(--accent-chroma) var(--accent-hue)); /* 派生 — logo / splash */
 }
 
