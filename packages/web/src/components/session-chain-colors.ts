@@ -32,8 +32,10 @@ function contrastingText(hex: string): string {
     const { l, c, h } = hexToOklch(hex);
     // Must match badgeBackground formula to stay in sync
     const bgL = Math.min(0.92, l * 0.6 + 0.55);
-    // Always dark text against the always-light badge bg
-    const textL = Math.max(0.15, bgL - 0.45);
+    // Always dark text against the always-light badge bg.
+    // Offset 0.50 + floor 0.10 guarantees ΔL≥0.45 even at worst case
+    // (bgL=0.55 for #000000 → textL=0.10, ΔL=0.45 → ~5:1 contrast).
+    const textL = Math.max(0.10, bgL - 0.50);
     return `oklch(${textL.toFixed(2)} ${c.toFixed(3)} ${h.toFixed(0)})`;
   } catch {
     return FALLBACK_COLOR;
