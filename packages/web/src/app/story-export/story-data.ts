@@ -5,6 +5,8 @@
  * messages rendered with the same visual style as real ChatMessage bubbles.
  */
 
+import { CAT_COLORS } from '@/lib/color-defaults';
+
 export type Speaker = 'opus' | 'codex' | 'gemini' | 'user';
 
 export interface StoryMessage {
@@ -45,23 +47,20 @@ export const CAT_STYLES: Record<
   opus: {
     displayName: '宪宪（Opus）',
     avatar: '/avatars/opus.png',
-    primary: '#9B7EBD',
-    secondary: '#E8DFF5',
+    ...CAT_COLORS.opus,
     bubbleRadius: 'rounded-2xl rounded-bl-sm',
   },
   codex: {
     displayName: '砚砚（Codex）',
     avatar: '/avatars/codex.png',
-    primary: '#5B8C5A',
-    secondary: '#D4E6D3',
+    ...CAT_COLORS.codex,
     bubbleRadius: 'rounded-2xl rounded-br-sm',
     font: 'font-mono',
   },
   gemini: {
     displayName: '烁烁（Gemini）',
     avatar: '/avatars/gemini.png',
-    primary: '#5B9BD5',
-    secondary: '#D6E9F8',
+    ...CAT_COLORS.gemini,
     bubbleRadius: 'rounded-2xl rounded-tr-sm',
   },
   user: {

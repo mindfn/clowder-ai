@@ -1,5 +1,6 @@
 import type { DragEvent as ReactDragEvent } from 'react';
 import type { CatData } from '@/hooks/useCatData';
+import { CO_CREATOR_COLOR } from '@/lib/color-defaults';
 import { AvatarImageWithFallback } from './AvatarImageWithFallback';
 import type { CatConfig, CoCreatorConfig } from './config-viewer-types';
 import { HubIcon } from './hub-icons';
@@ -96,7 +97,7 @@ function OwnerBadge() {
 
 // F206 exempt: coCreator config default colors — data-driven, not UI theme
 function OwnerAvatar({ coCreator }: { coCreator: CoCreatorConfig }) {
-  const primary = coCreator.color?.primary ?? '#D4A76A';
+  const primary = coCreator.color?.primary ?? CO_CREATOR_COLOR.primary;
   const avatarSrc = safeAvatarSrc(coCreator.avatar);
   return (
     <div
@@ -117,7 +118,7 @@ function OwnerAvatar({ coCreator }: { coCreator: CoCreatorConfig }) {
 }
 
 export function HubCoCreatorOverviewCard({ coCreator, onEdit }: { coCreator: CoCreatorConfig; onEdit?: () => void }) {
-  const primary = coCreator.color?.primary ?? '#D4A76A';
+  const primary = coCreator.color?.primary ?? CO_CREATOR_COLOR.primary;
   return (
     <SettingsRow
       icon={<OwnerAvatar coCreator={coCreator} />}

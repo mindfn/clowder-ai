@@ -5,6 +5,7 @@ import { type CatData, formatCatName } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
 import { useTts } from '@/hooks/useTts';
 import { catColorVar, catSlug } from '@/lib/cat-slug';
+import { CO_CREATOR_COLOR } from '@/lib/color-defaults';
 import { hexToOklch } from '@/lib/color-utils';
 import { getMentionRe, getMentionToCat } from '@/lib/mention-highlight';
 import { parseDirection } from '@/lib/parse-direction';
@@ -318,7 +319,7 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
   }
 
   if (isUser) {
-    const coCreatorPrimary = coCreator.color?.primary ?? '#815b5b';
+    const coCreatorPrimary = coCreator.color?.primary ?? CO_CREATOR_COLOR.primary;
     /* F056: cocreator slug-keyed (cocreator is in SLUGS, has its own per-cat
      * --color-cocreator-surface in cat-persona-tokens.css that follows the
      * shared --cat-surface-l/cmul gradient — same Tuner control surface as

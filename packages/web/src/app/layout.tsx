@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { META_THEME_COLOR } from '@/lib/color-defaults';
 import { AppShell } from '@/components/AppShell';
 import { BrakeModal } from '@/components/BrakeModal';
 import { CatHueInjector } from '@/components/CatHueInjector';
@@ -24,7 +25,7 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
-  themeColor: '#E29578',
+  themeColor: META_THEME_COLOR,
 };
 
 export const metadata: Metadata = {

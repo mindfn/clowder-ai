@@ -4,6 +4,7 @@ import { Children, isValidElement, type ReactNode, useCallback, useRef, useState
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
+import { UNKNOWN_CAT_COLOR } from '@/lib/color-defaults';
 import { getMentionColor, getMentionRe, getMentionToCat } from '@/lib/mention-highlight';
 import { useChatStore } from '@/stores/chatStore';
 import { MermaidDiagram } from './MermaidDiagram';
@@ -24,7 +25,7 @@ function highlightMentions(text: string): ReactNode[] {
   while ((m = re.exec(text)) !== null) {
     if (m.index > lastIdx) parts.push(text.slice(lastIdx, m.index));
     const catId = toCat[m[1].toLowerCase()] ?? 'opus';
-    const catColor = colorMap[catId] ?? '#9B7EBD';
+    const catColor = colorMap[catId] ?? UNKNOWN_CAT_COLOR.primary;
     const r = Number.parseInt(catColor.slice(1, 3), 16);
     const g = Number.parseInt(catColor.slice(3, 5), 16);
     const b = Number.parseInt(catColor.slice(5, 7), 16);

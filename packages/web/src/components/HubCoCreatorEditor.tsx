@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { primeCoCreatorConfigCache } from '@/hooks/useCoCreatorConfig';
+import { CO_CREATOR_COLOR } from '@/lib/color-defaults';
 import { apiFetch } from '@/utils/api-client';
 import type { CoCreatorConfig } from './config-viewer-types';
 import { uploadAvatarAsset } from './hub-cat-editor.client';
@@ -13,10 +14,7 @@ const DEFAULT_CO_CREATOR: CoCreatorConfig = {
   aliases: [],
   mentionPatterns: ['@co-creator'],
   avatar: '',
-  color: {
-    primary: '#D4A76A',
-    secondary: '#FFF8F0',
-  },
+  color: { ...CO_CREATOR_COLOR },
 };
 
 function normalizeMentionTag(value: string): string {

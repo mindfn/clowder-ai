@@ -1,6 +1,7 @@
 'use client';
 
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { DEFAULT_LABEL_COLOR } from '@/lib/color-defaults';
 import { useIMEGuard } from '@/hooks/useIMEGuard';
 import { type ThreadLabel, useLabelStore } from '@/stores/label-store';
 
@@ -29,7 +30,7 @@ export function ThreadLabelPicker({
   const [isSaving, setIsSaving] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
-  const [newColor, setNewColor] = useState('#5B8C5A');
+  const [newColor, setNewColor] = useState(DEFAULT_LABEL_COLOR);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const ime = useIMEGuard();

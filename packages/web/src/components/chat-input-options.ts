@@ -1,4 +1,5 @@
 import type { CatData } from '@/hooks/useCatData';
+import { GROUP_MENTION_COLOR } from '@/lib/color-defaults';
 import { catColorVar } from '@/lib/cat-slug';
 
 export interface CatOption {
@@ -20,7 +21,7 @@ const STATIC_GROUP_MENTIONS: CatOption[] = [
     label: '@thread',
     desc: '本帖全体参与猫猫',
     insert: '@thread ',
-    color: '#6B7280',
+    color: GROUP_MENTION_COLOR,
     avatar: '',
     isGroup: true,
   },
@@ -29,7 +30,7 @@ const STATIC_GROUP_MENTIONS: CatOption[] = [
     label: '@all',
     desc: '全体猫猫',
     insert: '@all ',
-    color: '#6B7280',
+    color: GROUP_MENTION_COLOR,
     avatar: '',
     isGroup: true,
   },
