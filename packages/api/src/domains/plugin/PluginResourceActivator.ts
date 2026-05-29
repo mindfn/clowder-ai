@@ -214,6 +214,10 @@ export class PluginResourceActivator {
     if (!skillStat.isDirectory()) {
       throw new Error(`Skill resource must be a directory: ${skillSourceDir}`);
     }
+    const skillMdPath = join(skillSourceDir, 'SKILL.md');
+    if (!existsSync(skillMdPath)) {
+      throw new Error(`Skill resource directory must contain SKILL.md: ${skillSourceDir}`);
+    }
     const skillName = resourcePathBasename(resource.path);
 
     const createdLinks: string[] = [];

@@ -635,6 +635,7 @@ describe('PluginResourceActivator skill safety', () => {
     const projectRoot = join(root, 'project');
     const skillSourceDir = join(pluginsDir, 'test-plugin', 'skills', 'plugin-skill');
     mkdirSync(skillSourceDir, { recursive: true });
+    writeFileSync(join(skillSourceDir, 'SKILL.md'), '# Test Skill\n');
 
     let persisted = { version: 1, capabilities: [] };
     const activator = new PluginResourceActivator({
@@ -680,6 +681,7 @@ describe('PluginResourceActivator skill safety', () => {
     const sharedSkillsDir = join(root, 'shared-skills');
     const skillSourceDir = join(pluginsDir, 'test-plugin', 'skills', 'plugin-skill');
     mkdirSync(skillSourceDir, { recursive: true });
+    writeFileSync(join(skillSourceDir, 'SKILL.md'), '# Test Skill\n');
     mkdirSync(sharedSkillsDir, { recursive: true });
     mkdirSync(join(projectRoot, '.claude'), { recursive: true });
     symlinkSync(sharedSkillsDir, join(projectRoot, '.claude', 'skills'), 'dir');
@@ -782,12 +784,48 @@ describe('PluginResourceActivator skill safety', () => {
     assert.deepEqual(persisted.capabilities, []);
   });
 
+  it('rejects skill resource directory that lacks SKILL.md', async () => {
+    const root = mkdtempSync(join(os.tmpdir(), 'plugin-activator-root-'));
+    const pluginsDir = join(root, 'plugins');
+    const projectRoot = join(root, 'project');
+    // Directory exists but has no SKILL.md
+    const skillDir = join(pluginsDir, 'test-plugin', 'skills', 'plugin-skill');
+    mkdirSync(skillDir, { recursive: true });
+
+    let persisted = { version: 1, capabilities: [] };
+    const activator = new PluginResourceActivator({
+      resolveProjectRoot: () => projectRoot,
+      pluginsDir,
+      limbRegistry: {},
+      readCapabilities: async () => structuredClone(persisted),
+      writeCapabilities: async (config) => {
+        persisted = structuredClone(config);
+      },
+      withCapabilityLock: async (fn) => fn(),
+    });
+
+    const result = await activator.enablePlugin({
+      id: 'test-plugin',
+      name: 'Test Plugin',
+      version: '1.0.0',
+      builtin: false,
+      config: [],
+      resources: [{ type: 'skill', path: 'skills/plugin-skill' }],
+    });
+
+    assert.equal(result.status, 'failed');
+    assert.match(result.resources[0].error, /must contain SKILL\.md/);
+    assert.equal(existsSync(join(projectRoot, '.codex', 'skills', 'plugin-skill')), false);
+    assert.deepEqual(persisted.capabilities, []);
+  });
+
   it('rolls back capability state and symlinks when CLI regeneration fails', async () => {
     const root = mkdtempSync(join(os.tmpdir(), 'plugin-activator-root-'));
     const pluginsDir = join(root, 'plugins');
     const projectRoot = join(root, 'project');
     const skillSourceDir = join(pluginsDir, 'test-plugin', 'skills', 'plugin-skill');
     mkdirSync(skillSourceDir, { recursive: true });
+    writeFileSync(join(skillSourceDir, 'SKILL.md'), '# Test Skill\n');
 
     let persisted = {
       version: 1,
