@@ -221,10 +221,10 @@
    * sunken=0.275 / surface=0.18 / elevated=0.1 / canvas=0.18
    * Chroma unified with light (0.015/0.012/0.005/0.003).
    * 空间映射见 console-tokens.css（light/dark 统一，不再镜像） */
-  --cafe-surface-sunken: oklch(0.275 0.015 var(--surface-hue));
-  --cafe-surface: oklch(0.18 0.012 var(--surface-hue));
-  --cafe-surface-elevated: oklch(0.1 0.005 var(--surface-hue));
-  --cafe-surface-canvas: oklch(0.18 0.003 var(--surface-hue));
+  --cafe-surface-sunken: oklch(0.36 0.015 var(--surface-hue));
+  --cafe-surface: oklch(0.28 0.012 var(--surface-hue));
+  --cafe-surface-elevated: oklch(0.21 0.005 var(--surface-hue));
+  --cafe-surface-canvas: oklch(0.24 0.003 var(--surface-hue));
 
   /* --- Cafe semantic shortcuts dark（重新映射 Neutral） --- */
   --cafe-text: var(--neutral-900);
