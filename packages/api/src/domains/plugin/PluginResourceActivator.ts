@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { lstat, mkdir, realpath, rm, symlink } from 'node:fs/promises';
+import { lstat, mkdir, realpath, rm, stat, symlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import type {
   CapabilitiesConfig,
@@ -210,6 +210,10 @@ export class PluginResourceActivator {
       throw new Error(`Skill source not found: ${skillSourceDir}`);
     }
     await assertPluginResourceInsideRoot(this.deps.pluginsDir, manifest, skillSourceDir, 'Skill resource');
+    const skillStat = await stat(skillSourceDir);
+    if (!skillStat.isDirectory()) {
+      throw new Error(`Skill resource must be a directory: ${skillSourceDir}`);
+    }
     const skillName = resourcePathBasename(resource.path);
 
     const createdLinks: string[] = [];

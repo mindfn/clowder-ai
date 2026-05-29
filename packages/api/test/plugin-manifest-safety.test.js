@@ -745,6 +745,43 @@ describe('PluginResourceActivator skill safety', () => {
     assert.deepEqual(persisted.capabilities, []);
   });
 
+  it('rejects skill resource that resolves to a file instead of a directory', async () => {
+    const root = mkdtempSync(join(os.tmpdir(), 'plugin-activator-root-'));
+    const pluginsDir = join(root, 'plugins');
+    const projectRoot = join(root, 'project');
+    const skillParent = join(pluginsDir, 'test-plugin', 'skills');
+    mkdirSync(skillParent, { recursive: true });
+    // Create a regular file instead of a directory
+    writeFileSync(join(skillParent, 'plugin-skill'), 'not a directory');
+
+    let persisted = { version: 1, capabilities: [] };
+    const activator = new PluginResourceActivator({
+      resolveProjectRoot: () => projectRoot,
+      pluginsDir,
+      limbRegistry: {},
+      readCapabilities: async () => structuredClone(persisted),
+      writeCapabilities: async (config) => {
+        persisted = structuredClone(config);
+      },
+      withCapabilityLock: async (fn) => fn(),
+    });
+
+    const result = await activator.enablePlugin({
+      id: 'test-plugin',
+      name: 'Test Plugin',
+      version: '1.0.0',
+      builtin: false,
+      config: [],
+      resources: [{ type: 'skill', path: 'skills/plugin-skill' }],
+    });
+
+    assert.equal(result.status, 'failed');
+    assert.match(result.resources[0].error, /must be a directory/);
+    // No symlinks should be created
+    assert.equal(existsSync(join(projectRoot, '.codex', 'skills', 'plugin-skill')), false);
+    assert.deepEqual(persisted.capabilities, []);
+  });
+
   it('rolls back capability state and symlinks when CLI regeneration fails', async () => {
     const root = mkdtempSync(join(os.tmpdir(), 'plugin-activator-root-'));
     const pluginsDir = join(root, 'plugins');
