@@ -22,7 +22,12 @@ export function ThemeApplier() {
   useEffect(() => {
     if (recoveryAttempted.current) return;
     recoveryAttempted.current = true;
-    const hasLocal = typeof window !== 'undefined' && !!localStorage.getItem('cat-cafe:themes');
+    let hasLocal = false;
+    try {
+      hasLocal = typeof window !== 'undefined' && !!localStorage.getItem('cat-cafe:themes');
+    } catch {
+      /* localStorage denied (sandboxed / private context) — treat as empty */
+    }
     if (hasLocal) return;
     restoreFromServer().then((restored) => {
       if (restored) window.location.reload(); // reload to re-initialize store from recovered data
