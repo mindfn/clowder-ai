@@ -44,8 +44,10 @@ function contrastingText(hex: string): string {
 
 /** Derive session chain badge/shadow colors from the cat's single primary color.
  * F056: secondary was removed — all derivation from one hue. */
+const HEX_RE = /^#?[0-9a-fA-F]{3,8}$/;
+
 export function deriveSessionColors(color?: string): SessionColors {
-  const c = color ?? FALLBACK_COLOR;
+  const c = color && HEX_RE.test(color) ? color : FALLBACK_COLOR;
   const tint = hexToRgba(c, 0.12);
   const soft = hexToRgba(c, 0.06);
   const bg = badgeBackground(c);
