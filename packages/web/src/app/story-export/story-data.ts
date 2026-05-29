@@ -7,6 +7,9 @@
 
 import { CAT_COLORS } from '@/lib/color-defaults';
 
+/** Story-specific user color (amber palette, distinct from co-creator gold). */
+const STORY_USER_COLOR = { primary: '#D97706', secondary: '#FEF3C7' } as const;
+
 export type Speaker = 'opus' | 'codex' | 'gemini' | 'user';
 
 export interface StoryMessage {
@@ -66,8 +69,7 @@ export const CAT_STYLES: Record<
   user: {
     displayName: '铲屎官',
     avatar: '/avatars/owner.jpg',
-    primary: '#D97706',
-    secondary: '#FEF3C7',
+    ...STORY_USER_COLOR,
     bubbleRadius: 'rounded-2xl rounded-br-sm',
   },
 };

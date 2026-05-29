@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { primeCoCreatorConfigCache } from '@/hooks/useCoCreatorConfig';
 import { CO_CREATOR_COLOR } from '@/lib/color-defaults';
 import { apiFetch } from '@/utils/api-client';
@@ -126,7 +127,7 @@ export function HubCoCreatorEditor({ open, coCreator, onClose, onSaved }: HubCoC
     }
   };
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--console-overlay-medium)] px-4"
       onClick={onClose}
@@ -271,6 +272,7 @@ export function HubCoCreatorEditor({ open, coCreator, onClose, onSaved }: HubCoC
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
