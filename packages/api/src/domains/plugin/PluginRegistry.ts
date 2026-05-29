@@ -109,10 +109,7 @@ export class PluginRegistry {
       manifest.resources.length > 0 &&
       manifest.resources.every((resource) =>
         declaredEntries.some(
-          (c) =>
-            normalizeCapId(c.id) === resourceCapId(manifest.id, resource) &&
-            c.type === resource.type &&
-            c.enabled,
+          (c) => normalizeCapId(c.id) === resourceCapId(manifest.id, resource) && c.type === resource.type && c.enabled,
         ),
       );
     if (allDeclaredEnabled) return allConfigured ? 'enabled' : 'partial';
@@ -139,9 +136,7 @@ export class PluginRegistry {
     const resourceStatuses: PluginResourceStatus[] = manifest.resources.map((r) => {
       const capEntry = capabilities?.capabilities.find(
         (c) =>
-          c.pluginId === manifest.id &&
-          c.type === r.type &&
-          normalizeCapId(c.id) === resourceCapId(manifest.id, r),
+          c.pluginId === manifest.id && c.type === r.type && normalizeCapId(c.id) === resourceCapId(manifest.id, r),
       );
       return {
         type: r.type,
