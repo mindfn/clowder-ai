@@ -17,12 +17,13 @@
   /* ============================================================
    * Layer 0: Brand + Hue/Chroma anchors
    *
-   * --accent-hue 是唯一主题色旋钮。品牌色派生自它 —— 换主题色时 logo/splash
-   * 一起适应（KD-27）。"不变"的是出厂默认 hue=35（light 模式的粉橙身份）
-   * 和 OKLCH 派生结构本身，不是某个冻结的颜色值。
+   * --accent-hue 控制品牌/交互色（按钮、链接、accent scale）。
+   * --surface-hue 控制页面底色色调（独立于 accent，KD-34）。
+   * 原始 #fdf8f3 ≈ oklch(0.98 0.008 ~80)，warm-beige/vanilla。
    * ============================================================ */
-  --accent-hue: 35; /* paw-pink — 唯一主题色旋钮，出厂默认 Claude 粉橙 */
+  --accent-hue: 35; /* terracotta/paw-pink — 品牌主色旋钮 */
   --accent-chroma: 0.12;
+  --surface-hue: 80; /* warm beige — 页面底色旋钮，独立于 accent（KD-34） */
   --brand-cat-cafe-pink: oklch(0.62 var(--accent-chroma) var(--accent-hue)); /* 派生 — logo / splash */
 }
 
@@ -106,10 +107,10 @@
    *   surface  #F6EFE7 ThreadSidebar / RightPanel
    *   elevated #FCFAF8 Chat 主区
    *   canvas   #FFFDFB Card 浮起 */
-  --cafe-surface-sunken: oklch(0.92 0.015 var(--accent-hue));
-  --cafe-surface: oklch(0.95 0.012 var(--accent-hue));
-  --cafe-surface-elevated: oklch(0.985 0.005 var(--accent-hue));
-  --cafe-surface-canvas: oklch(0.996 0.003 var(--accent-hue));
+  --cafe-surface-sunken: oklch(0.92 0.015 var(--surface-hue));
+  --cafe-surface: oklch(0.95 0.012 var(--surface-hue));
+  --cafe-surface-elevated: oklch(0.985 0.005 var(--surface-hue));
+  --cafe-surface-canvas: oklch(0.996 0.003 var(--surface-hue));
 
   /* --- Cafe semantic shortcuts（映射到 Neutral / App Accent / Semantic） --- */
   --cafe-text: var(--neutral-900);
@@ -220,10 +221,10 @@
    * sunken=0.275 / surface=0.18 / elevated=0.1 / canvas=0.18
    * Chroma unified with light (0.015/0.012/0.005/0.003).
    * 空间映射见 console-tokens.css（light/dark 统一，不再镜像） */
-  --cafe-surface-sunken: oklch(0.275 0.015 var(--accent-hue));
-  --cafe-surface: oklch(0.18 0.012 var(--accent-hue));
-  --cafe-surface-elevated: oklch(0.1 0.005 var(--accent-hue));
-  --cafe-surface-canvas: oklch(0.18 0.003 var(--accent-hue));
+  --cafe-surface-sunken: oklch(0.275 0.015 var(--surface-hue));
+  --cafe-surface: oklch(0.18 0.012 var(--surface-hue));
+  --cafe-surface-elevated: oklch(0.1 0.005 var(--surface-hue));
+  --cafe-surface-canvas: oklch(0.18 0.003 var(--surface-hue));
 
   /* --- Cafe semantic shortcuts dark（重新映射 Neutral） --- */
   --cafe-text: var(--neutral-900);

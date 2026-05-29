@@ -182,11 +182,20 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
           <div className="text-[10px] text-cafe-muted font-bold flex items-center gap-1">
             <LayersIcon /> 页面层次 ({mode})
           </div>
+          <Slider
+            label="底色 H"
+            value={params.surfaceHue}
+            min={0}
+            max={360}
+            step={1}
+            fmt={`${params.surfaceHue}`}
+            onChange={(v) => setParams((p) => ({ ...p, surfaceHue: v }))}
+          />
           {SURF_KEYS.map((k) => (
             <div key={k} className="flex items-center gap-1.5">
               <div
                 className="w-3 h-3 rounded border border-[var(--console-border-soft)] shrink-0"
-                style={{ background: `oklch(${mp.elev[k]} 0.012 ${params.accentHue})` }}
+                style={{ background: `oklch(${mp.elev[k]} 0.012 ${params.surfaceHue})` }}
               />
               <span className="w-20 text-[9px] text-cafe-muted shrink-0">{SURF_LABELS[k]}</span>
               <input
