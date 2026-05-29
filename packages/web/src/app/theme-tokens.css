@@ -21,8 +21,8 @@
    * --surface-hue 控制页面底色色调（独立于 accent，KD-34）。
    * 原始 #fdf8f3 ≈ oklch(0.98 0.008 ~80)，warm-beige/vanilla。
    * ============================================================ */
-  --accent-hue: 35; /* terracotta/paw-pink — 品牌主色旋钮 */
-  --accent-chroma: 0.12;
+  --accent-hue: 50; /* warm gold — 品牌主色旋钮（aligned with INIT_LIGHT） */
+  --accent-chroma: 0.14;
   --surface-hue: 80; /* warm beige — 页面底色旋钮，独立于 accent（KD-34） */
   --brand-cat-cafe-pink: oklch(0.62 var(--accent-chroma) var(--accent-hue)); /* 派生 — logo / splash */
 }
@@ -147,6 +147,10 @@
  * DARK MODE
  * ============================================================ */
 [data-theme="dark"] {
+  /* Dark accent hue/chroma — aligned with INIT_DARK (35/0.08) */
+  --accent-hue: 35;
+  --accent-chroma: 0.08;
+
   /* --- 1. Neutral 11档（dark: L 反转） --- */
   --neutral-50: oklch(0.13 0.005 30);
   --neutral-100: oklch(0.18 0.005 30);
