@@ -166,7 +166,7 @@ export function ConnectorBubble({ message }: ConnectorBubbleProps) {
         <div
           className="rounded-2xl px-4 py-3 transition-transform hover:-translate-y-0.5 overflow-hidden"
           style={{
-            backgroundColor: `var(--color-${connId}-surface, var(--cafe-surface))`,
+            backgroundColor: `var(--${connId}-theme, var(--color-${connId}-surface, var(--cafe-surface)))`,
             color: 'var(--cat-msg-text)',
           }}
         >
