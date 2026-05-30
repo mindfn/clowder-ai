@@ -83,8 +83,9 @@ export function CatHueInjector() {
       ruleIds.push(cat.id);
     }
 
-    /* Connector sources: brand hex → OKLCH hue/chroma, same L/C derivation as cats.
-     * ConnectorBubble reads var(--color-{connectorId}-surface) for bubble bg. */
+    /* Connector sources: brand hex → OKLCH hue/chroma for bubble/ring/text derivation.
+     * ConnectorBubble reads var(--color-{connectorId}-surface) for bubble bg and
+     * var(--{connectorId}-theme) (curated pale hex from color.secondary) for avatar. */
     for (const def of getAllConnectorDefinitions()) {
       if (!def.id || !CSS_SAFE_ID.test(def.id) || !def.color?.primary) continue;
       // Skip if a cat already claims this id (cat catalog takes precedence)
@@ -102,6 +103,10 @@ export function CatHueInjector() {
       }
       root.style.setProperty(`--${def.id}-hue`, h.toFixed(1));
       root.style.setProperty(`--${def.id}-chroma`, c.toFixed(3));
+      // Curated pale hex for avatar identity (brand colors don't change with theme)
+      if (def.color.secondary) {
+        root.style.setProperty(`--${def.id}-theme`, def.color.secondary);
+      }
       ruleIds.push(def.id);
     }
 
