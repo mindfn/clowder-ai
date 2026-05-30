@@ -1,7 +1,9 @@
 'use client';
 
+import { getConnectorDefinition } from '@cat-cafe/shared';
 import { useCallback, useState } from 'react';
 import type { ChatMessage as ChatMessageType, MessageContent } from '@/stores/chatStore';
+import { tintedLight } from '@/lib/color-utils';
 import { API_URL, apiFetch } from '@/utils/api-client';
 import { ConnectorImage, GitHubIcon, SchedulerIcon, SettingsIcon, UsersIcon } from './icons/ConnectorIcons';
 import { BallotIcon } from './icons/VoteIcons';
@@ -120,6 +122,10 @@ export function ConnectorBubble({ message }: ConnectorBubbleProps) {
   if (message.extra?.scheduler?.hiddenTrigger) return null;
 
   const connId = source.connector;
+  /* Avatar uses fixed hex from connector definition — same pattern as CatAvatar
+   * (cat.color.primary). Only the message bubble bg is OKLCH-derived. */
+  const connDef = getConnectorDefinition(connId);
+  const themeHex = connDef?.color?.secondary ?? connDef?.color?.primary;
   const hasBlocks = message.contentBlocks && message.contentBlocks.length > 0;
   const richBlocks = message.extra?.rich?.blocks;
   // P3 fix (砚砚 R1): protocol whitelist — only render safe URLs as clickable links
@@ -128,12 +134,13 @@ export function ConnectorBubble({ message }: ConnectorBubbleProps) {
 
   return (
     <div data-message-id={message.id} className="flex gap-2 mb-4 items-start">
-      {/* Connector icon avatar — same OKLCH pipeline as cats: surface bg + ring */}
+      {/* Connector icon avatar — fixed hex like CatAvatar (ring = theme color,
+         * bg = 50% tint toward white). NOT OKLCH-derived. */}
       <div
         className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-base"
         style={{
-          backgroundColor: `var(--color-${connId}-surface, var(--cafe-surface))`,
-          boxShadow: `0 0 0 2px var(--color-${connId}-ring, var(--cafe-border))`,
+          backgroundColor: themeHex ? tintedLight(themeHex, 0.5) : 'var(--cafe-surface)',
+          boxShadow: themeHex ? `0 0 0 2px ${themeHex}` : '0 0 0 2px var(--cafe-border)',
         }}
       >
         <ConnectorIcon connector={source.connector} fallbackIcon={source.icon} />
@@ -167,7 +174,7 @@ export function ConnectorBubble({ message }: ConnectorBubbleProps) {
           className="rounded-2xl px-4 py-3 transition-transform hover:-translate-y-0.5 overflow-hidden"
           style={{
             backgroundColor: `var(--color-${connId}-surface, var(--cafe-surface))`,
-            color: 'var(--cat-msg-text)',
+            color: 'var(--cat-msg-text, var(--cafe-text))',
           }}
         >
           {hasBlocks ? renderContentBlocks(message.contentBlocks!) : <MarkdownContent content={message.content} />}
