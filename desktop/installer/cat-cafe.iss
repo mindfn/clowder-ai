@@ -98,14 +98,13 @@ Source: "..\..\cat-cafe-skills\*";               DestDir: "{app}\cat-cafe-skills
 ; routes (features, threads, architecture). Missing → /api/docs/* returns 404.
 Source: "..\..\docs\*";                          DestDir: "{app}\docs"; \
   Flags: recursesubdirs createallsubdirs; Components: core
-; Service scripts — recommendation-matrix.yaml loaded at API startup (P0);
-; install/server *.ps1/*.sh scripts used on-demand for local service management.
-; Missing → API crash (matrix) or service install/start/stop fails (scripts).
-Source: "..\..\scripts\services\*";                DestDir: "{app}\scripts\services"; \
+; Runtime scripts — blacklist approach: include all scripts, exclude platform-
+; irrelevant and dev artifacts. New files are automatically included without
+; needing to update this manifest (prevents the "missing file" class of bugs).
+; Excludes: *.sh (bash — Linux/Mac only), *.test.* (test files), __pycache__
+Source: "..\..\scripts\*";                         DestDir: "{app}\scripts"; \
+  Excludes: "*.sh,*.test.*,__pycache__"; \
   Flags: recursesubdirs createallsubdirs; Components: core
-; L0 system prompt compiler — invoked when dispatching Claude/Codex agents.
-; Missing → cat invocations fail (compile-system-prompt-l0.mjs not found).
-Source: "..\..\scripts\compile-system-prompt-l0.mjs"; DestDir: "{app}\scripts"; Components: core
 ; L0 system prompt template — read by rules.ts for governance compilation.
 Source: "..\..\assets\system-prompts\*";           DestDir: "{app}\assets\system-prompts"; \
   Flags: recursesubdirs createallsubdirs; Components: core

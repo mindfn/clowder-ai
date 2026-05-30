@@ -516,7 +516,7 @@ if (-not $SkipPortableZip) {
     # Bundled Node.js
     Copy-ToStaging (Join-Path $ProjectRoot "bundled\node") "node"
 
-    # Scripts (post-install, desktop-config, hook sync)
+    # Desktop scripts (post-install, desktop-config, hook sync) — from desktop/scripts/
     $scriptsDir = Join-Path $staging "scripts"
     if (-not (Test-Path $scriptsDir)) { New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null }
     foreach ($s in @("post-install-offline.ps1", "generate-desktop-config.ps1", "sync-agent-hooks-offline.mjs")) {
@@ -524,20 +524,19 @@ if (-not $SkipPortableZip) {
         if (Test-Path $src) { Copy-Item $src (Join-Path $scriptsDir $s) }
     }
 
-    # Service scripts — recommendation-matrix.yaml (P0: API startup), install/server
-    # scripts (P1: local service management). Resolved from install dir via import.meta.url.
-    Copy-ToStaging (Join-Path $ProjectRoot "scripts\services") "scripts\services"
+    # Runtime scripts — blacklist approach: copy all from root scripts/, then
+    # remove platform-irrelevant and dev artifacts. New files are automatically
+    # included (prevents the "missing file" class of bugs).
+    Copy-ToStaging (Join-Path $ProjectRoot "scripts") "scripts"
+    # Exclude: *.sh (bash — Linux/Mac only), *.test.* (test files), __pycache__
+    Get-ChildItem (Join-Path $staging "scripts") -Recurse -File `
+        | Where-Object { $_.Name -match '\.(sh)$' -or $_.Name -match '\.test\.' } `
+        | Remove-Item -Force
+    $pycache = Join-Path (Join-Path $staging "scripts") "__pycache__"
+    if (Test-Path $pycache) { Remove-Item $pycache -Recurse -Force }
 
-    # L0 system prompt compiler — invoked when dispatching Claude/Codex agents.
-    $l0Compiler = Join-Path $ProjectRoot "scripts\compile-system-prompt-l0.mjs"
-    if (Test-Path $l0Compiler) {
-        Copy-Item $l0Compiler (Join-Path $scriptsDir "compile-system-prompt-l0.mjs")
-    } else {
-        Write-Warn "compile-system-prompt-l0.mjs not found — cat L0 compilation will fail"
-    }
-
-    # L0 system prompt template
-    Copy-ToStaging (Join-Path $ProjectRoot "assets\system-prompts") "assets\system-prompts"
+    # Assets (system prompt templates, etc.)
+    Copy-ToStaging (Join-Path $ProjectRoot "assets") "assets"
 
     # Guide registry + flow definitions — bootcamp/guide features
     Copy-ToStaging (Join-Path $ProjectRoot "guides") "guides"
