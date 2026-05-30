@@ -42,12 +42,12 @@ interface ConnectorBubbleProps {
   message: ChatMessageType;
 }
 
-/** Default theme for connectors without a registered tailwindTheme. */
+/** Default theme for connectors without a registered tailwindTheme (avatar/label only). */
 const DEFAULT_CONNECTOR_THEME: ConnectorTailwindTheme = {
   avatar: 'bg-conn-blue-bg ring-2 ring-conn-blue-ring',
   label: 'text-conn-blue-text',
   labelLink: 'text-conn-blue-text hover:text-conn-blue-hover',
-  bubble: 'border border-conn-blue-bubble-border bg-conn-blue-bubble-bg',
+  bubble: '',
 };
 
 /** F056: Designed icon per connector — replaces emoji with SVG/PNG icons.
@@ -172,7 +172,11 @@ export function ConnectorBubble({ message }: ConnectorBubbleProps) {
           <span className="text-xs text-cafe-muted">{formatTime(message.timestamp)}</span>
         </div>
         <div
-          className={`${theme.bubble} rounded-2xl rounded-bl-sm px-4 py-3 transition-transform hover:-translate-y-0.5 overflow-hidden`}
+          className="rounded-2xl px-4 py-3 transition-transform hover:-translate-y-0.5 overflow-hidden"
+          style={{
+            backgroundColor: `var(--color-${source.connector}-surface, var(--cafe-surface))`,
+            color: 'var(--cat-msg-text)',
+          }}
         >
           {hasBlocks ? renderContentBlocks(message.contentBlocks!) : <MarkdownContent content={message.content} />}
           {richBlocks && richBlocks.length > 0 && <RichBlocks blocks={richBlocks} messageSource={message.source} />}
