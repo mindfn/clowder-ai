@@ -128,12 +128,12 @@ export function ConnectorBubble({ message }: ConnectorBubbleProps) {
 
   return (
     <div data-message-id={message.id} className="flex gap-2 mb-4 items-start">
-      {/* Connector icon avatar — curated theme hex (color.secondary) for identity */}
+      {/* Connector icon avatar — OKLCH surface bg + theme hex ring */}
       <div
         className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-base"
         style={{
-          backgroundColor: `var(--${connId}-theme, var(--color-${connId}-surface, var(--cafe-surface)))`,
-          boxShadow: `0 0 0 2px var(--${connId}-theme, var(--color-${connId}-surface, var(--cafe-border)))`,
+          backgroundColor: `var(--color-${connId}-surface, var(--cafe-surface))`,
+          boxShadow: `0 0 0 2px var(--${connId}-theme, var(--color-${connId}-ring, var(--cafe-border)))`,
         }}
       >
         <ConnectorIcon connector={source.connector} fallbackIcon={source.icon} />
@@ -166,7 +166,7 @@ export function ConnectorBubble({ message }: ConnectorBubbleProps) {
         <div
           className="rounded-2xl px-4 py-3 transition-transform hover:-translate-y-0.5 overflow-hidden"
           style={{
-            backgroundColor: `var(--${connId}-theme, var(--color-${connId}-surface, var(--cafe-surface)))`,
+            backgroundColor: `var(--color-${connId}-surface, var(--cafe-surface))`,
             color: 'var(--cat-msg-text)',
           }}
         >
