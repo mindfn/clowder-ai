@@ -136,6 +136,7 @@ export type ContinuationEnqueueOutcome =
   | 'skipped_invalid_capsule'
   | 'skipped_existing_entry'
   | 'skipped_rate_limited'
+  | 'skipped_handoff_complete'
   | 'queue_full';
 
 export class QueueProcessor {
@@ -320,6 +321,23 @@ export class QueueProcessor {
         '[QueueProcessor] continuation skipped: capsule target mismatch',
       );
       return { outcome: 'skipped_invalid_capsule' };
+    }
+
+    // #813: Skip continuation when cat has already handed off via A2A.
+    // Session handoff should be passive (lazy) — the new session is created
+    // when the cat is next triggered, not immediately after seal.
+    // Check if this cat already has a pending A2A entry it dispatched FROM itself
+    // (callerCatId = catId), indicating it completed work and handed off.
+    if (
+      capsule.ballState === 'needs_handoff' ||
+      capsule.ballState === 'completed' ||
+      this.deps.queue.hasPendingFromCat(threadId, catId, { sourceCategories: ['a2a'] })
+    ) {
+      this.deps.log.info(
+        { threadId, catId, ballState: capsule.ballState },
+        '[QueueProcessor] continuation skipped: cat already handed off (lazy session handoff)',
+      );
+      return { outcome: 'skipped_handoff_complete' };
     }
 
     const now = Date.now();

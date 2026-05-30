@@ -641,6 +641,26 @@ export class InvocationQueue {
     return false;
   }
 
+  /** #813: Check if a cat has dispatched (callerCatId) any pending/processing entry
+   *  in this thread, optionally filtered by sourceCategory. Used to detect A2A handoff
+   *  so continuation capsule can be skipped (lazy session handoff). */
+  hasPendingFromCat(
+    threadId: string,
+    callerCatId: string,
+    opts?: { sourceCategories?: NonNullable<QueueEntry['sourceCategory']>[] },
+  ): boolean {
+    for (const q of this.queues.values()) {
+      if (!this.queueMatchesThread(q, threadId)) continue;
+      for (const e of q) {
+        if (e.status !== 'queued' && e.status !== 'processing') continue;
+        if (e.callerCatId !== callerCatId) continue;
+        if (opts?.sourceCategories && !opts.sourceCategories.includes(e.sourceCategory!)) continue;
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** F122B: Mark a specific entry as processing by ID (cross-user). */
   markProcessingById(threadId: string, entryId: string): boolean {
     for (const q of this.queues.values()) {

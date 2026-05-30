@@ -598,7 +598,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
       const richExtra = richBlocks.length > 0 ? { rich: { v: 1 as const, blocks: richBlocks } } : {};
       const targetCatsExtra = validExplicitTargets.length ? { targetCats: validExplicitTargets } : {};
-      const extraParts = { ...richExtra, ...targetCatsExtra };
+      // #814: Mark as explicit post so frontend TD112 dedup skips merge
+      const extraParts = { isExplicitPost: true, ...richExtra, ...targetCatsExtra };
       const extra = Object.keys(extraParts).length > 0 ? extraParts : undefined;
 
       const hasA2AMentions = !!(mentions.length > 0 && router && invocationRecordStore && effectiveThreadId);
@@ -1045,6 +1046,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // identity never falls back to parent (which would collapse multi-turn same-cat).
     const persistedExtra = {
       ...(extra ?? {}),
+      // #814: Mark as explicit post_message so frontend TD112 dedup does not
+      // merge this into the cat's CLI stream bubble. post_message is a cat-initiated
+      // separate communication, not a duplicate of the stream response.
+      isExplicitPost: true,
       stream: {
         invocationId: effectiveInvId,
         turnInvocationId: invocationId ?? effectiveInvId,
@@ -1199,16 +1204,14 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           // F194 Phase Z9 (砚砚 R1 P1-2): unified visible turn stamp via helper.
           ...stampVisibleTurn(effectiveInvId, invocationId),
           // F52+F098-C1: Include crossPost + targetCats in real-time broadcast
-          ...(isCrossThread || validExplicitTargets.length
-            ? {
-                extra: {
-                  ...(isCrossThread
-                    ? { crossPost: { sourceThreadId: actor.threadId, sourceInvocationId: effectiveInvId } }
-                    : {}),
-                  ...(validExplicitTargets.length ? { targetCats: validExplicitTargets } : {}),
-                },
-              }
-            : {}),
+          // #814: Always include isExplicitPost so frontend TD112 dedup skips merge
+          extra: {
+            isExplicitPost: true,
+            ...(isCrossThread
+              ? { crossPost: { sourceThreadId: actor.threadId, sourceInvocationId: effectiveInvId } }
+              : {}),
+            ...(validExplicitTargets.length ? { targetCats: validExplicitTargets } : {}),
+          },
           ...(mentionsUser ? { mentionsUser } : {}),
           ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
           ...(replyPreview ? { replyPreview } : {}),

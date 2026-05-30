@@ -484,6 +484,11 @@ function findAssistantDuplicate(messages: ChatMessage[], incoming: ChatMessage):
 
   const incomingInvId = getBubbleInvocationId(incoming);
 
+  // #814: Explicit post_message callbacks are independent messages — never merge.
+  // post_message is a cat-initiated separate communication (e.g., @mention to another cat),
+  // not a duplicate of the same response arriving via stream+callback paths.
+  if (incoming.origin === 'callback' && incoming.extra?.isExplicitPost) return -1;
+
   // Phase 1: Hard rule — scan ALL same-cat assistants for exact invocationId match.
   // Must run first because bridge/soft rules on a newer message would mis-associate.
   if (incomingInvId) {
