@@ -12,12 +12,15 @@ import {
 } from '../SettingsResourceCard';
 import { GithubConfigPanel } from './GithubConfigPanel';
 import { PluginConfigPanel } from './PluginConfigPanel';
+import { SettingsBadge } from './primitives/SettingsBadge';
+import { SettingsText } from './primitives/SettingsText';
 
-const STATUS_CONFIG: Record<PluginStatus, { label: string; bg: string; text: string }> = {
-  enabled: { label: '已启用', bg: 'bg-conn-emerald-bg', text: 'text-conn-emerald-text' },
-  configured: { label: '已配置', bg: 'bg-conn-amber-bg', text: 'text-conn-amber-text' },
-  partial: { label: '部分启用', bg: 'bg-conn-amber-bg', text: 'text-conn-amber-text' },
-  not_configured: { label: '未配置', bg: 'bg-cafe-surface-sunken', text: 'text-cafe-muted' },
+type BadgeTone = 'emerald' | 'amber' | 'slate' | 'red' | 'purple' | 'blue';
+const STATUS_CONFIG: Record<PluginStatus, { label: string; tone: BadgeTone }> = {
+  enabled: { label: '已启用', tone: 'emerald' },
+  configured: { label: '已配置', tone: 'amber' },
+  partial: { label: '部分启用', tone: 'amber' },
+  not_configured: { label: '未配置', tone: 'slate' },
 };
 
 export function PluginsContent() {
@@ -63,22 +66,27 @@ export function PluginsContent() {
           <article key={plugin.id} className={settingsResourceCardClass}>
             <button
               type="button"
-              className={`${settingsResourceRowClass} w-full text-left`}
+              className={`${settingsResourceRowClass} w-full`}
+              style={{ textAlign: 'left' }}
               onClick={() => setExpandedId(isExpanded ? null : plugin.id)}
             >
               <div className={settingsResourceAvatarClass} style={{ backgroundColor: plugin.iconBg ?? '#9ca3af' }}>
                 <HubIcon name={plugin.icon ?? 'blocks'} className="h-5 w-5 text-[var(--cafe-surface)]" />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-bold text-cafe">{plugin.name}</p>
-                {plugin.description && <p className="mt-0.5 text-xs text-cafe-secondary">{plugin.description}</p>}
+                <SettingsText as="p" variant="sm" tone="default" className="font-semibold">
+                  {plugin.name}
+                </SettingsText>
+                {plugin.description && (
+                  <SettingsText as="p" tone="secondary" className="mt-0.5">
+                    {plugin.description}
+                  </SettingsText>
+                )}
               </div>
               <div className={settingsResourceActionGroupClass}>
-                <span
-                  className={`flex-shrink-0 rounded-[13px] px-2.5 py-0.5 text-label font-medium ${statusCfg.bg} ${statusCfg.text}`}
-                >
+                <SettingsBadge tone={statusCfg.tone} className="shrink-0 font-medium">
                   {statusCfg.label}
-                </span>
+                </SettingsBadge>
               </div>
             </button>
 
