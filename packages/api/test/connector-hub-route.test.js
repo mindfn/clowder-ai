@@ -237,7 +237,7 @@ describe('POST /api/connector/feishu/disconnect', () => {
     await app.close();
   });
 
-  it('rejects disconnect when DEFAULT_OWNER_USER_ID is not configured', async () => {
+  it('allows disconnect in single-user mode when DEFAULT_OWNER_USER_ID is not configured (issue #794)', async () => {
     const tmpDir = mkdtempSync(join(os.tmpdir(), 'feishu-disconnect-owner-'));
     const envFilePath = join(tmpDir, '.env');
     writeFileSync(envFilePath, 'FEISHU_APP_ID=cli_old\nFEISHU_APP_SECRET=sec_old\n');
@@ -257,7 +257,7 @@ describe('POST /api/connector/feishu/disconnect', () => {
     await app.ready();
 
     const res = await app.inject({ method: 'POST', url: '/api/connector/feishu/disconnect', headers: AUTH_HEADERS });
-    assert.equal(res.statusCode, 403, res.body);
+    assert.notEqual(res.statusCode, 403, 'should not 403 in single-user mode');
 
     await app.close();
   });
