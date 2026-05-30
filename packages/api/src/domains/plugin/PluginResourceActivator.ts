@@ -324,6 +324,7 @@ export class PluginResourceActivator {
       const cap: CapabilitiesConfig = config ? structuredClone(config) : { version: 1, capabilities: [] };
       const capId = resourceCapId(manifest.id, resource);
 
+      let staleLimbNodeIdToClean: string | undefined;
       const existing = cap.capabilities.find((c) => normalizeCapId(c.id) === capId);
       if (existing) {
         if (existing.pluginId !== undefined && existing.pluginId !== manifest.id) {
@@ -340,6 +341,12 @@ export class PluginResourceActivator {
           await this.writeCapabilitiesWithRollback(previous, structuredClone(cap));
         }
 
+        // Capture stale limb nodeId before type transition so we can deregister after write
+        const staleLimbNodeId =
+          existing.type === 'limb' && resource.type !== 'limb' && existing.enabled
+            ? existing.limbNodeId
+            : undefined;
+
         existing.type = resource.type as 'mcp' | 'skill' | 'limb';
         existing.enabled = enabled;
         existing.pluginId = manifest.id;
@@ -354,6 +361,8 @@ export class PluginResourceActivator {
             delete existing.limbNodeId;
           }
         }
+        // staleLimbNodeId is deregistered after the write below
+        staleLimbNodeIdToClean = staleLimbNodeId;
       } else {
         const entry: CapabilityEntry = {
           id: capId,
@@ -372,6 +381,15 @@ export class PluginResourceActivator {
       }
 
       await this.writeCapabilitiesWithRollback(previous, cap);
+
+      // Deregister stale limb node only after config write succeeds
+      if (staleLimbNodeIdToClean) {
+        try {
+          this.deps.limbRegistry.deregister(staleLimbNodeIdToClean);
+        } catch {
+          /* best-effort: node may already be gone */
+        }
+      }
       return previous;
     });
   }

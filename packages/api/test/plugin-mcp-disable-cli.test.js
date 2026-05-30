@@ -149,6 +149,79 @@ describe('plugin MCP disable removes CLI config entries', () => {
   });
 });
 
+describe('limb→MCP type transition deregisters stale limb node', () => {
+  /** @type {string} */ let projectRoot;
+
+  beforeEach(async () => {
+    projectRoot = await makeTmpDir('limb-type-transition');
+    await mkdir(join(projectRoot, '.cat-cafe'), { recursive: true });
+    await mkdir(join(projectRoot, '.claude'), { recursive: true });
+  });
+
+  afterEach(async () => {
+    await rm(projectRoot, { recursive: true, force: true });
+  });
+
+  test('transitioning limb→MCP deregisters old limb node after write', async () => {
+    const { PluginResourceActivator } = await import('../dist/domains/plugin/PluginResourceActivator.js');
+
+    const capId = 'plugin:test-plugin:my-resource';
+    const pluginsDir = join(projectRoot, 'plugins');
+    await mkdir(join(pluginsDir, 'test-plugin'), { recursive: true });
+
+    // Pre-seed: an enabled limb entry with a limbNodeId
+    /** @type {import('@cat-cafe/shared').CapabilitiesConfig} */
+    let storedConfig = {
+      version: 1,
+      capabilities: [
+        {
+          id: capId,
+          type: 'limb',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId: 'test-plugin',
+          limbNodeId: 'old-limb-node-123',
+        },
+      ],
+    };
+
+    /** @type {string[]} */
+    const deregistered = [];
+
+    const activator = new PluginResourceActivator({
+      resolveProjectRoot: () => projectRoot,
+      pluginsDir,
+      limbRegistry: /** @type {any} */ ({
+        register: async () => {},
+        deregister: (nodeId) => deregistered.push(nodeId),
+      }),
+      readCapabilities: async () => structuredClone(storedConfig),
+      writeCapabilities: async (config) => {
+        storedConfig = structuredClone(config);
+      },
+      withCapabilityLock: async (fn) => fn(),
+    });
+
+    // Transition: same capId but now it's an MCP resource
+    const manifest = /** @type {any} */ ({
+      id: 'test-plugin',
+      name: 'Test Plugin',
+      version: '1.0.0',
+      resources: [{ type: 'mcp', name: 'my-resource', command: 'node', args: ['server.js'] }],
+      config: [],
+    });
+
+    await activator.enablePlugin(manifest);
+
+    // Verify: old limb node was deregistered
+    assert.deepStrictEqual(deregistered, ['old-limb-node-123'], 'should deregister old limb node');
+    // Verify: entry is now MCP type
+    assert.equal(storedConfig.capabilities[0].type, 'mcp');
+    assert.equal(storedConfig.capabilities[0].enabled, true);
+    assert.equal(storedConfig.capabilities[0].limbNodeId, undefined, 'limbNodeId should be removed');
+  });
+});
+
 describe('/api/capabilities returns pluginId for plugin-owned MCPs', () => {
   test('MCP board items include pluginId when capability has one', async () => {
     // This is a structural test: verify that the capabilities route code
