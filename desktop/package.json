@@ -104,7 +104,12 @@
       {
         "from": "../scripts",
         "to": "scripts",
-        "filter": ["**/*", "!**/*.ps1", "!**/*.test.*", "!**/__pycache__/**"]
+        "filter": [
+          "**/*",
+          "!**/*.ps1",
+          "!**/*.test.*",
+          "!**/__pycache__/**"
+        ]
       },
       {
         "from": "../guides",

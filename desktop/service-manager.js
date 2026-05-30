@@ -598,9 +598,7 @@ class ServiceManager {
       if (!proc || proc.killed) continue;
       log(`[desktop] stopping ${name} (pid=${proc.pid})...`);
 
-      killPromises.push(
-        this._killProcessTree(name, proc, KILL_TIMEOUT_MS),
-      );
+      killPromises.push(this._killProcessTree(name, proc, KILL_TIMEOUT_MS));
     }
 
     await Promise.allSettled(killPromises);
