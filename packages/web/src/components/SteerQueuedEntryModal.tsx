@@ -47,9 +47,14 @@ export function SteerQueuedEntryModal({
             onClick={() => onModeChange('immediate')}
             className={`w-full text-left p-4 rounded-xl border transition-colors ${
               mode === 'immediate'
-                ? 'border-[var(--color-cocreator-primary)] bg-[var(--color-cocreator-primary)]/5'
+                ? 'border-[var(--color-cocreator-primary)]'
                 : 'border-cafe hover:border-cafe bg-cafe-surface'
             }`}
+            style={
+              mode === 'immediate'
+                ? { backgroundColor: 'color-mix(in oklch, var(--color-cocreator-primary) 5%, transparent)' }
+                : undefined
+            }
           >
             <div className="text-sm font-medium text-cafe">立即执行（必要时中断目标猫）</div>
             <div className="text-xs text-cafe-secondary mt-1">
@@ -63,9 +68,14 @@ export function SteerQueuedEntryModal({
             onClick={() => onModeChange('promote')}
             className={`w-full text-left p-4 rounded-xl border transition-colors ${
               mode === 'promote'
-                ? 'border-[var(--color-cocreator-primary)] bg-[var(--color-cocreator-primary)]/5'
+                ? 'border-[var(--color-cocreator-primary)]'
                 : 'border-cafe hover:border-cafe bg-cafe-surface'
             }`}
+            style={
+              mode === 'promote'
+                ? { backgroundColor: 'color-mix(in oklch, var(--color-cocreator-primary) 5%, transparent)' }
+                : undefined
+            }
           >
             <div className="text-sm font-medium text-cafe">提到队首（不取消）</div>
             <div className="text-xs text-cafe-secondary mt-1">只调整顺序；当前猫跑完后优先执行这条消息。</div>

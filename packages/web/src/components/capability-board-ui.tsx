@@ -8,7 +8,7 @@
 
 'use client';
 
-import { type ReactNode, useState } from 'react';
+import { type CSSProperties, type ReactNode, useState } from 'react';
 import { HubIcon } from './hub-icons';
 import { EcosystemBadge } from './marketplace/marketplace-badges';
 
@@ -658,7 +658,10 @@ export function FilterChips({
 
 export function SectionIconMcp() {
   return (
-    <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-[var(--semantic-info-surface)] to-[var(--semantic-info-surface)]/50 border border-conn-indigo-bg/50 shadow-sm">
+    <div
+      className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-[var(--semantic-info-surface)] to-[var(--_info-50)] border border-conn-indigo-bg/50 shadow-sm"
+      style={{ '--_info-50': 'color-mix(in oklch, var(--semantic-info-surface) 50%, transparent)' } as CSSProperties}
+    >
       <McpIcon className="w-4 h-4 text-conn-indigo-text" />
     </div>
   );
@@ -666,7 +669,10 @@ export function SectionIconMcp() {
 
 export function SectionIconSkill() {
   return (
-    <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-[var(--semantic-warning-surface)] to-[var(--semantic-warning-surface)]/50 border border-[var(--semantic-warning-surface)] shadow-sm">
+    <div
+      className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-[var(--semantic-warning-surface)] to-[var(--_warn-50)] border border-[var(--semantic-warning-surface)] shadow-sm"
+      style={{ '--_warn-50': 'color-mix(in oklch, var(--semantic-warning-surface) 50%, transparent)' } as CSSProperties}
+    >
       <SkillIcon className="w-4 h-4 text-conn-amber-text" />
     </div>
   );
@@ -674,7 +680,10 @@ export function SectionIconSkill() {
 
 export function SectionIconExtension() {
   return (
-    <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-[var(--semantic-success-surface)] to-[var(--semantic-success-surface)]/50 border border-[var(--semantic-success-surface)] shadow-sm">
+    <div
+      className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-[var(--semantic-success-surface)] to-[var(--_ok-50)] border border-[var(--semantic-success-surface)] shadow-sm"
+      style={{ '--_ok-50': 'color-mix(in oklch, var(--semantic-success-surface) 50%, transparent)' } as CSSProperties}
+    >
       <ExtensionIcon className="w-4 h-4 text-conn-emerald-text" />
     </div>
   );

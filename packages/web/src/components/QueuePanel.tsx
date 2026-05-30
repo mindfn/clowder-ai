@@ -176,14 +176,25 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
   return (
     <div
       className={`border-t mx-4 mb-1 rounded-xl overflow-hidden ${
-        queuePaused
-          ? 'border-conn-amber-ring bg-conn-amber-bg/50'
-          : 'border-[var(--color-cocreator-primary)]/20 bg-[var(--color-cocreator-primary)]/5'
+        queuePaused ? 'border-conn-amber-ring bg-conn-amber-bg/50' : ''
       }`}
+      style={
+        queuePaused
+          ? undefined
+          : {
+              borderColor: 'color-mix(in oklch, var(--color-cocreator-primary) 20%, transparent)',
+              backgroundColor: 'color-mix(in oklch, var(--color-cocreator-primary) 5%, transparent)',
+            }
+      }
     >
       {/* Header */}
       <div
-        className={`flex items-center justify-between px-3 py-2 ${queuePaused ? 'bg-conn-amber-bg/60' : 'bg-[var(--color-cocreator-primary)]/10'}`}
+        className={`flex items-center justify-between px-3 py-2 ${queuePaused ? 'bg-conn-amber-bg/60' : ''}`}
+        style={
+          queuePaused
+            ? undefined
+            : { backgroundColor: 'color-mix(in oklch, var(--color-cocreator-primary) 10%, transparent)' }
+        }
       >
         <div className="flex items-center gap-2">
           <svg className="w-4 h-4 text-cafe-secondary" viewBox="0 0 20 20" fill="currentColor">
@@ -194,8 +205,13 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
             className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
               queuePaused
                 ? 'bg-[var(--semantic-warning-surface)] text-conn-amber-text'
-                : 'bg-[var(--color-cocreator-primary)]/20 text-[var(--color-cocreator-primary)]'
+                : 'text-[var(--color-cocreator-primary)]'
             }`}
+            style={
+              queuePaused
+                ? undefined
+                : { backgroundColor: 'color-mix(in oklch, var(--color-cocreator-primary) 20%, transparent)' }
+            }
           >
             {visibleEntries.length}
           </span>

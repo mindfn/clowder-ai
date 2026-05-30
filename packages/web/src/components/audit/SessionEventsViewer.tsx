@@ -94,8 +94,12 @@ function fmtDuration(ms: number): string {
 }
 
 const ROLE_STYLES: Record<string, string> = {
-  user: 'bg-[var(--color-cafe-accent)]/10 text-[var(--color-cafe-accent)]',
+  user: 'text-[var(--color-cafe-accent)]',
   system: 'bg-cafe-surface-elevated text-cafe-secondary',
+};
+/* Slash opacity on CSS-var colors silently fails; use color-mix() via inline style. */
+const ROLE_INLINE_STYLES: Record<string, React.CSSProperties> = {
+  user: { backgroundColor: 'color-mix(in oklch, var(--color-cafe-accent) 10%, transparent)' },
 };
 
 const ASSISTANT_STYLE_BY_CAT: Record<string, string> = {
@@ -266,6 +270,7 @@ export function SessionEventsViewer({ sessionId, catId, onClose }: SessionEvents
                     ? assistantStyle
                     : (ROLE_STYLES[msg.role] ?? 'bg-cafe-surface-elevated text-cafe-secondary')
                 }`}
+                style={ROLE_INLINE_STYLES[msg.role]}
               >
                 <span className="font-medium">{msg.role === 'assistant' ? assistantLabel : msg.role}</span>
                 <p className="mt-0.5 whitespace-pre-wrap break-words">{msg.content}</p>

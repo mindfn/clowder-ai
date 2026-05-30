@@ -406,7 +406,13 @@ export function SessionChainPanel({ threadId, catInvocations, onViewSession }: S
                       )}
                       <button
                         type="button"
-                        className="text-micro px-2 py-0.5 rounded border border-[var(--color-cafe-accent)]/20 text-[var(--color-cafe-accent)] hover:bg-[var(--color-cafe-accent)]/5 disabled:opacity-50"
+                        className="text-micro px-2 py-0.5 rounded border border-[var(--_accent-20)] text-[var(--color-cafe-accent)] hover:bg-[var(--_accent-5)] disabled:opacity-50"
+                        style={
+                          {
+                            '--_accent-20': 'color-mix(in oklch, var(--color-cafe-accent) 20%, transparent)',
+                            '--_accent-5': 'color-mix(in oklch, var(--color-cafe-accent) 5%, transparent)',
+                          } as React.CSSProperties
+                        }
                         onClick={() => {
                           void handleUnseal(session.id);
                         }}

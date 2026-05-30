@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { type CSSProperties, useState } from 'react';
 import { MarkdownContent } from '@/components/MarkdownContent';
 import type { RichBlock, RichCardBlock } from '@/stores/chat-types';
 import { CafeIcon } from './CafeIcons';
@@ -21,7 +21,8 @@ export function BriefingCard({ block: raw }: { block: RichBlock; messageId?: str
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-center gap-1.5 px-3 py-2 text-left hover:bg-[var(--semantic-info-surface)]/50 transition-colors"
+        className="w-full flex items-center gap-1.5 px-3 py-2 text-left hover:bg-[var(--_info-50)] transition-colors"
+        style={{ '--_info-50': 'color-mix(in oklch, var(--semantic-info-surface) 50%, transparent)' } as CSSProperties}
       >
         <CafeIcon name="search" className="w-3.5 h-3.5 text-conn-blue-text shrink-0" />
         <span className="text-xs font-medium text-[var(--semantic-info)] uppercase tracking-wide">

@@ -96,16 +96,22 @@ function QueueEntryRow({
           {categoryLabel && (
             <span
               className={`text-micro px-1 py-px rounded font-medium ${
-                isUrgent
-                  ? 'bg-conn-red-bg text-conn-red-text'
-                  : 'bg-[var(--color-cocreator-primary)]/15 text-[var(--color-cocreator-primary)]'
+                isUrgent ? 'bg-conn-red-bg text-conn-red-text' : 'text-[var(--color-cocreator-primary)]'
               }`}
+              style={
+                isUrgent
+                  ? undefined
+                  : { backgroundColor: 'color-mix(in oklch, var(--color-cocreator-primary) 15%, transparent)' }
+              }
             >
               {categoryLabel}
             </span>
           )}
           {isAgent && entry.autoExecute && (
-            <span className="text-micro px-1 py-px rounded bg-[var(--color-cocreator-primary)]/15 text-[var(--color-cocreator-primary)] font-medium">
+            <span
+              className="text-micro px-1 py-px rounded text-[var(--color-cocreator-primary)] font-medium"
+              style={{ backgroundColor: 'color-mix(in oklch, var(--color-cocreator-primary) 15%, transparent)' }}
+            >
               自动
             </span>
           )}
