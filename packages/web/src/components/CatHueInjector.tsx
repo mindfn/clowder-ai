@@ -21,6 +21,14 @@ import { hexToOklch } from '@/lib/color-utils';
 
 const DYNAMIC_STYLE_ID = 'f056-dynamic-cat-tokens';
 
+/** F056: Connector sources with fixed OKLCH hue/chroma — participate in the same
+ * cat L/C derivation pipeline so their bubbles follow the Tuner (surface L, Cmul,
+ * ring L etc.) instead of hardcoded hex values in connector-tokens.css.
+ * Extend this array to OKLCH-ize more connector color families. */
+const CONN_OKLCH: ReadonlyArray<{ id: string; hue: number; chroma: number; alias: string }> = [
+  { id: 'scheduler', hue: 85, chroma: 0.15, alias: 'amber' },
+];
+
 /* Both light and dark use the same formula, just with different fallback L/Cmul
  * values. Tuner emits :root + [data-theme="dark"] overrides for the --cat-{tier}-
  * L/Cmul vars, so the dark fallbacks below only kick in when Tuner hasn't run
@@ -75,7 +83,14 @@ export function CatHueInjector() {
       ruleIds.push(cat.id);
     }
 
-    /* Generate dynamic cat token stylesheet for ALL cats. */
+    /* Connector sources: fixed hue/chroma, L controlled by Tuner via cat tier vars */
+    for (const conn of CONN_OKLCH) {
+      root.style.setProperty(`--${conn.id}-hue`, conn.hue.toFixed(1));
+      root.style.setProperty(`--${conn.id}-chroma`, conn.chroma.toFixed(3));
+      ruleIds.push(conn.id);
+    }
+
+    /* Generate dynamic cat token stylesheet for ALL cats + connector sources. */
     let styleEl = document.getElementById(DYNAMIC_STYLE_ID) as HTMLStyleElement | null;
     if (ruleIds.length === 0) {
       if (styleEl) styleEl.textContent = '';
@@ -88,7 +103,20 @@ export function CatHueInjector() {
     }
     const lightRules = ruleIds.map(lightDecl).join('');
     const darkRules = ruleIds.map(darkDecl).join('');
-    styleEl.textContent = `:root{${lightRules}}\n[data-theme="dark"]{${darkRules}}`;
+    /* Connector token aliases — map --conn-{alias}-* to OKLCH-derived --color-{id}-*
+     * so existing Tailwind classes (bg-conn-amber-bg etc.) follow the Tuner.
+     * Both :root and [data-theme="dark"] blocks get the same var() aliases;
+     * the referenced tokens resolve to mode-appropriate values automatically. */
+    const connAlias = CONN_OKLCH.map(
+      ({ id, alias }) =>
+        `--conn-${alias}-bg:var(--color-${id}-surface);` +
+        `--conn-${alias}-ring:var(--color-${id}-ring);` +
+        `--conn-${alias}-text:var(--color-${id}-ring);` +
+        `--conn-${alias}-hover:var(--color-${id}-bubble);` +
+        `--conn-${alias}-bubble-bg:var(--color-${id}-surface);` +
+        `--conn-${alias}-bubble-border:var(--color-${id}-ring);`,
+    ).join('');
+    styleEl.textContent = `:root{${lightRules}${connAlias}}\n[data-theme="dark"]{${darkRules}${connAlias}}`;
   }, [cats]);
 
   return null;

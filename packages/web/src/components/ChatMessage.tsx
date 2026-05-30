@@ -43,8 +43,6 @@ const DEFAULT_BREED_STYLE = { radius: 'rounded-2xl' };
 /* catSlug helper moved to '@/lib/cat-slug' so other components can share it. */
 const SCHEDULER_ACCENT_BADGE_CLASS =
   'inline-flex w-fit items-center gap-1.5 rounded-full border border-conn-amber-ring bg-conn-amber-bg px-2.5 py-1 text-xs font-semibold text-conn-amber-text shadow-sm';
-const SCHEDULER_ACCENT_BUBBLE_CLASS =
-  'border-conn-amber-ring bg-conn-amber-bg/70 ring-1 ring-amber-200 shadow-[0_10px_24px_rgba(217,119,6,0.16)] bg-gradient-to-b from-amber-50/60 to-transparent';
 
 function formatTime(ts: number): string {
   const d = new Date(ts);
@@ -530,7 +528,7 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
         <div
           className={`px-4 py-3 transition-transform hover:-translate-y-0.5 overflow-hidden ${
             catStyle ? `${catStyle.radius} ${catStyle.font ?? ''}` : 'bg-cafe-surface rounded-2xl'
-          } ${showSchedulerAccent ? SCHEDULER_ACCENT_BUBBLE_CLASS : ''}`}
+          }`}
           style={
             catStyle
               ? { backgroundColor: catStyle.bgColor, color: 'var(--cat-msg-text)' }
