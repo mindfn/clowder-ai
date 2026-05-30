@@ -98,6 +98,10 @@ Source: "..\..\cat-cafe-skills\*";               DestDir: "{app}\cat-cafe-skills
 ; routes (features, threads, architecture). Missing → /api/docs/* returns 404.
 Source: "..\..\docs\*";                          DestDir: "{app}\docs"; \
   Flags: recursesubdirs createallsubdirs; Components: core
+; Service recommendation matrix — loaded synchronously at API startup by
+; recommendation-matrix-data.ts via the import chain (services route → index).
+; Missing → API crashes with ENOENT at launch.
+Source: "..\..\scripts\services\recommendation-matrix.yaml"; DestDir: "{app}\scripts\services"; Components: core
 ; (Node.js runtime is shipped as node.tar.gz in bulk archives above)
 ; Desktop scripts (post-install config generation)
 Source: "..\scripts\post-install-offline.ps1";   DestDir: "{app}\scripts"; Components: core

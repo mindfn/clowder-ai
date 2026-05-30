@@ -524,6 +524,17 @@ if (-not $SkipPortableZip) {
         if (Test-Path $src) { Copy-Item $src (Join-Path $scriptsDir $s) }
     }
 
+    # Service recommendation matrix — loaded at API startup.
+    # Missing → API crashes with ENOENT (recommendation-matrix-data.ts).
+    $matrixSrc = Join-Path $ProjectRoot "scripts\services\recommendation-matrix.yaml"
+    if (Test-Path $matrixSrc) {
+        $matrixDst = Join-Path $staging "scripts\services"
+        if (-not (Test-Path $matrixDst)) { New-Item -ItemType Directory -Path $matrixDst -Force | Out-Null }
+        Copy-Item $matrixSrc (Join-Path $matrixDst "recommendation-matrix.yaml")
+    } else {
+        Write-Warn "recommendation-matrix.yaml not found — API will fail to start"
+    }
+
     # Agent CLI hook templates
     $hooksSource = Join-Path $ProjectRoot ".claude\hooks\user-level"
     if (Test-Path $hooksSource) {
