@@ -591,13 +591,65 @@ class ServiceManager {
   }
 
   async stopAll() {
+    const KILL_TIMEOUT_MS = 5000;
+    const killPromises = [];
+
     for (const [name, proc] of Object.entries(this.procs)) {
-      if (proc && !proc.killed) {
-        console.log(`[desktop] stopping ${name}...`);
-        proc.kill('SIGTERM');
-      }
+      if (!proc || proc.killed) continue;
+      log(`[desktop] stopping ${name} (pid=${proc.pid})...`);
+
+      killPromises.push(
+        this._killProcessTree(name, proc, KILL_TIMEOUT_MS),
+      );
     }
+
+    await Promise.allSettled(killPromises);
     this.procs = {};
+  }
+
+  async _killProcessTree(name, proc, timeoutMs) {
+    if (!proc.pid) {
+      log(`[${name}] no pid — skipping`);
+      return;
+    }
+
+    if (IS_WIN) {
+      // On Windows, proc.kill('SIGTERM') only kills the direct child process.
+      // Child processes spawned by it (e.g., cmd.exe → node, or node → workers)
+      // become orphans. Use taskkill /T (tree) /F (force) to kill the entire
+      // process tree rooted at the PID.
+      try {
+        execSync(`taskkill /PID ${proc.pid} /T /F`, {
+          timeout: timeoutMs,
+          windowsHide: true,
+          stdio: 'ignore',
+        });
+        log(`[${name}] process tree killed via taskkill`);
+      } catch (err) {
+        // taskkill exits non-zero if the process is already gone — that's fine
+        log(`[${name}] taskkill: ${err.message}`);
+      }
+      return;
+    }
+
+    // macOS/Linux: SIGTERM first, then SIGKILL after timeout
+    proc.kill('SIGTERM');
+
+    const exited = await new Promise((resolve) => {
+      if (proc.exitCode !== null) return resolve(true);
+      const timer = setTimeout(() => resolve(false), timeoutMs);
+      proc.once('exit', () => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+    });
+
+    if (!exited) {
+      log(`[${name}] did not exit after SIGTERM, sending SIGKILL`);
+      try {
+        proc.kill('SIGKILL');
+      } catch {}
+    }
   }
 }
 
