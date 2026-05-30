@@ -29,8 +29,8 @@ if not exist "%APPDIR%\.env" (
     echo.
 
     rem Step 3: Generate desktop-config.json (records installed components)
-    rem Portable mode: no CLI components pre-selected (all $false)
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "& '%APPDIR%\scripts\generate-desktop-config.ps1' -AppDir '%APPDIR%' -Claude $false -Codex $false -Antigravity $false -Kimi $false"
+    rem Portable mode: no CLI components pre-selected (omit switch = false)
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "& '%APPDIR%\scripts\generate-desktop-config.ps1' -AppDir '%APPDIR%'"
     echo.
 
     if errorlevel 1 (
