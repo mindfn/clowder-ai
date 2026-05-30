@@ -102,6 +102,19 @@
         "to": "docs"
       },
       {
+        "from": "../scripts",
+        "to": "scripts",
+        "filter": ["**/*", "!**/*.ps1", "!**/*.test.*", "!**/__pycache__/**"]
+      },
+      {
+        "from": "../guides",
+        "to": "guides"
+      },
+      {
+        "from": "../assets/system-prompts",
+        "to": "assets/system-prompts"
+      },
+      {
         "from": "../bundled/cli-tools",
         "to": "bundled/cli-tools"
       }
