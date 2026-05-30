@@ -524,16 +524,23 @@ if (-not $SkipPortableZip) {
         if (Test-Path $src) { Copy-Item $src (Join-Path $scriptsDir $s) }
     }
 
-    # Service recommendation matrix — loaded at API startup.
-    # Missing → API crashes with ENOENT (recommendation-matrix-data.ts).
-    $matrixSrc = Join-Path $ProjectRoot "scripts\services\recommendation-matrix.yaml"
-    if (Test-Path $matrixSrc) {
-        $matrixDst = Join-Path $staging "scripts\services"
-        if (-not (Test-Path $matrixDst)) { New-Item -ItemType Directory -Path $matrixDst -Force | Out-Null }
-        Copy-Item $matrixSrc (Join-Path $matrixDst "recommendation-matrix.yaml")
+    # Service scripts — recommendation-matrix.yaml (P0: API startup), install/server
+    # scripts (P1: local service management). Resolved from install dir via import.meta.url.
+    Copy-ToStaging (Join-Path $ProjectRoot "scripts\services") "scripts\services"
+
+    # L0 system prompt compiler — invoked when dispatching Claude/Codex agents.
+    $l0Compiler = Join-Path $ProjectRoot "scripts\compile-system-prompt-l0.mjs"
+    if (Test-Path $l0Compiler) {
+        Copy-Item $l0Compiler (Join-Path $scriptsDir "compile-system-prompt-l0.mjs")
     } else {
-        Write-Warn "recommendation-matrix.yaml not found — API will fail to start"
+        Write-Warn "compile-system-prompt-l0.mjs not found — cat L0 compilation will fail"
     }
+
+    # L0 system prompt template
+    Copy-ToStaging (Join-Path $ProjectRoot "assets\system-prompts") "assets\system-prompts"
+
+    # Guide registry + flow definitions — bootcamp/guide features
+    Copy-ToStaging (Join-Path $ProjectRoot "guides") "guides"
 
     # Agent CLI hook templates
     $hooksSource = Join-Path $ProjectRoot ".claude\hooks\user-level"

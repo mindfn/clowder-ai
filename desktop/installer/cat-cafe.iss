@@ -98,10 +98,21 @@ Source: "..\..\cat-cafe-skills\*";               DestDir: "{app}\cat-cafe-skills
 ; routes (features, threads, architecture). Missing → /api/docs/* returns 404.
 Source: "..\..\docs\*";                          DestDir: "{app}\docs"; \
   Flags: recursesubdirs createallsubdirs; Components: core
-; Service recommendation matrix — loaded synchronously at API startup by
-; recommendation-matrix-data.ts via the import chain (services route → index).
-; Missing → API crashes with ENOENT at launch.
-Source: "..\..\scripts\services\recommendation-matrix.yaml"; DestDir: "{app}\scripts\services"; Components: core
+; Service scripts — recommendation-matrix.yaml loaded at API startup (P0);
+; install/server *.ps1/*.sh scripts used on-demand for local service management.
+; Missing → API crash (matrix) or service install/start/stop fails (scripts).
+Source: "..\..\scripts\services\*";                DestDir: "{app}\scripts\services"; \
+  Flags: recursesubdirs createallsubdirs; Components: core
+; L0 system prompt compiler — invoked when dispatching Claude/Codex agents.
+; Missing → cat invocations fail (compile-system-prompt-l0.mjs not found).
+Source: "..\..\scripts\compile-system-prompt-l0.mjs"; DestDir: "{app}\scripts"; Components: core
+; L0 system prompt template — read by rules.ts for governance compilation.
+Source: "..\..\assets\system-prompts\*";           DestDir: "{app}\assets\system-prompts"; \
+  Flags: recursesubdirs createallsubdirs; Components: core
+; Guide registry + flow definitions — loaded by guide-registry-loader.ts.
+; Missing → bootcamp/guide features crash on first request.
+Source: "..\..\guides\*";                          DestDir: "{app}\guides"; \
+  Flags: recursesubdirs createallsubdirs; Components: core
 ; (Node.js runtime is shipped as node.tar.gz in bulk archives above)
 ; Desktop scripts (post-install config generation)
 Source: "..\scripts\post-install-offline.ps1";   DestDir: "{app}\scripts"; Components: core
