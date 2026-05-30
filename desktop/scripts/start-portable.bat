@@ -3,6 +3,7 @@ setlocal EnableDelayedExpansion
 
 rem Cat Cafe Portable — launch script
 rem Detects first run, auto-configures, then starts the Electron app.
+rem Equivalent to Inno Setup [Run] section but without admin requirement.
 
 set "APPDIR=%~dp0"
 rem Remove trailing backslash
@@ -15,8 +16,23 @@ if not exist "%APPDIR%\.env" (
     echo   Cat Cafe — First Run Configuration
     echo  ============================================
     echo.
+
+    rem Step 1: Generate .env, mount skills, verify artifacts
+    rem (post-install-offline.ps1 without CLI flags = skip CLI provisioning;
+    rem  CLI tools are user-choice in portable mode — install separately)
     powershell -NoProfile -ExecutionPolicy Bypass -File "%APPDIR%\scripts\post-install-offline.ps1" -AppDir "%APPDIR%"
     echo.
+
+    rem Step 2: Sync Agent CLI hooks to user profile (~/.claude, ~/.codex)
+    rem so any existing CLI installations can connect to this Cat Cafe instance.
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%APPDIR%\scripts\post-install-offline.ps1" -AppDir "%APPDIR%" -AgentHooksOnly
+    echo.
+
+    rem Step 3: Generate desktop-config.json (records installed components)
+    rem Portable mode: no CLI components pre-selected (all $false)
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "& '%APPDIR%\scripts\generate-desktop-config.ps1' -AppDir '%APPDIR%' -Claude $false -Codex $false -Antigravity $false -Kimi $false"
+    echo.
+
     if errorlevel 1 (
         echo  [!!] Configuration encountered issues. See above for details.
         echo       Cat Cafe will still attempt to start.

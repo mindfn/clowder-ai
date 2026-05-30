@@ -223,11 +223,23 @@ if (Test-Path $skillsSource) {
             New-Item -ItemType Directory -Path $t.Dir -Force | Out-Null
         }
         if (-not (Test-Path $linkPath)) {
+            $linked = $false
+            # Try directory symlink first (needs admin or Developer Mode)
             try {
                 cmd /c mklink /D "$linkPath" "$skillsSource" 2>$null | Out-Null
+                if (Test-Path $linkPath) { $linked = $true }
+            } catch {}
+            # Fallback to junction (no admin needed, local paths only)
+            if (-not $linked) {
+                try {
+                    cmd /c mklink /J "$linkPath" "$skillsSource" 2>$null | Out-Null
+                    if (Test-Path $linkPath) { $linked = $true }
+                } catch {}
+            }
+            if ($linked) {
                 Write-Ok "Skills linked: $linkPath"
-            } catch {
-                Write-Warn "Could not create symlink: $linkPath"
+            } else {
+                Write-Warn "Could not create symlink: $linkPath (try running as admin or enable Developer Mode)"
             }
         }
     }
