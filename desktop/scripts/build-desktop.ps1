@@ -516,17 +516,12 @@ if (-not $SkipPortableZip) {
     # Bundled Node.js
     Copy-ToStaging (Join-Path $ProjectRoot "bundled\node") "node"
 
-    # Desktop scripts (post-install, desktop-config, hook sync) — from desktop/scripts/
-    $scriptsDir = Join-Path $staging "scripts"
-    if (-not (Test-Path $scriptsDir)) { New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null }
-    foreach ($s in @("post-install-offline.ps1", "generate-desktop-config.ps1", "sync-agent-hooks-offline.mjs")) {
-        $src = Join-Path (Join-Path (Join-Path $ProjectRoot "desktop") "scripts") $s
-        if (Test-Path $src) { Copy-Item $src (Join-Path $scriptsDir $s) }
-    }
-
     # Runtime scripts — blacklist approach: copy all from root scripts/, then
     # remove platform-irrelevant and dev artifacts. New files are automatically
     # included (prevents the "missing file" class of bugs).
+    # IMPORTANT: this must run BEFORE desktop scripts are added, because
+    # Copy-ToStaging uses Copy-Item which, when the destination directory
+    # already exists, nests the source as a subdirectory (scripts/scripts/).
     Copy-ToStaging (Join-Path $ProjectRoot "scripts") "scripts"
     # Exclude: *.sh (bash — Linux/Mac only), *.test.* (test files), __pycache__
     Get-ChildItem (Join-Path $staging "scripts") -Recurse -File `
@@ -534,6 +529,14 @@ if (-not $SkipPortableZip) {
         | Remove-Item -Force
     $pycache = Join-Path (Join-Path $staging "scripts") "__pycache__"
     if (Test-Path $pycache) { Remove-Item $pycache -Recurse -Force }
+
+    # Desktop scripts (post-install, desktop-config, hook sync) — added on top
+    # of the root scripts directory that was just copied above.
+    $scriptsDir = Join-Path $staging "scripts"
+    foreach ($s in @("post-install-offline.ps1", "generate-desktop-config.ps1", "sync-agent-hooks-offline.mjs")) {
+        $src = Join-Path (Join-Path (Join-Path $ProjectRoot "desktop") "scripts") $s
+        if (Test-Path $src) { Copy-Item $src (Join-Path $scriptsDir $s) }
+    }
 
     # Assets (system prompt templates, etc.)
     Copy-ToStaging (Join-Path $ProjectRoot "assets") "assets"
