@@ -23,6 +23,12 @@ import { hexToOklch } from '@/lib/color-utils';
 const DYNAMIC_STYLE_ID = 'f056-dynamic-cat-tokens';
 const CSS_SAFE_ID = /^[a-zA-Z0-9_-]+$/;
 
+/* Connector brand colors (e.g. amber #F59E0B → C≈0.17) are typically much
+ * more vivid than cat persona colors (e.g. green #5B8C5A → C≈0.08). Without
+ * scaling, the shared surface Cmul produces overly saturated connector bubbles
+ * in light mode. Scale connector chroma down so surfaces stay subtle. */
+const CONNECTOR_CHROMA_SCALE = 0.5;
+
 /* Both light and dark use the same formula, just with different fallback L/Cmul
  * values. Tuner emits :root + [data-theme="dark"] overrides for the --cat-{tier}-
  * L/Cmul vars, so the dark fallbacks below only kick in when Tuner hasn't run
@@ -89,7 +95,7 @@ export function CatHueInjector() {
         const oklch = hexToOklch(def.color.primary);
         if (Number.isFinite(oklch.h) && Number.isFinite(oklch.c)) {
           h = oklch.h;
-          c = oklch.c;
+          c = oklch.c * CONNECTOR_CHROMA_SCALE;
         }
       } catch {
         /* neutral fallback */
