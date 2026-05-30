@@ -1,7 +1,7 @@
 name: Build Windows Desktop
 
 # Reusable workflow: builds Windows installer (.exe) and portable zip for
-# Cat Cafe. Produces both CatCafe-Setup-*.exe and CatCafe-Portable-*.zip.
+# Cat Cafe. Produces both CatCafe-Setup-*.exe and CatCafe-*.zip.
 #
 # Called by: release-desktop.yml (orchestrator)
 # Standalone: workflow_dispatch for dry-run verification
@@ -87,7 +87,7 @@ jobs:
         with:
           files: |
             dist/CatCafe-Setup-*.exe
-            dist/CatCafe-Portable-*.zip
+            dist/CatCafe-*.zip
           fail_on_unmatched_files: true
 
       - name: Upload installer as workflow artifact
@@ -103,5 +103,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-portable-${{ inputs.version }}
-          path: dist/CatCafe-Portable-*.zip
+          path: dist/CatCafe-*.zip
           if-no-files-found: error
