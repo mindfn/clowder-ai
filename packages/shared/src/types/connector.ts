@@ -119,7 +119,7 @@ const CONNECTOR_DEFINITIONS: readonly ConnectorDefinition[] = [
     id: 'github-review',
     displayName: 'GitHub Review',
     icon: 'github',
-    color: { primary: '#2563EB', secondary: '#F3F4F6' },
+    color: { primary: '#2563EB', secondary: '#E2E8F0' },
     description: 'GitHub PR review 邮件通知',
     tailwindTheme: {
       avatar: 'bg-conn-slate-bg ring-2 ring-conn-slate-ring',
@@ -132,7 +132,7 @@ const CONNECTOR_DEFINITIONS: readonly ConnectorDefinition[] = [
     id: 'github-ci',
     displayName: 'GitHub CI/CD',
     icon: 'github',
-    color: { primary: '#2563EB', secondary: '#F3F4F6' },
+    color: { primary: '#2563EB', secondary: '#E2E8F0' },
     description: 'GitHub CI/CD 状态通知',
     tailwindTheme: {
       avatar: 'bg-conn-slate-bg ring-2 ring-conn-slate-ring',
@@ -145,7 +145,7 @@ const CONNECTOR_DEFINITIONS: readonly ConnectorDefinition[] = [
     id: 'github-conflict',
     displayName: 'PR Conflict',
     icon: 'github',
-    color: { primary: '#D97706', secondary: '#F3F4F6' },
+    color: { primary: '#D97706', secondary: '#E2E8F0' },
     description: 'GitHub PR 冲突状态通知',
     tailwindTheme: {
       avatar: 'bg-conn-amber-bg ring-2 ring-conn-amber-ring',
@@ -158,7 +158,7 @@ const CONNECTOR_DEFINITIONS: readonly ConnectorDefinition[] = [
     id: 'github-review-feedback',
     displayName: 'Review Feedback',
     icon: 'github',
-    color: { primary: '#475569', secondary: '#F3F4F6' },
+    color: { primary: '#475569', secondary: '#E2E8F0' },
     description: 'GitHub PR review feedback 通知',
     tailwindTheme: {
       avatar: 'bg-conn-slate-bg ring-2 ring-conn-slate-ring',
@@ -171,7 +171,7 @@ const CONNECTOR_DEFINITIONS: readonly ConnectorDefinition[] = [
     id: 'github-repo-event',
     displayName: 'Repo Inbox',
     icon: 'github',
-    color: { primary: '#24292e', secondary: '#F3F4F6' },
+    color: { primary: '#24292e', secondary: '#E2E8F0' },
     description: 'GitHub 仓库事件通知（新 PR / 新 Issue）',
     tailwindTheme: {
       avatar: 'bg-conn-gray-bg ring-2 ring-conn-gray-ring',
@@ -210,7 +210,7 @@ const CONNECTOR_DEFINITIONS: readonly ConnectorDefinition[] = [
     id: 'feishu',
     displayName: '飞书',
     icon: '/images/connectors/feishu.png',
-    color: { primary: '#3370FF', secondary: '#DBEAFE' },
+    color: { primary: '#3370FF', secondary: '#E8F0FE' },
     description: '飞书机器人',
     tailwindTheme: {
       avatar: 'bg-conn-blue-bg ring-2 ring-conn-blue-ring',
@@ -223,7 +223,7 @@ const CONNECTOR_DEFINITIONS: readonly ConnectorDefinition[] = [
     id: 'telegram',
     displayName: 'Telegram',
     icon: '/images/connectors/telegram.png',
-    color: { primary: '#0088CC', secondary: '#E1F3FE' },
+    color: { primary: '#0088CC', secondary: '#E3F2FD' },
     description: 'Telegram Bot',
     tailwindTheme: {
       avatar: 'bg-conn-sky-bg ring-2 ring-conn-sky-ring',
@@ -236,7 +236,7 @@ const CONNECTOR_DEFINITIONS: readonly ConnectorDefinition[] = [
     id: 'dingtalk',
     displayName: '钉钉',
     icon: '/images/connectors/dingtalk.png',
-    color: { primary: '#3296FA', secondary: '#D0FAFE' },
+    color: { primary: '#3296FA', secondary: '#E8F4FE' },
     description: '钉钉企业内部应用',
     tailwindTheme: {
       avatar: 'bg-conn-cyan-bg ring-2 ring-conn-cyan-ring',
@@ -249,7 +249,7 @@ const CONNECTOR_DEFINITIONS: readonly ConnectorDefinition[] = [
     id: 'xiaoyi',
     displayName: '小艺 APP',
     icon: '/images/connectors/xiaoyi.png',
-    color: { primary: '#CF0A2C', secondary: '#FFE2E2' },
+    color: { primary: '#CF0A2C', secondary: '#FFF0F0' },
     description: '华为小艺 OpenClaw 模式',
     tailwindTheme: {
       avatar: 'bg-conn-red-bg ring-2 ring-conn-red-ring',
@@ -262,7 +262,7 @@ const CONNECTOR_DEFINITIONS: readonly ConnectorDefinition[] = [
     id: 'wecom-bot',
     displayName: '企业微信',
     icon: '/images/connectors/wecom-bot.png',
-    color: { primary: '#4F46E5', secondary: '#E0E7FF' },
+    color: { primary: '#4F46E5', secondary: '#EEF2FF' },
     description: '企业微信智能机器人 (WebSocket)',
     tailwindTheme: {
       avatar: 'bg-conn-indigo-bg ring-2 ring-conn-indigo-ring',
@@ -275,7 +275,7 @@ const CONNECTOR_DEFINITIONS: readonly ConnectorDefinition[] = [
     id: 'wecom-agent',
     displayName: '企微自建应用',
     icon: '/images/connectors/wecom-agent.png',
-    color: { primary: '#7C3AED', secondary: '#EEE9FE' },
+    color: { primary: '#7C3AED', secondary: '#F5F3FF' },
     description: '企业微信自建应用 (HTTP 回调)',
     tailwindTheme: {
       avatar: 'bg-conn-violet-bg ring-2 ring-conn-violet-ring',
@@ -301,7 +301,7 @@ const CONNECTOR_DEFINITIONS: readonly ConnectorDefinition[] = [
     id: 'scheduler',
     displayName: '定时任务',
     icon: 'scheduler',
-    color: { primary: '#F59E0B', secondary: '#FEF4C7' },
+    color: { primary: '#F59E0B', secondary: '#FDE691' },
     description: '定时任务投递',
     tailwindTheme: {
       avatar: 'bg-conn-amber-bg ring-2 ring-conn-amber-ring',
