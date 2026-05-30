@@ -17,7 +17,12 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 USER_REDIS_SCRIPT="${SCRIPT_DIR}/user-redis.sh"
 PORT="${USER_REDIS_PORT:-6401}"
 PROFILE="${USER_REDIS_PROFILE:-user}"
-LOCAL_BACKUP_DIR="${USER_REDIS_BACKUP_DIR:-$HOME/.cat-cafe/redis-backups/${PROFILE}}"
+# #671: When the global DATA_DIR root is set, derive backup dir from it
+if [ -n "${DATA_DIR-}" ] && [ -z "${USER_REDIS_BACKUP_DIR-}" ]; then
+  LOCAL_BACKUP_DIR="${DATA_DIR}/redis-backups"
+else
+  LOCAL_BACKUP_DIR="${USER_REDIS_BACKUP_DIR:-$HOME/.cat-cafe/redis-backups/${PROFILE}}"
+fi
 ICLOUD_ROOT="$HOME/Library/Mobile Documents/com~apple~CloudDocs"
 DEFAULT_OFFSITE_ROOT="$HOME/.cat-cafe/redis-offsite-backups"
 if [[ -d "$ICLOUD_ROOT" ]]; then

@@ -14,6 +14,7 @@
  * CONNECTOR_MEDIA_DIR) are removed — configure via the three roots instead.
  */
 
+import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -64,6 +65,27 @@ export function resolveUploadsDir(): string {
   return root ? joinUnder(root, 'uploads') : MODULE_DEFAULT_UPLOAD_DIR;
 }
 
+// --- Redis data (lifecycle managed by start-dev.sh / user-redis.sh) ------
+// Redis is started by shell scripts *before* the API server, so the shell
+// layer owns the actual `--dir` flag and pre-start migration.  These
+// resolvers exist for introspection (Settings UI / data-dirs endpoint)
+// and for the shell to stay consistent with the TypeScript world.
+
+export function resolveRedisDataDir(): string {
+  const root = readRoot('DATA_DIR');
+  if (root) return joinUnder(root, 'redis');
+  // Legacy: shell script sets REDIS_DATA_DIR based on profile/port before
+  // launching the API.  Fall back to the default dev path if not in env
+  // (e.g. running `node dist/index.js` directly without start-dev.sh).
+  return process.env.REDIS_DATA_DIR || resolve(homedir(), '.cat-cafe/redis-dev');
+}
+
+export function resolveRedisBackupDir(): string {
+  const root = readRoot('DATA_DIR');
+  if (root) return joinUnder(root, 'redis-backups');
+  return process.env.REDIS_BACKUP_DIR || resolve(homedir(), '.cat-cafe/redis-backups/dev');
+}
+
 // --- CACHE_DIR consumers -------------------------------------------------
 
 export function resolveTtsCacheDir(): string {
@@ -92,6 +114,8 @@ export type DataPathKey =
   | 'auditLogs'
   | 'cliRawArchive'
   | 'uploads'
+  | 'redisData'
+  | 'redisBackups'
   | 'ttsCache'
   | 'connectorMedia'
   | 'logs';
@@ -187,6 +211,24 @@ export function describeDataPaths(opts: DescribeOptions): readonly DataPathSpec[
       // Note: resolveUploadsDir() always uses MODULE_DEFAULT_UPLOAD_DIR; the
       // override only affects the legacyPath surfaced for introspection.
       currentPath: dataRoot ? joinUnder(dataRoot, 'uploads') : uploadsLegacy,
+      isFile: false,
+    },
+    {
+      key: 'redisData',
+      root: 'DATA_DIR',
+      subPath: 'redis',
+      legacyPath: process.env.REDIS_DATA_DIR || resolve(homedir(), '.cat-cafe/redis-dev'),
+      rootBasedPath: dataRoot ? joinUnder(dataRoot, 'redis') : null,
+      currentPath: resolveRedisDataDir(),
+      isFile: false,
+    },
+    {
+      key: 'redisBackups',
+      root: 'DATA_DIR',
+      subPath: 'redis-backups',
+      legacyPath: process.env.REDIS_BACKUP_DIR || resolve(homedir(), '.cat-cafe/redis-backups/dev'),
+      rootBasedPath: dataRoot ? joinUnder(dataRoot, 'redis-backups') : null,
+      currentPath: resolveRedisBackupDir(),
       isFile: false,
     },
     {

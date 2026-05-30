@@ -9,21 +9,29 @@ const {
   resolveAuditLogsDir,
   resolveCliRawArchiveDir,
   resolveUploadsDir,
+  resolveRedisDataDir,
+  resolveRedisBackupDir,
   resolveTtsCacheDir,
   resolveConnectorMediaDir,
   resolveLogDir,
   describeDataPaths,
 } = await import('../dist/config/data-dirs.js');
 
+import { homedir } from 'node:os';
+
 const REPO_ROOT = '/tmp/issue-671-repo';
 const MONOREPO_ROOT = '/tmp/issue-671-monorepo';
 
+const REDIS_ENV_KEYS = ['REDIS_DATA_DIR', 'REDIS_BACKUP_DIR'];
+
 function snapshotEnv() {
-  return {
+  const snap = {
     DATA_DIR: process.env.DATA_DIR,
     CACHE_DIR: process.env.CACHE_DIR,
     LOG_DIR: process.env.LOG_DIR,
   };
+  for (const k of REDIS_ENV_KEYS) snap[k] = process.env[k];
+  return snap;
 }
 
 function restoreEnv(snap) {
@@ -37,6 +45,7 @@ function clearRoots() {
   delete process.env.DATA_DIR;
   delete process.env.CACHE_DIR;
   delete process.env.LOG_DIR;
+  for (const k of REDIS_ENV_KEYS) delete process.env[k];
 }
 
 describe('data-dirs resolver (issue #671)', () => {
@@ -90,6 +99,29 @@ describe('data-dirs resolver (issue #671)', () => {
     test('logs falls back to cwd/data/logs/api', () => {
       assert.equal(resolveLogDir(), resolve(process.cwd(), 'data/logs/api'));
     });
+
+    test('redis data falls back to REDIS_DATA_DIR env or home default', () => {
+      // No REDIS_DATA_DIR in env → homedir-based default
+      const dir = resolveRedisDataDir();
+      assert.equal(dir, resolve(homedir(), '.cat-cafe/redis-dev'));
+    });
+
+    test('redis data respects REDIS_DATA_DIR env when set', () => {
+      process.env.REDIS_DATA_DIR = '/tmp/custom-redis';
+      assert.equal(resolveRedisDataDir(), '/tmp/custom-redis');
+      delete process.env.REDIS_DATA_DIR;
+    });
+
+    test('redis backups falls back to REDIS_BACKUP_DIR env or home default', () => {
+      const dir = resolveRedisBackupDir();
+      assert.equal(dir, resolve(homedir(), '.cat-cafe/redis-backups/dev'));
+    });
+
+    test('redis backups respects REDIS_BACKUP_DIR env when set', () => {
+      process.env.REDIS_BACKUP_DIR = '/tmp/custom-redis-backups';
+      assert.equal(resolveRedisBackupDir(), '/tmp/custom-redis-backups');
+      delete process.env.REDIS_BACKUP_DIR;
+    });
   });
 
   describe('DATA_DIR root configured', () => {
@@ -119,6 +151,20 @@ describe('data-dirs resolver (issue #671)', () => {
 
     test('uploads goes under DATA_DIR (overrides module default)', () => {
       assert.equal(resolveUploadsDir(), '/tmp/issue-671-data/uploads');
+    });
+
+    test('redis data goes under DATA_DIR', () => {
+      assert.equal(resolveRedisDataDir(), '/tmp/issue-671-data/redis');
+    });
+
+    test('redis backups goes under DATA_DIR', () => {
+      assert.equal(resolveRedisBackupDir(), '/tmp/issue-671-data/redis-backups');
+    });
+
+    test('DATA_DIR overrides REDIS_DATA_DIR env', () => {
+      process.env.REDIS_DATA_DIR = '/should/be/ignored';
+      assert.equal(resolveRedisDataDir(), '/tmp/issue-671-data/redis');
+      delete process.env.REDIS_DATA_DIR;
     });
 
     test('DATA_DIR does not affect cache or log paths', () => {
@@ -179,9 +225,9 @@ describe('data-dirs resolver (issue #671)', () => {
   });
 
   describe('describeDataPaths introspection', () => {
-    test('returns 9 specs with correct keys when no root set', () => {
+    test('returns 11 specs with correct keys when no root set', () => {
       const specs = describeDataPaths({ repoRoot: REPO_ROOT, monorepoRoot: MONOREPO_ROOT });
-      assert.equal(specs.length, 9);
+      assert.equal(specs.length, 11);
       const keys = specs.map((s) => s.key).sort();
       assert.deepEqual(keys, [
         'auditLogs',
@@ -189,6 +235,8 @@ describe('data-dirs resolver (issue #671)', () => {
         'connectorMedia',
         'evidenceDb',
         'logs',
+        'redisBackups',
+        'redisData',
         'transcripts',
         'ttsCache',
         'uploads',

@@ -26,8 +26,22 @@ source "$SCRIPT_DIR/lib/redis-rdb-first.sh"
 
 PORT="${USER_REDIS_PORT:-6401}"
 PROFILE="${USER_REDIS_PROFILE:-user}"
-DATA_DIR="${USER_REDIS_DATA_DIR:-$HOME/.cat-cafe/redis-${PROFILE}}"
-BACKUP_DIR="${USER_REDIS_BACKUP_DIR:-$HOME/.cat-cafe/redis-backups/${PROFILE}}"
+
+# #671: When the global DATA_DIR root is set (unified data directory), derive
+# Redis paths from it — unless the user explicitly overrides via USER_REDIS_*.
+# NOTE: we capture the global DATA_DIR *before* overwriting it with the local
+# Redis data directory variable (unfortunately same name for historical reasons).
+_GLOBAL_DATA_ROOT="${DATA_DIR-}"
+if [ -n "$_GLOBAL_DATA_ROOT" ] && [ -z "${USER_REDIS_DATA_DIR-}" ]; then
+  DATA_DIR="${_GLOBAL_DATA_ROOT}/redis"
+else
+  DATA_DIR="${USER_REDIS_DATA_DIR:-$HOME/.cat-cafe/redis-${PROFILE}}"
+fi
+if [ -n "$_GLOBAL_DATA_ROOT" ] && [ -z "${USER_REDIS_BACKUP_DIR-}" ]; then
+  BACKUP_DIR="${_GLOBAL_DATA_ROOT}/redis-backups"
+else
+  BACKUP_DIR="${USER_REDIS_BACKUP_DIR:-$HOME/.cat-cafe/redis-backups/${PROFILE}}"
+fi
 DBFILE="${USER_REDIS_DBFILE:-dump.rdb}"
 PIDFILE="${DATA_DIR}/redis-${PORT}.pid"
 LOGFILE="${DATA_DIR}/redis-${PORT}.log"

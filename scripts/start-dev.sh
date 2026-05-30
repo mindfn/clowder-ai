@@ -451,6 +451,41 @@ elif [ -n "$CLI_REDIS_PORT_OVERRIDE" ]; then
 else
     REDIS_BACKUP_DIR=${REDIS_BACKUP_DIR:-"$(default_redis_backup_dir "$REDIS_PROFILE" "$REDIS_PORT")"}
 fi
+# --- DATA_DIR → Redis path unification (#671) ---
+# When DATA_DIR is set, all runtime data lives under one root.  Redis data
+# and backups follow the same convention: DATA_DIR/redis, DATA_DIR/redis-backups.
+# This keeps the user-facing config simple (one knob) and makes portable
+# deployment (installer / archive) straightforward.
+if [ -n "${DATA_DIR-}" ]; then
+    _legacy_redis_data="$REDIS_DATA_DIR"
+    _target_redis_data="${DATA_DIR}/redis"
+    if [ "$_legacy_redis_data" != "$_target_redis_data" ]; then
+        # Pre-start migration: move legacy Redis data before overriding the path
+        if [ -d "$_legacy_redis_data" ] && [ ! -d "$_target_redis_data" ]; then
+            echo -e "${YELLOW}  [#671] Migrating Redis data: $_legacy_redis_data → $_target_redis_data${NC}"
+            mkdir -p "$(dirname "$_target_redis_data")"
+            mv "$_legacy_redis_data" "$_target_redis_data" 2>/dev/null || {
+                # Cross-device fallback: copy + remove
+                cp -a "$_legacy_redis_data" "$_target_redis_data" && rm -rf "$_legacy_redis_data"
+            }
+        fi
+        REDIS_DATA_DIR="$_target_redis_data"
+    fi
+
+    _legacy_redis_backup="$REDIS_BACKUP_DIR"
+    _target_redis_backup="${DATA_DIR}/redis-backups"
+    if [ "$_legacy_redis_backup" != "$_target_redis_backup" ]; then
+        if [ -d "$_legacy_redis_backup" ] && [ ! -d "$_target_redis_backup" ]; then
+            echo -e "${YELLOW}  [#671] Migrating Redis backups: $_legacy_redis_backup → $_target_redis_backup${NC}"
+            mkdir -p "$(dirname "$_target_redis_backup")"
+            mv "$_legacy_redis_backup" "$_target_redis_backup" 2>/dev/null || {
+                cp -a "$_legacy_redis_backup" "$_target_redis_backup" && rm -rf "$_legacy_redis_backup"
+            }
+        fi
+        REDIS_BACKUP_DIR="$_target_redis_backup"
+    fi
+fi
+
 REDIS_DBFILE=${REDIS_DBFILE:-dump.rdb}
 REDIS_PIDFILE="${REDIS_DATA_DIR}/redis-${REDIS_PORT}.pid"
 REDIS_LOGFILE="${REDIS_DATA_DIR}/redis-${REDIS_PORT}.log"

@@ -41,6 +41,14 @@ const ALLOWLIST = new Map([
   ['npm_config_user_agent', 'Package-manager metadata injected by npm/pnpm; not user-configurable'],
   ['INIT_CWD', 'Package-manager metadata injected by npm/pnpm; original invocation directory'],
   ['COGVIDEO_API_KEY', 'F139 MediaHub CogVideoX provider — mcp-server-local credential'],
+  [
+    'REDIS_DATA_DIR',
+    '#671 shell-injected: start-dev.sh sets before API launch; not user-facing (derived from DATA_DIR)',
+  ],
+  [
+    'REDIS_BACKUP_DIR',
+    '#671 shell-injected: start-dev.sh sets before API launch; not user-facing (derived from DATA_DIR)',
+  ],
 ]);
 
 // ── Extract registered names from env-registry.ts ──

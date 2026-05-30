@@ -189,12 +189,17 @@ export async function measurePath(path: string): Promise<number> {
  * Build a migration plan describing what would move and why.
  * Pure — does not touch the filesystem beyond stat/readdir calls.
  *
- * `logs` is intentionally excluded — Pino captures LOG_DIR at module load,
- * so moving logs without a logger restart is unsafe. Setting LOG_DIR only
- * redirects future writes; legacy logs remain at the old path.
+ * Excluded paths:
+ * - `logs`: Pino captures LOG_DIR at module load; moving logs without a
+ *   logger restart is unsafe. Setting LOG_DIR only redirects future writes.
+ * - `redisData` / `redisBackups`: Redis is started by the shell script
+ *   *before* the API server.  The shell layer handles the `--dir` flag
+ *   and pre-start data migration.  Moving Redis data while the server is
+ *   running would corrupt it.
  */
 export async function buildMigrationPlan(opts: PlanOptions): Promise<MigrationPlan> {
-  const specs = describeDataPaths(opts).filter((s) => s.key !== 'logs');
+  const SHELL_MANAGED: ReadonlySet<string> = new Set(['logs', 'redisData', 'redisBackups']);
+  const specs = describeDataPaths(opts).filter((s) => !SHELL_MANAGED.has(s.key));
   const items: MigrationPlanItem[] = [];
   let totalBytes = 0;
 
