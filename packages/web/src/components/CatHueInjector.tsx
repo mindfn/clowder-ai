@@ -56,7 +56,7 @@ export function CatHueInjector() {
     const ruleIds: string[] = [];
 
     for (const cat of cats) {
-      if (!cat.id) continue;
+      if (!cat.id || !/^[a-zA-Z0-9_-]+$/.test(cat.id)) continue;
       let h = 0;
       let c = 0;
       if (cat.color?.primary) {
