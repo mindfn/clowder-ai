@@ -343,9 +343,7 @@ export class PluginResourceActivator {
 
         // Capture stale limb nodeId before type transition so we can deregister after write
         const staleLimbNodeId =
-          existing.type === 'limb' && resource.type !== 'limb' && existing.enabled
-            ? existing.limbNodeId
-            : undefined;
+          existing.type === 'limb' && resource.type !== 'limb' && existing.enabled ? existing.limbNodeId : undefined;
 
         existing.type = resource.type as 'mcp' | 'skill' | 'limb';
         existing.enabled = enabled;
