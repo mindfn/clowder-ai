@@ -77,14 +77,28 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
             onClick={handleCopy}
             className="px-2 py-0.5 rounded bg-[var(--semantic-success)] hover:opacity-90 text-[10px]"
           >
-            {copied ? '✓' : 'Copy'}
+            {copied ? (
+              <svg
+                className="w-3.5 h-3.5 inline-block"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M3 8l4 4 6-7" />
+              </svg>
+            ) : (
+              'Copy'
+            )}
           </button>
           <button
             type="button"
             onClick={onClose}
             className="flex h-6 w-6 items-center justify-center rounded-lg bg-[var(--console-modal-close-bg)] text-[var(--console-modal-close-fg)] hover:opacity-80 transition-opacity text-xs font-extrabold leading-none"
           >
-            ✕
+            <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M4 4l8 8M12 4l-8 8" />
+            </svg>
           </button>
         </div>
       </div>

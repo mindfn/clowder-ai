@@ -87,9 +87,15 @@ export function ThemeMenu({ onEditTheme }: Props) {
                 >
                   <span>{t.name}</span>
                   {t.id === store.activeId && (
-                    <span className="text-micro font-bold ml-auto" style={{ color: accent }}>
-                      ✓
-                    </span>
+                    <svg
+                      className="w-3.5 h-3.5 ml-auto"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke={accent}
+                      strokeWidth="2"
+                    >
+                      <path d="M3 8l4 4 6-7" />
+                    </svg>
                   )}
                 </button>
                 <button
@@ -111,7 +117,9 @@ export function ThemeMenu({ onEditTheme }: Props) {
                     className="p-1 rounded opacity-50 hover:opacity-100 text-micro"
                     title={`删除 ${t.name}`}
                   >
-                    ✕
+                    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M4 4l8 8M12 4l-8 8" />
+                    </svg>
                   </button>
                 )}
               </div>
