@@ -2,8 +2,8 @@
 
 import { getConnectorDefinition } from '@cat-cafe/shared';
 import { useCallback, useState } from 'react';
-import type { ChatMessage as ChatMessageType, MessageContent } from '@/stores/chatStore';
 import { tintedLight } from '@/lib/color-utils';
+import type { ChatMessage as ChatMessageType, MessageContent } from '@/stores/chatStore';
 import { API_URL, apiFetch } from '@/utils/api-client';
 import { ConnectorImage, GitHubIcon, SchedulerIcon, SettingsIcon, UsersIcon } from './icons/ConnectorIcons';
 import { BallotIcon } from './icons/VoteIcons';
@@ -135,7 +135,7 @@ export function ConnectorBubble({ message }: ConnectorBubbleProps) {
   return (
     <div data-message-id={message.id} className="flex gap-2 mb-4 items-start">
       {/* Connector icon avatar — fixed hex like CatAvatar (ring = theme color,
-         * bg = 50% tint toward white). NOT OKLCH-derived. */}
+       * bg = 50% tint toward white). NOT OKLCH-derived. */}
       <div
         className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-base"
         style={{
