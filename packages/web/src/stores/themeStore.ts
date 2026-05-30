@@ -6,8 +6,8 @@
  * The active theme's params are applied as CSS overrides via ThemeApplier.
  */
 import { create } from 'zustand';
+import { buildCSS } from '@/components/dev/oklch-tuner-css';
 import {
-  buildCSS,
   type HcOverride,
   INIT_DARK,
   INIT_LIGHT,

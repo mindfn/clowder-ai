@@ -4,23 +4,14 @@
  * preview swatches must render dynamic oklch() literals computed from live params.
  * This file is the documented AC-E11 exception. */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { applyThemeCSS, getActiveTheme, useThemeStore } from '@/stores/themeStore';
 import { PaletteIcon } from '../ThemeMenu';
+import { exportText } from './oklch-tuner-css';
 import { useDrag } from './oklch-tuner-drag';
-import {
-  type CatTier,
-  exportText,
-  type Mode,
-  type NeutralP,
-  type SemanticP,
-  SURF_KEYS,
-  SURF_LABELS,
-  type SurfaceP,
-  TIER_LABELS,
-  type TunerState,
-} from './oklch-tuner-engine';
+import { type CatTier, type Mode, SURF_KEYS, SURF_LABELS, TIER_LABELS, type TunerState } from './oklch-tuner-engine';
 import { BubbleIcon, LayersIcon, TagIcon, TunerExtraSections } from './oklch-tuner-extra';
+import { useOklchTunerActions } from './oklch-tuner-hooks';
 import { Slider } from './oklch-tuner-slider';
 
 /* Only surface (bubble bg) and inset (thinking block) are user-tunable;
@@ -52,45 +43,7 @@ export function OklchTuner({ onClose }: { onClose: () => void }) {
     }
   }, [params]);
 
-  const updateTier = useCallback(
-    (tier: CatTier | 'insetText' | 'msgText', field: 'L' | 'Cmul' | 'C', value: number) => {
-      setParams((prev) => ({
-        ...prev,
-        [mode]: { ...prev[mode], [tier]: { ...prev[mode][tier], [field]: value } },
-      }));
-    },
-    [mode],
-  );
-
-  const updateElev = useCallback(
-    (key: keyof SurfaceP, value: number) => {
-      setParams((prev) => ({
-        ...prev,
-        [mode]: { ...prev[mode], elev: { ...prev[mode].elev, [key]: value } },
-      }));
-    },
-    [mode],
-  );
-
-  const updateSemantic = useCallback(
-    (field: keyof SemanticP, value: number) => {
-      const key = mode === 'light' ? 'semanticLight' : 'semanticDark';
-      setParams((prev) => ({ ...prev, [key]: { ...prev[key], [field]: value } }));
-    },
-    [mode],
-  );
-
-  const updateQueue = useCallback((field: 'H' | 'C' | 'L', value: number) => {
-    setParams((prev) => ({ ...prev, queue: { ...prev.queue, [field]: value } }));
-  }, []);
-
-  const updateNeutral = useCallback(
-    (field: keyof NeutralP, value: number) => {
-      const key = mode === 'light' ? 'neutralLight' : 'neutralDark';
-      setParams((prev) => ({ ...prev, [key]: { ...prev[key], [field]: value } }));
-    },
-    [mode],
-  );
+  const { updateTier, updateElev, updateSemantic, updateQueue, updateNeutral } = useOklchTunerActions(mode, setParams);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(exportText(params, mode));
