@@ -212,6 +212,9 @@ describe('SystemPromptBuilder', () => {
     assert.equal(a, b);
   });
 
+  // 改 governance content（Magic Words / shared-rules）时两个 test 都要跑：
+  //   - 本文件：char budget（runtime prompt）
+  //   - scripts/compile-system-prompt-l0.test.mjs：token budget（L0 compiled markdown）
   test('output size stays under 3900 chars after Magic Words + runtime prompt growth', async () => {
     const build = await getBuilder();
     const prompt = build({
