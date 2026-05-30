@@ -54,7 +54,7 @@ function Write-Err   { param([string]$msg) Write-Host "  [ERR] $msg" -Foreground
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSCommandPath))
 
 # Step 1: Build web app
-Write-Step "Step 1/7 - Build web application"
+Write-Step "Step 1/8 - Build web application"
 if (-not $SkipWebBuild) {
     Push-Location $ProjectRoot
     pnpm install --frozen-lockfile
@@ -71,7 +71,7 @@ if (-not $SkipWebBuild) {
 # Produces bundled/deploy/{api,web}/ with real files — no junctions, no workspace
 # references. Replaces the old "tar root node_modules" approach, which baked in
 # build-machine absolute paths via Windows junctions and broke on install.
-Write-Step "Step 2/7 - pnpm deploy runtime packages"
+Write-Step "Step 2/8 - pnpm deploy runtime packages"
 $bundledDir = Join-Path $ProjectRoot "bundled"
 $deployRoot = Join-Path $bundledDir "deploy"
 if (-not $SkipBundleDeps) {
@@ -149,7 +149,7 @@ if (-not $SkipBundleDeps) {
 }
 
 # Step 3: Bundle Redis portable + Node.js runtime
-Write-Step "Step 3/7 - Bundle Redis portable + Node.js"
+Write-Step "Step 3/8 - Bundle Redis portable + Node.js"
 
 # Node.js portable — without this, clean Windows installs with no system Node
 # cannot spawn the API/Web processes. CRITICAL: the bundled Node major version
@@ -250,7 +250,7 @@ if (Test-Path (Join-Path $bundledRedis "redis-server.exe")) {
 }
 
 # Step 4: Bundle CLI tool tarballs for offline installation
-Write-Step "Step 4/7 - Bundle CLI tool tarballs"
+Write-Step "Step 4/8 - Bundle CLI tool tarballs"
 
 $cliToolsDir = Join-Path $bundledDir "cli-tools"
 if (-not (Test-Path $cliToolsDir)) {
@@ -324,7 +324,7 @@ if (-not $cliAllPacked) {
 Write-Ok "All CLI tarballs ready under bundled/cli-tools/"
 
 # Step 5: Build Electron app
-Write-Step "Step 5/7 - Build Electron shell"
+Write-Step "Step 5/8 - Build Electron shell"
 $desktopDir = Join-Path $ProjectRoot "desktop"
 $desktopDist = Join-Path $ProjectRoot "desktop-dist"
 
@@ -377,8 +377,42 @@ if (-not $SkipElectronBuild) {
     Write-Ok "Electron build skipped (using existing desktop-dist/)"
 }
 
-# Step 6: Compile Inno Setup installer
-Write-Step "Step 6/7 - Compile installer"
+# Step 6: Archive bulky directories for fast Inno Setup extraction
+# Inno Setup per-file extraction of 30K+ node_modules files triggers per-file
+# NTFS metadata creation + Windows Defender real-time scan → 10+ min install.
+# Shipping tar.gz archives and extracting post-install with Windows' built-in
+# tar.exe reduces Inno Setup [Files] count from ~30K to ~100.
+Write-Step "Step 6/8 - Archive for fast installer extraction"
+$archiveDir = Join-Path $bundledDir "archives"
+if (Test-Path $archiveDir) { Remove-Item $archiveDir -Recurse -Force }
+New-Item -ItemType Directory -Path $archiveDir -Force | Out-Null
+
+$archiveTargets = @(
+    @{ Name = "deploy-api";        Src = Join-Path $deployRoot "api" },
+    @{ Name = "deploy-web";        Src = Join-Path $deployRoot "web" },
+    @{ Name = "deploy-mcp-server"; Src = Join-Path $deployRoot "mcp-server" },
+    @{ Name = "electron";          Src = Join-Path $desktopDist "win-unpacked" },
+    @{ Name = "node";              Src = Join-Path $bundledDir "node" }
+)
+
+foreach ($t in $archiveTargets) {
+    if (-not (Test-Path $t.Src)) {
+        Write-Warn "$($t.Src) not found — skipping $($t.Name).tar.gz"
+        continue
+    }
+    $archivePath = Join-Path $archiveDir "$($t.Name).tar.gz"
+    tar -czf $archivePath -C $t.Src .
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "tar failed for $($t.Name)"
+        exit 1
+    }
+    $sizeMB = [math]::Round((Get-Item $archivePath).Length / 1MB, 2)
+    Write-Ok "$($t.Name).tar.gz ($sizeMB MB)"
+}
+Write-Ok "Archives ready under bundled/archives/"
+
+# Step 7: Compile Inno Setup installer
+Write-Step "Step 7/8 - Compile installer"
 if (-not $SkipInstaller) {
     $issFile = Join-Path (Join-Path (Join-Path $ProjectRoot "desktop") "installer") "cat-cafe.iss"
     $distDir = Join-Path $ProjectRoot "dist"
@@ -430,8 +464,8 @@ if (-not $SkipInstaller) {
     Write-Ok "Installer compilation skipped"
 }
 
-# Step 7: Assemble portable zip (no-install distribution)
-Write-Step "Step 7/7 - Portable zip"
+# Step 8: Assemble portable zip (no-install distribution)
+Write-Step "Step 8/8 - Portable zip"
 if (-not $SkipPortableZip) {
     $distDir = Join-Path $ProjectRoot "dist"
     if (-not (Test-Path $distDir)) { New-Item -ItemType Directory -Path $distDir | Out-Null }
