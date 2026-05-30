@@ -266,8 +266,13 @@ export class PluginResourceActivator {
     const previousEntry = previous?.capabilities.find(
       (c) => normalizeCapId(c.id) === capId && c.pluginId === manifest.id,
     );
+    const previousNodeId = previousEntry?.limbNodeId;
     try {
       await this.deps.limbRegistry.register(node);
+      // Deregister stale node when re-enabling with a different nodeId
+      if (previousNodeId && previousNodeId !== node.nodeId) {
+        this.deps.limbRegistry.deregister(previousNodeId);
+      }
     } catch (err) {
       await this.rollbackCapabilityEntry(manifest, resource, previousEntry);
       throw err;
