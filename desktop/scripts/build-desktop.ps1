@@ -475,7 +475,7 @@ if (-not $SkipPortableZip) {
     $desktopPkgJson = Get-Content $desktopPkgPath -Raw | ConvertFrom-Json
     $zipVersion = if ($env:CATCAFE_VERSION) { $env:CATCAFE_VERSION } else { $desktopPkgJson.version }
 
-    $stagingName = "CatCafe-Portable-$zipVersion"
+    $stagingName = "CatCafe-$zipVersion"
     $staging = Join-Path $distDir $stagingName
     if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
     New-Item -ItemType Directory -Path $staging -Force | Out-Null
