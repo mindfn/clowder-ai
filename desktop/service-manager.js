@@ -218,7 +218,17 @@ class ServiceManager {
         continue;
       }
       try {
-        const dstStat = fs.existsSync(dst) ? fs.lstatSync(dst) : null;
+        // lstatSync does NOT follow symlinks/junctions — it inspects the
+        // link entry itself. existsSync follows the target, so a broken
+        // junction (target path removed after reinstall) returns false
+        // even though the junction entry still occupies the path, causing
+        // symlinkSync to fail with EEXIST.
+        let dstStat = null;
+        try {
+          dstStat = fs.lstatSync(dst);
+        } catch {
+          // Path doesn't exist at all — proceed to create
+        }
         if (dstStat?.isSymbolicLink()) {
           // Verify junction/symlink target matches current install root.
           // After reinstall to a different path, stale junctions cause
@@ -229,7 +239,11 @@ class ServiceManager {
             fs.unlinkSync(dst);
             log(`Removed stale ${linkType}: ${dst} (was -> ${target})`);
           } catch {
-            try { fs.unlinkSync(dst); } catch {}
+            try {
+              fs.unlinkSync(dst);
+            } catch {
+              // Ignore — symlinkSync below will report the real error
+            }
           }
         } else if (dstStat?.isDirectory()) {
           continue; // Real directory — don't replace
