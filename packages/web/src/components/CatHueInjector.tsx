@@ -77,24 +77,22 @@ export function CatHueInjector() {
       ruleIds.push(cat.id);
     }
 
-    /* Connector sources use the same pipeline as cats: one theme hex →
-     * hexToOklch → hue/chroma → lightDecl/darkDecl derives all tiers. */
+    /* Connector sources: brand hex → OKLCH hue/chroma, same L/C derivation as cats.
+     * ConnectorBubble reads var(--color-{connectorId}-surface) for bubble bg. */
     for (const def of getAllConnectorDefinitions()) {
-      if (!def.id || !CSS_SAFE_ID.test(def.id)) continue;
+      if (!def.id || !CSS_SAFE_ID.test(def.id) || !def.color?.primary) continue;
+      // Skip if a cat already claims this id (cat catalog takes precedence)
       if (ruleIds.includes(def.id)) continue;
-      const hex = def.color?.secondary ?? def.color?.primary;
       let h = 0;
       let c = 0;
-      if (hex) {
-        try {
-          const oklch = hexToOklch(hex);
-          if (Number.isFinite(oklch.h) && Number.isFinite(oklch.c)) {
-            h = oklch.h;
-            c = oklch.c;
-          }
-        } catch {
-          /* neutral fallback */
+      try {
+        const oklch = hexToOklch(def.color.primary);
+        if (Number.isFinite(oklch.h) && Number.isFinite(oklch.c)) {
+          h = oklch.h;
+          c = oklch.c;
         }
+      } catch {
+        /* neutral fallback */
       }
       root.style.setProperty(`--${def.id}-hue`, h.toFixed(1));
       root.style.setProperty(`--${def.id}-chroma`, c.toFixed(3));
