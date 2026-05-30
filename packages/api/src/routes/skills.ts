@@ -87,11 +87,9 @@ function requireSkillsOwner(
     return null;
   }
   const ownerId = process.env.DEFAULT_OWNER_USER_ID?.trim();
-  if (!ownerId) {
-    reply.status(403);
-    return null;
-  }
-  if (userId !== ownerId) {
+  // When no owner is configured, treat as local single-user mode:
+  // any authenticated session is allowed (issue #794).
+  if (ownerId && userId !== ownerId) {
     reply.status(403);
     return null;
   }

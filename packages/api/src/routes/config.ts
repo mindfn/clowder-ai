@@ -300,11 +300,9 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
         return { error: 'Sensitive env writes require session authentication' };
       }
       const ownerId = process.env.DEFAULT_OWNER_USER_ID?.trim();
-      if (!ownerId) {
-        reply.status(403);
-        return { error: 'Sensitive env write requires DEFAULT_OWNER_USER_ID to be configured' };
-      }
-      if (sessionOperator !== ownerId) {
+      // When no owner is configured, treat as local single-user mode:
+      // any authenticated session is allowed (issue #794).
+      if (ownerId && sessionOperator !== ownerId) {
         reply.status(403);
         return { error: 'Sensitive env vars can only be modified by the owner' };
       }

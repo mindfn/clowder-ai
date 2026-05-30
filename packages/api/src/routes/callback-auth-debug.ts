@@ -47,11 +47,9 @@ function checkOwnerGate(request: FastifyRequest, reply: FastifyReply): { error: 
     return { error: 'Authenticated session required (establish via GET /api/session)' };
   }
   const ownerId = process.env.DEFAULT_OWNER_USER_ID?.trim();
-  if (!ownerId) {
-    reply.status(403);
-    return { error: 'Callback auth telemetry requires DEFAULT_OWNER_USER_ID to be explicitly configured' };
-  }
-  if (operator !== ownerId) {
+  // When no owner is configured, treat as local single-user mode:
+  // any authenticated session is allowed (issue #794).
+  if (ownerId && operator !== ownerId) {
     reply.status(403);
     return { error: 'Callback auth telemetry can only be accessed by the configured owner' };
   }
