@@ -71,7 +71,7 @@ Layer 0: Governance — ESLint gate + visual baseline + "迁移完成"定义
 - 颜色/类名审计：产出"现状热力图"（审计结果：**3993 处**硬编码——1383 inline hex + 1570 TW neutral + 1040 TW color，198/328 个文件有问题）
 - ESLint `cafe/no-hardcoded-colors` 规则：禁止新增 raw hex / `bg-white` / `text-gray-*` 等非语义类（本地插件 `eslint-plugin-cafe`，`warn` 级别）。**现状**：规则 + 单测存在且通过；`next lint` 集成受 Next.js 自定义插件加载限制尚未生效，完整 CI 集成为 follow-up
 - "迁移完成"定义（per file）：
-  1. `cafe/no-hardcoded-colors` 规则零 warning（目标态；当前 ~151 处 pre-existing debt 追踪为后续清理）
+  1. `cafe/no-hardcoded-colors` 规则零 warning（**已达成**：所有 .ts/.tsx 源文件 0 warning；CSS token 定义文件中的 hex 是集中化 OKLCH token 声明，属正确模式非 debt —— Issue #797 审计结论，2026-05-28）
   2. 所有色彩走 semantic token（`bg-surface`、`text-primary`、`border-default` 等）或 cat token（`bg-opus-primary` 等）
   3. 所有 UI 组件使用 DS primitive/pattern，不自建
   4. 有 Storybook stories（light + dark 双版本）
