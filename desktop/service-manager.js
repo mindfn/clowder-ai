@@ -219,7 +219,21 @@ class ServiceManager {
       }
       try {
         const dstStat = fs.existsSync(dst) ? fs.lstatSync(dst) : null;
-        if (dstStat?.isSymbolicLink() || dstStat?.isDirectory()) continue;
+        if (dstStat?.isSymbolicLink()) {
+          // Verify junction/symlink target matches current install root.
+          // After reinstall to a different path, stale junctions cause
+          // UNKNOWN errors because the old target no longer exists.
+          try {
+            const target = fs.readlinkSync(dst);
+            if (path.resolve(target) === path.resolve(src)) continue;
+            fs.unlinkSync(dst);
+            log(`Removed stale ${linkType}: ${dst} (was -> ${target})`);
+          } catch {
+            try { fs.unlinkSync(dst); } catch {}
+          }
+        } else if (dstStat?.isDirectory()) {
+          continue; // Real directory — don't replace
+        }
         fs.symlinkSync(src, dst, linkType);
         log(`Mirror ${linkType} created: ${dst} -> ${src}`);
       } catch (err) {
