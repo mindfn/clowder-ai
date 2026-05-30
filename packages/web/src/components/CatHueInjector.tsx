@@ -77,32 +77,27 @@ export function CatHueInjector() {
       ruleIds.push(cat.id);
     }
 
-    /* Connector sources: extract OKLCH hue/chroma from color.secondary (the curated
-     * theme hex, e.g. scheduler #FDE691) so surface/bubble/ring derivation stays in
-     * the same hue family. color.secondary is also set as --{id}-theme for the avatar
-     * ring. Falls back to color.primary if secondary is absent. */
+    /* Connector sources use the same pipeline as cats: one theme hex →
+     * hexToOklch → hue/chroma → lightDecl/darkDecl derives all tiers. */
     for (const def of getAllConnectorDefinitions()) {
-      if (!def.id || !CSS_SAFE_ID.test(def.id) || !def.color?.primary) continue;
-      // Skip if a cat already claims this id (cat catalog takes precedence)
+      if (!def.id || !CSS_SAFE_ID.test(def.id)) continue;
       if (ruleIds.includes(def.id)) continue;
-      const themeHex = def.color.secondary ?? def.color.primary;
+      const hex = def.color?.secondary ?? def.color?.primary;
       let h = 0;
       let c = 0;
-      try {
-        const oklch = hexToOklch(themeHex);
-        if (Number.isFinite(oklch.h) && Number.isFinite(oklch.c)) {
-          h = oklch.h;
-          c = oklch.c;
+      if (hex) {
+        try {
+          const oklch = hexToOklch(hex);
+          if (Number.isFinite(oklch.h) && Number.isFinite(oklch.c)) {
+            h = oklch.h;
+            c = oklch.c;
+          }
+        } catch {
+          /* neutral fallback */
         }
-      } catch {
-        /* neutral fallback */
       }
       root.style.setProperty(`--${def.id}-hue`, h.toFixed(1));
       root.style.setProperty(`--${def.id}-chroma`, c.toFixed(3));
-      // Curated theme hex for avatar ring identity
-      if (def.color.secondary) {
-        root.style.setProperty(`--${def.id}-theme`, def.color.secondary);
-      }
       ruleIds.push(def.id);
     }
 

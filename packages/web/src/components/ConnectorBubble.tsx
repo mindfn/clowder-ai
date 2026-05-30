@@ -128,12 +128,12 @@ export function ConnectorBubble({ message }: ConnectorBubbleProps) {
 
   return (
     <div data-message-id={message.id} className="flex gap-2 mb-4 items-start">
-      {/* Connector icon avatar — OKLCH surface bg + theme hex ring */}
+      {/* Connector icon avatar — same OKLCH pipeline as cats: surface bg + ring */}
       <div
         className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-base"
         style={{
           backgroundColor: `var(--color-${connId}-surface, var(--cafe-surface))`,
-          boxShadow: `0 0 0 2px var(--${connId}-theme, var(--color-${connId}-ring, var(--cafe-border)))`,
+          boxShadow: `0 0 0 2px var(--color-${connId}-ring, var(--cafe-border))`,
         }}
       >
         <ConnectorIcon connector={source.connector} fallbackIcon={source.icon} />
