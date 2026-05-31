@@ -32,6 +32,7 @@ import {
 import { updateRuntimeCoCreator } from '../config/runtime-cat-catalog.js';
 import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
+import { isLoopbackAddress } from '../utils/loopback-request.js';
 import { resolveOwnerGate } from '../utils/owner-gate.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
 import { getDefaultUploadDir } from '../utils/upload-paths.js';
@@ -293,11 +294,23 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
     }
 
     // Sensitive env writes require session-auth (not forgeable header identity)
+    // + loopback guard: non-localhost requests without a configured owner are
+    // rejected to prevent LAN/Tailscale write-through in single-user mode.
     const touchesSensitive = hasSensitiveEditableVars(updates.keys());
     if (touchesSensitive) {
       if (!sessionOperator) {
         reply.status(401);
         return { error: 'Sensitive env writes require session authentication' };
+      }
+      // Network guard: when DEFAULT_OWNER_USER_ID is unset, only loopback
+      // requests are trusted. Non-loopback must have a configured owner so
+      // the owner gate below can enforce identity. Same pattern as
+      // requireConnectorWriteNetworkGuard (connector-secret-write-guards.ts).
+      if (!isLoopbackAddress(request.ip) && !process.env.DEFAULT_OWNER_USER_ID?.trim()) {
+        reply.status(403);
+        return {
+          error: 'Sensitive env writes from non-localhost require DEFAULT_OWNER_USER_ID to be configured',
+        };
       }
       const gateResult = resolveOwnerGate(sessionOperator, {
         errorMessage: 'Sensitive env vars can only be modified by the owner',
