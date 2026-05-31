@@ -44,6 +44,7 @@ let mainWindow = null;
 let splashWindow = null;
 let tray = null;
 let services = null;
+let isQuitting = false;
 
 function createSplashWindow() {
   splashWindow = new BrowserWindow({
@@ -88,7 +89,11 @@ function createMainWindow() {
   });
 
   mainWindow.on('close', (e) => {
-    if (tray) {
+    // Hide to tray on manual close — but let the window close when the
+    // app is quitting (Cmd+Q / OS quit / tray "Quit"). Without the
+    // isQuitting guard, the close handler blocks app.quit() because
+    // tray still exists → zombie Electron shell with dead services.
+    if (tray && !isQuitting) {
       e.preventDefault();
       mainWindow.hide();
     }
@@ -174,6 +179,8 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', (e) => {
+  // Signal close handlers to stop hiding windows to tray.
+  isQuitting = true;
   // Electron does NOT await async event handlers. Without blocking here,
   // the app exits before stopAll() finishes → orphaned node/redis processes.
   // Prevent default, run cleanup, then quit when done.
@@ -181,6 +188,10 @@ app.on('before-quit', (e) => {
     e.preventDefault();
     services.stopAll().finally(() => {
       services = null; // prevent re-entry
+      if (tray) {
+        tray.destroy();
+        tray = null;
+      }
       app.quit();
     });
   }
