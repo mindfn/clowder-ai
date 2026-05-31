@@ -5,20 +5,13 @@
  * callback auth issues without Prometheus / log tails. Shape matches
  * `getCallbackAuthFailureSnapshot()` from callback-auth-telemetry.
  *
- * Cloud Codex P1 sequence (PR #1377) walked through the bypass classes:
- *   - 18:50Z: public endpoint leaked per-tool failure counts + catIds
- *   - 19:11Z: resolveHeaderUserId trusted-origin fallback to 'default-user'
- *   - 19:31Z: raw X-Cat-Cafe-User header spoofable by any client
- *   - 20:30Z: same-origin browser GET can omit Origin
- *   - 20:46Z: DEFAULT_OWNER_USER_ID mismatch made endpoint unreachable
- *   - 21:00Z: `/api/session` mints sessions for anonymous callers —
- *             "has session" ≠ "authorized", so owner check IS required
+ * Security history (PR #1377): endpoint was originally public, then
+ * progressively hardened through session + owner gate. See PR #821
+ * (#794) for the unified gate migration.
  *
- * Final design: two-layer gate — session required AND session user must
- * match the configured owner. Owner defaults to 'default-user' (what
- * F156 D-1 session plugin currently mints). Operators running with
- * non-default DEFAULT_OWNER_USER_ID get 403 until session minting is
- * extended (F156 future work) — better fail-closed than silently public.
+ * Current design: session required + resolveOwnerGate(). When
+ * DEFAULT_OWNER_USER_ID is configured, only the owner can access.
+ * When unconfigured (single-user local mode), any valid session passes.
  */
 
 import { createCatId } from '@cat-cafe/shared';
