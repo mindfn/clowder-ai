@@ -51,77 +51,74 @@ LicenseFile=..\..\LICENSE
 Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "chinese_simplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
-[Components]
-Name: "core";         Description: "Cat Cafe Core (required)";      Flags: fixed
-
 [Dirs]
 ; Target directories for tar.exe archive extraction ([Run] section).
 ; Must exist before tar -C writes into them.
-Name: "{app}\packages\api"; Components: core
-Name: "{app}\packages\web"; Components: core
-Name: "{app}\packages\mcp-server"; Components: core
-Name: "{app}\desktop-dist"; Components: core
-Name: "{app}\node"; Components: core
+Name: "{app}\packages\api"
+Name: "{app}\packages\web"
+Name: "{app}\packages\mcp-server"
+Name: "{app}\desktop-dist"
+Name: "{app}\node"
 
 [Files]
 ; ── Bulk archives ─────────────────────────────────────────────────────
 ; Shipped as tar.gz and extracted post-install by Windows' built-in tar.exe.
 ; This replaces per-file Inno Setup extraction of 30K+ node_modules files,
 ; eliminating per-file NTFS + Defender overhead (10+ min → <2 min install).
-Source: "..\..\bundled\archives\deploy-api.tar.gz";        DestDir: "{app}\bundled\archives"; Components: core
-Source: "..\..\bundled\archives\deploy-web.tar.gz";        DestDir: "{app}\bundled\archives"; Components: core
-Source: "..\..\bundled\archives\deploy-mcp-server.tar.gz"; DestDir: "{app}\bundled\archives"; Components: core
-Source: "..\..\bundled\archives\electron.tar.gz";           DestDir: "{app}\bundled\archives"; Components: core
-Source: "..\..\bundled\archives\node.tar.gz";               DestDir: "{app}\bundled\archives"; Components: core
+Source: "..\..\bundled\archives\deploy-api.tar.gz";        DestDir: "{app}\bundled\archives"
+Source: "..\..\bundled\archives\deploy-web.tar.gz";        DestDir: "{app}\bundled\archives"
+Source: "..\..\bundled\archives\deploy-mcp-server.tar.gz"; DestDir: "{app}\bundled\archives"
+Source: "..\..\bundled\archives\electron.tar.gz";           DestDir: "{app}\bundled\archives"
+Source: "..\..\bundled\archives\node.tar.gz";               DestDir: "{app}\bundled\archives"
 ; ── Individual files (small — per-file overhead negligible) ───────────
 ; cat-template.json — the authoritative source for cat model defaults.
 ; cat-config-loader.js resolves it relative to its own location 4 dirs up
 ; (= install root). Without this file, getCatModel("codex") falls back to
 ; the hardcoded CAT_CONFIGS default ("codex") which fox/custom proxies
 ; don't recognize — yielding 404 on every CLI invocation.
-Source: "..\..\cat-template.json";               DestDir: "{app}"; Components: core
+Source: "..\..\cat-template.json";               DestDir: "{app}"
 ; Repository structure so findMonorepoRoot() resolves correctly at install root.
 ; Without pnpm-workspace.yaml at {app}, the monorepo marker walks above Program
 ; Files, which breaks docs/skills/package resolution paths in the API.
-Source: "..\..\pnpm-workspace.yaml";             DestDir: "{app}"; Components: core
-Source: "..\..\package.json";                    DestDir: "{app}"; Components: core
+Source: "..\..\pnpm-workspace.yaml";             DestDir: "{app}"
+Source: "..\..\package.json";                    DestDir: "{app}"
 ; Skills manifest — loaded by API routes/capabilities.ts when listing available
 ; skills. Missing → skills panel shows empty; cats lose skill context.
 Source: "..\..\cat-cafe-skills\*";               DestDir: "{app}\cat-cafe-skills"; \
-  Flags: recursesubdirs createallsubdirs; Components: core
+  Flags: recursesubdirs createallsubdirs
 ; Documentation directories used by git-doc-reader and feat-index-doc-import
 ; routes (features, threads, architecture). Missing → /api/docs/* returns 404.
 Source: "..\..\docs\*";                          DestDir: "{app}\docs"; \
-  Flags: recursesubdirs createallsubdirs; Components: core
+  Flags: recursesubdirs createallsubdirs
 ; Runtime scripts — blacklist approach: include all scripts, exclude platform-
 ; irrelevant and dev artifacts. New files are automatically included without
 ; needing to update this manifest (prevents the "missing file" class of bugs).
 ; Excludes: *.sh (bash — Linux/Mac only), *.test.* (test files), __pycache__
 Source: "..\..\scripts\*";                         DestDir: "{app}\scripts"; \
   Excludes: "*.sh,*.test.*,__pycache__"; \
-  Flags: recursesubdirs createallsubdirs; Components: core
+  Flags: recursesubdirs createallsubdirs
 ; L0 system prompt template — read by rules.ts for governance compilation.
 Source: "..\..\assets\system-prompts\*";           DestDir: "{app}\assets\system-prompts"; \
-  Flags: recursesubdirs createallsubdirs; Components: core
+  Flags: recursesubdirs createallsubdirs
 ; Guide registry + flow definitions — loaded by guide-registry-loader.ts.
 ; Missing → bootcamp/guide features crash on first request.
 Source: "..\..\guides\*";                          DestDir: "{app}\guides"; \
-  Flags: recursesubdirs createallsubdirs; Components: core
+  Flags: recursesubdirs createallsubdirs
 ; (Node.js runtime is shipped as node.tar.gz in bulk archives above)
 ; Desktop scripts (post-install config generation)
-Source: "..\scripts\post-install-offline.ps1";   DestDir: "{app}\scripts"; Components: core
-Source: "..\scripts\generate-desktop-config.ps1"; DestDir: "{app}\scripts"; Components: core
-Source: "..\scripts\sync-agent-hooks-offline.mjs"; DestDir: "{app}\scripts"; Components: core
+Source: "..\scripts\post-install-offline.ps1";   DestDir: "{app}\scripts"
+Source: "..\scripts\generate-desktop-config.ps1"; DestDir: "{app}\scripts"
+Source: "..\scripts\sync-agent-hooks-offline.mjs"; DestDir: "{app}\scripts"
 ; User-level Agent CLI hook truth source used by F180 health/sync.
 Source: "..\..\.claude\hooks\user-level\*";      DestDir: "{app}\.claude\hooks\user-level"; \
-  Flags: recursesubdirs createallsubdirs; Components: core
+  Flags: recursesubdirs createallsubdirs
 ; (Electron app is shipped as electron.tar.gz in bulk archives above)
 ; Desktop assets (icon used by uninstaller entry)
 Source: "..\assets\*";                           DestDir: "{app}\desktop\assets"; \
-  Flags: recursesubdirs createallsubdirs; Components: core
+  Flags: recursesubdirs createallsubdirs
 ; Portable Redis for Windows
 Source: "..\..\bundled\redis\*";                 DestDir: "{app}\.cat-cafe\redis\windows"; \
-  Flags: recursesubdirs createallsubdirs; Components: core
+  Flags: recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}";        Filename: "{app}\desktop-dist\{#MyAppExeName}"
@@ -133,23 +130,23 @@ Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Filename: "tar.exe"; \
   Parameters: "-xzf ""{app}\bundled\archives\deploy-api.tar.gz"" -C ""{app}\packages\api"""; \
   StatusMsg: "Extracting API runtime..."; \
-  Flags: runhidden waituntilterminated; Components: core
+  Flags: runhidden waituntilterminated
 Filename: "tar.exe"; \
   Parameters: "-xzf ""{app}\bundled\archives\deploy-web.tar.gz"" -C ""{app}\packages\web"""; \
   StatusMsg: "Extracting Web runtime..."; \
-  Flags: runhidden waituntilterminated; Components: core
+  Flags: runhidden waituntilterminated
 Filename: "tar.exe"; \
   Parameters: "-xzf ""{app}\bundled\archives\deploy-mcp-server.tar.gz"" -C ""{app}\packages\mcp-server"""; \
   StatusMsg: "Extracting MCP Server..."; \
-  Flags: runhidden waituntilterminated; Components: core
+  Flags: runhidden waituntilterminated
 Filename: "tar.exe"; \
   Parameters: "-xzf ""{app}\bundled\archives\electron.tar.gz"" -C ""{app}\desktop-dist"""; \
   StatusMsg: "Extracting Electron shell..."; \
-  Flags: runhidden waituntilterminated; Components: core
+  Flags: runhidden waituntilterminated
 Filename: "tar.exe"; \
   Parameters: "-xzf ""{app}\bundled\archives\node.tar.gz"" -C ""{app}\node"""; \
   StatusMsg: "Extracting Node.js runtime..."; \
-  Flags: runhidden waituntilterminated; Components: core
+  Flags: runhidden waituntilterminated
 ; Create scripts/node_modules junction → packages/api/node_modules.
 ; compile-system-prompt-l0.mjs uses ESM imports (@cat-cafe/shared) which
 ; require a filesystem node_modules chain (NODE_PATH is ignored by ESM).
@@ -158,34 +155,32 @@ Filename: "tar.exe"; \
 Filename: "cmd.exe"; \
   Parameters: "/c mklink /J ""{app}\scripts\node_modules"" ""{app}\packages\api\node_modules"""; \
   StatusMsg: "Linking script dependencies..."; \
-  Flags: runhidden waituntilterminated; Components: core
+  Flags: runhidden waituntilterminated
 ; Clean up archives after extraction (saves ~100 MB disk space)
 Filename: "cmd.exe"; \
   Parameters: "/c rmdir /s /q ""{app}\bundled\archives"""; \
   StatusMsg: "Cleaning up temporary files..."; \
-  Flags: runhidden waituntilterminated; Components: core
+  Flags: runhidden waituntilterminated
 ; ── Post-install configuration ────────────────────────────────────────
 ; Enable Windows long paths — pnpm creates paths > 260 chars
 Filename: "reg.exe"; \
   Parameters: "add ""HKLM\SYSTEM\CurrentControlSet\Control\FileSystem"" /v LongPathsEnabled /t REG_DWORD /d 1 /f"; \
   StatusMsg: "Enabling long path support..."; \
-  Flags: runhidden waituntilterminated; Components: core
+  Flags: runhidden waituntilterminated
 ; Post-install: .env, skills, agent hooks.
 ; CLI tool provisioning removed — bundled Node has no global npm, so
 ; `npm install -g` fails on clean machines. Users install CLIs separately.
 Filename: "powershell.exe"; \
   Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\post-install-offline.ps1"" -AppDir ""{app}"""; \
   StatusMsg: "Configuring Cat Cafe..."; \
-  Flags: runhidden waituntilterminated; \
-  Components: core
+  Flags: runhidden waituntilterminated
 ; User-level Agent CLI hook sync writes to ~/.claude and ~/.codex, so it must
 ; run as the invoking user rather than the elevated installer account.
 ; If Windows cannot recover the original credentials, Hub health check repairs it later.
 Filename: "powershell.exe"; \
   Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\post-install-offline.ps1"" -AppDir ""{app}"" -AgentHooksOnly"; \
   StatusMsg: "Configuring Agent CLI hooks..."; \
-  Flags: runhidden waituntilterminated runasoriginaluser; \
-  Components: core
+  Flags: runhidden waituntilterminated runasoriginaluser
 
 ; Generate desktop-config.json
 Filename: "powershell.exe"; \
