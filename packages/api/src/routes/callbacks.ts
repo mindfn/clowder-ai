@@ -1922,7 +1922,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
     // F211 BUG1 fix: resolve /uploads/ relative image URLs to absolute paths
     // so external runtimes (Antigravity/Bengal) can access image files.
-    const uploadDir = getDefaultUploadDir(process.env.UPLOAD_DIR);
+    const uploadDir = getDefaultUploadDir();
 
     return {
       // TD091: echo threadId so cats know which thread they're in
