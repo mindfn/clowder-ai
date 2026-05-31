@@ -16,6 +16,7 @@
 
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
+import { requireCapabilityWriteOwner } from '../dist/config/capabilities/capability-write-guards.js';
 import {
   requireConnectorWriteNetworkGuard,
   requireConnectorWriteOwner,
@@ -290,6 +291,43 @@ describe('Issue #794 — owner gate single-user fallthrough', () => {
       assert.equal(coreResult, null, 'resolveOwnerGate should allow');
       const connResult = requireConnectorWriteOwner('any-user');
       assert.equal(connResult, null, 'requireConnectorWriteOwner should allow');
+      // Capability/plugin writes with allowMissingOwner should also fall through
+      const capResult = requireCapabilityWriteOwner('any-user', { allowMissingOwner: true });
+      assert.equal(capResult, null, 'requireCapabilityWriteOwner (allowMissingOwner) should allow');
+    });
+  });
+
+  // ── requireCapabilityWriteOwner (plugin-routes pattern, #794) ───────
+  // plugin-routes.ts must pass { allowMissingOwner: true } so local single-user
+  // plugin writes fall through. Without it, the default maps to
+  // requireConfiguredOwner: true (data-filter path) and rejects.
+
+  describe('requireCapabilityWriteOwner (plugin-routes #794)', () => {
+    it('allows write with allowMissingOwner when owner is not configured (regression)', () => {
+      // This is the pattern all write routes must use (including plugin-routes)
+      const result = requireCapabilityWriteOwner('any-user', { allowMissingOwner: true });
+      assert.equal(result, null, 'should fall through in single-user mode');
+    });
+
+    it('data-filter path rejects when owner is not configured (by design)', () => {
+      // canReadSensitiveMcpConfig uses requireConfiguredOwner: true — this is correct:
+      // sensitive data should not be exposed without an owner identity.
+      const result = requireCapabilityWriteOwner('any-user', { requireConfiguredOwner: true });
+      assert.ok(result, 'data-filter should reject when no owner configured');
+      assert.equal(result.status, 403);
+    });
+
+    it('rejects non-owner when owner IS configured', () => {
+      process.env.DEFAULT_OWNER_USER_ID = 'the-owner';
+      const result = requireCapabilityWriteOwner('imposter', { allowMissingOwner: true });
+      assert.ok(result, 'should reject non-owner');
+      assert.equal(result.status, 403);
+    });
+
+    it('allows matching owner when configured', () => {
+      process.env.DEFAULT_OWNER_USER_ID = 'the-owner';
+      const result = requireCapabilityWriteOwner('the-owner', { allowMissingOwner: true });
+      assert.equal(result, null, 'should allow matching owner');
     });
   });
 

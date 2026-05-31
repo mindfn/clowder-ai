@@ -25,9 +25,9 @@ export function requireCapabilityWriteOwner(
   userId: string,
   options: CapabilityWriteOwnerOptions = {},
 ): CapabilityWriteRouteError | null {
-  // All write callers pass allowMissingOwner: true → fall through in single-user mode.
-  // Only the data-filter caller passes requireConfiguredOwner: true → fail when unconfigured.
-  // The old fail-closed default (neither option) had zero callers — dead code removed.
+  // Write callers (MCP install/delete, plugin enable/disable) pass allowMissingOwner: true
+  // → fall through in single-user mode. The data-filter caller (canReadSensitiveMcpConfig)
+  // passes requireConfiguredOwner: true → fail when unconfigured (sensitive data gate).
   const shouldFallThrough = !!options.allowMissingOwner && !options.requireConfiguredOwner;
   return resolveOwnerGate(userId, {
     requireConfiguredOwner: !shouldFallThrough,
