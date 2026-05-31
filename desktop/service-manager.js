@@ -201,31 +201,6 @@ class ServiceManager {
       }
     }
     const projectDir = path.join(baseDir, 'project');
-
-    // --- Install-root fingerprint ---
-    // Detect reinstall to a different path. When the install root changes,
-    // project/ junctions point to the old location (targets deleted during
-    // uninstall). The mirror loop below recreates them, but .cat-cafe/
-    // runtime data and Redis persistence may embed stale paths or have
-    // schema incompatibilities. Clean regenerable data proactively.
-    const fingerprintFile = path.join(baseDir, '.install-root');
-    try {
-      const stored = fs.readFileSync(fingerprintFile, 'utf-8').trim();
-      if (stored !== this.root) {
-        log(`Install root changed: ${stored} → ${this.root}`);
-        this._cleanRegenerableData(baseDir);
-      }
-    } catch {
-      // Missing fingerprint — first launch with fingerprint support.
-      // Don't cleanup (could be valid upgrade from pre-fingerprint version).
-      log('No install-root fingerprint — writing current root');
-    }
-    try {
-      fs.writeFileSync(fingerprintFile, this.root, 'utf-8');
-    } catch (err) {
-      log(`Warning: failed to write install-root fingerprint: ${err.message}`);
-    }
-
     const marker = path.join(projectDir, 'pnpm-workspace.yaml');
     if (!fs.existsSync(marker)) {
       try {
@@ -341,98 +316,6 @@ class ServiceManager {
         } catch (err) {
           log(`Warning: failed to create scripts/node_modules link: ${err.message}`);
         }
-      }
-    }
-  }
-
-  /**
-   * Clean data in the user data dir that is regenerable by the app.
-   * Called when the install root changes (reinstall to a different path).
-   * Preserves: user credentials, transcripts, uploads, evidence DB, logs.
-   */
-  _cleanRegenerableData(baseDir) {
-    const projectDir = path.join(baseDir, 'project');
-    if (!fs.existsSync(projectDir)) return;
-
-    // Helper: remove a junction or symlink safely
-    const removeLink = (p) => {
-      if (IS_WIN) {
-        try { fs.rmdirSync(p); } catch { fs.unlinkSync(p); }
-      } else {
-        fs.unlinkSync(p);
-      }
-    };
-
-    // 1. Remove known junction/symlink entries (mirror loop recreates them)
-    const junctionNames = ['.claude', 'assets', 'cat-cafe-skills', 'docs', 'guides', 'packages', 'scripts'];
-    for (const name of junctionNames) {
-      const p = path.join(projectDir, name);
-      try {
-        const stat = fs.lstatSync(p);
-        if (stat.isSymbolicLink()) {
-          removeLink(p);
-          log(`Cleanup: removed symlink ${p}`);
-        } else if (IS_WIN && stat.isDirectory()) {
-          // Probe for hidden NTFS junction (lstat reports as directory)
-          try {
-            fs.readlinkSync(p);
-            removeLink(p);
-            log(`Cleanup: removed junction ${p}`);
-          } catch {
-            // Genuine directory — leave it
-          }
-        }
-      } catch {
-        // Doesn't exist — fine
-      }
-    }
-
-    // 2. Remove cat-template.json (re-copied by _startApi mtime check)
-    try { fs.unlinkSync(path.join(projectDir, 'cat-template.json')); } catch {}
-
-    // 3. Clean .cat-cafe/ regenerable files. Preserve accounts.json and
-    //    credentials.json (user-configured API keys and cat accounts).
-    const catCafeDir = path.join(projectDir, '.cat-cafe');
-    if (fs.existsSync(catCafeDir)) {
-      const preserve = new Set(['accounts.json', 'credentials.json']);
-      try {
-        for (const entry of fs.readdirSync(catCafeDir)) {
-          if (preserve.has(entry)) continue;
-          const fp = path.join(catCafeDir, entry);
-          try {
-            const s = fs.statSync(fp);
-            if (s.isDirectory()) {
-              fs.rmSync(fp, { recursive: true, force: true });
-            } else {
-              fs.unlinkSync(fp);
-            }
-          } catch {}
-        }
-        log('Cleanup: removed regenerable .cat-cafe/ files');
-      } catch (err) {
-        log(`Warning: .cat-cafe/ cleanup failed: ${err.message}`);
-      }
-    }
-
-    // 4. Clean Redis persistence (stale paths or schema drift).
-    //    Redis creates fresh files on next start.
-    const redisDir = path.join(baseDir, 'data', 'redis');
-    if (fs.existsSync(redisDir)) {
-      try {
-        for (const entry of fs.readdirSync(redisDir)) {
-          const fp = path.join(redisDir, entry);
-          try {
-            const s = fs.statSync(fp);
-            if (s.isDirectory()) {
-              fs.rmSync(fp, { recursive: true, force: true });
-            } else {
-              fs.unlinkSync(fp);
-            }
-          } catch {}
-        }
-        log('Cleanup: cleared Redis persistence data');
-      } catch (err) {
-        log(`Warning: Redis data cleanup failed: ${err.message}`);
       }
     }
   }
