@@ -402,6 +402,15 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
       return { error: 'Identity required (X-Cat-Cafe-User header)' };
     }
 
+    // Network guard: default-cat writes persist to .env — when
+    // DEFAULT_OWNER_USER_ID is unset, restrict to direct loopback to
+    // prevent LAN/proxied clients from changing the default cat via
+    // forgeable X-Cat-Cafe-User header (#794 P2).
+    if (!isDirectLoopbackRequest(request) && !process.env.DEFAULT_OWNER_USER_ID?.trim()) {
+      reply.status(403);
+      return { error: 'Default cat changes from non-localhost require DEFAULT_OWNER_USER_ID to be configured' };
+    }
+
     const gateResult = resolveOwnerGate(operator, {
       errorMessage: 'Only the owner can change the default cat',
     });
