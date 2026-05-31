@@ -118,10 +118,6 @@
       {
         "from": "../assets/system-prompts",
         "to": "assets/system-prompts"
-      },
-      {
-        "from": "../bundled/cli-tools",
-        "to": "bundled/cli-tools"
       }
     ],
     "asar": false,

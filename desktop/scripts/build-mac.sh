@@ -17,7 +17,6 @@
 #   ./desktop/scripts/build-mac.sh --skip-deploy   # reuse bundled/deploy/
 #   ./desktop/scripts/build-mac.sh --skip-redis    # reuse bundled/redis-darwin-*
 #   ./desktop/scripts/build-mac.sh --skip-node     # reuse bundled/node-darwin-*
-#   ./desktop/scripts/build-mac.sh --skip-cli      # reuse bundled/cli-tools/
 #   ./desktop/scripts/build-mac.sh --arch arm64    # build single arch only
 #
 # Signing: ad-hoc (identity="-" in desktop/package.json). Gatekeeper shows
@@ -31,7 +30,6 @@ SKIP_WEB=0
 SKIP_DEPLOY=0
 SKIP_REDIS=0
 SKIP_NODE=0
-SKIP_CLI=0
 ARCHS=("arm64" "x64")
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -39,7 +37,6 @@ while [[ $# -gt 0 ]]; do
     --skip-deploy) SKIP_DEPLOY=1; shift ;;
     --skip-redis)  SKIP_REDIS=1; shift ;;
     --skip-node)   SKIP_NODE=1; shift ;;
-    --skip-cli)    SKIP_CLI=1; shift ;;
     --arch)        ARCHS=("$2"); shift 2 ;;
     *) echo "Unknown flag: $1" >&2; exit 2 ;;
   esac
@@ -50,7 +47,6 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$( cd "${SCRIPT_DIR}/../.." && pwd )"
 BUNDLED_DIR="${PROJECT_ROOT}/bundled"
 DEPLOY_ROOT="${BUNDLED_DIR}/deploy"
-CLI_TOOLS_DIR="${BUNDLED_DIR}/cli-tools"
 DESKTOP_DIR="${PROJECT_ROOT}/desktop"
 DIST_DIR="${PROJECT_ROOT}/dist"
 ASSETS_DIR="${DESKTOP_DIR}/assets"
@@ -197,57 +193,13 @@ for arch in "${ARCHS[@]}"; do
   build_redis "$arch"
 done
 
-# ─── Step 5: Pack CLI tarballs + AGY native install guidance ───────────
-bold "Step 5/6 — Pack CLI tool tarballs + AGY native install guidance"
-mkdir -p "$CLI_TOOLS_DIR"
-# Prefer a bundled npm we just downloaded (version-pinned to build Node).
-NPM_CMD=""
-for arch in "${ARCHS[@]}"; do
-  c="${BUNDLED_DIR}/node-darwin-${arch}/bin/npm"
-  [[ -x "$c" ]] && NPM_CMD="$c" && break
-done
-# Fallback to system npm if no bundled one (e.g. --skip-node with nothing present)
-if [[ -z "$NPM_CMD" ]]; then
-  NPM_CMD="$(command -v npm || true)"
-fi
-[[ -n "$NPM_CMD" ]] || die "no npm available for 'npm pack'"
-
-cat > "${CLI_TOOLS_DIR}/agy-install-instructions.txt" <<'EOF'
-Antigravity CLI (agy) is a native binary, not an npm package.
-Install it with the official bootstrapper:
-
-  curl -fsSL https://antigravity.google/cli/install.sh | bash
-
-Offline Cat Cafe packages intentionally do not vendor agy until Google
-publishes a redistributable native binary contract.
-EOF
-ok "agy-install-instructions.txt written"
-
-cli_names=("claude" "codex")
-cli_pkgs=("@anthropic-ai/claude-code" "@openai/codex")
-all_packed=1
-for i in "${!cli_names[@]}"; do
-  name="${cli_names[$i]}"
-  pkg="${cli_pkgs[$i]}"
-  existing="$(ls "${CLI_TOOLS_DIR}"/*"${name}"*.tgz 2>/dev/null | head -1 || true)"
-  if [[ -n "$existing" && $SKIP_CLI -eq 1 ]]; then
-    ok "$(basename "$existing") reused (--skip-cli)"
-    continue
-  fi
-  if [[ -n "$existing" ]]; then
-    ok "$(basename "$existing") already present"
-    continue
-  fi
-  echo "  Packing ${pkg} ..."
-  ( cd "$CLI_TOOLS_DIR" && "$NPM_CMD" pack "$pkg" >/dev/null 2>&1 ) || {
-    err "${name} npm pack failed"
-    all_packed=0
-    continue
-  }
-  packed="$(ls "${CLI_TOOLS_DIR}"/*"${name}"*.tgz 2>/dev/null | head -1 || true)"
-  [[ -n "$packed" ]] && ok "$(basename "$packed") packed" || all_packed=0
-done
-[[ $all_packed -eq 1 ]] || die "Some CLI tarballs failed. Ensure network + registry access."
+# ─── Step 5: (macOS skips CLI tarball bundling) ──────────────────────────
+bold "Step 5/6 — CLI tools (skipped on macOS)"
+# macOS DMG has no post-install execution phase (unlike Windows Inno Setup),
+# so bundling CLI tarballs (claude, codex) would just waste ~60 MB in the DMG
+# without ever being installed. macOS users install CLIs via Homebrew / npm /
+# official installers. Windows build-desktop.ps1 handles CLI bundling separately.
+ok "Skipped — macOS DMG does not auto-install CLI tools"
 
 # ─── Step 6a: Generate icon.icns from icon.png (one-time) ──────────────
 bold "Step 6/6 — Assets + electron-builder"
