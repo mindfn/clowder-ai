@@ -362,6 +362,42 @@ describe('PATCH /api/config/env — sensitive env owner gate', () => {
     }
   });
 
+  it('rejects proxy-forwarded loopback sensitive writes when owner is not configured (#794 proxy guard)', async () => {
+    const { configRoutes } = await import('../dist/routes/config.js');
+    const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
+    const envFilePath = resolve(tempRoot, '.env');
+    writeFileSync(envFilePath, 'F102_API_KEY=sk-old\n', 'utf8');
+    delete process.env.DEFAULT_OWNER_USER_ID;
+
+    const app = Fastify({ logger: false });
+    addSessionHook(app);
+    try {
+      await configRoutes(app, {
+        projectRoot: tempRoot,
+        envFilePath,
+        auditLog: { append: async () => {} },
+      });
+      await app.ready();
+
+      // Loopback IP but with proxy forwarding header → not a direct client
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/config/env',
+        headers: {
+          'x-test-session-user': 'any-user',
+          'x-forwarded-for': '203.0.113.50',
+        },
+        payload: { updates: [{ name: 'F102_API_KEY', value: 'sk-new' }] },
+      });
+
+      assert.equal(res.statusCode, 403, 'proxy-forwarded loopback sensitive write without owner must be rejected');
+      assert.equal(readFileSync(envFilePath, 'utf8'), 'F102_API_KEY=sk-old\n', '.env must NOT be modified');
+    } finally {
+      await app.close();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it('non-sensitive vars bypass owner gate even when DEFAULT_OWNER_USER_ID is set', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));

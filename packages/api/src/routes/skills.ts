@@ -15,7 +15,7 @@ import { detectConflicts } from '../config/governance/skill-conflict.js';
 import { resolveConflict, syncSkills, validateSkillName } from '../config/governance/skill-sync.js';
 import type { SkillsStaleness } from '../config/governance/skills-state.js';
 import { checkStaleness, readSkillsState } from '../config/governance/skills-state.js';
-import { isLoopbackAddress } from '../utils/loopback-request.js';
+import { isDirectLoopbackRequest } from '../utils/loopback-request.js';
 import { resolveOwnerGate } from '../utils/owner-gate.js';
 import { validateProjectPath } from '../utils/project-path.js';
 import { resolveUserId } from '../utils/request-identity.js';
@@ -88,9 +88,9 @@ function requireSkillsOwner(
     reply.status(401);
     return null;
   }
-  // Network guard: non-loopback requests without a configured owner are
-  // rejected to prevent LAN skill writes in single-user mode (#794).
-  if (!isLoopbackAddress(request.ip) && !process.env.DEFAULT_OWNER_USER_ID?.trim()) {
+  // Network guard: non-direct-loopback requests without a configured owner are
+  // rejected to prevent LAN/proxied skill writes in single-user mode (#794).
+  if (!isDirectLoopbackRequest(request) && !process.env.DEFAULT_OWNER_USER_ID?.trim()) {
     reply.status(403);
     return null;
   }

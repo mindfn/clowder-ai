@@ -185,6 +185,18 @@ describe('Issue #794 — owner gate single-user fallthrough', () => {
       });
       assert.equal(res.statusCode, 200, 'non-loopback with matching owner should be allowed');
     });
+
+    it('rejects proxy-forwarded loopback when owner is NOT configured (#794 proxy guard)', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/debug/callback-auth',
+        headers: {
+          'x-test-session-user': 'default-user',
+          'x-forwarded-for': '203.0.113.50',
+        },
+      });
+      assert.equal(res.statusCode, 403, 'proxy-forwarded loopback without owner must be rejected');
+    });
   });
 
   // ── requireSkillsOwner (skills.ts POST routes) ─────────────────────
@@ -266,6 +278,19 @@ describe('Issue #794 — owner gate single-user fallthrough', () => {
       // Should not be 403 — may fail for other reasons (missing files etc.)
       assert.notEqual(res.statusCode, 403, 'non-loopback with matching owner should not 403');
     });
+
+    it('rejects proxy-forwarded loopback when owner is NOT configured (#794 proxy guard)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/skills/sync',
+        headers: {
+          'x-test-session-user': 'default-user',
+          'x-forwarded-for': '203.0.113.50',
+        },
+        payload: {},
+      });
+      assert.equal(res.statusCode, 403, 'proxy-forwarded loopback skill write without owner must be rejected');
+    });
   });
 
   // ── config.ts + lifecycle — all delegate to resolveOwnerGate ────────
@@ -332,29 +357,59 @@ describe('Issue #794 — owner gate single-user fallthrough', () => {
   });
 
   describe('requireConnectorWriteNetworkGuard', () => {
-    it('allows loopback requests when owner is not configured', () => {
+    it('allows direct loopback requests when owner is not configured', () => {
       delete process.env.DEFAULT_OWNER_USER_ID;
-      const result = requireConnectorWriteNetworkGuard({ ip: '127.0.0.1' });
+      const result = requireConnectorWriteNetworkGuard({ ip: '127.0.0.1', headers: {} });
       assert.equal(result, null);
     });
 
-    it('allows loopback IPv6 requests when owner is not configured', () => {
+    it('allows direct loopback IPv6 requests when owner is not configured', () => {
       delete process.env.DEFAULT_OWNER_USER_ID;
-      const result = requireConnectorWriteNetworkGuard({ ip: '::1' });
+      const result = requireConnectorWriteNetworkGuard({ ip: '::1', headers: {} });
       assert.equal(result, null);
     });
 
     it('blocks non-loopback requests when owner is not configured', () => {
       delete process.env.DEFAULT_OWNER_USER_ID;
-      const result = requireConnectorWriteNetworkGuard({ ip: '192.168.1.100' });
+      const result = requireConnectorWriteNetworkGuard({ ip: '192.168.1.100', headers: {} });
       assert.ok(result, 'should block');
       assert.equal(result.status, 403);
     });
 
     it('allows non-loopback requests when owner IS configured', () => {
       process.env.DEFAULT_OWNER_USER_ID = 'configured-owner';
-      const result = requireConnectorWriteNetworkGuard({ ip: '192.168.1.100' });
+      const result = requireConnectorWriteNetworkGuard({ ip: '192.168.1.100', headers: {} });
       assert.equal(result, null, 'should allow — owner gate handles identity');
+    });
+
+    it('blocks loopback IP with proxy forwarding headers when owner is not configured', () => {
+      delete process.env.DEFAULT_OWNER_USER_ID;
+      // Reverse proxy connects on loopback but forwards a remote client
+      const result = requireConnectorWriteNetworkGuard({
+        ip: '127.0.0.1',
+        headers: { 'x-forwarded-for': '203.0.113.50' },
+      });
+      assert.ok(result, 'proxy-forwarded loopback should be blocked');
+      assert.equal(result.status, 403);
+    });
+
+    it('blocks loopback IP with x-real-ip header when owner is not configured', () => {
+      delete process.env.DEFAULT_OWNER_USER_ID;
+      const result = requireConnectorWriteNetworkGuard({
+        ip: '::1',
+        headers: { 'x-real-ip': '10.0.0.5' },
+      });
+      assert.ok(result, 'proxy-forwarded loopback via x-real-ip should be blocked');
+      assert.equal(result.status, 403);
+    });
+
+    it('allows proxy-forwarded loopback when owner IS configured', () => {
+      process.env.DEFAULT_OWNER_USER_ID = 'configured-owner';
+      const result = requireConnectorWriteNetworkGuard({
+        ip: '127.0.0.1',
+        headers: { 'x-forwarded-for': '203.0.113.50' },
+      });
+      assert.equal(result, null, 'proxy-forwarded with configured owner should pass — owner gate handles identity');
     });
   });
 });

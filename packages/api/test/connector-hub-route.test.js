@@ -915,6 +915,36 @@ describe('P1 — connector writes from non-loopback without configured owner', (
     await app.close();
   });
 
+  it('blocks proxy-forwarded loopback connector writes when owner is not configured (#794 proxy guard)', async () => {
+    delete process.env.DEFAULT_OWNER_USER_ID;
+
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'connector-proxy-guard-'));
+    const envFilePath = join(tmpDir, '.env');
+    writeFileSync(envFilePath, 'FEISHU_APP_ID=old\nFEISHU_APP_SECRET=old\n');
+
+    const app = Fastify();
+    await registerConnectorHub(app, {
+      threadStore: {
+        async list() {
+          return [];
+        },
+      },
+      envFilePath,
+    });
+    await app.ready();
+
+    // Loopback IP but with proxy forwarding header → reverse proxy scenario
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/connector/feishu/disconnect',
+      headers: { ...AUTH_HEADERS, 'x-forwarded-for': '203.0.113.50' },
+    });
+
+    assert.equal(res.statusCode, 403, 'proxy-forwarded loopback connector write without owner must be 403');
+
+    await app.close();
+  });
+
   it('allows connector secret writes from loopback even without configured owner', async () => {
     delete process.env.DEFAULT_OWNER_USER_ID;
 
