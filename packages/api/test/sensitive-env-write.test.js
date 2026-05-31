@@ -125,7 +125,7 @@ describe('PATCH /api/config/env — sensitive env owner gate', () => {
         payload: { updates: [{ name: 'F102_API_KEY', value: 'sk-new' }] },
       });
 
-      assert.notEqual(res.statusCode, 403, 'should not 403 in single-user mode');
+      assert.equal(res.statusCode, 200, 'should return 200 in single-user mode');
     } finally {
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });

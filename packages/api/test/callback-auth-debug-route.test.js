@@ -162,7 +162,7 @@ describe('GET /api/debug/callback-auth — auth rejections (F174-D1)', () => {
       url: '/api/debug/callback-auth',
       headers: { 'x-test-session-user': 'default-user' },
     });
-    assert.notEqual(res.statusCode, 403, 'should not 403 in single-user mode');
+    assert.equal(res.statusCode, 200, 'should return 200 in single-user mode');
   });
 
   test('accepts owner session when DEFAULT_OWNER_USER_ID explicitly set to default-user', async () => {
@@ -320,7 +320,7 @@ describe('POST /api/debug/callback-auth/mark-viewed — F174 D2b-2 rev3', () => 
       url: '/api/debug/callback-auth/mark-viewed',
       headers: { 'x-test-session-user': 'default-user' },
     });
-    assert.notEqual(res.statusCode, 403, 'should not 403 in single-user mode');
+    assert.equal(res.statusCode, 200, 'should return 200 in single-user mode');
   });
 
   // Cloud Codex P2 #1425: optional viewedUpTo body — only ack failures the

@@ -15,6 +15,7 @@ import { detectConflicts } from '../config/governance/skill-conflict.js';
 import { resolveConflict, syncSkills, validateSkillName } from '../config/governance/skill-sync.js';
 import type { SkillsStaleness } from '../config/governance/skills-state.js';
 import { checkStaleness, readSkillsState } from '../config/governance/skills-state.js';
+import { resolveOwnerGate } from '../utils/owner-gate.js';
 import { validateProjectPath } from '../utils/project-path.js';
 import { resolveUserId } from '../utils/request-identity.js';
 import {
@@ -86,11 +87,9 @@ function requireSkillsOwner(
     reply.status(401);
     return null;
   }
-  const ownerId = process.env.DEFAULT_OWNER_USER_ID?.trim();
-  // When no owner is configured, treat as local single-user mode:
-  // any authenticated session is allowed (issue #794).
-  if (ownerId && userId !== ownerId) {
-    reply.status(403);
+  const gateResult = resolveOwnerGate(userId);
+  if (gateResult) {
+    reply.status(gateResult.status);
     return null;
   }
   return userId;

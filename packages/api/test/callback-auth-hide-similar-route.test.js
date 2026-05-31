@@ -82,7 +82,7 @@ describe('POST /api/debug/callback-auth/hide-similar (F174-D2b-1)', () => {
       headers: { 'x-test-session-user': 'default-user' },
       payload: { reason: 'expired', tool: 't', catId: 'opus', threadId: 't1', userId: 'u1' },
     });
-    assert.notEqual(res.statusCode, 403, 'should not 403 in single-user mode');
+    assert.equal(res.statusCode, 200, 'should return 200 in single-user mode');
     await freshApp.close();
   });
 

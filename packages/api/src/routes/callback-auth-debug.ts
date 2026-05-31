@@ -24,6 +24,7 @@
 import { createCatId } from '@cat-cafe/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { resolveOwnerGate } from '../utils/owner-gate.js';
 import type { CallbackAuthSystemMessageNotifier } from './callback-auth-system-message.js';
 import {
   getCallbackAuthFailureSnapshot,
@@ -46,12 +47,12 @@ function checkOwnerGate(request: FastifyRequest, reply: FastifyReply): { error: 
     reply.status(401);
     return { error: 'Authenticated session required (establish via GET /api/session)' };
   }
-  const ownerId = process.env.DEFAULT_OWNER_USER_ID?.trim();
-  // When no owner is configured, treat as local single-user mode:
-  // any authenticated session is allowed (issue #794).
-  if (ownerId && operator !== ownerId) {
-    reply.status(403);
-    return { error: 'Callback auth telemetry can only be accessed by the configured owner' };
+  const gateResult = resolveOwnerGate(operator, {
+    errorMessage: 'Callback auth telemetry can only be accessed by the configured owner',
+  });
+  if (gateResult) {
+    reply.status(gateResult.status);
+    return { error: gateResult.error };
   }
   return null;
 }

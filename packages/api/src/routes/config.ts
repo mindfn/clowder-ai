@@ -33,6 +33,7 @@ import {
 import { updateRuntimeCoCreator } from '../config/runtime-cat-catalog.js';
 import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
+import { resolveOwnerGate } from '../utils/owner-gate.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
 import { getDefaultUploadDir } from '../utils/upload-paths.js';
 import { configCatOrderRoutes } from './config-cat-order.js';
@@ -299,12 +300,12 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
         reply.status(401);
         return { error: 'Sensitive env writes require session authentication' };
       }
-      const ownerId = process.env.DEFAULT_OWNER_USER_ID?.trim();
-      // When no owner is configured, treat as local single-user mode:
-      // any authenticated session is allowed (issue #794).
-      if (ownerId && sessionOperator !== ownerId) {
-        reply.status(403);
-        return { error: 'Sensitive env vars can only be modified by the owner' };
+      const gateResult = resolveOwnerGate(sessionOperator, {
+        errorMessage: 'Sensitive env vars can only be modified by the owner',
+      });
+      if (gateResult) {
+        reply.status(gateResult.status);
+        return { error: gateResult.error };
       }
     }
 

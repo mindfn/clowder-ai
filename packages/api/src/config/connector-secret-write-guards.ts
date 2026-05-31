@@ -1,5 +1,6 @@
 import type { FastifyRequest } from 'fastify';
 import { normalizeTelegramBotToken } from '../infrastructure/connectors/telegram-token.js';
+import { resolveOwnerGate } from '../utils/owner-gate.js';
 import { isConnectorSecret } from './connector-secrets-allowlist.js';
 
 export const REDACTED_PLACEHOLDER = '••••••';
@@ -20,17 +21,9 @@ export function resolveConnectorSessionUserId(request: FastifyRequest): string |
 }
 
 export function requireConnectorWriteOwner(userId: string): ConnectorWriteRouteError | null {
-  const ownerId = process.env.DEFAULT_OWNER_USER_ID?.trim();
-  // When no owner is configured, treat as local single-user mode:
-  // any authenticated session is allowed (issue #794).
-  if (!ownerId) return null;
-  if (userId !== ownerId) {
-    return {
-      status: 403,
-      error: 'Connector credential writes can only be modified by the configured owner',
-    };
-  }
-  return null;
+  return resolveOwnerGate(userId, {
+    errorMessage: 'Connector credential writes can only be modified by the configured owner',
+  });
 }
 
 export function containsRedactedPlaceholder(value: unknown): boolean {
