@@ -251,8 +251,8 @@ if (Test-Path (Join-Path $bundledRedis "redis-server.exe")) {
     }
 }
 
-# Step 4: Bundle CLI tool tarballs for offline installation
-Write-Step "Step 4/8 - Bundle CLI tool tarballs"
+# Step 4: Write CLI install guidance (CLIs are installed by users separately)
+Write-Step "Step 4/8 - Write CLI install guidance"
 
 $cliToolsDir = Join-Path $bundledDir "cli-tools"
 if (-not (Test-Path $cliToolsDir)) {
@@ -271,59 +271,10 @@ publishes a redistributable native binary contract.
 "@ | Set-Content -Path $agyInstructionsPath -Encoding ascii
 Write-Ok "agy-install-instructions.txt written"
 
-# Use bundled npm (guaranteed present after Step 3) to pack CLI tarballs.
-$npmCmd = Join-Path $bundledNode "npm.cmd"
-if (-not (Test-Path $npmCmd)) {
-    Write-Err "Bundled npm.cmd not found at $npmCmd — cannot pack CLI tools"
-    exit 1
-}
-
-$cliPackages = @(
-    @{ Name = "claude"; Pkg = "@anthropic-ai/claude-code" },
-    @{ Name = "codex";  Pkg = "@openai/codex" }
-)
-
-$cliAllPacked = $true
-foreach ($cli in $cliPackages) {
-    # Reuse existing tarball if already present (idempotent rebuilds)
-    $existing = Get-ChildItem -Path $cliToolsDir -Filter "*.tgz" -ErrorAction SilentlyContinue `
-        | Where-Object { $_.Name -like "*$($cli.Name)*" } | Select-Object -First 1
-    if ($existing) {
-        Write-Ok "$($cli.Name) tarball already present: $($existing.Name)"
-        continue
-    }
-    Write-Host "  Packing $($cli.Pkg) ..." -ForegroundColor Gray
-    try {
-        Push-Location $cliToolsDir
-        & $npmCmd pack $($cli.Pkg) 2>&1 | Out-Null
-        $packExit = $LASTEXITCODE
-        Pop-Location
-        if ($packExit -eq 0) {
-            $packed = Get-ChildItem -Path $cliToolsDir -Filter "*.tgz" -ErrorAction SilentlyContinue `
-                | Where-Object { $_.Name -like "*$($cli.Name)*" } | Select-Object -First 1
-            if ($packed) {
-                Write-Ok "$($cli.Name) tarball packed: $($packed.Name)"
-            } else {
-                Write-Err "$($cli.Name) npm pack succeeded but tarball not found"
-                $cliAllPacked = $false
-            }
-        } else {
-            Write-Err "$($cli.Name) npm pack failed (exit $packExit)"
-            $cliAllPacked = $false
-        }
-    } catch {
-        if ((Get-Location).Path -ne $ProjectRoot) { Pop-Location }
-        Write-Err "$($cli.Name) tarball failed: $_"
-        $cliAllPacked = $false
-    }
-}
-
-if (-not $cliAllPacked) {
-    Write-Err "Some CLI tarballs failed to pack. The installer requires all CLI tools."
-    Write-Err "Ensure network access is available during build."
-    exit 1
-}
-Write-Ok "All CLI tarballs ready under bundled/cli-tools/"
+# CLI tarballs (npm pack @anthropic-ai/claude-code, @openai/codex) were
+# removed — the installer/portable zip no longer provisions CLI tools.
+# Users install CLIs separately; see README "AI CLI Tools" section.
+Write-Ok "CLI tool provisioning removed — users install CLIs separately"
 
 # Step 5: Build Electron app
 Write-Step "Step 5/8 - Build Electron shell"
