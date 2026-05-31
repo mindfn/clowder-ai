@@ -71,18 +71,25 @@ test('F210 desktop packaging records Antigravity CLI native install policy inste
   const postInstallScript = await readFile(desktopPostInstallScriptPath, 'utf8');
   const installerScript = await readFile(desktopInstallerScriptPath, 'utf8');
 
-  for (const [name, content] of [
-    ['build-mac.sh', macBuildScript],
-    ['build-desktop.ps1', windowsBuildScript],
-  ]) {
-    assert.match(content, /agy-install-instructions\.txt/, `${name} should ship explicit AGY install guidance`);
-    assert.match(
-      content,
-      /https:\/\/antigravity\.google\/cli\/install/,
-      `${name} should point at official AGY bootstrapper`,
-    );
-    assert.doesNotMatch(content, /@google\/gemini-cli/, `${name} must not pack Gemini CLI as the AGY replacement`);
-  }
+  // macOS DMG intentionally skips CLI bundling (no post-install phase),
+  // so AGY guidance only applies to Windows build script.
+  assert.match(
+    windowsBuildScript,
+    /agy-install-instructions\.txt/,
+    'build-desktop.ps1 should ship explicit AGY install guidance',
+  );
+  assert.match(
+    windowsBuildScript,
+    /https:\/\/antigravity\.google\/cli\/install/,
+    'build-desktop.ps1 should point at official AGY bootstrapper',
+  );
+  assert.doesNotMatch(
+    windowsBuildScript,
+    /@google\/gemini-cli/,
+    'build-desktop.ps1 must not pack Gemini CLI as the AGY replacement',
+  );
+  // macOS build should not reference CLI packaging at all
+  assert.doesNotMatch(macBuildScript, /@google\/gemini-cli/, 'build-mac.sh must not pack Gemini CLI');
 
   assert.match(postInstallScript, /\[switch\]\$Antigravity/);
   assert.match(postInstallScript, /Name = "agy"; Label = "Antigravity CLI"/);
