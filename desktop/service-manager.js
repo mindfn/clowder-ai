@@ -300,22 +300,26 @@ class ServiceManager {
     // scripts/ has no node_modules. compile-system-prompt-l0.mjs uses ESM
     // `import { catRegistry } from '@cat-cafe/shared'` — Node ESM ignores
     // NODE_PATH and only walks the filesystem node_modules chain.
-    // Windows: Inno Setup creates this junction during install (admin
-    //   context). Runtime creation would fail with EPERM because Program
-    //   Files is read-only for non-admin users.
-    // macOS: afterPack.js creates the symlink during electron-builder
-    //   packaging. This runtime code is a safety net for dev builds or
-    //   cases where afterPack didn't run.
-    if (!IS_WIN) {
-      const scriptsNmSrc = path.join(this.root, 'packages', 'api', 'node_modules');
-      const scriptsNmDst = path.join(this.root, 'scripts', 'node_modules');
-      if (fs.existsSync(scriptsNmSrc) && !fs.existsSync(scriptsNmDst)) {
-        try {
+    // Three creation paths (first one wins):
+    //   1. macOS: afterPack.js bakes the symlink into the .app bundle
+    //   2. Windows installer: Inno Setup [Run] creates junction (admin)
+    //   3. Runtime (here): safety net for portable zip (writable dir) and
+    //      dev builds. On installed Windows (Program Files) this silently
+    //      fails with EPERM — fine, path 2 already created it.
+    const scriptsNmSrc = path.join(this.root, 'packages', 'api', 'node_modules');
+    const scriptsNmDst = path.join(this.root, 'scripts', 'node_modules');
+    if (fs.existsSync(scriptsNmSrc) && !fs.existsSync(scriptsNmDst)) {
+      try {
+        if (IS_WIN) {
+          fs.symlinkSync(scriptsNmSrc, scriptsNmDst, 'junction');
+        } else {
           fs.symlinkSync(path.relative(path.dirname(scriptsNmDst), scriptsNmSrc), scriptsNmDst);
-          log(`scripts/node_modules -> packages/api/node_modules (symlink)`);
-        } catch (err) {
-          log(`Warning: failed to create scripts/node_modules link: ${err.message}`);
         }
+        log(`scripts/node_modules -> packages/api/node_modules (${IS_WIN ? 'junction' : 'symlink'})`);
+      } catch (err) {
+        // Expected to fail on installed Windows (Program Files is read-only).
+        // Inno Setup already created the junction during install.
+        log(`Warning: scripts/node_modules link: ${err.message}`);
       }
     }
   }
