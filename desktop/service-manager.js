@@ -210,6 +210,23 @@ class ServiceManager {
     // uses plain directory symlinks.
     const linkType = IS_WIN ? 'junction' : 'dir';
     const mirrors = ['.claude', 'assets', 'cat-cafe-skills', 'docs', 'guides', 'packages', 'scripts'];
+
+    // Helper: remove a junction or symlink. On Windows, NTFS junctions are
+    // directory reparse points — fs.unlinkSync calls DeleteFileW which fails
+    // on directory entries (EPERM). fs.rmdirSync calls RemoveDirectoryW which
+    // correctly removes junctions without recursing into the target.
+    const removeLink = (linkPath) => {
+      if (IS_WIN) {
+        try {
+          fs.rmdirSync(linkPath);
+        } catch {
+          fs.unlinkSync(linkPath); // fallback for true symlinks
+        }
+      } else {
+        fs.unlinkSync(linkPath);
+      }
+    };
+
     for (const name of mirrors) {
       const src = path.join(this.root, name);
       const dst = path.join(projectDir, name);
@@ -236,17 +253,33 @@ class ServiceManager {
           try {
             const target = fs.readlinkSync(dst);
             if (path.resolve(target) === path.resolve(src)) continue;
-            fs.unlinkSync(dst);
+            removeLink(dst);
             log(`Removed stale ${linkType}: ${dst} (was -> ${target})`);
           } catch {
             try {
-              fs.unlinkSync(dst);
+              removeLink(dst);
             } catch {
               // Ignore — symlinkSync below will report the real error
             }
           }
         } else if (dstStat?.isDirectory()) {
-          continue; // Real directory — don't replace
+          // On Windows, lstatSync().isSymbolicLink() can return false for
+          // NTFS junctions (IO_REPARSE_TAG_MOUNT_POINT ≠ SYMLINK tag),
+          // making them appear as plain directories. Probe with readlinkSync
+          // to detect hidden junctions; real directories throw EINVAL.
+          if (IS_WIN) {
+            try {
+              const target = fs.readlinkSync(dst);
+              // readlinkSync succeeded → it's a junction, not a real dir.
+              if (path.resolve(target) === path.resolve(src)) continue;
+              removeLink(dst);
+              log(`Removed stale junction (was dir-flagged): ${dst} (was -> ${target})`);
+            } catch {
+              continue; // Genuine directory — don't replace
+            }
+          } else {
+            continue; // Real directory on macOS — don't replace
+          }
         }
         fs.symlinkSync(src, dst, linkType);
         log(`Mirror ${linkType} created: ${dst} -> ${src}`);
