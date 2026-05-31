@@ -467,6 +467,25 @@ class ServiceManager {
       PROMPT_DEBUG: '1',
     };
 
+    // macOS Electron apps launched from Finder/Dock inherit a minimal PATH
+    // (/usr/bin:/bin:/usr/sbin:/sbin) that excludes common CLI install dirs.
+    // Augment PATH so CLI detection (command -v claude/codex/...) works.
+    if (IS_MAC) {
+      const home = os.homedir();
+      const extraDirs = [
+        '/opt/homebrew/bin',        // Homebrew (Apple Silicon)
+        '/usr/local/bin',           // Homebrew (Intel) / npm global
+        path.join(home, '.local', 'bin'),  // pipx, cargo, etc.
+        '/opt/homebrew/sbin',
+        '/usr/local/sbin',
+      ];
+      const currentPath = env.PATH || '';
+      const missing = extraDirs.filter((d) => !currentPath.includes(d));
+      if (missing.length > 0) {
+        env.PATH = `${currentPath}:${missing.join(':')}`;
+      }
+    }
+
     if (this.memoryMode) {
       env.MEMORY_STORE = '1';
       delete env.REDIS_URL;
