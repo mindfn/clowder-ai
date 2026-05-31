@@ -18,7 +18,7 @@
 ; MyAppVersion can be overridden by iscc /DMyAppVersion=X.Y.Z (CI release pipeline).
 ; Default kept for local manual builds.
 #ifndef MyAppVersion
-  #define MyAppVersion "0.2.0"
+  #define MyAppVersion "0.10.1"
 #endif
 #define MyAppPublisher "Cat Cafe"
 #define MyAppURL       "https://github.com/zts212653/cat-cafe"
@@ -28,6 +28,9 @@
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+; Show just "Cat Cafe" in Add/Remove Programs, not "Cat Cafe 版本 X.Y.Z".
+; The version is still available in the detail pane via AppVersion.
+AppVerName={#MyAppName}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 DefaultDirName={autopf}\CatCafe
