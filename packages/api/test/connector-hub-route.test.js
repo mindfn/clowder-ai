@@ -851,6 +851,89 @@ describe('POST /api/connector/wecom-bot/validate', () => {
   });
 });
 
+describe('P1 — connector writes from non-loopback without configured owner', () => {
+  it('blocks connector secret writes from non-loopback IP when DEFAULT_OWNER_USER_ID is unset', async () => {
+    delete process.env.DEFAULT_OWNER_USER_ID;
+
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'connector-network-guard-'));
+    const envFilePath = join(tmpDir, '.env');
+    writeFileSync(envFilePath, 'FEISHU_APP_ID=old\nFEISHU_APP_SECRET=old\n');
+
+    const app = Fastify();
+    await registerConnectorHub(app, {
+      threadStore: { async list() { return []; } },
+      envFilePath,
+    });
+    await app.ready();
+
+    // Simulate a non-loopback (LAN) request
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/connector/feishu/disconnect',
+      headers: AUTH_HEADERS,
+      remoteAddress: '192.168.1.100',
+    });
+
+    assert.equal(res.statusCode, 403, 'non-loopback connector write without owner must be 403');
+    const body = JSON.parse(res.body);
+    assert.ok(body.error, 'response should contain error message');
+
+    await app.close();
+  });
+
+  it('allows connector secret writes from non-loopback when DEFAULT_OWNER_USER_ID IS configured', async () => {
+    process.env.DEFAULT_OWNER_USER_ID = OWNER_ID;
+
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'connector-network-owner-'));
+    const envFilePath = join(tmpDir, '.env');
+    writeFileSync(envFilePath, 'FEISHU_APP_ID=old\nFEISHU_APP_SECRET=old\n');
+
+    const app = Fastify();
+    await registerConnectorHub(app, {
+      threadStore: { async list() { return []; } },
+      envFilePath,
+    });
+    await app.ready();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/connector/feishu/disconnect',
+      headers: AUTH_HEADERS,
+      remoteAddress: '192.168.1.100',
+    });
+
+    assert.equal(res.statusCode, 200, 'non-loopback connector write with configured owner should pass');
+
+    await app.close();
+  });
+
+  it('allows connector secret writes from loopback even without configured owner', async () => {
+    delete process.env.DEFAULT_OWNER_USER_ID;
+
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'connector-loopback-'));
+    const envFilePath = join(tmpDir, '.env');
+    writeFileSync(envFilePath, 'FEISHU_APP_ID=old\nFEISHU_APP_SECRET=old\n');
+
+    const app = Fastify();
+    await registerConnectorHub(app, {
+      threadStore: { async list() { return []; } },
+      envFilePath,
+    });
+    await app.ready();
+
+    // Default remoteAddress in Fastify inject is 127.0.0.1 (loopback)
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/connector/feishu/disconnect',
+      headers: AUTH_HEADERS,
+    });
+
+    assert.notEqual(res.statusCode, 403, 'loopback connector write without owner should NOT be 403');
+
+    await app.close();
+  });
+});
+
 describe('POST /api/connector/wecom-bot/disconnect', () => {
   it('returns 401 without auth header', async () => {
     const { app } = await buildApp();

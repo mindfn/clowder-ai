@@ -16,7 +16,7 @@
 
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import { requireConnectorWriteOwner } from '../dist/config/connector-secret-write-guards.js';
+import { requireConnectorWriteNetworkGuard, requireConnectorWriteOwner } from '../dist/config/connector-secret-write-guards.js';
 import { resolveOwnerGate } from '../dist/utils/owner-gate.js';
 
 const SAVED_OWNER = process.env.DEFAULT_OWNER_USER_ID;
@@ -242,6 +242,33 @@ describe('Issue #794 — owner gate single-user fallthrough', () => {
       assert.equal(coreResult, null, 'resolveOwnerGate should allow');
       const connResult = requireConnectorWriteOwner('any-user');
       assert.equal(connResult, null, 'requireConnectorWriteOwner should allow');
+    });
+  });
+
+  describe('requireConnectorWriteNetworkGuard', () => {
+    it('allows loopback requests when owner is not configured', () => {
+      delete process.env.DEFAULT_OWNER_USER_ID;
+      const result = requireConnectorWriteNetworkGuard({ ip: '127.0.0.1' });
+      assert.equal(result, null);
+    });
+
+    it('allows loopback IPv6 requests when owner is not configured', () => {
+      delete process.env.DEFAULT_OWNER_USER_ID;
+      const result = requireConnectorWriteNetworkGuard({ ip: '::1' });
+      assert.equal(result, null);
+    });
+
+    it('blocks non-loopback requests when owner is not configured', () => {
+      delete process.env.DEFAULT_OWNER_USER_ID;
+      const result = requireConnectorWriteNetworkGuard({ ip: '192.168.1.100' });
+      assert.ok(result, 'should block');
+      assert.equal(result.status, 403);
+    });
+
+    it('allows non-loopback requests when owner IS configured', () => {
+      process.env.DEFAULT_OWNER_USER_ID = 'configured-owner';
+      const result = requireConnectorWriteNetworkGuard({ ip: '192.168.1.100' });
+      assert.equal(result, null, 'should allow — owner gate handles identity');
     });
   });
 });
