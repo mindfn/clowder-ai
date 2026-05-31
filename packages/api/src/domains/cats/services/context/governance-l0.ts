@@ -1,7 +1,26 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { basename, dirname, extname, join } from 'node:path';
+import { basename, dirname, extname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { findMonorepoRoot } from '../../../../utils/monorepo-root.js';
+
+/**
+ * Derive the install root from this module's file path.
+ * governance-l0.ts lives at packages/api/src/domains/cats/services/context/
+ * → dist layout: packages/api/dist/domains/cats/services/context/governance-l0.js
+ * → 7 levels up from __filename reaches the install root.
+ * Used as fallback when reading through AppData mirror junctions fails.
+ */
+function deriveInstallRoot(): string | null {
+  try {
+    const thisFile = fileURLToPath(import.meta.url);
+    // packages/api/dist/domains/cats/services/context/governance-l0.js
+    //    7       6    5      4      3      2        1          0
+    return resolve(dirname(thisFile), '..', '..', '..', '..', '..', '..', '..');
+  } catch {
+    return null;
+  }
+}
 
 export type GovernanceL0Source = 'base' | 'local' | 'override';
 
@@ -238,13 +257,41 @@ export function loadCompiledGovernanceL0Sync(root = findMonorepoRoot()): Compile
     };
   }
 
-  const base = readFileSync(sourcePath, 'utf-8');
+  let base: string;
+  let effectiveSourcePath = sourcePath;
+  try {
+    base = readFileSync(sourcePath, 'utf-8');
+  } catch (primaryErr) {
+    // On Windows desktop installs, the project dir lives in AppData and uses
+    // NTFS junctions pointing back to the install directory. On the very first
+    // launch after installation the junction can fail with UNKNOWN even though
+    // the link entry and target both exist. Fall back to reading directly from
+    // the install root (derived from this module's file path) so the API can
+    // boot instead of crashing at module load time.
+    const installRoot = deriveInstallRoot();
+    if (installRoot) {
+      const fallbackPath = join(installRoot, SHARED_RULES_RELPATH);
+      try {
+        base = readFileSync(fallbackPath, 'utf-8');
+        effectiveSourcePath = fallbackPath;
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[governance-l0] Primary path failed (${(primaryErr as Error).message}), ` +
+            `fell back to install root: ${fallbackPath}`,
+        );
+      } catch {
+        throw primaryErr; // Both paths failed — surface the original error
+      }
+    } else {
+      throw primaryErr;
+    }
+  }
   const compiled = compileGovernanceL0FromMarkdown(base);
   const local = tryReadSync(paths.local);
   if (local !== null) {
     return {
       content: `${compiled}\n\n### 本地治理覆盖（shared-rules.local.md）\n${local.trimEnd()}`,
-      sourcePath,
+      sourcePath: effectiveSourcePath,
       source: 'local',
       overlayPath: paths.local,
       generatedFrom: SHARED_RULES_RELPATH,

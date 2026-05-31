@@ -297,6 +297,36 @@ class ServiceManager {
       }
     }
 
+    // Verify critical junctions are traversable. On Windows, freshly-created
+    // NTFS junctions occasionally return UNKNOWN errors from readFileSync
+    // even though the link entry and target both exist (observed on first
+    // launch after installer on clean machines). Removing and recreating
+    // the junction resolves it — so retry once if the probe fails.
+    const criticalProbes = [{ mirror: 'cat-cafe-skills', probe: path.join('refs', 'shared-rules.md') }];
+    for (const { mirror, probe } of criticalProbes) {
+      const probePath = path.join(projectDir, mirror, probe);
+      const src = path.join(this.root, mirror);
+      const dst = path.join(projectDir, mirror);
+      try {
+        fs.readFileSync(probePath, 'utf-8');
+      } catch (probeErr) {
+        log(`Junction probe FAILED for ${probePath}: ${probeErr.message} — rebuilding`);
+        try {
+          removeLink(dst);
+        } catch {
+          /* best effort */
+        }
+        try {
+          fs.symlinkSync(src, dst, linkType);
+          // Second attempt — verify again
+          fs.readFileSync(probePath, 'utf-8');
+          log(`Junction rebuilt and verified: ${dst} -> ${src}`);
+        } catch (retryErr) {
+          log(`Junction rebuild ALSO FAILED: ${retryErr.message}`);
+        }
+      }
+    }
+
     // scripts/ has no node_modules. compile-system-prompt-l0.mjs uses ESM
     // `import { catRegistry } from '@cat-cafe/shared'` — Node ESM ignores
     // NODE_PATH and only walks the filesystem node_modules chain.
