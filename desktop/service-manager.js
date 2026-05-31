@@ -19,10 +19,25 @@ const EXE_SUFFIX = IS_WIN ? '.exe' : '';
 // so extraResources like bundled/redis-darwin-${arch} map directly to these dirs.
 const ARCH_SEG = process.arch === 'arm64' ? 'arm64' : 'x64';
 
-// Log file for diagnosing service startup issues. os.tmpdir() resolves to
-// %TEMP% on Windows and /var/folders/... on macOS, avoiding the old
-// 'C:\\Temp' fallback that broke on non-Windows.
-const LOG_FILE = path.join(os.tmpdir(), 'cat-cafe-desktop.log');
+// Resolve the per-user writable data root. Extracted to module level so
+// LOG_FILE can be set before ServiceManager is instantiated.
+function resolveUserDataDir() {
+  if (IS_MAC) {
+    const home = process.env.HOME || os.homedir();
+    return path.join(home, 'Library', 'Application Support', 'Clowder AI');
+  }
+  const localAppData = process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Local');
+  return path.join(localAppData, 'Clowder AI');
+}
+
+// Desktop log alongside API logs in the user data directory.
+// Prior location (os.tmpdir()) was hard to find for debugging.
+const USER_DATA_DIR = resolveUserDataDir();
+const LOG_DIR_DESKTOP = path.join(USER_DATA_DIR, 'data', 'logs');
+try {
+  fs.mkdirSync(LOG_DIR_DESKTOP, { recursive: true });
+} catch {}
+const LOG_FILE = path.join(LOG_DIR_DESKTOP, 'desktop.log');
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
   process.stdout.write(line);
@@ -155,13 +170,7 @@ class ServiceManager {
   }
 
   _getUserDataDir() {
-    if (IS_MAC) {
-      // macOS convention: app data lives under ~/Library/Application Support/
-      const home = process.env.HOME || os.homedir();
-      return path.join(home, 'Library', 'Application Support', 'Clowder AI');
-    }
-    const localAppData = process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Local');
-    return path.join(localAppData, 'Clowder AI');
+    return resolveUserDataDir();
   }
 
   _ensureUserDataDir(baseDir) {

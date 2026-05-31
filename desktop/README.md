@@ -225,10 +225,10 @@ pnpm desktop:installer
 
 ## 调试
 
-桌面应用的运行日志会写入系统临时目录：
+桌面应用的运行日志集中在用户数据目录：
 
-- **Windows**：`%TEMP%\cat-cafe-main.log` / `%TEMP%\cat-cafe-desktop.log`
-- **macOS**：`$TMPDIR/cat-cafe-main.log` / `$TMPDIR/cat-cafe-desktop.log`
+- **Windows**：`%LOCALAPPDATA%\Clowder AI\data\logs\` (`main.log` / `desktop.log` / `api\api.log`)
+- **macOS**：`~/Library/Application Support/Clowder AI/data/logs/` (`main.log` / `desktop.log` / `api/api.log`)
 
 ## 故障排查
 
