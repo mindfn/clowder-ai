@@ -10,7 +10,7 @@
  *
  * Security context (defense-in-depth):
  *   Layer 1 — API_SERVER_HOST defaults to 127.0.0.1 (not network-reachable)
- *   Layer 2 — Sensitive endpoints have independent isLoopbackAddress() guards
+ *   Layer 2 — Sensitive endpoints have independent isDirectLoopbackRequest() guards
  *   Layer 3 — This owner gate (adds multi-user isolation when configured)
  *
  * In single-user mode (no owner configured), Layer 1+2 provide sufficient
