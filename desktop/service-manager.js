@@ -486,6 +486,18 @@ class ServiceManager {
       }
     }
 
+    // In packaged desktop mode, scripts/ has no node_modules. Workspace
+    // packages like @cat-cafe/shared are only available in the pnpm-deployed
+    // packages/api/node_modules. Set NODE_PATH so subprocess scripts
+    // (e.g. compile-system-prompt-l0.mjs) can resolve workspace imports.
+    const apiNodeModules = path.join(this.root, 'packages', 'api', 'node_modules');
+    if (fs.existsSync(apiNodeModules)) {
+      const existing = env.NODE_PATH || '';
+      if (!existing.includes(apiNodeModules)) {
+        env.NODE_PATH = existing ? `${existing}${path.delimiter}${apiNodeModules}` : apiNodeModules;
+      }
+    }
+
     if (this.memoryMode) {
       env.MEMORY_STORE = '1';
       delete env.REDIS_URL;
