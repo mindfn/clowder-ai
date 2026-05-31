@@ -296,6 +296,32 @@ class ServiceManager {
         log(`Warning: failed to create ${linkType} ${dst}: ${err.message}`);
       }
     }
+
+    // scripts/ has no node_modules. compile-system-prompt-l0.mjs uses ESM
+    // `import { catRegistry } from '@cat-cafe/shared'` — Node ESM ignores
+    // NODE_PATH and only walks the filesystem node_modules chain. Create a
+    // link so the resolver finds packages from the API deployment.
+    // On macOS, afterPack.js creates this inside the .app bundle, but
+    // Windows Inno Setup never runs afterPack → scripts/node_modules is
+    // missing → ERR_MODULE_NOT_FOUND. Do it here for both platforms as a
+    // runtime safety net (covers fresh installs, reinstalls, and any case
+    // where afterPack didn't run or the .app bundle was not used).
+    const scriptsNmSrc = path.join(this.root, 'packages', 'api', 'node_modules');
+    const scriptsNmDst = path.join(this.root, 'scripts', 'node_modules');
+    if (fs.existsSync(scriptsNmSrc) && !fs.existsSync(scriptsNmDst)) {
+      try {
+        if (IS_WIN) {
+          // NTFS junction: absolute path, no admin needed
+          fs.symlinkSync(scriptsNmSrc, scriptsNmDst, 'junction');
+        } else {
+          // Relative symlink for macOS (matches afterPack.js convention)
+          fs.symlinkSync(path.relative(path.dirname(scriptsNmDst), scriptsNmSrc), scriptsNmDst);
+        }
+        log(`scripts/node_modules -> packages/api/node_modules (${linkType})`);
+      } catch (err) {
+        log(`Warning: failed to create scripts/node_modules link: ${err.message}`);
+      }
+    }
   }
 
   _getOrCreateTelemetrySalt(userDataDir) {
