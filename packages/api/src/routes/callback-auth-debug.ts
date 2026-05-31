@@ -17,6 +17,7 @@
 import { createCatId } from '@cat-cafe/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { isLoopbackAddress } from '../utils/loopback-request.js';
 import { resolveOwnerGate } from '../utils/owner-gate.js';
 import type { CallbackAuthSystemMessageNotifier } from './callback-auth-system-message.js';
 import {
@@ -39,6 +40,12 @@ function checkOwnerGate(request: FastifyRequest, reply: FastifyReply): { error: 
   if (!operator) {
     reply.status(401);
     return { error: 'Authenticated session required (establish via GET /api/session)' };
+  }
+  // Network guard: non-loopback requests without a configured owner are
+  // rejected to prevent LAN access to debug telemetry in single-user mode (#794).
+  if (!isLoopbackAddress(request.ip) && !process.env.DEFAULT_OWNER_USER_ID?.trim()) {
+    reply.status(403);
+    return { error: 'Debug endpoints from non-localhost require DEFAULT_OWNER_USER_ID to be configured' };
   }
   const gateResult = resolveOwnerGate(operator, {
     errorMessage: 'Callback auth telemetry can only be accessed by the configured owner',

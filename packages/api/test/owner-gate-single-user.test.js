@@ -163,6 +163,27 @@ describe('Issue #794 — owner gate single-user fallthrough', () => {
       });
       assert.equal(res.statusCode, 403);
     });
+
+    it('rejects non-loopback when owner is NOT configured (#794 loopback guard)', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/debug/callback-auth',
+        headers: { 'x-test-session-user': 'default-user' },
+        remoteAddress: '192.168.1.100',
+      });
+      assert.equal(res.statusCode, 403, 'non-loopback debug access without owner must be rejected');
+    });
+
+    it('allows non-loopback when owner IS configured and matches (#794 loopback guard)', async () => {
+      process.env.DEFAULT_OWNER_USER_ID = 'the-owner';
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/debug/callback-auth',
+        headers: { 'x-test-session-user': 'the-owner' },
+        remoteAddress: '192.168.1.100',
+      });
+      assert.equal(res.statusCode, 200, 'non-loopback with matching owner should be allowed');
+    });
   });
 
   // ── requireSkillsOwner (skills.ts POST routes) ─────────────────────
@@ -219,6 +240,30 @@ describe('Issue #794 — owner gate single-user fallthrough', () => {
         payload: {},
       });
       assert.equal(res.statusCode, 403);
+    });
+
+    it('rejects non-loopback when owner is NOT configured (#794 loopback guard)', async () => {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/skills/sync',
+        headers: { 'x-test-session-user': 'default-user' },
+        payload: {},
+        remoteAddress: '192.168.1.100',
+      });
+      assert.equal(res.statusCode, 403, 'non-loopback skill write without owner must be rejected');
+    });
+
+    it('allows non-loopback when owner IS configured and matches (#794 loopback guard)', async () => {
+      process.env.DEFAULT_OWNER_USER_ID = 'the-owner';
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/skills/sync',
+        headers: { 'x-test-session-user': 'the-owner' },
+        payload: {},
+        remoteAddress: '192.168.1.100',
+      });
+      // Should not be 403 — may fail for other reasons (missing files etc.)
+      assert.notEqual(res.statusCode, 403, 'non-loopback with matching owner should not 403');
     });
   });
 
