@@ -242,6 +242,28 @@ done
 echo "  Running: npx electron-builder ${EB_ARGS[*]}"
 npx electron-builder "${EB_ARGS[@]}" || die "electron-builder failed"
 
+# Ad-hoc sign each .app bundle AFTER electron-builder finishes.
+# electron-builder's built-in signing (identity="-") opens every file in
+# the bundle simultaneously, hitting EMFILE when afterPack injects 3 full
+# node_modules trees (~10k+ files). Setting identity=null in package.json
+# skips EB's signing; we sign here with codesign --deep, which handles its
+# own file-descriptor management and never hits EMFILE.
+# Ad-hoc signing changes "damaged" → "unidentified developer" on macOS
+# Gatekeeper — users right-click → Open on first launch.
+for arch in "${ARCHS[@]}"; do
+  case "$arch" in
+    arm64) app_dir="${DESKTOP_DIR}/dist/mac-arm64" ;;
+    x64) app_dir="${DESKTOP_DIR}/dist/mac" ;;
+    *) continue ;;
+  esac
+  app_bundle="${app_dir}/Cat Cafe.app"
+  if [[ -d "$app_bundle" ]]; then
+    echo "  Ad-hoc signing ${arch} bundle ..."
+    codesign -s - --deep --force "$app_bundle" || warn "codesign ${arch} failed (non-fatal)"
+    ok "Ad-hoc signed ${arch}"
+  fi
+done
+
 # Create DMGs from .app bundles using hdiutil (handles large bundles reliably).
 mkdir -p "$DIST_DIR"
 VERSION="$(node -p "require('./package.json').version")"
