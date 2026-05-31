@@ -35,7 +35,7 @@
       ],
       "category": "public.app-category.developer-tools",
       "icon": "assets/icon.icns",
-      "identity": null,
+      "identity": "-",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "extraResources": [

@@ -20,9 +20,9 @@
 #   ./desktop/scripts/build-mac.sh --skip-cli      # reuse bundled/cli-tools/
 #   ./desktop/scripts/build-mac.sh --arch arm64    # build single arch only
 #
-# Signing/notarization: intentionally disabled (identity=null in
-# desktop/package.json). End users must right-click → Open on first launch,
-# or run: xattr -cr "/Applications/Cat Cafe.app"
+# Signing: ad-hoc (identity="-" in desktop/package.json). Gatekeeper shows
+# "unidentified developer" instead of "damaged" — users right-click → Open
+# on first launch. No Apple Developer account needed.
 
 set -euo pipefail
 
@@ -319,6 +319,5 @@ for dmg in "${DIST_DIR}"/CatCafe-*-*.dmg; do
   echo "  $(basename "$dmg")  (${size_mb} MB)"
 done
 echo ""
-echo "  First-launch (unsigned): right-click the app → Open, or run:"
-echo "    xattr -cr \"/Applications/Cat Cafe.app\""
+echo "  First-launch (ad-hoc signed): right-click the app → Open"
 echo "  ========================================"
