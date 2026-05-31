@@ -1,6 +1,6 @@
 {
   "name": "cat-cafe-desktop",
-  "version": "0.2.0",
+  "version": "0.10.1",
   "description": "Cat Cafe Desktop - Multi-Agent Collaboration Platform",
   "main": "main.js",
   "scripts": {

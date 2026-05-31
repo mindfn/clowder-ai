@@ -3,8 +3,8 @@
 #
 # Mirrors desktop/scripts/build-desktop.ps1 for macOS. Outputs two DMGs
 # (arm64 + x64) under dist/:
-#   CatCafe-0.2.0-arm64.dmg
-#   CatCafe-0.2.0-x64.dmg
+#   CatCafe-0.10.1-arm64.dmg
+#   CatCafe-0.10.1-x64.dmg
 #
 # Prerequisites on the build machine:
 #   - macOS 13+ (Xcode Command Line Tools: xcode-select --install)
