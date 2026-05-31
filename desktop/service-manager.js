@@ -669,6 +669,12 @@ class ServiceManager {
 
     for (const [name, proc] of Object.entries(this.procs)) {
       if (!proc || proc.killed) continue;
+      // Skip children that already exited on their own — their PID may have
+      // been reused by Windows, so taskkill could hit an unrelated process.
+      if (proc.exitCode !== null || proc.signalCode !== null) {
+        log(`[desktop] ${name} already exited (code=${proc.exitCode}), skipping`);
+        continue;
+      }
       log(`[desktop] stopping ${name} (pid=${proc.pid})...`);
 
       killPromises.push(this._killProcessTree(name, proc, KILL_TIMEOUT_MS));
