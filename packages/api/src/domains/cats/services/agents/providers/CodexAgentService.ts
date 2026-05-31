@@ -576,7 +576,28 @@ export class CodexAgentService implements AgentService {
           rawEnv.USERPROFILE = isolatedHome;
         }
       }
+      const homeIsolated = authMode === 'api_key' && !!customBaseUrl;
       const codexEnv = applyAuthMode(rawEnv, authMode);
+
+      // Diagnostic logging: critical env state for debugging CLI startup failures
+      log.info(
+        {
+          catId: this.catId,
+          authMode,
+          homeIsolated,
+          isolatedHome: homeIsolated ? rawEnv.HOME : undefined,
+          customBaseUrl: customBaseUrl ? `${customBaseUrl.slice(0, 30)}...` : null,
+          sandboxMode,
+          hasOpenaiKey: !!codexEnv.OPENAI_API_KEY,
+          hasOpenaiKeyAfterAuth: codexEnv.OPENAI_API_KEY !== null && codexEnv.OPENAI_API_KEY !== undefined,
+          envKeysCallbackEnv: Object.keys(options?.callbackEnv ?? {}),
+          envKeysAccountEnv: Object.keys(options?.accountEnv ?? {}),
+          cwd: options?.workingDirectory ?? null,
+          platform: process.platform,
+        },
+        '[codex-diag] Auth + env setup',
+      );
+
       // F171: Account env vars applied LAST — user overrides provider-injected values.
       // Strip OPENAI_BASE_URL/OPENAI_API_BASE if already consumed via --config model_providers
       // to prevent the deprecated env var from conflicting with the CLI config.
@@ -602,7 +623,8 @@ export class CodexAgentService implements AgentService {
         return;
       }
 
-      log.debug(
+      // Diagnostic: log full invocation params at info level for troubleshooting
+      log.info(
         {
           catId: this.catId,
           command: codexCommand,
@@ -614,8 +636,11 @@ export class CodexAgentService implements AgentService {
           cwd: options?.workingDirectory ?? null,
           authMode,
           argCount: args.length,
+          // Log flag names + --config keys (no values) for debugging
+          cliFlags: args.filter((a) => a.startsWith('-')),
+          cliConfigKeys: args.map((a, i) => (args[i - 1] === '--config' ? a.split('=')[0] : null)).filter(Boolean),
         },
-        'Invoking Codex CLI',
+        '[codex-diag] Invoking Codex CLI',
       );
 
       const cliOpts = {
@@ -721,6 +746,22 @@ export class CodexAgentService implements AgentService {
             );
             continue;
           }
+          // Diagnostic: log full error details at info level for troubleshooting
+          log.info(
+            {
+              catId: this.catId,
+              exitCode: event.exitCode,
+              signal: event.signal,
+              message: event.message,
+              reasonCode: event.reasonCode,
+              publicSummary: event.cliDiagnostics?.publicSummary,
+              safeExcerpt: event.cliDiagnostics?.safeExcerpt,
+              debugRef: event.cliDiagnostics?.debugRef,
+              sawSubstantiveOutput,
+              recentStreamErrors,
+            },
+            '[codex-diag] CLI error exit — full diagnostics',
+          );
           const base = formatCliExitError('Codex CLI', event);
           // F212 Phase A: forward cliDiagnostics on metadata for frontend folded panel (Phase B).
           yield {

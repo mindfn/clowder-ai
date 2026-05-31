@@ -16,6 +16,43 @@ import { dirname, join, win32 } from 'node:path';
 const resolvedShimCache = new Map<string, string | null>();
 
 /**
+ * Cache for system Node.js path lookup (null = not found).
+ */
+let cachedSystemNodePath: string | undefined | null;
+
+/**
+ * Find the system Node.js executable on Windows.
+ *
+ * External CLI shim scripts (.js entry points installed via npm) must always be
+ * executed with the system Node.js — never with process.execPath. In dev mode
+ * process.execPath happens to be system node, but in packaged Electron it points
+ * to the Electron binary whose module resolver can't find global npm packages.
+ * Rather than detecting Electron as a special case, we unconditionally resolve
+ * the system node for external shims: if we don't bundle it, we don't run it
+ * with our own runtime.
+ *
+ * Returns null if not found — caller should fall back to shell mode.
+ */
+function findSystemNode(): string | null {
+  if (cachedSystemNodePath !== undefined) return cachedSystemNodePath ?? null;
+  try {
+    const whereOutput = execSync('where node.exe', { encoding: 'utf-8', timeout: 5000 }).trim();
+    for (const line of whereOutput.split(/\r?\n/)) {
+      const candidate = line.trim();
+      if (!candidate) continue;
+      if (existsSync(candidate)) {
+        cachedSystemNodePath = candidate;
+        return candidate;
+      }
+    }
+  } catch {
+    // `where` failed or timed out
+  }
+  cachedSystemNodePath = null;
+  return null;
+}
+
+/**
  * Known npm-global paths for common CLI tools on Windows.
  * Checked first for fast resolution before falling back to `where`.
  */
@@ -187,8 +224,13 @@ export function resolveWindowsShimSpawn(
       args: [...args],
     };
   }
+  // External CLI shim scripts belong to the user's system, not to us.
+  // Always use the system node to run them — never process.execPath,
+  // which may be Electron, a bundled runtime, or anything else we control.
+  const systemNode = findSystemNode();
+  if (!systemNode) return null; // Fall through to shell mode
   return {
-    command: process.execPath,
+    command: systemNode,
     args: [shimScript, ...args],
   };
 }

@@ -651,6 +651,22 @@ export async function* spawnCli(
           'CLI stderr (LOG_CLI_STDERR=1)',
         );
       }
+      // Diagnostic: always log sanitized stderr summary when reasonCode is unknown
+      // (the actual root cause is invisible otherwise). Safe: uses sanitizer, capped length.
+      if (!cliDiagnostics.reasonCode && stderrBuffer.trim()) {
+        const sanitized = stderrBuffer.replace(/sk-[A-Za-z0-9_-]+/g, 'sk-***').slice(-500);
+        log.info(
+          {
+            command: options.command,
+            exitCode,
+            signal: exitSignal,
+            stderrTail: sanitized,
+            streamErrorCount: streamErrorTexts.length,
+            invocationId: options.invocationId,
+          },
+          '[cli-diag] Unknown CLI error — stderr tail (auto-sanitized)',
+        );
+      }
       yield {
         __cliError: true,
         exitCode,
