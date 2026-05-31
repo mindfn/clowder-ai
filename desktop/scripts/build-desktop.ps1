@@ -107,7 +107,9 @@ if (-not $SkipBundleDeps) {
                     }
                     if (Test-Path $out) { Remove-Item $out -Recurse -Force }
                     Write-Host "  Deploying @cat-cafe/$pkg ..." -ForegroundColor Gray
+                    $env:CAT_CAFE_SKIP_NODE_RUNTIME_GUARD = "1"
                     pnpm --filter "@cat-cafe/$pkg" --prod --config.node-linker=hoisted deploy $out 2>&1
+                    $env:CAT_CAFE_SKIP_NODE_RUNTIME_GUARD = $null
                     if ($LASTEXITCODE -eq 0) { $deployed = $true; break }
                 }
                 if (-not $deployed) { throw "pnpm deploy @cat-cafe/$pkg failed after 3 attempts" }

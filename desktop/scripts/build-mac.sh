@@ -82,7 +82,8 @@ if [[ $SKIP_DEPLOY -eq 0 ]]; then
   cd "$PROJECT_ROOT"
   for pkg in api web mcp-server; do
     echo "  Deploying @cat-cafe/$pkg ..."
-    pnpm --filter "@cat-cafe/$pkg" --prod --config.node-linker=hoisted deploy "${DEPLOY_ROOT}/${pkg}" \
+    CAT_CAFE_SKIP_NODE_RUNTIME_GUARD=1 \
+      pnpm --filter "@cat-cafe/$pkg" --prod --config.node-linker=hoisted deploy "${DEPLOY_ROOT}/${pkg}" \
       || die "pnpm deploy @cat-cafe/$pkg failed"
   done
   # Web's .next build output is outside the package's "files" field,
