@@ -473,9 +473,9 @@ class ServiceManager {
     if (IS_MAC) {
       const home = os.homedir();
       const extraDirs = [
-        '/opt/homebrew/bin',        // Homebrew (Apple Silicon)
-        '/usr/local/bin',           // Homebrew (Intel) / npm global
-        path.join(home, '.local', 'bin'),  // pipx, cargo, etc.
+        '/opt/homebrew/bin', // Homebrew (Apple Silicon)
+        '/usr/local/bin', // Homebrew (Intel) / npm global
+        path.join(home, '.local', 'bin'), // pipx, cargo, etc.
         '/opt/homebrew/sbin',
         '/usr/local/sbin',
       ];
