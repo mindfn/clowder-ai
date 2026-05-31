@@ -268,6 +268,8 @@ for arch in "${ARCHS[@]}"; do
 done
 
 # Create DMGs from .app bundles using hdiutil (handles large bundles reliably).
+# Each DMG contains the .app plus an /Applications symlink so users can
+# drag-to-install instead of accidentally running from the mounted volume.
 mkdir -p "$DIST_DIR"
 VERSION="$(node -p "require('./package.json').version")"
 for arch in "${ARCHS[@]}"; do
@@ -281,10 +283,15 @@ for arch in "${ARCHS[@]}"; do
   if [[ ! -d "$app_dir" ]]; then
     die "Expected app bundle directory not found for ${arch}: ${app_dir}"
   fi
+  # Stage .app + /Applications symlink in a temp directory for the DMG.
+  dmg_staging="$(mktemp -d)"
+  cp -R "${app_dir}/Cat Cafe.app" "$dmg_staging/"
+  ln -s /Applications "$dmg_staging/Applications"
   echo "  Creating ${dmg_name} via hdiutil ..."
   rm -f "$dmg_out"
-  hdiutil create -volname "Cat Cafe" -srcfolder "$app_dir" -ov -format UDZO "$dmg_out" \
+  hdiutil create -volname "Cat Cafe" -srcfolder "$dmg_staging" -ov -format UDZO "$dmg_out" \
     || die "hdiutil create failed for ${arch}"
+  rm -rf "$dmg_staging"
   ok "Created ${dmg_name}"
 done
 
