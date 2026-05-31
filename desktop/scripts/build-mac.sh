@@ -19,9 +19,11 @@
 #   ./desktop/scripts/build-mac.sh --skip-node     # reuse bundled/node-darwin-*
 #   ./desktop/scripts/build-mac.sh --arch arm64    # build single arch only
 #
-# Signing: ad-hoc (identity="-" in desktop/package.json). Gatekeeper shows
-# "unidentified developer" instead of "damaged" — users right-click → Open
-# on first launch. No Apple Developer account needed.
+# Signing: electron-builder signing is disabled (identity=null in
+# desktop/package.json) to avoid EMFILE with large bundles. Ad-hoc signing
+# is applied manually after electron-builder finishes (Step 6b).
+# Gatekeeper shows "unidentified developer" instead of "damaged" — users
+# right-click → Open on first launch. No Apple Developer account needed.
 
 set -euo pipefail
 
@@ -259,8 +261,9 @@ for arch in "${ARCHS[@]}"; do
   app_bundle="${app_dir}/Cat Cafe.app"
   if [[ -d "$app_bundle" ]]; then
     echo "  Ad-hoc signing ${arch} bundle ..."
-    codesign -s - --deep --force "$app_bundle" || warn "codesign ${arch} failed (non-fatal)"
-    ok "Ad-hoc signed ${arch}"
+    codesign -s - --deep --force "$app_bundle" || die "codesign ${arch} failed"
+    codesign --verify --deep --strict "$app_bundle" || die "codesign verify ${arch} failed"
+    ok "Ad-hoc signed and verified ${arch}"
   fi
 done
 
