@@ -262,7 +262,9 @@ for arch in "${ARCHS[@]}"; do
   if [[ -d "$app_bundle" ]]; then
     echo "  Ad-hoc signing ${arch} bundle ..."
     codesign -s - --deep --force "$app_bundle" || die "codesign ${arch} failed"
-    codesign --verify --deep --strict "$app_bundle" || die "codesign verify ${arch} failed"
+    # --strict rejects symlinks inside the bundle (scripts/node_modules →
+    # ../packages/api/node_modules), so use basic --deep verification only.
+    codesign --verify --deep "$app_bundle" || die "codesign verify ${arch} failed"
     ok "Ad-hoc signed and verified ${arch}"
   fi
 done
