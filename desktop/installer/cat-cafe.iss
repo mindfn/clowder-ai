@@ -9,8 +9,8 @@
 ;      instead of 30K+ individual files — eliminates per-file NTFS + Defender
 ;      overhead that caused 10+ min installs
 ;   2. Extracts archives post-install using Windows' built-in tar.exe
-;   3. Copies small files directly (skills, docs, scripts, Redis, CLI tarballs)
-;   4. Runs post-install-offline.ps1 for .env / skills / CLI tools setup
+;   3. Copies small files directly (skills, docs, scripts, Redis)
+;   4. Runs post-install-offline.ps1 for .env / skills setup
 ;   5. Runs user-level Agent CLI hook sync under the invoking user profile
 ;   6. Creates desktop shortcut to the Electron app
 
@@ -51,16 +51,8 @@ LicenseFile=..\..\LICENSE
 Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "chinese_simplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
-[Types]
-Name: "full";    Description: "Full installation (all CLI tools)"
-Name: "minimal"; Description: "Minimal (no extra CLI tools)"; Flags: iscustom
-
 [Components]
-Name: "core";         Description: "Cat Cafe Core (required)";      Types: full minimal; Flags: fixed
-Name: "cli_claude";   Description: "Claude CLI (Anthropic)";          Types: full
-Name: "cli_codex";    Description: "Codex CLI (OpenAI)";              Types: full
-Name: "cli_antigravity"; Description: "Antigravity CLI (Google agy)";  Types: full
-Name: "cli_kimi";     Description: "Kimi CLI (Moonshot)";             Types: full
+Name: "core";         Description: "Cat Cafe Core (required)";      Flags: fixed
 
 [Dirs]
 ; Target directories for tar.exe archive extraction ([Run] section).
@@ -127,9 +119,6 @@ Source: "..\..\.claude\hooks\user-level\*";      DestDir: "{app}\.claude\hooks\u
 ; Desktop assets (icon used by uninstaller entry)
 Source: "..\assets\*";                           DestDir: "{app}\desktop\assets"; \
   Flags: recursesubdirs createallsubdirs; Components: core
-; CLI tool tarballs (offline install — produced by build-desktop.ps1)
-Source: "..\..\bundled\cli-tools\*";             DestDir: "{app}\bundled\cli-tools"; \
-  Flags: recursesubdirs createallsubdirs; Components: core
 ; Portable Redis for Windows
 Source: "..\..\bundled\redis\*";                 DestDir: "{app}\.cat-cafe\redis\windows"; \
   Flags: recursesubdirs createallsubdirs; Components: core
@@ -181,11 +170,11 @@ Filename: "reg.exe"; \
   Parameters: "add ""HKLM\SYSTEM\CurrentControlSet\Control\FileSystem"" /v LongPathsEnabled /t REG_DWORD /d 1 /f"; \
   StatusMsg: "Enabling long path support..."; \
   Flags: runhidden waituntilterminated; Components: core
-; Post-install: .env, skills, CLI tools (single source of truth for CLI provisioning).
-; Switch params are only present when the user selected that component — avoids the
-; -File mode pitfall where -Switch $false still sets .IsPresent to $true.
+; Post-install: .env, skills, agent hooks.
+; CLI tool provisioning removed — bundled Node has no global npm, so
+; `npm install -g` fails on clean machines. Users install CLIs separately.
 Filename: "powershell.exe"; \
-  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\post-install-offline.ps1"" -AppDir ""{app}""{code:CliSwitches|}"; \
+  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\post-install-offline.ps1"" -AppDir ""{app}"""; \
   StatusMsg: "Configuring Cat Cafe..."; \
   Flags: runhidden waituntilterminated; \
   Components: core
@@ -198,35 +187,15 @@ Filename: "powershell.exe"; \
   Flags: runhidden waituntilterminated runasoriginaluser; \
   Components: core
 
-; Generate desktop-config.json with selected components
+; Generate desktop-config.json
 Filename: "powershell.exe"; \
-  Parameters: "-ExecutionPolicy Bypass -Command ""& '{app}\scripts\generate-desktop-config.ps1' -AppDir '{app}' -Claude {code:BoolComponent|cli_claude} -Codex {code:BoolComponent|cli_codex} -Antigravity {code:BoolComponent|cli_antigravity} -Kimi {code:BoolComponent|cli_kimi}"""; \
+  Parameters: "-ExecutionPolicy Bypass -Command ""& '{app}\scripts\generate-desktop-config.ps1' -AppDir '{app}'"""; \
   StatusMsg: "Generating desktop configuration..."; \
   Flags: runhidden waituntilterminated
 
 ; Offer to launch after install
 Filename: "{app}\desktop-dist\{#MyAppExeName}"; \
   Description: "Launch {#MyAppName}"; Flags: postinstall nowait skipifsilent
-
-[Code]
-function BoolComponent(Param: String): String;
-begin
-  if WizardIsComponentSelected(Param) then
-    Result := '$true'
-  else
-    Result := '$false';
-end;
-
-{ Returns only the -Switch flags for CLI components the user selected.
-  Used with -File mode where switches must be absent (not "$false") to be off. }
-function CliSwitches(Param: String): String;
-begin
-  Result := '';
-  if WizardIsComponentSelected('cli_claude') then Result := Result + ' -Claude';
-  if WizardIsComponentSelected('cli_codex')  then Result := Result + ' -Codex';
-  if WizardIsComponentSelected('cli_antigravity') then Result := Result + ' -Antigravity';
-  if WizardIsComponentSelected('cli_kimi')   then Result := Result + ' -Kimi';
-end;
 
 [UninstallRun]
 Filename: "powershell.exe"; \
