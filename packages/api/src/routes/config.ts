@@ -16,7 +16,6 @@ import { configStore } from '../config/ConfigStore.js';
 import {
   clearRuntimeDefaultCatId,
   getDefaultCatId,
-  getOwnerUserId,
   hasRuntimeDefaultCatOverride,
   isCatAvailable,
   setRuntimeDefaultCatId,
@@ -391,9 +390,12 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
       return { error: 'Identity required (X-Cat-Cafe-User header)' };
     }
 
-    if (operator !== getOwnerUserId()) {
-      reply.status(403);
-      return { error: 'Only the owner can change the default cat' };
+    const gateResult = resolveOwnerGate(operator, {
+      errorMessage: 'Only the owner can change the default cat',
+    });
+    if (gateResult) {
+      reply.status(gateResult.status);
+      return { error: gateResult.error };
     }
 
     const parsed = defaultCatPutSchema.safeParse(request.body);
