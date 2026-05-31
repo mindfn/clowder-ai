@@ -201,6 +201,31 @@ class ServiceManager {
       }
     }
     const projectDir = path.join(baseDir, 'project');
+
+    // --- Install-root fingerprint ---
+    // Detect reinstall to a different path. When the install root changes,
+    // project/ junctions point to the old location (targets deleted during
+    // uninstall). The mirror loop below recreates them, but .cat-cafe/
+    // runtime data and Redis persistence may embed stale paths or have
+    // schema incompatibilities. Clean regenerable data proactively.
+    const fingerprintFile = path.join(baseDir, '.install-root');
+    try {
+      const stored = fs.readFileSync(fingerprintFile, 'utf-8').trim();
+      if (stored !== this.root) {
+        log(`Install root changed: ${stored} → ${this.root}`);
+        this._cleanRegenerableData(baseDir);
+      }
+    } catch {
+      // Missing fingerprint — first launch with fingerprint support.
+      // Don't cleanup (could be valid upgrade from pre-fingerprint version).
+      log('No install-root fingerprint — writing current root');
+    }
+    try {
+      fs.writeFileSync(fingerprintFile, this.root, 'utf-8');
+    } catch (err) {
+      log(`Warning: failed to write install-root fingerprint: ${err.message}`);
+    }
+
     const marker = path.join(projectDir, 'pnpm-workspace.yaml');
     if (!fs.existsSync(marker)) {
       try {
@@ -299,27 +324,115 @@ class ServiceManager {
 
     // scripts/ has no node_modules. compile-system-prompt-l0.mjs uses ESM
     // `import { catRegistry } from '@cat-cafe/shared'` — Node ESM ignores
-    // NODE_PATH and only walks the filesystem node_modules chain. Create a
-    // link so the resolver finds packages from the API deployment.
-    // On macOS, afterPack.js creates this inside the .app bundle, but
-    // Windows Inno Setup never runs afterPack → scripts/node_modules is
-    // missing → ERR_MODULE_NOT_FOUND. Do it here for both platforms as a
-    // runtime safety net (covers fresh installs, reinstalls, and any case
-    // where afterPack didn't run or the .app bundle was not used).
-    const scriptsNmSrc = path.join(this.root, 'packages', 'api', 'node_modules');
-    const scriptsNmDst = path.join(this.root, 'scripts', 'node_modules');
-    if (fs.existsSync(scriptsNmSrc) && !fs.existsSync(scriptsNmDst)) {
-      try {
-        if (IS_WIN) {
-          // NTFS junction: absolute path, no admin needed
-          fs.symlinkSync(scriptsNmSrc, scriptsNmDst, 'junction');
-        } else {
-          // Relative symlink for macOS (matches afterPack.js convention)
+    // NODE_PATH and only walks the filesystem node_modules chain.
+    // Windows: Inno Setup creates this junction during install (admin
+    //   context). Runtime creation would fail with EPERM because Program
+    //   Files is read-only for non-admin users.
+    // macOS: afterPack.js creates the symlink during electron-builder
+    //   packaging. This runtime code is a safety net for dev builds or
+    //   cases where afterPack didn't run.
+    if (!IS_WIN) {
+      const scriptsNmSrc = path.join(this.root, 'packages', 'api', 'node_modules');
+      const scriptsNmDst = path.join(this.root, 'scripts', 'node_modules');
+      if (fs.existsSync(scriptsNmSrc) && !fs.existsSync(scriptsNmDst)) {
+        try {
           fs.symlinkSync(path.relative(path.dirname(scriptsNmDst), scriptsNmSrc), scriptsNmDst);
+          log(`scripts/node_modules -> packages/api/node_modules (symlink)`);
+        } catch (err) {
+          log(`Warning: failed to create scripts/node_modules link: ${err.message}`);
         }
-        log(`scripts/node_modules -> packages/api/node_modules (${linkType})`);
+      }
+    }
+  }
+
+  /**
+   * Clean data in the user data dir that is regenerable by the app.
+   * Called when the install root changes (reinstall to a different path).
+   * Preserves: user credentials, transcripts, uploads, evidence DB, logs.
+   */
+  _cleanRegenerableData(baseDir) {
+    const projectDir = path.join(baseDir, 'project');
+    if (!fs.existsSync(projectDir)) return;
+
+    // Helper: remove a junction or symlink safely
+    const removeLink = (p) => {
+      if (IS_WIN) {
+        try { fs.rmdirSync(p); } catch { fs.unlinkSync(p); }
+      } else {
+        fs.unlinkSync(p);
+      }
+    };
+
+    // 1. Remove known junction/symlink entries (mirror loop recreates them)
+    const junctionNames = ['.claude', 'assets', 'cat-cafe-skills', 'docs', 'guides', 'packages', 'scripts'];
+    for (const name of junctionNames) {
+      const p = path.join(projectDir, name);
+      try {
+        const stat = fs.lstatSync(p);
+        if (stat.isSymbolicLink()) {
+          removeLink(p);
+          log(`Cleanup: removed symlink ${p}`);
+        } else if (IS_WIN && stat.isDirectory()) {
+          // Probe for hidden NTFS junction (lstat reports as directory)
+          try {
+            fs.readlinkSync(p);
+            removeLink(p);
+            log(`Cleanup: removed junction ${p}`);
+          } catch {
+            // Genuine directory — leave it
+          }
+        }
+      } catch {
+        // Doesn't exist — fine
+      }
+    }
+
+    // 2. Remove cat-template.json (re-copied by _startApi mtime check)
+    try { fs.unlinkSync(path.join(projectDir, 'cat-template.json')); } catch {}
+
+    // 3. Clean .cat-cafe/ regenerable files. Preserve accounts.json and
+    //    credentials.json (user-configured API keys and cat accounts).
+    const catCafeDir = path.join(projectDir, '.cat-cafe');
+    if (fs.existsSync(catCafeDir)) {
+      const preserve = new Set(['accounts.json', 'credentials.json']);
+      try {
+        for (const entry of fs.readdirSync(catCafeDir)) {
+          if (preserve.has(entry)) continue;
+          const fp = path.join(catCafeDir, entry);
+          try {
+            const s = fs.statSync(fp);
+            if (s.isDirectory()) {
+              fs.rmSync(fp, { recursive: true, force: true });
+            } else {
+              fs.unlinkSync(fp);
+            }
+          } catch {}
+        }
+        log('Cleanup: removed regenerable .cat-cafe/ files');
       } catch (err) {
-        log(`Warning: failed to create scripts/node_modules link: ${err.message}`);
+        log(`Warning: .cat-cafe/ cleanup failed: ${err.message}`);
+      }
+    }
+
+    // 4. Clean Redis persistence (stale paths or schema drift).
+    //    Redis creates fresh files on next start.
+    const redisDir = path.join(baseDir, 'data', 'redis');
+    if (fs.existsSync(redisDir)) {
+      try {
+        for (const entry of fs.readdirSync(redisDir)) {
+          const fp = path.join(redisDir, entry);
+          try {
+            const s = fs.statSync(fp);
+            if (s.isDirectory()) {
+              fs.rmSync(fp, { recursive: true, force: true });
+            } else {
+              fs.unlinkSync(fp);
+            }
+          } catch {}
+        }
+        log('Cleanup: cleared Redis persistence data');
+      } catch (err) {
+        log(`Warning: Redis data cleanup failed: ${err.message}`);
       }
     }
   }

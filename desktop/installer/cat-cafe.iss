@@ -161,6 +161,15 @@ Filename: "tar.exe"; \
   Parameters: "-xzf ""{app}\bundled\archives\node.tar.gz"" -C ""{app}\node"""; \
   StatusMsg: "Extracting Node.js runtime..."; \
   Flags: runhidden waituntilterminated; Components: core
+; Create scripts/node_modules junction → packages/api/node_modules.
+; compile-system-prompt-l0.mjs uses ESM imports (@cat-cafe/shared) which
+; require a filesystem node_modules chain (NODE_PATH is ignored by ESM).
+; Must be done during install (admin context) — Program Files is read-only
+; at runtime, so the desktop app cannot create junctions there.
+Filename: "cmd.exe"; \
+  Parameters: "/c mklink /J ""{app}\scripts\node_modules"" ""{app}\packages\api\node_modules"""; \
+  StatusMsg: "Linking script dependencies..."; \
+  Flags: runhidden waituntilterminated; Components: core
 ; Clean up archives after extraction (saves ~100 MB disk space)
 Filename: "cmd.exe"; \
   Parameters: "/c rmdir /s /q ""{app}\bundled\archives"""; \
@@ -231,3 +240,5 @@ Type: filesandordirs; Name: "{app}\packages"
 Type: filesandordirs; Name: "{app}\desktop-dist"
 Type: filesandordirs; Name: "{app}\node"
 Type: filesandordirs; Name: "{app}\bundled"
+; scripts/node_modules junction created by mklink /J in [Run]
+Type: filesandordirs; Name: "{app}\scripts\node_modules"
