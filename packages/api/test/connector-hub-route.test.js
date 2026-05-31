@@ -861,7 +861,11 @@ describe('P1 — connector writes from non-loopback without configured owner', (
 
     const app = Fastify();
     await registerConnectorHub(app, {
-      threadStore: { async list() { return []; } },
+      threadStore: {
+        async list() {
+          return [];
+        },
+      },
       envFilePath,
     });
     await app.ready();
@@ -890,7 +894,11 @@ describe('P1 — connector writes from non-loopback without configured owner', (
 
     const app = Fastify();
     await registerConnectorHub(app, {
-      threadStore: { async list() { return []; } },
+      threadStore: {
+        async list() {
+          return [];
+        },
+      },
       envFilePath,
     });
     await app.ready();
@@ -916,7 +924,11 @@ describe('P1 — connector writes from non-loopback without configured owner', (
 
     const app = Fastify();
     await registerConnectorHub(app, {
-      threadStore: { async list() { return []; } },
+      threadStore: {
+        async list() {
+          return [];
+        },
+      },
       envFilePath,
     });
     await app.ready();

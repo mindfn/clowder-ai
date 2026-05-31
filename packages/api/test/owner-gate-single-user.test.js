@@ -16,7 +16,10 @@
 
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import { requireConnectorWriteNetworkGuard, requireConnectorWriteOwner } from '../dist/config/connector-secret-write-guards.js';
+import {
+  requireConnectorWriteNetworkGuard,
+  requireConnectorWriteOwner,
+} from '../dist/config/connector-secret-write-guards.js';
 import { resolveOwnerGate } from '../dist/utils/owner-gate.js';
 
 const SAVED_OWNER = process.env.DEFAULT_OWNER_USER_ID;
