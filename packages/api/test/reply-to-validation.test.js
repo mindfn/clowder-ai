@@ -7,9 +7,28 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, mock, test } from 'node:test';
 import Fastify from 'fastify';
+import { catRegistry } from '@cat-cafe/shared';
+import { createCatId } from '@cat-cafe/shared';
 
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 const { InvocationRegistry } = await import('../dist/domains/cats/services/agents/invocation/InvocationRegistry.js');
+
+/** Minimal cat config for registry — only fields needed by catIdSchema validation */
+function stubCatConfig(id) {
+  return {
+    id: createCatId(id),
+    name: id,
+    displayName: id,
+    avatar: `/avatars/${id}.png`,
+    color: { primary: '#000', secondary: '#fff' },
+    mentionPatterns: [`@${id}`],
+    clientId: 'test',
+    defaultModel: 'test',
+    mcpSupport: false,
+    roleDescription: 'test',
+    personality: 'test',
+  };
+}
 
 describe('POST /api/messages — replyTo validation', () => {
   let app;
@@ -19,6 +38,12 @@ describe('POST /api/messages — replyTo validation', () => {
   beforeEach(async () => {
     const { MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js');
     const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+
+    // Register cats so catIdSchema passes for whisper tests
+    catRegistry.reset();
+    for (const id of ['opus', 'codex', 'gemini']) {
+      catRegistry.register(id, stubCatConfig(id));
+    }
 
     messageStore = new MessageStore();
     const threadStore = new ThreadStore();
@@ -82,6 +107,7 @@ describe('POST /api/messages — replyTo validation', () => {
 
   afterEach(async () => {
     if (app) await app.close();
+    catRegistry.reset();
   });
 
   async function createThread(title = 'Test thread') {
@@ -255,5 +281,107 @@ describe('POST /api/messages — replyTo validation', () => {
     const sent = messages.find((m) => m.content === 'valid reply');
     assert.ok(sent, 'message should be stored');
     assert.equal(sent.replyTo, target.id, 'valid replyTo should be preserved');
+  });
+
+  // ── Whisper visibility leak prevention ──
+
+  test('silently drops replyTo when public message quotes a whisper', async () => {
+    const thread = await createThread();
+
+    const whisperMsg = messageStore.append({
+      userId: 'default-user',
+      catId: 'opus',
+      content: 'secret whisper content',
+      mentions: [],
+      timestamp: 1000,
+      threadId: thread.id,
+      visibility: 'whisper',
+      whisperTo: ['codex'],
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/messages',
+      payload: {
+        content: 'public reply to whisper',
+        threadId: thread.id,
+        replyTo: whisperMsg.id,
+      },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const messages = messageStore.getByThread(thread.id);
+    const sent = messages.find((m) => m.content === 'public reply to whisper');
+    assert.ok(sent, 'message should be stored');
+    assert.equal(sent.replyTo, undefined, 'public reply to whisper should drop replyTo');
+  });
+
+  test('silently drops replyTo when whisper has wider audience than parent whisper', async () => {
+    const thread = await createThread();
+
+    // Parent whispered only to codex
+    const whisperMsg = messageStore.append({
+      userId: 'default-user',
+      catId: 'opus',
+      content: 'private to codex only',
+      mentions: [],
+      timestamp: 1000,
+      threadId: thread.id,
+      visibility: 'whisper',
+      whisperTo: ['codex'],
+    });
+
+    // Reply whispered to codex AND gemini — gemini can't see parent
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/messages',
+      payload: {
+        content: 'wider whisper reply',
+        threadId: thread.id,
+        replyTo: whisperMsg.id,
+        visibility: 'whisper',
+        whisperTo: ['codex', 'gemini'],
+      },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const messages = messageStore.getByThread(thread.id);
+    const sent = messages.find((m) => m.content === 'wider whisper reply');
+    assert.ok(sent, 'message should be stored');
+    assert.equal(sent.replyTo, undefined, 'wider-audience whisper reply should drop replyTo');
+  });
+
+  test('preserves replyTo when whisper replies to whisper with same recipients', async () => {
+    const thread = await createThread();
+
+    const whisperMsg = messageStore.append({
+      userId: 'default-user',
+      catId: 'opus',
+      content: 'whisper to codex',
+      mentions: [],
+      timestamp: 1000,
+      threadId: thread.id,
+      visibility: 'whisper',
+      whisperTo: ['codex'],
+    });
+
+    // Same-audience whisper reply — safe, codex already saw the parent
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/messages',
+      payload: {
+        content: 'same-audience whisper reply',
+        threadId: thread.id,
+        replyTo: whisperMsg.id,
+        visibility: 'whisper',
+        whisperTo: ['codex'],
+      },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const messages = messageStore.getByThread(thread.id);
+    const sent = messages.find((m) => m.content === 'same-audience whisper reply');
+    assert.ok(sent, 'message should be stored');
+    assert.equal(sent.replyTo, whisperMsg.id, 'same-audience whisper replyTo should be preserved');
   });
 });
