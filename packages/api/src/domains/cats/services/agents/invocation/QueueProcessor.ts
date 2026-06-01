@@ -939,7 +939,8 @@ export class QueueProcessor {
       // history. Consuming them prevents double-trigger (same cat invoked twice
       // for a single @mention when both user message and A2A entry target it).
       const activeCatSet = new Set(targetCats);
-      const consumedA2A = queue.consumeSubsumedA2AEntries(threadId, activeCatSet);
+      const deliveredIdSet = new Set(deliveredIds);
+      const consumedA2A = queue.consumeSubsumedA2AEntries(threadId, activeCatSet, deliveredIdSet);
       if (consumedA2A.length > 0) {
         for (const c of consumedA2A) {
           this.entryCompleteHooks.delete(c.id);
@@ -959,31 +960,33 @@ export class QueueProcessor {
         });
       }
 
-      // 6c. #813: Consume pending continuation for target cats (passive seal).
+      // 6c. #813: Consume pending continuation for single-target invocations.
       // If a previous session sealed and wrote a continuation capsule to thread
       // metadata, inject the continuation prompt into the current execution content
       // so the cat has context about its prior session.
-      if (this.deps.threadStore) {
-        for (const catId of targetCats) {
-          try {
-            const pending = await this.deps.threadStore.consumePendingContinuation(threadId, catId);
-            if (pending) {
-              const capsule = pending.capsule as unknown as CollaborationContinuityCapsuleV1;
-              if (isCollaborationContinuityCapsuleV1(capsule)) {
-                const continuationPrompt = formatContinuationPrompt(capsule);
-                content = continuationPrompt + '\n\n---\n\n' + content;
-                log.info(
-                  { threadId, catId, capsuleCreatedAt: pending.createdAt },
-                  '[QueueProcessor] #813: injected pending continuation context into execution',
-                );
-              }
+      // Multi-target: skip — content is shared across all targets, so injecting
+      // one cat's continuation context would leak it to other cats. The pending
+      // capsule stays in thread metadata until this cat is triggered alone.
+      if (this.deps.threadStore && targetCats.length === 1) {
+        const singleCatId = targetCats[0]!;
+        try {
+          const pending = await this.deps.threadStore.consumePendingContinuation(threadId, singleCatId);
+          if (pending) {
+            const capsule = pending.capsule as unknown as CollaborationContinuityCapsuleV1;
+            if (isCollaborationContinuityCapsuleV1(capsule)) {
+              const continuationPrompt = formatContinuationPrompt(capsule);
+              content = continuationPrompt + '\n\n---\n\n' + content;
+              log.info(
+                { threadId, catId: singleCatId, capsuleCreatedAt: pending.createdAt },
+                '[QueueProcessor] #813: injected pending continuation context into execution',
+              );
             }
-          } catch (err) {
-            log.warn(
-              { threadId, catId, err },
-              '[QueueProcessor] #813: consumePendingContinuation failed, proceeding without continuation context',
-            );
           }
+        } catch (err) {
+          log.warn(
+            { threadId, catId: singleCatId, err },
+            '[QueueProcessor] #813: consumePendingContinuation failed, proceeding without continuation context',
+          );
         }
       }
 

@@ -858,12 +858,19 @@ export class InvocationQueue {
 
   /**
    * #815: Consume queued A2A trigger entries subsumed by active processing.
-   * When a cat is already being triggered by the current batch, queued A2A entries
-   * targeting the same cat are redundant — the source messages are already persisted
-   * in thread history and will be visible during context assembly.
+   * Conditions (both must hold):
+   *   1. All target cats are already in the active processing batch.
+   *   2. The entry's messageId is already in the delivered/unread set — the
+   *      source message is visible to the target cat's context assembly.
+   * Without condition 2, explicit post_message entries (stored with
+   * deliveryStatus:'queued') would lose their message before delivery.
    * Returns consumed entries (caller handles cleanup + notifications).
    */
-  consumeSubsumedA2AEntries(threadId: string, activeCatSet: Set<string>): QueueEntry[] {
+  consumeSubsumedA2AEntries(
+    threadId: string,
+    activeCatSet: Set<string>,
+    deliveredMessageIds: Set<string>,
+  ): QueueEntry[] {
     const consumed: QueueEntry[] = [];
     for (const q of this.queues.values()) {
       if (!this.queueMatchesThread(q, threadId)) continue;
@@ -872,11 +879,11 @@ export class InvocationQueue {
         const e = q[i]!;
         if (e.status !== 'queued') continue;
         if (e.sourceCategory !== 'a2a') continue;
-        // A2A entries are single-target (deferA2AEnqueue); check all targets are active
-        if (e.targetCats.every((cat) => activeCatSet.has(cat))) {
-          this.originalContents.delete(e.id);
-          consumed.push(q.splice(i, 1)[0]!);
-        }
+        // Both conditions: target cats active AND message already delivered
+        if (!e.targetCats.every((cat) => activeCatSet.has(cat))) continue;
+        if (e.messageId && !deliveredMessageIds.has(e.messageId)) continue;
+        this.originalContents.delete(e.id);
+        consumed.push(q.splice(i, 1)[0]!);
       }
     }
     if (consumed.length > 0) {
