@@ -40,7 +40,7 @@ import {
 } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { type ITaskStore, isSubjectOwnershipConflictError } from '../domains/cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore, VotingStateV1 } from '../domains/cats/services/stores/ports/ThreadStore.js';
-import { canViewMessage, isSystemUserMessage } from '../domains/cats/services/stores/visibility.js';
+import { canViewMessage, isSystemUserMessage, type Viewer } from '../domains/cats/services/stores/visibility.js';
 import { getVoiceBlockSynthesizer } from '../domains/cats/services/tts/VoiceBlockSynthesizer.js';
 import type { IEvidenceStore, IMarkerQueue, IReflectionService } from '../domains/memory/interfaces.js';
 import { buildThreadDeepLink } from '../infrastructure/connectors/connector-command-helpers.js';
@@ -1842,6 +1842,21 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const { messageId, contextCount } = parsed.data;
     const message = await messageStore.getById(messageId);
     if (!message || message.deletedAt) {
+      reply.status(404);
+      return { error: 'Message not found' };
+    }
+
+    // #699 P1-1: Enforce visibility — userId scope, delivery status, whisper filtering
+    if (!isDelivered(message)) {
+      reply.status(404);
+      return { error: 'Message not found' };
+    }
+    if (message.userId !== principal.userId && !isSystemUserMessage(message)) {
+      reply.status(404);
+      return { error: 'Message not found' };
+    }
+    const viewer: Viewer = { type: 'cat', catId: principal.catId };
+    if (!canViewMessage(message, viewer)) {
       reply.status(404);
       return { error: 'Message not found' };
     }

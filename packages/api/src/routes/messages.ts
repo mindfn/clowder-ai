@@ -382,6 +382,14 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       };
     }
 
+    // #699 P1-2: Validate replyTo — must exist in same thread, not deleted
+    if (replyTo) {
+      const replyTarget = await opts.messageStore.getById(replyTo);
+      if (!replyTarget || replyTarget.deletedAt || replyTarget.threadId !== resolvedThreadId) {
+        replyTo = undefined;
+      }
+    }
+
     // F101: /game command interception — start game directly, skip AI routing
     const parsedGame = parseGameCommand(content);
     if (parsedGame && opts.gameStore && opts.threadStore) {
