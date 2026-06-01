@@ -491,9 +491,12 @@ describe('tryCliProbe (unit)', () => {
     const result = await tryCliProbe('claude', { model: 'claude-sonnet-4-6', spawnFn: mock });
     assert.ok(result);
     assert.equal(result.ok, true);
-    const { args } = mock.captured();
-    assert.ok(args.includes('--model'), 'args should contain --model flag');
-    assert.ok(args.includes('claude-sonnet-4-6'), 'args should contain model name');
+    const { command, args } = mock.captured();
+    /* Claude uses shell echo pipe — args are embedded in the command string,
+       not in the args array. Other CLIs pass them as args. */
+    const combined = `${command} ${args.join(' ')}`;
+    assert.ok(combined.includes('--model'), 'command/args should contain --model flag');
+    assert.ok(combined.includes('claude-sonnet-4-6'), 'command/args should contain model name');
   });
 
   test('treats budget error in stdout (exit 0) as connectivity success', async () => {

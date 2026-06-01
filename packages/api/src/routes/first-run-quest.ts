@@ -91,8 +91,8 @@ const STDOUT_ERROR_PATTERNS = [/^error/i, /exception/i, /frozen/i, /unauthorized
 /** Model names must be safe for shell interpolation. */
 const SAFE_MODEL_RE = /^[\w.\-/]+$/;
 
-/** Probe timeout — CLI cold start (especially opencode) can be slow. */
-const PROBE_TIMEOUT_MS = 120_000;
+/** Probe timeout — matches main-branch exec() timeout. */
+const PROBE_TIMEOUT_MS = 30_000;
 
 /** @internal Spawn function signature for dependency injection in tests. */
 type ProbeSpawnFn = (
@@ -139,9 +139,16 @@ export function tryCliProbe(
     let shell: boolean | string | undefined;
 
     if (spec.shell) {
-      /* Claude CLI needs shell context to exit cleanly (stdin pipe + shell
-         environment). This matches the main-branch exec() behaviour. */
+      /* Claude CLI `-p` reads from stdin. Main branch uses shell echo pipe:
+         `echo "reply pong" | claude -p ...` — cmd.exe handles the pipe
+         internally. Node.js stdin.write() to a shell-spawned cmd.exe does
+         NOT forward to the claude subprocess, causing 120s hangs on Windows.
+         Build the full shell command with echo pipe to match main branch. */
       shell = true;
+      if (spec.stdin) {
+        command = `echo "${spec.stdin}" | ${command} ${cliArgs.join(' ')}`;
+        finalArgs = [];
+      }
     } else if (IS_WINDOWS) {
       const plan = resolveWindowsSpawnPlan(command, cliArgs);
       command = plan.command;
@@ -176,8 +183,9 @@ export function tryCliProbe(
       settle({ ok: false, message: `${client} CLI 响应超时` });
     }, PROBE_TIMEOUT_MS);
 
-    /* Pipe optional stdin data if spec provides it. */
-    if (spec.stdin) {
+    /* Pipe optional stdin data — skip when shell echo pipe is used (spec.shell
+       + spec.stdin already embedded the input in the command string). */
+    if (spec.stdin && !spec.shell) {
       child.stdin?.write(spec.stdin);
     }
     child.stdin?.end();
