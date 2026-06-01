@@ -72,6 +72,8 @@ interface ChatMessageProps {
   message: ChatMessageType;
   getCatById: (id: string) => CatData | undefined;
   onEditCat?: (catId: string) => void;
+  /** F056 follow-up: click co-creator avatar to open editor (consistent with cat avatar behavior). */
+  onEditCoCreator?: () => void;
   /** F212 follow-up — UI-layer dedup for adjacent identical CliDiagnostics panels.
    *  When true, this message hides its CliDiagnosticsPanel entirely (an earlier adjacent
    *  message in the same dedup group already rendered the panel with a "×N" badge). The
@@ -85,7 +87,14 @@ interface ChatMessageProps {
   dedupCount?: number;
 }
 
-export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPanel, dedupCount }: ChatMessageProps) {
+export function ChatMessage({
+  message,
+  getCatById,
+  onEditCat,
+  onEditCoCreator,
+  hideDiagnosticsPanel,
+  dedupCount,
+}: ChatMessageProps) {
   const coCreator = useCoCreatorConfig();
   const { state: ttsState, synthesize: ttsSynthesize, activeMessageId } = useTts();
   const currentThreadId = useChatStore((s) => s.currentThreadId);
@@ -388,12 +397,15 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
             )}
           </div>
         </div>
-        <div
-          className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 ring-2 flex items-center justify-center text-xs font-bold text-[var(--cafe-surface)]"
+        <button
+          type="button"
+          onClick={onEditCoCreator}
+          className={`w-8 h-8 rounded-full overflow-hidden flex-shrink-0 ring-2 flex items-center justify-center text-xs font-bold text-[var(--cafe-surface)] ${onEditCoCreator ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
           style={{
             backgroundColor: 'var(--color-cocreator-primary)',
             boxShadow: '0 0 0 2px var(--color-cocreator-surface)',
           }}
+          aria-label={`编辑 ${coCreator.name}`}
         >
           {coCreator.avatar ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -410,7 +422,7 @@ export function ChatMessage({ message, getCatById, onEditCat, hideDiagnosticsPan
           ) : (
             'ME'
           )}
-        </div>
+        </button>
       </div>
     );
   }

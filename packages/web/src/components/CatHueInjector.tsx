@@ -82,7 +82,7 @@ export function CatHueInjector() {
     for (const def of getAllConnectorDefinitions()) {
       if (!def.id || !CSS_SAFE_ID.test(def.id)) continue;
       if (ruleIds.includes(def.id)) continue;
-      const hex = def.color?.secondary ?? def.color?.primary;
+      const hex = def.themeColor;
       let h = 0;
       let c = 0;
       if (hex) {

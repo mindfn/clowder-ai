@@ -1,14 +1,34 @@
 'use client';
 
-import { getConnectorDefinition } from '@cat-cafe/shared';
+import { type ConnectorIconSpec, getConnectorDefinition } from '@cat-cafe/shared';
 import { useCallback, useState } from 'react';
 import { tintedLight } from '@/lib/color-utils';
 import type { ChatMessage as ChatMessageType, MessageContent } from '@/stores/chatStore';
 import { API_URL, apiFetch } from '@/utils/api-client';
-import { ConnectorImage, GitHubIcon, SchedulerIcon, SettingsIcon, UsersIcon } from './icons/ConnectorIcons';
+import {
+  AuthKeyIcon,
+  ConnectorImage,
+  GitHubIcon,
+  HoldBallIcon,
+  SchedulerIcon,
+  SettingsIcon,
+  UsersIcon,
+} from './icons/ConnectorIcons';
 import { BallotIcon } from './icons/VoteIcons';
 import { MarkdownContent } from './MarkdownContent';
 import { RichBlocks } from './rich/RichBlocks';
+
+/** SVG icon component lookup — maps definition `iconId` to React component.
+ *  Single source of truth: add new SVG icons here + in ConnectorIcons.tsx. */
+const SVG_ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
+  github: GitHubIcon,
+  ballot: BallotIcon,
+  users: UsersIcon,
+  scheduler: SchedulerIcon,
+  settings: SettingsIcon,
+  'hold-ball': HoldBallIcon,
+  'auth-key': AuthKeyIcon,
+};
 
 function formatTime(ts: number): string {
   const d = new Date(ts);
@@ -42,48 +62,30 @@ interface ConnectorBubbleProps {
   message: ChatMessageType;
 }
 
-/** F056: Designed icon per connector — replaces emoji with SVG/PNG icons.
- *  Thread-local system notices are filtered earlier in ChatMessage and do not render here. */
-function ConnectorIcon({ connector, fallbackIcon }: { connector: string; fallbackIcon: string }) {
-  switch (connector) {
-    case 'feishu':
-      return <ConnectorImage src="/images/connectors/feishu.png" alt="Feishu" className="w-5 h-5" />;
-    case 'telegram':
-      return <ConnectorImage src="/images/connectors/telegram.png" alt="Telegram" className="w-5 h-5" />;
-    case 'imessage':
-      return <ConnectorImage src="/images/connectors/imessage.png" alt="iMessage" className="w-5 h-5" />;
-    case 'weixin':
-      return <ConnectorImage src="/images/connectors/weixin.png" alt="WeChat" className="w-5 h-5" />;
-    case 'dingtalk':
-      return <ConnectorImage src="/images/connectors/dingtalk.png" alt="DingTalk" className="w-5 h-5" />;
-    case 'wecom-bot':
-      return <ConnectorImage src="/images/connectors/wecom-bot.png" alt="WeCom" className="w-5 h-5" />;
-    case 'xiaoyi':
-      return <ConnectorImage src="/images/connectors/xiaoyi.png" alt="XiaoYi" className="w-5 h-5" />;
-    case 'github-review':
-    case 'github-ci':
-    case 'github-repo-event':
-    case 'github-conflict':
-    case 'github-review-feedback':
-      // Preserve legacy non-default icons (e.g., triage stored ⚠️ instead of 🔔)
-      if (fallbackIcon !== 'github' && fallbackIcon !== '🔔') {
-        return <span>{fallbackIcon}</span>;
-      }
-      return <GitHubIcon className="w-4 h-4" />;
-    case 'vote-result':
-      return <BallotIcon className="w-4 h-4" />;
-    case 'multi-mention-result':
-      return <UsersIcon className="w-4 h-4" />;
-    case 'scheduler':
-      return <SchedulerIcon className="w-4 h-4" />;
-    case 'system-command':
-      return <SettingsIcon className="w-4 h-4" />;
-    default:
-      if (fallbackIcon.startsWith('/') || fallbackIcon.startsWith('http')) {
-        return <ConnectorImage src={fallbackIcon} alt="connector" className="w-5 h-5" />;
-      }
-      return <span>{fallbackIcon}</span>;
+/** Data-driven icon rendering from ConnectorDefinition.icon spec.
+ *  Registered connectors always use the registry icon (SVG or PNG).
+ *  Falls back to source.icon (emoji/URL) only for unregistered connectors. */
+function ConnectorIcon({
+  iconSpec,
+  fallbackIcon,
+}: {
+  iconSpec?: ConnectorIconSpec;
+  fallbackIcon: string;
+}) {
+  // Registered connector → always use registry icon
+  if (iconSpec) {
+    if (iconSpec.type === 'png') {
+      return <ConnectorImage src={iconSpec.src} alt={connector} className="w-5 h-5" />;
+    }
+    const SvgComponent = SVG_ICON_MAP[iconSpec.iconId];
+    if (SvgComponent) return <SvgComponent className="w-4 h-4" />;
   }
+
+  // Fallback for unregistered connectors
+  if (fallbackIcon.startsWith('/') || fallbackIcon.startsWith('http')) {
+    return <ConnectorImage src={fallbackIcon} alt="connector" className="w-5 h-5" />;
+  }
+  return <span>{fallbackIcon}</span>;
 }
 
 function HoldBallCancelButton({ taskId }: { taskId: string }) {
@@ -122,10 +124,10 @@ export function ConnectorBubble({ message }: ConnectorBubbleProps) {
   if (message.extra?.scheduler?.hiddenTrigger) return null;
 
   const connId = source.connector;
-  /* Avatar uses fixed hex from connector definition — same pattern as CatAvatar
-   * (cat.color.primary). Only the message bubble bg is OKLCH-derived. */
+  /* Avatar uses fixed hex from connector definition — same pattern as CatAvatar.
+   * Only the message bubble bg is OKLCH-derived. */
   const connDef = getConnectorDefinition(connId);
-  const themeHex = connDef?.color?.secondary ?? connDef?.color?.primary;
+  const themeHex = connDef?.themeColor;
   const hasBlocks = message.contentBlocks && message.contentBlocks.length > 0;
   const richBlocks = message.extra?.rich?.blocks;
   // P3 fix (砚砚 R1): protocol whitelist — only render safe URLs as clickable links
@@ -143,7 +145,7 @@ export function ConnectorBubble({ message }: ConnectorBubbleProps) {
           boxShadow: themeHex ? `0 0 0 2px ${themeHex}` : '0 0 0 2px var(--cafe-border)',
         }}
       >
-        <ConnectorIcon connector={source.connector} fallbackIcon={source.icon} />
+        <ConnectorIcon iconSpec={connDef?.icon} fallbackIcon={source.icon} />
       </div>
       <div className="max-w-[85%] md:max-w-[75%] min-w-0">
         <div className="flex items-center gap-2 mb-1">
