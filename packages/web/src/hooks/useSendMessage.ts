@@ -72,26 +72,27 @@ export function useSendMessage(activeThreadId?: string) {
       setUploadError(null);
       setUploadStatus(hasImages ? 'uploading' : 'idle');
 
+      // #699: Capture replyToMessage BEFORE any await — ChatInput calls clearReplyTo()
+      // immediately after onSend, so the store will be cleared by the time processCommand yields.
+      const capturedReplyTarget = replyToId ? useChatStore.getState().replyToMessage : undefined;
+
       const wasCommand = await processCommand(content, threadId);
       if (wasCommand) return;
 
       const clientMessageId = createClientId();
       const optimisticMessageId = `user-${clientMessageId}`;
 
-      // #699: Build optimistic replyPreview from local message data so ReplyPill renders immediately
+      // #699: Build optimistic replyPreview from captured data (not store — already cleared)
       let replyPreview: ChatMessageData['replyPreview'] | undefined;
-      if (replyToId) {
-        const replyTarget = useChatStore.getState().replyToMessage;
-        if (replyTarget) {
-          const PREVIEW_MAX = 80;
-          replyPreview = {
-            senderCatId: replyTarget.senderCatId,
-            content:
-              replyTarget.content.length > PREVIEW_MAX
-                ? replyTarget.content.slice(0, PREVIEW_MAX)
-                : replyTarget.content,
-          };
-        }
+      if (replyToId && capturedReplyTarget) {
+        const PREVIEW_MAX = 80;
+        replyPreview = {
+          senderCatId: capturedReplyTarget.senderCatId,
+          content:
+            capturedReplyTarget.content.length > PREVIEW_MAX
+              ? capturedReplyTarget.content.slice(0, PREVIEW_MAX)
+              : capturedReplyTarget.content,
+        };
       }
 
       // Create user message
