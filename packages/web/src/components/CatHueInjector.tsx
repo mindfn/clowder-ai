@@ -53,7 +53,7 @@ export function CatHueInjector() {
   const { cats } = useCatData();
 
   useEffect(() => {
-    if (typeof document === 'undefined' || cats.length === 0) return;
+    if (typeof document === 'undefined') return;
     const root = document.documentElement;
     const ruleIds: string[] = [];
 
