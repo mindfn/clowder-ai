@@ -54,7 +54,15 @@ interface CliProbeSpec {
  */
 const CLI_PROBE_SPECS: Record<string, CliProbeSpec> = {
   claude: {
-    args: (m) => ['-p', 'reply pong', ...(m ? ['--model', m] : []), '--max-budget-usd', '0.05'],
+    args: (m) => [
+      '-p',
+      'reply pong',
+      '--output-format',
+      'json',
+      ...(m ? ['--model', m] : []),
+      '--max-budget-usd',
+      '0.05',
+    ],
   },
   codex: {
     args: (m) => ['exec', ...(m ? ['--model', m] : []), 'reply pong'],
