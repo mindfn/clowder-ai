@@ -97,6 +97,9 @@ export function adaptIncomingToBubbleEvent(
   // + reducer 不识别 → B1.2.2 wire 进 active stream 后 replace 会被当 append（content
   // 累加 = 重复显示）。
   if (msg.textMode) payload.textMode = msg.textMode;
+  // #814: Propagate isExplicitPost so chatStore findAssistantDuplicate can
+  // skip merge for live socket events (not just hydration).
+  if (msg.extra?.isExplicitPost) payload.isExplicitPost = true;
 
   // F194 Phase Z3 (砚砚 R2 P1-1): bubble identity SoT = per-cat-turn id (msg.turnInvocationId);
   // chain/parent id (msg.invocationId) lives alongside as `chainInvocationId` for liveness/queue/cancel.
