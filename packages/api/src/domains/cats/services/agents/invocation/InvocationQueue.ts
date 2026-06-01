@@ -874,19 +874,20 @@ export class InvocationQueue {
 
   /**
    * #815: Find queued A2A trigger entries whose target cats are all active.
+   * Scoped to a single userId — prompt context assembly is per-user, so
+   * consuming another user's A2A entry would silently lose their trigger.
    * Returns candidates without removing them — caller performs async
    * delivery-status filtering, then calls `consumeEntriesById` to remove.
    */
-  findSubsumedA2ACandidates(threadId: string, activeCatSet: Set<string>): QueueEntry[] {
+  findSubsumedA2ACandidates(threadId: string, userId: string, activeCatSet: Set<string>): QueueEntry[] {
+    const q = this.queues.get(this.scopeKey(threadId, userId));
+    if (!q) return [];
     const candidates: QueueEntry[] = [];
-    for (const q of this.queues.values()) {
-      if (!this.queueMatchesThread(q, threadId)) continue;
-      for (const e of q) {
-        if (e.status !== 'queued') continue;
-        if (e.sourceCategory !== 'a2a') continue;
-        if (!e.targetCats.every((cat) => activeCatSet.has(cat))) continue;
-        candidates.push(e);
-      }
+    for (const e of q) {
+      if (e.status !== 'queued') continue;
+      if (e.sourceCategory !== 'a2a') continue;
+      if (!e.targetCats.every((cat) => activeCatSet.has(cat))) continue;
+      candidates.push(e);
     }
     return candidates;
   }
