@@ -21,7 +21,7 @@ const resolvedShimCache = new Map<string, string | null>();
 let cachedSystemNodePath: string | undefined | null;
 
 /**
- * Find the system Node.js executable on Windows.
+ * Find the system Node.js executable (cross-platform).
  *
  * External CLI shim scripts (.js entry points installed via npm) must always be
  * executed with the system Node.js — never with process.execPath. In dev mode
@@ -31,22 +31,35 @@ let cachedSystemNodePath: string | undefined | null;
  * the system node for external shims: if we don't bundle it, we don't run it
  * with our own runtime.
  *
+ * Tries `where node.exe` (Windows) then `which node` (Unix/macOS) so the
+ * function works on all platforms — including CI environments where
+ * process.platform may be patched to 'win32' for testing.
+ *
  * Returns null if not found — caller should fall back to shell mode.
  */
-function findSystemNode(): string | null {
+export function findSystemNode(): string | null {
   if (cachedSystemNodePath !== undefined) return cachedSystemNodePath ?? null;
-  try {
-    const whereOutput = execSync('where node.exe', { encoding: 'utf-8', timeout: 5000 }).trim();
-    for (const line of whereOutput.split(/\r?\n/)) {
-      const candidate = line.trim();
-      if (!candidate) continue;
-      if (existsSync(candidate)) {
-        cachedSystemNodePath = candidate;
-        return candidate;
+  // Try both Windows and Unix commands. Each command uses an explicit shell
+  // to avoid Node.js selecting cmd.exe when process.platform is patched to
+  // 'win32' in tests — on macOS/Linux cmd.exe doesn't exist (ENOENT).
+  const commands: Array<{ cmd: string; shell?: string }> = [
+    { cmd: 'where node.exe' }, // Windows default shell (cmd.exe / ComSpec)
+    { cmd: 'which node', shell: '/bin/sh' }, // explicit Unix shell
+  ];
+  for (const { cmd, shell } of commands) {
+    try {
+      const output = execSync(cmd, { encoding: 'utf-8', timeout: 5000, shell }).trim();
+      for (const line of output.split(/\r?\n/)) {
+        const candidate = line.trim();
+        if (!candidate) continue;
+        if (existsSync(candidate)) {
+          cachedSystemNodePath = candidate;
+          return candidate;
+        }
       }
+    } catch {
+      // Command failed or timed out — try next
     }
-  } catch {
-    // `where` failed or timed out
   }
   cachedSystemNodePath = null;
   return null;

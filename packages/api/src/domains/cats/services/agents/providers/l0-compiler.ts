@@ -22,14 +22,37 @@
 
 import { spawn as nodeSpawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const SCRIPT_BASENAME = 'compile-system-prompt-l0.mjs';
+
+/**
+ * Derive the install root from this module's file path.
+ * l0-compiler.ts lives at packages/api/src/domains/cats/services/agents/providers/
+ * → dist layout: packages/api/dist/domains/cats/services/agents/providers/l0-compiler.js
+ * → 8 levels up from dirname(__filename) reaches the install root.
+ * Used as fallback when cwd-based resolution fails (e.g. Windows NTFS junctions
+ * not yet traversable on first boot after installation).
+ */
+function deriveInstallRoot(): string | undefined {
+  try {
+    const thisFile = fileURLToPath(import.meta.url);
+    return resolve(dirname(thisFile), '..', '..', '..', '..', '..', '..', '..', '..');
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Resolve `scripts/compile-system-prompt-l0.mjs` for monorepo layouts.
  * Mirrors `resolveDefaultClaudeMcpServerPath` (ClaudeAgentService.ts): the API
  * may be started from the repo root or from `packages/api`.
+ *
+ * Falls back to the install root (derived from this module's file path) when
+ * cwd-based candidates all fail — this covers Windows packaged installs where
+ * the API's cwd is a user-data mirror directory whose NTFS junctions to the
+ * install root may not yet be traversable on first boot (#802).
  */
 export function resolveL0CompilerScriptPath(cwd: string = process.cwd()): string | undefined {
   const candidates = [
@@ -37,6 +60,13 @@ export function resolveL0CompilerScriptPath(cwd: string = process.cwd()): string
     resolve(cwd, '../../scripts', SCRIPT_BASENAME), // cwd = packages/api
     resolve(cwd, '../scripts', SCRIPT_BASENAME), // cwd = packages/* (best-effort fallback)
   ];
+
+  // Install-root fallback: bypass junction on Windows first-boot (#802)
+  const installRoot = deriveInstallRoot();
+  if (installRoot) {
+    candidates.push(resolve(installRoot, 'scripts', SCRIPT_BASENAME));
+  }
+
   for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate;
   }
