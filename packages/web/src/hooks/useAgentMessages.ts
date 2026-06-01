@@ -325,7 +325,11 @@ export interface BackgroundAgentMessage {
     cliDiagnostics?: CliDiagnostics;
   };
   /** F52: Cross-thread origin metadata */
-  extra?: { crossPost?: { sourceThreadId: string; sourceInvocationId?: string } };
+  extra?: {
+    crossPost?: { sourceThreadId: string; sourceInvocationId?: string };
+    /** #814: True when message originated from an explicit post_message callback */
+    isExplicitPost?: boolean;
+  };
   /** F057-C2: Whether this message mentions the user (@user / @铲屎官) */
   mentionsUser?: boolean;
   /** F121: Reply-to message ID */
@@ -2849,10 +2853,15 @@ export function useAgentMessages() {
     (msg: AgentMsg): void => {
       if (!msg.invocationId) return;
       const invocationId = msg.invocationId;
-      // F194 Phase Z3 R8 P1-1: pass turn-priority expected
-      const replacementTarget =
-        findCallbackReplacementTarget(msg.catId, msg.turnInvocationId ?? invocationId) ??
-        findInvocationlessRichPlaceholder(msg.catId);
+      const isExplicitPost = msg.extra?.isExplicitPost === true;
+      // #814: explicit post_message is a standalone message — it doesn't replace
+      // any existing stream bubble, so skip replacement target lookup entirely.
+      // Finding a target would cause deleteActive/clearFinalized/markReplacedInvocation
+      // which would kill subsequent stream chunks from the same invocation.
+      const replacementTarget = isExplicitPost
+        ? null
+        : (findCallbackReplacementTarget(msg.catId, msg.turnInvocationId ?? invocationId) ??
+          findInvocationlessRichPlaceholder(msg.catId));
       // F194 Phase Z3 R3 P1-2: callback bubble id 用 turn-priority (turnInvocationId ?? invocationId)
       const bubbleIdSeed = msg.turnInvocationId ?? invocationId;
       const finalId =
@@ -2939,9 +2948,14 @@ export function useAgentMessages() {
         deleteActive(msg.catId);
         clearFinalized(msg.catId);
       }
-      // F194 Phase Z3 R16 (cloud Codex P1): suppression key uses turn id when present so
-      // sibling turns under the same parent chain don't get cross-suppressed.
-      markReplacedInvocation(threadIdForCallback, msg.catId, msg.turnInvocationId ?? invocationId);
+      // #814: explicit post_message is standalone — must NOT mark the invocation
+      // as replaced, otherwise subsequent stream chunks from the same invocation
+      // get dropped by isInvocationReplaced guard.
+      if (!isExplicitPost) {
+        // F194 Phase Z3 R16 (cloud Codex P1): suppression key uses turn id when present so
+        // sibling turns under the same parent chain don't get cross-suppressed.
+        markReplacedInvocation(threadIdForCallback, msg.catId, msg.turnInvocationId ?? invocationId);
+      }
     },
     [
       addMessage,

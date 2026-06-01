@@ -1220,30 +1220,23 @@ export class RedisThreadStore implements IThreadStore {
     catId: string,
     entry: { capsule: Record<string, unknown>; createdAt: number },
   ): Promise<void> {
+    // #813 P2 fix: per-cat hash field (atomic HSET, no read-modify-write race).
+    // Field key: `pendCont:<catId>` — parallel cats write to different fields.
     const key = ThreadKeys.detail(threadId);
-    const raw = await this.redis.hget(key, 'pendingContinuation');
-    const existing: Record<string, unknown> = raw ? JSON.parse(raw) : {};
-    existing[catId] = entry;
-    await this.redis.hset(key, { pendingContinuation: JSON.stringify(existing) });
+    await this.redis.hset(key, { [`pendCont:${catId}`]: JSON.stringify(entry) });
   }
 
   async consumePendingContinuation(
     threadId: string,
     catId: string,
   ): Promise<{ capsule: Record<string, unknown>; createdAt: number } | null> {
+    // #813 P2 fix: per-cat field — atomic HGET + HDEL, no read-modify-write race.
     const key = ThreadKeys.detail(threadId);
-    const raw = await this.redis.hget(key, 'pendingContinuation');
+    const field = `pendCont:${catId}`;
+    const raw = await this.redis.hget(key, field);
     if (!raw) return null;
-    const existing: Record<string, { capsule: Record<string, unknown>; createdAt: number }> = JSON.parse(raw);
-    const entry = existing[catId];
-    if (!entry) return null;
-    delete existing[catId];
-    if (Object.keys(existing).length === 0) {
-      await this.deleteDetailFields(key, 'pendingContinuation');
-    } else {
-      await this.redis.hset(key, { pendingContinuation: JSON.stringify(existing) });
-    }
-    return entry;
+    await this.redis.hdel(key, field);
+    return JSON.parse(raw) as { capsule: Record<string, unknown>; createdAt: number };
   }
 
   private parsePhase(raw: string | undefined): ThreadPhase | undefined {

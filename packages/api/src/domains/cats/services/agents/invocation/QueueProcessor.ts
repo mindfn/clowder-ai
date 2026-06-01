@@ -941,7 +941,7 @@ export class QueueProcessor {
       // undefined/delivered → safe to consume). Callback A2A entries reference
       // messages with deliveryStatus:'queued' → NOT safe (message not yet delivered).
       const activeCatSet = new Set(targetCats);
-      const a2aCandidates = queue.findSubsumedA2ACandidates(threadId, activeCatSet);
+      const a2aCandidates = queue.findSubsumedA2ACandidates(threadId, userId, activeCatSet);
       if (a2aCandidates.length > 0) {
         const safeToConsume = new Set<string>();
         for (const candidate of a2aCandidates) {
