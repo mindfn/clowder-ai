@@ -935,29 +935,41 @@ export class QueueProcessor {
 
       // 6b. #815: Consume redundant A2A trigger entries — if target cats are
       // already being processed in this batch, queued A2A entries for those cats
-      // are pure triggers whose source messages are already persisted in thread
-      // history. Consuming them prevents double-trigger (same cat invoked twice
-      // for a single @mention when both user message and A2A entry target it).
+      // are pure triggers whose source messages are already visible in context.
+      // Two-step: find candidates, then async-filter by message delivery status.
+      // Text-scan A2A entries reference persisted agent messages (deliveryStatus
+      // undefined/delivered → safe to consume). Callback A2A entries reference
+      // messages with deliveryStatus:'queued' → NOT safe (message not yet delivered).
       const activeCatSet = new Set(targetCats);
-      const deliveredIdSet = new Set(deliveredIds);
-      const consumedA2A = queue.consumeSubsumedA2AEntries(threadId, activeCatSet, deliveredIdSet);
-      if (consumedA2A.length > 0) {
-        for (const c of consumedA2A) {
-          this.entryCompleteHooks.delete(c.id);
+      const a2aCandidates = queue.findSubsumedA2ACandidates(threadId, activeCatSet);
+      if (a2aCandidates.length > 0) {
+        const safeToConsume = new Set<string>();
+        for (const candidate of a2aCandidates) {
+          if (!candidate.messageId) continue; // no message ref → conservative, skip
+          const msg = await messageStore.getById(candidate.messageId);
+          if (!msg) continue; // message not found → skip
+          if (msg.deliveryStatus === 'queued') continue; // not yet delivered → don't consume
+          safeToConsume.add(candidate.id);
         }
-        log.info(
-          {
+        if (safeToConsume.size > 0) {
+          const consumedA2A = queue.consumeEntriesById(safeToConsume);
+          for (const c of consumedA2A) {
+            this.entryCompleteHooks.delete(c.id);
+          }
+          log.info(
+            {
+              threadId,
+              consumedCount: consumedA2A.length,
+              consumedIds: consumedA2A.map((c) => c.id),
+            },
+            '[QueueProcessor] #815: consumed A2A entries subsumed by active batch',
+          );
+          socketManager.emitToUser(userId, 'queue_updated', {
             threadId,
-            consumedCount: consumedA2A.length,
-            consumedIds: consumedA2A.map((c) => c.id),
-          },
-          '[QueueProcessor] #815: consumed A2A entries subsumed by active batch',
-        );
-        socketManager.emitToUser(userId, 'queue_updated', {
-          threadId,
-          queue: queue.list(threadId, userId),
-          action: 'a2a_subsumed',
-        });
+            queue: queue.list(threadId, userId),
+            action: 'a2a_subsumed',
+          });
+        }
       }
 
       // 6c. #813: Consume pending continuation for single-target invocations.

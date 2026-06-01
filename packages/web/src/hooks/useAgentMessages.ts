@@ -2891,6 +2891,9 @@ export function useAgentMessages() {
         const turnInvocationIdForFallback = msg.turnInvocationId;
         const extraForAdd = {
           ...(msg.extra?.crossPost ? { crossPost: msg.extra.crossPost } : {}),
+          // #814: propagate isExplicitPost so chatStore.findAssistantDuplicate
+          // skips merge for explicit post_message callbacks in fallback path.
+          ...(msg.extra?.isExplicitPost ? { isExplicitPost: true } : {}),
           stream: {
             invocationId,
             ...(turnInvocationIdForFallback && turnInvocationIdForFallback !== invocationId

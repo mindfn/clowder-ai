@@ -857,39 +857,42 @@ export class InvocationQueue {
   }
 
   /**
-   * #815: Consume queued A2A trigger entries subsumed by active processing.
-   * Conditions (both must hold):
-   *   1. All target cats are already in the active processing batch.
-   *   2. The entry's messageId is already in the delivered/unread set — the
-   *      source message is visible to the target cat's context assembly.
-   * Without condition 2, explicit post_message entries (stored with
-   * deliveryStatus:'queued') would lose their message before delivery.
-   * Returns consumed entries (caller handles cleanup + notifications).
+   * #815: Find queued A2A trigger entries whose target cats are all active.
+   * Returns candidates without removing them — caller performs async
+   * delivery-status filtering, then calls `consumeEntriesById` to remove.
    */
-  consumeSubsumedA2AEntries(
-    threadId: string,
-    activeCatSet: Set<string>,
-    deliveredMessageIds: Set<string>,
-  ): QueueEntry[] {
-    const consumed: QueueEntry[] = [];
+  findSubsumedA2ACandidates(threadId: string, activeCatSet: Set<string>): QueueEntry[] {
+    const candidates: QueueEntry[] = [];
     for (const q of this.queues.values()) {
       if (!this.queueMatchesThread(q, threadId)) continue;
-      // Reverse iteration for safe splice
-      for (let i = q.length - 1; i >= 0; i--) {
-        const e = q[i]!;
+      for (const e of q) {
         if (e.status !== 'queued') continue;
         if (e.sourceCategory !== 'a2a') continue;
-        // Both conditions: target cats active AND message already delivered
         if (!e.targetCats.every((cat) => activeCatSet.has(cat))) continue;
-        if (e.messageId && !deliveredMessageIds.has(e.messageId)) continue;
-        this.originalContents.delete(e.id);
-        consumed.push(q.splice(i, 1)[0]!);
+        candidates.push(e);
+      }
+    }
+    return candidates;
+  }
+
+  /**
+   * #815: Remove specific entries by ID. Returns removed entries.
+   * Used after async filtering of A2A candidates by delivery status.
+   */
+  consumeEntriesById(entryIds: Set<string>): QueueEntry[] {
+    const consumed: QueueEntry[] = [];
+    for (const q of this.queues.values()) {
+      for (let i = q.length - 1; i >= 0; i--) {
+        if (entryIds.has(q[i]!.id)) {
+          this.originalContents.delete(q[i]!.id);
+          consumed.push(q.splice(i, 1)[0]!);
+        }
       }
     }
     if (consumed.length > 0) {
       this.log.info(
-        { threadId, count: consumed.length, entryIds: consumed.map((e) => e.id) },
-        '#815: consumed A2A entries subsumed by active processing',
+        { count: consumed.length, entryIds: consumed.map((e) => e.id) },
+        '#815: consumed A2A entries by ID',
       );
     }
     return consumed;
