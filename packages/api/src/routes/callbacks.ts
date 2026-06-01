@@ -1899,8 +1899,9 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         effectiveContextCount,
         principalUserId,
       );
+      // #699 P1-1b: Apply same visibility predicate to context items as target
       const contextMsgs = [...before, ...after]
-        .filter((m) => m.id !== messageId && !m.deletedAt)
+        .filter((m) => m.id !== messageId && !m.deletedAt && isDelivered(m) && canViewMessage(m, viewer))
         .sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
       result.context = contextMsgs.map(projectMsg);
     }
