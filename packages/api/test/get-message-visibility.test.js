@@ -172,4 +172,57 @@ describe('GET /api/callbacks/get-message visibility', () => {
     const body = JSON.parse(res.body);
     assert.equal(body.message.id, whisperMsg.id);
   });
+
+  test('context excludes whispers not visible to calling cat', async () => {
+    const app = await createApp();
+    const { invocationId, callbackToken } = await registry.create('user-1', 'opus');
+
+    // Public message (the target)
+    const target = messageStore.append({
+      userId: 'user-1',
+      catId: null,
+      content: 'public target',
+      mentions: [],
+      timestamp: 2000,
+      threadId: 'thread-ctx',
+    });
+
+    // Whisper before target — addressed to codex, NOT opus
+    messageStore.append({
+      userId: 'user-1',
+      catId: null,
+      content: 'secret for codex only',
+      mentions: [],
+      timestamp: 1000,
+      threadId: 'thread-ctx',
+      visibility: 'whisper',
+      whisperTo: ['codex'],
+    });
+
+    // Public message after target — should appear in context
+    messageStore.append({
+      userId: 'user-1',
+      catId: null,
+      content: 'public after',
+      mentions: [],
+      timestamp: 3000,
+      threadId: 'thread-ctx',
+    });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/callbacks/get-message?messageId=${target.id}&contextCount=5`,
+      headers: {
+        'x-invocation-id': invocationId,
+        'x-callback-token': callbackToken,
+      },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.ok(body.context, 'context should be present');
+    const contextContents = body.context.map((m) => m.content);
+    assert.ok(!contextContents.includes('secret for codex only'), 'whisper for other cat must not appear in context');
+    assert.ok(contextContents.includes('public after'), 'public messages should appear in context');
+  });
 });
