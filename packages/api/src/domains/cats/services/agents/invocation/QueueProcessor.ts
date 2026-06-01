@@ -796,6 +796,11 @@ export class QueueProcessor {
     let responseText = '';
     const cursorBoundaries = new Map<string, string>();
     const continuationCapsules = new Map<string, CollaborationContinuityCapsuleV1>();
+    // Cloud Codex P2: track consumed continuation so we can re-store on failure/cancel.
+    let consumedContinuation: {
+      catId: string;
+      entry: { capsule: Record<string, unknown>; createdAt: number };
+    } | null = null;
 
     try {
       // 1. Create InvocationRecord (before batching — avoid claiming entries on duplicate)
@@ -1006,6 +1011,7 @@ export class QueueProcessor {
         try {
           const pending = await this.deps.threadStore.consumePendingContinuation(threadId, singleCatId);
           if (pending) {
+            consumedContinuation = { catId: singleCatId, entry: pending };
             const capsule = pending.capsule as unknown as CollaborationContinuityCapsuleV1;
             if (isCollaborationContinuityCapsuleV1(capsule)) {
               const continuationPrompt = formatContinuationPrompt(capsule);
@@ -1408,6 +1414,26 @@ export class QueueProcessor {
       } else {
         for (const bid of batchedEntryIds) {
           queue.rollbackProcessing(threadId, bid);
+        }
+        // Cloud Codex P2: re-store consumed continuation on failure/cancel so
+        // the next invocation retry still gets the sealed session context.
+        if (consumedContinuation && this.deps.threadStore) {
+          try {
+            await this.deps.threadStore.setPendingContinuation(
+              threadId,
+              consumedContinuation.catId,
+              consumedContinuation.entry,
+            );
+            log.info(
+              { threadId, catId: consumedContinuation.catId },
+              '[QueueProcessor] #813: re-stored consumed continuation after failed/canceled execution',
+            );
+          } catch (restoreErr) {
+            log.warn(
+              { threadId, catId: consumedContinuation.catId, err: restoreErr },
+              '[QueueProcessor] #813: failed to re-store continuation after execution failure',
+            );
+          }
         }
       }
       await emitQueueUpdated(socketManager, userId, threadId, queue.list(threadId, userId), messageStore, 'completed');
