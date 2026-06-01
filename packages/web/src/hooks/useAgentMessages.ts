@@ -1516,7 +1516,12 @@ export function handleBackgroundAgentMessage(
       if (deferBackgroundCallbackIfStreamOpen(msg, options)) {
         return;
       }
-      const replacementTarget = findBackgroundCallbackReplacementTarget(msg, options);
+      // #814: explicit post_message is a standalone message — skip replacement target
+      // lookup to avoid replacing existing stream bubble or marking the invocation as
+      // replaced, which would kill subsequent stream chunks (symmetric with active path).
+      const replacementTarget = msg.extra?.isExplicitPost
+        ? null
+        : findBackgroundCallbackReplacementTarget(msg, options);
       if (replacementTarget) {
         const cbId = msg.messageId ?? replacementTarget.id;
         if (cbId !== replacementTarget.id) {
