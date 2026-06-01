@@ -107,13 +107,18 @@ export function adaptIncomingToBubbleEvent(
   // Legacy/single-cat (turn absent): canonical falls back to parent (only id available).
   const turnId = msg.turnInvocationId;
   const chainId = msg.invocationId;
-  const canonicalInvocationId = turnId ?? chainId;
+  // #814 root fix: explicit post_message callbacks must be invocationless.
+  // Omitting canonicalInvocationId prevents ALL stable key merge paths
+  // (ADR-033 #4: invocationless events don't participate in stable key lookup).
+  // This is the single point of truth — no downstream guards needed.
+  const isExplicitPost = msg.extra?.isExplicitPost === true;
+  const canonicalInvocationId = isExplicitPost ? undefined : (turnId ?? chainId);
   return {
     type: eventType,
     threadId: msg.threadId,
     actorId: msg.catId,
-    canonicalInvocationId,
-    ...(chainId && turnId && chainId !== turnId ? { chainInvocationId: chainId } : {}),
+    ...(canonicalInvocationId ? { canonicalInvocationId } : {}),
+    ...(!isExplicitPost && chainId && turnId && chainId !== turnId ? { chainInvocationId: chainId } : {}),
     bubbleKind: kind,
     originPhase: phase,
     sourcePath: options.sourcePath,
