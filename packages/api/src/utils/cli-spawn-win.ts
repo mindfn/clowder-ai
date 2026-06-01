@@ -61,6 +61,22 @@ export function findSystemNode(): string | null {
       // Command failed or timed out — try next
     }
   }
+  // Fallback: probe standard Windows Node.js install locations when PATH
+  // doesn't include Node (common in packaged Electron apps).
+  if (process.platform === 'win32') {
+    const programFiles = process.env.ProgramFiles ?? 'C:\\Program Files';
+    const standardPaths = [
+      join(programFiles, 'nodejs', 'node.exe'),
+      'C:\\Program Files\\nodejs\\node.exe',
+      'C:\\Program Files (x86)\\nodejs\\node.exe',
+    ];
+    for (const candidate of standardPaths) {
+      if (existsSync(candidate)) {
+        cachedSystemNodePath = candidate;
+        return candidate;
+      }
+    }
+  }
   cachedSystemNodePath = null;
   return null;
 }

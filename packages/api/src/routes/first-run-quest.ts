@@ -6,8 +6,7 @@
  * POST /api/first-run/connectivity-test  — probe provider API connectivity
  */
 
-import { exec } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn } from 'node:child_process';
 import { builtinAccountIdForClient, type ClientId, protocolForClient } from '@cat-cafe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
@@ -15,9 +14,11 @@ import { resolveByAccountRef } from '../config/account-resolver.js';
 import { detectAvailableClients } from '../domains/cats/services/first-run-quest/client-detection.js';
 import type { FirstRunQuestStateV1, IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
+import { resolveCliCommand } from '../utils/cli-resolve.js';
+import { resolveWindowsSpawnPlan } from '../utils/cli-spawn-win.js';
 import { resolveUserId } from '../utils/request-identity.js';
 
-const execAsync = promisify(exec);
+const IS_WINDOWS = process.platform === 'win32';
 
 interface FirstRunQuestRoutesOptions {
   threadStore: IThreadStore;
@@ -37,18 +38,37 @@ const connectivityTestSchema = z.object({
   model: z.string().optional(),
 });
 
+/* ── Spawn-based CLI probe ────────────────────────────────────────────── */
+
+/** Structured probe spec: args array + optional stdin data. */
+interface CliProbeSpec {
+  args: (model?: string) => string[];
+  /** Data piped to stdin (claude reads prompt from stdin in -p mode). */
+  stdin?: string;
+}
+
 /**
- * CLI commands for non-interactive connectivity probe.
- *
- * claude `-p` is a mode flag (not prompt value) and reads from stdin when piped,
- * so we use `echo … | claude -p`. Other CLIs take the prompt as a direct argument.
+ * CLI probe specs — args for spawn-based invocation.
+ * Uses the same spawn path as real conversation invocations:
+ *   spawn() + resolveWindowsSpawnPlan() on Windows.
  */
-const CLI_PROBE_CMD: Record<string, (model?: string) => string> = {
-  claude: (m) => `echo "reply pong" | claude -p${m ? ` --model ${m}` : ''} --max-budget-usd 0.05`,
-  codex: (m) => `codex exec${m ? ` --model ${m}` : ''} "reply pong"`,
-  gemini: (m) => `gemini -p "reply pong"${m ? ` --model ${m}` : ''}`,
-  kimi: (m) => `kimi --print${m ? ` --model ${m}` : ''} --prompt "reply pong"`,
-  opencode: (m) => `opencode run --format json${m ? ` --model ${m}` : ''} "reply pong"`,
+const CLI_PROBE_SPECS: Record<string, CliProbeSpec> = {
+  claude: {
+    args: (m) => ['-p', ...(m ? ['--model', m] : []), '--max-budget-usd', '0.05'],
+    stdin: 'reply pong',
+  },
+  codex: {
+    args: (m) => ['exec', ...(m ? ['--model', m] : []), 'reply pong'],
+  },
+  gemini: {
+    args: (m) => ['-p', 'reply pong', ...(m ? ['--model', m] : [])],
+  },
+  kimi: {
+    args: (m) => ['--print', ...(m ? ['--model', m] : []), '--prompt', 'reply pong'],
+  },
+  opencode: {
+    args: (m) => ['run', '--format', 'json', ...(m ? ['--model', m] : []), 'reply pong'],
+  },
 };
 
 /** Error patterns that prove the CLI authenticated and reached the API. */
@@ -68,62 +88,128 @@ const STDOUT_ERROR_PATTERNS = [/^error/i, /exception/i, /frozen/i, /unauthorized
 /** Model names must be safe for shell interpolation. */
 const SAFE_MODEL_RE = /^[\w.\-/]+$/;
 
-type ExecFn = (cmd: string, opts: { timeout: number; env?: NodeJS.ProcessEnv }) => Promise<{ stdout: string }>;
+/** Probe timeout — CLI cold start (especially opencode) can be slow. */
+const PROBE_TIMEOUT_MS = 120_000;
 
 export interface CliProbeOptions {
   model?: string;
-  /** Extra env vars injected into the CLI subprocess (e.g. API key credentials). */
+  /** Extra env vars injected into the subprocess (e.g. API key credentials). */
   env?: Record<string, string>;
-  execFn?: ExecFn;
 }
 
-export async function tryCliProbe(
+/**
+ * Probe CLI connectivity by spawning the CLI with the same mechanism used
+ * in real conversation invocations (spawn + resolveWindowsSpawnPlan).
+ *
+ * This avoids the exec() → cmd.exe → .cmd shim chain that caused orphaned
+ * processes and 30s timeouts on Windows (#802).
+ */
+export function tryCliProbe(
   client: string,
   opts: CliProbeOptions = {},
 ): Promise<{ ok: boolean; message: string } | null> {
-  const { model, env, execFn = execAsync } = opts;
-  if (!Object.hasOwn(CLI_PROBE_CMD, client)) return null;
-  const buildCmd = CLI_PROBE_CMD[client];
+  const spec = CLI_PROBE_SPECS[client];
+  if (!spec) return Promise.resolve(null);
+
+  const { model, env } = opts;
   if (model && !SAFE_MODEL_RE.test(model)) {
-    return { ok: false, message: '模型名称包含非法字符' };
+    return Promise.resolve({ ok: false, message: '模型名称包含非法字符' });
   }
-  const cmd = buildCmd(model);
-  const execOpts: { timeout: number; env?: NodeJS.ProcessEnv } = { timeout: 30_000 };
-  if (env && Object.keys(env).length > 0) {
-    execOpts.env = { ...process.env, ...env };
-  }
-  try {
-    const { stdout } = await execFn(cmd, execOpts);
-    const trimmed = stdout.trim();
-    if (trimmed.length === 0) {
-      return { ok: false, message: `${client} CLI 无响应` };
+
+  const cliArgs = spec.args(model);
+  const spawnEnv: NodeJS.ProcessEnv =
+    env && Object.keys(env).length > 0 ? { ...process.env, ...env } : { ...process.env };
+
+  return new Promise((resolve) => {
+    /* Resolve command + args via the same path as real invocations. */
+    let command: string = resolveCliCommand(client) ?? client;
+    let finalArgs = cliArgs;
+    let shell: boolean | string | undefined;
+
+    if (IS_WINDOWS) {
+      const plan = resolveWindowsSpawnPlan(command, cliArgs);
+      command = plan.command;
+      finalArgs = plan.args;
+      shell = plan.shell;
     }
-    /* Budget / rate-limit text in stdout also proves connectivity (exit code 0 path) */
-    if (CLI_OK_PATTERNS.some((re) => re.test(trimmed))) {
-      return { ok: true, message: `${client} CLI 连接正常（受限响应）` };
+
+    const child = spawn(command, finalArgs, {
+      env: spawnEnv,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      ...(shell !== undefined ? { shell } : {}),
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+
+    const settle = (result: { ok: boolean; message: string }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+        /* already exited */
+      }
+      settle({ ok: false, message: `${client} CLI 响应超时` });
+    }, PROBE_TIMEOUT_MS);
+
+    /* Pipe stdin data (claude reads prompt via -p stdin). */
+    if (spec.stdin) {
+      child.stdin?.write(spec.stdin);
     }
-    /* Guard against false positives: error text in stdout with exit code 0 */
-    if (STDOUT_ERROR_PATTERNS.some((re) => re.test(trimmed))) {
-      return { ok: false, message: `${client} CLI 异常: ${trimmed.slice(0, 80)}` };
-    }
-    return { ok: true, message: `${client} CLI 连接正常` };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    const stderr = (err as { stderr?: string }).stderr ?? '';
-    /* Budget / rate-limit errors prove the CLI authenticated and reached the API */
-    if (CLI_OK_PATTERNS.some((re) => re.test(msg) || re.test(stderr))) {
-      return { ok: true, message: `${client} CLI 连接正常（受限响应）` };
-    }
-    /* Process killed (timeout) — treat as failure unless stderr proved connectivity above */
-    if ((err as { code?: number | null }).code === null) {
-      return { ok: false, message: `${client} CLI 响应超时` };
-    }
-    if (msg.includes('authentication') || msg.includes('login') || msg.includes('OAuth')) {
-      return { ok: false, message: '需要先完成 OAuth 登录，请在终端运行一次 CLI' };
-    }
-    return { ok: false, message: `${client} CLI 调用失败: ${msg.slice(0, 100)}` };
-  }
+    child.stdin?.end();
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdout += chunk;
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk;
+    });
+
+    child.on('error', (err) => {
+      settle({ ok: false, message: `${client} CLI 启动失败: ${err.message.slice(0, 100)}` });
+    });
+
+    child.on('close', (code) => {
+      const combined = stdout + stderr;
+
+      /* Budget / rate-limit / model errors prove the CLI reached the API. */
+      if (CLI_OK_PATTERNS.some((re) => re.test(combined))) {
+        settle({ ok: true, message: `${client} CLI 连接正常（受限响应）` });
+        return;
+      }
+
+      if (code === 0) {
+        const trimmed = stdout.trim();
+        if (!trimmed) {
+          settle({ ok: false, message: `${client} CLI 无响应` });
+          return;
+        }
+        if (STDOUT_ERROR_PATTERNS.some((re) => re.test(trimmed))) {
+          settle({ ok: false, message: `${client} CLI 异常: ${trimmed.slice(0, 80)}` });
+          return;
+        }
+        settle({ ok: true, message: `${client} CLI 连接正常` });
+        return;
+      }
+
+      /* Non-zero exit: check for auth errors. */
+      if (/authentication|login|OAuth/i.test(combined)) {
+        settle({ ok: false, message: '需要先完成 OAuth 登录，请在终端运行一次 CLI' });
+        return;
+      }
+      settle({ ok: false, message: `${client} CLI 调用失败 (exit ${code})` });
+    });
+  });
 }
+
+/* ── Route definitions ────────────────────────────────────────────────── */
 
 export const firstRunQuestRoutes: FastifyPluginAsync<FirstRunQuestRoutesOptions> = async (app, opts) => {
   const { threadStore } = opts;
@@ -176,8 +262,6 @@ export const firstRunQuestRoutes: FastifyPluginAsync<FirstRunQuestRoutesOptions>
     }
 
     const thread = await threadStore.create(userId, '新手教程');
-    /* Cat is already created by the wizard before this endpoint is called,
-       so start at quest-2 (cat intro) instead of quest-1 (create cat). */
     const initialState: FirstRunQuestStateV1 = {
       v: 1,
       phase: 'quest-2-cat-intro',
@@ -197,8 +281,7 @@ export const firstRunQuestRoutes: FastifyPluginAsync<FirstRunQuestRoutesOptions>
 
   /**
    * Probe provider API connectivity for a given profile.
-   * Unified path: both OAuth and API-key accounts go through the real CLI,
-   * so the probe tests the same path production traffic uses.
+   * Uses spawn() with resolveWindowsSpawnPlan — same path as real invocations.
    */
   app.post('/api/first-run/connectivity-test', async (request, reply) => {
     const userId = resolveUserId(request);
@@ -228,13 +311,12 @@ export const firstRunQuestRoutes: FastifyPluginAsync<FirstRunQuestRoutesOptions>
       return { ok: false, error: `未知的 client: ${clientId}` };
     }
 
-    /* Build env vars for API-key accounts so the CLI picks up credentials.
-     * Reject explicitly if api_key account has no stored key — do NOT fall
-     * through to ambient host auth, as that conflates "machine works" with
-     * "this account binding is valid". */
+    /* Reject explicitly if api_key account has no stored key. */
     if (runtime.authType === 'api_key' && !runtime.apiKey) {
       return { ok: false, error: '该账号未配置 API Key，请先填写密钥' };
     }
+
+    /* Build env vars for API-key accounts so the CLI picks up credentials. */
     const probeEnv =
       runtime.authType === 'api_key' && runtime.apiKey
         ? buildProbeEnv(clientId, runtime.apiKey, runtime.baseUrl)
@@ -252,8 +334,6 @@ export { buildProbeEnv };
 
 /**
  * Build env vars that mirror production credential injection for each provider.
- * These are the env vars that the actual CLI reads, matching the paths in
- * ClaudeAgentService.buildClaudeEnvOverrides / invoke-single-cat.ts.
  */
 function buildProbeEnv(clientId: string, apiKey: string, baseUrl?: string): Record<string, string> {
   const env: Record<string, string> = {};
@@ -281,7 +361,6 @@ function buildProbeEnv(clientId: string, apiKey: string, baseUrl?: string): Reco
       if (baseUrl) env.CAT_CAFE_KIMI_BASE_URL = baseUrl;
       break;
     default:
-      // Unknown protocol — pass generic keys, let CLI figure it out
       env.API_KEY = apiKey;
       if (baseUrl) env.API_BASE_URL = baseUrl;
   }
