@@ -41,6 +41,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
   const queuePauseReason = useChatStore((s) => s.queuePauseReason);
   const messages = useChatStore((s) => s.messages);
   const setQueue = useChatStore((s) => s.setQueue);
+  const setPendingChatInsert = useChatStore((s) => s.setPendingChatInsert);
   const addToast = useToastStore((s) => s.addToast);
 
   const [steerEntryId, setSteerEntryId] = useState<string | null>(null);
@@ -87,6 +88,48 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
       }
     },
     [addToast, queue, setQueue, threadId],
+  );
+
+  const handleRecallEdit = useCallback(
+    async (entryId: string) => {
+      const entry = queue.find((e) => e.id === entryId);
+      if (!entry) return;
+
+      const prevQueue = queue;
+      setQueue(
+        threadId,
+        prevQueue.filter((e) => e.id !== entryId),
+      );
+
+      try {
+        const res = await apiFetch(`/api/threads/${threadId}/queue/${entryId}`, { method: 'DELETE' });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setQueue(threadId, prevQueue);
+          addToast({
+            type: 'error',
+            title: '撤回失败',
+            message: data?.error ?? '撤回失败，请重试',
+            threadId,
+            duration: 5000,
+          });
+          return;
+        }
+
+        setPendingChatInsert({ threadId, text: entry.content });
+        addToast({
+          type: 'success',
+          title: '已撤回编辑',
+          message: '已回填到输入框',
+          threadId,
+          duration: 2500,
+        });
+      } catch {
+        setQueue(threadId, prevQueue);
+        addToast({ type: 'error', title: '撤回失败', message: '撤回失败，请重试', threadId, duration: 5000 });
+      }
+    },
+    [addToast, queue, setPendingChatInsert, setQueue, threadId],
   );
 
   const handleContinue = useCallback(async () => {
@@ -260,6 +303,7 @@ export function QueuePanel({ threadId }: QueuePanelProps) {
                     imageCount={imageCount}
                     ownerName={coCreator.name}
                     onRemove={handleRemove}
+                    onRecallEdit={handleRecallEdit}
                     onSteer={handleSteerOpen}
                   />
                 );
