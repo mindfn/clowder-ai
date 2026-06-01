@@ -27,6 +27,7 @@ import { formatCliExitError } from '../../../../../utils/cli-format.js';
 import { formatCliNotFoundError, resolveCliCommand } from '../../../../../utils/cli-resolve.js';
 import { isCliError, isCliTimeout, isLivenessWarning, spawnCli } from '../../../../../utils/cli-spawn.js';
 import type { SpawnFn } from '../../../../../utils/cli-types.js';
+import { sanitizeCliStderr } from '../../../../../utils/sanitize-cli-stderr.js';
 import { AuditEventTypes, getEventAuditLog } from '../../orchestration/EventAuditLog.js';
 import { CliRawArchive } from '../../session/CliRawArchive.js';
 import type { AgentMessage, AgentService, AgentServiceOptions, MessageMetadata, TokenUsage } from '../../types.js';
@@ -109,7 +110,7 @@ function collectCodexStreamError(event: unknown, recentErrors: string[]): void {
   const raw = record.message;
   if (typeof raw !== 'string') return;
 
-  const msg = raw.trim().slice(0, MAX_STREAM_ERROR_LENGTH);
+  const msg = sanitizeCliStderr(raw.trim()).slice(0, MAX_STREAM_ERROR_LENGTH);
   if (!msg) return;
 
   const last = recentErrors[recentErrors.length - 1];

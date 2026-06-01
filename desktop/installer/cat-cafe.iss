@@ -126,27 +126,10 @@ Name: "{autodesktop}\{#MyAppName}";  Filename: "{app}\desktop-dist\{#MyAppExeNam
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 
 [Run]
-; ── Extract bulk archives (tar.exe built into Windows 10 1803+) ───────
-Filename: "tar.exe"; \
-  Parameters: "-xzf ""{app}\bundled\archives\deploy-api.tar.gz"" -C ""{app}\packages\api"""; \
-  StatusMsg: "Extracting API runtime..."; \
-  Flags: runhidden waituntilterminated
-Filename: "tar.exe"; \
-  Parameters: "-xzf ""{app}\bundled\archives\deploy-web.tar.gz"" -C ""{app}\packages\web"""; \
-  StatusMsg: "Extracting Web runtime..."; \
-  Flags: runhidden waituntilterminated
-Filename: "tar.exe"; \
-  Parameters: "-xzf ""{app}\bundled\archives\deploy-mcp-server.tar.gz"" -C ""{app}\packages\mcp-server"""; \
-  StatusMsg: "Extracting MCP Server..."; \
-  Flags: runhidden waituntilterminated
-Filename: "tar.exe"; \
-  Parameters: "-xzf ""{app}\bundled\archives\electron.tar.gz"" -C ""{app}\desktop-dist"""; \
-  StatusMsg: "Extracting Electron shell..."; \
-  Flags: runhidden waituntilterminated
-Filename: "tar.exe"; \
-  Parameters: "-xzf ""{app}\bundled\archives\node.tar.gz"" -C ""{app}\node"""; \
-  StatusMsg: "Extracting Node.js runtime..."; \
-  Flags: runhidden waituntilterminated
+; Archive extraction moved to [Code] section (CurStepChanged / ssPostInstall)
+; for exit code validation — tar.exe failures are now caught and reported
+; instead of silently continuing with missing files.
+;
 ; Create scripts/node_modules junction → packages/api/node_modules.
 ; compile-system-prompt-l0.mjs uses ESM imports (@cat-cafe/shared) which
 ; require a filesystem node_modules chain (NODE_PATH is ignored by ESM).
@@ -206,3 +189,64 @@ Type: filesandordirs; Name: "{app}\node"
 Type: filesandordirs; Name: "{app}\bundled"
 ; scripts/node_modules junction created by mklink /J in [Run]
 Type: filesandordirs; Name: "{app}\scripts\node_modules"
+
+[Code]
+{ ── Archive extraction with exit code validation ──────────────────────
+  Replaces the previous [Run] tar.exe entries which used
+  waituntilterminated but silently continued on extraction failure.
+  Now each extraction is validated and failures are reported to the user. }
+
+function ExtractArchive(const ArchiveName, DestSubDir, StatusLabel: String): Boolean;
+var
+  AppDir, ArchivePath, DestDir: String;
+  ResultCode: Integer;
+begin
+  AppDir := ExpandConstant('{app}');
+  ArchivePath := AppDir + '\bundled\archives\' + ArchiveName;
+  DestDir := AppDir + '\' + DestSubDir;
+
+  WizardForm.StatusLabel.Caption := StatusLabel;
+
+  Result := Exec('tar.exe',
+    '-xzf "' + ArchivePath + '" -C "' + DestDir + '"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  if (not Result) or (ResultCode <> 0) then
+    Result := False;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  FailedArchives: String;
+begin
+  if CurStep <> ssPostInstall then
+    Exit;
+
+  FailedArchives := '';
+
+  if not ExtractArchive('deploy-api.tar.gz', 'packages\api',
+       'Extracting API runtime...') then
+    FailedArchives := FailedArchives + #13#10 + '  - deploy-api.tar.gz';
+
+  if not ExtractArchive('deploy-web.tar.gz', 'packages\web',
+       'Extracting Web runtime...') then
+    FailedArchives := FailedArchives + #13#10 + '  - deploy-web.tar.gz';
+
+  if not ExtractArchive('deploy-mcp-server.tar.gz', 'packages\mcp-server',
+       'Extracting MCP Server...') then
+    FailedArchives := FailedArchives + #13#10 + '  - deploy-mcp-server.tar.gz';
+
+  if not ExtractArchive('electron.tar.gz', 'desktop-dist',
+       'Extracting Electron shell...') then
+    FailedArchives := FailedArchives + #13#10 + '  - electron.tar.gz';
+
+  if not ExtractArchive('node.tar.gz', 'node',
+       'Extracting Node.js runtime...') then
+    FailedArchives := FailedArchives + #13#10 + '  - node.tar.gz';
+
+  if FailedArchives <> '' then
+    MsgBox('The following archives failed to extract:' + FailedArchives
+      + #13#10 + #13#10
+      + 'Cat Cafe may not work correctly. Please check disk space and try reinstalling.',
+      mbError, MB_OK);
+end;
