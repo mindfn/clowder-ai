@@ -393,6 +393,21 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         !isDelivered(replyTarget)
       ) {
         replyTo = undefined;
+      } else if (replyTarget.visibility === 'whisper') {
+        // #699: Prevent public replies from quoting hidden whispers.
+        // hydrateReplyPreview fetches raw content without visibility checks,
+        // so a public reply's preview would leak whisper content to non-recipients.
+        if (whisperVisibility !== 'whisper') {
+          // Public message replying to a whisper → drop replyTo
+          replyTo = undefined;
+        } else {
+          // Whisper replying to a whisper → ensure all new recipients can see the parent
+          const parentRecipients = new Set(replyTarget.whisperTo ?? []);
+          const newRecipients = whisperRecipients ?? [];
+          if (newRecipients.some((catId) => !parentRecipients.has(catId))) {
+            replyTo = undefined;
+          }
+        }
       }
     }
 
