@@ -82,6 +82,22 @@ interface LoggerLike {
   error(obj: unknown, msg?: string): void;
 }
 
+/** #813: Minimal thread store interface for passive continuation. */
+export interface ThreadStoreLike {
+  setPendingContinuation(
+    threadId: string,
+    catId: string,
+    entry: { capsule: Record<string, unknown>; createdAt: number },
+  ): void | Promise<void>;
+  consumePendingContinuation(
+    threadId: string,
+    catId: string,
+  ):
+    | { capsule: Record<string, unknown>; createdAt: number }
+    | null
+    | Promise<{ capsule: Record<string, unknown>; createdAt: number } | null>;
+}
+
 /** Minimal outbound delivery interface — avoids importing full OutboundDeliveryHook. */
 export interface OutboundDeliveryHookLike {
   deliver(
@@ -131,6 +147,8 @@ export interface QueueProcessorDeps {
   streamingHook?: StreamingOutboundHookLike;
   /** F088 fix: optional thread metadata lookup for outbound delivery. */
   threadMetaLookup?: (threadId: string) => ThreadMetaLike | undefined | Promise<ThreadMetaLike | undefined>;
+  /** #813: Thread store for passive continuation (write/consume pending continuation). */
+  threadStore?: ThreadStoreLike;
 }
 
 /** F122B B6: Completion hook — called when a queue entry finishes execution. */
@@ -937,6 +955,60 @@ export class QueueProcessor {
         });
       }
 
+      // 6b. #815: Consume redundant A2A trigger entries — if target cats are
+      // already being processed in this batch, queued A2A entries for those cats
+      // are pure triggers whose source messages are already persisted in thread
+      // history. Consuming them prevents double-trigger (same cat invoked twice
+      // for a single @mention when both user message and A2A entry target it).
+      const activeCatSet = new Set(targetCats);
+      const consumedA2A = queue.consumeSubsumedA2AEntries(threadId, activeCatSet);
+      if (consumedA2A.length > 0) {
+        for (const c of consumedA2A) {
+          this.entryCompleteHooks.delete(c.id);
+        }
+        log.info(
+          {
+            threadId,
+            consumedCount: consumedA2A.length,
+            consumedIds: consumedA2A.map((c) => c.id),
+          },
+          '[QueueProcessor] #815: consumed A2A entries subsumed by active batch',
+        );
+        socketManager.emitToUser(userId, 'queue_updated', {
+          threadId,
+          queue: queue.list(threadId, userId),
+          action: 'a2a_subsumed',
+        });
+      }
+
+      // 6c. #813: Consume pending continuation for target cats (passive seal).
+      // If a previous session sealed and wrote a continuation capsule to thread
+      // metadata, inject the continuation prompt into the current execution content
+      // so the cat has context about its prior session.
+      if (this.deps.threadStore) {
+        for (const catId of targetCats) {
+          try {
+            const pending = await this.deps.threadStore.consumePendingContinuation(threadId, catId);
+            if (pending) {
+              const capsule = pending.capsule as unknown as CollaborationContinuityCapsuleV1;
+              if (isCollaborationContinuityCapsuleV1(capsule)) {
+                const continuationPrompt = formatContinuationPrompt(capsule);
+                content = continuationPrompt + '\n\n---\n\n' + content;
+                log.info(
+                  { threadId, catId, capsuleCreatedAt: pending.createdAt },
+                  '[QueueProcessor] #813: injected pending continuation context into execution',
+                );
+              }
+            }
+          } catch (err) {
+            log.warn(
+              { threadId, catId, err },
+              '[QueueProcessor] #813: consumePendingContinuation failed, proceeding without continuation context',
+            );
+          }
+        }
+      }
+
       // 7. Route execution
       const persistenceContext: { richBlocks?: Array<{ kind: string; [key: string]: unknown }> } = {};
       const collectedTextParts: string[] = [];
@@ -1280,13 +1352,43 @@ export class QueueProcessor {
         for (const bid of batchedEntryIds) {
           queue.removeProcessedAcrossUsers(threadId, bid);
         }
+        // #813: Passive seal — write pending continuation to thread metadata
+        // instead of immediately enqueuing. The next invocation of this cat
+        // will consume the capsule at startup and inject continuation context.
         for (const continuationCapsule of continuationCapsules.values()) {
-          void this.enqueueContinuation({
-            threadId,
-            userId,
-            catId: continuationCapsule.catId,
-            capsule: continuationCapsule,
-          }).catch((err) => log.warn({ err, threadId }, 'enqueueContinuation failed (best-effort)'));
+          if (this.deps.threadStore) {
+            try {
+              await this.deps.threadStore.setPendingContinuation(threadId, continuationCapsule.catId, {
+                capsule: continuationCapsule as unknown as Record<string, unknown>,
+                createdAt: Date.now(),
+              });
+              log.info(
+                { threadId, catId: continuationCapsule.catId },
+                '[QueueProcessor] #813: wrote pending continuation to thread metadata (passive seal)',
+              );
+            } catch (err) {
+              log.warn(
+                { threadId, catId: continuationCapsule.catId, err },
+                '[QueueProcessor] #813: setPendingContinuation failed, falling back to enqueueContinuation',
+              );
+              void this.enqueueContinuation({
+                threadId,
+                userId,
+                catId: continuationCapsule.catId,
+                capsule: continuationCapsule,
+              }).catch((enqueueErr) =>
+                log.warn({ err: enqueueErr, threadId }, 'enqueueContinuation failed (best-effort)'),
+              );
+            }
+          } else {
+            // Fallback: no threadStore → legacy behavior (immediate enqueue)
+            void this.enqueueContinuation({
+              threadId,
+              userId,
+              catId: continuationCapsule.catId,
+              capsule: continuationCapsule,
+            }).catch((err) => log.warn({ err, threadId }, 'enqueueContinuation failed (best-effort)'));
+          }
         }
       } else {
         for (const bid of batchedEntryIds) {

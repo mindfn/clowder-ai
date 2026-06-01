@@ -1215,6 +1215,37 @@ export class RedisThreadStore implements IThreadStore {
     await this.redis.hset(key, { labels: JSON.stringify(labelIds) });
   }
 
+  async setPendingContinuation(
+    threadId: string,
+    catId: string,
+    entry: { capsule: Record<string, unknown>; createdAt: number },
+  ): Promise<void> {
+    const key = ThreadKeys.detail(threadId);
+    const raw = await this.redis.hget(key, 'pendingContinuation');
+    const existing: Record<string, unknown> = raw ? JSON.parse(raw) : {};
+    existing[catId] = entry;
+    await this.redis.hset(key, { pendingContinuation: JSON.stringify(existing) });
+  }
+
+  async consumePendingContinuation(
+    threadId: string,
+    catId: string,
+  ): Promise<{ capsule: Record<string, unknown>; createdAt: number } | null> {
+    const key = ThreadKeys.detail(threadId);
+    const raw = await this.redis.hget(key, 'pendingContinuation');
+    if (!raw) return null;
+    const existing: Record<string, { capsule: Record<string, unknown>; createdAt: number }> = JSON.parse(raw);
+    const entry = existing[catId];
+    if (!entry) return null;
+    delete existing[catId];
+    if (Object.keys(existing).length === 0) {
+      await this.deleteDetailFields(key, 'pendingContinuation');
+    } else {
+      await this.redis.hset(key, { pendingContinuation: JSON.stringify(existing) });
+    }
+    return entry;
+  }
+
   private parsePhase(raw: string | undefined): ThreadPhase | undefined {
     if (!raw) return undefined;
     if (raw === 'coding' || raw === 'research' || raw === 'brainstorm') {

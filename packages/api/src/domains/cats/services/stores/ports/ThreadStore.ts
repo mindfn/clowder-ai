@@ -175,6 +175,17 @@ export interface Thread {
   preferredWorkspaceMode?: 'dev' | 'recall' | 'schedule' | 'tasks' | 'community';
   /** F187: User-defined label IDs for thread categorization. */
   labels?: string[];
+  /** #813: Per-cat pending continuation capsule — written at session seal,
+   *  consumed at next invocation start. Passive/lazy session renewal. */
+  pendingContinuation?: Record<string, PendingContinuationEntry>;
+}
+
+/** #813: Pending continuation state per cat. Written by seal, consumed at next invocation. */
+export interface PendingContinuationEntry {
+  /** The serialized continuation capsule (CollaborationContinuityCapsuleV1). */
+  capsule: Record<string, unknown>;
+  /** Unix ms when the seal wrote this entry. */
+  createdAt: number;
 }
 
 /**
@@ -391,6 +402,13 @@ export interface IThreadStore {
   ): void | Promise<void>;
   /** F187: Update thread labels (replaces entire array). */
   updateLabels(threadId: string, labelIds: string[]): void | Promise<void>;
+  /** #813: Write pending continuation state for a cat (passive seal). */
+  setPendingContinuation(threadId: string, catId: string, entry: PendingContinuationEntry): void | Promise<void>;
+  /** #813: Consume (read + delete) pending continuation for a cat. Returns null if none. */
+  consumePendingContinuation(
+    threadId: string,
+    catId: string,
+  ): PendingContinuationEntry | null | Promise<PendingContinuationEntry | null>;
   /**
    * Ensure a thread with a specific ID exists. If it doesn't exist, create it
    * with the given title and createdBy='system'. If it already exists, no-op.
@@ -829,6 +847,25 @@ export class ThreadStore implements IThreadStore {
   updateLabels(threadId: string, labelIds: string[]): void {
     const thread = this.get(threadId);
     if (thread) thread.labels = labelIds;
+  }
+
+  setPendingContinuation(threadId: string, catId: string, entry: PendingContinuationEntry): void {
+    const thread = this.get(threadId);
+    if (!thread) return;
+    if (!thread.pendingContinuation) thread.pendingContinuation = {};
+    thread.pendingContinuation[catId] = entry;
+  }
+
+  consumePendingContinuation(threadId: string, catId: string): PendingContinuationEntry | null {
+    const thread = this.get(threadId);
+    if (!thread?.pendingContinuation?.[catId]) return null;
+    const entry = thread.pendingContinuation[catId]!;
+    delete thread.pendingContinuation[catId];
+    // Clean up empty container
+    if (Object.keys(thread.pendingContinuation).length === 0) {
+      delete thread.pendingContinuation;
+    }
+    return entry;
   }
 
   updateLastActive(threadId: string): void {
