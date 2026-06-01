@@ -45,6 +45,8 @@ interface CliProbeSpec {
   args: (model?: string) => string[];
   /** Optional data piped to stdin before close. Most CLIs take prompt as a positional arg. */
   stdin?: string;
+  /** Force spawn with shell: true. Claude CLI needs shell context to exit cleanly. */
+  shell?: boolean;
 }
 
 /**
@@ -54,15 +56,9 @@ interface CliProbeSpec {
  */
 const CLI_PROBE_SPECS: Record<string, CliProbeSpec> = {
   claude: {
-    args: (m) => [
-      '-p',
-      'reply pong',
-      '--output-format',
-      'json',
-      ...(m ? ['--model', m] : []),
-      '--max-budget-usd',
-      '0.05',
-    ],
+    args: (m) => ['-p', ...(m ? ['--model', m] : []), '--max-budget-usd', '0.05'],
+    stdin: 'reply pong',
+    shell: true,
   },
   codex: {
     args: (m) => ['exec', ...(m ? ['--model', m] : []), 'reply pong'],
@@ -142,7 +138,11 @@ export function tryCliProbe(
     let finalArgs = cliArgs;
     let shell: boolean | string | undefined;
 
-    if (IS_WINDOWS) {
+    if (spec.shell) {
+      /* Claude CLI needs shell context to exit cleanly (stdin pipe + shell
+         environment). This matches the main-branch exec() behaviour. */
+      shell = true;
+    } else if (IS_WINDOWS) {
       const plan = resolveWindowsSpawnPlan(command, cliArgs);
       command = plan.command;
       finalArgs = plan.args;
