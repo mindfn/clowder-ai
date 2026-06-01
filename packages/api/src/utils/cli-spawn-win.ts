@@ -64,7 +64,7 @@ export function findSystemNode(): string | null {
   // Fallback: probe standard Windows Node.js install locations when PATH
   // doesn't include Node (common in packaged Electron apps).
   if (process.platform === 'win32') {
-    const programFiles = process.env.ProgramFiles ?? 'C:\\Program Files';
+    const programFiles = process.env.PROGRAMFILES ?? 'C:\\Program Files';
     const standardPaths = [
       join(programFiles, 'nodejs', 'node.exe'),
       'C:\\Program Files\\nodejs\\node.exe',
