@@ -509,7 +509,7 @@ export class PluginResourceActivator {
     const resolved = resolvePluginEnv([manifest]);
     const env: Record<string, string> = {};
     const setIfPresent = (envName: string) => {
-      const val = stored[envName];
+      const val = resolved[envName];
       if (val) env[envName] = val;
     };
     for (const field of manifest.config) {
