@@ -1338,21 +1338,15 @@ export const callbackTools = [
       'Returns the message content, sender, timestamp, and optionally N nearby messages for context. ' +
       'PARAM GUIDE: messageId = required exact ID. contextCount = number of messages before/after to include (default 0, max 10).',
     inputSchema: {
-      type: 'object' as const,
-      properties: {
-        messageId: { type: 'string', description: 'The exact message ID to look up' },
-        contextCount: {
-          type: 'number',
-          description: 'Number of messages before and after to include for context (0-10, default 0)',
-        },
-        agentKeyCatId: {
-          type: 'string',
-          description:
-            'For shared Antigravity MCP: select which per-cat agent-key to use. ' +
-            'Required when CAT_CAFE_AGENT_KEY_FILES has multiple entries. Ignored by invocation-token callers.',
-        },
-      },
-      required: ['messageId'],
+      messageId: z.string().min(1).describe('The exact message ID to look up'),
+      contextCount: z
+        .number()
+        .int()
+        .min(0)
+        .max(10)
+        .optional()
+        .describe('Number of messages before and after to include for context (0-10, default 0)'),
+      agentKeyCatId: agentKeyCatIdSchema,
     },
     handler: handleGetMessage,
   },
