@@ -43,6 +43,16 @@ import { compileL0ViaSubprocess } from './l0-compiler.js';
 
 const log = createModuleLogger('codex-agent');
 
+/** Redact a custom base URL for diagnostic logging — expose protocol+host only. */
+function redactUrlForLog(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return '[invalid-url]';
+  }
+}
+
 /**
  * Options for constructing CodexAgentService (dependency injection)
  * F32-b: catId and model are constructor parameters
@@ -586,7 +596,7 @@ export class CodexAgentService implements AgentService {
           authMode,
           homeIsolated,
           isolatedHome: homeIsolated ? rawEnv.HOME : undefined,
-          customBaseUrl: customBaseUrl ? `${customBaseUrl.slice(0, 30)}...` : null,
+          customBaseUrl: customBaseUrl ? redactUrlForLog(customBaseUrl) : null,
           sandboxMode,
           hasOpenaiKey: !!codexEnv.OPENAI_API_KEY,
           hasOpenaiKeyAfterAuth: codexEnv.OPENAI_API_KEY !== null && codexEnv.OPENAI_API_KEY !== undefined,
@@ -630,7 +640,7 @@ export class CodexAgentService implements AgentService {
           command: codexCommand,
           model: cliModel,
           originalModel: effectiveModel,
-          customBaseUrl: customBaseUrl ? `${customBaseUrl.slice(0, 30)}…` : null,
+          customBaseUrl: customBaseUrl ? redactUrlForLog(customBaseUrl) : null,
           sessionId: options?.sessionId ?? null,
           invocationId: options?.invocationId ?? null,
           cwd: options?.workingDirectory ?? null,

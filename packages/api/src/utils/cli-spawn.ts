@@ -24,6 +24,7 @@ import { resolveCliTimeoutMs } from './cli-timeout.js';
 import type { ChildProcessLike, CliSpawnOptions, SpawnFn } from './cli-types.js';
 import { isParseError, parseNDJSON } from './ndjson-parser.js';
 import { ProcessLivenessProbe } from './ProcessLivenessProbe.js';
+import { sanitizeCliStderr } from './sanitize-cli-stderr.js';
 
 const log = createModuleLogger('cli-spawn');
 
@@ -654,7 +655,7 @@ export async function* spawnCli(
       // Diagnostic: always log sanitized stderr summary when reasonCode is unknown
       // (the actual root cause is invisible otherwise). Safe: uses sanitizer, capped length.
       if (!cliDiagnostics.reasonCode && stderrBuffer.trim()) {
-        const sanitized = stderrBuffer.replace(/sk-[A-Za-z0-9_-]+/g, 'sk-***').slice(-500);
+        const sanitized = sanitizeCliStderr(stderrBuffer).slice(-500);
         log.info(
           {
             command: options.command,
