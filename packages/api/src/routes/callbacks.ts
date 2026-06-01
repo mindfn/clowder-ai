@@ -1855,8 +1855,19 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       reply.status(404);
       return { error: 'Message not found' };
     }
-    const viewer: Viewer = { type: 'cat', catId: principal.catId };
+    // Align with thread-context: debug = cats see all (user viewer), play = cats see own (cat viewer)
+    let needsPlayFilter = false;
+    if (message.threadId && threadStore) {
+      const thread = await threadStore.get(message.threadId);
+      needsPlayFilter = !!thread && (thread.thinkingMode ?? 'debug') === 'play';
+    }
+    const viewer: Viewer = needsPlayFilter ? { type: 'cat', catId: principal.catId } : { type: 'user' };
     if (!canViewMessage(message, viewer)) {
+      reply.status(404);
+      return { error: 'Message not found' };
+    }
+    // Play mode: hide other cats' stream messages (cross-cat thinking isolation)
+    if (needsPlayFilter && message.origin === 'stream' && message.catId && message.catId !== principal.catId) {
       reply.status(404);
       return { error: 'Message not found' };
     }
@@ -1901,7 +1912,15 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       );
       // #699 P1-1b: Apply same visibility predicate to context items as target
       const contextMsgs = [...before, ...after]
-        .filter((m) => m.id !== messageId && !m.deletedAt && isDelivered(m) && canViewMessage(m, viewer))
+        .filter((m) => {
+          if (m.id === messageId) return false;
+          if (m.deletedAt) return false;
+          if (!isDelivered(m)) return false;
+          if (m.userId !== principalUserId && !isSystemUserMessage(m)) return false;
+          if (!canViewMessage(m, viewer)) return false;
+          if (needsPlayFilter && m.origin === 'stream' && m.catId && m.catId !== principal.catId) return false;
+          return true;
+        })
         .sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
       result.context = contextMsgs.map(projectMsg);
     }

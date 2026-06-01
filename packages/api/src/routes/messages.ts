@@ -55,6 +55,7 @@ import type { IDraftStore } from '../domains/cats/services/stores/ports/DraftSto
 import type { IGameStore } from '../domains/cats/services/stores/ports/GameStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
+import { isDelivered } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { ISummaryStore } from '../domains/cats/services/stores/ports/SummaryStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { isSystemUserMessage } from '../domains/cats/services/stores/visibility.js';
@@ -382,10 +383,15 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       };
     }
 
-    // #699 P1-2: Validate replyTo — must exist in same thread, not deleted
+    // #699 P1-2: Validate replyTo — must exist in same thread, not deleted, and delivered
     if (replyTo) {
       const replyTarget = await opts.messageStore.getById(replyTo);
-      if (!replyTarget || replyTarget.deletedAt || replyTarget.threadId !== resolvedThreadId) {
+      if (
+        !replyTarget ||
+        replyTarget.deletedAt ||
+        replyTarget.threadId !== resolvedThreadId ||
+        !isDelivered(replyTarget)
+      ) {
         replyTo = undefined;
       }
     }
