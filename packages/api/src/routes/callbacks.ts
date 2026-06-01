@@ -1823,6 +1823,76 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     };
   });
 
+  // #699: Look up a single message by ID with optional surrounding context
+  const getMessageQuerySchema = z.object({
+    messageId: z.string().min(1),
+    contextCount: z.coerce.number().int().min(0).max(10).optional(),
+  });
+
+  app.get('/api/callbacks/get-message', async (request, reply) => {
+    const principal = requireCallbackPrincipal(request, reply);
+    if (!principal) return;
+
+    const parsed = getMessageQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      reply.status(400);
+      return { error: 'Invalid query parameters', details: parsed.error.issues };
+    }
+
+    const { messageId, contextCount } = parsed.data;
+    const message = await messageStore.getById(messageId);
+    if (!message || message.deletedAt) {
+      reply.status(404);
+      return { error: 'Message not found' };
+    }
+
+    const uploadDir = getDefaultUploadDir(process.env.UPLOAD_DIR);
+    const projectMsg = (m: typeof message) => {
+      const imagePaths = extractImagePaths(m.contentBlocks, uploadDir);
+      const imageUrls = extractImageUrls(m.contentBlocks);
+      return {
+        id: m.id,
+        userId: m.userId,
+        catId: m.catId,
+        content: m.content,
+        ...(m.contentBlocks ? { contentBlocks: m.contentBlocks } : {}),
+        ...(imagePaths.length > 0 ? { imagePaths } : {}),
+        ...(imageUrls.length > 0 ? { imageUrls } : {}),
+        ...(m.replyTo ? { replyTo: m.replyTo } : {}),
+        timestamp: m.timestamp,
+        threadId: m.threadId,
+      };
+    };
+
+    const result: { message: ReturnType<typeof projectMsg>; context?: ReturnType<typeof projectMsg>[] } = {
+      message: projectMsg(message),
+    };
+
+    const effectiveContextCount = contextCount ?? 0;
+    if (effectiveContextCount > 0 && message.threadId) {
+      const principalUserId = principal.userId;
+      const before = await messageStore.getByThreadBefore(
+        message.threadId,
+        message.timestamp,
+        effectiveContextCount,
+        message.id,
+        principalUserId,
+      );
+      const after = await messageStore.getByThreadAfter(
+        message.threadId,
+        message.id,
+        effectiveContextCount,
+        principalUserId,
+      );
+      const contextMsgs = [...before, ...after]
+        .filter((m) => m.id !== messageId && !m.deletedAt)
+        .sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
+      result.context = contextMsgs.map(projectMsg);
+    }
+
+    return result;
+  });
+
   app.get('/api/callbacks/list-threads', async (request, reply) => {
     const principal = requireCallbackPrincipal(request, reply);
     if (!principal) return;

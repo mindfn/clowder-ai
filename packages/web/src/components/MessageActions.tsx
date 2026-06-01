@@ -165,6 +165,27 @@ export function MessageActions({ message, threadId, children }: MessageActionsPr
         <div
           className={`opacity-0 group-hover:opacity-100 absolute ${toolbarPositionClass} right-1 flex gap-0.5 transition-opacity bg-cafe-surface/90 rounded-lg shadow-sm border border-cafe px-1 py-0.5`}
         >
+          {/* #699: Reply (quote) button */}
+          <button
+            onClick={() => {
+              useChatStore.getState().setReplyTo({
+                id: message.id,
+                content: message.content,
+                senderCatId: message.catId ?? null,
+              });
+            }}
+            className="p-1 rounded hover:bg-cafe-surface-elevated text-cafe-muted hover:text-cafe-primary transition-colors"
+            title="引用回复"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M3 10h10a5 5 0 015 5v6M3 10l6-6M3 10l6 6"
+              />
+            </svg>
+          </button>
           <button
             onClick={handleSoftDelete}
             className="p-1 rounded hover:bg-cafe-surface-elevated text-cafe-muted hover:text-conn-red-text transition-colors"

@@ -33,7 +33,13 @@ const MAX_IMAGE_DRAFT_THREADS = 5;
 interface ChatInputProps {
   /** Thread ID for draft persistence — drafts are saved per-thread */
   threadId?: string;
-  onSend: (content: string, images?: File[], whisper?: WhisperOptions, deliveryMode?: DeliveryMode) => void;
+  onSend: (
+    content: string,
+    images?: File[],
+    whisper?: WhisperOptions,
+    deliveryMode?: DeliveryMode,
+    replyToId?: string,
+  ) => void;
   onStop?: () => void;
   disabled?: boolean;
   hasActiveInvocation?: boolean;
@@ -57,6 +63,10 @@ export function ChatInput({
   const catOptions = useMemo(() => buildCatOptions(cats), [cats]);
   // F108 Scene 2: whisper-eligible cats (CatData[] for WhisperCatSelector)
   const whisperCats = useMemo(() => cats.filter((c) => c.roster?.available !== false), [cats]);
+
+  // #699: Reply-to (quote) state
+  const replyToMessage = useChatStore((s) => s.replyToMessage);
+  const clearReplyTo = useChatStore((s) => s.clearReplyTo);
 
   // F122B AC-B10: track which cats are actively executing (for whisper disable)
   const activeInvocations = useChatStore((s) => s.activeInvocations);
@@ -159,16 +169,28 @@ export function ChatInput({
           whisperMode && whisperTargets.size > 0
             ? { visibility: 'whisper' as const, whisperTo: [...whisperTargets] }
             : undefined;
-        onSend(trimmed, images.length > 0 ? images : undefined, whisper, deliveryMode);
+        onSend(trimmed, images.length > 0 ? images : undefined, whisper, deliveryMode, replyToMessage?.id);
         setInput('');
         ghostRef.current = null;
         setGhostSuggestion(null);
         setImages([]);
         setShowMentions(false);
         setShowGameMenu(false);
+        clearReplyTo();
       }
     },
-    [input, disabled, onSend, images, sendTemporarilyDisabled, whisperMode, whisperTargets, addHistoryEntry],
+    [
+      input,
+      disabled,
+      onSend,
+      images,
+      sendTemporarilyDisabled,
+      whisperMode,
+      whisperTargets,
+      addHistoryEntry,
+      replyToMessage,
+      clearReplyTo,
+    ],
   );
 
   const handleSend = useCallback(() => doSend(undefined), [doSend]);
@@ -646,6 +668,27 @@ export function ChatInput({
       )}
 
       <ImagePreview files={images} onRemove={handleRemoveImage} />
+
+      {/* #699: Reply preview bar */}
+      {replyToMessage && (
+        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-cafe text-sm text-cafe-secondary bg-cafe-surface-elevated rounded-t-lg">
+          <span className="text-cafe-muted shrink-0">↩</span>
+          <span className="truncate flex-1 text-xs">
+            {replyToMessage.content.slice(0, 80)}
+            {replyToMessage.content.length > 80 ? '...' : ''}
+          </span>
+          <button
+            type="button"
+            onClick={clearReplyTo}
+            className="text-cafe-muted hover:text-cafe-primary shrink-0 p-0.5"
+            title="取消引用"
+          >
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       <input
         ref={fileInputRef}
