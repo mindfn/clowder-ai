@@ -485,6 +485,11 @@ function fireOwnerMentionNotification(msg: ChatMessage) {
 function findAssistantDuplicate(messages: ChatMessage[], incoming: ChatMessage): number {
   if (incoming.type !== 'assistant' || !incoming.catId) return -1;
 
+  // #814: Explicit post_message callbacks are independent messages — never merge.
+  // post_message is a cat-initiated separate communication (e.g., @mention to another cat),
+  // not a duplicate of the same response arriving via stream+callback paths.
+  if (incoming.origin === 'callback' && incoming.extra?.isExplicitPost) return -1;
+
   const incomingInvId = getBubbleInvocationId(incoming);
 
   // Phase 1: Hard rule — scan ALL same-cat assistants for exact invocationId match.

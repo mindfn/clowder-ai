@@ -172,6 +172,8 @@ interface AgentMsg {
   extra?: {
     crossPost?: { sourceThreadId: string; sourceInvocationId?: string };
     a2aRouting?: { fromCatId?: string; targetCatId?: string; invocationId?: string };
+    /** #814: True when message originated from an explicit post_message callback */
+    isExplicitPost?: boolean;
   };
   /** F121: Reply-to message ID */
   replyTo?: string;
@@ -1559,7 +1561,9 @@ export function handleBackgroundAgentMessage(
 
         const sidePatch: Partial<ChatMessage> = {
           ...(msg.metadata ? { metadata: msg.metadata } : {}),
-          ...(msg.extra?.crossPost ? { extra: { crossPost: msg.extra.crossPost } } : {}),
+          ...(msg.extra?.crossPost || msg.extra?.isExplicitPost
+              ? { extra: { ...(msg.extra.crossPost ? { crossPost: msg.extra.crossPost } : {}), ...(msg.extra.isExplicitPost ? { isExplicitPost: true as const } : {}) } }
+              : {}),
           ...(msg.mentionsUser ? { mentionsUser: true } : {}),
           ...(msg.replyTo ? { replyTo: msg.replyTo } : {}),
           ...(msg.replyPreview ? { replyPreview: msg.replyPreview } : {}),
@@ -1637,7 +1641,9 @@ export function handleBackgroundAgentMessage(
             catId: msg.catId,
             content: msg.content,
             ...(msg.metadata ? { metadata: msg.metadata } : {}),
-            ...(msg.extra?.crossPost ? { extra: { crossPost: msg.extra.crossPost } } : {}),
+            ...(msg.extra?.crossPost || msg.extra?.isExplicitPost
+              ? { extra: { ...(msg.extra.crossPost ? { crossPost: msg.extra.crossPost } : {}), ...(msg.extra.isExplicitPost ? { isExplicitPost: true as const } : {}) } }
+              : {}),
             ...(msg.mentionsUser ? { mentionsUser: true } : {}),
             ...(msg.replyTo ? { replyTo: msg.replyTo } : {}),
             ...(msg.replyPreview ? { replyPreview: msg.replyPreview } : {}),
@@ -1648,7 +1654,9 @@ export function handleBackgroundAgentMessage(
           // Side-fields after reducer success (reducer 不 model 这些)
           const sidePatch: Partial<ChatMessage> = {
             ...(msg.metadata ? { metadata: msg.metadata } : {}),
-            ...(msg.extra?.crossPost ? { extra: { crossPost: msg.extra.crossPost } } : {}),
+            ...(msg.extra?.crossPost || msg.extra?.isExplicitPost
+              ? { extra: { ...(msg.extra.crossPost ? { crossPost: msg.extra.crossPost } : {}), ...(msg.extra.isExplicitPost ? { isExplicitPost: true as const } : {}) } }
+              : {}),
             ...(msg.mentionsUser ? { mentionsUser: true } : {}),
             ...(msg.replyTo ? { replyTo: msg.replyTo } : {}),
             ...(msg.replyPreview ? { replyPreview: msg.replyPreview } : {}),
