@@ -6,7 +6,7 @@
  * POST /api/first-run/connectivity-test  — probe provider API connectivity
  */
 
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { builtinAccountIdForClient, type ClientId, protocolForClient } from '@cat-cafe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
@@ -90,10 +90,19 @@ const SAFE_MODEL_RE = /^[\w.\-/]+$/;
 /** Probe timeout — CLI cold start (especially opencode) can be slow. */
 const PROBE_TIMEOUT_MS = 120_000;
 
+/** @internal Spawn function signature for dependency injection in tests. */
+type ProbeSpawnFn = (
+  cmd: string,
+  args: string[],
+  opts: { env?: NodeJS.ProcessEnv; stdio?: readonly string[]; shell?: boolean | string },
+) => ChildProcess;
+
 export interface CliProbeOptions {
   model?: string;
   /** Extra env vars injected into the subprocess (e.g. API key credentials). */
   env?: Record<string, string>;
+  /** @internal Test hook — overrides child_process.spawn for unit testing. */
+  spawnFn?: ProbeSpawnFn;
 }
 
 /**
@@ -110,7 +119,7 @@ export function tryCliProbe(
   const spec = CLI_PROBE_SPECS[client];
   if (!spec) return Promise.resolve(null);
 
-  const { model, env } = opts;
+  const { model, env, spawnFn: customSpawn } = opts;
   if (model && !SAFE_MODEL_RE.test(model)) {
     return Promise.resolve({ ok: false, message: '模型名称包含非法字符' });
   }
@@ -132,7 +141,8 @@ export function tryCliProbe(
       shell = plan.shell;
     }
 
-    const child = spawn(command, finalArgs, {
+    const doSpawn = customSpawn ?? spawn;
+    const child = doSpawn(command, finalArgs, {
       env: spawnEnv,
       stdio: ['pipe', 'pipe', 'pipe'],
       ...(shell !== undefined ? { shell } : {}),
