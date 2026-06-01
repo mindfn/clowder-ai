@@ -288,6 +288,9 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     // F39: Delivery mode
     let deliveryMode: 'immediate' | 'queue' | 'force' | undefined;
 
+    // #699: Reply-to (quote) reference
+    let replyTo: string | undefined;
+
     if (request.isMultipart()) {
       // Parse multipart: text fields + image files
       const parsed = await parseMultipart(request, uploadDir);
@@ -308,6 +311,10 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
       if (parsed.deliveryMode) {
         deliveryMode = parsed.deliveryMode;
       }
+      // #699: Extract replyTo from multipart
+      if (parsed.replyTo) {
+        replyTo = parsed.replyTo;
+      }
     } else {
       // JSON mode (backwards compatible)
       const parseResult = sendMessageSchema.safeParse(request.body);
@@ -322,6 +329,8 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         whisperVisibility = 'whisper';
         whisperRecipients = parseResult.data.whisperTo as CatId[] | undefined;
       }
+      // #699: Extract replyTo from JSON body
+      replyTo = parseResult.data.replyTo;
     }
 
     const userId = resolveUserId(request, {
@@ -597,6 +606,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
             ...(whisperVisibility && whisperRecipients
               ? { visibility: whisperVisibility, whisperTo: whisperRecipients }
               : {}),
+            ...(replyTo ? { replyTo } : {}),
           });
           storedUserMessageId = userMessage.id;
 
@@ -715,6 +725,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
                   ...(whisperVisibility && whisperRecipients
                     ? { visibility: whisperVisibility, whisperTo: whisperRecipients }
                     : {}),
+                  ...(replyTo ? { replyTo } : {}),
                 });
                 toctouUserMessageId = toctouUserMessage.id;
                 const queueEntryId = enqueueResult.entry?.id;
@@ -814,6 +825,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           ...(whisperVisibility && whisperRecipients
             ? { visibility: whisperVisibility, whisperTo: whisperRecipients }
             : {}),
+          ...(replyTo ? { replyTo } : {}),
         });
 
         // ③ Backfill InvocationRecord.userMessageId

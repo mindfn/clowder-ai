@@ -60,6 +60,7 @@ export function useSendMessage(activeThreadId?: string) {
       overrideThreadId?: string,
       whisper?: WhisperOptions,
       deliveryMode?: DeliveryMode,
+      replyToId?: string,
     ) => {
       const activeThread = activeThreadId ?? useChatStore.getState().currentThreadId;
       const threadId = overrideThreadId ?? activeThread;
@@ -77,6 +78,22 @@ export function useSendMessage(activeThreadId?: string) {
       const clientMessageId = createClientId();
       const optimisticMessageId = `user-${clientMessageId}`;
 
+      // #699: Build optimistic replyPreview from local message data so ReplyPill renders immediately
+      let replyPreview: ChatMessageData['replyPreview'] | undefined;
+      if (replyToId) {
+        const replyTarget = useChatStore.getState().replyToMessage;
+        if (replyTarget) {
+          const PREVIEW_MAX = 80;
+          replyPreview = {
+            senderCatId: replyTarget.senderCatId,
+            content:
+              replyTarget.content.length > PREVIEW_MAX
+                ? replyTarget.content.slice(0, PREVIEW_MAX)
+                : replyTarget.content,
+          };
+        }
+      }
+
       // Create user message
       const userMsg: ChatMessageData = {
         id: optimisticMessageId,
@@ -84,6 +101,7 @@ export function useSendMessage(activeThreadId?: string) {
         content,
         timestamp: Date.now(),
         ...(whisper ? { visibility: whisper.visibility, whisperTo: whisper.whisperTo } : {}),
+        ...(replyToId ? { replyTo: replyToId, ...(replyPreview ? { replyPreview } : {}) } : {}),
       };
       if (images && images.length > 0) {
         userMsg.contentBlocks = [
@@ -155,6 +173,7 @@ export function useSendMessage(activeThreadId?: string) {
               formData.append('whisperTo', catId);
             }
           }
+          if (replyToId) formData.append('replyTo', replyToId);
           for (const img of images) {
             formData.append('images', img);
           }
@@ -180,6 +199,7 @@ export function useSendMessage(activeThreadId?: string) {
               idempotencyKey: clientMessageId,
               ...(whisper ? { visibility: whisper.visibility, whisperTo: whisper.whisperTo } : {}),
               ...deliveryModePayload,
+              ...(replyToId ? { replyTo: replyToId } : {}),
             }),
           });
           if (!res.ok) {
