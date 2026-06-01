@@ -1345,6 +1345,12 @@ export const callbackTools = [
           type: 'number',
           description: 'Number of messages before and after to include for context (0-10, default 0)',
         },
+        agentKeyCatId: {
+          type: 'string',
+          description:
+            'For shared Antigravity MCP: select which per-cat agent-key to use. ' +
+            'Required when CAT_CAFE_AGENT_KEY_FILES has multiple entries. Ignored by invocation-token callers.',
+        },
       },
       required: ['messageId'],
     },
