@@ -43,7 +43,7 @@ const connectivityTestSchema = z.object({
 /** Structured probe spec: args array + optional stdin data. */
 interface CliProbeSpec {
   args: (model?: string) => string[];
-  /** Data piped to stdin (claude reads prompt from stdin in -p mode). */
+  /** Optional data piped to stdin before close. Most CLIs take prompt as a positional arg. */
   stdin?: string;
 }
 
@@ -54,8 +54,7 @@ interface CliProbeSpec {
  */
 const CLI_PROBE_SPECS: Record<string, CliProbeSpec> = {
   claude: {
-    args: (m) => ['-p', ...(m ? ['--model', m] : []), '--max-budget-usd', '0.05'],
-    stdin: 'reply pong',
+    args: (m) => ['-p', 'reply pong', ...(m ? ['--model', m] : []), '--max-budget-usd', '0.05'],
   },
   codex: {
     args: (m) => ['exec', ...(m ? ['--model', m] : []), 'reply pong'],
@@ -159,7 +158,7 @@ export function tryCliProbe(
       settle({ ok: false, message: `${client} CLI 响应超时` });
     }, PROBE_TIMEOUT_MS);
 
-    /* Pipe stdin data (claude reads prompt via -p stdin). */
+    /* Pipe optional stdin data if spec provides it. */
     if (spec.stdin) {
       child.stdin?.write(spec.stdin);
     }
