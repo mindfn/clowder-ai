@@ -630,7 +630,7 @@ export class CodexAgentService implements AgentService {
           command: codexCommand,
           model: cliModel,
           originalModel: effectiveModel,
-          customBaseUrl: customBaseUrl ?? null,
+          customBaseUrl: customBaseUrl ? `${customBaseUrl.slice(0, 30)}…` : null,
           sessionId: options?.sessionId ?? null,
           invocationId: options?.invocationId ?? null,
           cwd: options?.workingDirectory ?? null,
