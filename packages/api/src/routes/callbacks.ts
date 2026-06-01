@@ -1400,16 +1400,14 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
               origin: 'callback',
               messageId: duplicateMsg.id,
               ...stampVisibleTurn(effectiveInvId, invocationId),
-              ...(isCrossThread || validExplicitTargets.length
-                ? {
-                    extra: {
-                      ...(isCrossThread
-                        ? { crossPost: { sourceThreadId: actor.threadId, sourceInvocationId: effectiveInvId } }
-                        : {}),
-                      ...(validExplicitTargets.length ? { targetCats: validExplicitTargets } : {}),
-                    },
-                  }
-                : {}),
+              // #814: Always include isExplicitPost so frontend TD112 dedup skips merge
+              extra: {
+                isExplicitPost: true,
+                ...(isCrossThread
+                  ? { crossPost: { sourceThreadId: actor.threadId, sourceInvocationId: effectiveInvId } }
+                  : {}),
+                ...(validExplicitTargets.length ? { targetCats: validExplicitTargets } : {}),
+              },
               ...(duplicateMsg.mentionsUser ? { mentionsUser: true } : {}),
               ...(validatedReplyTo ? { replyTo: validatedReplyTo } : {}),
               ...(replyPreview ? { replyPreview } : {}),

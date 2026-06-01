@@ -516,7 +516,11 @@ function reduceCallbackFinal(messages: ChatMessage[], event: BubbleEvent): ChatM
     }
   }
 
-  const existing = findExistingByStableKey(messages, event);
+  // #814: explicit post_message callbacks must NOT merge into existing stream
+  // bubbles — they are standalone messages. Skip stable-key merge entirely.
+  const isExplicitPost = event.payload?.isExplicitPost === true;
+
+  const existing = !isExplicitPost ? findExistingByStableKey(messages, event) : undefined;
   if (existing) {
     const next = [...messages];
     next[existing.index] = {
