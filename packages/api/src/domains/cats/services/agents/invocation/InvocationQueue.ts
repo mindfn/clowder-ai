@@ -856,6 +856,38 @@ export class InvocationQueue {
     return false;
   }
 
+  /**
+   * #815: Consume queued A2A trigger entries subsumed by active processing.
+   * When a cat is already being triggered by the current batch, queued A2A entries
+   * targeting the same cat are redundant — the source messages are already persisted
+   * in thread history and will be visible during context assembly.
+   * Returns consumed entries (caller handles cleanup + notifications).
+   */
+  consumeSubsumedA2AEntries(threadId: string, activeCatSet: Set<string>): QueueEntry[] {
+    const consumed: QueueEntry[] = [];
+    for (const q of this.queues.values()) {
+      if (!this.queueMatchesThread(q, threadId)) continue;
+      // Reverse iteration for safe splice
+      for (let i = q.length - 1; i >= 0; i--) {
+        const e = q[i]!;
+        if (e.status !== 'queued') continue;
+        if (e.sourceCategory !== 'a2a') continue;
+        // A2A entries are single-target (deferA2AEnqueue); check all targets are active
+        if (e.targetCats.every((cat) => activeCatSet.has(cat))) {
+          this.originalContents.delete(e.id);
+          consumed.push(q.splice(i, 1)[0]!);
+        }
+      }
+    }
+    if (consumed.length > 0) {
+      this.log.info(
+        { threadId, count: consumed.length, entryIds: consumed.map((e) => e.id) },
+        '#815: consumed A2A entries subsumed by active processing',
+      );
+    }
+    return consumed;
+  }
+
   // ── Internal helpers ──
 
   private findEntry(threadId: string, userId: string, entryId: string): QueueEntry | undefined {

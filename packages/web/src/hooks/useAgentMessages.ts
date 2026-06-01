@@ -1551,8 +1551,13 @@ export function handleBackgroundAgentMessage(
         const sidePatch: Partial<ChatMessage> = {
           ...(msg.metadata ? { metadata: msg.metadata } : {}),
           ...(msg.extra?.crossPost || msg.extra?.isExplicitPost
-              ? { extra: { ...(msg.extra.crossPost ? { crossPost: msg.extra.crossPost } : {}), ...(msg.extra.isExplicitPost ? { isExplicitPost: true as const } : {}) } }
-              : {}),
+            ? {
+                extra: {
+                  ...(msg.extra.crossPost ? { crossPost: msg.extra.crossPost } : {}),
+                  ...(msg.extra.isExplicitPost ? { isExplicitPost: true as const } : {}),
+                },
+              }
+            : {}),
           ...(msg.mentionsUser ? { mentionsUser: true } : {}),
           ...(msg.replyTo ? { replyTo: msg.replyTo } : {}),
           ...(msg.replyPreview ? { replyPreview: msg.replyPreview } : {}),
@@ -1631,7 +1636,12 @@ export function handleBackgroundAgentMessage(
             content: msg.content,
             ...(msg.metadata ? { metadata: msg.metadata } : {}),
             ...(msg.extra?.crossPost || msg.extra?.isExplicitPost
-              ? { extra: { ...(msg.extra.crossPost ? { crossPost: msg.extra.crossPost } : {}), ...(msg.extra.isExplicitPost ? { isExplicitPost: true as const } : {}) } }
+              ? {
+                  extra: {
+                    ...(msg.extra.crossPost ? { crossPost: msg.extra.crossPost } : {}),
+                    ...(msg.extra.isExplicitPost ? { isExplicitPost: true as const } : {}),
+                  },
+                }
               : {}),
             ...(msg.mentionsUser ? { mentionsUser: true } : {}),
             ...(msg.replyTo ? { replyTo: msg.replyTo } : {}),
@@ -1644,7 +1654,12 @@ export function handleBackgroundAgentMessage(
           const sidePatch: Partial<ChatMessage> = {
             ...(msg.metadata ? { metadata: msg.metadata } : {}),
             ...(msg.extra?.crossPost || msg.extra?.isExplicitPost
-              ? { extra: { ...(msg.extra.crossPost ? { crossPost: msg.extra.crossPost } : {}), ...(msg.extra.isExplicitPost ? { isExplicitPost: true as const } : {}) } }
+              ? {
+                  extra: {
+                    ...(msg.extra.crossPost ? { crossPost: msg.extra.crossPost } : {}),
+                    ...(msg.extra.isExplicitPost ? { isExplicitPost: true as const } : {}),
+                  },
+                }
               : {}),
             ...(msg.mentionsUser ? { mentionsUser: true } : {}),
             ...(msg.replyTo ? { replyTo: msg.replyTo } : {}),

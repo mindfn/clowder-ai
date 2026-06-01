@@ -1361,6 +1361,8 @@ async function main(): Promise<void> {
     socketManager,
     messageStore,
     log: app.log,
+    threadStore:
+      threadStore as unknown as import('./domains/cats/services/agents/invocation/QueueProcessor.js').ThreadStoreLike,
   });
   socketManager.setQueueProcessor(queueProcessor);
 
