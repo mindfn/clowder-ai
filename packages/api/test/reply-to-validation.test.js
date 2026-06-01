@@ -6,9 +6,8 @@
 
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, mock, test } from 'node:test';
+import { catRegistry, createCatId } from '@cat-cafe/shared';
 import Fastify from 'fastify';
-import { catRegistry } from '@cat-cafe/shared';
-import { createCatId } from '@cat-cafe/shared';
 
 const { InvocationQueue } = await import('../dist/domains/cats/services/agents/invocation/InvocationQueue.js');
 const { InvocationRegistry } = await import('../dist/domains/cats/services/agents/invocation/InvocationRegistry.js');
