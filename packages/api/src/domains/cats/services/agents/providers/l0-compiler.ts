@@ -21,11 +21,46 @@
  */
 
 import { spawn as nodeSpawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SCRIPT_BASENAME = 'compile-system-prompt-l0.mjs';
+
+// ── L0 cache ────────────────────────────────────────────────────────
+// The compiled L0 depends on static inputs (shared-rules.md, cat config,
+// teammate roster) that don't change during a session. Caching avoids
+// spawning a subprocess on every invoke(). The cache is populated at
+// startup via warmL0Cache() and invalidated on hot-reload via clearL0Cache().
+const l0Cache = new Map<string, string>();
+
+/** Clear cached L0 for one cat or all cats (call on hot-reload / re-sync). */
+export function clearL0Cache(catId?: string): void {
+  if (catId) l0Cache.delete(catId);
+  else l0Cache.clear();
+}
+
+/** Number of cached entries (test/diagnostic). */
+export function l0CacheSize(): number {
+  return l0Cache.size;
+}
+
+/**
+ * Pre-compile L0 for a list of catIds in parallel at startup.
+ * Failures are logged but don't block startup — invoke() will retry.
+ */
+export async function warmL0Cache(
+  catIds: string[],
+  logger?: { warn: (obj: Record<string, unknown>, msg: string) => void },
+): Promise<void> {
+  await Promise.all(
+    catIds.map((catId) =>
+      compileL0ViaSubprocess({ catId }).catch((err: unknown) => {
+        logger?.warn({ catId, err: (err as Error).message }, 'L0 pre-compile failed at startup (will retry on invoke)');
+      }),
+    ),
+  );
+}
 
 /**
  * Derive the install root from this module's file path.
@@ -97,6 +132,13 @@ export interface CompileL0Options {
 export async function compileL0ViaSubprocess(options: CompileL0Options): Promise<string> {
   const { catId, outPath, cwd = process.cwd(), spawnFn = nodeSpawn } = options;
 
+  // Cache hit — skip subprocess entirely
+  const cached = l0Cache.get(catId);
+  if (cached) {
+    if (outPath) writeFileSync(outPath, cached, 'utf8');
+    return cached;
+  }
+
   const scriptPath = resolveL0CompilerScriptPath(cwd);
   if (!scriptPath) {
     throw new Error(
@@ -134,15 +176,19 @@ export async function compileL0ViaSubprocess(options: CompileL0Options): Promise
     });
   });
 
+  let result: string;
   if (outPath) {
-    const content = readFileSync(outPath, 'utf8');
-    if (content.trim().length === 0) {
+    result = readFileSync(outPath, 'utf8');
+    if (result.trim().length === 0) {
       throw new Error(`L0 compile produced empty file ${outPath} for ${catId}`);
     }
-    return content;
+  } else {
+    result = stdout;
+    if (result.trim().length === 0) {
+      throw new Error(`L0 compile produced empty output (no --out) for ${catId}`);
+    }
   }
-  if (stdout.trim().length === 0) {
-    throw new Error(`L0 compile produced empty output (no --out) for ${catId}`);
-  }
-  return stdout;
+
+  l0Cache.set(catId, result);
+  return result;
 }
