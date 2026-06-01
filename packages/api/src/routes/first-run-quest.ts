@@ -48,7 +48,7 @@ const CLI_PROBE_CMD: Record<string, (model?: string) => string> = {
   codex: (m) => `codex exec${m ? ` --model ${m}` : ''} "reply pong"`,
   gemini: (m) => `gemini -p "reply pong"${m ? ` --model ${m}` : ''}`,
   kimi: (m) => `kimi --print${m ? ` --model ${m}` : ''} --prompt "reply pong"`,
-  opencode: (m) => `opencode run${m ? ` --model ${m}` : ''} "reply pong"`,
+  opencode: (m) => `opencode run --format json${m ? ` --model ${m}` : ''} "reply pong"`,
 };
 
 /** Error patterns that prove the CLI authenticated and reached the API. */
