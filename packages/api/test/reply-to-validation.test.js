@@ -168,6 +168,66 @@ describe('POST /api/messages — replyTo validation', () => {
     assert.equal(sent.replyTo, undefined, 'deleted-message replyTo should be dropped');
   });
 
+  test('silently drops replyTo referencing queued (undelivered) message', async () => {
+    const thread = await createThread();
+
+    const queued = messageStore.append({
+      userId: 'default-user',
+      catId: null,
+      content: 'queued message',
+      mentions: [],
+      timestamp: 1000,
+      threadId: thread.id,
+      deliveryStatus: 'queued',
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/messages',
+      payload: {
+        content: 'reply to queued',
+        threadId: thread.id,
+        replyTo: queued.id,
+      },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const messages = messageStore.getByThread(thread.id);
+    const sent = messages.find((m) => m.content === 'reply to queued');
+    assert.ok(sent, 'message should be stored');
+    assert.equal(sent.replyTo, undefined, 'queued-message replyTo should be dropped');
+  });
+
+  test('silently drops replyTo referencing canceled message', async () => {
+    const thread = await createThread();
+
+    const canceled = messageStore.append({
+      userId: 'default-user',
+      catId: null,
+      content: 'canceled message',
+      mentions: [],
+      timestamp: 1000,
+      threadId: thread.id,
+      deliveryStatus: 'canceled',
+    });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/messages',
+      payload: {
+        content: 'reply to canceled',
+        threadId: thread.id,
+        replyTo: canceled.id,
+      },
+    });
+
+    assert.equal(res.statusCode, 200);
+    const messages = messageStore.getByThread(thread.id);
+    const sent = messages.find((m) => m.content === 'reply to canceled');
+    assert.ok(sent, 'message should be stored');
+    assert.equal(sent.replyTo, undefined, 'canceled-message replyTo should be dropped');
+  });
+
   test('preserves valid replyTo referencing message in same thread', async () => {
     const thread = await createThread();
 
