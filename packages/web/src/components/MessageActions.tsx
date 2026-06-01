@@ -174,6 +174,7 @@ export function MessageActions({ message, threadId, children }: MessageActionsPr
                 id: message.id,
                 content: message.content,
                 senderCatId: message.catId ?? null,
+                threadId,
               });
             }}
             className="p-1 rounded hover:bg-cafe-surface-elevated text-cafe-muted hover:text-cafe-primary transition-colors"

@@ -64,9 +64,11 @@ export function ChatInput({
   // F108 Scene 2: whisper-eligible cats (CatData[] for WhisperCatSelector)
   const whisperCats = useMemo(() => cats.filter((c) => c.roster?.available !== false), [cats]);
 
-  // #699: Reply-to (quote) state
-  const replyToMessage = useChatStore((s) => s.replyToMessage);
+  // #699: Reply-to (quote) state — thread-scoped to prevent split-pane leaks
+  const rawReplyToMessage = useChatStore((s) => s.replyToMessage);
   const clearReplyTo = useChatStore((s) => s.clearReplyTo);
+  // Only surface the reply when it belongs to this ChatInput's thread
+  const replyToMessage = rawReplyToMessage?.threadId === threadId ? rawReplyToMessage : null;
 
   // F122B AC-B10: track which cats are actively executing (for whisper disable)
   const activeInvocations = useChatStore((s) => s.activeInvocations);
@@ -176,7 +178,8 @@ export function ChatInput({
         setImages([]);
         setShowMentions(false);
         setShowGameMenu(false);
-        clearReplyTo();
+        // Only clear reply if it belongs to this thread (preserve other thread's reply in split-pane)
+        if (replyToMessage) clearReplyTo();
       }
     },
     [
