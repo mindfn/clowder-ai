@@ -559,4 +559,59 @@ describe('ThreadStore', () => {
     store.updateVotingState(thread.id, null);
     assert.equal(store.getVotingState(thread.id), null);
   });
+
+  // ── #813: Pending continuation per-cat isolation ──
+
+  test('#813: setPendingContinuation + consumePendingContinuation per-cat isolation', async () => {
+    const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const store = new ThreadStore();
+    const thread = store.create('user-1', 'cont-test');
+
+    const capsuleA = { summary: 'cat A context' };
+    const capsuleB = { summary: 'cat B context' };
+
+    // Write continuation for two cats
+    store.setPendingContinuation(thread.id, 'catA', { capsule: capsuleA, createdAt: 1000 });
+    store.setPendingContinuation(thread.id, 'catB', { capsule: capsuleB, createdAt: 2000 });
+
+    // Consume catA — catB should remain
+    const resultA = store.consumePendingContinuation(thread.id, 'catA');
+    assert.ok(resultA);
+    assert.deepEqual(resultA.capsule, capsuleA);
+    assert.equal(resultA.createdAt, 1000);
+
+    // catB still present
+    const resultB = store.consumePendingContinuation(thread.id, 'catB');
+    assert.ok(resultB);
+    assert.deepEqual(resultB.capsule, capsuleB);
+    assert.equal(resultB.createdAt, 2000);
+  });
+
+  test('#813: consumePendingContinuation returns null for non-existent cat', async () => {
+    const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const store = new ThreadStore();
+    const thread = store.create('user-1', 'cont-test-2');
+
+    store.setPendingContinuation(thread.id, 'catA', { capsule: { x: 1 }, createdAt: 1000 });
+
+    const result = store.consumePendingContinuation(thread.id, 'catX');
+    assert.equal(result, null);
+
+    // catA still available
+    const resultA = store.consumePendingContinuation(thread.id, 'catA');
+    assert.ok(resultA);
+  });
+
+  test('#813: consumePendingContinuation is one-shot (second call returns null)', async () => {
+    const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const store = new ThreadStore();
+    const thread = store.create('user-1', 'cont-test-3');
+
+    store.setPendingContinuation(thread.id, 'catA', { capsule: { data: 'once' }, createdAt: 500 });
+
+    const first = store.consumePendingContinuation(thread.id, 'catA');
+    assert.ok(first);
+    const second = store.consumePendingContinuation(thread.id, 'catA');
+    assert.equal(second, null);
+  });
 });
