@@ -294,12 +294,18 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
   });
 
   // #671: Inspect current data-dirs layout + pending migration work.
-  // Exposes absolute paths — owner-only to avoid leaking filesystem layout.
+  // Exposes absolute paths — owner-only + loopback to avoid leaking filesystem layout.
   app.get('/api/config/data-dirs', async (request, reply) => {
     const operator = resolveHeaderUserId(request);
     if (!operator) {
       reply.status(400);
       return { error: 'Identity required (X-Cat-Cafe-User header)' };
+    }
+    // Same loopback guard as POST /data-dirs/migrate: remote/proxied
+    // requests without a configured owner are rejected.
+    if (!isDirectLoopbackRequest(request) && !process.env.DEFAULT_OWNER_USER_ID?.trim()) {
+      reply.status(403);
+      return { error: 'Data-dirs inspection from non-localhost requires DEFAULT_OWNER_USER_ID to be configured' };
     }
     const gateResult = resolveOwnerGate(operator, {
       errorMessage: 'Data-dirs inspection requires owner identity',

@@ -207,6 +207,39 @@ describe('data-dirs-migration', () => {
       assert.equal(existsSync(`${legacyDb}-shm`), false);
     });
 
+    test('rolls back main SQLite file when sidecar migration fails', async () => {
+      const legacyDb = join(workRoot, 'evidence.sqlite');
+      const legacyWal = `${legacyDb}-wal`;
+      await writeFile(legacyDb, 'main-db-data', 'utf-8');
+      await writeFile(legacyWal, 'wal-data', 'utf-8');
+
+      const dataRoot = join(workRoot, 'newdata');
+      await mkdir(dataRoot, { recursive: true });
+      // Plant a directory at the WAL target path — rename(file, dir) fails
+      // with EISDIR, triggering the rollback logic in migrateOne.
+      await mkdir(join(dataRoot, 'evidence.sqlite-wal'), { recursive: true });
+
+      process.env.DATA_DIR = dataRoot;
+
+      const result = await runDataDirsMigration({
+        repoRoot: workRoot,
+        monorepoRoot: workRoot,
+        uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
+        trigger: 'startup',
+        io: plentyOfSpaceIO(),
+      });
+
+      const evidence = result.items.find((i) => i.key === 'evidenceDb');
+      assert.equal(evidence.status, 'failed', 'migration must fail when sidecar target is blocked');
+      // Legacy data must be fully intact (rollback succeeded)
+      assert.equal(existsSync(legacyDb), true, 'legacy main DB must survive rollback');
+      assert.equal(existsSync(legacyWal), true, 'legacy WAL must survive rollback');
+      assert.equal(await readFile(legacyDb, 'utf-8'), 'main-db-data');
+      assert.equal(await readFile(legacyWal, 'utf-8'), 'wal-data');
+      // Target main file must NOT remain (rolled back)
+      assert.equal(existsSync(join(dataRoot, 'evidence.sqlite')), false, 'target main DB must be rolled back');
+    });
+
     test('migrates eligible directory paths recursively', async () => {
       // Set up legacy audit-logs dir relative to workRoot (acts as cwd surrogate)
       const legacyAudit = join(workRoot, 'data', 'audit-logs');
