@@ -1215,6 +1215,26 @@ export class RedisThreadStore implements IThreadStore {
     await this.redis.hset(key, { labels: JSON.stringify(labelIds) });
   }
 
+  async updateMemberSessionStrategy(
+    threadId: string,
+    catId: string,
+    strategy: 'resume' | 'reborn' | null,
+  ): Promise<void> {
+    const key = ThreadKeys.detail(threadId);
+    if (strategy === null || strategy === 'resume') {
+      await this.redis.hdel(key, `memberSS:${catId}`);
+    } else {
+      await this.redis.hset(key, { [`memberSS:${catId}`]: strategy });
+    }
+  }
+
+  /** #836: Check if cat uses reborn strategy in this thread. */
+  async isRebornSession(threadId: string, catId: string): Promise<boolean> {
+    const key = ThreadKeys.detail(threadId);
+    const raw = await this.redis.hget(key, `memberSS:${catId}`);
+    return raw === 'reborn';
+  }
+
   async setPendingContinuation(
     threadId: string,
     catId: string,

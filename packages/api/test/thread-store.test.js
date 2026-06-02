@@ -633,4 +633,64 @@ describe('ThreadStore', () => {
     assert.ok(resultA);
     assert.deepEqual(resultA.capsule, capsuleUserA);
   });
+
+  // #836: Reborn session strategy tests
+  test('#836: updateMemberSessionStrategy sets and clears reborn', async () => {
+    const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const store = new ThreadStore();
+    const thread = store.create('user-1', 'reborn-test');
+
+    // Initially no strategy set — isRebornSession returns false
+    assert.equal(store.isRebornSession(thread.id, 'catA'), false);
+
+    // Set reborn strategy
+    store.updateMemberSessionStrategy(thread.id, 'catA', 'reborn');
+    assert.equal(store.isRebornSession(thread.id, 'catA'), true);
+
+    // Other cats not affected
+    assert.equal(store.isRebornSession(thread.id, 'catB'), false);
+
+    // Clear by setting null (removes override)
+    store.updateMemberSessionStrategy(thread.id, 'catA', null);
+    assert.equal(store.isRebornSession(thread.id, 'catA'), false);
+
+    // Verify container is cleaned up
+    const updated = store.get(thread.id);
+    assert.equal(updated.memberSessionStrategy, undefined);
+  });
+
+  test('#836: resume strategy is treated as default (not reborn)', async () => {
+    const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const store = new ThreadStore();
+    const thread = store.create('user-1', 'resume-test');
+
+    // Explicitly setting 'resume' also clears the override (it's the default)
+    store.updateMemberSessionStrategy(thread.id, 'catA', 'reborn');
+    assert.equal(store.isRebornSession(thread.id, 'catA'), true);
+
+    store.updateMemberSessionStrategy(thread.id, 'catA', 'resume');
+    assert.equal(store.isRebornSession(thread.id, 'catA'), false);
+  });
+
+  test('#836: reborn is per-cat-per-thread (isolation)', async () => {
+    const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const store = new ThreadStore();
+    const threadA = store.create('user-1', 'thread-a');
+    const threadB = store.create('user-1', 'thread-b');
+
+    // Set reborn for catA in threadA only
+    store.updateMemberSessionStrategy(threadA.id, 'catA', 'reborn');
+
+    assert.equal(store.isRebornSession(threadA.id, 'catA'), true);
+    // Same cat in different thread — not reborn
+    assert.equal(store.isRebornSession(threadB.id, 'catA'), false);
+    // Different cat in same thread — not reborn
+    assert.equal(store.isRebornSession(threadA.id, 'catB'), false);
+  });
+
+  test('#836: isRebornSession returns false for non-existent thread', async () => {
+    const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const store = new ThreadStore();
+    assert.equal(store.isRebornSession('ghost-thread', 'catA'), false);
+  });
 });

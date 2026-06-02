@@ -96,6 +96,9 @@ export interface ThreadStoreLike {
     | { capsule: Record<string, unknown>; createdAt: number }
     | null
     | Promise<{ capsule: Record<string, unknown>; createdAt: number } | null>;
+  /** #836: Check if a cat uses reborn session strategy in this thread.
+   *  Reborn cats skip continuation consume/enqueue — every invocation starts fresh. */
+  isRebornSession?(threadId: string, catId: string): boolean | Promise<boolean>;
 }
 
 /** Minimal outbound delivery interface — avoids importing full OutboundDeliveryHook. */
@@ -984,27 +987,38 @@ export class QueueProcessor {
       // Multi-target: skip — content is shared across all targets, so injecting
       // one cat's continuation context would leak it to other cats. The pending
       // capsule stays in thread metadata until this cat is triggered alone.
+      // #836: Reborn cats skip continuation consume — every invocation starts fresh.
       if (this.deps.threadStore && targetCats.length === 1) {
         const singleCatId = targetCats[0]!;
-        try {
-          const pending = await this.deps.threadStore.consumePendingContinuation(threadId, singleCatId, userId);
-          if (pending) {
-            consumedContinuation = { catId: singleCatId, entry: pending };
-            const capsule = pending.capsule as unknown as CollaborationContinuityCapsuleV1;
-            if (isCollaborationContinuityCapsuleV1(capsule)) {
-              const continuationPrompt = formatContinuationPrompt(capsule);
-              content = continuationPrompt + '\n\n---\n\n' + content;
-              log.info(
-                { threadId, catId: singleCatId, capsuleCreatedAt: pending.createdAt },
-                '[QueueProcessor] #813: injected pending continuation context into execution',
-              );
-            }
-          }
-        } catch (err) {
-          log.warn(
-            { threadId, catId: singleCatId, err },
-            '[QueueProcessor] #813: consumePendingContinuation failed, proceeding without continuation context',
+        const isReborn = this.deps.threadStore.isRebornSession
+          ? await Promise.resolve(this.deps.threadStore.isRebornSession(threadId, singleCatId))
+          : false;
+        if (isReborn) {
+          log.info(
+            { threadId, catId: singleCatId },
+            '[QueueProcessor] #836: reborn session — skipping continuation consume',
           );
+        } else {
+          try {
+            const pending = await this.deps.threadStore.consumePendingContinuation(threadId, singleCatId, userId);
+            if (pending) {
+              consumedContinuation = { catId: singleCatId, entry: pending };
+              const capsule = pending.capsule as unknown as CollaborationContinuityCapsuleV1;
+              if (isCollaborationContinuityCapsuleV1(capsule)) {
+                const continuationPrompt = formatContinuationPrompt(capsule);
+                content = continuationPrompt + '\n\n---\n\n' + content;
+                log.info(
+                  { threadId, catId: singleCatId, capsuleCreatedAt: pending.createdAt },
+                  '[QueueProcessor] #813: injected pending continuation context into execution',
+                );
+              }
+            }
+          } catch (err) {
+            log.warn(
+              { threadId, catId: singleCatId, err },
+              '[QueueProcessor] #813: consumePendingContinuation failed, proceeding without continuation context',
+            );
+          }
         }
       }
 
@@ -1346,7 +1360,18 @@ export class QueueProcessor {
         // #813: Passive seal — write pending continuation to thread metadata
         // instead of immediately enqueuing. The next invocation of this cat
         // will consume the capsule at startup and inject continuation context.
+        // #836: Reborn cats skip continuation store — they never resume.
         for (const continuationCapsule of continuationCapsules.values()) {
+          const capsuleCatReborn = this.deps.threadStore?.isRebornSession
+            ? await Promise.resolve(this.deps.threadStore.isRebornSession(threadId, continuationCapsule.catId))
+            : false;
+          if (capsuleCatReborn) {
+            log.info(
+              { threadId, catId: continuationCapsule.catId },
+              '[QueueProcessor] #836: reborn session — skipping continuation store',
+            );
+            continue;
+          }
           if (this.deps.threadStore) {
             try {
               await this.deps.threadStore.setPendingContinuation(threadId, continuationCapsule.catId, userId, {

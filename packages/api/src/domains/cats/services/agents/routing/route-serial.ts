@@ -556,8 +556,14 @@ export async function* routeSerial(
       });
 
       // F24 Phase E: Bootstrap context for Session #2+
+      // #836: Reborn cats skip bootstrap — every invocation starts with zero prior context.
       let bootstrapContext = '';
+      const serialRebornThread = deps.invocationDeps.threadStore
+        ? await Promise.resolve(deps.invocationDeps.threadStore.get(threadId))
+        : null;
+      const isSerialReborn = serialRebornThread?.memberSessionStrategy?.[catId as string] === 'reborn';
       if (
+        !isSerialReborn &&
         isSessionChainEnabled(catId) &&
         deps.invocationDeps.sessionChainStore &&
         deps.invocationDeps.transcriptReader

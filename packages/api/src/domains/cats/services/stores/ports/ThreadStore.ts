@@ -178,6 +178,10 @@ export interface Thread {
   /** #813: Per-cat pending continuation capsule — written at session seal,
    *  consumed at next invocation start. Passive/lazy session renewal. */
   pendingContinuation?: Record<string, PendingContinuationEntry>;
+  /** #836: Per-cat session strategy override at thread member level.
+   *  'resume' (default) = normal session continuation / bootstrap / continuation capsule.
+   *  'reborn' = force new session every invocation, skip bootstrap digest, skip continuation. */
+  memberSessionStrategy?: Record<string, 'resume' | 'reborn'>;
 }
 
 /** #813: Pending continuation state per cat. Written by seal, consumed at next invocation. */
@@ -402,6 +406,12 @@ export interface IThreadStore {
   ): void | Promise<void>;
   /** F187: Update thread labels (replaces entire array). */
   updateLabels(threadId: string, labelIds: string[]): void | Promise<void>;
+  /** #836: Update per-cat session strategy for a thread member. `null` clears. */
+  updateMemberSessionStrategy(
+    threadId: string,
+    catId: string,
+    strategy: 'resume' | 'reborn' | null,
+  ): void | Promise<void>;
   /** #813: Write pending continuation state for a cat+user (passive seal). */
   setPendingContinuation(
     threadId: string,
@@ -853,6 +863,29 @@ export class ThreadStore implements IThreadStore {
   updateLabels(threadId: string, labelIds: string[]): void {
     const thread = this.get(threadId);
     if (thread) thread.labels = labelIds;
+  }
+
+  updateMemberSessionStrategy(threadId: string, catId: string, strategy: 'resume' | 'reborn' | null): void {
+    const thread = this.get(threadId);
+    if (!thread) return;
+    if (strategy === null || strategy === 'resume') {
+      // null or default: remove override
+      if (thread.memberSessionStrategy) {
+        delete thread.memberSessionStrategy[catId];
+        if (Object.keys(thread.memberSessionStrategy).length === 0) {
+          delete thread.memberSessionStrategy;
+        }
+      }
+    } else {
+      if (!thread.memberSessionStrategy) thread.memberSessionStrategy = {};
+      thread.memberSessionStrategy[catId] = strategy;
+    }
+  }
+
+  /** #836: Check if cat uses reborn strategy in this thread. */
+  isRebornSession(threadId: string, catId: string): boolean {
+    const thread = this.get(threadId);
+    return thread?.memberSessionStrategy?.[catId] === 'reborn';
   }
 
   setPendingContinuation(threadId: string, catId: string, userId: string, entry: PendingContinuationEntry): void {
