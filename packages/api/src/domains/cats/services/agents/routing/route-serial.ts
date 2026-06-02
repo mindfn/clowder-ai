@@ -1928,6 +1928,17 @@ export async function* routeSerial(
                 );
                 continue;
               }
+              // P2: dedup — skip if target cat already has queued/active work
+              // (same guard the inline and fairness-gate paths apply via
+              // resolveRoutingDecisions → hasActiveAgent). Without this, a
+              // seal-recovery enqueue could duplicate an earlier same-turn handoff.
+              if (hasQueuedOrActiveAgentForCat?.(threadId, nextCat)) {
+                log.info(
+                  { threadId, catId: nextCat, fromCat: catId },
+                  '#813: A2A abort-recovery skipped — target already queued/active',
+                );
+                continue;
+              }
               deferA2AEnqueue({
                 threadId,
                 userId,
