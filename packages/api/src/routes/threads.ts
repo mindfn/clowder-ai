@@ -171,7 +171,7 @@ function parseOptionalBooleanQuery(value: string | boolean | undefined): boolean
   return undefined;
 }
 
-function sanitizeThreadForResponse(thread: Thread, _userId: string): Thread {
+export function sanitizeThreadForResponse(thread: Thread, _userId: string): Thread {
   // Cloud Codex P2: strip internal-only fields that should not appear in API responses.
   // pendingContinuation is per-cat/user session state — not client-visible.
   if (thread.pendingContinuation) {

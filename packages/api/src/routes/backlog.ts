@@ -7,6 +7,7 @@ import type { IBacklogStore } from '../domains/cats/services/stores/ports/Backlo
 import { BacklogTransitionError } from '../domains/cats/services/stores/ports/BacklogStore.js';
 import { generateSortableId, type IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
+import { sanitizeThreadForResponse } from './threads.js';
 import { resolveUserId } from '../utils/request-identity.js';
 import {
   type BacklogFeatureRow,
@@ -295,7 +296,10 @@ export const backlogRoutes: FastifyPluginAsync<BacklogRoutesOptions> = async (ap
       );
     }
     const refreshedThread = await threadStore.get(threadId);
-    return { statusCode: 200 as const, payload: { item: dispatched, thread: refreshedThread } };
+    return {
+      statusCode: 200 as const,
+      payload: { item: dispatched, thread: refreshedThread ? sanitizeThreadForResponse(refreshedThread, userId) : null },
+    };
   }
 
   app.post('/api/backlog/items', async (request, reply) => {
@@ -533,7 +537,8 @@ export const backlogRoutes: FastifyPluginAsync<BacklogRoutesOptions> = async (ap
     }
 
     if (existing.status === 'dispatched') {
-      const thread = existing.dispatchedThreadId ? await threadStore.get(existing.dispatchedThreadId) : null;
+      const rawThread = existing.dispatchedThreadId ? await threadStore.get(existing.dispatchedThreadId) : null;
+      const thread = rawThread ? sanitizeThreadForResponse(rawThread, userId) : null;
       return {
         item: existing,
         ...(thread ? { thread } : {}),
@@ -704,7 +709,8 @@ export const backlogRoutes: FastifyPluginAsync<BacklogRoutesOptions> = async (ap
 
       const phase = parsed.data.threadPhase as ThreadPhase;
       if (existing.status === 'dispatched') {
-        const thread = existing.dispatchedThreadId ? await threadStore.get(existing.dispatchedThreadId) : null;
+        const rawThread = existing.dispatchedThreadId ? await threadStore.get(existing.dispatchedThreadId) : null;
+        const thread = rawThread ? sanitizeThreadForResponse(rawThread, userId) : null;
         return { item: existing, ...(thread ? { thread } : {}) };
       }
 
