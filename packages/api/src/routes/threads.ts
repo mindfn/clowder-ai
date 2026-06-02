@@ -320,7 +320,7 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
     }
 
     reply.status(201);
-    return thread;
+    return sanitizeThreadForResponse(thread, userId);
   });
 
   // GET /api/threads - 列出用户的对话
@@ -536,8 +536,8 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
       reply.status(404);
       return { error: 'Thread not found' };
     }
-
-    return updated;
+    const patchUserId = resolveUserId(request, { defaultUserId: 'default-user' }) ?? 'default-user';
+    return sanitizeThreadForResponse(updated, patchUserId);
   });
 
   // DELETE /api/threads/:id - 删除对话 (with cascade delete)
@@ -628,7 +628,9 @@ export const threadsRoutes: FastifyPluginAsync<ThreadsRoutesOptions> = async (ap
     }
 
     const updated = await threadStore.get(id);
-    return updated;
+    if (!updated) return { error: 'Thread not found after restore' };
+    const restoreUserId = resolveUserId(request, { defaultUserId: 'default-user' }) ?? 'default-user';
+    return sanitizeThreadForResponse(updated, restoreUserId);
   });
 
   // F045: GET /api/threads/:threadId/task-progress — task progress snapshot for page refresh persistence
