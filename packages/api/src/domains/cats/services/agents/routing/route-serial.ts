@@ -1898,33 +1898,46 @@ export async function* routeSerial(
           // #813 fix: When invocation is aborted (e.g., after context seal), defer @mentions
           // to the queue instead of silently dropping them. This ensures handoff continuity
           // even when the cat's invocation was interrupted after writing a line-start @mention.
-          for (const nextCat of a2aMentions) {
-            if (worklistEntry.a2aCount >= maxDepth) {
-              log.info(
-                { threadId, catId: nextCat, fromCat: catId, a2aCount: worklistEntry.a2aCount, maxDepth },
-                'A2A abort-recovery blocked: depth limit reached',
-              );
-              continue;
-            }
-            deferA2AEnqueue({
-              threadId,
-              userId,
-              content: storedContent,
-              source: 'agent',
-              sourceCategory: 'a2a',
-              targetCats: [nextCat],
-              callerCatId: catId,
-              messageId: storedMsgId,
-              a2aTriggerMessageId: storedMsgId,
-              autoExecute: true,
-              priority: 'normal',
-              intent: 'execute',
-            });
-            worklistEntry.a2aCount++;
+          //
+          // P2 gate: Do NOT recover for user-initiated cancellations (user_cancel / cancel_all).
+          // The user explicitly stopped the flow — enqueueing autoExecute A2A work afterward
+          // would contradict their intent and run work they tried to stop.
+          const abortReason = catSignal.reason;
+          const isUserInitiatedAbort = abortReason === 'user_cancel' || abortReason === 'cancel_all';
+          if (isUserInitiatedAbort) {
             log.info(
-              { threadId, catId: nextCat, fromCat: catId },
-              '#813: A2A mention recovered after signal abort — deferred to queue',
+              { threadId, catId, abortReason, mentionCount: a2aMentions.length },
+              '#813: A2A abort-recovery suppressed — user-initiated cancellation',
             );
+          } else {
+            for (const nextCat of a2aMentions) {
+              if (worklistEntry.a2aCount >= maxDepth) {
+                log.info(
+                  { threadId, catId: nextCat, fromCat: catId, a2aCount: worklistEntry.a2aCount, maxDepth },
+                  'A2A abort-recovery blocked: depth limit reached',
+                );
+                continue;
+              }
+              deferA2AEnqueue({
+                threadId,
+                userId,
+                content: storedContent,
+                source: 'agent',
+                sourceCategory: 'a2a',
+                targetCats: [nextCat],
+                callerCatId: catId,
+                messageId: storedMsgId,
+                a2aTriggerMessageId: storedMsgId,
+                autoExecute: true,
+                priority: 'normal',
+                intent: 'execute',
+              });
+              worklistEntry.a2aCount++;
+              log.info(
+                { threadId, catId: nextCat, fromCat: catId },
+                '#813: A2A mention recovered after signal abort — deferred to queue',
+              );
+            }
           }
         } else if (a2aMentions.length > 0 && queuedMessagesPending && deferA2AEnqueue && !catSignal?.aborted) {
           // F216 c2: deferred enqueue via the unified resolveRoutingDecisions decision layer.
