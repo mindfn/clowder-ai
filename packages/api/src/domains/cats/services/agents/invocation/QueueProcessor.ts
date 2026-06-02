@@ -1012,9 +1012,19 @@ export class QueueProcessor {
       // #836: Reborn cats skip continuation consume — every invocation starts fresh.
       if (this.deps.threadStore && targetCats.length === 1) {
         const singleCatId = targetCats[0]!;
-        const isReborn = this.deps.threadStore.isRebornSession
-          ? await Promise.resolve(this.deps.threadStore.isRebornSession(threadId, singleCatId))
-          : false;
+        // #836: Reborn check is best-effort — a transient Redis failure must not
+        // prevent continuation consumption or abort the invocation before routing.
+        let isReborn = false;
+        try {
+          isReborn = this.deps.threadStore.isRebornSession
+            ? await Promise.resolve(this.deps.threadStore.isRebornSession(threadId, singleCatId))
+            : false;
+        } catch (rebornErr) {
+          log.warn(
+            { threadId, catId: singleCatId, err: rebornErr },
+            '[QueueProcessor] #836: isRebornSession lookup failed pre-route, defaulting to non-reborn',
+          );
+        }
         if (isReborn) {
           log.info(
             { threadId, catId: singleCatId },
