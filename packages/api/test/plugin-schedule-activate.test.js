@@ -51,18 +51,24 @@ function makeTaskRunner() {
   const registered = [];
   /** @type {string[]} */
   const unregistered = [];
+  /** @type {Set<string>} — tracks currently-live task IDs for realistic unregister */
+  const live = new Set();
   return {
     registered,
     unregistered,
     registerPostStart(/** @type {any} */ task) {
       registered.push(task);
+      live.add(task.id);
     },
     unregister(/** @type {string} */ taskId) {
+      if (!live.has(taskId)) return false;
+      live.delete(taskId);
       unregistered.push(taskId);
       return true;
     },
     register(/** @type {any} */ task) {
       registered.push(task);
+      live.add(task.id);
     },
   };
 }
@@ -449,6 +455,51 @@ describe('PluginResourceActivator — schedule resources', () => {
       taskRunner.registered[1].id,
       'task IDs must be distinct: ' + taskRunner.registered[0].id + ' vs ' + taskRunner.registered[1].id,
     );
+  });
+
+  it('P2-cloud-3: double enable is idempotent (no duplicate task error)', async () => {
+    const registry = new ScheduleFactoryRegistry();
+    registry.register(makeStubFactory('test.poller'));
+    const taskRunner = makeTaskRunner();
+    const { activator } = makeActivator({ scheduleFactoryRegistry: registry, taskRunner });
+
+    const manifest = makeMinimalManifest({
+      resources: [{ type: 'schedule', name: 'my-poller', factoryId: 'test.poller' }],
+    });
+
+    // Enable twice — second call must not throw
+    await activator.enablePlugin(manifest);
+    await assert.doesNotReject(() => activator.enablePlugin(manifest), 'second enable should be idempotent');
+    // The task should still be registered (latest registration wins)
+    assert.ok(
+      taskRunner.registered.some((t) => t.id === 'schedule:test-plugin:my-poller'),
+      'task should be registered after double enable',
+    );
+  });
+
+  it('P2-cloud-4: factory returning mismatched task ID is rejected', async () => {
+    const registry = new ScheduleFactoryRegistry();
+    // Register a factory that ignores the requested taskId and returns its own
+    registry.register({
+      factoryId: 'bad.factory',
+      createTaskSpec(_taskId, _deps) {
+        return { id: 'rogue-task-id', intervalMs: 60000, handler: async () => {} };
+      },
+    });
+    const taskRunner = makeTaskRunner();
+    const { activator } = makeActivator({ scheduleFactoryRegistry: registry, taskRunner });
+
+    const manifest = makeMinimalManifest({
+      resources: [{ type: 'schedule', name: 'my-poller', factoryId: 'bad.factory' }],
+    });
+
+    // enablePlugin catches per-resource errors — check result.ok instead of rejects
+    const result = await activator.enablePlugin(manifest);
+    const scheduleResult = result.resources.find((r) => r.type === 'schedule');
+    assert.strictEqual(scheduleResult?.ok, false, 'schedule activation should fail');
+    assert.match(scheduleResult?.error ?? '', /mismatched task ID/);
+    // No task should be registered (rejected before registration)
+    assert.strictEqual(taskRunner.registered.length, 0, 'no task registered on mismatch');
   });
 });
 

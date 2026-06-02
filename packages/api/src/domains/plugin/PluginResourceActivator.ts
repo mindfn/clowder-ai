@@ -345,6 +345,16 @@ export class PluginResourceActivator {
     const taskId = `schedule:${manifest.id}:${resource.name}`;
     const taskSpec = factory.createTaskSpec(taskId, this.deps.scheduleFactoryDeps ?? { log: console });
 
+    // Defensive: factory must return a spec with the ID we requested
+    if (taskSpec.id !== taskId) {
+      throw new Error(
+        `Schedule factory '${resource.factoryId}' returned mismatched task ID: expected '${taskId}', got '${taskSpec.id}'`,
+      );
+    }
+
+    // Idempotent: unregister existing task before re-registering (handles retry / double-enable)
+    this.deps.taskRunner.unregister(taskId);
+
     // Register as builtin (not dynamic) so SchedulePanel doesn't target it with
     // dynamic PATCH/DELETE endpoints that require a DynamicTaskStore row.
     this.deps.taskRunner.registerPostStart(taskSpec);
