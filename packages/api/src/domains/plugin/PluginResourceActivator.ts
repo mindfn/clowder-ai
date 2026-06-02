@@ -360,15 +360,15 @@ export class PluginResourceActivator {
   private async deactivateSchedule(manifest: PluginManifest, resource: PluginResourceDef): Promise<void> {
     if (!resource.name) return;
 
-    // Read current capability to get scheduleTaskId
-    const config = await this.deps.readCapabilities();
-    const capId = resourceCapId(manifest.id, resource);
-    const entry = config?.capabilities.find((c) => normalizeCapId(c.id) === capId && c.pluginId === manifest.id);
-    const taskId = entry?.scheduleTaskId;
+    // Persist removal first — runtime cleanup only after successful write.
+    // Invariant: runtime state ↔ persisted state must stay in sync;
+    // if persist fails, runtime task must keep running (mirrors deactivateLimb).
+    const removedEntries = await this.removeCapabilityEntry(manifest, resource);
+    const ownedEntry = removedEntries.find((c) => c.type === 'schedule' && c.pluginId === manifest.id && c.enabled);
+    const taskId = ownedEntry?.scheduleTaskId;
     if (taskId && this.deps.taskRunner) {
       this.deps.taskRunner.unregister(taskId);
     }
-    await this.removeCapabilityEntry(manifest, resource);
   }
 
   private async upsertCapabilityEntry(

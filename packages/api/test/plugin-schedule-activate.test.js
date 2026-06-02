@@ -344,6 +344,43 @@ describe('PluginResourceActivator — schedule resources', () => {
       'current schedule task must be unregistered via deactivateSchedule',
     );
   });
+
+  it('P1-R2: deactivateSchedule does not unregister task when capability removal fails', async () => {
+    const registry = new ScheduleFactoryRegistry();
+    registry.register(makeStubFactory('test.poller'));
+    const capStore = makeCapabilitiesStore();
+    const taskRunner = makeTaskRunner();
+    const { activator } = makeActivator({ scheduleFactoryRegistry: registry, taskRunner, capStore });
+
+    const manifest = makeMinimalManifest({ resources: [makeScheduleResource()] });
+
+    // Enable normally — task registered + capability written
+    await activator.enablePlugin(manifest);
+    assert.strictEqual(taskRunner.registered.length, 1);
+    assert.strictEqual(capStore.get()?.capabilities.length, 1);
+
+    // Make writes fail from now on (simulates disk-full during disable)
+    const originalWrite = capStore.write.bind(capStore);
+    capStore.write = async () => {
+      throw new Error('disk full');
+    };
+
+    // Disable should fail because capability removal can't persist
+    const result = await activator.disablePlugin(manifest);
+    assert.strictEqual(result.resources[0].ok, false);
+
+    // Invariant: runtime task must NOT be unregistered when persist fails
+    // (persist-first ordering — mirrors deactivateLimb pattern)
+    assert.strictEqual(
+      taskRunner.unregistered.length,
+      0,
+      'task must not be unregistered when capability removal fails',
+    );
+
+    // Capability entry must still exist (write failed → state unchanged)
+    assert.strictEqual(capStore.get()?.capabilities.length, 1);
+    assert.strictEqual(capStore.get()?.capabilities[0].enabled, true);
+  });
 });
 
 describe('rehydrateEnabledPluginSchedules', () => {
