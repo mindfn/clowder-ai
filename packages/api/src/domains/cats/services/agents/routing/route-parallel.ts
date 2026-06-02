@@ -270,9 +270,19 @@ export async function* routeParallel(
       // #836: Reborn cats skip bootstrap — every invocation starts with zero prior context.
       // Uses store lookup (not thread field) — Redis memberSS:* fields aren't hydrated by get().
       let bootstrapCtx = '';
-      const isParReborn = deps.invocationDeps.threadStore?.isRebornSession
-        ? await Promise.resolve(deps.invocationDeps.threadStore.isRebornSession(threadId, catId as string))
-        : false;
+      // #836: Reborn check is best-effort — transient Redis failure must not
+      // abort the invocation before bootstrap/routing. Default to non-reborn.
+      let isParReborn = false;
+      try {
+        isParReborn = deps.invocationDeps.threadStore?.isRebornSession
+          ? await Promise.resolve(deps.invocationDeps.threadStore.isRebornSession(threadId, catId as string))
+          : false;
+      } catch (rebornErr) {
+        log.warn(
+          { threadId, catId },
+          '[routeParallel] #836: isRebornSession lookup failed pre-bootstrap, defaulting to non-reborn',
+        );
+      }
       if (
         !isParReborn &&
         isSessionChainEnabled(catId) &&
