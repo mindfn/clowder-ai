@@ -267,8 +267,14 @@ export async function* routeParallel(
       const targetUploadDir = targetContentBlocks ? uploadDir : undefined;
 
       // F24 Phase E: Bootstrap context for Session #2+
+      // #836: Reborn cats skip bootstrap — every invocation starts with zero prior context.
       let bootstrapCtx = '';
+      const parRebornThread = deps.invocationDeps.threadStore
+        ? await Promise.resolve(deps.invocationDeps.threadStore.get(threadId))
+        : null;
+      const isParReborn = parRebornThread?.memberSessionStrategy?.[catId as string] === 'reborn';
       if (
+        !isParReborn &&
         isSessionChainEnabled(catId) &&
         deps.invocationDeps.sessionChainStore &&
         deps.invocationDeps.transcriptReader

@@ -957,6 +957,13 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       try {
         const thread = await preflightRace(Promise.resolve(threadStore.get(threadId)), 'threadStore.get', signal);
         if (thread?.createdAt) threadCreatedAt = thread.createdAt;
+        // #836: Reborn session strategy — force new session every invocation.
+        // This cat's thread-level override says "never resume", so discard any
+        // sessionId resolved by the session chain above.
+        if (thread?.memberSessionStrategy?.[catId as string] === 'reborn') {
+          sessionId = undefined;
+          log.info({ catId, threadId }, '#836: reborn session strategy — forcing new session');
+        }
         if (thread?.projectPath && thread.projectPath !== 'default') {
           // F101: Game threads use virtual projectPaths (e.g. 'games/werewolf') for
           // categorization only — they are not real filesystem directories. Skip them
