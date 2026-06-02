@@ -6,6 +6,7 @@ import test from 'node:test';
 const packageJsonPath = path.resolve(import.meta.dirname, '../package.json');
 const desktopPackageJsonPath = path.resolve(import.meta.dirname, '../../../desktop/package.json');
 const desktopMainPath = path.resolve(import.meta.dirname, '../../../desktop/main.js');
+const desktopServiceManagerPath = path.resolve(import.meta.dirname, '../../../desktop/service-manager.js');
 const desktopBuildScriptPath = path.resolve(import.meta.dirname, '../../../desktop/scripts/build-desktop.ps1');
 const desktopMacBuildScriptPath = path.resolve(import.meta.dirname, '../../../desktop/scripts/build-mac.sh');
 const desktopPostInstallScriptPath = path.resolve(
@@ -39,6 +40,41 @@ test('desktop package includes main process local require dependencies', async (
   }
 
   assert.deepEqual(missing, []);
+});
+
+test('desktop service manager injects #671 root data directories into API env', async () => {
+  const serviceManagerSource = await readFile(desktopServiceManagerPath, 'utf8');
+  const start = serviceManagerSource.indexOf('\n  _buildApiEnv(userDataDir)');
+  const end = serviceManagerSource.indexOf('async _startRedis(userDataDir)');
+  assert.notEqual(start, -1, '_buildApiEnv must exist');
+  assert.notEqual(end, -1, '_startRedis marker must exist after _buildApiEnv');
+
+  const buildApiEnvSource = serviceManagerSource.slice(start, end);
+  assert.match(buildApiEnvSource, /DATA_DIR:\s*path\.join\(userDataDir,\s*'data'\)/);
+  assert.match(buildApiEnvSource, /CACHE_DIR:\s*path\.join\(userDataDir,\s*'cache'\)/);
+  assert.match(buildApiEnvSource, /LOG_DIR:\s*path\.join\(userDataDir,\s*'data',\s*'logs',\s*'api'\)/);
+
+  const removedLegacyVars = [
+    'EVIDENCE_DB',
+    'TRANSCRIPT_DATA_DIR',
+    'UPLOAD_DIR',
+    'CONNECTOR_MEDIA_DIR',
+    'TTS_CACHE_DIR',
+    'AUDIT_LOG_DIR',
+    'CLI_RAW_ARCHIVE_DIR',
+  ];
+  for (const envName of removedLegacyVars) {
+    assert.doesNotMatch(buildApiEnvSource, new RegExp(`\\b${envName}\\s*:`));
+  }
+});
+
+test('desktop service manager links writable .cat-cafe state under DATA_DIR', async () => {
+  const serviceManagerSource = await readFile(desktopServiceManagerPath, 'utf8');
+
+  assert.match(serviceManagerSource, /path\.join\(baseDir,\s*'data',\s*'cat-cafe'\)/);
+  assert.match(serviceManagerSource, /path\.join\(projectDir,\s*'\.cat-cafe'\)/);
+  assert.match(serviceManagerSource, /fs\.renameSync\(projectCatCafeDir,\s*catCafeStateDir\)/);
+  assert.match(serviceManagerSource, /fs\.symlinkSync\(catCafeStateDir,\s*projectCatCafeDir,\s*linkType\)/);
 });
 
 test('windows desktop build script cleans up temporary Defender exclusions', async () => {

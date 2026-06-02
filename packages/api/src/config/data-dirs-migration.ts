@@ -192,13 +192,17 @@ export async function measurePath(path: string): Promise<number> {
  * Excluded paths:
  * - `logs`: Pino captures LOG_DIR at module load; moving logs without a
  *   logger restart is unsafe. Setting LOG_DIR only redirects future writes.
+ * - `catCafeState`: the `.cat-cafe/` directory contains both writable
+ *   state and bundled tools; the shell startup moves the whole dir to
+ *   `DATA_DIR/cat-cafe/` and plants a symlink at the original path so
+ *   all 50+ in-process consumers remain transparent.
  * - `redisData` / `redisBackups`: Redis is started by the shell script
  *   *before* the API server.  The shell layer handles the `--dir` flag
  *   and pre-start data migration.  Moving Redis data while the server is
  *   running would corrupt it.
  */
 export async function buildMigrationPlan(opts: PlanOptions): Promise<MigrationPlan> {
-  const SHELL_MANAGED: ReadonlySet<string> = new Set(['logs', 'redisData', 'redisBackups']);
+  const SHELL_MANAGED: ReadonlySet<string> = new Set(['logs', 'catCafeState', 'redisData', 'redisBackups']);
   const specs = describeDataPaths(opts).filter((s) => !SHELL_MANAGED.has(s.key));
   const items: MigrationPlanItem[] = [];
   let totalBytes = 0;

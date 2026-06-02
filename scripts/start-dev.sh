@@ -484,6 +484,23 @@ if [ -n "${DATA_DIR-}" ]; then
         fi
         REDIS_BACKUP_DIR="$_target_redis_backup"
     fi
+
+    # .cat-cafe/ state directory: move writable config/state to DATA_DIR/cat-cafe/
+    # and replace the original with a symlink so all in-process consumers
+    # (50+ files that do `resolve(projectRoot, '.cat-cafe', file)`) keep working.
+    _legacy_catcafe="${PROJECT_DIR}/.cat-cafe"
+    _target_catcafe="${DATA_DIR}/cat-cafe"
+    if [ -d "$_legacy_catcafe" ] && [ ! -L "$_legacy_catcafe" ] && [ ! -d "$_target_catcafe" ]; then
+        echo -e "${YELLOW}  [#671] Migrating .cat-cafe state: $_legacy_catcafe → $_target_catcafe${NC}"
+        mkdir -p "$(dirname "$_target_catcafe")"
+        mv "$_legacy_catcafe" "$_target_catcafe" 2>/dev/null || {
+            cp -a "$_legacy_catcafe" "$_target_catcafe" && rm -rf "$_legacy_catcafe"
+        }
+        ln -sfn "$_target_catcafe" "$_legacy_catcafe"
+    elif [ ! -e "$_legacy_catcafe" ] && [ -d "$_target_catcafe" ]; then
+        # Target exists but no symlink yet (e.g. after manual copy)
+        ln -sfn "$_target_catcafe" "$_legacy_catcafe"
+    fi
 fi
 
 REDIS_DBFILE=${REDIS_DBFILE:-dump.rdb}

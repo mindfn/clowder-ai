@@ -176,10 +176,15 @@ class ServiceManager {
   _ensureUserDataDir(baseDir) {
     const dirs = [
       baseDir,
+      path.join(baseDir, 'data'),
       path.join(baseDir, 'data', 'transcripts'),
       path.join(baseDir, 'data', 'logs', 'api'),
-      path.join(baseDir, 'data', 'connector-media'),
-      path.join(baseDir, 'uploads'),
+      path.join(baseDir, 'data', 'audit-logs'),
+      path.join(baseDir, 'data', 'cli-raw-archive'),
+      path.join(baseDir, 'data', 'uploads'),
+      path.join(baseDir, 'cache'),
+      path.join(baseDir, 'cache', 'connector-media'),
+      path.join(baseDir, 'cache', 'tts'),
       // Writable project root for the API. The install dir (Program Files) is
       // read-only for non-admin users, but the API writes many files under
       // {projectRoot}/.cat-cafe/ (cat-catalog.json, governance-registry.json,
@@ -188,8 +193,8 @@ class ServiceManager {
       // no per-path env overrides, so the API cwd must be a writable dir with
       // a pnpm-workspace.yaml marker.
       path.join(baseDir, 'data', 'redis'),
+      path.join(baseDir, 'data', 'cat-cafe'),
       path.join(baseDir, 'project'),
-      path.join(baseDir, 'project', '.cat-cafe'),
     ];
     for (const d of dirs) {
       try {
@@ -210,16 +215,9 @@ class ServiceManager {
       }
     }
 
-    // Mirror read-only install-dir resources into the project dir via symlinks.
-    // Without these, findMonorepoRoot(cwd) resolves to the project dir but
-    // docs/cat-cafe-skills/packages are not under it — so API routes like
-    // /api/docs, capabilities.ts skill listing, and MCP server spawning
-    // (resolve(projectRoot, 'packages/mcp-server/dist/memory.js')) all fail.
     // Windows uses NTFS junctions (no admin needed, absolute paths). macOS
     // uses plain directory symlinks.
     const linkType = IS_WIN ? 'junction' : 'dir';
-    const mirrors = ['.claude', 'assets', 'cat-cafe-skills', 'docs', 'guides', 'packages', 'plugins', 'scripts'];
-
     // Helper: remove a junction or symlink. On Windows, NTFS junctions are
     // directory reparse points — fs.unlinkSync calls DeleteFileW which fails
     // on directory entries (EPERM). fs.rmdirSync calls RemoveDirectoryW which
@@ -235,6 +233,79 @@ class ServiceManager {
         fs.unlinkSync(linkPath);
       }
     };
+
+    const catCafeStateDir = path.join(baseDir, 'data', 'cat-cafe');
+    const projectCatCafeDir = path.join(projectDir, '.cat-cafe');
+    const createCatCafeLink = () => {
+      fs.mkdirSync(catCafeStateDir, { recursive: true });
+      fs.symlinkSync(catCafeStateDir, projectCatCafeDir, linkType);
+      log(`.cat-cafe state ${linkType} created: ${projectCatCafeDir} -> ${catCafeStateDir}`);
+    };
+    const moveRealCatCafeDir = () => {
+      fs.mkdirSync(path.dirname(catCafeStateDir), { recursive: true });
+      try {
+        fs.renameSync(projectCatCafeDir, catCafeStateDir);
+      } catch {
+        fs.cpSync(projectCatCafeDir, catCafeStateDir, {
+          recursive: true,
+          errorOnExist: true,
+          force: false,
+        });
+        fs.rmSync(projectCatCafeDir, { recursive: true, force: true });
+      }
+      fs.symlinkSync(catCafeStateDir, projectCatCafeDir, linkType);
+      log(`.cat-cafe state migrated: ${projectCatCafeDir} -> ${catCafeStateDir}`);
+    };
+
+    try {
+      let catCafeStat = null;
+      try {
+        catCafeStat = fs.lstatSync(projectCatCafeDir);
+      } catch {
+        // Path does not exist yet
+      }
+
+      if (!catCafeStat) {
+        createCatCafeLink();
+      } else if (catCafeStat.isSymbolicLink()) {
+        const target = fs.readlinkSync(projectCatCafeDir);
+        if (path.resolve(target) !== path.resolve(catCafeStateDir)) {
+          removeLink(projectCatCafeDir);
+          createCatCafeLink();
+        }
+      } else if (catCafeStat.isDirectory()) {
+        if (IS_WIN) {
+          try {
+            const target = fs.readlinkSync(projectCatCafeDir);
+            if (path.resolve(target) !== path.resolve(catCafeStateDir)) {
+              removeLink(projectCatCafeDir);
+              createCatCafeLink();
+            }
+          } catch {
+            if (!fs.existsSync(catCafeStateDir)) {
+              moveRealCatCafeDir();
+            } else {
+              log(`Warning: both ${projectCatCafeDir} and ${catCafeStateDir} exist; leaving .cat-cafe unmerged`);
+            }
+          }
+        } else if (!fs.existsSync(catCafeStateDir)) {
+          moveRealCatCafeDir();
+        } else {
+          log(`Warning: both ${projectCatCafeDir} and ${catCafeStateDir} exist; leaving .cat-cafe unmerged`);
+        }
+      } else {
+        log(`Warning: ${projectCatCafeDir} exists but is not a directory or link`);
+      }
+    } catch (err) {
+      log(`Warning: failed to prepare .cat-cafe DATA_DIR link: ${err.message}`);
+    }
+
+    // Mirror read-only install-dir resources into the project dir via symlinks.
+    // Without these, findMonorepoRoot(cwd) resolves to the project dir but
+    // docs/cat-cafe-skills/packages are not under it — so API routes like
+    // /api/docs, capabilities.ts skill listing, and MCP server spawning
+    // (resolve(projectRoot, 'packages/mcp-server/dist/memory.js')) all fail.
+    const mirrors = ['.claude', 'assets', 'cat-cafe-skills', 'docs', 'guides', 'packages', 'plugins', 'scripts'];
 
     for (const name of mirrors) {
       const src = path.join(this.root, name);
@@ -330,6 +401,43 @@ class ServiceManager {
       }
     }
 
+    // .cat-cafe writable state: unify under DATA_DIR/cat-cafe/ (#671).
+    // The API resolves .cat-cafe files via resolve(projectRoot, '.cat-cafe', f),
+    // so a symlink from project/.cat-cafe → data/cat-cafe keeps it transparent.
+    const catCafeStateDir = path.join(baseDir, 'data', 'cat-cafe');
+    const projectCatCafeDir = path.join(projectDir, '.cat-cafe');
+    try {
+      const catCafeStat = fs.lstatSync(projectCatCafeDir);
+      if (catCafeStat.isSymbolicLink()) {
+        // Already migrated — verify target points to the right place
+        const target = fs.readlinkSync(projectCatCafeDir);
+        if (path.resolve(target) !== path.resolve(catCafeStateDir)) {
+          removeLink(projectCatCafeDir);
+          fs.symlinkSync(catCafeStateDir, projectCatCafeDir, linkType);
+          log(`.cat-cafe symlink retargeted: ${projectCatCafeDir} -> ${catCafeStateDir}`);
+        }
+      } else if (catCafeStat.isDirectory()) {
+        // Real directory with data — move to unified location, replace with
+        // symlink.  Remove the empty mkdir target first to allow rename.
+        try {
+          fs.rmdirSync(catCafeStateDir);
+        } catch {
+          /* non-empty or missing — rename will fail gracefully */
+        }
+        fs.renameSync(projectCatCafeDir, catCafeStateDir);
+        fs.symlinkSync(catCafeStateDir, projectCatCafeDir, linkType);
+        log(`.cat-cafe state migrated: ${projectCatCafeDir} -> ${catCafeStateDir}`);
+      }
+    } catch {
+      // project/.cat-cafe doesn't exist yet — create symlink to data/cat-cafe
+      try {
+        fs.symlinkSync(catCafeStateDir, projectCatCafeDir, linkType);
+        log(`.cat-cafe symlink created: ${projectCatCafeDir} -> ${catCafeStateDir}`);
+      } catch (linkErr) {
+        log(`Warning: .cat-cafe symlink failed: ${linkErr.message}`);
+      }
+    }
+
     // scripts/ has no node_modules. compile-system-prompt-l0.mjs uses ESM
     // `import { catRegistry } from '@cat-cafe/shared'` — Node ESM ignores
     // NODE_PATH and only walks the filesystem node_modules chain.
@@ -413,14 +521,9 @@ class ServiceManager {
     const salt = this._getOrCreateTelemetrySalt(userDataDir);
     return {
       TELEMETRY_HMAC_SALT: salt,
-      EVIDENCE_DB: path.join(userDataDir, 'evidence.sqlite'),
-      TRANSCRIPT_DATA_DIR: path.join(userDataDir, 'data', 'transcripts'),
+      DATA_DIR: path.join(userDataDir, 'data'),
+      CACHE_DIR: path.join(userDataDir, 'cache'),
       LOG_DIR: path.join(userDataDir, 'data', 'logs', 'api'),
-      UPLOAD_DIR: path.join(userDataDir, 'uploads'),
-      CONNECTOR_MEDIA_DIR: path.join(userDataDir, 'data', 'connector-media'),
-      TTS_CACHE_DIR: path.join(userDataDir, 'data', 'tts-cache'),
-      AUDIT_LOG_DIR: path.join(userDataDir, 'data', 'audit-logs'),
-      CLI_RAW_ARCHIVE_DIR: path.join(userDataDir, 'data', 'cli-raw-archive'),
     };
   }
 
@@ -614,7 +717,9 @@ class ServiceManager {
     log(`[${name}] spawn: ${cmd} ${args.join(' ')}`);
     log(`[${name}] cwd: ${opts.cwd || this.root}`);
     log(`[${name}] env: MEMORY_STORE=${env.MEMORY_STORE || 'unset'}, REDIS_URL=${env.REDIS_URL || 'unset'}`);
-    log(`[${name}] env: EVIDENCE_DB=${env.EVIDENCE_DB || 'unset'}, LOG_DIR=${env.LOG_DIR || 'unset'}`);
+    log(
+      `[${name}] env: DATA_DIR=${env.DATA_DIR || 'unset'}, CACHE_DIR=${env.CACHE_DIR || 'unset'}, LOG_DIR=${env.LOG_DIR || 'unset'}`,
+    );
 
     const proc = spawn(cmd, args, {
       cwd: opts.cwd || this.root,

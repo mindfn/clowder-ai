@@ -9,6 +9,7 @@ const {
   resolveAuditLogsDir,
   resolveCliRawArchiveDir,
   resolveUploadsDir,
+  resolveCatCafeStateDir,
   resolveRedisDataDir,
   resolveRedisBackupDir,
   resolveTtsCacheDir,
@@ -100,6 +101,10 @@ describe('data-dirs resolver (issue #671)', () => {
       assert.equal(resolveLogDir(), resolve(process.cwd(), 'data/logs/api'));
     });
 
+    test('.cat-cafe state falls back to projectRoot/.cat-cafe', () => {
+      assert.equal(resolveCatCafeStateDir(REPO_ROOT), resolve(REPO_ROOT, '.cat-cafe'));
+    });
+
     test('redis data falls back to REDIS_DATA_DIR env or home default', () => {
       // No REDIS_DATA_DIR in env → homedir-based default
       const dir = resolveRedisDataDir();
@@ -151,6 +156,10 @@ describe('data-dirs resolver (issue #671)', () => {
 
     test('uploads goes under DATA_DIR (overrides module default)', () => {
       assert.equal(resolveUploadsDir(), '/tmp/issue-671-data/uploads');
+    });
+
+    test('.cat-cafe state goes under DATA_DIR', () => {
+      assert.equal(resolveCatCafeStateDir(REPO_ROOT), '/tmp/issue-671-data/cat-cafe');
     });
 
     test('redis data goes under DATA_DIR', () => {
@@ -225,12 +234,13 @@ describe('data-dirs resolver (issue #671)', () => {
   });
 
   describe('describeDataPaths introspection', () => {
-    test('returns 11 specs with correct keys when no root set', () => {
+    test('returns 12 specs with correct keys when no root set', () => {
       const specs = describeDataPaths({ repoRoot: REPO_ROOT, monorepoRoot: MONOREPO_ROOT });
-      assert.equal(specs.length, 11);
+      assert.equal(specs.length, 12);
       const keys = specs.map((s) => s.key).sort();
       assert.deepEqual(keys, [
         'auditLogs',
+        'catCafeState',
         'cliRawArchive',
         'connectorMedia',
         'evidenceDb',

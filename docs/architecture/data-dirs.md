@@ -11,7 +11,7 @@ issue: 671
 
 ## 设计
 
-运行时有 11 条数据路径，按生命周期划成三组，由三个环境变量统一控制：
+运行时有 12 条数据路径，按生命周期划成三组，由三个环境变量统一控制：
 
 | 根 | 含义 | 子路径 | 内容 | 不能丢吗？ |
 |----|------|--------|------|------------|
@@ -23,6 +23,7 @@ issue: 671
 | | | `uploads/` | 用户上传文件（头像、附件、参考音频） | ✅ |
 | | | `redis/` | Redis 持久化数据（dump.rdb + AOF） | ✅ |
 | | | `redis-backups/` | Redis 定时备份快照 | ✅ |
+| | | `cat-cafe/` | .cat-cafe 运行时可写状态（账户、凭证、catalog、治理…） | ✅ |
 | `CACHE_DIR` | 可重建缓存 | `tts/` | TTS 音频缓存 | ❌ |
 | | | `connector-media/` | 微信/飞书等下载的临时媒体 | ❌ |
 | `LOG_DIR` | 日志 | — | Pino 滚动日志（直接使用 LOG_DIR，无子目录） | ❌ |
@@ -41,6 +42,7 @@ issue: 671
 - `uploads/` → `packages/api/uploads/`（模块相对，保证 connector outbound delivery 看到同一份）
 - `redis/` → `~/.cat-cafe/redis-{profile}/`（由 `start-dev.sh` 基于 REDIS_PROFILE/PORT 动态推导）
 - `redis-backups/` → `~/.cat-cafe/redis-backups/{profile}/`（同上）
+- `cat-cafe/` → `{projectRoot}/.cat-cafe/`（50+ 消费方通过此路径读写账户、凭证、catalog 等运行时状态）
 - `LOG_DIR` → `{cwd}/data/logs/api`
 
 ### 设置根
@@ -71,7 +73,10 @@ LOG_DIR=/var/log/clowder
 
 `LOG_DIR` 不参与 API 启动迁移：Pino 在 module load 时就绑定了 LOG_DIR，没有 logger restart 流程做不到安全切换。**设置 LOG_DIR 仅影响后续写入；legacy 日志保留在旧路径，需要时由运维手动搬迁。**
 
-`redis/` 和 `redis-backups/` 不参与 API 启动迁移（它们由 `start-dev.sh` / `user-redis.sh` 在 Redis 启动前于 shell 层迁移）。流程：当 `DATA_DIR` 已设且 legacy Redis 目录存在于旧路径时，shell 脚本在启动 `redis-server` 之前将整个目录 `mv` 到 `${DATA_DIR}/redis`。跨设备 fallback 使用 `cp -a` + `rm -rf`。
+`redis/`、`redis-backups/` 和 `cat-cafe/` 不参与 API 启动迁移（它们由 `start-dev.sh` 在服务启动前于 shell 层迁移）。
+
+- **Redis**：当 `DATA_DIR` 已设且 legacy Redis 目录存在于旧路径时，shell 脚本在启动 `redis-server` 之前将整个目录 `mv` 到 `${DATA_DIR}/redis`。跨设备 fallback 使用 `cp -a` + `rm -rf`。
+- **`.cat-cafe/` 状态**：当 `DATA_DIR` 已设时，shell 脚本将 `{projectRoot}/.cat-cafe/` 移动到 `${DATA_DIR}/cat-cafe/`，然后在原位创建指向新路径的 symlink（`ln -sfn`）。这样 50+ 消费方继续用 `resolve(projectRoot, '.cat-cafe', file)` 就透明地读写到新路径。跨设备同样 fallback 到 `cp -a` + `rm -rf`。
 
 ## 运行时迁移
 
@@ -107,7 +112,7 @@ curl -XPOST -H "X-Cat-Cafe-User: $OWNER_ID" \
 ## 相关代码
 
 - `packages/api/src/config/data-dirs.ts` — resolver + introspection
-- `packages/api/src/config/data-dirs-migration.ts` — migration engine（排除 logs/redis — 它们有各自的迁移层）
+- `packages/api/src/config/data-dirs-migration.ts` — migration engine（排除 logs/redis/catCafeState — 它们由 shell 层迁移）
 - `packages/api/src/index.ts` — 启动期接入
 - `packages/api/src/routes/config.ts` — GET / POST 端点
 - `scripts/start-dev.sh` — Redis DATA_DIR 集成 + shell 层迁移

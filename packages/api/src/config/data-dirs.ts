@@ -65,6 +65,17 @@ export function resolveUploadsDir(): string {
   return root ? joinUnder(root, 'uploads') : MODULE_DEFAULT_UPLOAD_DIR;
 }
 
+// --- .cat-cafe state (writable config/data: accounts, credentials, catalog, governance…)
+// When DATA_DIR is set, the shell startup moves the contents of
+// {projectRoot}/.cat-cafe/ to DATA_DIR/cat-cafe/ and replaces the
+// original with a symlink.  This lets all 50+ consumers keep using
+// `resolve(projectRoot, '.cat-cafe', file)` transparently.
+
+export function resolveCatCafeStateDir(projectRoot: string): string {
+  const root = readRoot('DATA_DIR');
+  return root ? joinUnder(root, 'cat-cafe') : resolve(projectRoot, '.cat-cafe');
+}
+
 // --- Redis data (lifecycle managed by start-dev.sh / user-redis.sh) ------
 // Redis is started by shell scripts *before* the API server, so the shell
 // layer owns the actual `--dir` flag and pre-start migration.  These
@@ -114,6 +125,7 @@ export type DataPathKey =
   | 'auditLogs'
   | 'cliRawArchive'
   | 'uploads'
+  | 'catCafeState'
   | 'redisData'
   | 'redisBackups'
   | 'ttsCache'
@@ -211,6 +223,15 @@ export function describeDataPaths(opts: DescribeOptions): readonly DataPathSpec[
       // Note: resolveUploadsDir() always uses MODULE_DEFAULT_UPLOAD_DIR; the
       // override only affects the legacyPath surfaced for introspection.
       currentPath: dataRoot ? joinUnder(dataRoot, 'uploads') : uploadsLegacy,
+      isFile: false,
+    },
+    {
+      key: 'catCafeState',
+      root: 'DATA_DIR',
+      subPath: 'cat-cafe',
+      legacyPath: resolve(opts.repoRoot, '.cat-cafe'),
+      rootBasedPath: dataRoot ? joinUnder(dataRoot, 'cat-cafe') : null,
+      currentPath: resolveCatCafeStateDir(opts.repoRoot),
       isFile: false,
     },
     {
