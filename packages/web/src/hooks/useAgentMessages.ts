@@ -1528,7 +1528,11 @@ export function handleBackgroundAgentMessage(
     let finalMsgId: string | undefined;
 
     if (msg.origin === 'callback') {
-      if (deferBackgroundCallbackIfStreamOpen(msg, options)) {
+      // #814 P2: explicit post_message must bypass stream-open deferral. The deferral
+      // stores callbacks keyed by thread/cat/invocation (no messageId), so multiple
+      // explicit posts from the same invocation overwrite each other and are delayed
+      // until stream end. Explicit posts are standalone — apply them immediately.
+      if (!msg.extra?.isExplicitPost && deferBackgroundCallbackIfStreamOpen(msg, options)) {
         return;
       }
       // #814: explicit post_message is a standalone message — skip replacement target
@@ -3529,7 +3533,14 @@ export function useAgentMessages() {
           const hasExplicitInvocationId = !!msg.invocationId;
           if (hasExplicitInvocationId && msg.invocationId) {
             const callbackThreadId = msg.threadId ?? useChatStore.getState().currentThreadId;
-            if (isActiveCallbackStillStreaming(msg.catId, msg.turnInvocationId ?? msg.invocationId)) {
+            // #814 P2: explicit post_message must bypass stream-open deferral.
+            // The pending map keys by thread/cat/invocation (no messageId), so multiple
+            // explicit posts from the same invocation overwrite each other. Explicit
+            // posts are standalone bubbles — apply them immediately even while streaming.
+            if (
+              !msg.extra?.isExplicitPost &&
+              isActiveCallbackStillStreaming(msg.catId, msg.turnInvocationId ?? msg.invocationId)
+            ) {
               deferPendingCallback(
                 {
                   ...msg,
