@@ -85,11 +85,23 @@ export interface TelemetryHandle {
 let sdk: NodeSDK | null = null;
 
 /**
+ * Single source of truth for "is the OTel SDK supposed to be running?".
+ * Only the literal string `'true'` disables it — `OTEL_SDK_DISABLED=false`,
+ * `=0`, `=no`, or any other value keeps OTel enabled. Callers outside
+ * init.ts (e.g. /api/telemetry/health) MUST use this helper rather than
+ * re-implementing the env check, otherwise the two interpretations can
+ * drift and silently re-mute alarms.
+ */
+export function isOtelSdkEnabled(): boolean {
+  return process.env.OTEL_SDK_DISABLED !== 'true';
+}
+
+/**
  * Initialize OTel SDK. Returns a handle with shutdown + traceStore.
  * No-op if OTEL_SDK_DISABLED=true.
  */
 export function initTelemetry(config?: TelemetryConfig): TelemetryHandle {
-  if (process.env.OTEL_SDK_DISABLED === 'true') {
+  if (!isOtelSdkEnabled()) {
     log.info('OTel SDK disabled (OTEL_SDK_DISABLED=true)');
     return { shutdown: async () => {}, traceStore: null, getMetricsText: null, metricsSnapshotStore: null };
   }

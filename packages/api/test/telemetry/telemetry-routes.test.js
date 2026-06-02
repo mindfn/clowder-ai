@@ -415,6 +415,36 @@ test('GET /api/telemetry/health stays healthy when OTel is explicitly disabled a
   }
 });
 
+// Regression for codex review of 39d64d73b: the prior implementation used
+// `!process.env.OTEL_SDK_DISABLED`, which treated any non-empty value
+// (including the very common `OTEL_SDK_DISABLED=false`) as disabled and
+// re-muted the alarms this fix was meant to surface. The route now goes
+// through isOtelSdkEnabled() so only the literal 'true' disables OTel,
+// matching init.ts. This test pins that contract.
+test('GET /api/telemetry/health returns 503 when OTEL_SDK_DISABLED=false and stores are null', async () => {
+  const prev = process.env.OTEL_SDK_DISABLED;
+  process.env.OTEL_SDK_DISABLED = 'false';
+  try {
+    const app = await buildApp({ traceStore: null, metricsSnapshotStore: null });
+    const cookie = await getSessionCookie(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/telemetry/health',
+      headers: { cookie },
+    });
+    assert.equal(res.statusCode, 503);
+    const body = JSON.parse(res.body);
+    assert.equal(body.status, 'degraded');
+    assert.equal(body.otelEnabled, true);
+    assert.ok(body.reasons.includes('telemetry_stores_unavailable'));
+    app.close();
+  } finally {
+    if (prev === undefined) delete process.env.OTEL_SDK_DISABLED;
+    else process.env.OTEL_SDK_DISABLED = prev;
+  }
+});
+
 // ─── Metrics History (L1.5) ───
 
 test('GET /api/telemetry/metrics/history returns 401 without session', async () => {

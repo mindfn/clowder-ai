@@ -10,6 +10,7 @@
 
 import type { FastifyPluginAsync } from 'fastify';
 import { hmacId } from '../infrastructure/telemetry/hmac.js';
+import { isOtelSdkEnabled } from '../infrastructure/telemetry/init.js';
 import type { LocalTraceStore } from '../infrastructure/telemetry/local-trace-store.js';
 import type { MetricsSnapshotStore } from '../infrastructure/telemetry/metrics-snapshot-store.js';
 import { parsePrometheusText } from '../infrastructure/telemetry/metrics-snapshot-store.js';
@@ -188,7 +189,12 @@ export const telemetryRoutes: FastifyPluginAsync<TelemetryRoutesOptions> = async
     const snapshotStats = opts.metricsSnapshotStore?.stats() ?? null;
     const errorRate = await computeRecentErrorRate(opts.getMetricsText);
 
-    const otelEnabled = !process.env.OTEL_SDK_DISABLED;
+    // Reuse init.ts's contract: only the literal string 'true' disables
+    // OTel. Anything else (including 'false', '0', '', unset) keeps OTel
+    // enabled. Re-implementing this check locally caused the original
+    // bug where OTEL_SDK_DISABLED=false re-muted alarms (see codex review
+    // on 39d64d73b).
+    const otelEnabled = isOtelSdkEnabled();
     const readinessOk = !readiness || readiness.status === 'ready';
     const threshold = Number.parseFloat(process.env.TELEMETRY_ALERT_ERROR_RATE ?? '0.3');
     const errorRateOk = errorRate === null || errorRate < threshold;
