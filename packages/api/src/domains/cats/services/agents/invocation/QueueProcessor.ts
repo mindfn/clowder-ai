@@ -788,6 +788,9 @@ export class QueueProcessor {
       catId: string;
       entry: { capsule: Record<string, unknown>; createdAt: number };
     } | null = null;
+    // Cloud Codex P2: defer A2A consumption to success path — entries stay in queue
+    // until the batch actually succeeds. The invocationTracker prevents double-pickup.
+    let deferredA2AConsume = new Set<string>();
 
     try {
       // 1. Create InvocationRecord (before batching — avoid claiming entries on duplicate)
@@ -959,23 +962,18 @@ export class QueueProcessor {
           safeToConsume.add(candidate.id);
         }
         if (safeToConsume.size > 0) {
-          const consumedA2A = queue.consumeEntriesById(safeToConsume);
-          for (const c of consumedA2A) {
-            this.entryCompleteHooks.delete(c.id);
-          }
+          // Cloud Codex P2: defer actual removal to the success path in `finally`.
+          // If the batch fails/cancels, entries stay in queue for retry.
+          // invocationTracker prevents double-pickup during execution.
+          deferredA2AConsume = safeToConsume;
           log.info(
             {
               threadId,
-              consumedCount: consumedA2A.length,
-              consumedIds: consumedA2A.map((c) => c.id),
+              deferredCount: safeToConsume.size,
+              deferredIds: [...safeToConsume],
             },
-            '[QueueProcessor] #815: consumed A2A entries subsumed by active batch',
+            '[QueueProcessor] #815: identified subsumed A2A entries (deferred to success)',
           );
-          socketManager.emitToUser(userId, 'queue_updated', {
-            threadId,
-            queue: queue.list(threadId, userId),
-            action: 'a2a_subsumed',
-          });
         }
       }
 
@@ -1328,6 +1326,23 @@ export class QueueProcessor {
         for (const bid of batchedEntryIds) {
           queue.removeProcessedAcrossUsers(threadId, bid);
         }
+        // #815 + Cloud Codex P2: now that the batch succeeded, actually consume
+        // the subsumed A2A entries that were deferred earlier.
+        if (deferredA2AConsume.size > 0) {
+          const consumedA2A = queue.consumeEntriesById(deferredA2AConsume);
+          for (const c of consumedA2A) {
+            this.entryCompleteHooks.delete(c.id);
+          }
+          log.info(
+            { threadId, consumedCount: consumedA2A.length },
+            '[QueueProcessor] #815: consumed deferred A2A entries after successful batch',
+          );
+          socketManager.emitToUser(userId, 'queue_updated', {
+            threadId,
+            queue: queue.list(threadId, userId),
+            action: 'a2a_subsumed',
+          });
+        }
         // #813: Passive seal — write pending continuation to thread metadata
         // instead of immediately enqueuing. The next invocation of this cat
         // will consume the capsule at startup and inject continuation context.
@@ -1368,6 +1383,7 @@ export class QueueProcessor {
         for (const bid of batchedEntryIds) {
           queue.rollbackProcessing(threadId, bid);
         }
+        // Cloud Codex P2: deferred A2A entries stay in queue on failure — no rollback needed.
         // Cloud Codex P2: re-store consumed continuation on failure/cancel so
         // the next invocation retry still gets the sealed session context.
         if (consumedContinuation && this.deps.threadStore) {
