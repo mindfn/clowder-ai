@@ -7,7 +7,6 @@ import type { IBacklogStore } from '../domains/cats/services/stores/ports/Backlo
 import { BacklogTransitionError } from '../domains/cats/services/stores/ports/BacklogStore.js';
 import { generateSortableId, type IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
-import { sanitizeThreadForResponse } from './threads.js';
 import { resolveUserId } from '../utils/request-identity.js';
 import {
   type BacklogFeatureRow,
@@ -19,6 +18,7 @@ import {
   readFeatureDocDependencies,
   readFeatureDocStatuses,
 } from './backlog-doc-import.js';
+import { sanitizeThreadForResponse } from './threads.js';
 
 export interface BacklogRoutesOptions {
   backlogStore: IBacklogStore;
@@ -298,7 +298,10 @@ export const backlogRoutes: FastifyPluginAsync<BacklogRoutesOptions> = async (ap
     const refreshedThread = await threadStore.get(threadId);
     return {
       statusCode: 200 as const,
-      payload: { item: dispatched, thread: refreshedThread ? sanitizeThreadForResponse(refreshedThread, userId) : null },
+      payload: {
+        item: dispatched,
+        thread: refreshedThread ? sanitizeThreadForResponse(refreshedThread, userId) : null,
+      },
     };
   }
 
