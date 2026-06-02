@@ -342,7 +342,7 @@ export class PluginResourceActivator {
     const factory = this.deps.scheduleFactoryRegistry.get(resource.factoryId);
     if (!factory) throw new Error(`Unknown schedule factory '${resource.factoryId}'`);
 
-    const taskId = `plugin-${manifest.id}-${resource.name}`;
+    const taskId = `schedule:${manifest.id}:${resource.name}`;
     const taskSpec = factory.createTaskSpec(taskId, this.deps.scheduleFactoryDeps ?? { log: console });
 
     // Register as builtin (not dynamic) so SchedulePanel doesn't target it with

@@ -130,7 +130,7 @@ describe('PluginResourceActivator — schedule resources', () => {
 
     // TaskRunner should have received the task
     assert.strictEqual(taskRunner.registered.length, 1);
-    assert.strictEqual(taskRunner.registered[0].id, 'plugin-test-plugin-my-poller');
+    assert.strictEqual(taskRunner.registered[0].id, 'schedule:test-plugin:my-poller');
 
     // Capability entry should be written
     const config = capStore.get();
@@ -139,7 +139,7 @@ describe('PluginResourceActivator — schedule resources', () => {
     assert.ok(entry);
     assert.strictEqual(entry.enabled, true);
     assert.strictEqual(entry.pluginId, 'test-plugin');
-    assert.strictEqual(entry.scheduleTaskId, 'plugin-test-plugin-my-poller');
+    assert.strictEqual(entry.scheduleTaskId, 'schedule:test-plugin:my-poller');
   });
 
   it('deactivateSchedule unregisters task + removes capability entry', async () => {
@@ -161,7 +161,7 @@ describe('PluginResourceActivator — schedule resources', () => {
 
     // TaskRunner.unregister should have been called
     assert.strictEqual(taskRunner.unregistered.length, 1);
-    assert.strictEqual(taskRunner.unregistered[0], 'plugin-test-plugin-my-poller');
+    assert.strictEqual(taskRunner.unregistered[0], 'schedule:test-plugin:my-poller');
 
     // Capability entry should be removed
     const config = capStore.get();
@@ -309,7 +309,7 @@ describe('PluginResourceActivator — schedule resources', () => {
     assert.strictEqual(result.status, 'failed');
     // Task was registered then must have been unregistered (rollback)
     assert.strictEqual(taskRunner.unregistered.length, 1, 'task must be unregistered on capability write failure');
-    assert.strictEqual(taskRunner.unregistered[0], 'plugin-test-plugin-my-poller');
+    assert.strictEqual(taskRunner.unregistered[0], 'schedule:test-plugin:my-poller');
   });
 
   it('P1-3: removeOrphanedPluginEntries unregisters orphaned schedule tasks', async () => {
@@ -336,11 +336,11 @@ describe('PluginResourceActivator — schedule resources', () => {
 
     // Both old-poller (orphan cleanup) and new-poller (deactivate) should be unregistered
     assert.ok(
-      taskRunner.unregistered.includes('plugin-test-plugin-old-poller'),
+      taskRunner.unregistered.includes('schedule:test-plugin:old-poller'),
       'orphaned schedule task must be unregistered',
     );
     assert.ok(
-      taskRunner.unregistered.includes('plugin-test-plugin-new-poller'),
+      taskRunner.unregistered.includes('schedule:test-plugin:new-poller'),
       'current schedule task must be unregistered via deactivateSchedule',
     );
   });
@@ -393,7 +393,7 @@ describe('PluginResourceActivator — schedule resources', () => {
     });
     await activator.enablePlugin(schedManifest);
     assert.strictEqual(taskRunner.registered.length, 1);
-    assert.strictEqual(taskRunner.registered[0].id, 'plugin-test-plugin-my-poller');
+    assert.strictEqual(taskRunner.registered[0].id, 'schedule:test-plugin:my-poller');
 
     // Step 2: re-enable with the SAME name but type=mcp (type transition)
     const mcpManifest = makeMinimalManifest({
@@ -410,7 +410,7 @@ describe('PluginResourceActivator — schedule resources', () => {
 
     // The old schedule task must be unregistered (stale cleanup)
     assert.ok(
-      taskRunner.unregistered.includes('plugin-test-plugin-my-poller'),
+      taskRunner.unregistered.includes('schedule:test-plugin:my-poller'),
       'stale schedule task must be unregistered on type transition',
     );
 
@@ -419,6 +419,36 @@ describe('PluginResourceActivator — schedule resources', () => {
     const entry = config?.capabilities.find((c) => c.pluginId === 'test-plugin');
     assert.strictEqual(entry?.type, 'mcp');
     assert.strictEqual(entry?.scheduleTaskId, undefined);
+  });
+
+  it('P2-cloud-2: schedule task IDs are unambiguous across plugins with hyphenated names', async () => {
+    // Plugin "a-b" schedule "c" and plugin "a" schedule "b-c" must produce distinct taskIds.
+    // With hyphen concatenation both would be "plugin-a-b-c" → collision.
+    // With colon delimiter: "schedule:a-b:c" vs "schedule:a:b-c" → no collision.
+    const registry = new ScheduleFactoryRegistry();
+    registry.register(makeStubFactory('test.poller'));
+    const taskRunner = makeTaskRunner();
+    const { activator, capStore } = makeActivator({ scheduleFactoryRegistry: registry, taskRunner });
+
+    const manifest1 = makeMinimalManifest({
+      id: 'a-b',
+      resources: [{ type: 'schedule', name: 'c', factoryId: 'test.poller' }],
+    });
+    const manifest2 = makeMinimalManifest({
+      id: 'a',
+      resources: [{ type: 'schedule', name: 'b-c', factoryId: 'test.poller' }],
+    });
+
+    await activator.enablePlugin(manifest1);
+    await activator.enablePlugin(manifest2);
+
+    // Both must register successfully with distinct task IDs
+    assert.strictEqual(taskRunner.registered.length, 2, 'both plugins should register');
+    assert.notStrictEqual(
+      taskRunner.registered[0].id,
+      taskRunner.registered[1].id,
+      'task IDs must be distinct: ' + taskRunner.registered[0].id + ' vs ' + taskRunner.registered[1].id,
+    );
   });
 });
 
@@ -438,7 +468,7 @@ describe('rehydrateEnabledPluginSchedules', () => {
           enabled: true,
           source: 'cat-cafe',
           pluginId: 'test-plugin',
-          scheduleTaskId: 'plugin-test-plugin-my-poller',
+          scheduleTaskId: 'schedule:test-plugin:my-poller',
         },
       ],
     };
@@ -464,7 +494,7 @@ describe('rehydrateEnabledPluginSchedules', () => {
     });
 
     assert.strictEqual(taskRunner.registered.length, 1);
-    assert.strictEqual(taskRunner.registered[0].id, 'plugin-test-plugin-my-poller');
+    assert.strictEqual(taskRunner.registered[0].id, 'schedule:test-plugin:my-poller');
   });
 
   it('skips disabled schedule capabilities', async () => {
@@ -482,7 +512,7 @@ describe('rehydrateEnabledPluginSchedules', () => {
           enabled: false, // disabled
           source: 'cat-cafe',
           pluginId: 'test-plugin',
-          scheduleTaskId: 'plugin-test-plugin-my-poller',
+          scheduleTaskId: 'schedule:test-plugin:my-poller',
         },
       ],
     };
@@ -519,7 +549,7 @@ describe('rehydrateEnabledPluginSchedules', () => {
           enabled: true,
           source: 'cat-cafe',
           pluginId: 'test-plugin',
-          scheduleTaskId: 'plugin-test-plugin-my-poller',
+          scheduleTaskId: 'schedule:test-plugin:my-poller',
         },
       ],
     };
