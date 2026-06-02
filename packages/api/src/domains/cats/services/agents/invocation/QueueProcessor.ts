@@ -1362,9 +1362,19 @@ export class QueueProcessor {
         // will consume the capsule at startup and inject continuation context.
         // #836: Reborn cats skip continuation store — they never resume.
         for (const continuationCapsule of continuationCapsules.values()) {
-          const capsuleCatReborn = this.deps.threadStore?.isRebornSession
-            ? await Promise.resolve(this.deps.threadStore.isRebornSession(threadId, continuationCapsule.catId))
-            : false;
+          // #836: Reborn check is best-effort — a transient Redis failure must not
+          // abort the completion flow. Default to false (store the capsule) on error.
+          let capsuleCatReborn = false;
+          try {
+            capsuleCatReborn = this.deps.threadStore?.isRebornSession
+              ? await Promise.resolve(this.deps.threadStore.isRebornSession(threadId, continuationCapsule.catId))
+              : false;
+          } catch (rebornErr) {
+            log.warn(
+              { threadId, catId: continuationCapsule.catId, err: rebornErr },
+              '[QueueProcessor] #836: isRebornSession lookup failed, defaulting to non-reborn',
+            );
+          }
           if (capsuleCatReborn) {
             log.info(
               { threadId, catId: continuationCapsule.catId },
@@ -1438,9 +1448,19 @@ export class QueueProcessor {
         const restoredCatId = consumedContinuation?.catId;
         for (const continuationCapsule of continuationCapsules.values()) {
           if (restoredCatId && continuationCapsule.catId === restoredCatId) continue;
-          const capsuleCatReborn = this.deps.threadStore?.isRebornSession
-            ? await Promise.resolve(this.deps.threadStore.isRebornSession(threadId, continuationCapsule.catId))
-            : false;
+          // #836: Reborn check is best-effort — a transient Redis failure must not
+          // prevent capsule storage on the failure path. Default to false on error.
+          let capsuleCatReborn = false;
+          try {
+            capsuleCatReborn = this.deps.threadStore?.isRebornSession
+              ? await Promise.resolve(this.deps.threadStore.isRebornSession(threadId, continuationCapsule.catId))
+              : false;
+          } catch (rebornErr) {
+            log.warn(
+              { threadId, catId: continuationCapsule.catId, err: rebornErr },
+              '[QueueProcessor] #836: isRebornSession lookup failed on failure path, defaulting to non-reborn',
+            );
+          }
           if (capsuleCatReborn) {
             log.info(
               { threadId, catId: continuationCapsule.catId },
