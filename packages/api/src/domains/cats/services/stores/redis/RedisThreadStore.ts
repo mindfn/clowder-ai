@@ -1233,13 +1233,19 @@ export class RedisThreadStore implements IThreadStore {
     catId: string,
     userId: string,
   ): Promise<{ capsule: Record<string, unknown>; createdAt: number } | null> {
-    // #813 P2 fix: per-cat field — atomic HGET + HDEL, no read-modify-write race.
-    // Cloud Codex P1: scope by userId — same rationale as setPendingContinuation.
+    // Cloud Codex P2: atomic read-and-delete via Lua script to prevent
+    // concurrent same-thread/cat/user invocations from both consuming the capsule.
     const key = ThreadKeys.detail(threadId);
     const field = `pendCont:${catId}:${userId}`;
-    const raw = await this.redis.hget(key, field);
+    const raw = (await this.redis.eval(
+      `local v = redis.call('hget', KEYS[1], ARGV[1])
+       if v then redis.call('hdel', KEYS[1], ARGV[1]) end
+       return v`,
+      1,
+      key,
+      field,
+    )) as string | null;
     if (!raw) return null;
-    await this.redis.hdel(key, field);
     return JSON.parse(raw) as { capsule: Record<string, unknown>; createdAt: number };
   }
 
