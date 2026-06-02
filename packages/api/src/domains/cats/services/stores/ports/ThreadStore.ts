@@ -402,12 +402,18 @@ export interface IThreadStore {
   ): void | Promise<void>;
   /** F187: Update thread labels (replaces entire array). */
   updateLabels(threadId: string, labelIds: string[]): void | Promise<void>;
-  /** #813: Write pending continuation state for a cat (passive seal). */
-  setPendingContinuation(threadId: string, catId: string, entry: PendingContinuationEntry): void | Promise<void>;
-  /** #813: Consume (read + delete) pending continuation for a cat. Returns null if none. */
+  /** #813: Write pending continuation state for a cat+user (passive seal). */
+  setPendingContinuation(
+    threadId: string,
+    catId: string,
+    userId: string,
+    entry: PendingContinuationEntry,
+  ): void | Promise<void>;
+  /** #813: Consume (read + delete) pending continuation for a cat+user. Returns null if none. */
   consumePendingContinuation(
     threadId: string,
     catId: string,
+    userId: string,
   ): PendingContinuationEntry | null | Promise<PendingContinuationEntry | null>;
   /**
    * Ensure a thread with a specific ID exists. If it doesn't exist, create it
@@ -849,18 +855,20 @@ export class ThreadStore implements IThreadStore {
     if (thread) thread.labels = labelIds;
   }
 
-  setPendingContinuation(threadId: string, catId: string, entry: PendingContinuationEntry): void {
+  setPendingContinuation(threadId: string, catId: string, userId: string, entry: PendingContinuationEntry): void {
     const thread = this.get(threadId);
     if (!thread) return;
     if (!thread.pendingContinuation) thread.pendingContinuation = {};
-    thread.pendingContinuation[catId] = entry;
+    const scopeKey = `${catId}:${userId}`;
+    thread.pendingContinuation[scopeKey] = entry;
   }
 
-  consumePendingContinuation(threadId: string, catId: string): PendingContinuationEntry | null {
+  consumePendingContinuation(threadId: string, catId: string, userId: string): PendingContinuationEntry | null {
     const thread = this.get(threadId);
-    if (!thread?.pendingContinuation?.[catId]) return null;
-    const entry = thread.pendingContinuation[catId]!;
-    delete thread.pendingContinuation[catId];
+    const scopeKey = `${catId}:${userId}`;
+    if (!thread?.pendingContinuation?.[scopeKey]) return null;
+    const entry = thread.pendingContinuation[scopeKey]!;
+    delete thread.pendingContinuation[scopeKey];
     // Clean up empty container
     if (Object.keys(thread.pendingContinuation).length === 0) {
       delete thread.pendingContinuation;
