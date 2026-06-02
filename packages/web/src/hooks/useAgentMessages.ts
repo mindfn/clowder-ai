@@ -1681,13 +1681,18 @@ export function handleBackgroundAgentMessage(
         // #586 Bug 1 (TD112): Callback created new bubble without finding a stream
         // placeholder. Mark invocation as replaced so late background stream chunks
         // are suppressed instead of spawning a duplicate bubble.
+        // #814: explicit post_message is standalone — must NOT mark invocation as
+        // replaced, otherwise subsequent stream chunks from the same invocation get
+        // killed (symmetric with active-path guard in applyActiveExplicitCallbackNow).
         // F194 Phase Z3 R16 (cloud Codex P1): suppression key prefers turn id when
         // present so siblings under same parent chain don't cross-suppress.
-        const bgInvocationId = msg.invocationId ?? getThreadInvocationId(msg, options);
-        const bgSuppressionKey = msg.turnInvocationId ?? bgInvocationId;
-        if (bgSuppressionKey) {
-          // F173 A.6 — shared module Map.
-          markReplacedInvocation(msg.threadId, msg.catId, bgSuppressionKey);
+        if (!msg.extra?.isExplicitPost) {
+          const bgInvocationId = msg.invocationId ?? getThreadInvocationId(msg, options);
+          const bgSuppressionKey = msg.turnInvocationId ?? bgInvocationId;
+          if (bgSuppressionKey) {
+            // F173 A.6 — shared module Map.
+            markReplacedInvocation(msg.threadId, msg.catId, bgSuppressionKey);
+          }
         }
         finalMsgId = cbId;
       }
