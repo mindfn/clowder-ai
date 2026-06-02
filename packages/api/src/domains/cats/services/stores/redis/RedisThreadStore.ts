@@ -1218,21 +1218,25 @@ export class RedisThreadStore implements IThreadStore {
   async setPendingContinuation(
     threadId: string,
     catId: string,
+    userId: string,
     entry: { capsule: Record<string, unknown>; createdAt: number },
   ): Promise<void> {
     // #813 P2 fix: per-cat hash field (atomic HSET, no read-modify-write race).
-    // Field key: `pendCont:<catId>` — parallel cats write to different fields.
+    // Cloud Codex P1: scope by userId to prevent cross-user continuation leakage
+    // in shared threads. Field key: `pendCont:<catId>:<userId>`.
     const key = ThreadKeys.detail(threadId);
-    await this.redis.hset(key, { [`pendCont:${catId}`]: JSON.stringify(entry) });
+    await this.redis.hset(key, { [`pendCont:${catId}:${userId}`]: JSON.stringify(entry) });
   }
 
   async consumePendingContinuation(
     threadId: string,
     catId: string,
+    userId: string,
   ): Promise<{ capsule: Record<string, unknown>; createdAt: number } | null> {
     // #813 P2 fix: per-cat field — atomic HGET + HDEL, no read-modify-write race.
+    // Cloud Codex P1: scope by userId — same rationale as setPendingContinuation.
     const key = ThreadKeys.detail(threadId);
-    const field = `pendCont:${catId}`;
+    const field = `pendCont:${catId}:${userId}`;
     const raw = await this.redis.hget(key, field);
     if (!raw) return null;
     await this.redis.hdel(key, field);

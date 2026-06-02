@@ -85,11 +85,13 @@ export interface ThreadStoreLike {
   setPendingContinuation(
     threadId: string,
     catId: string,
+    userId: string,
     entry: { capsule: Record<string, unknown>; createdAt: number },
   ): void | Promise<void>;
   consumePendingContinuation(
     threadId: string,
     catId: string,
+    userId: string,
   ):
     | { capsule: Record<string, unknown>; createdAt: number }
     | null
@@ -987,7 +989,7 @@ export class QueueProcessor {
       if (this.deps.threadStore && targetCats.length === 1) {
         const singleCatId = targetCats[0]!;
         try {
-          const pending = await this.deps.threadStore.consumePendingContinuation(threadId, singleCatId);
+          const pending = await this.deps.threadStore.consumePendingContinuation(threadId, singleCatId, userId);
           if (pending) {
             consumedContinuation = { catId: singleCatId, entry: pending };
             const capsule = pending.capsule as unknown as CollaborationContinuityCapsuleV1;
@@ -1332,7 +1334,7 @@ export class QueueProcessor {
         for (const continuationCapsule of continuationCapsules.values()) {
           if (this.deps.threadStore) {
             try {
-              await this.deps.threadStore.setPendingContinuation(threadId, continuationCapsule.catId, {
+              await this.deps.threadStore.setPendingContinuation(threadId, continuationCapsule.catId, userId, {
                 capsule: continuationCapsule as unknown as Record<string, unknown>,
                 createdAt: Date.now(),
               });
@@ -1373,6 +1375,7 @@ export class QueueProcessor {
             await this.deps.threadStore.setPendingContinuation(
               threadId,
               consumedContinuation.catId,
+              userId,
               consumedContinuation.entry,
             );
             log.info(

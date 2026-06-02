@@ -570,18 +570,18 @@ describe('ThreadStore', () => {
     const capsuleA = { summary: 'cat A context' };
     const capsuleB = { summary: 'cat B context' };
 
-    // Write continuation for two cats
-    store.setPendingContinuation(thread.id, 'catA', { capsule: capsuleA, createdAt: 1000 });
-    store.setPendingContinuation(thread.id, 'catB', { capsule: capsuleB, createdAt: 2000 });
+    // Write continuation for two cats (same user)
+    store.setPendingContinuation(thread.id, 'catA', 'user-1', { capsule: capsuleA, createdAt: 1000 });
+    store.setPendingContinuation(thread.id, 'catB', 'user-1', { capsule: capsuleB, createdAt: 2000 });
 
     // Consume catA — catB should remain
-    const resultA = store.consumePendingContinuation(thread.id, 'catA');
+    const resultA = store.consumePendingContinuation(thread.id, 'catA', 'user-1');
     assert.ok(resultA);
     assert.deepEqual(resultA.capsule, capsuleA);
     assert.equal(resultA.createdAt, 1000);
 
     // catB still present
-    const resultB = store.consumePendingContinuation(thread.id, 'catB');
+    const resultB = store.consumePendingContinuation(thread.id, 'catB', 'user-1');
     assert.ok(resultB);
     assert.deepEqual(resultB.capsule, capsuleB);
     assert.equal(resultB.createdAt, 2000);
@@ -592,13 +592,13 @@ describe('ThreadStore', () => {
     const store = new ThreadStore();
     const thread = store.create('user-1', 'cont-test-2');
 
-    store.setPendingContinuation(thread.id, 'catA', { capsule: { x: 1 }, createdAt: 1000 });
+    store.setPendingContinuation(thread.id, 'catA', 'user-1', { capsule: { x: 1 }, createdAt: 1000 });
 
-    const result = store.consumePendingContinuation(thread.id, 'catX');
+    const result = store.consumePendingContinuation(thread.id, 'catX', 'user-1');
     assert.equal(result, null);
 
     // catA still available
-    const resultA = store.consumePendingContinuation(thread.id, 'catA');
+    const resultA = store.consumePendingContinuation(thread.id, 'catA', 'user-1');
     assert.ok(resultA);
   });
 
@@ -607,11 +607,30 @@ describe('ThreadStore', () => {
     const store = new ThreadStore();
     const thread = store.create('user-1', 'cont-test-3');
 
-    store.setPendingContinuation(thread.id, 'catA', { capsule: { data: 'once' }, createdAt: 500 });
+    store.setPendingContinuation(thread.id, 'catA', 'user-1', { capsule: { data: 'once' }, createdAt: 500 });
 
-    const first = store.consumePendingContinuation(thread.id, 'catA');
+    const first = store.consumePendingContinuation(thread.id, 'catA', 'user-1');
     assert.ok(first);
-    const second = store.consumePendingContinuation(thread.id, 'catA');
+    const second = store.consumePendingContinuation(thread.id, 'catA', 'user-1');
     assert.equal(second, null);
+  });
+
+  // Cloud Codex P1: cross-user isolation — user B must not consume user A's continuation
+  test('#813: pending continuation is scoped per-user (cross-user isolation)', async () => {
+    const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const store = new ThreadStore();
+    const thread = store.create('user-1', 'cont-test-user-scope');
+
+    const capsuleUserA = { summary: 'user A sealed context' };
+    store.setPendingContinuation(thread.id, 'catA', 'user-1', { capsule: capsuleUserA, createdAt: 1000 });
+
+    // user-2 consuming same cat in same thread should get null
+    const resultB = store.consumePendingContinuation(thread.id, 'catA', 'user-2');
+    assert.equal(resultB, null);
+
+    // user-1 can still consume their own
+    const resultA = store.consumePendingContinuation(thread.id, 'catA', 'user-1');
+    assert.ok(resultA);
+    assert.deepEqual(resultA.capsule, capsuleUserA);
   });
 });
