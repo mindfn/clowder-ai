@@ -412,24 +412,89 @@ export async function runDataDirsMigration(opts: RunOptions): Promise<MigrationR
   };
 }
 
-/** Migrate a single path (file or directory) with SQLite sidecar handling. */
+/**
+ * Migrate a single path (file or directory) with SQLite sidecar handling.
+ *
+ * SQLite DBs are migrated as an atomic bundle: main file + all sidecars
+ * (-wal, -shm, -journal) move together.  If any sidecar move fails the
+ * main file is rolled back so the legacy DB stays intact (P1 review).
+ */
 async function migrateOne(spec: DataPathSpec, isFile: boolean): Promise<void> {
   const target = spec.rootBasedPath!;
   await mkdir(dirname(target), { recursive: true });
 
-  if (isFile) {
-    await moveFile(spec.legacyPath, target);
-    // Move SQLite sidecars alongside
-    for (const suffix of SQLITE_SIDECARS) {
-      const sidecarSrc = `${spec.legacyPath}${suffix}`;
-      if (existsSync(sidecarSrc)) {
-        await moveFile(sidecarSrc, `${target}${suffix}`);
-      }
-    }
+  if (!isFile) {
+    await moveTree(spec.legacyPath, target);
     return;
   }
 
-  await moveTree(spec.legacyPath, target);
+  // Collect main file + any existing sidecars as one migration bundle.
+  const bundle: Array<{ from: string; to: string }> = [{ from: spec.legacyPath, to: target }];
+  for (const suffix of SQLITE_SIDECARS) {
+    const sidecarSrc = `${spec.legacyPath}${suffix}`;
+    if (existsSync(sidecarSrc)) {
+      bundle.push({ from: sidecarSrc, to: `${target}${suffix}` });
+    }
+  }
+
+  // Try same-device rename for the whole bundle (atomic per-file, fast).
+  const renamed: Array<{ from: string; to: string }> = [];
+  let crossDevice = false;
+  for (const move of bundle) {
+    try {
+      await rename(move.from, move.to);
+      renamed.push(move);
+    } catch (err) {
+      if (isCrossDeviceError(err)) {
+        crossDevice = true;
+        break;
+      }
+      // Non-EXDEV error — roll back already-renamed, then rethrow
+      for (const done of renamed.reverse()) {
+        await rename(done.to, done.from).catch(() => {});
+      }
+      throw err;
+    }
+  }
+  if (!crossDevice) return; // all renamed successfully
+
+  // EXDEV: undo any partial renames, then fall back to staged copy-verify-delete
+  for (const done of renamed.reverse()) {
+    await rename(done.to, done.from).catch(() => {});
+  }
+
+  // Phase 1: copy all files to target (sources untouched)
+  const copied: string[] = [];
+  try {
+    for (const move of bundle) {
+      await copyFile(move.from, move.to);
+      copied.push(move.to);
+    }
+  } catch (err) {
+    // Clean up partial copies — sources stay intact
+    for (const dst of copied) {
+      await unlink(dst).catch(() => {});
+    }
+    throw err;
+  }
+
+  // Phase 2: verify all copies
+  for (const move of bundle) {
+    const srcHash = await hashFile(move.from);
+    const dstHash = await hashFile(move.to);
+    if (srcHash !== dstHash) {
+      // Clean up ALL target copies — sources stay intact
+      for (const m of bundle) {
+        await unlink(m.to).catch(() => {});
+      }
+      throw new Error(`Hash mismatch after copy: ${move.from} → ${move.to}`);
+    }
+  }
+
+  // Phase 3: all verified — delete sources
+  for (const move of bundle) {
+    await unlink(move.from);
+  }
 }
 
 async function moveFile(from: string, to: string): Promise<void> {
@@ -479,8 +544,16 @@ async function copyTree(from: string, to: string): Promise<void> {
       await copyTree(src, dst);
     } else if (entry.isFile()) {
       await copyFile(src, dst);
+    } else {
+      // Symlinks, sockets, FIFOs, etc. — abort to avoid silent data loss.
+      // Same-device rename handles these transparently; cross-device copy
+      // cannot safely reproduce them, so fail fast with a clear message.
+      const kind = entry.isSymbolicLink() ? 'symlink' : 'special-file';
+      throw new Error(
+        `Cannot migrate non-regular entry: ${src} (${kind}). ` +
+          'Move the directory manually or remove the entry before retrying.',
+      );
     }
-    // Symlinks/special files: best-effort skip
   }
 }
 

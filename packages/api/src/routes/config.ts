@@ -293,8 +293,21 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
     };
   });
 
-  // #671: Inspect current data-dirs layout + pending migration work
-  app.get('/api/config/data-dirs', async (request) => {
+  // #671: Inspect current data-dirs layout + pending migration work.
+  // Exposes absolute paths — owner-only to avoid leaking filesystem layout.
+  app.get('/api/config/data-dirs', async (request, reply) => {
+    const operator = resolveHeaderUserId(request);
+    if (!operator) {
+      reply.status(400);
+      return { error: 'Identity required (X-Cat-Cafe-User header)' };
+    }
+    const gateResult = resolveOwnerGate(operator, {
+      errorMessage: 'Data-dirs inspection requires owner identity',
+    });
+    if (gateResult) {
+      reply.status(gateResult.status);
+      return { error: gateResult.error };
+    }
     const cwd = process.cwd();
     const probeRepoRoot = existsSync(resolve(cwd, 'docs', 'features'))
       ? cwd

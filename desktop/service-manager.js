@@ -417,16 +417,35 @@ class ServiceManager {
           log(`.cat-cafe symlink retargeted: ${projectCatCafeDir} -> ${catCafeStateDir}`);
         }
       } else if (catCafeStat.isDirectory()) {
-        // Real directory with data — move to unified location, replace with
-        // symlink.  Remove the empty mkdir target first to allow rename.
-        try {
-          fs.rmdirSync(catCafeStateDir);
-        } catch {
-          /* non-empty or missing — rename will fail gracefully */
+        // On Windows, NTFS junctions can report as directories via
+        // lstatSync().isSymbolicLink() === false.  Probe with readlinkSync
+        // to detect hidden junctions before treating this as a real dir.
+        let isJunction = false;
+        if (IS_WIN) {
+          try {
+            const jTarget = fs.readlinkSync(projectCatCafeDir);
+            isJunction = true;
+            if (path.resolve(jTarget) !== path.resolve(catCafeStateDir)) {
+              removeLink(projectCatCafeDir);
+              fs.symlinkSync(catCafeStateDir, projectCatCafeDir, linkType);
+              log(`.cat-cafe junction retargeted: ${projectCatCafeDir} -> ${catCafeStateDir}`);
+            }
+          } catch {
+            // readlinkSync failed (EINVAL) → genuine directory, not a junction
+          }
         }
-        fs.renameSync(projectCatCafeDir, catCafeStateDir);
-        fs.symlinkSync(catCafeStateDir, projectCatCafeDir, linkType);
-        log(`.cat-cafe state migrated: ${projectCatCafeDir} -> ${catCafeStateDir}`);
+        if (!isJunction) {
+          // Real directory with data — move to unified location, replace with
+          // symlink.  Remove the empty mkdir target first to allow rename.
+          try {
+            fs.rmdirSync(catCafeStateDir);
+          } catch {
+            /* non-empty or missing — rename will fail gracefully */
+          }
+          fs.renameSync(projectCatCafeDir, catCafeStateDir);
+          fs.symlinkSync(catCafeStateDir, projectCatCafeDir, linkType);
+          log(`.cat-cafe state migrated: ${projectCatCafeDir} -> ${catCafeStateDir}`);
+        }
       }
     } catch {
       // project/.cat-cafe doesn't exist yet — create symlink to data/cat-cafe

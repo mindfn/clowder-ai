@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync, symlinkSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, test } from 'node:test';
@@ -365,6 +365,48 @@ describe('data-dirs-migration', () => {
         restartRecommended: false,
       });
       assert.equal(decision.shouldAbort, false);
+    });
+
+    test('cross-device dir migration fails on symlinks instead of silently dropping them', async () => {
+      // Create a data directory containing a symlink
+      const legacyAudit = join(workRoot, 'data', 'audit-logs');
+      await mkdir(legacyAudit, { recursive: true });
+      await writeFile(join(legacyAudit, 'real.ndjson'), '{"a":1}\n', 'utf-8');
+      // Create a relative symlink inside the directory (relative so it
+      // survives same-device rename to a different parent directory)
+      await symlink('real.ndjson', join(legacyAudit, 'link.ndjson'));
+
+      const dataRoot = join(workRoot, 'newdata');
+      process.env.DATA_DIR = dataRoot;
+
+      const originalCwd = process.cwd();
+      process.chdir(workRoot);
+      try {
+        const result = await runDataDirsMigration({
+          repoRoot: workRoot,
+          monorepoRoot: workRoot,
+          uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
+          trigger: 'startup',
+          io: plentyOfSpaceIO(),
+        });
+        // On same device, rename handles symlinks transparently → moved.
+        // The test checks that the migration either succeeds (same device)
+        // or fails with a clear error (cross device), never silently drops.
+        const audit = result.items.find((i) => i.key === 'auditLogs');
+        if (audit.status === 'moved') {
+          // Same-device rename succeeded — symlink preserved
+          assert.equal(existsSync(join(dataRoot, 'audit-logs', 'link.ndjson')), true);
+        } else {
+          // Cross-device path hit the symlink guard → failed with message
+          assert.equal(audit.status, 'failed');
+          assert.ok(audit.error.includes('non-regular entry'));
+          // Legacy data stays intact
+          assert.equal(existsSync(join(legacyAudit, 'real.ndjson')), true);
+          assert.equal(existsSync(join(legacyAudit, 'link.ndjson')), true);
+        }
+      } finally {
+        process.chdir(originalCwd);
+      }
     });
 
     test('continues other items when one fails (per-item isolation)', async () => {

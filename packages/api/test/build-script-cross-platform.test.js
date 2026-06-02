@@ -75,6 +75,8 @@ test('desktop service manager links writable .cat-cafe state under DATA_DIR', as
   assert.match(serviceManagerSource, /path\.join\(projectDir,\s*'\.cat-cafe'\)/);
   assert.match(serviceManagerSource, /fs\.renameSync\(projectCatCafeDir,\s*catCafeStateDir\)/);
   assert.match(serviceManagerSource, /fs\.symlinkSync\(catCafeStateDir,\s*projectCatCafeDir,\s*linkType\)/);
+  // Windows junction detection (P1 review: NTFS junctions can report as directories)
+  assert.match(serviceManagerSource, /readlinkSync\(projectCatCafeDir\)/);
 });
 
 test('windows desktop build script cleans up temporary Defender exclusions', async () => {
