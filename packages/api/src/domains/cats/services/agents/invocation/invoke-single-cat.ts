@@ -960,11 +960,14 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         // #836: Reborn session strategy — force new session every invocation.
         // Uses store lookup (isRebornSession) instead of thread field because
         // Redis stores strategy in separate hash fields not hydrated by get().
-        const isReborn = await preflightRace(
-          Promise.resolve(threadStore.isRebornSession(threadId, catId as string)),
-          'isRebornSession',
-          signal,
-        );
+        // Optional chaining: test mocks may omit isRebornSession (absent = false).
+        const isReborn = threadStore.isRebornSession
+          ? await preflightRace(
+              Promise.resolve(threadStore.isRebornSession(threadId, catId as string)),
+              'isRebornSession',
+              signal,
+            )
+          : false;
         if (isReborn) {
           sessionId = undefined;
           log.info({ catId, threadId }, '#836: reborn session strategy — forcing new session');
