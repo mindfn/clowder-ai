@@ -201,7 +201,7 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
 
       resources.push({
         type: type as PluginResourceDef['type'],
-        factoryId: type === 'schedule' ? factoryId : undefined,
+        ...(type === 'schedule' && factoryId ? { factoryId } : {}),
         path,
         name,
         command: command as string | undefined,

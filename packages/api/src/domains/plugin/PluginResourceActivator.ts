@@ -9,7 +9,9 @@ import type {
   PluginResourceDef,
 } from '@cat-cafe/shared';
 import type { LimbRegistry } from '../limb/LimbRegistry.js';
+import type { TaskSpec_P1 } from '../../infrastructure/scheduler/types.js';
 import { normalizeCapId, resolvePluginResourcePath, resourceCapId, resourcePathBasename } from './PluginRegistry.js';
+import type { ScheduleFactory, ScheduleFactoryDeps, ScheduleFactoryRegistry } from './ScheduleFactoryRegistry.js';
 import { resolvePluginEnv } from './plugin-config-store.js';
 
 const PROVIDER_DIRS = ['.claude/skills', '.codex/skills', '.gemini/skills', '.kimi/skills'];
@@ -29,6 +31,12 @@ export interface ActivatePluginResult {
 
 export type LimbAdapterFactory = (pluginId: string, limbYamlPath: string) => Promise<ILimbNode>;
 
+/** Minimal TaskRunner interface for schedule resource activation (F220) */
+export interface ScheduleTaskRunner {
+  registerDynamic(task: TaskSpec_P1, defId: string): void;
+  unregister(taskId: string): boolean;
+}
+
 export interface PluginResourceActivatorDeps {
   resolveProjectRoot: () => string;
   pluginsDir: string;
@@ -37,6 +45,12 @@ export interface PluginResourceActivatorDeps {
   writeCapabilities: (config: CapabilitiesConfig) => Promise<void>;
   withCapabilityLock: <T>(fn: () => Promise<T>) => Promise<T>;
   limbAdapterFactory?: LimbAdapterFactory;
+  /** F220: Schedule factory registry (required for schedule resources) */
+  scheduleFactoryRegistry?: ScheduleFactoryRegistry;
+  /** F220: TaskRunner for registering/unregistering schedule tasks */
+  taskRunner?: ScheduleTaskRunner;
+  /** F220: Dependencies injected into schedule factory createTaskSpec */
+  scheduleFactoryDeps?: ScheduleFactoryDeps;
 }
 
 export function withPersistedLimbNodeId<T extends ILimbNode>(node: T, persistedNodeId?: string): T {
@@ -181,6 +195,9 @@ export class PluginResourceActivator {
       case 'mcp':
         await this.activateMcp(manifest, resource);
         break;
+      case 'schedule':
+        await this.activateSchedule(manifest, resource);
+        break;
       default:
         throw new Error(`Unsupported resource type: ${resource.type}`);
     }
@@ -196,6 +213,9 @@ export class PluginResourceActivator {
         break;
       case 'mcp':
         await this.deactivateMcp(manifest, resource);
+        break;
+      case 'schedule':
+        await this.deactivateSchedule(manifest, resource);
         break;
       default:
         throw new Error(`Unsupported resource type: ${resource.type}`);
@@ -312,11 +332,46 @@ export class PluginResourceActivator {
     await this.removeCapabilityEntry(manifest, resource);
   }
 
+  private async activateSchedule(manifest: PluginManifest, resource: PluginResourceDef): Promise<void> {
+    if (!resource.factoryId) throw new Error('Schedule resource must have a factoryId');
+    if (!resource.name) throw new Error('Schedule resource must have a name');
+    if (!this.deps.scheduleFactoryRegistry) throw new Error('ScheduleFactoryRegistry not configured');
+    if (!this.deps.taskRunner) throw new Error('TaskRunner not configured');
+
+    const factory = this.deps.scheduleFactoryRegistry.get(resource.factoryId);
+    if (!factory) throw new Error(`Unknown schedule factory '${resource.factoryId}'`);
+
+    const taskId = `plugin-${manifest.id}-${resource.name}`;
+    const taskSpec = factory.createTaskSpec(
+      taskId,
+      this.deps.scheduleFactoryDeps ?? { log: console },
+    );
+    this.deps.taskRunner.registerDynamic(taskSpec, `plugin:${manifest.id}:${resource.name}`);
+    await this.upsertCapabilityEntry(manifest, resource, true, undefined, taskId);
+  }
+
+  private async deactivateSchedule(manifest: PluginManifest, resource: PluginResourceDef): Promise<void> {
+    if (!resource.name) return;
+
+    // Read current capability to get scheduleTaskId
+    const config = await this.deps.readCapabilities();
+    const capId = resourceCapId(manifest.id, resource);
+    const entry = config?.capabilities.find(
+      (c) => normalizeCapId(c.id) === capId && c.pluginId === manifest.id,
+    );
+    const taskId = entry?.scheduleTaskId;
+    if (taskId && this.deps.taskRunner) {
+      this.deps.taskRunner.unregister(taskId);
+    }
+    await this.removeCapabilityEntry(manifest, resource);
+  }
+
   private async upsertCapabilityEntry(
     manifest: PluginManifest,
     resource: PluginResourceDef,
     enabled: boolean,
     limbNodeId?: string,
+    scheduleTaskId?: string,
   ): Promise<CapabilitiesConfig | null> {
     return this.deps.withCapabilityLock(async () => {
       const config = await this.deps.readCapabilities();
@@ -345,14 +400,20 @@ export class PluginResourceActivator {
         const staleLimbNodeId =
           existing.type === 'limb' && resource.type !== 'limb' && existing.enabled ? existing.limbNodeId : undefined;
 
-        existing.type = resource.type as 'mcp' | 'skill' | 'limb';
+        existing.type = resource.type as CapabilityEntry['type'];
         existing.enabled = enabled;
         existing.pluginId = manifest.id;
         if (resource.type === 'mcp') {
           delete existing.limbNodeId;
+          delete existing.scheduleTaskId;
           existing.mcpServer = this.buildMcpServer(manifest, resource);
+        } else if (resource.type === 'schedule') {
+          delete existing.mcpServer;
+          delete existing.limbNodeId;
+          if (scheduleTaskId) existing.scheduleTaskId = scheduleTaskId;
         } else {
           delete existing.mcpServer;
+          delete existing.scheduleTaskId;
           if (resource.type === 'limb' && limbNodeId !== undefined) {
             existing.limbNodeId = limbNodeId;
           } else {
@@ -364,11 +425,12 @@ export class PluginResourceActivator {
       } else {
         const entry: CapabilityEntry = {
           id: capId,
-          type: resource.type as 'mcp' | 'skill' | 'limb',
+          type: resource.type as CapabilityEntry['type'],
           enabled,
           source: 'cat-cafe',
           pluginId: manifest.id,
           ...(limbNodeId ? { limbNodeId } : {}),
+          ...(scheduleTaskId ? { scheduleTaskId } : {}),
         };
 
         if (resource.type === 'mcp') {
@@ -613,6 +675,58 @@ export class PluginResourceActivator {
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
       throw err;
+    }
+  }
+}
+
+// ─── F220: Schedule resource rehydration (startup recovery) ──────────
+
+export interface PluginScheduleRehydrationDeps {
+  capabilities: CapabilitiesConfig | null;
+  pluginRegistry: Pick<import('./PluginRegistry.js').PluginRegistry, 'getManifest'>;
+  scheduleFactoryRegistry: ScheduleFactoryRegistry;
+  taskRunner: { register(task: TaskSpec_P1): void };
+  scheduleFactoryDeps: ScheduleFactoryDeps;
+  log?: Pick<Console, 'info' | 'warn'>;
+}
+
+/**
+ * Rehydrate enabled schedule resources at startup.
+ * Reads capabilities.json for type=schedule + enabled=true entries,
+ * looks up the factory in ScheduleFactoryRegistry, and registers
+ * the TaskSpec in TaskRunnerV2 (via register, not registerDynamic —
+ * TaskRunnerV2.start() hasn't been called yet at rehydration time).
+ */
+export async function rehydrateEnabledPluginSchedules(deps: PluginScheduleRehydrationDeps): Promise<void> {
+  if (!deps.capabilities) return;
+
+  const scheduleEntries = deps.capabilities.capabilities.filter(
+    (c) => c.type === 'schedule' && c.enabled && c.pluginId,
+  );
+
+  for (const cap of scheduleEntries) {
+    const manifest = deps.pluginRegistry.getManifest(cap.pluginId!);
+    if (!manifest) continue;
+
+    const normalizedId = normalizeCapId(cap.id);
+    const scheduleResource = manifest.resources.find(
+      (r) => r.type === 'schedule' && resourceCapId(manifest.id, r) === normalizedId,
+    );
+    if (!scheduleResource?.factoryId) continue;
+
+    const factory = deps.scheduleFactoryRegistry.get(scheduleResource.factoryId);
+    if (!factory) {
+      deps.log?.warn(`[F220] Skip rehydration for factory '${scheduleResource.factoryId}' (not registered)`);
+      continue;
+    }
+
+    const taskId = cap.scheduleTaskId ?? `plugin-${manifest.id}-${scheduleResource.name}`;
+    try {
+      const taskSpec = factory.createTaskSpec(taskId, deps.scheduleFactoryDeps);
+      deps.taskRunner.register(taskSpec);
+      deps.log?.info(`[F220] Rehydrated schedule '${scheduleResource.name}' for plugin '${manifest.id}'`);
+    } catch (err) {
+      deps.log?.warn(`[F220] Failed to rehydrate schedule for '${manifest.id}': ${(err as Error).message}`);
     }
   }
 }
