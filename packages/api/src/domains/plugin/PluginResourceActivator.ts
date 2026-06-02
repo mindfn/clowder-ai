@@ -8,11 +8,11 @@ import type {
   PluginManifest,
   PluginResourceDef,
 } from '@cat-cafe/shared';
-import type { LimbRegistry } from '../limb/LimbRegistry.js';
 import type { TaskSpec_P1 } from '../../infrastructure/scheduler/types.js';
+import type { LimbRegistry } from '../limb/LimbRegistry.js';
 import { normalizeCapId, resolvePluginResourcePath, resourceCapId, resourcePathBasename } from './PluginRegistry.js';
-import type { ScheduleFactory, ScheduleFactoryDeps, ScheduleFactoryRegistry } from './ScheduleFactoryRegistry.js';
 import { resolvePluginEnv } from './plugin-config-store.js';
+import type { ScheduleFactoryDeps, ScheduleFactoryRegistry } from './ScheduleFactoryRegistry.js';
 
 const PROVIDER_DIRS = ['.claude/skills', '.codex/skills', '.gemini/skills', '.kimi/skills'];
 
@@ -342,10 +342,7 @@ export class PluginResourceActivator {
     if (!factory) throw new Error(`Unknown schedule factory '${resource.factoryId}'`);
 
     const taskId = `plugin-${manifest.id}-${resource.name}`;
-    const taskSpec = factory.createTaskSpec(
-      taskId,
-      this.deps.scheduleFactoryDeps ?? { log: console },
-    );
+    const taskSpec = factory.createTaskSpec(taskId, this.deps.scheduleFactoryDeps ?? { log: console });
     this.deps.taskRunner.registerDynamic(taskSpec, `plugin:${manifest.id}:${resource.name}`);
     await this.upsertCapabilityEntry(manifest, resource, true, undefined, taskId);
   }
@@ -356,9 +353,7 @@ export class PluginResourceActivator {
     // Read current capability to get scheduleTaskId
     const config = await this.deps.readCapabilities();
     const capId = resourceCapId(manifest.id, resource);
-    const entry = config?.capabilities.find(
-      (c) => normalizeCapId(c.id) === capId && c.pluginId === manifest.id,
-    );
+    const entry = config?.capabilities.find((c) => normalizeCapId(c.id) === capId && c.pluginId === manifest.id);
     const taskId = entry?.scheduleTaskId;
     if (taskId && this.deps.taskRunner) {
       this.deps.taskRunner.unregister(taskId);
