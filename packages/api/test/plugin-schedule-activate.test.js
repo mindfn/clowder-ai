@@ -397,12 +397,14 @@ describe('PluginResourceActivator — schedule resources', () => {
 
     // Step 2: re-enable with the SAME name but type=mcp (type transition)
     const mcpManifest = makeMinimalManifest({
-      resources: [{
-        type: 'mcp',
-        name: 'my-poller',
-        command: 'node',
-        args: ['server.js'],
-      }],
+      resources: [
+        {
+          type: 'mcp',
+          name: 'my-poller',
+          command: 'node',
+          args: ['server.js'],
+        },
+      ],
     });
     await activator.enablePlugin(mcpManifest);
 
