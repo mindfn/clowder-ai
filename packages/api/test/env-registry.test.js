@@ -337,6 +337,69 @@ describe('GET /api/config/env-summary (route)', () => {
   });
 });
 
+describe('POST /api/config/data-dirs/migrate owner gate', () => {
+  it('allows direct-loopback migration in single-user mode when owner is not configured', async () => {
+    const { configRoutes } = await import('../dist/routes/config.js');
+    const previous = {
+      DEFAULT_OWNER_USER_ID: process.env.DEFAULT_OWNER_USER_ID,
+      DATA_DIR: process.env.DATA_DIR,
+      CACHE_DIR: process.env.CACHE_DIR,
+      LOG_DIR: process.env.LOG_DIR,
+    };
+    delete process.env.DEFAULT_OWNER_USER_ID;
+    delete process.env.DATA_DIR;
+    delete process.env.CACHE_DIR;
+    delete process.env.LOG_DIR;
+
+    const app = Fastify({ logger: false });
+    try {
+      await configRoutes(app);
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/config/data-dirs/migrate',
+        headers: { 'x-cat-cafe-user': 'local-user' },
+      });
+
+      assert.equal(res.statusCode, 200);
+      assert.equal(JSON.parse(res.payload).attempted, false);
+    } finally {
+      await app.close();
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  it('rejects non-loopback migration in single-user mode when owner is not configured', async () => {
+    const { configRoutes } = await import('../dist/routes/config.js');
+    const previous = process.env.DEFAULT_OWNER_USER_ID;
+    delete process.env.DEFAULT_OWNER_USER_ID;
+
+    const app = Fastify({ logger: false });
+    try {
+      await configRoutes(app);
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/config/data-dirs/migrate',
+        headers: { 'x-cat-cafe-user': 'remote-user' },
+        remoteAddress: '192.168.1.100',
+      });
+
+      assert.equal(res.statusCode, 403);
+      assert.match(JSON.parse(res.payload).error, /non-localhost|DEFAULT_OWNER_USER_ID/i);
+    } finally {
+      await app.close();
+      if (previous === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+      else process.env.DEFAULT_OWNER_USER_ID = previous;
+    }
+  });
+});
+
 describe('PATCH /api/config/env (route)', () => {
   afterEach(() => restoreEnv());
 

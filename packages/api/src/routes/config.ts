@@ -343,10 +343,18 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
       reply.status(400);
       return { error: 'Identity required (X-Cat-Cafe-User header)' };
     }
-    const ownerId = process.env.DEFAULT_OWNER_USER_ID?.trim();
-    if (!ownerId || operator !== ownerId) {
+    // Data migration moves local runtime files. In single-user mode, allow
+    // direct loopback only; remote/proxied requests need an explicit owner.
+    if (!isDirectLoopbackRequest(request) && !process.env.DEFAULT_OWNER_USER_ID?.trim()) {
       reply.status(403);
-      return { error: 'Data-dirs migration requires owner identity (DEFAULT_OWNER_USER_ID)' };
+      return { error: 'Data-dirs migration from non-localhost requires DEFAULT_OWNER_USER_ID to be configured' };
+    }
+    const gateResult = resolveOwnerGate(operator, {
+      errorMessage: 'Data-dirs migration requires owner identity',
+    });
+    if (gateResult) {
+      reply.status(gateResult.status);
+      return { error: gateResult.error };
     }
     const cwd = process.cwd();
     const probeRepoRoot = existsSync(resolve(cwd, 'docs', 'features'))
