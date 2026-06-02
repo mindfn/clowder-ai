@@ -385,6 +385,7 @@ export class PluginResourceActivator {
       const capId = resourceCapId(manifest.id, resource);
 
       let staleLimbNodeIdToClean: string | undefined;
+      let staleScheduleTaskIdToClean: string | undefined;
       const existing = cap.capabilities.find((c) => normalizeCapId(c.id) === capId);
       if (existing) {
         if (existing.pluginId !== undefined && existing.pluginId !== manifest.id) {
@@ -404,6 +405,12 @@ export class PluginResourceActivator {
         // Capture stale limb nodeId before type transition so we can deregister after write
         const staleLimbNodeId =
           existing.type === 'limb' && resource.type !== 'limb' && existing.enabled ? existing.limbNodeId : undefined;
+
+        // F220: capture stale schedule taskId before type transition (mirrors limb pattern)
+        staleScheduleTaskIdToClean =
+          existing.type === 'schedule' && resource.type !== 'schedule' && existing.enabled
+            ? existing.scheduleTaskId
+            : undefined;
 
         existing.type = resource.type as CapabilityEntry['type'];
         existing.enabled = enabled;
@@ -453,6 +460,14 @@ export class PluginResourceActivator {
           this.deps.limbRegistry.deregister(staleLimbNodeIdToClean);
         } catch {
           /* best-effort: node may already be gone */
+        }
+      }
+      // F220: unregister stale schedule task only after config write succeeds
+      if (staleScheduleTaskIdToClean && this.deps.taskRunner) {
+        try {
+          this.deps.taskRunner.unregister(staleScheduleTaskIdToClean);
+        } catch {
+          /* best-effort: task may already be gone */
         }
       }
       return previous;

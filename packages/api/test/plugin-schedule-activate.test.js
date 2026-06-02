@@ -381,6 +381,43 @@ describe('PluginResourceActivator — schedule resources', () => {
     assert.strictEqual(capStore.get()?.capabilities.length, 1);
     assert.strictEqual(capStore.get()?.capabilities[0].enabled, true);
   });
+
+  it('P2-cloud: type transition from schedule to MCP unregisters stale schedule task', async () => {
+    const registry = new ScheduleFactoryRegistry();
+    registry.register(makeStubFactory('test.poller'));
+    const { activator, capStore, taskRunner } = makeActivator({ scheduleFactoryRegistry: registry });
+
+    // Step 1: enable plugin with a schedule resource named 'my-poller'
+    const schedManifest = makeMinimalManifest({
+      resources: [makeScheduleResource({ factoryId: 'test.poller', name: 'my-poller' })],
+    });
+    await activator.enablePlugin(schedManifest);
+    assert.strictEqual(taskRunner.registered.length, 1);
+    assert.strictEqual(taskRunner.registered[0].id, 'plugin-test-plugin-my-poller');
+
+    // Step 2: re-enable with the SAME name but type=mcp (type transition)
+    const mcpManifest = makeMinimalManifest({
+      resources: [{
+        type: 'mcp',
+        name: 'my-poller',
+        command: 'node',
+        args: ['server.js'],
+      }],
+    });
+    await activator.enablePlugin(mcpManifest);
+
+    // The old schedule task must be unregistered (stale cleanup)
+    assert.ok(
+      taskRunner.unregistered.includes('plugin-test-plugin-my-poller'),
+      'stale schedule task must be unregistered on type transition',
+    );
+
+    // Capability should now be MCP type
+    const config = capStore.get();
+    const entry = config?.capabilities.find((c) => c.pluginId === 'test-plugin');
+    assert.strictEqual(entry?.type, 'mcp');
+    assert.strictEqual(entry?.scheduleTaskId, undefined);
+  });
 });
 
 describe('rehydrateEnabledPluginSchedules', () => {
