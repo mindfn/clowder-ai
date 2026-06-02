@@ -268,11 +268,11 @@ export async function* routeParallel(
 
       // F24 Phase E: Bootstrap context for Session #2+
       // #836: Reborn cats skip bootstrap — every invocation starts with zero prior context.
+      // Uses store lookup (not thread field) — Redis memberSS:* fields aren't hydrated by get().
       let bootstrapCtx = '';
-      const parRebornThread = deps.invocationDeps.threadStore
-        ? await Promise.resolve(deps.invocationDeps.threadStore.get(threadId))
-        : null;
-      const isParReborn = parRebornThread?.memberSessionStrategy?.[catId as string] === 'reborn';
+      const isParReborn = deps.invocationDeps.threadStore
+        ? await Promise.resolve(deps.invocationDeps.threadStore.isRebornSession(threadId, catId as string))
+        : false;
       if (
         !isParReborn &&
         isSessionChainEnabled(catId) &&
