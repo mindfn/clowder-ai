@@ -1600,9 +1600,10 @@ async function main(): Promise<void> {
   {
     const { join } = await import('node:path');
     const { PluginRegistry } = await import('./domains/plugin/PluginRegistry.js');
-    const { PluginResourceActivator, rehydrateEnabledPluginLimbs } = await import(
+    const { PluginResourceActivator, rehydrateEnabledPluginLimbs, rehydrateEnabledPluginSchedules } = await import(
       './domains/plugin/PluginResourceActivator.js'
     );
+    const { ScheduleFactoryRegistry } = await import('./domains/plugin/ScheduleFactoryRegistry.js');
     const { registerPluginRoutes } = await import('./routes/plugin-routes.js');
     const { generateCliConfigs, readCapabilitiesConfig, writeCapabilitiesConfig, withCapabilityLock } = await import(
       './config/capabilities/capability-orchestrator.js'
@@ -1622,6 +1623,9 @@ async function main(): Promise<void> {
     );
 
     const limbAdapterRegistry = new Map<string, (yamlPath: string) => Promise<ILimbNode>>();
+
+    // F220: Schedule factory registry — Phase B will register GitHub factories here
+    const scheduleFactoryRegistry = new ScheduleFactoryRegistry();
 
     const pluginActivator = new PluginResourceActivator({
       resolveProjectRoot: () => resolveActiveProjectRoot(),
@@ -1645,6 +1649,13 @@ async function main(): Promise<void> {
         }
         return factory(limbYamlPath);
       },
+      // F220: schedule resource activation deps
+      scheduleFactoryRegistry,
+      taskRunner: {
+        registerDynamic: (task, defId) => taskRunnerV2.registerDynamic(task, defId),
+        unregister: (taskId) => taskRunnerV2.unregister(taskId),
+      },
+      scheduleFactoryDeps: { log: app.log },
     });
 
     const startupCaps = await readCapabilitiesConfig(resolveActiveProjectRoot());
@@ -1654,6 +1665,16 @@ async function main(): Promise<void> {
       pluginsDir,
       limbAdapterRegistry,
       limbRegistry,
+      log: app.log,
+    });
+
+    // F220: Rehydrate enabled schedule resources (register tasks before taskRunnerV2.start())
+    await rehydrateEnabledPluginSchedules({
+      capabilities: startupCaps,
+      pluginRegistry,
+      scheduleFactoryRegistry,
+      taskRunner: taskRunnerV2,
+      scheduleFactoryDeps: { log: app.log },
       log: app.log,
     });
 
