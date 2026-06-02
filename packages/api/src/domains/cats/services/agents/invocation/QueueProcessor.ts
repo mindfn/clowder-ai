@@ -1453,11 +1453,10 @@ export class QueueProcessor {
         // #813 fix: Also store NEW capsules produced during this execution
         // (e.g., seal happened mid-run then invocation was canceled).
         // Without this, a seal + cancel loses the continuation capsule and
-        // the cat never continues. Skip any catId that was already re-stored
-        // as consumed above to avoid overwriting with stale data.
-        const restoredCatId = consumedContinuation?.catId;
+        // the cat never continues. When the same catId has both a restored
+        // consumed capsule AND a new capsule from this run, the new one wins —
+        // it contains fresher sealed context from the run that just failed.
         for (const continuationCapsule of continuationCapsules.values()) {
-          if (restoredCatId && continuationCapsule.catId === restoredCatId) continue;
           // #836: Reborn check is best-effort — a transient Redis failure must not
           // prevent capsule storage on the failure path. Default to false on error.
           let capsuleCatReborn = false;
