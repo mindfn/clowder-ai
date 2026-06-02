@@ -412,6 +412,11 @@ export interface IThreadStore {
     catId: string,
     strategy: 'resume' | 'reborn' | null,
   ): void | Promise<void>;
+  /** #836: Check if a cat uses reborn session strategy in this thread.
+   *  Must be used instead of reading thread.memberSessionStrategy directly,
+   *  because Redis stores strategy in separate hash fields (memberSS:<catId>)
+   *  that are NOT hydrated by get(). */
+  isRebornSession(threadId: string, catId: string): boolean | Promise<boolean>;
   /** #813: Write pending continuation state for a cat+user (passive seal). */
   setPendingContinuation(
     threadId: string,

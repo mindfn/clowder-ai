@@ -557,11 +557,11 @@ export async function* routeSerial(
 
       // F24 Phase E: Bootstrap context for Session #2+
       // #836: Reborn cats skip bootstrap — every invocation starts with zero prior context.
+      // Uses store lookup (not thread field) — Redis memberSS:* fields aren't hydrated by get().
       let bootstrapContext = '';
-      const serialRebornThread = deps.invocationDeps.threadStore
-        ? await Promise.resolve(deps.invocationDeps.threadStore.get(threadId))
-        : null;
-      const isSerialReborn = serialRebornThread?.memberSessionStrategy?.[catId as string] === 'reborn';
+      const isSerialReborn = deps.invocationDeps.threadStore
+        ? await Promise.resolve(deps.invocationDeps.threadStore.isRebornSession(threadId, catId as string))
+        : false;
       if (
         !isSerialReborn &&
         isSessionChainEnabled(catId) &&
