@@ -1430,6 +1430,42 @@ export class QueueProcessor {
             );
           }
         }
+        // #813 fix: Also store NEW capsules produced during this execution
+        // (e.g., seal happened mid-run then invocation was canceled).
+        // Without this, a seal + cancel loses the continuation capsule and
+        // the cat never continues. Skip any catId that was already re-stored
+        // as consumed above to avoid overwriting with stale data.
+        const restoredCatId = consumedContinuation?.catId;
+        for (const continuationCapsule of continuationCapsules.values()) {
+          if (restoredCatId && continuationCapsule.catId === restoredCatId) continue;
+          const capsuleCatReborn = this.deps.threadStore?.isRebornSession
+            ? await Promise.resolve(this.deps.threadStore.isRebornSession(threadId, continuationCapsule.catId))
+            : false;
+          if (capsuleCatReborn) {
+            log.info(
+              { threadId, catId: continuationCapsule.catId },
+              '[QueueProcessor] #836: reborn session — skipping new capsule store on failure',
+            );
+            continue;
+          }
+          if (this.deps.threadStore) {
+            try {
+              await this.deps.threadStore.setPendingContinuation(threadId, continuationCapsule.catId, userId, {
+                capsule: continuationCapsule as unknown as Record<string, unknown>,
+                createdAt: Date.now(),
+              });
+              log.info(
+                { threadId, catId: continuationCapsule.catId },
+                '[QueueProcessor] #813: saved new continuation capsule after failed/canceled execution',
+              );
+            } catch (capsuleErr) {
+              log.warn(
+                { threadId, catId: continuationCapsule.catId, err: capsuleErr },
+                '[QueueProcessor] #813: failed to save new capsule after execution failure',
+              );
+            }
+          }
+        }
       }
       socketManager.emitToUser(userId, 'queue_updated', {
         threadId,
