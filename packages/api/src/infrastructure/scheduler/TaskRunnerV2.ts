@@ -168,6 +168,18 @@ export class TaskRunnerV2 {
     }
   }
 
+  /**
+   * F220: Register a builtin task that may arrive after start() (e.g., plugin schedule activation).
+   * Unlike registerDynamic, this does NOT mark the task in dynamicTaskIds, so it reports
+   * as source: 'builtin' and won't be targeted by SchedulePanel's dynamic PATCH/DELETE.
+   */
+  registerPostStart(task: AnyTaskSpec): void {
+    this.register(task);
+    if (this.started) {
+      this.scheduleTask(task, /* deferFirstTick */ true);
+    }
+  }
+
   /** Phase 3A: unregister a task by spec ID (stops timer if running) */
   unregister(taskId: string): boolean {
     const idx = this.tasks.findIndex((t) => t.id === taskId);

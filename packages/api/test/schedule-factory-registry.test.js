@@ -45,10 +45,7 @@ describe('ScheduleFactoryRegistry', () => {
   it('rejects duplicate factoryId registration', () => {
     const registry = new ScheduleFactoryRegistry();
     registry.register(makeFactory('github.cicd-check'));
-    assert.throws(
-      () => registry.register(makeFactory('github.cicd-check')),
-      /already registered/,
-    );
+    assert.throws(() => registry.register(makeFactory('github.cicd-check')), /already registered/);
   });
 
   it('factory createTaskSpec returns a valid TaskSpec-shaped object', () => {

@@ -33,7 +33,8 @@ export type LimbAdapterFactory = (pluginId: string, limbYamlPath: string) => Pro
 
 /** Minimal TaskRunner interface for schedule resource activation (F220) */
 export interface ScheduleTaskRunner {
-  registerDynamic(task: TaskSpec_P1, defId: string): void;
+  /** Register a builtin task that may arrive after start() — does NOT mark as dynamic */
+  registerPostStart(task: TaskSpec_P1): void;
   unregister(taskId: string): boolean;
 }
 
@@ -343,8 +344,17 @@ export class PluginResourceActivator {
 
     const taskId = `plugin-${manifest.id}-${resource.name}`;
     const taskSpec = factory.createTaskSpec(taskId, this.deps.scheduleFactoryDeps ?? { log: console });
-    this.deps.taskRunner.registerDynamic(taskSpec, `plugin:${manifest.id}:${resource.name}`);
-    await this.upsertCapabilityEntry(manifest, resource, true, undefined, taskId);
+
+    // Register as builtin (not dynamic) so SchedulePanel doesn't target it with
+    // dynamic PATCH/DELETE endpoints that require a DynamicTaskStore row.
+    this.deps.taskRunner.registerPostStart(taskSpec);
+    try {
+      await this.upsertCapabilityEntry(manifest, resource, true, undefined, taskId);
+    } catch (err) {
+      // Rollback: unregister the just-registered task to prevent ghost tasks
+      this.deps.taskRunner.unregister(taskId);
+      throw err;
+    }
   }
 
   private async deactivateSchedule(manifest: PluginManifest, resource: PluginResourceDef): Promise<void> {
@@ -473,6 +483,7 @@ export class PluginResourceActivator {
 
   private async removeOrphanedPluginEntries(manifest: PluginManifest, declaredIds: Set<string>): Promise<void> {
     const limbNodeIds: string[] = [];
+    const scheduleTaskIds: string[] = [];
     await this.deps.withCapabilityLock(async () => {
       const config = await this.deps.readCapabilities();
       if (!config) return;
@@ -504,6 +515,10 @@ export class PluginResourceActivator {
           if (cap.type === 'limb' && cap.enabled && cap.limbNodeId) {
             limbNodeIds.push(cap.limbNodeId);
           }
+          // F220: collect orphaned schedule tasks for post-lock unregistration
+          if (cap.type === 'schedule' && cap.enabled && cap.scheduleTaskId) {
+            scheduleTaskIds.push(cap.scheduleTaskId);
+          }
         }
       }
       next.capabilities = next.capabilities.filter((c) => !isOrphan(c));
@@ -512,6 +527,10 @@ export class PluginResourceActivator {
 
     for (const nodeId of limbNodeIds) {
       this.deps.limbRegistry.deregister(nodeId);
+    }
+    // F220: unregister orphaned schedule tasks (outside the lock — same pattern as limb)
+    for (const taskId of scheduleTaskIds) {
+      this.deps.taskRunner?.unregister(taskId);
     }
   }
 

@@ -1,9 +1,11 @@
 // @ts-check
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { PluginResourceActivator } from '../dist/domains/plugin/PluginResourceActivator.js';
+import {
+  PluginResourceActivator,
+  rehydrateEnabledPluginSchedules,
+} from '../dist/domains/plugin/PluginResourceActivator.js';
 import { ScheduleFactoryRegistry } from '../dist/domains/plugin/ScheduleFactoryRegistry.js';
-import { rehydrateEnabledPluginSchedules } from '../dist/domains/plugin/PluginResourceActivator.js';
 
 // ─── Test helpers ──────────────────────────────────────────────────
 
@@ -32,9 +34,15 @@ function makeCapabilitiesStore() {
   /** @type {import('@cat-cafe/shared').CapabilitiesConfig | null} */
   let config = null;
   return {
-    get() { return config; },
-    async read() { return config; },
-    async write(/** @type {import('@cat-cafe/shared').CapabilitiesConfig} */ c) { config = structuredClone(c); },
+    get() {
+      return config;
+    },
+    async read() {
+      return config;
+    },
+    async write(/** @type {import('@cat-cafe/shared').CapabilitiesConfig} */ c) {
+      config = structuredClone(c);
+    },
   };
 }
 
@@ -46,7 +54,7 @@ function makeTaskRunner() {
   return {
     registered,
     unregistered,
-    registerDynamic(/** @type {any} */ task, /** @type {string} */ _defId) {
+    registerPostStart(/** @type {any} */ task) {
       registered.push(task);
     },
     unregister(/** @type {string} */ taskId) {
@@ -127,7 +135,7 @@ describe('PluginResourceActivator — schedule resources', () => {
     // Capability entry should be written
     const config = capStore.get();
     assert.ok(config);
-    const entry = config.capabilities.find(c => c.type === 'schedule');
+    const entry = config.capabilities.find((c) => c.type === 'schedule');
     assert.ok(entry);
     assert.strictEqual(entry.enabled, true);
     assert.strictEqual(entry.pluginId, 'test-plugin');
@@ -158,7 +166,7 @@ describe('PluginResourceActivator — schedule resources', () => {
     // Capability entry should be removed
     const config = capStore.get();
     assert.ok(config);
-    const scheduleEntries = config.capabilities.filter(c => c.type === 'schedule');
+    const scheduleEntries = config.capabilities.filter((c) => c.type === 'schedule');
     assert.strictEqual(scheduleEntries.length, 0);
   });
 
@@ -245,6 +253,97 @@ describe('PluginResourceActivator — schedule resources', () => {
     assert.strictEqual(taskRunner.registered.length, 2);
     assert.strictEqual(capStore.get()?.capabilities.length, 2);
   });
+
+  // ─── P1 regression tests (review round 1) ─────────────────────────
+
+  it('P1-1: activateSchedule uses registerPostStart, not registerDynamic', async () => {
+    const registry = new ScheduleFactoryRegistry();
+    registry.register(makeStubFactory('test.poller'));
+    const taskRunner = makeTaskRunner();
+    // Track which method was called
+    let postStartCalled = false;
+    let dynamicCalled = false;
+    taskRunner.registerPostStart = (task) => {
+      postStartCalled = true;
+      taskRunner.registered.push(task);
+    };
+    taskRunner.registerDynamic = (task, _defId) => {
+      dynamicCalled = true;
+      taskRunner.registered.push(task);
+    };
+    const { activator } = makeActivator({ scheduleFactoryRegistry: registry, taskRunner });
+
+    const manifest = makeMinimalManifest({ resources: [makeScheduleResource()] });
+    await activator.enablePlugin(manifest);
+
+    assert.strictEqual(postStartCalled, true, 'registerPostStart must be called');
+    assert.strictEqual(dynamicCalled, false, 'registerDynamic must NOT be called');
+  });
+
+  it('P1-2: activateSchedule rolls back task registration on capability write failure', async () => {
+    const registry = new ScheduleFactoryRegistry();
+    registry.register(makeStubFactory('test.poller'));
+    const taskRunner = makeTaskRunner();
+
+    // Capability store that fails on write
+    let writeCount = 0;
+    const capStore = makeCapabilitiesStore();
+    const failingCapStore = {
+      get: () => capStore.get(),
+      read: () => capStore.read(),
+      write: async (c) => {
+        writeCount++;
+        throw new Error('disk full');
+      },
+    };
+
+    const { activator } = makeActivator({
+      scheduleFactoryRegistry: registry,
+      taskRunner,
+      capStore: failingCapStore,
+    });
+
+    const manifest = makeMinimalManifest({ resources: [makeScheduleResource()] });
+    const result = await activator.enablePlugin(manifest);
+
+    assert.strictEqual(result.status, 'failed');
+    // Task was registered then must have been unregistered (rollback)
+    assert.strictEqual(taskRunner.unregistered.length, 1, 'task must be unregistered on capability write failure');
+    assert.strictEqual(taskRunner.unregistered[0], 'plugin-test-plugin-my-poller');
+  });
+
+  it('P1-3: removeOrphanedPluginEntries unregisters orphaned schedule tasks', async () => {
+    const registry = new ScheduleFactoryRegistry();
+    registry.register(makeStubFactory('test.poller'));
+    const { activator, capStore, taskRunner } = makeActivator({ scheduleFactoryRegistry: registry });
+
+    // Step 1: enable plugin with a schedule resource
+    const manifest = makeMinimalManifest({
+      resources: [makeScheduleResource({ factoryId: 'test.poller', name: 'old-poller' })],
+    });
+    await activator.enablePlugin(manifest);
+    assert.strictEqual(capStore.get()?.capabilities.length, 1);
+
+    // Step 2: disable with a DIFFERENT resource list (simulates plugin.yaml change)
+    // The old 'old-poller' entry is now orphaned
+    const updatedManifest = makeMinimalManifest({
+      resources: [makeScheduleResource({ factoryId: 'test.poller', name: 'new-poller' })],
+    });
+    // We need to first register a new factory call so enable works
+    await activator.enablePlugin(updatedManifest);
+    // Now disable the updated manifest — the old 'old-poller' is orphaned
+    await activator.disablePlugin(updatedManifest);
+
+    // Both old-poller (orphan cleanup) and new-poller (deactivate) should be unregistered
+    assert.ok(
+      taskRunner.unregistered.includes('plugin-test-plugin-old-poller'),
+      'orphaned schedule task must be unregistered',
+    );
+    assert.ok(
+      taskRunner.unregistered.includes('plugin-test-plugin-new-poller'),
+      'current schedule task must be unregistered via deactivateSchedule',
+    );
+  });
 });
 
 describe('rehydrateEnabledPluginSchedules', () => {
@@ -256,14 +355,16 @@ describe('rehydrateEnabledPluginSchedules', () => {
     /** @type {import('@cat-cafe/shared').CapabilitiesConfig} */
     const capabilities = {
       version: 1,
-      capabilities: [{
-        id: 'plugin:test-plugin:my-poller',
-        type: 'schedule',
-        enabled: true,
-        source: 'cat-cafe',
-        pluginId: 'test-plugin',
-        scheduleTaskId: 'plugin-test-plugin-my-poller',
-      }],
+      capabilities: [
+        {
+          id: 'plugin:test-plugin:my-poller',
+          type: 'schedule',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId: 'test-plugin',
+          scheduleTaskId: 'plugin-test-plugin-my-poller',
+        },
+      ],
     };
 
     const pluginRegistry = {
@@ -298,18 +399,22 @@ describe('rehydrateEnabledPluginSchedules', () => {
     /** @type {import('@cat-cafe/shared').CapabilitiesConfig} */
     const capabilities = {
       version: 1,
-      capabilities: [{
-        id: 'plugin:test-plugin:my-poller',
-        type: 'schedule',
-        enabled: false,  // disabled
-        source: 'cat-cafe',
-        pluginId: 'test-plugin',
-        scheduleTaskId: 'plugin-test-plugin-my-poller',
-      }],
+      capabilities: [
+        {
+          id: 'plugin:test-plugin:my-poller',
+          type: 'schedule',
+          enabled: false, // disabled
+          source: 'cat-cafe',
+          pluginId: 'test-plugin',
+          scheduleTaskId: 'plugin-test-plugin-my-poller',
+        },
+      ],
     };
 
     const pluginRegistry = {
-      getManifest(/** @type {string} */ _id) { return makeMinimalManifest({ resources: [makeScheduleResource()] }); },
+      getManifest(/** @type {string} */ _id) {
+        return makeMinimalManifest({ resources: [makeScheduleResource()] });
+      },
     };
 
     await rehydrateEnabledPluginSchedules({
@@ -331,18 +436,22 @@ describe('rehydrateEnabledPluginSchedules', () => {
     /** @type {import('@cat-cafe/shared').CapabilitiesConfig} */
     const capabilities = {
       version: 1,
-      capabilities: [{
-        id: 'plugin:test-plugin:my-poller',
-        type: 'schedule',
-        enabled: true,
-        source: 'cat-cafe',
-        pluginId: 'test-plugin',
-        scheduleTaskId: 'plugin-test-plugin-my-poller',
-      }],
+      capabilities: [
+        {
+          id: 'plugin:test-plugin:my-poller',
+          type: 'schedule',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId: 'test-plugin',
+          scheduleTaskId: 'plugin-test-plugin-my-poller',
+        },
+      ],
     };
 
     const pluginRegistry = {
-      getManifest(/** @type {string} */ _id) { return makeMinimalManifest({ resources: [makeScheduleResource()] }); },
+      getManifest(/** @type {string} */ _id) {
+        return makeMinimalManifest({ resources: [makeScheduleResource()] });
+      },
     };
 
     await rehydrateEnabledPluginSchedules({
@@ -355,7 +464,7 @@ describe('rehydrateEnabledPluginSchedules', () => {
     });
 
     assert.strictEqual(taskRunner.registered.length, 0);
-    assert.ok(warnings.some(w => w.includes('test.poller')));
+    assert.ok(warnings.some((w) => w.includes('test.poller')));
   });
 
   it('handles null capabilities gracefully', async () => {

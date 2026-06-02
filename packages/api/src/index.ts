@@ -1652,7 +1652,7 @@ async function main(): Promise<void> {
       // F220: schedule resource activation deps
       scheduleFactoryRegistry,
       taskRunner: {
-        registerDynamic: (task, defId) => taskRunnerV2.registerDynamic(task, defId),
+        registerPostStart: (task) => taskRunnerV2.registerPostStart(task),
         unregister: (taskId) => taskRunnerV2.unregister(taskId),
       },
       scheduleFactoryDeps: { log: app.log },
