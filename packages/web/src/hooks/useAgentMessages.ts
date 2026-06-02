@@ -174,6 +174,8 @@ interface AgentMsg {
     a2aRouting?: { fromCatId?: string; targetCatId?: string; invocationId?: string };
     /** #814: True when message originated from an explicit post_message callback */
     isExplicitPost?: boolean;
+    /** F098-C1: Explicit target cats from post_message (direction pills) */
+    targetCats?: string[];
   };
   /** F121: Reply-to message ID */
   replyTo?: string;
@@ -329,6 +331,8 @@ export interface BackgroundAgentMessage {
     crossPost?: { sourceThreadId: string; sourceInvocationId?: string };
     /** #814: True when message originated from an explicit post_message callback */
     isExplicitPost?: boolean;
+    /** F098-C1: Explicit target cats from post_message (direction pills) */
+    targetCats?: string[];
   };
   /** F057-C2: Whether this message mentions the user (@user / @铲屎官) */
   mentionsUser?: boolean;
@@ -1655,11 +1659,12 @@ export function handleBackgroundAgentMessage(
             catId: msg.catId,
             content: msg.content,
             ...(msg.metadata ? { metadata: msg.metadata } : {}),
-            ...(msg.extra?.crossPost || msg.extra?.isExplicitPost
+            ...(msg.extra?.crossPost || msg.extra?.isExplicitPost || msg.extra?.targetCats
               ? {
                   extra: {
                     ...(msg.extra.crossPost ? { crossPost: msg.extra.crossPost } : {}),
                     ...(msg.extra.isExplicitPost ? { isExplicitPost: true as const } : {}),
+                    ...(msg.extra.targetCats ? { targetCats: msg.extra.targetCats } : {}),
                   },
                 }
               : {}),
@@ -1673,11 +1678,12 @@ export function handleBackgroundAgentMessage(
           // Side-fields after reducer success (reducer 不 model 这些)
           const sidePatch: Partial<ChatMessage> = {
             ...(msg.metadata ? { metadata: msg.metadata } : {}),
-            ...(msg.extra?.crossPost || msg.extra?.isExplicitPost
+            ...(msg.extra?.crossPost || msg.extra?.isExplicitPost || msg.extra?.targetCats
               ? {
                   extra: {
                     ...(msg.extra.crossPost ? { crossPost: msg.extra.crossPost } : {}),
                     ...(msg.extra.isExplicitPost ? { isExplicitPost: true as const } : {}),
+                    ...(msg.extra.targetCats ? { targetCats: msg.extra.targetCats } : {}),
                   },
                 }
               : {}),
@@ -2931,6 +2937,7 @@ export function useAgentMessages() {
           // #814: propagate isExplicitPost so chatStore.findAssistantDuplicate
           // skips merge for explicit post_message callbacks in fallback path.
           ...(msg.extra?.isExplicitPost ? { isExplicitPost: true } : {}),
+          ...(msg.extra?.targetCats ? { targetCats: msg.extra.targetCats } : {}),
           stream: {
             invocationId,
             ...(turnInvocationIdForFallback && turnInvocationIdForFallback !== invocationId
@@ -2956,6 +2963,7 @@ export function useAgentMessages() {
 
       const extraForPatch = {
         ...(msg.extra?.crossPost ? { crossPost: msg.extra.crossPost } : {}),
+        ...(msg.extra?.targetCats ? { targetCats: msg.extra.targetCats } : {}),
       };
       if (
         msg.metadata ||
@@ -3640,6 +3648,7 @@ export function useAgentMessages() {
             // F194 Phase Z3 R3 P1-3: invocationless callback add 也写完整 dual id
             const extraForAdd = {
               ...(msg.extra?.crossPost ? { crossPost: msg.extra.crossPost } : {}),
+              ...(msg.extra?.targetCats ? { targetCats: msg.extra.targetCats } : {}),
               ...(hasExplicitInvocationId && msg.invocationId
                 ? {
                     stream: {
