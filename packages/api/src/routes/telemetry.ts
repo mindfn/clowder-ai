@@ -170,6 +170,15 @@ export const telemetryRoutes: FastifyPluginAsync<TelemetryRoutesOptions> = async
   /**
    * GET /api/telemetry/health — aggregated health verdict.
    * Combines readiness probe + trace/metrics store stats + recent error rate.
+   *
+   * F167 resilience fix (2026-06-02): when OTel is meant to be enabled
+   * (OTEL_SDK_DISABLED unset) but the trace/metrics stores are null, the
+   * endpoint must report `degraded` + 503. Previously it returned 200
+   * `healthy` with `traceStore=null`, which silently muted alarms when
+   * telemetry init failed (e.g. TELEMETRY_HMAC_SALT missing in profile-
+   * driven startup), letting the f167-runtime-eval source adapter remain
+   * dark for days. `OTEL_SDK_DISABLED=true` is still a legitimate
+   * disabled state and stays healthy.
    */
   app.get('/api/telemetry/health', async (request, reply) => {
     if (!requireSession(request, reply)) return;
@@ -183,11 +192,21 @@ export const telemetryRoutes: FastifyPluginAsync<TelemetryRoutesOptions> = async
     const readinessOk = !readiness || readiness.status === 'ready';
     const threshold = Number.parseFloat(process.env.TELEMETRY_ALERT_ERROR_RATE ?? '0.3');
     const errorRateOk = errorRate === null || errorRate < threshold;
-    const healthy = readinessOk && errorRateOk;
+    // When OTel should be running, both stores must be wired; when
+    // OTEL_SDK_DISABLED=true, null stores are the expected configuration.
+    const telemetryStoresOk =
+      !otelEnabled || (opts.traceStore != null && opts.metricsSnapshotStore != null);
+    const healthy = readinessOk && errorRateOk && telemetryStoresOk;
+
+    const reasons: string[] = [];
+    if (!readinessOk) reasons.push('readiness_degraded');
+    if (!errorRateOk) reasons.push('error_rate_threshold_exceeded');
+    if (!telemetryStoresOk) reasons.push('telemetry_stores_unavailable');
 
     if (!healthy) reply.code(503);
     return {
       status: healthy ? 'healthy' : 'degraded',
+      reasons,
       uptime: process.uptime(),
       otelEnabled,
       readiness: readiness ?? undefined,

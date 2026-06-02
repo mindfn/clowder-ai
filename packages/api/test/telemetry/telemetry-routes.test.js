@@ -329,7 +329,90 @@ test('GET /api/telemetry/health returns 503 when readiness is degraded', async (
   assert.equal(res.statusCode, 503);
   const body = JSON.parse(res.body);
   assert.equal(body.status, 'degraded');
+  assert.ok(Array.isArray(body.reasons));
+  assert.ok(body.reasons.includes('readiness_degraded'));
   app.close();
+});
+
+// ─── F167 resilience: stores=null must be visible when OTel should be on ───
+//
+// Regression for 2026-06-01..06-02 eval:a2a verdicts: when telemetry init
+// silently fails (e.g. missing TELEMETRY_HMAC_SALT under profile-driven
+// startup) the f167-runtime-eval source adapter goes dark, but /health
+// previously still returned 200 healthy because it never inspected the
+// stores. New contract: OTel-on + null stores ⇒ degraded + 503 with reason.
+
+test('GET /api/telemetry/health returns 503 when traceStore is null while OTel is enabled', async () => {
+  const prev = process.env.OTEL_SDK_DISABLED;
+  delete process.env.OTEL_SDK_DISABLED;
+  try {
+    const snapshotStore = new MetricsSnapshotStore({ maxSnapshots: 10 });
+    const app = await buildApp({ traceStore: null, metricsSnapshotStore: snapshotStore });
+    const cookie = await getSessionCookie(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/telemetry/health',
+      headers: { cookie },
+    });
+    assert.equal(res.statusCode, 503);
+    const body = JSON.parse(res.body);
+    assert.equal(body.status, 'degraded');
+    assert.equal(body.otelEnabled, true);
+    assert.ok(Array.isArray(body.reasons));
+    assert.ok(body.reasons.includes('telemetry_stores_unavailable'));
+    app.close();
+  } finally {
+    if (prev !== undefined) process.env.OTEL_SDK_DISABLED = prev;
+  }
+});
+
+test('GET /api/telemetry/health returns 503 when metricsSnapshotStore is null while OTel is enabled', async () => {
+  const prev = process.env.OTEL_SDK_DISABLED;
+  delete process.env.OTEL_SDK_DISABLED;
+  try {
+    const traceStore = new LocalTraceStore({ maxSpans: 100 });
+    const app = await buildApp({ traceStore, metricsSnapshotStore: null });
+    const cookie = await getSessionCookie(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/telemetry/health',
+      headers: { cookie },
+    });
+    assert.equal(res.statusCode, 503);
+    const body = JSON.parse(res.body);
+    assert.equal(body.status, 'degraded');
+    assert.equal(body.otelEnabled, true);
+    assert.ok(body.reasons.includes('telemetry_stores_unavailable'));
+    app.close();
+  } finally {
+    if (prev !== undefined) process.env.OTEL_SDK_DISABLED = prev;
+  }
+});
+
+test('GET /api/telemetry/health stays healthy when OTel is explicitly disabled and stores are null', async () => {
+  const prev = process.env.OTEL_SDK_DISABLED;
+  process.env.OTEL_SDK_DISABLED = 'true';
+  try {
+    const app = await buildApp({ traceStore: null, metricsSnapshotStore: null });
+    const cookie = await getSessionCookie(app);
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/telemetry/health',
+      headers: { cookie },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.body);
+    assert.equal(body.status, 'healthy');
+    assert.equal(body.otelEnabled, false);
+    assert.deepEqual(body.reasons, []);
+    app.close();
+  } finally {
+    if (prev === undefined) delete process.env.OTEL_SDK_DISABLED;
+    else process.env.OTEL_SDK_DISABLED = prev;
+  }
 });
 
 // ─── Metrics History (L1.5) ───
