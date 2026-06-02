@@ -19,6 +19,8 @@ export interface PluginHealthCheck {
 /** Plugin resource declaration */
 export interface PluginResourceDef {
   type: 'skill' | 'mcp' | 'limb' | 'schedule';
+  /** F220: Factory ID for schedule resources (white-list reference, no arbitrary scripts) */
+  factoryId?: string;
   path?: string;
   name?: string;
   command?: string;

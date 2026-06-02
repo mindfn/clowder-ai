@@ -18,8 +18,8 @@ const SYSTEM_ENV_DENYLIST_PREFIXES = [
 
 const SYSTEM_ENV_DENYLIST_EXACT = new Set(['NODE_OPTIONS', 'NODE_ENV', 'PATH', 'HOME', 'SHELL', 'PORT']);
 
-const SUPPORTED_RESOURCE_TYPES = new Set(['skill', 'mcp', 'limb']);
-const DEFERRED_RESOURCE_TYPES = new Set(['schedule']);
+const SUPPORTED_RESOURCE_TYPES = new Set(['skill', 'mcp', 'limb', 'schedule']);
+const DEFERRED_RESOURCE_TYPES = new Set<string>();
 
 export const BUILTIN_PLUGIN_IDS = new Set<string>();
 
@@ -184,8 +184,24 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
         throw new Error(`MCP resource in ${yamlPath} must have a 'command' field`);
       }
 
+      // F220: schedule resource validation — factoryId + name required
+      const rawFactoryId = rr['factoryId'];
+      if (rawFactoryId != null && typeof rawFactoryId !== 'string') {
+        throw new Error(`Invalid resource factoryId in ${yamlPath}: must be a string`);
+      }
+      const factoryId = rawFactoryId as string | undefined;
+      if (type === 'schedule') {
+        if (!factoryId || factoryId.trim().length === 0) {
+          throw new Error(`Schedule resource in ${yamlPath} must have a 'factoryId' field`);
+        }
+        if (!name) {
+          throw new Error(`Schedule resource in ${yamlPath} must have a 'name' field`);
+        }
+      }
+
       resources.push({
         type: type as PluginResourceDef['type'],
+        factoryId: type === 'schedule' ? factoryId : undefined,
         path,
         name,
         command: command as string | undefined,
