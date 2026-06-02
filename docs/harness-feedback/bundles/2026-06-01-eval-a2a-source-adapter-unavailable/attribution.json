@@ -1,0 +1,56 @@
+{
+  "verdictId": "2026-06-01-eval-a2a-source-adapter-unavailable",
+  "featureId": "F167",
+  "evalSnapshotId": "eval-F167-2026-06-01-source-adapter",
+  "generatedAt": "2026-06-01T03:05:26.598Z",
+  "findings": [
+    {
+      "id": "source-adapter-unavailable",
+      "relatedFeature": "F192",
+      "frictionSignal": {
+        "type": "source_adapter_unavailable",
+        "severity": "medium",
+        "confidence": 0.91
+      },
+      "attribution": {
+        "primaryLayer": "environment_drift",
+        "pipelineOrHuman": "pipeline",
+        "evidence": [
+          {
+            "type": "endpoint_check",
+            "anchor": "source-adapter/telemetry.metrics",
+            "excerpt": "/api/telemetry/metrics returned 503 after a valid session cookie: Metrics reader not available."
+          },
+          {
+            "type": "endpoint_check",
+            "anchor": "source-adapter/telemetry.metrics_history",
+            "excerpt": "/api/telemetry/metrics/history returned 503 after a valid session cookie: Metrics snapshot store not available."
+          },
+          {
+            "type": "endpoint_check",
+            "anchor": "source-adapter/telemetry.traces",
+            "excerpt": "/api/telemetry/traces and /traces/stats returned 503 after a valid session cookie: Trace store not available."
+          },
+          {
+            "type": "audit_log",
+            "anchor": "legacy-cleanup/daily-slots",
+            "excerpt": "Audit/log scan shows one eval:a2a invocation in the 2026-05-31 slot and one in the 2026-06-01 slot; both scheduler packets reported legacyCleanup.status=disabled."
+          },
+          {
+            "type": "artifact_scan",
+            "anchor": "source-adapter/fresh-artifacts",
+            "excerpt": "docs/harness-feedback contains no eval:a2a live verdict artifact newer than 2026-05-23."
+          }
+        ]
+      },
+      "proposedAction": [
+        {
+          "action": "restore-telemetry-source-adapter",
+          "target": "f167-runtime-eval",
+          "rationale": "eval:a2a cannot produce a valid day-over-day F167 keep_observe/fix/build/delete_sunset decision while the F153 metrics reader, metrics snapshot store, and trace store are unavailable."
+        }
+      ],
+      "status": "open"
+    }
+  ]
+}

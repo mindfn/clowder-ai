@@ -1,0 +1,44 @@
+{
+  "verdictId": "2026-06-01-eval-a2a-source-adapter-unavailable",
+  "rawInputs": [
+    {
+      "path": "docs/harness-feedback/eval-domains/eval-a2a.yaml",
+      "sha256": "c8d7d0c1fe608b61b04cec0050c362effdd7dd1e76463ee0d717f58a05d42271"
+    },
+    {
+      "path": "docs/harness-feedback/verdicts/2026-05-23-eval-a2a-live-verdict.md",
+      "sha256": "5bc35a42ec50fda3a1c43a379ff52e8bc27502d67deaf79c2db2e006ffafe984"
+    },
+    {
+      "path": "packages/api/data/audit-logs/audit-2026-05-31.ndjson",
+      "sha256": "c7c9199a0e15706077bce997b792ff6a53cbcf3d887a458fb14e89794167d08e"
+    },
+    {
+      "path": "packages/api/data/audit-logs/audit-2026-06-01.ndjson",
+      "sha256": "1efa8e1a718ec7db31f1a1c2c5284cc7941432a4307bd6a1b695fc7e1d6edfcd"
+    },
+    {
+      "path": "packages/api/data/logs/api/api.2026-05-31.1.log",
+      "sha256": "6b729ec6d1442ea5c685c328f9ba82661e902c7f99a694c1afc518f8e7abd731"
+    },
+    {
+      "path": "packages/api/data/logs/api/api.2026-06-01.1.log",
+      "sha256": "4226401412f6e96e3a59670e761ef5f31d2fa430a23e89334402da001da6f6e9"
+    }
+  ],
+  "generatedAt": "2026-06-01T03:05:26.598Z",
+  "generator": {
+    "name": "eval-a2a-domain-thread",
+    "version": "manual-v1",
+    "catId": "codex",
+    "model": "gpt-5.5"
+  },
+  "verification": {
+    "commands": [
+      "curl with fresh /api/session cookie against /api/telemetry/* endpoints",
+      "CAT_CAFE_DISABLE_SHARED_STATE_PREFLIGHT=1 bash packages/api/scripts/with-test-home.sh node --import $(pwd)/packages/api/test/helpers/setup-cat-registry.js --test packages/api/test/harness-eval/eval-domain-daily.test.js packages/api/test/harness-eval/legacy-task-cleanup.test.js packages/api/test/scheduler/cron-utils.test.js"
+    ],
+    "testResult": "36 tests passed"
+  },
+  "sanitizeRulesVersion": "f192-e-pilot-v1"
+}

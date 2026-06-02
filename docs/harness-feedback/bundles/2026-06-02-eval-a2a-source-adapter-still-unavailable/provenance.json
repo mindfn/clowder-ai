@@ -1,0 +1,44 @@
+{
+  "verdictId": "2026-06-02-eval-a2a-source-adapter-still-unavailable",
+  "rawInputs": [
+    {
+      "path": "docs/harness-feedback/eval-domains/eval-a2a.yaml",
+      "sha256": "c8d7d0c1fe608b61b04cec0050c362effdd7dd1e76463ee0d717f58a05d42271"
+    },
+    {
+      "path": "docs/harness-feedback/verdicts/2026-06-01-eval-a2a-source-adapter-unavailable.md",
+      "sha256": "961425736e9c45b69ec467d1b8fd4fd5648a5050110a34dc250602f38023f745"
+    },
+    {
+      "path": "docs/harness-feedback/bundles/2026-06-01-eval-a2a-source-adapter-unavailable/snapshot.json",
+      "sha256": "fc05d56715b3ba5b1e7e4068d5c48cc0f881ba231370e0724408eb6124bc238f"
+    },
+    {
+      "path": "docs/harness-feedback/bundles/2026-06-01-eval-a2a-source-adapter-unavailable/attribution.json",
+      "sha256": "750c3a37a9a5f5871e52e5279a8668de2a2b8553efb29aec11df797ac0eed2e8"
+    },
+    {
+      "path": "packages/api/data/audit-logs/audit-2026-06-02.ndjson",
+      "sha256": "a838e3519537dea686fe02a6e7ae7def51f9d947dae4517b44e91beafba760d3"
+    },
+    {
+      "path": "packages/api/data/logs/api/api.2026-06-02.1.log",
+      "sha256": "863453371c487e7f0cc76b364e9d622dccae0cafd75b39d963c244412878415e"
+    }
+  ],
+  "generatedAt": "2026-06-02T03:02:46.162Z",
+  "generator": {
+    "name": "eval-a2a-domain-thread",
+    "version": "manual-v1",
+    "catId": "codex",
+    "model": "gpt-5.5"
+  },
+  "verification": {
+    "commands": [
+      "curl with fresh /api/session cookie against /api/telemetry/* endpoints",
+      "audit/log scan for thread_eval_a2a 2026-06-02 invocation and eval-domain-daily scheduler slot"
+    ],
+    "result": "source adapter unavailable persists; legacy overlap and duplicate cron slot fire remain 0"
+  },
+  "sanitizeRulesVersion": "f192-e-pilot-v1"
+}

@@ -1,0 +1,56 @@
+{
+  "verdictId": "2026-06-02-eval-a2a-source-adapter-still-unavailable",
+  "featureId": "F167",
+  "evalSnapshotId": "eval-F167-2026-06-02-source-adapter",
+  "generatedAt": "2026-06-02T03:02:46.162Z",
+  "findings": [
+    {
+      "id": "source-adapter-still-unavailable",
+      "relatedFeature": "F192",
+      "frictionSignal": {
+        "type": "source_adapter_unavailable",
+        "severity": "medium",
+        "confidence": 0.95
+      },
+      "attribution": {
+        "primaryLayer": "environment_drift",
+        "pipelineOrHuman": "pipeline",
+        "evidence": [
+          {
+            "type": "endpoint_check",
+            "anchor": "source-adapter/telemetry.metrics",
+            "excerpt": "2026-06-02 re-eval: /api/telemetry/metrics returned 503 after a valid session cookie: Metrics reader not available."
+          },
+          {
+            "type": "endpoint_check",
+            "anchor": "source-adapter/telemetry.metrics_history",
+            "excerpt": "2026-06-02 re-eval: /api/telemetry/metrics/history returned 503 after a valid session cookie: Metrics snapshot store not available."
+          },
+          {
+            "type": "endpoint_check",
+            "anchor": "source-adapter/telemetry.traces",
+            "excerpt": "2026-06-02 re-eval: /api/telemetry/traces and /traces/stats returned 503 after a valid session cookie: Trace store not available."
+          },
+          {
+            "type": "audit_log",
+            "anchor": "legacy-cleanup/daily-slots",
+            "excerpt": "Audit/log scan shows one eval:a2a invocation in the 2026-06-02 slot and no active harness-fit-digest overlap; duplicate trigger count remains 0."
+          },
+          {
+            "type": "previous_verdict",
+            "anchor": "verdict/2026-06-01-eval-a2a-source-adapter-unavailable",
+            "excerpt": "The 2026-06-01 fix verdict's closure condition was not met at the 2026-06-02 scheduled re-eval."
+          }
+        ]
+      },
+      "proposedAction": [
+        {
+          "action": "restore-telemetry-source-adapter",
+          "target": "f167-runtime-eval",
+          "rationale": "The same source_adapter_unavailable finding persisted across the 2026-06-02 re-eval window, so the active eval:a2a verdict must remain fix/open."
+        }
+      ],
+      "status": "open"
+    }
+  ]
+}
