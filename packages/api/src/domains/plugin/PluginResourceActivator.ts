@@ -352,17 +352,24 @@ export class PluginResourceActivator {
       );
     }
 
-    // Idempotent: unregister existing task before re-registering (handles retry / double-enable)
-    this.deps.taskRunner.unregister(taskId);
+    // Idempotent re-enable: try to register; if already exists (duplicate),
+    // the existing task keeps running — no window of inconsistency.
+    // Only rollback on write failure if WE added the registration.
+    let newRegistration = false;
+    try {
+      this.deps.taskRunner.registerPostStart(taskSpec);
+      newRegistration = true;
+    } catch {
+      // Task already registered with same ID — idempotent, keep existing task running
+    }
 
-    // Register as builtin (not dynamic) so SchedulePanel doesn't target it with
-    // dynamic PATCH/DELETE endpoints that require a DynamicTaskStore row.
-    this.deps.taskRunner.registerPostStart(taskSpec);
     try {
       await this.upsertCapabilityEntry(manifest, resource, true, undefined, taskId);
     } catch (err) {
-      // Rollback: unregister the just-registered task to prevent ghost tasks
-      this.deps.taskRunner.unregister(taskId);
+      // Rollback: only unregister if we were the ones who registered
+      if (newRegistration) {
+        this.deps.taskRunner.unregister(taskId);
+      }
       throw err;
     }
   }
@@ -759,9 +766,16 @@ export async function rehydrateEnabledPluginSchedules(deps: PluginScheduleRehydr
       continue;
     }
 
-    const taskId = cap.scheduleTaskId ?? `plugin-${manifest.id}-${scheduleResource.name}`;
+    const taskId = cap.scheduleTaskId ?? `schedule:${manifest.id}:${scheduleResource.name}`;
     try {
       const taskSpec = factory.createTaskSpec(taskId, deps.scheduleFactoryDeps);
+      // Defensive: factory must return a spec with the expected ID (mirrors activation path)
+      if (taskSpec.id !== taskId) {
+        deps.log?.warn(
+          `[F220] Factory '${scheduleResource.factoryId}' returned mismatched task ID on rehydration: expected '${taskId}', got '${taskSpec.id}' — skipping`,
+        );
+        continue;
+      }
       deps.taskRunner.register(taskSpec);
       deps.log?.info(`[F220] Rehydrated schedule '${scheduleResource.name}' for plugin '${manifest.id}'`);
     } catch (err) {

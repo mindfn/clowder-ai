@@ -57,6 +57,9 @@ function makeTaskRunner() {
     registered,
     unregistered,
     registerPostStart(/** @type {any} */ task) {
+      if (live.has(task.id)) {
+        throw new Error(`TaskRunnerV2: duplicate task id "${task.id}"`);
+      }
       registered.push(task);
       live.add(task.id);
     },
@@ -501,6 +504,42 @@ describe('PluginResourceActivator — schedule resources', () => {
     // No task should be registered (rejected before registration)
     assert.strictEqual(taskRunner.registered.length, 0, 'no task registered on mismatch');
   });
+
+  it('P2-cloud-5: failed re-enable preserves existing task (no window of inconsistency)', async () => {
+    const registry = new ScheduleFactoryRegistry();
+    registry.register(makeStubFactory('test.poller'));
+    const taskRunner = makeTaskRunner();
+    // First enable succeeds, second enable write fails
+    let writeCount = 0;
+    const capStore = makeCapabilitiesStore();
+    const failingWrite = async (c) => {
+      writeCount++;
+      if (writeCount > 1) throw new Error('disk full');
+      await capStore.write(c);
+    };
+    const { activator } = makeActivator({
+      scheduleFactoryRegistry: registry,
+      taskRunner,
+      capStore,
+      writeCapabilities: failingWrite,
+    });
+
+    const manifest = makeMinimalManifest({
+      resources: [{ type: 'schedule', name: 'my-poller', factoryId: 'test.poller' }],
+    });
+
+    // First enable succeeds
+    await activator.enablePlugin(manifest);
+    assert.strictEqual(taskRunner.registered.length, 1);
+
+    // Second enable: registerPostStart throws (duplicate caught), write fails
+    const result2 = await activator.enablePlugin(manifest);
+    const scheduleResult = result2.resources.find((r) => r.type === 'schedule');
+    assert.strictEqual(scheduleResult?.ok, false, 'second enable should report failure');
+
+    // Existing task must still be live (not unregistered)
+    assert.strictEqual(taskRunner.unregistered.length, 0, 'existing task must NOT be unregistered on failed re-enable');
+  });
 });
 
 describe('rehydrateEnabledPluginSchedules', () => {
@@ -637,5 +676,56 @@ describe('rehydrateEnabledPluginSchedules', () => {
     });
 
     assert.strictEqual(taskRunner.registered.length, 0);
+  });
+
+  it('P2-cloud-6: rehydration rejects factory returning mismatched task ID', async () => {
+    const registry = new ScheduleFactoryRegistry();
+    // Factory that returns a rogue task ID
+    registry.register({
+      factoryId: 'test.poller',
+      createTaskSpec(_taskId, _deps) {
+        return { id: 'rogue-id', intervalMs: 60000, handler: async () => {} };
+      },
+    });
+    const taskRunner = makeTaskRunner();
+    const warnings = [];
+
+    /** @type {import('@cat-cafe/shared').CapabilitiesConfig} */
+    const capabilities = {
+      version: 1,
+      capabilities: [
+        {
+          id: 'plugin:test-plugin:my-poller',
+          type: 'schedule',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId: 'test-plugin',
+          scheduleTaskId: 'schedule:test-plugin:my-poller',
+        },
+      ],
+    };
+
+    const pluginRegistry = {
+      getManifest(/** @type {string} */ _id) {
+        return makeMinimalManifest({ resources: [makeScheduleResource()] });
+      },
+    };
+
+    await rehydrateEnabledPluginSchedules({
+      capabilities,
+      pluginRegistry,
+      scheduleFactoryRegistry: registry,
+      taskRunner,
+      scheduleFactoryDeps: { log: { info: () => {}, error: () => {} } },
+      log: { info: () => {}, warn: (...args) => warnings.push(args.join(' ')) },
+    });
+
+    // Task must NOT be registered (factory returned wrong ID)
+    assert.strictEqual(taskRunner.registered.length, 0, 'rogue task must not be registered');
+    // Warning must mention mismatch
+    assert.ok(
+      warnings.some((w) => w.includes('mismatched')),
+      'should warn about mismatched task ID',
+    );
   });
 });
