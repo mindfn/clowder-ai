@@ -2350,30 +2350,6 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
           continue;
         }
 
-        // #848: General resume failure safety net — when a resume was attempted
-        // (sessionId set), no content was produced, and the error doesn't match
-        // any specific self-heal pattern above, treat it as a generic resume failure.
-        // Covers: client switch (stale session), session expiry, provider change, etc.
-        if (
-          allowSessionRetry &&
-          options.sessionId &&
-          !attemptHasContentOutput &&
-          msg.type === 'error' &&
-          !suppressedMissingSessionError &&
-          !suppressedPromptLimitError &&
-          !suppressedContextOverflowError &&
-          !suppressedTransientCliError &&
-          !suppressedTimeoutError &&
-          !suppressedMalformedError
-        ) {
-          log.info(
-            { catId, threadId, invocationId, error: msg.error },
-            '#848: unrecognized resume failure — will retry without session',
-          );
-          suppressedMissingSessionError = msg;
-          continue;
-        }
-
         if (
           suppressedMissingSessionError ||
           suppressedPromptLimitError ||

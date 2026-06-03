@@ -41,7 +41,16 @@ export type ResumeFailureKind = 'missing_session' | 'cli_exit' | 'auth' | 'inval
 export function classifyResumeFailure(message: string | undefined): ResumeFailureKind | null {
   if (!message) return null;
 
-  if (/(No conversation found with session ID|no rollout found|missing_rollout)/i.test(message)) {
+  // Claude: "No conversation found with session ID: <uuid>"
+  // Codex:  "no rollout found for thread id <uuid>"
+  // Gemini: "Error resuming session: Invalid session identifier"
+  // OpenCode: "Session not found"
+  // (Kimi silently accepts any session ID — no error produced)
+  if (
+    /(No conversation found with session ID|no rollout found|missing_rollout|Error resuming session|Session not found)/i.test(
+      message,
+    )
+  ) {
     return 'missing_session';
   }
   if (/CLI 异常退出 \(code:\s*(?:\d+|null)(?:,\s*signal:\s*[^)]+)?\)/i.test(message)) {
