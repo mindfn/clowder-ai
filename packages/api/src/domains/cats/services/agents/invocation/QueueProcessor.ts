@@ -1017,6 +1017,11 @@ export class QueueProcessor {
               { threadId, catId: singleCatId, entryId: entry.id },
               '[QueueProcessor] #836: reborn session — dropping stale continuation queue entry',
             );
+            // Close the invocation record (created at L803, marked running at L872)
+            // before early return — otherwise the record stays 'running' forever.
+            if (invocationId) {
+              await invocationRecordStore.update(invocationId, { status: 'succeeded' });
+            }
             finalStatus = 'succeeded';
             return 'succeeded';
           }
