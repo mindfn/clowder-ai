@@ -13,6 +13,7 @@
 
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -369,6 +370,87 @@ describe('GitHub plugin lifecycle (AC-B4)', () => {
     }
   });
 
+  test('disable is persistent — migration marker prevents re-enable on restart', async () => {
+    const tmpDir = createTempDir();
+    try {
+      const registry = new ScheduleFactoryRegistry();
+      registerGitHubScheduleFactories(registry);
+      const taskRunner = makeTaskRunner();
+      writeCapabilities(tmpDir, { capabilities: [] });
+
+      const { PluginResourceActivator } = await import('../dist/domains/plugin/PluginResourceActivator.js');
+      const activator = new PluginResourceActivator({
+        resolveProjectRoot: () => tmpDir,
+        pluginsDir: join(tmpDir, 'plugins'),
+        limbRegistry: { register: () => {}, unregister: () => {}, getNode: () => null },
+        readCapabilities: async () => readCapabilities(tmpDir),
+        writeCapabilities: async (cfg) => writeCapabilities(tmpDir, cfg),
+        withCapabilityLock: async (fn) => fn(),
+        scheduleFactoryRegistry: registry,
+        taskRunner,
+        scheduleFactoryDeps: makeGitHubDeps(),
+      });
+
+      const manifest = parsePluginManifest(join(__dirname, '../../../plugins/github/plugin.yaml'));
+
+      // Simulate first-startup migration: write entries + marker (as index.ts does)
+      const { shouldRunGitHubScheduleMigration, markGitHubScheduleMigrationDone } = await import(
+        '../dist/domains/plugin/github-schedule-factories.js'
+      );
+      const capsBeforeEnable = readCapabilities(tmpDir);
+      assert.strictEqual(
+        shouldRunGitHubScheduleMigration(tmpDir, capsBeforeEnable),
+        true,
+        'first startup should trigger migration',
+      );
+
+      // Enable → 4 registered
+      await activator.enablePlugin(manifest);
+      assert.strictEqual(taskRunner.registered.length, 4);
+
+      // Write marker (simulating what index.ts migration does after writing entries)
+      markGitHubScheduleMigrationDone(tmpDir);
+
+      // Disable → all removed from capabilities
+      await activator.disablePlugin(manifest);
+      const capsAfterDisable = readCapabilities(tmpDir);
+      const githubEntries = capsAfterDisable.capabilities.filter(
+        (c) => c.type === 'schedule' && c.pluginId === 'github',
+      );
+      assert.strictEqual(githubEntries.length, 0, 'disable must remove all schedule entries');
+
+      // Simulate "restart": shouldRunGitHubScheduleMigration should return false
+      // because the migration marker persists even though entries are gone
+      const shouldMigrate = shouldRunGitHubScheduleMigration(tmpDir, capsAfterDisable);
+      assert.strictEqual(shouldMigrate, false, 'migration must NOT re-enable after explicit disable');
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test('migration runs on first startup (no marker, no existing entries)', async () => {
+    const tmpDir = createTempDir();
+    try {
+      writeCapabilities(tmpDir, { version: 1, capabilities: [] });
+
+      const { shouldRunGitHubScheduleMigration, markGitHubScheduleMigrationDone } = await import(
+        '../dist/domains/plugin/github-schedule-factories.js'
+      );
+
+      // First startup: no marker, no entries → should migrate
+      const caps = readCapabilities(tmpDir);
+      assert.strictEqual(shouldRunGitHubScheduleMigration(tmpDir, caps), true);
+
+      // After migration writes marker
+      markGitHubScheduleMigrationDone(tmpDir);
+
+      // Second startup: marker exists → should NOT migrate
+      assert.strictEqual(shouldRunGitHubScheduleMigration(tmpDir, caps), false);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   test('enable with missing repo-scan deps → 3 succeed, 1 fails gracefully', async () => {
     const tmpDir = createTempDir();
     try {
@@ -410,4 +492,45 @@ describe('GitHub plugin lifecycle (AC-B4)', () => {
       rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+});
+
+// --- P2-2: Plugin config → process.env sync ---
+
+test('syncPluginEnvToProcess syncs plugin config store values to process.env', async () => {
+  const tmpDir = join(tmpdir(), `f220-env-sync-${Date.now()}`);
+  mkdirSync(tmpDir, { recursive: true });
+  try {
+    const { writePluginConfig, loadAllPluginConfigs, syncPluginEnvToProcess } = await import(
+      '../dist/domains/plugin/plugin-config-store.js'
+    );
+
+    const testEnvKey = `F220_TEST_SYNC_${Date.now()}`;
+    const testManifest = {
+      id: 'test-sync',
+      name: 'Test Sync',
+      version: '1.0.0',
+      builtin: false,
+      config: [{ envName: testEnvKey, label: 'Test', sensitive: false, required: false }],
+      resources: [],
+    };
+
+    // Write a value to plugin config store
+    writePluginConfig(tmpDir, 'test-sync', [{ name: testEnvKey, value: 'synced-value-42' }]);
+    loadAllPluginConfigs(tmpDir, [testManifest]);
+
+    // Before sync: process.env should NOT have the value
+    assert.strictEqual(process.env[testEnvKey], undefined);
+
+    // Sync
+    const synced = syncPluginEnvToProcess([testManifest]);
+    assert.ok(synced >= 1, `should sync at least 1 key, got ${synced}`);
+
+    // After sync: process.env should have the value
+    assert.strictEqual(process.env[testEnvKey], 'synced-value-42');
+
+    // Cleanup env
+    delete process.env[testEnvKey];
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
 });

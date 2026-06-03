@@ -1616,13 +1616,15 @@ async function main(): Promise<void> {
 
     const monorepoRoot = findMonorepoRoot(process.cwd());
     const pluginsDir = join(monorepoRoot, 'plugins');
-    const { loadAllPluginConfigs } = await import('./domains/plugin/plugin-config-store.js');
+    const { loadAllPluginConfigs, syncPluginEnvToProcess } = await import('./domains/plugin/plugin-config-store.js');
     const pluginRegistry = new PluginRegistry(pluginsDir);
     pluginRegistry.scan();
     const scannedManifests = pluginRegistry.getAllManifests();
     const loadedEnvKeys = loadAllPluginConfigs(resolveActiveProjectRoot(), scannedManifests);
+    // F220-B P2-2: sync plugin config store values to process.env so direct consumers work
+    const syncedEnvKeys = syncPluginEnvToProcess(scannedManifests);
     app.log.info(
-      `[api] F202: PluginRegistry scanned ${scannedManifests.length} plugin(s), loaded ${loadedEnvKeys} config key(s)`,
+      `[api] F202: PluginRegistry scanned ${scannedManifests.length} plugin(s), loaded ${loadedEnvKeys} config key(s)${syncedEnvKeys > 0 ? `, synced ${syncedEnvKeys} to process.env` : ''}`,
     );
 
     const limbAdapterRegistry = new Map<string, (yamlPath: string) => Promise<ILimbNode>>();
@@ -1685,14 +1687,15 @@ async function main(): Promise<void> {
       Object.assign(scheduleFactoryDeps, githubDeps);
 
       // Migration: auto-enable GitHub schedule resources on first startup after Phase B migration
+      // Uses marker file to prevent re-enable after explicit disable (P2-1 fix)
       const root = resolveActiveProjectRoot();
       const githubManifest = pluginRegistry.getManifest('github');
       if (githubManifest) {
         const existingCaps = await readCapabilitiesConfig(root);
-        const hasGitHubSchedule = existingCaps?.capabilities.some(
-          (c) => c.type === 'schedule' && c.pluginId === 'github' && c.enabled,
+        const { shouldRunGitHubScheduleMigration, markGitHubScheduleMigrationDone } = await import(
+          './domains/plugin/github-schedule-factories.js'
         );
-        if (!hasGitHubSchedule) {
+        if (shouldRunGitHubScheduleMigration(root, existingCaps)) {
           const entries: import('@cat-cafe/shared').CapabilityEntry[] = githubManifest.resources
             .filter((r) => r.type === 'schedule' && r.name)
             .map((r) => ({
@@ -1709,6 +1712,7 @@ async function main(): Promise<void> {
               capabilities: [...(existingCaps?.capabilities ?? []), ...entries],
             };
             await writeCapabilitiesConfig(root, updatedCaps);
+            markGitHubScheduleMigrationDone(root);
             app.log.info(`[api] F220-B migration: auto-enabled ${entries.length} GitHub schedule resources`);
           }
         }

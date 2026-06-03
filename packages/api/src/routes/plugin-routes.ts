@@ -20,7 +20,12 @@ import type { PluginRegistry } from '../domains/plugin/PluginRegistry.js';
 import { normalizeCapId, resolvePluginResourcePath, resourceCapId } from '../domains/plugin/PluginRegistry.js';
 import type { PluginResourceActivator as PluginResourceActivatorType } from '../domains/plugin/PluginResourceActivator.js';
 import { assertPluginResourceInsideRoot } from '../domains/plugin/PluginResourceActivator.js';
-import { loadAllPluginConfigs, resolvePluginEnv, writePluginConfig } from '../domains/plugin/plugin-config-store.js';
+import {
+  loadAllPluginConfigs,
+  resolvePluginEnv,
+  syncPluginEnvToProcess,
+  writePluginConfig,
+} from '../domains/plugin/plugin-config-store.js';
 import { validateEnvSafety } from '../domains/plugin/plugin-manifest.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
 
@@ -229,6 +234,8 @@ export function registerPluginRoutes(app: FastifyInstance, opts: PluginRoutesOpt
 
       const projectRoot = resolveActiveProjectRoot();
       writePluginConfig(projectRoot, id, body.updates);
+      // F220-B: sync to process.env so direct consumers (e.g., GitHub pollers) pick up changes
+      syncPluginEnvToProcess([manifest]);
 
       await pluginActivator.syncPluginEnv(manifest);
 

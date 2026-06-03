@@ -9,6 +9,9 @@
  * KD-7: Poller logic unchanged — factories only wire deps and override task ID.
  */
 
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import type { CapabilitiesConfig } from '@cat-cafe/shared';
 import type { IConnectorThreadBindingStore } from '../../infrastructure/connectors/ConnectorThreadBindingStore.js';
 import type { ReconciliationDedup } from '../../infrastructure/connectors/github-repo-event/ReconciliationDedup.js';
 import type { GhIssueItem, GhPrItem } from '../../infrastructure/connectors/github-repo-event/RepoScanTaskSpec.js';
@@ -169,4 +172,36 @@ export function registerGitHubScheduleFactories(registry: ScheduleFactoryRegistr
   registry.register(conflictCheckFactory);
   registry.register(reviewFeedbackFactory);
   registry.register(repoScanFactory);
+}
+
+// --- F220-B Migration helpers (P2-1 fix) ---
+
+const MIGRATION_MARKER_PATH = '.cat-cafe/f220-github-schedule-migrated';
+
+/**
+ * Determine if the one-time GitHub schedule migration should run.
+ *
+ * Returns true only on first-ever startup after Phase B code is deployed.
+ * Returns false if:
+ * - A marker file exists (migration already ran)
+ * - Any GitHub schedule entries already exist in capabilities (enabled or disabled)
+ */
+export function shouldRunGitHubScheduleMigration(
+  projectRoot: string,
+  existingCaps: CapabilitiesConfig | null,
+): boolean {
+  // If any GitHub schedule entries exist (enabled OR disabled), migration already ran
+  const hasAnyGitHubSchedule = existingCaps?.capabilities.some((c) => c.type === 'schedule' && c.pluginId === 'github');
+  if (hasAnyGitHubSchedule) return false;
+
+  // One-time marker prevents re-enable after explicit disable
+  const markerPath = join(projectRoot, MIGRATION_MARKER_PATH);
+  return !existsSync(markerPath);
+}
+
+/** Write the one-time migration marker so migration won't re-run. */
+export function markGitHubScheduleMigrationDone(projectRoot: string): void {
+  const markerPath = join(projectRoot, MIGRATION_MARKER_PATH);
+  mkdirSync(dirname(markerPath), { recursive: true });
+  writeFileSync(markerPath, new Date().toISOString());
 }

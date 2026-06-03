@@ -135,3 +135,23 @@ export function resolvePluginEnv(manifests: PluginManifest[]): Record<string, st
   }
   return result;
 }
+
+/**
+ * Sync resolved plugin env values to process.env so that direct
+ * `process.env.XXX` consumers (e.g., GitHub pollers) pick up values
+ * written via the plugin config store.
+ *
+ * Call after `loadAllPluginConfigs` at startup and after `writePluginConfig`
+ * at runtime.
+ */
+export function syncPluginEnvToProcess(manifests: PluginManifest[]): number {
+  const resolved = resolvePluginEnv(manifests);
+  let synced = 0;
+  for (const [key, value] of Object.entries(resolved)) {
+    if (typeof value === 'string' && process.env[key] !== value) {
+      process.env[key] = value;
+      synced++;
+    }
+  }
+  return synced;
+}
