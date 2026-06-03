@@ -486,6 +486,10 @@ function recoverBackgroundStreamingMessage(
 }
 
 function getStreamStableInvocationKey(message: ChatMessage): string | undefined {
+  // #814: explicit post_message is standalone — never match by stable key,
+  // so stream events from the same invocation can't replace this bubble.
+  // stream block is still preserved for #573 correlation after F5/hydration.
+  if (message.extra?.isExplicitPost) return undefined;
   const invocationId = message.extra?.stream?.invocationId;
   if (typeof invocationId !== 'string' || invocationId.length === 0) return undefined;
   const turnInvocationId = message.extra?.stream?.turnInvocationId;
@@ -2942,19 +2946,12 @@ export function useAgentMessages() {
           // skips merge for explicit post_message callbacks in fallback path.
           ...(msg.extra?.isExplicitPost ? { isExplicitPost: true } : {}),
           ...(msg.extra?.targetCats ? { targetCats: msg.extra.targetCats } : {}),
-          // #814: explicit post_message is standalone — omit stream block so
-          // getStreamStableInvocationKey won't match it, preventing later
-          // stream events from the same invocation from replacing this bubble.
-          ...(isExplicitPost
-            ? {}
-            : {
-                stream: {
-                  invocationId,
-                  ...(turnInvocationIdForFallback && turnInvocationIdForFallback !== invocationId
-                    ? { turnInvocationId: turnInvocationIdForFallback }
-                    : {}),
-                },
-              }),
+          stream: {
+            invocationId,
+            ...(turnInvocationIdForFallback && turnInvocationIdForFallback !== invocationId
+              ? { turnInvocationId: turnInvocationIdForFallback }
+              : {}),
+          },
         };
         addMessage({
           id: fallbackId,

@@ -1334,19 +1334,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // F194 Phase Z9 AC-Z25 (KD-28): always stamp turnInvocationId. When first-in-chain
     // (invocationId === effectiveInvId), still stamp explicitly so frontend bubble
     // identity never falls back to parent (which would collapse multi-turn same-cat).
-    // #814: explicit post_message is standalone — omit stream block so
-    // findExistingByStableKey won't match it after F5/hydration, preventing
-    // later stream events from the same invocation from replacing this bubble.
     const persistedExtra = {
       ...(extra ?? {}),
-      ...(extra?.isExplicitPost
-        ? {}
-        : {
-            stream: {
-              invocationId: effectiveInvId,
-              turnInvocationId: invocationId ?? effectiveInvId,
-            },
-          }),
+      stream: {
+        invocationId: effectiveInvId,
+        turnInvocationId: invocationId ?? effectiveInvId,
+      },
     };
     const now = Date.now();
     const duplicateMsg =
