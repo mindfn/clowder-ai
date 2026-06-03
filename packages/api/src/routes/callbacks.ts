@@ -702,7 +702,14 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       let validatedReplyTo: string | undefined;
       if (replyTo) {
         const parentMsg = await messageStore.getById(replyTo);
-        if (parentMsg && parentMsg.threadId === effectiveThreadId) {
+        // #699: align with /api/messages — must be same thread, delivered, not deleted,
+        // and not a whisper invisible to the posting cat (prevents preview content leaks).
+        if (
+          parentMsg &&
+          parentMsg.threadId === effectiveThreadId &&
+          !parentMsg.deletedAt &&
+          parentMsg.userId !== 'system'
+        ) {
           validatedReplyTo = replyTo;
         }
       }
@@ -1146,7 +1153,13 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const effectiveReplyTo = replyTo ?? autoFilledReplyTo;
     if (effectiveReplyTo) {
       const parentMsg = await messageStore.getById(effectiveReplyTo);
-      if (parentMsg && parentMsg.threadId === effectiveThreadId) {
+      // #699: align with /api/messages — same thread, not deleted, not system
+      if (
+        parentMsg &&
+        parentMsg.threadId === effectiveThreadId &&
+        !parentMsg.deletedAt &&
+        parentMsg.userId !== 'system'
+      ) {
         validatedReplyTo = effectiveReplyTo;
       } else if (replyTo) {
         // Only warn for explicit replyTo failures — auto-fill mismatches are expected

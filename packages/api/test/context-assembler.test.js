@@ -607,4 +607,26 @@ describe('#699: inline reply-to preview', () => {
     assert.ok(result.contextText.includes('缅因猫'), 'should show parent sender in preview');
     assert.ok(result.contextText.includes('review 完成'), 'should include parent content preview');
   });
+
+  test('system message parent must not leak into inline preview', async () => {
+    const { assembleContext } = await import('../dist/domains/cats/services/context/ContextAssembler.js');
+    const systemParent = mockMsg({
+      id: 'sys-p',
+      userId: 'system',
+      catId: null,
+      content: 'system error badge',
+      timestamp: 1000,
+    });
+    const reply = mockMsg({
+      id: 'reply-sys',
+      catId: null,
+      content: '回复系统消息',
+      replyTo: 'sys-p',
+      timestamp: 2000,
+    });
+    const result = assembleContext([systemParent, reply]);
+    // System parent is excluded from deliveredMessages → messageMap should not contain it
+    assert.ok(!result.contextText.includes('system error badge'), 'system parent content must not appear in preview');
+    assert.ok(!result.contextText.includes('↩'), 'reply should not have preview when parent is filtered out');
+  });
 });

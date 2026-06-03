@@ -674,9 +674,7 @@ export function ChatInput({
       <ImagePreview files={images} onRemove={handleRemoveImage} />
 
       {/* #699: Reply preview bar — matches ReplyPill styling with sender theme color */}
-      {replyToMessage && (
-        <ReplyPreviewBar replyToMessage={replyToMessage} cats={cats} onClear={clearReplyTo} />
-      )}
+      {replyToMessage && <ReplyPreviewBar replyToMessage={replyToMessage} cats={cats} onClear={clearReplyTo} />}
 
       <input
         ref={fileInputRef}

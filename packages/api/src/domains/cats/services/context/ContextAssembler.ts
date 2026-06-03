@@ -116,8 +116,7 @@ export function formatMessage(
     if (parent) {
       const parentSender = parent.source ? parent.source.label : getSenderName(parent.catId);
       const raw = parent.content.replaceAll('\n', ' ');
-      const preview =
-        raw.length > REPLY_PREVIEW_LENGTH ? `${raw.slice(0, REPLY_PREVIEW_LENGTH)}…` : raw;
+      const preview = raw.length > REPLY_PREVIEW_LENGTH ? `${raw.slice(0, REPLY_PREVIEW_LENGTH)}…` : raw;
       replyPrefix = `[↩ ${parentSender}: ${preview}] `;
     }
   }
@@ -158,8 +157,10 @@ export function assembleContext(messages: StoredMessage[], options?: ContextAsse
   // Take the most recent N messages (messages are already chronological from store)
   const recent = deliveredMessages.length > maxMessages ? deliveredMessages.slice(-maxMessages) : deliveredMessages;
 
-  // #699: Build message map for inline reply-to preview resolution
-  const messageMap = buildMessageMap(messages);
+  // #699: Build message map for inline reply-to preview resolution.
+  // Use deliveredMessages (not raw input) so system/undelivered/error parents
+  // can't leak into prompt via formatMessage's inline preview.
+  const messageMap = buildMessageMap(deliveredMessages);
 
   // Format all messages, then apply token budget from most-recent backward
   const formatted = recent.map((m) => formatMessage(m, { truncate: maxContentLength, messageMap }));

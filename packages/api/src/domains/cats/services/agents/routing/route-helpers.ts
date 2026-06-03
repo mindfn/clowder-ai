@@ -773,6 +773,7 @@ export async function assembleIncrementalContext(
       recentArtifacts,
       rankedSources,
       storedLedgerArtifacts,
+      viewer,
     );
   }
 
@@ -803,6 +804,16 @@ export async function assembleIncrementalContext(
   // #699: Build map from full relevant set for inline reply-to preview.
   // Cursor gap fix: messages replying to older content (before cursor) need
   // a targeted getById fetch so the inline preview can resolve the parent.
+  // Security: fetched parents must pass the same visibility predicates as `relevant`
+  // to prevent leaking system/whisper/stream content via inline preview.
+  const isEligibleReplyParent = (m: StoredMessage): boolean => {
+    if (m.userId === 'system') return false;
+    if (m.origin === 'briefing') return false;
+    if (!canViewMessage(m, viewer)) return false;
+    if ((thinkingMode ?? 'play') === 'play' && m.catId !== null && m.origin === 'stream') return false;
+    if (m.deletedAt) return false;
+    return true;
+  };
   const baseMap = new Map(buildMessageMap(relevant));
   const missingReplyIds = [
     ...new Set(capped.filter((m) => m.replyTo && !baseMap.has(m.replyTo)).map((m) => m.replyTo!)),
@@ -810,7 +821,7 @@ export async function assembleIncrementalContext(
   if (missingReplyIds.length > 0) {
     const fetched = await Promise.all(missingReplyIds.map((id) => deps.messageStore.getById(id)));
     for (const msg of fetched) {
-      if (msg) baseMap.set(msg.id, msg);
+      if (msg && isEligibleReplyParent(msg)) baseMap.set(msg.id, msg);
     }
   }
   const messageMap: ReadonlyMap<string, StoredMessage> = baseMap;
@@ -930,6 +941,7 @@ async function assembleSmartWindowContext(
   recentArtifacts: import('./artifact-tracking.js').RecentArtifact[],
   rankedSources: import('./source-ranking.js').RankedSource[],
   preReadStoredArtifacts: import('./artifact-tracking.js').RecentArtifact[],
+  viewer: { type: 'cat'; catId: CatId } | { type: 'user' },
 ): Promise<IncrementalContextResult> {
   const budget = getCatContextBudget(catId as string);
   const truncateLimit = budget.maxContentLengthPerMsg;
@@ -1081,6 +1093,15 @@ async function assembleSmartWindowContext(
   // #699: Build map from full relevant set for inline reply-to preview.
   // Cursor gap fix: burst messages may reply to content from the omitted window —
   // targeted getById fills those gaps so the inline preview resolves.
+  // Security: fetched parents must pass the same visibility predicates as `relevant`.
+  const isEligibleReplyParentCold = (m: StoredMessage): boolean => {
+    if (m.userId === 'system') return false;
+    if (m.origin === 'briefing') return false;
+    if (!canViewMessage(m, viewer)) return false;
+    if (m.catId !== null && m.origin === 'stream') return false;
+    if (m.deletedAt) return false;
+    return true;
+  };
   const baseMap = new Map(buildMessageMap(relevant));
   const missingReplyIds = [
     ...new Set(scrubbedBurst.filter((m) => m.replyTo && !baseMap.has(m.replyTo)).map((m) => m.replyTo!)),
@@ -1088,7 +1109,7 @@ async function assembleSmartWindowContext(
   if (missingReplyIds.length > 0) {
     const fetched = await Promise.all(missingReplyIds.map((id) => deps.messageStore.getById(id)));
     for (const msg of fetched) {
-      if (msg) baseMap.set(msg.id, msg);
+      if (msg && isEligibleReplyParentCold(msg)) baseMap.set(msg.id, msg);
     }
   }
   const messageMap: ReadonlyMap<string, StoredMessage> = baseMap;
