@@ -354,6 +354,19 @@ describe('McpManageContent', () => {
         (args: unknown[]) => args[0] === '/api/capabilities' && (args[1] as { method?: string })?.method === 'PATCH',
       ),
     ).toBe(true);
+
+    // Modal opens readOnly for source: 'cat-cafe' — config managed via plugin page
+    const cardButton = card?.querySelector('button.flex') as HTMLButtonElement | null;
+    mockFetch.mockClear();
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ tools: [] }) });
+    await act(async () => {
+      cardButton?.click();
+    });
+    const modal = document.querySelector('[data-testid="mcp-config-modal"]');
+    if (modal) {
+      // readOnly modal has no save button
+      expect(modal.querySelector('button[type="submit"]')).toBeFalsy();
+    }
   });
 
   it('ignores stale project-switch responses when a newer selection resolves first', async () => {
