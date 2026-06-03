@@ -51,6 +51,7 @@ function buildEditData(item: CapabilityBoardItem): McpConfigModalProps['editData
     headers: server.headers,
     envKeys: server.envKeys ?? Object.keys(server.env ?? {}),
     resolver: server.resolver,
+    pluginId: item.pluginId,
   };
 }
 
@@ -295,7 +296,6 @@ export function McpManageContent() {
                       cap.handleToggle(item, !effectiveEnabled);
                     }}
                   />
-                  {pluginId && <PluginManagedLink pluginId={pluginId} />}
                   {!pluginManaged && cap.catFamilies.length > 0 && (
                     <SettingsResourceIconButton
                       onClick={() => setExpandedId(expanded ? null : item.id)}

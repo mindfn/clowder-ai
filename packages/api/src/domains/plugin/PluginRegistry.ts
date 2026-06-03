@@ -15,6 +15,15 @@ function maskValue(raw: string | undefined, sensitive: boolean): string | null {
   return raw;
 }
 
+/**
+ * Resource types that are metadata-only: they do NOT create capability entries
+ * during activation (see PluginResourceActivator switch cases). Status
+ * derivation and resource-status mapping must exclude them from the
+ * "all-declared-enabled" check, otherwise plugins with protocol/schedule
+ * resources can never reach `enabled` status.
+ */
+const METADATA_ONLY_RESOURCE_TYPES = new Set(['protocol', 'schedule']);
+
 export class PluginRegistry {
   private manifests = new Map<string, PluginManifest>();
   private readonly pluginsDir: string;
@@ -99,7 +108,8 @@ export class PluginRegistry {
     if (!capabilities) return allConfigured ? 'configured' : 'not_configured';
 
     const capEntries = capabilities.capabilities.filter((c) => c.pluginId === manifest.id);
-    const declaredIds = new Set(manifest.resources.map((r) => resourceCapId(manifest.id, r)));
+    const activatableResources = manifest.resources.filter((r) => !METADATA_ONLY_RESOURCE_TYPES.has(r.type));
+    const declaredIds = new Set(activatableResources.map((r) => resourceCapId(manifest.id, r)));
     const declaredEntries = capEntries.filter((c) => declaredIds.has(normalizeCapId(c.id)));
 
     if (capEntries.length === 0) return allConfigured ? 'configured' : 'not_configured';
@@ -137,6 +147,11 @@ export class PluginRegistry {
     }));
 
     const resourceStatuses: PluginResourceStatus[] = manifest.resources.map((r) => {
+      if (METADATA_ONLY_RESOURCE_TYPES.has(r.type)) {
+        // protocol / schedule resources don't create capability entries;
+        // mirror the overall plugin enabled state so the UI badge is correct.
+        return { type: r.type, path: r.path, name: r.name, enabled: status === 'enabled' || status === 'partial' };
+      }
       const capEntry = capabilities?.capabilities.find(
         (c) =>
           c.pluginId === manifest.id && c.type === r.type && normalizeCapId(c.id) === resourceCapId(manifest.id, r),
