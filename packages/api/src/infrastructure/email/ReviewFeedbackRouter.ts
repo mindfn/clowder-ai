@@ -119,7 +119,9 @@ export function buildReviewFeedbackContent(signal: ReviewFeedbackSignal, trackin
     for (const d of signal.newDecisions) {
       const emoji = decisionEmoji(d.state);
       // F220 Phase C (AC-C4): wrap external content as untrusted
-      const bodySnippet = d.body ? ` — [UNTRUSTED EXTERNAL CONTENT] ${d.body.slice(0, 120)}` : '';
+      const bodySnippet = d.body
+        ? ` — [UNTRUSTED EXTERNAL CONTENT] ${d.body.slice(0, 120).replace(/[\r\n]+/g, ' ')}`
+        : '';
       lines.push(`${emoji} **${d.author}**: ${d.state}${bodySnippet}`);
     }
   }
@@ -130,8 +132,8 @@ export function buildReviewFeedbackContent(signal: ReviewFeedbackSignal, trackin
     lines.push('', `--- Inline Comments (${inline.length}) ---`);
     for (const c of inline) {
       const location = c.filePath ? `\`${c.filePath}${c.line ? `:${c.line}` : ''}\`` : '';
-      // F220 Phase C (AC-C4): wrap external content as untrusted
-      const bodySnippet = `[UNTRUSTED EXTERNAL CONTENT] ${c.body.slice(0, 120)}`;
+      // F220 Phase C (AC-C4): wrap external content as untrusted — flatten newlines to prevent escape
+      const bodySnippet = `[UNTRUSTED EXTERNAL CONTENT] ${c.body.slice(0, 120).replace(/[\r\n]+/g, ' ')}`;
       lines.push(`💬 **${c.author}** ${location}: ${bodySnippet}`);
     }
   }
@@ -141,8 +143,8 @@ export function buildReviewFeedbackContent(signal: ReviewFeedbackSignal, trackin
   if (conversation.length > 0) {
     lines.push('', `--- PR Conversation (${conversation.length}) ---`);
     for (const c of conversation) {
-      // F220 Phase C (AC-C4): wrap external content as untrusted
-      const bodySnippet = `[UNTRUSTED EXTERNAL CONTENT] ${c.body.slice(0, 120)}`;
+      // F220 Phase C (AC-C4): wrap external content as untrusted — flatten newlines to prevent escape
+      const bodySnippet = `[UNTRUSTED EXTERNAL CONTENT] ${c.body.slice(0, 120).replace(/[\r\n]+/g, ' ')}`;
       lines.push(`💬 **${c.author}**: ${bodySnippet}`);
     }
   }

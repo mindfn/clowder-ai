@@ -93,7 +93,7 @@ export function buildIssueCommentContent(signal: IssueCommentSignal, trackingIns
   ];
 
   for (const c of signal.newComments) {
-    const bodySnippet = `[UNTRUSTED EXTERNAL CONTENT] ${c.body.slice(0, 200)}`;
+    const bodySnippet = `[UNTRUSTED EXTERNAL CONTENT] ${c.body.slice(0, 200).replace(/[\r\n]+/g, ' ')}`;
     lines.push(`💬 **${c.author}**: ${bodySnippet}`);
   }
 
