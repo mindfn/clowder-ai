@@ -40,7 +40,12 @@ import {
 } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { type ITaskStore, isSubjectOwnershipConflictError } from '../domains/cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore, VotingStateV1 } from '../domains/cats/services/stores/ports/ThreadStore.js';
-import { canViewMessage, isSystemUserMessage, type Viewer } from '../domains/cats/services/stores/visibility.js';
+import {
+  canViewMessage,
+  isEligibleReplyParent,
+  isSystemUserMessage,
+  type Viewer,
+} from '../domains/cats/services/stores/visibility.js';
 import { getVoiceBlockSynthesizer } from '../domains/cats/services/tts/VoiceBlockSynthesizer.js';
 import type { IEvidenceStore, IMarkerQueue, IReflectionService } from '../domains/memory/interfaces.js';
 import { buildThreadDeepLink } from '../infrastructure/connectors/connector-command-helpers.js';
@@ -702,14 +707,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       let validatedReplyTo: string | undefined;
       if (replyTo) {
         const parentMsg = await messageStore.getById(replyTo);
-        // #699: align with /api/messages — must be same thread, delivered, not deleted,
-        // and not a whisper invisible to the posting cat (prevents preview content leaks).
-        if (
-          parentMsg &&
-          parentMsg.threadId === effectiveThreadId &&
-          !parentMsg.deletedAt &&
-          parentMsg.userId !== 'system'
-        ) {
+        // #699: unified parent eligibility — same predicate chain as /api/messages
+        // and route-helpers context assembly (isDelivered, visibility, whisper safety).
+        const senderViewer: Viewer = { type: 'cat', catId: createCatId(principal.catId) };
+        if (parentMsg && isEligibleReplyParent(parentMsg, { threadId: effectiveThreadId, viewer: senderViewer })) {
           validatedReplyTo = replyTo;
         }
       }
@@ -1153,13 +1154,9 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const effectiveReplyTo = replyTo ?? autoFilledReplyTo;
     if (effectiveReplyTo) {
       const parentMsg = await messageStore.getById(effectiveReplyTo);
-      // #699: align with /api/messages — same thread, not deleted, not system
-      if (
-        parentMsg &&
-        parentMsg.threadId === effectiveThreadId &&
-        !parentMsg.deletedAt &&
-        parentMsg.userId !== 'system'
-      ) {
+      // #699: unified parent eligibility — same predicate chain as /api/messages
+      const actorViewer: Viewer = { type: 'cat', catId: createCatId(actor.catId) };
+      if (parentMsg && isEligibleReplyParent(parentMsg, { threadId: effectiveThreadId, viewer: actorViewer })) {
         validatedReplyTo = effectiveReplyTo;
       } else if (replyTo) {
         // Only warn for explicit replyTo failures — auto-fill mismatches are expected

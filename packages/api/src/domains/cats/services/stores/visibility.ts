@@ -4,7 +4,7 @@
  */
 
 import type { CatId } from '@cat-cafe/shared';
-import type { StoredMessage } from './ports/MessageStore.js';
+import { isDelivered, type StoredMessage } from './ports/MessageStore.js';
 
 /**
  * System-level userIds whose messages are visible to ALL thread participants
@@ -45,4 +45,42 @@ export function canViewMessage(msg: StoredMessage, viewer: Viewer): boolean {
   }
 
   return false;
+}
+
+/**
+ * #699: Unified parent eligibility for reply-to inline preview.
+ *
+ * A fetched parent message is eligible for inline preview only if it passes
+ * the SAME predicates used to build prompt context. This prevents leaking
+ * system/undelivered/deleted/whisper/stream content via formatMessage preview.
+ *
+ * Used by: route-helpers cursor-gap fetch, callbacks replyTo validation.
+ */
+export interface ReplyParentEligibilityOptions {
+  /** Thread the child belongs to — parent must be same thread */
+  threadId: string;
+  /** Viewer context for whisper visibility */
+  viewer: Viewer;
+  /** When true, other-cat stream messages are hidden (play mode default) */
+  hideOtherCatStreams?: boolean;
+  /** The catId of the child message sender — NOT filtered out (own messages are valid parents) */
+  childCatId?: CatId | null;
+}
+
+export function isEligibleReplyParent(parent: StoredMessage, opts: ReplyParentEligibilityOptions): boolean {
+  // Must be same thread
+  if (parent.threadId !== opts.threadId) return false;
+  // Must be delivered (not queued/canceled)
+  if (!isDelivered(parent)) return false;
+  // Must not be deleted
+  if (parent.deletedAt) return false;
+  // System-generated messages are display-only — never valid parents for inline preview
+  if (parent.userId === 'system') return false;
+  // Briefing messages are non-routing
+  if (parent.origin === 'briefing') return false;
+  // Whisper visibility
+  if (!canViewMessage(parent, opts.viewer)) return false;
+  // Play-mode: hide other cats' stream (thinking) messages
+  if (opts.hideOtherCatStreams && parent.catId !== null && parent.origin === 'stream') return false;
+  return true;
 }

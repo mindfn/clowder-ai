@@ -17,7 +17,7 @@ import { DeliveryCursorStore } from '../../stores/ports/DeliveryCursorStore.js';
 import type { IDraftStore } from '../../stores/ports/DraftStore.js';
 import type { IMessageStore, StoredMessage, StoredToolEvent } from '../../stores/ports/MessageStore.js';
 import type { Thread } from '../../stores/ports/ThreadStore.js';
-import { canViewMessage } from '../../stores/visibility.js';
+import { canViewMessage, isEligibleReplyParent } from '../../stores/visibility.js';
 import type { AgentMessage, AgentService } from '../../types.js';
 import type { InvocationDeps } from '../invocation/invoke-single-cat.js';
 import { extractRecentArtifacts, mergeLedger } from './artifact-tracking.js';
@@ -806,13 +806,10 @@ export async function assembleIncrementalContext(
   // a targeted getById fetch so the inline preview can resolve the parent.
   // Security: fetched parents must pass the same visibility predicates as `relevant`
   // to prevent leaking system/whisper/stream content via inline preview.
-  const isEligibleReplyParent = (m: StoredMessage): boolean => {
-    if (m.userId === 'system') return false;
-    if (m.origin === 'briefing') return false;
-    if (!canViewMessage(m, viewer)) return false;
-    if ((thinkingMode ?? 'play') === 'play' && m.catId !== null && m.origin === 'stream') return false;
-    if (m.deletedAt) return false;
-    return true;
+  const replyParentOpts = {
+    threadId,
+    viewer,
+    hideOtherCatStreams: (thinkingMode ?? 'play') === 'play',
   };
   const baseMap = new Map(buildMessageMap(relevant));
   const missingReplyIds = [
@@ -821,7 +818,7 @@ export async function assembleIncrementalContext(
   if (missingReplyIds.length > 0) {
     const fetched = await Promise.all(missingReplyIds.map((id) => deps.messageStore.getById(id)));
     for (const msg of fetched) {
-      if (msg && isEligibleReplyParent(msg)) baseMap.set(msg.id, msg);
+      if (msg && isEligibleReplyParent(msg, replyParentOpts)) baseMap.set(msg.id, msg);
     }
   }
   const messageMap: ReadonlyMap<string, StoredMessage> = baseMap;
@@ -1094,14 +1091,7 @@ async function assembleSmartWindowContext(
   // Cursor gap fix: burst messages may reply to content from the omitted window —
   // targeted getById fills those gaps so the inline preview resolves.
   // Security: fetched parents must pass the same visibility predicates as `relevant`.
-  const isEligibleReplyParentCold = (m: StoredMessage): boolean => {
-    if (m.userId === 'system') return false;
-    if (m.origin === 'briefing') return false;
-    if (!canViewMessage(m, viewer)) return false;
-    if (m.catId !== null && m.origin === 'stream') return false;
-    if (m.deletedAt) return false;
-    return true;
-  };
+  const replyParentOptsCold = { threadId, viewer, hideOtherCatStreams: true };
   const baseMap = new Map(buildMessageMap(relevant));
   const missingReplyIds = [
     ...new Set(scrubbedBurst.filter((m) => m.replyTo && !baseMap.has(m.replyTo)).map((m) => m.replyTo!)),
@@ -1109,7 +1099,7 @@ async function assembleSmartWindowContext(
   if (missingReplyIds.length > 0) {
     const fetched = await Promise.all(missingReplyIds.map((id) => deps.messageStore.getById(id)));
     for (const msg of fetched) {
-      if (msg && isEligibleReplyParentCold(msg)) baseMap.set(msg.id, msg);
+      if (msg && isEligibleReplyParent(msg, replyParentOptsCold)) baseMap.set(msg.id, msg);
     }
   }
   const messageMap: ReadonlyMap<string, StoredMessage> = baseMap;
