@@ -1008,6 +1008,18 @@ export class QueueProcessor {
             { threadId, catId: singleCatId },
             '[QueueProcessor] #836: reborn session — skipping continuation consume',
           );
+          // #836 P2: If the queue entry itself is a legacy/fallback continuation
+          // (sourceCategory: 'continuation'), its content already contains the stale
+          // formatContinuationPrompt. Drop it — reborn cat should not resume from
+          // pre-reborn context. Return 'succeeded' so the entry is removed from queue.
+          if (entry.sourceCategory === 'continuation') {
+            log.info(
+              { threadId, catId: singleCatId, entryId: entry.id },
+              '[QueueProcessor] #836: reborn session — dropping stale continuation queue entry',
+            );
+            finalStatus = 'succeeded';
+            return 'succeeded';
+          }
         } else {
           try {
             const pending = await this.deps.threadStore.consumePendingContinuation(threadId, singleCatId, userId);
