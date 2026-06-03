@@ -95,6 +95,8 @@ export function formatMessage(
     formatTime?: (epochMs: number) => string;
     /** #699: Message lookup map for inline reply-to preview */
     messageMap?: ReadonlyMap<string, StoredMessage>;
+    /** #699 P2: Sanitizer for parent content before inlining preview (prevents injection via quoted text) */
+    sanitizeContent?: (content: string) => string;
   },
 ): string {
   // Default formatter: UTC (formatPromptTime) for prompt injection — cats need
@@ -115,7 +117,8 @@ export function formatMessage(
     const parent = options.messageMap.get(msg.replyTo);
     if (parent) {
       const parentSender = parent.source ? parent.source.label : getSenderName(parent.catId);
-      const raw = parent.content.replaceAll('\n', ' ');
+      const sanitized = options?.sanitizeContent ? options.sanitizeContent(parent.content) : parent.content;
+      const raw = sanitized.replaceAll('\n', ' ');
       const preview = raw.length > REPLY_PREVIEW_LENGTH ? `${raw.slice(0, REPLY_PREVIEW_LENGTH)}…` : raw;
       replyPrefix = `[↩ ${parentSender}: ${preview}] `;
     }
