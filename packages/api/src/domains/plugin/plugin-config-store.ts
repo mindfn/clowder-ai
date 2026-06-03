@@ -151,6 +151,11 @@ export function syncPluginEnvToProcess(manifests: PluginManifest[]): number {
     if (typeof value === 'string' && process.env[key] !== value) {
       process.env[key] = value;
       synced++;
+    } else if (value === undefined && process.env[key] !== undefined) {
+      // User cleared this config field (store has null → resolvePluginEnv returns undefined).
+      // Must delete from process.env so direct consumers see the cleared state.
+      delete process.env[key];
+      synced++;
     }
   }
   return synced;

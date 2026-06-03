@@ -1692,20 +1692,13 @@ async function main(): Promise<void> {
       const githubManifest = pluginRegistry.getManifest('github');
       if (githubManifest) {
         const existingCaps = await readCapabilitiesConfig(root);
-        const { shouldRunGitHubScheduleMigration, markGitHubScheduleMigrationDone } = await import(
-          './domains/plugin/github-schedule-factories.js'
-        );
+        const { shouldRunGitHubScheduleMigration, markGitHubScheduleMigrationDone, buildGitHubMigrationEntries } =
+          await import('./domains/plugin/github-schedule-factories.js');
         if (shouldRunGitHubScheduleMigration(root, existingCaps)) {
-          const entries: import('@cat-cafe/shared').CapabilityEntry[] = githubManifest.resources
-            .filter((r) => r.type === 'schedule' && r.name)
-            .map((r) => ({
-              id: `plugin:github:${r.name}`,
-              type: 'schedule' as const,
-              enabled: true,
-              source: 'cat-cafe' as const,
-              pluginId: 'github',
-              scheduleTaskId: `schedule:github:${r.name}`,
-            }));
+          // P2-B fix: buildGitHubMigrationEntries skips repo-scan when env deps are missing,
+          // avoiding "enabled but not running" ghost state in capabilities.json
+          const entries: import('@cat-cafe/shared').CapabilityEntry[] =
+            buildGitHubMigrationEntries(githubManifest);
           if (entries.length > 0) {
             const updatedCaps = {
               version: 1 as const,

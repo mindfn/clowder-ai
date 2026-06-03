@@ -534,3 +534,98 @@ test('syncPluginEnvToProcess syncs plugin config store values to process.env', a
     rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('syncPluginEnvToProcess clears process.env when config value is removed (P2-A)', async () => {
+  const tmpDir = join(tmpdir(), `f220-env-clear-${Date.now()}`);
+  mkdirSync(tmpDir, { recursive: true });
+  try {
+    const { writePluginConfig, loadAllPluginConfigs, syncPluginEnvToProcess } = await import(
+      '../dist/domains/plugin/plugin-config-store.js'
+    );
+
+    const testEnvKey = `F220_TEST_CLEAR_${Date.now()}`;
+    const testManifest = {
+      id: 'test-clear',
+      name: 'Test Clear',
+      version: '1.0.0',
+      builtin: false,
+      config: [{ envName: testEnvKey, label: 'Test', sensitive: false, required: false }],
+      resources: [],
+    };
+
+    // Step 1: Write a value, sync it to process.env
+    writePluginConfig(tmpDir, 'test-clear', [{ name: testEnvKey, value: 'should-be-cleared' }]);
+    loadAllPluginConfigs(tmpDir, [testManifest]);
+    syncPluginEnvToProcess([testManifest]);
+    assert.strictEqual(process.env[testEnvKey], 'should-be-cleared');
+
+    // Step 2: Clear the value (set to null), re-sync
+    writePluginConfig(tmpDir, 'test-clear', [{ name: testEnvKey, value: null }]);
+    loadAllPluginConfigs(tmpDir, [testManifest]);
+    const synced = syncPluginEnvToProcess([testManifest]);
+
+    // After sync: process.env should NOT have the value anymore
+    assert.strictEqual(process.env[testEnvKey], undefined, 'cleared config must delete process.env key');
+    assert.ok(synced >= 1, `should sync at least 1 key (the deletion), got ${synced}`);
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+describe('buildGitHubMigrationEntries (P2-B)', () => {
+  test('excludes repo-scan when env deps are missing', async () => {
+    const { buildGitHubMigrationEntries } = await import('../dist/domains/plugin/github-schedule-factories.js');
+
+    const manifest = {
+      resources: [
+        { type: 'schedule', name: 'cicd-check' },
+        { type: 'schedule', name: 'conflict-check' },
+        { type: 'schedule', name: 'review-feedback' },
+        { type: 'schedule', name: 'repo-scan' },
+      ],
+    };
+
+    // No repo-scan env vars → only 3 entries
+    const entries = buildGitHubMigrationEntries(manifest, {});
+    assert.strictEqual(entries.length, 3, 'should exclude repo-scan when deps missing');
+    assert.ok(!entries.some((e) => e.id.includes('repo-scan')), 'repo-scan must not appear');
+    assert.ok(entries.some((e) => e.id.includes('cicd-check')));
+    assert.ok(entries.some((e) => e.id.includes('conflict-check')));
+    assert.ok(entries.some((e) => e.id.includes('review-feedback')));
+  });
+
+  test('includes repo-scan when env deps are present', async () => {
+    const { buildGitHubMigrationEntries } = await import('../dist/domains/plugin/github-schedule-factories.js');
+
+    const manifest = {
+      resources: [
+        { type: 'schedule', name: 'cicd-check' },
+        { type: 'schedule', name: 'repo-scan' },
+      ],
+    };
+
+    const entries = buildGitHubMigrationEntries(manifest, {
+      GITHUB_REPO_ALLOWLIST: 'my-org/my-repo',
+      GITHUB_REPO_INBOX_CAT_ID: 'cat-123',
+    });
+    assert.strictEqual(entries.length, 2, 'should include repo-scan when deps present');
+    assert.ok(entries.some((e) => e.id.includes('repo-scan')));
+  });
+
+  test('each entry has correct shape', async () => {
+    const { buildGitHubMigrationEntries } = await import('../dist/domains/plugin/github-schedule-factories.js');
+
+    const entries = buildGitHubMigrationEntries(
+      { resources: [{ type: 'schedule', name: 'cicd-check' }] },
+      {},
+    );
+    assert.strictEqual(entries.length, 1);
+    const e = entries[0];
+    assert.strictEqual(e.id, 'plugin:github:cicd-check');
+    assert.strictEqual(e.type, 'schedule');
+    assert.strictEqual(e.enabled, true);
+    assert.strictEqual(e.source, 'cat-cafe');
+    assert.strictEqual(e.pluginId, 'github');
+    assert.strictEqual(e.scheduleTaskId, 'schedule:github:cicd-check');
+  });
+});

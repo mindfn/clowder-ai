@@ -205,3 +205,35 @@ export function markGitHubScheduleMigrationDone(projectRoot: string): void {
   mkdirSync(dirname(markerPath), { recursive: true });
   writeFileSync(markerPath, new Date().toISOString());
 }
+
+/** Repo-scan env deps that must be present for the schedule to actually run. */
+const REPO_SCAN_REQUIRED_ENV = ['GITHUB_REPO_ALLOWLIST', 'GITHUB_REPO_INBOX_CAT_ID'] as const;
+
+/**
+ * Build capability entries for the one-time migration, skipping schedules
+ * whose runtime deps aren't available (e.g., repo-scan without its env vars).
+ *
+ * This avoids persisting "enabled" for a schedule that will fail on rehydration,
+ * which would leave the Settings UI showing a ghost "enabled" state.
+ */
+export function buildGitHubMigrationEntries(
+  manifest: { resources: { type: string; name?: string }[] },
+  env: Record<string, string | undefined> = process.env,
+): { id: string; type: 'schedule'; enabled: boolean; source: 'cat-cafe'; pluginId: 'github'; scheduleTaskId: string }[] {
+  const hasRepoScanDeps = REPO_SCAN_REQUIRED_ENV.every((k) => !!env[k]);
+
+  return manifest.resources
+    .filter((r) => r.type === 'schedule' && r.name)
+    .filter((r) => {
+      if (r.name === 'repo-scan' && !hasRepoScanDeps) return false;
+      return true;
+    })
+    .map((r) => ({
+      id: `plugin:github:${r.name}`,
+      type: 'schedule' as const,
+      enabled: true,
+      source: 'cat-cafe' as const,
+      pluginId: 'github' as const,
+      scheduleTaskId: `schedule:github:${r.name}`,
+    }));
+}
