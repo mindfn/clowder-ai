@@ -800,8 +800,20 @@ export async function assembleIncrementalContext(
   }
 
   const truncateLimit = budget.maxContentLengthPerMsg;
-  // #699: Build map from full relevant set for inline reply-to preview
-  const messageMap = buildMessageMap(relevant);
+  // #699: Build map from full relevant set for inline reply-to preview.
+  // Cursor gap fix: messages replying to older content (before cursor) need
+  // a targeted getById fetch so the inline preview can resolve the parent.
+  const baseMap = new Map(buildMessageMap(relevant));
+  const missingReplyIds = [
+    ...new Set(capped.filter((m) => m.replyTo && !baseMap.has(m.replyTo)).map((m) => m.replyTo!)),
+  ];
+  if (missingReplyIds.length > 0) {
+    const fetched = await Promise.all(missingReplyIds.map((id) => deps.messageStore.getById(id)));
+    for (const msg of fetched) {
+      if (msg) baseMap.set(msg.id, msg);
+    }
+  }
+  const messageMap: ReadonlyMap<string, StoredMessage> = baseMap;
   const lines = capped.map((m) => {
     // F22: Digest rich blocks into compact summaries for context
     const contentWithDigest = digestRichBlocks(m);
@@ -1066,8 +1078,20 @@ async function assembleSmartWindowContext(
   const scrubbedBurst = scrubToolPayloads(burst);
 
   // 6. Format burst messages
-  // #699: Build map from full relevant set for inline reply-to preview
-  const messageMap = buildMessageMap(relevant);
+  // #699: Build map from full relevant set for inline reply-to preview.
+  // Cursor gap fix: burst messages may reply to content from the omitted window —
+  // targeted getById fills those gaps so the inline preview resolves.
+  const baseMap = new Map(buildMessageMap(relevant));
+  const missingReplyIds = [
+    ...new Set(scrubbedBurst.filter((m) => m.replyTo && !baseMap.has(m.replyTo)).map((m) => m.replyTo!)),
+  ];
+  if (missingReplyIds.length > 0) {
+    const fetched = await Promise.all(missingReplyIds.map((id) => deps.messageStore.getById(id)));
+    for (const msg of fetched) {
+      if (msg) baseMap.set(msg.id, msg);
+    }
+  }
+  const messageMap: ReadonlyMap<string, StoredMessage> = baseMap;
   const burstLines = scrubbedBurst.map((m) => {
     const contentWithDigest = digestRichBlocks(m);
     const cleanContent = sanitizeInjectedContent(contentWithDigest);
