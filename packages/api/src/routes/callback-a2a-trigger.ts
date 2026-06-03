@@ -28,10 +28,11 @@ import { parseIntent } from '../domains/cats/services/context/IntentParser.js';
 import type { AgentRouter } from '../domains/cats/services/index.js';
 import type { DeliveryCursorStore } from '../domains/cats/services/stores/ports/DeliveryCursorStore.js';
 import type { IInvocationRecordStore } from '../domains/cats/services/stores/ports/InvocationRecordStore.js';
-import type { StoredMessage } from '../domains/cats/services/stores/ports/MessageStore.js';
+import type { IMessageStore, StoredMessage } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { wrapWithDispatchSpan } from '../infrastructure/telemetry/dispatch-span.js';
 import type { CallerTraceContext } from '../infrastructure/telemetry/genai-semconv.js';
 import type { SocketManager } from '../infrastructure/websocket/index.js';
+import { emitQueueUpdated } from '../utils/queue-enrichment.js';
 
 export interface QueueProcessorLike {
   onInvocationComplete(threadId: string, catId: string, status: 'succeeded' | 'failed' | 'canceled'): Promise<void>;
@@ -45,6 +46,8 @@ export interface A2ATriggerDeps {
   invocationTracker?: InvocationTracker;
   deliveryCursorStore?: DeliveryCursorStore;
   queueProcessor?: QueueProcessorLike;
+  /** F706: MessageStore for queue enrichment (messagePreview in queue_updated SSE). */
+  messageStore?: IMessageStore;
   /** F122B: InvocationQueue for agent-sourced entries */
   invocationQueue?: Pick<
     InvocationQueue,
@@ -201,11 +204,10 @@ export async function enqueueA2ATargets(
       );
     }
     if (enqueued.length > 0) {
-      deps.socketManager.emitToUser(opts.userId, 'queue_updated', {
-        threadId,
-        queue: deps.invocationQueue.list(threadId, opts.userId),
-        action: 'enqueued',
-      });
+      await emitQueueUpdated(
+        deps.socketManager, opts.userId, threadId,
+        deps.invocationQueue.list(threadId, opts.userId), deps.messageStore ?? null, 'enqueued',
+      );
     }
     log.info(
       {

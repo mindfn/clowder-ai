@@ -27,6 +27,7 @@ import type { IInvocationRecordStore } from '../domains/cats/services/stores/por
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { buildCancelMessages, type SocketManager } from '../infrastructure/websocket/index.js';
+import { emitQueueUpdated, enrichQueueEntries } from '../utils/queue-enrichment.js';
 import { resolveUserId } from '../utils/request-identity.js';
 import { getMultiMentionOrchestrator } from './callback-multi-mention-routes.js';
 
@@ -228,8 +229,9 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       opts.taskProgressStore,
       opts.invocationRegistry,
     );
+    const enrichedQueue = await enrichQueueEntries(invocationQueue.list(threadId, guard.userId), messageStore);
     return {
-      queue: invocationQueue.list(threadId, guard.userId),
+      queue: enrichedQueue,
       paused: queueProcessor.isPaused(threadId),
       pauseReason: queueProcessor.getPauseReason(threadId),
       activeInvocations,
@@ -259,29 +261,17 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       // F117: Collect message IDs before removing (entry contains messageId + mergedMessageIds)
       const messageIds = [entry.messageId, ...(entry.mergedMessageIds ?? [])].filter(Boolean) as string[];
 
-      // F706: Snapshot contentBlocks from persisted messages BEFORE canceling.
-      // The client store may not have these messages (F117 skip-optimistic-insert),
-      // so the response carries them for recall-edit image restoration.
-      const recalledContentBlocks: Array<{ type: string; url?: string; text?: string }> = [];
-      if (messageStore) {
-        for (const msgId of messageIds) {
-          const msg = await messageStore.getById(msgId);
-          if (msg?.contentBlocks) {
-            for (const block of msg.contentBlocks) {
-              recalledContentBlocks.push(block);
-            }
-          }
-        }
-      }
-
+      // Remove entry from queue FIRST (sync) to close the TOCTOU window —
+      // prevents queue processor from promoting to 'processing' during the
+      // async contentBlocks snapshot below.
       const removed = invocationQueue.remove(threadId, guard.userId, entryId);
       // F122B B6 P2: Clean up completion hook to prevent leak when entry removed before execution
       queueProcessor.unregisterEntryCompleteHook?.(entryId);
-      socketManager.emitToUser(guard.userId, 'queue_updated', {
-        threadId,
-        queue: invocationQueue.list(threadId, guard.userId),
-        action: 'removed',
-      });
+
+      await emitQueueUpdated(
+        socketManager, guard.userId, threadId,
+        invocationQueue.list(threadId, guard.userId), messageStore, 'removed',
+      );
 
       // F117: Mark queued messages as canceled + emit message_deleted
       if (messageStore) {
@@ -295,7 +285,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
         }
       }
 
-      return { removed, contentBlocks: recalledContentBlocks };
+      return { removed };
     },
   );
 
@@ -341,11 +331,10 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       const { mode } = parseResult.data;
       if (mode === 'promote') {
         invocationQueue.promote(threadId, guard.userId, entryId);
-        socketManager.emitToUser(guard.userId, 'queue_updated', {
-          threadId,
-          queue: invocationQueue.list(threadId, guard.userId),
-          action: 'steer_promote',
-        });
+        await emitQueueUpdated(
+          socketManager, guard.userId, threadId,
+          invocationQueue.list(threadId, guard.userId), messageStore, 'steer_promote',
+        );
         return { ok: true };
       }
 
@@ -379,11 +368,10 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       }
 
       invocationQueue.promote(threadId, guard.userId, entryId);
-      socketManager.emitToUser(guard.userId, 'queue_updated', {
-        threadId,
-        queue: invocationQueue.list(threadId, guard.userId),
-        action: 'steer_immediate',
-      });
+      await emitQueueUpdated(
+        socketManager, guard.userId, threadId,
+        invocationQueue.list(threadId, guard.userId), messageStore, 'steer_immediate',
+      );
 
       const result = await queueProcessor.processNext(threadId, guard.userId);
       if (!result.started) {
@@ -426,11 +414,10 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       }
 
       invocationQueue.move(threadId, guard.userId, entryId, parseResult.data.direction);
-      socketManager.emitToUser(guard.userId, 'queue_updated', {
-        threadId,
-        queue: invocationQueue.list(threadId, guard.userId),
-        action: 'reordered',
-      });
+      await emitQueueUpdated(
+        socketManager, guard.userId, threadId,
+        invocationQueue.list(threadId, guard.userId), messageStore, 'reordered',
+      );
 
       return { ok: true };
     },
@@ -482,11 +469,10 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
       invocationQueue.setPosition(threadId, guard.userId, entryId, position);
     }
 
-    socketManager.emitToUser(guard.userId, 'queue_updated', {
-      threadId,
-      queue: invocationQueue.list(threadId, guard.userId),
-      action: 'reordered',
-    });
+    await emitQueueUpdated(
+      socketManager, guard.userId, threadId,
+      invocationQueue.list(threadId, guard.userId), messageStore, 'reordered',
+    );
     return { ok: true };
   });
 
@@ -508,11 +494,7 @@ export const queueRoutes: FastifyPluginAsync<QueueRoutesOptions> = async (app, o
     }
 
     const cleared = invocationQueue.clear(threadId, guard.userId);
-    socketManager.emitToUser(guard.userId, 'queue_updated', {
-      threadId,
-      queue: [],
-      action: 'cleared',
-    });
+    await emitQueueUpdated(socketManager, guard.userId, threadId, [], messageStore, 'cleared');
 
     // F117: Mark all queued messages as canceled + emit message_deleted
     if (messageStore) {
