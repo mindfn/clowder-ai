@@ -43,7 +43,9 @@ export function PluginsContent() {
     try {
       const res = await apiFetch('/api/plugins');
       const payload = res.ok ? ((await res.json()) as { plugins?: PluginInfo[] }) : {};
-      setPlugins(Array.isArray(payload.plugins) ? payload.plugins : [BUILTIN_GITHUB_PLUGIN]);
+      const list = Array.isArray(payload.plugins) ? payload.plugins : [];
+      const hasGithub = list.some((p) => p.id === 'github');
+      setPlugins(hasGithub ? list : [BUILTIN_GITHUB_PLUGIN, ...list]);
     } catch {
       setPlugins([]);
     } finally {
