@@ -240,6 +240,49 @@ describe('AC-C4: untrusted external content boundary', () => {
   });
 });
 
+// ── P2-fix: unregister-tracking rejects non-tracking tasks ──────────
+
+describe('P2-fix: unregister-tracking kind guard', () => {
+  test('isTrackingKind rejects work tasks — unregister defense', async () => {
+    const { isTrackingKind } = await import('@cat-cafe/shared');
+    // Work tasks must NOT pass the tracking kind check
+    assert.strictEqual(isTrackingKind('work'), false, 'work tasks should be rejected');
+    // Tracking tasks must pass
+    assert.strictEqual(isTrackingKind('pr_tracking'), true);
+    assert.strictEqual(isTrackingKind('issue_tracking'), true);
+  });
+
+  test('work task with subjectKey must not be deletable as tracking', () => {
+    const store = new TaskStore();
+    // Create a work task that happens to have a subjectKey
+    const workTask = store.create({
+      kind: 'work',
+      threadId: 't1',
+      subjectKey: 'custom:something',
+      title: 'Manual task',
+      why: 'user created',
+      createdBy: 'user',
+    });
+    // Create a tracking task
+    const trackingTask = store.upsertBySubject({
+      kind: 'pr_tracking',
+      threadId: 't1',
+      subjectKey: 'pr:o/r#1',
+      title: 'PR tracking',
+      why: 'test',
+      createdBy: 'cat1',
+    });
+    // Verify work task exists with subjectKey
+    const found = store.getBySubject('custom:something');
+    assert.ok(found, 'work task should be findable by subjectKey');
+    assert.strictEqual(found.kind, 'work');
+    // Verify tracking task is findable
+    const foundTracking = store.getBySubject('pr:o/r#1');
+    assert.ok(foundTracking);
+    assert.strictEqual(foundTracking.kind, 'pr_tracking');
+  });
+});
+
 // ── P2-fix: multiline untrusted content cannot escape boundary ──────
 
 describe('P2-fix: multiline external content stays within untrusted boundary', () => {

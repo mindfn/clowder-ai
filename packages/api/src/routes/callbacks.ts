@@ -8,6 +8,7 @@ import type { CatId, CatRoutingError, RichBlock } from '@cat-cafe/shared';
 import {
   catRegistry,
   createCatId,
+  isTrackingKind,
   normalizeRichBlock,
   normalizeSopDefinitionId,
   resolveWorkflowSopSkill,
@@ -2210,6 +2211,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     if (!task) {
       reply.status(404);
       return { error: `No tracking task for subject: ${parsed.data.subjectKey}` };
+    }
+
+    // Kind guard: only tracking tasks can be unregistered via this endpoint
+    if (!isTrackingKind(task.kind)) {
+      reply.status(400);
+      return { error: `Task is not a tracking task (kind: ${task.kind}), cannot unregister via this endpoint` };
     }
 
     // Ownership check: only the user who registered can unregister
