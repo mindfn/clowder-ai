@@ -885,6 +885,21 @@ export class ThreadStore implements IThreadStore {
     } else {
       if (!thread.memberSessionStrategy) thread.memberSessionStrategy = {};
       thread.memberSessionStrategy[catId] = strategy;
+      // #836 P2: Clear stale pending continuations when switching to reborn.
+      // Capsules sealed before the reborn period contain pre-reborn session
+      // context; if reborn is later cleared back to resume, consuming them
+      // would resume from stale state instead of the post-reborn session.
+      if (strategy === 'reborn' && thread.pendingContinuation) {
+        const prefix = `${catId}:`;
+        for (const key of Object.keys(thread.pendingContinuation)) {
+          if (key.startsWith(prefix)) {
+            delete thread.pendingContinuation[key];
+          }
+        }
+        if (Object.keys(thread.pendingContinuation).length === 0) {
+          delete thread.pendingContinuation;
+        }
+      }
     }
   }
 

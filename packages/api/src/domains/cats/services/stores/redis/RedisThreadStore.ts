@@ -1225,6 +1225,27 @@ export class RedisThreadStore implements IThreadStore {
       await this.redis.hdel(key, `memberSS:${catId}`);
     } else {
       await this.redis.hset(key, { [`memberSS:${catId}`]: strategy });
+      // #836 P2: Clear stale pending continuations when switching to reborn.
+      // Capsules sealed before the reborn period contain pre-reborn session
+      // context; consuming them after reborn is cleared would resume from
+      // stale state. Lua script atomically scans and deletes matching fields.
+      if (strategy === 'reborn') {
+        const prefix = `pendCont:${catId}:`;
+        await this.redis.eval(
+          `local cursor = "0"
+           repeat
+             local r = redis.call("HSCAN", KEYS[1], cursor, "MATCH", ARGV[1])
+             cursor = r[1]
+             local data = r[2]
+             for i = 1, #data, 2 do
+               redis.call("HDEL", KEYS[1], data[i])
+             end
+           until cursor == "0"`,
+          1,
+          key,
+          `${prefix}*`,
+        );
+      }
     }
   }
 
