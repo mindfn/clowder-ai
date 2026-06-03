@@ -1,0 +1,38 @@
+id: github
+name: GitHub
+version: 1.0.0
+description: "GitHub PR tracking, CI/CD monitoring, conflict detection, and repository scanning"
+icon: github
+docsUrl: "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens"
+setupSteps:
+  - "Create a GitHub Personal Access Token (needs repo + notifications permissions)"
+  - "Fill in the token to enable PR Tracking, Review Router, CI/CD Monitor"
+  - "Optional: configure Noise Bot list to reduce setup-only comment noise"
+
+config:
+  - envName: GITHUB_TOKEN
+    label: "Personal Access Token"
+    sensitive: true
+    required: true
+  - envName: GITHUB_SETUP_NOISE_BOT_LOGINS
+    label: "Noise Bot Login List"
+    sensitive: false
+    required: false
+  - envName: GITHUB_MCP_PAT
+    label: "MCP Token"
+    sensitive: true
+    required: false
+
+resources:
+  - type: schedule
+    name: cicd-check
+    factoryId: github.cicd-check
+  - type: schedule
+    name: conflict-check
+    factoryId: github.conflict-check
+  - type: schedule
+    name: review-feedback
+    factoryId: github.review-feedback
+  - type: schedule
+    name: repo-scan
+    factoryId: github.repo-scan

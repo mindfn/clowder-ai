@@ -11,8 +11,7 @@ import type { TaskSpec_P1 } from '../../infrastructure/scheduler/types.js';
 
 /** Dependencies injected into factory.createTaskSpec() */
 export interface ScheduleFactoryDeps {
-  log: { info: (...args: unknown[]) => void; error: (...args: unknown[]) => void };
-  // Phase B will add: taskStore, routers, invokeTrigger, etc.
+  log: { info: (...args: unknown[]) => void; error: (...args: unknown[]) => void; warn: (...args: unknown[]) => void };
   [key: string]: unknown;
 }
 

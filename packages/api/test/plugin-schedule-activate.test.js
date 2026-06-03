@@ -102,7 +102,7 @@ function makeActivator(deps = {}) {
   const capStore = deps.capStore ?? makeCapabilitiesStore();
   const taskRunner = deps.taskRunner ?? makeTaskRunner();
   const scheduleFactoryRegistry = deps.scheduleFactoryRegistry ?? new ScheduleFactoryRegistry();
-  const scheduleFactoryDeps = { log: { info: () => {}, error: () => {} } };
+  const scheduleFactoryDeps = { log: { info: () => {}, error: () => {}, warn: () => {} } };
 
   const activator = new PluginResourceActivator({
     resolveProjectRoot: () => '/tmp/project',
@@ -579,7 +579,7 @@ describe('rehydrateEnabledPluginSchedules', () => {
       pluginRegistry,
       scheduleFactoryRegistry: registry,
       taskRunner,
-      scheduleFactoryDeps: { log: { info: () => {}, error: () => {} } },
+      scheduleFactoryDeps: { log: { info: () => {}, error: () => {}, warn: () => {} } },
       log: { info: () => {}, warn: () => {} },
     });
 
@@ -618,7 +618,7 @@ describe('rehydrateEnabledPluginSchedules', () => {
       pluginRegistry,
       scheduleFactoryRegistry: registry,
       taskRunner,
-      scheduleFactoryDeps: { log: { info: () => {}, error: () => {} } },
+      scheduleFactoryDeps: { log: { info: () => {}, error: () => {}, warn: () => {} } },
     });
 
     assert.strictEqual(taskRunner.registered.length, 0);
@@ -655,7 +655,7 @@ describe('rehydrateEnabledPluginSchedules', () => {
       pluginRegistry,
       scheduleFactoryRegistry: registry,
       taskRunner,
-      scheduleFactoryDeps: { log: { info: () => {}, error: () => {} } },
+      scheduleFactoryDeps: { log: { info: () => {}, error: () => {}, warn: () => {} } },
       log: { info: () => {}, warn: (...args) => warnings.push(args.join(' ')) },
     });
 
@@ -672,7 +672,7 @@ describe('rehydrateEnabledPluginSchedules', () => {
       pluginRegistry: { getManifest: () => undefined },
       scheduleFactoryRegistry: registry,
       taskRunner,
-      scheduleFactoryDeps: { log: { info: () => {}, error: () => {} } },
+      scheduleFactoryDeps: { log: { info: () => {}, error: () => {}, warn: () => {} } },
     });
 
     assert.strictEqual(taskRunner.registered.length, 0);
@@ -716,7 +716,7 @@ describe('rehydrateEnabledPluginSchedules', () => {
       pluginRegistry,
       scheduleFactoryRegistry: registry,
       taskRunner,
-      scheduleFactoryDeps: { log: { info: () => {}, error: () => {} } },
+      scheduleFactoryDeps: { log: { info: () => {}, error: () => {}, warn: () => {} } },
       log: { info: () => {}, warn: (...args) => warnings.push(args.join(' ')) },
     });
 
