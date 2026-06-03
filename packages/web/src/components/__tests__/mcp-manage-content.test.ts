@@ -308,7 +308,7 @@ describe('McpManageContent', () => {
     expect(bodies.map((body) => body.projectPath).sort()).toEqual(['/tmp/fast-project', '/tmp/slow-project']);
   });
 
-  it('renders plugin-owned MCP resources as readonly and routes management to plugins', async () => {
+  it('renders plugin-owned MCP with badge, normal toggle, and no delete', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -332,14 +332,18 @@ describe('McpManageContent', () => {
     const card = container.querySelector('.settings-resource-card');
     expect(card?.textContent).toContain('Plugin owned MCP');
     expect(card?.textContent).toContain('由插件 weixin-mp 管理');
-    expect(card?.querySelector('a[href="/settings?s=plugins"]')).toBeTruthy();
 
+    // Toggle should be functional (not disabled) — plugin MCP acts like normal MCP
     const toggle = card?.querySelector('.settings-resource-toggle') as HTMLButtonElement | null;
-    expect(toggle?.disabled).toBe(true);
+    expect(toggle?.disabled).toBe(false);
+    // Delete is still forbidden for plugin-managed MCPs
     expect(card?.querySelector('button[title="卸载此 MCP"]')).toBeFalsy();
-    expect(card?.querySelector('button[title="按猫开关"]')).toBeFalsy();
+    // Per-cat toggles should be available
+    expect(card?.querySelector('button[title="按猫开关"]')).toBeTruthy();
 
+    // Clicking toggle should send PATCH like any normal MCP
     mockFetch.mockClear();
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({}) });
     await act(async () => {
       toggle?.click();
     });
@@ -348,7 +352,7 @@ describe('McpManageContent', () => {
       mockFetch.mock.calls.some(
         (args: unknown[]) => args[0] === '/api/capabilities' && (args[1] as { method?: string })?.method === 'PATCH',
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('ignores stale project-switch responses when a newer selection resolves first', async () => {
