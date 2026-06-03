@@ -14,6 +14,7 @@ const { buildReviewFeedbackContent } = await import('../dist/infrastructure/emai
 const { buildCiMessageContent } = await import('../dist/infrastructure/email/CiCdRouter.js');
 const { buildIssueCommentContent } = await import('../dist/infrastructure/email/IssueCommentRouter.js');
 const { TaskStore } = await import('../dist/domains/cats/services/stores/ports/TaskStore.js');
+const { computeSubjectPreview } = await import('../dist/infrastructure/scheduler/TaskRunnerV2.js');
 
 // ── AC-C1: trackingInstructions stored in AutomationState ─────────
 
@@ -330,5 +331,24 @@ describe('P2-fix: multiline external content stays within untrusted boundary', (
     const content = buildReviewFeedbackContent(signal);
     const autoLines = content.split('\n').filter((l) => l.trim() === '🔧 **自动处理**');
     assert.strictEqual(autoLines.length, 1, 'only one 自动处理 block (the real one, not injected)');
+  });
+});
+
+// ── P2-fix: computeSubjectPreview handles issue subject keys ──────
+
+describe('P2-fix: computeSubjectPreview handles issue SubjectKind', () => {
+  test('issue: subject key returns owner/repo#N preview', () => {
+    const result = computeSubjectPreview('issue', { subject_key: 'issue:owner/repo#50' });
+    assert.strictEqual(result, 'owner/repo#50', 'should strip issue: prefix');
+  });
+
+  test('issue: unrecognized prefix returns null', () => {
+    const result = computeSubjectPreview('issue', { subject_key: 'unknown:foo' });
+    assert.strictEqual(result, null, 'non-issue prefix should return null');
+  });
+
+  test('pr: still works after adding issue case', () => {
+    const result = computeSubjectPreview('pr', { subject_key: 'pr:owner/repo#42' });
+    assert.strictEqual(result, 'owner/repo#42');
   });
 });

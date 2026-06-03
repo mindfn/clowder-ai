@@ -2163,6 +2163,21 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const { repoFullName, issueNumber, instructions } = parsed.data;
     const catId = record.catId;
 
+    // F220 Phase D P2-fix: validate repo exists and is accessible (mirrors PR tracking at L1975)
+    if (validateRepo) {
+      let repoOk: boolean;
+      try {
+        repoOk = await validateRepo(repoFullName);
+      } catch {
+        reply.status(503);
+        return { error: 'Repository validation unavailable — try again later' };
+      }
+      if (!repoOk) {
+        reply.status(422);
+        return { error: `Repository ${repoFullName} does not exist or is not accessible` };
+      }
+    }
+
     const subjectKey = `issue:${repoFullName}#${issueNumber}`;
     try {
       const task = await taskStore.upsertBySubject({

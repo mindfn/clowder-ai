@@ -73,6 +73,11 @@ export function computeSubjectPreview(
       if (key.startsWith('repo:')) return key.slice(5);
       return null;
     }
+    case 'issue': {
+      // F220 Phase D: issue tracking uses `issue:owner/repo#N` format
+      if (key.startsWith('issue:')) return key.slice(6);
+      return null;
+    }
     case 'external': {
       return key;
     }
