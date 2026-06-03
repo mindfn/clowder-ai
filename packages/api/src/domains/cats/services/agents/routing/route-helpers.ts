@@ -11,7 +11,7 @@ import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 const log = createModuleLogger('context-transport');
 
 import { estimateTokens } from '../../../../../utils/token-counter.js';
-import { formatMessage } from '../../context/ContextAssembler.js';
+import { buildMessageMap, formatMessage } from '../../context/ContextAssembler.js';
 import { checkContextBudget, type DegradationResult } from '../../orchestration/DegradationPolicy.js';
 import { DeliveryCursorStore } from '../../stores/ports/DeliveryCursorStore.js';
 import type { IDraftStore } from '../../stores/ports/DraftStore.js';
@@ -800,12 +800,14 @@ export async function assembleIncrementalContext(
   }
 
   const truncateLimit = budget.maxContentLengthPerMsg;
+  // #699: Build map from full relevant set for inline reply-to preview
+  const messageMap = buildMessageMap(relevant);
   const lines = capped.map((m) => {
     // F22: Digest rich blocks into compact summaries for context
     const contentWithDigest = digestRichBlocks(m);
     const cleanContent = sanitizeInjectedContent(contentWithDigest);
     const normalized: StoredMessage = cleanContent === m.content ? m : { ...m, content: cleanContent };
-    const rendered = formatMessage(normalized, { truncate: truncateLimit });
+    const rendered = formatMessage(normalized, { truncate: truncateLimit, messageMap });
     return `[${m.id}] ${rendered}`;
   });
 
@@ -1064,11 +1066,13 @@ async function assembleSmartWindowContext(
   const scrubbedBurst = scrubToolPayloads(burst);
 
   // 6. Format burst messages
+  // #699: Build map from full relevant set for inline reply-to preview
+  const messageMap = buildMessageMap(relevant);
   const burstLines = scrubbedBurst.map((m) => {
     const contentWithDigest = digestRichBlocks(m);
     const cleanContent = sanitizeInjectedContent(contentWithDigest);
     const normalized: StoredMessage = cleanContent === m.content ? m : { ...m, content: cleanContent };
-    const rendered = formatMessage(normalized, { truncate: truncateLimit });
+    const rendered = formatMessage(normalized, { truncate: truncateLimit, messageMap });
     return `[${m.id}] ${rendered}`;
   });
 
