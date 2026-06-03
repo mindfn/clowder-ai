@@ -24,6 +24,14 @@ vi.mock('@/components/icons/AttachIcon', () => ({
   AttachIcon: () => React.createElement('span', null, 'attach'),
 }));
 vi.mock('@/utils/compressImage', () => ({ compressImage: (f: File) => Promise.resolve(f) }));
+vi.mock('@/hooks/useCoCreatorConfig', () => ({
+  useCoCreatorConfig: () => ({
+    name: 'ME',
+    aliases: [],
+    mentionPatterns: ['@co-creator'],
+    color: { primary: '#D4A76A', secondary: '#FFF8F0' },
+  }),
+}));
 vi.mock('@/hooks/useCatData', () => ({
   useCatData: () => ({
     cats: [
