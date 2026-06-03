@@ -21,6 +21,7 @@ import { ImagePreview } from './ImagePreview';
 import { AttachIcon } from './icons/AttachIcon';
 import { MobileInputToolbar } from './MobileInputToolbar';
 import { PathCompletionMenu } from './PathCompletionMenu';
+import { ReplyPreviewBar } from './ReplyPreviewBar';
 import { pushThreadRouteWithHistory } from './ThreadSidebar/thread-navigation';
 import { hasPendingThreadDraft, syncDraftToStorage, threadDrafts, threadImageDrafts } from './thread-drafts';
 import { WhisperCatSelector, WhisperTargetChips } from './WhisperCatSelector';
@@ -672,25 +673,9 @@ export function ChatInput({
 
       <ImagePreview files={images} onRemove={handleRemoveImage} />
 
-      {/* #699: Reply preview bar */}
+      {/* #699: Reply preview bar — matches ReplyPill styling with sender theme color */}
       {replyToMessage && (
-        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-cafe text-sm text-cafe-secondary bg-cafe-surface-elevated rounded-t-lg">
-          <span className="text-cafe-muted shrink-0">↩</span>
-          <span className="truncate flex-1 text-xs">
-            {replyToMessage.content.slice(0, 80)}
-            {replyToMessage.content.length > 80 ? '...' : ''}
-          </span>
-          <button
-            type="button"
-            onClick={clearReplyTo}
-            className="text-cafe-muted hover:text-cafe-primary shrink-0 p-0.5"
-            title="取消引用"
-          >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
+        <ReplyPreviewBar replyToMessage={replyToMessage} cats={cats} onClear={clearReplyTo} />
       )}
 
       <input
