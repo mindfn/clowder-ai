@@ -83,7 +83,12 @@ describe('CiCdCheckTaskSpec', () => {
         }),
       },
       fetchPrStatus: async () => ({ checks: [], headSha: 'sha1', prNumber: 1, repoFullName: 'a/b' }),
-      invokeTrigger: { trigger: (...args) => triggered.push(args) },
+      invokeTrigger: {
+        trigger: (...args) => {
+          triggered.push(args);
+          return Promise.resolve();
+        },
+      },
       log: { info: () => {}, error: () => {}, warn: () => {} },
     });
     const gateResult = await spec.admission.gate({ taskId: 'cicd-check', lastRunAt: null, tickCount: 1 });
@@ -113,7 +118,12 @@ describe('CiCdCheckTaskSpec', () => {
         }),
       },
       fetchPrStatus: async () => ({ checks: [], headSha: 'sha1', prNumber: 1, repoFullName: 'a/b' }),
-      invokeTrigger: { trigger: (...args) => triggered.push(args) },
+      invokeTrigger: {
+        trigger: (...args) => {
+          triggered.push(args);
+          return Promise.resolve();
+        },
+      },
       log: { info: () => {}, error: () => {}, warn: () => {} },
     });
     const gateResult = await spec.admission.gate({ taskId: 'cicd-check', lastRunAt: null, tickCount: 1 });
