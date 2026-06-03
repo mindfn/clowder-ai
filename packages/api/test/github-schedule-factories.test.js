@@ -78,6 +78,11 @@ function makeGitHubDeps(overrides = {}) {
     deliveryDeps: { messageStore: {}, socketManager: {} },
     fetchOpenPRs: async () => [],
     fetchOpenIssues: async () => [],
+    // F220 Phase D: issue-tracking deps
+    issueCommentRouter: stubRouter,
+    fetchIssueComments: async () => [],
+    fetchIssueState: async () => 'open',
+    isEchoIssueComment: () => false,
     ...overrides,
   };
 }
@@ -205,7 +210,7 @@ describe('schedule name validation (P2-2)', () => {
 // --- Task 2: plugin.yaml manifest parsing ---
 
 describe('plugins/github/plugin.yaml (AC-B1)', () => {
-  test('parses as valid PluginManifest with 3 config + 4 schedule resources', () => {
+  test('parses as valid PluginManifest with 3 config + 5 schedule resources', () => {
     const yamlPath = join(__dirname, '../../../plugins/github/plugin.yaml');
     assert.ok(existsSync(yamlPath), `plugin.yaml must exist at ${yamlPath}`);
 
@@ -229,8 +234,8 @@ describe('plugins/github/plugin.yaml (AC-B1)', () => {
     const noiseField = manifest.config.find((c) => c.envName === 'GITHUB_SETUP_NOISE_BOT_LOGINS');
     assert.strictEqual(noiseField?.required, false);
 
-    // Schedule resources
-    assert.strictEqual(manifest.resources.length, 4);
+    // Schedule resources (4 original + 1 issue-tracking from F220-D)
+    assert.strictEqual(manifest.resources.length, 5);
     for (const r of manifest.resources) {
       assert.strictEqual(r.type, 'schedule');
       assert.ok(r.factoryId?.startsWith('github.'), `factoryId must start with "github.": ${r.factoryId}`);
@@ -238,20 +243,21 @@ describe('plugins/github/plugin.yaml (AC-B1)', () => {
     }
 
     const resourceNames = manifest.resources.map((r) => r.name).sort();
-    assert.deepStrictEqual(resourceNames, ['cicd-check', 'conflict-check', 'repo-scan', 'review-feedback']);
+    assert.deepStrictEqual(resourceNames, ['cicd-check', 'conflict-check', 'issue-tracking', 'repo-scan', 'review-feedback']);
   });
 });
 
 // --- Task 3: Factory registration + task creation ---
 
 describe('GitHub schedule factory registration (F220-B Task 3)', () => {
-  test('registerGitHubScheduleFactories registers all 4 factories', () => {
+  test('registerGitHubScheduleFactories registers all 5 factories', () => {
     const registry = new ScheduleFactoryRegistry();
     registerGitHubScheduleFactories(registry);
     assert.ok(registry.has('github.cicd-check'));
     assert.ok(registry.has('github.conflict-check'));
     assert.ok(registry.has('github.review-feedback'));
     assert.ok(registry.has('github.repo-scan'));
+    assert.ok(registry.has('github.issue-tracking'));
   });
 
   test('github.cicd-check factory creates TaskSpec with correct instanceId', () => {
@@ -369,7 +375,7 @@ describe('GitHub plugin lifecycle (AC-B4)', () => {
     return JSON.parse(readFileSync(p, 'utf-8'));
   }
 
-  test('enable → 4 schedule tasks registered; disable → 4 unregistered', async () => {
+  test('enable → 5 schedule tasks registered; disable → 5 unregistered', async () => {
     const tmpDir = createTempDir();
     try {
       // Setup
@@ -394,26 +400,27 @@ describe('GitHub plugin lifecycle (AC-B4)', () => {
       const manifest = parsePluginManifest(join(__dirname, '../../../plugins/github/plugin.yaml'));
       const result = await activator.enablePlugin(manifest);
 
-      // All 4 schedule resources should succeed
+      // All 5 schedule resources should succeed
       assert.strictEqual(result.status, 'success', `enable should succeed: ${JSON.stringify(result)}`);
-      assert.strictEqual(result.resources.length, 4);
+      assert.strictEqual(result.resources.length, 5);
       for (const r of result.resources) {
         assert.ok(r.ok, `resource ${r.name} should be ok: ${r.error}`);
       }
 
-      // TaskRunner should have 4 registered tasks
-      assert.strictEqual(taskRunner.registered.length, 4);
+      // TaskRunner should have 5 registered tasks
+      assert.strictEqual(taskRunner.registered.length, 5);
       const ids = taskRunner.registered.map((t) => t.id).sort();
       assert.deepStrictEqual(ids, [
         'schedule:github:cicd-check',
         'schedule:github:conflict-check',
+        'schedule:github:issue-tracking',
         'schedule:github:repo-scan',
         'schedule:github:review-feedback',
       ]);
 
-      // Disable → all 4 unregistered
+      // Disable → all 5 unregistered
       await activator.disablePlugin(manifest);
-      assert.strictEqual(taskRunner.unregistered.length, 4);
+      assert.strictEqual(taskRunner.unregistered.length, 5);
       const unregIds = [...taskRunner.unregistered].sort();
       assert.deepStrictEqual(unregIds, ids);
     } finally {
@@ -455,9 +462,9 @@ describe('GitHub plugin lifecycle (AC-B4)', () => {
         'first startup should trigger migration',
       );
 
-      // Enable → 4 registered
+      // Enable → 5 registered
       await activator.enablePlugin(manifest);
-      assert.strictEqual(taskRunner.registered.length, 4);
+      assert.strictEqual(taskRunner.registered.length, 5);
 
       // Write marker (simulating what index.ts migration does after writing entries)
       markGitHubScheduleMigrationDone(tmpDir);
@@ -502,7 +509,7 @@ describe('GitHub plugin lifecycle (AC-B4)', () => {
     }
   });
 
-  test('enable with missing repo-scan deps → 3 succeed, 1 fails gracefully', async () => {
+  test('enable with missing repo-scan deps → 4 succeed, 1 fails gracefully', async () => {
     const tmpDir = createTempDir();
     try {
       const registry = new ScheduleFactoryRegistry();
@@ -528,17 +535,17 @@ describe('GitHub plugin lifecycle (AC-B4)', () => {
       const manifest = parsePluginManifest(join(__dirname, '../../../plugins/github/plugin.yaml'));
       const result = await activator.enablePlugin(manifest);
 
-      // 3 succeed, 1 fails (repo-scan)
+      // 4 succeed, 1 fails (repo-scan)
       assert.strictEqual(result.status, 'partial');
       const succeeded = result.resources.filter((r) => r.ok);
       const failed = result.resources.filter((r) => !r.ok);
-      assert.strictEqual(succeeded.length, 3);
+      assert.strictEqual(succeeded.length, 4);
       assert.strictEqual(failed.length, 1);
       assert.strictEqual(failed[0].name, 'repo-scan');
       assert.ok(failed[0].error?.includes('repoAllowlist'));
 
-      // Only 3 tasks registered
-      assert.strictEqual(taskRunner.registered.length, 3);
+      // Only 4 tasks registered (all except repo-scan)
+      assert.strictEqual(taskRunner.registered.length, 4);
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }
