@@ -1,0 +1,66 @@
+{
+  "verdictId": "2026-06-03-eval-a2a-source-adapter-closure-unmet",
+  "featureId": "F167",
+  "evalSnapshotId": "eval-F167-2026-06-03-source-adapter",
+  "generatedAt": "2026-06-03T03:03:24.933Z",
+  "findings": [
+    {
+      "id": "source-adapter-closure-unmet-action-observed",
+      "relatedFeature": "F192",
+      "frictionSignal": {
+        "type": "source_adapter_unavailable",
+        "severity": "medium",
+        "confidence": 0.95
+      },
+      "attribution": {
+        "primaryLayer": "environment_drift",
+        "pipelineOrHuman": "pipeline",
+        "evidence": [
+          {
+            "type": "endpoint_check",
+            "anchor": "source-adapter/telemetry.metrics",
+            "excerpt": "2026-06-03 re-eval: /api/telemetry/metrics returned 503 after a valid session cookie: Metrics reader not available."
+          },
+          {
+            "type": "endpoint_check",
+            "anchor": "source-adapter/telemetry.metrics_history",
+            "excerpt": "2026-06-03 re-eval: /api/telemetry/metrics/history returned 503 after a valid session cookie: Metrics snapshot store not available."
+          },
+          {
+            "type": "endpoint_check",
+            "anchor": "source-adapter/telemetry.traces",
+            "excerpt": "2026-06-03 re-eval: /api/telemetry/traces and /traces/stats returned 503 after a valid session cookie: Trace store not available."
+          },
+          {
+            "type": "endpoint_check",
+            "anchor": "source-adapter/telemetry.health",
+            "excerpt": "2026-06-03 live runtime still returns /api/telemetry/health 200 healthy with otelEnabled=true, traceStore=null, and metricsSnapshotStore=null."
+          },
+          {
+            "type": "owner_action",
+            "anchor": "branch/feat-f167-no-data-resilience",
+            "excerpt": "Owner branch feat/f167-no-data-resilience reached 988545163; codex review approved Path C after build, 25 telemetry-route tests, and an OTEL_SDK_DISABLED=false probe passed."
+          },
+          {
+            "type": "audit_log",
+            "anchor": "legacy-cleanup/daily-slots",
+            "excerpt": "Audit/log scan shows one eval:a2a invocation in the 2026-06-03 slot and no active harness-fit-digest overlap; duplicate trigger count remains 0."
+          },
+          {
+            "type": "previous_verdict",
+            "anchor": "verdict/2026-06-02-eval-a2a-source-adapter-still-unavailable",
+            "excerpt": "The 2026-06-02 fix verdict's closure condition was not met at the 2026-06-03 scheduled re-eval."
+          }
+        ]
+      },
+      "proposedAction": [
+        {
+          "action": "merge-or-continue-source-adapter-fix",
+          "target": "f167-runtime-eval",
+          "rationale": "Path C branch action is visible and reviewed, but the live eval:a2a source adapter still cannot produce telemetry-backed artifacts; the active verdict remains fix/open until acceptance closure."
+        }
+      ],
+      "status": "open"
+    }
+  ]
+}

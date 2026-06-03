@@ -1,0 +1,98 @@
+{
+  "verdictId": "2026-06-03-eval-a2a-source-adapter-closure-unmet",
+  "evalSnapshotId": "eval-F167-2026-06-03-source-adapter",
+  "featureId": "F167",
+  "generatedAt": "2026-06-03T03:03:24.933Z",
+  "window": {
+    "startMs": 1780369366162,
+    "endMs": 1780455804933,
+    "durationHours": 24.01
+  },
+  "sourceAdapter": "f167-runtime-eval",
+  "previousVerdictRef": "vhp_eval_a2a_2026_06_02T03_02_46_162Z_source_adapter_still_unavailable",
+  "closureCheck": {
+    "previousClosureCondition": "next eval can fetch metrics, metrics history, traces, and trace stats successfully, emits a fresh F167 verdict artifact, and still shows no active harness-fit-digest overlap or duplicate daily cron slot fire",
+    "closureMet": false,
+    "reason": "Telemetry metrics reader, metrics snapshot store, trace store, and traces remain unavailable on 2026-06-03. /api/telemetry/health still returns 200 healthy with null stores in the live runtime because the Path C branch has not been merged into that process."
+  },
+  "ownerActionStatus": {
+    "branch": "feat/f167-no-data-resilience",
+    "latestCommit": "988545163",
+    "reviewStatus": "codex_approved_path_c",
+    "notes": "Path C fixes /api/telemetry/health stores-null detection in branch tests, but live runtime closure is still unmet until merge/restart/acceptance."
+  },
+  "legacyScheduledTaskStatus": {
+    "taskIds": ["harness-fit-digest"],
+    "cleanupStatus": "disabled",
+    "activeLegacyOverlap": 0
+  },
+  "dailySchedulerStatus": {
+    "currentSlot": "2026-06-03T03:00:00.000Z",
+    "previousSlot": "2026-06-02T03:00:00.000Z",
+    "invocationsPerSlot": {
+      "2026-06-02": 1,
+      "2026-06-03": 1
+    },
+    "duplicateCronSlotFires": 0
+  },
+  "components": [
+    {
+      "id": "source-adapter",
+      "name": "f167-runtime-eval telemetry source adapter",
+      "confidence": "high",
+      "activationCounts": {
+        "eval-domain-daily.invocations_2026-06-02": 1,
+        "eval-domain-daily.invocations_2026-06-03": 1,
+        "owner_branch_commits": 2,
+        "codex_path_c_reviews": 2
+      },
+      "frictionCounts": {
+        "telemetry.metrics_reader_unavailable": 1,
+        "telemetry.metrics_snapshot_store_unavailable": 1,
+        "telemetry.trace_store_unavailable": 1,
+        "telemetry.health_false_healthy_with_null_stores": 1,
+        "fresh_f167_live_artifacts_since_2026-06-02": 0
+      }
+    },
+    {
+      "id": "legacy-cleanup",
+      "name": "legacy scheduled-task overlap guard",
+      "confidence": "high",
+      "activationCounts": {
+        "legacyScheduledTaskIds.harness-fit-digest": 1,
+        "legacyCleanup.disabled": 1
+      },
+      "frictionCounts": {
+        "legacy_task_overlap_count": 0,
+        "duplicate_trigger_count": 0
+      }
+    }
+  ],
+  "endpointChecks": [
+    {
+      "endpoint": "/api/telemetry/metrics",
+      "status": 503,
+      "result": "Metrics reader not available"
+    },
+    {
+      "endpoint": "/api/telemetry/metrics/history",
+      "status": 503,
+      "result": "Metrics snapshot store not available"
+    },
+    {
+      "endpoint": "/api/telemetry/traces/stats",
+      "status": 503,
+      "result": "Trace store not available"
+    },
+    {
+      "endpoint": "/api/telemetry/traces",
+      "status": 503,
+      "result": "Trace store not available (OTel may be disabled)"
+    },
+    {
+      "endpoint": "/api/telemetry/health",
+      "status": 200,
+      "result": "healthy, otelEnabled=true, traceStore=null, metricsSnapshotStore=null, errorRate=null"
+    }
+  ]
+}

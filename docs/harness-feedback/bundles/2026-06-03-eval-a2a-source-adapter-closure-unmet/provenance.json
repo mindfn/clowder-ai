@@ -1,0 +1,45 @@
+{
+  "verdictId": "2026-06-03-eval-a2a-source-adapter-closure-unmet",
+  "rawInputs": [
+    {
+      "path": "docs/harness-feedback/eval-domains/eval-a2a.yaml",
+      "sha256": "c8d7d0c1fe608b61b04cec0050c362effdd7dd1e76463ee0d717f58a05d42271"
+    },
+    {
+      "path": "docs/harness-feedback/verdicts/2026-06-02-eval-a2a-source-adapter-still-unavailable.md",
+      "sha256": "13a2b243b30dce8d52c71e66eab0ae2181c93dae97d4b05e6fbe28d33d9cd1c0"
+    },
+    {
+      "path": "docs/harness-feedback/bundles/2026-06-02-eval-a2a-source-adapter-still-unavailable/snapshot.json",
+      "sha256": "7cf417c9d7da32e171b32d181b676e3f0401fbb50ce3a939b2e5a7c8ff4941d0"
+    },
+    {
+      "path": "docs/harness-feedback/bundles/2026-06-02-eval-a2a-source-adapter-still-unavailable/attribution.json",
+      "sha256": "dd99731b9f2e5512019c8f191353be61c75ac3eade1b5e52a272243e98618550"
+    },
+    {
+      "path": "packages/api/data/audit-logs/audit-2026-06-03.ndjson",
+      "sha256": "4cb52df9c6017bf48f23a9da10e830ebe430823a5cf08cd1e4a257b5f2284b22"
+    },
+    {
+      "path": "packages/api/data/logs/api/api.2026-06-03.1.log",
+      "sha256": "35a62930a4a3958601d2e82f0f3c89ba32c7e71a823b75f9ae482a428033645a"
+    }
+  ],
+  "generatedAt": "2026-06-03T03:03:24.933Z",
+  "generator": {
+    "name": "eval-a2a-domain-thread",
+    "version": "manual-v1",
+    "catId": "codex",
+    "model": "gpt-5.5"
+  },
+  "verification": {
+    "commands": [
+      "Node fetch with fresh /api/session cookie against /api/telemetry/* endpoints",
+      "audit/log scan for thread_eval_a2a 2026-06-03 invocation and eval-domain-daily scheduler slot",
+      "review verification on feat/f167-no-data-resilience: env -u NODE_ENV pnpm --dir packages/api build; telemetry-routes.test.js; OTEL_SDK_DISABLED=false probe"
+    ],
+    "result": "source adapter unavailable persists in live runtime; owner Path C branch action is reviewed; legacy overlap and duplicate cron slot fire remain 0"
+  },
+  "sanitizeRulesVersion": "f192-e-pilot-v1"
+}
