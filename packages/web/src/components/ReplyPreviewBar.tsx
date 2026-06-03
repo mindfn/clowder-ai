@@ -2,7 +2,7 @@
 
 import type { CatData } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
-import { UNKNOWN_CAT_COLOR } from '@/lib/color-defaults';
+import { resolveSender } from '@/lib/resolve-sender';
 
 interface ReplyPreviewBarProps {
   replyToMessage: { id: string; content: string; senderCatId: string | null };
@@ -19,9 +19,8 @@ export function ReplyPreviewBar({ replyToMessage, cats, onClear }: ReplyPreviewB
   const coCreator = useCoCreatorConfig();
   const { senderCatId, content, id: replyToId } = replyToMessage;
 
-  const cat = senderCatId ? cats.find((c) => c.id === senderCatId) : undefined;
-  const senderLabel = cat ? `@${cat.displayName}` : senderCatId ? `@${senderCatId}` : coCreator.name;
-  const color = cat?.color.primary ?? (senderCatId ? UNKNOWN_CAT_COLOR.primary : coCreator.color.primary);
+  const getCatById = (id: string) => cats.find((c) => c.id === id);
+  const sender = resolveSender(senderCatId, getCatById, coCreator);
 
   const handleClick = () => {
     const target = document.querySelector(`[data-message-id="${CSS.escape(replyToId)}"]`);
@@ -34,17 +33,17 @@ export function ReplyPreviewBar({ replyToMessage, cats, onClear }: ReplyPreviewB
   return (
     <div
       className="flex items-center gap-2 px-3 py-1.5 rounded-t-lg cursor-pointer"
-      style={{ backgroundColor: `${color}18` }}
+      style={{ backgroundColor: `${sender.color}18` }}
       onClick={handleClick}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => e.key === 'Enter' && handleClick()}
     >
-      <span className="shrink-0 text-sm" style={{ color }}>
+      <span className="shrink-0 text-sm" style={{ color: sender.color }}>
         ↩
       </span>
-      <span className="truncate flex-1 text-xs font-medium" style={{ color }}>
-        {senderLabel}: {content.slice(0, 80)}
+      <span className="truncate flex-1 text-xs font-medium" style={{ color: sender.color }}>
+        {sender.label}: {content.slice(0, 80)}
         {content.length > 80 ? '…' : ''}
       </span>
       <button
@@ -53,8 +52,8 @@ export function ReplyPreviewBar({ replyToMessage, cats, onClear }: ReplyPreviewB
           e.stopPropagation();
           onClear();
         }}
-        className="shrink-0 p-1 rounded hover:bg-black/10 transition-colors"
-        style={{ color }}
+        className="shrink-0 p-1 rounded hover:bg-[var(--console-hover-bg)] transition-colors"
+        style={{ color: sender.color }}
         title="取消引用"
       >
         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
