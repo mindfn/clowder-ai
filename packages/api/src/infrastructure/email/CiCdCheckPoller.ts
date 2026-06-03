@@ -86,15 +86,17 @@ export class CiCdCheckPoller {
         reason: isFail ? 'github_ci_failure' : 'github_ci_pass',
         sourceCategory: 'ci',
       };
-      void invokeTrigger.trigger(
-        routeResult.threadId,
-        routeResult.catId as CatId,
-        entry.userId,
-        routeResult.content,
-        routeResult.messageId,
-        undefined,
-        policy,
-      );
+      void invokeTrigger
+        .trigger(
+          routeResult.threadId,
+          routeResult.catId as CatId,
+          entry.userId,
+          routeResult.content,
+          routeResult.messageId,
+          undefined,
+          policy,
+        )
+        .catch((err) => log.warn({ err }, '[CiCdCheckPoller] trigger failed (best-effort)'));
       log.info(`[CiCdCheckPoller] Triggered ${routeResult.catId} for CI ${isFail ? 'failure' : 'pass'}`);
     }
   }
