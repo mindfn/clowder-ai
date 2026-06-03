@@ -309,14 +309,15 @@ describe('McpManageContent', () => {
   });
 
   it('renders plugin-owned MCP with badge, normal toggle, and no delete', async () => {
+    // Real plugin MCPs are written by PluginResourceActivator with source: 'cat-cafe'
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({
         items: [
           {
-            ...MOCK_ITEMS[1],
+            ...MOCK_ITEMS[0],
             id: 'plugin:weixin-mp:mcp',
-            source: 'external',
+            source: 'cat-cafe',
             pluginId: 'weixin-mp',
             description: 'Plugin owned MCP',
           },
