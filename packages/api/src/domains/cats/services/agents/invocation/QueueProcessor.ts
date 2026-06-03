@@ -984,6 +984,21 @@ export class QueueProcessor {
           const msg = await messageStore.getById(candidate.messageId);
           if (!msg) continue; // message not found → skip
           if (msg.deliveryStatus === 'queued') continue; // not yet delivered → don't consume
+          // Cloud Codex P2: also check mergedMessageIds — coalesced entries can
+          // have additional trigger messages that are still queued (e.g. a callback
+          // post_message coalesced into a text-scan A2A entry). If ANY merged
+          // trigger is still queued, don't consume the entry.
+          let mergedSafe = true;
+          if (candidate.mergedMessageIds?.length) {
+            for (const mid of candidate.mergedMessageIds) {
+              const mergedMsg = await messageStore.getById(mid);
+              if (mergedMsg?.deliveryStatus === 'queued') {
+                mergedSafe = false;
+                break;
+              }
+            }
+          }
+          if (!mergedSafe) continue;
           safeToConsume.add(candidate.id);
         }
         if (safeToConsume.size > 0) {
