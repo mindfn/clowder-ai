@@ -498,6 +498,11 @@ function findAssistantDuplicate(messages: ChatMessage[], incoming: ChatMessage):
     for (let i = messages.length - 1; i >= 0; i--) {
       const existing = messages[i]!;
       if (existing.type !== 'assistant' || existing.catId !== incoming.catId) continue;
+      // #814: explicit post_message is standalone — never match as merge target,
+      // even though it carries stream.invocationId for #573 correlation.
+      // Without this guard, a stream chunk arriving after F5/hydration would
+      // match the hydrated explicit post by invocationId and overwrite it.
+      if (existing.extra?.isExplicitPost) continue;
       const existingInvId = getBubbleInvocationId(existing);
       if (existingInvId === incomingInvId) {
         if (existing.id !== incoming.id && crossesUserTurnBoundary(messages, existing, incoming)) continue;
