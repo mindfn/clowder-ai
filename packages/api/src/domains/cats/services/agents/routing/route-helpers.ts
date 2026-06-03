@@ -827,7 +827,11 @@ export async function assembleIncrementalContext(
     const contentWithDigest = digestRichBlocks(m);
     const cleanContent = sanitizeInjectedContent(contentWithDigest);
     const normalized: StoredMessage = cleanContent === m.content ? m : { ...m, content: cleanContent };
-    const rendered = formatMessage(normalized, { truncate: truncateLimit, messageMap });
+    const rendered = formatMessage(normalized, {
+      truncate: truncateLimit,
+      messageMap,
+      sanitizeContent: sanitizeInjectedContent,
+    });
     return `[${m.id}] ${rendered}`;
   });
 
@@ -1107,7 +1111,11 @@ async function assembleSmartWindowContext(
     const contentWithDigest = digestRichBlocks(m);
     const cleanContent = sanitizeInjectedContent(contentWithDigest);
     const normalized: StoredMessage = cleanContent === m.content ? m : { ...m, content: cleanContent };
-    const rendered = formatMessage(normalized, { truncate: truncateLimit, messageMap });
+    const rendered = formatMessage(normalized, {
+      truncate: truncateLimit,
+      messageMap,
+      sanitizeContent: sanitizeInjectedContent,
+    });
     return `[${m.id}] ${rendered}`;
   });
 
