@@ -7,7 +7,7 @@ created: 2026-02-26
 
 # Cat Cafe Feature Roadmap
 
-> 维护者：三猫 | 最后更新：2026-05-26（feature truth hygiene：F088/F101 active，F179 done）
+> 维护者：三猫 | 最后更新：2026-06-03（F220 GitHub Plugin Schedule Resource 立项）
 >
 > **规则**：只放活跃 Feature（idea/spec/in-progress/review），done 后移除。
 > 详细信息见 `docs/features/Fxxx-*.md`。
@@ -66,3 +66,4 @@ created: 2026-02-26
 | F208 | Capability Profile Routing — 能力画像档案 + 认知路由 | spec | Ragdoll | internal | [F208](features/F208-capability-profile-routing.md) |
 | F210 | Gemini CLI to Antigravity CLI Migration | in-progress | Maine Coon/Maine Coon | internal | [F210](features/F210-antigravity-cli-migration.md) |
 | F217 | Merge Gate Integrity — 检查覆盖 + 强制力 + 元守护（根治 6 类 gate 失效）| spec | Ragdoll Opus 4.8 | internal | [F217](features/F217-merge-gate-integrity.md) |
+| F220 | GitHub Plugin Schedule Resource — 定时任务插件化重构 | in-progress | Ragdoll | community [#844](https://github.com/zts212653/clowder-ai/issues/844) | [F220](features/F220-github-plugin-schedule-resource.md) |
