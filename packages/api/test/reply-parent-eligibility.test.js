@@ -7,9 +7,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-const { isEligibleReplyParent } = await import(
-  '../dist/domains/cats/services/stores/visibility.js'
-);
+const { isEligibleReplyParent } = await import('../dist/domains/cats/services/stores/visibility.js');
 
 /** Helper: minimal StoredMessage-like object */
 function mockMsg(overrides) {
