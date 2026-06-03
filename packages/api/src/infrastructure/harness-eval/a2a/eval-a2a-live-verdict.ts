@@ -6,6 +6,10 @@ import type { EvalDomainRegistryEntry } from '../domain/eval-domain-registry.js'
 import { parseVerdictHandoffPacket, type VerdictHandoffPacket } from '../verdict-handoff.js';
 import { buildA2aVerdictHandoff } from './eval-a2a-adapter.js';
 import { resolveA2aEvidenceBundle } from './eval-a2a-artifact-resolver.js';
+import {
+  buildA2aNoDataVerdictHandoff,
+  type BuildA2aNoDataVerdictInput,
+} from './eval-a2a-no-data-adapter.js';
 
 const SANITIZE_RULES_VERSION = 'f192-e-pilot-v1';
 const SAFE_VERDICT_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
@@ -238,6 +242,277 @@ function parseMarkdownYaml(path: string): ParsedMarkdownYaml {
     frontmatter: asRecord(parseYaml(frontmatterMatch[1] ?? '')),
     body: asRecord(parseYaml(bodyYaml) ?? {}),
   };
+}
+
+/**
+ * F167 Path A: end-to-end no-data verdict writer.
+ *
+ * Replaces the hand-written 2026-06-01..06-03 packets. Given structured
+ * `BuildA2aNoDataVerdictInput`, this:
+ *   1. Compiles a standard `VerdictHandoffPacket` via the no-data builder
+ *      (so the cross-thread handoff gate stays honest).
+ *   2. Materializes `bundle/<verdictId>/{snapshot,attribution,provenance}.json`
+ *      with the same field shape the eval cat has been writing by hand
+ *      (so existing Eval Hub consumers keep working without migration).
+ *   3. Writes `verdicts/<verdictId>.md` with the standard frontmatter,
+ *      plus the embedded `## Verdict Handoff Packet` JSON block and
+ *      `## Legacy Scheduled Task Status` section the eval cat has been
+ *      appending manually.
+ *
+ * Callers only need to supply structured input — they no longer have to
+ * remember the bundle/markdown conventions or risk schema drift.
+ */
+export interface GenerateA2aNoDataVerdictInput extends BuildA2aNoDataVerdictInput {
+  harnessFeedbackRoot: string;
+  /** Optional generator commit for provenance auditability. */
+  generatorCommit?: string;
+}
+
+export function generateA2aNoDataVerdict(input: GenerateA2aNoDataVerdictInput): A2aLiveVerdictArtifact {
+  assertSafeVerdictId(input.verdictId);
+
+  const packet = buildA2aNoDataVerdictHandoff(input);
+
+  const bundleDir = join(input.harnessFeedbackRoot, 'bundles', input.verdictId);
+  const verdictDir = join(input.harnessFeedbackRoot, 'verdicts');
+  const verdictPath = join(verdictDir, `${input.verdictId}.md`);
+  mkdirSync(bundleDir, { recursive: true });
+  mkdirSync(verdictDir, { recursive: true });
+
+  const evalSnapshotId = `eval-${packet.harnessUnderEval.featureId}-${input.verdictId}`;
+  const snapshotBundle = buildNoDataSnapshotBundle(input, packet, evalSnapshotId);
+  const attributionBundle = buildNoDataAttributionBundle(input, packet, evalSnapshotId);
+  const provenance = {
+    verdictId: input.verdictId,
+    rawInputs: [],
+    generatedAt: input.generatedAt,
+    generator: {
+      name: 'eval-a2a-no-data-verdict',
+      version: '1',
+      ...(input.generatorCommit ? { commit: input.generatorCommit } : {}),
+    },
+    sanitizeRulesVersion: SANITIZE_RULES_VERSION,
+    inputFingerprint: fingerprintInput(input),
+  };
+
+  writeJson(join(bundleDir, 'snapshot.json'), snapshotBundle);
+  writeJson(join(bundleDir, 'attribution.json'), attributionBundle);
+  writeJson(join(bundleDir, 'provenance.json'), provenance);
+
+  const snapshotRef = packet.evidencePacket.snapshotRefs[0] ?? `snapshot:bundle/${input.verdictId}/snapshot`;
+  const attributionRefs = packet.evidencePacket.attributionRefs;
+  const markdown = formatNoDataVerdictMarkdown(input, packet, snapshotRef);
+  writeFileSync(verdictPath, markdown, 'utf8');
+
+  return {
+    path: verdictPath,
+    bundleDir,
+    packet,
+    markdown,
+    refs: {
+      bundleDir,
+      snapshotRef,
+      attributionRefs,
+    },
+    isLive: true,
+    sentCrossThreadMessage: false,
+  };
+}
+
+function buildNoDataSnapshotBundle(
+  input: GenerateA2aNoDataVerdictInput,
+  packet: VerdictHandoffPacket,
+  evalSnapshotId: string,
+): Record<string, unknown> {
+  return {
+    verdictId: input.verdictId,
+    evalSnapshotId,
+    featureId: packet.harnessUnderEval.featureId,
+    generatedAt: input.generatedAt,
+    window: input.window,
+    sourceAdapter: input.domain.sourceAdapter,
+    ...(input.previousVerdict
+      ? {
+          previousVerdictRef: input.previousVerdict.packetId,
+          closureCheck: {
+            previousClosureCondition: input.previousVerdict.closureCondition,
+            closureMet: input.previousVerdict.closureMet,
+            reason: input.previousVerdict.reason,
+          },
+        }
+      : {}),
+    ...(input.ownerActionStatus ? { ownerActionStatus: input.ownerActionStatus } : {}),
+    legacyScheduledTaskStatus: input.legacyScheduledTaskStatus,
+    dailySchedulerStatus: input.dailySchedulerStatus,
+    components: [
+      {
+        id: 'source-adapter',
+        name: packet.harnessUnderEval.name,
+        confidence: 'no-data',
+        activationCounts: noDataActivationCounts(input),
+        frictionCounts: noDataFrictionCounts(packet),
+      },
+      {
+        id: 'legacy-cleanup',
+        name: 'legacy scheduled-task overlap guard',
+        confidence: 'high',
+        activationCounts: {
+          [`legacyScheduledTaskIds.${input.legacyScheduledTaskStatus.taskIds.join(',') || 'none'}`]: 1,
+          [`legacyCleanup.${input.legacyScheduledTaskStatus.cleanupStatus}`]: 1,
+        },
+        frictionCounts: {
+          legacy_task_overlap_count: input.legacyScheduledTaskStatus.activeLegacyOverlap,
+          duplicate_trigger_count: input.dailySchedulerStatus.duplicateCronSlotFires,
+        },
+      },
+    ],
+    endpointChecks: input.noDataReason.endpointProbes,
+  };
+}
+
+function noDataActivationCounts(input: GenerateA2aNoDataVerdictInput): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const [day, n] of Object.entries(input.dailySchedulerStatus.invocationsPerSlot)) {
+    counts[`eval-domain-daily.invocations_${day}`] = n;
+  }
+  return counts;
+}
+
+function noDataFrictionCounts(packet: VerdictHandoffPacket): Record<string, number> {
+  return packet.dailyTrend.current;
+}
+
+function buildNoDataAttributionBundle(
+  input: GenerateA2aNoDataVerdictInput,
+  packet: VerdictHandoffPacket,
+  evalSnapshotId: string,
+): Record<string, unknown> {
+  const evidence: Array<{ type: string; anchor: string; excerpt: string }> = [];
+  for (const probe of input.noDataReason.endpointProbes) {
+    evidence.push({
+      type: 'endpoint_check',
+      anchor: `source-adapter/${probe.endpoint}`,
+      excerpt: `${probe.endpoint} returned ${probe.status}: ${probe.result}`,
+    });
+  }
+  if (input.ownerActionStatus) {
+    evidence.push({
+      type: 'owner_action',
+      anchor: `branch/${input.ownerActionStatus.branch}`,
+      excerpt: `Owner branch ${input.ownerActionStatus.branch} reached ${input.ownerActionStatus.latestCommit}; review status: ${input.ownerActionStatus.reviewStatus}.${input.ownerActionStatus.notes ? ' ' + input.ownerActionStatus.notes : ''}`,
+    });
+  }
+  if (input.previousVerdict) {
+    evidence.push({
+      type: 'previous_verdict',
+      anchor: `verdict/${input.previousVerdict.packetId}`,
+      excerpt: `Previous closure condition (${input.previousVerdict.closureCondition}) closureMet=${input.previousVerdict.closureMet}: ${input.previousVerdict.reason}`,
+    });
+  }
+  return {
+    verdictId: input.verdictId,
+    featureId: packet.harnessUnderEval.featureId,
+    evalSnapshotId,
+    generatedAt: input.generatedAt,
+    findings: [
+      {
+        id: 'source-adapter-unavailable',
+        relatedFeature: 'F192',
+        frictionSignal: {
+          type: 'source_adapter_unavailable',
+          severity: 'medium',
+          confidence: 0.95,
+        },
+        attribution: {
+          primaryLayer: 'environment_drift',
+          pipelineOrHuman: 'pipeline',
+          evidence,
+        },
+        proposedAction: [
+          {
+            action: 'restore-or-degrade-source-adapter',
+            target: input.domain.sourceAdapter,
+            rationale: input.noDataReason.summary,
+          },
+        ],
+        status: 'open',
+      },
+    ],
+  };
+}
+
+function fingerprintInput(input: GenerateA2aNoDataVerdictInput): string {
+  const stable = {
+    verdictId: input.verdictId,
+    generatedAt: input.generatedAt,
+    probes: input.noDataReason.endpointProbes,
+    legacy: input.legacyScheduledTaskStatus,
+    scheduler: input.dailySchedulerStatus,
+    ownerAction: input.ownerActionStatus ?? null,
+    previous: input.previousVerdict ?? null,
+  };
+  return createHash('sha256').update(JSON.stringify(stable)).digest('hex').slice(0, 16);
+}
+
+function formatNoDataVerdictMarkdown(
+  input: GenerateA2aNoDataVerdictInput,
+  packet: VerdictHandoffPacket,
+  sourceSnapshotRef: string,
+): string {
+  const lines: string[] = [
+    '---',
+    'feature_ids: [F192, F167]',
+    'topics: [harness-eval, eval-a2a, source-adapter, live-verdict, no-data]',
+    'doc_kind: harness-feedback',
+    'feedback_type: live-verdict',
+    'domain_id: eval:a2a',
+    `packet_id: ${packet.id}`,
+    `source_snapshot: "${sourceSnapshotRef}"`,
+    '---',
+    '',
+    `# Live Verdict — ${input.verdictId}`,
+    '',
+    `- Verdict: \`${packet.verdict}\``,
+    `- Phenomenon: ${packet.phenomenon}`,
+    `- Harness: ${packet.harnessUnderEval.featureId}/${packet.harnessUnderEval.componentId} (${packet.harnessUnderEval.name})`,
+  ];
+  if (input.ownerActionStatus) {
+    lines.push(
+      `- Owner action observed: ${input.ownerActionStatus.branch}@${input.ownerActionStatus.latestCommit} (${input.ownerActionStatus.reviewStatus})${input.ownerActionStatus.notes ? ' — ' + input.ownerActionStatus.notes : ''}`,
+    );
+  }
+  lines.push(
+    `- Owner ask: ${packet.ownerAsk.requestedAction}`,
+    `- Re-eval: ${packet.acceptanceReevalPlan.closureCondition} (next at ${packet.acceptanceReevalPlan.nextEvalAt})`,
+    '',
+    'Evidence:',
+    ...packet.evidencePacket.snapshotRefs.map((ref) => `- ${ref}`),
+    ...packet.evidencePacket.attributionRefs.map((ref) => `- ${ref}`),
+    ...packet.evidencePacket.metricRefs.map((ref) => `- metric:${ref}`),
+    ...packet.evidencePacket.sampleTraceRefs.map((ref) => `- ${ref}`),
+    '',
+    '## Verdict Handoff Packet',
+    '',
+    '```json',
+    JSON.stringify(packet, null, 2),
+    '```',
+    '',
+    '## Legacy Scheduled Task Status',
+    '',
+    `- Tasks: ${input.legacyScheduledTaskStatus.taskIds.join(', ') || '(none)'}`,
+    `- Cleanup status: \`${input.legacyScheduledTaskStatus.cleanupStatus}\``,
+    `- Active overlap: ${input.legacyScheduledTaskStatus.activeLegacyOverlap}`,
+    `- Daily slot ${input.dailySchedulerStatus.currentSlot} fires: ${input.dailySchedulerStatus.invocationsPerSlot[ymdFromSlot(input.dailySchedulerStatus.currentSlot)] ?? 'n/a'} (duplicates: ${input.dailySchedulerStatus.duplicateCronSlotFires})`,
+    '',
+    'Counterarguments:',
+    ...packet.counterarguments.map((counterargument) => `- ${counterargument}`),
+    '',
+  );
+  return lines.join('\n');
+}
+
+function ymdFromSlot(slot: string): string {
+  return slot.slice(0, 10);
 }
 
 function formatLiveVerdictMarkdown(verdictId: string, packet: VerdictHandoffPacket, sourceSnapshotRef: string): string {
