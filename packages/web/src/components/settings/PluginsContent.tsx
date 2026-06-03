@@ -10,7 +10,6 @@ import {
   settingsResourceCardClass,
   settingsResourceRowClass,
 } from '../SettingsResourceCard';
-import { GithubConfigPanel } from './GithubConfigPanel';
 import { PluginConfigPanel } from './PluginConfigPanel';
 import { SettingsBadge } from './primitives/SettingsBadge';
 import { SettingsText } from './primitives/SettingsText';
@@ -132,12 +131,7 @@ export function PluginsContent() {
               </div>
             </button>
 
-            {isExpanded &&
-              (plugin.id === 'github' ? (
-                <GithubConfigPanel />
-              ) : (
-                <PluginConfigPanel plugin={plugin} onUpdated={fetchPlugins} />
-              ))}
+            {isExpanded && <PluginConfigPanel plugin={plugin} onUpdated={fetchPlugins} />}
           </article>
         );
       })}

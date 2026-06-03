@@ -1664,7 +1664,8 @@ async function main(): Promise<void> {
         unregister: (taskId) => taskRunnerV2.unregister(taskId),
       },
       // F220-B: Mutable deps ref — populated via rehydrateGitHubSchedules after GitHub services created
-      scheduleFactoryDeps: scheduleFactoryDeps as import('./domains/plugin/ScheduleFactoryRegistry.js').ScheduleFactoryDeps,
+      scheduleFactoryDeps:
+        scheduleFactoryDeps as import('./domains/plugin/ScheduleFactoryRegistry.js').ScheduleFactoryDeps,
     });
 
     const startupCaps = await readCapabilitiesConfig(resolveActiveProjectRoot());
@@ -1720,7 +1721,8 @@ async function main(): Promise<void> {
         pluginRegistry,
         scheduleFactoryRegistry,
         taskRunner: taskRunnerV2,
-        scheduleFactoryDeps: scheduleFactoryDeps as import('./domains/plugin/ScheduleFactoryRegistry.js').ScheduleFactoryDeps,
+        scheduleFactoryDeps:
+          scheduleFactoryDeps as import('./domains/plugin/ScheduleFactoryRegistry.js').ScheduleFactoryDeps,
         log: app.log,
       });
     };
@@ -2795,22 +2797,32 @@ async function main(): Promise<void> {
 
       const fetchOpenPRs = async (repo: string) => {
         const stdout = await fetchGhApi([
-          'api', `/repos/${repo}/pulls`, '--jq',
+          'api',
+          `/repos/${repo}/pulls`,
+          '--jq',
           '.[] | {number, title, html_url, user: .user.login, author_association, draft}',
           '--paginate',
         ]);
         if (!stdout.trim()) return [];
-        return stdout.trim().split('\n').map((line: string) => JSON.parse(line));
+        return stdout
+          .trim()
+          .split('\n')
+          .map((line: string) => JSON.parse(line));
       };
 
       const fetchOpenIssues = async (repo: string) => {
         const stdout = await fetchGhApi([
-          'api', `/repos/${repo}/issues`, '--jq',
+          'api',
+          `/repos/${repo}/issues`,
+          '--jq',
           '.[] | select(.pull_request == null) | {number, title, html_url, user: .user.login, author_association}',
           '--paginate',
         ]);
         if (!stdout.trim()) return [];
-        return stdout.trim().split('\n').map((line: string) => JSON.parse(line));
+        return stdout
+          .trim()
+          .split('\n')
+          .map((line: string) => JSON.parse(line));
       };
 
       const { getOwnerUserId } = await import('./config/cat-config-loader.js');

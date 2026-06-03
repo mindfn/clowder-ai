@@ -8,32 +8,32 @@
  * KD-3: All factories are white-listed by factoryId — no arbitrary script loading.
  * KD-7: Poller logic unchanged — factories only wire deps and override task ID.
  */
-import type { ITaskStore } from '../cats/services/stores/ports/TaskStore.js';
-import type { CiCdRouter } from '../../infrastructure/email/CiCdRouter.js';
+
+import type { IConnectorThreadBindingStore } from '../../infrastructure/connectors/ConnectorThreadBindingStore.js';
+import type { ReconciliationDedup } from '../../infrastructure/connectors/github-repo-event/ReconciliationDedup.js';
+import type { GhIssueItem, GhPrItem } from '../../infrastructure/connectors/github-repo-event/RepoScanTaskSpec.js';
+import { createRepoScanTaskSpec } from '../../infrastructure/connectors/github-repo-event/RepoScanTaskSpec.js';
 import { createCiCdCheckTaskSpec } from '../../infrastructure/email/CiCdCheckTaskSpec.js';
-import type { ConflictRouter } from '../../infrastructure/email/ConflictRouter.js';
+import type { CiCdRouter } from '../../infrastructure/email/CiCdRouter.js';
 import type { ConflictAutoExecutor } from '../../infrastructure/email/ConflictAutoExecutor.js';
 import { createConflictCheckTaskSpec } from '../../infrastructure/email/ConflictCheckTaskSpec.js';
-import type { ReviewFeedbackRouter } from '../../infrastructure/email/ReviewFeedbackRouter.js';
-import type { PrFeedbackComment, PrReviewDecision } from '../../infrastructure/email/ReviewFeedbackRouter.js';
-import type { ReviewFeedbackPrMetadata } from '../../infrastructure/email/ReviewFeedbackTaskSpec.js';
-import { createReviewFeedbackTaskSpec } from '../../infrastructure/email/ReviewFeedbackTaskSpec.js';
+import type { ConflictRouter } from '../../infrastructure/email/ConflictRouter.js';
 import type { ConnectorInvokeTrigger } from '../../infrastructure/email/ConnectorInvokeTrigger.js';
 import type {
   ConnectorDeliveryDeps,
   ConnectorDeliveryInput,
   ConnectorDeliveryResult,
 } from '../../infrastructure/email/deliver-connector-message.js';
-import type { IConnectorThreadBindingStore } from '../../infrastructure/connectors/ConnectorThreadBindingStore.js';
-import type { ReconciliationDedup } from '../../infrastructure/connectors/github-repo-event/ReconciliationDedup.js';
 import type {
-  GhIssueItem,
-  GhPrItem,
-} from '../../infrastructure/connectors/github-repo-event/RepoScanTaskSpec.js';
-import { createRepoScanTaskSpec } from '../../infrastructure/connectors/github-repo-event/RepoScanTaskSpec.js';
+  PrFeedbackComment,
+  PrReviewDecision,
+  ReviewFeedbackRouter,
+} from '../../infrastructure/email/ReviewFeedbackRouter.js';
+import type { ReviewFeedbackPrMetadata } from '../../infrastructure/email/ReviewFeedbackTaskSpec.js';
+import { createReviewFeedbackTaskSpec } from '../../infrastructure/email/ReviewFeedbackTaskSpec.js';
 import type { TaskSpec_P1 } from '../../infrastructure/scheduler/types.js';
-import type { ScheduleFactory, ScheduleFactoryDeps } from './ScheduleFactoryRegistry.js';
-import type { ScheduleFactoryRegistry } from './ScheduleFactoryRegistry.js';
+import type { ITaskStore } from '../cats/services/stores/ports/TaskStore.js';
+import type { ScheduleFactory, ScheduleFactoryDeps, ScheduleFactoryRegistry } from './ScheduleFactoryRegistry.js';
 
 /**
  * Typed dep extraction for GitHub schedule factories.
@@ -134,12 +134,14 @@ const repoScanFactory: ScheduleFactory = {
     // repo-scan needs redis-dependent deps — validate before construction
     if (!d.repoAllowlist || !d.inboxCatId || !d.defaultUserId) {
       throw new Error(
-        '[F220] github.repo-scan requires repoAllowlist, inboxCatId, defaultUserId in deps. '
-          + 'Set GITHUB_REPO_ALLOWLIST and GITHUB_REPO_INBOX_CAT_ID environment variables.',
+        '[F220] github.repo-scan requires repoAllowlist, inboxCatId, defaultUserId in deps. ' +
+          'Set GITHUB_REPO_ALLOWLIST and GITHUB_REPO_INBOX_CAT_ID environment variables.',
       );
     }
     if (!d.reconciliationDedup || !d.bindingStore || !d.deliverFn || !d.deliveryDeps) {
-      throw new Error('[F220] github.repo-scan requires redis-dependent deps (reconciliationDedup, bindingStore, deliverFn, deliveryDeps)');
+      throw new Error(
+        '[F220] github.repo-scan requires redis-dependent deps (reconciliationDedup, bindingStore, deliverFn, deliveryDeps)',
+      );
     }
     if (!d.fetchOpenPRs || !d.fetchOpenIssues) {
       throw new Error('[F220] github.repo-scan requires fetchOpenPRs and fetchOpenIssues in deps');

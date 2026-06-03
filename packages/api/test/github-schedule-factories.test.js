@@ -10,29 +10,27 @@
  * - Rehydration of GitHub schedule resources on startup (AC-B4)
  * - Custom ID propagation to existing TaskSpec factories
  */
-import { describe, test } from 'node:test';
+
 import assert from 'node:assert/strict';
-import { join, dirname } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Phase A imports
-import { ScheduleFactoryRegistry } from '../dist/domains/plugin/ScheduleFactoryRegistry.js';
-
 // Phase B imports
 import { registerGitHubScheduleFactories } from '../dist/domains/plugin/github-schedule-factories.js';
-
 // Manifest parser
 import { parsePluginManifest } from '../dist/domains/plugin/plugin-manifest.js';
-
+// Phase A imports
+import { ScheduleFactoryRegistry } from '../dist/domains/plugin/ScheduleFactoryRegistry.js';
+import { createRepoScanTaskSpec } from '../dist/infrastructure/connectors/github-repo-event/RepoScanTaskSpec.js';
 // TaskSpec factories (for custom id tests)
 import { createCiCdCheckTaskSpec } from '../dist/infrastructure/email/CiCdCheckTaskSpec.js';
 import { createConflictCheckTaskSpec } from '../dist/infrastructure/email/ConflictCheckTaskSpec.js';
 import { createReviewFeedbackTaskSpec } from '../dist/infrastructure/email/ReviewFeedbackTaskSpec.js';
-import { createRepoScanTaskSpec } from '../dist/infrastructure/connectors/github-repo-event/RepoScanTaskSpec.js';
 
 const stubLog = {
   info: () => {},
@@ -250,10 +248,7 @@ describe('GitHub schedule factory registration (F220-B Task 3)', () => {
     const factory = registry.get('github.repo-scan');
     assert.ok(factory);
     const deps = makeGitHubDeps({ repoAllowlist: undefined });
-    assert.throws(
-      () => factory.createTaskSpec('schedule:github:repo-scan', deps),
-      /repoAllowlist/,
-    );
+    assert.throws(() => factory.createTaskSpec('schedule:github:repo-scan', deps), /repoAllowlist/);
   });
 
   test('github.repo-scan factory throws when redis deps missing', () => {
@@ -262,10 +257,7 @@ describe('GitHub schedule factory registration (F220-B Task 3)', () => {
     const factory = registry.get('github.repo-scan');
     assert.ok(factory);
     const deps = makeGitHubDeps({ reconciliationDedup: undefined });
-    assert.throws(
-      () => factory.createTaskSpec('schedule:github:repo-scan', deps),
-      /reconciliationDedup/,
-    );
+    assert.throws(() => factory.createTaskSpec('schedule:github:repo-scan', deps), /reconciliationDedup/);
   });
 
   test('asGitHub validates taskStore presence', () => {
@@ -273,10 +265,7 @@ describe('GitHub schedule factory registration (F220-B Task 3)', () => {
     registerGitHubScheduleFactories(registry);
     const factory = registry.get('github.cicd-check');
     assert.ok(factory);
-    assert.throws(
-      () => factory.createTaskSpec('schedule:github:cicd-check', { log: stubLog }),
-      /taskStore/,
-    );
+    assert.throws(() => factory.createTaskSpec('schedule:github:cicd-check', { log: stubLog }), /taskStore/);
   });
 });
 
