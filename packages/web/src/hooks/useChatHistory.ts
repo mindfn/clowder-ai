@@ -174,6 +174,9 @@ function mergeMessageExtra(
   const cliDiagnostics = preferred?.cliDiagnostics ?? fallback?.cliDiagnostics;
   const governanceBlocked = preferred?.governanceBlocked ?? fallback?.governanceBlocked;
   const systemKind = preferred?.systemKind ?? fallback?.systemKind;
+  // #814 P2: preserve isExplicitPost so F5/thread-switch doesn't lose the
+  // "don't merge by invocation" semantic for explicit post_message callbacks.
+  const isExplicitPost = preferred?.isExplicitPost ?? fallback?.isExplicitPost;
   if (
     !rich &&
     !crossPost &&
@@ -183,7 +186,8 @@ function mergeMessageExtra(
     !timeoutDiagnostics &&
     !cliDiagnostics &&
     !governanceBlocked &&
-    !systemKind
+    !systemKind &&
+    !isExplicitPost
   ) {
     return undefined;
   }
@@ -197,6 +201,7 @@ function mergeMessageExtra(
     ...(cliDiagnostics ? { cliDiagnostics } : {}),
     ...(governanceBlocked ? { governanceBlocked } : {}),
     ...(systemKind ? { systemKind } : {}),
+    ...(isExplicitPost ? { isExplicitPost: true as const } : {}),
   };
 }
 
@@ -686,6 +691,11 @@ export function useChatHistory(threadId: string) {
               stream?: { invocationId?: string };
               scheduler?: SchedulerMessageExtra['scheduler'];
               systemKind?: 'a2a_routing';
+              /** #814: explicit post_message bypass — survives hydration so F5/thread-switch
+               *  preserves the "don't merge by invocation" semantic. */
+              isExplicitPost?: boolean;
+              /** #814: direction pills — persisted by API, must survive hydration. */
+              targetCats?: string[];
               /** F212 Phase B: history-loader path may already carry cliDiagnostics under
                *  extra (when client wrote it via active-path) — prefer it over metadata copy. */
               cliDiagnostics?: CliDiagnostics;
@@ -735,6 +745,8 @@ export function useChatHistory(threadId: string) {
                   m.extra?.stream ||
                   m.extra?.scheduler ||
                   m.extra?.systemKind ||
+                  m.extra?.isExplicitPost ||
+                  m.extra?.targetCats ||
                   cliDiag;
                 if (!hasExtraField) return {};
                 return {
@@ -744,6 +756,8 @@ export function useChatHistory(threadId: string) {
                     ...(m.extra?.stream ? { stream: m.extra.stream } : {}),
                     ...(m.extra?.scheduler ? { scheduler: m.extra.scheduler } : {}),
                     ...(m.extra?.systemKind ? { systemKind: m.extra.systemKind } : {}),
+                    ...(m.extra?.isExplicitPost ? { isExplicitPost: true as const } : {}),
+                    ...(m.extra?.targetCats ? { targetCats: m.extra.targetCats } : {}),
                     ...(cliDiag ? { cliDiagnostics: cliDiag } : {}),
                   },
                 };

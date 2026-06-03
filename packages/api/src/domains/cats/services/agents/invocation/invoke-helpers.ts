@@ -43,11 +43,13 @@ export function classifyResumeFailure(message: string | undefined): ResumeFailur
 
   // Claude: "No conversation found with session ID: <uuid>"
   // Codex:  "no rollout found for thread id <uuid>"
-  // Gemini: "Error resuming session: Invalid session identifier"
+  // Gemini: "Error resuming session: Invalid session identifier \"<id>\""
+  //   (narrowed to "Invalid session identifier" to avoid matching auth/rate-limit
+  //   errors that also start with "Error resuming session:")
   // OpenCode: "Session not found"
   // (Kimi silently accepts any session ID — no error produced)
   if (
-    /(No conversation found with session ID|no rollout found|missing_rollout|Error resuming session|Session not found)/i.test(
+    /(No conversation found with session ID|no rollout found|missing_rollout|Invalid session identifier|Session not found)/i.test(
       message,
     )
   ) {
