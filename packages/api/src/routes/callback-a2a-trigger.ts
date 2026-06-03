@@ -205,8 +205,12 @@ export async function enqueueA2ATargets(
     }
     if (enqueued.length > 0) {
       await emitQueueUpdated(
-        deps.socketManager, opts.userId, threadId,
-        deps.invocationQueue.list(threadId, opts.userId), deps.messageStore ?? null, 'enqueued',
+        deps.socketManager,
+        opts.userId,
+        threadId,
+        deps.invocationQueue.list(threadId, opts.userId),
+        deps.messageStore ?? null,
+        'enqueued',
       );
     }
     log.info(
