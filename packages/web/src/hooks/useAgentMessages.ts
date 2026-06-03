@@ -2942,12 +2942,19 @@ export function useAgentMessages() {
           // skips merge for explicit post_message callbacks in fallback path.
           ...(msg.extra?.isExplicitPost ? { isExplicitPost: true } : {}),
           ...(msg.extra?.targetCats ? { targetCats: msg.extra.targetCats } : {}),
-          stream: {
-            invocationId,
-            ...(turnInvocationIdForFallback && turnInvocationIdForFallback !== invocationId
-              ? { turnInvocationId: turnInvocationIdForFallback }
-              : {}),
-          },
+          // #814: explicit post_message is standalone — omit stream block so
+          // getStreamStableInvocationKey won't match it, preventing later
+          // stream events from the same invocation from replacing this bubble.
+          ...(isExplicitPost
+            ? {}
+            : {
+                stream: {
+                  invocationId,
+                  ...(turnInvocationIdForFallback && turnInvocationIdForFallback !== invocationId
+                    ? { turnInvocationId: turnInvocationIdForFallback }
+                    : {}),
+                },
+              }),
         };
         addMessage({
           id: fallbackId,
