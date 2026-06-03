@@ -243,7 +243,13 @@ describe('plugins/github/plugin.yaml (AC-B1)', () => {
     }
 
     const resourceNames = manifest.resources.map((r) => r.name).sort();
-    assert.deepStrictEqual(resourceNames, ['cicd-check', 'conflict-check', 'issue-tracking', 'repo-scan', 'review-feedback']);
+    assert.deepStrictEqual(resourceNames, [
+      'cicd-check',
+      'conflict-check',
+      'issue-tracking',
+      'repo-scan',
+      'review-feedback',
+    ]);
   });
 });
 
