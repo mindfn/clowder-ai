@@ -50,6 +50,8 @@ export interface AutomationState {
   readonly conflict?: ConflictAutomationState;
   readonly review?: ReviewAutomationState;
   readonly closedAt?: number;
+  /** F220 Phase C: user-provided instructions appended to trigger messages. Task preference, not system override. */
+  readonly trackingInstructions?: string;
 }
 
 export interface TaskItem {

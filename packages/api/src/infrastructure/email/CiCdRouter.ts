@@ -91,11 +91,17 @@ export class CiCdRouter {
 
   private async deliver(
     poll: CiPollResult,
-    task: { id: string; threadId: string; ownerCatId: string | null; userId?: string },
+    task: {
+      id: string;
+      threadId: string;
+      ownerCatId: string | null;
+      userId?: string;
+      automationState?: { trackingInstructions?: string };
+    },
     fingerprint: string,
   ): Promise<CiRouteResult> {
     const { taskStore, log } = this.opts;
-    const content = buildCiMessageContent(poll);
+    const content = buildCiMessageContent(poll, task.automationState?.trackingInstructions);
 
     const source: ConnectorSource = {
       connector: 'github-ci',
@@ -137,7 +143,7 @@ export class CiCdRouter {
   }
 }
 
-export function buildCiMessageContent(poll: CiPollResult): string {
+export function buildCiMessageContent(poll: CiPollResult, trackingInstructions?: string): string {
   const bucketEmoji = poll.aggregateBucket === 'pass' ? '✅' : '❌';
   const bucketLabel = poll.aggregateBucket === 'pass' ? 'CI 通过' : 'CI 失败';
 
@@ -160,6 +166,11 @@ export function buildCiMessageContent(poll: CiPollResult): string {
 
   if (poll.aggregateBucket === 'fail') {
     lines.push('', '请检查 CI 失败原因并修复。');
+  }
+
+  // F220 Phase C (AC-C2): append user-provided tracking instructions
+  if (trackingInstructions) {
+    lines.push('', '📌 **Tracking Instructions**', trackingInstructions);
   }
 
   return lines.join('\n');

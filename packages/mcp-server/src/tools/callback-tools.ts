@@ -887,6 +887,12 @@ export async function handleCheckPermissionStatus(input: { requestId: string }):
 export const registerPrTrackingInputSchema = {
   repoFullName: z.string().min(1).describe('Repository full name in owner/repo format (e.g. "zts212653/cat-cafe")'),
   prNumber: z.number().int().positive().describe('PR number'),
+  // F220 Phase C (AC-C1): tracking instructions appended to trigger messages
+  instructions: z
+    .string()
+    .max(2000)
+    .optional()
+    .describe('Tracking instructions — appended to trigger messages when review/CI events fire. Task preference, not system override.'),
   catId: z
     .string()
     .optional()
@@ -896,6 +902,7 @@ export const registerPrTrackingInputSchema = {
 export async function handleRegisterPrTracking(input: {
   repoFullName: string;
   prNumber: number;
+  instructions?: string;
   catId?: string;
 }): Promise<ToolResult> {
   // F174 Phase E (AC-E2/E5): explicit kind:'none'. PR tracking is one-shot
@@ -906,7 +913,29 @@ export async function handleRegisterPrTracking(input: {
       callbackPost('/api/callbacks/register-pr-tracking', {
         repoFullName: input.repoFullName,
         prNumber: input.prNumber,
+        ...(input.instructions ? { instructions: input.instructions } : {}),
         ...(input.catId ? { catId: input.catId } : {}),
+      }),
+    policy: { kind: 'none' },
+  });
+}
+
+// F220 Phase C (AC-C3): Unregister tracking task by subjectKey
+export const unregisterTrackingInputSchema = {
+  subjectKey: z
+    .string()
+    .min(1)
+    .describe('Subject key to unregister. Format: "pr:{owner/repo}#{num}" or "issue:{owner/repo}#{num}"'),
+};
+
+export async function handleUnregisterTracking(input: {
+  subjectKey: string;
+}): Promise<ToolResult> {
+  return withDegradation({
+    toolName: 'unregister_tracking',
+    primary: () =>
+      callbackPost('/api/callbacks/unregister-tracking', {
+        subjectKey: input.subjectKey,
       }),
     policy: { kind: 'none' },
   });
@@ -1479,6 +1508,15 @@ export const callbackTools = [
       'GOTCHA: Must be called in the same session that created the PR, while callback credentials are still valid.',
     inputSchema: registerPrTrackingInputSchema,
     handler: handleRegisterPrTracking,
+  },
+  {
+    name: 'cat_cafe_unregister_tracking',
+    description:
+      'Unregister a PR or issue tracking task by subjectKey. Stops all automated notifications ' +
+      '(review feedback, CI/CD, conflict detection, issue comments) for this subject. ' +
+      'Format: "pr:{owner/repo}#{num}" or "issue:{owner/repo}#{num}".',
+    inputSchema: unregisterTrackingInputSchema,
+    handler: handleUnregisterTracking,
   },
   {
     name: 'cat_cafe_update_workflow',

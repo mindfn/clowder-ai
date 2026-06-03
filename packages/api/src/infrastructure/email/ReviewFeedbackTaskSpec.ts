@@ -211,6 +211,7 @@ export function createReviewFeedbackTaskSpec(opts: ReviewFeedbackTaskSpecOptions
             threadId: task.threadId,
             catId: task.ownerCatId ?? '',
             userId: task.userId ?? '',
+            trackingInstructions: task.automationState?.trackingInstructions,
           },
         );
 

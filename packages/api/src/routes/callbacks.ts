@@ -2068,6 +2068,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       .min(1)
       .regex(/^[^/]+\/[^/]+$/, 'Must be owner/repo format'),
     prNumber: z.number().int().positive(),
+    // F220 Phase C (AC-C1): tracking instructions appended to trigger messages
+    instructions: z.string().max(2000).optional(),
     catId: z.string().min(1).optional(), // ignored — server uses record.catId
   });
 
@@ -2087,7 +2089,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     const record = requireCallbackAuth(request, reply);
     if (!record) return;
 
-    const { repoFullName, prNumber } = parsed.data;
+    const { repoFullName, prNumber, instructions } = parsed.data;
 
     // Use authoritative catId from invocation record, not caller payload.
     const catId = record.catId;
@@ -2118,6 +2120,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         why: `Tracking PR ${repoFullName}#${prNumber} for review feedback, CI/CD, and conflict detection`,
         createdBy: catId,
         userId: record.userId,
+        // F220 Phase C (AC-C1): store user-provided tracking instructions
+        automationState: instructions ? { trackingInstructions: instructions } : undefined,
       });
 
       return { status: 'ok', threadId: record.threadId, task };
@@ -2128,6 +2132,42 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       }
       throw error;
     }
+  });
+
+  // F220 Phase C (AC-C3): Unregister tracking task by subjectKey
+  const unregisterTrackingSchema = z.object({
+    subjectKey: z.string().min(1),
+  });
+
+  app.post('/api/callbacks/unregister-tracking', async (request, reply) => {
+    if (!taskStore) {
+      reply.status(503);
+      return { error: 'Task store not configured' };
+    }
+
+    const parsed = unregisterTrackingSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.status(400);
+      return { error: 'Invalid request body', details: parsed.error.issues };
+    }
+
+    const record = requireCallbackAuth(request, reply);
+    if (!record) return;
+
+    const task = await taskStore.getBySubject(parsed.data.subjectKey);
+    if (!task) {
+      reply.status(404);
+      return { error: `No tracking task for subject: ${parsed.data.subjectKey}` };
+    }
+
+    // Ownership check: only the user who registered can unregister
+    if (task.userId && record.userId && task.userId !== record.userId) {
+      reply.status(403);
+      return { error: 'Not authorized to unregister this tracking task' };
+    }
+
+    await taskStore.delete(task.id);
+    return { status: 'ok', deleted: { id: task.id, subjectKey: parsed.data.subjectKey } };
   });
 
   // F174 Phase C: refresh-token endpoint — keep tokens alive in long sessions
