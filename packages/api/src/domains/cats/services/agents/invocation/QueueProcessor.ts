@@ -1431,23 +1431,40 @@ export class QueueProcessor {
         // Cloud Codex P2: deferred A2A entries stay in queue on failure — no rollback needed.
         // Cloud Codex P2: re-store consumed continuation on failure/cancel so
         // the next invocation retry still gets the sealed session context.
+        // #836 P2: Skip restore if cat was switched to reborn during this run —
+        // the consumed capsule is pre-reborn context that must not survive.
         if (consumedContinuation && this.deps.threadStore) {
+          let consumedCatReborn = false;
           try {
-            await this.deps.threadStore.setPendingContinuation(
-              threadId,
-              consumedContinuation.catId,
-              userId,
-              consumedContinuation.entry,
-            );
+            consumedCatReborn = this.deps.threadStore.isRebornSession
+              ? await Promise.resolve(this.deps.threadStore.isRebornSession(threadId, consumedContinuation.catId))
+              : false;
+          } catch {
+            // Best-effort — default to non-reborn so capsule is preserved on error
+          }
+          if (consumedCatReborn) {
             log.info(
               { threadId, catId: consumedContinuation.catId },
-              '[QueueProcessor] #813: re-stored consumed continuation after failed/canceled execution',
+              '[QueueProcessor] #836: reborn session — skipping consumed continuation restore',
             );
-          } catch (restoreErr) {
-            log.warn(
-              { threadId, catId: consumedContinuation.catId, err: restoreErr },
-              '[QueueProcessor] #813: failed to re-store continuation after execution failure',
-            );
+          } else {
+            try {
+              await this.deps.threadStore.setPendingContinuation(
+                threadId,
+                consumedContinuation.catId,
+                userId,
+                consumedContinuation.entry,
+              );
+              log.info(
+                { threadId, catId: consumedContinuation.catId },
+                '[QueueProcessor] #813: re-stored consumed continuation after failed/canceled execution',
+              );
+            } catch (restoreErr) {
+              log.warn(
+                { threadId, catId: consumedContinuation.catId, err: restoreErr },
+                '[QueueProcessor] #813: failed to re-store continuation after execution failure',
+              );
+            }
           }
         }
         // #813 fix: Also store NEW capsules produced during this execution
