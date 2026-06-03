@@ -219,7 +219,14 @@ const REPO_SCAN_REQUIRED_ENV = ['GITHUB_REPO_ALLOWLIST', 'GITHUB_REPO_INBOX_CAT_
 export function buildGitHubMigrationEntries(
   manifest: { resources: { type: string; name?: string }[] },
   env: Record<string, string | undefined> = process.env,
-): { id: string; type: 'schedule'; enabled: boolean; source: 'cat-cafe'; pluginId: 'github'; scheduleTaskId: string }[] {
+): {
+  id: string;
+  type: 'schedule';
+  enabled: boolean;
+  source: 'cat-cafe';
+  pluginId: 'github';
+  scheduleTaskId: string;
+}[] {
   const hasRepoScanDeps = REPO_SCAN_REQUIRED_ENV.every((k) => !!env[k]);
 
   return manifest.resources

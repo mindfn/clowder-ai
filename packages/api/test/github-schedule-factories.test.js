@@ -615,10 +615,7 @@ describe('buildGitHubMigrationEntries (P2-B)', () => {
   test('each entry has correct shape', async () => {
     const { buildGitHubMigrationEntries } = await import('../dist/domains/plugin/github-schedule-factories.js');
 
-    const entries = buildGitHubMigrationEntries(
-      { resources: [{ type: 'schedule', name: 'cicd-check' }] },
-      {},
-    );
+    const entries = buildGitHubMigrationEntries({ resources: [{ type: 'schedule', name: 'cicd-check' }] }, {});
     assert.strictEqual(entries.length, 1);
     const e = entries[0];
     assert.strictEqual(e.id, 'plugin:github:cicd-check');

@@ -1697,8 +1697,7 @@ async function main(): Promise<void> {
         if (shouldRunGitHubScheduleMigration(root, existingCaps)) {
           // P2-B fix: buildGitHubMigrationEntries skips repo-scan when env deps are missing,
           // avoiding "enabled but not running" ghost state in capabilities.json
-          const entries: import('@cat-cafe/shared').CapabilityEntry[] =
-            buildGitHubMigrationEntries(githubManifest);
+          const entries: import('@cat-cafe/shared').CapabilityEntry[] = buildGitHubMigrationEntries(githubManifest);
           if (entries.length > 0) {
             const updatedCaps = {
               version: 1 as const,
