@@ -1214,7 +1214,7 @@ describe('ConnectorInvokeTrigger', () => {
       const policy = { priority: 'urgent', reason: 'webhook_retry' };
 
       // First trigger — should enqueue
-      const r1 = trigger.trigger(
+      const r1 = await trigger.trigger(
         'thread-1',
         /** @type {any} */ ('opus'),
         'user-1',
@@ -1227,7 +1227,7 @@ describe('ConnectorInvokeTrigger', () => {
       assert.strictEqual(queue.list('thread-1', 'user-1').length, 1);
 
       // Second trigger with same messageId — should be deduped
-      const r2 = trigger.trigger(
+      const r2 = await trigger.trigger(
         'thread-1',
         /** @type {any} */ ('opus'),
         'user-1',
@@ -1240,7 +1240,7 @@ describe('ConnectorInvokeTrigger', () => {
       assert.strictEqual(queue.list('thread-1', 'user-1').length, 1, 'Queue should still have exactly 1 entry');
 
       // Different messageId — should enqueue normally
-      const r3 = trigger.trigger(
+      const r3 = await trigger.trigger(
         'thread-1',
         /** @type {any} */ ('opus'),
         'user-1',
@@ -1304,7 +1304,7 @@ describe('ConnectorInvokeTrigger', () => {
         async onInvocationComplete() {},
       });
       const trigger = createTrigger({ queueProcessor: mockQueueProcessor });
-      const outcome = trigger.trigger('thread-1', /** @type {any} */ ('opus'), 'user-1', 'Review msg', 'msg-1');
+      const outcome = await trigger.trigger('thread-1', /** @type {any} */ ('opus'), 'user-1', 'Review msg', 'msg-1');
       await waitForTrigger();
 
       assert.strictEqual(outcome, 'enqueued', 'should enqueue when thread is busy');
@@ -1321,7 +1321,7 @@ describe('ConnectorInvokeTrigger', () => {
       // Mock tryStartThread returning null (thread already has active invocation)
       trackerMock.tracker.tryStartThread = (_threadId, _catId) => null;
       const trigger = createTrigger({ queueProcessor: mockQueueProcessor });
-      const outcome = trigger.trigger('thread-1', /** @type {any} */ ('opus'), 'user-1', 'Review msg', 'msg-1');
+      const outcome = await trigger.trigger('thread-1', /** @type {any} */ ('opus'), 'user-1', 'Review msg', 'msg-1');
       await waitForTrigger();
 
       assert.strictEqual(outcome, 'enqueued', 'should enqueue when tryStartThread fails');
@@ -1337,7 +1337,7 @@ describe('ConnectorInvokeTrigger', () => {
       const acquiredController = new AbortController();
       trackerMock.tracker.tryStartThread = (_threadId, _catId) => acquiredController;
       const trigger = createTrigger({ queueProcessor: mockQueueProcessor });
-      const outcome = trigger.trigger('thread-1', /** @type {any} */ ('opus'), 'user-1', 'Review msg', 'msg-1');
+      const outcome = await trigger.trigger('thread-1', /** @type {any} */ ('opus'), 'user-1', 'Review msg', 'msg-1');
       await waitForTrigger();
 
       assert.strictEqual(outcome, 'dispatched', 'should dispatch when tryStartThread succeeds');
@@ -1348,8 +1348,7 @@ describe('ConnectorInvokeTrigger', () => {
       // Scenario: opus is running, connector targets codex — should still queue (thread-level)
       trackerMock.setActive('thread-1', 'user-1');
       const trigger = createTrigger();
-      const outcome = trigger.trigger('thread-1', /** @type {any} */ ('codex'), 'user-1', 'CI notification', 'msg-ci');
-      await waitForTrigger();
+      const outcome = await trigger.trigger('thread-1', /** @type {any} */ ('codex'), 'user-1', 'CI notification', 'msg-ci');
 
       assert.strictEqual(outcome, 'enqueued', 'connector must queue when ANY cat is busy in thread');
       assert.strictEqual(routerMock.calls.length, 0, 'should NOT dispatch concurrently');
@@ -1403,8 +1402,7 @@ describe('ConnectorInvokeTrigger', () => {
       });
       trackerMock.setActive('thread-1', 'user-1');
       const trigger = createTrigger({ invocationQueue: mockFullQueue });
-      const outcome = trigger.trigger('thread-1', /** @type {any} */ ('opus'), 'user-1', 'overflow', 'mid-full');
-      await waitForTrigger();
+      const outcome = await trigger.trigger('thread-1', /** @type {any} */ ('opus'), 'user-1', 'overflow', 'mid-full');
 
       assert.strictEqual(outcome, 'full');
       const systemInfoMsgs = socketMock.broadcasts.filter(

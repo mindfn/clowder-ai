@@ -86,7 +86,7 @@ export class CiCdCheckPoller {
         reason: isFail ? 'github_ci_failure' : 'github_ci_pass',
         sourceCategory: 'ci',
       };
-      invokeTrigger.trigger(
+      void invokeTrigger.trigger(
         routeResult.threadId,
         routeResult.catId as CatId,
         entry.userId,

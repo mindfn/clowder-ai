@@ -85,7 +85,7 @@ export function createCiCdCheckTaskSpec(opts: CiCdCheckTaskSpecOptions): TaskSpe
             sourceCategory: 'ci',
             suggestedSkill: isFail ? undefined : 'merge-gate',
           };
-          opts.invokeTrigger.trigger(
+          void opts.invokeTrigger.trigger(
             routeResult.threadId,
             routeResult.catId as CatId,
             signal.task.userId ?? '',
