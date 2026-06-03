@@ -197,6 +197,12 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
         if (!name) {
           throw new Error(`Schedule resource in ${yamlPath} must have a 'name' field`);
         }
+        // P2-2: Backslash in schedule name causes normalizeCapId / resourceCapId mismatch.
+        // normalizeCapId converts \ → / but resourceCapId uses raw name, so stored
+        // "plugin:p:a\b" won't match lookup "plugin:p:a/b" → disable/cleanup misses it.
+        if (/\\/.test(name)) {
+          throw new Error(`Schedule resource name "${name}" in ${yamlPath} must not contain backslashes`);
+        }
       }
 
       resources.push({

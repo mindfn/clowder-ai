@@ -219,6 +219,7 @@ const REPO_SCAN_REQUIRED_ENV = ['GITHUB_REPO_ALLOWLIST', 'GITHUB_REPO_INBOX_CAT_
 export function buildGitHubMigrationEntries(
   manifest: { resources: { type: string; name?: string }[] },
   env: Record<string, string | undefined> = process.env,
+  opts?: { repoScanDepsAvailable?: boolean },
 ): {
   id: string;
   type: 'schedule';
@@ -227,7 +228,11 @@ export function buildGitHubMigrationEntries(
   pluginId: 'github';
   scheduleTaskId: string;
 }[] {
-  const hasRepoScanDeps = REPO_SCAN_REQUIRED_ENV.every((k) => !!env[k]);
+  const hasRepoScanEnvDeps = REPO_SCAN_REQUIRED_ENV.every((k) => !!env[k]);
+  // Gate on both env vars AND runtime deps (Redis).
+  // Without Redis, repo-scan factory construction fails at rehydration,
+  // leaving capabilities.json with "enabled" but no running task (P2-1).
+  const hasRepoScanDeps = hasRepoScanEnvDeps && opts?.repoScanDepsAvailable !== false;
 
   return manifest.resources
     .filter((r) => r.type === 'schedule' && r.name)

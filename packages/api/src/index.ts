@@ -1695,9 +1695,15 @@ async function main(): Promise<void> {
         const { shouldRunGitHubScheduleMigration, markGitHubScheduleMigrationDone, buildGitHubMigrationEntries } =
           await import('./domains/plugin/github-schedule-factories.js');
         if (shouldRunGitHubScheduleMigration(root, existingCaps)) {
-          // P2-B fix: buildGitHubMigrationEntries skips repo-scan when env deps are missing,
-          // avoiding "enabled but not running" ghost state in capabilities.json
-          const entries: import('@cat-cafe/shared').CapabilityEntry[] = buildGitHubMigrationEntries(githubManifest);
+          // P2-1 fix: gate repo-scan on both env vars AND runtime deps (Redis).
+          // Without Redis, factory construction fails at rehydration, leaving
+          // capabilities.json with "enabled" but no running task.
+          const hasRepoScanRuntimeDeps = !!(githubDeps as Record<string, unknown>).reconciliationDedup;
+          const entries: import('@cat-cafe/shared').CapabilityEntry[] = buildGitHubMigrationEntries(
+            githubManifest,
+            process.env,
+            { repoScanDepsAvailable: hasRepoScanRuntimeDeps },
+          );
           if (entries.length > 0) {
             const updatedCaps = {
               version: 1 as const,
@@ -2613,19 +2619,23 @@ async function main(): Promise<void> {
 
   // F140 Phase E.2 cutover: setup-noise bot allowlist env name切换
   // GITHUB_SETUP_NOISE_BOT_LOGINS (new, post-E.2 semantics) takes precedence;
+  // P2-3 fix: pass a thunk so the filter reflects runtime config changes
+  // (e.g. GITHUB_SETUP_NOISE_BOT_LOGINS updated via plugin config panel)
+  // without requiring a server restart.
   // GITHUB_AUTHORITATIVE_REVIEW_LOGINS (legacy E.1 借壳) falls back for
   // backward compat — will be removed in a follow-up release.
-  const setupNoiseBotLogins = (
-    process.env.GITHUB_SETUP_NOISE_BOT_LOGINS ||
-    process.env.GITHUB_AUTHORITATIVE_REVIEW_LOGINS ||
-    'chatgpt-codex-connector[bot]'
-  )
-    .split(',')
-    .map((s: string) => s.trim())
-    .filter(Boolean);
-  app.log.info(`[api] F140: setup-noise bot logins=${setupNoiseBotLogins.join(', ')}`);
+  const getSetupNoiseBotLogins = (): readonly string[] =>
+    (
+      process.env.GITHUB_SETUP_NOISE_BOT_LOGINS ||
+      process.env.GITHUB_AUTHORITATIVE_REVIEW_LOGINS ||
+      'chatgpt-codex-connector[bot]'
+    )
+      .split(',')
+      .map((s: string) => s.trim())
+      .filter(Boolean);
+  app.log.info(`[api] F140: setup-noise bot logins=${getSetupNoiseBotLogins().join(', ')}`);
 
-  const setupNoiseFilter = createSetupNoiseFilter(setupNoiseBotLogins);
+  const setupNoiseFilter = createSetupNoiseFilter(getSetupNoiseBotLogins);
 
   // F140 Phase E.3 cleanup (2026-04-25): email/IMAP watcher source files removed.
   // Polling (ReviewFeedbackTaskSpec) is the sole truth source for review feedback.

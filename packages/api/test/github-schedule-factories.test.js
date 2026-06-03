@@ -151,6 +151,57 @@ describe('TaskSpec factory custom id (F220-B Task 1)', () => {
   });
 });
 
+// --- P2-2: Schedule name backslash validation ---
+
+describe('schedule name validation (P2-2)', () => {
+  test('parsePluginManifest rejects schedule name containing backslash', () => {
+    const tmpDir = join(__dirname, `tmp-backslash-${Date.now()}`);
+    mkdirSync(join(tmpDir, 'test-bs'), { recursive: true });
+    const yamlPath = join(tmpDir, 'test-bs', 'plugin.yaml');
+    writeFileSync(
+      yamlPath,
+      [
+        'id: test-bs',
+        'name: Test Backslash',
+        'version: 1.0.0',
+        'resources:',
+        '  - type: schedule',
+        '    name: "bad\\\\name"',
+        '    factoryId: test.factory',
+      ].join('\n'),
+    );
+    try {
+      assert.throws(() => parsePluginManifest(yamlPath), /backslash/i);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test('parsePluginManifest accepts schedule name without backslash', () => {
+    const tmpDir = join(__dirname, `tmp-good-name-${Date.now()}`);
+    mkdirSync(join(tmpDir, 'test-ok'), { recursive: true });
+    const yamlPath = join(tmpDir, 'test-ok', 'plugin.yaml');
+    writeFileSync(
+      yamlPath,
+      [
+        'id: test-ok',
+        'name: Test OK',
+        'version: 1.0.0',
+        'resources:',
+        '  - type: schedule',
+        '    name: "cicd-check"',
+        '    factoryId: test.factory',
+      ].join('\n'),
+    );
+    try {
+      const manifest = parsePluginManifest(yamlPath);
+      assert.strictEqual(manifest.resources[0].name, 'cicd-check');
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
 // --- Task 2: plugin.yaml manifest parsing ---
 
 describe('plugins/github/plugin.yaml (AC-B1)', () => {
@@ -624,5 +675,24 @@ describe('buildGitHubMigrationEntries (P2-B)', () => {
     assert.strictEqual(e.source, 'cat-cafe');
     assert.strictEqual(e.pluginId, 'github');
     assert.strictEqual(e.scheduleTaskId, 'schedule:github:cicd-check');
+  });
+
+  test('excludes repo-scan when env deps present but Redis deps unavailable (P2-1)', async () => {
+    const { buildGitHubMigrationEntries } = await import('../dist/domains/plugin/github-schedule-factories.js');
+    const manifest = {
+      resources: [
+        { type: 'schedule', name: 'cicd-check' },
+        { type: 'schedule', name: 'repo-scan' },
+      ],
+    };
+    // Env deps present BUT Redis deps unavailable
+    const entries = buildGitHubMigrationEntries(
+      manifest,
+      { GITHUB_REPO_ALLOWLIST: 'org/repo', GITHUB_REPO_INBOX_CAT_ID: 'cat-1' },
+      { repoScanDepsAvailable: false },
+    );
+    assert.strictEqual(entries.length, 1, 'should exclude repo-scan when Redis deps unavailable');
+    assert.ok(!entries.some((e) => e.id.includes('repo-scan')));
+    assert.ok(entries.some((e) => e.id.includes('cicd-check')));
   });
 });
