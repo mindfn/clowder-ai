@@ -54,6 +54,76 @@ describe('AC-C1: trackingInstructions storage', () => {
   });
 });
 
+// ── P2-fix: re-register with instructions preserves automation cursors ──
+
+describe('P2-fix: automation cursor preservation on re-registration', () => {
+  test('re-upsert with instructions preserves existing CI/review cursors (pr_tracking)', () => {
+    const store = new TaskStore();
+    // Step 1: create task
+    const created = store.upsertBySubject({
+      kind: 'pr_tracking',
+      threadId: 't1',
+      subjectKey: 'pr:o/r#100',
+      title: 'PR tracking',
+      why: 'test',
+      createdBy: 'cat1',
+    });
+    // Step 2: simulate pollers adding cursors via patchAutomationState
+    store.patchAutomationState(created.id, {
+      ci: { headSha: 'abc123', lastFingerprint: 'fp1', lastNotifiedAt: 1000 },
+      review: { lastCommentCursor: 42, lastDecisionCursor: 5, lastNotifiedAt: 2000 },
+      conflict: { mergeState: 'CLEAN', lastFingerprint: 'cf1' },
+    });
+    // Step 3: re-register with instructions — must NOT lose cursors
+    const reregistered = store.upsertBySubject({
+      kind: 'pr_tracking',
+      threadId: 't1',
+      subjectKey: 'pr:o/r#100',
+      title: 'PR tracking',
+      why: 'test',
+      createdBy: 'cat1',
+      automationState: { trackingInstructions: 'Fix CI then merge' },
+    });
+    // Instructions stored
+    assert.strictEqual(reregistered.automationState?.trackingInstructions, 'Fix CI then merge');
+    // Existing cursors preserved
+    assert.strictEqual(reregistered.automationState?.ci?.headSha, 'abc123');
+    assert.strictEqual(reregistered.automationState?.ci?.lastFingerprint, 'fp1');
+    assert.strictEqual(reregistered.automationState?.review?.lastCommentCursor, 42);
+    assert.strictEqual(reregistered.automationState?.review?.lastDecisionCursor, 5);
+    assert.strictEqual(reregistered.automationState?.conflict?.mergeState, 'CLEAN');
+  });
+
+  test('re-upsert with instructions preserves existing issue cursors (issue_tracking)', () => {
+    const store = new TaskStore();
+    const created = store.upsertBySubject({
+      kind: 'issue_tracking',
+      threadId: 't1',
+      subjectKey: 'issue:o/r#50',
+      title: 'Issue tracking',
+      why: 'test',
+      createdBy: 'cat1',
+    });
+    // Simulate poller adding cursor
+    store.patchAutomationState(created.id, {
+      issue: { lastCommentCursor: 99, lastNotifiedAt: 3000, issueState: 'open' },
+    });
+    // Re-register with instructions
+    const reregistered = store.upsertBySubject({
+      kind: 'issue_tracking',
+      threadId: 't1',
+      subjectKey: 'issue:o/r#50',
+      title: 'Issue tracking',
+      why: 'test',
+      createdBy: 'cat1',
+      automationState: { trackingInstructions: 'Watch for maintainer response' },
+    });
+    assert.strictEqual(reregistered.automationState?.trackingInstructions, 'Watch for maintainer response');
+    assert.strictEqual(reregistered.automationState?.issue?.lastCommentCursor, 99);
+    assert.strictEqual(reregistered.automationState?.issue?.issueState, 'open');
+  });
+});
+
 // ── AC-C2: trackingInstructions appended to trigger messages ──────
 
 describe('AC-C2: trackingInstructions in trigger messages', () => {

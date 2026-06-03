@@ -205,7 +205,9 @@ export class RedisTaskStore implements ITaskStore {
       status: isTrackingKind(existing.kind) && existing.status === 'done' ? 'todo' : existing.status,
       why: input.why,
       userId: input.userId ?? existing.userId,
-      automationState: input.automationState ?? existing.automationState,
+      automationState: input.automationState
+        ? this.mergeAutomationState(existing.automationState, input.automationState)
+        : existing.automationState,
       updatedAt: now,
     };
 
