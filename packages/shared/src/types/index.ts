@@ -578,12 +578,14 @@ export type {
   CiAutomationState,
   ConflictAutomationState,
   CreateTaskInput,
+  IssueAutomationState,
   ReviewAutomationState,
   TaskItem,
   TaskKind,
   TaskStatus,
   UpdateTaskInput,
 } from './task.js';
+export { isTrackingKind } from './task.js';
 // TTS types (F34 TTS Provider)
 export type {
   ITtsProvider,

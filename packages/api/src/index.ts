@@ -121,6 +121,7 @@ import {
 } from './infrastructure/connectors/connector-gateway-bootstrap.js';
 import { restartConnectorGateway } from './infrastructure/connectors/connector-gateway-lifecycle.js';
 import { createConnectorReloadSubscriber } from './infrastructure/connectors/connector-reload-subscriber.js';
+import { IssueCommentRouter } from './infrastructure/email/IssueCommentRouter.js';
 import {
   CiCdRouter,
   ConflictRouter,
@@ -2684,6 +2685,12 @@ async function main(): Promise<void> {
       log: app.log,
     });
 
+    // F220 Phase D: Issue comment tracking
+    const issueCommentRouter = new IssueCommentRouter({
+      deliveryDeps,
+      log: app.log,
+    });
+
     const checkMergeable = async (repo: string, pr: number) => {
       const { execFile } = await import('node:child_process');
       const { promisify } = await import('node:util');
@@ -2775,6 +2782,34 @@ async function main(): Promise<void> {
       );
     };
 
+    // F220 Phase D: Issue comment fetchers (parallel to PR comment fetchers)
+    const fetchIssueComments = async (repoFullName: string, issueNumber: number, sinceId?: number) => {
+      const comments = await fetchPaginated(`/repos/${repoFullName}/issues/${issueNumber}/comments`, sinceId);
+      return comments.map((c: { id: number; body: string; created_at: string; user?: { login: string } }) => ({
+        id: c.id,
+        author: c.user?.login ?? 'unknown',
+        body: c.body,
+        createdAt: c.created_at,
+      }));
+    };
+
+    const fetchIssueState = async (repoFullName: string, issueNumber: number): Promise<'open' | 'closed'> => {
+      const { execFile } = await import('node:child_process');
+      const { promisify } = await import('node:util');
+      const execFileAsync = promisify(execFile);
+      try {
+        const { stdout } = await execFileAsync(
+          'gh',
+          ['api', `/repos/${repoFullName}/issues/${issueNumber}`, '--jq', '.state'],
+          { timeout: 15_000 },
+        );
+        return stdout.trim() === 'closed' ? 'closed' : 'open';
+      } catch (error) {
+        app.log.warn({ repoFullName, issueNumber, err: error }, '[api] issue state lookup failed; assuming open');
+        return 'open';
+      }
+    };
+
     // Repo-scan deps (conditional on env vars + redis)
     const ghRepoAllowlist = process.env.GITHUB_REPO_ALLOWLIST;
     const ghInboxCatId = process.env.GITHUB_REPO_INBOX_CAT_ID;
@@ -2863,6 +2898,11 @@ async function main(): Promise<void> {
         isEchoComment: (c: { author: string }) => feedbackFilter.shouldSkipComment(c),
         isEchoReview: (r: { author: string }) => feedbackFilter.shouldSkipReview(r),
         isNoiseComment: setupNoiseFilter,
+        // F220 Phase D: issue comment tracking deps
+        issueCommentRouter,
+        fetchIssueComments,
+        fetchIssueState,
+        isEchoIssueComment: (c: { author: string }) => feedbackFilter.shouldSkipComment(c),
         ...repoScanDeps,
       });
       app.log.info('[api] F220-B: GitHub schedule resources rehydrated via plugin framework');

@@ -7,6 +7,7 @@
  */
 
 import type { AutomationState, CreateTaskInput, TaskItem, TaskKind, UpdateTaskInput } from '@cat-cafe/shared';
+import { isTrackingKind } from '@cat-cafe/shared';
 import { generateSortableId } from './MessageStore.js';
 
 const MAX_TASKS = 500;
@@ -141,10 +142,7 @@ export class TaskStore implements ITaskStore {
           threadId: input.threadId,
           title: input.title,
           ownerCatId: input.ownerCatId ?? existing.ownerCatId,
-          status:
-            (existing.kind === 'pr_tracking' || existing.kind === 'issue_tracking') && existing.status === 'done'
-              ? 'todo'
-              : existing.status,
+          status: isTrackingKind(existing.kind) && existing.status === 'done' ? 'todo' : existing.status,
           why: input.why,
           userId: input.userId ?? existing.userId,
           automationState: input.automationState ?? existing.automationState,
@@ -274,6 +272,6 @@ export class TaskStore implements ITaskStore {
   }
 
   private isProtectedFromFallbackEviction(task: TaskItem): boolean {
-    return (task.kind === 'pr_tracking' || task.kind === 'issue_tracking') && task.status !== 'done';
+    return isTrackingKind(task.kind) && task.status !== 'done';
   }
 }

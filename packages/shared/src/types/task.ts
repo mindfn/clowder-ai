@@ -19,6 +19,11 @@ export type TaskStatus = 'todo' | 'doing' | 'blocked' | 'done';
  */
 export type TaskKind = 'work' | 'pr_tracking' | 'issue_tracking';
 
+/** Tracking kinds that receive eviction/TTL protection when active (status !== 'done'). */
+export function isTrackingKind(kind: TaskKind): kind is 'pr_tracking' | 'issue_tracking' {
+  return kind === 'pr_tracking' || kind === 'issue_tracking';
+}
+
 /** CI/CD automation state for pr_tracking tasks */
 export interface CiAutomationState {
   readonly headSha?: string;

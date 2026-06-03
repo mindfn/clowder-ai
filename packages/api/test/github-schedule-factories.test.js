@@ -324,6 +324,34 @@ describe('GitHub schedule factory registration (F220-B Task 3)', () => {
     assert.throws(() => factory.createTaskSpec('schedule:github:repo-scan', deps), /reconciliationDedup/);
   });
 
+  test('github.issue-tracking factory creates TaskSpec with correct instanceId', () => {
+    const registry = new ScheduleFactoryRegistry();
+    registerGitHubScheduleFactories(registry);
+    const factory = registry.get('github.issue-tracking');
+    assert.ok(factory);
+    const spec = factory.createTaskSpec('schedule:github:issue-tracking', makeGitHubDeps());
+    assert.strictEqual(spec.id, 'schedule:github:issue-tracking');
+    assert.strictEqual(spec.profile, 'poller');
+  });
+
+  test('github.issue-tracking factory throws when issueCommentRouter missing', () => {
+    const registry = new ScheduleFactoryRegistry();
+    registerGitHubScheduleFactories(registry);
+    const factory = registry.get('github.issue-tracking');
+    assert.ok(factory);
+    const deps = makeGitHubDeps({ issueCommentRouter: undefined });
+    assert.throws(() => factory.createTaskSpec('schedule:github:issue-tracking', deps), /issueCommentRouter/);
+  });
+
+  test('github.issue-tracking factory throws when fetchIssueComments missing', () => {
+    const registry = new ScheduleFactoryRegistry();
+    registerGitHubScheduleFactories(registry);
+    const factory = registry.get('github.issue-tracking');
+    assert.ok(factory);
+    const deps = makeGitHubDeps({ fetchIssueComments: undefined, fetchIssueState: undefined });
+    assert.throws(() => factory.createTaskSpec('schedule:github:issue-tracking', deps), /fetchIssueComments/);
+  });
+
   test('asGitHub validates taskStore presence', () => {
     const registry = new ScheduleFactoryRegistry();
     registerGitHubScheduleFactories(registry);
