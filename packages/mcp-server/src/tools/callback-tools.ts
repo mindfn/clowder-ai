@@ -892,7 +892,9 @@ export const registerPrTrackingInputSchema = {
     .string()
     .max(2000)
     .optional()
-    .describe('Tracking instructions — appended to trigger messages when review/CI events fire. Task preference, not system override.'),
+    .describe(
+      'Tracking instructions — appended to trigger messages when review/CI events fire. Task preference, not system override.',
+    ),
   catId: z
     .string()
     .optional()
@@ -920,6 +922,34 @@ export async function handleRegisterPrTracking(input: {
   });
 }
 
+// F220 Phase D (AC-D3): Register issue tracking
+export const registerIssueTrackingInputSchema = {
+  repoFullName: z.string().min(1).describe('Repository full name in owner/repo format (e.g. "zts212653/cat-cafe")'),
+  issueNumber: z.number().int().positive().describe('Issue number'),
+  instructions: z
+    .string()
+    .max(2000)
+    .optional()
+    .describe('Tracking instructions — appended to trigger messages when issue comment events fire.'),
+};
+
+export async function handleRegisterIssueTracking(input: {
+  repoFullName: string;
+  issueNumber: number;
+  instructions?: string;
+}): Promise<ToolResult> {
+  return withDegradation({
+    toolName: 'register_issue_tracking',
+    primary: () =>
+      callbackPost('/api/callbacks/register-issue-tracking', {
+        repoFullName: input.repoFullName,
+        issueNumber: input.issueNumber,
+        ...(input.instructions ? { instructions: input.instructions } : {}),
+      }),
+    policy: { kind: 'none' },
+  });
+}
+
 // F220 Phase C (AC-C3): Unregister tracking task by subjectKey
 export const unregisterTrackingInputSchema = {
   subjectKey: z
@@ -928,9 +958,7 @@ export const unregisterTrackingInputSchema = {
     .describe('Subject key to unregister. Format: "pr:{owner/repo}#{num}" or "issue:{owner/repo}#{num}"'),
 };
 
-export async function handleUnregisterTracking(input: {
-  subjectKey: string;
-}): Promise<ToolResult> {
+export async function handleUnregisterTracking(input: { subjectKey: string }): Promise<ToolResult> {
   return withDegradation({
     toolName: 'unregister_tracking',
     primary: () =>
@@ -1508,6 +1536,16 @@ export const callbackTools = [
       'GOTCHA: Must be called in the same session that created the PR, while callback credentials are still valid.',
     inputSchema: registerPrTrackingInputSchema,
     handler: handleRegisterPrTracking,
+  },
+  {
+    name: 'cat_cafe_register_issue_tracking',
+    description:
+      'Register a GitHub issue for comment tracking. New comments on the issue are routed to your current thread. ' +
+      'Call after opening or referencing an issue you want to monitor. ' +
+      'The server resolves threadId and catId from your invocation identity. ' +
+      'GOTCHA: Must be called while callback credentials are still valid.',
+    inputSchema: registerIssueTrackingInputSchema,
+    handler: handleRegisterIssueTracking,
   },
   {
     name: 'cat_cafe_unregister_tracking',

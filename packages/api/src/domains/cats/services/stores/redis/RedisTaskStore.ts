@@ -427,6 +427,7 @@ export class RedisTaskStore implements ITaskStore {
       ci: patch.ci ? { ...existing?.ci, ...patch.ci } : existing?.ci,
       conflict: patch.conflict ? { ...existing?.conflict, ...patch.conflict } : existing?.conflict,
       review: patch.review ? { ...existing?.review, ...patch.review } : existing?.review,
+      issue: patch.issue ? { ...existing?.issue, ...patch.issue } : existing?.issue,
     };
   }
 

@@ -141,7 +141,10 @@ export class TaskStore implements ITaskStore {
           threadId: input.threadId,
           title: input.title,
           ownerCatId: input.ownerCatId ?? existing.ownerCatId,
-          status: existing.kind === 'pr_tracking' && existing.status === 'done' ? 'todo' : existing.status,
+          status:
+            (existing.kind === 'pr_tracking' || existing.kind === 'issue_tracking') && existing.status === 'done'
+              ? 'todo'
+              : existing.status,
           why: input.why,
           userId: input.userId ?? existing.userId,
           automationState: input.automationState ?? existing.automationState,
@@ -180,6 +183,7 @@ export class TaskStore implements ITaskStore {
       review: patch.review
         ? { ...existing.automationState?.review, ...patch.review }
         : existing.automationState?.review,
+      issue: patch.issue ? { ...existing.automationState?.issue, ...patch.issue } : existing.automationState?.issue,
     };
 
     const updated: TaskItem = {
@@ -270,6 +274,6 @@ export class TaskStore implements ITaskStore {
   }
 
   private isProtectedFromFallbackEviction(task: TaskItem): boolean {
-    return task.kind === 'pr_tracking' && task.status !== 'done';
+    return (task.kind === 'pr_tracking' || task.kind === 'issue_tracking') && task.status !== 'done';
   }
 }

@@ -2134,6 +2134,58 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     }
   });
 
+  // F220 Phase D (AC-D3): Register issue tracking
+  const registerIssueTrackingSchema = z.object({
+    repoFullName: z
+      .string()
+      .min(1)
+      .regex(/^[^/]+\/[^/]+$/, 'Must be owner/repo format'),
+    issueNumber: z.number().int().positive(),
+    instructions: z.string().max(2000).optional(),
+  });
+
+  app.post('/api/callbacks/register-issue-tracking', async (request, reply) => {
+    if (!taskStore) {
+      reply.status(503);
+      return { error: 'Task store not configured' };
+    }
+
+    const parsed = registerIssueTrackingSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.status(400);
+      return { error: 'Invalid request body', details: parsed.error.issues };
+    }
+
+    const record = requireCallbackAuth(request, reply);
+    if (!record) return;
+
+    const { repoFullName, issueNumber, instructions } = parsed.data;
+    const catId = record.catId;
+
+    const subjectKey = `issue:${repoFullName}#${issueNumber}`;
+    try {
+      const task = await taskStore.upsertBySubject({
+        kind: 'issue_tracking',
+        subjectKey,
+        threadId: record.threadId,
+        title: `Issue tracking: ${repoFullName}#${issueNumber}`,
+        ownerCatId: catId,
+        why: `Tracking issue ${repoFullName}#${issueNumber} for comment notifications`,
+        createdBy: catId,
+        userId: record.userId,
+        automationState: instructions ? { trackingInstructions: instructions } : undefined,
+      });
+
+      return { status: 'ok', threadId: record.threadId, task };
+    } catch (error) {
+      if (isSubjectOwnershipConflictError(error)) {
+        reply.status(409);
+        return { error: `Issue ${repoFullName}#${issueNumber} already registered by another user` };
+      }
+      throw error;
+    }
+  });
+
   // F220 Phase C (AC-C3): Unregister tracking task by subjectKey
   const unregisterTrackingSchema = z.object({
     subjectKey: z.string().min(1),

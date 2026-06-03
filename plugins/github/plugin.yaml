@@ -36,3 +36,6 @@ resources:
   - type: schedule
     name: repo-scan
     factoryId: github.repo-scan
+  - type: schedule
+    name: issue-tracking
+    factoryId: github.issue-tracking

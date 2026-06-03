@@ -12,11 +12,12 @@ import type { CatId } from './ids.js';
 export type TaskStatus = 'todo' | 'doing' | 'blocked' | 'done';
 
 /**
- * Task kind discriminator (#320).
+ * Task kind discriminator (#320, F220-D).
  * - work: manual tasks created by cats/humans
  * - pr_tracking: automated PR tasks (review-feedback, cicd-check, conflict-check)
+ * - issue_tracking: automated GitHub issue comment tracking (F220 Phase D)
  */
-export type TaskKind = 'work' | 'pr_tracking';
+export type TaskKind = 'work' | 'pr_tracking' | 'issue_tracking';
 
 /** CI/CD automation state for pr_tracking tasks */
 export interface CiAutomationState {
@@ -44,11 +45,19 @@ export interface ReviewAutomationState {
   readonly lastNotifiedAt?: number;
 }
 
-/** Composite automation state embedded in pr_tracking tasks (#320 KD-14) */
+/** Issue comment automation state for issue_tracking tasks (F220 Phase D) */
+export interface IssueAutomationState {
+  readonly lastCommentCursor?: number;
+  readonly lastNotifiedAt?: number;
+  readonly issueState?: 'open' | 'closed';
+}
+
+/** Composite automation state embedded in pr_tracking/issue_tracking tasks (#320 KD-14, F220-D) */
 export interface AutomationState {
   readonly ci?: CiAutomationState;
   readonly conflict?: ConflictAutomationState;
   readonly review?: ReviewAutomationState;
+  readonly issue?: IssueAutomationState;
   readonly closedAt?: number;
   /** F220 Phase C: user-provided instructions appended to trigger messages. Task preference, not system override. */
   readonly trackingInstructions?: string;

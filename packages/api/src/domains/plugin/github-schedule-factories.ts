@@ -27,6 +27,8 @@ import type {
   ConnectorDeliveryInput,
   ConnectorDeliveryResult,
 } from '../../infrastructure/email/deliver-connector-message.js';
+import type { IssueComment, IssueCommentRouter } from '../../infrastructure/email/IssueCommentRouter.js';
+import { createIssueCommentTaskSpec } from '../../infrastructure/email/IssueCommentTaskSpec.js';
 import type {
   PrFeedbackComment,
   PrReviewDecision,
@@ -71,6 +73,11 @@ export interface GitHubScheduleDeps extends ScheduleFactoryDeps {
   deliveryDeps?: ConnectorDeliveryDeps;
   fetchOpenPRs?: (repo: string) => Promise<GhPrItem[]>;
   fetchOpenIssues?: (repo: string) => Promise<GhIssueItem[]>;
+  // F220 Phase D: issue comment tracking deps
+  issueCommentRouter?: IssueCommentRouter;
+  fetchIssueComments?: (repoFullName: string, issueNumber: number, sinceId?: number) => Promise<IssueComment[]>;
+  fetchIssueState?: (repoFullName: string, issueNumber: number) => Promise<'open' | 'closed'>;
+  isEchoIssueComment?: (c: IssueComment) => boolean;
 }
 
 /** Cast ScheduleFactoryDeps to GitHubScheduleDeps with runtime validation */
@@ -166,12 +173,36 @@ const repoScanFactory: ScheduleFactory = {
   },
 };
 
-/** Register all 4 GitHub schedule factories in the registry. */
+const issueTrackingFactory: ScheduleFactory = {
+  factoryId: 'github.issue-tracking',
+  createTaskSpec(instanceId, deps) {
+    const d = asGitHub(deps);
+    if (!d.issueCommentRouter) {
+      throw new Error('[F220] github.issue-tracking requires issueCommentRouter in deps');
+    }
+    if (!d.fetchIssueComments || !d.fetchIssueState) {
+      throw new Error('[F220] github.issue-tracking requires fetchIssueComments and fetchIssueState in deps');
+    }
+    return createIssueCommentTaskSpec({
+      id: instanceId,
+      taskStore: d.taskStore,
+      issueCommentRouter: d.issueCommentRouter,
+      fetchComments: d.fetchIssueComments,
+      fetchIssueState: d.fetchIssueState,
+      invokeTrigger: d.invokeTrigger,
+      isEchoComment: d.isEchoIssueComment,
+      log: d.log,
+    }) as TaskSpec_P1;
+  },
+};
+
+/** Register all 5 GitHub schedule factories in the registry. */
 export function registerGitHubScheduleFactories(registry: ScheduleFactoryRegistry): void {
   registry.register(cicdCheckFactory);
   registry.register(conflictCheckFactory);
   registry.register(reviewFeedbackFactory);
   registry.register(repoScanFactory);
+  registry.register(issueTrackingFactory);
 }
 
 // --- F220-B Migration helpers (P2-1 fix) ---
