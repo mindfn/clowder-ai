@@ -2,7 +2,7 @@
 
 import type { CatData } from '@/hooks/useCatData';
 import { useCoCreatorConfig } from '@/hooks/useCoCreatorConfig';
-import { UNKNOWN_CAT_COLOR } from '@/lib/color-defaults';
+import { CO_CREATOR_COLOR, UNKNOWN_CAT_COLOR } from '@/lib/color-defaults';
 
 interface ReplyPillProps {
   replyPreview: { senderCatId: string | null; content: string; deleted?: true };
@@ -21,7 +21,10 @@ export function ReplyPill({ replyPreview, replyToId, getCatById }: ReplyPillProp
   const cat = senderCatId ? getCatById(senderCatId) : undefined;
   const senderLabel = deleted ? '' : cat ? `@${cat.displayName}` : senderCatId ? `@${senderCatId}` : coCreator.name;
   const previewText = deleted ? '消息已删除' : content;
-  const color = cat?.color.primary ?? UNKNOWN_CAT_COLOR.primary;
+  // #699: senderCatId=null → co-creator's color (not unknown cat which coincides with opus purple)
+  const color =
+    cat?.color.primary ??
+    (senderCatId ? UNKNOWN_CAT_COLOR.primary : (coCreator.color?.primary ?? CO_CREATOR_COLOR.primary));
 
   const handleClick = () => {
     const target = document.querySelector(`[data-message-id="${CSS.escape(replyToId)}"]`);
