@@ -94,7 +94,7 @@ interface StreamingHookLike {
 }
 
 import { normalizeErrorMessage } from '../utils/normalize-error.js';
-import { emitQueueUpdated } from '../utils/queue-enrichment.js';
+import { emitQueueUpdated, enrichQueueEntries } from '../utils/queue-enrichment.js';
 import { resolveUserId } from '../utils/request-identity.js';
 import { buildGameSeats, parseGameCommand, sanitizeCatIds } from './game-command-interceptor.js';
 import type { HoldBallCancelDeps } from './hold-ball-cancel.js';
@@ -603,11 +603,15 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
 
       // Queue full → 429, no message written (no ghost message)
       if (enqueueResult.outcome === 'full') {
+        const fullQueue = await enrichQueueEntries(
+          opts.invocationQueue.list(resolvedThreadId, userId),
+          opts.messageStore,
+        );
         opts.socketManager.emitToUser(userId, 'queue_full_warning', {
           threadId: resolvedThreadId,
           source: 'user',
           queueSize: opts.invocationQueue.size(resolvedThreadId, userId),
-          queue: opts.invocationQueue.list(resolvedThreadId, userId),
+          queue: fullQueue,
         });
         reply.status(429);
         return {
@@ -734,11 +738,15 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
               intent: intent.intent,
             });
             if (enqueueResult.outcome === 'full') {
+              const toctouFullQueue = await enrichQueueEntries(
+                opts.invocationQueue.list(resolvedThreadId, userId),
+                opts.messageStore,
+              );
               opts.socketManager.emitToUser(userId, 'queue_full_warning', {
                 threadId: resolvedThreadId,
                 source: 'user',
                 queueSize: opts.invocationQueue.size(resolvedThreadId, userId),
-                queue: opts.invocationQueue.list(resolvedThreadId, userId),
+                queue: toctouFullQueue,
               });
               reply.status(429);
               return { error: '消息队列已满', code: 'QUEUE_FULL' };
