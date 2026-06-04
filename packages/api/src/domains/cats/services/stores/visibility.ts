@@ -67,6 +67,20 @@ export interface ReplyParentEligibilityOptions {
   childCatId?: CatId | null;
 }
 
+/**
+ * #699: Can a parent message be safely quoted in a public (non-whisper) reply?
+ * Unrevealed whispers must not be quoted in public replies — hydrateReplyPreview
+ * fetches raw content without visibility checks, so the preview would leak
+ * whisper content to non-recipients.
+ *
+ * Use AFTER isEligibleReplyParent passes (sender CAN see the parent),
+ * when the reply itself is public (e.g. callback posts which have no visibility field).
+ */
+export function canQuoteInPublicReply(parent: StoredMessage): boolean {
+  if (parent.visibility === 'whisper' && !parent.revealedAt) return false;
+  return true;
+}
+
 export function isEligibleReplyParent(parent: StoredMessage, opts: ReplyParentEligibilityOptions): boolean {
   // Must be same thread
   if (parent.threadId !== opts.threadId) return false;

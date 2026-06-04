@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-const { isEligibleReplyParent } = await import(
+const { isEligibleReplyParent, canQuoteInPublicReply } = await import(
   '../dist/domains/cats/services/stores/visibility.js'
 );
 
@@ -111,5 +111,27 @@ describe('#699: isEligibleReplyParent', () => {
     });
     const userOpts = { threadId: 'thread-1', viewer: { type: 'user' } };
     assert.ok(isEligibleReplyParent(parent, userOpts));
+  });
+});
+
+describe('#699: canQuoteInPublicReply', () => {
+  test('allows quoting a normal public message', () => {
+    const parent = mockMsg({});
+    assert.ok(canQuoteInPublicReply(parent));
+  });
+
+  test('blocks quoting an unrevealed whisper', () => {
+    const parent = mockMsg({ visibility: 'whisper', whisperTo: ['opus'] });
+    assert.ok(!canQuoteInPublicReply(parent), 'unrevealed whisper must not be quoted in public reply');
+  });
+
+  test('allows quoting a revealed whisper', () => {
+    const parent = mockMsg({ visibility: 'whisper', whisperTo: ['opus'], revealedAt: Date.now() });
+    assert.ok(canQuoteInPublicReply(parent), 'revealed whisper is visible to all, safe to quote');
+  });
+
+  test('allows quoting a message with explicit public visibility', () => {
+    const parent = mockMsg({ visibility: 'public' });
+    assert.ok(canQuoteInPublicReply(parent));
   });
 });
