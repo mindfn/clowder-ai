@@ -1598,14 +1598,19 @@ async function main(): Promise<void> {
   };
 
   // F220 followup: validate specific issue exists (number-level, not just repo)
+  // P2-cloud: also reject PR numbers — GitHub Issues API returns PRs with .pull_request set
   const validateIssue = async (repoFullName: string, issueNumber: number): Promise<boolean> => {
     const { execFile } = await import('node:child_process');
     const { promisify } = await import('node:util');
     const execFileAsync = promisify(execFile);
     try {
-      await execFileAsync('gh', ['api', `repos/${repoFullName}/issues/${issueNumber}`, '--jq', '.number'], {
-        timeout: 10_000,
-      });
+      const { stdout } = await execFileAsync(
+        'gh',
+        ['api', `repos/${repoFullName}/issues/${issueNumber}`, '--jq', '.pull_request != null'],
+        { timeout: 10_000 },
+      );
+      // If .pull_request is set, this is a PR not a pure issue — reject
+      if (stdout.trim() === 'true') return false;
       return true;
     } catch (err: unknown) {
       if (err instanceof Error && 'code' in err && typeof (err as Record<string, unknown>).code === 'number') {
