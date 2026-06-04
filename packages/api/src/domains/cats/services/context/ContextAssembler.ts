@@ -144,13 +144,20 @@ export function assembleContext(messages: StoredMessage[], options?: ContextAsse
   // F117: exclude undelivered messages (queued/canceled) from prompt context
   // Also exclude system-generated messages (userId='system') — these are display-only
   // (e.g. persisted error badges) and must not re-enter the prompt as "铲屎官" messages.
+  // #699: exclude briefing messages (origin='briefing') — non-routing internal artifacts
+  // that must not appear in prompt context or reply preview maps (consistent with
+  // isEligibleReplyParent and incremental context paths which already exclude them).
   // Defense: also exclude legacy error messages that were incorrectly persisted with
   // userId=user by route-parallel.ts (context poisoning bug, fixed in PR #992).
   // Only filter cat messages (catId !== null) starting with [错误] — user messages are legit.
   // All 6 known contaminated records start with [错误] (no partial-text-before-error exists
   // in practice, since stream_idle_stall means zero text was produced before the error).
   const deliveredMessages = messages.filter(
-    (m) => isDelivered(m) && m.userId !== 'system' && !(m.catId && m.content?.startsWith('[错误]')),
+    (m) =>
+      isDelivered(m) &&
+      m.userId !== 'system' &&
+      m.origin !== 'briefing' &&
+      !(m.catId && m.content?.startsWith('[错误]')),
   );
 
   if (deliveredMessages.length === 0) {
