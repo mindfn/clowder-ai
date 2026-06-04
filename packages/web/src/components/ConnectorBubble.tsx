@@ -62,13 +62,7 @@ function renderContentBlocks(blocks: MessageContent[]) {
 /** Data-driven icon rendering from ConnectorDefinition.icon spec.
  *  Registered connectors always use the registry icon (SVG or PNG).
  *  Falls back to source.icon (emoji/URL) only for unregistered connectors. */
-function ConnectorIcon({
-  iconSpec,
-  fallbackIcon,
-}: {
-  iconSpec?: ConnectorIconSpec;
-  fallbackIcon: string;
-}) {
+function ConnectorIcon({ iconSpec, fallbackIcon }: { iconSpec?: ConnectorIconSpec; fallbackIcon: string }) {
   // Registered connector → always use registry icon
   if (iconSpec) {
     if (iconSpec.type === 'png') {
