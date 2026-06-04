@@ -1579,6 +1579,42 @@ async function main(): Promise<void> {
     }
   };
 
+  // F220 followup: validate specific PR exists (number-level, not just repo)
+  const validatePr = async (repoFullName: string, prNumber: number): Promise<boolean> => {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const execFileAsync = promisify(execFile);
+    try {
+      await execFileAsync('gh', ['api', `repos/${repoFullName}/pulls/${prNumber}`, '--jq', '.number'], {
+        timeout: 10_000,
+      });
+      return true;
+    } catch (err: unknown) {
+      if (err instanceof Error && 'code' in err && typeof (err as Record<string, unknown>).code === 'number') {
+        return false;
+      }
+      throw err;
+    }
+  };
+
+  // F220 followup: validate specific issue exists (number-level, not just repo)
+  const validateIssue = async (repoFullName: string, issueNumber: number): Promise<boolean> => {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const execFileAsync = promisify(execFile);
+    try {
+      await execFileAsync('gh', ['api', `repos/${repoFullName}/issues/${issueNumber}`, '--jq', '.number'], {
+        timeout: 10_000,
+      });
+      return true;
+    } catch (err: unknown) {
+      if (err instanceof Error && 'code' in err && typeof (err as Record<string, unknown>).code === 'number') {
+        return false;
+      }
+      throw err;
+    }
+  };
+
   // F126: Create LimbRegistry + Phase B deps for device/hardware capability management
   const { LimbRegistry } = await import('./domains/limb/LimbRegistry.js');
   const { LimbAccessPolicy } = await import('./domains/limb/LimbAccessPolicy.js');
@@ -1755,6 +1791,8 @@ async function main(): Promise<void> {
     invocationTracker,
     deliveryCursorStore,
     validateRepo,
+    validatePr,
+    validateIssue,
     ...(workflowSopStore ? { workflowSopStore } : {}),
     queueProcessor,
     invocationQueue,

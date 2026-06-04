@@ -543,7 +543,7 @@ describe('GitHub plugin lifecycle (AC-B4)', () => {
     }
   });
 
-  test('enable with missing repo-scan deps → 4 succeed, 1 fails gracefully', async () => {
+  test('enable with missing repo-scan deps → 4 required succeed, 1 optional fails → success', async () => {
     const tmpDir = createTempDir();
     try {
       const registry = new ScheduleFactoryRegistry();
@@ -569,8 +569,8 @@ describe('GitHub plugin lifecycle (AC-B4)', () => {
       const manifest = parsePluginManifest(join(__dirname, '../../../plugins/github/plugin.yaml'));
       const result = await activator.enablePlugin(manifest);
 
-      // 4 succeed, 1 fails (repo-scan)
-      assert.strictEqual(result.status, 'partial');
+      // 4 succeed, 1 fails (repo-scan — optional), so overall status = success
+      assert.strictEqual(result.status, 'success');
       const succeeded = result.resources.filter((r) => r.ok);
       const failed = result.resources.filter((r) => !r.ok);
       assert.strictEqual(succeeded.length, 4);

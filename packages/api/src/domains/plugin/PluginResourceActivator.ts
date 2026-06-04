@@ -144,10 +144,11 @@ export class PluginResourceActivator {
       }
     }
 
-    const allOk = results.every((r) => r.ok);
+    // F220 followup: optional resources that fail don't block 'success' status
+    const allRequiredOk = results.every((r, i) => r.ok || !!manifest.resources[i]?.optional);
     const someOk = results.some((r) => r.ok);
     return {
-      status: allOk ? 'success' : someOk ? 'partial' : 'failed',
+      status: allRequiredOk ? 'success' : someOk ? 'partial' : 'failed',
       resources: results,
     };
   }

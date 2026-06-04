@@ -205,9 +205,13 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
         }
       }
 
+      // F220 followup: parse optional flag for resources
+      const optional = rr['optional'] === true;
+
       resources.push({
         type: type as PluginResourceDef['type'],
         ...(type === 'schedule' && factoryId ? { factoryId } : {}),
+        ...(optional ? { optional } : {}),
         path,
         name,
         command: command as string | undefined,

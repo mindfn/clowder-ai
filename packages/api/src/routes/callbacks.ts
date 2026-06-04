@@ -381,6 +381,10 @@ export interface CallbackRoutesOptions {
   deliveryCursorStore?: DeliveryCursorStore;
   /** Phase D: validates GitHub repo exists before PR tracking registration */
   validateRepo?: (repoFullName: string) => Promise<boolean>;
+  /** F220 followup: validates specific PR exists (number-level validation) */
+  validatePr?: (repoFullName: string, prNumber: number) => Promise<boolean>;
+  /** F220 followup: validates specific issue exists (number-level validation) */
+  validateIssue?: (repoFullName: string, issueNumber: number) => Promise<boolean>;
   /** F043 P1: feat_index provider override for tests */
   featIndexProvider?: () => Promise<FeatIndexEntry[]>;
   /** F073 P1: workflow SOP store for bulletin board */
@@ -636,6 +640,8 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     invocationTracker,
     deliveryCursorStore,
     validateRepo,
+    validatePr,
+    validateIssue,
     featIndexProvider,
     queueProcessor,
   } = opts;
@@ -2110,6 +2116,21 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       }
     }
 
+    // F220 followup: validate specific PR exists (number-level, not just repo)
+    if (validatePr) {
+      let prOk: boolean;
+      try {
+        prOk = await validatePr(repoFullName, prNumber);
+      } catch {
+        reply.status(503);
+        return { error: 'PR validation unavailable — try again later' };
+      }
+      if (!prOk) {
+        reply.status(422);
+        return { error: `PR ${repoFullName}#${prNumber} does not exist or is not accessible` };
+      }
+    }
+
     const subjectKey = `pr:${repoFullName}#${prNumber}`;
     try {
       const task = await taskStore.upsertBySubject({
@@ -2175,6 +2196,21 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       if (!repoOk) {
         reply.status(422);
         return { error: `Repository ${repoFullName} does not exist or is not accessible` };
+      }
+    }
+
+    // F220 followup: validate specific issue exists (number-level, not just repo)
+    if (validateIssue) {
+      let issueOk: boolean;
+      try {
+        issueOk = await validateIssue(repoFullName, issueNumber);
+      } catch {
+        reply.status(503);
+        return { error: 'Issue validation unavailable — try again later' };
+      }
+      if (!issueOk) {
+        reply.status(422);
+        return { error: `Issue ${repoFullName}#${issueNumber} does not exist or is not accessible` };
       }
     }
 

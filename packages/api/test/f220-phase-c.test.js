@@ -5,6 +5,7 @@
  * AC-C2: trigger messages contain trackingInstructions
  * AC-C3: unregister_tracking MCP tool
  * AC-C4: external GitHub content marked as untrusted
+ * Followup: PR/Issue number validation, optional resource support
  */
 
 import assert from 'node:assert/strict';
@@ -15,6 +16,11 @@ const { buildCiMessageContent } = await import('../dist/infrastructure/email/CiC
 const { buildIssueCommentContent } = await import('../dist/infrastructure/email/IssueCommentRouter.js');
 const { TaskStore } = await import('../dist/domains/cats/services/stores/ports/TaskStore.js');
 const { computeSubjectPreview } = await import('../dist/infrastructure/scheduler/TaskRunnerV2.js');
+const { PluginRegistry, resourceCapId } = await import('../dist/domains/plugin/PluginRegistry.js');
+const { parsePluginManifest } = await import('../dist/domains/plugin/plugin-manifest.js');
+const nodeFs = await import('node:fs');
+const nodeOs = await import('node:os');
+const nodePath = await import('node:path');
 
 // ── AC-C1: trackingInstructions stored in AutomationState ─────────
 
@@ -350,5 +356,160 @@ describe('P2-fix: computeSubjectPreview handles issue SubjectKind', () => {
   test('pr: still works after adding issue case', () => {
     const result = computeSubjectPreview('pr', { subject_key: 'pr:owner/repo#42' });
     assert.strictEqual(result, 'owner/repo#42');
+  });
+});
+
+// ── Followup: optional resource support in deriveStatus ─────────────
+
+describe('Followup: optional resource support', () => {
+  /** Helper to build a minimal manifest with given resources */
+  function makeManifest(resources, id = 'test-plugin') {
+    return {
+      id,
+      name: 'Test Plugin',
+      version: '1.0.0',
+      builtin: false,
+      config: [{ envName: 'TEST_PLUGIN_KEY', label: 'Key', sensitive: true, required: true }],
+      resources,
+    };
+  }
+
+  /** Helper to build capabilities config with given entries */
+  function makeCaps(entries) {
+    return { capabilities: entries };
+  }
+
+  const env = { TEST_PLUGIN_KEY: 'set' };
+  const registry = new PluginRegistry('/tmp/nonexistent');
+
+  test('deriveStatus: all required enabled + optional missing → enabled', () => {
+    const manifest = makeManifest([
+      { type: 'schedule', name: 'cicd-check', factoryId: 'github.cicd-check' },
+      { type: 'schedule', name: 'repo-scan', factoryId: 'github.repo-scan', optional: true },
+    ]);
+    // Only the required resource has a capability entry — optional is missing entirely
+    const caps = makeCaps([
+      {
+        id: resourceCapId('test-plugin', manifest.resources[0]),
+        pluginId: 'test-plugin',
+        type: 'schedule',
+        enabled: true,
+      },
+    ]);
+    const status = registry.deriveStatus(manifest, caps, env);
+    assert.strictEqual(status, 'enabled', 'optional missing should not block enabled status');
+  });
+
+  test('deriveStatus: all required enabled + optional disabled → enabled', () => {
+    const manifest = makeManifest([
+      { type: 'schedule', name: 'cicd-check', factoryId: 'github.cicd-check' },
+      { type: 'schedule', name: 'repo-scan', factoryId: 'github.repo-scan', optional: true },
+    ]);
+    const caps = makeCaps([
+      {
+        id: resourceCapId('test-plugin', manifest.resources[0]),
+        pluginId: 'test-plugin',
+        type: 'schedule',
+        enabled: true,
+      },
+      {
+        id: resourceCapId('test-plugin', manifest.resources[1]),
+        pluginId: 'test-plugin',
+        type: 'schedule',
+        enabled: false,
+      },
+    ]);
+    const status = registry.deriveStatus(manifest, caps, env);
+    assert.strictEqual(status, 'enabled', 'optional disabled should not block enabled status');
+  });
+
+  test('deriveStatus: required resource disabled → not enabled even with optional enabled', () => {
+    const manifest = makeManifest([
+      { type: 'schedule', name: 'cicd-check', factoryId: 'github.cicd-check' },
+      { type: 'schedule', name: 'repo-scan', factoryId: 'github.repo-scan', optional: true },
+    ]);
+    const caps = makeCaps([
+      {
+        id: resourceCapId('test-plugin', manifest.resources[0]),
+        pluginId: 'test-plugin',
+        type: 'schedule',
+        enabled: false,
+      },
+      {
+        id: resourceCapId('test-plugin', manifest.resources[1]),
+        pluginId: 'test-plugin',
+        type: 'schedule',
+        enabled: true,
+      },
+    ]);
+    const status = registry.deriveStatus(manifest, caps, env);
+    // Required resource is disabled → partial (some runtime enabled)
+    assert.strictEqual(status, 'partial', 'required resource disabled should prevent enabled status');
+  });
+
+  test('deriveStatus: all resources optional → no required → configured (not enabled)', () => {
+    const manifest = makeManifest([{ type: 'schedule', name: 'scan', factoryId: 'github.repo-scan', optional: true }]);
+    const caps = makeCaps([
+      {
+        id: resourceCapId('test-plugin', manifest.resources[0]),
+        pluginId: 'test-plugin',
+        type: 'schedule',
+        enabled: true,
+      },
+    ]);
+    const status = registry.deriveStatus(manifest, caps, env);
+    // requiredResources.length === 0, so allRequiredEnabled = false
+    // but someRuntimeEnabled = true → partial
+    assert.strictEqual(status, 'partial', 'all-optional plugin with runtime caps should be partial');
+  });
+});
+
+// ── Followup: plugin.yaml optional field parsing ────────────────────
+
+describe('Followup: plugin.yaml optional field parsing', () => {
+  test('parsePluginManifest preserves optional: true on resources', () => {
+    const tmpDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'f220-test-'));
+    const yamlPath = nodePath.join(tmpDir, 'plugin.yaml');
+    nodeFs.writeFileSync(
+      yamlPath,
+      `id: test-opt
+name: Test Optional
+version: "1.0.0"
+config: []
+resources:
+  - type: schedule
+    name: required-job
+    factoryId: test.required
+  - type: schedule
+    name: optional-job
+    factoryId: test.optional
+    optional: true
+`,
+    );
+    const manifest = parsePluginManifest(yamlPath);
+    assert.strictEqual(manifest.resources.length, 2);
+    assert.strictEqual(manifest.resources[0].optional, undefined, 'non-optional should omit field');
+    assert.strictEqual(manifest.resources[1].optional, true, 'optional: true should be preserved');
+    // Cleanup
+    nodeFs.rmSync(tmpDir, { recursive: true });
+  });
+
+  test('parsePluginManifest rejects backslash in schedule name (P2-2)', () => {
+    const tmpDir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'f220-test-'));
+    const yamlPath = nodePath.join(tmpDir, 'plugin.yaml');
+    nodeFs.writeFileSync(
+      yamlPath,
+      `id: test-bs
+name: Test Backslash
+version: "1.0.0"
+config: []
+resources:
+  - type: schedule
+    name: "a\\\\b"
+    factoryId: test.bs
+`,
+    );
+    assert.throws(() => parsePluginManifest(yamlPath), /backslash/i, 'backslash in schedule name should throw');
+    nodeFs.rmSync(tmpDir, { recursive: true });
   });
 });
