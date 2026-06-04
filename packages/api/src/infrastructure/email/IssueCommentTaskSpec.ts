@@ -93,14 +93,9 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
             const { repoFullName, issueNumber } = parsed;
             const issueKey = `${repoFullName}#${issueNumber}`;
 
-            // AC-D4: Check if issue is closed → auto-close task
+            // AC-D4: Check issue state (fetch before comment processing so
+            // pending comments are delivered before auto-close — P2-cloud fix)
             const issueState = await opts.fetchIssueState(repoFullName, issueNumber);
-            if (issueState === 'closed') {
-              await opts.taskStore.update(task.id, { status: 'done' });
-              await opts.taskStore.patchAutomationState(task.id, { issue: { issueState: 'closed' } });
-              opts.log.info(`[issue-comment] Issue ${issueKey} closed — task marked done`);
-              continue;
-            }
 
             const commentCursor = commentCursors.get(issueKey) ?? task.automationState?.issue?.lastCommentCursor ?? 0;
             const comments = await opts.fetchComments(repoFullName, issueNumber, commentCursor);
@@ -116,6 +111,33 @@ export function createIssueCommentTaskSpec(opts: IssueCommentTaskSpecOptions): T
             // All new items were echo → advance cursor without notification
             if (newComments.length === 0 && allNewComments.length > 0) {
               await advanceCursor(task.id, issueKey, maxCommentId, 'persistFirst');
+            }
+
+            // AC-D4: Issue closed → deliver pending comments first, then auto-close
+            if (issueState === 'closed') {
+              if (newComments.length > 0) {
+                // Deliver final comments; commitCursor also marks task done
+                workItems.push({
+                  signal: {
+                    task,
+                    repoFullName,
+                    issueNumber,
+                    newComments,
+                    commitCursor: async () => {
+                      await advanceCursor(task.id, issueKey, maxCommentId, 'memoryFirst');
+                      await opts.taskStore.update(task.id, { status: 'done' });
+                      await opts.taskStore.patchAutomationState(task.id, { issue: { issueState: 'closed' } });
+                      opts.log.info(`[issue-comment] Issue ${issueKey} closed — final comments delivered, task done`);
+                    },
+                  },
+                  subjectKey: task.subjectKey!,
+                });
+              } else {
+                // No pending comments → close immediately
+                await opts.taskStore.update(task.id, { status: 'done' });
+                await opts.taskStore.patchAutomationState(task.id, { issue: { issueState: 'closed' } });
+                opts.log.info(`[issue-comment] Issue ${issueKey} closed — task marked done`);
+              }
               continue;
             }
 

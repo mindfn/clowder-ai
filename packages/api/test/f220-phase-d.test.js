@@ -291,6 +291,120 @@ describe('AC-D4: Issue auto-close', () => {
   });
 });
 
+// ── P2-cloud: deliver pending comments before auto-close ─────────
+
+describe('P2-cloud: process pending comments before closing', () => {
+  test('gate returns workItems for pending comments even when issue is closed', async () => {
+    assert.ok(createIssueCommentTaskSpec, 'createIssueCommentTaskSpec should be importable');
+    const store = new TaskStore();
+    const task = store.upsertBySubject({
+      kind: 'issue_tracking',
+      threadId: 't1',
+      subjectKey: 'issue:o/r#77',
+      title: 'Issue #77',
+      why: 'track',
+      createdBy: 'cat1',
+      userId: 'u1',
+    });
+    // Set cursor at comment #50 — comments after this are "pending"
+    store.patchAutomationState(task.id, { issue: { lastCommentCursor: 50 } });
+
+    const mockRouter = {
+      route: async () => ({ kind: 'notified', threadId: 't1', catId: 'cat1', messageId: 'm1', content: 'test' }),
+    };
+    const mockLog = { info: () => {}, error: () => {}, warn: () => {} };
+
+    const spec = createIssueCommentTaskSpec({
+      taskStore: store,
+      issueCommentRouter: mockRouter,
+      // Maintainer posted comment #100 (the closing explanation) after cursor #50
+      fetchComments: async () => [
+        { id: 100, author: 'maintainer', body: 'Closing: fixed in v2.0', createdAt: '2026-01-01T00:00:00Z' },
+      ],
+      fetchIssueState: async () => 'closed',
+      log: mockLog,
+    });
+
+    const result = await spec.admission.gate();
+    // Key assertion: gate must return workItems with the pending comment,
+    // NOT skip it by marking done immediately
+    assert.strictEqual(result.run, true, 'should return run=true to deliver pending comments');
+    assert.ok(result.workItems?.length > 0, 'should have workItems with the closing comment');
+    assert.strictEqual(result.workItems[0].signal.newComments.length, 1);
+    assert.strictEqual(result.workItems[0].signal.newComments[0].id, 100);
+  });
+
+  test('commitCursor also marks task done after delivering final comments', async () => {
+    assert.ok(createIssueCommentTaskSpec, 'createIssueCommentTaskSpec should be importable');
+    const store = new TaskStore();
+    const task = store.upsertBySubject({
+      kind: 'issue_tracking',
+      threadId: 't1',
+      subjectKey: 'issue:o/r#88',
+      title: 'Issue #88',
+      why: 'track',
+      createdBy: 'cat1',
+      userId: 'u1',
+    });
+    store.patchAutomationState(task.id, { issue: { lastCommentCursor: 10 } });
+
+    const mockRouter = {
+      route: async () => ({ kind: 'notified', threadId: 't1', catId: 'cat1', messageId: 'm1', content: 'test' }),
+    };
+    const logMessages = [];
+    const mockLog = { info: (...args) => logMessages.push(args.join(' ')), error: () => {}, warn: () => {} };
+
+    const spec = createIssueCommentTaskSpec({
+      taskStore: store,
+      issueCommentRouter: mockRouter,
+      fetchComments: async () => [
+        { id: 20, author: 'maintainer', body: 'Final note', createdAt: '2026-01-01T00:00:00Z' },
+      ],
+      fetchIssueState: async () => 'closed',
+      log: mockLog,
+    });
+
+    const result = await spec.admission.gate();
+    assert.strictEqual(result.run, true);
+
+    // Simulate execute phase: call commitCursor
+    await result.workItems[0].signal.commitCursor();
+
+    // After commitCursor, task should be done (auto-close embedded in commitCursor)
+    const updated = store.get(task.id);
+    assert.strictEqual(updated.status, 'done', 'task should be marked done after final comments delivered');
+    assert.strictEqual(updated.automationState?.issue?.issueState, 'closed');
+  });
+
+  test('closed issue with no pending comments still marks done immediately', async () => {
+    assert.ok(createIssueCommentTaskSpec, 'createIssueCommentTaskSpec should be importable');
+    const store = new TaskStore();
+    const task = store.upsertBySubject({
+      kind: 'issue_tracking',
+      threadId: 't1',
+      subjectKey: 'issue:o/r#66',
+      title: 'Issue #66',
+      why: 'track',
+      createdBy: 'cat1',
+    });
+
+    const mockRouter = { route: async () => ({ kind: 'skipped', reason: 'test' }) };
+    const mockLog = { info: () => {}, error: () => {}, warn: () => {} };
+
+    const spec = createIssueCommentTaskSpec({
+      taskStore: store,
+      issueCommentRouter: mockRouter,
+      fetchComments: async () => [],
+      fetchIssueState: async () => 'closed',
+      log: mockLog,
+    });
+
+    await spec.admission.gate();
+    const updated = store.get(task.id);
+    assert.strictEqual(updated.status, 'done', 'no pending comments → immediate close');
+  });
+});
+
 // ── Schedule factory registration ─────────────────────────────────
 
 describe('Issue tracking schedule factory', () => {
