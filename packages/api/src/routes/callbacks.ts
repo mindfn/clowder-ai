@@ -41,8 +41,8 @@ import {
 import { type ITaskStore, isSubjectOwnershipConflictError } from '../domains/cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore, VotingStateV1 } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import {
-  canViewMessage,
   canQuoteInPublicReply,
+  canViewMessage,
   isEligibleReplyParent,
   isSystemUserMessage,
   type Viewer,
