@@ -9,6 +9,10 @@ import { resolveA2aEvidenceBundle } from './eval-a2a-artifact-resolver.js';
 import {
   buildA2aNoDataVerdictHandoff,
   type BuildA2aNoDataVerdictInput,
+  isProbeUnavailable,
+  metricRefForUnavailableProbe,
+  SOURCE_ADAPTER_COMPONENT_ID,
+  sourceAdapterFrictionMetrics,
 } from './eval-a2a-no-data-adapter.js';
 
 const SANITIZE_RULES_VERSION = 'f192-e-pilot-v1';
@@ -282,9 +286,29 @@ export function generateA2aNoDataVerdict(input: GenerateA2aNoDataVerdictInput): 
   const evalSnapshotId = `eval-${packet.harnessUnderEval.featureId}-${input.verdictId}`;
   const snapshotBundle = buildNoDataSnapshotBundle(input, packet, evalSnapshotId);
   const attributionBundle = buildNoDataAttributionBundle(input, packet, evalSnapshotId);
+
+  writeJson(join(bundleDir, 'snapshot.json'), snapshotBundle);
+  writeJson(join(bundleDir, 'attribution.json'), attributionBundle);
+
+  // Persist a canonicalized copy of the generator input so provenance.rawInputs
+  // can point at a real file with a real sha256 — required by
+  // eval-a2a-artifact-resolver.ts so loadEvalHubSummary() can read this
+  // verdict back. Codex review on c3672fb3e blocked the prior `rawInputs: []`
+  // shape because the resolver gates on `min(1)` plus a 64-char hex digest.
+  const inputArtifactPath = join(bundleDir, 'input.json');
+  const inputArtifactContent = `${JSON.stringify(canonicalInputCopy(input), null, 2)}\n`;
+  writeFileSync(inputArtifactPath, inputArtifactContent, 'utf8');
+  const inputArtifactSha = createHash('sha256').update(inputArtifactContent).digest('hex');
+  const inputArtifactRepoPath = repoRelativeRawInputPath(inputArtifactPath, input.harnessFeedbackRoot);
+
   const provenance = {
     verdictId: input.verdictId,
-    rawInputs: [],
+    rawInputs: [
+      {
+        path: inputArtifactRepoPath,
+        sha256: inputArtifactSha,
+      },
+    ],
     generatedAt: input.generatedAt,
     generator: {
       name: 'eval-a2a-no-data-verdict',
@@ -294,9 +318,6 @@ export function generateA2aNoDataVerdict(input: GenerateA2aNoDataVerdictInput): 
     sanitizeRulesVersion: SANITIZE_RULES_VERSION,
     inputFingerprint: fingerprintInput(input),
   };
-
-  writeJson(join(bundleDir, 'snapshot.json'), snapshotBundle);
-  writeJson(join(bundleDir, 'attribution.json'), attributionBundle);
   writeJson(join(bundleDir, 'provenance.json'), provenance);
 
   const snapshotRef = packet.evidencePacket.snapshotRefs[0] ?? `snapshot:bundle/${input.verdictId}/snapshot`;
@@ -316,6 +337,31 @@ export function generateA2aNoDataVerdict(input: GenerateA2aNoDataVerdictInput): 
     },
     isLive: true,
     sentCrossThreadMessage: false,
+  };
+}
+
+/**
+ * Stable, side-effect-free copy of the generator input — drops the
+ * `harnessFeedbackRoot` path (varies per env / test tmpdir, would break
+ * reproducibility) but keeps everything semantically meaningful so the
+ * resulting sha256 only changes when the verdict's logical input changes.
+ */
+function canonicalInputCopy(input: GenerateA2aNoDataVerdictInput): unknown {
+  return {
+    verdictId: input.verdictId,
+    generatedAt: input.generatedAt,
+    domain: {
+      domainId: input.domain.domainId,
+      sourceAdapter: input.domain.sourceAdapter,
+      handoffTargetResolver: input.domain.handoffTargetResolver,
+      sla: input.domain.sla,
+    },
+    window: input.window,
+    noDataReason: input.noDataReason,
+    legacyScheduledTaskStatus: input.legacyScheduledTaskStatus,
+    dailySchedulerStatus: input.dailySchedulerStatus,
+    ownerActionStatus: input.ownerActionStatus ?? null,
+    previousVerdict: input.previousVerdict ?? null,
   };
 }
 
@@ -346,11 +392,11 @@ function buildNoDataSnapshotBundle(
     dailySchedulerStatus: input.dailySchedulerStatus,
     components: [
       {
-        id: 'source-adapter',
+        id: SOURCE_ADAPTER_COMPONENT_ID,
         name: packet.harnessUnderEval.name,
         confidence: 'no-data',
         activationCounts: noDataActivationCounts(input),
-        frictionCounts: noDataFrictionCounts(packet),
+        frictionCounts: noDataFrictionCounts(input, packet),
       },
       {
         id: 'legacy-cleanup',
@@ -378,8 +424,29 @@ function noDataActivationCounts(input: GenerateA2aNoDataVerdictInput): Record<st
   return counts;
 }
 
-function noDataFrictionCounts(packet: VerdictHandoffPacket): Record<string, number> {
-  return packet.dailyTrend.current;
+function noDataFrictionCounts(
+  input: GenerateA2aNoDataVerdictInput,
+  _packet: VerdictHandoffPacket,
+): Record<string, number> {
+  // Populate source-adapter component frictionCounts with the SAME metric
+  // keys that buildA2aNoDataVerdictHandoff put into evidencePacket.metricRefs.
+  // This is the contract the resolver checks: attribution evidence anchors
+  // like `source-adapter/telemetry.metrics_reader_unavailable` must point at
+  // a metric key that actually exists on the bundled component (see
+  // eval-a2a-artifact-resolver.ts line 224 — `componentMetricKeys.has(metricKey)`).
+  // Without this, every no-data verdict would fail loadEvalHubSummary().
+  const counts: Record<string, number> = {};
+  // Headline: the adapter as a whole is unavailable — always 1.
+  counts['telemetry.source_adapter_unavailable'] = 1;
+  // Per-endpoint friction: counted per unavailable probe so multiple /traces
+  // probes mapping to the same store correctly surface as count > 1.
+  for (const probe of input.noDataReason.endpointProbes) {
+    const ref = metricRefForUnavailableProbe(probe);
+    if (!ref) continue;
+    counts[ref] = (counts[ref] ?? 0) + 1;
+  }
+  if (input.ownerActionStatus) counts.owner_action_observed = 1;
+  return counts;
 }
 
 function buildNoDataAttributionBundle(
@@ -389,16 +456,29 @@ function buildNoDataAttributionBundle(
 ): Record<string, unknown> {
   const evidence: Array<{ type: string; anchor: string; excerpt: string }> = [];
   for (const probe of input.noDataReason.endpointProbes) {
+    // Anchor points at a metric key that actually exists on the bundled
+    // source-adapter component (frictionCounts). This is what
+    // eval-a2a-artifact-resolver.ts:224 checks; without it,
+    // `loadEvalHubSummary()` rejects the verdict.
+    // Available probes (healthy 200 etc.) don't produce a frictionCount, so
+    // they get a non-component anchor — the resolver allows non-component
+    // anchors on non-counter evidence types.
+    const metricRef = metricRefForUnavailableProbe(probe);
+    const anchor = metricRef
+      ? `${SOURCE_ADAPTER_COMPONENT_ID}/${metricRef}`
+      : `endpoint-probe/${probe.endpoint}`;
     evidence.push({
       type: 'endpoint_check',
-      anchor: `source-adapter/${probe.endpoint}`,
+      anchor,
       excerpt: `${probe.endpoint} returned ${probe.status}: ${probe.result}`,
     });
   }
   if (input.ownerActionStatus) {
     evidence.push({
       type: 'owner_action',
-      anchor: `branch/${input.ownerActionStatus.branch}`,
+      // Anchor under the component path so the action shows up as bundled
+      // component evidence (owner_action_observed is a frictionCount key).
+      anchor: `${SOURCE_ADAPTER_COMPONENT_ID}/owner_action_observed`,
       excerpt: `Owner branch ${input.ownerActionStatus.branch} reached ${input.ownerActionStatus.latestCommit}; review status: ${input.ownerActionStatus.reviewStatus}.${input.ownerActionStatus.notes ? ' ' + input.ownerActionStatus.notes : ''}`,
     });
   }

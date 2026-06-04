@@ -99,9 +99,63 @@ export interface BuildA2aNoDataVerdictInput {
   previousVerdict?: NoDataPreviousVerdict;
 }
 
-const SOURCE_ADAPTER_COMPONENT_ID = 'source-adapter';
-const SOURCE_ADAPTER_COMPONENT_NAME = 'f167-runtime-eval telemetry source adapter';
+export const SOURCE_ADAPTER_COMPONENT_ID = 'source-adapter';
+export const SOURCE_ADAPTER_COMPONENT_NAME = 'f167-runtime-eval telemetry source adapter';
 const NO_DATA_FRICTION_METRIC = 'telemetry.source_adapter_unavailable';
+
+/**
+ * Single source of truth: is this telemetry probe an unavailability signal?
+ * Codex review on c3672fb3e flagged that `metricRefForProbe` and
+ * `countUnavailableProbes` previously disagreed on what "/health 200"
+ * meant — same root-cause shape as the init.ts vs route OTEL_SDK_DISABLED
+ * drift fixed in 988545163. Centralize the predicate so callers can't
+ * disagree again.
+ *
+ * Rules:
+ * - HTTP 5xx is always unavailable (store missing / init failed).
+ * - HTTP 200 from /health is unavailable iff the response body mentions
+ *   `null` or `unavailable` stores (so an honest healthy response with
+ *   real stores stays healthy and is filtered out of metric refs).
+ * - Everything else is "data present" and not counted.
+ */
+export function isProbeUnavailable(probe: NoDataEndpointProbe): boolean {
+  if (probe.status >= 500) return true;
+  if (probe.status === 200 && probe.endpoint.endsWith('/health') && /null|unavailable/i.test(probe.result)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Map an unavailable probe to a stable metric ref string.
+ * Returns `null` for available probes — callers must filter them out via
+ * `isProbeUnavailable` first.
+ */
+export function metricRefForUnavailableProbe(probe: NoDataEndpointProbe): string | null {
+  if (!isProbeUnavailable(probe)) return null;
+  if (probe.endpoint.endsWith('/health')) return 'telemetry.health_false_healthy_with_null_stores';
+  if (probe.endpoint.endsWith('/metrics/history')) return 'telemetry.metrics_snapshot_store_unavailable';
+  if (probe.endpoint.endsWith('/metrics')) return 'telemetry.metrics_reader_unavailable';
+  if (probe.endpoint.endsWith('/traces/stats') || probe.endpoint.endsWith('/traces'))
+    return 'telemetry.trace_store_unavailable';
+  return `telemetry.endpoint_unavailable:${probe.endpoint}`;
+}
+
+/**
+ * The set of metric keys that the source-adapter component will surface
+ * as `frictionCounts`. Used by both the builder (to emit metricRefs) and
+ * the generator (to populate the bundle snapshot so attribution evidence
+ * anchors resolve against real bundled component metrics).
+ */
+export function sourceAdapterFrictionMetrics(input: BuildA2aNoDataVerdictInput): string[] {
+  const keys = new Set<string>([NO_DATA_FRICTION_METRIC]);
+  for (const probe of input.noDataReason.endpointProbes) {
+    const ref = metricRefForUnavailableProbe(probe);
+    if (ref) keys.add(ref);
+  }
+  if (input.ownerActionStatus) keys.add('owner_action_observed');
+  return Array.from(keys);
+}
 
 /**
  * Build a no-data verdict packet that survives the standard verdict
@@ -112,6 +166,12 @@ export function buildA2aNoDataVerdictHandoff(input: BuildA2aNoDataVerdictInput):
   const domain = parseEvalDomainRegistryEntry(input.domain);
   if (input.noDataReason.endpointProbes.length === 0) {
     throw new Error('no-data verdict requires at least one endpoint probe');
+  }
+  // The whole point of a no-data verdict is that *something* is unavailable.
+  // If every probe is healthy, the caller should be on the regular F167
+  // pipeline, not this one — refuse to fabricate a fake source-adapter outage.
+  if (!input.noDataReason.endpointProbes.some(isProbeUnavailable)) {
+    throw new Error('no-data verdict requires at least one unavailable probe (5xx, or /health 200 with null/unavailable stores)');
   }
 
   const targetFeatureId = domain.handoffTargetResolver.featureId;
@@ -179,25 +239,10 @@ export function buildA2aNoDataVerdictHandoff(input: BuildA2aNoDataVerdictInput):
 }
 
 function buildMetricRefs(input: BuildA2aNoDataVerdictInput): string[] {
-  const refs = new Set<string>([NO_DATA_FRICTION_METRIC]);
-  for (const probe of input.noDataReason.endpointProbes) {
-    refs.add(metricRefForProbe(probe));
-  }
-  if (input.ownerActionStatus) refs.add('owner_action_observed');
+  const refs = new Set<string>(sourceAdapterFrictionMetrics(input));
   refs.add('legacy_task_overlap_count');
   refs.add('duplicate_trigger_count');
   return Array.from(refs);
-}
-
-function metricRefForProbe(probe: NoDataEndpointProbe): string {
-  if (probe.endpoint.endsWith('/health') && probe.status === 200) {
-    return 'telemetry.health_false_healthy_with_null_stores';
-  }
-  if (probe.endpoint.endsWith('/metrics/history')) return 'telemetry.metrics_snapshot_store_unavailable';
-  if (probe.endpoint.endsWith('/metrics')) return 'telemetry.metrics_reader_unavailable';
-  if (probe.endpoint.endsWith('/traces/stats') || probe.endpoint.endsWith('/traces'))
-    return 'telemetry.trace_store_unavailable';
-  return `telemetry.endpoint_unavailable:${probe.endpoint}`;
 }
 
 function buildSampleTraceRefs(input: BuildA2aNoDataVerdictInput): string[] {
@@ -247,13 +292,7 @@ function buildBaselineTrend(input: BuildA2aNoDataVerdictInput): Record<string, n
 
 function countUnavailableProbes(probes: NoDataEndpointProbe[]): number {
   let count = 0;
-  for (const probe of probes) {
-    if (probe.status >= 500) count++;
-    else if (probe.status === 200 && probe.endpoint.endsWith('/health') && /null|unavailable/i.test(probe.result)) {
-      // False-healthy /health is itself an unavailable signal.
-      count++;
-    }
-  }
+  for (const probe of probes) if (isProbeUnavailable(probe)) count++;
   return count;
 }
 

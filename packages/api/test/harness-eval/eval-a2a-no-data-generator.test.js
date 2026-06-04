@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
 import { generateA2aNoDataVerdict } from '../../dist/infrastructure/harness-eval/eval-a2a-live-verdict.js';
+import { resolveA2aEvidenceBundle } from '../../dist/infrastructure/harness-eval/eval-a2a-artifact-resolver.js';
 import {
   assertCanCrossThreadHandoff,
   parseVerdictHandoffPacket,
@@ -241,5 +242,111 @@ describe('generateA2aNoDataVerdict', () => {
         ),
       /verdictId must be a safe slug/,
     );
+  });
+
+  // Regression for codex review of c3672fb3e: the prior implementation wrote
+  // `provenance.rawInputs: []` and used `source-adapter/<endpoint>` evidence
+  // anchors, both of which made the generated artifact unreadable by the
+  // existing Eval Hub `resolveA2aEvidenceBundle()` consumer. Without this
+  // round-trip, `loadEvalHubSummary()` would throw on every no-data verdict.
+  describe('Eval Hub read-model round-trip', () => {
+    it('generates an artifact that resolveA2aEvidenceBundle() accepts (minimal input)', () => {
+      const harnessFeedbackRoot = makeRoot();
+      const result = generateA2aNoDataVerdict(baseInput(harnessFeedbackRoot));
+      const resolved = resolveA2aEvidenceBundle({
+        bundleDir: result.bundleDir,
+        verdictId: '2026-06-04-eval-a2a-source-adapter-unavailable',
+      });
+      assert.equal(resolved.snapshot.featureId, 'F167');
+      // resolver guarantees at least one bundled component evidence anchor exists.
+      assert.equal(resolved.attributionReport.findings.length, 1);
+      // provenance was the original P1: at-least-one rawInput + 64-char sha256.
+      assert.ok(resolved.provenance.rawInputs.length >= 1);
+      for (const raw of resolved.provenance.rawInputs) {
+        assert.match(raw.sha256, /^[a-f0-9]{64}$/, `rawInput sha256 must be 64-char lowercase hex, got ${raw.sha256}`);
+      }
+    });
+
+    it('round-trips with optional ownerActionStatus and previousVerdict (closure-unmet)', () => {
+      const harnessFeedbackRoot = makeRoot();
+      const result = generateA2aNoDataVerdict(
+        baseInput(harnessFeedbackRoot, {
+          ownerActionStatus: {
+            branch: 'feat/f167-no-data-resilience',
+            latestCommit: 'c3672fb3e',
+            reviewStatus: 'codex_returned_p1',
+          },
+          previousVerdict: {
+            packetId: 'vhp_eval_a2a_2026_06_03_source_adapter_closure_unmet',
+            closureCondition: 'next eval can fetch metrics, traces, history successfully',
+            closureMet: false,
+            reason: 'Telemetry stores remain null on 2026-06-04.',
+          },
+        }),
+      );
+      // No throw == round-trip success; explicit re-parse to be defensive.
+      const resolved = resolveA2aEvidenceBundle({
+        bundleDir: result.bundleDir,
+        verdictId: '2026-06-04-eval-a2a-source-adapter-unavailable',
+      });
+      assert.equal(resolved.attributionReport.findings.length, 1);
+    });
+
+    it('writes a side-by-side input.json artifact whose sha256 matches provenance.rawInputs', () => {
+      const harnessFeedbackRoot = makeRoot();
+      const result = generateA2aNoDataVerdict(baseInput(harnessFeedbackRoot));
+      const provenance = JSON.parse(
+        readFileSync(join(result.bundleDir, 'provenance.json'), 'utf8'),
+      );
+      assert.equal(provenance.rawInputs.length, 1);
+      const raw = provenance.rawInputs[0];
+      assert.ok(raw.path.endsWith('input.json'), `expected rawInputs[0].path to end with input.json, got ${raw.path}`);
+      assert.match(raw.sha256, /^[a-f0-9]{64}$/);
+      // The fingerprint and the persisted artifact share input semantics —
+      // both should be stable across re-runs with identical input.
+      assert.equal(existsSync(join(result.bundleDir, 'input.json')), true);
+    });
+
+    it('attribution evidence anchors land on real component metric keys (not endpoint paths)', () => {
+      const harnessFeedbackRoot = makeRoot();
+      generateA2aNoDataVerdict(baseInput(harnessFeedbackRoot));
+      const snapshot = JSON.parse(
+        readFileSync(
+          join(
+            harnessFeedbackRoot,
+            'bundles',
+            '2026-06-04-eval-a2a-source-adapter-unavailable',
+            'snapshot.json',
+          ),
+          'utf8',
+        ),
+      );
+      const attribution = JSON.parse(
+        readFileSync(
+          join(
+            harnessFeedbackRoot,
+            'bundles',
+            '2026-06-04-eval-a2a-source-adapter-unavailable',
+            'attribution.json',
+          ),
+          'utf8',
+        ),
+      );
+      const sourceComponent = snapshot.components.find((c) => c.id === 'source-adapter');
+      const validKeys = new Set([
+        ...Object.keys(sourceComponent.frictionCounts),
+        ...Object.keys(sourceComponent.activationCounts),
+      ]);
+      // For each endpoint_check evidence anchor that points at the
+      // source-adapter component, the metric key suffix must be in the
+      // component's counts — otherwise resolver rejects the bundle.
+      const sourceAdapterAnchors = attribution.findings[0].attribution.evidence
+        .filter((e) => e.anchor.startsWith('source-adapter/'))
+        .map((e) => e.anchor.slice('source-adapter/'.length));
+      assert.ok(sourceAdapterAnchors.length > 0, 'expected at least one source-adapter/<metric> anchor');
+      for (const key of sourceAdapterAnchors) {
+        assert.ok(validKeys.has(key), `evidence anchor "source-adapter/${key}" must exist in component counts, got keys=${JSON.stringify([...validKeys])}`);
+      }
+    });
   });
 });

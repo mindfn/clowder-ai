@@ -200,6 +200,55 @@ describe('eval:a2a no-data verdict builder', () => {
     );
   });
 
+  // Regression for codex review of c3672fb3e: refuse to fabricate a no-data
+  // verdict when every probe is healthy — the caller should be on the
+  // regular F167 pipeline instead.
+  it('rejects input where every probe is healthy — no fake source-adapter outage', () => {
+    assert.throws(
+      () =>
+        buildA2aNoDataVerdictHandoff(
+          baseInput({
+            noDataReason: {
+              summary: 'all probes returned 200 with real stores',
+              endpointProbes: [
+                { endpoint: '/api/telemetry/metrics', status: 200, result: 'metrics text returned' },
+                {
+                  endpoint: '/api/telemetry/health',
+                  status: 200,
+                  result: 'healthy, traceStore present, metricsSnapshotStore present',
+                },
+              ],
+            },
+          }),
+        ),
+      /at least one unavailable probe/,
+    );
+  });
+
+  it('does not flag a healthy /health 200 (real stores) as an unavailable signal', () => {
+    const packet = buildA2aNoDataVerdictHandoff(
+      baseInput({
+        noDataReason: {
+          summary: '/health is healthy; only /metrics is dark.',
+          endpointProbes: [
+            { endpoint: '/api/telemetry/metrics', status: 503, result: 'Metrics reader not available' },
+            {
+              endpoint: '/api/telemetry/health',
+              status: 200,
+              result: 'healthy, all stores connected, errorRate=0.01',
+            },
+          ],
+        },
+      }),
+    );
+    // Only the 503 should count; the healthy 200 must not pollute metricRefs.
+    assert.equal(packet.dailyTrend.current.telemetry_endpoint_unavailable_count, 1);
+    assert.ok(
+      !packet.evidencePacket.metricRefs.includes('telemetry.health_false_healthy_with_null_stores'),
+      'healthy /health 200 must not produce the false-healthy metric ref',
+    );
+  });
+
   it('sets the next re-eval timestamp using the domain SLA window', () => {
     const packet = buildA2aNoDataVerdictHandoff(baseInput());
     const expected = new Date(Date.parse('2026-06-04T03:00:00.000Z') + 72 * 3600 * 1000).toISOString();
