@@ -42,6 +42,7 @@ import { type ITaskStore, isSubjectOwnershipConflictError } from '../domains/cat
 import type { IThreadStore, VotingStateV1 } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import {
   canViewMessage,
+  canQuoteInPublicReply,
   isEligibleReplyParent,
   isSystemUserMessage,
   type Viewer,
@@ -710,7 +711,13 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
         // #699: unified parent eligibility — same predicate chain as /api/messages
         // and route-helpers context assembly (isDelivered, visibility, whisper safety).
         const senderViewer: Viewer = { type: 'cat', catId: createCatId(principal.catId) };
-        if (parentMsg && isEligibleReplyParent(parentMsg, { threadId: effectiveThreadId, viewer: senderViewer })) {
+        if (
+          parentMsg &&
+          isEligibleReplyParent(parentMsg, { threadId: effectiveThreadId, viewer: senderViewer }) &&
+          // #699: Callback replies are always public — block quoting unrevealed whispers
+          // to prevent hydrateReplyPreview from leaking whisper content to non-recipients.
+          canQuoteInPublicReply(parentMsg)
+        ) {
           validatedReplyTo = replyTo;
         }
       }
@@ -1156,7 +1163,12 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       const parentMsg = await messageStore.getById(effectiveReplyTo);
       // #699: unified parent eligibility — same predicate chain as /api/messages
       const actorViewer: Viewer = { type: 'cat', catId: createCatId(actor.catId) };
-      if (parentMsg && isEligibleReplyParent(parentMsg, { threadId: effectiveThreadId, viewer: actorViewer })) {
+      if (
+        parentMsg &&
+        isEligibleReplyParent(parentMsg, { threadId: effectiveThreadId, viewer: actorViewer }) &&
+        // #699: A2A replies are always public — block quoting unrevealed whispers
+        canQuoteInPublicReply(parentMsg)
+      ) {
         validatedReplyTo = effectiveReplyTo;
       } else if (replyTo) {
         // Only warn for explicit replyTo failures — auto-fill mismatches are expected
