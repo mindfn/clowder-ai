@@ -46,7 +46,7 @@ export interface A2ATriggerDeps {
   invocationTracker?: InvocationTracker;
   deliveryCursorStore?: DeliveryCursorStore;
   queueProcessor?: QueueProcessorLike;
-  /** F706: MessageStore for queue enrichment (messagePreview in queue_updated SSE). */
+  /** #706: MessageStore for queue enrichment (messagePreview in queue_updated SSE). */
   messageStore?: IMessageStore;
   /** F122B: InvocationQueue for agent-sourced entries */
   invocationQueue?: Pick<
