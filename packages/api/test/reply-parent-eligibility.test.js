@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-const { isEligibleReplyParent, canQuoteInPublicReply } = await import(
+const { isEligibleReplyParent, canQuoteInPublicReply, resolveVisibleReplyParent } = await import(
   '../dist/domains/cats/services/stores/visibility.js'
 );
 
@@ -133,5 +133,52 @@ describe('#699: canQuoteInPublicReply', () => {
   test('allows quoting a message with explicit public visibility', () => {
     const parent = mockMsg({ visibility: 'public' });
     assert.ok(canQuoteInPublicReply(parent));
+  });
+});
+
+describe('#699: resolveVisibleReplyParent (atomic resolver)', () => {
+  /** Minimal mock store */
+  function mockStore(messages) {
+    const map = new Map(messages.map((m) => [m.id, m]));
+    return { getById: (id) => map.get(id) ?? null };
+  }
+
+  test('returns message when eligible', async () => {
+    const parent = mockMsg({ id: 'p1', deliveryStatus: 'delivered' });
+    const store = mockStore([parent]);
+    const result = await resolveVisibleReplyParent(store, 'p1', defaultOpts);
+    assert.ok(result);
+    assert.equal(result.id, 'p1');
+  });
+
+  test('returns null for non-existent ID', async () => {
+    const store = mockStore([]);
+    const result = await resolveVisibleReplyParent(store, 'nope', defaultOpts);
+    assert.equal(result, null);
+  });
+
+  test('returns null for ineligible parent (system user)', async () => {
+    const parent = mockMsg({ id: 'p-sys', userId: 'system', catId: null });
+    const store = mockStore([parent]);
+    const result = await resolveVisibleReplyParent(store, 'p-sys', defaultOpts);
+    assert.equal(result, null);
+  });
+
+  test('returns null for unrevealed whisper in public reply', async () => {
+    const parent = mockMsg({ id: 'p-w', visibility: 'whisper', whisperTo: ['opus'] });
+    const store = mockStore([parent]);
+    // Without publicReply — eligible (sender can see)
+    const eligible = await resolveVisibleReplyParent(store, 'p-w', defaultOpts);
+    assert.ok(eligible, 'whisper visible to sender should pass without publicReply');
+    // With publicReply — blocked
+    const blocked = await resolveVisibleReplyParent(store, 'p-w', { ...defaultOpts, publicReply: true });
+    assert.equal(blocked, null, 'unrevealed whisper must be blocked for public reply');
+  });
+
+  test('allows revealed whisper in public reply', async () => {
+    const parent = mockMsg({ id: 'p-rw', visibility: 'whisper', whisperTo: ['codex'], revealedAt: Date.now() });
+    const store = mockStore([parent]);
+    const result = await resolveVisibleReplyParent(store, 'p-rw', { ...defaultOpts, publicReply: true });
+    assert.ok(result, 'revealed whisper should pass even for public reply');
   });
 });

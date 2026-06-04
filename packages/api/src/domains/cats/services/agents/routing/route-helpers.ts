@@ -17,7 +17,7 @@ import { DeliveryCursorStore } from '../../stores/ports/DeliveryCursorStore.js';
 import type { IDraftStore } from '../../stores/ports/DraftStore.js';
 import type { IMessageStore, StoredMessage, StoredToolEvent } from '../../stores/ports/MessageStore.js';
 import type { Thread } from '../../stores/ports/ThreadStore.js';
-import { canViewMessage, isEligibleReplyParent } from '../../stores/visibility.js';
+import { canViewMessage, resolveVisibleReplyParent } from '../../stores/visibility.js';
 import type { AgentMessage, AgentService } from '../../types.js';
 import type { InvocationDeps } from '../invocation/invoke-single-cat.js';
 import { extractRecentArtifacts, mergeLedger } from './artifact-tracking.js';
@@ -825,9 +825,8 @@ export async function assembleIncrementalContext(
   const truncateLimit = budget.maxContentLengthPerMsg;
   // #699: Build map from full relevant set for inline reply-to preview.
   // Cursor gap fix: messages replying to older content (before cursor) need
-  // a targeted getById fetch so the inline preview can resolve the parent.
-  // Security: fetched parents must pass the same visibility predicates as `relevant`
-  // to prevent leaking system/whisper/stream content via inline preview.
+  // a targeted fetch so the inline preview can resolve the parent.
+  // Uses resolveVisibleReplyParent — atomic fetch + visibility gate.
   const replyParentOpts = {
     threadId,
     viewer,
@@ -838,9 +837,11 @@ export async function assembleIncrementalContext(
     ...new Set(capped.filter((m) => m.replyTo && !baseMap.has(m.replyTo)).map((m) => m.replyTo!)),
   ];
   if (missingReplyIds.length > 0) {
-    const fetched = await Promise.all(missingReplyIds.map((id) => deps.messageStore.getById(id)));
-    for (const msg of fetched) {
-      if (msg && isEligibleReplyParent(msg, replyParentOpts)) baseMap.set(msg.id, msg);
+    const resolved = await Promise.all(
+      missingReplyIds.map((id) => resolveVisibleReplyParent(deps.messageStore, id, replyParentOpts)),
+    );
+    for (const msg of resolved) {
+      if (msg) baseMap.set(msg.id, msg);
     }
   }
   const messageMap: ReadonlyMap<string, StoredMessage> = baseMap;
@@ -1115,17 +1116,18 @@ async function assembleSmartWindowContext(
   // 6. Format burst messages
   // #699: Build map from full relevant set for inline reply-to preview.
   // Cursor gap fix: burst messages may reply to content from the omitted window —
-  // targeted getById fills those gaps so the inline preview resolves.
-  // Security: fetched parents must pass the same visibility predicates as `relevant`.
+  // uses resolveVisibleReplyParent — atomic fetch + visibility gate.
   const replyParentOptsCold = { threadId, viewer, hideOtherCatStreams: true };
   const baseMap = new Map(buildMessageMap(relevant));
   const missingReplyIds = [
     ...new Set(scrubbedBurst.filter((m) => m.replyTo && !baseMap.has(m.replyTo)).map((m) => m.replyTo!)),
   ];
   if (missingReplyIds.length > 0) {
-    const fetched = await Promise.all(missingReplyIds.map((id) => deps.messageStore.getById(id)));
-    for (const msg of fetched) {
-      if (msg && isEligibleReplyParent(msg, replyParentOptsCold)) baseMap.set(msg.id, msg);
+    const resolved = await Promise.all(
+      missingReplyIds.map((id) => resolveVisibleReplyParent(deps.messageStore, id, replyParentOptsCold)),
+    );
+    for (const msg of resolved) {
+      if (msg) baseMap.set(msg.id, msg);
     }
   }
   const messageMap: ReadonlyMap<string, StoredMessage> = baseMap;

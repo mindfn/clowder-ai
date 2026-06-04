@@ -41,10 +41,9 @@ import {
 import { type ITaskStore, isSubjectOwnershipConflictError } from '../domains/cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore, VotingStateV1 } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import {
-  canQuoteInPublicReply,
   canViewMessage,
-  isEligibleReplyParent,
   isSystemUserMessage,
+  resolveVisibleReplyParent,
   type Viewer,
 } from '../domains/cats/services/stores/visibility.js';
 import { getVoiceBlockSynthesizer } from '../domains/cats/services/tts/VoiceBlockSynthesizer.js';
@@ -707,19 +706,14 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
       let validatedReplyTo: string | undefined;
       if (replyTo) {
-        const parentMsg = await messageStore.getById(replyTo);
-        // #699: unified parent eligibility — same predicate chain as /api/messages
-        // and route-helpers context assembly (isDelivered, visibility, whisper safety).
+        // #699: atomic fetch + visibility gate — callback replies are always public.
         const senderViewer: Viewer = { type: 'cat', catId: createCatId(principal.catId) };
-        if (
-          parentMsg &&
-          isEligibleReplyParent(parentMsg, { threadId: effectiveThreadId, viewer: senderViewer }) &&
-          // #699: Callback replies are always public — block quoting unrevealed whispers
-          // to prevent hydrateReplyPreview from leaking whisper content to non-recipients.
-          canQuoteInPublicReply(parentMsg)
-        ) {
-          validatedReplyTo = replyTo;
-        }
+        const parent = await resolveVisibleReplyParent(messageStore, replyTo, {
+          threadId: effectiveThreadId,
+          viewer: senderViewer,
+          publicReply: true,
+        });
+        if (parent) validatedReplyTo = replyTo;
       }
 
       const richExtra = richBlocks.length > 0 ? { rich: { v: 1 as const, blocks: richBlocks } } : {};
@@ -1160,22 +1154,21 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     }
     const effectiveReplyTo = replyTo ?? autoFilledReplyTo;
     if (effectiveReplyTo) {
-      const parentMsg = await messageStore.getById(effectiveReplyTo);
-      // #699: unified parent eligibility — same predicate chain as /api/messages
+      // #699: atomic fetch + visibility gate — A2A replies are always public.
       const actorViewer: Viewer = { type: 'cat', catId: createCatId(actor.catId) };
-      if (
-        parentMsg &&
-        isEligibleReplyParent(parentMsg, { threadId: effectiveThreadId, viewer: actorViewer }) &&
-        // #699: A2A replies are always public — block quoting unrevealed whispers
-        canQuoteInPublicReply(parentMsg)
-      ) {
+      const parent = await resolveVisibleReplyParent(messageStore, effectiveReplyTo, {
+        threadId: effectiveThreadId,
+        viewer: actorViewer,
+        publicReply: true,
+      });
+      if (parent) {
         validatedReplyTo = effectiveReplyTo;
       } else if (replyTo) {
         // Only warn for explicit replyTo failures — auto-fill mismatches are expected
         // (e.g. cross-thread A2A where trigger is in a different thread)
         app.log.warn(
-          { replyTo, effectiveThreadId, parentThreadId: parentMsg?.threadId },
-          '[callbacks/post-message] replyTo rejected: not found or wrong thread',
+          { replyTo, effectiveThreadId },
+          '[callbacks/post-message] replyTo rejected: not found or not eligible',
         );
       }
     }
