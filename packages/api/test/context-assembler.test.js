@@ -627,6 +627,28 @@ describe('#699: inline reply-to preview', () => {
     assert.ok(safeResult.includes('[REDACTED]'), 'sanitized content should appear');
   });
 
+  test('briefing parent must not leak into inline preview', async () => {
+    const { assembleContext } = await import('../dist/domains/cats/services/context/ContextAssembler.js');
+    const briefingParent = mockMsg({
+      id: 'brief-p',
+      catId: null,
+      content: 'You are assigned to thread-1. Context: ...',
+      origin: 'briefing',
+      timestamp: 1000,
+    });
+    const reply = mockMsg({
+      id: 'reply-brief',
+      catId: 'opus',
+      content: '收到任务',
+      replyTo: 'brief-p',
+      timestamp: 2000,
+    });
+    const result = assembleContext([briefingParent, reply]);
+    // Briefing parent should be excluded from messageMap → no inline preview
+    assert.ok(!result.contextText.includes('You are assigned'), 'briefing parent content must not appear in preview');
+    assert.ok(!result.contextText.includes('↩'), 'reply should not have preview when parent is a briefing');
+  });
+
   test('system message parent must not leak into inline preview', async () => {
     const { assembleContext } = await import('../dist/domains/cats/services/context/ContextAssembler.js');
     const systemParent = mockMsg({
