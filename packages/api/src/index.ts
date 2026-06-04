@@ -1747,7 +1747,9 @@ async function main(): Promise<void> {
             { repoScanDepsAvailable: hasRepoScanRuntimeDeps },
           );
           if (entries.length > 0) {
-            const updatedCaps = {
+            // P2-cloud: spread existingCaps to preserve governancePack and other top-level fields
+            const updatedCaps: import('@cat-cafe/shared').CapabilitiesConfig = {
+              ...(existingCaps ?? { version: 1 as const, capabilities: [] }),
               version: 1 as const,
               capabilities: [...(existingCaps?.capabilities ?? []), ...entries],
             };

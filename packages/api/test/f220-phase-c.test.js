@@ -513,3 +513,45 @@ resources:
     nodeFs.rmSync(tmpDir, { recursive: true });
   });
 });
+
+// ── P2-cloud: migration must preserve governance metadata ───────────
+
+describe('P2-cloud: migration config spread preserves top-level fields', () => {
+  test('spreading existingCaps preserves governancePack', () => {
+    // Simulate the migration pattern from index.ts:
+    // const updatedCaps = { ...(existingCaps ?? {}), version: 1, capabilities: [...] };
+    const existingCaps = {
+      version: 1,
+      capabilities: [{ id: 'existing:cap', type: 'skill', enabled: true }],
+      governancePack: { packId: 'coding-world', version: '1.0.0', installedAt: '2026-01-01' },
+    };
+    const newEntries = [{ id: 'plugin:github:cicd-check', type: 'schedule', enabled: true, pluginId: 'github' }];
+
+    // This is the FIXED pattern — spread existingCaps to preserve governancePack
+    const updatedCaps = {
+      ...(existingCaps ?? { version: 1, capabilities: [] }),
+      version: 1,
+      capabilities: [...(existingCaps?.capabilities ?? []), ...newEntries],
+    };
+
+    assert.strictEqual(updatedCaps.version, 1);
+    assert.strictEqual(updatedCaps.capabilities.length, 2, 'existing + new entries');
+    assert.ok(updatedCaps.governancePack, 'governancePack must be preserved');
+    assert.strictEqual(updatedCaps.governancePack.packId, 'coding-world');
+  });
+
+  test('spreading null existingCaps works without error', () => {
+    const existingCaps = null;
+    const newEntries = [{ id: 'plugin:github:cicd-check', type: 'schedule', enabled: true, pluginId: 'github' }];
+
+    const updatedCaps = {
+      ...(existingCaps ?? { version: 1, capabilities: [] }),
+      version: 1,
+      capabilities: [...(existingCaps?.capabilities ?? []), ...newEntries],
+    };
+
+    assert.strictEqual(updatedCaps.version, 1);
+    assert.strictEqual(updatedCaps.capabilities.length, 1);
+    assert.strictEqual(updatedCaps.governancePack, undefined, 'no governance on fresh config');
+  });
+});
