@@ -1250,6 +1250,16 @@ export class RedisThreadStore implements IThreadStore {
   }
 
   /** #836: Check if cat uses reborn strategy in this thread. */
+  async getMemberSessionStrategy(
+    threadId: string,
+    catId: string,
+    _userId: string,
+  ): Promise<'resume' | 'reborn' | undefined> {
+    const key = ThreadKeys.detail(threadId);
+    const raw = await this.redis.hget(key, `memberSS:${catId}`);
+    return raw === 'resume' || raw === 'reborn' ? raw : undefined;
+  }
+
   async isRebornSession(threadId: string, catId: string): Promise<boolean> {
     const key = ThreadKeys.detail(threadId);
     const raw = await this.redis.hget(key, `memberSS:${catId}`);

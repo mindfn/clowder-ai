@@ -672,6 +672,18 @@ describe('ThreadStore', () => {
     assert.equal(store.isRebornSession(thread.id, 'catA'), false);
   });
 
+  test('#836: getMemberSessionStrategy exposes coordinator policy read', async () => {
+    const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const store = new ThreadStore();
+    const thread = store.create('user-1', 'strategy-read-test');
+
+    assert.equal(store.getMemberSessionStrategy(thread.id, 'catA', 'user-1'), undefined);
+    store.updateMemberSessionStrategy(thread.id, 'catA', 'reborn');
+    assert.equal(store.getMemberSessionStrategy(thread.id, 'catA', 'user-1'), 'reborn');
+    store.updateMemberSessionStrategy(thread.id, 'catA', 'resume');
+    assert.equal(store.getMemberSessionStrategy(thread.id, 'catA', 'user-1'), undefined);
+  });
+
   test('#836: reborn is per-cat-per-thread (isolation)', async () => {
     const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
     const store = new ThreadStore();

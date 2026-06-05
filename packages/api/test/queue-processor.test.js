@@ -601,6 +601,75 @@ describe('QueueProcessor', () => {
     );
   });
 
+  it('#815: does not consume delivered historical A2A entries outside the current invocation context', async () => {
+    const active = enqueueEntry(deps.queue, { targetCats: ['opus'], content: 'current user work' });
+    deps.queue.backfillMessageId('t1', 'u1', active.id, 'current-user-msg');
+    const historicalA2A = enqueueEntry(deps.queue, {
+      source: 'agent',
+      sourceCategory: 'a2a',
+      targetCats: ['opus'],
+      autoExecute: true,
+      content: 'historical handoff',
+    });
+    deps.queue.backfillMessageId('t1', 'u1', historicalA2A.id, 'historical-a2a-msg');
+    deps.messageStore.getById = mock.fn(async (id) => {
+      if (id === 'historical-a2a-msg') {
+        return { id, deliveryStatus: 'delivered', content: 'historical handoff', mentions: [] };
+      }
+      return null;
+    });
+
+    const processing = deps.queue.markProcessing('t1', 'u1');
+    assert.equal(processing.id, active.id);
+
+    const status = await processor.executeEntry(processing);
+
+    assert.equal(status, 'succeeded');
+    assert.ok(
+      deps.queue.list('t1', 'u1').some((entry) => entry.id === historicalA2A.id),
+      'historical delivered A2A trigger was not in this invocation context and must stay queued',
+    );
+  });
+
+  it('uses SessionContinuationCoordinator to prepare context and commit outcome', async () => {
+    const routeContents = [];
+    const coordinator = {
+      prepareInvocationContext: mock.fn(async ({ content }) => ({
+        content: `prepared:${content}`,
+        sessionPolicy: 'resume',
+      })),
+      commitInvocationOutcome: mock.fn(async () => {}),
+    };
+    const coordinatorDeps = stubDeps({
+      sessionContinuationCoordinator: coordinator,
+      router: {
+        routeExecution: mock.fn(async function* (_userId, content) {
+          routeContents.push(content);
+          yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+        }),
+        ackCollectedCursors: mock.fn(async () => {}),
+      },
+    });
+    const coordinatorProcessor = new QueueProcessor(coordinatorDeps);
+    const active = enqueueEntry(coordinatorDeps.queue, { targetCats: ['opus'], content: 'work' });
+    coordinatorDeps.queue.backfillMessageId('t1', 'u1', active.id, 'current-user-msg');
+    const processing = coordinatorDeps.queue.markProcessing('t1', 'u1');
+
+    const status = await coordinatorProcessor.executeEntry(processing);
+
+    assert.equal(status, 'succeeded');
+    assert.equal(coordinator.prepareInvocationContext.mock.calls.length, 1);
+    assert.deepEqual(coordinator.prepareInvocationContext.mock.calls[0].arguments[0], {
+      threadId: 't1',
+      catId: 'opus',
+      userId: 'u1',
+      content: 'work',
+    });
+    assert.deepEqual(routeContents, ['prepared:work']);
+    assert.equal(coordinator.commitInvocationOutcome.mock.calls.length, 1);
+    assert.equal(coordinator.commitInvocationOutcome.mock.calls[0].arguments[0].finalStatus, 'succeeded');
+  });
+
   it('threshold seal capsule in queued execution stores and starts bounded same-cat continuation', async () => {
     let routeCalls = 0;
     let pendingContinuation = null;

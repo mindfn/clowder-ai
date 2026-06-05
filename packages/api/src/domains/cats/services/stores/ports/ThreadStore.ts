@@ -412,6 +412,12 @@ export interface IThreadStore {
     catId: string,
     strategy: 'resume' | 'reborn' | null,
   ): void | Promise<void>;
+  /** F224: Coordinator-facing strategy read. Undefined means default resume. */
+  getMemberSessionStrategy?(
+    threadId: string,
+    catId: string,
+    userId: string,
+  ): 'resume' | 'reborn' | undefined | Promise<'resume' | 'reborn' | undefined>;
   /** #836: Check if a cat uses reborn session strategy in this thread.
    *  Must be used instead of reading thread.memberSessionStrategy directly,
    *  because Redis stores strategy in separate hash fields (memberSS:<catId>)
@@ -904,6 +910,11 @@ export class ThreadStore implements IThreadStore {
   }
 
   /** #836: Check if cat uses reborn strategy in this thread. */
+  getMemberSessionStrategy(threadId: string, catId: string, _userId: string): 'resume' | 'reborn' | undefined {
+    const thread = this.get(threadId);
+    return thread?.memberSessionStrategy?.[catId];
+  }
+
   isRebornSession(threadId: string, catId: string): boolean {
     const thread = this.get(threadId);
     return thread?.memberSessionStrategy?.[catId] === 'reborn';

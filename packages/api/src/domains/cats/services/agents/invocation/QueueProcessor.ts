@@ -24,6 +24,15 @@ import {
   isCollaborationContinuityCapsuleV1,
 } from './CollaborationContinuityCapsule.js';
 import type { InvocationQueue, QueueEntry } from './InvocationQueue.js';
+import {
+  type CommitInvocationInput,
+  type ConsumedContinuationToken,
+  type InvocationFinalStatus,
+  type PrepareInvocationInput,
+  type PrepareInvocationResult,
+  SessionContinuationCoordinator,
+  type SessionStrategy,
+} from './SessionContinuationCoordinator.js';
 import { stampVisibleTurn } from './visible-turn.js';
 
 /** Minimal interfaces for deps — avoid importing full types for testability */
@@ -84,6 +93,11 @@ interface LoggerLike {
 
 /** #813: Minimal thread store interface for passive continuation. */
 export interface ThreadStoreLike {
+  getMemberSessionStrategy?(
+    threadId: string,
+    catId: string,
+    userId: string,
+  ): 'resume' | 'reborn' | undefined | Promise<'resume' | 'reborn' | undefined>;
   setPendingContinuation(
     threadId: string,
     catId: string,
@@ -101,6 +115,12 @@ export interface ThreadStoreLike {
   /** #836: Check if a cat uses reborn session strategy in this thread.
    *  Reborn cats skip continuation consume/enqueue — every invocation starts fresh. */
   isRebornSession?(threadId: string, catId: string): boolean | Promise<boolean>;
+}
+
+export interface SessionContinuationCoordinatorLike {
+  resolveSessionStrategy?(threadId: string, catId: string, userId: string): Promise<SessionStrategy>;
+  prepareInvocationContext(input: PrepareInvocationInput): Promise<PrepareInvocationResult>;
+  commitInvocationOutcome(input: CommitInvocationInput): Promise<void>;
 }
 
 /** Minimal outbound delivery interface — avoids importing full OutboundDeliveryHook. */
@@ -154,6 +174,8 @@ export interface QueueProcessorDeps {
   threadMetaLookup?: (threadId: string) => ThreadMetaLike | undefined | Promise<ThreadMetaLike | undefined>;
   /** #813: Thread store for passive continuation (write/consume pending continuation). */
   threadStore?: ThreadStoreLike;
+  /** F224: continuation lifecycle coordinator boundary. */
+  sessionContinuationCoordinator?: SessionContinuationCoordinatorLike;
 }
 
 /** F122B B6: Completion hook — called when a queue entry finishes execution. */
@@ -189,6 +211,7 @@ export class QueueProcessor {
   private entryCompleteHooks = new Map<string, EntryCompleteHook>();
   /** F118 D4: max age before a processingSlot is considered zombie (default 2.5× CLI timeout = 75min) */
   private processingSlotTtlMs: number;
+  private readonly sessionContinuationCoordinator?: SessionContinuationCoordinatorLike;
   /** #502 PR2: bounded auto-continuation guard, in-memory per process. */
   private continuationWindows = new Map<string, number[]>();
   private static readonly CONTINUATION_WINDOW_MS = 60 * 60 * 1000;
@@ -197,6 +220,37 @@ export class QueueProcessor {
   constructor(deps: QueueProcessorDeps, opts?: { processingSlotTtlMs?: number }) {
     this.deps = deps;
     this.processingSlotTtlMs = opts?.processingSlotTtlMs ?? 2.5 * resolveCliTimeoutMs(undefined);
+    this.sessionContinuationCoordinator =
+      deps.sessionContinuationCoordinator ?? QueueProcessor.createSessionContinuationCoordinator(deps.threadStore);
+  }
+
+  private static createSessionContinuationCoordinator(
+    threadStore?: ThreadStoreLike,
+  ): SessionContinuationCoordinatorLike | undefined {
+    if (!threadStore) return undefined;
+    return new SessionContinuationCoordinator({
+      threadStore: {
+        getMemberSessionStrategy: async (threadId, catId, userId) => {
+          if (threadStore.getMemberSessionStrategy) {
+            return (await threadStore.getMemberSessionStrategy(threadId, catId, userId)) ?? undefined;
+          }
+          if (threadStore.isRebornSession && (await threadStore.isRebornSession(threadId, catId))) {
+            return 'reborn';
+          }
+          return undefined;
+        },
+        consumePendingContinuation: async (threadId, catId, userId) => {
+          const entry = await threadStore.consumePendingContinuation(threadId, catId, userId);
+          return (entry?.capsule as unknown as CollaborationContinuityCapsuleV1 | undefined) ?? null;
+        },
+        setPendingContinuation: async (threadId, catId, userId, capsule) => {
+          await threadStore.setPendingContinuation(threadId, catId, userId, {
+            capsule: capsule as unknown as Record<string, unknown>,
+            createdAt: Date.now(),
+          });
+        },
+      },
+    });
   }
 
   /** F088 fix: Late-bind outbound hook (set after gateway bootstrap). */
@@ -814,15 +868,12 @@ export class QueueProcessor {
 
     let controller: AbortController | undefined;
     let invocationId: string | undefined;
-    let finalStatus: 'succeeded' | 'failed' | 'canceled' | 'canceled_by_user' = 'failed';
+    let finalStatus: InvocationFinalStatus = 'failed';
     let responseText = '';
     const cursorBoundaries = new Map<string, string>();
     const continuationCapsules = new Map<string, CollaborationContinuityCapsuleV1>();
     // Cloud Codex P2: track consumed continuation so we can re-store on failure/cancel.
-    let consumedContinuation: {
-      catId: string;
-      entry: { capsule: Record<string, unknown>; createdAt: number };
-    } | null = null;
+    let consumedContinuation: ConsumedContinuationToken | undefined;
     // Cloud Codex P2: defer A2A consumption to success path — entries stay in queue
     // until the batch actually succeeds. The invocationTracker prevents double-pickup.
     let deferredA2AConsume = new Set<string>();
@@ -926,6 +977,7 @@ export class QueueProcessor {
       const allMessageIds: string[] = [messageId ?? '', ...(entry.mergedMessageIds ?? []), ...batchedMessageIds].filter(
         Boolean,
       );
+      const currentContextMessageIds = new Set(allMessageIds);
       const deliveredNow = Date.now();
       const deliveredIds: string[] = [];
       const deliveredMessages: Array<{
@@ -998,6 +1050,10 @@ export class QueueProcessor {
         const safeToConsume = new Set<string>();
         for (const candidate of a2aCandidates) {
           if (!candidate.messageId) continue; // no message ref → conservative, skip
+          const candidateMessageIds = [candidate.messageId, ...(candidate.mergedMessageIds ?? [])];
+          if (!candidateMessageIds.every((mid) => currentContextMessageIds.has(mid))) {
+            continue; // delivered historical trigger, but not part of this invocation context
+          }
           const msg = await messageStore.getById(candidate.messageId);
           if (!msg) continue; // message not found → skip
           if (msg.deliveryStatus === 'queued') continue; // not yet delivered → don't consume
@@ -1034,82 +1090,65 @@ export class QueueProcessor {
         }
       }
 
-      // 6c. #813: Consume pending continuation for single-target invocations.
-      // If a previous session sealed and wrote a continuation capsule to thread
-      // metadata, inject the continuation prompt into the current execution content
-      // so the cat has context about its prior session.
-      // Multi-target: skip — content is shared across all targets, so injecting
-      // one cat's continuation context would leak it to other cats. The pending
-      // capsule stays in thread metadata until this cat is triggered alone.
-      // #836: Reborn cats skip continuation consume — every invocation starts fresh.
-      if (this.deps.threadStore && targetCats.length === 1) {
+      // 6c. F224: single-cat continuation lifecycle is owned by
+      // SessionContinuationCoordinator. Multi-target still skips prepare because
+      // content is shared across cats; a cat-specific continuation prompt would leak.
+      if (this.sessionContinuationCoordinator && targetCats.length === 1) {
         const singleCatId = targetCats[0]!;
-        // #836: Reborn check is best-effort — a transient Redis failure must not
-        // prevent continuation consumption or abort the invocation before routing.
-        let isReborn = false;
         try {
-          isReborn = this.deps.threadStore.isRebornSession
-            ? await Promise.resolve(this.deps.threadStore.isRebornSession(threadId, singleCatId))
-            : false;
-        } catch (rebornErr) {
-          log.warn(
-            { threadId, catId: singleCatId, err: rebornErr },
-            '[QueueProcessor] #836: isRebornSession lookup failed pre-route, defaulting to non-reborn',
-          );
-        }
-        if (isReborn) {
-          log.info(
-            { threadId, catId: singleCatId },
-            '[QueueProcessor] #836: reborn session — skipping continuation consume',
-          );
-          // #836 P2: If the queue entry itself is a legacy/fallback continuation
-          // (sourceCategory: 'continuation'), its content already contains the stale
-          // formatContinuationPrompt. Drop it — reborn cat should not resume from
-          // pre-reborn context. Return 'succeeded' so the entry is removed from queue.
-          if (entry.sourceCategory === 'continuation') {
+          const originalContent = content;
+          const prepared = await this.sessionContinuationCoordinator.prepareInvocationContext({
+            threadId,
+            catId: singleCatId,
+            userId,
+            content,
+          });
+          content = prepared.content;
+          consumedContinuation = prepared.consumedContinuation;
+
+          if (prepared.sessionPolicy === 'reborn') {
             log.info(
-              { threadId, catId: singleCatId, entryId: entry.id },
-              '[QueueProcessor] #836: reborn session — dropping stale continuation queue entry',
+              { threadId, catId: singleCatId },
+              '[QueueProcessor] #836: reborn session — coordinator skipped continuation consume',
             );
-            // Close the invocation record (created at L803, marked running at L872)
-            // before early return — otherwise the record stays 'running' forever.
-            if (invocationId) {
-              await invocationRecordStore.update(invocationId, { status: 'succeeded' });
-            }
-            finalStatus = 'succeeded';
-            return 'succeeded';
-          }
-        } else {
-          try {
-            const pending = await this.deps.threadStore.consumePendingContinuation(threadId, singleCatId, userId);
-            if (pending) {
-              consumedContinuation = { catId: singleCatId, entry: pending };
-              const capsule = pending.capsule as unknown as CollaborationContinuityCapsuleV1;
-              if (isCollaborationContinuityCapsuleV1(capsule)) {
-                const continuationPrompt = formatContinuationPrompt(capsule);
-                const sameQueuedContinuation =
-                  entry.sourceCategory === 'continuation' &&
-                  entry.continuationKey === QueueProcessor.continuationKey(capsule);
-                if (!sameQueuedContinuation) {
-                  content = continuationPrompt + '\n\n---\n\n' + content;
-                }
-                log.info(
-                  {
-                    threadId,
-                    catId: singleCatId,
-                    capsuleCreatedAt: pending.createdAt,
-                    promptAlreadyQueued: sameQueuedContinuation,
-                  },
-                  '[QueueProcessor] #813: handled pending continuation context for execution',
-                );
+            // A legacy/fallback continuation entry already contains stale pre-reborn
+            // context. Drop it so reborn starts fresh.
+            if (entry.sourceCategory === 'continuation') {
+              log.info(
+                { threadId, catId: singleCatId, entryId: entry.id },
+                '[QueueProcessor] #836: reborn session — dropping stale continuation queue entry',
+              );
+              if (invocationId) {
+                await invocationRecordStore.update(invocationId, { status: 'succeeded' });
               }
+              finalStatus = 'succeeded';
+              return 'succeeded';
             }
-          } catch (err) {
-            log.warn(
-              { threadId, catId: singleCatId, err },
-              '[QueueProcessor] #813: consumePendingContinuation failed, proceeding without continuation context',
+          }
+
+          if (prepared.consumedContinuation) {
+            const capsule = prepared.consumedContinuation.capsule;
+            const sameQueuedContinuation =
+              entry.sourceCategory === 'continuation' &&
+              entry.continuationKey === QueueProcessor.continuationKey(capsule);
+            if (sameQueuedContinuation) {
+              content = originalContent;
+            }
+            log.info(
+              {
+                threadId,
+                catId: singleCatId,
+                capsuleCreatedAt: capsule.createdAt,
+                promptAlreadyQueued: sameQueuedContinuation,
+              },
+              '[QueueProcessor] #813: coordinator prepared pending continuation context for execution',
             );
           }
+        } catch (err) {
+          log.warn(
+            { threadId, catId: singleCatId, err },
+            '[QueueProcessor] F224: prepareInvocationContext failed, proceeding without continuation context',
+          );
         }
       }
 
@@ -1473,179 +1512,41 @@ export class QueueProcessor {
             action: 'a2a_subsumed',
           });
         }
-        // #813: Store-and-resume seal — keep the capsule durable in thread metadata,
-        // then enqueue bounded auto-continuation so in-progress work resumes without
-        // waiting for the next user/authored trigger.
-        // #836: Reborn cats skip continuation store — they never resume.
-        for (const continuationCapsule of continuationCapsules.values()) {
-          // #836: Reborn check is best-effort — a transient Redis failure must not
-          // abort the completion flow. Default to false (store the capsule) on error.
-          let capsuleCatReborn = false;
-          try {
-            capsuleCatReborn = this.deps.threadStore?.isRebornSession
-              ? await Promise.resolve(this.deps.threadStore.isRebornSession(threadId, continuationCapsule.catId))
-              : false;
-          } catch (rebornErr) {
-            log.warn(
-              { threadId, catId: continuationCapsule.catId, err: rebornErr },
-              '[QueueProcessor] #836: isRebornSession lookup failed, defaulting to non-reborn',
-            );
-          }
-          if (capsuleCatReborn) {
-            log.info(
-              { threadId, catId: continuationCapsule.catId },
-              '[QueueProcessor] #836: reborn session — skipping continuation store',
-            );
-            continue;
-          }
-          if (this.deps.threadStore) {
-            try {
-              await this.deps.threadStore.setPendingContinuation(threadId, continuationCapsule.catId, userId, {
-                capsule: continuationCapsule as unknown as Record<string, unknown>,
-                createdAt: Date.now(),
-              });
-              log.info(
-                { threadId, catId: continuationCapsule.catId },
-                '[QueueProcessor] #813: wrote pending continuation to thread metadata',
-              );
-              await this.enqueueContinuation({
-                threadId,
-                userId,
-                catId: continuationCapsule.catId,
-                capsule: continuationCapsule,
-              });
-            } catch (err) {
-              log.warn(
-                { threadId, catId: continuationCapsule.catId, err },
-                '[QueueProcessor] #813: setPendingContinuation failed, falling back to enqueueContinuation',
-              );
-              await this.enqueueContinuation({
-                threadId,
-                userId,
-                catId: continuationCapsule.catId,
-                capsule: continuationCapsule,
-              }).catch((enqueueErr) =>
-                log.warn({ err: enqueueErr, threadId }, 'enqueueContinuation failed (best-effort)'),
-              );
-            }
-          } else {
-            // Fallback: no threadStore → legacy behavior (immediate enqueue)
-            await this.enqueueContinuation({
-              threadId,
-              userId,
-              catId: continuationCapsule.catId,
-              capsule: continuationCapsule,
-            }).catch((err) => log.warn({ err, threadId }, 'enqueueContinuation failed (best-effort)'));
-          }
-        }
       } else {
         for (const bid of batchedEntryIds) {
           queue.rollbackProcessing(threadId, bid);
         }
         // Cloud Codex P2: deferred A2A entries stay in queue on failure — no rollback needed.
-        // Cloud Codex P2: re-store consumed continuation on failure/cancel so
-        // the next invocation retry still gets the sealed session context.
-        // #836 P2: Skip restore if cat was switched to reborn during this run —
-        // the consumed capsule is pre-reborn context that must not survive.
-        if (consumedContinuation && this.deps.threadStore) {
-          let consumedCatReborn = false;
-          try {
-            consumedCatReborn = this.deps.threadStore.isRebornSession
-              ? await Promise.resolve(this.deps.threadStore.isRebornSession(threadId, consumedContinuation.catId))
-              : false;
-          } catch {
-            // Best-effort — default to non-reborn so capsule is preserved on error
-          }
-          if (consumedCatReborn) {
-            log.info(
-              { threadId, catId: consumedContinuation.catId },
-              '[QueueProcessor] #836: reborn session — skipping consumed continuation restore',
-            );
-          } else {
-            try {
-              await this.deps.threadStore.setPendingContinuation(
-                threadId,
-                consumedContinuation.catId,
-                userId,
-                consumedContinuation.entry,
-              );
-              // Deliberate: re-stored consumed capsules stay passive to avoid retry storms.
-              log.info(
-                { threadId, catId: consumedContinuation.catId },
-                '[QueueProcessor] #813: re-stored consumed continuation after failed/canceled execution',
-              );
-            } catch (restoreErr) {
-              log.warn(
-                { threadId, catId: consumedContinuation.catId, err: restoreErr },
-                '[QueueProcessor] #813: failed to re-store continuation after execution failure',
-              );
-            }
-          }
+      }
+      const producedCapsules = [...continuationCapsules.values()];
+      if (this.sessionContinuationCoordinator) {
+        try {
+          await this.sessionContinuationCoordinator.commitInvocationOutcome({
+            finalStatus,
+            threadId,
+            catId: primaryCat,
+            userId,
+            consumedContinuation,
+            producedCapsules,
+          });
+        } catch (err) {
+          log.warn({ threadId, targetCats, err }, '[QueueProcessor] F224: commitInvocationOutcome failed');
         }
-        // #813 fix: Also store NEW capsules produced during this execution
-        // (e.g., seal happened mid-run then invocation was canceled).
-        // Without this, a seal + cancel loses the continuation capsule and
-        // the cat never continues. When the same catId has both a restored
-        // consumed capsule AND a new capsule from this run, the new one wins —
-        // it contains fresher sealed context from the run that just failed.
-        for (const continuationCapsule of continuationCapsules.values()) {
-          // #836: Reborn check is best-effort — a transient Redis failure must not
-          // prevent capsule storage on the failure path. Default to false on error.
-          let capsuleCatReborn = false;
-          try {
-            capsuleCatReborn = this.deps.threadStore?.isRebornSession
-              ? await Promise.resolve(this.deps.threadStore.isRebornSession(threadId, continuationCapsule.catId))
-              : false;
-          } catch (rebornErr) {
-            log.warn(
-              { threadId, catId: continuationCapsule.catId, err: rebornErr },
-              '[QueueProcessor] #836: isRebornSession lookup failed on failure path, defaulting to non-reborn',
-            );
-          }
-          if (capsuleCatReborn) {
-            log.info(
-              { threadId, catId: continuationCapsule.catId },
-              '[QueueProcessor] #836: reborn session — skipping new capsule store on failure',
-            );
-            continue;
-          }
-          if (this.deps.threadStore) {
-            try {
-              await this.deps.threadStore.setPendingContinuation(threadId, continuationCapsule.catId, userId, {
-                capsule: continuationCapsule as unknown as Record<string, unknown>,
-                createdAt: Date.now(),
-              });
-              log.info(
-                { threadId, catId: continuationCapsule.catId },
-                '[QueueProcessor] #813: saved new continuation capsule after failed/canceled execution',
-              );
-              await this.enqueueContinuation({
-                threadId,
-                userId,
-                catId: continuationCapsule.catId,
-                capsule: continuationCapsule,
-              });
-            } catch (capsuleErr) {
-              log.warn(
-                { threadId, catId: continuationCapsule.catId, err: capsuleErr },
-                '[QueueProcessor] #813: failed to save new capsule after execution failure',
-              );
-              await this.enqueueContinuation({
-                threadId,
-                userId,
-                catId: continuationCapsule.catId,
-                capsule: continuationCapsule,
-              });
-            }
-          } else {
-            await this.enqueueContinuation({
-              threadId,
-              userId,
-              catId: continuationCapsule.catId,
-              capsule: continuationCapsule,
-            });
-          }
+      }
+      for (const continuationCapsule of producedCapsules) {
+        if (!(await this.shouldEnqueueContinuation(continuationCapsule, userId))) {
+          log.info(
+            { threadId, catId: continuationCapsule.catId },
+            '[QueueProcessor] #836: reborn session — skipping continuation enqueue',
+          );
+          continue;
         }
+        await this.enqueueContinuation({
+          threadId,
+          userId,
+          catId: continuationCapsule.catId,
+          capsule: continuationCapsule,
+        });
       }
       await emitQueueUpdated(socketManager, userId, threadId, queue.list(threadId, userId), messageStore, 'completed');
       // F122B B6: Fire completion hook (one-shot) and clean up
@@ -1660,6 +1561,25 @@ export class QueueProcessor {
       }
       // Chain auto-dequeue is handled by tryExecuteNext* (calls onInvocationComplete
       // AFTER releasing processingThreads mutex to avoid self-blocking).
+    }
+  }
+
+  private async shouldEnqueueContinuation(
+    capsule: CollaborationContinuityCapsuleV1,
+    userId: string,
+  ): Promise<boolean> {
+    if (!this.sessionContinuationCoordinator?.resolveSessionStrategy) return true;
+    try {
+      return (
+        (await this.sessionContinuationCoordinator.resolveSessionStrategy(capsule.threadId, capsule.catId, userId)) !==
+        'reborn'
+      );
+    } catch (err) {
+      this.deps.log.warn(
+        { threadId: capsule.threadId, catId: capsule.catId, err },
+        '[QueueProcessor] F224: resolveSessionStrategy failed for continuation enqueue, defaulting to enqueue',
+      );
+      return true;
     }
   }
 
