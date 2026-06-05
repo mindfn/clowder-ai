@@ -40,10 +40,11 @@ describe('Eval Hub API route', () => {
 
     assert.equal(response.statusCode, 200);
     const body = response.json();
-    assert.equal(body.counts.total, 1);
-    assert.equal(body.items[0].id, '2026-05-23-eval-a2a-live-verdict');
-    assert.equal(body.items[0].systemWorkspace.kind, 'eval_domain');
-    assert.equal(body.items[0].evidence.snapshotRefs[0], 'snapshot:bundle/2026-05-23-eval-a2a-live-verdict/snapshot');
+    assert.ok(body.counts.total >= 4, `expected at least 4 live verdicts, got ${body.counts.total}`);
+    const item = body.items.find((i) => i.id === '2026-05-23-eval-a2a-live-verdict');
+    assert.ok(item, '5/23 verdict must be present in API response');
+    assert.equal(item.systemWorkspace.kind, 'eval_domain');
+    assert.equal(item.evidence.snapshotRefs[0], 'snapshot:bundle/2026-05-23-eval-a2a-live-verdict/snapshot');
     await app.close();
   });
 });

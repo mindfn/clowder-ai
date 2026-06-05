@@ -216,7 +216,10 @@ function assertAttributionAnchors(
         continue;
       }
       hasBundledComponentEvidence = true;
-      if (evidence.type === 'telemetry-gap') continue;
+      // Only 'counter' evidence requires the metric key to exist in the snapshot.
+      // Qualitative types (endpoint_check, audit_log, previous_verdict, artifact_scan,
+      // telemetry-gap) describe observations, not metric counters.
+      if (evidence.type !== 'counter') continue;
       const componentMetricKeys = new Set([
         ...Object.keys(component.activationCounts),
         ...Object.keys(component.frictionCounts),

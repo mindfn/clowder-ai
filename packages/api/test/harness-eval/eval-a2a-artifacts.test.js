@@ -48,7 +48,7 @@ function assertLiveVerdictBundleRefsResolve(root) {
     assert.ok(provenance.rawInputs.every((input) => /^[a-f0-9]{64}$/.test(input.sha256)));
 
     const snapshotRefs = [...text.matchAll(/\bsnapshot:bundle\/([^/\s)]+)\/snapshot\b/g)];
-    const attributionRefs = [...text.matchAll(/\battribution:bundle\/([^/\s)]+)\/([^\s)]+)/g)];
+    const attributionRefs = [...text.matchAll(/\battribution:bundle\/([^/\s)"]+)\/([^\s)"]+)/g)];
     assert.ok(snapshotRefs.length > 0, `live verdict missing snapshot bundle ref: ${verdictId}`);
     assert.ok(attributionRefs.length > 0, `live verdict missing attribution bundle ref: ${verdictId}`);
     assert.ok(

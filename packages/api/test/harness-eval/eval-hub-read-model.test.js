@@ -14,10 +14,11 @@ function writeJson(path, value) {
 const repoHarnessFeedbackRoot = fileURLToPath(new URL('../../../../docs/harness-feedback', import.meta.url));
 const apiPackageRoot = fileURLToPath(new URL('../../', import.meta.url));
 
-// Pin staleness reference time so the committed fixture verdict
-// (nextEvalAt = 2026-05-26T03:12:57.174Z) stays "fresh" regardless of wall clock.
+// Pin staleness reference time so committed verdicts stay deterministic.
+// Before all verdict deadlines (5/23 verdict's nextEvalAt = 2026-05-26, latest 6/3 = 2026-06-04).
 const FIXTURE_NOW_BEFORE_DEADLINE = new Date('2026-05-23T12:00:00.000Z');
-const FIXTURE_NOW_AFTER_DEADLINE = new Date('2026-05-29T00:00:00.000Z');
+// After the latest active verdict's nextEvalAt (6/3 verdict = 2026-06-04T03:00:00.000Z).
+const FIXTURE_NOW_AFTER_DEADLINE = new Date('2026-06-05T00:00:00.000Z');
 
 // Shared helper for the per-domain supersede regression cases (PR 791 review feedback).
 // Writes a self-consistent eval:a2a live verdict + bundle triple under harnessFeedbackRoot.
@@ -97,14 +98,13 @@ describe('Eval Hub read model', () => {
       now: FIXTURE_NOW_BEFORE_DEADLINE,
     });
 
-    assert.equal(summary.items.length, 1);
-    assert.equal(summary.counts.total, 1);
-    assert.equal(summary.counts.keepObserve, 1);
-    assert.equal(summary.counts.actionable, 0);
+    // Repo now has 4 live verdicts: 5/23 (keep_observe), 6/1, 6/2, 6/3 (all fix).
+    assert.ok(summary.items.length >= 4, `expected at least 4 live verdicts, got ${summary.items.length}`);
     assert.equal(summary.counts.stale, 0);
 
-    const item = summary.items[0];
-    assert.equal(item.id, '2026-05-23-eval-a2a-live-verdict');
+    // Spot-check the original 5/23 verdict (now superseded by newer ones).
+    const item = summary.items.find((i) => i.id === '2026-05-23-eval-a2a-live-verdict');
+    assert.ok(item, '5/23 live verdict must still be loaded');
     assert.equal(item.domainId, 'eval:a2a');
     assert.equal(item.packetId, 'vhp_eval_a2a_2026_05_23T03_12_57_174Z_eval_F167_2026_05_23_no_finding');
     assert.equal(item.verdict, 'keep_observe');
@@ -118,6 +118,7 @@ describe('Eval Hub read model', () => {
     assert.equal(item.reeval.status, 'observing');
     assert.equal(item.lifecycle.ownerResponseStatus, 'not_required');
     assert.equal(item.lifecycle.closureStatus, 'observing');
+    // Superseded by newer verdicts → stale forced to false by markSupersededAsClosed.
     assert.equal(item.lifecycle.stale, false);
 
     assert.deepEqual(item.evidence.snapshotRefs, ['snapshot:bundle/2026-05-23-eval-a2a-live-verdict/snapshot']);
@@ -148,11 +149,13 @@ describe('Eval Hub read model', () => {
         now: FIXTURE_NOW_BEFORE_DEADLINE,
       });
 
+      const item = summary.items.find((i) => i.id === '2026-05-23-eval-a2a-live-verdict');
+      assert.ok(item, '5/23 verdict must exist for repo-relative path check');
       assert.equal(
-        summary.items[0].source.verdictPath,
+        item.source.verdictPath,
         'docs/harness-feedback/verdicts/2026-05-23-eval-a2a-live-verdict.md',
       );
-      assert.equal(summary.items[0].source.bundleDir, 'docs/harness-feedback/bundles/2026-05-23-eval-a2a-live-verdict');
+      assert.equal(item.source.bundleDir, 'docs/harness-feedback/bundles/2026-05-23-eval-a2a-live-verdict');
     } finally {
       chdir(originalCwd);
     }
@@ -323,6 +326,8 @@ Evidence:
     assert.ok(a2aDomain, 'eval:a2a must appear in domains');
     assert.equal(a2aDomain.hasVerdict, true);
     assert.ok(a2aDomain.latestVerdictId, 'eval:a2a should have latestVerdictId');
+    // Latest verdict is the 6/3 verdict (sorted desc by generatedAt).
+    assert.equal(a2aDomain.latestVerdictId, '2026-06-03-eval-a2a-source-adapter-closure-unmet');
     assert.equal(a2aDomain.evalCatHandle, '@codex');
 
     const memoryDomain = summary.domains.find((d) => d.domainId === 'eval:memory');
@@ -419,32 +424,37 @@ Evidence:
     );
   });
 
-  // F192 P2 — eval-hub stale lifecycle calculation regression guard
+  // F192 P2 — eval-hub stale lifecycle calculation regression guard.
+  // With 4 live verdicts (5/23, 6/1, 6/2, 6/3), only the latest active (6/3) can be stale;
+  // older ones are superseded by markSupersededAsClosed.
   it('marks lifecycle.stale = true and counts.stale = 1 when now is past nextEvalAt', () => {
     const summary = loadEvalHubSummary({
       harnessFeedbackRoot: repoHarnessFeedbackRoot,
       now: FIXTURE_NOW_AFTER_DEADLINE,
     });
 
-    assert.equal(summary.items.length, 1);
-    assert.equal(summary.counts.stale, 1, 'counts.stale should reflect overdue lifecycle');
-    const item = summary.items[0];
-    assert.equal(item.lifecycle.stale, true, 'verdict past its nextEvalAt must be stale');
-    // Other lifecycle/keep_observe semantics must remain untouched by the stale signal.
-    assert.equal(item.verdict, 'keep_observe');
-    assert.equal(item.lifecycle.closureStatus, 'observing');
-    assert.equal(item.lifecycle.ownerResponseStatus, 'not_required');
+    assert.ok(summary.items.length >= 4, `expected at least 4 live verdicts, got ${summary.items.length}`);
+    assert.equal(summary.counts.stale, 1, 'counts.stale should reflect only the latest active overdue verdict');
+    // Items sorted desc by generatedAt → [0] is the latest active verdict (6/3).
+    const latestItem = summary.items[0];
+    assert.equal(latestItem.id, '2026-06-03-eval-a2a-source-adapter-closure-unmet');
+    assert.equal(latestItem.lifecycle.stale, true, 'latest active verdict past its nextEvalAt must be stale');
+    assert.equal(latestItem.verdict, 'fix');
+    assert.equal(latestItem.lifecycle.closureStatus, 'open');
+    assert.equal(latestItem.lifecycle.ownerResponseStatus, 'not_started');
   });
 
-  // F192 P2 — boundary: at-deadline must not flip to stale (strict `>`, not `>=`)
+  // F192 P2 — boundary: at-deadline must not flip to stale (strict `>`, not `>=`).
+  // Uses the latest active verdict's nextEvalAt (6/3 = 2026-06-04T03:00:00.000Z).
   it('keeps lifecycle.stale = false when now equals nextEvalAt exactly', () => {
     const summary = loadEvalHubSummary({
       harnessFeedbackRoot: repoHarnessFeedbackRoot,
-      // Fixture nextEvalAt = 2026-05-26T03:12:57.174Z
-      now: new Date('2026-05-26T03:12:57.174Z'),
+      now: new Date('2026-06-04T03:00:00.000Z'),
     });
 
-    assert.equal(summary.items[0].lifecycle.stale, false, 'at-deadline tick is not yet stale');
+    const latestItem = summary.items[0];
+    assert.equal(latestItem.id, '2026-06-03-eval-a2a-source-adapter-closure-unmet');
+    assert.equal(latestItem.lifecycle.stale, false, 'at-deadline tick is not yet stale');
     assert.equal(summary.counts.stale, 0);
   });
 
