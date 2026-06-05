@@ -824,7 +824,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
       {sidebarOpen && !isDesktop && (
         <>
           <div
-            className="fixed inset-0 bg-[var(--console-overlay-backdrop)] z-20"
+            className="fixed inset-0 bg-[var(--console-overlay-backdrop)] backdrop-blur-sm z-20"
             onClick={closeSidebar}
             aria-hidden="true"
           />
@@ -1183,7 +1183,7 @@ export function ChatContainer({ threadId }: ChatContainerProps) {
       />
       {showFirstRunQuestPrompt &&
         createPortal(
-          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--console-overlay-medium)] px-4">
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--console-overlay-medium)] px-4 backdrop-blur-sm">
             <div
               className="w-full max-w-md rounded-2xl border border-conn-amber-ring bg-[var(--console-card-bg)] p-6 shadow-2xl"
               onClick={(event) => event.stopPropagation()}
