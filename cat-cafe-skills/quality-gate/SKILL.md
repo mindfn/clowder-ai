@@ -64,10 +64,11 @@ Step 2: CREATE — 建检查清单
 Step 2.4: PATCH COUNTER GATE（反复返工硬闸）🔴
   - **Step A — 列出候选 commits**：
     ```
-    BASE_REF=$(git merge-base "${UPSTREAM_REF:-origin/main}" HEAD)
+    UPSTREAM_REF="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || echo origin/main)"
+    BASE_REF="$(git merge-base "$UPSTREAM_REF" HEAD)"
     git log --oneline "$BASE_REF..HEAD" -- <changed-files>
     ```
-    `UPSTREAM_REF` 取当前分支的 upstream tracking ref（`@{upstream}`），无 tracking 时 fallback `origin/main`。develop_base 流程中 base = `origin/develop_base`。
+    自动取当前分支的 upstream tracking ref，无 tracking 时 fallback `origin/main`。develop_base 流程中会自动解析为 `origin/develop_base`。
   - **Step B — 人工分类**：逐条标记每个 commit 为以下之一：
     - ✅ **同一 bug/AC 返工**：修上次没修好的同一个问题、用户报告同一问题后的重复修复、同一区域反复修补
     - ⬚ **正常迭代**（不计入）：reviewer 正常 P1/P2 修复（`fix: address review P2-xxx`）、新发现的不同问题的修复
