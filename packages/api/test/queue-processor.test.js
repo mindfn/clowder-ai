@@ -456,8 +456,9 @@ describe('QueueProcessor', () => {
     );
   });
 
-  it('threshold seal capsule in queued execution enqueues and starts bounded same-cat continuation', async () => {
+  it('threshold seal capsule in queued execution stores and starts bounded same-cat continuation', async () => {
     let routeCalls = 0;
+    let pendingContinuation = null;
     const capsule = completeCapsuleForSeal(
       buildCapsuleFromRouteState({
         threadId: 't1',
@@ -491,6 +492,17 @@ describe('QueueProcessor', () => {
         }),
         ackCollectedCursors: mock.fn(async () => {}),
       },
+      threadStore: {
+        isRebornSession: mock.fn(async () => false),
+        setPendingContinuation: mock.fn(async (_threadId, _catId, _userId, entry) => {
+          pendingContinuation = entry;
+        }),
+        consumePendingContinuation: mock.fn(async () => {
+          const pending = pendingContinuation;
+          pendingContinuation = null;
+          return pending;
+        }),
+      },
     });
     const sealProcessor = new QueueProcessor(sealDeps);
     const entry = enqueueEntry(sealDeps.queue, { targetCats: ['opus'], content: 'initial work' });
@@ -503,6 +515,17 @@ describe('QueueProcessor', () => {
 
     assert.equal(routeCalls, 2, 'second route call should be the continuation');
     assert.match(routeContents[1], /previous session was sealed/i);
+    assert.equal(
+      (routeContents[1].match(/Continue the same structured work from the sealed session/g) ?? []).length,
+      1,
+      'stored pending continuation and queued continuation must not duplicate the bootstrap prompt',
+    );
+    assert.equal(sealDeps.threadStore.setPendingContinuation.mock.calls.length, 1);
+    assert.equal(
+      sealDeps.threadStore.consumePendingContinuation.mock.calls.length,
+      2,
+      'initial execution checks empty pending; continuation execution consumes the stored capsule',
+    );
     assert.ok(sealDeps.invocationTracker.startAll.mock.calls.length >= 2);
   });
 
@@ -631,7 +654,10 @@ describe('QueueProcessor', () => {
     );
   });
 
-  it('threshold seal capsule does not enqueue continuation when execution fails afterward', async () => {
+  it('threshold seal capsule in failed queued execution still starts continuation', async () => {
+    let routeCalls = 0;
+    const routeContents = [];
+    let pendingContinuation = null;
     const capsule = completeCapsuleForSeal(
       buildCapsuleFromRouteState({
         threadId: 't1',
@@ -647,16 +673,33 @@ describe('QueueProcessor', () => {
     );
     const failDeps = stubDeps({
       router: {
-        routeExecution: mock.fn(async function* () {
-          yield {
-            type: 'system_info',
-            catId: 'opus',
-            content: JSON.stringify({ type: 'session_seal_requested', continuityCapsule: capsule }),
-            timestamp: Date.now(),
-          };
-          throw new Error('route failed after seal notice');
+        routeExecution: mock.fn(async function* (_userId, content) {
+          routeCalls++;
+          routeContents.push(content);
+          if (routeCalls === 1) {
+            yield {
+              type: 'system_info',
+              catId: 'opus',
+              content: JSON.stringify({ type: 'session_seal_requested', continuityCapsule: capsule }),
+              timestamp: Date.now(),
+            };
+            throw new Error('route failed after seal notice');
+          }
+          yield { type: 'text', catId: 'opus', content: 'continued', timestamp: Date.now() };
+          yield { type: 'done', catId: 'opus', timestamp: Date.now() };
         }),
         ackCollectedCursors: mock.fn(async () => {}),
+      },
+      threadStore: {
+        isRebornSession: mock.fn(async () => false),
+        setPendingContinuation: mock.fn(async (_threadId, _catId, _userId, entry) => {
+          pendingContinuation = entry;
+        }),
+        consumePendingContinuation: mock.fn(async () => {
+          const pending = pendingContinuation;
+          pendingContinuation = null;
+          return pending;
+        }),
       },
     });
     const failProcessor = new QueueProcessor(failDeps);
@@ -668,8 +711,13 @@ describe('QueueProcessor', () => {
 
     await new Promise((r) => setTimeout(r, 150));
 
-    assert.equal(failDeps.queue.list('t1', 'u1').length, 0, 'failed execution must not leave continuation queued');
-    assert.equal(failDeps.router.routeExecution.mock.calls.length, 1, 'must not start continuation after failure');
+    assert.equal(routeCalls, 2, 'second route call should be the continuation even after failure');
+    assert.match(routeContents[1], /previous session was sealed/i);
+    assert.equal(
+      (routeContents[1].match(/Continue the same structured work from the sealed session/g) ?? []).length,
+      1,
+      'stored pending continuation and queued continuation must not duplicate the bootstrap prompt',
+    );
   });
 
   it('enqueueContinuation pins seal work ahead of queued user work without dropping either', async () => {
