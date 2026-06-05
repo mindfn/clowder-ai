@@ -151,10 +151,7 @@ describe('Eval Hub read model', () => {
 
       const item = summary.items.find((i) => i.id === '2026-05-23-eval-a2a-live-verdict');
       assert.ok(item, '5/23 verdict must exist for repo-relative path check');
-      assert.equal(
-        item.source.verdictPath,
-        'docs/harness-feedback/verdicts/2026-05-23-eval-a2a-live-verdict.md',
-      );
+      assert.equal(item.source.verdictPath, 'docs/harness-feedback/verdicts/2026-05-23-eval-a2a-live-verdict.md');
       assert.equal(item.source.bundleDir, 'docs/harness-feedback/bundles/2026-05-23-eval-a2a-live-verdict');
     } finally {
       chdir(originalCwd);
