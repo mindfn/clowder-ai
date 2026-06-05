@@ -8,12 +8,11 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-
+import { buildA2aNoDataVerdictHandoff } from '../../dist/infrastructure/harness-eval/eval-a2a-no-data-adapter.js';
 import {
   assertCanCrossThreadHandoff,
   parseVerdictHandoffPacket,
 } from '../../dist/infrastructure/harness-eval/verdict-handoff.js';
-import { buildA2aNoDataVerdictHandoff } from '../../dist/infrastructure/harness-eval/eval-a2a-no-data-adapter.js';
 
 const domain = {
   domainId: 'eval:a2a',
@@ -39,7 +38,8 @@ function baseInput(overrides = {}) {
     generatedAt: '2026-06-04T03:00:00.000Z',
     window: { startMs: 1780455600000, endMs: 1780542000000, durationHours: 24 },
     noDataReason: {
-      summary: 'OTel init failed because TELEMETRY_HMAC_SALT is missing under profile-driven NODE_ENV=production startup.',
+      summary:
+        'OTel init failed because TELEMETRY_HMAC_SALT is missing under profile-driven NODE_ENV=production startup.',
       endpointProbes: [
         { endpoint: '/api/telemetry/metrics', status: 503, result: 'Metrics reader not available' },
         { endpoint: '/api/telemetry/metrics/history', status: 503, result: 'Metrics snapshot store not available' },
@@ -181,10 +181,7 @@ describe('eval:a2a no-data verdict builder', () => {
       },
     });
     const packet = buildA2aNoDataVerdictHandoff(input);
-    assert.match(
-      packet.acceptanceReevalPlan.closureCondition,
-      /harness-fit-digest.*disabled cleanup status/i,
-    );
+    assert.match(packet.acceptanceReevalPlan.closureCondition, /harness-fit-digest.*disabled cleanup status/i);
     assert.equal(packet.dailyTrend.current.legacy_task_overlap_count, 1);
   });
 

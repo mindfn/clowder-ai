@@ -171,7 +171,9 @@ export function buildA2aNoDataVerdictHandoff(input: BuildA2aNoDataVerdictInput):
   // If every probe is healthy, the caller should be on the regular F167
   // pipeline, not this one — refuse to fabricate a fake source-adapter outage.
   if (!input.noDataReason.endpointProbes.some(isProbeUnavailable)) {
-    throw new Error('no-data verdict requires at least one unavailable probe (5xx, or /health 200 with null/unavailable stores)');
+    throw new Error(
+      'no-data verdict requires at least one unavailable probe (5xx, or /health 200 with null/unavailable stores)',
+    );
   }
 
   const targetFeatureId = domain.handoffTargetResolver.featureId;
@@ -259,9 +261,7 @@ function buildSampleTraceRefs(input: BuildA2aNoDataVerdictInput): string[] {
     );
   }
   if (input.previousVerdict) {
-    refs.push(
-      `previous_verdict:${input.previousVerdict.packetId} closureMet=${input.previousVerdict.closureMet}`,
-    );
+    refs.push(`previous_verdict:${input.previousVerdict.packetId} closureMet=${input.previousVerdict.closureMet}`);
   }
   return refs;
 }
@@ -336,7 +336,9 @@ function buildClosureCondition(input: BuildA2aNoDataVerdictInput): string {
     'and no duplicate daily cron slot fire',
   ];
   if (input.legacyScheduledTaskStatus.cleanupStatus !== 'disabled') {
-    conditions.push(`and legacy tasks (${input.legacyScheduledTaskStatus.taskIds.join(', ')}) reach disabled cleanup status`);
+    conditions.push(
+      `and legacy tasks (${input.legacyScheduledTaskStatus.taskIds.join(', ')}) reach disabled cleanup status`,
+    );
   }
   return conditions.join('; ');
 }
@@ -346,15 +348,16 @@ function buildCounterarguments(input: BuildA2aNoDataVerdictInput): string[] {
   counter.push(
     'A no-data verdict cannot prove component health; downgrade to keep_observe only after a real telemetry-backed snapshot lands.',
   );
-  if (input.dailySchedulerStatus.duplicateCronSlotFires === 0 && input.legacyScheduledTaskStatus.activeLegacyOverlap === 0) {
+  if (
+    input.dailySchedulerStatus.duplicateCronSlotFires === 0 &&
+    input.legacyScheduledTaskStatus.activeLegacyOverlap === 0
+  ) {
     counter.push(
       'Scheduler and legacy-cleanup paths are healthy; the source-adapter outage does not affect the rest of the eval pipeline.',
     );
   }
   if (input.ownerActionStatus) {
-    counter.push(
-      'Owner action is in progress; this verdict should be read as closure-unmet, not no-action.',
-    );
+    counter.push('Owner action is in progress; this verdict should be read as closure-unmet, not no-action.');
   }
   return counter;
 }

@@ -200,8 +200,7 @@ export const telemetryRoutes: FastifyPluginAsync<TelemetryRoutesOptions> = async
     const errorRateOk = errorRate === null || errorRate < threshold;
     // When OTel should be running, both stores must be wired; when
     // OTEL_SDK_DISABLED=true, null stores are the expected configuration.
-    const telemetryStoresOk =
-      !otelEnabled || (opts.traceStore != null && opts.metricsSnapshotStore != null);
+    const telemetryStoresOk = !otelEnabled || (opts.traceStore != null && opts.metricsSnapshotStore != null);
     const healthy = readinessOk && errorRateOk && telemetryStoresOk;
 
     const reasons: string[] = [];

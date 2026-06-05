@@ -7,12 +7,10 @@ import { parseVerdictHandoffPacket, type VerdictHandoffPacket } from '../verdict
 import { buildA2aVerdictHandoff } from './eval-a2a-adapter.js';
 import { resolveA2aEvidenceBundle } from './eval-a2a-artifact-resolver.js';
 import {
-  buildA2aNoDataVerdictHandoff,
   type BuildA2aNoDataVerdictInput,
-  isProbeUnavailable,
+  buildA2aNoDataVerdictHandoff,
   metricRefForUnavailableProbe,
   SOURCE_ADAPTER_COMPONENT_ID,
-  sourceAdapterFrictionMetrics,
 } from './eval-a2a-no-data-adapter.js';
 
 const SANITIZE_RULES_VERSION = 'f192-e-pilot-v1';
@@ -464,9 +462,7 @@ function buildNoDataAttributionBundle(
     // they get a non-component anchor — the resolver allows non-component
     // anchors on non-counter evidence types.
     const metricRef = metricRefForUnavailableProbe(probe);
-    const anchor = metricRef
-      ? `${SOURCE_ADAPTER_COMPONENT_ID}/${metricRef}`
-      : `endpoint-probe/${probe.endpoint}`;
+    const anchor = metricRef ? `${SOURCE_ADAPTER_COMPONENT_ID}/${metricRef}` : `endpoint-probe/${probe.endpoint}`;
     evidence.push({
       type: 'endpoint_check',
       anchor,

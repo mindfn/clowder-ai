@@ -13,9 +13,8 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-
-import { generateA2aNoDataVerdict } from '../../dist/infrastructure/harness-eval/eval-a2a-live-verdict.js';
 import { resolveA2aEvidenceBundle } from '../../dist/infrastructure/harness-eval/eval-a2a-artifact-resolver.js';
+import { generateA2aNoDataVerdict } from '../../dist/infrastructure/harness-eval/eval-a2a-live-verdict.js';
 import {
   assertCanCrossThreadHandoff,
   parseVerdictHandoffPacket,
@@ -104,12 +103,7 @@ describe('generateA2aNoDataVerdict', () => {
 
     const snapshot = JSON.parse(
       readFileSync(
-        join(
-          harnessFeedbackRoot,
-          'bundles',
-          '2026-06-04-eval-a2a-source-adapter-unavailable',
-          'snapshot.json',
-        ),
+        join(harnessFeedbackRoot, 'bundles', '2026-06-04-eval-a2a-source-adapter-unavailable', 'snapshot.json'),
         'utf8',
       ),
     );
@@ -151,12 +145,7 @@ describe('generateA2aNoDataVerdict', () => {
 
     const attribution = JSON.parse(
       readFileSync(
-        join(
-          harnessFeedbackRoot,
-          'bundles',
-          '2026-06-04-eval-a2a-source-adapter-unavailable',
-          'attribution.json',
-        ),
+        join(harnessFeedbackRoot, 'bundles', '2026-06-04-eval-a2a-source-adapter-unavailable', 'attribution.json'),
         'utf8',
       ),
     );
@@ -208,7 +197,10 @@ describe('generateA2aNoDataVerdict', () => {
         },
       }),
     ).markdown;
-    assert.match(with_, /Owner action observed: feat\/f167-no-data-resilience@988545163 \(codex_approved_path_c\) — Build and tests passed/);
+    assert.match(
+      with_,
+      /Owner action observed: feat\/f167-no-data-resilience@988545163 \(codex_approved_path_c\) — Build and tests passed/,
+    );
   });
 
   it('writes provenance.json with a stable input fingerprint for re-eval audit', () => {
@@ -217,12 +209,7 @@ describe('generateA2aNoDataVerdict', () => {
 
     const provenance = JSON.parse(
       readFileSync(
-        join(
-          harnessFeedbackRoot,
-          'bundles',
-          '2026-06-04-eval-a2a-source-adapter-unavailable',
-          'provenance.json',
-        ),
+        join(harnessFeedbackRoot, 'bundles', '2026-06-04-eval-a2a-source-adapter-unavailable', 'provenance.json'),
         'utf8',
       ),
     );
@@ -236,10 +223,7 @@ describe('generateA2aNoDataVerdict', () => {
   it('rejects unsafe verdictIds before touching the filesystem', () => {
     const harnessFeedbackRoot = makeRoot();
     assert.throws(
-      () =>
-        generateA2aNoDataVerdict(
-          baseInput(harnessFeedbackRoot, { verdictId: '../../etc/passwd' }),
-        ),
+      () => generateA2aNoDataVerdict(baseInput(harnessFeedbackRoot, { verdictId: '../../etc/passwd' })),
       /verdictId must be a safe slug/,
     );
   });
@@ -295,9 +279,7 @@ describe('generateA2aNoDataVerdict', () => {
     it('writes a side-by-side input.json artifact whose sha256 matches provenance.rawInputs', () => {
       const harnessFeedbackRoot = makeRoot();
       const result = generateA2aNoDataVerdict(baseInput(harnessFeedbackRoot));
-      const provenance = JSON.parse(
-        readFileSync(join(result.bundleDir, 'provenance.json'), 'utf8'),
-      );
+      const provenance = JSON.parse(readFileSync(join(result.bundleDir, 'provenance.json'), 'utf8'));
       assert.equal(provenance.rawInputs.length, 1);
       const raw = provenance.rawInputs[0];
       assert.ok(raw.path.endsWith('input.json'), `expected rawInputs[0].path to end with input.json, got ${raw.path}`);
@@ -312,23 +294,13 @@ describe('generateA2aNoDataVerdict', () => {
       generateA2aNoDataVerdict(baseInput(harnessFeedbackRoot));
       const snapshot = JSON.parse(
         readFileSync(
-          join(
-            harnessFeedbackRoot,
-            'bundles',
-            '2026-06-04-eval-a2a-source-adapter-unavailable',
-            'snapshot.json',
-          ),
+          join(harnessFeedbackRoot, 'bundles', '2026-06-04-eval-a2a-source-adapter-unavailable', 'snapshot.json'),
           'utf8',
         ),
       );
       const attribution = JSON.parse(
         readFileSync(
-          join(
-            harnessFeedbackRoot,
-            'bundles',
-            '2026-06-04-eval-a2a-source-adapter-unavailable',
-            'attribution.json',
-          ),
+          join(harnessFeedbackRoot, 'bundles', '2026-06-04-eval-a2a-source-adapter-unavailable', 'attribution.json'),
           'utf8',
         ),
       );
@@ -345,7 +317,10 @@ describe('generateA2aNoDataVerdict', () => {
         .map((e) => e.anchor.slice('source-adapter/'.length));
       assert.ok(sourceAdapterAnchors.length > 0, 'expected at least one source-adapter/<metric> anchor');
       for (const key of sourceAdapterAnchors) {
-        assert.ok(validKeys.has(key), `evidence anchor "source-adapter/${key}" must exist in component counts, got keys=${JSON.stringify([...validKeys])}`);
+        assert.ok(
+          validKeys.has(key),
+          `evidence anchor "source-adapter/${key}" must exist in component counts, got keys=${JSON.stringify([...validKeys])}`,
+        );
       }
     });
   });
