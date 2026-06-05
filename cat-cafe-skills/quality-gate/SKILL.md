@@ -62,8 +62,9 @@ Step 2: CREATE — 建检查清单
   - 列出 Discussion 里的 UX 描述和场景
 
 Step 2.4: PATCH COUNTER GATE（反复返工硬闸）🔴
-  - 执行：`git log --oneline --all -- <changed-files> | grep -icE 'fix|hotfix|patch|workaround|revert|regression' | head -1`
-  - **同一区域（同文件集合）≥3 个 fix/hotfix/patch commit → GATE FAIL**
+  - 执行：`git log --oneline $(git merge-base origin/main HEAD)..HEAD -- <changed-files> | grep -icE 'fix|hotfix|patch|workaround|revert|regression'`
+    （注意：只统计**当前分支从 base 分叉后**的 commits，不是全仓历史）
+  - **当前分支内同一区域 ≥3 个 corrective commit → GATE FAIL**
   - FAIL 时必须：
     ① 停止继续修补
     ② 重读 spec 原文 + 铲屎官原始需求

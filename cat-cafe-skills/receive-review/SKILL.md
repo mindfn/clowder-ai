@@ -109,7 +109,7 @@ review 报告中必须包含 fallback 层数分析结果。
 WHEN 收到 review 反馈:
 
 1. READ  — 完整读完，不要边读边反应。**R2+ 时额外动作**：回看上轮 finding 列表，标注每个 finding 的 failure-mode 类型，用于 AUDIT 步骤的同型判别
-2. CLASSIFY — 区分愿景级 vs 代码级；按 P1/P2/P3 分优先级
+2. CLASSIFY — 区分代码级 / 数据流级 / 愿景级（见上方三类反馈表）；按 P1/P2/P3 分优先级。数据流级 = 涉及真相源/状态/级联/一致性 → 走数据流级处理流程
 3. CLARIFY — 有不清晰的问题先全部问清，再动手
 4. VERIFY — reviewer 说的问题真的存在吗？（见下方三道门）
 5. AUDIT — failure-mode sweep（见下方 §16e 判别）
