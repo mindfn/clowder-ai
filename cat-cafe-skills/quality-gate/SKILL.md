@@ -61,6 +61,19 @@ Step 2: CREATE — 建检查清单
   - 列出每一个 AC / 功能点 / 边界条件
   - 列出 Discussion 里的 UX 描述和场景
 
+Step 2.4: PATCH COUNTER GATE（反复返工硬闸）🔴
+  - 执行：`git log --oneline --all -- <changed-files> | grep -icE 'fix|hotfix|patch|workaround|revert|regression' | head -1`
+  - **同一区域（同文件集合）≥3 个 fix/hotfix/patch commit → GATE FAIL**
+  - FAIL 时必须：
+    ① 停止继续修补
+    ② 重读 spec 原文 + 铲屎官原始需求
+    ③ 产出完整的真相源矩阵（格式同 writing-plans 的 Truth-Source Model Gate）
+    ④ 写清"为什么需要这么多 fix"的根因分析
+    ⑤ 根因分析通过后才能继续
+  - 补丁计数不分谁提交的——你自己的 fix 和 reviewer 要求的 fix 都算
+  - **豁免**：纯 lint/format/typo fix 不计入（必须在 commit message 中标注 `chore:` 或 `style:`）
+  - > **根因（2026-06-05 反思 + LL-020）**：F719 分支前 25 个提交大量 fix/refactor/test-fix，远超 LL-020 的"N > 3 换方向"告警线。补丁数量是方向信号——N > 3 不是"还需要更多补丁"的信号，而是"理解不完整，需要停下来重新建模"的信号。
+
 Step 2.5: CLOSE GATE MATRIX + FOLLOW-UP TAIL SCAN（F177 Phase A）🔴
   - 检查 CloseGateReport 是否已生成（schema: `cat-cafe-skills/refs/close-gate.md`）
   - 每个 unmet AC 是否三选一处置（immediate / delete / cvo_signoff）
