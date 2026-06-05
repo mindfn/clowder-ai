@@ -1564,10 +1564,7 @@ export class QueueProcessor {
     }
   }
 
-  private async shouldEnqueueContinuation(
-    capsule: CollaborationContinuityCapsuleV1,
-    userId: string,
-  ): Promise<boolean> {
+  private async shouldEnqueueContinuation(capsule: CollaborationContinuityCapsuleV1, userId: string): Promise<boolean> {
     if (!this.sessionContinuationCoordinator?.resolveSessionStrategy) return true;
     try {
       return (
