@@ -232,6 +232,43 @@ describe('QueueProcessor', () => {
     assert.equal(pausedCall.arguments[2].reason, 'canceled');
   });
 
+  it('failed + unrelated auto-continuation → pauses failed cat queued work', async () => {
+    const queuedWork = enqueueEntry(deps.queue, { targetCats: ['opus'], source: 'user', content: 'opus queued work' });
+    deps.queue.backfillMessageId('t1', 'u1', queuedWork.id, 'msg-opus-work');
+    const codexCapsule = completeCapsuleForSeal(
+      buildCapsuleFromRouteState({
+        threadId: 't1',
+        catId: 'codex',
+        mode: 'independent',
+        a2aEnabled: true,
+      }),
+      {
+        invocationId: 'inv-codex-seal',
+        createdAt: Date.now(),
+        seal: { sessionId: 'sess-codex', sessionSeq: 1, reason: 'threshold' },
+      },
+    );
+    const continuation = processor.enqueueContinuation({
+      threadId: 't1',
+      userId: 'u1',
+      catId: 'codex',
+      capsule: codexCapsule,
+    });
+    assert.equal(continuation.outcome, 'enqueued');
+
+    await processor.onInvocationComplete('t1', 'opus', 'failed');
+
+    assert.equal(processor.isPaused('t1', 'opus'), true, 'unrelated continuation must not bypass failed opus pause');
+    assert.equal(
+      deps.invocationTracker.startAll.mock.calls.length,
+      0,
+      'unrelated codex continuation should not be started by opus failure cleanup',
+    );
+    const pausedCall = deps.socketManager.emitToUser.mock.calls.find((c) => c.arguments[1] === 'queue_paused');
+    assert.ok(pausedCall, 'should emit queue_paused for failed opus work');
+    assert.equal(pausedCall.arguments[2].reason, 'failed');
+  });
+
   it('failed + stale user queued entry → #595 auto-recovery starts dispatch after pause delay', async (t) => {
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const entry = enqueueEntry(deps.queue, { source: 'user' });

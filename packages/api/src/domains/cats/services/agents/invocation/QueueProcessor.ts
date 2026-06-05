@@ -529,9 +529,9 @@ export class QueueProcessor {
         }
       }
     } else {
-      if (this.hasQueuedAutoContinuationForThread(threadId)) {
+      if (this.hasQueuedAutoContinuationForThreadCat(threadId, catId)) {
         this.pausedSlots.delete(sk);
-        await this.tryAutoExecute(threadId, { onlyContinuation: true, bypassNonAgentGate: true });
+        await this.tryAutoExecute(threadId, { onlyContinuation: true, bypassNonAgentGate: true, onlyTargetCat: catId });
         return;
       }
       // canceled or failed → pause ONLY if there are queued entries to manage.
@@ -630,12 +630,13 @@ export class QueueProcessor {
    */
   async tryAutoExecute(
     threadId: string,
-    opts: { onlyContinuation?: boolean; bypassNonAgentGate?: boolean } = {},
+    opts: { onlyContinuation?: boolean; bypassNonAgentGate?: boolean; onlyTargetCat?: string } = {},
   ): Promise<void> {
     this.sweepZombieSlots(threadId);
     if (!opts.bypassNonAgentGate && this.hasDispatchableNonAgentQueued(threadId)) return;
     const entries = (this.deps.queue.listAutoExecute?.(threadId) ?? [])
       .filter((entry) => !opts.onlyContinuation || entry.sourceCategory === 'continuation')
+      .filter((entry) => !opts.onlyTargetCat || entry.targetCats[0] === opts.onlyTargetCat)
       .sort((a, b) => a.createdAt - b.createdAt);
     if (entries.length > 0) {
       const now = Date.now();
@@ -698,9 +699,9 @@ export class QueueProcessor {
     return false;
   }
 
-  private hasQueuedAutoContinuationForThread(threadId: string): boolean {
+  private hasQueuedAutoContinuationForThreadCat(threadId: string, catId: string): boolean {
     return (this.deps.queue.listAutoExecute?.(threadId) ?? []).some(
-      (entry) => entry.source === 'agent' && entry.sourceCategory === 'continuation',
+      (entry) => entry.source === 'agent' && entry.sourceCategory === 'continuation' && entry.targetCats[0] === catId,
     );
   }
 
