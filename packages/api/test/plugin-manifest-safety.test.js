@@ -1458,6 +1458,8 @@ describe('PluginResourceActivator skill safety', () => {
     assert.equal(persisted.capabilities[0].mcpServer.command, '');
   });
 
+  // orphan reclaim tests moved to #713 (public plugin resource lifecycle)
+
   it('removes stale plugin-owned MCP and limb capabilities during disable', async () => {
     const root = mkdtempSync(join(os.tmpdir(), 'plugin-activator-root-'));
     const pluginsDir = join(root, 'plugins');

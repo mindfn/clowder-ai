@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, relative } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import {
   type CapabilitiesConfig,
   type CapabilityEntry,
@@ -811,9 +811,28 @@ export class PluginResourceActivator {
       };
     }
 
+    const projectRoot = this.deps.resolveProjectRoot();
+    const pluginDir = join(this.deps.pluginsDir, manifest.id);
+
+    // Resolve relative args to absolute paths. Plugin YAML args are typically
+    // relative to the project root (e.g. "packages/mcp-server/dist/protocol-server.js").
+    // Codex TOML format has no `cwd` field, so the CLI spawns MCP servers from the
+    // thread's projectPath — which can differ from project root — causing relative
+    // paths to break silently. Making args absolute at source fixes all downstream
+    // consumers (TOML, JSON, --config injection). Consistent with how built-in Cat
+    // Cafe MCPs use resolve() in buildCatCafeSplitMcpDescriptors.
+    const resolvedArgs = (resource.args ?? []).map((arg) => {
+      if (arg.startsWith('/') || arg.startsWith('-')) return arg;
+      const fromRoot = resolve(projectRoot, arg);
+      if (existsSync(fromRoot)) return fromRoot;
+      const fromPlugin = resolve(pluginDir, arg);
+      if (existsSync(fromPlugin)) return fromPlugin;
+      return arg;
+    });
+
     return {
       command: resource.command!,
-      args: resource.args ?? [],
+      args: resolvedArgs,
       transport: (resource.transport as 'stdio' | 'streamableHttp') ?? 'stdio',
       workingDir: this.deps.resolveProjectRoot(),
       ...this.buildMcpEnv(manifest),
