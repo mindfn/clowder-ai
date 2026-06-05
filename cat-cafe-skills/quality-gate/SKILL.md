@@ -62,18 +62,24 @@ Step 2: CREATE — 建检查清单
   - 列出 Discussion 里的 UX 描述和场景
 
 Step 2.4: PATCH COUNTER GATE（反复返工硬闸）🔴
-  - 执行：`git log --oneline $(git merge-base origin/main HEAD)..HEAD -- <changed-files> | grep -icE 'fix|hotfix|patch|workaround|revert|regression'`
-    （注意：只统计**当前分支从 base 分叉后**的 commits，不是全仓历史）
-  - **当前分支内同一区域 ≥3 个 corrective commit → GATE FAIL**
+  - **Step A — 列出候选 commits**：
+    ```
+    BASE_REF=$(git merge-base "${UPSTREAM_REF:-origin/main}" HEAD)
+    git log --oneline "$BASE_REF..HEAD" -- <changed-files>
+    ```
+    `UPSTREAM_REF` 取当前分支的 upstream tracking ref（`@{upstream}`），无 tracking 时 fallback `origin/main`。develop_base 流程中 base = `origin/develop_base`。
+  - **Step B — 人工分类**：逐条标记每个 commit 为以下之一：
+    - ✅ **同一 bug/AC 返工**：修上次没修好的同一个问题、用户报告同一问题后的重复修复、同一区域反复修补
+    - ⬚ **正常迭代**（不计入）：reviewer 正常 P1/P2 修复（`fix: address review P2-xxx`）、新发现的不同问题的修复
+    - ⬚ **排除**（不计入）：纯 lint/format/typo（`chore:` / `style:`）、rebase 冲突解决
+    - 判断标准：问自己——"这个 fix 是在修一个**新发现的问题**，还是在修**上次没修好的同一个问题**？"后者才标 ✅
+  - **Step C — 硬闸判定**：标 ✅ 的 ≥3 个 → **GATE FAIL**
   - FAIL 时必须：
     ① 停止继续修补
     ② 重读 spec 原文 + 铲屎官原始需求
     ③ 产出完整的真相源矩阵（格式同 writing-plans 的 Truth-Source Model Gate）
     ④ 写清"为什么需要这么多 fix"的根因分析
     ⑤ 根因分析通过后才能继续
-  - 计数范围：只计**同一 bug/AC 的返工修复**（用户报告同一问题后的重复修复、自己发现同一区域反复修补）
-  - **不计入**：reviewer 正常 P1/P2 修复（`fix: address review P2-xxx`）、纯 lint/format/typo fix（`chore:` / `style:`）、rebase 冲突解决
-  - 判断方式：如果不确定是否计入，问自己——"这个 fix 是在修一个新发现的问题，还是在修上次没修好的同一个问题？"后者才计入
   - > **根因（2026-06-05 反思 + LL-020）**：F719 分支前 25 个提交大量 fix/refactor/test-fix，远超 LL-020 的"N > 3 换方向"告警线。补丁数量是方向信号——N > 3 不是"还需要更多补丁"的信号，而是"理解不完整，需要停下来重新建模"的信号。
 
 Step 2.5: CLOSE GATE MATRIX + FOLLOW-UP TAIL SCAN（F177 Phase A）🔴

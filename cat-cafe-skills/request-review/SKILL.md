@@ -81,7 +81,7 @@ BEFORE 发 review 请求:
 关键字段提醒：
 - **Original Requirements**: 必填，≤5 行铲屎官原话 + 来源文档路径，并明确请 reviewer 对照判断
 - **Architecture Ownership**: 必填，列 `Architecture cell` / `Map delta` / `Why`，并请 reviewer 检查 diff 是否与 `Map delta` 一致
-- **Invariant Matrix**（涉及多数据源交互时必填）🔴: 列出核心不变量 + 真相源读写关系（格式同 `writing-plans` 的 Truth-Source Model Gate）。reviewer 必须逐条验证 invariant 是否被代码保持。缺少 invariant matrix 时，reviewer 有权要求补上后再继续 review
+- **Invariant Matrix**（涉及跨层状态同步/级联时必填；简单 CRUD 可写"不适用"）🔴: 列出核心不变量 + 真相源读写关系（格式同 `writing-plans` 的 Truth-Source Model Gate）。reviewer 必须逐条验证 invariant 是否被代码保持。缺少 invariant matrix 时，reviewer 有权要求补上后再继续 review
 - **E2E User Path Evidence**（涉及用户可感知功能时必填）🔴: 引用 quality-gate Step 4.5 Dogfood-Your-Slice 的输出即可（不需要重新跑）。reviewer 可据此判断 blast radius。若 quality-gate 中该项为"可豁免"，此处同样豁免
 - **Open Questions**: 分为两类——**技术 OQ**（给 reviewer 的，如实现正确性）和 **价值 OQ**（需要 CVO 判断的，附 Decision Packet——格式见 `refs/decision-matrix.md`）。不混在一起
 - **自检证据**: 附 quality-gate report 摘要 + 测试命令输出 + 根目录工件闸门输出
