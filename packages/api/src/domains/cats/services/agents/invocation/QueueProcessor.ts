@@ -529,6 +529,11 @@ export class QueueProcessor {
         }
       }
     } else {
+      if (this.hasQueuedAutoContinuationForThread(threadId)) {
+        this.pausedSlots.delete(sk);
+        await this.tryAutoExecute(threadId, { onlyContinuation: true, bypassNonAgentGate: true });
+        return;
+      }
       // canceled or failed → pause ONLY if there are queued entries to manage.
       if (!this.hasDispatchableQueuedForThread(threadId)) {
         this.pausedSlots.delete(sk);
@@ -623,10 +628,15 @@ export class QueueProcessor {
    * Scans all entries and starts every one whose cat slot is free (parallel multi-cat).
    * Per-cat slot mutex (processingSlots + invocationTracker) prevents conflicts.
    */
-  async tryAutoExecute(threadId: string): Promise<void> {
+  async tryAutoExecute(
+    threadId: string,
+    opts: { onlyContinuation?: boolean; bypassNonAgentGate?: boolean } = {},
+  ): Promise<void> {
     this.sweepZombieSlots(threadId);
-    if (this.hasDispatchableNonAgentQueued(threadId)) return;
-    const entries = (this.deps.queue.listAutoExecute?.(threadId) ?? []).sort((a, b) => a.createdAt - b.createdAt);
+    if (!opts.bypassNonAgentGate && this.hasDispatchableNonAgentQueued(threadId)) return;
+    const entries = (this.deps.queue.listAutoExecute?.(threadId) ?? [])
+      .filter((entry) => !opts.onlyContinuation || entry.sourceCategory === 'continuation')
+      .sort((a, b) => a.createdAt - b.createdAt);
     if (entries.length > 0) {
       const now = Date.now();
       this.deps.log.info(
@@ -686,6 +696,12 @@ export class QueueProcessor {
       }
     }
     return false;
+  }
+
+  private hasQueuedAutoContinuationForThread(threadId: string): boolean {
+    return (this.deps.queue.listAutoExecute?.(threadId) ?? []).some(
+      (entry) => entry.source === 'agent' && entry.sourceCategory === 'continuation',
+    );
   }
 
   private async tryExecuteNextAcrossUsers(
@@ -1070,10 +1086,20 @@ export class QueueProcessor {
               const capsule = pending.capsule as unknown as CollaborationContinuityCapsuleV1;
               if (isCollaborationContinuityCapsuleV1(capsule)) {
                 const continuationPrompt = formatContinuationPrompt(capsule);
-                content = continuationPrompt + '\n\n---\n\n' + content;
+                const sameQueuedContinuation =
+                  entry.sourceCategory === 'continuation' &&
+                  entry.continuationKey === QueueProcessor.continuationKey(capsule);
+                if (!sameQueuedContinuation) {
+                  content = continuationPrompt + '\n\n---\n\n' + content;
+                }
                 log.info(
-                  { threadId, catId: singleCatId, capsuleCreatedAt: pending.createdAt },
-                  '[QueueProcessor] #813: injected pending continuation context into execution',
+                  {
+                    threadId,
+                    catId: singleCatId,
+                    capsuleCreatedAt: pending.createdAt,
+                    promptAlreadyQueued: sameQueuedContinuation,
+                  },
+                  '[QueueProcessor] #813: handled pending continuation context for execution',
                 );
               }
             }
@@ -1446,9 +1472,9 @@ export class QueueProcessor {
             action: 'a2a_subsumed',
           });
         }
-        // #813: Passive seal — write pending continuation to thread metadata
-        // instead of immediately enqueuing. The next invocation of this cat
-        // will consume the capsule at startup and inject continuation context.
+        // #813: Store-and-resume seal — keep the capsule durable in thread metadata,
+        // then enqueue bounded auto-continuation so in-progress work resumes without
+        // waiting for the next user/authored trigger.
         // #836: Reborn cats skip continuation store — they never resume.
         for (const continuationCapsule of continuationCapsules.values()) {
           // #836: Reborn check is best-effort — a transient Redis failure must not
@@ -1479,14 +1505,20 @@ export class QueueProcessor {
               });
               log.info(
                 { threadId, catId: continuationCapsule.catId },
-                '[QueueProcessor] #813: wrote pending continuation to thread metadata (passive seal)',
+                '[QueueProcessor] #813: wrote pending continuation to thread metadata',
               );
+              await this.enqueueContinuation({
+                threadId,
+                userId,
+                catId: continuationCapsule.catId,
+                capsule: continuationCapsule,
+              });
             } catch (err) {
               log.warn(
                 { threadId, catId: continuationCapsule.catId, err },
                 '[QueueProcessor] #813: setPendingContinuation failed, falling back to enqueueContinuation',
               );
-              void this.enqueueContinuation({
+              await this.enqueueContinuation({
                 threadId,
                 userId,
                 catId: continuationCapsule.catId,
@@ -1497,7 +1529,7 @@ export class QueueProcessor {
             }
           } else {
             // Fallback: no threadStore → legacy behavior (immediate enqueue)
-            void this.enqueueContinuation({
+            await this.enqueueContinuation({
               threadId,
               userId,
               catId: continuationCapsule.catId,
@@ -1536,6 +1568,7 @@ export class QueueProcessor {
                 userId,
                 consumedContinuation.entry,
               );
+              // Deliberate: re-stored consumed capsules stay passive to avoid retry storms.
               log.info(
                 { threadId, catId: consumedContinuation.catId },
                 '[QueueProcessor] #813: re-stored consumed continuation after failed/canceled execution',
@@ -1585,12 +1618,31 @@ export class QueueProcessor {
                 { threadId, catId: continuationCapsule.catId },
                 '[QueueProcessor] #813: saved new continuation capsule after failed/canceled execution',
               );
+              await this.enqueueContinuation({
+                threadId,
+                userId,
+                catId: continuationCapsule.catId,
+                capsule: continuationCapsule,
+              });
             } catch (capsuleErr) {
               log.warn(
                 { threadId, catId: continuationCapsule.catId, err: capsuleErr },
                 '[QueueProcessor] #813: failed to save new capsule after execution failure',
               );
+              await this.enqueueContinuation({
+                threadId,
+                userId,
+                catId: continuationCapsule.catId,
+                capsule: continuationCapsule,
+              });
             }
+          } else {
+            await this.enqueueContinuation({
+              threadId,
+              userId,
+              catId: continuationCapsule.catId,
+              capsule: continuationCapsule,
+            });
           }
         }
       }
