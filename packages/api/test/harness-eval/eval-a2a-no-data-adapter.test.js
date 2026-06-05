@@ -8,7 +8,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { buildA2aNoDataVerdictHandoff } from '../../dist/infrastructure/harness-eval/eval-a2a-no-data-adapter.js';
+import { buildA2aNoDataVerdictHandoff } from '../../dist/infrastructure/harness-eval/a2a/eval-a2a-no-data-adapter.js';
 import {
   assertCanCrossThreadHandoff,
   parseVerdictHandoffPacket,

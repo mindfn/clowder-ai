@@ -13,8 +13,8 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { resolveA2aEvidenceBundle } from '../../dist/infrastructure/harness-eval/eval-a2a-artifact-resolver.js';
-import { generateA2aNoDataVerdict } from '../../dist/infrastructure/harness-eval/eval-a2a-live-verdict.js';
+import { resolveA2aEvidenceBundle } from '../../dist/infrastructure/harness-eval/a2a/eval-a2a-artifact-resolver.js';
+import { generateA2aNoDataVerdict } from '../../dist/infrastructure/harness-eval/a2a/eval-a2a-live-verdict.js';
 import {
   assertCanCrossThreadHandoff,
   parseVerdictHandoffPacket,
