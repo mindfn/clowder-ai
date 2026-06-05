@@ -144,7 +144,7 @@ function hasNonSuppressibleCodexExitOneDiagnostics(
     .filter((value): value is string => Boolean(value))
     .join('\n');
 
-  return /remote compaction failed|compact_error|stream disconnected before completion/i.test(diagnosticText);
+  return /remote compaction failed|compact_error/i.test(diagnosticText);
 }
 
 function toTomlString(value: string): string {
