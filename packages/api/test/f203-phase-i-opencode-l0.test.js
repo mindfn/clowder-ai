@@ -30,8 +30,7 @@ const hasProjectOpenCodeRuntimeFiles =
 const projectRuntimeInvariantOptions = hasProjectOpenCodeRuntimeFiles
   ? {}
   : {
-      skip:
-        'public checkout does not include local OpenCode runtime config files; committed template tests still run',
+      skip: 'public checkout does not include local OpenCode runtime config files; committed template tests still run',
     };
 
 // ── AC-I3: OpenCodeAgentService.injectsL0Natively() ──
