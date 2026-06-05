@@ -891,6 +891,38 @@ describe('CodexAgentService Tests (CLI mode)', { concurrency: false }, () => {
     );
   });
 
+  test('does NOT suppress exit code 1 when substantive output is followed by compact failure', async () => {
+    const proc = createMockProcess();
+    const spawnFn = createMockSpawnFn(proc);
+    const service = new CodexAgentService({ l0CompilerFn: fakeL0Compiler, spawnFn });
+
+    const promise = collect(service.invoke('continue this'));
+
+    proc.stdout.write(`${JSON.stringify({ type: 'thread.started', thread_id: 'tx' })}\n`);
+    proc.stdout.write(
+      `${JSON.stringify({
+        type: 'item.completed',
+        item: { type: 'agent_message', text: 'Partial answer before compact.' },
+      })}\n`,
+    );
+    proc.stdout.write(
+      `${JSON.stringify({
+        type: 'error',
+        message: 'remote compaction failed: compact_error=stream disconnected before completion',
+      })}\n`,
+    );
+    finishExit(proc, 1);
+
+    const msgs = await promise;
+    const errors = msgs.filter((m) => m.type === 'error');
+    assert.equal(errors.length, 1, 'compact failure must yield an error even after substantive output');
+    assert.ok(errors[0].error.includes('code: 1'));
+    assert.ok(
+      errors[0].error.includes('stream disconnected before completion'),
+      'error should retain sanitized compact diagnostics',
+    );
+  });
+
   test('does NOT suppress exit code 1 when only thread.started (no substantive output)', async () => {
     const proc = createMockProcess();
     const spawnFn = createMockSpawnFn(proc);
