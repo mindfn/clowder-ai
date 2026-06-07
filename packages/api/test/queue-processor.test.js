@@ -999,7 +999,11 @@ describe('QueueProcessor', () => {
     await new Promise((r) => setTimeout(r, 150));
 
     assert.equal(routeCalls, 1, 'user stop must not immediately auto-run the produced continuation');
-    assert.equal(stopDeps.threadStore.setPendingContinuation.mock.calls.length, 1, 'capsule remains available for resume');
+    assert.equal(
+      stopDeps.threadStore.setPendingContinuation.mock.calls.length,
+      1,
+      'capsule remains available for resume',
+    );
     assert.equal(
       stopDeps.queue
         .list('t1', 'u1')
