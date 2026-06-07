@@ -93,6 +93,7 @@ type MessageExtra = NonNullable<ChatMessageData['extra']>;
 type MessageRichPayload = MessageExtra['rich'];
 
 function getHistoryInvocationId(msg: ChatMessageData): string | undefined {
+  if (msg.extra?.isExplicitPost) return undefined;
   return getBubbleInvocationId(msg);
 }
 
@@ -101,6 +102,7 @@ export function getLocalPlaceholderInvocationId(
   msg: ChatMessageData,
   currentCatInvocations: Record<string, CatInvocationInfo>,
 ): string | undefined {
+  if (msg.extra?.isExplicitPost) return undefined;
   // F194 Phase Z3 P1-2 (砚砚 R): MUST share `getBubbleInvocationId` priority order
   // (turnInvocationId > invocationId > draft id slice). Otherwise current/local placeholder uses
   // parent key while history bubble uses turn key → 刷新前后 merge 路径不一致。
