@@ -33,8 +33,12 @@ import { getThreadLiveInvocations } from '../domains/cats/services/agents/invoca
 import type { InvocationQueue } from '../domains/cats/services/agents/invocation/InvocationQueue.js';
 import type { InvocationRegistry } from '../domains/cats/services/agents/invocation/InvocationRegistry.js';
 import type { InvocationTracker } from '../domains/cats/services/agents/invocation/InvocationTracker.js';
-import type { QueueProcessor } from '../domains/cats/services/agents/invocation/QueueProcessor.js';
+import type {
+  QueueProcessor,
+  SessionContinuationCoordinatorLike,
+} from '../domains/cats/services/agents/invocation/QueueProcessor.js';
 import { reconcileZombies } from '../domains/cats/services/agents/invocation/reconcileZombies.js';
+import type { ConsumedContinuationToken } from '../domains/cats/services/agents/invocation/SessionContinuationCoordinator.js';
 import type { TaskProgressStore } from '../domains/cats/services/agents/invocation/TaskProgressStore.js';
 import { stampVisibleTurn } from '../domains/cats/services/agents/invocation/visible-turn.js';
 import type { PersistenceContext } from '../domains/cats/services/agents/routing/route-helpers.js';
@@ -137,6 +141,8 @@ export interface MessagesRoutesOptions {
   invocationQueue?: InvocationQueue;
   /** F39: Queue processor for auto-dequeue on invocation complete */
   queueProcessor?: QueueProcessor;
+  /** F224: Shared continuation lifecycle coordinator for direct immediate invocations. */
+  sessionContinuationCoordinator?: SessionContinuationCoordinatorLike;
   /** Test/diagnostic override for releasing invocations that never produce a provider/session event. */
   invocationStartupWatchdogMs?: number;
   /** F101: Game store for /game command interception */
@@ -1010,6 +1016,8 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
 
         // F148 fix: Hoisted so abort/catch branches can ack completed cats' cursors
         const cursorBoundaries = new Map<string, string>();
+        const continuationCapsules = new Map<string, CollaborationContinuityCapsuleV1>();
+        let consumedContinuation: ConsumedContinuationToken | undefined;
 
         // F194 Phase Z3 (AC-Z3): mark chain start for finally fallback. routeExecution may
         // hang / silently exit / swallow exceptions and never reach explicit terminal write
@@ -1077,7 +1085,6 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           const collectedUsage = new Map<string, TokenUsage>();
           // F070: track governance block errorCode for recoverable failure marking
           let governanceErrorCode: string | undefined;
-          const continuationCapsules = new Map<string, CollaborationContinuityCapsuleV1>();
 
           // F088 ISSUE-15: Collect per-turn content for outbound delivery to connector platforms
           const outboundTurns: Array<{
@@ -1109,6 +1116,38 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
             });
             await cleanupStreamingOnFailure(resolvedThreadId, createResult.invocationId, streamStartPromise, opts, log);
             return;
+          }
+
+          // F224: direct immediate invocations must consume the same pending continuation
+          // as QueueProcessor. Only single-cat content is safe to rewrite with a cat-specific prompt.
+          if (opts.sessionContinuationCoordinator && targetCats.length === 1) {
+            const singleCatId = targetCats[0]!;
+            try {
+              const prepared = await opts.sessionContinuationCoordinator.prepareInvocationContext({
+                threadId: resolvedThreadId,
+                catId: singleCatId,
+                userId,
+                content,
+              });
+              content = prepared.content;
+              consumedContinuation = prepared.consumedContinuation;
+              if (prepared.sessionPolicy === 'reborn') {
+                log.info(
+                  { threadId: resolvedThreadId, catId: singleCatId },
+                  '[messages] F224: reborn session — coordinator skipped continuation consume',
+                );
+              } else if (prepared.consumedContinuation) {
+                log.info(
+                  { threadId: resolvedThreadId, catId: singleCatId },
+                  '[messages] F224: consumed pending continuation for direct invocation',
+                );
+              }
+            } catch (err) {
+              log.warn(
+                { err, threadId: resolvedThreadId, catId: singleCatId },
+                '[messages] F224: prepareInvocationContext failed, proceeding without continuation context',
+              );
+            }
           }
 
           // F118 D2: Broadcast spawn_started immediately — fills the intent_mode blind spot.
@@ -1514,6 +1553,23 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
             }
           }
           routeChainTracker.release(createResult.invocationId);
+          if (opts.sessionContinuationCoordinator) {
+            try {
+              await opts.sessionContinuationCoordinator.commitInvocationOutcome({
+                finalStatus,
+                threadId: resolvedThreadId,
+                catId: primaryCat,
+                userId,
+                consumedContinuation,
+                producedCapsules: continuationCapsules.values(),
+              });
+            } catch (err) {
+              log.warn(
+                { err, threadId: resolvedThreadId, targetCats },
+                '[messages] F224: commitInvocationOutcome failed',
+              );
+            }
+          }
           // F39: Notify queue processor for auto-dequeue chain
           notifyQueueCompletion(finalStatus);
         }
