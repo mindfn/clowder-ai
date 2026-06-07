@@ -934,6 +934,81 @@ describe('QueueProcessor', () => {
     );
   });
 
+  it('threshold seal capsule after user stop stores pending but does not auto-run continuation', async () => {
+    let routeCalls = 0;
+    let pendingContinuation = null;
+    const capsule = completeCapsuleForSeal(
+      buildCapsuleFromRouteState({
+        threadId: 't1',
+        catId: 'opus',
+        mode: 'independent',
+        a2aEnabled: true,
+      }),
+      {
+        invocationId: 'inv-first',
+        createdAt: Date.now(),
+        seal: { sessionId: 'sess-user-stop', sessionSeq: 1, reason: 'user-stop-after-seal' },
+      },
+    );
+    const stopDeps = stubDeps({
+      invocationTracker: {
+        start: mock.fn(() => new AbortController()),
+        startAll: mock.fn(() => new AbortController()),
+        complete: mock.fn(),
+        completeAll: mock.fn(),
+        completeSlot: mock.fn(),
+        has: mock.fn(() => false),
+        resolveFinalStatus: mock.fn(() => 'canceled_by_user'),
+      },
+      router: {
+        routeExecution: mock.fn(async function* () {
+          routeCalls++;
+          if (routeCalls === 1) {
+            yield {
+              type: 'system_info',
+              catId: 'opus',
+              content: JSON.stringify({ type: 'session_seal_requested', continuityCapsule: capsule }),
+              timestamp: Date.now(),
+            };
+          } else {
+            yield { type: 'text', catId: 'opus', content: 'unexpected auto continuation', timestamp: Date.now() };
+          }
+          yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+        }),
+        ackCollectedCursors: mock.fn(async () => {}),
+      },
+      threadStore: {
+        isRebornSession: mock.fn(async () => false),
+        setPendingContinuation: mock.fn(async (_threadId, _catId, _userId, entry) => {
+          pendingContinuation = entry;
+        }),
+        consumePendingContinuation: mock.fn(async () => {
+          const pending = pendingContinuation;
+          pendingContinuation = null;
+          return pending;
+        }),
+      },
+    });
+    const stopProcessor = new QueueProcessor(stopDeps);
+    const entry = enqueueEntry(stopDeps.queue, { targetCats: ['opus'], content: 'initial work' });
+    stopDeps.queue.backfillMessageId('t1', 'u1', entry.id, 'msg-1');
+
+    const result = await stopProcessor.processNext('t1', 'u1');
+    assert.equal(result.started, true);
+
+    await new Promise((r) => setTimeout(r, 150));
+
+    assert.equal(routeCalls, 1, 'user stop must not immediately auto-run the produced continuation');
+    assert.equal(stopDeps.threadStore.setPendingContinuation.mock.calls.length, 1, 'capsule remains available for resume');
+    assert.equal(
+      stopDeps.queue
+        .list('t1', 'u1')
+        .some((queued) => queued.sourceCategory === 'continuation' && queued.autoExecute === true),
+      false,
+      'user-stopped capsule must not be queued as autoExecute continuation',
+    );
+  });
+
   it('enqueueContinuation pins seal work ahead of queued user work without dropping either', async () => {
     enqueueEntry(deps.queue, { targetCats: ['opus'], source: 'user', content: 'new user work' });
     const capsule = completeCapsuleForSeal(

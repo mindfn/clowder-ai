@@ -1534,6 +1534,13 @@ export class QueueProcessor {
         }
       }
       for (const continuationCapsule of producedCapsules) {
+        if (finalStatus === 'canceled_by_user') {
+          log.info(
+            { threadId, catId: continuationCapsule.catId },
+            '[QueueProcessor] F224: user-canceled invocation — storing continuation without auto-enqueue',
+          );
+          continue;
+        }
         if (!(await this.shouldEnqueueContinuation(continuationCapsule, userId))) {
           log.info(
             { threadId, catId: continuationCapsule.catId },
