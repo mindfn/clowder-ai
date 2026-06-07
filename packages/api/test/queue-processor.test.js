@@ -248,7 +248,7 @@ describe('QueueProcessor', () => {
         seal: { sessionId: 'sess-codex', sessionSeq: 1, reason: 'threshold' },
       },
     );
-    const continuation = processor.enqueueContinuation({
+    const continuation = await processor.enqueueContinuation({
       threadId: 't1',
       userId: 'u1',
       catId: 'codex',
