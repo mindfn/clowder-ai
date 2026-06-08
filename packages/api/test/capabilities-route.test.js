@@ -1661,6 +1661,46 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
     }
   });
 
+  it('converts legacy directory-level mounts before disabling managed skills', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const disabledSkill = 'debugging';
+    const keptSkill = 'tdd';
+    const sourceSkillsDir = join(findRepoRoot(), 'cat-cafe-skills');
+    const projectDir = await makeTmpDir('patch-managed-skill-legacy-root');
+    const codexSkillsDir = join(projectDir, '.codex', 'skills');
+    const app = await buildSessionApp();
+
+    try {
+      await mkdir(dirname(codexSkillsDir), { recursive: true });
+      await symlink(sourceSkillsDir, codexSkillsDir);
+      await writeCapabilitiesConfig(projectDir, {
+        version: 1,
+        capabilities: [
+          { id: disabledSkill, type: 'skill', enabled: true, source: 'cat-cafe' },
+          { id: keptSkill, type: 'skill', enabled: true, source: 'cat-cafe' },
+        ],
+      });
+
+      const res = await patchSkillCapability(app, projectDir, disabledSkill, false);
+
+      assert.equal(res.statusCode, 200, res.payload);
+      const rootStat = await lstat(codexSkillsDir);
+      assert.equal(rootStat.isDirectory(), true, 'legacy provider root should become a real directory');
+      assert.equal(rootStat.isSymbolicLink(), false, 'legacy provider root symlink should be removed');
+      await assert.rejects(() => lstat(join(codexSkillsDir, disabledSkill)), /ENOENT/);
+      assert.equal(await realpath(join(codexSkillsDir, keptSkill)), await realpath(join(sourceSkillsDir, keptSkill)));
+      const config = await readCapabilitiesConfig(projectDir);
+      assert.equal(config?.capabilities.find((cap) => cap.id === disabledSkill)?.enabled, false);
+      assert.equal(config?.capabilities.find((cap) => cap.id === keptSkill)?.enabled, true);
+    } finally {
+      await app.close();
+      await rm(projectDir, { recursive: true, force: true });
+      if (previousOwner === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+      else process.env.DEFAULT_OWNER_USER_ID = previousOwner;
+    }
+  });
+
   it('creates managed cat-cafe skill symlinks on global enable', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';

@@ -1009,7 +1009,13 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
           if (body.enabled) {
             await mountManagedSkillSymlinks(projectRoot, cap.id, CAT_CAFE_SKILLS_SRC);
           } else {
-            await unmountManagedSkillSymlinks(projectRoot, cap.id, CAT_CAFE_SKILLS_SRC);
+            await unmountManagedSkillSymlinks(projectRoot, cap.id, CAT_CAFE_SKILLS_SRC, {
+              disabledSkillNames: config.capabilities
+                .filter(
+                  (entry) => entry.type === 'skill' && entry.source === 'cat-cafe' && !entry.pluginId && !entry.enabled,
+                )
+                .map((entry) => entry.id),
+            });
           }
         } catch (err) {
           if (err instanceof ManagedSkillWritebackConflictError) {

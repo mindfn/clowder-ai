@@ -1,6 +1,7 @@
 import { lstat, mkdir, readlink, realpath, rm, symlink } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { validateSkillName } from '../config/governance/skill-sync.js';
+import { listSourceSkillNames } from '../config/governance/skills-state.js';
 import { pathsEqual } from './project-path.js';
 
 const PROJECT_PROVIDER_SKILL_DIRS = ['.claude/skills', '.codex/skills', '.gemini/skills', '.kimi/skills'];
@@ -118,14 +119,59 @@ export async function unmountManagedSkillSymlinks(
   projectRoot: string,
   skillName: string,
   skillsSource: string,
+  opts?: { disabledSkillNames?: Iterable<string> },
 ): Promise<void> {
   validateSkillName(skillName);
 
+  const managedDirectoryRoots: string[] = [];
+  const skillLinksToRemove: string[] = [];
   for (const providerDir of PROJECT_PROVIDER_SKILL_DIRS) {
     const skillsDir = join(projectRoot, providerDir);
+    if (await isManagedDirectoryLevelSkillsSymlink(skillsDir, skillsSource)) {
+      managedDirectoryRoots.push(skillsDir);
+      continue;
+    }
     if (await isProviderRootSymlink(skillsDir)) continue;
     const linkPath = join(skillsDir, skillName);
-    if (!(await isManagedSkillSymlink(linkPath, skillsSource, skillName))) continue;
-    await rm(linkPath);
+    if (await isManagedSkillSymlink(linkPath, skillsSource, skillName)) {
+      skillLinksToRemove.push(linkPath);
+    }
+  }
+
+  const disabledSkillNames = new Set(opts?.disabledSkillNames ?? []);
+  disabledSkillNames.add(skillName);
+  const enabledSourceSkillNames = (await listSourceSkillNames(skillsSource)).filter(
+    (name) => !disabledSkillNames.has(name),
+  );
+
+  const convertedRoots: Array<{ skillsDir: string; target: string }> = [];
+  const removedLinks: Array<{ linkPath: string; target: string }> = [];
+  try {
+    for (const skillsDir of managedDirectoryRoots) {
+      const target = await readlink(skillsDir);
+      convertedRoots.push({ skillsDir, target });
+      await rm(skillsDir);
+      await mkdir(skillsDir, { recursive: true });
+      for (const sourceSkillName of enabledSourceSkillNames) {
+        const linkPath = join(skillsDir, sourceSkillName);
+        await symlink(symlinkTargetFor(linkPath, join(skillsSource, sourceSkillName)), linkPath);
+      }
+    }
+
+    for (const linkPath of skillLinksToRemove) {
+      const target = await readlink(linkPath);
+      removedLinks.push({ linkPath, target });
+      await rm(linkPath);
+    }
+  } catch (err) {
+    for (const { linkPath, target } of removedLinks.reverse()) {
+      await rm(linkPath, { force: true }).catch(() => {});
+      await symlink(target, linkPath).catch(() => {});
+    }
+    for (const { skillsDir, target } of convertedRoots.reverse()) {
+      await rm(skillsDir, { recursive: true, force: true }).catch(() => {});
+      await symlink(target, skillsDir).catch(() => {});
+    }
+    throw err;
   }
 }
