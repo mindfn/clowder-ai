@@ -1444,10 +1444,14 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       );
       callbackEnv.OPENCODE_CONFIG = openCodeRuntimeConfigPath;
       // Credentials: only for api_key auth.
-      // OAuth users authenticate through OpenCode's native flow.
+      // OAuth users authenticate through OpenCode's native flow — signal
+      // OC_INSTRUCTIONS_ONLY_ENV so buildEnv preserves native auth instead
+      // of clearing it for the custom provider config path.
       if (isApiKey) {
         if (resolvedAccount.apiKey) callbackEnv[OC_API_KEY_ENV] = resolvedAccount.apiKey;
         if (resolvedAccount.baseUrl) callbackEnv[OC_BASE_URL_ENV] = resolvedAccount.baseUrl;
+      } else {
+        callbackEnv[OC_INSTRUCTIONS_ONLY_ENV] = '1';
       }
       log.debug(
         {

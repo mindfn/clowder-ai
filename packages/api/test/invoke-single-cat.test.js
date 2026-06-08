@@ -5352,14 +5352,15 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       );
 
       const callbackEnv = optionsSeen[0]?.callbackEnv ?? {};
-      // Non-api_key auth still gets full runtime config (MCP + L0 + model routing)
+      // Non-api_key auth gets full runtime config (MCP + L0 + model routing)
+      // but signals instructions-only so buildEnv preserves native auth
       assert.ok(callbackEnv.OPENCODE_CONFIG, 'subscription path must get OPENCODE_CONFIG with MCP + L0');
       assert.strictEqual(
         callbackEnv.CAT_CAFE_OC_INSTRUCTIONS_ONLY,
-        undefined,
-        'full runtime config path — not instructions-only',
+        '1',
+        'non-api_key must signal instructions-only to preserve native auth',
       );
-      // Subscription mode: no API key injection (auth handled natively)
+      // Non-api_key: no credential injection (auth handled natively by OpenCode)
       assert.strictEqual(callbackEnv.CAT_CAFE_OC_API_KEY, undefined, 'no API key for non-api_key auth');
       assert.strictEqual(
         callbackEnv.CAT_CAFE_ANTHROPIC_PROFILE_MODE,
