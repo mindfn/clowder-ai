@@ -1405,10 +1405,12 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       }
     }
 
+    // authType is either 'api_key' or 'oauth' — both need runtime config (MCP +
+    // L0 + model routing). The only difference is credential injection below.
+    const isApiKey = resolvedAccount?.authType === 'api_key';
     if (
       provider === 'opencode' &&
       resolvedAccount != null &&
-      resolvedAccount.authType === 'api_key' &&
       effectiveModel &&
       effectiveProviderName &&
       (hasExplicitOcProvider || !getOpenCodeKnownModels().has(effectiveModel) || mcpServerPath)
@@ -1441,8 +1443,12 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         runtimeConfigOptions,
       );
       callbackEnv.OPENCODE_CONFIG = openCodeRuntimeConfigPath;
-      if (resolvedAccount.apiKey) callbackEnv[OC_API_KEY_ENV] = resolvedAccount.apiKey;
-      if (resolvedAccount.baseUrl) callbackEnv[OC_BASE_URL_ENV] = resolvedAccount.baseUrl;
+      // Credentials: only for api_key auth.
+      // OAuth users authenticate through OpenCode's native flow.
+      if (isApiKey) {
+        if (resolvedAccount.apiKey) callbackEnv[OC_API_KEY_ENV] = resolvedAccount.apiKey;
+        if (resolvedAccount.baseUrl) callbackEnv[OC_BASE_URL_ENV] = resolvedAccount.baseUrl;
+      }
       log.debug(
         {
           catId,

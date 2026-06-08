@@ -5294,7 +5294,7 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
   );
 
   // F203 Phase I AC-I4: subscription/unresolved OpenCode path gets instructions-only L0 config
-  it('F203-I: OpenCode subscription path → instructions-only config + no API key injection', async () => {
+  it('F203-I: OpenCode subscription path → full runtime config (MCP + L0) + no API key injection', async () => {
     const { createProviderProfile } = await import('./helpers/create-test-account.js');
     const root = await mkdtemp(join(tmpdir(), 'f203-subscription-oc-'));
     const apiDir = join(root, 'packages', 'api');
@@ -5352,14 +5352,15 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       );
 
       const callbackEnv = optionsSeen[0]?.callbackEnv ?? {};
-      // F203 Phase I: subscription path must get instructions-only config for L0
-      assert.ok(callbackEnv.OPENCODE_CONFIG, 'subscription path must get OPENCODE_CONFIG for L0 instructions');
+      // Non-api_key auth still gets full runtime config (MCP + L0 + model routing)
+      assert.ok(callbackEnv.OPENCODE_CONFIG, 'subscription path must get OPENCODE_CONFIG with MCP + L0');
       assert.strictEqual(
         callbackEnv.CAT_CAFE_OC_INSTRUCTIONS_ONLY,
-        '1',
-        'subscription path must signal instructions-only',
+        undefined,
+        'full runtime config path — not instructions-only',
       );
-      // Subscription mode: no API key injection
+      // Subscription mode: no API key injection (auth handled natively)
+      assert.strictEqual(callbackEnv.CAT_CAFE_OC_API_KEY, undefined, 'no API key for non-api_key auth');
       assert.strictEqual(
         callbackEnv.CAT_CAFE_ANTHROPIC_PROFILE_MODE,
         'subscription',
