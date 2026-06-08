@@ -5300,6 +5300,9 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     const apiDir = join(root, 'packages', 'api');
     await mkdir(apiDir, { recursive: true });
     await writeFile(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n', 'utf-8');
+    const mcpDir = join(root, 'packages', 'mcp-server', 'dist');
+    await mkdir(mcpDir, { recursive: true });
+    await writeFile(join(mcpDir, 'index.js'), '// stub mcp server', 'utf-8');
 
     // Create a subscription-mode profile (no API key)
     const subscriptionProfile = await createProviderProfile(root, {
