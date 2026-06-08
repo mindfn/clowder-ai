@@ -1432,6 +1432,7 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         defaultModel: effectiveModel,
         apiType,
         hasBaseUrl: Boolean(resolvedAccount.baseUrl),
+        omitProviderAuth: !isApiKey,
         mcpServerPath,
         // F203 Phase I: inject compiled L0 + OPENCODE.md into instructions.
         instructions: openCodeL0InstructionPaths,
@@ -1444,9 +1445,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       );
       callbackEnv.OPENCODE_CONFIG = openCodeRuntimeConfigPath;
       // Credentials: only for api_key auth.
-      // OAuth users authenticate through OpenCode's native flow — signal
-      // OC_INSTRUCTIONS_ONLY_ENV so buildEnv preserves native auth instead
-      // of clearing it for the custom provider config path.
+      // OAuth users authenticate through OpenCode's native flow; their runtime
+      // config omits provider auth placeholders and signals buildEnv to preserve
+      // native auth instead of clearing it for the custom provider config path.
       if (isApiKey) {
         if (resolvedAccount.apiKey) callbackEnv[OC_API_KEY_ENV] = resolvedAccount.apiKey;
         if (resolvedAccount.baseUrl) callbackEnv[OC_BASE_URL_ENV] = resolvedAccount.baseUrl;

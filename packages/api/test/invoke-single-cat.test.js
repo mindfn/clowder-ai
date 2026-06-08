@@ -5328,10 +5328,15 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     });
 
     const optionsSeen = [];
+    let seenRuntimeConfig;
     const service = {
       l0CompilerFn: dummyL0CompilerFn,
       async *invoke(_prompt, options) {
         optionsSeen.push(options ?? {});
+        const configPath = options?.callbackEnv?.OPENCODE_CONFIG;
+        if (configPath) {
+          seenRuntimeConfig = JSON.parse(await readFile(configPath, 'utf-8'));
+        }
         yield { type: 'done', catId: 'opencode', timestamp: Date.now() };
       },
     };
@@ -5367,6 +5372,21 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
         'subscription',
         'must pass subscription profile mode',
       );
+      const runtimeConfig = seenRuntimeConfig;
+      assert.ok(runtimeConfig, 'fake service must observe runtime config before cleanup');
+      assert.equal(runtimeConfig.model, 'anthropic/claude-opus-4-6', 'model routing must stay in runtime config');
+      assert.ok(runtimeConfig.provider?.anthropic, 'provider routing must stay in runtime config');
+      assert.equal(
+        runtimeConfig.provider.anthropic.options.apiKey,
+        undefined,
+        'non-api_key runtime config must not reference missing CAT_CAFE_OC_API_KEY',
+      );
+      assert.equal(
+        runtimeConfig.provider.anthropic.options.baseURL,
+        undefined,
+        'non-api_key runtime config must not reference missing CAT_CAFE_OC_BASE_URL',
+      );
+      assert.ok(runtimeConfig.mcp?.['cat-cafe'], 'MCP config must still be present for subscription path');
     } finally {
       process.chdir(previousCwd);
       catRegistry.reset();
