@@ -670,7 +670,57 @@ describe('QueueProcessor', () => {
     assert.equal(coordinator.commitInvocationOutcome.mock.calls[0].arguments[0].finalStatus, 'succeeded');
   });
 
-  it('threshold seal capsule in queued execution stores and starts bounded same-cat continuation', async () => {
+  it('does not persist produced continuation that was already auto-queued', async () => {
+    const capsule = completeCapsuleForSeal(
+      buildCapsuleFromRouteState({
+        threadId: 't1',
+        catId: 'opus',
+        mode: 'independent',
+        a2aEnabled: true,
+      }),
+      {
+        invocationId: 'inv-queued-produced',
+        createdAt: Date.now(),
+        seal: { sessionId: 'sess-queued-produced', sessionSeq: 1, reason: 'threshold' },
+      },
+    );
+    const coordinator = {
+      prepareInvocationContext: mock.fn(async ({ content }) => ({ content, sessionPolicy: 'resume' })),
+      commitInvocationOutcome: mock.fn(async () => {}),
+    };
+    const coordinatorDeps = stubDeps({
+      sessionContinuationCoordinator: coordinator,
+      router: {
+        routeExecution: mock.fn(async function* () {
+          yield {
+            type: 'system_info',
+            catId: 'opus',
+            content: JSON.stringify({ type: 'session_seal_requested', continuityCapsule: capsule }),
+            timestamp: Date.now(),
+          };
+          yield { type: 'done', catId: 'opus', timestamp: Date.now() };
+        }),
+        ackCollectedCursors: mock.fn(async () => {}),
+      },
+    });
+    const coordinatorProcessor = new QueueProcessor(coordinatorDeps);
+    const active = enqueueEntry(coordinatorDeps.queue, { targetCats: ['opus'], content: 'work' });
+    coordinatorDeps.queue.backfillMessageId('t1', 'u1', active.id, 'current-user-msg');
+    const processing = coordinatorDeps.queue.markProcessing('t1', 'u1');
+
+    const status = await coordinatorProcessor.executeEntry(processing);
+
+    assert.equal(status, 'succeeded');
+    assert.equal(coordinator.commitInvocationOutcome.mock.calls.length, 1);
+    const commitInput = coordinator.commitInvocationOutcome.mock.calls[0].arguments[0];
+    assert.deepEqual(Array.from(commitInput.producedCapsules ?? []), []);
+    const queuedContinuation = coordinatorDeps.queue
+      .list('t1', 'u1')
+      .find((entry) => entry.sourceCategory === 'continuation');
+    assert.ok(queuedContinuation, 'continuation should still be auto-queued');
+  });
+
+  it('threshold seal capsule in queued execution starts bounded same-cat continuation without pending duplicate', async () => {
     let routeCalls = 0;
     let pendingContinuation = null;
     const capsule = completeCapsuleForSeal(
@@ -732,13 +782,17 @@ describe('QueueProcessor', () => {
     assert.equal(
       (routeContents[1].match(/Continue the same structured work from the sealed session/g) ?? []).length,
       1,
-      'stored pending continuation and queued continuation must not duplicate the bootstrap prompt',
+      'queued continuation must not duplicate the bootstrap prompt',
     );
-    assert.equal(sealDeps.threadStore.setPendingContinuation.mock.calls.length, 1);
+    assert.equal(
+      sealDeps.threadStore.setPendingContinuation.mock.calls.length,
+      0,
+      'successfully auto-queued continuation must not also be persisted as pending',
+    );
     assert.equal(
       sealDeps.threadStore.consumePendingContinuation.mock.calls.length,
       2,
-      'initial execution checks empty pending; continuation execution consumes the stored capsule',
+      'initial and continuation executions still check pending storage; the queued capsule supplies the continuation',
     );
     assert.ok(sealDeps.invocationTracker.startAll.mock.calls.length >= 2);
   });

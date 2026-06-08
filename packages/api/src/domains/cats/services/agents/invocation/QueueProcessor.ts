@@ -1519,20 +1519,7 @@ export class QueueProcessor {
         // Cloud Codex P2: deferred A2A entries stay in queue on failure — no rollback needed.
       }
       const producedCapsules = [...continuationCapsules.values()];
-      if (this.sessionContinuationCoordinator) {
-        try {
-          await this.sessionContinuationCoordinator.commitInvocationOutcome({
-            finalStatus,
-            threadId,
-            catId: primaryCat,
-            userId,
-            consumedContinuation,
-            producedCapsules,
-          });
-        } catch (err) {
-          log.warn({ threadId, targetCats, err }, '[QueueProcessor] F224: commitInvocationOutcome failed');
-        }
-      }
+      const queuedContinuationCapsules = new Set<CollaborationContinuityCapsuleV1>();
       for (const continuationCapsule of producedCapsules) {
         if (finalStatus === 'canceled_by_user') {
           log.info(
@@ -1548,12 +1535,40 @@ export class QueueProcessor {
           );
           continue;
         }
-        await this.enqueueContinuation({
+        const result = await this.enqueueContinuation({
           threadId,
           userId,
           catId: continuationCapsule.catId,
           capsule: continuationCapsule,
         });
+        if (result.outcome === 'enqueued' || result.outcome === 'skipped_existing_entry') {
+          queuedContinuationCapsules.add(continuationCapsule);
+        }
+      }
+      if (this.sessionContinuationCoordinator) {
+        try {
+          const producedCapsulesForCommit = producedCapsules.filter(
+            (capsule) => !queuedContinuationCapsules.has(capsule),
+          );
+          let queuedProducedSupersedesConsumed = false;
+          if (consumedContinuation) {
+            const consumedThreadId = consumedContinuation.threadId;
+            const consumedCatId = consumedContinuation.catId;
+            queuedProducedSupersedesConsumed = [...queuedContinuationCapsules].some(
+              (capsule) => capsule.threadId === consumedThreadId && capsule.catId === consumedCatId,
+            );
+          }
+          await this.sessionContinuationCoordinator.commitInvocationOutcome({
+            finalStatus,
+            threadId,
+            catId: primaryCat,
+            userId,
+            consumedContinuation: queuedProducedSupersedesConsumed ? undefined : consumedContinuation,
+            producedCapsules: producedCapsulesForCommit,
+          });
+        } catch (err) {
+          log.warn({ threadId, targetCats, err }, '[QueueProcessor] F224: commitInvocationOutcome failed');
+        }
       }
       await emitQueueUpdated(socketManager, userId, threadId, queue.list(threadId, userId), messageStore, 'completed');
       // F122B B6: Fire completion hook (one-shot) and clean up
