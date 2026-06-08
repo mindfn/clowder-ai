@@ -87,7 +87,25 @@ const log = createModuleLogger('invoke');
 const tracer = trace.getTracer('cat-cafe-api', '0.1.0');
 const TRANSCRIPT_DIR =
   process.env.TRANSCRIPT_DIR ?? resolve(findMonorepoRoot(), 'scripts', 'meeting-copilot', 'transcripts');
-const CAT_INVOCATION_STALL_AUTO_KILL_MS = 7 * 60_000;
+/**
+ * #854: Stall auto-kill threshold (milliseconds of idle-silent before kill).
+ * Configurable via CLI_STALL_WARNING_MS env var. Default 7 minutes.
+ * Minimum 60_000 (1 min) to prevent disabling stuck-process cleanup.
+ */
+const DEFAULT_STALL_AUTO_KILL_MS = 7 * 60_000;
+const MIN_STALL_AUTO_KILL_MS = 60_000;
+
+export function resolveStallAutoKillMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.CLI_STALL_WARNING_MS;
+  if (raw != null) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed >= MIN_STALL_AUTO_KILL_MS) return parsed;
+    if (raw === '0') return 0; // explicit 0 = disable stall auto-kill
+  }
+  return DEFAULT_STALL_AUTO_KILL_MS;
+}
+
+const CAT_INVOCATION_STALL_AUTO_KILL_MS = resolveStallAutoKillMs();
 const ANTIGRAVITY_AUTOMATIC_RETRY_FRAGMENT_REASONS = new Set([
   'model_capacity',
   'empty_response',
@@ -1583,8 +1601,11 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       ...(sessionId ? { cliSessionId: sessionId } : {}),
       // F118 Phase B: Enable liveness probe for all CLI providers.
       // #774: stallAutoKill clears truly stuck idle-silent CLIs before F216's 10m stale-processing guard.
-      // Leave room for async ps sampling + deferred kill probes, while avoiding the 5m slow-API false kills.
-      livenessProbe: { stallAutoKill: true, stallWarningMs: CAT_INVOCATION_STALL_AUTO_KILL_MS },
+      // #854: stallWarningMs is now configurable via CLI_STALL_WARNING_MS env var (default 7m).
+      //       0 = disable stallAutoKill (probe still runs for diagnostics, no auto-kill).
+      livenessProbe: CAT_INVOCATION_STALL_AUTO_KILL_MS > 0
+        ? { stallAutoKill: true, stallWarningMs: CAT_INVOCATION_STALL_AUTO_KILL_MS }
+        : { stallAutoKill: false },
       ...(catConfig?.cliConfigArgs?.length ? { cliConfigArgs: catConfig.cliConfigArgs } : {}),
       parentSpan: invocationSpan,
     };
