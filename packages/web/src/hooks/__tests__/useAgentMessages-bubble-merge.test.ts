@@ -70,6 +70,9 @@ const storeState = {
     origin?: string;
     extra?: {
       stream?: { invocationId?: string; turnInvocationId?: string };
+      isExplicitPost?: boolean;
+      targetCats?: string[];
+      crossPost?: { sourceThreadId: string; sourceInvocationId?: string };
       systemKind?: 'a2a_routing';
       a2aRouting?: { fromCatId?: string; targetCatId?: string; invocationId?: string };
     };
@@ -1072,6 +1075,36 @@ describe('useAgentMessages bubble merge prevention (Bug B)', () => {
     ).toHaveLength(0);
     const cbBubble = storeState.messages.find((m) => m.id === 'msg-cb-first-B');
     expect(cbBubble?.content, 'callback content must remain unmodified').toBe('Final callback content');
+  });
+
+  it('active explicit callback patch preserves isExplicitPost when targets are patched', () => {
+    mockAddMessage.mockImplementation((msg) => {
+      storeState.messages.push(msg);
+    });
+    mockPatchMessage.mockImplementation((id: string, patch: Record<string, unknown>) => {
+      storeState.messages = storeState.messages.map((m) =>
+        m.id === id ? { ...m, ...(patch as Record<string, unknown>) } : m,
+      );
+    });
+
+    act(() => {
+      root.render(React.createElement(Harness));
+    });
+
+    act(() => {
+      captured?.handleAgentMessage({
+        type: 'text',
+        catId: 'opus',
+        origin: 'callback',
+        content: 'Standalone explicit target post',
+        invocationId: 'inv-explicit-patch',
+        messageId: 'msg-explicit-patch',
+        extra: { isExplicitPost: true, targetCats: ['codex'] },
+      });
+    });
+
+    const patch = mockPatchMessage.mock.calls.find(([id]) => id === 'msg-explicit-patch')?.[1];
+    expect(patch?.extra).toEqual({ isExplicitPost: true, targetCats: ['codex'] });
   });
 
   it('callback with explicit invocationId does not reclaim an empty placeholder without rich/tool markers', () => {

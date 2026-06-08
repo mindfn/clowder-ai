@@ -2971,6 +2971,7 @@ export function useAgentMessages() {
 
       const extraForPatch = {
         ...(msg.extra?.crossPost ? { crossPost: msg.extra.crossPost } : {}),
+        ...(msg.extra?.isExplicitPost ? { isExplicitPost: true as const } : {}),
         ...(msg.extra?.targetCats ? { targetCats: msg.extra.targetCats } : {}),
       };
       if (
