@@ -54,7 +54,12 @@ export interface ConflictAutomationState {
 
 /** Review feedback automation state for pr_tracking tasks */
 export interface ReviewAutomationState {
+  /** @deprecated Use lastInlineCommentCursor + lastConversationCommentCursor instead (#798 dual-cursor fix) */
   readonly lastCommentCursor?: number;
+  /** #798: cursor for pull review comments (commentType='inline') — separate ID sequence from issue comments */
+  readonly lastInlineCommentCursor?: number;
+  /** #798: cursor for issue/conversation comments (commentType='conversation') — separate ID sequence from pull review comments */
+  readonly lastConversationCommentCursor?: number;
   readonly lastDecisionCursor?: number;
   readonly lastNotifiedAt?: number;
 }

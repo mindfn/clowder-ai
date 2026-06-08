@@ -33,8 +33,12 @@ export interface ReviewFeedbackTaskSpecOptions {
   readonly taskStore: ITaskStore;
   /** Return null when PR metadata is temporarily unavailable; gate will continue without head/state filtering. */
   readonly fetchPrMetadata?: (repoFullName: string, prNumber: number) => Promise<ReviewFeedbackPrMetadata | null>;
-  /** @param sinceId — when provided, only fetch items with id > sinceId (enables per-page early termination). */
-  readonly fetchComments: (repoFullName: string, prNumber: number, sinceId?: number) => Promise<PrFeedbackComment[]>;
+  /**
+   * #798: dual-cursor — pull review comments and issue comments use different ID sequences.
+   * @param sinceCursors.inline — cursor for pull review comments (commentType='inline')
+   * @param sinceCursors.conversation — cursor for issue/conversation comments (commentType='conversation')
+   */
+  readonly fetchComments: (repoFullName: string, prNumber: number, sinceCursors?: { inline?: number; conversation?: number }) => Promise<PrFeedbackComment[]>;
   /** @param sinceId — when provided, only fetch items with id > sinceId (enables per-page early termination). */
   readonly fetchReviews: (repoFullName: string, prNumber: number, sinceId?: number) => Promise<PrReviewDecision[]>;
   readonly reviewFeedbackRouter: ReviewFeedbackRouter;
@@ -62,8 +66,10 @@ function resolveCursor(memoryCursor: number | undefined, persistedCursor: number
 }
 
 export function createReviewFeedbackTaskSpec(opts: ReviewFeedbackTaskSpecOptions): TaskSpec_P1<ReviewFeedbackSignal> {
-  // In-memory cursors: highest seen comment ID and review ID per PR
-  const commentCursors = new Map<string, number>();
+  // #798: dual-cursor — pull review comments (inline) and issue comments (conversation) use different GitHub ID sequences.
+  // A single cursor caused all inline comments to be permanently missed once a conversation comment advanced the cursor.
+  const inlineCommentCursors = new Map<string, number>();
+  const conversationCommentCursors = new Map<string, number>();
   const reviewCursors = new Map<string, number>();
 
   /**
@@ -76,18 +82,20 @@ export function createReviewFeedbackTaskSpec(opts: ReviewFeedbackTaskSpecOptions
   async function advanceCursor(
     taskId: string,
     prKey: string,
-    cursors: { comment: number; decision: number },
+    cursors: { inlineComment: number; conversationComment: number; decision: number },
     policy: 'persistFirst' | 'memoryFirst',
   ): Promise<void> {
     const patch = {
       review: {
-        lastCommentCursor: cursors.comment,
+        lastInlineCommentCursor: cursors.inlineComment,
+        lastConversationCommentCursor: cursors.conversationComment,
         lastDecisionCursor: cursors.decision,
         ...(policy === 'memoryFirst' ? { lastNotifiedAt: Date.now() } : {}),
       },
     };
     const setMemory = () => {
-      commentCursors.set(prKey, cursors.comment);
+      inlineCommentCursors.set(prKey, cursors.inlineComment);
+      conversationCommentCursors.set(prKey, cursors.conversationComment);
       reviewCursors.set(prKey, cursors.decision);
     };
 
@@ -136,25 +144,36 @@ export function createReviewFeedbackTaskSpec(opts: ReviewFeedbackTaskSpecOptions
               continue;
             }
 
-            // #406: Seed from persisted automationState.review on first access (survives restart).
-            // Cursor sources are monotonic: re-registration may reseed persisted state
-            // while a long-lived poller still has an older in-memory value.
-            const commentCursor = resolveCursor(
-              commentCursors.get(prKey),
-              task.automationState?.review?.lastCommentCursor,
+            // #798: dual-cursor — inline (pull review) and conversation (issue) comments have separate ID sequences.
+            // Cursor sources are monotonic (#406): re-registration may reseed persisted state
+            // while a long-lived poller still has an older in-memory value → take the higher.
+            // Migration: lastInlineCommentCursor falls back to 0 (re-scan is safe, router de-dups).
+            //            lastConversationCommentCursor falls back to legacy lastCommentCursor (was effectively the conversation cursor).
+            const reviewState = task.automationState?.review;
+            const inlineCursor = resolveCursor(
+              inlineCommentCursors.get(prKey),
+              reviewState?.lastInlineCommentCursor,
+            );
+            const conversationCursor = resolveCursor(
+              conversationCommentCursors.get(prKey),
+              reviewState?.lastConversationCommentCursor ?? reviewState?.lastCommentCursor,
             );
             const reviewCursor = resolveCursor(
               reviewCursors.get(prKey),
-              task.automationState?.review?.lastDecisionCursor,
+              reviewState?.lastDecisionCursor,
             );
 
-            // #798: Pass cursor to fetch for per-page client-side filtering (eliminates maxBuffer crash)
+            // #798: Pass per-type cursors to fetch for per-page client-side filtering
             const [comments, reviews] = await Promise.all([
-              opts.fetchComments(repoFullName, prNumber, commentCursor),
+              opts.fetchComments(repoFullName, prNumber, { inline: inlineCursor, conversation: conversationCursor }),
               opts.fetchReviews(repoFullName, prNumber, reviewCursor),
             ]);
 
-            const allNewComments = comments.filter((c) => c.id > commentCursor);
+            // Filter new comments using per-type cursors
+            const allNewComments = comments.filter((c) => {
+              const cursor = c.commentType === 'inline' ? inlineCursor : conversationCursor;
+              return c.id > cursor;
+            });
             const allNewReviews = reviews.filter((r) => r.id > reviewCursor);
             const freshNewComments = allNewComments.filter((c) => !isStaleCommitFeedback(c, prMetadata?.headSha));
             const freshNewReviews = allNewReviews.filter((r) => !isStaleCommitFeedback(r, prMetadata?.headSha));
@@ -169,14 +188,17 @@ export function createReviewFeedbackTaskSpec(opts: ReviewFeedbackTaskSpecOptions
             });
             const newDecisions = reviewFilter ? freshNewReviews.filter((r) => !reviewFilter(r)) : freshNewReviews;
 
-            const maxCommentId =
-              allNewComments.length > 0 ? Math.max(...allNewComments.map((c) => c.id)) : commentCursor;
+            // Compute per-type max IDs for cursor advancement
+            const inlineNew = allNewComments.filter((c) => c.commentType === 'inline');
+            const conversationNew = allNewComments.filter((c) => c.commentType === 'conversation');
+            const maxInlineId = inlineNew.length > 0 ? Math.max(...inlineNew.map((c) => c.id)) : inlineCursor;
+            const maxConversationId = conversationNew.length > 0 ? Math.max(...conversationNew.map((c) => c.id)) : conversationCursor;
             const maxReviewId = allNewReviews.length > 0 ? Math.max(...allNewReviews.map((r) => r.id)) : reviewCursor;
 
             const allSkipped = newComments.length === 0 && newDecisions.length === 0;
             const hadNewItems = allNewComments.length > 0 || allNewReviews.length > 0;
             if (hadNewItems && allSkipped) {
-              await advanceCursor(task.id, prKey, { comment: maxCommentId, decision: maxReviewId }, 'persistFirst');
+              await advanceCursor(task.id, prKey, { inlineComment: maxInlineId, conversationComment: maxConversationId, decision: maxReviewId }, 'persistFirst');
               continue;
             }
 
@@ -190,7 +212,7 @@ export function createReviewFeedbackTaskSpec(opts: ReviewFeedbackTaskSpecOptions
                 newComments,
                 newDecisions,
                 commitCursor: () =>
-                  advanceCursor(task.id, prKey, { comment: maxCommentId, decision: maxReviewId }, 'memoryFirst'),
+                  advanceCursor(task.id, prKey, { inlineComment: maxInlineId, conversationComment: maxConversationId, decision: maxReviewId }, 'memoryFirst'),
               },
               // #320 KD-15: unified subject_key format
               subjectKey: task.subjectKey!,

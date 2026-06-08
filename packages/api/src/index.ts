@@ -3060,11 +3060,17 @@ async function main(): Promise<void> {
       }
     };
 
-    const fetchComments = async (repo: string, pr: number, sinceId?: number) => {
+    // #798: extracted fetchComments with dual cursors — inline (pull review) and
+    // conversation (issue) comment IDs live in different sequences
+    const fetchComments = async (
+      repo: string,
+      pr: number,
+      sinceCursors?: { inline?: number; conversation?: number },
+    ) => {
       await refreshGitHubSelfLogin();
       const [reviewComments, issueComments] = await Promise.all([
-        fetchPaginated(`/repos/${repo}/pulls/${pr}/comments`, sinceId),
-        fetchPaginated(`/repos/${repo}/issues/${pr}/comments`, sinceId),
+        fetchPaginated(`/repos/${repo}/pulls/${pr}/comments`, sinceCursors?.inline),
+        fetchPaginated(`/repos/${repo}/issues/${pr}/comments`, sinceCursors?.conversation),
       ]);
       return [...reviewComments, ...issueComments].map(
         (c: {
