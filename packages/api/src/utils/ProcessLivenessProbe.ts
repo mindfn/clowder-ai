@@ -213,11 +213,7 @@ export class ProcessLivenessProbe {
     // #854: Only emit suspected_stall when CPU sampling is available.
     // On Windows we can't distinguish idle from busy, so we can't "suspect"
     // a stall — CLI_TIMEOUT_MS is the binding constraint instead.
-    if (
-      silenceMs >= this.config.stallWarningMs &&
-      !this.stallWarningEmitted &&
-      this.cpuSamplingAvailable
-    ) {
+    if (silenceMs >= this.config.stallWarningMs && !this.stallWarningEmitted && this.cpuSamplingAvailable) {
       this.stallWarningEmitted = true;
       this.warningQueue.push(this.makeWarning('suspected_stall', silenceMs));
     } else if (silenceMs >= this.config.softWarningMs && !this.softWarningEmitted) {
