@@ -3,7 +3,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { mock, test } from 'node:test';
+import { test } from 'node:test';
 
 const { ProcessLivenessProbe } = await import('../dist/utils/ProcessLivenessProbe.js');
 
@@ -37,25 +37,29 @@ test('new probe starts in active state', () => {
   probe.stop();
 });
 
-test('treats tiny CPU drift as idle-silent so stall auto-kill can fire', () => {
-  const probe = new ProcessLivenessProbe(process.pid, {
-    sampleIntervalMs: 1,
-    softWarningMs: 100,
-    stallWarningMs: 300,
-    minCpuGrowthMs: 50,
-  });
+test(
+  'treats tiny CPU drift as idle-silent so stall auto-kill can fire',
+  { skip: process.platform === 'win32' && 'suspected_stall suppressed without CPU sampling (#854)' },
+  () => {
+    const probe = new ProcessLivenessProbe(process.pid, {
+      sampleIntervalMs: 1,
+      softWarningMs: 100,
+      stallWarningMs: 300,
+      minCpuGrowthMs: 50,
+    });
 
-  probe.updateCpuSample(230);
-  probe.lastActivityAt = Date.now() - 1_000;
-  probe.updateCpuSample(270);
+    probe.updateCpuSample(230);
+    probe.lastActivityAt = Date.now() - 1_000;
+    probe.updateCpuSample(270);
 
-  const warnings = probe.drainWarnings();
-  const stallWarning = warnings.find((w) => w.level === 'suspected_stall');
-  assert.equal(probe.getState(), 'idle-silent');
-  assert.equal(probe.shouldExtendTimeout(), false);
-  assert.equal(stallWarning?.state, 'idle-silent');
-  probe.stop();
-});
+    const warnings = probe.drainWarnings();
+    const stallWarning = warnings.find((w) => w.level === 'suspected_stall');
+    assert.equal(probe.getState(), 'idle-silent');
+    assert.equal(probe.shouldExtendTimeout(), false);
+    assert.equal(stallWarning?.state, 'idle-silent');
+    probe.stop();
+  },
+);
 
 test('detects dead process (PID does not exist)', async () => {
   const probe = new ProcessLivenessProbe(99999, { sampleIntervalMs: 50 });
@@ -210,19 +214,19 @@ test('parseCpuTime handles empty/invalid input', () => {
 
 // --- Windows platform guard tests ---
 
-test('on Windows, sampleOnce keeps cpuGrowing=false and exposes cpuSamplingAvailable (#854)', async () => {
-  // Without `ps`, CPU sampling is unavailable on Windows. cpuGrowing stays false
-  // → state is idle-silent, shouldExtendTimeout() is false, and CLI_TIMEOUT_MS
-  // (not bounded extension) is the binding constraint.
-  // suspected_stall is gated on cpuSamplingAvailable so stall auto-kill won't fire.
-  mock.property(process, 'platform', 'win32');
-
-  const probe = new ProcessLivenessProbe(process.pid, {
-    sampleIntervalMs: 30,
-    softWarningMs: 200,
-    stallWarningMs: 500,
-  });
-  try {
+test(
+  'on Windows, sampleOnce keeps cpuGrowing=false and exposes cpuSamplingAvailable (#854)',
+  { skip: process.platform !== 'win32' && 'Windows platform guard — skipped on Unix' },
+  async () => {
+    // Without `ps`, CPU sampling is unavailable on Windows. cpuGrowing stays false
+    // → state is idle-silent, shouldExtendTimeout() is false, and CLI_TIMEOUT_MS
+    // (not bounded extension) is the binding constraint.
+    // suspected_stall is gated on cpuSamplingAvailable so stall auto-kill won't fire.
+    const probe = new ProcessLivenessProbe(process.pid, {
+      sampleIntervalMs: 30,
+      softWarningMs: 200,
+      stallWarningMs: 500,
+    });
     assert.equal(probe.cpuSamplingAvailable, false, 'cpuSamplingAvailable must be false on Windows');
     probe.start();
     // Wait past sampleIntervalMs so silence kicks in
@@ -231,23 +235,21 @@ test('on Windows, sampleOnce keeps cpuGrowing=false and exposes cpuSamplingAvail
     const state = probe.getState();
     assert.equal(state, 'idle-silent', 'Windows: cpuGrowing=false → idle-silent');
     assert.equal(probe.shouldExtendTimeout(), false, 'idle-silent does not extend timeout');
-  } finally {
     probe.stop();
-    mock.restoreAll();
-  }
-});
+  },
+);
 
-test('on Windows, alive_but_silent fires but suspected_stall is suppressed (#854)', async () => {
-  // Without CPU evidence, suspected_stall would be a false positive — suppressed
-  // via cpuSamplingAvailable guard. alive_but_silent (informational) still fires.
-  mock.property(process, 'platform', 'win32');
-
-  const probe = new ProcessLivenessProbe(process.pid, {
-    sampleIntervalMs: 20,
-    softWarningMs: 50,
-    stallWarningMs: 150,
-  });
-  try {
+test(
+  'on Windows, alive_but_silent fires but suspected_stall is suppressed (#854)',
+  { skip: process.platform !== 'win32' && 'Windows platform guard — skipped on Unix' },
+  async () => {
+    // Without CPU evidence, suspected_stall would be a false positive — suppressed
+    // via cpuSamplingAvailable guard. alive_but_silent (informational) still fires.
+    const probe = new ProcessLivenessProbe(process.pid, {
+      sampleIntervalMs: 20,
+      softWarningMs: 50,
+      stallWarningMs: 150,
+    });
     probe.start();
     await new Promise((r) => setTimeout(r, 200));
 
@@ -260,8 +262,6 @@ test('on Windows, alive_but_silent fires but suspected_stall is suppressed (#854
       !warnings.some((w) => w.level === 'suspected_stall'),
       'must NOT emit suspected_stall without CPU sampling (#854)',
     );
-  } finally {
     probe.stop();
-    mock.restoreAll();
-  }
-});
+  },
+);
