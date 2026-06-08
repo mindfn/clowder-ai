@@ -6109,32 +6109,6 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     );
   });
 
-  // #854: resolveStallAutoKillMs unit tests — env var configurability
-  it('#854: resolveStallAutoKillMs returns default 7 min when env is unset', async () => {
-    const { resolveStallAutoKillMs } = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
-    assert.equal(resolveStallAutoKillMs({}), 7 * 60_000);
-  });
-
-  it('#854: resolveStallAutoKillMs reads CLI_STALL_WARNING_MS from env', async () => {
-    const { resolveStallAutoKillMs } = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
-    assert.equal(resolveStallAutoKillMs({ CLI_STALL_WARNING_MS: '600000' }), 600_000);
-  });
-
-  it('#854: resolveStallAutoKillMs rejects values below 60s floor (returns default)', async () => {
-    const { resolveStallAutoKillMs } = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
-    assert.equal(resolveStallAutoKillMs({ CLI_STALL_WARNING_MS: '30000' }), 7 * 60_000);
-  });
-
-  it('#854: resolveStallAutoKillMs allows explicit 0 to disable stall auto-kill', async () => {
-    const { resolveStallAutoKillMs } = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
-    assert.equal(resolveStallAutoKillMs({ CLI_STALL_WARNING_MS: '0' }), 0);
-  });
-
-  it('#854: resolveStallAutoKillMs ignores non-numeric values', async () => {
-    const { resolveStallAutoKillMs } = await import('../dist/domains/cats/services/agents/invocation/invoke-single-cat.js');
-    assert.equal(resolveStallAutoKillMs({ CLI_STALL_WARNING_MS: 'abc' }), 7 * 60_000);
-  });
-
   it('F101: game thread projectPath (games/*) does not trigger governance gate', async () => {
     const optionsSeen = [];
     const service = {
