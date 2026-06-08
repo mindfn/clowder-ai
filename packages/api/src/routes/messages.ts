@@ -1017,6 +1017,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
         // F148 fix: Hoisted so abort/catch branches can ack completed cats' cursors
         const cursorBoundaries = new Map<string, string>();
         const continuationCapsules = new Map<string, CollaborationContinuityCapsuleV1>();
+        const queuedContinuationCapsules = new Set<CollaborationContinuityCapsuleV1>();
         let consumedContinuation: ConsumedContinuationToken | undefined;
 
         // F194 Phase Z3 (AC-Z3): mark chain start for finally fallback. routeExecution may
@@ -1408,16 +1409,20 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
             routeChainTracker.succeed(createResult.invocationId);
 
             for (const continuationCapsule of continuationCapsules.values()) {
-              void opts.queueProcessor
+              const result = await opts.queueProcessor
                 ?.enqueueContinuation({
                   threadId: resolvedThreadId,
                   userId,
                   catId: continuationCapsule.catId,
                   capsule: continuationCapsule,
                 })
-                .catch((err) =>
-                  log.warn({ err, threadId: resolvedThreadId }, 'enqueueContinuation failed (best-effort)'),
-                );
+                .catch((err) => {
+                  log.warn({ err, threadId: resolvedThreadId }, 'enqueueContinuation failed (best-effort)');
+                  return undefined;
+                });
+              if (result?.outcome === 'enqueued' || result?.outcome === 'skipped_existing_entry') {
+                queuedContinuationCapsules.add(continuationCapsule);
+              }
             }
 
             // Push notification: cat(s) finished responding
@@ -1555,13 +1560,16 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           routeChainTracker.release(createResult.invocationId);
           if (opts.sessionContinuationCoordinator) {
             try {
+              const producedCapsulesForCommit = [...continuationCapsules.values()].filter(
+                (capsule) => !queuedContinuationCapsules.has(capsule),
+              );
               await opts.sessionContinuationCoordinator.commitInvocationOutcome({
                 finalStatus,
                 threadId: resolvedThreadId,
                 catId: primaryCat,
                 userId,
                 consumedContinuation,
-                producedCapsules: continuationCapsules.values(),
+                producedCapsules: producedCapsulesForCommit,
               });
             } catch (err) {
               log.warn(
