@@ -74,14 +74,19 @@ export async function mountManagedSkillSymlinks(
   projectRoot: string,
   skillName: string,
   skillsSource: string,
+  opts?: { disabledSkillNames?: Iterable<string> },
 ): Promise<void> {
   validateSkillName(skillName);
   await lstat(join(skillsSource, skillName));
 
+  const managedDirectoryRoots: string[] = [];
   const missingLinks: Array<{ skillsDir: string; linkPath: string }> = [];
   for (const providerDir of PROJECT_PROVIDER_SKILL_DIRS) {
     const skillsDir = join(projectRoot, providerDir);
-    if (await isManagedDirectoryLevelSkillsSymlink(skillsDir, skillsSource)) continue;
+    if (await isManagedDirectoryLevelSkillsSymlink(skillsDir, skillsSource)) {
+      managedDirectoryRoots.push(skillsDir);
+      continue;
+    }
     if (await isProviderRootSymlink(skillsDir)) {
       throw new ManagedSkillWritebackConflictError(
         `Refusing to mount skill "${skillName}" at ${skillsDir}: provider skills root is not a managed Cat Cafe symlink.`,
@@ -100,8 +105,26 @@ export async function mountManagedSkillSymlinks(
     missingLinks.push({ skillsDir, linkPath });
   }
 
+  const disabledSkillNames = new Set(opts?.disabledSkillNames ?? []);
+  const enabledSourceSkillNames =
+    managedDirectoryRoots.length === 0
+      ? []
+      : (await listSourceSkillNames(skillsSource)).filter((name) => !disabledSkillNames.has(name));
+
+  const convertedRoots: Array<{ skillsDir: string; target: string }> = [];
   const createdLinks: string[] = [];
   try {
+    for (const skillsDir of managedDirectoryRoots) {
+      const target = await readlink(skillsDir);
+      convertedRoots.push({ skillsDir, target });
+      await rm(skillsDir);
+      await mkdir(skillsDir, { recursive: true });
+      for (const sourceSkillName of enabledSourceSkillNames) {
+        const linkPath = join(skillsDir, sourceSkillName);
+        await symlink(symlinkTargetFor(linkPath, join(skillsSource, sourceSkillName)), linkPath);
+      }
+    }
+
     for (const { skillsDir, linkPath } of missingLinks) {
       await mkdir(skillsDir, { recursive: true });
       await symlink(symlinkTargetFor(linkPath, join(skillsSource, skillName)), linkPath);
@@ -110,6 +133,10 @@ export async function mountManagedSkillSymlinks(
   } catch (err) {
     for (const linkPath of createdLinks.reverse()) {
       await rm(linkPath).catch(() => {});
+    }
+    for (const { skillsDir, target } of convertedRoots.reverse()) {
+      await rm(skillsDir, { recursive: true, force: true }).catch(() => {});
+      await symlink(target, skillsDir).catch(() => {});
     }
     throw err;
   }

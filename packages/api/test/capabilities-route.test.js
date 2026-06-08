@@ -1729,6 +1729,49 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
     }
   });
 
+  it('converts legacy directory-level mounts before enabling managed skills', async () => {
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const enabledSkill = 'debugging';
+    const stillDisabledSkill = 'tdd';
+    const sourceSkillsDir = join(findRepoRoot(), 'cat-cafe-skills');
+    const projectDir = await makeTmpDir('patch-managed-skill-enable-legacy-root');
+    const codexSkillsDir = join(projectDir, '.codex', 'skills');
+    const app = await buildSessionApp();
+
+    try {
+      await mkdir(dirname(codexSkillsDir), { recursive: true });
+      await symlink(sourceSkillsDir, codexSkillsDir);
+      await writeCapabilitiesConfig(projectDir, {
+        version: 1,
+        capabilities: [
+          { id: enabledSkill, type: 'skill', enabled: false, source: 'cat-cafe' },
+          { id: stillDisabledSkill, type: 'skill', enabled: false, source: 'cat-cafe' },
+        ],
+      });
+
+      const res = await patchSkillCapability(app, projectDir, enabledSkill, true);
+
+      assert.equal(res.statusCode, 200, res.payload);
+      const rootStat = await lstat(codexSkillsDir);
+      assert.equal(rootStat.isDirectory(), true, 'legacy provider root should become a real directory');
+      assert.equal(rootStat.isSymbolicLink(), false, 'legacy provider root symlink should be removed');
+      assert.equal(
+        await realpath(join(codexSkillsDir, enabledSkill)),
+        await realpath(join(sourceSkillsDir, enabledSkill)),
+      );
+      await assert.rejects(() => lstat(join(codexSkillsDir, stillDisabledSkill)), /ENOENT/);
+      const config = await readCapabilitiesConfig(projectDir);
+      assert.equal(config?.capabilities.find((cap) => cap.id === enabledSkill)?.enabled, true);
+      assert.equal(config?.capabilities.find((cap) => cap.id === stillDisabledSkill)?.enabled, false);
+    } finally {
+      await app.close();
+      await rm(projectDir, { recursive: true, force: true });
+      if (previousOwner === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+      else process.env.DEFAULT_OWNER_USER_ID = previousOwner;
+    }
+  });
+
   it('preserves user-owned skill paths when enabling managed skills', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';

@@ -1006,15 +1006,17 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
 
       if (body.scope === 'global' && cap.type === 'skill' && cap.source === 'cat-cafe') {
         try {
+          const disabledSkillNames = config.capabilities
+            .filter(
+              (entry) => entry.type === 'skill' && entry.source === 'cat-cafe' && !entry.pluginId && !entry.enabled,
+            )
+            .map((entry) => entry.id);
+
           if (body.enabled) {
-            await mountManagedSkillSymlinks(projectRoot, cap.id, CAT_CAFE_SKILLS_SRC);
+            await mountManagedSkillSymlinks(projectRoot, cap.id, CAT_CAFE_SKILLS_SRC, { disabledSkillNames });
           } else {
             await unmountManagedSkillSymlinks(projectRoot, cap.id, CAT_CAFE_SKILLS_SRC, {
-              disabledSkillNames: config.capabilities
-                .filter(
-                  (entry) => entry.type === 'skill' && entry.source === 'cat-cafe' && !entry.pluginId && !entry.enabled,
-                )
-                .map((entry) => entry.id),
+              disabledSkillNames,
             });
           }
         } catch (err) {
