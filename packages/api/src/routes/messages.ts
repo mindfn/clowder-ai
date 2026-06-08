@@ -170,6 +170,31 @@ export interface MessagesRoutesOptions {
 
 const log = createModuleLogger('routes/messages');
 
+async function shouldEnqueueDirectContinuation(
+  capsule: CollaborationContinuityCapsuleV1,
+  userId: string,
+  coordinator?: SessionContinuationCoordinatorLike,
+): Promise<boolean> {
+  if (!coordinator?.resolveSessionStrategy) return true;
+  try {
+    const strategy = await coordinator.resolveSessionStrategy(capsule.threadId, capsule.catId, userId);
+    if (strategy === 'reborn') {
+      log.info(
+        { threadId: capsule.threadId, catId: capsule.catId },
+        '[messages] F224: reborn session — skipping continuation enqueue',
+      );
+      return false;
+    }
+    return true;
+  } catch (err) {
+    log.warn(
+      { err, threadId: capsule.threadId, catId: capsule.catId },
+      '[messages] F224: resolveSessionStrategy failed for continuation enqueue, defaulting to enqueue',
+    );
+    return true;
+  }
+}
+
 /**
  * F192 Phase G AC-G12: detect magic words in user message content.
  * Best-effort, fire-and-forget — failures are silently swallowed.
@@ -1409,6 +1434,15 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
             routeChainTracker.succeed(createResult.invocationId);
 
             for (const continuationCapsule of continuationCapsules.values()) {
+              if (
+                !(await shouldEnqueueDirectContinuation(
+                  continuationCapsule,
+                  userId,
+                  opts.sessionContinuationCoordinator,
+                ))
+              ) {
+                continue;
+              }
               const result = await opts.queueProcessor
                 ?.enqueueContinuation({
                   threadId: resolvedThreadId,
