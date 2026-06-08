@@ -210,10 +210,10 @@ test('parseCpuTime handles empty/invalid input', () => {
 
 // --- Windows platform guard tests ---
 
-test('on Windows, sampleOnce sets cpuGrowing=false (conservative idle-silent)', async () => {
+test('on Windows, sampleOnce sets cpuGrowing=true (benefit of the doubt — #854)', async () => {
   // This test runs on Windows where the platform guard is active.
-  // The probe should classify silent processes as idle-silent (not busy-silent),
-  // preserving stall detection semantics.
+  // Without CPU sampling, assume the process is busy so stall auto-kill
+  // does not fire prematurely. CLI_TIMEOUT_MS is the binding constraint.
   if (process.platform !== 'win32') {
     // On non-Windows, the Unix ps-based path runs instead — skip.
     return;
@@ -229,9 +229,9 @@ test('on Windows, sampleOnce sets cpuGrowing=false (conservative idle-silent)', 
   await new Promise((r) => setTimeout(r, 80));
 
   const state = probe.getState();
-  // On Windows, with cpuGrowing=false, the state should be idle-silent (not busy-silent)
-  assert.equal(state, 'idle-silent', 'Windows guard must set cpuGrowing=false → idle-silent');
-  assert.equal(probe.shouldExtendTimeout(), false, 'idle-silent must NOT extend timeout');
+  // On Windows, with cpuGrowing=true, the state should be busy-silent (not idle-silent)
+  assert.equal(state, 'busy-silent', 'Windows guard must set cpuGrowing=true → busy-silent');
+  assert.equal(probe.shouldExtendTimeout(), true, 'busy-silent extends timeout on Windows');
   probe.stop();
 });
 

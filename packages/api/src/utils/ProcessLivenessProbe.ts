@@ -154,10 +154,11 @@ export class ProcessLivenessProbe {
     }
 
     // Windows: `ps` is not available. Use process.kill(pid, 0) for liveness
-    // and skip CPU sampling. Conservative: assume idle (cpuGrowing = false)
-    // so that idle-silent → stall detection still works on Windows.
+    // and skip CPU sampling. Assume busy (cpuGrowing = true) so the process
+    // gets the benefit of the doubt — stall auto-kill won't fire, and
+    // CLI_TIMEOUT_MS becomes the binding constraint (#854).
     if (process.platform === 'win32') {
-      this.cpuGrowing = false;
+      this.cpuGrowing = true;
       this.emitSilenceWarnings();
       this.sampling = false;
       return;
