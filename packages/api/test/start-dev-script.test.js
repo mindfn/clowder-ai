@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -817,6 +817,106 @@ test('redis port override also recomputes isolated redis dirs', () => {
   } finally {
     rmSync(tmp, { recursive: true, force: true });
     rmSync(tempHome, { recursive: true, force: true });
+  }
+});
+
+test('DATA_DIR Redis migration treats an empty target data dir as unoccupied', () => {
+  const tmp = createTempProject();
+  try {
+    const scriptPath = join(tmp, 'scripts', 'start-dev.sh');
+    const legacyDir = join(tmp, 'legacy-redis');
+    const dataRoot = join(tmp, 'data-root');
+    const targetDir = join(dataRoot, 'redis');
+    mkdirSync(legacyDir, { recursive: true });
+    mkdirSync(targetDir, { recursive: true });
+    writeFileSync(join(legacyDir, 'dump.rdb'), 'legacy redis', 'utf8');
+
+    const result = spawnSync(
+      'bash',
+      [
+        '-lc',
+        `set -e\nsource "${scriptPath}" --source-only >/dev/null 2>&1\ntrap - EXIT INT TERM\nprintf '%s|%s|%s' "$REDIS_DATA_DIR" "$(cat "${targetDir}/dump.rdb")" "$([ -d "${legacyDir}" ] && printf legacy || printf moved)"`,
+      ],
+      {
+        encoding: 'utf8',
+        env: baseShellEnv({
+          DATA_DIR: dataRoot,
+          REDIS_DATA_DIR: legacyDir,
+        }),
+      },
+    );
+
+    assert.equal(result.status, 0, `snippet failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    assert.equal(result.stdout.trim(), `${targetDir}|legacy redis|moved`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('DATA_DIR Redis migration treats an empty target backup dir as unoccupied', () => {
+  const tmp = createTempProject();
+  try {
+    const scriptPath = join(tmp, 'scripts', 'start-dev.sh');
+    const legacyBackup = join(tmp, 'legacy-backups');
+    const dataRoot = join(tmp, 'data-root');
+    const targetBackup = join(dataRoot, 'redis-backups');
+    mkdirSync(legacyBackup, { recursive: true });
+    mkdirSync(targetBackup, { recursive: true });
+    writeFileSync(join(legacyBackup, 'snapshot.rdb'), 'legacy backup', 'utf8');
+
+    const result = spawnSync(
+      'bash',
+      [
+        '-lc',
+        `set -e\nsource "${scriptPath}" --source-only >/dev/null 2>&1\ntrap - EXIT INT TERM\nprintf '%s|%s|%s' "$REDIS_BACKUP_DIR" "$(cat "${targetBackup}/snapshot.rdb")" "$([ -d "${legacyBackup}" ] && printf legacy || printf moved)"`,
+      ],
+      {
+        encoding: 'utf8',
+        env: baseShellEnv({
+          DATA_DIR: dataRoot,
+          REDIS_BACKUP_DIR: legacyBackup,
+        }),
+      },
+    );
+
+    assert.equal(result.status, 0, `snippet failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    assert.equal(result.stdout.trim(), `${targetBackup}|legacy backup|moved`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('DATA_DIR Redis migration refuses to hide legacy data behind a populated target', () => {
+  const tmp = createTempProject();
+  try {
+    const scriptPath = join(tmp, 'scripts', 'start-dev.sh');
+    const legacyDir = join(tmp, 'legacy-redis');
+    const dataRoot = join(tmp, 'data-root');
+    const targetDir = join(dataRoot, 'redis');
+    mkdirSync(legacyDir, { recursive: true });
+    mkdirSync(targetDir, { recursive: true });
+    writeFileSync(join(legacyDir, 'dump.rdb'), 'legacy redis', 'utf8');
+    writeFileSync(join(targetDir, 'dump.rdb'), 'target redis', 'utf8');
+
+    const result = spawnSync('bash', ['-lc', `source "${scriptPath}" --source-only`], {
+      encoding: 'utf8',
+      env: baseShellEnv({
+        DATA_DIR: dataRoot,
+        REDIS_DATA_DIR: legacyDir,
+      }),
+    });
+
+    assert.notEqual(
+      result.status,
+      0,
+      `source should fail closed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    );
+    assert.match(`${result.stdout}\n${result.stderr}`, /Refusing to switch Redis data to DATA_DIR/);
+    assert.equal(readFileSync(join(legacyDir, 'dump.rdb'), 'utf8'), 'legacy redis');
+    assert.equal(readFileSync(join(targetDir, 'dump.rdb'), 'utf8'), 'target redis');
+    assert.equal(existsSync(legacyDir), true);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
   }
 });
 

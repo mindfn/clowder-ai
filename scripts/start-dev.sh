@@ -435,6 +435,42 @@ default_redis_backup_dir() {
     printf '%s/.cat-cafe/redis-backups/%s' "$HOME" "$key"
 }
 
+dir_has_entries() {
+    local dir="$1"
+    [ -d "$dir" ] && find "$dir" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .
+}
+
+migrate_data_root_dir_or_abort() {
+    local label="$1"
+    local legacy_dir="$2"
+    local target_dir="$3"
+
+    [ "$legacy_dir" != "$target_dir" ] || return 0
+    dir_has_entries "$legacy_dir" || return 0
+
+    if [ -d "$target_dir" ]; then
+        if dir_has_entries "$target_dir"; then
+            echo -e "${RED}  [#671] Refusing to switch ${label} to DATA_DIR because both legacy and target contain data.${NC}" >&2
+            echo "        legacy: $legacy_dir" >&2
+            echo "        target: $target_dir" >&2
+            exit 1
+        fi
+        rmdir "$target_dir" 2>/dev/null || {
+            echo -e "${RED}  [#671] Refusing to switch ${label} to DATA_DIR because the empty target could not be removed: $target_dir${NC}" >&2
+            exit 1
+        }
+    fi
+
+    echo -e "${YELLOW}  [#671] Migrating ${label}: $legacy_dir → $target_dir${NC}"
+    mkdir -p "$(dirname "$target_dir")"
+    mv "$legacy_dir" "$target_dir" 2>/dev/null || {
+        cp -a "$legacy_dir" "$target_dir" && rm -rf "$legacy_dir"
+    } || {
+        echo -e "${RED}  [#671] Failed to migrate ${label}: $legacy_dir → $target_dir${NC}" >&2
+        exit 1
+    }
+}
+
 REDIS_STORAGE_KEY=$(default_redis_storage_key "$REDIS_PROFILE" "$REDIS_PORT")
 if [ -n "$CLI_REDIS_DATA_DIR_OVERRIDE" ]; then
     REDIS_DATA_DIR="$CLI_REDIS_DATA_DIR_OVERRIDE"
@@ -461,27 +497,14 @@ if [ -n "${DATA_DIR-}" ]; then
     _target_redis_data="${DATA_DIR}/redis"
     if [ "$_legacy_redis_data" != "$_target_redis_data" ]; then
         # Pre-start migration: move legacy Redis data before overriding the path
-        if [ -d "$_legacy_redis_data" ] && [ ! -d "$_target_redis_data" ]; then
-            echo -e "${YELLOW}  [#671] Migrating Redis data: $_legacy_redis_data → $_target_redis_data${NC}"
-            mkdir -p "$(dirname "$_target_redis_data")"
-            mv "$_legacy_redis_data" "$_target_redis_data" 2>/dev/null || {
-                # Cross-device fallback: copy + remove
-                cp -a "$_legacy_redis_data" "$_target_redis_data" && rm -rf "$_legacy_redis_data"
-            }
-        fi
+        migrate_data_root_dir_or_abort "Redis data" "$_legacy_redis_data" "$_target_redis_data"
         REDIS_DATA_DIR="$_target_redis_data"
     fi
 
     _legacy_redis_backup="$REDIS_BACKUP_DIR"
     _target_redis_backup="${DATA_DIR}/redis-backups"
     if [ "$_legacy_redis_backup" != "$_target_redis_backup" ]; then
-        if [ -d "$_legacy_redis_backup" ] && [ ! -d "$_target_redis_backup" ]; then
-            echo -e "${YELLOW}  [#671] Migrating Redis backups: $_legacy_redis_backup → $_target_redis_backup${NC}"
-            mkdir -p "$(dirname "$_target_redis_backup")"
-            mv "$_legacy_redis_backup" "$_target_redis_backup" 2>/dev/null || {
-                cp -a "$_legacy_redis_backup" "$_target_redis_backup" && rm -rf "$_legacy_redis_backup"
-            }
-        fi
+        migrate_data_root_dir_or_abort "Redis backups" "$_legacy_redis_backup" "$_target_redis_backup"
         REDIS_BACKUP_DIR="$_target_redis_backup"
     fi
 
