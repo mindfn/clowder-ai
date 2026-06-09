@@ -401,62 +401,6 @@ class ServiceManager {
       }
     }
 
-    // .cat-cafe writable state: unify under DATA_DIR/cat-cafe/ (#671).
-    // The API resolves .cat-cafe files via resolve(projectRoot, '.cat-cafe', f),
-    // so a symlink from project/.cat-cafe → data/cat-cafe keeps it transparent.
-    const catCafeStateDir = path.join(baseDir, 'data', 'cat-cafe');
-    const projectCatCafeDir = path.join(projectDir, '.cat-cafe');
-    try {
-      const catCafeStat = fs.lstatSync(projectCatCafeDir);
-      if (catCafeStat.isSymbolicLink()) {
-        // Already migrated — verify target points to the right place
-        const target = fs.readlinkSync(projectCatCafeDir);
-        if (path.resolve(target) !== path.resolve(catCafeStateDir)) {
-          removeLink(projectCatCafeDir);
-          fs.symlinkSync(catCafeStateDir, projectCatCafeDir, linkType);
-          log(`.cat-cafe symlink retargeted: ${projectCatCafeDir} -> ${catCafeStateDir}`);
-        }
-      } else if (catCafeStat.isDirectory()) {
-        // On Windows, NTFS junctions can report as directories via
-        // lstatSync().isSymbolicLink() === false.  Probe with readlinkSync
-        // to detect hidden junctions before treating this as a real dir.
-        let isJunction = false;
-        if (IS_WIN) {
-          try {
-            const jTarget = fs.readlinkSync(projectCatCafeDir);
-            isJunction = true;
-            if (path.resolve(jTarget) !== path.resolve(catCafeStateDir)) {
-              removeLink(projectCatCafeDir);
-              fs.symlinkSync(catCafeStateDir, projectCatCafeDir, linkType);
-              log(`.cat-cafe junction retargeted: ${projectCatCafeDir} -> ${catCafeStateDir}`);
-            }
-          } catch {
-            // readlinkSync failed (EINVAL) → genuine directory, not a junction
-          }
-        }
-        if (!isJunction) {
-          // Real directory with data — move to unified location, replace with
-          // symlink.  Remove the empty mkdir target first to allow rename.
-          try {
-            fs.rmdirSync(catCafeStateDir);
-          } catch {
-            /* non-empty or missing — rename will fail gracefully */
-          }
-          fs.renameSync(projectCatCafeDir, catCafeStateDir);
-          fs.symlinkSync(catCafeStateDir, projectCatCafeDir, linkType);
-          log(`.cat-cafe state migrated: ${projectCatCafeDir} -> ${catCafeStateDir}`);
-        }
-      }
-    } catch {
-      // project/.cat-cafe doesn't exist yet — create symlink to data/cat-cafe
-      try {
-        fs.symlinkSync(catCafeStateDir, projectCatCafeDir, linkType);
-        log(`.cat-cafe symlink created: ${projectCatCafeDir} -> ${catCafeStateDir}`);
-      } catch (linkErr) {
-        log(`Warning: .cat-cafe symlink failed: ${linkErr.message}`);
-      }
-    }
-
     // scripts/ has no node_modules. compile-system-prompt-l0.mjs uses ESM
     // `import { catRegistry } from '@cat-cafe/shared'` — Node ESM ignores
     // NODE_PATH and only walks the filesystem node_modules chain.
