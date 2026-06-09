@@ -19,10 +19,11 @@ function maskValue(raw: string | undefined, sensitive: boolean): string | null {
  * Resource types that are metadata-only: they do NOT create capability entries
  * during activation (see PluginResourceActivator switch cases). Status
  * derivation and resource-status mapping must exclude them from the
- * "all-declared-enabled" check, otherwise plugins with protocol/schedule
+ * "all-declared-enabled" check, otherwise plugins with protocol
  * resources can never reach `enabled` status.
+ * Note: schedule was promoted to first-class activatable by upstream (F202 Phase 2).
  */
-const METADATA_ONLY_RESOURCE_TYPES = new Set(['protocol', 'schedule']);
+const METADATA_ONLY_RESOURCE_TYPES = new Set(['protocol']);
 
 export class PluginRegistry {
   private manifests = new Map<string, PluginManifest>();
