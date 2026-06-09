@@ -1996,7 +1996,7 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       return { error: 'Message not found' };
     }
 
-    const uploadDir = getDefaultUploadDir(process.env.UPLOAD_DIR);
+    const uploadDir = getDefaultUploadDir();
     const projectMsg = (m: typeof message) => {
       const imagePaths = extractImagePaths(m.contentBlocks, uploadDir);
       const imageUrls = extractImageUrls(m.contentBlocks);
