@@ -6,12 +6,12 @@ describe('F140 ConnectorDefinitions', () => {
   it('GitHub connectors use a unified slate-gray gradient', () => {
     // Semantic depth: lightest (ambient) → base (standard) → deeper (attention) → deepest (action needed)
     const expected = {
-      'github-repo-event': '#94A3B8',    // slate-400 — ambient inbox
-      'github-review': '#778899',         // light-slate — standard notification
-      'github-ci': '#778899',             // light-slate — standard notification
-      'github-issue-comment': '#778899',  // light-slate — standard notification
+      'github-repo-event': '#94A3B8', // slate-400 — ambient inbox
+      'github-review': '#778899', // light-slate — standard notification
+      'github-ci': '#778899', // light-slate — standard notification
+      'github-issue-comment': '#778899', // light-slate — standard notification
       'github-review-feedback': '#64748B', // slate-500 — needs attention
-      'github-conflict': '#475569',       // slate-600 — needs action
+      'github-conflict': '#475569', // slate-600 — needs action
     };
     for (const [id, color] of Object.entries(expected)) {
       const def = getConnectorDefinition(id);
