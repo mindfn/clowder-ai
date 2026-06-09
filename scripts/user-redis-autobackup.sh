@@ -21,7 +21,7 @@ PROFILE="${USER_REDIS_PROFILE:-user}"
 # #671: When the global DATA_DIR root is set, derive backup dir from it
 if [ -n "${DATA_DIR-}" ] && [ -z "${USER_REDIS_BACKUP_DIR-}" ]; then
   _GLOBAL_DATA_ROOT="$(cat_cafe_absolute_path "$DATA_DIR")"
-  LOCAL_BACKUP_DIR="${_GLOBAL_DATA_ROOT}/redis-backups"
+  LOCAL_BACKUP_DIR="${_GLOBAL_DATA_ROOT}/redis-backups/${PROFILE}"
 else
   LOCAL_BACKUP_DIR="${USER_REDIS_BACKUP_DIR:-$HOME/.cat-cafe/redis-backups/${PROFILE}}"
 fi

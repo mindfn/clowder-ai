@@ -29,7 +29,7 @@ test('user-redis DATA_DIR migration moves legacy data into an empty target befor
   const tempHome = join(tempRoot, 'home');
   const dataRoot = join(tempRoot, 'runtime-data');
   const legacyDir = join(tempHome, '.cat-cafe', 'redis-user');
-  const targetDir = join(dataRoot, 'redis');
+  const targetDir = join(dataRoot, 'redis-user');
 
   try {
     mkdirSync(legacyDir, { recursive: true });
@@ -59,7 +59,7 @@ test('user-redis DATA_DIR migration refuses populated target with legacy data pr
   const tempHome = join(tempRoot, 'home');
   const dataRoot = join(tempRoot, 'runtime-data');
   const legacyDir = join(tempHome, '.cat-cafe', 'redis-user');
-  const targetDir = join(dataRoot, 'redis');
+  const targetDir = join(dataRoot, 'redis-user');
 
   try {
     mkdirSync(legacyDir, { recursive: true });
@@ -93,7 +93,7 @@ test('user-redis autobackup normalizes DATA_DIR before deriving local backup dir
   const tempRoot = mkdtempSync(join(tmpdir(), 'cat-cafe-user-redis-autobackup-'));
   const tempHome = join(tempRoot, 'home');
   const binDir = join(tempRoot, 'bin');
-  const expectedBackupDir = join(realpathSync(tempRoot), 'runtime-data', 'redis-backups');
+  const expectedBackupDir = join(realpathSync(tempRoot), 'runtime-data', 'redis-backups', 'user');
 
   try {
     mkdirSync(tempHome, { recursive: true });
