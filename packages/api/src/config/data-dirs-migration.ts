@@ -35,7 +35,7 @@ export interface MigrationPlanItem {
   readonly spec: DataPathSpec;
   /** Bytes that need to move (legacy path size, including SQLite sidecars). */
   readonly sourceBytes: number;
-  /** True if the source path exists at all. */
+  /** True if the source path exists and is not a placeholder-only upload dir. */
   readonly sourceExists: boolean;
   /** True if the target path is already populated (skip to avoid overwrite). */
   readonly targetPopulated: boolean;
@@ -169,6 +169,7 @@ export interface RunOptions extends PlanOptions {
 }
 
 const DEFAULT_SAFETY_MULTIPLIER = 1.5;
+const UPLOADS_PLACEHOLDER_FILES = new Set(['.gitkeep']);
 
 /** Recursively measure on-disk size of a file or directory. */
 export async function measurePath(path: string): Promise<number> {
@@ -247,7 +248,7 @@ export async function buildMigrationPlan(opts: PlanOptions): Promise<MigrationPl
       continue;
     }
 
-    const sourceExists = existsSync(spec.legacyPath);
+    const sourceExists = await sourceExistsForMigration(spec);
     const targetPopulated = await isMigrationTargetPopulated(spec);
 
     if (!sourceExists) {
@@ -289,13 +290,24 @@ export async function buildMigrationPlan(opts: PlanOptions): Promise<MigrationPl
   return { items, totalBytes, hasWork };
 }
 
-async function isPopulated(path: string): Promise<boolean> {
+async function sourceExistsForMigration(spec: DataPathSpec): Promise<boolean> {
+  if (!existsSync(spec.legacyPath)) return false;
+  if (spec.key !== 'uploads') return true;
+  return isPopulated(spec.legacyPath, { ignoreUploadsPlaceholder: true });
+}
+
+async function isPopulated(path: string, opts: { readonly ignoreUploadsPlaceholder?: boolean } = {}): Promise<boolean> {
   try {
     const st = await stat(path);
     if (st.isFile()) return st.size > 0;
     if (st.isDirectory()) {
-      const entries = await readdir(path);
-      return entries.length > 0;
+      const entries = await readdir(path, { withFileTypes: true });
+      return entries.some((entry) => {
+        if (opts.ignoreUploadsPlaceholder === true && entry.isFile() && UPLOADS_PLACEHOLDER_FILES.has(entry.name)) {
+          return false;
+        }
+        return true;
+      });
     }
     return false;
   } catch {

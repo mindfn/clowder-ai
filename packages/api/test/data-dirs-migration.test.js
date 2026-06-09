@@ -148,6 +148,27 @@ describe('data-dirs-migration', () => {
       assert.equal(evidence.targetPopulated, true);
       assert.equal(evidence.skipReason, 'target-not-empty');
     });
+
+    test('treats uploads legacy .gitkeep placeholder as no source data', async () => {
+      const legacyUploads = join(workRoot, 'packages', 'api', 'uploads');
+      const dataRoot = join(workRoot, 'data');
+      await mkdir(legacyUploads, { recursive: true });
+      await mkdir(join(dataRoot, 'uploads'), { recursive: true });
+      await writeFile(join(legacyUploads, '.gitkeep'), '', 'utf-8');
+      await writeFile(join(dataRoot, 'uploads', 'real-upload.png'), 'target upload', 'utf-8');
+
+      process.env.DATA_DIR = dataRoot;
+      const plan = await buildMigrationPlan({
+        repoRoot: workRoot,
+        monorepoRoot: workRoot,
+        uploadsLegacyOverride: legacyUploads,
+      });
+
+      const uploads = plan.items.find((i) => i.spec.key === 'uploads');
+      assert.equal(uploads.eligible, false);
+      assert.equal(uploads.sourceExists, false);
+      assert.equal(uploads.skipReason, 'no-source-data');
+    });
   });
 
   describe('measurePath', () => {

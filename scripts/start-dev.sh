@@ -480,14 +480,29 @@ if [ -n "${DATA_DIR-}" ]; then
     # (50+ files that do `resolve(projectRoot, '.cat-cafe', file)`) keep working.
     _legacy_catcafe="${PROJECT_DIR}/.cat-cafe"
     _target_catcafe="${DATA_DIR}/cat-cafe"
-    if [ -d "$_legacy_catcafe" ] && [ ! -L "$_legacy_catcafe" ] && [ ! -d "$_target_catcafe" ]; then
-        echo -e "${YELLOW}  [#671] Migrating .cat-cafe state: $_legacy_catcafe → $_target_catcafe${NC}"
-        mkdir -p "$(dirname "$_target_catcafe")"
-        mv "$_legacy_catcafe" "$_target_catcafe" 2>/dev/null || {
-            cp -a "$_legacy_catcafe" "$_target_catcafe" && rm -rf "$_legacy_catcafe"
-        }
-        ln -sfn "$_target_catcafe" "$_legacy_catcafe"
-    elif [ ! -e "$_legacy_catcafe" ] && [ -d "$_target_catcafe" ]; then
+    if [ -d "$_legacy_catcafe" ] && [ ! -L "$_legacy_catcafe" ]; then
+        if cat_cafe_dir_has_entries "$_legacy_catcafe"; then
+            cat_cafe_migrate_data_root_dir_or_abort ".cat-cafe state" "$_legacy_catcafe" "$_target_catcafe"
+        elif [ -d "$_target_catcafe" ]; then
+            rmdir "$_legacy_catcafe" 2>/dev/null || {
+                echo "  [#671] Refusing to replace empty .cat-cafe with DATA_DIR symlink because it could not be removed: $_legacy_catcafe" >&2
+                exit 1
+            }
+        elif [ ! -e "$_target_catcafe" ]; then
+            echo -e "${YELLOW}  [#671] Migrating .cat-cafe state: $_legacy_catcafe → $_target_catcafe${NC}"
+            mkdir -p "$(dirname "$_target_catcafe")"
+            mv "$_legacy_catcafe" "$_target_catcafe" 2>/dev/null || {
+                cp -a "$_legacy_catcafe" "$_target_catcafe" && rm -rf "$_legacy_catcafe"
+            } || {
+                echo "  [#671] Failed to migrate .cat-cafe state: $_legacy_catcafe -> $_target_catcafe" >&2
+                exit 1
+            }
+        else
+            echo "  [#671] Refusing to switch .cat-cafe state to DATA_DIR because the target path is not a directory: $_target_catcafe" >&2
+            exit 1
+        fi
+    fi
+    if [ ! -e "$_legacy_catcafe" ] && [ -d "$_target_catcafe" ]; then
         # Target exists but no symlink yet (e.g. after manual copy)
         ln -sfn "$_target_catcafe" "$_legacy_catcafe"
     fi
