@@ -28,6 +28,7 @@ import {
   buildEnvSummary,
   ENV_CATEGORIES,
   filterSensitiveEditableKeys,
+  hasOwnerGatedEditableVars,
   hasSensitiveEditableVars,
   isEditableEnvVarName,
 } from '../config/env-registry.js';
@@ -419,14 +420,18 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
       updates.set(update.name, update.value);
     }
 
-    // Sensitive env writes require session-auth (not forgeable header identity)
+    // Protected env writes require session-auth (not forgeable header identity)
     // + loopback guard: non-localhost requests without a configured owner are
     // rejected to prevent LAN/Tailscale write-through in single-user mode.
+    // Some protected values (DATA_DIR/CACHE_DIR) are not secret, so masking and
+    // sensitive-write audit still use the narrower sensitive-editable set.
     const touchesSensitive = hasSensitiveEditableVars(updates.keys());
-    if (touchesSensitive) {
+    const touchesOwnerGated = hasOwnerGatedEditableVars(updates.keys());
+    if (touchesOwnerGated) {
+      const gateLabel = touchesSensitive ? 'Sensitive env' : 'Protected env';
       if (!sessionOperator) {
         reply.status(401);
-        return { error: 'Sensitive env writes require session authentication' };
+        return { error: `${gateLabel} writes require session authentication` };
       }
       // Network guard: when DEFAULT_OWNER_USER_ID is unset, only direct
       // loopback requests (no proxy) are trusted. Proxied or remote requests
@@ -434,11 +439,11 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
       if (!isDirectLoopbackRequest(request) && !process.env.DEFAULT_OWNER_USER_ID?.trim()) {
         reply.status(403);
         return {
-          error: 'Sensitive env writes from non-localhost require DEFAULT_OWNER_USER_ID to be configured',
+          error: `${gateLabel} writes from non-localhost require DEFAULT_OWNER_USER_ID to be configured`,
         };
       }
       const gateResult = resolveOwnerGate(sessionOperator, {
-        errorMessage: 'Sensitive env vars can only be modified by the owner',
+        errorMessage: `${gateLabel} vars can only be modified by the owner`,
       });
       if (gateResult) {
         reply.status(gateResult.status);
@@ -475,7 +480,7 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
       });
     }
 
-    const auditOperator = touchesSensitive ? sessionOperator! : (sessionOperator ?? operator);
+    const auditOperator = touchesOwnerGated ? sessionOperator! : (sessionOperator ?? operator);
     try {
       await auditLog.append({
         type: AuditEventTypes.CONFIG_UPDATED,

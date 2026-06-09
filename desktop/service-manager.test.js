@@ -45,6 +45,29 @@ test('mirrors bundled plugins into the writable API project root', async () => {
   }
 });
 
+test('migrates existing project .cat-cafe into DATA_DIR before linking it back', async () => {
+  const installRoot = await mkdtemp(path.join(tmpdir(), 'service-manager-install-'));
+  const userDataRoot = await mkdtemp(path.join(tmpdir(), 'service-manager-user-'));
+  try {
+    const projectCatCafeDir = path.join(userDataRoot, 'project', '.cat-cafe');
+    const stateDir = path.join(userDataRoot, 'data', 'cat-cafe');
+    mkdirSync(projectCatCafeDir, { recursive: true });
+    writeFileSync(path.join(projectCatCafeDir, 'cat-catalog.json'), '{"cats":[]}\n', 'utf-8');
+
+    const manager = new ServiceManager(installRoot, { frontendPort: 3003, apiPort: 3004 });
+
+    manager._ensureUserDataDir(userDataRoot);
+
+    assert.equal(existsSync(path.join(stateDir, 'cat-catalog.json')), true);
+    assert.equal(existsSync(path.join(projectCatCafeDir, 'cat-catalog.json')), true);
+    assert.doesNotThrow(() => fs.readlinkSync(projectCatCafeDir));
+    assert.equal(fs.realpathSync(projectCatCafeDir), fs.realpathSync(stateDir));
+  } finally {
+    rmSync(installRoot, { recursive: true, force: true });
+    rmSync(userDataRoot, { recursive: true, force: true });
+  }
+});
+
 test('probes bundled plugin mirror and rebuilds it when the first read fails', async () => {
   const installRoot = await mkdtemp(path.join(tmpdir(), 'service-manager-install-'));
   const userDataRoot = await mkdtemp(path.join(tmpdir(), 'service-manager-user-'));

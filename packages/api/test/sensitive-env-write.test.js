@@ -101,6 +101,41 @@ describe('PATCH /api/config/env — sensitive env owner gate', () => {
     }
   });
 
+  it('rejects DATA_DIR writes with header-only identity while keeping the value visible', async () => {
+    const { configRoutes } = await import('../dist/routes/config.js');
+    const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
+    const envFilePath = resolve(tempRoot, '.env');
+    writeFileSync(envFilePath, 'DATA_DIR=/old-data\n', 'utf8');
+    setEnv('DEFAULT_OWNER_USER_ID', 'you');
+    setEnv('DATA_DIR', undefined);
+
+    const app = Fastify({ logger: false });
+    addSessionHook(app);
+    try {
+      await configRoutes(app, {
+        projectRoot: tempRoot,
+        envFilePath,
+        auditLog: { append: async () => {} },
+      });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/config/env',
+        headers: { 'x-cat-cafe-user': 'you' },
+        payload: { updates: [{ name: 'DATA_DIR', value: '/new-data' }] },
+      });
+
+      assert.equal(res.statusCode, 401);
+      assert.match(JSON.parse(res.payload).error, /session authentication/);
+      assert.equal(readFileSync(envFilePath, 'utf8'), 'DATA_DIR=/old-data\n');
+      assert.equal(process.env.DATA_DIR, undefined);
+    } finally {
+      await app.close();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it('allows sensitive env writes in single-user mode when DEFAULT_OWNER_USER_ID is not configured (issue #794)', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));

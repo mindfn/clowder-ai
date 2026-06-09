@@ -54,6 +54,8 @@ export interface EnvDefinition {
   hubVisible?: boolean;
   /** If false, value is bootstrap-only and cannot be edited at runtime from Hub */
   runtimeEditable?: boolean;
+  /** If true, runtime writes require session-auth + owner gate even when the value is not secret */
+  writeRequiresOwner?: boolean;
   /** If true, changes take effect only after service restart */
   restartRequired?: boolean;
   /** If true, this var should appear in .env.example (enforced by check:env-example) */
@@ -319,6 +321,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '日志根目录（issue #671：三根目录模型；Pino 滚动日志直接写入此路径，不再加子目录）',
     category: 'storage',
     sensitive: false,
+    writeRequiresOwner: true,
     restartRequired: true,
     exampleRecommended: true,
   },
@@ -496,6 +499,7 @@ export const ENV_VARS: EnvDefinition[] = [
       '持久数据根目录（issue #671）：设置后 evidence.sqlite/world.sqlite/transcripts/audit-logs/cli-raw-archive/uploads 全部移到该目录下对应子路径。未设置时各路径沿用旧默认。',
     category: 'storage',
     sensitive: false,
+    writeRequiresOwner: true,
     restartRequired: true,
   },
   {
@@ -505,6 +509,7 @@ export const ENV_VARS: EnvDefinition[] = [
       '可重建缓存根目录（issue #671）：设置后 tts/connector-media 移到该目录下对应子路径。未设置时各路径沿用旧默认。',
     category: 'storage',
     sensitive: false,
+    writeRequiresOwner: true,
     restartRequired: true,
   },
   {
@@ -1794,6 +1799,11 @@ export function isSensitiveEditableEnvVar(def: EnvDefinition): boolean {
   return def.sensitive && def.runtimeEditable === true;
 }
 
+/** True if runtime writes require the privileged owner-gated env route. */
+export function isOwnerGatedEditableEnvVar(def: EnvDefinition): boolean {
+  return isSensitiveEditableEnvVar(def) || def.writeRequiresOwner === true;
+}
+
 export function isEditableEnvVarName(name: string): boolean {
   return ENV_VARS.some((def) => def.name === name && isHubVisibleEnvVar(def) && isEditableEnvVar(def));
 }
@@ -1802,6 +1812,12 @@ export function isEditableEnvVarName(name: string): boolean {
 export function hasSensitiveEditableVars(names: Iterable<string>): boolean {
   const nameSet = new Set(names);
   return ENV_VARS.some((def) => nameSet.has(def.name) && isSensitiveEditableEnvVar(def));
+}
+
+/** Check if any of the given env var names require session-auth + owner gate for writes. */
+export function hasOwnerGatedEditableVars(names: Iterable<string>): boolean {
+  const nameSet = new Set(names);
+  return ENV_VARS.some((def) => nameSet.has(def.name) && isOwnerGatedEditableEnvVar(def));
 }
 
 /** Return only the sensitive-editable keys from the given names (for audit filtering). */

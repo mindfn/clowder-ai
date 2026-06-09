@@ -13,6 +13,7 @@ import {
   buildEnvSummary,
   ENV_CATEGORIES,
   ENV_VARS,
+  hasOwnerGatedEditableVars,
   hasSensitiveEditableVars,
   isSensitiveEditableEnvVar,
   maskUrlCredentials,
@@ -145,6 +146,21 @@ describe('env-registry', () => {
     assert.ok(hasSensitiveEditableVars(['FRONTEND_URL', 'F102_API_KEY']));
     assert.ok(!hasSensitiveEditableVars(['FRONTEND_URL', 'LOG_DIR']));
     assert.ok(!hasSensitiveEditableVars(['OPENAI_API_KEY']), 'OPENAI_API_KEY is no longer editable (#340 P6)');
+  });
+
+  it('owner-gates root-directory writes without masking their summary values', () => {
+    for (const name of ['DATA_DIR', 'CACHE_DIR', 'LOG_DIR']) {
+      const def = ENV_VARS.find((v) => v.name === name);
+      assert.ok(def, `${name} should be in registry`);
+      assert.equal(def.sensitive, false, `${name} should remain visible in env-summary`);
+    }
+    assert.ok(hasOwnerGatedEditableVars(['DATA_DIR']));
+    assert.ok(hasOwnerGatedEditableVars(['FRONTEND_URL', 'CACHE_DIR']));
+    assert.ok(hasOwnerGatedEditableVars(['LOG_DIR']));
+    assert.ok(
+      !hasSensitiveEditableVars(['DATA_DIR', 'CACHE_DIR', 'LOG_DIR']),
+      'storage roots are protected but not secret',
+    );
   });
 
   it('marks DEFAULT_OWNER_USER_ID as non-editable (trust anchor)', () => {

@@ -193,7 +193,6 @@ class ServiceManager {
       // no per-path env overrides, so the API cwd must be a writable dir with
       // a pnpm-workspace.yaml marker.
       path.join(baseDir, 'data', 'redis'),
-      path.join(baseDir, 'data', 'cat-cafe'),
       path.join(baseDir, 'project'),
     ];
     for (const d of dirs) {
