@@ -139,7 +139,7 @@ const CONNECTOR_DEFINITIONS: readonly ConnectorDefinition[] = [
     id: 'github-review-feedback',
     displayName: 'Review Feedback',
     icon: { type: 'svg', iconId: 'github' },
-    themeColor: '#2563EB',
+    themeColor: '#475569',
     description: 'GitHub PR review feedback 通知',
   },
   {
