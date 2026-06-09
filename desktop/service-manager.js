@@ -204,6 +204,7 @@ class ServiceManager {
         log(`Warning: failed to create directory ${d}: ${err.message}`);
       }
     }
+    this._migrateLegacyDesktopDataDirs(baseDir);
     const projectDir = path.join(baseDir, 'project');
     const marker = path.join(projectDir, 'pnpm-workspace.yaml');
     if (!fs.existsSync(marker)) {
@@ -424,6 +425,75 @@ class ServiceManager {
         // Inno Setup already created the junction during install.
         log(`Warning: scripts/node_modules link: ${err.message}`);
       }
+    }
+  }
+
+  _isPathPopulated(p) {
+    try {
+      const st = fs.lstatSync(p);
+      if (st.isFile() || st.isSymbolicLink()) return true;
+      if (st.isDirectory()) return fs.readdirSync(p).length > 0;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  _moveLegacyDesktopPath(from, to) {
+    if (!fs.existsSync(from)) return true;
+    if (path.resolve(from) === path.resolve(to)) return true;
+    if (this._isPathPopulated(to)) {
+      log(`Warning: legacy desktop data ${from} not moved; target already populated at ${to}`);
+      return false;
+    }
+
+    try {
+      if (fs.existsSync(to)) {
+        fs.rmSync(to, { recursive: true, force: true });
+      }
+      fs.mkdirSync(path.dirname(to), { recursive: true });
+      try {
+        fs.renameSync(from, to);
+      } catch (err) {
+        if (err?.code !== 'EXDEV') throw err;
+        try {
+          const st = fs.lstatSync(from);
+          if (st.isDirectory() && !st.isSymbolicLink()) {
+            fs.cpSync(from, to, { recursive: true, errorOnExist: true, force: false });
+          } else {
+            fs.copyFileSync(from, to);
+          }
+        } catch (copyErr) {
+          fs.rmSync(to, { recursive: true, force: true });
+          throw copyErr;
+        }
+        fs.rmSync(from, { recursive: true, force: true });
+      }
+      log(`Legacy desktop data migrated: ${from} -> ${to}`);
+      return true;
+    } catch (err) {
+      log(`Warning: failed to migrate legacy desktop data ${from} -> ${to}: ${err.message}`);
+      return false;
+    }
+  }
+
+  _migrateLegacyDesktopDataDirs(baseDir) {
+    const dataDir = path.join(baseDir, 'data');
+    const cacheDir = path.join(baseDir, 'cache');
+    const moves = [
+      [path.join(baseDir, 'evidence.sqlite'), path.join(dataDir, 'evidence.sqlite')],
+      [path.join(baseDir, 'uploads'), path.join(dataDir, 'uploads')],
+      [path.join(dataDir, 'connector-media'), path.join(cacheDir, 'connector-media')],
+      [path.join(dataDir, 'tts-cache'), path.join(cacheDir, 'tts')],
+    ];
+    const failed = [];
+    for (const [from, to] of moves) {
+      if (!this._moveLegacyDesktopPath(from, to)) failed.push(`${from} -> ${to}`);
+    }
+    if (failed.length > 0) {
+      throw new Error(
+        `Legacy desktop data migration failed; refusing to start with hidden legacy data: ${failed.join('; ')}`,
+      );
     }
   }
 

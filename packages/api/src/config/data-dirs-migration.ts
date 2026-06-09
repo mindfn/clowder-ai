@@ -150,6 +150,8 @@ export interface RunOptions extends PlanOptions {
   readonly io: MigrationIO;
   /** Skip the disk-space pre-flight (useful for tests). */
   readonly skipSpaceCheck?: boolean;
+  /** Test-only: force the cross-device copy fallback path. */
+  readonly forceCrossDeviceForTesting?: boolean;
   /** Multiplier applied to required bytes when checking disk free space. */
   readonly spaceSafetyMultiplier?: number;
 }
@@ -359,7 +361,7 @@ export async function runDataDirsMigration(opts: RunOptions): Promise<MigrationR
       continue;
     }
     try {
-      await migrateOne(item.spec, item.spec.isFile);
+      await migrateOne(item.spec, item.spec.isFile, opts.forceCrossDeviceForTesting === true);
       log?.info(
         {
           key: item.spec.key,
@@ -419,12 +421,12 @@ export async function runDataDirsMigration(opts: RunOptions): Promise<MigrationR
  * (-wal, -shm, -journal) move together.  If any sidecar move fails the
  * main file is rolled back so the legacy DB stays intact (P1 review).
  */
-async function migrateOne(spec: DataPathSpec, isFile: boolean): Promise<void> {
+async function migrateOne(spec: DataPathSpec, isFile: boolean, forceCrossDevice = false): Promise<void> {
   const target = spec.rootBasedPath!;
   await mkdir(dirname(target), { recursive: true });
 
   if (!isFile) {
-    await moveTree(spec.legacyPath, target);
+    await moveTree(spec.legacyPath, target, forceCrossDevice);
     return;
   }
 
@@ -515,21 +517,27 @@ async function moveFile(from: string, to: string): Promise<void> {
   await unlink(from);
 }
 
-async function moveTree(from: string, to: string): Promise<void> {
-  try {
-    await rename(from, to);
-    return;
-  } catch (err) {
-    if (!isCrossDeviceError(err)) throw err;
+async function moveTree(from: string, to: string, forceCrossDevice = false): Promise<void> {
+  if (!forceCrossDevice) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (err) {
+      if (!isCrossDeviceError(err)) throw err;
+    }
   }
   // Cross-device fallback: recursive copy → spot-check sizes → recursive delete
-  await copyTree(from, to);
-  // Best-effort verification: compare total sizes (deep hash would be expensive)
-  const srcSize = await measurePath(from);
-  const dstSize = await measurePath(to);
-  if (srcSize !== dstSize) {
+  try {
+    await copyTree(from, to);
+    // Best-effort verification: compare total sizes (deep hash would be expensive)
+    const srcSize = await measurePath(from);
+    const dstSize = await measurePath(to);
+    if (srcSize !== dstSize) {
+      throw new Error(`Size mismatch after tree copy: ${from} (${srcSize}) → ${to} (${dstSize})`);
+    }
+  } catch (err) {
     await rm(to, { recursive: true, force: true }).catch(() => {});
-    throw new Error(`Size mismatch after tree copy: ${from} (${srcSize}) → ${to} (${dstSize})`);
+    throw err;
   }
   await rm(from, { recursive: true, force: true });
 }

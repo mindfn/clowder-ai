@@ -68,6 +68,36 @@ test('migrates existing project .cat-cafe into DATA_DIR before linking it back',
   }
 });
 
+test('migrates legacy desktop override data into DATA_DIR and CACHE_DIR', async () => {
+  const installRoot = await mkdtemp(path.join(tmpdir(), 'service-manager-install-'));
+  const userDataRoot = await mkdtemp(path.join(tmpdir(), 'service-manager-user-'));
+  try {
+    writeFileSync(path.join(userDataRoot, 'evidence.sqlite'), 'legacy-evidence', 'utf-8');
+    mkdirSync(path.join(userDataRoot, 'uploads'), { recursive: true });
+    writeFileSync(path.join(userDataRoot, 'uploads', 'image.png'), 'legacy-upload', 'utf-8');
+    mkdirSync(path.join(userDataRoot, 'data', 'connector-media'), { recursive: true });
+    writeFileSync(path.join(userDataRoot, 'data', 'connector-media', 'media.bin'), 'legacy-media', 'utf-8');
+    mkdirSync(path.join(userDataRoot, 'data', 'tts-cache'), { recursive: true });
+    writeFileSync(path.join(userDataRoot, 'data', 'tts-cache', 'voice.wav'), 'legacy-tts', 'utf-8');
+
+    const manager = new ServiceManager(installRoot, { frontendPort: 3003, apiPort: 3004 });
+
+    manager._ensureUserDataDir(userDataRoot);
+
+    assert.equal(existsSync(path.join(userDataRoot, 'data', 'evidence.sqlite')), true);
+    assert.equal(existsSync(path.join(userDataRoot, 'data', 'uploads', 'image.png')), true);
+    assert.equal(existsSync(path.join(userDataRoot, 'cache', 'connector-media', 'media.bin')), true);
+    assert.equal(existsSync(path.join(userDataRoot, 'cache', 'tts', 'voice.wav')), true);
+    assert.equal(existsSync(path.join(userDataRoot, 'evidence.sqlite')), false);
+    assert.equal(existsSync(path.join(userDataRoot, 'uploads')), false);
+    assert.equal(existsSync(path.join(userDataRoot, 'data', 'connector-media')), false);
+    assert.equal(existsSync(path.join(userDataRoot, 'data', 'tts-cache')), false);
+  } finally {
+    rmSync(installRoot, { recursive: true, force: true });
+    rmSync(userDataRoot, { recursive: true, force: true });
+  }
+});
+
 test('probes bundled plugin mirror and rebuilds it when the first read fails', async () => {
   const installRoot = await mkdtemp(path.join(tmpdir(), 'service-manager-install-'));
   const userDataRoot = await mkdtemp(path.join(tmpdir(), 'service-manager-user-'));

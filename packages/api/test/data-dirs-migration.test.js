@@ -442,6 +442,37 @@ describe('data-dirs-migration', () => {
       }
     });
 
+    test('cross-device dir migration removes partial target when copy fails', async () => {
+      const legacyAudit = join(workRoot, 'data', 'audit-logs');
+      await mkdir(legacyAudit, { recursive: true });
+      await writeFile(join(legacyAudit, 'first.ndjson'), '{"first":true}\n', 'utf-8');
+      await symlink('first.ndjson', join(legacyAudit, 'link.ndjson'));
+
+      const dataRoot = join(workRoot, 'newdata');
+      process.env.DATA_DIR = dataRoot;
+
+      const originalCwd = process.cwd();
+      process.chdir(workRoot);
+      try {
+        const result = await runDataDirsMigration({
+          repoRoot: workRoot,
+          monorepoRoot: workRoot,
+          uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
+          trigger: 'startup',
+          io: plentyOfSpaceIO(),
+          forceCrossDeviceForTesting: true,
+        });
+        const audit = result.items.find((i) => i.key === 'auditLogs');
+        assert.equal(audit.status, 'failed');
+        assert.ok(audit.error.includes('non-regular entry'));
+        assert.equal(existsSync(join(legacyAudit, 'first.ndjson')), true, 'legacy file must remain');
+        assert.equal(existsSync(join(legacyAudit, 'link.ndjson')), true, 'legacy symlink must remain');
+        assert.equal(existsSync(join(dataRoot, 'audit-logs')), false, 'partial target must be removed');
+      } finally {
+        process.chdir(originalCwd);
+      }
+    });
+
     test('continues other items when one fails (per-item isolation)', async () => {
       const legacyA = join(workRoot, 'evidence.sqlite');
       const legacyB = join(workRoot, 'world.sqlite');
