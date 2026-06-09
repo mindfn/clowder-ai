@@ -430,7 +430,7 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
     // Protected env writes require session-auth (not forgeable header identity)
     // + loopback guard: non-localhost requests without a configured owner are
     // rejected to prevent LAN/Tailscale write-through in single-user mode.
-    // Some protected values (DATA_DIR/CACHE_DIR) are not secret, so masking and
+    // Some protected runtime-editable values may be non-secret, so masking and
     // sensitive-write audit still use the narrower sensitive-editable set.
     const touchesSensitive = hasSensitiveEditableVars(updates.keys());
     const touchesOwnerGated = hasOwnerGatedEditableVars(updates.keys());

@@ -101,7 +101,7 @@ describe('PATCH /api/config/env — sensitive env owner gate', () => {
     }
   });
 
-  it('rejects DATA_DIR writes with header-only identity while keeping the value visible', async () => {
+  it('rejects DATA_DIR writes as restart-only while keeping the value visible', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
     const envFilePath = resolve(tempRoot, '.env');
@@ -126,8 +126,8 @@ describe('PATCH /api/config/env — sensitive env owner gate', () => {
         payload: { updates: [{ name: 'DATA_DIR', value: '/new-data' }] },
       });
 
-      assert.equal(res.statusCode, 401);
-      assert.match(JSON.parse(res.payload).error, /session authentication/);
+      assert.equal(res.statusCode, 400);
+      assert.match(JSON.parse(res.payload).error, /not editable/);
       assert.equal(readFileSync(envFilePath, 'utf8'), 'DATA_DIR=/old-data\n');
       assert.equal(process.env.DATA_DIR, undefined);
     } finally {

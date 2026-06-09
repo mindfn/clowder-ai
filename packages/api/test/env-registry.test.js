@@ -15,6 +15,7 @@ import {
   ENV_VARS,
   hasOwnerGatedEditableVars,
   hasSensitiveEditableVars,
+  isEditableEnvVarName,
   isSensitiveEditableEnvVar,
   maskUrlCredentials,
 } from '../dist/config/env-registry.js';
@@ -148,15 +149,16 @@ describe('env-registry', () => {
     assert.ok(!hasSensitiveEditableVars(['OPENAI_API_KEY']), 'OPENAI_API_KEY is no longer editable (#340 P6)');
   });
 
-  it('owner-gates root-directory writes without masking their summary values', () => {
+  it('marks root-directory changes as restart-only and non-runtime-editable without masking values', () => {
     for (const name of ['DATA_DIR', 'CACHE_DIR', 'LOG_DIR']) {
       const def = ENV_VARS.find((v) => v.name === name);
       assert.ok(def, `${name} should be in registry`);
       assert.equal(def.sensitive, false, `${name} should remain visible in env-summary`);
+      assert.equal(def.restartRequired, true, `${name} should require restart`);
+      assert.equal(def.runtimeEditable, false, `${name} must not mutate process.env at runtime`);
+      assert.equal(isEditableEnvVarName(name), false, `${name} should be rejected by PATCH /api/config/env`);
     }
-    assert.ok(hasOwnerGatedEditableVars(['DATA_DIR']));
-    assert.ok(hasOwnerGatedEditableVars(['FRONTEND_URL', 'CACHE_DIR']));
-    assert.ok(hasOwnerGatedEditableVars(['LOG_DIR']));
+    assert.ok(!hasOwnerGatedEditableVars(['DATA_DIR', 'CACHE_DIR', 'LOG_DIR']));
     assert.ok(
       !hasSensitiveEditableVars(['DATA_DIR', 'CACHE_DIR', 'LOG_DIR']),
       'storage roots are protected but not secret',
@@ -779,6 +781,50 @@ describe('PATCH /api/config/env (route)', () => {
       const body = JSON.parse(res.payload);
       assert.match(body.error, /not editable/i);
       assert.equal(readFileSync(envFilePath, 'utf8'), 'REDIS_URL=redis://localhost:6399/15\n');
+    } finally {
+      await app.close();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects DATA_DIR/CACHE_DIR/LOG_DIR hub writes because root resolvers are restart-bound', async () => {
+    const { configRoutes } = await import('../dist/routes/config.js');
+    const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
+    const envFilePath = resolve(tempRoot, '.env');
+    writeFileSync(envFilePath, 'DATA_DIR=/old-data\nCACHE_DIR=/old-cache\nLOG_DIR=/old-logs\n', 'utf8');
+    setEnv('DATA_DIR', '/old-data');
+    setEnv('CACHE_DIR', '/old-cache');
+    setEnv('LOG_DIR', '/old-logs');
+
+    const app = Fastify({ logger: false });
+    try {
+      await configRoutes(app, {
+        projectRoot: tempRoot,
+        envFilePath,
+        auditLog: { append: async () => {} },
+      });
+      await app.ready();
+
+      for (const [name, oldValue, newValue] of [
+        ['DATA_DIR', '/old-data', '/new-data'],
+        ['CACHE_DIR', '/old-cache', '/new-cache'],
+        ['LOG_DIR', '/old-logs', '/new-logs'],
+      ]) {
+        const beforeFile = readFileSync(envFilePath, 'utf8');
+        const res = await app.inject({
+          method: 'PATCH',
+          url: '/api/config/env',
+          headers: { 'x-cat-cafe-user': 'codex' },
+          payload: {
+            updates: [{ name, value: newValue }],
+          },
+        });
+
+        assert.equal(res.statusCode, 400, `${name} should be rejected`);
+        assert.match(JSON.parse(res.payload).error, /not editable/i);
+        assert.equal(readFileSync(envFilePath, 'utf8'), beforeFile, `${name} must not rewrite .env`);
+        assert.equal(process.env[name], oldValue, `${name} must not mutate process.env`);
+      }
     } finally {
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });

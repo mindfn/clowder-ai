@@ -321,7 +321,7 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '日志根目录（issue #671：三根目录模型；Pino 滚动日志直接写入此路径，不再加子目录）',
     category: 'storage',
     sensitive: false,
-    writeRequiresOwner: true,
+    runtimeEditable: false,
     restartRequired: true,
     exampleRecommended: true,
   },
@@ -499,7 +499,7 @@ export const ENV_VARS: EnvDefinition[] = [
       '持久数据根目录（issue #671）：设置后 evidence.sqlite/world.sqlite/transcripts/audit-logs/cli-raw-archive/uploads 全部移到该目录下对应子路径。未设置时各路径沿用旧默认。',
     category: 'storage',
     sensitive: false,
-    writeRequiresOwner: true,
+    runtimeEditable: false,
     restartRequired: true,
   },
   {
@@ -509,7 +509,7 @@ export const ENV_VARS: EnvDefinition[] = [
       '可重建缓存根目录（issue #671）：设置后 tts/connector-media 移到该目录下对应子路径。未设置时各路径沿用旧默认。',
     category: 'storage',
     sensitive: false,
-    writeRequiresOwner: true,
+    runtimeEditable: false,
     restartRequired: true,
   },
   {
@@ -1801,7 +1801,7 @@ export function isSensitiveEditableEnvVar(def: EnvDefinition): boolean {
 
 /** True if runtime writes require the privileged owner-gated env route. */
 export function isOwnerGatedEditableEnvVar(def: EnvDefinition): boolean {
-  return isSensitiveEditableEnvVar(def) || def.writeRequiresOwner === true;
+  return isEditableEnvVar(def) && (isSensitiveEditableEnvVar(def) || def.writeRequiresOwner === true);
 }
 
 export function isEditableEnvVarName(name: string): boolean {
