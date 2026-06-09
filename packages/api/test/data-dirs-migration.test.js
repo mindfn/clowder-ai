@@ -129,6 +129,25 @@ describe('data-dirs-migration', () => {
       assert.equal(evidence.eligible, false);
       assert.equal(evidence.skipReason, 'target-not-empty');
     });
+
+    test('treats populated SQLite target sidecars as target-not-empty', async () => {
+      const legacyDb = join(workRoot, 'evidence.sqlite');
+      await writeFile(legacyDb, 'legacy main', 'utf-8');
+      const dataRoot = join(workRoot, 'data');
+      await mkdir(dataRoot, { recursive: true });
+      await writeFile(join(dataRoot, 'evidence.sqlite-wal'), 'target wal', 'utf-8');
+
+      process.env.DATA_DIR = dataRoot;
+      const plan = await buildMigrationPlan({
+        repoRoot: workRoot,
+        monorepoRoot: workRoot,
+        uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
+      });
+      const evidence = plan.items.find((i) => i.spec.key === 'evidenceDb');
+      assert.equal(evidence.eligible, false);
+      assert.equal(evidence.targetPopulated, true);
+      assert.equal(evidence.skipReason, 'target-not-empty');
+    });
   });
 
   describe('measurePath', () => {
@@ -319,6 +338,31 @@ describe('data-dirs-migration', () => {
         io: plentyOfSpaceIO(),
       });
       assert.equal(runtime.restartRecommended, true);
+    });
+
+    test('blockFileMoves refuses runtime SQLite moves without touching legacy data', async () => {
+      const legacyDb = join(workRoot, 'evidence.sqlite');
+      await writeFile(legacyDb, 'legacy evidence', 'utf-8');
+      process.env.DATA_DIR = join(workRoot, 'newdata');
+
+      const result = await runDataDirsMigration({
+        repoRoot: workRoot,
+        monorepoRoot: workRoot,
+        uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
+        trigger: 'runtime',
+        blockFileMoves: true,
+        io: plentyOfSpaceIO(),
+      });
+
+      assert.equal(result.attempted, false);
+      assert.equal(result.allSucceeded, false);
+      assert.equal(result.restartRecommended, true);
+      assert.match(result.abortedReason, /restart/i);
+      const evidence = result.items.find((i) => i.key === 'evidenceDb');
+      assert.equal(evidence.status, 'skipped');
+      assert.equal(evidence.reason, 'runtime-file-migration-requires-restart');
+      assert.equal(existsSync(legacyDb), true);
+      assert.equal(existsSync(join(workRoot, 'newdata', 'evidence.sqlite')), false);
     });
 
     test('shouldAbortStartupOnMigration: no work → no abort', () => {

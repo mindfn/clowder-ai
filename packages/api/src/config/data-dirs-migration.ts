@@ -16,9 +16,10 @@
  *      naturally because the resolver only returns the new path when
  *      the root env var is set.
  *   5. Restart-required: this engine runs *before* DB connections open,
- *      so startup migration never needs a restart. Runtime migration
- *      (post-startup, via Settings UI) sets `restartRecommended: true`
- *      in the result so the caller can surface a notice.
+ *      so startup migration never needs a restart. Runtime callers can set
+ *      `blockFileMoves` to require a restart before moving file-backed stores;
+ *      when a runtime-safe migration moves data, the result sets
+ *      `restartRecommended`.
  */
 
 import { createHash } from 'node:crypto';
@@ -157,6 +158,8 @@ export interface RunOptions extends PlanOptions {
   /** Trigger context — affects restart recommendation in the result. */
   readonly trigger: 'startup' | 'runtime';
   readonly io: MigrationIO;
+  /** Refuse to move SQLite/file-backed stores after startup. */
+  readonly blockFileMoves?: boolean;
   /** Skip the disk-space pre-flight (useful for tests). */
   readonly skipSpaceCheck?: boolean;
   /** Test-only: force the cross-device copy fallback path. */
@@ -245,7 +248,7 @@ export async function buildMigrationPlan(opts: PlanOptions): Promise<MigrationPl
     }
 
     const sourceExists = existsSync(spec.legacyPath);
-    const targetPopulated = existsSync(spec.rootBasedPath) && (await isPopulated(spec.rootBasedPath));
+    const targetPopulated = await isMigrationTargetPopulated(spec);
 
     if (!sourceExists) {
       items.push({
@@ -300,6 +303,19 @@ async function isPopulated(path: string): Promise<boolean> {
   }
 }
 
+async function isMigrationTargetPopulated(spec: DataPathSpec): Promise<boolean> {
+  const target = spec.rootBasedPath;
+  if (target === null) return false;
+  if (existsSync(target) && (await isPopulated(target))) return true;
+  if (!spec.isFile || !target.endsWith('.sqlite')) return false;
+
+  for (const suffix of SQLITE_SIDECARS) {
+    const sidecarTarget = `${target}${suffix}`;
+    if (existsSync(sidecarTarget) && (await isPopulated(sidecarTarget))) return true;
+  }
+  return false;
+}
+
 /**
  * Execute the migration plan with the configured safety guards.
  * On insufficient disk space, returns `attempted: false` and a reason — no
@@ -309,6 +325,23 @@ async function isPopulated(path: string): Promise<boolean> {
 export async function runDataDirsMigration(opts: RunOptions): Promise<MigrationResult> {
   const log = opts.io.logger;
   const plan = await buildMigrationPlan(opts);
+  const blockedFileMoves = opts.blockFileMoves ? plan.items.filter(isFileStoreMigrationCandidate) : [];
+  if (blockedFileMoves.length > 0) {
+    log?.warn(
+      {
+        trigger: opts.trigger,
+        blocked: blockedFileMoves.map((i) => ({ key: i.spec.key, from: i.spec.legacyPath, to: i.spec.rootBasedPath })),
+      },
+      '[#671] Data-dirs migration blocked until restart because file-backed stores may be open',
+    );
+    return {
+      attempted: false,
+      items: blockedFileMoves.map(planItemToRuntimeFileBlockedResult),
+      allSucceeded: false,
+      restartRecommended: true,
+      abortedReason: 'runtime-file-migration-requires-restart: restart before moving file-backed stores',
+    };
+  }
 
   if (!plan.hasWork) {
     const blocked = plan.items.filter((i) => i.skipReason === 'target-not-empty');
@@ -438,6 +471,26 @@ function planItemToSkippedResult(item: MigrationPlanItem): MigrationItemResult {
     bytes: 0,
     status: 'skipped',
     reason: item.skipReason,
+  };
+}
+
+function isFileStoreMigrationCandidate(item: MigrationPlanItem): boolean {
+  return (
+    item.spec.isFile &&
+    item.sourceExists &&
+    item.spec.rootBasedPath !== null &&
+    item.spec.legacyPath !== item.spec.rootBasedPath
+  );
+}
+
+function planItemToRuntimeFileBlockedResult(item: MigrationPlanItem): MigrationItemResult {
+  return {
+    key: item.spec.key,
+    fromPath: item.spec.legacyPath,
+    toPath: item.spec.rootBasedPath ?? item.spec.legacyPath,
+    bytes: 0,
+    status: 'skipped',
+    reason: 'runtime-file-migration-requires-restart',
   };
 }
 

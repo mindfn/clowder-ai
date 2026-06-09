@@ -4,7 +4,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
@@ -382,6 +382,57 @@ describe('POST /api/config/data-dirs/migrate owner gate', () => {
       assert.equal(JSON.parse(res.payload).attempted, false);
     } finally {
       await app.close();
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  it('refuses runtime migration when file-backed legacy stores would move after startup', async () => {
+    const { configRoutes } = await import('../dist/routes/config.js');
+    const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-runtime-migrate-'));
+    const originalCwd = process.cwd();
+    const previous = {
+      DEFAULT_OWNER_USER_ID: process.env.DEFAULT_OWNER_USER_ID,
+      DATA_DIR: process.env.DATA_DIR,
+      CACHE_DIR: process.env.CACHE_DIR,
+      LOG_DIR: process.env.LOG_DIR,
+    };
+    delete process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DATA_DIR = resolve(tempRoot, 'data');
+    delete process.env.CACHE_DIR;
+    delete process.env.LOG_DIR;
+    mkdirSync(resolve(tempRoot, 'docs', 'features'), { recursive: true });
+    writeFileSync(resolve(tempRoot, 'evidence.sqlite'), 'legacy evidence', 'utf8');
+
+    const app = Fastify({ logger: false });
+    try {
+      process.chdir(tempRoot);
+      await configRoutes(app);
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/config/data-dirs/migrate',
+        headers: { 'x-cat-cafe-user': 'local-user' },
+      });
+
+      assert.equal(res.statusCode, 409);
+      const body = JSON.parse(res.payload);
+      assert.equal(body.attempted, false);
+      assert.equal(body.allSucceeded, false);
+      assert.equal(body.restartRecommended, true);
+      assert.match(body.abortedReason, /restart/i);
+      const evidence = body.items.find((i) => i.key === 'evidenceDb');
+      assert.equal(evidence.status, 'skipped');
+      assert.equal(evidence.reason, 'runtime-file-migration-requires-restart');
+      assert.equal(existsSync(resolve(tempRoot, 'evidence.sqlite')), true);
+      assert.equal(existsSync(resolve(tempRoot, 'data', 'evidence.sqlite')), false);
+    } finally {
+      await app.close();
+      process.chdir(originalCwd);
+      rmSync(tempRoot, { recursive: true, force: true });
       for (const [key, value] of Object.entries(previous)) {
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;

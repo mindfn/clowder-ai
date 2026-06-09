@@ -382,12 +382,19 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
       : existsSync(resolve(cwd, '..', '..', 'docs', 'features'))
         ? resolve(cwd, '..', '..')
         : cwd;
-    const result = await runDataDirsMigration({
+    const migrationScope = {
       repoRoot: probeRepoRoot,
       monorepoRoot: findMonorepoRoot(cwd),
+    };
+    const result = await runDataDirsMigration({
+      ...migrationScope,
       trigger: 'runtime',
+      blockFileMoves: true,
       io: { diskFree: defaultDiskSpaceProbe, logger: request.log },
     });
+    if (result.abortedReason?.startsWith('runtime-file-migration-requires-restart')) {
+      reply.status(409);
+    }
     return {
       attempted: result.attempted,
       allSucceeded: result.allSucceeded,
