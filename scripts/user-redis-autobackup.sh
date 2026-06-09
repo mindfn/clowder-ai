@@ -14,12 +14,14 @@ LAUNCHD_SAFE_PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:
 export PATH="${LAUNCHD_SAFE_PATH}:${PATH:-}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/data-root-migration.sh"
 USER_REDIS_SCRIPT="${SCRIPT_DIR}/user-redis.sh"
 PORT="${USER_REDIS_PORT:-6401}"
 PROFILE="${USER_REDIS_PROFILE:-user}"
 # #671: When the global DATA_DIR root is set, derive backup dir from it
 if [ -n "${DATA_DIR-}" ] && [ -z "${USER_REDIS_BACKUP_DIR-}" ]; then
-  LOCAL_BACKUP_DIR="${DATA_DIR}/redis-backups"
+  _GLOBAL_DATA_ROOT="$(cat_cafe_absolute_path "$DATA_DIR")"
+  LOCAL_BACKUP_DIR="${_GLOBAL_DATA_ROOT}/redis-backups"
 else
   LOCAL_BACKUP_DIR="${USER_REDIS_BACKUP_DIR:-$HOME/.cat-cafe/redis-backups/${PROFILE}}"
 fi

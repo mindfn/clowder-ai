@@ -15,6 +15,7 @@ function createSandbox(envFile = '') {
   cpSync(resolve(ROOT, 'scripts/start-dev.sh'), join(dir, 'scripts', 'start-dev.sh'));
   cpSync(resolve(ROOT, 'scripts/lib/node-runtime-guard.sh'), join(dir, 'scripts/lib', 'node-runtime-guard.sh'));
   cpSync(resolve(ROOT, 'scripts/lib/redis-rdb-first.sh'), join(dir, 'scripts/lib', 'redis-rdb-first.sh'));
+  cpSync(resolve(ROOT, 'scripts/lib/data-root-migration.sh'), join(dir, 'scripts/lib', 'data-root-migration.sh'));
 
   const downloadOverrides = resolve(ROOT, 'scripts/download-source-overrides.sh');
   if (existsSync(downloadOverrides)) {

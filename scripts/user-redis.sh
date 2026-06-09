@@ -23,6 +23,7 @@ if [[ $# -gt 0 ]]; then
 fi
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/redis-rdb-first.sh"
+source "$SCRIPT_DIR/lib/data-root-migration.sh"
 
 PORT="${USER_REDIS_PORT:-6401}"
 PROFILE="${USER_REDIS_PROFILE:-user}"
@@ -32,13 +33,22 @@ PROFILE="${USER_REDIS_PROFILE:-user}"
 # NOTE: we capture the global DATA_DIR *before* overwriting it with the local
 # Redis data directory variable (unfortunately same name for historical reasons).
 _GLOBAL_DATA_ROOT="${DATA_DIR-}"
+if [ -n "$_GLOBAL_DATA_ROOT" ]; then
+  _GLOBAL_DATA_ROOT="$(cat_cafe_absolute_path "$_GLOBAL_DATA_ROOT")"
+fi
 if [ -n "$_GLOBAL_DATA_ROOT" ] && [ -z "${USER_REDIS_DATA_DIR-}" ]; then
-  DATA_DIR="${_GLOBAL_DATA_ROOT}/redis"
+  _legacy_user_redis_data="$HOME/.cat-cafe/redis-${PROFILE}"
+  _target_user_redis_data="${_GLOBAL_DATA_ROOT}/redis"
+  cat_cafe_migrate_data_root_dir_or_abort "user Redis data" "$_legacy_user_redis_data" "$_target_user_redis_data"
+  DATA_DIR="$_target_user_redis_data"
 else
   DATA_DIR="${USER_REDIS_DATA_DIR:-$HOME/.cat-cafe/redis-${PROFILE}}"
 fi
 if [ -n "$_GLOBAL_DATA_ROOT" ] && [ -z "${USER_REDIS_BACKUP_DIR-}" ]; then
-  BACKUP_DIR="${_GLOBAL_DATA_ROOT}/redis-backups"
+  _legacy_user_redis_backup="$HOME/.cat-cafe/redis-backups/${PROFILE}"
+  _target_user_redis_backup="${_GLOBAL_DATA_ROOT}/redis-backups"
+  cat_cafe_migrate_data_root_dir_or_abort "user Redis backups" "$_legacy_user_redis_backup" "$_target_user_redis_backup"
+  BACKUP_DIR="$_target_user_redis_backup"
 else
   BACKUP_DIR="${USER_REDIS_BACKUP_DIR:-$HOME/.cat-cafe/redis-backups/${PROFILE}}"
 fi

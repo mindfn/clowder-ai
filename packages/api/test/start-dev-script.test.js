@@ -485,6 +485,7 @@ function createTempProject() {
   cpSync(join(realScriptsDir, 'download-source-overrides.sh'), join(scriptsDir, 'download-source-overrides.sh'));
   cpSync(join(realScriptsDir, 'lib', 'node-runtime-guard.sh'), join(scriptsDir, 'lib', 'node-runtime-guard.sh'));
   cpSync(join(realScriptsDir, 'lib', 'redis-rdb-first.sh'), join(scriptsDir, 'lib', 'redis-rdb-first.sh'));
+  cpSync(join(realScriptsDir, 'lib', 'data-root-migration.sh'), join(scriptsDir, 'lib', 'data-root-migration.sh'));
   chmodSync(join(scriptsDir, 'start-dev.sh'), 0o755);
   return tmp;
 }
@@ -500,6 +501,10 @@ function copyStartDevClosure(tempRoot, scriptPath, tempScriptPath, tempOverrides
   cpSync(
     resolve(process.cwd(), '../../scripts/lib/redis-rdb-first.sh'),
     join(tempRoot, 'scripts', 'lib', 'redis-rdb-first.sh'),
+  );
+  cpSync(
+    resolve(process.cwd(), '../../scripts/lib/data-root-migration.sh'),
+    join(tempRoot, 'scripts', 'lib', 'data-root-migration.sh'),
   );
 }
 
@@ -915,6 +920,33 @@ test('DATA_DIR Redis migration refuses to hide legacy data behind a populated ta
     assert.equal(readFileSync(join(legacyDir, 'dump.rdb'), 'utf8'), 'legacy redis');
     assert.equal(readFileSync(join(targetDir, 'dump.rdb'), 'utf8'), 'target redis');
     assert.equal(existsSync(legacyDir), true);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('DATA_DIR is normalized before deriving Redis paths for API inheritance', () => {
+  const tmp = createTempProject();
+  try {
+    const scriptPath = join(tmp, 'scripts', 'start-dev.sh');
+    const expectedRoot = join(tmp, 'runtime-data');
+    const result = spawnSync(
+      'bash',
+      [
+        '-lc',
+        `set -e\nsource "${scriptPath}" --source-only >/dev/null 2>&1\ntrap - EXIT INT TERM\nprintf '%s|%s|%s' "$DATA_DIR" "$REDIS_DATA_DIR" "$REDIS_BACKUP_DIR"`,
+      ],
+      {
+        cwd: tmp,
+        encoding: 'utf8',
+        env: baseShellEnv({
+          DATA_DIR: './runtime-data',
+        }),
+      },
+    );
+
+    assert.equal(result.status, 0, `snippet failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    assert.equal(result.stdout.trim(), `${expectedRoot}|${expectedRoot}/redis|${expectedRoot}/redis-backups`);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
