@@ -92,14 +92,15 @@ export interface AbortDecision {
  * Returns `{ shouldAbort: true, reason, leftBehind[] }` when:
  *   - The migration aborted at the planning stage (e.g. disk space)
  *   - Any eligible item failed to move
+ *   - A legacy source still exists but its root target is already populated
  *
  * Returns `{ shouldAbort: false }` when:
  *   - No migration was attempted (no root set, or no pending work)
  *   - All eligible items moved successfully
  *
- * Skipped items (target-not-empty, no-source-data) do NOT trigger abort:
- *   their legacyPath is irrelevant (no source) or the operator already moved
- *   data manually.
+ * Skipped items with no source data do NOT trigger abort. Skipped
+ * target-not-empty items do trigger abort because the resolver now points at
+ * the populated target while legacy data still exists at the old path.
  */
 export function shouldAbortStartupOnMigration(result: MigrationResult): AbortDecision {
   if (result.abortedReason) {
@@ -117,6 +118,14 @@ export function shouldAbortStartupOnMigration(result: MigrationResult): AbortDec
       shouldAbort: true,
       reason: `${failed.length} data-dirs path(s) failed to migrate; legacy data still on disk while resolver now points at the new root`,
       leftBehind: failed.map((i) => ({ key: i.key, fromPath: i.fromPath, status: i.status })),
+    };
+  }
+  const blocked = result.items.filter((i) => i.status === 'skipped' && i.reason === 'target-not-empty');
+  if (blocked.length > 0) {
+    return {
+      shouldAbort: true,
+      reason: `${blocked.length} data-dirs path(s) blocked by target-not-empty; legacy data still on disk while resolver now points at the new root`,
+      leftBehind: blocked.map((i) => ({ key: i.key, fromPath: i.fromPath, status: i.status })),
     };
   }
   return { shouldAbort: false, leftBehind: [] };
@@ -302,6 +311,19 @@ export async function runDataDirsMigration(opts: RunOptions): Promise<MigrationR
   const plan = await buildMigrationPlan(opts);
 
   if (!plan.hasWork) {
+    const blocked = plan.items.filter((i) => i.skipReason === 'target-not-empty');
+    if (blocked.length > 0) {
+      log?.warn(
+        { trigger: opts.trigger, blocked: blocked.map((i) => ({ key: i.spec.key, from: i.spec.legacyPath })) },
+        '[#671] Data-dirs migration blocked by populated target',
+      );
+      return {
+        attempted: false,
+        items: blocked.map(planItemToSkippedResult),
+        allSucceeded: false,
+        restartRecommended: false,
+      };
+    }
     log?.info({ trigger: opts.trigger }, '[#671] No data-dirs migration pending');
     return {
       attempted: false,
@@ -350,14 +372,7 @@ export async function runDataDirsMigration(opts: RunOptions): Promise<MigrationR
   const results: MigrationItemResult[] = [];
   for (const item of plan.items) {
     if (!item.eligible) {
-      results.push({
-        key: item.spec.key,
-        fromPath: item.spec.legacyPath,
-        toPath: item.spec.rootBasedPath ?? item.spec.legacyPath,
-        bytes: 0,
-        status: 'skipped',
-        reason: item.skipReason,
-      });
+      results.push(planItemToSkippedResult(item));
       continue;
     }
     try {
@@ -402,6 +417,7 @@ export async function runDataDirsMigration(opts: RunOptions): Promise<MigrationR
   }
 
   const movedAny = results.some((r) => r.status === 'moved');
+  const blocked = results.some((r) => r.status === 'skipped' && r.reason === 'target-not-empty');
   const allEligibleSucceeded = eligible.every((item) =>
     results.find((r) => r.key === item.spec.key && r.status === 'moved'),
   );
@@ -409,8 +425,19 @@ export async function runDataDirsMigration(opts: RunOptions): Promise<MigrationR
   return {
     attempted: true,
     items: results,
-    allSucceeded: allEligibleSucceeded,
+    allSucceeded: allEligibleSucceeded && !blocked,
     restartRecommended: opts.trigger === 'runtime' && movedAny,
+  };
+}
+
+function planItemToSkippedResult(item: MigrationPlanItem): MigrationItemResult {
+  return {
+    key: item.spec.key,
+    fromPath: item.spec.legacyPath,
+    toPath: item.spec.rootBasedPath ?? item.spec.legacyPath,
+    bytes: 0,
+    status: 'skipped',
+    reason: item.skipReason,
   };
 }
 

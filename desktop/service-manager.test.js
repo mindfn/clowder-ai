@@ -73,6 +73,9 @@ test('migrates legacy desktop override data into DATA_DIR and CACHE_DIR', async 
   const userDataRoot = await mkdtemp(path.join(tmpdir(), 'service-manager-user-'));
   try {
     writeFileSync(path.join(userDataRoot, 'evidence.sqlite'), 'legacy-evidence', 'utf-8');
+    writeFileSync(path.join(userDataRoot, 'evidence.sqlite-wal'), 'legacy-wal', 'utf-8');
+    writeFileSync(path.join(userDataRoot, 'evidence.sqlite-shm'), 'legacy-shm', 'utf-8');
+    writeFileSync(path.join(userDataRoot, 'evidence.sqlite-journal'), 'legacy-journal', 'utf-8');
     mkdirSync(path.join(userDataRoot, 'uploads'), { recursive: true });
     writeFileSync(path.join(userDataRoot, 'uploads', 'image.png'), 'legacy-upload', 'utf-8');
     mkdirSync(path.join(userDataRoot, 'data', 'connector-media'), { recursive: true });
@@ -85,10 +88,16 @@ test('migrates legacy desktop override data into DATA_DIR and CACHE_DIR', async 
     manager._ensureUserDataDir(userDataRoot);
 
     assert.equal(existsSync(path.join(userDataRoot, 'data', 'evidence.sqlite')), true);
+    assert.equal(existsSync(path.join(userDataRoot, 'data', 'evidence.sqlite-wal')), true);
+    assert.equal(existsSync(path.join(userDataRoot, 'data', 'evidence.sqlite-shm')), true);
+    assert.equal(existsSync(path.join(userDataRoot, 'data', 'evidence.sqlite-journal')), true);
     assert.equal(existsSync(path.join(userDataRoot, 'data', 'uploads', 'image.png')), true);
     assert.equal(existsSync(path.join(userDataRoot, 'cache', 'connector-media', 'media.bin')), true);
     assert.equal(existsSync(path.join(userDataRoot, 'cache', 'tts', 'voice.wav')), true);
     assert.equal(existsSync(path.join(userDataRoot, 'evidence.sqlite')), false);
+    assert.equal(existsSync(path.join(userDataRoot, 'evidence.sqlite-wal')), false);
+    assert.equal(existsSync(path.join(userDataRoot, 'evidence.sqlite-shm')), false);
+    assert.equal(existsSync(path.join(userDataRoot, 'evidence.sqlite-journal')), false);
     assert.equal(existsSync(path.join(userDataRoot, 'uploads')), false);
     assert.equal(existsSync(path.join(userDataRoot, 'data', 'connector-media')), false);
     assert.equal(existsSync(path.join(userDataRoot, 'data', 'tts-cache')), false);

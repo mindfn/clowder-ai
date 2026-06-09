@@ -400,6 +400,36 @@ describe('data-dirs-migration', () => {
       assert.equal(decision.shouldAbort, false);
     });
 
+    test('startup surfaces target-not-empty blocked migrations when no item is eligible', async () => {
+      const legacyDb = join(workRoot, 'evidence.sqlite');
+      await writeFile(legacyDb, 'legacy evidence', 'utf-8');
+      const dataRoot = join(workRoot, 'newdata');
+      await mkdir(dataRoot, { recursive: true });
+      await writeFile(join(dataRoot, 'evidence.sqlite'), 'existing target', 'utf-8');
+      process.env.DATA_DIR = dataRoot;
+
+      const result = await runDataDirsMigration({
+        repoRoot: workRoot,
+        monorepoRoot: workRoot,
+        uploadsLegacyOverride: join(workRoot, 'mock-uploads-legacy'),
+        trigger: 'startup',
+        io: plentyOfSpaceIO(),
+      });
+
+      assert.equal(result.attempted, false);
+      assert.equal(result.allSucceeded, false);
+      const evidence = result.items.find((i) => i.key === 'evidenceDb');
+      assert.equal(evidence.status, 'skipped');
+      assert.equal(evidence.reason, 'target-not-empty');
+
+      const decision = shouldAbortStartupOnMigration(result);
+      assert.equal(decision.shouldAbort, true);
+      assert.ok(decision.reason.includes('target-not-empty'));
+      assert.equal(decision.leftBehind.length, 1);
+      assert.equal(decision.leftBehind[0].key, 'evidenceDb');
+      assert.equal(decision.leftBehind[0].status, 'skipped');
+    });
+
     test('cross-device dir migration fails on symlinks instead of silently dropping them', async () => {
       // Create a data directory containing a symlink
       const legacyAudit = join(workRoot, 'data', 'audit-logs');

@@ -439,35 +439,62 @@ class ServiceManager {
     }
   }
 
-  _moveLegacyDesktopPath(from, to) {
+  _moveLegacyDesktopPath(from, to, sidecarSuffixes = []) {
     if (!fs.existsSync(from)) return true;
-    if (path.resolve(from) === path.resolve(to)) return true;
-    if (this._isPathPopulated(to)) {
-      log(`Warning: legacy desktop data ${from} not moved; target already populated at ${to}`);
-      return false;
+    const moves = [{ from, to }];
+    for (const suffix of sidecarSuffixes) {
+      const sidecarFrom = `${from}${suffix}`;
+      if (fs.existsSync(sidecarFrom)) {
+        moves.push({ from: sidecarFrom, to: `${to}${suffix}` });
+      }
+    }
+    const pendingMoves = moves.filter((move) => path.resolve(move.from) !== path.resolve(move.to));
+    if (pendingMoves.length === 0) return true;
+    for (const move of pendingMoves) {
+      if (this._isPathPopulated(move.to)) {
+        log(`Warning: legacy desktop data ${move.from} not moved; target already populated at ${move.to}`);
+        return false;
+      }
     }
 
     try {
-      if (fs.existsSync(to)) {
-        fs.rmSync(to, { recursive: true, force: true });
+      for (const move of pendingMoves) {
+        if (fs.existsSync(move.to)) {
+          fs.rmSync(move.to, { recursive: true, force: true });
+        }
+        fs.mkdirSync(path.dirname(move.to), { recursive: true });
       }
-      fs.mkdirSync(path.dirname(to), { recursive: true });
+      const renamed = [];
       try {
-        fs.renameSync(from, to);
+        for (const move of pendingMoves) {
+          fs.renameSync(move.from, move.to);
+          renamed.push(move);
+        }
       } catch (err) {
+        for (const move of renamed.reverse()) {
+          try {
+            fs.renameSync(move.to, move.from);
+          } catch {}
+        }
         if (err?.code !== 'EXDEV') throw err;
         try {
-          const st = fs.lstatSync(from);
-          if (st.isDirectory() && !st.isSymbolicLink()) {
-            fs.cpSync(from, to, { recursive: true, errorOnExist: true, force: false });
-          } else {
-            fs.copyFileSync(from, to);
+          for (const move of pendingMoves) {
+            const st = fs.lstatSync(move.from);
+            if (st.isDirectory() && !st.isSymbolicLink()) {
+              fs.cpSync(move.from, move.to, { recursive: true, errorOnExist: true, force: false });
+            } else {
+              fs.copyFileSync(move.from, move.to);
+            }
           }
         } catch (copyErr) {
-          fs.rmSync(to, { recursive: true, force: true });
+          for (const move of pendingMoves) {
+            fs.rmSync(move.to, { recursive: true, force: true });
+          }
           throw copyErr;
         }
-        fs.rmSync(from, { recursive: true, force: true });
+        for (const move of pendingMoves) {
+          fs.rmSync(move.from, { recursive: true, force: true });
+        }
       }
       log(`Legacy desktop data migrated: ${from} -> ${to}`);
       return true;
@@ -481,14 +508,14 @@ class ServiceManager {
     const dataDir = path.join(baseDir, 'data');
     const cacheDir = path.join(baseDir, 'cache');
     const moves = [
-      [path.join(baseDir, 'evidence.sqlite'), path.join(dataDir, 'evidence.sqlite')],
+      [path.join(baseDir, 'evidence.sqlite'), path.join(dataDir, 'evidence.sqlite'), ['-wal', '-shm', '-journal']],
       [path.join(baseDir, 'uploads'), path.join(dataDir, 'uploads')],
       [path.join(dataDir, 'connector-media'), path.join(cacheDir, 'connector-media')],
       [path.join(dataDir, 'tts-cache'), path.join(cacheDir, 'tts')],
     ];
     const failed = [];
-    for (const [from, to] of moves) {
-      if (!this._moveLegacyDesktopPath(from, to)) failed.push(`${from} -> ${to}`);
+    for (const [from, to, sidecarSuffixes] of moves) {
+      if (!this._moveLegacyDesktopPath(from, to, sidecarSuffixes)) failed.push(`${from} -> ${to}`);
     }
     if (failed.length > 0) {
       throw new Error(
