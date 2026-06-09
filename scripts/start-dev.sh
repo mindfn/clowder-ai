@@ -480,7 +480,51 @@ if [ -n "${DATA_DIR-}" ]; then
     # (50+ files that do `resolve(projectRoot, '.cat-cafe', file)`) keep working.
     _legacy_catcafe="${PROJECT_DIR}/.cat-cafe"
     _target_catcafe="${DATA_DIR}/cat-cafe"
-    if [ -d "$_legacy_catcafe" ] && [ ! -L "$_legacy_catcafe" ]; then
+    if [ -L "$_legacy_catcafe" ]; then
+        _linked_catcafe="$(readlink "$_legacy_catcafe")"
+        case "$_linked_catcafe" in
+            /*) ;;
+            *) _linked_catcafe="$(cat_cafe_absolute_path "$(dirname "$_legacy_catcafe")/$_linked_catcafe")" ;;
+        esac
+        if [ "$_linked_catcafe" != "$_target_catcafe" ]; then
+            if [ -d "$_linked_catcafe" ]; then
+                if cat_cafe_dir_has_entries "$_linked_catcafe"; then
+                    cat_cafe_migrate_data_root_dir_or_abort ".cat-cafe state" "$_linked_catcafe" "$_target_catcafe"
+                elif [ -d "$_target_catcafe" ]; then
+                    rmdir "$_linked_catcafe" 2>/dev/null || {
+                        echo "  [#671] Refusing to replace stale empty .cat-cafe target because it could not be removed: $_linked_catcafe" >&2
+                        exit 1
+                    }
+                elif [ ! -e "$_target_catcafe" ]; then
+                    echo -e "${YELLOW}  [#671] Migrating .cat-cafe state: $_linked_catcafe → $_target_catcafe${NC}"
+                    mkdir -p "$(dirname "$_target_catcafe")"
+                    mv "$_linked_catcafe" "$_target_catcafe" 2>/dev/null || {
+                        cp -a "$_linked_catcafe" "$_target_catcafe" && rm -rf "$_linked_catcafe"
+                    } || {
+                        echo "  [#671] Failed to migrate .cat-cafe state: $_linked_catcafe -> $_target_catcafe" >&2
+                        exit 1
+                    }
+                else
+                    echo "  [#671] Refusing to switch .cat-cafe state to DATA_DIR because the target path is not a directory: $_target_catcafe" >&2
+                    exit 1
+                fi
+            elif [ -e "$_linked_catcafe" ]; then
+                echo "  [#671] Refusing to switch .cat-cafe state to DATA_DIR because the stale .cat-cafe symlink target is not a directory: $_linked_catcafe" >&2
+                exit 1
+            elif [ ! -d "$_target_catcafe" ]; then
+                if [ -e "$_target_catcafe" ]; then
+                    echo "  [#671] Refusing to switch .cat-cafe state to DATA_DIR because the target path is not a directory: $_target_catcafe" >&2
+                    exit 1
+                fi
+                mkdir -p "$_target_catcafe"
+            fi
+            rm "$_legacy_catcafe" 2>/dev/null || {
+                echo "  [#671] Refusing to replace stale .cat-cafe symlink: $_legacy_catcafe" >&2
+                exit 1
+            }
+            ln -s "$_target_catcafe" "$_legacy_catcafe"
+        fi
+    elif [ -d "$_legacy_catcafe" ]; then
         if cat_cafe_dir_has_entries "$_legacy_catcafe"; then
             cat_cafe_migrate_data_root_dir_or_abort ".cat-cafe state" "$_legacy_catcafe" "$_target_catcafe"
         elif [ -d "$_target_catcafe" ]; then

@@ -10,6 +10,7 @@ import {
   readFileSync,
   readlinkSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { createServer } from 'node:net';
@@ -997,6 +998,113 @@ test('DATA_DIR .cat-cafe migration replaces empty legacy dir with target symlink
     assert.equal(lstatSync(legacyDir).isSymbolicLink(), true);
     assert.equal(readlinkSync(legacyDir), targetDir);
     assert.equal(readFileSync(join(targetDir, 'accounts.json'), 'utf8'), '{"target":true}');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('DATA_DIR .cat-cafe migration moves stale symlink target to the new root', () => {
+  const tmp = createTempProject();
+  try {
+    const scriptPath = join(tmp, 'scripts', 'start-dev.sh');
+    const legacyDir = join(tmp, '.cat-cafe');
+    const oldTargetDir = join(tmp, 'old-data-root', 'cat-cafe');
+    const newDataRoot = join(tmp, 'new-data-root');
+    const newTargetDir = join(newDataRoot, 'cat-cafe');
+    mkdirSync(oldTargetDir, { recursive: true });
+    writeFileSync(join(oldTargetDir, 'accounts.json'), '{"old":true}', 'utf8');
+    symlinkSync(oldTargetDir, legacyDir);
+
+    const result = spawnSync('bash', ['-lc', `source "${scriptPath}" --source-only`], {
+      encoding: 'utf8',
+      env: baseShellEnv({
+        HOME: join(tmp, 'home'),
+        DATA_DIR: newDataRoot,
+        REDIS_DATA_DIR: join(tmp, 'redis-empty'),
+        REDIS_BACKUP_DIR: join(tmp, 'redis-backups-empty'),
+      }),
+    });
+
+    assert.equal(result.status, 0, `snippet failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    assert.equal(lstatSync(legacyDir).isSymbolicLink(), true);
+    assert.equal(readlinkSync(legacyDir), newTargetDir);
+    assert.equal(readFileSync(join(newTargetDir, 'accounts.json'), 'utf8'), '{"old":true}');
+    assert.equal(existsSync(oldTargetDir), false);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('DATA_DIR .cat-cafe migration refuses stale symlink split-brain when new target has data', () => {
+  const tmp = createTempProject();
+  try {
+    const scriptPath = join(tmp, 'scripts', 'start-dev.sh');
+    const legacyDir = join(tmp, '.cat-cafe');
+    const oldTargetDir = join(tmp, 'old-data-root', 'cat-cafe');
+    const newDataRoot = join(tmp, 'new-data-root');
+    const newTargetDir = join(newDataRoot, 'cat-cafe');
+    mkdirSync(oldTargetDir, { recursive: true });
+    mkdirSync(newTargetDir, { recursive: true });
+    writeFileSync(join(oldTargetDir, 'accounts.json'), '{"old":true}', 'utf8');
+    writeFileSync(join(newTargetDir, 'accounts.json'), '{"new":true}', 'utf8');
+    symlinkSync(oldTargetDir, legacyDir);
+
+    const result = spawnSync('bash', ['-lc', `source "${scriptPath}" --source-only`], {
+      encoding: 'utf8',
+      env: baseShellEnv({
+        HOME: join(tmp, 'home'),
+        DATA_DIR: newDataRoot,
+        REDIS_DATA_DIR: join(tmp, 'redis-empty'),
+        REDIS_BACKUP_DIR: join(tmp, 'redis-backups-empty'),
+      }),
+    });
+
+    assert.notEqual(
+      result.status,
+      0,
+      `source should fail closed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    );
+    assert.match(`${result.stdout}\n${result.stderr}`, /Refusing to switch \.cat-cafe state to DATA_DIR/);
+    assert.equal(readlinkSync(legacyDir), oldTargetDir);
+    assert.equal(readFileSync(join(oldTargetDir, 'accounts.json'), 'utf8'), '{"old":true}');
+    assert.equal(readFileSync(join(newTargetDir, 'accounts.json'), 'utf8'), '{"new":true}');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('DATA_DIR .cat-cafe migration refuses stale symlink to a non-directory target', () => {
+  const tmp = createTempProject();
+  try {
+    const scriptPath = join(tmp, 'scripts', 'start-dev.sh');
+    const legacyDir = join(tmp, '.cat-cafe');
+    const oldTargetRoot = join(tmp, 'old-data-root');
+    const oldTargetFile = join(oldTargetRoot, 'cat-cafe');
+    const newDataRoot = join(tmp, 'new-data-root');
+    const newTargetDir = join(newDataRoot, 'cat-cafe');
+    mkdirSync(oldTargetRoot, { recursive: true });
+    writeFileSync(oldTargetFile, 'not a directory', 'utf8');
+    symlinkSync(oldTargetFile, legacyDir);
+
+    const result = spawnSync('bash', ['-lc', `source "${scriptPath}" --source-only`], {
+      encoding: 'utf8',
+      env: baseShellEnv({
+        HOME: join(tmp, 'home'),
+        DATA_DIR: newDataRoot,
+        REDIS_DATA_DIR: join(tmp, 'redis-empty'),
+        REDIS_BACKUP_DIR: join(tmp, 'redis-backups-empty'),
+      }),
+    });
+
+    assert.notEqual(
+      result.status,
+      0,
+      `source should fail closed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    );
+    assert.match(`${result.stdout}\n${result.stderr}`, /stale \.cat-cafe symlink target is not a directory/);
+    assert.equal(readlinkSync(legacyDir), oldTargetFile);
+    assert.equal(readFileSync(oldTargetFile, 'utf8'), 'not a directory');
+    assert.equal(existsSync(newTargetDir), false);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

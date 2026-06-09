@@ -48,6 +48,15 @@ function restoreEnv() {
   }
 }
 
+function addSessionHook(app) {
+  app.addHook('preHandler', async (request) => {
+    const sessionUser = request.headers['x-test-session-user'];
+    if (typeof sessionUser === 'string' && sessionUser.trim()) {
+      request.sessionUserId = sessionUser.trim();
+    }
+  });
+}
+
 describe('env-registry', () => {
   afterEach(() => restoreEnv());
 
@@ -355,8 +364,84 @@ describe('GET /api/config/env-summary (route)', () => {
   });
 });
 
-describe('POST /api/config/data-dirs/migrate owner gate', () => {
-  it('allows direct-loopback migration in single-user mode when owner is not configured', async () => {
+describe('GET/POST /api/config/data-dirs owner gate', () => {
+  it('rejects data-dirs inspection with a spoofed owner header but no session auth', async () => {
+    const { configRoutes } = await import('../dist/routes/config.js');
+    const previous = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'owner-user';
+
+    const app = Fastify({ logger: false });
+    try {
+      await configRoutes(app);
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/config/data-dirs',
+        headers: { 'x-cat-cafe-user': 'owner-user' },
+      });
+
+      assert.equal(res.statusCode, 401);
+      assert.match(JSON.parse(res.payload).error, /session authentication/i);
+    } finally {
+      await app.close();
+      if (previous === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+      else process.env.DEFAULT_OWNER_USER_ID = previous;
+    }
+  });
+
+  it('allows data-dirs inspection for an authenticated owner session', async () => {
+    const { configRoutes } = await import('../dist/routes/config.js');
+    const previous = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'owner-user';
+
+    const app = Fastify({ logger: false });
+    addSessionHook(app);
+    try {
+      await configRoutes(app);
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/config/data-dirs',
+        headers: { 'x-cat-cafe-user': 'spoofed-user', 'x-test-session-user': 'owner-user' },
+      });
+
+      assert.equal(res.statusCode, 200);
+      assert.ok(Array.isArray(JSON.parse(res.payload).paths));
+    } finally {
+      await app.close();
+      if (previous === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+      else process.env.DEFAULT_OWNER_USER_ID = previous;
+    }
+  });
+
+  it('rejects data-dirs migration with a spoofed owner header but no session auth', async () => {
+    const { configRoutes } = await import('../dist/routes/config.js');
+    const previous = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'owner-user';
+
+    const app = Fastify({ logger: false });
+    try {
+      await configRoutes(app);
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/config/data-dirs/migrate',
+        headers: { 'x-cat-cafe-user': 'owner-user' },
+      });
+
+      assert.equal(res.statusCode, 401);
+      assert.match(JSON.parse(res.payload).error, /session authentication/i);
+    } finally {
+      await app.close();
+      if (previous === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+      else process.env.DEFAULT_OWNER_USER_ID = previous;
+    }
+  });
+
+  it('allows direct-loopback migration in single-user mode when owner is not configured and session is authenticated', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const previous = {
       DEFAULT_OWNER_USER_ID: process.env.DEFAULT_OWNER_USER_ID,
@@ -370,6 +455,7 @@ describe('POST /api/config/data-dirs/migrate owner gate', () => {
     delete process.env.LOG_DIR;
 
     const app = Fastify({ logger: false });
+    addSessionHook(app);
     try {
       await configRoutes(app);
       await app.ready();
@@ -377,7 +463,7 @@ describe('POST /api/config/data-dirs/migrate owner gate', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/config/data-dirs/migrate',
-        headers: { 'x-cat-cafe-user': 'local-user' },
+        headers: { 'x-test-session-user': 'local-user' },
       });
 
       assert.equal(res.statusCode, 200);
@@ -409,6 +495,7 @@ describe('POST /api/config/data-dirs/migrate owner gate', () => {
     writeFileSync(resolve(tempRoot, 'evidence.sqlite'), 'legacy evidence', 'utf8');
 
     const app = Fastify({ logger: false });
+    addSessionHook(app);
     try {
       process.chdir(tempRoot);
       await configRoutes(app);
@@ -417,7 +504,7 @@ describe('POST /api/config/data-dirs/migrate owner gate', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/config/data-dirs/migrate',
-        headers: { 'x-cat-cafe-user': 'local-user' },
+        headers: { 'x-test-session-user': 'local-user' },
       });
 
       assert.equal(res.statusCode, 409);
@@ -448,6 +535,7 @@ describe('POST /api/config/data-dirs/migrate owner gate', () => {
     delete process.env.DEFAULT_OWNER_USER_ID;
 
     const app = Fastify({ logger: false });
+    addSessionHook(app);
     try {
       await configRoutes(app);
       await app.ready();
@@ -455,7 +543,7 @@ describe('POST /api/config/data-dirs/migrate owner gate', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/api/config/data-dirs/migrate',
-        headers: { 'x-cat-cafe-user': 'remote-user' },
+        headers: { 'x-test-session-user': 'remote-user' },
         remoteAddress: '192.168.1.100',
       });
 

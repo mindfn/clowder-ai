@@ -90,6 +90,34 @@ interface ConfigRoutesOptions {
   projectRoot?: string;
 }
 
+type DataDirsOwnerAuthResult = { ok: true; operator: string } | { ok: false; status: number; error: string };
+
+function resolveSessionOperator(request: FastifyRequest): string | null {
+  const sessionUserId = (request as FastifyRequest & { sessionUserId?: string }).sessionUserId;
+  return typeof sessionUserId === 'string' && sessionUserId.trim() ? sessionUserId.trim() : null;
+}
+
+function requireDataDirsOwnerSession(request: FastifyRequest, label: string): DataDirsOwnerAuthResult {
+  const operator = resolveSessionOperator(request);
+  if (!operator) {
+    return { ok: false, status: 401, error: `${label} requires session authentication` };
+  }
+  if (!isDirectLoopbackRequest(request) && !process.env.DEFAULT_OWNER_USER_ID?.trim()) {
+    return {
+      ok: false,
+      status: 403,
+      error: `${label} from non-localhost requires DEFAULT_OWNER_USER_ID to be configured`,
+    };
+  }
+  const gateResult = resolveOwnerGate(operator, {
+    errorMessage: `${label} requires owner identity`,
+  });
+  if (gateResult) {
+    return { ok: false, status: gateResult.status, error: gateResult.error };
+  }
+  return { ok: true, operator };
+}
+
 function getSnapshotValue(snapshot: ConfigSnapshot, key: string): unknown {
   const path = configStore.getSnapshotPath(key);
   if (!path) return undefined;
@@ -295,25 +323,12 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
   });
 
   // #671: Inspect current data-dirs layout + pending migration work.
-  // Exposes absolute paths — owner-only + loopback to avoid leaking filesystem layout.
+  // Exposes absolute paths — require non-forgeable session owner identity.
   app.get('/api/config/data-dirs', async (request, reply) => {
-    const operator = resolveHeaderUserId(request);
-    if (!operator) {
-      reply.status(400);
-      return { error: 'Identity required (X-Cat-Cafe-User header)' };
-    }
-    // Same loopback guard as POST /data-dirs/migrate: remote/proxied
-    // requests without a configured owner are rejected.
-    if (!isDirectLoopbackRequest(request) && !process.env.DEFAULT_OWNER_USER_ID?.trim()) {
-      reply.status(403);
-      return { error: 'Data-dirs inspection from non-localhost requires DEFAULT_OWNER_USER_ID to be configured' };
-    }
-    const gateResult = resolveOwnerGate(operator, {
-      errorMessage: 'Data-dirs inspection requires owner identity',
-    });
-    if (gateResult) {
-      reply.status(gateResult.status);
-      return { error: gateResult.error };
+    const auth = requireDataDirsOwnerSession(request, 'Data-dirs inspection');
+    if (!auth.ok) {
+      reply.status(auth.status);
+      return { error: auth.error };
     }
     const cwd = process.cwd();
     const probeRepoRoot = existsSync(resolve(cwd, 'docs', 'features'))
@@ -358,23 +373,10 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
   // SQLite holds open handles to the legacy path until restart, so movedAny + isFile
   // surfaces a restart recommendation in the response.
   app.post('/api/config/data-dirs/migrate', async (request, reply) => {
-    const operator = resolveHeaderUserId(request);
-    if (!operator) {
-      reply.status(400);
-      return { error: 'Identity required (X-Cat-Cafe-User header)' };
-    }
-    // Data migration moves local runtime files. In single-user mode, allow
-    // direct loopback only; remote/proxied requests need an explicit owner.
-    if (!isDirectLoopbackRequest(request) && !process.env.DEFAULT_OWNER_USER_ID?.trim()) {
-      reply.status(403);
-      return { error: 'Data-dirs migration from non-localhost requires DEFAULT_OWNER_USER_ID to be configured' };
-    }
-    const gateResult = resolveOwnerGate(operator, {
-      errorMessage: 'Data-dirs migration requires owner identity',
-    });
-    if (gateResult) {
-      reply.status(gateResult.status);
-      return { error: gateResult.error };
+    const auth = requireDataDirsOwnerSession(request, 'Data-dirs migration');
+    if (!auth.ok) {
+      reply.status(auth.status);
+      return { error: auth.error };
     }
     const cwd = process.cwd();
     const probeRepoRoot = existsSync(resolve(cwd, 'docs', 'features'))
