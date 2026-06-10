@@ -56,26 +56,26 @@
   --accent-900: oklch(0.2 calc(var(--accent-chroma) * 0.5) var(--accent-hue));
 
   /* --- 4. Semantic 5色（固定，不派生）— L 选定保证 vs cafe-surface 对比度 ≥3:1（WCAG icon） --- */
-  --semantic-critical: oklch(0.57 0.12 38); /* unread + error + delete + critical 合并 */
-  --semantic-success: oklch(0.57 0.12 135);
-  --semantic-warning: oklch(0.57 0.12 46); /* 暖橙：对比度 ≥3:1 (icon) */
-  --semantic-info: oklch(0.57 0.12 209); /* 跨线程气泡蓝亦用 */
-  --semantic-spotlight: oklch(0.67 0.12 46); /* F155 guide + quest input glow 合并 */
-  --semantic-critical-surface: oklch(0.96 0.03 38);
+  --semantic-critical: oklch(0.55 0.12 35); /* unread + error + delete + critical 合并 */
+  --semantic-success: oklch(0.55 0.12 135);
+  --semantic-warning: oklch(0.55 0.12 45); /* 暖橙：对比度 ≥3:1 (icon) */
+  --semantic-info: oklch(0.55 0.12 210); /* 跨线程气泡蓝亦用 */
+  --semantic-spotlight: oklch(0.65 0.12 45); /* F155 guide + quest input glow 合并 */
+  --semantic-critical-surface: oklch(0.96 0.03 35);
   --semantic-success-surface: oklch(0.96 0.03 135);
-  --semantic-warning-surface: oklch(0.96 0.04 46);
-  --semantic-info-surface: oklch(0.96 0.03 209);
-  --semantic-spotlight-surface: oklch(0.96 0.04 46);
+  --semantic-warning-surface: oklch(0.96 0.04 45);
+  --semantic-info-surface: oklch(0.96 0.03 210);
+  --semantic-spotlight-surface: oklch(0.96 0.04 45);
 
   /* --- 5. Code Block（github-light 风格固定 palette） --- */
-  --code-bg: oklch(0.92 0.005 30);
-  --code-text: oklch(0.2 0.02 30);
+  --code-bg: oklch(0.9 0.005 30);
+  --code-text: oklch(0.19 0.02 30);
   --code-keyword: oklch(0.5 0.18 320);
   --code-string: oklch(0.5 0.15 140);
   --code-comment: oklch(0.55 0.05 100);
   --code-function: oklch(0.5 0.18 250);
   --code-number: oklch(0.5 0.18 30);
-  --code-border: oklch(0.92 0.005 30);
+  --code-border: oklch(0.9 0.005 30);
 
   /* --- 6. Chart palette 12色（OKLCH H 均匀分布 30°/60°） --- */
   --chart-1: oklch(0.55 0.15 30);

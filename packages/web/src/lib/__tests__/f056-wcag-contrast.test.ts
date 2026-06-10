@@ -10,7 +10,7 @@
  * Token 派生公式来源：
  *   theme-tokens.css        — primitives（neutral / accent / semantic / chart）
  *   cat-persona-tokens.css  — text 走中性 --cafe-text（neutral-900）；
- *                            surface light L=0.94 / dark L=0.25（per-cat 派生）
+ *                            surface light L=0.85 / dark L=0.25（per-cat 派生）
  */
 import { describe, expect, it } from 'vitest';
 import { type OklchColor, oklchContrast } from '../color-utils';
@@ -25,7 +25,7 @@ function catPersonaDerived(hue: number, chroma: number, mode: 'light' | 'dark') 
     return {
       bubble: oklch(0.62, chroma, hue),
       surface: oklch(0.85, chroma * 0.45, hue),
-      text: oklch(0.36, 0.03, 30),
+      text: oklch(0.25, 0.01, 30),
       ring: oklch(0.55, chroma * 1.1, hue),
     };
   }
@@ -53,7 +53,7 @@ describe('F056 Phase E AC-E10 — WCAG contrast (OKLCH derived tokens)', () => {
       it(`${slug} light: text vs surface`, () => {
         const { text, surface } = catPersonaDerived(hue, chroma, 'light');
         const ratio = oklchContrast(text, surface);
-        // --cat-msg-text (L=0.36) is intentionally softer than --cafe-text (L=0.2)
+        // --cat-msg-text (L=0.25) is intentionally softer than --cafe-text (L=0.2)
         // inside colored bubbles. INIT_LIGHT.msgText tuned for readability + aesthetics.
         // Threshold: enhanced AA (6.5) — all cats score 6.86–6.97. Full AAA (7.0)
         // would require L≤0.33 which conflicts with the tuned visual design.
