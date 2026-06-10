@@ -49,7 +49,7 @@ created: 2026-02-26
 | F153 | Observability Infrastructure — 运行时可观测基础设施 | in-progress | Community + Ragdoll | community [#388](https://github.com/zts212653/clowder-ai/issues/388) | [F153](features/F153-observability-infra.md) |
 | F156 | Security Hardening — 实时通道 + 本机信任边界加固（Phase E） | spec | Ragdoll | internal | [F156](features/F156-websocket-security-hardening.md) |
 | F159 | CatAgent Native Provider — Opt-in API Path | spec | 社区 + Ragdoll + Maine Coon | community [#434](https://github.com/zts212653/clowder-ai/issues/434) | [F159](features/F159-catagent-native-provider.md) |
-| F161 | ACP Carrier Generalization — 多载体复用同一 Runtime Policy | spec | TBD | internal | [F161](features/F161-acp-carrier-generalization.md) |
+| F161 | ACP Carrier Generalization — 通用 ACP 传输 + 模板环境变量映射 | in-progress | Ragdoll Opus-4.6 | internal | [F161](features/F161-acp-carrier-generalization.md) |
 | F162 | Enterprise Action Toolkit — 官方 CLI 驱动的企业工作流 | spec | Ragdoll | internal | [F162](features/F162-enterprise-action-toolkit.md) |
 | F165 | Guided Overfitting — 引导式过拟合 / 养猫路径 | spec | Ragdoll | internal | [F165](features/F165-guided-overfitting.md) |
 | F167 | A2A Chain Quality — 乒乓球熔断 + 虚空传球检测 + 角色护栏 | spec | Ragdoll | internal | [F167](features/F167-a2a-chain-quality.md) |
