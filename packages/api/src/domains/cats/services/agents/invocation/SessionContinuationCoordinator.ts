@@ -127,8 +127,9 @@ export class SessionContinuationCoordinator {
     }
 
     const continuationPrompt = formatContinuationPrompt(capsule);
+    const contentAlreadyCarriesThisContinuation = content.startsWith(continuationPrompt);
     return {
-      content: `${continuationPrompt}\n\n${content}`,
+      content: contentAlreadyCarriesThisContinuation ? content : `${continuationPrompt}\n\n${content}`,
       consumedContinuation: { capsule, threadId, catId, userId },
       sessionPolicy,
     };

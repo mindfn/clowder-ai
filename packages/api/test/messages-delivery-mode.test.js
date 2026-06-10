@@ -621,7 +621,7 @@ describe('POST /api/messages deliveryMode', () => {
     assert.equal(call.capsule.seal.sessionId, 'sess-1');
   });
 
-  it('immediate success does not persist produced continuation that was already queued', async () => {
+  it('immediate success persists produced continuation even when it was already queued', async () => {
     deps.invocationTracker.has.mock.mockImplementation(() => false);
     const capsule = completeCapsuleForSeal(
       buildCapsuleFromRouteState({
@@ -664,7 +664,7 @@ describe('POST /api/messages deliveryMode', () => {
     assert.equal(deps.sessionContinuationCoordinator.commitInvocationOutcome.mock.calls.length, 1);
     const commitInput = deps.sessionContinuationCoordinator.commitInvocationOutcome.mock.calls[0].arguments[0];
     assert.equal(commitInput.finalStatus, 'succeeded');
-    assert.deepEqual(Array.from(commitInput.producedCapsules ?? []), []);
+    assert.deepEqual(Array.from(commitInput.producedCapsules ?? []), [capsule]);
   });
 
   it('immediate success does not auto-enqueue produced continuation for reborn sessions', async () => {
