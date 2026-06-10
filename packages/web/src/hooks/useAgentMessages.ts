@@ -257,6 +257,10 @@ function sameInvocationForCat(candidate: string | undefined, expected: string, c
  */
 function sameBubbleStableKey(message: ChatMessage | undefined, expected: string, catId: string): boolean {
   if (!message) return false;
+  // #814: explicit post_message bubbles are standalone. They may retain stream
+  // identity after hydration for correlation, but must never be recovered,
+  // finalized, or replaced by stream stable-key paths.
+  if (message.extra?.isExplicitPost) return false;
   const turn = message.extra?.stream?.turnInvocationId;
   // F194 Phase Z3 R5 P1-1 (砚砚): turn-bearing bubble matches ONLY against turn (parent reserved
   // for liveness/cancel; same-parent multi-turn must NOT cross-match via parent fallback).

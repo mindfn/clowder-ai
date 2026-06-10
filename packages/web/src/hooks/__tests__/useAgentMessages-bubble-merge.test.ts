@@ -1107,6 +1107,41 @@ describe('useAgentMessages bubble merge prevention (Bug B)', () => {
     expect(patch?.extra).toEqual({ isExplicitPost: true, targetCats: ['codex'] });
   });
 
+  it('active stream recovery does not reuse hydrated explicit posts with stream identity', () => {
+    act(() => {
+      root.render(React.createElement(Harness));
+    });
+
+    storeState.messages.push({
+      id: 'msg-explicit-post',
+      type: 'assistant',
+      catId: 'opus',
+      content: 'standalone explicit post',
+      extra: {
+        isExplicitPost: true,
+        stream: { invocationId: 'inv-explicit-active' },
+      },
+      timestamp: Date.now() - 1000,
+    });
+
+    act(() => {
+      captured?.handleAgentMessage({
+        type: 'text',
+        catId: 'opus',
+        content: 'stream chunk',
+        invocationId: 'inv-explicit-active',
+      });
+    });
+
+    expect(mockSetStreaming).not.toHaveBeenCalledWith('msg-explicit-post', true);
+    const projectedMessages = mockReplaceMessages.mock.calls.at(-1)?.[0] as typeof storeState.messages | undefined;
+    const explicitPost = projectedMessages?.find((m) => m.id === 'msg-explicit-post');
+    const streamBubble = projectedMessages?.find((m) => m.origin === 'stream');
+    expect(explicitPost?.content).toBe('standalone explicit post');
+    expect(streamBubble?.id).not.toBe('msg-explicit-post');
+    expect(streamBubble?.content).toBe('stream chunk');
+  });
+
   it('callback with explicit invocationId does not reclaim an empty placeholder without rich/tool markers', () => {
     act(() => {
       root.render(React.createElement(Harness));
