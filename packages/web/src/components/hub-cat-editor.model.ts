@@ -10,9 +10,17 @@ import { UNKNOWN_CAT_COLOR } from '@/lib/color-defaults';
 import type { BuiltinAccountClient, ProfileItem } from './hub-accounts.types';
 import type { CatStrategyEntry, StrategyType } from './hub-strategy-types';
 
-/** clowder-ai#340 P5: Renamed from ClientValue → ClientId (aligned with shared type). */
-export type ClientId = 'anthropic' | 'openai' | 'google' | 'kimi' | 'dare' | 'opencode' | 'antigravity' | 'catagent';
-/** @deprecated clowder-ai#340: Use {@link ClientId} instead. */
+export type ClientId =
+  | 'anthropic'
+  | 'openai'
+  | 'google'
+  | 'kimi'
+  | 'dare'
+  | 'opencode'
+  | 'antigravity'
+  | 'catagent'
+  | 'acp';
+/** @deprecated Use ClientId instead. */
 export type ClientValue = ClientId;
 export type SessionChainValue = 'true' | 'false';
 export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access';
@@ -40,8 +48,12 @@ export interface HubCatEditorFormState {
   commandArgs: string;
   cliConfigArgs: string[];
   cliEffort: CliEffortValue | '';
-  /** clowder-ai#340 P5: Model provider name (renamed from ocProviderName). */
   provider: string;
+  acpEnabled: boolean;
+  acpCommand: string;
+  acpStartupArgs: string;
+  acpMaxLiveProcesses: string;
+  acpIdleTtlMinutes: string;
   sessionChain: SessionChainValue;
   maxPromptTokens: string;
   maxContextTokens: string;
@@ -96,6 +108,7 @@ export const CLIENT_OPTIONS: Array<{ value: ClientId; label: string }> = [
   { value: 'opencode', label: 'OpenCode' },
   { value: 'antigravity', label: 'Antigravity' },
   { value: 'catagent', label: 'CatAgent' },
+  { value: 'acp', label: 'ACP Client' },
 ];
 
 export const SESSION_CHAIN_OPTIONS: Array<{ value: SessionChainValue; label: string }> = [
@@ -127,6 +140,15 @@ export const CODEX_AUTH_MODE_OPTIONS: Array<{ value: CodexAuthMode; label: strin
   { value: 'api_key', label: 'api_key' },
   { value: 'auto', label: 'auto' },
 ];
+
+import {
+  defaultAcpStartupArgsForClient as _defaultAcpArgs,
+  defaultAcpCommandForClient as _defaultAcpCmd,
+} from './hub-cat-editor.acp';
+
+export { ACP_TRANSPORT_OPTIONS, isAcpOnlyClient, showTransportSelector } from './hub-cat-editor.acp';
+export const defaultAcpCommandForClient = _defaultAcpCmd;
+export const defaultAcpStartupArgsForClient = _defaultAcpArgs;
 
 export const DEFAULT_ANTIGRAVITY_COMMAND_ARGS = '. --remote-debugging-port=9000';
 
@@ -295,12 +317,14 @@ function resolveBuiltinClientFamily(client: ClientId): BuiltinAccountClient | nu
   if (client === 'catagent') return 'anthropic';
   return null;
 }
-
 export function builtinAccountIdForClient(client: ClientId): string | null {
   return sharedBuiltinAccountIdForClient(client);
 }
 
 export function filterAccounts(client: ClientId, profiles: ProfileItem[]): ProfileItem[] {
+  if (client === 'acp') {
+    return profiles.filter((profile) => profile.authType === 'api_key');
+  }
   const effective = resolveBuiltinClientFamily(client);
   if (!effective || !isBuiltinClient(effective)) return [];
   const builtinProfiles = profiles.filter(
@@ -342,6 +366,7 @@ export function initialState(cat?: CatData | null, draft?: HubCatEditorDraft | n
   const createDraft = !cat ? draft : null;
   const persistedCliEffort = cat?.cli?.effort;
   const voiceConfig = cat?.voiceConfig;
+  const acpConfig = cat?.acp;
   const nameForCreate = createDraft?.templateName ?? '';
   const catId = cat?.id ?? (nameForCreate ? autoSlug(nameForCreate) : '');
   const mentionPatterns = cat?.mentionPatterns ?? [];
@@ -367,6 +392,17 @@ export function initialState(cat?: CatData | null, draft?: HubCatEditorDraft | n
     cliConfigArgs: [...(cat?.cliConfigArgs ?? [])],
     cliEffort: isCliEffortValue(persistedCliEffort) ? persistedCliEffort : '',
     provider: cat?.provider ?? '',
+    acpEnabled:
+      Boolean(acpConfig) || (cat?.clientId as ClientId | undefined) === 'acp' || createDraft?.clientId === 'acp',
+    acpCommand:
+      acpConfig?.command ??
+      defaultAcpCommandForClient((cat?.clientId as ClientId | undefined) ?? createDraft?.clientId ?? 'anthropic'),
+    acpStartupArgs:
+      acpConfig?.startupArgs?.join(' ') ??
+      defaultAcpStartupArgsForClient((cat?.clientId as ClientId | undefined) ?? createDraft?.clientId ?? 'anthropic'),
+    acpMaxLiveProcesses: acpConfig?.pool?.maxLiveProcesses !== undefined ? String(acpConfig.pool.maxLiveProcesses) : '',
+    acpIdleTtlMinutes:
+      acpConfig?.pool?.idleTtlMs !== undefined ? String(Math.round(acpConfig.pool.idleTtlMs / 60_000)) : '',
     sessionChain: String(cat?.sessionChain ?? true) as SessionChainValue,
     maxPromptTokens: cat?.contextBudget ? String(cat.contextBudget.maxPromptTokens) : '',
     maxContextTokens: cat?.contextBudget ? String(cat.contextBudget.maxContextTokens) : '',

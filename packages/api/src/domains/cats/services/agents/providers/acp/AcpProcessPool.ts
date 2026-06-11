@@ -12,6 +12,8 @@ import { createModuleLogger } from '../../../../../../infrastructure/logger.js';
 
 const log = createModuleLogger('acp-pool');
 
+export const DEFAULT_ACP_IDLE_TTL_MS = 30 * 60 * 1000;
+
 // ── Types ─────────────────────────────────────────────────────
 
 export interface PoolKey {
@@ -94,7 +96,7 @@ export class AcpProcessPool {
   ) {
     this.config = {
       maxLiveProcesses: config.maxLiveProcesses,
-      idleTtlMs: config.idleTtlMs ?? 5 * 60 * 1000,
+      idleTtlMs: config.idleTtlMs ?? DEFAULT_ACP_IDLE_TTL_MS,
       evictionPolicy: config.evictionPolicy ?? 'lru',
       healthCheckIntervalMs: config.healthCheckIntervalMs ?? 30_000,
     };

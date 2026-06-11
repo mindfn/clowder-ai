@@ -49,7 +49,7 @@ function createMockClient() {
 
 const defaultPoolConfig = {
   maxLiveProcesses: 3,
-  idleTtlMs: 5 * 60 * 1000,
+  idleTtlMs: 30 * 60 * 1000,
   evictionPolicy: /** @type {const} */ ('lru'),
   healthCheckIntervalMs: 30_000,
 };
@@ -73,6 +73,21 @@ describe('AcpProcessPool', () => {
   afterEach(async () => {
     if (pool) await pool.closeAll();
     clientIdCounter = 0;
+  });
+
+  describe('defaults', () => {
+    test('uses 30 minutes as the default idle TTL', async () => {
+      const { AcpProcessPool, DEFAULT_ACP_IDLE_TTL_MS } = await import(
+        '../../dist/domains/cats/services/agents/providers/acp/AcpProcessPool.js'
+      );
+      pool = new AcpProcessPool(
+        { maxLiveProcesses: 3, healthCheckIntervalMs: 999_999 },
+        defaultVariantConfig,
+        createMockClient,
+      );
+      assert.equal(DEFAULT_ACP_IDLE_TTL_MS, 30 * 60 * 1000);
+      assert.equal(pool.config.idleTtlMs, DEFAULT_ACP_IDLE_TTL_MS);
+    });
   });
 
   describe('acquire / release basics', () => {

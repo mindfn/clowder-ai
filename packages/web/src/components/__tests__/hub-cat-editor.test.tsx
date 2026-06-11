@@ -22,6 +22,8 @@ import {
   filterProfiles,
   getCliEffortOptionsForClient,
   type HubCatEditorFormState,
+  isAcpOnlyClient,
+  showTransportSelector,
   splitCommandArgs,
   validateModelFormatForClient,
 } from '@/components/hub-cat-editor.model';
@@ -37,6 +39,14 @@ const emptyVoiceFields = {
   voiceRefText: '',
   voiceInstruct: '',
   voiceTemperature: '',
+};
+
+const emptyAcpFields = {
+  acpEnabled: false,
+  acpCommand: '',
+  acpStartupArgs: '',
+  acpMaxLiveProcesses: '',
+  acpIdleTtlMinutes: '',
 };
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -136,6 +146,7 @@ describe('HubCatEditor', () => {
       maxContextTokens: '',
       maxMessages: '',
       maxContentLengthPerMsg: '',
+      ...emptyAcpFields,
       ...emptyVoiceFields,
     };
 
@@ -200,6 +211,7 @@ describe('HubCatEditor', () => {
       maxContextTokens: '',
       maxMessages: '',
       maxContentLengthPerMsg: '',
+      ...emptyAcpFields,
       ...emptyVoiceFields,
     };
     const existingCat = {
@@ -247,6 +259,7 @@ describe('HubCatEditor', () => {
       maxContextTokens: '',
       maxMessages: '',
       maxContentLengthPerMsg: '',
+      ...emptyAcpFields,
       ...emptyVoiceFields,
     };
     const existingCat = {
@@ -293,6 +306,7 @@ describe('HubCatEditor', () => {
       maxContextTokens: '',
       maxMessages: '',
       maxContentLengthPerMsg: '',
+      ...emptyAcpFields,
       ...emptyVoiceFields,
     };
 
@@ -333,6 +347,7 @@ describe('HubCatEditor', () => {
       maxContextTokens: '',
       maxMessages: '',
       maxContentLengthPerMsg: '',
+      ...emptyAcpFields,
       ...emptyVoiceFields,
     } as HubCatEditorFormState & { cliEffort: string };
 
@@ -355,6 +370,109 @@ describe('HubCatEditor', () => {
     expect(validateModelFormatForClient('opencode', 'gpt-5.4')).toMatch(/providerId\/modelId/i);
     expect(validateModelFormatForClient('opencode', 'openai/gpt-5.4')).toBeNull();
     expect(validateModelFormatForClient('openai', 'gpt-5.4')).toBeNull();
+  });
+
+  it('buildCatPayload includes ACP transport config when enabled for OpenCode', () => {
+    const form: HubCatEditorFormState = {
+      catId: 'opencode-acp',
+      name: 'OpenCode ACP',
+      displayName: 'OpenCode ACP',
+      variantLabel: '',
+      nickname: '',
+      avatar: '/avatars/opencode.png',
+      colorPrimary: '#c8a951',
+      colorSecondary: '#f5edda',
+      mentionPatterns: '@opencode-acp',
+      roleDescription: 'OpenCode over ACP',
+      personality: '',
+      teamStrengths: '',
+      caution: '',
+      strengths: '',
+      clientId: 'opencode',
+      accountRef: 'claude-key',
+      defaultModel: 'claude-opus-4-6',
+      commandArgs: '',
+      cliConfigArgs: [],
+      cliEffort: '',
+      provider: 'anthropic',
+      sessionChain: 'true',
+      maxPromptTokens: '',
+      maxContextTokens: '',
+      maxMessages: '',
+      maxContentLengthPerMsg: '',
+      ...emptyVoiceFields,
+      acpEnabled: true,
+      acpCommand: 'opencode',
+      acpStartupArgs: '--acp --mode agent',
+      acpMaxLiveProcesses: '4',
+      acpIdleTtlMinutes: '30',
+    };
+
+    const payload = buildCatPayload(form, null) as Record<string, unknown>;
+    expect(payload.acp).toEqual({
+      command: 'opencode',
+      startupArgs: ['--acp', '--mode', 'agent'],
+      pool: { maxLiveProcesses: 4, idleTtlMs: 1_800_000 },
+    });
+  });
+
+  it('showTransportSelector only for dual-transport clients', () => {
+    expect(showTransportSelector('opencode')).toBe(true);
+    expect(showTransportSelector('acp')).toBe(false);
+    expect(showTransportSelector('anthropic')).toBe(false);
+    expect(showTransportSelector('openai')).toBe(false);
+    expect(showTransportSelector('google')).toBe(false);
+    expect(showTransportSelector('antigravity')).toBe(false);
+  });
+
+  it('isAcpOnlyClient identifies generic ACP client', () => {
+    expect(isAcpOnlyClient('acp')).toBe(true);
+    expect(isAcpOnlyClient('opencode')).toBe(false);
+    expect(isAcpOnlyClient('anthropic')).toBe(false);
+  });
+
+  it('buildCatPayload forces ACP transport for generic acp client', () => {
+    const form: HubCatEditorFormState = {
+      catId: 'acp-deepseek',
+      name: 'DeepSeek ACP',
+      displayName: 'DeepSeek ACP',
+      variantLabel: '',
+      nickname: '',
+      avatar: '/avatars/default.png',
+      colorPrimary: '#0f172a',
+      colorSecondary: '#e2e8f0',
+      mentionPatterns: '@acp-deepseek',
+      roleDescription: 'ACP agent',
+      personality: '',
+      teamStrengths: '',
+      caution: '',
+      strengths: '',
+      clientId: 'acp',
+      accountRef: 'deepseek-key',
+      defaultModel: 'deepseek-chat',
+      commandArgs: '',
+      cliConfigArgs: [],
+      cliEffort: '',
+      provider: '',
+      sessionChain: 'true',
+      maxPromptTokens: '',
+      maxContextTokens: '',
+      maxMessages: '',
+      maxContentLengthPerMsg: '',
+      ...emptyVoiceFields,
+      acpEnabled: true,
+      acpCommand: 'deepseek-cli',
+      acpStartupArgs: '--acp',
+      acpMaxLiveProcesses: '',
+      acpIdleTtlMinutes: '',
+    };
+
+    const payload = buildCatPayload(form, null) as Record<string, unknown>;
+    expect(payload.clientId).toBe('acp');
+    expect(payload.acp).toEqual({
+      command: 'deepseek-cli',
+      startupArgs: ['--acp'],
+    });
   });
 
   it('renders normal member provider/model fields and saves to /api/cats', async () => {
@@ -813,6 +931,76 @@ describe('HubCatEditor', () => {
     const postCall = mockApiFetch.mock.calls.find(([path, init]) => path === '/api/cats' && init?.method === 'POST');
     expect(postCall).toBeUndefined();
     expect(document.body.textContent).toContain('Provider 名称');
+  });
+
+  it('lets OpenCode members opt into ACP transport from the auth section', async () => {
+    const onSaved = vi.fn(() => Promise.resolve());
+    mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/accounts') {
+        return Promise.resolve(
+          jsonResponse({
+            projectPath: '/tmp/project',
+            activeProfileId: 'claude-key',
+            providers: [
+              {
+                id: 'claude-key',
+                provider: 'claude',
+                displayName: 'Claude Key',
+                name: 'Claude Key',
+                authType: 'api_key',
+                mode: 'api_key',
+                models: ['claude-opus-4-6'],
+                hasApiKey: true,
+                createdAt: '2026-03-18T00:00:00.000Z',
+                updatedAt: '2026-03-18T00:00:00.000Z',
+              },
+            ],
+          }),
+        );
+      }
+      if (path === '/api/cats' && init?.method === 'POST') {
+        return Promise.resolve(jsonResponse({ cat: { id: 'opencode-acp' } }, 201));
+      }
+      if (path === '/api/cat-templates') {
+        return Promise.resolve(jsonResponse({ templates: [] }));
+      }
+      throw new Error(`Unexpected apiFetch path: ${path}`);
+    });
+
+    await act(async () => {
+      root.render(
+        React.createElement(HubCatEditor, {
+          open: true,
+          draft: { clientId: 'opencode', accountRef: 'claude-key', defaultModel: 'claude-opus-4-6' },
+          onClose: vi.fn(),
+          onSaved,
+        }),
+      );
+    });
+    await flushEffects();
+
+    expect(document.body.textContent).toContain('Transport');
+    await changeField(queryField(container, 'select[aria-label="Transport"]'), 'acp', 'change');
+    expect(document.body.textContent).toContain('ACP Command');
+
+    await changeField(queryField(container, 'input[aria-label="Name"]'), 'OpenCode ACP');
+    await changeField(queryField(container, 'input[aria-label="Description"]'), 'OpenCode over ACP');
+    await changeField(queryField(container, 'textarea[aria-label="Aliases"]'), '@opencode-acp');
+    await changeField(queryField(container, 'input[aria-label="OC Provider Name"]'), 'anthropic');
+
+    const saveButton = Array.from(document.body.querySelectorAll('button')).find(
+      (button) => button.textContent === '保存',
+    );
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    const postCall = mockApiFetch.mock.calls.find(([path, init]) => path === '/api/cats' && init?.method === 'POST');
+    expect(postCall).toBeTruthy();
+    const payload = JSON.parse(String(postCall?.[1]?.body));
+    expect(payload.acp).toEqual({ command: 'opencode', startupArgs: ['acp', '--pure'] });
+    expect(onSaved).toHaveBeenCalled();
   });
 
   it('resets defaultModel when switching Provider to prevent stale model carry-over', async () => {

@@ -2,6 +2,8 @@ import type { CatData } from '@/hooks/useCatData';
 import {
   type ClientId,
   DEFAULT_ANTIGRAVITY_COMMAND_ARGS,
+  defaultAcpCommandForClient,
+  defaultAcpStartupArgsForClient,
   type HubCatEditorFormState,
   normalizeMentionPattern,
   splitCommandArgs,
@@ -49,6 +51,43 @@ function buildVoiceConfig(form: HubCatEditorFormState) {
     ...(trimText(form.voiceInstruct) ? { instruct: trimText(form.voiceInstruct) } : {}),
     ...(Number.isFinite(temperature) && temperature >= 0 ? { temperature } : {}),
   };
+}
+
+function optionalPositiveInteger(raw: string, fieldName: string): number | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0 || String(parsed) !== trimmed) {
+    throw new Error(`${fieldName} 必须是正整数`);
+  }
+  return parsed;
+}
+
+function buildAcpTransportConfig(form: HubCatEditorFormState) {
+  const command = trimText(form.acpCommand) || defaultAcpCommandForClient(form.clientId);
+  if (!command) throw new Error('ACP Command 不能为空');
+  const startupArgs = splitCommandArgs(trimText(form.acpStartupArgs) || defaultAcpStartupArgsForClient(form.clientId));
+  if (startupArgs.length === 0) throw new Error('ACP Startup Args 不能为空');
+  const maxLiveProcesses = optionalPositiveInteger(form.acpMaxLiveProcesses, 'ACP Max Processes');
+  const idleTtlMinutes = optionalPositiveInteger(form.acpIdleTtlMinutes, 'ACP Idle TTL');
+  const pool =
+    maxLiveProcesses !== undefined || idleTtlMinutes !== undefined
+      ? {
+          ...(maxLiveProcesses !== undefined ? { maxLiveProcesses } : {}),
+          ...(idleTtlMinutes !== undefined ? { idleTtlMs: idleTtlMinutes * 60_000 } : {}),
+        }
+      : undefined;
+  return {
+    command,
+    startupArgs,
+    ...(pool ? { pool } : {}),
+  };
+}
+
+function buildAcpPatch(form: HubCatEditorFormState, cat?: CatData | null): Record<string, unknown> {
+  if (form.clientId === 'antigravity') return cat?.acp ? { acp: null } : {};
+  if (form.acpEnabled) return { acp: buildAcpTransportConfig(form) };
+  return cat?.acp ? { acp: null } : {};
 }
 
 export function buildContextBudget(form: HubCatEditorFormState) {
@@ -122,6 +161,7 @@ export function buildCatPayload(form: HubCatEditorFormState, cat?: CatData | nul
     sessionChain: form.sessionChain === 'true',
     ...contextBudgetPatch,
     ...voiceConfigPatch,
+    ...buildAcpPatch(form, cat),
   };
 
   if (form.clientId === 'antigravity') {

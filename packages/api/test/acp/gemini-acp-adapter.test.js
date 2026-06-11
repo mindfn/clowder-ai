@@ -1,5 +1,6 @@
 /**
- * GeminiAcpAdapter unit tests — Phase C: pool-backed AgentService via AcpClient.
+ * AcpAgentService unit tests — Phase C: pool-backed AgentService via AcpClient.
+ * F161: Renamed from GeminiAcpAdapter tests.
  */
 
 import assert from 'node:assert/strict';
@@ -7,7 +8,9 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, it, mock } from 'node:test';
 
-const { GeminiAcpAdapter } = await import('../../dist/domains/cats/services/agents/providers/acp/GeminiAcpAdapter.js');
+const { AcpAgentService: GeminiAcpAdapter } = await import(
+  '../../dist/domains/cats/services/agents/providers/acp/AcpAgentService.js'
+);
 const { AcpProcessPool } = await import('../../dist/domains/cats/services/agents/providers/acp/AcpProcessPool.js');
 const { AcpClient } = await import('../../dist/domains/cats/services/agents/providers/acp/AcpClient.js');
 
@@ -125,7 +128,14 @@ describe('GeminiAcpAdapter', () => {
   it('invoke yields session_init + text + done', async () => {
     const result = createPoolWithAutoRespond();
     pool = result.pool;
-    const adapter = new GeminiAcpAdapter({ catId: 'gemini', pool, poolKey: TEST_POOL_KEY, projectRoot: '/tmp' });
+    const adapter = new GeminiAcpAdapter({
+      catId: 'gemini',
+      pool,
+      poolKey: TEST_POOL_KEY,
+      projectRoot: '/tmp',
+      providerName: 'google',
+      modelName: 'gemini-acp',
+    });
 
     const messages = [];
     for await (const msg of adapter.invoke('hello')) {
@@ -173,7 +183,14 @@ describe('GeminiAcpAdapter', () => {
   it('sends empty mcpServers when not configured', async () => {
     const { pool: p, captured } = createPoolWithAutoRespond();
     pool = p;
-    const adapter = new GeminiAcpAdapter({ catId: 'gemini', pool, poolKey: TEST_POOL_KEY, projectRoot: '/tmp' });
+    const adapter = new GeminiAcpAdapter({
+      catId: 'gemini',
+      pool,
+      poolKey: TEST_POOL_KEY,
+      projectRoot: '/tmp',
+      providerName: 'google',
+      modelName: 'gemini-acp',
+    });
 
     for await (const msg of adapter.invoke('hello')) {
       /* drain */
@@ -187,7 +204,14 @@ describe('GeminiAcpAdapter', () => {
   it('reuses pool client across invocations (warm hit)', async () => {
     const { pool: p, captured } = createPoolWithAutoRespond();
     pool = p;
-    const adapter = new GeminiAcpAdapter({ catId: 'gemini', pool, poolKey: TEST_POOL_KEY, projectRoot: '/tmp' });
+    const adapter = new GeminiAcpAdapter({
+      catId: 'gemini',
+      pool,
+      poolKey: TEST_POOL_KEY,
+      projectRoot: '/tmp',
+      providerName: 'google',
+      modelName: 'gemini-acp',
+    });
 
     const msgs1 = [];
     for await (const msg of adapter.invoke('first')) msgs1.push(msg);
@@ -233,7 +257,14 @@ describe('GeminiAcpAdapter', () => {
       return child;
     });
 
-    const adapter = new GeminiAcpAdapter({ catId: 'gemini', pool, poolKey: TEST_POOL_KEY, projectRoot: '/tmp' });
+    const adapter = new GeminiAcpAdapter({
+      catId: 'gemini',
+      pool,
+      poolKey: TEST_POOL_KEY,
+      projectRoot: '/tmp',
+      providerName: 'google',
+      modelName: 'gemini-acp',
+    });
 
     const messages = [];
     for await (const msg of adapter.invoke('hello')) {
@@ -257,7 +288,14 @@ describe('GeminiAcpAdapter', () => {
   it('prepends system prompt to prompt text', async () => {
     const { pool: p, captured } = createPoolWithAutoRespond();
     pool = p;
-    const adapter = new GeminiAcpAdapter({ catId: 'gemini', pool, poolKey: TEST_POOL_KEY, projectRoot: '/tmp' });
+    const adapter = new GeminiAcpAdapter({
+      catId: 'gemini',
+      pool,
+      poolKey: TEST_POOL_KEY,
+      projectRoot: '/tmp',
+      providerName: 'google',
+      modelName: 'gemini-acp',
+    });
 
     for await (const _ of adapter.invoke('user question', { systemPrompt: 'You are a cat.' })) {
     }
@@ -298,7 +336,14 @@ describe('GeminiAcpAdapter', () => {
     });
 
     pool = createPoolWithSpawn(() => child);
-    const adapter = new GeminiAcpAdapter({ catId: 'gemini', pool, poolKey: TEST_POOL_KEY, projectRoot: '/tmp' });
+    const adapter = new GeminiAcpAdapter({
+      catId: 'gemini',
+      pool,
+      poolKey: TEST_POOL_KEY,
+      projectRoot: '/tmp',
+      providerName: 'google',
+      modelName: 'gemini-acp',
+    });
 
     const messages = [];
     for await (const msg of adapter.invoke('hello')) {
@@ -401,7 +446,14 @@ describe('GeminiAcpAdapter integration', () => {
     });
 
     pool = createPoolWithSpawn(() => child);
-    const adapter = new GeminiAcpAdapter({ catId: 'gemini', pool, poolKey: TEST_POOL_KEY, projectRoot: '/tmp' });
+    const adapter = new GeminiAcpAdapter({
+      catId: 'gemini',
+      pool,
+      poolKey: TEST_POOL_KEY,
+      projectRoot: '/tmp',
+      providerName: 'google',
+      modelName: 'gemini-acp',
+    });
 
     const messages = [];
     for await (const msg of adapter.invoke('what is this?')) {
@@ -477,7 +529,14 @@ describe('GeminiAcpAdapter integration', () => {
     });
 
     pool = createPoolWithSpawn(() => child);
-    const adapter = new GeminiAcpAdapter({ catId: 'gemini', pool, poolKey: TEST_POOL_KEY, projectRoot: '/tmp' });
+    const adapter = new GeminiAcpAdapter({
+      catId: 'gemini',
+      pool,
+      poolKey: TEST_POOL_KEY,
+      projectRoot: '/tmp',
+      providerName: 'google',
+      modelName: 'gemini-acp',
+    });
 
     const ac1 = new AbortController();
     const msgs1 = [];
@@ -551,7 +610,14 @@ describe('GeminiAcpAdapter integration', () => {
 
     const ac = new AbortController();
     pool = createPoolWithSpawn(() => child);
-    const adapter = new GeminiAcpAdapter({ catId: 'gemini', pool, poolKey: TEST_POOL_KEY, projectRoot: '/tmp' });
+    const adapter = new GeminiAcpAdapter({
+      catId: 'gemini',
+      pool,
+      poolKey: TEST_POOL_KEY,
+      projectRoot: '/tmp',
+      providerName: 'google',
+      modelName: 'gemini-acp',
+    });
 
     // Abort 10ms in — during the 30ms newSession delay
     setTimeout(() => ac.abort(), 10);
@@ -604,7 +670,14 @@ describe('GeminiAcpAdapter integration', () => {
 
     const ac = new AbortController();
     pool = createPoolWithSpawn(() => child);
-    const adapter = new GeminiAcpAdapter({ catId: 'gemini', pool, poolKey: TEST_POOL_KEY, projectRoot: '/tmp' });
+    const adapter = new GeminiAcpAdapter({
+      catId: 'gemini',
+      pool,
+      poolKey: TEST_POOL_KEY,
+      projectRoot: '/tmp',
+      providerName: 'google',
+      modelName: 'gemini-acp',
+    });
 
     const messages = [];
     for await (const msg of adapter.invoke('hello', { signal: ac.signal })) {
@@ -623,7 +696,14 @@ describe('GeminiAcpAdapter integration', () => {
   it('P2: pre-aborted signal short-circuits immediately', async () => {
     const result = createPoolWithAutoRespond();
     pool = result.pool;
-    const adapter = new GeminiAcpAdapter({ catId: 'gemini', pool, poolKey: TEST_POOL_KEY, projectRoot: '/tmp' });
+    const adapter = new GeminiAcpAdapter({
+      catId: 'gemini',
+      pool,
+      poolKey: TEST_POOL_KEY,
+      projectRoot: '/tmp',
+      providerName: 'google',
+      modelName: 'gemini-acp',
+    });
 
     const ac = new AbortController();
     ac.abort(); // Abort BEFORE invoke

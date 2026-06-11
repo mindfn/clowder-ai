@@ -184,6 +184,59 @@ describe('acp bootstrap cwd', () => {
     );
   });
 
+  it('REGRESSION: ACP static envVars merge must be outside authType guard (R5 P2)', () => {
+    const source = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf-8');
+    // The static envVars pass-through must NOT be gated on authType === 'api_key'.
+    // OAuth and static-only accounts also have envVars that must reach the subprocess.
+    // Pattern: the `acpAccount?.envVars` loop must appear AFTER the api_key block closes.
+    const apiKeyBlockEnd = source.indexOf("if (acpAccount?.authType === 'api_key')");
+    const staticEnvLoop = source.indexOf('if (acpAccount?.envVars)');
+    assert.ok(apiKeyBlockEnd > 0, 'index.ts must contain api_key auth block for ACP');
+    assert.ok(staticEnvLoop > 0, 'index.ts must contain static envVars pass-through for ACP');
+    assert.ok(
+      staticEnvLoop > apiKeyBlockEnd,
+      'REGRESSION: static envVars merge must be outside authType === api_key guard (F171 CLI-path parity)',
+    );
+  });
+
+  it('REGRESSION: opencode ACP must auto-inject --pure to prevent session/new hang', () => {
+    const source = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf-8');
+    // OpenCode's --pure flag skips loading external plugin/MCP config. Without it,
+    // OpenCode loads its local MCP config on session/new which may have broken paths
+    // and causes the session to hang indefinitely. Cat Cafe injects MCP servers via
+    // the ACP protocol, so OpenCode's own MCP loading is redundant and harmful.
+    // Auto-inject ONLY for clientId 'opencode' — generic ACP clients (clientId 'acp')
+    // with command 'opencode' are manually configured, user controls all args.
+    assert.ok(
+      source.includes("config.clientId === 'opencode'") && source.includes("'--pure'"),
+      'REGRESSION: index.ts must auto-inject --pure for opencode-client ACP (not generic acp client)',
+    );
+  });
+
+  it('REGRESSION: AcpClient must filter MCP servers by client mcpCapabilities', () => {
+    const source = readFileSync(
+      new URL('../../src/domains/cats/services/agents/providers/acp/AcpClient.ts', import.meta.url),
+      'utf-8',
+    );
+    // Sending stdio MCP servers to clients that only support http/sse (e.g. OpenCode)
+    // causes session/new to hang. AcpClient.filterMcpByCapabilities() must exist and
+    // be called in both newSession() and loadSession().
+    assert.ok(
+      source.includes('filterMcpByCapabilities'),
+      'REGRESSION: AcpClient must implement filterMcpByCapabilities to prevent sending unsupported MCP transports',
+    );
+    // newSession uses it
+    assert.ok(
+      source.includes('filterMcpByCapabilities(mcpServers)'),
+      'REGRESSION: newSession() and loadSession() must filter MCP servers before sending to client',
+    );
+    // The filter checks mcpCapabilities from initResult
+    assert.ok(
+      source.includes('initResult?.agentCapabilities?.mcpCapabilities'),
+      'REGRESSION: filter must read mcpCapabilities from the ACP initialize result',
+    );
+  });
+
   it('guards helper against TOCTTOU existsSync + mkdirSync creation', () => {
     const source = readFileSync(
       new URL('../../src/domains/cats/services/agents/providers/acp/acp-bootstrap-cwd.ts', import.meta.url),
