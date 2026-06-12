@@ -70,8 +70,29 @@ function createPoolWithAutoRespond() {
       } else if (msg.method === 'session/new') {
         setImmediate(() =>
           agentStdout.write(
-            JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { sessionId: `sess-${Date.now()}` } }) + '\n',
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: msg.id,
+              result: {
+                sessionId: `sess-${Date.now()}`,
+                configOptions: [
+                  {
+                    id: 'model',
+                    type: 'select',
+                    currentValue: 'google/gemini-default',
+                    options: [
+                      { value: 'google/gemini-default', name: 'Gemini Default' },
+                      { value: 'anthropic/claude-opus-4-6', name: 'Claude Opus 4.6' },
+                    ],
+                  },
+                ],
+              },
+            }) + '\n',
           ),
+        );
+      } else if (msg.method === 'session/set_config_option') {
+        setImmediate(() =>
+          agentStdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { configOptions: [] } }) + '\n'),
         );
       } else if (msg.method === 'session/prompt') {
         setImmediate(() => {
@@ -199,6 +220,213 @@ describe('GeminiAcpAdapter', () => {
     const sessionNew = captured.find((m) => m.method === 'session/new');
     assert.ok(sessionNew, 'Expected session/new in captured messages');
     assert.deepStrictEqual(sessionNew.params.mcpServers, []);
+  });
+
+  it('sets configured ACP session model after newSession and before prompt', async () => {
+    const { pool: p, captured } = createPoolWithAutoRespond();
+    pool = p;
+    const adapter = new GeminiAcpAdapter({
+      catId: 'gemini',
+      pool,
+      poolKey: TEST_POOL_KEY,
+      projectRoot: '/tmp',
+      providerName: 'opencode',
+      modelName: 'anthropic/claude-opus-4-6',
+      sessionModel: 'anthropic/claude-opus-4-6',
+    });
+
+    for await (const _ of adapter.invoke('hello')) {
+      /* drain */
+    }
+
+    const sessionNewIndex = captured.findIndex((m) => m.method === 'session/new');
+    const setModelIndex = captured.findIndex((m) => m.method === 'session/set_config_option');
+    const promptIndex = captured.findIndex((m) => m.method === 'session/prompt');
+    assert.ok(sessionNewIndex >= 0, 'Expected session/new');
+    assert.ok(setModelIndex >= 0, 'Expected session/set_config_option');
+    assert.ok(promptIndex >= 0, 'Expected session/prompt');
+    assert.ok(sessionNewIndex < setModelIndex, 'set_config_option must happen after session/new');
+    assert.ok(setModelIndex < promptIndex, 'set_config_option must happen before session/prompt');
+    assert.equal(captured[setModelIndex].params.configId, 'model');
+    assert.equal(captured[setModelIndex].params.value, 'anthropic/claude-opus-4-6');
+  });
+
+  it('does not set ACP session model when the agent model option does not allow it', async () => {
+    const { child, clientStdin, agentStdout, ee } = createMockChild();
+    const captured = [];
+
+    clientStdin.on('data', (chunk) => {
+      for (const line of chunk.toString().trim().split('\n')) {
+        const msg = JSON.parse(line);
+        captured.push(msg);
+        if (msg.method === 'initialize') {
+          setImmediate(() =>
+            agentStdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: INIT_RESULT }) + '\n'),
+          );
+        } else if (msg.method === 'session/new') {
+          setImmediate(() =>
+            agentStdout.write(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                id: msg.id,
+                result: {
+                  sessionId: 'sess-model-mismatch',
+                  configOptions: [
+                    {
+                      id: 'model',
+                      type: 'select',
+                      currentValue: 'anthropic/claude-opus-4-6',
+                      options: [{ value: 'anthropic/claude-opus-4-6', name: 'Claude Opus 4.6' }],
+                    },
+                  ],
+                },
+              }) + '\n',
+            ),
+          );
+        } else if (msg.method === 'session/prompt') {
+          setImmediate(() => {
+            agentStdout.write(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                method: 'session/update',
+                params: {
+                  sessionId: msg.params.sessionId,
+                  update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'ok' } },
+                },
+              }) + '\n',
+            );
+            agentStdout.write(
+              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }) + '\n',
+            );
+          });
+        }
+      }
+    });
+
+    pool = new AcpProcessPool(
+      { maxLiveProcesses: 5, idleTtlMs: 999_999, healthCheckIntervalMs: 999_999 },
+      {},
+      () => new AcpClient({ command: 'fake', args: [], cwd: '/tmp', spawnFn: () => child }),
+    );
+    const adapter = new GeminiAcpAdapter({
+      catId: 'opencode',
+      pool,
+      poolKey: TEST_POOL_KEY,
+      projectRoot: '/tmp',
+      providerName: 'opencode',
+      modelName: 'openai-compact/claude-opus-4-6',
+      sessionModel: 'openai-compact/claude-opus-4-6',
+    });
+
+    const messages = [];
+    for await (const msg of adapter.invoke('hello')) messages.push(msg);
+
+    assert.equal(
+      captured.some((m) => m.method === 'session/set_config_option'),
+      false,
+      'must not send unsupported model value to ACP agent',
+    );
+    assert.ok(
+      captured.some((m) => m.method === 'session/prompt'),
+      'should continue with the agent default model',
+    );
+    assert.ok(
+      messages.some((m) => m.type === 'done'),
+      'invoke should complete',
+    );
+  });
+
+  it('continues when optional ACP session model selection is rejected by the agent', async () => {
+    const { child, clientStdin, agentStdout, ee } = createMockChild();
+
+    clientStdin.on('data', (chunk) => {
+      for (const line of chunk.toString().trim().split('\n')) {
+        const msg = JSON.parse(line);
+        if (msg.method === 'initialize') {
+          setImmediate(() =>
+            agentStdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: INIT_RESULT }) + '\n'),
+          );
+        } else if (msg.method === 'session/new') {
+          setImmediate(() =>
+            agentStdout.write(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                id: msg.id,
+                result: {
+                  sessionId: 'sess-model-error',
+                  configOptions: [
+                    {
+                      id: 'model',
+                      type: 'select',
+                      currentValue: 'google/gemini-default',
+                      options: [{ value: 'anthropic/claude-opus-4-6', name: 'Claude Opus 4.6' }],
+                    },
+                  ],
+                },
+              }) + '\n',
+            ),
+          );
+        } else if (msg.method === 'session/set_config_option') {
+          setImmediate(() =>
+            agentStdout.write(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                id: msg.id,
+                error: { code: -32602, message: 'model not found' },
+              }) + '\n',
+            ),
+          );
+        } else if (msg.method === 'session/prompt') {
+          setImmediate(() => {
+            agentStdout.write(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                method: 'session/update',
+                params: {
+                  sessionId: msg.params.sessionId,
+                  update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'ok' } },
+                },
+              }) + '\n',
+            );
+            agentStdout.write(
+              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }) + '\n',
+            );
+          });
+        }
+      }
+    });
+
+    pool = new AcpProcessPool(
+      { maxLiveProcesses: 5, idleTtlMs: 999_999, healthCheckIntervalMs: 999_999 },
+      {},
+      () => new AcpClient({ command: 'fake', args: [], cwd: '/tmp', spawnFn: () => child }),
+    );
+    const adapter = new GeminiAcpAdapter({
+      catId: 'opencode',
+      pool,
+      poolKey: TEST_POOL_KEY,
+      projectRoot: '/tmp',
+      providerName: 'opencode',
+      modelName: 'anthropic/claude-opus-4-6',
+      sessionModel: 'anthropic/claude-opus-4-6',
+    });
+
+    const messages = [];
+    for await (const msg of adapter.invoke('hello')) messages.push(msg);
+
+    assert.ok(
+      messages.some((m) => m.type === 'text' && m.content === 'ok'),
+      'prompt should continue',
+    );
+    assert.equal(
+      messages.some((m) => m.type === 'error'),
+      false,
+      'model selection failure must not abort',
+    );
+    assert.ok(
+      messages.some((m) => m.type === 'done'),
+      'invoke should complete',
+    );
   });
 
   it('reuses pool client across invocations (warm hit)', async () => {

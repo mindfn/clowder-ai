@@ -62,6 +62,7 @@ import {
 import { AntigravityAgentService } from './domains/cats/services/agents/providers/antigravity/AntigravityAgentService.js';
 import { RedisAntigravitySupervisorStore } from './domains/cats/services/agents/providers/antigravity/AntigravitySupervisorStore.js';
 import { clearL0Cache, warmL0Cache } from './domains/cats/services/agents/providers/l0-compiler.js';
+import { prepareOpenCodeAcpSpawnConfig } from './domains/cats/services/agents/providers/opencode-acp-spawn-config.js';
 import { AgentRegistry } from './domains/cats/services/agents/registry/AgentRegistry.js';
 import { AuthorizationManager } from './domains/cats/services/auth/AuthorizationManager.js';
 import {
@@ -1088,7 +1089,11 @@ async function main(): Promise<void> {
         );
         const acpProjectRoot = findMonorepoRoot();
         const acpCommand = resolveAcpBootstrapCommand(acpProjectRoot, acpConfig.command);
-        const acpArgs = resolveAcpBootstrapArgs(acpProjectRoot, acpConfig.startupArgs);
+        const acpModel = config.defaultModel?.trim() || undefined;
+        const acpArgs = resolveAcpBootstrapArgs(acpProjectRoot, acpConfig.startupArgs, {
+          base_model: acpModel,
+          model: acpModel,
+        });
 
         // F161: Auto-inject --pure for OpenCode-as-client ACP (clientId === 'opencode').
         // OpenCode's --pure flag skips loading external plugin/MCP configs, which is
@@ -1126,7 +1131,7 @@ async function main(): Promise<void> {
               resolveEnvMap(
                 config.clientId,
                 config.provider,
-                { apiKey: acpAccount.apiKey, baseUrl: acpAccount.baseUrl },
+                { apiKey: acpAccount.apiKey, baseUrl: acpAccount.baseUrl, baseModel: acpModel },
                 userEnvTemplates,
               ),
             );
@@ -1145,6 +1150,29 @@ async function main(): Promise<void> {
           }
           if (Object.keys(resolved).length > 0) acpSpawnEnv = resolved;
         }
+        const openCodeAcpSpawnConfig = prepareOpenCodeAcpSpawnConfig({
+          projectRoot: acpProjectRoot,
+          profileId: id,
+          clientId: config.clientId,
+          command: acpCommand,
+          providerName: config.provider,
+          defaultModel: config.defaultModel,
+          account: acpAccount,
+        });
+        let acpSessionModel = acpModel;
+        if (openCodeAcpSpawnConfig) {
+          acpSessionModel = openCodeAcpSpawnConfig.runtimeConfigSummary.model ?? acpSessionModel;
+          acpSpawnEnv = { ...(acpSpawnEnv ?? {}), ...openCodeAcpSpawnConfig.env };
+          app.log.info(
+            {
+              catId,
+              profileId: id,
+              configPath: openCodeAcpSpawnConfig.configPath,
+              runtimeConfigSummary: openCodeAcpSpawnConfig.runtimeConfigSummary,
+            },
+            'ACP OpenCode: prepared spawn runtime config',
+          );
+        }
 
         // Shared pool per variant — reuse across cats with same variant.
         // Detect stale pools: if spawn-affecting inputs changed (env/command/args/cwd),
@@ -1154,6 +1182,7 @@ async function main(): Promise<void> {
           args: acpArgs,
           cwd: resolveAcpBootstrapCwd(acpProjectRoot, id),
           env: acpSpawnEnv ?? null,
+          openCodeRuntimeConfig: openCodeAcpSpawnConfig?.runtimeConfigSummary ?? null,
         });
         const existingPool = acpPoolRegistry.get(id);
         if (existingPool && existingPool._spawnSignature !== spawnSignature) {
@@ -1192,7 +1221,8 @@ async function main(): Promise<void> {
           projectRoot: acpProjectRoot,
           mcpServers,
           providerName: config.clientId === 'acp' ? 'acp' : config.clientId,
-          modelName: config.defaultModel ?? 'acp',
+          modelName: acpSessionModel ?? config.defaultModel ?? 'acp',
+          sessionModel: acpSessionModel,
         });
       } else
         switch (config.clientId) {

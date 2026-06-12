@@ -24,7 +24,7 @@ import type { AcpLease, AcpProcessPool, PoolKey } from './AcpProcessPool.js';
 import { createAcpSessionState, transformAcpEvent } from './acp-event-transformer.js';
 import { resolveUserProjectMcpServers } from './acp-mcp-resolver.js';
 import { callbackEnvDiagnostic, materializeSessionMcpServers } from './acp-session-env.js';
-import type { AcpMcpServer } from './types.js';
+import type { AcpMcpServer, AcpNewSessionResult } from './types.js';
 
 const log = createModuleLogger('acp-agent');
 
@@ -40,6 +40,8 @@ export interface AcpAgentServiceConfig {
   providerName?: string;
   /** Model name for metadata. Defaults to 'acp'. */
   modelName?: string;
+  /** ACP session model override sent via session/set_config_option when the agent exposes model selection. */
+  sessionModel?: string;
 }
 
 /** @deprecated Use AcpAgentServiceConfig. Kept for backward compat during transition. */
@@ -53,6 +55,7 @@ export class AcpAgentService implements AgentService {
   private readonly mcpServers: AcpMcpServer[];
   private readonly providerName: string;
   private readonly modelName: string;
+  private readonly sessionModel?: string;
 
   constructor(config: AcpAgentServiceConfig) {
     this.catId = config.catId;
@@ -61,7 +64,8 @@ export class AcpAgentService implements AgentService {
     this.projectRoot = config.projectRoot;
     this.mcpServers = config.mcpServers ?? [];
     this.providerName = config.providerName ?? 'acp';
-    this.modelName = config.modelName ?? 'acp';
+    this.modelName = config.modelName ?? config.sessionModel ?? 'acp';
+    this.sessionModel = config.sessionModel?.trim() || undefined;
   }
 
   async *invoke(prompt: string, options?: AgentServiceOptions): AsyncIterable<AgentMessage> {
@@ -108,7 +112,8 @@ export class AcpAgentService implements AgentService {
 
     // Pool returns AcpPoolClient; we know it's actually an AcpClient with full protocol methods
     const client = lease.client as unknown as {
-      newSession(cwd: string, mcpServers?: AcpMcpServer[]): Promise<{ sessionId: string }>;
+      newSession(cwd: string, mcpServers?: AcpMcpServer[]): Promise<AcpNewSessionResult>;
+      setSessionConfigOption(sessionId: string, configId: string, value: string): Promise<void>;
       cancelSession(sessionId: string): void;
       promptStream(sessionId: string, text: string): AsyncGenerator<import('./types.js').AcpSessionUpdate>;
       onCapacity(fn: (signal: AcpCapacitySignal) => void): void;
@@ -170,6 +175,21 @@ export class AcpAgentService implements AgentService {
       sessionId = session.sessionId;
       metadata.sessionId = sessionId;
       log.info({ ...ctx, sessionId }, 'ACP newSession completed');
+
+      const sessionModel = this.sessionModel;
+      const modelConfig = sessionModel ? resolveSessionModelConfigOption(session, sessionModel) : null;
+      if (modelConfig && sessionModel) {
+        try {
+          await client.setSessionConfigOption(sessionId, modelConfig.configId, sessionModel);
+          log.info({ ...ctx, sessionId, model: this.sessionModel }, 'ACP session model selected');
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          log.warn(
+            { ...ctx, sessionId, model: this.sessionModel, err: errorMsg },
+            'ACP session model selection failed — continuing with agent default',
+          );
+        }
+      }
 
       // Window 2: abort may have fired during newSession
       if (options?.signal?.aborted) {
@@ -308,6 +328,32 @@ export class AcpAgentService implements AgentService {
 export const GeminiAcpAdapter = AcpAgentService;
 /** @deprecated Use AcpAgentServiceConfig. */
 export type { AcpAgentServiceConfig as GeminiAcpAdapterConfig_Deprecated };
+
+function resolveSessionModelConfigOption(
+  session: { configOptions?: unknown },
+  modelId: string,
+): { configId: string } | null {
+  const configOptions = session.configOptions;
+  if (!Array.isArray(configOptions)) return null;
+  const modelOption = configOptions.find(
+    (option) => isRecord(option) && (option.id === 'model' || option.category === 'model'),
+  );
+  if (!isRecord(modelOption)) return null;
+  const configId = typeof modelOption.id === 'string' ? modelOption.id.trim() : '';
+  if (!configId) return null;
+  if (modelOption.currentValue === modelId) return null;
+  const optionValues = Array.isArray(modelOption.options)
+    ? modelOption.options
+        .map((option) => (isRecord(option) && typeof option.value === 'string' ? option.value.trim() : ''))
+        .filter(Boolean)
+    : [];
+  if (optionValues.length > 0 && !optionValues.includes(modelId)) return null;
+  return { configId };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
 
 /** F149: Build a provider_signal warning for realtime capacity display. */
 function makeCapacityWarning(

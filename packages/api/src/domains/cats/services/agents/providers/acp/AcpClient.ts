@@ -184,7 +184,13 @@ export class AcpClient {
     this.startReading();
 
     log.info(
-      { command, args, cwd: this.config.cwd, pid: this.child.pid, envKeyCount: Object.keys(this.config.env ?? {}).length },
+      {
+        command,
+        args,
+        cwd: this.config.cwd,
+        pid: this.child.pid,
+        envKeyCount: Object.keys(this.config.env ?? {}).length,
+      },
       'ACP initialize: process spawned, sending initialize request',
     );
     const resp = await this.sendRequest(ACP_METHODS.initialize, { protocolVersion: 1 });
@@ -232,9 +238,7 @@ export class AcpClient {
           // For http/sse: log url presence
           ...('url' in s ? { hasUrl: !!s.url } : {}),
           envKeyCount: 'env' in s && Array.isArray(s.env) ? s.env.length : 0,
-          envKeys: 'env' in s && Array.isArray(s.env)
-            ? (s.env as Array<{ name: string }>).map((e) => e.name)
-            : [],
+          envKeys: 'env' in s && Array.isArray(s.env) ? (s.env as Array<{ name: string }>).map((e) => e.name) : [],
         })),
         agentInfo: this.initResult?.agentInfo,
         pid: this.child?.pid,
@@ -247,10 +251,7 @@ export class AcpClient {
       cwd: effectiveCwd,
       mcpServers: compatible,
     });
-    log.info(
-      { durationMs: Date.now() - t0, hasResult: !!resp.result },
-      'ACP session/new: response received',
-    );
+    log.info({ durationMs: Date.now() - t0, hasResult: !!resp.result }, 'ACP session/new: response received');
     return resp.result as unknown as AcpNewSessionResult;
   }
 
@@ -285,6 +286,24 @@ export class AcpClient {
       'ACP session/load: response received',
     );
     return resp.result as unknown as AcpNewSessionResult;
+  }
+
+  async setSessionConfigOption(sessionId: string, configId: string, value: string): Promise<void> {
+    const trimmedConfigId = configId.trim();
+    const trimmedValue = value.trim();
+    if (!trimmedConfigId || !trimmedValue) return;
+
+    log.info(
+      { sessionId, configId: trimmedConfigId, value: trimmedValue, pid: this.child?.pid },
+      'ACP session/set_config_option: sending request',
+    );
+    const t0 = Date.now();
+    await this.sendRequest(ACP_METHODS.sessionSetConfigOption, {
+      sessionId,
+      configId: trimmedConfigId,
+      value: trimmedValue,
+    });
+    log.info({ sessionId, durationMs: Date.now() - t0 }, 'ACP session/set_config_option: response received');
   }
 
   /**
@@ -742,10 +761,7 @@ export class AcpClient {
         },
         reject: (err) => {
           clearTimeout(timer);
-          log.error(
-            { method, id, durationMs: Date.now() - sentAt, error: err.message },
-            'ACP sendRequest: rejected',
-          );
+          log.error({ method, id, durationMs: Date.now() - sentAt, error: err.message }, 'ACP sendRequest: rejected');
           reject(err);
         },
       });

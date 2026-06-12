@@ -13,7 +13,7 @@
  */
 
 /** Internal canonical variable names available in templates */
-export type EnvTemplateVariable = 'api_key' | 'base_url';
+export type EnvTemplateVariable = 'api_key' | 'base_url' | 'base_model' | 'model';
 
 /** Template pattern: ${variable_name} */
 const TEMPLATE_RE = /\$\{(\w+)\}/g;
@@ -58,6 +58,7 @@ export const BUILTIN_ENV_MAPS: Record<string, Record<string, string>> = {
 export interface EnvMapAccount {
   apiKey?: string;
   baseUrl?: string;
+  baseModel?: string;
 }
 
 /**
@@ -66,7 +67,7 @@ export interface EnvMapAccount {
  * @param clientId - The client identity (e.g. 'opencode', 'google', 'acp')
  * @param provider - Optional backend provider name (for multi-provider CLIs like opencode)
  * @param account - Resolved account with API key / base URL
- * @param userEnvMap - User-configured env vars (may contain ${api_key} / ${base_url} templates)
+ * @param userEnvMap - User-configured env vars (may contain ${api_key} / ${base_url} / ${base_model} templates)
  * @returns Resolved env vars ready for subprocess injection. Empty values are omitted.
  */
 export function resolveEnvMap(
@@ -84,6 +85,8 @@ export function resolveEnvMap(
   const vars: Record<string, string> = {
     api_key: account.apiKey ?? '',
     base_url: account.baseUrl ?? '',
+    base_model: account.baseModel ?? '',
+    model: account.baseModel ?? '',
   };
 
   const result: Record<string, string> = {};

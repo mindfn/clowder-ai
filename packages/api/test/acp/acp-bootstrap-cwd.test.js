@@ -155,6 +155,18 @@ describe('acp bootstrap cwd', () => {
     ]);
   });
 
+  it('expands model templates in startupArgs before spawning ACP clients', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'acp-project-'));
+    createdDirs.add(projectRoot);
+
+    assert.deepEqual(
+      resolveAcpBootstrapArgs(projectRoot, ['--model', '${base_model}', 'acp'], {
+        base_model: 'anthropic/claude-sonnet-4-6',
+      }),
+      ['--model', 'anthropic/claude-sonnet-4-6', 'acp'],
+    );
+  });
+
   it('scopes bootstrap root by current uid or equivalent user identity', () => {
     const root = resolveAcpBootstrapRoot();
     assert.ok(root.startsWith(tmpdir()), `bootstrap root should stay under tmpdir(), got ${root}`);
@@ -210,6 +222,14 @@ describe('acp bootstrap cwd', () => {
     assert.ok(
       source.includes("config.clientId === 'opencode'") && source.includes("'--pure'"),
       'REGRESSION: index.ts must auto-inject --pure for opencode-client ACP (not generic acp client)',
+    );
+  });
+
+  it('REGRESSION: generic ACP env mapping must not infer built-in clients from command', () => {
+    const source = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf-8');
+    assert.ok(
+      !source.includes('resolveEnvMapClientId'),
+      'REGRESSION: generic clientId=acp must use only user envVars templates, not command basename aliases',
     );
   });
 

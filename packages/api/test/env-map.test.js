@@ -152,6 +152,49 @@ describe('F161: env-map — resolveEnvMap', () => {
       DEEPSEEK_API_KEY: 'custom-key',
     });
   });
+
+  it('user templates can pass the configured base model', () => {
+    const result = resolveEnvMap(
+      'acp',
+      undefined,
+      { apiKey: 'custom-key', baseModel: 'anthropic/claude-sonnet-4-6' },
+      {
+        KIMI_API_KEY: '${api_key}',
+        KIMI_MODEL_NAME: '${base_model}',
+      },
+    );
+    assert.deepEqual(result, {
+      KIMI_API_KEY: 'custom-key',
+      KIMI_MODEL_NAME: 'anthropic/claude-sonnet-4-6',
+    });
+  });
+
+  it('generic acp external clients require explicit user env templates', () => {
+    assert.deepEqual(
+      resolveEnvMap('acp', undefined, {
+        apiKey: 'moonshot-xxx',
+        baseUrl: 'https://api.moonshot.cn/v1',
+      }),
+      {},
+    );
+
+    const result = resolveEnvMap(
+      'acp',
+      undefined,
+      {
+        apiKey: 'moonshot-xxx',
+        baseUrl: 'https://api.moonshot.cn/v1',
+      },
+      {
+        KIMI_API_KEY: '${api_key}',
+        KIMI_BASE_URL: '${base_url}',
+      },
+    );
+    assert.deepEqual(result, {
+      KIMI_API_KEY: 'moonshot-xxx',
+      KIMI_BASE_URL: 'https://api.moonshot.cn/v1',
+    });
+  });
 });
 
 describe('F161: env-map — sanitizer (F171 parity)', () => {

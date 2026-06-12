@@ -120,6 +120,38 @@ describe('AcpClient', () => {
     assert.equal(capturedCwd, '/my/project');
   });
 
+  it('setSessionConfigOption sends session/set_config_option with config value', async () => {
+    const { child, clientStdin, agentStdout } = createMockChild();
+
+    let captured = null;
+    clientStdin.on('data', (chunk) => {
+      for (const line of chunk.toString().trim().split('\n')) {
+        const msg = JSON.parse(line);
+        if (msg.method === 'initialize') {
+          agentRespond(agentStdout, msg.id, INIT_RESULT);
+        } else if (msg.method === 'session/set_config_option') {
+          captured = msg;
+          agentRespond(agentStdout, msg.id, { configOptions: [] });
+        }
+      }
+    });
+
+    client = new AcpClient({
+      command: 'fake',
+      args: [],
+      cwd: '/my/project',
+      spawnFn: () => child,
+    });
+
+    await client.initialize();
+    await client.setSessionConfigOption('sess-123', 'model', 'anthropic/claude-opus-4-6');
+
+    assert.ok(captured, 'Expected session/set_config_option request');
+    assert.equal(captured.params.sessionId, 'sess-123');
+    assert.equal(captured.params.configId, 'model');
+    assert.equal(captured.params.value, 'anthropic/claude-opus-4-6');
+  });
+
   it('promptCollect collects events and returns stopReason', async () => {
     const { child, clientStdin, agentStdout } = createMockChild();
 
