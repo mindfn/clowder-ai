@@ -1730,6 +1730,30 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
     const hasMore = messages.length > limit;
     const page = hasMore ? messages.slice(1) : messages;
 
+    // [DIAG:msg-disappear] Log codex messages for disappearance bug investigation
+    {
+      const codexMsgs = page.filter((m) => m.catId === 'codex');
+      if (codexMsgs.length > 0 || resolvedThreadId.includes('mq5zrg04n1votqb9')) {
+        const hasDraftStore = Boolean(opts.draftStore);
+        const drafts = hasDraftStore ? await opts.draftStore!.getByThread(userId, resolvedThreadId) : [];
+        request.log.info(
+          {
+            diag: 'msg-disappear',
+            threadId: resolvedThreadId,
+            totalFetched: messages.length,
+            pageSize: page.length,
+            hasMore,
+            codexCount: codexMsgs.length,
+            codexIds: codexMsgs.map((m) => m.id),
+            draftCount: drafts.length,
+            draftCats: drafts.map((d) => d.catId),
+            allCatIds: [...new Set(page.map((m) => m.catId).filter(Boolean))],
+          },
+          '[DIAG:msg-disappear] /api/messages response',
+        );
+      }
+    }
+
     // Map chat messages (union type allows summary items to be pushed later)
     type TimelineItem = {
       id: string;

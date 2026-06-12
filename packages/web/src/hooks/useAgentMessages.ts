@@ -4142,6 +4142,22 @@ export function useAgentMessages() {
                 currentMessages: storeSnapshot.messages,
               });
               if (result.recoveryAction === 'none') {
+                // [DIAG:msg-disappear] Trace done handler replaceMessages
+                const codexBefore = storeSnapshot.messages.filter((m: { catId?: string | null }) => m.catId === 'codex').length;
+                const codexAfter = result.nextMessages.filter((m: { catId?: string | null }) => m.catId === 'codex').length;
+                if (codexBefore !== codexAfter || msg.catId === 'codex') {
+                  console.warn('[DIAG:msg-disappear] done handler replaceMessages', {
+                    doneCatId: msg.catId,
+                    isFinal: msg.isFinal,
+                    invocationId: msg.invocationId,
+                    codexBefore,
+                    codexAfter,
+                    totalBefore: storeSnapshot.messages.length,
+                    totalAfter: result.nextMessages.length,
+                    recoveryAction: result.recoveryAction,
+                    violationCount: result.violations.length,
+                  });
+                }
                 storeSnapshot.replaceMessages(result.nextMessages, storeSnapshot.hasMore);
               }
               if (result.violations.length > 0) {

@@ -1648,6 +1648,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // throw on bypass-of-reducer mutations. No-op when strict is off — keeps
     // production hot path free of the O(n) scan.
     forwardStoreInvariantViolationsStrict(msgs, get().currentThreadId);
+    // [DIAG:msg-disappear] Trace codex messages through replaceMessages
+    {
+      const prevMsgs = get().messages;
+      const codexBefore = prevMsgs.filter((m: { catId?: string | null }) => m.catId === 'codex').length;
+      const codexAfter = msgs.filter((m: { catId?: string | null }) => m.catId === 'codex').length;
+      if (codexBefore > 0 && codexAfter === 0) {
+        console.warn('[DIAG:msg-disappear] replaceMessages DROPPED all codex messages!', {
+          codexBefore,
+          codexAfter,
+          totalBefore: prevMsgs.length,
+          totalAfter: msgs.length,
+          codexIdsBefore: prevMsgs.filter((m: { catId?: string | null }) => m.catId === 'codex').map((m: { id: string }) => m.id),
+        });
+        console.trace('[DIAG:msg-disappear] replaceMessages caller stack');
+      }
+    }
     set((state) => {
       revokeRemovedBlobUrls(state.messages, msgs);
       return { messages: msgs, hasMore };
@@ -1694,6 +1710,23 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // F183 Phase E AC-E2 (砚砚 R2 P1 fix): same strict-gate as the other
     // caller-driven writers. Runs only when strict mode is on.
     forwardStoreInvariantViolationsStrict(msgs, threadId);
+    // [DIAG:msg-disappear] Trace codex messages through hydrateThread
+    {
+      const prevMsgs = get().messages;
+      const codexBefore = prevMsgs.filter((m: { catId?: string | null }) => m.catId === 'codex').length;
+      const codexAfter = msgs.filter((m: { catId?: string | null }) => m.catId === 'codex').length;
+      if (codexBefore > 0 && codexAfter === 0) {
+        console.warn('[DIAG:msg-disappear] hydrateThread DROPPED all codex messages!', {
+          threadId,
+          codexBefore,
+          codexAfter,
+          totalBefore: prevMsgs.length,
+          totalAfter: msgs.length,
+          codexIdsBefore: prevMsgs.filter((m: { catId?: string | null }) => m.catId === 'codex').map((m: { id: string }) => m.id),
+        });
+        console.trace('[DIAG:msg-disappear] hydrateThread caller stack');
+      }
+    }
     set((state) => {
       if (threadId === state.currentThreadId) {
         revokeRemovedBlobUrls(state.messages, msgs);
