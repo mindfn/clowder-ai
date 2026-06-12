@@ -43,6 +43,10 @@ export const BUILTIN_ENV_MAPS: Record<string, Record<string, string>> = {
     OPENROUTER_API_KEY: '${api_key}', // OpenCode routing compat
     GEMINI_BASE_URL: '${base_url}',
   },
+  opencode: {
+    OPENCODE_API_KEY: '${api_key}',
+    OPENCODE_BASE_URL: '${base_url}',
+  },
   openrouter: {
     OPENROUTER_API_KEY: '${api_key}',
   },

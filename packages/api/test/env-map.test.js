@@ -53,8 +53,19 @@ describe('F161: env-map — resolveEnvMap', () => {
     });
   });
 
+  it('resolves opencode built-in mapping (native env vars)', () => {
+    const result = resolveEnvMap('opencode', undefined, {
+      apiKey: 'sk-oc-xxx',
+      baseUrl: 'https://proxy.example.com',
+    });
+    assert.deepEqual(result, {
+      OPENCODE_API_KEY: 'sk-oc-xxx',
+      OPENCODE_BASE_URL: 'https://proxy.example.com',
+    });
+  });
+
   it('provider takes priority over clientId', () => {
-    // clientId=opencode has no built-in map, but provider=anthropic does
+    // clientId=opencode has built-in map, but provider=anthropic overrides it
     const result = resolveEnvMap('opencode', 'anthropic', {
       apiKey: 'sk-ant-xxx',
       baseUrl: 'https://proxy.example.com',
