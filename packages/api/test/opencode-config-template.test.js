@@ -3,7 +3,10 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
-import { prepareOpenCodeAcpSpawnConfig } from '../dist/domains/cats/services/agents/providers/opencode-acp-spawn-config.js';
+import {
+  isOpenCodeCommand,
+  prepareOpenCodeAcpSpawnConfig,
+} from '../dist/domains/cats/services/agents/providers/opencode-acp-spawn-config.js';
 import {
   deriveOpenCodeApiType,
   generateOpenCodeConfig,
@@ -227,6 +230,12 @@ describe('deriveOpenCodeApiType', () => {
 });
 
 describe('prepareOpenCodeAcpSpawnConfig', () => {
+  test('recognizes direct OpenCode command basenames across platforms', () => {
+    assert.equal(isOpenCodeCommand('/usr/local/bin/opencode'), true);
+    assert.equal(isOpenCodeCommand('C:\\Program Files\\opencode\\opencode.exe'), true);
+    assert.equal(isOpenCodeCommand('/usr/local/bin/opencode-wrapper'), false);
+  });
+
   test('writes OPENCODE_CONFIG and credential env for OpenCode ACP api_key accounts', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-cafe-opencode-acp-'));
     try {
@@ -262,7 +271,7 @@ describe('prepareOpenCodeAcpSpawnConfig', () => {
     }
   });
 
-  test('does not auto-configure generic ACP clients even when command is opencode', () => {
+  test('writes OPENCODE_CONFIG for generic ACP when the command is opencode', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-cafe-opencode-acp-generic-'));
     try {
       const prepared = prepareOpenCodeAcpSpawnConfig({
@@ -270,18 +279,25 @@ describe('prepareOpenCodeAcpSpawnConfig', () => {
         profileId: 'generic-acp-opencode',
         clientId: 'acp',
         command: 'opencode',
-        providerName: 'openrouter',
-        defaultModel: 'openrouter/google/gemini-3-flash',
+        providerName: undefined,
+        defaultModel: 'anthropic/claude-opus-4-6',
         account: {
-          id: 'openrouter',
+          id: 'anthropic-proxy',
           authType: 'api_key',
-          apiKey: 'sk-openrouter',
-          baseUrl: 'https://openrouter.ai/api/v1',
-          models: ['google/gemini-3-flash'],
+          apiKey: 'sk-test-secret',
+          baseUrl: 'https://proxy.example/v1',
+          models: ['claude-opus-4-6'],
         },
       });
 
-      assert.equal(prepared, null, 'generic ACP clients must use explicit user env/config mapping');
+      assert.ok(prepared, 'generic ACP opencode command should receive a prepared spawn config');
+      assert.ok(prepared.env.OPENCODE_CONFIG, 'OPENCODE_CONFIG must be set for generic OpenCode ACP');
+      assert.equal(prepared.env[OC_API_KEY_ENV], 'sk-test-secret');
+      assert.equal(prepared.env[OC_BASE_URL_ENV], 'https://proxy.example/v1');
+
+      const config = JSON.parse(readFileSync(prepared.env.OPENCODE_CONFIG, 'utf8'));
+      assert.equal(config.model, 'anthropic/claude-opus-4-6');
+      assert.deepEqual(Object.keys(config.provider), ['anthropic']);
     } finally {
       rmSync(projectRoot, { recursive: true, force: true });
     }

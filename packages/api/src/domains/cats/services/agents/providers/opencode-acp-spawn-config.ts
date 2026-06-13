@@ -32,8 +32,15 @@ export interface PreparedOpenCodeAcpSpawnConfig {
   runtimeConfigSummary: OpenCodeRuntimeConfigDebugSummary;
 }
 
-function isBuiltInOpenCodeAcpClient(clientId: string): boolean {
-  return clientId === 'opencode';
+const OPENCODE_COMMAND_BASENAMES = new Set(['opencode', 'opencode.cmd', 'opencode.exe']);
+
+export function isOpenCodeCommand(command: string): boolean {
+  const basename = command.split(/[\\/]/).pop()?.toLowerCase() ?? '';
+  return OPENCODE_COMMAND_BASENAMES.has(basename);
+}
+
+function isOpenCodeAcpTarget(clientId: string, command: string): boolean {
+  return clientId === 'opencode' || isOpenCodeCommand(command);
 }
 
 function resolveEffectiveOpenCodeModel(
@@ -75,7 +82,7 @@ function resolveEffectiveOpenCodeModel(
 export function prepareOpenCodeAcpSpawnConfig(
   options: OpenCodeAcpSpawnConfigOptions,
 ): PreparedOpenCodeAcpSpawnConfig | null {
-  if (!isBuiltInOpenCodeAcpClient(options.clientId)) return null;
+  if (!isOpenCodeAcpTarget(options.clientId, options.command)) return null;
 
   const effective = resolveEffectiveOpenCodeModel(options.providerName, options.defaultModel);
   if (!effective) return null;

@@ -62,7 +62,10 @@ import {
 import { AntigravityAgentService } from './domains/cats/services/agents/providers/antigravity/AntigravityAgentService.js';
 import { RedisAntigravitySupervisorStore } from './domains/cats/services/agents/providers/antigravity/AntigravitySupervisorStore.js';
 import { clearL0Cache, warmL0Cache } from './domains/cats/services/agents/providers/l0-compiler.js';
-import { prepareOpenCodeAcpSpawnConfig } from './domains/cats/services/agents/providers/opencode-acp-spawn-config.js';
+import {
+  isOpenCodeCommand,
+  prepareOpenCodeAcpSpawnConfig,
+} from './domains/cats/services/agents/providers/opencode-acp-spawn-config.js';
 import { AgentRegistry } from './domains/cats/services/agents/registry/AgentRegistry.js';
 import { AuthorizationManager } from './domains/cats/services/auth/AuthorizationManager.js';
 import {
@@ -1095,15 +1098,14 @@ async function main(): Promise<void> {
           model: acpModel,
         });
 
-        // F161: Auto-inject --pure for OpenCode-as-client ACP (clientId === 'opencode').
+        // F161: Auto-inject --pure for OpenCode ACP commands.
         // OpenCode's --pure flag skips loading external plugin/MCP configs, which is
         // required for Cat Cafe ACP because Cat Cafe injects its own MCP servers via
         // the session/new protocol. Without --pure, OpenCode loads its local MCP config
         // which may have broken/stale paths and causes session/new to hang indefinitely.
-        // NOTE: Only for clientId 'opencode' (user chose OpenCode client + ACP protocol).
-        // Generic ACP clients (clientId 'acp') with command 'opencode' are manually
-        // configured — the user controls all args, we don't auto-inject.
-        if (config.clientId === 'opencode' && !acpArgs.includes('--pure')) {
+        // NOTE: Generic ACP clients still control startupArgs, but OpenCode must run
+        // pure whenever Cat Cafe pins its spawn config to avoid loading local MCPs.
+        if ((config.clientId === 'opencode' || isOpenCodeCommand(acpCommand)) && !acpArgs.includes('--pure')) {
           acpArgs.push('--pure');
         }
 

@@ -270,7 +270,7 @@ describe('F161: env-map — extractUserEnvTemplates', () => {
 
 describe('F161: env-map — BUILTIN_ENV_MAPS coverage', () => {
   it('has mappings for all expected providers', () => {
-    const expected = ['anthropic', 'openai', 'google', 'openrouter', 'kimi', 'dare'];
+    const expected = ['anthropic', 'openai', 'google', 'openrouter', 'kimi', 'dare', 'opencode'];
     for (const provider of expected) {
       assert.ok(BUILTIN_ENV_MAPS[provider], `Missing built-in map for ${provider}`);
       assert.ok(Object.keys(BUILTIN_ENV_MAPS[provider]).length > 0, `Empty built-in map for ${provider}`);

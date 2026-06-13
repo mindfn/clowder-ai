@@ -211,17 +211,16 @@ describe('acp bootstrap cwd', () => {
     );
   });
 
-  it('REGRESSION: opencode ACP must auto-inject --pure to prevent session/new hang', () => {
+  it('REGRESSION: opencode ACP command must auto-inject --pure to prevent session/new hang', () => {
     const source = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf-8');
     // OpenCode's --pure flag skips loading external plugin/MCP config. Without it,
     // OpenCode loads its local MCP config on session/new which may have broken paths
     // and causes the session to hang indefinitely. Cat Cafe injects MCP servers via
     // the ACP protocol, so OpenCode's own MCP loading is redundant and harmful.
-    // Auto-inject ONLY for clientId 'opencode' — generic ACP clients (clientId 'acp')
-    // with command 'opencode' are manually configured, user controls all args.
     assert.ok(
-      source.includes("config.clientId === 'opencode'") && source.includes("'--pure'"),
-      'REGRESSION: index.ts must auto-inject --pure for opencode-client ACP (not generic acp client)',
+      source.includes("config.clientId === 'opencode' || isOpenCodeCommand(acpCommand)") &&
+        source.includes("'--pure'"),
+      'REGRESSION: index.ts must auto-inject --pure for fixed and generic OpenCode ACP commands',
     );
   });
 
