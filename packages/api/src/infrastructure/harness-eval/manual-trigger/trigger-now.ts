@@ -2,6 +2,7 @@ import { getEvalCatOverride } from '../domain/eval-domain-override.js';
 import { buildEvalCatInvocation } from '../eval-cat-invocation.js';
 import { loadDomains } from '../hub/eval-hub-read-model.js';
 import { ensureEvalDomainThreads } from '../hub/eval-hub-thread-ensure.js';
+import type { VerdictSourceRefs } from '../publish-verdict/types.js';
 import type { HandlerError, ManualTriggerDeps } from './types.js';
 
 export interface TriggerNowInput {
@@ -92,12 +93,22 @@ export async function handleTriggerNow(
     }
   }
 
+  let publishSourceRefs: VerdictSourceRefs | undefined;
+  if (effectiveDomain.domainId === 'eval:a2a') {
+    try {
+      publishSourceRefs = await deps.preparePublishSourceRefs?.(effectiveDomain);
+    } catch (err) {
+      console.warn('[eval:a2a] preparePublishSourceRefs failed; continuing without prepared refs', err);
+    }
+  }
+
   const invocation = buildEvalCatInvocation(
     {
       domain: effectiveDomain,
       trendRefs: [],
       verdictRefs: [],
       legacyCleanup: { status: 'not_checked' },
+      ...(publishSourceRefs ? { publishSourceRefs } : {}),
     },
     // cloud R5 P2 (PR-2): gate publish instructions on actual runtime support so
     // cats don't waste a run producing a packet they can't publish (501 from

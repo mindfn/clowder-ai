@@ -18,6 +18,7 @@ import type { TaskSpec_P1 } from '../../scheduler/types.js';
 import { buildEvalCatInvocation } from '../eval-cat-invocation.js';
 import { ensureEvalDomainThreads } from '../hub/eval-hub-thread-ensure.js';
 import { inventoryLegacyTasks, type LegacyScheduledTaskLike } from '../legacy-task-cleanup.js';
+import type { VerdictSourceRefs } from '../publish-verdict/types.js';
 import { getEvalCatOverride } from './eval-domain-override.js';
 import { type EvalDomainRegistryEntry, parseEvalDomainRegistryFile } from './eval-domain-registry.js';
 
@@ -38,6 +39,8 @@ export interface EvalDomainScheduleOpts {
    * → legacy default (all known-wireable domains get publish instructions in invocation).
    */
   wiredPublishDomains?: ReadonlySet<EvalDomainRegistryEntry['domainId']>;
+  /** Optional runtime producer for prepared publish sourceRefs (currently eval:a2a raw YAML evidence). */
+  preparePublishSourceRefs?: (domain: EvalDomainRegistryEntry) => Promise<VerdictSourceRefs | undefined>;
 }
 
 /** @deprecated Use EvalDomainScheduleOpts — kept for backward compat. */
@@ -151,12 +154,22 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
           }
         }
 
+        let publishSourceRefs: VerdictSourceRefs | undefined;
+        if (effectiveDomain.domainId === 'eval:a2a') {
+          try {
+            publishSourceRefs = await config.preparePublishSourceRefs?.(effectiveDomain);
+          } catch (err) {
+            console.warn('[eval:a2a] preparePublishSourceRefs failed; continuing without prepared refs', err);
+          }
+        }
+
         const invocation = buildEvalCatInvocation(
           {
             domain: effectiveDomain,
             trendRefs: [],
             verdictRefs: [],
             legacyCleanup: { status: legacyStatus },
+            ...(publishSourceRefs ? { publishSourceRefs } : {}),
           },
           // cloud R6 P2 (PR-2): gate scheduled invocation's publish instructions on
           // actual runtime support so weekly cw scheduled eval doesn't tell cat to

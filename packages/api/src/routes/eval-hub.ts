@@ -8,6 +8,7 @@ import {
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { getEvalCatOverride, setEvalCatOverride } from '../infrastructure/harness-eval/domain/eval-domain-override.js';
+import type { EvalDomainRegistryEntry } from '../infrastructure/harness-eval/domain/eval-domain-registry.js';
 import { loadDomains, loadEvalHubSummary } from '../infrastructure/harness-eval/hub/eval-hub-read-model.js';
 import { ensureEvalDomainThreads } from '../infrastructure/harness-eval/hub/eval-hub-thread-ensure.js';
 import {
@@ -19,6 +20,7 @@ import {
   type GitPublisher,
   handlePublishVerdict,
   type VerdictGenerator,
+  type VerdictSourceRefs,
 } from '../infrastructure/harness-eval/publish-verdict/publish-verdict.js';
 import type { AgentKeyAuthRegistry, CallbackAuthRegistry } from './callback-auth-prehandler.js';
 import { registerCallbackAuthHook, requireCallbackPrincipal } from './callback-auth-prehandler.js';
@@ -58,6 +60,8 @@ export interface EvalHubRoutesOptions {
    * Missing entry for a domain → handler returns 501 unsupported_generator.
    */
   verdictGenerators?: Partial<Record<string, VerdictGenerator>>;
+  /** Runtime producer for prepared sourceRefs injected into eval-cat invocation context. */
+  preparePublishSourceRefs?: (domain: EvalDomainRegistryEntry) => Promise<VerdictSourceRefs | undefined>;
   /** Runtime-configured task-outcome DB path (trusted bootstrap config). */
   taskOutcomeDbPath?: string;
   /** Runtime-configured event-memory DB path (trusted bootstrap config). */
@@ -225,6 +229,7 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
         // cloud R5 P2 (PR-2): pass wired publish-verdict domain set so
         // buildEvalCatInvocation omits publish instructions for unwired domains.
         wiredPublishDomains: new Set(Object.keys(opts.verdictGenerators ?? {})),
+        preparePublishSourceRefs: opts.preparePublishSourceRefs,
       },
       { domainId, userId },
     );

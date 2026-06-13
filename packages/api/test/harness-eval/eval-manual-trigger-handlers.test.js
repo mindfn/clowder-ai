@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync, rmSync } from 'node:fs';
-import { after, before, describe, it } from 'node:test';
+import { after, before, describe, it, mock } from 'node:test';
 
 import { handleGenerateNow, handleTriggerNow } from '../../dist/routes/eval-hub.js';
 import { setupHarnessFeedback, setupRawArtifacts } from './eval-manual-trigger-fixtures.js';
@@ -144,6 +144,76 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
       assert.match(result.detail, /queue/);
       assert.match(result.detail, /retry/i);
       assert.equal(messageStoreCalls.length, 1, 'message delivered even though wake dropped');
+    });
+
+    it('includes prepared eval:a2a publishSourceRefs in manual trigger context', async () => {
+      const messageStoreCalls = [];
+      const prepareCalls = [];
+
+      const result = await handleTriggerNow(
+        {
+          harnessFeedbackRoot: root,
+          invokeTriggerProvider: { get: () => ({ trigger: () => 'dispatched' }) },
+          messageStore: {
+            append: async (msg) => {
+              messageStoreCalls.push(msg);
+              return { id: 'msg-with-refs' };
+            },
+          },
+          preparePublishSourceRefs: async (domain) => {
+            prepareCalls.push(domain.domainId);
+            return {
+              kind: 'a2a-snapshot-attribution',
+              snapshotName: '2026-06-12-F167-eval.yaml',
+              attributionName: '2026-06-12-F167-attribution.yaml',
+            };
+          },
+        },
+        { domainId: 'eval:a2a', userId: 'test-user' },
+      );
+
+      assert.ok(!('error' in result), `expected success, got: ${JSON.stringify(result)}`);
+      assert.deepEqual(prepareCalls, ['eval:a2a']);
+      assert.equal(messageStoreCalls.length, 1);
+      assert.match(messageStoreCalls[0].content, /"publishSourceRefs"/);
+      assert.match(messageStoreCalls[0].content, /"snapshotName": "2026-06-12-F167-eval\.yaml"/);
+      assert.match(messageStoreCalls[0].content, /"attributionName": "2026-06-12-F167-attribution\.yaml"/);
+    });
+
+    it('continues manual eval:a2a trigger when publishSourceRefs preparation fails', async () => {
+      const warnMock = mock.method(console, 'warn', () => {});
+      const messageStoreCalls = [];
+      const triggerCalls = [];
+
+      const result = await handleTriggerNow(
+        {
+          harnessFeedbackRoot: root,
+          invokeTriggerProvider: {
+            get: () => ({
+              trigger: (...args) => {
+                triggerCalls.push(args);
+                return 'dispatched';
+              },
+            }),
+          },
+          messageStore: {
+            append: async (msg) => {
+              messageStoreCalls.push(msg);
+              return { id: 'msg-without-refs' };
+            },
+          },
+          preparePublishSourceRefs: async () => {
+            throw new Error('permission denied');
+          },
+        },
+        { domainId: 'eval:a2a', userId: 'test-user' },
+      );
+
+      assert.ok(!('error' in result), `expected success, got: ${JSON.stringify(result)}`);
+      assert.equal(messageStoreCalls.length, 1);
+      assert.equal(triggerCalls.length, 1);
+      assert.equal(warnMock.mock.callCount(), 1);
+      assert.doesNotMatch(messageStoreCalls[0].content, /"publishSourceRefs"/);
     });
   });
 

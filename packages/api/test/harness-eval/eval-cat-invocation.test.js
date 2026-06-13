@@ -120,4 +120,24 @@ describe('Eval cat invocation packet', () => {
       },
     ]);
   });
+
+  it('carries prepared publish sourceRefs in context when provided', () => {
+    const invocation = buildEvalCatInvocation({
+      domain,
+      trendRefs: [],
+      verdictRefs: [],
+      legacyCleanup: { status: 'disabled' },
+      publishSourceRefs: {
+        kind: 'a2a-snapshot-attribution',
+        snapshotName: '2026-06-12-F167-eval.yaml',
+        attributionName: '2026-06-12-F167-attribution.yaml',
+      },
+    });
+
+    assert.deepEqual(invocation.context.publishSourceRefs, {
+      kind: 'a2a-snapshot-attribution',
+      snapshotName: '2026-06-12-F167-eval.yaml',
+      attributionName: '2026-06-12-F167-attribution.yaml',
+    });
+  });
 });

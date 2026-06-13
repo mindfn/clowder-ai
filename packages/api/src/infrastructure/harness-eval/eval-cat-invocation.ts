@@ -1,4 +1,5 @@
 import { type EvalDomainRegistryEntry, parseEvalDomainRegistryEntry } from './domain/eval-domain-registry.js';
+import type { VerdictSourceRefs } from './publish-verdict/types.js';
 
 export interface LegacyCleanupStatus {
   status: 'not_checked' | 'dry_run_ready' | 'redirected' | 'disabled';
@@ -10,6 +11,7 @@ export interface EvalCatInvocationInput {
   trendRefs: string[];
   verdictRefs: string[];
   legacyCleanup: LegacyCleanupStatus;
+  publishSourceRefs?: VerdictSourceRefs;
 }
 
 export interface EvalCatInvocationPacket {
@@ -25,6 +27,7 @@ export interface EvalCatInvocationPacket {
     fixtures: EvalDomainRegistryEntry['fixtures'];
     legacyCleanup: LegacyCleanupStatus;
     sla: EvalDomainRegistryEntry['sla'];
+    publishSourceRefs?: VerdictSourceRefs;
   };
 }
 
@@ -93,6 +96,8 @@ Include your domain thread ID in the verdict PR body (the MCP tool does this aut
 /** a2a-specific sourceRefs section (snapshot/attribution YAML basenames). */
 const PUBLISH_VERDICT_INSTRUCTIONS_A2A = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
 You must also supply \`sourceRefs\` (NOT part of packet, separate input field): \`{ snapshotName, attributionName }\` — BASENAMES of your sanitized evidence YAMLs inside \`<harnessFeedbackRoot>/snapshots/\` and \`<harnessFeedbackRoot>/attributions/\` respectively. Path separators / \`..\` will be rejected (allowlist). The tool will NOT fabricate evidence — if you don't provide refs, publish fails.
+
+If the JSON context includes \`publishSourceRefs\`, pass that object exactly as the MCP tool's \`sourceRefs\`. If it is missing, stop and report that prepared eval:a2a publish evidence is missing; do not invent snapshot or attribution basenames.
 
 The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
 
@@ -279,6 +284,7 @@ export function buildEvalCatInvocation(
       fixtures: domain.fixtures,
       legacyCleanup: input.legacyCleanup,
       sla: domain.sla,
+      ...(input.publishSourceRefs ? { publishSourceRefs: input.publishSourceRefs } : {}),
     },
   };
 }
