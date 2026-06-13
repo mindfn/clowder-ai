@@ -1636,6 +1636,16 @@ async function main(): Promise<void> {
   };
 
   const { evalHubRoutes } = await import('./routes/eval-hub.js');
+  const harnessFeedbackRoot = join(repoRoot, 'docs', 'harness-feedback');
+  const { createA2aPublishSourceRefsProducer } = await import(
+    './infrastructure/harness-eval/a2a/a2a-publish-source-refs.js'
+  );
+  const preparePublishSourceRefs = createA2aPublishSourceRefsProducer({
+    harnessFeedbackRoot,
+    traceStore: telemetryHandle.traceStore,
+    getMetricsText: telemetryHandle.getMetricsText ?? undefined,
+    metricsSnapshotStore: telemetryHandle.metricsSnapshotStore ?? undefined,
+  });
   // F192 Phase H AC-H4: real GitPublisher (git worktree + gh) + per-domain generators
   const { createGitWorktreePublisher } = await import(
     './infrastructure/harness-eval/publish-verdict/git-worktree-publisher.js'
@@ -1713,7 +1723,7 @@ async function main(): Promise<void> {
   const taskOutcomeDbPath = process.env.TASK_OUTCOME_DB ?? resolve(repoRoot, 'task-outcome-episodes.sqlite');
   const taskOutcomeStore = new TaskOutcomeEpisodeStore(taskOutcomeDbPath);
   await app.register(evalHubRoutes, {
-    harnessFeedbackRoot: resolve(repoRoot, 'docs', 'harness-feedback'),
+    harnessFeedbackRoot,
     threadStore,
     redis: redisClient ?? undefined,
     invokeTriggerProvider: invokeTriggerHolder,
@@ -1726,6 +1736,7 @@ async function main(): Promise<void> {
     agentKeyRegistry,
     taskOutcomeDbPath,
     eventMemoryDbPath: memoryServices.eventMemoryDbPath,
+    preparePublishSourceRefs,
   });
   // AC-G13: Cancel burst detector (in-memory, per-process)
   const { buildProposalRejectSignal } = await import(
@@ -3523,12 +3534,13 @@ async function main(): Promise<void> {
     wiredPublishDomains.add('eval:memory');
   }
   const evalScheduleOpts = {
-    harnessFeedbackRoot: resolve(repoRoot, 'docs', 'harness-feedback'),
+    harnessFeedbackRoot,
     threadStore,
     defaultUserId: getOwnerUserId(),
     listDynamicTasks: () => dynamicTaskStore.getAll(),
     redis: redisClient ?? undefined,
     wiredPublishDomains,
+    preparePublishSourceRefs,
   };
   taskRunnerV2.register(createEvalDomainDailySpec(evalScheduleOpts));
   taskRunnerV2.register(createEvalDomainWeeklySpec(evalScheduleOpts));
@@ -3558,7 +3570,13 @@ async function main(): Promise<void> {
     invokeTrigger,
     socketManager,
     defaultUserId: 'default-user' as const,
-    defaultCatId: 'opus' as CatId,
+    // clowder-ai#910 + cloud P1: pass a getter (not a value) so runtime
+    // `PUT /api/config/default-cat` (which calls `setRuntimeDefaultCatId` →
+    // updates `_runtimeDefaultCatId`) propagates to ConnectorRouter's
+    // per-message parseMentions resolve, without needing a gateway restart.
+    // An object getter or a one-shot value would still be copied as a
+    // string into `new ConnectorRouter({ defaultCatId, ... })` and frozen.
+    defaultCatId: getDefaultCatId,
     redis: redisClient ?? undefined,
     log: app.log,
     agentRegistry,

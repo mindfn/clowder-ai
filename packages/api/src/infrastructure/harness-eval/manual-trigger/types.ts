@@ -1,6 +1,8 @@
 import type { Redis } from 'ioredis';
 import type { IMessageStore } from '../../../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../../../domains/cats/services/stores/ports/ThreadStore.js';
+import type { EvalDomainRegistryEntry } from '../domain/eval-domain-registry.js';
+import type { VerdictSourceRefs } from '../publish-verdict/types.js';
 
 /**
  * F192 OQ-21 — Shared types for manual eval trigger handlers.
@@ -50,6 +52,8 @@ export interface ManualTriggerDeps {
    * legacy default (all known-wireable domains get publish instructions).
    */
   wiredPublishDomains?: ReadonlySet<string>;
+  /** Optional runtime producer for prepared publish sourceRefs (currently eval:a2a raw YAML evidence). */
+  preparePublishSourceRefs?: (domain: EvalDomainRegistryEntry) => Promise<VerdictSourceRefs | undefined>;
 }
 
 export interface HandlerError {

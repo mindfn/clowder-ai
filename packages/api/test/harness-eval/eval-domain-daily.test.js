@@ -143,6 +143,71 @@ describe('eval-domain-daily task spec', () => {
     assert.equal(triggerArgs[4], 'msg_123'); // messageId
   });
 
+  it('execute prepares eval:a2a publishSourceRefs and includes them in delivered context', async () => {
+    const prepareCalls = [];
+    const spec = createEvalDomainDailySpec({
+      harnessFeedbackRoot: repoHarnessFeedbackRoot,
+      defaultUserId: 'default-user',
+      preparePublishSourceRefs: async (domain) => {
+        prepareCalls.push(domain.domainId);
+        return {
+          kind: 'a2a-snapshot-attribution',
+          snapshotName: '2026-06-12-F167-eval.yaml',
+          attributionName: '2026-06-12-F167-attribution.yaml',
+        };
+      },
+    });
+
+    const gateResult = await spec.admission.gate();
+    assert.equal(gateResult.run, true);
+    const a2aItem = gateResult.workItems.find((w) => w.subjectKey === 'eval:a2a');
+    assert.ok(a2aItem);
+
+    const deliverMock = mock.fn(async () => 'msg_refs');
+    await spec.run.execute(a2aItem.signal, a2aItem.subjectKey, {
+      assignedCatId: null,
+      deliver: deliverMock,
+      invokeTrigger: { trigger: mock.fn() },
+    });
+
+    assert.deepEqual(prepareCalls, ['eval:a2a']);
+    const content = deliverMock.mock.calls[0].arguments[0].content;
+    assert.match(content, /"publishSourceRefs"/);
+    assert.match(content, /"snapshotName": "2026-06-12-F167-eval\.yaml"/);
+    assert.match(content, /"attributionName": "2026-06-12-F167-attribution\.yaml"/);
+  });
+
+  it('execute continues eval:a2a invocation when publishSourceRefs preparation fails', async () => {
+    const warnMock = mock.method(console, 'warn', () => {});
+    const spec = createEvalDomainDailySpec({
+      harnessFeedbackRoot: repoHarnessFeedbackRoot,
+      defaultUserId: 'default-user',
+      preparePublishSourceRefs: async () => {
+        throw new Error('disk full');
+      },
+    });
+
+    const gateResult = await spec.admission.gate();
+    assert.equal(gateResult.run, true);
+    const a2aItem = gateResult.workItems.find((w) => w.subjectKey === 'eval:a2a');
+    assert.ok(a2aItem);
+
+    const deliverMock = mock.fn(async () => 'msg_without_refs');
+    const triggerMock = mock.fn();
+
+    await spec.run.execute(a2aItem.signal, a2aItem.subjectKey, {
+      assignedCatId: null,
+      deliver: deliverMock,
+      invokeTrigger: { trigger: triggerMock },
+    });
+
+    assert.equal(deliverMock.mock.callCount(), 1);
+    assert.equal(triggerMock.mock.callCount(), 1);
+    assert.equal(warnMock.mock.callCount(), 1);
+    const content = deliverMock.mock.calls[0].arguments[0].content;
+    assert.doesNotMatch(content, /"publishSourceRefs"/);
+  });
+
   it('execute reports "disabled" when legacy task exists but is disabled (P2 regression)', async () => {
     // DynamicTaskStore.getAll() returns disabled defs too — execute must not
     // misreport them as 'dry_run_ready' when they're already disabled.
