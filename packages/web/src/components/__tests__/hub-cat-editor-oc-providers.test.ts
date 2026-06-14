@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildCallHint, KNOWN_OC_PROVIDERS, resolveOpenCodeEndpoint } from '@/components/hub-cat-editor.sections';
 import type { ProfileItem } from '@/components/hub-accounts.types';
+import { buildCallHint, KNOWN_OC_PROVIDERS, resolveOpenCodeEndpoint } from '@/components/hub-cat-editor.sections';
 
 /** Minimal profile stub for buildCallHint tests */
 function mkProfile(baseUrl: string): ProfileItem {

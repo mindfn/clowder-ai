@@ -218,8 +218,7 @@ describe('acp bootstrap cwd', () => {
     // and causes the session to hang indefinitely. Cat Cafe injects MCP servers via
     // the ACP protocol, so OpenCode's own MCP loading is redundant and harmful.
     assert.ok(
-      source.includes("config.clientId === 'opencode' || isOpenCodeCommand(acpCommand)") &&
-        source.includes("'--pure'"),
+      source.includes("config.clientId === 'opencode' || isOpenCodeCommand(acpCommand)") && source.includes("'--pure'"),
       'REGRESSION: index.ts must auto-inject --pure for fixed and generic OpenCode ACP commands',
     );
   });
