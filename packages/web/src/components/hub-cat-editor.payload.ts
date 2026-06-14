@@ -16,6 +16,25 @@ function trimText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+const OPENCODE_COMMAND_BASENAMES = new Set(['opencode', 'opencode.cmd', 'opencode.exe']);
+
+function isOpenCodeCommand(command: string): boolean {
+  const basename = command.split(/[\\/]/).pop()?.toLowerCase() ?? '';
+  return OPENCODE_COMMAND_BASENAMES.has(basename);
+}
+
+function usesOpenCodeProvider(form: HubCatEditorFormState): boolean {
+  return form.clientId === 'opencode' || (form.clientId === 'acp' && isOpenCodeCommand(trimText(form.acpCommand)));
+}
+
+function buildProviderPatch(form: HubCatEditorFormState, cat?: CatData | null): Record<string, unknown> {
+  const providerCarrier = usesOpenCodeProvider(form);
+  const trimmedProvider = trimText(form.provider);
+  if (providerCarrier && trimmedProvider.length > 0) return { provider: trimmedProvider };
+  if (cat?.provider && (form.clientId === 'opencode' || !providerCarrier)) return { provider: null as null };
+  return {};
+}
+
 /**
  * Returns a hint string when the model does not follow "providerId/modelId" convention for opencode.
  * Advisory only — callers should display as a warning, not block submission.
@@ -186,11 +205,7 @@ export function buildCatPayload(form: HubCatEditorFormState, cat?: CatData | nul
     ...cliPatch,
     defaultModel: trimText(form.defaultModel),
     cliConfigArgs: (form.cliConfigArgs ?? []).filter((arg) => arg.trim().length > 0),
-    ...(form.clientId === 'opencode' && trimText(form.provider)
-      ? { provider: trimText(form.provider) }
-      : cat?.provider
-        ? { provider: null as null }
-        : {}),
+    ...buildProviderPatch(form, cat),
   };
 }
 
@@ -216,7 +231,7 @@ export function buildCatPatchPayload(form: HubCatEditorFormState, cat: CatData) 
   }
 
   const nextProvider =
-    form.clientId === 'opencode' && trimText(form.provider).length > 0 ? trimText(form.provider) : null;
+    usesOpenCodeProvider(form) && trimText(form.provider).length > 0 ? trimText(form.provider) : null;
   const currentProvider = normalizeOptionalText(cat.provider);
   if (nextProvider === currentProvider) {
     delete payload.provider;

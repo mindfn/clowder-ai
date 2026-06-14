@@ -16,6 +16,7 @@ vi.mock('@/components/useConfirm', () => ({
 import { HubCatEditor } from '@/components/HubCatEditor';
 import type { ProfileItem } from '@/components/hub-accounts.types';
 import {
+  buildCatPatchPayload,
   buildCatPayload,
   builtinAccountIdForClient,
   DEFAULT_ANTIGRAVITY_COMMAND_ARGS,
@@ -473,6 +474,60 @@ describe('HubCatEditor', () => {
       command: 'deepseek-cli',
       startupArgs: ['--acp'],
     });
+  });
+
+  it('buildCatPatchPayload preserves provider for generic ACP OpenCode no-op saves', () => {
+    const form: HubCatEditorFormState = {
+      catId: 'acp-opencode',
+      name: 'OpenCode ACP',
+      displayName: 'OpenCode ACP',
+      variantLabel: '',
+      nickname: '',
+      avatar: '/avatars/default.png',
+      colorPrimary: '#0f172a',
+      colorSecondary: '#e2e8f0',
+      mentionPatterns: '@acp-opencode',
+      roleDescription: 'OpenCode over generic ACP',
+      personality: '',
+      teamStrengths: '',
+      caution: '',
+      strengths: '',
+      clientId: 'acp',
+      accountRef: 'anthropic-key',
+      defaultModel: 'claude-opus-4-6',
+      commandArgs: '',
+      cliConfigArgs: [],
+      cliEffort: '',
+      provider: 'anthropic',
+      sessionChain: 'true',
+      maxPromptTokens: '',
+      maxContextTokens: '',
+      maxMessages: '',
+      maxContentLengthPerMsg: '',
+      ...emptyVoiceFields,
+      acpEnabled: true,
+      acpCommand: 'opencode',
+      acpStartupArgs: 'acp --pure',
+      acpMaxLiveProcesses: '',
+      acpIdleTtlMinutes: '',
+    };
+    const existingCat = {
+      id: 'acp-opencode',
+      name: 'OpenCode ACP',
+      displayName: 'OpenCode ACP',
+      clientId: 'acp',
+      accountRef: 'anthropic-key',
+      provider: 'anthropic',
+      defaultModel: 'claude-opus-4-6',
+      acp: { command: 'opencode', startupArgs: ['acp', '--pure'] },
+      color: { primary: '#0f172a', secondary: '#e2e8f0' },
+      mentionPatterns: ['@acp-opencode'],
+      avatar: '/avatars/default.png',
+      roleDescription: 'OpenCode over generic ACP',
+    } as CatData;
+
+    const payload = buildCatPatchPayload(form, existingCat) as Record<string, unknown>;
+    expect(payload).not.toHaveProperty('provider');
   });
 
   it('renders normal member provider/model fields and saves to /api/cats', async () => {

@@ -1087,9 +1087,7 @@ async function main(): Promise<void> {
           './domains/cats/services/agents/providers/acp/AcpProcessPool.js'
         );
         const { AcpClient } = await import('./domains/cats/services/agents/providers/acp/AcpClient.js');
-        const { resolveEnvMap, extractUserEnvTemplates } = await import(
-          './domains/cats/services/agents/providers/env-map.js'
-        );
+        const { prepareAcpProcessEnv } = await import('./domains/cats/services/agents/providers/acp/acp-spawn-env.js');
         const acpProjectRoot = findMonorepoRoot();
         const acpCommand = resolveAcpBootstrapCommand(acpProjectRoot, acpConfig.command);
         const acpModel = config.defaultModel?.trim() || undefined;
@@ -1123,35 +1121,12 @@ async function main(): Promise<void> {
           : acpAccountRef
             ? resolveByAccountRef(acpProjectRoot, acpAccountRef)
             : null;
-        {
-          // Template env resolution: only for api_key accounts (need apiKey/baseUrl values).
-          const resolved: Record<string, string> = {};
-          if (acpAccount?.authType === 'api_key') {
-            const userEnvTemplates = acpAccount.envVars ? extractUserEnvTemplates(acpAccount.envVars) : undefined;
-            Object.assign(
-              resolved,
-              resolveEnvMap(
-                config.clientId,
-                config.provider,
-                { apiKey: acpAccount.apiKey, baseUrl: acpAccount.baseUrl, baseModel: acpModel },
-                userEnvTemplates,
-              ),
-            );
-          }
-          // R5 P2: Static envVars pass-through for ANY auth type (CLI-path parity).
-          // Template entries are skipped (already resolved above for api_key, or literal
-          // "${...}" that must not leak). CAT_CAFE_* internal env is excluded.
-          const validEnvKey = /^[A-Z_][A-Za-z0-9_]*$/;
-          const templateRe = /\$\{(\w+)\}/;
-          if (acpAccount?.envVars) {
-            for (const [k, v] of Object.entries(acpAccount.envVars)) {
-              if (!validEnvKey.test(k) || k.startsWith('CAT_CAFE_')) continue;
-              if (templateRe.test(v)) continue;
-              resolved[k] = v;
-            }
-          }
-          if (Object.keys(resolved).length > 0) acpSpawnEnv = resolved;
-        }
+        acpSpawnEnv = prepareAcpProcessEnv({
+          clientId: config.clientId,
+          provider: config.provider,
+          baseModel: acpModel,
+          account: acpAccount,
+        });
         const openCodeAcpSpawnConfig = prepareOpenCodeAcpSpawnConfig({
           projectRoot: acpProjectRoot,
           profileId: id,
