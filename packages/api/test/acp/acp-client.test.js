@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, it, mock } from 'node:test';
 
-const { AcpClient, AcpProtocolError } = await import(
+const { AcpClient, AcpProtocolError, buildAcpSpawnLogFields } = await import(
   '../../dist/domains/cats/services/agents/providers/acp/AcpClient.js'
 );
 
@@ -64,6 +64,21 @@ describe('AcpClient', () => {
       await client.close();
       client = null;
     }
+  });
+
+  it('redacts startup args from initialize spawn log metadata', () => {
+    const fields = buildAcpSpawnLogFields({
+      command: 'custom-acp',
+      args: ['--api-key', 'sk-secret', '--token=tok-secret', '--acp'],
+      cwd: '/tmp/project',
+      pid: 12345,
+      env: { CUSTOM_API_KEY: 'env-secret' },
+    });
+
+    assert.equal(fields.argCount, 4);
+    assert.equal(fields.envKeyCount, 1);
+    assert.equal(Object.hasOwn(fields, 'args'), false);
+    assert.doesNotMatch(JSON.stringify(fields), /sk-secret|tok-secret|env-secret/);
   });
 
   it('initialize sends protocolVersion and parses response', async () => {

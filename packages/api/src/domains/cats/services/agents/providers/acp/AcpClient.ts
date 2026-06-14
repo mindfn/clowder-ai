@@ -58,6 +58,30 @@ export interface AcpClientConfig {
   permissionHandler?: AcpPermissionHandler;
 }
 
+export interface AcpSpawnLogFields {
+  command: string;
+  argCount: number;
+  cwd: string;
+  pid?: number;
+  envKeyCount: number;
+}
+
+export function buildAcpSpawnLogFields(input: {
+  command: string;
+  args: readonly string[];
+  cwd: string;
+  pid?: number;
+  env?: Record<string, string>;
+}): AcpSpawnLogFields {
+  return {
+    command: input.command,
+    argCount: input.args.length,
+    cwd: input.cwd,
+    ...(input.pid !== undefined ? { pid: input.pid } : {}),
+    envKeyCount: Object.keys(input.env ?? {}).length,
+  };
+}
+
 // ─── Errors ──────────────��─────────────────────────────────────
 
 export class AcpProtocolError extends Error {
@@ -184,13 +208,7 @@ export class AcpClient {
     this.startReading();
 
     log.info(
-      {
-        command,
-        args,
-        cwd: this.config.cwd,
-        pid: this.child.pid,
-        envKeyCount: Object.keys(this.config.env ?? {}).length,
-      },
+      buildAcpSpawnLogFields({ command, args, cwd: this.config.cwd, pid: this.child.pid, env: this.config.env }),
       'ACP initialize: process spawned, sending initialize request',
     );
     const resp = await this.sendRequest(ACP_METHODS.initialize, { protocolVersion: 1 });
