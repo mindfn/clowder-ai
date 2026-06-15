@@ -401,10 +401,14 @@ export class WeixinAdapter implements IOutboundAdapter {
     const contextToken = msg.context_token;
     if (!senderId || !contextToken) return null;
 
+    // Deterministic fallback: derive from sender + timestamp + content prefix
+    // so re-delivered messages produce the same ID → InboundMessageDedup catches them.
+    // (Random fallback was the root cause of #925 duplicate messages.)
+    const contentPrefix = msg.item_list?.[0]?.text_item?.text?.slice(0, 64) ?? '';
     const msgId =
       msg.message_id != null
         ? String(msg.message_id)
-        : `weixin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        : `weixin-${crypto.createHash('sha256').update(`${senderId}\0${msg.create_time_ms ?? 0}\0${contentPrefix}`).digest('hex').slice(0, 16)}`;
 
     const firstItem = msg.item_list?.[0];
     if (!firstItem) {
