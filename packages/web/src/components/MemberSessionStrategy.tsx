@@ -21,16 +21,28 @@ export function MemberSessionStrategy({ threadId, catId }: MemberSessionStrategy
   const [strategy, setStrategy] = useState<Strategy>('resume');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Hide the control entirely when the API denies access (shared default
+  // thread, system-indexed threads, or any future access restriction).
+  const [accessible, setAccessible] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setAccessible(true);
     apiFetch(`/api/threads/${threadId}/members/${catId}/session-strategy`)
-      .then((res) => res.json())
-      .then((data: { strategy?: Strategy }) => {
-        if (!cancelled) setStrategy(data.strategy ?? 'resume');
+      .then((res) => {
+        if (!res.ok) {
+          if (!cancelled) setAccessible(false);
+          return undefined;
+        }
+        return res.json();
       })
-      .catch(() => {})
+      .then((data?: { strategy?: Strategy }) => {
+        if (!cancelled && data) setStrategy(data.strategy ?? 'resume');
+      })
+      .catch(() => {
+        if (!cancelled) setAccessible(false);
+      })
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
@@ -54,7 +66,7 @@ export function MemberSessionStrategy({ threadId, catId }: MemberSessionStrategy
     }
   }, [threadId, catId, strategy]);
 
-  if (loading) return null;
+  if (loading || !accessible) return null;
 
   return (
     <div className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs border-t border-cafe-subtle">
