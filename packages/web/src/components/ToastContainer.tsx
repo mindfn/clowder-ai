@@ -14,11 +14,18 @@ function ToastCard({ toast }: { toast: ToastItem }) {
     setTimeout(() => removeToast(toast.id), DISMISS_DELAY);
   }, [toast.id, markExiting, removeToast]);
 
+  // Use remaining lifetime so toasts that were hidden (thread-scoped, other
+  // thread active) don't restart their full duration when they become visible.
   useEffect(() => {
     if (toast.duration <= 0) return;
-    const timer = setTimeout(dismiss, toast.duration);
+    const remaining = toast.duration - (Date.now() - toast.createdAt);
+    if (remaining <= 0) {
+      dismiss();
+      return;
+    }
+    const timer = setTimeout(dismiss, remaining);
     return () => clearTimeout(timer);
-  }, [toast.duration, dismiss]);
+  }, [toast.duration, toast.createdAt, dismiss]);
 
   const borderColor =
     toast.type === 'error'
