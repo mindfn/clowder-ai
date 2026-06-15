@@ -530,6 +530,64 @@ describe('HubCatEditor', () => {
     expect(payload).not.toHaveProperty('provider');
   });
 
+  it('buildCatPatchPayload provider handling is independent of command basename (no opencode sniffing)', () => {
+    // F161 cleanup: provider handling for generic ACP must NOT depend on whether the
+    // command happens to be "opencode". A clientId=acp + command=kimi member with an
+    // unchanged provider must not re-send provider on a no-op save — same as any other
+    // generic ACP carrier. (Pre-cleanup, only the opencode command basename preserved it.)
+    const form: HubCatEditorFormState = {
+      catId: 'acp-kimi',
+      name: 'Kimi ACP',
+      displayName: 'Kimi ACP',
+      variantLabel: '',
+      nickname: '',
+      avatar: '/avatars/default.png',
+      colorPrimary: '#0f172a',
+      colorSecondary: '#e2e8f0',
+      mentionPatterns: '@acp-kimi',
+      roleDescription: 'Kimi over generic ACP',
+      personality: '',
+      teamStrengths: '',
+      caution: '',
+      strengths: '',
+      clientId: 'acp',
+      accountRef: 'moonshot-key',
+      defaultModel: 'kimi-k2',
+      commandArgs: '',
+      cliConfigArgs: [],
+      cliEffort: '',
+      provider: 'moonshot',
+      sessionChain: 'true',
+      maxPromptTokens: '',
+      maxContextTokens: '',
+      maxMessages: '',
+      maxContentLengthPerMsg: '',
+      ...emptyVoiceFields,
+      acpEnabled: true,
+      acpCommand: 'kimi',
+      acpStartupArgs: 'acp',
+      acpMaxLiveProcesses: '',
+      acpIdleTtlMinutes: '',
+    };
+    const existingCat = {
+      id: 'acp-kimi',
+      name: 'Kimi ACP',
+      displayName: 'Kimi ACP',
+      clientId: 'acp',
+      accountRef: 'moonshot-key',
+      provider: 'moonshot',
+      defaultModel: 'kimi-k2',
+      acp: { command: 'kimi', startupArgs: ['acp'] },
+      color: { primary: '#0f172a', secondary: '#e2e8f0' },
+      mentionPatterns: ['@acp-kimi'],
+      avatar: '/avatars/default.png',
+      roleDescription: 'Kimi over generic ACP',
+    } as CatData;
+
+    const payload = buildCatPatchPayload(form, existingCat) as Record<string, unknown>;
+    expect(payload).not.toHaveProperty('provider');
+  });
+
   it('renders normal member provider/model fields and saves to /api/cats', async () => {
     const onSaved = vi.fn(() => Promise.resolve());
     mockApiFetch.mockImplementation((path: string) => {

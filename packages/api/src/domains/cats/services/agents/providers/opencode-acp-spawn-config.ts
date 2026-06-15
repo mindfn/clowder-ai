@@ -20,7 +20,6 @@ export interface OpenCodeAcpSpawnConfigOptions {
   projectRoot: string;
   profileId: string;
   clientId: string;
-  command: string;
   providerName?: string | null;
   defaultModel?: string | null;
   account?: OpenCodeAcpSpawnAccount | null;
@@ -32,15 +31,13 @@ export interface PreparedOpenCodeAcpSpawnConfig {
   runtimeConfigSummary: OpenCodeRuntimeConfigDebugSummary;
 }
 
-const OPENCODE_COMMAND_BASENAMES = new Set(['opencode', 'opencode.cmd', 'opencode.exe']);
-
-export function isOpenCodeCommand(command: string): boolean {
-  const basename = command.split(/[\\/]/).pop()?.toLowerCase() ?? '';
-  return OPENCODE_COMMAND_BASENAMES.has(basename);
-}
-
-function isOpenCodeAcpTarget(clientId: string, command: string): boolean {
-  return clientId === 'opencode' || isOpenCodeCommand(command);
+// F161 cleanup: OpenCode managed config is opt-in via clientId='opencode' only.
+// Generic ACP (clientId='acp') is NOT auto-upgraded by sniffing the command
+// basename — a generic carrier that points at the opencode binary stays on the
+// pure generic env path. This keeps the spawn-config path consistent with the
+// env-map path, which already dropped command-based builtin inference.
+function isOpenCodeAcpTarget(clientId: string): boolean {
+  return clientId === 'opencode';
 }
 
 function resolveEffectiveOpenCodeModel(
@@ -82,7 +79,7 @@ function resolveEffectiveOpenCodeModel(
 export function prepareOpenCodeAcpSpawnConfig(
   options: OpenCodeAcpSpawnConfigOptions,
 ): PreparedOpenCodeAcpSpawnConfig | null {
-  if (!isOpenCodeAcpTarget(options.clientId, options.command)) return null;
+  if (!isOpenCodeAcpTarget(options.clientId)) return null;
 
   const effective = resolveEffectiveOpenCodeModel(options.providerName, options.defaultModel);
   if (!effective) return null;

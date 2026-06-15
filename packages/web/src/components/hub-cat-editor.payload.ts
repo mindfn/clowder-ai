@@ -16,19 +16,16 @@ function trimText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-const OPENCODE_COMMAND_BASENAMES = new Set(['opencode', 'opencode.cmd', 'opencode.exe']);
-
-function isOpenCodeCommand(command: string): boolean {
-  const basename = command.split(/[\\/]/).pop()?.toLowerCase() ?? '';
-  return OPENCODE_COMMAND_BASENAMES.has(basename);
-}
-
-function usesOpenCodeProvider(form: HubCatEditorFormState): boolean {
-  return form.clientId === 'opencode' || (form.clientId === 'acp' && isOpenCodeCommand(trimText(form.acpCommand)));
+function usesExplicitProvider(form: HubCatEditorFormState): boolean {
+  // F161 cleanup: the provider field is carried by managed OpenCode members
+  // (clientId='opencode') and generic ACP carriers (clientId='acp', which forward
+  // provider to the env-map). Generic ACP is no longer command-sniffed — the command
+  // basename does not affect provider handling, consistent with the backend.
+  return form.clientId === 'opencode' || form.clientId === 'acp';
 }
 
 function buildProviderPatch(form: HubCatEditorFormState, cat?: CatData | null): Record<string, unknown> {
-  const providerCarrier = usesOpenCodeProvider(form);
+  const providerCarrier = usesExplicitProvider(form);
   const trimmedProvider = trimText(form.provider);
   if (providerCarrier && trimmedProvider.length > 0) return { provider: trimmedProvider };
   if (cat?.provider && (form.clientId === 'opencode' || !providerCarrier)) return { provider: null as null };
@@ -231,7 +228,7 @@ export function buildCatPatchPayload(form: HubCatEditorFormState, cat: CatData) 
   }
 
   const nextProvider =
-    usesOpenCodeProvider(form) && trimText(form.provider).length > 0 ? trimText(form.provider) : null;
+    usesExplicitProvider(form) && trimText(form.provider).length > 0 ? trimText(form.provider) : null;
   const currentProvider = normalizeOptionalText(cat.provider);
   if (nextProvider === currentProvider) {
     delete payload.provider;

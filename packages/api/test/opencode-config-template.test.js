@@ -3,10 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
-import {
-  isOpenCodeCommand,
-  prepareOpenCodeAcpSpawnConfig,
-} from '../dist/domains/cats/services/agents/providers/opencode-acp-spawn-config.js';
+import { prepareOpenCodeAcpSpawnConfig } from '../dist/domains/cats/services/agents/providers/opencode-acp-spawn-config.js';
 import {
   deriveOpenCodeApiType,
   generateOpenCodeConfig,
@@ -230,12 +227,6 @@ describe('deriveOpenCodeApiType', () => {
 });
 
 describe('prepareOpenCodeAcpSpawnConfig', () => {
-  test('recognizes direct OpenCode command basenames across platforms', () => {
-    assert.equal(isOpenCodeCommand('/usr/local/bin/opencode'), true);
-    assert.equal(isOpenCodeCommand('C:\\Program Files\\opencode\\opencode.exe'), true);
-    assert.equal(isOpenCodeCommand('/usr/local/bin/opencode-wrapper'), false);
-  });
-
   test('writes OPENCODE_CONFIG and credential env for OpenCode ACP api_key accounts', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-cafe-opencode-acp-'));
     try {
@@ -271,9 +262,13 @@ describe('prepareOpenCodeAcpSpawnConfig', () => {
     }
   });
 
-  test('writes OPENCODE_CONFIG for generic ACP when the command is opencode', () => {
+  test('does NOT manage generic ACP by command basename (clientId=acp + command=opencode → null)', () => {
     const projectRoot = mkdtempSync(join(tmpdir(), 'cat-cafe-opencode-acp-generic-'));
     try {
+      // F161 cleanup: generic ACP (clientId='acp') must NOT be auto-upgraded to
+      // OpenCode managed config by sniffing the command basename. OpenCode managed
+      // config is opt-in via clientId='opencode' only. A generic carrier that happens
+      // to point at the opencode binary stays on the pure generic env path.
       const prepared = prepareOpenCodeAcpSpawnConfig({
         projectRoot,
         profileId: 'generic-acp-opencode',
@@ -290,14 +285,7 @@ describe('prepareOpenCodeAcpSpawnConfig', () => {
         },
       });
 
-      assert.ok(prepared, 'generic ACP opencode command should receive a prepared spawn config');
-      assert.ok(prepared.env.OPENCODE_CONFIG, 'OPENCODE_CONFIG must be set for generic OpenCode ACP');
-      assert.equal(prepared.env[OC_API_KEY_ENV], 'sk-test-secret');
-      assert.equal(prepared.env[OC_BASE_URL_ENV], 'https://proxy.example/v1');
-
-      const config = JSON.parse(readFileSync(prepared.env.OPENCODE_CONFIG, 'utf8'));
-      assert.equal(config.model, 'anthropic/claude-opus-4-6');
-      assert.deepEqual(Object.keys(config.provider), ['anthropic']);
+      assert.equal(prepared, null, 'generic ACP must not get OpenCode managed config via command sniffing');
     } finally {
       rmSync(projectRoot, { recursive: true, force: true });
     }
