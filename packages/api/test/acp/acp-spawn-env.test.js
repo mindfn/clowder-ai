@@ -22,4 +22,47 @@ describe('prepareAcpProcessEnv', () => {
       /account "deepseek-key" is configured as api_key but has no API key set/,
     );
   });
+
+  it('ignores provider for generic ACP (clientId=acp) — env-map is account-envVars driven, not BUILTIN_ENV_MAPS[provider]', () => {
+    // F161 AC-A5 / KD-1: generic ACP is a transport, not a provider identity. A stale provider
+    // (migrated from clientId=opencode, sitting in a pack/runtime catalog, or sent via direct
+    // API) must NOT select a BUILTIN_ENV_MAPS[provider] template. Env customization flows ONLY
+    // through the account's envVars templates. Locks the invariant at the runtime layer.
+    const env = prepareAcpProcessEnv({
+      clientId: 'acp',
+      provider: 'anthropic', // stale / catalog value — must be ignored for generic ACP
+      baseModel: 'kimi-k2',
+      account: {
+        id: 'moonshot-key',
+        authType: 'api_key',
+        apiKey: 'sk-moonshot-xyz',
+        envVars: { MOONSHOT_API_KEY: '${api_key}' },
+      },
+    });
+    assert.ok(env, 'env should be defined');
+    assert.equal(env.MOONSHOT_API_KEY, 'sk-moonshot-xyz', 'account envVars template should resolve');
+    assert.equal(env.ANTHROPIC_API_KEY, undefined, 'stale provider must NOT inject BUILTIN_ENV_MAPS[anthropic] key');
+    assert.equal(env.ANTHROPIC_BASE_URL, undefined, 'stale provider must NOT inject anthropic base url');
+  });
+
+  it('still honors provider for opencode over ACP transport (clientId=opencode is a real carrier)', () => {
+    // Guard the other side of the invariant: opencode IS a provider carrier (multi-provider
+    // routing), even when running over the ACP transport. Narrowing must not break it.
+    const env = prepareAcpProcessEnv({
+      clientId: 'opencode',
+      provider: 'anthropic',
+      baseModel: 'claude-sonnet-4-5',
+      account: {
+        id: 'anthropic-key',
+        authType: 'api_key',
+        apiKey: 'sk-ant-xyz',
+      },
+    });
+    assert.ok(env, 'env should be defined');
+    assert.equal(
+      env.ANTHROPIC_API_KEY,
+      'sk-ant-xyz',
+      'opencode provider must still select BUILTIN_ENV_MAPS[anthropic]',
+    );
+  });
 });

@@ -149,7 +149,9 @@ const createAcpCatSchema = baseCatSchema.extend({
   clientId: z.literal('acp'),
   defaultModel: modelSchema,
   mcpSupport: z.boolean().optional(),
-  provider: z.string().min(1).optional(),
+  // F161 AC-A5 / KD-1: generic ACP is a transport, not a provider identity — no provider field.
+  // Env customization flows through the account's envVars templates. Any incoming provider is
+  // dropped by zod (unknown key) so it never reaches persistence.
   acp: acpConfigSchema,
 });
 
@@ -620,7 +622,7 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
           defaultModel: body.defaultModel,
           mcpSupport: body.mcpSupport ?? false,
           cli: defaultCliForClient('acp'),
-          ...(body.provider ? { provider: body.provider } : {}),
+          // F161 AC-A5 / KD-1: generic ACP never carries provider (already stripped by schema).
           ...(body.voiceConfig ? { voiceConfig: body.voiceConfig } : {}),
           acp: body.acp,
         });
@@ -747,7 +749,9 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
 
     if (providerConfigTouched) {
       try {
-        const effectiveProviderName = body.provider !== undefined ? body.provider : currentCat.provider;
+        // F161 AC-A5 / KD-1: generic ACP carries no provider — exclude it from binding validation.
+        const effectiveProviderName =
+          effectiveClient === 'acp' ? undefined : body.provider !== undefined ? body.provider : currentCat.provider;
         // Legacy compat: existing opencode+api_key members without provider name
         // can still be edited for non-binding changes (name, model, etc.).
         // NOT allowed when: switching accountRef, or switching clientId to opencode
@@ -826,11 +830,17 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
         ...(nextCli !== undefined ? { cli: nextCli } : {}),
         ...(body.available !== undefined ? { available: body.available } : {}),
         ...(body.cliConfigArgs !== undefined ? { cliConfigArgs: body.cliConfigArgs } : {}),
-        ...(body.provider !== undefined
-          ? body.provider === null
+        // F161 AC-A5 / KD-1: generic ACP never carries provider — clear any stale value and
+        // ignore incoming provider; other clients keep the explicit set/clear semantics.
+        ...(effectiveClient === 'acp'
+          ? currentCat.provider != null
             ? { provider: null }
-            : { provider: body.provider }
-          : {}),
+            : {}
+          : body.provider !== undefined
+            ? body.provider === null
+              ? { provider: null }
+              : { provider: body.provider }
+            : {}),
         ...(body.voiceConfig !== undefined
           ? body.voiceConfig === null
             ? { voiceConfig: null }

@@ -2183,4 +2183,100 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     const switchBody = JSON.parse(switchRes.body);
     assert.equal(switchBody.cat.adapterMode, 'cli', 'after switch should be cli mode');
   });
+
+  it('POST /api/cats strips provider for generic ACP (AC-A5/KD-1: acp is transport, not provider identity)', async () => {
+    const projectRoot = createMonorepoProjectRoot();
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
+
+    const { createProviderProfile } = await import('./helpers/create-test-account.js');
+    const acpProfile = await createProviderProfile(projectRoot, {
+      displayName: 'Kimi ACP',
+      authType: 'api_key',
+      protocol: 'openai',
+      apiKey: 'sk-moonshot',
+      models: ['kimi-k2'],
+    });
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/cats',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        catId: 'acp-kimi-noprovider',
+        name: 'Kimi ACP',
+        displayName: 'Kimi ACP',
+        avatar: '/avatars/default.png',
+        color: { primary: '#0f172a', secondary: '#e2e8f0' },
+        mentionPatterns: ['@acp-kimi-noprovider'],
+        roleDescription: 'ACP agent',
+        clientId: 'acp',
+        accountRef: acpProfile.id,
+        defaultModel: 'kimi-k2',
+        provider: 'anthropic', // must be stripped — generic ACP never carries provider
+        acp: { command: 'kimi', startupArgs: ['acp'] },
+      }),
+    });
+    assert.equal(createRes.statusCode, 201, `create failed: ${createRes.body}`);
+    const created = JSON.parse(createRes.body);
+    assert.equal(created.cat.provider, undefined, 'generic ACP must not persist provider on create');
+
+    const listRes = await app.inject({ method: 'GET', url: '/api/cats' });
+    const listed = JSON.parse(listRes.body).cats.find((cat) => cat.id === 'acp-kimi-noprovider');
+    assert.equal(listed.provider, undefined, 'GET should confirm generic ACP has no persisted provider');
+  });
+
+  it('PATCH /api/cats/:id strips provider for generic ACP — stays transport-only', async () => {
+    const projectRoot = createMonorepoProjectRoot();
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
+
+    const { createProviderProfile } = await import('./helpers/create-test-account.js');
+    const acpProfile = await createProviderProfile(projectRoot, {
+      displayName: 'Patch ACP NoProvider',
+      authType: 'api_key',
+      protocol: 'openai',
+      apiKey: 'sk-patch2',
+      models: ['test-model'],
+    });
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/cats',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        catId: 'acp-patch-noprovider',
+        name: 'Patch ACP',
+        displayName: 'Patch ACP',
+        avatar: '/avatars/default.png',
+        color: { primary: '#0f172a', secondary: '#e2e8f0' },
+        mentionPatterns: ['@acp-patch-noprovider'],
+        roleDescription: 'ACP agent',
+        clientId: 'acp',
+        accountRef: acpProfile.id,
+        defaultModel: 'test-model',
+        acp: { command: 'test-cli', startupArgs: ['--acp'] },
+      }),
+    });
+    assert.equal(createRes.statusCode, 201, `create failed: ${createRes.body}`);
+
+    // Direct API PATCH tries to set a provider on a generic ACP member — must be stripped.
+    const patchRes = await app.inject({
+      method: 'PATCH',
+      url: '/api/cats/acp-patch-noprovider',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({ provider: 'anthropic' }),
+    });
+    assert.equal(patchRes.statusCode, 200, `patch failed: ${patchRes.body}`);
+    const patched = JSON.parse(patchRes.body);
+    assert.equal(patched.cat.provider, undefined, 'generic ACP must not persist provider on update');
+  });
 });

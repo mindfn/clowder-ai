@@ -27,11 +27,15 @@ export function prepareAcpProcessEnv(options: PrepareAcpProcessEnvOptions): Reco
       );
     }
     const userEnvTemplates = account.envVars ? extractUserEnvTemplates(account.envVars) : undefined;
+    // F161 AC-A5 / KD-1: generic ACP (clientId='acp') is a transport, not a provider identity.
+    // It never selects a BUILTIN_ENV_MAPS[provider] template — env comes only from the account's
+    // envVars templates. Ignore any provider on generic ACP (stale / pack-catalog / direct-API).
+    const envMapProvider = options.clientId === 'acp' ? undefined : (options.provider ?? undefined);
     Object.assign(
       resolved,
       resolveEnvMap(
         options.clientId,
-        options.provider ?? undefined,
+        envMapProvider,
         { apiKey: account.apiKey, baseUrl: account.baseUrl, baseModel: options.baseModel },
         userEnvTemplates,
       ),
