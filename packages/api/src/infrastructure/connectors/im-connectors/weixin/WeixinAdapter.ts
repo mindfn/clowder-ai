@@ -408,7 +408,11 @@ export class WeixinAdapter implements IOutboundAdapter {
     const msgId =
       msg.message_id != null
         ? String(msg.message_id)
-        : `weixin-${crypto.createHash('sha256').update(`${senderId}\0${msg.create_time_ms ?? 0}\0${contentPrefix}`).digest('hex').slice(0, 16)}`;
+        : `weixin-${crypto
+            .createHash('sha256')
+            .update(`${senderId}\0${msg.create_time_ms ?? 0}\0${contentPrefix}`)
+            .digest('hex')
+            .slice(0, 16)}`;
 
     const firstItem = msg.item_list?.[0];
     if (!firstItem) {
