@@ -16,16 +16,20 @@ function trimText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function usesExplicitProvider(form: HubCatEditorFormState): boolean {
-  // F161 cleanup: the provider field is carried by managed OpenCode members
-  // (clientId='opencode') and generic ACP carriers (clientId='acp', which forward
-  // provider to the env-map). Generic ACP is no longer command-sniffed — the command
-  // basename does not affect provider handling, consistent with the backend.
-  return form.clientId === 'opencode' || form.clientId === 'acp';
+function usesOpenCodeProvider(form: HubCatEditorFormState): boolean {
+  // F161: the `provider` field is an OpenCode-only concept — it selects the env-map template
+  // (BUILTIN_ENV_MAPS[provider]) for OpenCode's multi-provider backend routing. Generic ACP
+  // carriers (clientId='acp') are NOT provider carriers: the field renders only for opencode
+  // (there is no UI to set it for acp), BUILTIN_ENV_MAPS has no 'acp' entry, and env
+  // customization flows through the account's envVars templates (env-map priority 1). A stale
+  // provider on a generic ACP member (e.g. migrated from clientId='opencode') is therefore
+  // cleared on save by the !providerCarrier branch below — not preserved. For OpenCode
+  // provider management, use clientId='opencode' (cli or acp transport).
+  return form.clientId === 'opencode';
 }
 
 function buildProviderPatch(form: HubCatEditorFormState, cat?: CatData | null): Record<string, unknown> {
-  const providerCarrier = usesExplicitProvider(form);
+  const providerCarrier = usesOpenCodeProvider(form);
   const trimmedProvider = trimText(form.provider);
   if (providerCarrier && trimmedProvider.length > 0) return { provider: trimmedProvider };
   if (cat?.provider && (form.clientId === 'opencode' || !providerCarrier)) return { provider: null as null };
@@ -228,7 +232,7 @@ export function buildCatPatchPayload(form: HubCatEditorFormState, cat: CatData) 
   }
 
   const nextProvider =
-    usesExplicitProvider(form) && trimText(form.provider).length > 0 ? trimText(form.provider) : null;
+    usesOpenCodeProvider(form) && trimText(form.provider).length > 0 ? trimText(form.provider) : null;
   const currentProvider = normalizeOptionalText(cat.provider);
   if (nextProvider === currentProvider) {
     delete payload.provider;

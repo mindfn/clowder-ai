@@ -476,7 +476,15 @@ describe('HubCatEditor', () => {
     });
   });
 
-  it('buildCatPatchPayload preserves provider for generic ACP OpenCode no-op saves', () => {
+  it('buildCatPatchPayload clears stale provider for generic ACP — provider is opencode-only, not carried by acp', () => {
+    // F161 root-cause fix: clientId='acp' (generic ACP) is NOT a provider carrier.
+    // `provider` selects the env-map template (BUILTIN_ENV_MAPS[provider]) and is an
+    // OpenCode-only concept — there is no UI field for generic ACP, and env customization
+    // flows through account envVars templates instead. A stale provider (e.g. left over from
+    // a clientId='opencode' member or pre-cleanup data) must be cleared (provider:null) on
+    // save; otherwise prepareAcpProcessEnv forwards it to the env-map and injects the new
+    // account's key under the wrong provider's env name. For OpenCode provider management,
+    // use clientId='opencode' (cli or acp transport).
     const form: HubCatEditorFormState = {
       catId: 'acp-opencode',
       name: 'OpenCode ACP',
@@ -498,7 +506,7 @@ describe('HubCatEditor', () => {
       commandArgs: '',
       cliConfigArgs: [],
       cliEffort: '',
-      provider: 'anthropic',
+      provider: '',
       sessionChain: 'true',
       maxPromptTokens: '',
       maxContextTokens: '',
@@ -527,14 +535,15 @@ describe('HubCatEditor', () => {
     } as CatData;
 
     const payload = buildCatPatchPayload(form, existingCat) as Record<string, unknown>;
-    expect(payload).not.toHaveProperty('provider');
+    expect(payload.provider).toBeNull();
   });
 
-  it('buildCatPatchPayload provider handling is independent of command basename (no opencode sniffing)', () => {
-    // F161 cleanup: provider handling for generic ACP must NOT depend on whether the
-    // command happens to be "opencode". A clientId=acp + command=kimi member with an
-    // unchanged provider must not re-send provider on a no-op save — same as any other
-    // generic ACP carrier. (Pre-cleanup, only the opencode command basename preserved it.)
+  it('buildCatPatchPayload provider handling is independent of command basename — generic ACP never carries provider, kimi or opencode alike', () => {
+    // F161 root-cause fix: provider handling for generic ACP must NOT depend on the command
+    // basename. A clientId='acp' member is never a provider carrier whether the command is
+    // "kimi", "opencode", or anything else — a stale provider is always cleared on save.
+    // (Pre-cleanup, the opencode command basename alone preserved it; the cleanup commit
+    // wrongly widened the carrier to ALL acp — the correct scope is opencode-only.)
     const form: HubCatEditorFormState = {
       catId: 'acp-kimi',
       name: 'Kimi ACP',
@@ -556,7 +565,7 @@ describe('HubCatEditor', () => {
       commandArgs: '',
       cliConfigArgs: [],
       cliEffort: '',
-      provider: 'moonshot',
+      provider: '',
       sessionChain: 'true',
       maxPromptTokens: '',
       maxContextTokens: '',
@@ -582,6 +591,62 @@ describe('HubCatEditor', () => {
       mentionPatterns: ['@acp-kimi'],
       avatar: '/avatars/default.png',
       roleDescription: 'Kimi over generic ACP',
+    } as CatData;
+
+    const payload = buildCatPatchPayload(form, existingCat) as Record<string, unknown>;
+    expect(payload.provider).toBeNull();
+  });
+
+  it('buildCatPatchPayload does not emit a redundant provider:null when a generic ACP member has no stale provider', () => {
+    // F161 root-cause fix guard: a clean generic ACP member (no existing provider) must NOT
+    // gain a noisy provider:null on every save. Clearing only applies when there is a stale
+    // value to remove.
+    const form: HubCatEditorFormState = {
+      catId: 'acp-clean',
+      name: 'Clean ACP',
+      displayName: 'Clean ACP',
+      variantLabel: '',
+      nickname: '',
+      avatar: '/avatars/default.png',
+      colorPrimary: '#0f172a',
+      colorSecondary: '#e2e8f0',
+      mentionPatterns: '@acp-clean',
+      roleDescription: 'Clean generic ACP',
+      personality: '',
+      teamStrengths: '',
+      caution: '',
+      strengths: '',
+      clientId: 'acp',
+      accountRef: 'some-key',
+      defaultModel: 'some-model',
+      commandArgs: '',
+      cliConfigArgs: [],
+      cliEffort: '',
+      provider: '',
+      sessionChain: 'true',
+      maxPromptTokens: '',
+      maxContextTokens: '',
+      maxMessages: '',
+      maxContentLengthPerMsg: '',
+      ...emptyVoiceFields,
+      acpEnabled: true,
+      acpCommand: 'some-acp-agent',
+      acpStartupArgs: 'acp',
+      acpMaxLiveProcesses: '',
+      acpIdleTtlMinutes: '',
+    };
+    const existingCat = {
+      id: 'acp-clean',
+      name: 'Clean ACP',
+      displayName: 'Clean ACP',
+      clientId: 'acp',
+      accountRef: 'some-key',
+      defaultModel: 'some-model',
+      acp: { command: 'some-acp-agent', startupArgs: ['acp'] },
+      color: { primary: '#0f172a', secondary: '#e2e8f0' },
+      mentionPatterns: ['@acp-clean'],
+      avatar: '/avatars/default.png',
+      roleDescription: 'Clean generic ACP',
     } as CatData;
 
     const payload = buildCatPatchPayload(form, existingCat) as Record<string, unknown>;
