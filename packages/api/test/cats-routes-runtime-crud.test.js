@@ -2279,4 +2279,70 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     const patched = JSON.parse(patchRes.body);
     assert.equal(patched.cat.provider, undefined, 'generic ACP must not persist provider on update');
   });
+
+  it('PATCH /api/cats/:id clears stale provider when migrating opencode → generic ACP (covers the currentCat.provider != null clear branch)', async () => {
+    // F161 R7 P3: the migration/stale path. A clientId=opencode member legitimately carries a
+    // provider; migrating it to generic ACP (clientId=acp) must clear that stale provider
+    // (provider:null) so it cannot leak into the ACP env-map. This is the exact path the
+    // @acp-opencode runtime member takes. Locks cats.ts buildProviderPatch acp clear branch.
+    const projectRoot = createMonorepoProjectRoot();
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
+
+    const { createProviderProfile } = await import('./helpers/create-test-account.js');
+    const profile = await createProviderProfile(projectRoot, {
+      displayName: 'OpenAI Key Profile',
+      authType: 'api_key',
+      protocol: 'openai',
+      baseUrl: 'https://api.bound.example',
+      apiKey: 'sk-bound',
+      models: ['openai/claude-sonnet-4-6'],
+    });
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    // Step 1: create an opencode member that legitimately carries a provider.
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/cats',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        catId: 'migrate-oc-to-acp',
+        name: 'Migrate OC',
+        displayName: 'Migrate OC',
+        avatar: '/avatars/default.png',
+        color: { primary: '#0f172a', secondary: '#e2e8f0' },
+        mentionPatterns: ['@migrate-oc-to-acp'],
+        roleDescription: 'migration',
+        clientId: 'opencode',
+        accountRef: profile.id,
+        defaultModel: 'openai/claude-sonnet-4-6',
+        provider: 'openai',
+      }),
+    });
+    assert.equal(createRes.statusCode, 201, `create failed: ${createRes.body}`);
+    assert.equal(JSON.parse(createRes.body).cat.provider, 'openai', 'opencode should persist provider');
+
+    // Step 2: migrate to generic ACP — the stale provider must be cleared (provider:null).
+    const patchRes = await app.inject({
+      method: 'PATCH',
+      url: '/api/cats/migrate-oc-to-acp',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        clientId: 'acp',
+        accountRef: profile.id,
+        acp: { command: 'opencode', startupArgs: ['acp', '--pure'] },
+      }),
+    });
+    assert.equal(patchRes.statusCode, 200, `migration patch failed: ${patchRes.body}`);
+    const patched = JSON.parse(patchRes.body);
+    assert.equal(patched.cat.clientId, 'acp', 'should be generic ACP after migration');
+    assert.equal(patched.cat.provider, undefined, 'stale provider must be cleared on migration to generic ACP');
+
+    const listRes = await app.inject({ method: 'GET', url: '/api/cats' });
+    const listed = JSON.parse(listRes.body).cats.find((cat) => cat.id === 'migrate-oc-to-acp');
+    assert.equal(listed.provider, undefined, 'GET should confirm no stale provider remains after migration');
+  });
 });
