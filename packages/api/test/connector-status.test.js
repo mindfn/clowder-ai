@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { afterEach, describe, it } from 'node:test';
+import {
+  clearExternalConnectorRegistry,
+  registerExternalConnectorMeta,
+} from '../dist/infrastructure/connectors/external-connector-registry.js';
 import { buildConnectorStatus } from '../dist/routes/connector-hub.js';
 
 describe('buildConnectorStatus', () => {
+  afterEach(() => clearExternalConnectorRegistry());
   it('returns all platforms as not configured when env is empty', () => {
     const result = buildConnectorStatus({});
     assert.equal(result.length, 7);
@@ -229,4 +234,86 @@ describe('buildConnectorStatus', () => {
 
   // F202-2B: "marks GitHub plugin as configured" test removed — GitHub config
   // moved to plugin framework (plugin-config-store), no longer in connector-hub.
+
+  // ── F231 P1-2 regression: external connector plugins must appear in status ──
+
+  it('F231 P1-2: includes external connector plugin in status when registered', () => {
+    registerExternalConnectorMeta({
+      id: 'welink',
+      definition: {
+        id: 'welink',
+        displayName: 'WeLink',
+        icon: { type: 'png', src: '/images/connectors/welink.png' },
+        themeColor: '#FF6600',
+        description: 'Huawei WeLink connector',
+      },
+      requiredEnvKeys: ['WELINK_APP_KEY', 'WELINK_APP_SECRET'],
+      optionalEnvKeys: [],
+      configured: true, // simulates bootstrap having called isConfigured()→true
+    });
+
+    const result = buildConnectorStatus({
+      WELINK_APP_KEY: 'mykey123',
+      WELINK_APP_SECRET: 'mysecret456',
+    });
+
+    // Built-in platforms still present
+    assert.equal(result.filter((p) => p.id === 'feishu').length, 1);
+
+    // External connector appears
+    const welink = result.find((p) => p.id === 'welink');
+    assert.ok(welink, 'External connector "welink" must appear in status');
+    assert.equal(welink.name, 'WeLink');
+    assert.equal(welink.configured, true);
+    assert.equal(welink.fields.length, 2);
+
+    // External fields are masked (sensitive: true by default)
+    for (const field of welink.fields) {
+      assert.equal(field.sensitive, true, `External field ${field.envName} must be sensitive`);
+      assert.equal(field.currentValue, '••••••••', `External field ${field.envName} must be masked`);
+    }
+  });
+
+  it('F231 P1-2: external connector shows not-configured when env vars missing', () => {
+    registerExternalConnectorMeta({
+      id: 'welink',
+      definition: {
+        id: 'welink',
+        displayName: 'WeLink',
+        icon: { type: 'png', src: '/images/connectors/welink.png' },
+        themeColor: '#FF6600',
+        description: 'Huawei WeLink connector',
+      },
+      requiredEnvKeys: ['WELINK_APP_KEY', 'WELINK_APP_SECRET'],
+      optionalEnvKeys: [],
+      configured: false, // simulates bootstrap having called isConfigured()→false
+    });
+
+    const result = buildConnectorStatus({});
+    const welink = result.find((p) => p.id === 'welink');
+    assert.ok(welink, 'External connector must appear even when not configured');
+    assert.equal(welink.configured, false);
+    assert.equal(welink.fields[0].currentValue, null);
+  });
+
+  it('F231 P1-2: external connector does not duplicate built-in platform', () => {
+    // Register with a built-in ID — should be skipped
+    registerExternalConnectorMeta({
+      id: 'feishu',
+      definition: {
+        id: 'feishu',
+        displayName: 'Fake Feishu',
+        icon: { type: 'png', src: '/test.png' },
+        themeColor: '#000',
+        description: 'should not duplicate',
+      },
+      requiredEnvKeys: [],
+      optionalEnvKeys: [],
+      configured: false,
+    });
+
+    const result = buildConnectorStatus({});
+    const feishuEntries = result.filter((p) => p.id === 'feishu');
+    assert.equal(feishuEntries.length, 1, 'Must not duplicate built-in feishu');
+  });
 });

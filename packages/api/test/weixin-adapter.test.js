@@ -3,7 +3,7 @@ import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
-import { WeixinAdapter } from '../dist/infrastructure/connectors/adapters/WeixinAdapter.js';
+import { WeixinAdapter } from '../dist/infrastructure/connectors/im-connectors/weixin/WeixinAdapter.js';
 
 function noopLog() {
   const noop = () => {};
