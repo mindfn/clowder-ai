@@ -45,6 +45,7 @@ import {
   buildClaudeEnvOverrides,
   resolveClaudeModelSelection,
   resolveDefaultClaudeMcpServerPath,
+  SUBSCRIPTION_MODE_DENY_KEYS,
 } from './ClaudeAgentService.js';
 import { JobEventConsumer } from './JobEventConsumer.js';
 import { compileL0ViaSubprocess } from './l0-compiler.js';
@@ -236,6 +237,12 @@ export class ClaudeBgCarrierService implements AgentService {
         for (const [k, v] of Object.entries(options.accountEnv)) {
           envOverrides[k] = v;
         }
+      }
+      // #883: Subscription deny-list must survive accountEnv merge (same as
+      // ClaudeAgentService). Effective mode resolves from callbackEnvWithMode.
+      const effectiveMode = callbackEnvWithMode[ANTHROPIC_PROFILE_MODE_KEY];
+      if (effectiveMode === 'subscription') {
+        for (const key of SUBSCRIPTION_MODE_DENY_KEYS) envOverrides[key] = null;
       }
       envOverrides.CLAUDE_CODE_ENTRYPOINT = null;
       envOverrides.CLAUDECODE = null;
