@@ -391,6 +391,28 @@ test('codex round-6 P1.2: strip ANTHROPIC_* env for subscription-mode carrier', 
   }
 });
 
+test('#883: subscription deny-list survives accountEnv merge in bg carrier (proxy token in account env)', async () => {
+  // When callbackEnv explicitly sets subscription mode AND accountEnv leaks
+  // proxy credentials, the deny-list must re-apply after the accountEnv merge.
+  // This mirrors the ClaudeAgentService fix for #883.
+  const fakeSpawn = buildFakeSpawn({ stdout: 'backgrounded · ab120099\n' });
+  const service = new ClaudeBgCarrierService({
+    l0CompilerFn: fakeL0Compiler,
+    spawnFn: fakeSpawn,
+    model: 'claude-test',
+  });
+  await service.startJob('hi', {
+    callbackEnv: { CAT_CAFE_ANTHROPIC_PROFILE_MODE: 'subscription' },
+    accountEnv: {
+      ANTHROPIC_AUTH_TOKEN: 'leaked-proxy-token',
+      ANTHROPIC_API_KEY: 'leaked-api-key',
+    },
+  });
+  const env = fakeSpawn.lastEnv;
+  assert.equal(env.ANTHROPIC_AUTH_TOKEN, undefined, 'proxy token must not leak through accountEnv');
+  assert.equal(env.ANTHROPIC_API_KEY, undefined, 'api key must not leak through accountEnv');
+});
+
 test('codex round-6 P1.3: spawn passes options.signal so startup abort kills child', async () => {
   // codex review (PR #1666 round 6) P1.3: AbortSignal must reach spawn so
   // cancellation during the 5-15s startup window terminates the child via

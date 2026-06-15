@@ -239,9 +239,12 @@ export class ClaudeBgCarrierService implements AgentService {
         }
       }
       // #883: Subscription deny-list must survive accountEnv merge (same as
-      // ClaudeAgentService). Effective mode resolves from callbackEnvWithMode.
-      const effectiveMode = callbackEnvWithMode[ANTHROPIC_PROFILE_MODE_KEY];
-      if (effectiveMode === 'subscription') {
+      // ClaudeAgentService). Check the CALLER's explicit mode — not the bg
+      // carrier's defaulted callbackEnvWithMode (which always includes
+      // 'subscription'). When accountEnv provides ANTHROPIC_API_KEY without
+      // an explicit subscription callbackEnv, the cat is opting into api_key
+      // mode and the key must survive.
+      if (options?.callbackEnv?.[ANTHROPIC_PROFILE_MODE_KEY] === 'subscription') {
         for (const key of SUBSCRIPTION_MODE_DENY_KEYS) envOverrides[key] = null;
       }
       envOverrides.CLAUDE_CODE_ENTRYPOINT = null;
