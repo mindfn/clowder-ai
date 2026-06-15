@@ -992,6 +992,13 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
   },
   {
+    name: 'IM_CONNECTOR_PLUGINS',
+    defaultValue: '',
+    description: 'F231: Comma-separated npm package names for external IM connector plugins (restart required)',
+    category: 'connector',
+    sensitive: true,
+  },
+  {
     name: 'FEISHU_BOT_OPEN_ID',
     defaultValue: '(未设置)',
     description: '飞书机器人 Open ID（接收消息的 bot 身份标识）',

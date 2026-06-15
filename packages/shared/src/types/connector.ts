@@ -253,12 +253,36 @@ const CONNECTOR_DEFINITIONS: readonly ConnectorDefinition[] = [
 
 const connectorMap = new Map<string, ConnectorDefinition>(CONNECTOR_DEFINITIONS.map((d) => [d.id, d]));
 
+/** Static IDs from compile-time definitions — immune to runtime registration. */
+const staticConnectorIds = new Set(CONNECTOR_DEFINITIONS.map((d) => d.id));
+
+/**
+ * Check whether an ID belongs to a static (compile-time) connector definition.
+ * Unlike `getConnectorDefinition()`, this is NOT affected by runtime
+ * `registerConnectorDefinition()` calls — safe for hot-reload ID conflict checks.
+ */
+export function isStaticConnectorId(id: string): boolean {
+  return staticConnectorIds.has(id);
+}
+
+/**
+ * Register a connector definition at runtime (F230 dynamic plugins).
+ * External IM connector plugins call this to make their definition
+ * available to frontend rendering (icon, color, displayName).
+ * Built-in definitions cannot be overridden.
+ */
+export function registerConnectorDefinition(def: ConnectorDefinition): void {
+  if (!connectorMap.has(def.id)) {
+    connectorMap.set(def.id, def);
+  }
+}
+
 /** Look up a connector definition by ID. */
 export function getConnectorDefinition(connectorId: string): ConnectorDefinition | undefined {
   return connectorMap.get(connectorId);
 }
 
-/** Get all registered connector definitions. */
+/** Get all registered connector definitions (built-in + dynamically registered). */
 export function getAllConnectorDefinitions(): readonly ConnectorDefinition[] {
-  return CONNECTOR_DEFINITIONS;
+  return Array.from(connectorMap.values());
 }

@@ -266,7 +266,9 @@ describe('POST /api/connector/feishu/disconnect', () => {
 describe('GET /api/connector/weixin/qrcode-status — adapter not ready', () => {
   it('P1: returns 503 when QR confirms but weixinAdapter is not available (cloud review a312a53f)', async () => {
     // Arrange: inject a mock fetch that makes pollQrCodeStatus return 'confirmed'
-    const { WeixinAdapter: WA } = await import('../dist/infrastructure/connectors/adapters/WeixinAdapter.js');
+    const { WeixinAdapter: WA } = await import(
+      '../dist/infrastructure/connectors/im-connectors/weixin/WeixinAdapter.js'
+    );
     const originalFetch = globalThis.fetch;
     WA._injectStaticFetch(async () => ({
       ok: true,
@@ -305,7 +307,9 @@ describe('GET /api/connector/weixin/qrcode-status — adapter not ready', () => 
   });
 
   it('P1: returns confirmed when adapter IS available and QR confirms', async () => {
-    const { WeixinAdapter: WA } = await import('../dist/infrastructure/connectors/adapters/WeixinAdapter.js');
+    const { WeixinAdapter: WA } = await import(
+      '../dist/infrastructure/connectors/im-connectors/weixin/WeixinAdapter.js'
+    );
     const originalFetch = globalThis.fetch;
     WA._injectStaticFetch(async () => ({
       ok: true,
@@ -357,7 +361,9 @@ describe('GET /api/connector/weixin/qrcode-status — adapter not ready', () => 
   });
 
   it('P1: persists WEIXIN_BOT_TOKEN to .env on QR confirmation so restarts skip re-scan', async () => {
-    const { WeixinAdapter: WA } = await import('../dist/infrastructure/connectors/adapters/WeixinAdapter.js');
+    const { WeixinAdapter: WA } = await import(
+      '../dist/infrastructure/connectors/im-connectors/weixin/WeixinAdapter.js'
+    );
     const originalFetch = globalThis.fetch;
     WA._injectStaticFetch(async () => ({
       ok: true,
@@ -582,7 +588,9 @@ describe('GET /api/connector/hub-threads', () => {
 
 // ── F132 Phase E: WeCom Bot guided setup routes ──
 
-const { WeComBotAdapter } = await import('../dist/infrastructure/connectors/adapters/WeComBotAdapter.js');
+const { WeComBotAdapter } = await import(
+  '../dist/infrastructure/connectors/im-connectors/wecom-bot/WeComBotAdapter.js'
+);
 
 describe('GET /api/connector/status — WeCom Bot live health', () => {
   it('rejects trusted header identity without a real session', async () => {

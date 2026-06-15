@@ -8,37 +8,35 @@
  * - Returns lifecycle handle { stop }
  *
  * F088 Multi-Platform Chat Gateway
+ * F231 IM Connector Plugin Architecture — unified plugin loop replaces
+ *      per-connector inline init blocks. All connectors (built-in + external)
+ *      go through the same IMConnectorPlugin interface.
  */
 
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { type CatId, type ConnectorSource, catRegistry } from '@cat-cafe/shared';
+import { type CatId, type ConnectorSource, catRegistry, isStaticConnectorId } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
-import * as lark from '@larksuiteoapi/node-sdk';
 import type { FastifyBaseLogger } from 'fastify';
 import { isCatAvailable } from '../../config/cat-config-loader.js';
-import type { ConnectorWebhookHandler, WebhookHandleResult } from '../../routes/connector-webhooks.js';
+import type { ConnectorWebhookHandler } from '../../routes/connector-webhooks.js';
 import { getDefaultUploadDir } from '../../utils/upload-paths.js';
 import { deliverConnectorMessage } from '../email/deliver-connector-message.js';
-import { DingTalkAdapter } from './adapters/DingTalkAdapter.js';
-import { FeishuAdapter } from './adapters/FeishuAdapter.js';
-import { FeishuTokenManager } from './adapters/FeishuTokenManager.js';
-import { TelegramAdapter } from './adapters/TelegramAdapter.js';
-import { WeComAgentAdapter } from './adapters/WeComAgentAdapter.js';
-import { WeComBotAdapter } from './adapters/WeComBotAdapter.js';
-import { WeixinAdapter, type WeixinSessionStateStore } from './adapters/WeixinAdapter.js';
 import { ConnectorCommandLayer, type ConnectorCommandLayerDeps } from './ConnectorCommandLayer.js';
 import {
   type IConnectorPermissionStore,
   MemoryConnectorPermissionStore,
   RedisConnectorPermissionStore,
 } from './ConnectorPermissionStore.js';
-import { ConnectorRouter, type RouteResult } from './ConnectorRouter.js';
+import { ConnectorRouter } from './ConnectorRouter.js';
 import { type IConnectorThreadBindingStore, MemoryConnectorThreadBindingStore } from './ConnectorThreadBindingStore.js';
 import { GitHubRepoWebhookHandler } from './github-repo-event/GitHubRepoWebhookHandler.js';
 import { ReconciliationDedup } from './github-repo-event/ReconciliationDedup.js';
 import { RedisDeliveryDedup } from './github-repo-event/RedisDeliveryDedup.js';
 import { InboundMessageDedup } from './InboundMessageDedup.js';
+import type { IMConnectorPluginContext, InboundMessageCallback } from './im-connector-plugin.js';
+import { WeComBotAdapter } from './im-connectors/wecom-bot/WeComBotAdapter.js';
+import { WeixinAdapter } from './im-connectors/weixin/WeixinAdapter.js';
 import { ConnectorMediaService } from './media/ConnectorMediaService.js';
 import { MediaCleanupJob } from './media/MediaCleanupJob.js';
 import {
@@ -48,7 +46,6 @@ import {
 } from './OutboundDeliveryHook.js';
 import { RedisConnectorThreadBindingStore } from './RedisConnectorThreadBindingStore.js';
 import { StreamingOutboundHook } from './StreamingOutboundHook.js';
-import { normalizeTelegramBotToken } from './telegram-token.js';
 
 export interface ConnectorGatewayConfig {
   telegramBotToken?: string | undefined;
@@ -166,8 +163,7 @@ export interface ConnectorGatewayDeps {
       }
     | undefined;
   readonly defaultUserId: string;
-  /** Static catId or getter; getter form propagates runtime PUT default-cat (cloud P1 #2253). */
-  readonly defaultCatId: CatId | (() => CatId);
+  readonly defaultCatId: CatId;
   readonly redis?: RedisClient | undefined;
   readonly log: FastifyBaseLogger;
   readonly frontendBaseUrl?: string | undefined;
@@ -185,7 +181,7 @@ export interface ConnectorGatewayDeps {
       })
     | undefined;
   /** @internal Test-only: override Feishu token manager (e.g. stub for fail-closed tests) */
-  readonly _feishuTokenManagerOverride?: FeishuTokenManager | undefined;
+  readonly _feishuTokenManagerOverride?: unknown;
 }
 
 export interface ConnectorGatewayHandle {
@@ -202,41 +198,6 @@ export interface ConnectorGatewayHandle {
   /** F132 bugfix: live adapter getter for health reporting (instance changes on restart) */
   readonly getWeComBotAdapter: () => WeComBotAdapter | null;
   stop(): Promise<void>;
-}
-
-const WEIXIN_SESSION_STATE_KEY = 'connectors:weixin:session-state';
-
-function createWeixinSessionStateStore(redis: RedisClient, log: FastifyBaseLogger): WeixinSessionStateStore {
-  return {
-    async load() {
-      const raw = await redis.get(WEIXIN_SESSION_STATE_KEY);
-      if (!raw) return null;
-      try {
-        const parsed = JSON.parse(raw) as { getUpdatesBuf?: unknown; contextTokens?: unknown };
-        const contextTokens =
-          parsed.contextTokens && typeof parsed.contextTokens === 'object'
-            ? Object.fromEntries(
-                Object.entries(parsed.contextTokens).filter(
-                  ([chatId, token]) => typeof chatId === 'string' && typeof token === 'string',
-                ),
-              )
-            : {};
-        return {
-          getUpdatesBuf: typeof parsed.getUpdatesBuf === 'string' ? parsed.getUpdatesBuf : '',
-          contextTokens,
-        };
-      } catch (err) {
-        log.warn({ err }, '[ConnectorGateway] Invalid persisted WeChat session state ignored');
-        return null;
-      }
-    },
-    async save(state) {
-      await redis.set(WEIXIN_SESSION_STATE_KEY, JSON.stringify(state));
-    },
-    async clear() {
-      await redis.del(WEIXIN_SESSION_STATE_KEY);
-    },
-  };
 }
 
 export function loadConnectorGatewayConfig(): ConnectorGatewayConfig {
@@ -318,37 +279,66 @@ export function applyConnectorGatewayAutostartPolicy(
   };
 }
 
+/**
+ * Map ConnectorGatewayConfig fields → env var names.
+ * Built-in plugins read from ctx.env (env var names), but tests pass config objects.
+ * This bridge ensures backward compatibility with the existing test interface.
+ */
+function configToEnvMap(config: ConnectorGatewayConfig): Record<string, string | undefined> {
+  return {
+    TELEGRAM_BOT_TOKEN: config.telegramBotToken,
+    FEISHU_APP_ID: config.feishuAppId,
+    FEISHU_APP_SECRET: config.feishuAppSecret,
+    FEISHU_VERIFICATION_TOKEN: config.feishuVerificationToken,
+    FEISHU_BOT_OPEN_ID: config.feishuBotOpenId,
+    FEISHU_ADMIN_OPEN_IDS: config.feishuAdminOpenIds,
+    FEISHU_CONNECTION_MODE: config.feishuConnectionMode,
+    DINGTALK_APP_KEY: config.dingtalkAppKey,
+    DINGTALK_APP_SECRET: config.dingtalkAppSecret,
+    XIAOYI_AK: config.xiaoyiAk,
+    XIAOYI_SK: config.xiaoyiSk,
+    XIAOYI_AGENT_ID: config.xiaoyiAgentId,
+    WECOM_BOT_ID: config.wecomBotId,
+    WECOM_BOT_SECRET: config.wecomBotSecret,
+    WECOM_CORP_ID: config.wecomCorpId,
+    WECOM_AGENT_ID: config.wecomAgentId,
+    WECOM_AGENT_SECRET: config.wecomAgentSecret,
+    WECOM_TOKEN: config.wecomToken,
+    WECOM_ENCODING_AES_KEY: config.wecomEncodingAesKey,
+    WEIXIN_BOT_TOKEN: config.weixinBotToken,
+  };
+}
+
+/**
+ * Create an InboundMessageCallback that routes through ConnectorRouter.
+ * This adapts the plugin's message object to the router's positional args.
+ */
+function createOnMessage(connectorId: string, connectorRouter: ConnectorRouter): InboundMessageCallback {
+  return async (msg) => {
+    await connectorRouter.route(
+      connectorId,
+      msg.chatId,
+      msg.text,
+      msg.messageId,
+      msg.attachments?.map((a) => ({
+        type: a.type,
+        platformKey: a.platformKey,
+        ...(a.messageId ? { messageId: a.messageId } : {}),
+        ...(a.fileName ? { fileName: a.fileName } : {}),
+        ...(a.duration != null ? { duration: a.duration } : {}),
+      })),
+      msg.sender,
+      msg.chatType,
+      msg.chatName,
+    );
+  };
+}
+
 export async function startConnectorGateway(
   config: ConnectorGatewayConfig,
   deps: ConnectorGatewayDeps,
 ): Promise<ConnectorGatewayHandle | null> {
   const { log } = deps;
-
-  const telegramBotToken = normalizeTelegramBotToken(config.telegramBotToken);
-  const hasInvalidTelegramToken = Boolean(config.telegramBotToken?.trim()) && !telegramBotToken;
-  const hasTelegram = telegramBotToken != null;
-  const feishuWsMode = config.feishuConnectionMode === 'websocket';
-  const hasFeishu = Boolean(
-    config.feishuAppId && config.feishuAppSecret && (feishuWsMode || config.feishuVerificationToken),
-  );
-  const hasDingTalk = Boolean(config.dingtalkAppKey && config.dingtalkAppSecret);
-  const hasWeComBot = Boolean(config.wecomBotId && config.wecomBotSecret);
-  const hasWeComAgent = Boolean(
-    config.wecomCorpId &&
-      config.wecomAgentId &&
-      config.wecomAgentSecret &&
-      config.wecomToken &&
-      config.wecomEncodingAesKey,
-  );
-  const hasWeixin = Boolean(config.weixinBotToken);
-  const hasXiaoyi = Boolean(config.xiaoyiAk && config.xiaoyiSk && config.xiaoyiAgentId);
-
-  if (!hasTelegram && !hasFeishu && !hasDingTalk && !hasWeComBot && !hasWeComAgent && !hasWeixin && !hasXiaoyi) {
-    log.info('[ConnectorGateway] No pre-configured connectors — gateway created for WeChat QR login support');
-  }
-  if (hasInvalidTelegramToken) {
-    log.warn('[ConnectorGateway] Invalid TELEGRAM_BOT_TOKEN format — Telegram connector disabled');
-  }
 
   const bindingStore =
     deps.bindingStore ??
@@ -450,265 +440,171 @@ export async function startConnectorGateway(
     sttProvider,
   });
 
-  // ── Telegram (long polling) ──
-  if (telegramBotToken) {
-    const telegram = new TelegramAdapter(telegramBotToken, log);
-    adapters.set('telegram', telegram);
+  // ── F231: Load & initialize all IM connector plugins ──
+  const { loadBuiltinConnectors, loadExternalConnectors } = await import('./im-connector-loader.js');
+  const { registerConnectorDefinition } = await import('@cat-cafe/shared');
+  const { registerExternalConnectorMeta, updateExternalConnectorConfigured } = await import(
+    './external-connector-registry.js'
+  );
 
-    telegram.startPolling(async (msg) => {
-      const attachments = msg.attachments?.map((a) => ({
-        type: a.type,
-        platformKey: a.telegramFileId,
-        ...(a.fileName ? { fileName: a.fileName } : {}),
-        ...(a.duration != null ? { duration: a.duration } : {}),
-      }));
-      await connectorRouter.route('telegram', msg.chatId, msg.text, msg.messageId, attachments);
-    });
+  const builtinPlugins = await loadBuiltinConnectors();
+  const externalPlugins = await loadExternalConnectors(process.env.IM_CONNECTOR_PLUGINS, log);
 
-    stopFns.push(async () => telegram.stopPolling());
-    log.info('[ConnectorGateway] Telegram adapter started (long polling)');
+  const configEnv = configToEnvMap(config);
+  const builtinIds = new Set(builtinPlugins.map((p) => p.id));
+  const allPlugins = [...builtinPlugins, ...externalPlugins];
+
+  // Detect invalid telegram token (token provided but malformed — preserves warning for user)
+  const telegramPlugin = allPlugins.find((p) => p.id === 'telegram');
+  if (configEnv.TELEGRAM_BOT_TOKEN?.trim() && telegramPlugin && !telegramPlugin.isConfigured(configEnv)) {
+    log.warn('[ConnectorGateway] Invalid TELEGRAM_BOT_TOKEN format — Telegram connector disabled');
   }
 
-  // ── Feishu (webhook or websocket) ──
-  if (hasFeishu) {
-    const feishu = new FeishuAdapter(config.feishuAppId!, config.feishuAppSecret!, log, {
-      verificationToken: config.feishuVerificationToken,
-    });
-    const feishuTokenManager =
-      deps._feishuTokenManagerOverride ??
-      new FeishuTokenManager({
-        appId: config.feishuAppId!,
-        appSecret: config.feishuAppSecret!,
-      });
-    feishu._injectTokenManager(feishuTokenManager);
-    adapters.set('feishu', feishu);
+  // Special lifecycle refs needed by ConnectorGatewayHandle
+  let weixinAdapterRef: InstanceType<typeof WeixinAdapter> | null = null;
+  let startWeixinPollingFn: (() => void) | null = null;
 
-    // F134: Resolve bot open_id for @bot detection in group chats
-    const envBotOpenId = config.feishuBotOpenId;
-    if (envBotOpenId) {
-      feishu.setBotOpenId(envBotOpenId);
-      log.info({ botOpenId: envBotOpenId }, '[Feishu] Bot open_id set from config');
-    } else {
-      feishuTokenManager
-        .getTenantAccessToken()
-        .then(async (token) => {
-          try {
-            const res = await fetch('https://open.feishu.cn/open-apis/bot/v3/info', {
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            if (res.ok) {
-              const data = (await res.json()) as { bot?: { open_id?: string } };
-              const openId = data?.bot?.open_id;
-              if (openId) {
-                feishu.setBotOpenId(openId);
-                log.info({ botOpenId: openId }, '[Feishu] Bot open_id resolved via API');
-              }
-            }
-          } catch (err) {
-            log.warn({ err }, '[Feishu] Failed to resolve bot open_id — group chat @bot detection disabled');
-          }
-        })
-        .catch(() => {});
+  // WeComBot dynamic lifecycle (Hub-managed start/stop)
+  let wecomBotStopFn: (() => Promise<void>) | null = null;
+  stopFns.push(async () => wecomBotStopFn?.());
+  const wecomBotPlugin = allPlugins.find((p) => p.id === 'wecom-bot');
+
+  // ── Unified plugin initialization loop ──
+  for (const plugin of allPlugins) {
+    const isBuiltin = builtinIds.has(plugin.id);
+
+    // WeComBot: skip in main loop — handled separately via startWeComBotStream
+    if (plugin.id === 'wecom-bot') continue;
+
+    // External plugin validation
+    if (!isBuiltin) {
+      if (isStaticConnectorId(plugin.id)) {
+        log.warn({ id: plugin.id }, '[F231] External plugin ID conflicts with built-in connector — skipped');
+        continue;
+      }
+      if (plugin.definition.id !== plugin.id) {
+        log.warn(
+          { pluginId: plugin.id, definitionId: plugin.definition.id },
+          '[F231] Plugin id/definition.id mismatch — skipped',
+        );
+        continue;
+      }
+      // Register metadata early for Hub discovery — even unconfigured plugins
+      // should appear in status so users can see what env vars to fill.
+      // (R2 fix: moved from post-init to post-validation)
+      registerConnectorDefinition(plugin.definition);
+      registerExternalConnectorMeta({
+        id: plugin.id,
+        definition: plugin.definition,
+        requiredEnvKeys: plugin.requiredEnvKeys,
+        optionalEnvKeys: plugin.optionalEnvKeys ?? [],
+        configured: false, // updated after isConfigured() check below
+      });
     }
 
-    mediaService.setFeishuDownloadFn(async (fileKey: string, type: string, messageId?: string) => {
-      const token = await feishuTokenManager.getTenantAccessToken();
-      if (!messageId) throw new Error('Feishu download requires messageId');
-      const resourceType = type === 'image' ? 'image' : 'file';
-      const url = `https://open.feishu.cn/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=${resourceType}`;
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        throw new Error(`Feishu resource download failed: ${res.status} ${res.statusText}`);
-      }
-      return Buffer.from(await res.arrayBuffer());
-    });
-
-    // Shared routing logic for both webhook and websocket inbound messages
-    async function routeFeishuParsedEvent(parsed: NonNullable<ReturnType<FeishuAdapter['parseEvent']>>) {
-      const attachments = parsed.attachments?.map((a) => ({
-        type: a.type,
-        platformKey: a.feishuKey,
-        messageId: parsed.messageId,
-        ...(a.fileName ? { fileName: a.fileName } : {}),
-        ...(a.duration != null ? { duration: a.duration } : {}),
-      }));
-
-      let senderName = parsed.senderName;
-      let chatName = parsed.chatName;
-      if (parsed.chatType === 'group') {
-        if (!senderName) {
-          senderName = await feishu.resolveSenderName(parsed.senderId).catch(() => undefined);
-        }
-        if (!chatName) {
-          chatName = await feishu.resolveChatName(parsed.chatId).catch(() => undefined);
-        }
-      }
-      const sender =
-        parsed.chatType === 'group' && parsed.senderId !== 'unknown'
-          ? { id: parsed.senderId, ...(senderName ? { name: senderName } : {}) }
-          : undefined;
-
-      return connectorRouter.route(
-        'feishu',
-        parsed.chatId,
-        parsed.text,
-        parsed.messageId,
-        attachments,
-        sender,
-        parsed.chatType,
-        chatName,
-      );
+    // Build env for this plugin: built-in reads from config, external from process.env
+    const pluginEnv: Record<string, string | undefined> = {};
+    for (const key of [...plugin.requiredEnvKeys, ...(plugin.optionalEnvKeys ?? [])]) {
+      pluginEnv[key] = isBuiltin ? configEnv[key] : process.env[key];
     }
 
-    async function routeFeishuCardAction(
-      cardAction: NonNullable<ReturnType<FeishuAdapter['parseCardAction']>>,
-    ): Promise<RouteResult | { kind: 'skipped'; reason: string }> {
-      const actionValue = cardAction.actionValue as { cmd?: string; args?: string };
-      const cmdFromBtn =
-        typeof actionValue.cmd === 'string' && actionValue.cmd.startsWith('/')
-          ? actionValue.args
-            ? `${actionValue.cmd} ${actionValue.args}`
-            : actionValue.cmd
-          : null;
-      const cmdFromSelect = !cmdFromBtn && cardAction.option?.startsWith('/') ? cardAction.option : null;
-      const cmdText = cmdFromBtn ?? cmdFromSelect;
-      const chatType = cardAction.chatType ?? (await feishu.resolveChatType(cardAction.chatId));
-      if (!chatType) {
-        log.warn({ chatId: cardAction.chatId }, '[Feishu] Card action rejected: chatType unknown (fail-closed)');
-        return { kind: 'skipped', reason: 'chat_type_unknown' };
-      }
-      const text = cmdText ?? JSON.stringify(cardAction.actionValue);
-      const sender = cmdText && cardAction.senderId ? { id: cardAction.senderId } : undefined;
-      return connectorRouter.route(
-        'feishu',
-        cardAction.chatId,
-        text,
-        `card-action-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        undefined,
-        sender,
-        chatType,
-      );
+    // Weixin always creates adapter (for QR login support even without credentials)
+    const isWeixin = plugin.id === 'weixin';
+    const isConfigured = plugin.isConfigured(pluginEnv);
+
+    // Update external plugin metadata with actual isConfigured() result (cloud P2 fix:
+    // Hub must use plugin's own predicate, not the all-requiredEnvKeys heuristic)
+    if (!isBuiltin) updateExternalConnectorConfigured(plugin.id, isConfigured);
+
+    if (!isConfigured && !isWeixin) {
+      log.info({ id: plugin.id }, `[ConnectorGateway] ${plugin.definition.displayName} not configured — skipped`);
+      continue;
     }
 
-    if (feishuWsMode) {
-      // ── Feishu WebSocket (long-connection) mode ──
-      const eventDispatcher = new lark.EventDispatcher({}).register({
-        'im.message.receive_v1': async (data: Record<string, unknown>) => {
-          log.info(
-            {
-              msgType: (data.message as Record<string, unknown> | undefined)?.message_type,
-              chatType: (data.message as Record<string, unknown> | undefined)?.chat_type,
-            },
-            '[Feishu] WS event received',
-          );
-          const envelope = {
-            header: { event_type: 'im.message.receive_v1' },
-            event: data,
-          };
-          const parsed = feishu.parseEvent(envelope);
-          if (!parsed) return;
-          await routeFeishuParsedEvent(parsed);
-        },
-        'card.action.trigger': async (data: Record<string, unknown>) => {
-          log.info('[Feishu] WS card.action.trigger received');
-          const envelope = {
-            header: { event_type: 'card.action.trigger' },
-            event: data,
-          };
-          const cardAction = feishu.parseCardAction(envelope);
-          if (!cardAction) return;
-          await routeFeishuCardAction(cardAction);
-        },
-      });
+    // Build context with test overrides (Feishu: tokenManager + wsClientFactory)
+    const testOverrides: Record<string, unknown> = {};
+    if (plugin.id === 'feishu') {
+      if (deps._feishuTokenManagerOverride) testOverrides.feishuTokenManager = deps._feishuTokenManagerOverride;
+      if (deps._wsClientFactory) testOverrides.wsClientFactory = deps._wsClientFactory;
+    }
+    const ctx: IMConnectorPluginContext = {
+      env: pluginEnv,
+      log,
+      redis: deps.redis,
+      ...(Object.keys(testOverrides).length > 0 ? { _testOverrides: testOverrides } : {}),
+    };
 
-      const wsClient = deps._wsClientFactory
-        ? deps._wsClientFactory({ appId: config.feishuAppId!, appSecret: config.feishuAppSecret! })
-        : new lark.WSClient({
-            appId: config.feishuAppId!,
-            appSecret: config.feishuAppSecret!,
-            loggerLevel: lark.LoggerLevel.info,
-          });
+    try {
+      const adapter = await Promise.resolve(plugin.createAdapter(ctx));
+      if (plugin.setup) await plugin.setup(adapter, ctx);
+
+      const onMessage = createOnMessage(plugin.id, connectorRouter);
+
+      // Accumulate optional resources locally before committing (atomic init)
+      let localWebhookHandler: ConnectorWebhookHandler | undefined;
+      let localInboundHandle: { stop: () => Promise<void> } | undefined;
+      let localMediaDownloadFn:
+        | ((platformKey: string, type: string, messageId?: string) => Promise<Buffer>)
+        | undefined;
 
       try {
-        await wsClient.start({ eventDispatcher });
-        log.info('[ConnectorGateway] Feishu adapter started (WebSocket long-connection mode)');
-      } catch (err) {
-        log.warn({ err }, '[Feishu] WSClient initial connection failed — will auto-reconnect');
+        if (plugin.createWebhookHandler && isConfigured) {
+          localWebhookHandler = plugin.createWebhookHandler(adapter, onMessage, ctx) ?? undefined;
+        }
+        // Weixin inbound is managed via startWeixinPolling (Hub QR login flow)
+        if (plugin.startInbound && isConfigured && !isWeixin) {
+          localInboundHandle = await plugin.startInbound(adapter, onMessage, ctx);
+        }
+        if (plugin.createMediaDownloader) {
+          localMediaDownloadFn = plugin.createMediaDownloader(adapter, ctx);
+        }
+      } catch (stepErr) {
+        if (localInboundHandle) {
+          try {
+            await localInboundHandle.stop();
+          } catch (stopErr) {
+            log.warn({ err: stopErr, id: plugin.id }, '[ConnectorGateway] Failed to stop inbound during rollback');
+          }
+        }
+        throw stepErr;
       }
 
-      stopFns.push(async () => {
-        try {
-          wsClient.close({ force: true });
-        } catch {
-          // WSClient may already be torn down
+      // All resources created — commit atomically
+      adapters.set(plugin.id, adapter);
+      if (localWebhookHandler) webhookHandlers.set(plugin.id, localWebhookHandler);
+      if (localInboundHandle) stopFns.push(() => localInboundHandle!.stop());
+      if (localMediaDownloadFn) mediaService.registerDownloadFn(plugin.id, localMediaDownloadFn);
+      // ── Weixin special lifecycle: always-create + QR login managed polling ──
+      if (isWeixin) {
+        weixinAdapterRef = adapter as InstanceType<typeof WeixinAdapter>;
+        const capturedOnMessage = onMessage;
+        startWeixinPollingFn = () => {
+          weixinAdapterRef!.startPolling(async (msg) => {
+            const attachments = msg.attachments?.map((a) => ({
+              type: a.type,
+              platformKey: a.mediaUrl,
+              ...(a.fileName ? { fileName: a.fileName } : {}),
+            }));
+            capturedOnMessage({ chatId: msg.chatId, text: msg.text, messageId: msg.messageId, attachments });
+          });
+        };
+        stopFns.push(async () => weixinAdapterRef!.stopPolling());
+
+        if (isConfigured) {
+          startWeixinPollingFn();
+          log.info('[ConnectorGateway] WeChat adapter started (iLink Bot long polling)');
+        } else {
+          log.info('[ConnectorGateway] WeChat adapter registered (awaiting QR login)');
         }
-      });
-    } else {
-      // ── Feishu Webhook mode (default) ──
-      webhookHandlers.set('feishu', {
-        connectorId: 'feishu',
-        async handleWebhook(body, _headers): Promise<WebhookHandleResult> {
-          const eventHeader = (body as Record<string, unknown>)?.header as Record<string, unknown> | undefined;
-          const msgType = ((body as Record<string, unknown>)?.event as Record<string, unknown> | undefined)?.message as
-            | Record<string, unknown>
-            | undefined;
-          log.info(
-            {
-              eventType: eventHeader?.event_type,
-              msgType: msgType?.message_type,
-              chatType: msgType?.chat_type,
-            },
-            '[Feishu] Webhook received',
-          );
+      }
 
-          const challenge = feishu.isVerificationChallenge(body);
-          if (challenge) {
-            return { kind: 'challenge', response: { challenge: challenge.challenge } };
-          }
-
-          if (!feishu.verifyEventToken(body)) {
-            log.warn('[Feishu] Webhook rejected: invalid verification token');
-            return { kind: 'error', status: 403, message: 'Invalid verification token' };
-          }
-
-          const cardAction = feishu.parseCardAction(body);
-          if (cardAction) {
-            const result = await routeFeishuCardAction(cardAction);
-            return result.kind === 'skipped'
-              ? { kind: 'skipped', reason: result.reason }
-              : { kind: 'processed', messageId: result.kind === 'routed' ? result.messageId : 'card-action' };
-          }
-
-          const parsed = feishu.parseEvent(body);
-          if (!parsed) {
-            log.warn(
-              { eventType: eventHeader?.event_type, msgType: msgType?.message_type },
-              '[Feishu] Event skipped: parseEvent returned null (unsupported_event)',
-            );
-            return { kind: 'skipped', reason: 'unsupported_event' };
-          }
-
-          const result = await routeFeishuParsedEvent(parsed);
-
-          if (result.kind === 'skipped') {
-            return { kind: 'skipped', reason: result.reason };
-          }
-
-          if (result.kind === 'command') {
-            return { kind: 'processed', messageId: 'command' };
-          }
-
-          return { kind: 'processed', messageId: result.messageId };
-        },
-      });
-
-      log.info('[ConnectorGateway] Feishu adapter registered (webhook mode)');
+      log.info({ id: plugin.id }, `[ConnectorGateway] ${plugin.definition.displayName} initialized`);
+    } catch (err) {
+      log.error({ err, id: plugin.id }, `[ConnectorGateway] ${plugin.definition.displayName} failed to initialize`);
     }
   }
 
-  // ── F141: GitHub Repo Inbox webhook handler ──
+  // ── F141: GitHub Repo Inbox webhook handler (not an IM connector) ──
   const ghWebhookSecret = process.env.GITHUB_WEBHOOK_SECRET;
   const ghRepoAllowlist = process.env.GITHUB_REPO_ALLOWLIST;
   const ghInboxCatId = process.env.GITHUB_REPO_INBOX_CAT_ID;
@@ -740,7 +636,7 @@ export async function startConnectorGateway(
         webhookSecret: ghWebhookSecret,
         repoAllowlist: ghRepoAllowlist.split(',').map((r) => r.trim()),
         inboxCatId: ghInboxCatId,
-        defaultUserId: effectiveUserId, // P1-2: use effective owner for thread visibility (F088 pattern)
+        defaultUserId: effectiveUserId,
       },
       {
         bindingStore,
@@ -748,8 +644,8 @@ export async function startConnectorGateway(
         deliverFn: deliverConnectorMessage,
         invokeTrigger: deps.invokeTrigger,
         dedup: ghDedup,
-        reconciliationDedup: ghReconciliationDedup, // Phase B bridge (KD-15)
-        redis: deps.redis as import('./github-repo-event/RedisDeliveryDedup.js').RedisLike, // KD-20: inbox thread creation lock
+        reconciliationDedup: ghReconciliationDedup,
+        redis: deps.redis as import('./github-repo-event/RedisDeliveryDedup.js').RedisLike,
         deliveryDeps: {
           messageStore:
             deps.messageStore as import('../../domains/cats/services/stores/ports/MessageStore.js').IMessageStore,
@@ -767,136 +663,37 @@ export async function startConnectorGateway(
     log.warn('[F141] GitHub Repo Inbox partially configured — set all 3 env vars + Redis to enable');
   }
 
-  // ── DingTalk (Stream mode) ──
-  if (hasDingTalk) {
-    const dingtalk = new DingTalkAdapter(log, {
-      appKey: config.dingtalkAppKey!,
-      appSecret: config.dingtalkAppSecret!,
-      redis: deps.redis,
-    });
-    adapters.set('dingtalk', dingtalk);
-
-    await dingtalk.hydrateGroupChatIds();
-
-    mediaService.setDingtalkDownloadFn(async (downloadCode: string) => {
-      const downloadUrl = await dingtalk.downloadMedia(downloadCode);
-      const res = await fetch(downloadUrl);
-      if (!res.ok) throw new Error(`DingTalk media fetch failed: ${res.status}`);
-      return Buffer.from(await res.arrayBuffer());
-    });
-
-    await dingtalk.startStream(async (msg) => {
-      const attachments = msg.attachments?.map((a) => ({
-        type: a.type,
-        platformKey: a.downloadCode ?? '',
-        ...(a.fileName ? { fileName: a.fileName } : {}),
-        ...(a.duration != null ? { duration: a.duration } : {}),
-      }));
-
-      // F132 A.2: Register group chatId so outbound dispatch survives cold restarts
-      if (msg.chatType === 'group') {
-        dingtalk.registerGroupChatId(msg.chatId);
-      }
-
-      // F132 A.2: Enrich sender and chat info (mirroring F134 Feishu pattern)
-      const senderName = msg.senderNick ?? dingtalk.resolveSenderName(msg.senderId);
-      const chatName = msg.conversationTitle ?? dingtalk.resolveConversationTitle(msg.chatId);
-
-      const sender =
-        msg.chatType === 'group' && msg.senderId !== 'unknown'
-          ? { id: msg.senderId, ...(senderName ? { name: senderName } : {}) }
-          : undefined;
-
-      await connectorRouter.route(
-        'dingtalk',
-        msg.chatId,
-        msg.text,
-        msg.messageId,
-        attachments,
-        sender,
-        msg.chatType,
-        chatName,
-      );
-    });
-
-    stopFns.push(async () => dingtalk.stopStream());
-
-    log.info('[ConnectorGateway] DingTalk adapter started (Stream mode)');
-  }
-
-  // ── XiaoYi (OpenClaw WebSocket mode) — F151 ──
-  if (hasXiaoyi) {
-    const { XiaoyiAdapter } = await import('./adapters/XiaoyiAdapter.js');
-    const xiaoyi = new XiaoyiAdapter(log, {
-      agentId: config.xiaoyiAgentId!,
-      ak: config.xiaoyiAk!,
-      sk: config.xiaoyiSk!,
-    });
-    adapters.set('xiaoyi', xiaoyi);
-
-    await xiaoyi.startStream(async (msg) => {
-      await connectorRouter.route('xiaoyi', msg.chatId, msg.text, msg.messageId, undefined, { id: msg.senderId });
-    });
-
-    stopFns.push(async () => xiaoyi.stopStream());
-
-    log.info('[ConnectorGateway] XiaoYi adapter started (OpenClaw WebSocket mode)');
-  }
-
-  // ── WeCom Bot (WebSocket mode via @wecom/aibot-node-sdk) ──
-  // F132 Phase E: extracted into a function for dynamic start/stop (Hub guided setup)
-
-  let wecomBotStopFn: (() => Promise<void>) | null = null;
-
-  // P2 fix: register once — closure delegates to whatever wecomBotStopFn currently points to
-  stopFns.push(async () => wecomBotStopFn?.());
-
+  // ── WeComBot: dynamic start/stop lifecycle (F132 Phase E — Hub guided setup) ──
   const startWeComBotStream = async (botId: string, secret: string) => {
-    // Stop existing adapter if running
+    if (!wecomBotPlugin) {
+      log.error('[ConnectorGateway] WeCom Bot plugin not available — cannot start');
+      return;
+    }
+
     if (wecomBotStopFn) {
       await wecomBotStopFn();
       wecomBotStopFn = null;
     }
 
-    const wecomBot = new WeComBotAdapter(log, { botId, secret, redis: deps.redis });
-    adapters.set('wecom-bot', wecomBot);
+    const dynEnv: Record<string, string | undefined> = { WECOM_BOT_ID: botId, WECOM_BOT_SECRET: secret };
+    const dynCtx: IMConnectorPluginContext = { env: dynEnv, log, redis: deps.redis };
+    const adapter = await Promise.resolve(wecomBotPlugin.createAdapter(dynCtx));
+    if (wecomBotPlugin.setup) await wecomBotPlugin.setup(adapter, dynCtx);
 
-    await wecomBot.hydrateGroupChatIds();
+    const onMessage = createOnMessage('wecom-bot', connectorRouter);
+    let inboundHandle: { stop: () => Promise<void> } | undefined;
+    if (wecomBotPlugin.startInbound) {
+      inboundHandle = await wecomBotPlugin.startInbound(adapter, onMessage, dynCtx);
+    }
+    if (wecomBotPlugin.createMediaDownloader) {
+      mediaService.registerDownloadFn('wecom-bot', wecomBotPlugin.createMediaDownloader(adapter, dynCtx));
+    }
 
-    mediaService.setWeComBotDownloadFn(async (url: string, aesKey?: string) => {
-      const { buffer } = await wecomBot.downloadMedia(url, aesKey);
-      return buffer;
-    });
-
-    await wecomBot.startStream(async (msg) => {
-      const attachments = msg.attachments
-        ?.filter((a) => a.url)
-        .map((a) => ({
-          type: (a.type === 'voice' ? 'audio' : a.type) as 'image' | 'file' | 'audio',
-          platformKey: `${a.url}${a.aesKey ? `|aeskey=${a.aesKey}` : ''}`,
-          ...(a.fileName ? { fileName: a.fileName } : {}),
-        }));
-
-      if (msg.chatType === 'group') {
-        wecomBot.registerGroupChatId(msg.chatId);
-      }
-
-      await connectorRouter.route(
-        'wecom-bot',
-        msg.chatId,
-        msg.text,
-        msg.messageId,
-        attachments,
-        msg.chatType === 'group' && msg.senderId !== 'unknown' ? { id: msg.senderId } : undefined,
-        msg.chatType,
-      );
-    });
-
+    adapters.set('wecom-bot', adapter);
     wecomBotStopFn = async () => {
-      await wecomBot.stopStream();
+      if (inboundHandle) await inboundHandle.stop();
       adapters.delete('wecom-bot');
     };
-
     log.info('[ConnectorGateway] WeCom Bot adapter started (WebSocket mode)');
   };
 
@@ -908,131 +705,15 @@ export async function startConnectorGateway(
     }
   };
 
-  if (hasWeComBot) {
-    await startWeComBotStream(config.wecomBotId!, config.wecomBotSecret!);
+  if (config.wecomBotId && config.wecomBotSecret) {
+    await startWeComBotStream(config.wecomBotId, config.wecomBotSecret);
   }
 
-  // ── WeCom Agent (HTTP callback via webhook) ──
-  if (hasWeComAgent) {
-    const wecomAgent = new WeComAgentAdapter(log, {
-      corpId: config.wecomCorpId!,
-      agentId: config.wecomAgentId!,
-      agentSecret: config.wecomAgentSecret!,
-      token: config.wecomToken!,
-      encodingAesKey: config.wecomEncodingAesKey!,
-    });
-    adapters.set('wecom-agent', wecomAgent);
-
-    mediaService.setWeComAgentDownloadFn(async (mediaId: string) => {
-      return wecomAgent.downloadMedia(mediaId);
-    });
-
-    webhookHandlers.set('wecom-agent', {
-      connectorId: 'wecom-agent',
-      async handleWebhook(body, headers, _rawBody, query): Promise<WebhookHandleResult> {
-        const q = (query ?? {}) as Record<string, string>;
-        const msgSig = q.msg_signature ?? '';
-        const timestamp = q.timestamp ?? '';
-        const nonce = q.nonce ?? '';
-        const echostr = q.echostr;
-
-        // GET echostr challenge (URL verification)
-        if (echostr) {
-          const plainEcho = wecomAgent.verifyCallback({
-            msg_signature: msgSig,
-            timestamp,
-            nonce,
-            echostr,
-          });
-          if (plainEcho !== null) {
-            return { kind: 'challenge', response: plainEcho };
-          }
-          return { kind: 'error', status: 403, message: 'echostr verification failed' };
-        }
-
-        // POST encrypted message
-        const rawBody = typeof body === 'string' ? body : JSON.stringify(body);
-        const decryptedXml = wecomAgent.decryptInbound(rawBody, {
-          msg_signature: msgSig,
-          timestamp,
-          nonce,
-        });
-        if (!decryptedXml) {
-          return { kind: 'error', status: 403, message: 'Signature verification or decryption failed' };
-        }
-
-        const parsed = wecomAgent.parseEvent(decryptedXml);
-        if (!parsed) {
-          return { kind: 'skipped', reason: 'unsupported_event' };
-        }
-
-        const attachments = parsed.attachments?.map((a) => ({
-          type: (a.type === 'video' ? 'file' : a.type === 'audio' ? 'audio' : a.type) as 'image' | 'file' | 'audio',
-          platformKey: a.mediaId,
-          ...(a.fileName ? { fileName: a.fileName } : {}),
-        }));
-
-        const result = await connectorRouter.route(
-          'wecom-agent',
-          parsed.chatId,
-          parsed.text,
-          parsed.messageId,
-          attachments,
-        );
-
-        if (result.kind === 'skipped') {
-          return { kind: 'skipped', reason: result.reason };
-        }
-        if (result.kind === 'command') {
-          return { kind: 'processed', messageId: 'command' };
-        }
-        return { kind: 'processed', messageId: result.messageId };
-      },
-    });
-
-    log.info('[ConnectorGateway] WeCom Agent adapter registered (webhook mode)');
+  // Log if no connectors are active (excluding weixin which is always registered)
+  const activeConnectors = [...adapters.keys()].filter((id) => id !== 'weixin');
+  if (activeConnectors.length === 0) {
+    log.info('[ConnectorGateway] No pre-configured connectors — gateway created for WeChat QR login support');
   }
-
-  // ── WeChat Personal (iLink Bot long polling) ──
-  // Always create the adapter instance (for QR login routes); only start polling if we have a token.
-  const weixinSessionStateStore = deps.redis ? createWeixinSessionStateStore(deps.redis, log) : undefined;
-  const weixin = new WeixinAdapter(config.weixinBotToken ?? '', log, weixinSessionStateStore);
-  adapters.set('weixin', weixin);
-
-  const startWeixinPolling = () => {
-    weixin.startPolling(async (msg) => {
-      const attachments = msg.attachments?.map((a) => ({
-        type: a.type,
-        platformKey: a.mediaUrl,
-        ...(a.fileName ? { fileName: a.fileName } : {}),
-      }));
-      await connectorRouter.route('weixin', msg.chatId, msg.text, msg.messageId, attachments);
-    });
-  };
-
-  if (hasWeixin) {
-    await weixin.restoreSessionState();
-    startWeixinPolling();
-    log.info('[ConnectorGateway] WeChat adapter started (iLink Bot long polling)');
-  } else {
-    log.info('[ConnectorGateway] WeChat adapter registered (awaiting QR login)');
-  }
-
-  weixin.setOnSessionExpired(() => {
-    log.warn('[ConnectorGateway] WeChat session expired — user must re-scan QR code');
-  });
-
-  // Register weixin CDN download function for inbound media
-  mediaService.setWeixinDownloadFn(async (platformKey: string) => {
-    const { downloadMediaFromCdn } = await import('./adapters/weixin-cdn.js');
-    return downloadMediaFromCdn({
-      platformKey,
-      cdnBaseUrl: 'https://novac2c.cdn.weixin.qq.com/c2c',
-      log,
-    });
-  });
-
-  stopFns.push(async () => weixin.stopPolling());
 
   // R3-P1: Resolve route URLs to local file paths for real media delivery
   const uploadDir = getDefaultUploadDir(process.env.UPLOAD_DIR);
@@ -1100,9 +781,9 @@ export async function startConnectorGateway(
     outboundHook,
     streamingHook,
     webhookHandlers,
-    weixinAdapter: weixin,
+    weixinAdapter: weixinAdapterRef,
     permissionStore,
-    startWeixinPolling,
+    startWeixinPolling: startWeixinPollingFn ?? (() => {}),
     startWeComBotStream,
     stopWeComBot,
     getWeComBotAdapter: () => (adapters.get('wecom-bot') as WeComBotAdapter) ?? null,

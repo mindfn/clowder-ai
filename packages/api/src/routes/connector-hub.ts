@@ -8,10 +8,11 @@ import {
 } from '../config/connector-secret-write-guards.js';
 import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import { DEFAULT_THREAD_ID, type IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
-import type { WeComBotAdapter } from '../infrastructure/connectors/adapters/WeComBotAdapter.js';
-import type { WeixinAdapter } from '../infrastructure/connectors/adapters/WeixinAdapter.js';
 import type { IConnectorPermissionStore } from '../infrastructure/connectors/ConnectorPermissionStore.js';
+import { getAllExternalConnectorMeta } from '../infrastructure/connectors/external-connector-registry.js';
 import { DefaultFeishuQrBindClient, type FeishuQrBindClient } from '../infrastructure/connectors/FeishuQrBindClient.js';
+import type { WeComBotAdapter } from '../infrastructure/connectors/im-connectors/wecom-bot/WeComBotAdapter.js';
+import type { WeixinAdapter } from '../infrastructure/connectors/im-connectors/weixin/WeixinAdapter.js';
 import { normalizeTelegramBotToken } from '../infrastructure/connectors/telegram-token.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
 
@@ -310,7 +311,7 @@ function isRequiredFieldSatisfied(field: ConnectorFieldDef, env: Record<string, 
 }
 
 export function buildConnectorStatus(env: Record<string, string | undefined> = process.env): PlatformStatus[] {
-  return CONNECTOR_PLATFORMS.map((platform) => {
+  const builtinStatuses = CONNECTOR_PLATFORMS.map((platform) => {
     const fields: PlatformFieldStatus[] = platform.fields.map((f) => {
       const raw = env[f.envName];
       const isSet = isConfiguredFieldValue(f, raw);
@@ -341,6 +342,39 @@ export function buildConnectorStatus(env: Record<string, string | undefined> = p
       steps: platform.steps,
     };
   });
+
+  // F231: Append external connector plugin statuses (P1-2 fix)
+  const builtinIds = new Set(CONNECTOR_PLATFORMS.map((p) => p.id));
+
+  for (const meta of getAllExternalConnectorMeta()) {
+    if (builtinIds.has(meta.id)) continue; // already covered by CONNECTOR_PLATFORMS
+
+    const fields: PlatformFieldStatus[] = meta.requiredEnvKeys.map((key) => {
+      const raw = env[key];
+      const isSet = raw != null && raw !== '' && !raw.startsWith('(未设置');
+      return {
+        envName: key,
+        label: key,
+        sensitive: true, // external plugin env vars default to masked
+        currentValue: isSet ? maskSensitiveValue(raw!) : null,
+      };
+    });
+
+    // Use plugin's own isConfigured() result stored during bootstrap,
+    // not all-requiredEnvKeys heuristic — plugins may have custom logic
+    // (e.g., TOKEN *or* APP_ID/APP_SECRET). Cloud P2 fix.
+    builtinStatuses.push({
+      id: meta.id,
+      name: meta.definition.displayName,
+      nameEn: meta.definition.displayName,
+      configured: meta.configured,
+      fields,
+      docsUrl: '',
+      steps: [],
+    });
+  }
+
+  return builtinStatuses;
 }
 
 export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> = async (app, opts) => {
@@ -474,7 +508,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
     if (auth.error) return auth.error;
 
     try {
-      const { WeixinAdapter: WA } = await import('../infrastructure/connectors/adapters/WeixinAdapter.js');
+      const { WeixinAdapter: WA } = await import('../infrastructure/connectors/im-connectors/weixin/WeixinAdapter.js');
       const result = await WA.fetchQrCode();
       // iLink returns a webpage URL (https://liteapp.weixin.qq.com/q/...), not an image.
       // Generate a real QR code data URI from the URL so <img> can render it.
@@ -500,7 +534,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
     }
 
     try {
-      const { WeixinAdapter: WA } = await import('../infrastructure/connectors/adapters/WeixinAdapter.js');
+      const { WeixinAdapter: WA } = await import('../infrastructure/connectors/im-connectors/weixin/WeixinAdapter.js');
       const status = await WA.pollQrCodeStatus(qrPayload);
 
       if (status.status === 'confirmed') {
@@ -612,7 +646,9 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
       // adapter's scheduleReconnect() handles recovery. Stopping here would kill
       // a working connection on validation failure with no way to restore it.
       // On success, startWeComBotStream() stops the old adapter before starting new.
-      const { WeComBotAdapter } = await import('../infrastructure/connectors/adapters/WeComBotAdapter.js');
+      const { WeComBotAdapter } = await import(
+        '../infrastructure/connectors/im-connectors/wecom-bot/WeComBotAdapter.js'
+      );
       const result = await WeComBotAdapter.validateCredentials(botId, secret);
 
       if (!result.valid) {

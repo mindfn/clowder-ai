@@ -13,7 +13,7 @@
 
 import crypto from 'node:crypto';
 import type { FastifyBaseLogger } from 'fastify';
-import type { IOutboundAdapter } from '../OutboundDeliveryHook.js';
+import type { IOutboundAdapter } from '../../OutboundDeliveryHook.js';
 
 const ILINK_BASE_URL = 'https://ilinkai.weixin.qq.com';
 const GETUPDATES_TIMEOUT_MS = 35_000;

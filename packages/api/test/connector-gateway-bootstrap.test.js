@@ -1,13 +1,20 @@
 import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
+import { unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { FeishuTokenManager } from '../dist/infrastructure/connectors/adapters/FeishuTokenManager.js';
-import { TelegramAdapter } from '../dist/infrastructure/connectors/adapters/TelegramAdapter.js';
 import {
   applyConnectorGatewayAutostartPolicy,
   isPreconfiguredConnectorAutostartEnabled,
   startConnectorGateway,
 } from '../dist/infrastructure/connectors/connector-gateway-bootstrap.js';
+import {
+  clearExternalConnectorRegistry,
+  getAllExternalConnectorMeta,
+} from '../dist/infrastructure/connectors/external-connector-registry.js';
+import { FeishuTokenManager } from '../dist/infrastructure/connectors/im-connectors/feishu/FeishuTokenManager.js';
+import { TelegramAdapter } from '../dist/infrastructure/connectors/im-connectors/telegram/TelegramAdapter.js';
 
 function noopLog() {
   const noop = () => {};
@@ -670,5 +677,70 @@ describe('ConnectorGateway Bootstrap', () => {
     delete process.env.FEISHU_CONNECTION_MODE;
     const config3 = loadConnectorGatewayConfig();
     assert.equal(config3.feishuConnectionMode, 'webhook', 'Should default to webhook when not set');
+  });
+
+  // ── F231 R2-P2: external plugin metadata registered even when unconfigured ──
+
+  it('F231 R2-P2: registers external plugin metadata before isConfigured check (bootstrap path)', async () => {
+    // Create a temp external plugin — deliberately NOT set its required env vars
+    const pluginPath = join(tmpdir(), `f230-probe-${Date.now()}.mjs`);
+    writeFileSync(
+      pluginPath,
+      `export default {
+        id: 'test-probe-unconfigured',
+        definition: {
+          id: 'test-probe-unconfigured',
+          displayName: 'Test Probe',
+          icon: { type: 'png', src: '/test.png' },
+          themeColor: '#FF0000',
+          description: 'F231 R2 regression probe',
+        },
+        requiredEnvKeys: ['TEST_PROBE_SECRET_TOKEN'],
+        optionalEnvKeys: [],
+        isConfigured(env) { return Boolean(env.TEST_PROBE_SECRET_TOKEN); },
+        createAdapter() { throw new Error('should not be called for unconfigured plugin'); },
+      };`,
+    );
+
+    // DO NOT set TEST_PROBE_SECRET_TOKEN — plugin is intentionally unconfigured
+    const savedPlugins = process.env.IM_CONNECTOR_PLUGINS;
+    process.env.IM_CONNECTOR_PLUGINS = pluginPath;
+
+    try {
+      clearExternalConnectorRegistry();
+      const handle = await startConnectorGateway({}, baseDeps);
+
+      // Verify metadata was registered despite plugin being unconfigured
+      const allMeta = getAllExternalConnectorMeta();
+      const probe = allMeta.find((m) => m.id === 'test-probe-unconfigured');
+      assert.ok(probe, 'Unconfigured external plugin must register metadata for Hub discovery');
+      assert.equal(probe.definition.displayName, 'Test Probe');
+      assert.deepStrictEqual([...probe.requiredEnvKeys], ['TEST_PROBE_SECRET_TOKEN']);
+      // Cloud P2 fix: configured comes from plugin.isConfigured(), not Hub heuristic
+      assert.equal(probe.configured, false, 'Metadata must reflect isConfigured()=false');
+
+      // Verify it also appears in buildConnectorStatus()
+      const { buildConnectorStatus } = await import('../dist/routes/connector-hub.js');
+      const status = buildConnectorStatus({});
+      const probeStatus = status.find((p) => p.id === 'test-probe-unconfigured');
+      assert.ok(probeStatus, 'Unconfigured external plugin must appear in Hub status');
+      assert.equal(probeStatus.configured, false);
+      assert.equal(probeStatus.name, 'Test Probe');
+
+      await handle.stop();
+    } finally {
+      if (savedPlugins === undefined) {
+        delete process.env.IM_CONNECTOR_PLUGINS;
+      } else {
+        process.env.IM_CONNECTOR_PLUGINS = savedPlugins;
+      }
+      delete process.env.TEST_PROBE_SECRET_TOKEN;
+      clearExternalConnectorRegistry();
+      try {
+        unlinkSync(pluginPath);
+      } catch {
+        /* cleanup best-effort */
+      }
+    }
   });
 });

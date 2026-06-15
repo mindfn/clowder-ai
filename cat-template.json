@@ -790,7 +790,7 @@
       "caution": "OMOC Sisyphus 只编排自己的子 agent，不编排其他猫；opencode 原生 MCP 和 Clowder AI MCP 需避免冲突",
       "defaultVariantId": "opencode-default",
       "features": {
-        "sessionChain": true
+        "sessionChain": false
       },
       "variants": [
         {
