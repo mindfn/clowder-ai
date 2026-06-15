@@ -44,7 +44,7 @@ vi.mock('@/stores/toastStore', () => {
   return { useToastStore };
 });
 
-import { ToastContainer } from '../ToastContainer';
+import { getHiddenToastExpiries, ToastContainer } from '../ToastContainer';
 
 function makeToast(overrides: Partial<ToastItem> & { id: string }): ToastItem {
   return {
@@ -116,6 +116,31 @@ describe('ToastContainer thread-scoped filtering (#924)', () => {
     // Exactly 2 role="alert" elements (global + thread-A)
     const alertCount = (html.match(/role="alert"/g) || []).length;
     expect(alertCount).toBe(2);
+  });
+
+  it('getHiddenToastExpiries identifies expired hidden toasts', () => {
+    const now = 10000;
+    const toasts = [
+      makeToast({ id: 'hidden-expired', threadId: 'thread-A', duration: 3000, createdAt: now - 5000 }),
+      makeToast({ id: 'hidden-alive', threadId: 'thread-A', duration: 8000, createdAt: now - 2000 }),
+      makeToast({ id: 'visible', threadId: 'thread-B', duration: 3000, createdAt: now - 5000 }),
+      makeToast({ id: 'global', duration: 3000, createdAt: now - 5000 }),
+    ];
+    const result = getHiddenToastExpiries(toasts, 'thread-B', now);
+    expect(result.expired).toEqual(['hidden-expired']);
+    // Next expiry = 8000 - 2000 = 6000ms
+    expect(result.nextMs).toBe(6000);
+  });
+
+  it('getHiddenToastExpiries returns null nextMs when no pending hidden toasts', () => {
+    const now = 10000;
+    const toasts = [
+      makeToast({ id: 'visible', threadId: 'thread-A', duration: 3000, createdAt: now - 1000 }),
+      makeToast({ id: 'global', duration: 5000, createdAt: now - 1000 }),
+    ];
+    const result = getHiddenToastExpiries(toasts, 'thread-A', now);
+    expect(result.expired).toEqual([]);
+    expect(result.nextMs).toBeNull();
   });
 
   it('updates visibility when the active thread changes', () => {

@@ -11,6 +11,7 @@
 import { catIdSchema } from '@cat-cafe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { canAccessThread } from '../domains/guides/guide-state-access.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
 
 const strategySchema = z.object({
@@ -19,7 +20,7 @@ const strategySchema = z.object({
 
 export interface ThreadMemberStrategyRouteOptions {
   threadStore: {
-    get(id: string): { id: string } | null | Promise<{ id: string } | null>;
+    get(id: string): { id: string; createdBy: string } | null | Promise<{ id: string; createdBy: string } | null>;
     updateMemberSessionStrategy(
       threadId: string,
       catId: string,
@@ -58,6 +59,10 @@ export const threadMemberStrategyRoutes: FastifyPluginAsync<ThreadMemberStrategy
         reply.status(404);
         return { error: 'Thread not found' };
       }
+      if (!canAccessThread(thread, userId)) {
+        reply.status(403);
+        return { error: 'Access denied' };
+      }
 
       const current = threadStore.getMemberSessionStrategy
         ? await threadStore.getMemberSessionStrategy(id, catId, userId)
@@ -94,6 +99,10 @@ export const threadMemberStrategyRoutes: FastifyPluginAsync<ThreadMemberStrategy
       if (!thread) {
         reply.status(404);
         return { error: 'Thread not found' };
+      }
+      if (!canAccessThread(thread, userId)) {
+        reply.status(403);
+        return { error: 'Access denied' };
       }
 
       await threadStore.updateMemberSessionStrategy(id, catId, parsed.data.strategy);

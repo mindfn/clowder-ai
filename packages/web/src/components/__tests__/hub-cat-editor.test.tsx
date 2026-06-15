@@ -1261,9 +1261,10 @@ describe('HubCatEditor', () => {
     const providerSelect = queryField<HTMLSelectElement>(container, 'select[aria-label="认证信息"]');
     const optionLabels = Array.from(providerSelect.options).map((option) => option.textContent ?? '');
     expect(optionLabels).toContain('Gemini (OAuth)（内置）');
-    // #470: api_key profiles WITH baseUrl now show in selector (backend validates hostname)
+    // #470: api_key profiles WITH baseUrl (third-party proxy) now show;
+    // official Google endpoint (no baseUrl) stays hidden — filterAccounts rejects it.
     expect(optionLabels).toContain('Gemini Proxy（API Key）');
-    expect(optionLabels).toContain('Google Official API（API Key）');
+    expect(optionLabels).not.toContain('Google Official API（API Key）');
   });
 
   it('preserves existing model when it is not listed in provider defaults', async () => {

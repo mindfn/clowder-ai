@@ -31,8 +31,8 @@ function createMockThreadStore() {
       return strategies.get(`${threadId}:${catId}`);
     },
     // Test helpers
-    _addThread(id) {
-      threads.set(id, { id });
+    _addThread(id, createdBy = 'test-user') {
+      threads.set(id, { id, createdBy });
     },
     _clear() {
       threads.clear();
@@ -161,5 +161,30 @@ describe('thread-member-strategy routes (#921)', () => {
     assert.equal(res.statusCode, 401);
     const body = JSON.parse(res.payload);
     assert.ok(body.error);
+  });
+
+  it('GET returns 403 when user does not own the thread', async () => {
+    threadStore._addThread('other-thread', 'someone-else');
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/threads/other-thread/members/${CAT_ID}/session-strategy`,
+      headers: HEADERS,
+    });
+    assert.equal(res.statusCode, 403);
+    const body = JSON.parse(res.payload);
+    assert.ok(body.error.includes('Access denied'));
+  });
+
+  it('PATCH returns 403 when user does not own the thread', async () => {
+    threadStore._addThread('other-thread', 'someone-else');
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/threads/other-thread/members/${CAT_ID}/session-strategy`,
+      headers: HEADERS,
+      payload: { strategy: 'reborn' },
+    });
+    assert.equal(res.statusCode, 403);
+    const body = JSON.parse(res.payload);
+    assert.ok(body.error.includes('Access denied'));
   });
 });
