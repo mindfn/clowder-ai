@@ -73,7 +73,21 @@ function ToastCard({ toast }: { toast: ToastItem }) {
  */
 export function ToastContainer() {
   const toasts = useToastStore((s) => s.toasts);
+  const removeToast = useToastStore((s) => s.removeToast);
   const currentThreadId = useChatStore((s) => s.currentThreadId);
+
+  // P2 review fix: expire hidden thread-scoped toasts that would never unmount
+  // their ToastCard timer. Runs on every thread switch / toast change.
+  useEffect(() => {
+    const now = Date.now();
+    for (const t of toasts) {
+      if (t.threadId && t.threadId !== currentThreadId && t.duration > 0) {
+        if (now - t.createdAt >= t.duration) {
+          removeToast(t.id);
+        }
+      }
+    }
+  }, [toasts, currentThreadId, removeToast]);
 
   const visible = toasts.filter((t) => !t.threadId || t.threadId === currentThreadId);
 
