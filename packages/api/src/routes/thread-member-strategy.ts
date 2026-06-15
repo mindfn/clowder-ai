@@ -63,6 +63,10 @@ export const threadMemberStrategyRoutes: FastifyPluginAsync<ThreadMemberStrategy
         reply.status(403);
         return { error: 'Access denied' };
       }
+      if (isSharedDefaultThread(thread)) {
+        reply.status(400);
+        return { error: 'Session strategy is not available on the shared default thread' };
+      }
 
       const current = threadStore.getMemberSessionStrategy
         ? await threadStore.getMemberSessionStrategy(id, catId, userId)

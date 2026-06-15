@@ -201,15 +201,15 @@ describe('thread-member-strategy routes (#921)', () => {
     assert.ok(body.error.includes('shared default thread'));
   });
 
-  it('GET still works on the shared default thread (read-only is safe)', async () => {
+  it('GET returns 400 on the shared default thread (triggers UI self-hide)', async () => {
     threadStore._addThread('default', 'system');
     const res = await app.inject({
       method: 'GET',
       url: `/api/threads/default/members/${CAT_ID}/session-strategy`,
       headers: HEADERS,
     });
-    assert.equal(res.statusCode, 200);
+    assert.equal(res.statusCode, 400);
     const body = JSON.parse(res.payload);
-    assert.equal(body.strategy, 'resume');
+    assert.ok(body.error.includes('shared default thread'));
   });
 });
