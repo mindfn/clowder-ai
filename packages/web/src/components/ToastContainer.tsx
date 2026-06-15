@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect } from 'react';
+import { useChatStore } from '@/stores/chatStore';
 import { type ToastItem, useToastStore } from '@/stores/toastStore';
 
 const DISMISS_DELAY = 300; // animation duration
@@ -65,14 +66,22 @@ function ToastCard({ toast }: { toast: ToastItem }) {
   );
 }
 
+/**
+ * Filter toasts by the active thread.
+ * - Toasts with no threadId (global) are always shown.
+ * - Toasts with a threadId only show when that thread is active (#924).
+ */
 export function ToastContainer() {
   const toasts = useToastStore((s) => s.toasts);
+  const currentThreadId = useChatStore((s) => s.currentThreadId);
 
-  if (toasts.length === 0) return null;
+  const visible = toasts.filter((t) => !t.threadId || t.threadId === currentThreadId);
+
+  if (visible.length === 0) return null;
 
   return (
     <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
-      {toasts.map((toast) => (
+      {visible.map((toast) => (
         <ToastCard key={toast.id} toast={toast} />
       ))}
     </div>
