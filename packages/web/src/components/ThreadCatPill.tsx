@@ -179,8 +179,12 @@ export function ThreadCatPill({ threadId }: ThreadCatPillProps) {
           <div className="p-3 overflow-y-auto max-h-[50vh]">
             <CatSelector selectedCats={selectedCats} onSelectionChange={handleSelectionChange} />
           </div>
-          {/* #921: Per-member session strategy control */}
-          {selectedCats.length === 1 && <MemberSessionStrategy threadId={threadId} catId={selectedCats[0]} />}
+          {/* #921: Per-member session strategy control.
+              Hidden on the shared default thread — strategy storage is not
+              user-scoped there, so writes would leak across users. */}
+          {selectedCats.length === 1 && threadId !== 'default' && (
+            <MemberSessionStrategy threadId={threadId} catId={selectedCats[0]} />
+          )}
           <div className="flex items-center justify-between px-3 pb-3 pt-2 border-t border-cafe-subtle flex-shrink-0">
             {saveError && <span className="text-micro text-conn-red-text">保存失败</span>}
             {!saveError && selectedCats.length > 0 && (
