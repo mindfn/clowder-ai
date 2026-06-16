@@ -113,6 +113,23 @@ export function ActionRenderer({ connectorId, operation, onStatusChange, themeCo
     [connectorId, operation.name],
   );
 
+  const resetOperation = useCallback(
+    async (currentAction: string): Promise<boolean> => {
+      try {
+        const url = `/api/connectors/${encodeURIComponent(connectorId)}/operations/${encodeURIComponent(operation.name)}/reset`;
+        const res = await apiFetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ currentAction }),
+        });
+        return res.ok;
+      } catch {
+        return false;
+      }
+    },
+    [connectorId, operation.name],
+  );
+
   /** Transition to the next action's phase after a successful result. */
   const advanceTo = useCallback(
     (nextId: string) => {
@@ -161,7 +178,7 @@ export function ActionRenderer({ connectorId, operation, onStatusChange, themeCo
         abortedRef.current = true;
         stopTimers();
         if (action?.rollback) {
-          void executeAction(action.rollback).finally(() => {
+          void resetOperation(action.rollback).finally(() => {
             onStatusChange?.();
           });
           setCurrentActionId(action.rollback);
@@ -170,7 +187,7 @@ export function ActionRenderer({ connectorId, operation, onStatusChange, themeCo
         }
       }, timeoutMs);
     },
-    [actions, advanceTo, executeAction, onStatusChange, stopTimers],
+    [actions, advanceTo, executeAction, onStatusChange, resetOperation, stopTimers],
   );
 
   // P1-3 fix: auto-resume polling when mounted with persisted polling state

@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isOperationField, isValueField } from '@cat-cafe/shared';
+import { isOperationField, isValueField, type ValueConfigField } from '@cat-cafe/shared';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { requireLocalCapabilityWriteRequest } from '../config/capabilities/capability-write-guards.js';
 import { configEventBus, createChangeSetId } from '../config/config-event-bus.js';
@@ -23,6 +23,7 @@ import {
   readAllOperationStates,
   resolveConnectorEnv,
   writeConnectorConfig,
+  writeOperationState,
 } from '../infrastructure/connectors/im-connector-config-store.js';
 import type { IMConnectorPlugin } from '../infrastructure/connectors/im-connector-plugin.js';
 import type { WeComBotAdapter } from '../infrastructure/connectors/im-connectors/wecom-bot/WeComBotAdapter.js';
@@ -173,6 +174,8 @@ interface PlatformDef {
   name: string;
   nameEn: string;
   fields: ConnectorFieldDef[];
+  /** All value fields, including hidden fields that still participate in configured calculation. */
+  configFields: ConnectorFieldDef[];
   docsUrl: string;
   /** Steps displayed in the guided wizard — may be mode-filtered */
   steps: PlatformStepDef[];
@@ -249,33 +252,35 @@ function rewritePluginIconSrc(
  * Hidden input fields are excluded (e.g. weixin bot token managed by QR).
  * KD-18: defaults encoded through codec for string-uniform representation.
  */
+function valueFieldToConnectorFieldDef(f: ValueConfigField): ConnectorFieldDef {
+  const isSensitive = f.type === 'input' && f.sensitive;
+  const def: ConnectorFieldDef = {
+    envName: f.envName,
+    label: f.label,
+    sensitive: isSensitive,
+    type: f.type,
+  };
+  if (f.type === 'select' && f.options) def.options = f.options;
+  const hasRequiredWhen = f.type === 'input' && f.requiredWhen;
+  // requiredWhen means conditionally required, not optional
+  if (!f.required && !hasRequiredWhen) def.optional = true;
+  const encoded = encodeDefault(f);
+  if (encoded != null) def.defaultValue = encoded;
+  if (f.type === 'input' && f.requiredWhen) def.requiredWhen = f.requiredWhen;
+  return def;
+}
+
 function manifestToPlatformDef(m: ConnectorManifest): PlatformDef {
   const valueFields = m.config.filter(isValueField);
-  const fields: ConnectorFieldDef[] = valueFields
-    .filter((f) => !(f.type === 'input' && f.hidden))
-    .map((f) => {
-      const isSensitive = f.type === 'input' && f.sensitive;
-      const def: ConnectorFieldDef = {
-        envName: f.envName,
-        label: f.label,
-        sensitive: isSensitive,
-        type: f.type,
-      };
-      if (f.type === 'select' && f.options) def.options = f.options;
-      const hasRequiredWhen = f.type === 'input' && f.requiredWhen;
-      // requiredWhen means conditionally required, not optional
-      if (!f.required && !hasRequiredWhen) def.optional = true;
-      const encoded = encodeDefault(f);
-      if (encoded != null) def.defaultValue = encoded;
-      if (f.type === 'input' && f.requiredWhen) def.requiredWhen = f.requiredWhen;
-      return def;
-    });
+  const configFields = valueFields.map(valueFieldToConnectorFieldDef);
+  const fields = valueFields.filter((f) => !(f.type === 'input' && f.hidden)).map(valueFieldToConnectorFieldDef);
 
   return {
     id: m.id,
     name: m.name,
     nameEn: m.nameEn,
     fields,
+    configFields,
     docsUrl: m.docsUrl,
     steps: m.steps.map((s) => {
       const step: PlatformStepDef = { text: s.text };
@@ -418,10 +423,11 @@ export function buildConnectorStatus(
     });
 
     let configured: boolean;
-    if (platform.fields.length === 0) {
+    const configuredFields = platform.configFields ?? platform.fields;
+    if (configuredFields.length === 0) {
       configured = false;
     } else {
-      configured = platform.fields.every((f) => isRequiredFieldSatisfied(f, env));
+      configured = configuredFields.every((f) => isRequiredFieldSatisfied(f, env));
     }
 
     return {
@@ -942,6 +948,44 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
 
   // ── F231 A-3: Generic action endpoint (AC-A16) ──
 
+  app.post('/api/connectors/:connectorId/operations/:operationName/reset', async (request, reply) => {
+    const localErr = requireLocalCapabilityWriteRequest(request);
+    if (localErr) {
+      reply.status(localErr.status);
+      return { error: localErr.error };
+    }
+
+    const { connectorId, operationName } = request.params as {
+      connectorId: string;
+      operationName: string;
+    };
+    const body = request.body as { currentAction?: string };
+    const currentAction = body?.currentAction;
+    if (!currentAction) {
+      reply.status(400);
+      return { error: 'currentAction required' };
+    }
+
+    const manifest = getConnectorManifests().get(connectorId);
+    if (!manifest) {
+      reply.status(404);
+      return { error: `Unknown connector: ${connectorId}` };
+    }
+    const operation = manifest.config.find((f) => isOperationField(f) && f.name === operationName);
+    if (!operation || !isOperationField(operation)) {
+      reply.status(404);
+      return { error: `Operation '${operationName}' not found in connector '${connectorId}'` };
+    }
+    if (!operation.actions.some((a) => a.id === currentAction)) {
+      reply.status(400);
+      return { error: `Action '${currentAction}' not found in operation '${operationName}'` };
+    }
+
+    const projectRoot = resolveActiveProjectRoot();
+    writeOperationState(projectRoot, connectorId, operationName, { currentAction });
+    return { ok: true, currentAction };
+  });
+
   app.post('/api/connectors/:connectorId/actions/:operationName/:actionId', async (request, reply) => {
     const localErr = requireLocalCapabilityWriteRequest(request);
     if (localErr) {
@@ -1016,10 +1060,24 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
         );
       } catch (err) {
         activationStatus = 'failed';
+        writeOperationState(projectRoot, connectorId, operationName, {
+          currentAction: actionId,
+          lastResult: {
+            render: 'status',
+            data: { status: 'activation_failed' },
+            label: 'Activation failed',
+          },
+        });
         app.log.warn(
           { err, connectorId },
           '[ConnectorHub] Connector activation failed after backfill — may need restart',
         );
+        reply.status(502);
+        return {
+          ok: false,
+          error: 'Connector activation failed after action succeeded',
+          activationStatus,
+        };
       }
     }
 

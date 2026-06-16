@@ -51,14 +51,17 @@ describe('ActionRenderer', () => {
     vi.clearAllMocks();
   });
 
-  it('persists rollback action when a polling operation times out', async () => {
+  it('resets rollback state without executing the rollback action when a polling operation times out', async () => {
     mockApiFetch.mockImplementation(async (url) => {
       const path = String(url);
       if (path.endsWith('/qr-status')) {
         return jsonResponse({ ok: true, render: 'polling', label: 'Waiting for scan' });
       }
+      if (path.endsWith('/operations/connect/reset')) {
+        return jsonResponse({ ok: true, currentAction: 'qr-generate' });
+      }
       if (path.endsWith('/qr-generate')) {
-        return jsonResponse({ ok: true, render: 'status', label: 'Reset to generate' });
+        return jsonResponse({ ok: false, label: 'qr-generate should not run during timeout reset' }, 500);
       }
       return jsonResponse({ ok: false, label: 'unexpected action' }, 500);
     });
@@ -88,7 +91,12 @@ describe('ActionRenderer', () => {
     });
     await flushEffects();
 
-    expect(mockApiFetch).toHaveBeenCalledWith('/api/connectors/weixin/actions/connect/qr-generate', {
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/connectors/weixin/operations/connect/reset', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ currentAction: 'qr-generate' }),
+    });
+    expect(mockApiFetch).not.toHaveBeenCalledWith('/api/connectors/weixin/actions/connect/qr-generate', {
       method: 'POST',
     });
     expect(container.textContent).toContain('Operation timed out. Please try again.');

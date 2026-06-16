@@ -7,7 +7,8 @@
  * - Legacy external: dynamically imported from npm packages via `IM_CONNECTOR_PLUGINS` env
  */
 
-import { existsSync, lstatSync, readdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { cpSync, existsSync, lstatSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { FastifyBaseLogger } from 'fastify';
@@ -66,6 +67,40 @@ export async function loadExternalConnectors(
   return results;
 }
 
+function hashPluginModuleGraph(dir: string): string {
+  const hash = createHash('sha256');
+
+  const visit = (currentDir: string, relativeDir = ''): void => {
+    const entries = readdirSync(currentDir).sort();
+    for (const entry of entries) {
+      const absolute = join(currentDir, entry);
+      const relative = relativeDir ? `${relativeDir}/${entry}` : entry;
+      const stat = lstatSync(absolute);
+      if (stat.isDirectory()) {
+        hash.update(`dir\0${relative}\0`);
+        visit(absolute, relative);
+      } else if (stat.isFile()) {
+        hash.update(`file\0${relative}\0${stat.size}\0`);
+        hash.update(readFileSync(absolute));
+      }
+    }
+  };
+
+  visit(dir);
+  return hash.digest('hex').slice(0, 16);
+}
+
+function materializeVersionedPluginModule(projectRoot: string, pluginId: string, sourceDir: string): string {
+  const graphHash = hashPluginModuleGraph(sourceDir);
+  const cacheRoot = join(projectRoot, '.cat-cafe', 'plugin-module-cache', pluginId);
+  const cacheDir = join(cacheRoot, graphHash);
+  if (!existsSync(cacheDir)) {
+    rmSync(cacheRoot, { recursive: true, force: true });
+    cpSync(sourceDir, cacheDir, { recursive: true });
+  }
+  return join(cacheDir, 'index.js');
+}
+
 /**
  * Load installed plugins from `.cat-cafe/plugins/` directory (Phase B).
  * Each subdirectory must contain `index.js` exporting an IMConnectorPlugin.
@@ -92,10 +127,8 @@ export async function loadInstalledPlugins(projectRoot: string, log: FastifyBase
     }
 
     try {
-      // Append cache-bust query to defeat ESM module cache after plugin update.
-      // Without this, `import(fileURL)` returns the stale cached module for the same path.
-      const fileUrl = pathToFileURL(entryPath);
-      fileUrl.searchParams.set('v', String(Date.now()));
+      const versionedEntryPath = materializeVersionedPluginModule(projectRoot, entry, dir);
+      const fileUrl = pathToFileURL(versionedEntryPath);
       const mod = await import(fileUrl.href);
       const plugin: IMConnectorPlugin = mod.default ?? mod;
 

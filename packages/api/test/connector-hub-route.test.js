@@ -1060,6 +1060,202 @@ describe('PUT /api/connectors/:connectorId/config — external plugin reload', (
   });
 });
 
+describe('GET /api/connector/status — external hidden fields', () => {
+  it('uses hidden value fields for configured calculation without rendering them', async () => {
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'external-hidden-configured-'));
+    const pluginId = 'hidden-config-probe';
+    const pluginDir = join(tmpDir, '.cat-cafe', 'plugins', pluginId);
+    const configDir = join(tmpDir, '.cat-cafe', 'im-connector-config');
+    mkdirSync(pluginDir, { recursive: true });
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: Hidden Config Probe',
+        'nameEn: Hidden Config Probe',
+        'version: 1.0.0',
+        'source: external',
+        "themeColor: '#336699'",
+        'icon:',
+        '  type: png',
+        '  src: /test.png',
+        'docsUrl: https://example.com/hidden-config-probe',
+        'config:',
+        '  - envName: HIDDEN_PROBE_TOKEN',
+        '    type: input',
+        '    label: Token',
+        '    sensitive: true',
+        '    required: true',
+        '    hidden: true',
+        'steps:',
+        '  - text: Save token',
+      ].join('\n'),
+    );
+    writeFileSync(join(configDir, `${pluginId}.json`), JSON.stringify({ HIDDEN_PROBE_TOKEN: 'stored-token' }));
+
+    const previousRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    const previousToken = process.env.HIDDEN_PROBE_TOKEN;
+    process.env.CAT_CAFE_CONFIG_ROOT = tmpDir;
+    delete process.env.HIDDEN_PROBE_TOKEN;
+    invalidateManifestCache();
+
+    try {
+      const app = Fastify();
+      await registerConnectorHub(app, {
+        threadStore: {
+          async list() {
+            return [];
+          },
+        },
+      });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/connector/status',
+        headers: AUTH_HEADERS,
+      });
+      const body = JSON.parse(res.body);
+      const probe = body.platforms.find((p) => p.id === pluginId);
+
+      assert.equal(res.statusCode, 200);
+      assert.ok(probe, 'external hidden-field connector must appear in status');
+      assert.equal(probe.configured, true, 'hidden stored token must satisfy required configured status');
+      assert.deepEqual(
+        probe.fields.map((f) => f.envName),
+        [],
+        'hidden value fields must not be rendered in the Hub form',
+      );
+
+      await app.close();
+    } finally {
+      if (previousRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousRoot;
+      if (previousToken === undefined) delete process.env.HIDDEN_PROBE_TOKEN;
+      else process.env.HIDDEN_PROBE_TOKEN = previousToken;
+      invalidateManifestCache();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('POST /api/connectors/:connectorId/actions — activation failure', () => {
+  it('returns failure and does not persist connected state when activation throws', async () => {
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'external-activation-failure-'));
+    const pluginId = 'activation-failure-probe';
+    const pluginDir = join(tmpDir, '.cat-cafe', 'plugins', pluginId);
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: Activation Failure Probe',
+        'nameEn: Activation Failure Probe',
+        'version: 1.0.0',
+        'source: external',
+        "themeColor: '#336699'",
+        'icon:',
+        '  type: png',
+        '  src: /test.png',
+        'docsUrl: https://example.com/activation-failure-probe',
+        'config:',
+        '  - envName: ACTIVATION_FAILURE_TOKEN',
+        '    type: input',
+        '    label: Token',
+        '    sensitive: true',
+        '    required: true',
+        '  - name: connect',
+        '    type: operation',
+        '    label: Connect',
+        '    target: [ACTIVATION_FAILURE_TOKEN]',
+        '    actions:',
+        '      - id: finish',
+        '        label: Finish',
+        '        render: button',
+        '        next: disconnect',
+        '      - id: disconnect',
+        '        label: Disconnect',
+        '        render: button',
+        '        next: finish',
+        'steps:',
+        '  - text: Save token',
+      ].join('\n'),
+    );
+
+    const plugin = {
+      id: pluginId,
+      definition: {
+        id: pluginId,
+        displayName: 'Activation Failure Probe',
+        icon: { type: 'png', src: '/test.png' },
+        themeColor: '#336699',
+        description: 'activation failure regression',
+      },
+      requiredEnvKeys: ['ACTIVATION_FAILURE_TOKEN'],
+      isConfigured: () => true,
+      createAdapter: () => ({ id: pluginId, sendMessage() {} }),
+      async handleAction() {
+        return {
+          render: 'status',
+          data: { status: 'confirmed' },
+          label: 'Connected',
+          targetValues: { ACTIVATION_FAILURE_TOKEN: 'secret-token' },
+        };
+      },
+    };
+
+    const previousRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    process.env.CAT_CAFE_CONFIG_ROOT = tmpDir;
+    invalidateManifestCache();
+
+    try {
+      const app = Fastify();
+      await registerConnectorHub(app, {
+        threadStore: {
+          async list() {
+            return [];
+          },
+        },
+        pluginRegistry: new Map([[pluginId, plugin]]),
+        activateConnector: async () => {
+          throw new Error('adapter failed to start');
+        },
+      });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/connectors/${pluginId}/actions/connect/finish`,
+        headers: {
+          ...AUTH_HEADERS,
+          host: '127.0.0.1:3002',
+          origin: 'http://127.0.0.1:3001',
+        },
+      });
+      const body = JSON.parse(res.body);
+      const statesRes = await app.inject({
+        method: 'GET',
+        url: `/api/connectors/${pluginId}/operations`,
+        headers: AUTH_HEADERS,
+      });
+      const states = JSON.parse(statesRes.body).operations;
+
+      assert.equal(res.statusCode, 502);
+      assert.equal(body.ok, false);
+      assert.match(body.error, /activation failed/i);
+      assert.equal(states.connect.currentAction, 'finish', 'activation failure must not persist connected step');
+
+      await app.close();
+    } finally {
+      if (previousRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousRoot;
+      invalidateManifestCache();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('POST /api/connector/wecom-bot/disconnect', () => {
   it('returns 401 without auth header', async () => {
     const { app } = await buildApp();
