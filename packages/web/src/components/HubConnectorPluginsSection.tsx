@@ -102,6 +102,7 @@ export function HubConnectorPluginsSection({ onPluginChange }: { onPluginChange?
         <h3 className="text-sm font-medium text-cafe-primary">扩展插件</h3>
         <label
           className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-cafe-border px-3 py-1.5 text-xs font-medium text-cafe-secondary transition-colors hover:bg-cafe-hover ${uploading ? 'pointer-events-none opacity-50' : ''}`}
+          title="点击上传插件安装包，支持上传 .tar.gz"
         >
           <UploadIcon />
           {uploading ? '安装中...' : '安装插件'}
@@ -116,6 +117,18 @@ export function HubConnectorPluginsSection({ onPluginChange }: { onPluginChange?
             }}
           />
         </label>
+      </div>
+      <div className="flex items-center gap-1.5 text-xs text-cafe-muted">
+        <BookIcon />
+        <a
+          href="https://github.com/zts212653/clowder-ai/blob/main/docs/guides/im-connector-plugin-guide.md"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline decoration-cafe-border underline-offset-2 transition-colors hover:text-cafe-secondary"
+        >
+          插件开发文档
+        </a>
+        <span className="hidden sm:inline">— 接口说明 · 配置参数 · 打包部署</span>
       </div>
 
       {message && (
@@ -180,6 +193,25 @@ function UploadIcon() {
     >
       <path d="M8 2a.75.75 0 0 1 .75.75v5.69l1.72-1.72a.75.75 0 1 1 1.06 1.06l-3 3a.75.75 0 0 1-1.06 0l-3-3a.75.75 0 0 1 1.06-1.06l1.72 1.72V2.75A.75.75 0 0 1 8 2Z" />
       <path d="M3.5 9.75a.75.75 0 0 0-1.5 0v1.5A2.75 2.75 0 0 0 4.75 14h6.5A2.75 2.75 0 0 0 14 11.25v-1.5a.75.75 0 0 0-1.5 0v1.5c0 .69-.56 1.25-1.25 1.25h-6.5c-.69 0-1.25-.56-1.25-1.25v-1.5Z" />
+    </svg>
+  );
+}
+
+function BookIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      className="h-3.5 w-3.5 shrink-0"
+      role="img"
+      aria-label="文档"
+    >
+      <path
+        fillRule="evenodd"
+        d="M2 4.25A2.25 2.25 0 0 1 4.25 2h7.5A2.25 2.25 0 0 1 14 4.25v7.5A2.25 2.25 0 0 1 11.75 14h-7.5A2.25 2.25 0 0 1 2 11.75v-7.5ZM5 5.75A.75.75 0 0 1 5.75 5h4.5a.75.75 0 0 1 0 1.5h-4.5A.75.75 0 0 1 5 5.75Zm0 2.5a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1-.75-.75Zm0 2.5a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 0 1.5h-2.5a.75.75 0 0 1-.75-.75Z"
+        clipRule="evenodd"
+      />
     </svg>
   );
 }
