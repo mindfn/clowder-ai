@@ -14,7 +14,7 @@ Branch: feat/f230-im-connector-plugin
 4. **`im-connectors/{id}/index.ts`** × 7：每个 connector 自包含（plugin wrapper + adapter + helpers），可直接 lift into npm package
 5. **Phase D adapter co-location**：删除 `adapters/` 目录，adapter 代码搬入对应 `im-connectors/{id}/` 下，git 检测为 rename（99%+ similarity，保留 blame）
 6. **`examples/im-connector-example/`**：~100 行 echo connector 示例包
-7. **`docs/guides/im-connector-plugin-guide.md`**：贡献者指南（接口契约 + 模式 + 开发流程）
+7. **`docs/guides/im-connector-dev-guide.md`**：贡献者指南（接口契约 + 模式 + 开发流程）
 
 PR 总量：52 files changed, +2391/-702
 
@@ -91,7 +91,7 @@ Why: 将现有 hardcoded adapter switch-case 改为注册表模式，新增 IMCo
 - AC-B3 ✅ ConnectorDefinition 动态注册表
 - AC-C1 ✅ IM_CONNECTOR_PLUGINS 外部加载
 - AC-C2 ✅ 示例包 examples/im-connector-example/
-- AC-C3 ✅ 贡献者指南 docs/guides/im-connector-plugin-guide.md
+- AC-C3 ✅ 贡献者指南 docs/guides/im-connector-dev-guide.md
 
 ### 测试结果
 
@@ -118,7 +118,7 @@ git diff --name-only origin/main...HEAD | rg root artifacts → CLEAN
 ### 相关文档
 
 - Feature: `docs/features/F231-im-connector-plugin-architecture.md`
-- Guide: `docs/guides/im-connector-plugin-guide.md`
+- Guide: `docs/guides/im-connector-dev-guide.md`
 - Example: `examples/im-connector-example/`
 - PR: Draft #903
 

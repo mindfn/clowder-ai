@@ -17,14 +17,18 @@ import { encodeDefault } from '../infrastructure/config-field-parser.js';
 import type { IConnectorPermissionStore } from '../infrastructure/connectors/ConnectorPermissionStore.js';
 import { executeConnectorAction } from '../infrastructure/connectors/connector-action-handler.js';
 import { getAllExternalConnectorMeta } from '../infrastructure/connectors/external-connector-registry.js';
-import { DefaultFeishuQrBindClient, type FeishuQrBindClient } from '../infrastructure/connectors/FeishuQrBindClient.js';
+
 import {
   loadAllConnectorConfigs,
   readAllOperationStates,
   resolveConnectorEnv,
   writeConnectorConfig,
 } from '../infrastructure/connectors/im-connector-config-store.js';
-import { type ConnectorManifest, scanConnectorManifests } from '../infrastructure/connectors/im-connector-manifest.js';
+import {
+  type ConnectorManifest,
+  type ManifestIconSpec,
+  scanConnectorManifests,
+} from '../infrastructure/connectors/im-connector-manifest.js';
 import type { IMConnectorPlugin } from '../infrastructure/connectors/im-connector-plugin.js';
 import type { WeComBotAdapter } from '../infrastructure/connectors/im-connectors/wecom-bot/WeComBotAdapter.js';
 import type { WeixinAdapter } from '../infrastructure/connectors/im-connectors/weixin/WeixinAdapter.js';
@@ -45,18 +49,12 @@ export interface ConnectorHubRoutesOptions {
    * Null when gateway not started or WeChat not available.
    */
   weixinAdapter?: WeixinAdapter | null;
-  /** Called after successful QR login to start the WeChat polling loop */
-  startWeixinPolling?: () => void;
-  /** F132 Phase E: dynamically start WeCom Bot adapter after credential validation */
-  startWeComBotStream?: (botId: string, secret: string) => Promise<void>;
-  /** F132 Phase E: stop running WeCom Bot adapter (for disconnect) */
-  stopWeComBot?: () => Promise<void>;
   /** Live WeCom Bot adapter getter for health reporting (instance changes on reconnect) */
   getWeComBotAdapter?: () => WeComBotAdapter | null;
   /** F134 Phase D: Permission store for group whitelist + admin management */
   permissionStore?: IConnectorPermissionStore | null;
   envFilePath?: string;
-  feishuQrBindClient?: FeishuQrBindClient;
+
   /** F231 A-3: Plugin registry for generic action endpoint (includes unconfigured plugins) */
   pluginRegistry?: ReadonlyMap<string, IMConnectorPlugin>;
   /** F231 A-3: Adapter registry for generic action endpoint (only configured+started connectors) */
@@ -177,6 +175,10 @@ interface PlatformDef {
   themeColor?: string;
   /** AC-A25: manifest-driven permission label — renders HubPermissionsTab when present. */
   permissionLabel?: string;
+  /** F231: YAML-declared health-check — controls test button visibility. */
+  testable?: boolean;
+  /** F231: 'external' for user-installed plugins. Absent = builtin. */
+  source?: 'builtin' | 'external';
 }
 
 // ── Manifest-driven platform definitions ──
@@ -195,11 +197,13 @@ function getConnectorManifests(): Map<string, ConnectorManifest> {
   if (!_cachedManifests) {
     _cachedManifests = scanConnectorManifests(CONNECTORS_DIR);
 
-    // Phase B: also scan installed plugin manifests
+    // Phase B: also scan installed plugin manifests (source: 'external' is in their YAML)
     try {
       const pluginManifests = scanConnectorManifests(resolvePluginsDir(resolveActiveProjectRoot()));
       for (const [id, manifest] of pluginManifests) {
-        if (!_cachedManifests.has(id)) _cachedManifests.set(id, manifest);
+        if (!_cachedManifests.has(id)) {
+          _cachedManifests.set(id, manifest);
+        }
       }
     } catch {
       // Plugin dir not available — only built-in manifests
@@ -211,6 +215,25 @@ function getConnectorManifests(): Map<string, ConnectorManifest> {
 /** Invalidate manifest cache — called after plugin install/uninstall to pick up new manifests. */
 export function invalidateManifestCache(): void {
   _cachedManifests = null;
+}
+
+/**
+ * Rewrite external plugin icon.src from relative file name (e.g. `icon.svg`)
+ * to an API URL (e.g. `/api/connectors/plugins/echo-e2e/icon`) so the browser
+ * can fetch it. Built-in icons (absolute paths like `/images/connectors/feishu.png`)
+ * pass through unchanged.
+ */
+function rewritePluginIconSrc(
+  connectorId: string,
+  icon: ManifestIconSpec,
+  source: 'builtin' | 'external' | undefined,
+): PlatformDef['icon'] {
+  if (source !== 'external') return icon;
+  if (!('src' in icon) || !icon.src) return icon;
+  // Absolute path or URL → already reachable, keep as-is
+  if (icon.src.startsWith('/') || icon.src.startsWith('http')) return icon;
+  // Relative file name → rewrite to plugin icon API route
+  return { ...icon, src: `/api/connectors/plugins/${encodeURIComponent(connectorId)}/icon` };
 }
 
 /**
@@ -252,9 +275,11 @@ function manifestToPlatformDef(m: ConnectorManifest): PlatformDef {
       if (s.mode) step.mode = s.mode;
       return step;
     }),
-    ...(m.icon ? { icon: m.icon } : {}),
+    ...(m.icon ? { icon: rewritePluginIconSrc(m.id, m.icon, m.source) } : {}),
     ...(m.themeColor ? { themeColor: m.themeColor } : {}),
     ...(m.permissions?.label ? { permissionLabel: m.permissions.label } : {}),
+    ...(m.testable ? { testable: m.testable } : {}),
+    ...(m.source ? { source: m.source } : {}),
   };
 }
 
@@ -329,6 +354,8 @@ export interface PlatformStatus {
   id: string;
   name: string;
   nameEn: string;
+  /** F231: 'external' for user-installed connectors. Absent/undefined = builtin. */
+  source?: 'builtin' | 'external';
   configured: boolean;
   fields: PlatformFieldStatus[];
   docsUrl: string;
@@ -341,6 +368,8 @@ export interface PlatformStatus {
   operations?: PlatformOperationStatus[];
   /** AC-A25: manifest-driven permission label — renders HubPermissionsTab when present. */
   permissionLabel?: string;
+  /** F231: YAML-declared health-check — controls test button visibility. */
+  testable?: boolean;
 }
 
 function isConfiguredFieldValue(field: ConnectorFieldDef, raw: string | undefined): boolean {
@@ -365,7 +394,7 @@ export function buildConnectorStatus(
 ): PlatformStatus[] {
   const resolved = manifests ? manifestsToPlatformDefs(manifests) : getConnectorPlatforms();
 
-  const builtinStatuses = resolved.map((platform) => {
+  const builtinStatuses: PlatformStatus[] = resolved.map((platform) => {
     const fields: PlatformFieldStatus[] = platform.fields.map((f) => {
       const raw = env[f.envName];
       const isSet = isConfiguredFieldValue(f, raw);
@@ -399,6 +428,8 @@ export function buildConnectorStatus(
       ...(platform.icon ? { icon: platform.icon } : {}),
       ...(platform.themeColor ? { themeColor: platform.themeColor } : {}),
       ...(platform.permissionLabel ? { permissionLabel: platform.permissionLabel } : {}),
+      ...(platform.testable ? { testable: platform.testable } : {}),
+      ...(platform.source ? { source: platform.source } : {}),
     };
   });
 
@@ -424,6 +455,7 @@ export function buildConnectorStatus(
       id: meta.id,
       name: meta.definition.displayName,
       nameEn: meta.definition.displayName,
+      source: 'external',
       configured: meta.configured,
       fields,
       docsUrl: '',
@@ -436,7 +468,6 @@ export function buildConnectorStatus(
 
 export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> = async (app, opts) => {
   const { threadStore } = opts;
-  const feishuQrBindClient = opts.feishuQrBindClient ?? new DefaultFeishuQrBindClient();
 
   app.get('/api/connector/hub-threads', async (request, reply) => {
     const userId = requireSessionHubIdentity(request, reply);
@@ -658,7 +689,10 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
         activationStatus = 'failed';
         app.log.warn({ err, connectorId }, '[ConnectorHub] Connector deactivation failed');
       }
-    } else if (result.backfilledKeys && result.backfilledKeys.length > 0 && opts.activateConnector) {
+    } else if (
+      (result.activate === true || (result.backfilledKeys && result.backfilledKeys.length > 0)) &&
+      opts.activateConnector
+    ) {
       // Connect: create adapter + start inbound after credential backfill
       try {
         await opts.activateConnector(connectorId);
@@ -702,312 +736,6 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
     const projectRoot = resolveActiveProjectRoot();
     const states = readAllOperationStates(projectRoot, connectorId);
     return { operations: states };
-  });
-
-  app.post('/api/connector/feishu/qrcode', async (request, reply) => {
-    const auth = requireConnectorWriteIdentity(request, reply);
-    if (auth.error) return auth.error;
-
-    try {
-      const result = await feishuQrBindClient.create();
-      return result;
-    } catch (err) {
-      app.log.error({ err }, '[Feishu QR] Failed to fetch QR code');
-      reply.status(502);
-      return { error: 'Failed to fetch QR code from Feishu registration service' };
-    }
-  });
-
-  app.get('/api/connector/feishu/qrcode-status', async (request, reply) => {
-    const auth = requireConnectorWriteIdentity(request, reply);
-    if (auth.error) return auth.error;
-    const { userId } = auth;
-
-    const { qrPayload } = request.query as { qrPayload?: string };
-    if (!qrPayload) {
-      reply.status(400);
-      return { error: 'qrPayload query parameter required' };
-    }
-
-    try {
-      const status = await feishuQrBindClient.poll(qrPayload);
-      if (status.status !== 'confirmed') {
-        return status;
-      }
-
-      const updates = [
-        { name: 'FEISHU_APP_ID', value: status.appId ?? null },
-        { name: 'FEISHU_APP_SECRET', value: status.appSecret ?? null },
-      ];
-      const currentMode = process.env.FEISHU_CONNECTION_MODE === 'websocket' ? 'websocket' : 'webhook';
-      const verificationToken = process.env.FEISHU_VERIFICATION_TOKEN;
-      if (currentMode === 'webhook' && (!verificationToken || verificationToken.trim() === '')) {
-        updates.push({ name: 'FEISHU_CONNECTION_MODE', value: 'websocket' });
-      }
-      const writeError = await applyAuditedConnectorSecretUpdates(app, updates, opts, userId, 'feishu-qrcode-confirm');
-      if (writeError) {
-        reply.status(writeError.status);
-        return { error: writeError.error };
-      }
-      return { status: 'confirmed' };
-    } catch (err) {
-      app.log.error({ err }, '[Feishu QR] Failed to poll QR status');
-      reply.status(502);
-      return { error: 'Failed to poll Feishu QR status' };
-    }
-  });
-
-  app.post('/api/connector/feishu/disconnect', async (request, reply) => {
-    const auth = requireConnectorWriteIdentity(request, reply);
-    if (auth.error) return auth.error;
-    const { userId } = auth;
-
-    const writeError = await applyAuditedConnectorSecretUpdates(
-      app,
-      [
-        { name: 'FEISHU_APP_ID', value: null },
-        { name: 'FEISHU_APP_SECRET', value: null },
-      ],
-      opts,
-      userId,
-      'feishu-disconnect',
-    );
-    if (writeError) {
-      reply.status(writeError.status);
-      return { error: writeError.error };
-    }
-    app.log.info({ userId }, '[Feishu] Disconnected by user');
-    return { ok: true };
-  });
-
-  // ── F137: WeChat QR code login routes ──
-
-  app.post('/api/connector/weixin/qrcode', async (request, reply) => {
-    const auth = requireConnectorWriteIdentity(request, reply);
-    if (auth.error) return auth.error;
-
-    try {
-      const { WeixinAdapter: WA } = await import('../infrastructure/connectors/im-connectors/weixin/WeixinAdapter.js');
-      const result = await WA.fetchQrCode();
-      // iLink returns a webpage URL (https://liteapp.weixin.qq.com/q/...), not an image.
-      // Generate a real QR code data URI from the URL so <img> can render it.
-      const QRCode = await import('qrcode');
-      const qrDataUri = await QRCode.toDataURL(result.qrUrl, { width: 384, margin: 2 });
-      return { qrUrl: qrDataUri, qrPayload: result.qrPayload };
-    } catch (err) {
-      app.log.error({ err }, '[WeChat QR] Failed to fetch QR code');
-      reply.status(502);
-      return { error: 'Failed to fetch QR code from WeChat' };
-    }
-  });
-
-  app.get('/api/connector/weixin/qrcode-status', async (request, reply) => {
-    const auth = requireConnectorWriteIdentity(request, reply);
-    if (auth.error) return auth.error;
-    const { userId } = auth;
-
-    const { qrPayload } = request.query as { qrPayload?: string };
-    if (!qrPayload) {
-      reply.status(400);
-      return { error: 'qrPayload query parameter required' };
-    }
-
-    try {
-      const { WeixinAdapter: WA } = await import('../infrastructure/connectors/im-connectors/weixin/WeixinAdapter.js');
-      const status = await WA.pollQrCodeStatus(qrPayload);
-
-      if (status.status === 'confirmed') {
-        const adapter = opts.weixinAdapter;
-        if (!adapter) {
-          app.log.error('[WeChat QR] QR confirmed but adapter not available — token would be lost');
-          reply.status(503);
-          return { error: 'WeChat adapter not ready — please retry shortly' };
-        }
-        const writeError = await applyAuditedConnectorSecretUpdates(
-          app,
-          [{ name: 'WEIXIN_BOT_TOKEN', value: status.botToken }],
-          opts,
-          userId,
-          'weixin-qrcode-confirm',
-        );
-        if (writeError) {
-          reply.status(writeError.status);
-          return { error: writeError.error };
-        }
-        adapter.setBotToken(status.botToken);
-        opts.startWeixinPolling?.();
-        app.log.info('[WeChat QR] Auto-activated — bot_token persisted to .env, polling started');
-        return { status: 'confirmed' };
-      }
-
-      return status;
-    } catch (err) {
-      app.log.error({ err }, '[WeChat QR] Failed to poll QR status');
-      reply.status(502);
-      return { error: 'Failed to poll QR code status' };
-    }
-  });
-
-  app.post('/api/connector/weixin/activate', async (request, reply) => {
-    const auth = requireConnectorWriteIdentity(request, reply);
-    if (auth.error) return auth.error;
-
-    const adapter = opts.weixinAdapter;
-    if (!adapter) {
-      reply.status(503);
-      return { error: 'WeChat adapter not available (connector gateway not started)' };
-    }
-
-    if (!adapter.hasBotToken()) {
-      reply.status(409);
-      return { error: 'No bot_token available — complete QR code login first' };
-    }
-
-    opts.startWeixinPolling?.();
-    app.log.info('[WeChat QR] Manual activate — polling started');
-
-    return { ok: true, polling: adapter.isPolling() };
-  });
-
-  // F137 Phase D: Disconnect WeChat — stop polling + clear token + clear state
-  app.post('/api/connector/weixin/disconnect', async (request, reply) => {
-    const auth = requireConnectorWriteIdentity(request, reply);
-    if (auth.error) return auth.error;
-    const { userId } = auth;
-
-    const adapter = opts.weixinAdapter;
-    if (!adapter) {
-      reply.status(503);
-      return { error: 'WeChat adapter not available (connector gateway not started)' };
-    }
-
-    await adapter.disconnect();
-    const writeError = await applyAuditedConnectorSecretUpdates(
-      app,
-      [{ name: 'WEIXIN_BOT_TOKEN', value: null }],
-      opts,
-      userId,
-      'weixin-disconnect',
-    );
-    if (writeError) {
-      reply.status(writeError.status);
-      return { error: writeError.error };
-    }
-    app.log.info({ userId }, '[WeChat] Disconnected by user — token cleared from .env');
-
-    return { ok: true };
-  });
-
-  // ── F132 Phase E: WeCom Bot guided setup — validate + connect + disconnect ──
-
-  app.post('/api/connector/wecom-bot/validate', async (request, reply) => {
-    const auth = requireConnectorWriteIdentity(request, reply);
-    if (auth.error) return auth.error;
-    const { userId } = auth;
-
-    const { botId, secret } = (request.body ?? {}) as { botId?: string; secret?: string };
-    if (!botId || !secret) {
-      reply.status(400);
-      return { error: 'botId and secret are required' };
-    }
-    const validationError = validateConnectorSecretUpdates([
-      { name: 'WECOM_BOT_ID', value: botId },
-      { name: 'WECOM_BOT_SECRET', value: secret },
-    ]);
-    if (validationError) {
-      reply.status(400);
-      return { error: validationError };
-    }
-
-    try {
-      // Note: we intentionally do NOT stop the existing adapter before validation.
-      // The validate probe may kick the running WS via disconnected_event, but the
-      // adapter's scheduleReconnect() handles recovery. Stopping here would kill
-      // a working connection on validation failure with no way to restore it.
-      // On success, startWeComBotStream() stops the old adapter before starting new.
-      const { WeComBotAdapter } = await import(
-        '../infrastructure/connectors/im-connectors/wecom-bot/WeComBotAdapter.js'
-      );
-      const result = await WeComBotAdapter.validateCredentials(botId, secret);
-
-      if (!result.valid) {
-        reply.status(422);
-        return { valid: false, error: result.error };
-      }
-
-      // AC-E3: Save credentials and activate adapter without restart
-      // P1 fix: save → start → if start fails, rollback credentials
-      const writeError = await applyAuditedConnectorSecretUpdates(
-        app,
-        [
-          { name: 'WECOM_BOT_ID', value: botId },
-          { name: 'WECOM_BOT_SECRET', value: secret },
-        ],
-        opts,
-        userId,
-        'wecom-bot-validate',
-      );
-      if (writeError) {
-        reply.status(writeError.status);
-        return { valid: false, error: writeError.error };
-      }
-
-      if (opts.startWeComBotStream) {
-        try {
-          await opts.startWeComBotStream(botId, secret);
-        } catch (startErr) {
-          // Rollback: credentials saved but adapter failed to start
-          await applyAuditedConnectorSecretUpdates(
-            app,
-            [
-              { name: 'WECOM_BOT_ID', value: null },
-              { name: 'WECOM_BOT_SECRET', value: null },
-            ],
-            opts,
-            userId,
-            'wecom-bot-rollback',
-          );
-          app.log.error({ err: startErr }, '[WeCom Bot] Adapter start failed — credentials rolled back');
-          reply.status(502);
-          return { valid: false, error: 'Credentials valid but adapter failed to start' };
-        }
-      }
-
-      app.log.info({ userId }, '[WeCom Bot] Validated + activated via guided setup');
-      return { valid: true };
-    } catch (err) {
-      app.log.error({ err }, '[WeCom Bot] Validation failed');
-      reply.status(502);
-      return { valid: false, error: 'Failed to validate WeCom Bot credentials' };
-    }
-  });
-
-  app.post('/api/connector/wecom-bot/disconnect', async (request, reply) => {
-    const auth = requireConnectorWriteIdentity(request, reply);
-    if (auth.error) return auth.error;
-    const { userId } = auth;
-
-    if (opts.stopWeComBot) {
-      await opts.stopWeComBot();
-    }
-
-    const writeError = await applyAuditedConnectorSecretUpdates(
-      app,
-      [
-        { name: 'WECOM_BOT_ID', value: null },
-        { name: 'WECOM_BOT_SECRET', value: null },
-      ],
-      opts,
-      userId,
-      'wecom-bot-disconnect',
-    );
-    if (writeError) {
-      reply.status(writeError.status);
-      return { error: writeError.error };
-    }
-    app.log.info({ userId }, '[WeCom Bot] Disconnected by user — credentials cleared');
-
-    return { ok: true };
   });
 
   // ── F134 Phase D: Connector Permission API ──
@@ -1093,6 +821,14 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
       const status = buildConnectorStatus();
       const tg = status.find((p) => p.id === 'telegram');
       return { valid: tg?.configured === true, error: !tg?.configured ? 'Telegram Bot Token 未配置' : undefined };
+    }
+
+    // F231: Known connector but no dedicated test handler — report unsupported.
+    // Real connection testing should be a YAML-declared operation/action (like qr-generate).
+    const manifest = getConnectorManifests().get(id);
+    const extMeta = !manifest ? getAllExternalConnectorMeta().find((m) => m.id === id) : undefined;
+    if (manifest || extMeta) {
+      return { valid: false, error: '此连接器暂不支持连接测试', unsupported: true };
     }
 
     reply.status(400);

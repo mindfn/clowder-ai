@@ -385,17 +385,20 @@ for each ValueConfigField:
 | 前端通用 action 渲染器 | 替代 WeixinQrPanel / FeishuQrPanel |
 | `.env.example` | 删除 connector 相关配置项 |
 | `examples/im-connector-example/` | 示例包 |
-| `docs/guides/im-connector-plugin-guide.md` | 贡献者指南 |
+| `docs/guides/im-connector-dev-guide.md` | 贡献者指南 |
 
 ### Phase B: 动态插件安装 — 自包含 tar.gz 包 + Hub UI 管理
 
 支持非源码用户安装第三方 connector，无需 Node/npm 环境：
 
-- **插件包格式**：自包含 tar.gz，内含 `<id>/connector.yaml` + `index.js` + 可选 `assets/`
-- **安装服务**：`plugin-installer.ts` — 解压、校验 manifest + entry、ID 冲突检测、移动到 `.cat-cafe/plugins/<id>/`
-- **生命周期**：安装 → 更新（替换代码，保留配置）→ 卸载（可选清除配置）
-- **API 路由**：`connector-plugins.ts` — `GET /api/connectors/plugins`、`POST .../install`（multipart 上传）、`DELETE .../:id`
-- **前端 UI**：`HubConnectorPluginsSection` — 列表 + 上传 + 卸载，集成在 IM Connectors 页底部
+- **插件包格式**：自包含 tar.gz，内含 `<id>/connector.yaml` + `index.js` + 可选 icon 文件
+- **安装服务**：`plugin-installer.ts` — 解压、校验 manifest + entry、ID 冲突检测、移动到 `.cat-cafe/plugins/<id>/`；安装时 force-write `source: external` 到 connector.yaml
+- **生命周期**：安装 → 更新（替换代码，保留配置）→ 卸载（清理磁盘文件 + 内存注册表 + manifest 缓存，可选清除配置）
+- **`source` 标识**：`'builtin' | 'external'`，内置 connector 标记 `builtin`，插件安装时 force-write `external`。前端根据 source 渲染 "外部" badge + 🗑️ 卸载按钮
+- **Icon proxy**：外部插件 icon 通过 API 路由 `GET /api/connectors/plugins/:id/icon` 代理，connector.yaml 中的相对路径（如 `icon.svg`）由 `rewritePluginIconSrc()` 自动 rewrite 为 API URL
+- **卸载清理**：DELETE 时同步清理 `external-connector-registry` Map + `@cat-cafe/shared` connectorMap + manifest 缓存，避免幽灵卡片
+- **API 路由**：`connector-plugins.ts` — `GET /api/connectors/plugins`、`POST .../install`（multipart 上传）、`DELETE .../:id`、`GET .../:id/icon`
+- **前端 UI**：`ConnectorPluginInstallButton` — "安装 IM Connector" 上传按钮 + 开发文档下载链接，集成在 IM Connectors 页顶部
 - **Loader 集成**：`loadInstalledPlugins()` 动态导入已安装插件，gateway bootstrap 扫描插件 manifest
 - `IM_CONNECTOR_PLUGINS` env var 保留为 legacy escape hatch
 
@@ -430,7 +433,7 @@ for each ValueConfigField:
 - [x] AC-A13: 现有 plugin.yaml 无 `type` 字段时 fallback 到 `input`，零破坏（Why-3，验证：现有 plugin 功能不退化）
 - [x] AC-A14: `.env.example` 删除 connector 相关配置项（Why-3，KD-16）
 - [x] AC-A14a: `.env` 相关旧路径清理——后端/前端中"重启后生效"、"写入 .env"的文案和代码路径消除或替换为 .cat-cafe 路径（Why-3，验证：grep 'write.*\.env\|写入.*env' 在 connector 相关文件中命中 0）
-- [x] AC-A14b: `docs/guides/im-connector-plugin-guide.md` 更新——不再引导用户在 .env 配置凭证，改为 Hub UI 配置（Why-3）
+- [x] AC-A14b: `docs/guides/im-connector-dev-guide.md` 更新——不再引导用户在 .env 配置凭证，改为 Hub UI 配置（Why-3）
 
 **A-3: Action 状态机 + 通用端点：**
 - [x] AC-A15: YAML `actions` chain 声明 + `handleAction()` 插件方法（Why-2，验证：外部 connector 声明 action chain 后框架自动路由）
@@ -465,7 +468,7 @@ for each ValueConfigField:
 **B-3: 前端插件管理 UI：**
 - [x] AC-B8: `HubConnectorPluginsSection` 组件——列表 + 上传 + 卸载，集成在 IM Connectors 页底部（Why-2）
 - [x] AC-B9: 安装/更新/卸载操作触发父组件 connector 列表刷新（Why-2+4）
-- [x] AC-B10: 安装插件按钮 hover tooltip + 插件开发文档链接（指向 `docs/guides/im-connector-plugin-guide.md`，需与指南同步刷新）（Why-2）
+- [x] AC-B10: 安装插件按钮 hover tooltip + 插件开发文档链接（指向 `docs/guides/im-connector-dev-guide.md`，需与指南同步刷新）（Why-2）
 
 ### Phase C（内置 connector 统一结构）
 - [x] AC-C1: 7 个内置 connector 使用与外部插件相同的目录结构（`connector.yaml` + `index.ts` + adapter），无需额外改造
@@ -494,7 +497,7 @@ for each ValueConfigField:
 
 | # | 问题 | 状态 |
 |---|------|------|
-| OQ-1 | 外部 connector 包的 icon 图片如何分发？ | ⬜ Phase B 解决 |
+| OQ-1 | ~~外部 connector icon 分发~~ → 已实现：plugin 目录内相对路径 + API proxy route `/api/connectors/plugins/:id/icon` | ✅ Phase B |
 | OQ-2 | ~~QR 面板扩展点设计~~ → 已决策：YAML action 状态机 | ✅ KD-12 |
 | OQ-3 | ~~action handler 多步骤生命周期~~ → 已决策：状态机 chain（每个 action 是一个节点，next 指向下一个） | ✅ KD-12 |
 | OQ-4 | 权限从独立 store 迁移到 config store 的数据迁移路径（现有 permissions 数据保持兼容） | ⬜ 实现时处理 |
@@ -545,7 +548,8 @@ for each ValueConfigField:
 | 2026-06-15 | A-2 实现完成 + @codex APPROVED：共享 ConfigField 类型 + codec + parser + tombstone 修复 |
 | 2026-06-15 | A-3 后端实现完成：action state machine + 通用端点 + advance polling + plugin handleAction + updatedAt |
 | 2026-06-16 | AC-A14/A14a/A14b 完成：.env.example 清理 + guide 更新 + 旧路径验证 |
-| 2026-06-16 | @codex A-3 review 请求提交 |
+| 2026-06-16 | Phase B 完成：icon API proxy + source 标识 + ConnectorIcon onError fallback + uninstall 内存清理 |
+| 2026-06-16 | 文档整理：guide 改名 → `im-connector-dev-guide.md`；安装按钮 → "安装 IM Connector" |
 
 ## Review Gate
 

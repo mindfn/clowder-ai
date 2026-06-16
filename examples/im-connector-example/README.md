@@ -57,4 +57,4 @@ At least one of `createWebhookHandler` or `startInbound` must be implemented to 
 
 ## More Info
 
-See the full [IM Connector Plugin Guide](../../docs/guides/im-connector-plugin-guide.md) for detailed documentation.
+See the full [IM Connector 开发文档](../../docs/guides/im-connector-dev-guide.md) for detailed documentation.

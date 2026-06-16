@@ -1,8 +1,8 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
 
 // Will be created — expect import to fail until implementation exists
-import { encodeFieldValue, decodeFieldValue } from '../dist/types/config-field-codec.js';
+import { decodeFieldValue, encodeFieldValue } from '../dist/types/config-field-codec.js';
 
 describe('config-field-codec', () => {
   // ── input ──────────────────────────────────────────────────────────

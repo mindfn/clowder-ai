@@ -11,16 +11,24 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { unregisterConnectorDefinition } from '@cat-cafe/shared';
 import multipart from '@fastify/multipart';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { requireLocalCapabilityWriteRequest } from '../config/capabilities/capability-write-guards.js';
 import { configEventBus, createChangeSetId } from '../config/config-event-bus.js';
+import { unregisterExternalConnectorMeta } from '../infrastructure/connectors/external-connector-registry.js';
 import { loadBuiltinConnectors } from '../infrastructure/connectors/im-connector-loader.js';
-import { installPlugin, listInstalledPlugins, uninstallPlugin } from '../infrastructure/connectors/plugin-installer.js';
+import { parseConnectorManifest } from '../infrastructure/connectors/im-connector-manifest.js';
+import {
+  installPlugin,
+  listInstalledPlugins,
+  resolvePluginsDir,
+  uninstallPlugin,
+} from '../infrastructure/connectors/plugin-installer.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
 import { invalidateManifestCache } from './connector-hub.js';
 
@@ -52,6 +60,52 @@ export const connectorPluginRoutes: FastifyPluginAsync = async (app) => {
     const plugins = listInstalledPlugins(projectRoot);
     return reply.send({ plugins });
   });
+
+  // ── GET /api/connectors/plugins/:id/icon — serve plugin icon file ──
+  // External plugins can't place files in web public/; this route serves
+  // icons directly from .cat-cafe/plugins/<id>/ so connector.yaml can use
+  // relative paths (e.g. `icon.svg`) that get rewritten to this API URL.
+
+  app.get(
+    '/api/connectors/plugins/:id/icon',
+    async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+      const { id } = req.params;
+      const projectRoot = resolveActiveProjectRoot();
+      const pluginDir = join(resolvePluginsDir(projectRoot), id);
+
+      if (!existsSync(pluginDir)) {
+        return reply.status(404).send({ error: 'Plugin not found' });
+      }
+
+      const yamlPath = join(pluginDir, 'connector.yaml');
+      if (!existsSync(yamlPath)) {
+        return reply.status(404).send({ error: 'No manifest' });
+      }
+
+      let iconSrc: string | undefined;
+      try {
+        const manifest = parseConnectorManifest(yamlPath);
+        iconSrc = 'src' in manifest.icon ? manifest.icon.src : undefined;
+      } catch {
+        return reply.status(500).send({ error: 'Bad manifest' });
+      }
+
+      if (!iconSrc) {
+        return reply.status(404).send({ error: 'No icon configured' });
+      }
+
+      // Resolve within plugin dir — path traversal guard
+      const iconPath = resolve(pluginDir, iconSrc);
+      if (!iconPath.startsWith(resolve(pluginDir)) || !existsSync(iconPath)) {
+        return reply.status(404).send({ error: 'Icon file not found' });
+      }
+
+      const ext = iconPath.split('.').pop()?.toLowerCase();
+      const mime = ext === 'svg' ? 'image/svg+xml' : ext === 'png' ? 'image/png' : 'application/octet-stream';
+
+      return reply.type(mime).header('Cache-Control', 'public, max-age=3600').send(readFileSync(iconPath));
+    },
+  );
 
   // ── POST /api/connectors/plugins/install — install/update a plugin ──
 
@@ -130,6 +184,11 @@ export const connectorPluginRoutes: FastifyPluginAsync = async (app) => {
       if ('code' in result) {
         return reply.status(404).send({ error: result.message, code: result.code });
       }
+
+      // Clear in-memory registries so the deleted plugin doesn't ghost in status responses.
+      // Must happen BEFORE gateway reload (which re-registers surviving plugins).
+      unregisterExternalConnectorMeta(id);
+      unregisterConnectorDefinition(id);
 
       // Invalidate manifest cache so status/config endpoints drop removed plugin
       invalidateManifestCache();

@@ -23,7 +23,7 @@ export interface ConnectorStepDef {
 }
 
 /** Icon specification — matches ConnectorIconSpec in shared/types/connector.ts */
-export type ManifestIconSpec = { type: 'svg'; iconId: string } | { type: 'png'; src: string };
+export type ManifestIconSpec = { type: 'svg'; iconId: string; src?: string } | { type: 'png'; src: string };
 
 export interface ConnectorManifest {
   id: string;
@@ -40,6 +40,10 @@ export interface ConnectorManifest {
   steps: ConnectorStepDef[];
   /** AC-A25: manifest-driven permission support. If present, renders HubPermissionsTab. */
   permissions?: { label: string };
+  /** F231: YAML-declared health-check capability — controls test button visibility. */
+  testable?: boolean;
+  /** F231: 'external' for user-installed plugins (force-written at install time). Absent/undefined = builtin. */
+  source?: 'builtin' | 'external';
 }
 
 // ── Parser ───────────────────────────────────────────────────────────
@@ -66,6 +70,9 @@ export function parseConnectorManifest(yamlPath: string): ConnectorManifest {
     const iconRaw = raw.icon as Record<string, unknown>;
     if (iconRaw.type === 'png' && typeof iconRaw.src === 'string') {
       icon = { type: 'png', src: iconRaw.src };
+    } else if (iconRaw.type === 'svg' && typeof iconRaw.src === 'string') {
+      // SVG file reference (external plugins bundle .svg files)
+      icon = { type: 'svg', iconId: iconRaw.iconId ? String(iconRaw.iconId) : id, src: iconRaw.src };
     } else if (iconRaw.type === 'svg' && typeof iconRaw.iconId === 'string') {
       icon = { type: 'svg', iconId: iconRaw.iconId };
     } else {
@@ -85,6 +92,9 @@ export function parseConnectorManifest(yamlPath: string): ConnectorManifest {
     }
   }
 
+  const testable = raw.testable === true;
+  const source = raw.source === 'external' ? ('external' as const) : undefined;
+
   return {
     id,
     name: String(raw.name ?? id),
@@ -96,6 +106,8 @@ export function parseConnectorManifest(yamlPath: string): ConnectorManifest {
     config: parseConfigFields(configRaw, `${yamlPath}/config`),
     steps: stepsRaw.map((s: Record<string, unknown>) => parseStep(s)),
     ...(permissions ? { permissions } : {}),
+    ...(testable ? { testable } : {}),
+    ...(source ? { source } : {}),
   };
 }
 

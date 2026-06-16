@@ -277,6 +277,17 @@ export function registerConnectorDefinition(def: ConnectorDefinition): void {
   }
 }
 
+/**
+ * Unregister a runtime-added connector definition (F231 plugin uninstall).
+ * Static (compile-time) definitions are immune — only dynamically registered
+ * entries can be removed.
+ */
+export function unregisterConnectorDefinition(id: string): void {
+  if (!staticConnectorIds.has(id)) {
+    connectorMap.delete(id);
+  }
+}
+
 /** Look up a connector definition by ID. */
 export function getConnectorDefinition(connectorId: string): ConnectorDefinition | undefined {
   return connectorMap.get(connectorId);

@@ -14,9 +14,10 @@
  */
 
 import { execFile } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { type ConnectorManifest, parseConnectorManifest } from './im-connector-manifest.js';
 
 const execFileAsync = promisify(execFile);
@@ -140,6 +141,13 @@ export async function installPlugin(
     if (!existsSync(entryPath)) {
       return { code: 'MISSING_ENTRY', message: `Plugin must contain ${PLUGIN_ENTRY}` };
     }
+
+    // Force-write source: 'external' into manifest — overrides any user-supplied value.
+    // This is the single authority for marking a connector as externally installed.
+    const yamlContent = readFileSync(yamlPath, 'utf-8');
+    const rawYaml = parseYaml(yamlContent) as Record<string, unknown>;
+    rawYaml.source = 'external';
+    writeFileSync(yamlPath, stringifyYaml(rawYaml));
 
     // Check for built-in ID conflict
     if (builtinIds.has(manifest.id)) {

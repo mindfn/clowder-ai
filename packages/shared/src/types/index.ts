@@ -292,6 +292,21 @@ export type {
   TriagePlanTarget,
 } from './concierge.js';
 export { CONCIERGE_CONFIG_DEFAULTS } from './concierge.js';
+// Unified Config Field types (F234 KD-15 — shared by Plugin + IM Connector)
+export type {
+  ActionDef,
+  ConfigField,
+  ConfigFieldType,
+  InputConfigField,
+  ListConfigField,
+  OperationConfigField,
+  OperationState,
+  SelectConfigField,
+  ToggleConfigField,
+  ValueConfigField,
+} from './config-field.js';
+export { isOperationField, isValueField } from './config-field.js';
+export { decodeFieldValue, encodeFieldValue } from './config-field-codec.js';
 // Connector types (F97 外部信息源抽象)
 export type {
   ConnectorDefinition,
@@ -311,6 +326,7 @@ export {
   isStaticConnectorId,
   registerConnectorDefinition,
   SCHEDULER_TRIGGER_PREFIX,
+  unregisterConnectorDefinition,
 } from './connector.js';
 // Deliberate types (4-E 两轮制 - 类型预埋)
 export type {
@@ -543,21 +559,6 @@ export type {
   ResolverType,
   WorkflowAction,
 } from './pack.js';
-// Unified Config Field types (F231 KD-15 — shared by Plugin + IM Connector)
-export type {
-  ActionDef,
-  ConfigField,
-  ConfigFieldType,
-  InputConfigField,
-  ListConfigField,
-  OperationConfigField,
-  OperationState,
-  SelectConfigField,
-  ToggleConfigField,
-  ValueConfigField,
-} from './config-field.js';
-export { isOperationField, isValueField } from './config-field.js';
-export { decodeFieldValue, encodeFieldValue } from './config-field-codec.js';
 // Plugin Framework types (F202 声明式插件注册)
 export type {
   PluginConfigField,

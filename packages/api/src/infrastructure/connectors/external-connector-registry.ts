@@ -38,6 +38,11 @@ export function getAllExternalConnectorMeta(): readonly ExternalConnectorMeta[] 
   return Array.from(registry.values());
 }
 
+/** Remove a single connector from registry (called on plugin uninstall). */
+export function unregisterExternalConnectorMeta(id: string): void {
+  registry.delete(id);
+}
+
 /** Clear registry (for tests). */
 export function clearExternalConnectorRegistry(): void {
   registry.clear();

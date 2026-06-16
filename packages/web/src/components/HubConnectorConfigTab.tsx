@@ -3,80 +3,25 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { useGuideStore } from '@/stores/guideStore';
 import { apiFetch } from '@/utils/api-client';
+import { ConnectorActionBar } from './ConnectorActionBar';
 import {
+  buildPlatformVisual,
   connStatePill,
-  DEFAULT_VISUAL,
   ExternalLinkIcon,
   formatHeartbeat,
-  PLATFORM_VISUALS,
   type PlatformStatus,
   StepBadge,
-  WifiIcon,
+  TrashIcon,
 } from './HubConfigIcons';
-import { HubConnectorPluginsSection } from './HubConnectorPluginsSection';
 import { settingsResourceCardClass } from './SettingsResourceCard';
 import { ActionRenderer } from './settings/primitives/ActionRenderer';
 import { ConfigFieldRenderer } from './settings/primitives/ConfigFieldRenderer';
-import { WeComBotSetupPanel } from './WeComBotSetupPanel';
 
 const HubPermissionsTab = lazy(() => import('./HubPermissionsTab'));
 
 const REDACTED_PLACEHOLDER = '••••••';
 
-function ConnectorActionBar({
-  platformId,
-  saveResult,
-  saving,
-  onSave,
-  testing,
-  onTest,
-}: {
-  platformId: string;
-  saveResult: { type: 'success' | 'error'; message: string } | null;
-  saving: boolean;
-  onSave: () => void;
-  testing: boolean;
-  onTest: () => void;
-}) {
-  return (
-    <>
-      {saveResult && (
-        <div
-          className={`rounded-2xl px-3 py-2 text-xs ${
-            saveResult.type === 'success'
-              ? 'bg-conn-emerald-bg text-conn-emerald-text border border-conn-emerald-ring'
-              : 'bg-conn-red-bg text-conn-red-text border border-conn-red-ring'
-          }`}
-          data-testid="save-result"
-        >
-          {saveResult.message}
-        </div>
-      )}
-      <div className="flex items-center justify-end gap-2">
-        <button
-          type="button"
-          className="console-button-secondary text-sm disabled:opacity-50"
-          onClick={onTest}
-          disabled={testing}
-        >
-          <WifiIcon />
-          {testing ? '测试中...' : '测试连接'}
-        </button>
-        <button
-          type="button"
-          onClick={onSave}
-          disabled={saving}
-          className="console-button-primary text-sm disabled:opacity-50"
-          data-testid={`save-${platformId}`}
-        >
-          {saving ? '保存中...' : '保存配置'}
-        </button>
-      </div>
-    </>
-  );
-}
-
-export function HubConnectorConfigTab() {
+export function HubConnectorConfigTab({ refreshKey }: { refreshKey?: number }) {
   const activeGuideStep = useGuideStore((s) => {
     const session = s.session;
     if (!session || session.currentStepIndex >= session.flow.steps.length) return null;
@@ -89,6 +34,7 @@ export function HubConnectorConfigTab() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [saveResult, setSaveResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [uninstallingId, setUninstallingId] = useState<string | null>(null);
 
   const fetchStatus = useCallback(async () => {
     setIsLoading(true);
@@ -97,7 +43,7 @@ export function HubConnectorConfigTab() {
       if (!res.ok) return;
       const data = await res.json();
       const all: PlatformStatus[] = data.platforms ?? [];
-      setPlatforms(all.filter((p) => p.category !== 'plugin'));
+      setPlatforms(all);
     } catch {
       // fall through
     } finally {
@@ -105,9 +51,26 @@ export function HubConnectorConfigTab() {
     }
   }, []);
 
+  const handleUninstallPlugin = useCallback(
+    async (id: string) => {
+      setUninstallingId(id);
+      try {
+        const res = await apiFetch(`/api/connectors/plugins/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        if (res.ok) {
+          await fetchStatus();
+        }
+      } catch {
+        // silent
+      } finally {
+        setUninstallingId(null);
+      }
+    },
+    [fetchStatus],
+  );
+
   useEffect(() => {
     fetchStatus();
-  }, [fetchStatus]);
+  }, [fetchStatus, refreshKey]);
 
   const handleExpand = (platformId: string) => {
     const guideToggleTarget = `connector.${platformId}`;
@@ -196,11 +159,15 @@ export function HubConnectorConfigTab() {
     <div className="space-y-3">
       {platforms.map((platform) => {
         const isExpanded = expandedId === platform.id;
-        const v = PLATFORM_VISUALS[platform.id] ?? DEFAULT_VISUAL;
-        // Resolve current connection mode for mode-filtered steps
-        const modeField = platform.fields.find((f) => f.envName === 'FEISHU_CONNECTION_MODE');
+        const v = buildPlatformVisual(platform);
+        // Generic mode-driver: find select field whose options match step mode values
+        const stepModes = new Set(platform.steps.filter((s) => s.mode).map((s) => s.mode));
+        const modeField =
+          stepModes.size > 0
+            ? platform.fields.find((f) => f.type === 'select' && f.options?.some((o) => stepModes.has(o.value)))
+            : undefined;
         const selectedMode = modeField
-          ? (fieldValues['FEISHU_CONNECTION_MODE'] ?? modeField.currentValue ?? 'webhook')
+          ? (fieldValues[modeField.envName] ?? modeField.currentValue ?? modeField.options?.[0]?.value)
           : undefined;
         const filteredSteps = platform.steps.filter((s) => !s.mode || s.mode === selectedMode);
         const guideSteps = filteredSteps.slice(0, -1);
@@ -213,21 +180,28 @@ export function HubConnectorConfigTab() {
             data-guide-id={`connector.${platform.id}`}
             data-active={isExpanded ? 'true' : 'false'}
           >
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => handleExpand(platform.id)}
-              className="flex w-full items-center gap-3 px-4 py-3 transition-colors"
+              onKeyDown={(e) => e.key === 'Enter' && handleExpand(platform.id)}
+              className="flex w-full items-center gap-3 px-4 py-3 cursor-pointer transition-colors"
             >
               <span
-                className="flex h-9 w-9 items-center justify-center rounded-xl shrink-0"
+                className="flex h-9 w-9 items-center justify-center rounded-xl shrink-0 overflow-hidden"
                 style={{ backgroundColor: v.iconBg, color: v.iconColor }}
               >
                 {v.icon}
               </span>
               <span className="flex-1 text-left min-w-0 space-y-1">
-                <span className="block text-sm font-semibold text-cafe">
+                <span className="flex items-center gap-1.5 text-sm font-semibold text-cafe">
                   {platform.name}
                   {platform.nameEn !== platform.name ? ` ${platform.nameEn}` : ''}
+                  {platform.source === 'external' && (
+                    <span className="rounded bg-cafe-surface-sunken px-1.5 py-0.5 text-[10px] font-medium text-cafe-muted">
+                      外部
+                    </span>
+                  )}
                 </span>
                 {platform.lastHeartbeat && (
                   <span className="block text-xs text-cafe-muted">{formatHeartbeat(platform.lastHeartbeat)}</span>
@@ -238,15 +212,31 @@ export function HubConnectorConfigTab() {
               >
                 {connStatePill(platform).label}
               </span>
-            </button>
+              {platform.source === 'external' && (
+                <button
+                  type="button"
+                  disabled={uninstallingId === platform.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleUninstallPlugin(platform.id);
+                  }}
+                  className="shrink-0 rounded-lg p-1.5 text-cafe-muted transition-colors hover:bg-conn-red-bg hover:text-conn-red-text disabled:opacity-50"
+                  title="卸载插件"
+                >
+                  <TrashIcon />
+                </button>
+              )}
+            </div>
 
-            {/* Unified expanded content — manifest-driven (AC-A22 + AC-A23) */}
             {isExpanded && (
               <div className="px-4 py-4 space-y-4">
                 <div className={`${settingsResourceCardClass} overflow-hidden`}>
                   {/* Section header — themed from manifest */}
                   <div className="px-4 py-3 flex items-center gap-3" style={{ backgroundColor: v.iconBg }}>
-                    <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ color: v.iconColor }}>
+                    <div
+                      className="w-9 h-9 rounded-lg flex items-center justify-center overflow-hidden"
+                      style={{ color: v.iconColor }}
+                    >
                       {v.icon}
                     </div>
                     <div>
@@ -308,17 +298,6 @@ export function HubConnectorConfigTab() {
                         </div>
                       </div>
                     )}
-
-                    {/* WeComBot legacy setup panel — retained until YAML operations added */}
-                    {platform.id === 'wecom-bot' && (
-                      <div className="ml-[26px]">
-                        <WeComBotSetupPanel
-                          configured={platform.configured}
-                          onConnected={() => void fetchStatus()}
-                          onDisconnected={() => void fetchStatus()}
-                        />
-                      </div>
-                    )}
                   </div>
                 </div>
 
@@ -333,6 +312,7 @@ export function HubConnectorConfigTab() {
                   saveResult={saveResult}
                   saving={saving}
                   onSave={() => handleSave(platform)}
+                  showTest={platform.testable === true}
                   testing={testing}
                   onTest={() => handleTest(platform)}
                 />
@@ -341,8 +321,6 @@ export function HubConnectorConfigTab() {
           </div>
         );
       })}
-
-      <HubConnectorPluginsSection onPluginChange={fetchStatus} />
 
       <p className="mt-4 text-xs text-cafe-muted">配置保存后自动生效，无需重启</p>
     </div>

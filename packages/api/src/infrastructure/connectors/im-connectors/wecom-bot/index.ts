@@ -6,7 +6,12 @@
  */
 
 import type { ConnectorDefinition } from '@cat-cafe/shared';
-import type { IMConnectorPlugin, MediaDownloadFn } from '../../im-connector-plugin.js';
+import type {
+  HandleActionContext,
+  HandleActionResult,
+  IMConnectorPlugin,
+  MediaDownloadFn,
+} from '../../im-connector-plugin.js';
 import type { IOutboundAdapter } from '../../OutboundDeliveryHook.js';
 import { WeComBotAdapter } from './WeComBotAdapter.js';
 
@@ -86,6 +91,40 @@ const wecomBotPlugin: IMConnectorPlugin = {
     return {
       stop: async () => wecomBotAdapter.stopStream(),
     };
+  },
+
+  async handleAction(_operationName: string, actionId: string, ctx: HandleActionContext): Promise<HandleActionResult> {
+    const { log } = ctx;
+
+    switch (actionId) {
+      case 'validate': {
+        const botId = ctx.env.WECOM_BOT_ID;
+        const secret = ctx.env.WECOM_BOT_SECRET;
+        if (!botId || !secret) {
+          throw new Error('请先保存 Bot ID 和 Bot Secret');
+        }
+        const result = await WeComBotAdapter.validateCredentials(botId, secret);
+        if (!result.valid) {
+          throw new Error(result.error ?? '凭据验证失败');
+        }
+        log.info('[WeComBot handleAction] Credentials validated — activating');
+        return { render: 'status', data: { status: 'connected' }, label: '已连接', activate: true };
+      }
+
+      case 'disconnect': {
+        log.info('[WeComBot handleAction] Disconnected by user');
+        return {
+          render: 'status',
+          data: { status: 'disconnected' },
+          label: '已断开',
+          targetValues: { WECOM_BOT_ID: '', WECOM_BOT_SECRET: '' },
+          activate: false,
+        };
+      }
+
+      default:
+        throw new Error(`Unknown wecom-bot action: ${actionId}`);
+    }
   },
 
   createMediaDownloader(adapter, _ctx): MediaDownloadFn {

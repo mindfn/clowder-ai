@@ -147,6 +147,6 @@ export async function executeConnectorAction(input: ExecuteActionInput): Promise
     data: result.data,
     ...(result.label ? { label: result.label } : {}),
     ...(backfilledKeys && backfilledKeys.length > 0 ? { backfilledKeys } : {}),
-    ...(result.activate === false ? { activate: false } : {}),
+    ...(result.activate !== undefined ? { activate: result.activate } : {}),
   };
 }

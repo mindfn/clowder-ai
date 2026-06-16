@@ -7,6 +7,7 @@ icon:
   src: /images/connectors/weixin.png
 themeColor: '#07C160'
 docsUrl: https://chatbot.weixin.qq.com/
+testable: true
 
 config:
   # ── Value field (hidden, managed by QR operation) ──

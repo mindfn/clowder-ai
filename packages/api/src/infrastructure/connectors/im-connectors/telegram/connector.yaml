@@ -7,6 +7,7 @@ icon:
   src: /images/connectors/telegram.png
 themeColor: '#0088CC'
 docsUrl: https://core.telegram.org/bots/tutorial
+testable: true
 
 config:
   - envName: TELEGRAM_BOT_TOKEN
