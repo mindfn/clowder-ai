@@ -8,7 +8,7 @@ import {
   listInstalledPlugins,
   resolvePluginsDir,
   uninstallPlugin,
-} from '../dist/infrastructure/connectors/plugin-installer.js';
+} from '../dist/infrastructure/connectors/plugins/plugin-installer.js';
 
 const TEST_ROOT = '/tmp/cat-cafe-plugin-installer-test';
 const BUILTIN_IDS = new Set(['feishu', 'dingtalk', 'telegram', 'weixin', 'wecom-bot', 'wecom-agent', 'xiaoyi']);

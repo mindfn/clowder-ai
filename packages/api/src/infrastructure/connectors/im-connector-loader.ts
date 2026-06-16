@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { FastifyBaseLogger } from 'fastify';
 import type { IMConnectorPlugin } from './im-connector-plugin.js';
-import { resolvePluginsDir } from './plugin-installer.js';
+import { resolvePluginsDir } from './plugins/plugin-installer.js';
 
 /**
  * Load all built-in IM connector plugins.

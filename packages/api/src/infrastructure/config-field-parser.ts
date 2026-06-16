@@ -2,7 +2,7 @@
  * Shared Config Field Parser — F231 KD-15
  *
  * Parses raw YAML config field objects into typed ConfigField instances.
- * Used by both plugin-manifest.ts and im-connector-manifest.ts.
+ * Used by both plugin-manifest.ts and connectors/plugins/im-connector-manifest.ts.
  *
  * Key rules:
  * - No `type` field → fallback to 'input' (data compat, KD-15)

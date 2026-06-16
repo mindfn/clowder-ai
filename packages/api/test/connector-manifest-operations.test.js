@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { parseConnectorManifest } from '../dist/infrastructure/connectors/im-connector-manifest.js';
+import { parseConnectorManifest } from '../dist/infrastructure/connectors/plugins/im-connector-manifest.js';
 
 /**
  * Verify that connector.yaml manifests with operation fields parse correctly.

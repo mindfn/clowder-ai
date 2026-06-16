@@ -22,13 +22,13 @@ import { requireLocalCapabilityWriteRequest } from '../config/capabilities/capab
 import { configEventBus, createChangeSetId } from '../config/config-event-bus.js';
 import { unregisterExternalConnectorMeta } from '../infrastructure/connectors/external-connector-registry.js';
 import { loadBuiltinConnectors } from '../infrastructure/connectors/im-connector-loader.js';
-import { parseConnectorManifest } from '../infrastructure/connectors/im-connector-manifest.js';
+import { parseConnectorManifest } from '../infrastructure/connectors/plugins/im-connector-manifest.js';
 import {
   installPlugin,
   listInstalledPlugins,
   resolvePluginsDir,
   uninstallPlugin,
-} from '../infrastructure/connectors/plugin-installer.js';
+} from '../infrastructure/connectors/plugins/plugin-installer.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
 import { invalidateManifestCache } from './connector-hub.js';
 

@@ -42,7 +42,7 @@ import {
   loadAllConnectorConfigs,
   resolveConnectorEnv,
 } from './im-connector-config-store.js';
-import { scanConnectorManifests } from './im-connector-manifest.js';
+import { scanConnectorManifests } from './plugins/im-connector-manifest.js';
 import type { IMConnectorPluginContext, InboundMessageCallback } from './im-connector-plugin.js';
 import { WeComBotAdapter } from './im-connectors/wecom-bot/WeComBotAdapter.js';
 import { WeixinAdapter } from './im-connectors/weixin/WeixinAdapter.js';
@@ -493,7 +493,7 @@ export async function startConnectorGateway(
   const manifests = scanConnectorManifests(connectorsDir);
 
   // Phase B: also scan installed plugin manifests
-  const { resolvePluginsDir } = await import('./plugin-installer.js');
+  const { resolvePluginsDir } = await import('./plugins/plugin-installer.js');
   const pluginManifests = scanConnectorManifests(resolvePluginsDir(projectRoot));
   for (const [id, manifest] of pluginManifests) {
     if (!manifests.has(id)) manifests.set(id, manifest);

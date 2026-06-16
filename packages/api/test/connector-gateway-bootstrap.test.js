@@ -16,7 +16,7 @@ import {
 import { clearConnectorConfigCache } from '../dist/infrastructure/connectors/im-connector-config-store.js';
 import { FeishuTokenManager } from '../dist/infrastructure/connectors/im-connectors/feishu/FeishuTokenManager.js';
 import { TelegramAdapter } from '../dist/infrastructure/connectors/im-connectors/telegram/TelegramAdapter.js';
-import { resolvePluginsDir } from '../dist/infrastructure/connectors/plugin-installer.js';
+import { resolvePluginsDir } from '../dist/infrastructure/connectors/plugins/plugin-installer.js';
 
 function noopLog() {
   const noop = () => {};

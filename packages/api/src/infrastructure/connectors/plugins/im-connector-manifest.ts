@@ -14,7 +14,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ConfigField } from '@cat-cafe/shared';
 import { parse as parseYaml } from 'yaml';
-import { parseConfigFields } from '../config-field-parser.js';
+import { parseConfigFields } from '../../config-field-parser.js';
 
 export interface ConnectorStepDef {
   text: string;

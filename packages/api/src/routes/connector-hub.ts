@@ -28,12 +28,12 @@ import {
   type ConnectorManifest,
   type ManifestIconSpec,
   scanConnectorManifests,
-} from '../infrastructure/connectors/im-connector-manifest.js';
+} from '../infrastructure/connectors/plugins/im-connector-manifest.js';
 import type { IMConnectorPlugin } from '../infrastructure/connectors/im-connector-plugin.js';
 import type { WeComBotAdapter } from '../infrastructure/connectors/im-connectors/wecom-bot/WeComBotAdapter.js';
 import type { WeixinAdapter } from '../infrastructure/connectors/im-connectors/weixin/WeixinAdapter.js';
 import type { IOutboundAdapter } from '../infrastructure/connectors/OutboundDeliveryHook.js';
-import { resolvePluginsDir } from '../infrastructure/connectors/plugin-installer.js';
+import { resolvePluginsDir } from '../infrastructure/connectors/plugins/plugin-installer.js';
 import { normalizeTelegramBotToken } from '../infrastructure/connectors/telegram-token.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';

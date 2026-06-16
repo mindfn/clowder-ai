@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { resolve } from 'node:path';
 import { isValueField, type OperationState, type ValueConfigField } from '@cat-cafe/shared';
 import { encodeDefault } from '../config-field-parser.js';
-import type { ConnectorManifest } from './im-connector-manifest.js';
+import type { ConnectorManifest } from './plugins/im-connector-manifest.js';
 
 const CONFIG_DIR = '.cat-cafe';
 const CONNECTOR_CONFIG_SUBDIR = 'im-connector-config';

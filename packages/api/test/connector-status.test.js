@@ -13,7 +13,7 @@ import {
   resolveConnectorEnv,
   writeConnectorConfig,
 } from '../dist/infrastructure/connectors/im-connector-config-store.js';
-import { scanConnectorManifests } from '../dist/infrastructure/connectors/im-connector-manifest.js';
+import { scanConnectorManifests } from '../dist/infrastructure/connectors/plugins/im-connector-manifest.js';
 import { buildConnectorStatus } from '../dist/routes/connector-hub.js';
 
 const STORE_PROJECT_ROOT = '/tmp/cat-cafe-status-store-test';
