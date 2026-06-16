@@ -172,7 +172,7 @@ export interface ConnectorGatewayDeps {
       }
     | undefined;
   readonly defaultUserId: string;
-  readonly defaultCatId: CatId;
+  readonly defaultCatId: CatId | (() => CatId);
   readonly redis?: RedisClient | undefined;
   readonly log: FastifyBaseLogger;
   readonly frontendBaseUrl?: string | undefined;
@@ -526,8 +526,12 @@ export async function startConnectorGateway(
   for (const plugin of allPlugins) {
     const isBuiltin = builtinIds.has(plugin.id);
 
-    // WeComBot: skip in main loop — handled separately via startWeComBotStream
-    if (plugin.id === 'wecom-bot') continue;
+    // WeComBot stream startup is handled separately, but the plugin must stay
+    // registered so Hub action routes can validate/connect before credentials exist.
+    if (plugin.id === 'wecom-bot') {
+      plugins.set(plugin.id, plugin);
+      continue;
+    }
 
     // External plugin validation
     if (!isBuiltin) {
@@ -781,7 +785,6 @@ export async function startConnectorGateway(
     wecomBotStopFn = async () => {
       if (inboundHandle) await inboundHandle.stop();
       adapters.delete('wecom-bot');
-      plugins.delete('wecom-bot');
     };
     log.info('[ConnectorGateway] WeCom Bot adapter started (WebSocket mode)');
   };

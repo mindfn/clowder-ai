@@ -79,8 +79,8 @@ describe('transformOpenCodeEvent', () => {
     assert.strictEqual(result.toolName, 'read');
   });
 
-  // ── step_finish → null ──
-  test('maps step_finish → null (metadata only)', () => {
+  // ── step_finish → agent_loop + usage metadata ──
+  test('maps step_finish → agent_loop carrying metadata.usage', () => {
     const event = {
       type: 'step_finish',
       timestamp: 1773304958508,
@@ -91,6 +91,52 @@ describe('transformOpenCodeEvent', () => {
         cost: 0.036973,
         tokens: { total: 36937, input: 36928, output: 9, reasoning: 0 },
       },
+    };
+    const result = transformOpenCodeEvent(event, catId);
+    assert.ok(result);
+    assert.strictEqual(result.type, 'agent_loop');
+    assert.strictEqual(result.catId, catId);
+    assert.ok(result.metadata?.usage);
+    assert.strictEqual(result.metadata.provider, 'opencode');
+    assert.strictEqual(result.metadata.usage.inputTokens, 36928);
+    assert.strictEqual(result.metadata.usage.lastTurnInputTokens, 36928);
+    assert.strictEqual(result.metadata.usage.outputTokens, 9);
+    assert.strictEqual(result.metadata.usage.totalTokens, 36937);
+    assert.strictEqual(result.metadata.usage.costUsd, 0.036973);
+    assert.strictEqual(result.metadata.usage.contextWindowSize, undefined);
+  });
+
+  test('step_finish includes cache.read/cache.write in inputTokens', () => {
+    const event = {
+      type: 'step_finish',
+      timestamp: 1773304958508,
+      sessionID: 'ses_xxx',
+      part: {
+        type: 'step-finish',
+        cost: 0.012,
+        tokens: {
+          total: 21680,
+          input: 671,
+          output: 9,
+          cache: { read: 21000, write: 0 },
+        },
+      },
+    };
+    const result = transformOpenCodeEvent(event, catId);
+    assert.ok(result);
+    assert.strictEqual(result.type, 'agent_loop');
+    assert.strictEqual(result.metadata.usage.inputTokens, 21671);
+    assert.strictEqual(result.metadata.usage.lastTurnInputTokens, 21671);
+    assert.strictEqual(result.metadata.usage.cacheReadTokens, 21000);
+    assert.strictEqual(result.metadata.usage.cacheCreationTokens, undefined);
+  });
+
+  test('step_finish with no tokens returns null', () => {
+    const event = {
+      type: 'step_finish',
+      timestamp: 1773304958508,
+      sessionID: 'ses_xxx',
+      part: { type: 'step-finish', reason: 'stop' },
     };
     const result = transformOpenCodeEvent(event, catId);
     assert.strictEqual(result, null);

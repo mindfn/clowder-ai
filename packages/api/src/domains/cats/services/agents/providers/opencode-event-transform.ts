@@ -6,12 +6,14 @@
  *   { type, timestamp, sessionID, part: { type, ... } }
  *
  * Event mapping:
- *   step_start → session_init (first occurrence establishes session)
- *   text       → text (part.text)
- *   tool_use   → tool_use (part.tool, part.state.input)
- *   error      → error (error.data.message or error.name)
- *   step_finish → null (cost/token metadata, skipped)
- *   Others     → null
+ *   step_start  → session_init (first occurrence establishes session)
+ *   text        → text (part.text)
+ *   tool_use    → tool_use (part.tool, part.state.input)
+ *   error       → error (error.data.message or error.name)
+ *   step_finish → agent_loop + metadata.usage (telemetry-only). Lights up
+ *                 invoke-single-cat's F8 token block + F24 contextHealth
+ *                 path so handoff can fire BEFORE context fills.
+ *   Others      → null
  */
 
 import type { CatId } from '@cat-cafe/shared';
@@ -26,10 +28,27 @@ interface OpenCodeEvent {
     text?: string;
     tool?: string;
     callID?: string;
+    /** step_finish only: terminal reason — 'stop' = final answer (terminal),
+     *  'tool-calls' = LLM called tools, more steps follow (non-terminal),
+     *  'length'/'content-filter' = upstream halted mid-step (terminal). */
+    reason?: string;
     state?: {
       status?: string;
       input?: Record<string, unknown>;
       output?: string;
+    };
+    /** step_finish only: USD cost of this step from the upstream provider. */
+    cost?: number;
+    /** step_finish only: token counts for this step (per-API-call shape). */
+    tokens?: {
+      total?: number;
+      input?: number;
+      output?: number;
+      reasoning?: number;
+      cache?: {
+        read?: number;
+        write?: number;
+      };
     };
     [key: string]: unknown;
   };
@@ -97,8 +116,44 @@ export function transformOpenCodeEvent(event: unknown, catId: CatId | string): A
       };
     }
 
-    case 'step_finish':
-      return null;
+    case 'step_finish': {
+      const tokens = event.part?.tokens;
+      const freshInput = typeof tokens?.input === 'number' ? tokens.input : undefined;
+      const cacheRead = typeof tokens?.cache?.read === 'number' ? tokens.cache.read : undefined;
+      const cacheWrite = typeof tokens?.cache?.write === 'number' ? tokens.cache.write : undefined;
+      const outputTokens = typeof tokens?.output === 'number' ? tokens.output : undefined;
+      const totalTokens = typeof tokens?.total === 'number' ? tokens.total : undefined;
+      const costUsd = typeof event.part?.cost === 'number' ? event.part.cost : undefined;
+
+      // opencode reports cached prompt tokens separately from fresh input; the
+      // shared TokenUsage contract wants total prompt tokens for fill-ratio math.
+      const totalInputTokens =
+        freshInput != null || cacheRead != null || cacheWrite != null
+          ? (freshInput ?? 0) + (cacheRead ?? 0) + (cacheWrite ?? 0)
+          : undefined;
+
+      if (totalInputTokens == null && outputTokens == null && totalTokens == null) return null;
+
+      return {
+        type: 'agent_loop',
+        catId: catId as CatId,
+        timestamp: ts,
+        metadata: {
+          provider: 'opencode',
+          model: '',
+          usage: {
+            ...(totalInputTokens != null
+              ? { inputTokens: totalInputTokens, lastTurnInputTokens: totalInputTokens }
+              : {}),
+            ...(outputTokens != null ? { outputTokens } : {}),
+            ...(totalTokens != null ? { totalTokens } : {}),
+            ...(cacheRead ? { cacheReadTokens: cacheRead } : {}),
+            ...(cacheWrite ? { cacheCreationTokens: cacheWrite } : {}),
+            ...(costUsd != null ? { costUsd } : {}),
+          },
+        },
+      };
+    }
 
     default:
       return null;

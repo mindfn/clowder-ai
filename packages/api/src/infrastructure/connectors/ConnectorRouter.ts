@@ -124,7 +124,7 @@ export interface ConnectorRouterOptions {
       }
     | undefined;
   readonly defaultUserId: string;
-  readonly defaultCatId: CatId;
+  readonly defaultCatId: CatId | (() => CatId);
   readonly log: FastifyBaseLogger;
   readonly commandLayer?: ConnectorCommandLayer | undefined;
   readonly permissionStore?: IConnectorPermissionStore | undefined;
@@ -154,6 +154,10 @@ export class ConnectorRouter {
   private readonly hubThreadResolvers = new Map<string, Promise<string | undefined>>();
 
   constructor(private readonly opts: ConnectorRouterOptions) {}
+
+  private getDefaultCatId(): CatId {
+    return typeof this.opts.defaultCatId === 'function' ? this.opts.defaultCatId() : this.opts.defaultCatId;
+  }
 
   /** Build @-mention patterns from catRegistry for parseMentions. */
   private getMentionPatterns(): Map<string, string[]> {
@@ -296,7 +300,7 @@ export class ConnectorRouter {
             icon: connectorSourceIcon(def2),
           };
           const mentionPatterns = this.getMentionPatterns();
-          const { targetCatId } = parseMentions(fwdText, mentionPatterns, this.opts.defaultCatId);
+          const { targetCatId } = parseMentions(fwdText, mentionPatterns, this.getDefaultCatId());
           const fwdTimestamp = Date.now();
           const fwdStored = await messageStore.append({
             threadId: fwdThreadId,
@@ -442,7 +446,7 @@ export class ConnectorRouter {
 
     // Parse @-mentions to determine target cat
     const mentionPatterns = this.getMentionPatterns();
-    const mentionResult = parseMentions(resolvedText, mentionPatterns, this.opts.defaultCatId);
+    const mentionResult = parseMentions(resolvedText, mentionPatterns, this.getDefaultCatId());
     let targetCatId = mentionResult.targetCatId;
     if (!mentionResult.matched && this.opts.threadStore.getParticipantsWithActivity) {
       const participants = await this.opts.threadStore.getParticipantsWithActivity(binding.threadId);

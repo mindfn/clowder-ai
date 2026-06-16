@@ -335,7 +335,11 @@ export class OpenCodeAgentService implements L0InjectableAgentService {
             sessionInitEmitted = true;
             if (result.sessionId) metadata.sessionId = result.sessionId;
           }
-          yield { ...result, metadata: yieldMetadata };
+          // step_finish telemetry carries usage from the transformer; preserve
+          // it while keeping service-level provider/model/session metadata.
+          const mergedMetadata: MessageMetadata =
+            result.metadata?.usage != null ? { ...yieldMetadata, usage: result.metadata.usage } : yieldMetadata;
+          yield { ...result, metadata: mergedMetadata };
         }
       }
 

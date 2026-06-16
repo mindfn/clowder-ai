@@ -453,6 +453,40 @@ describe('OpenCodeAgentService', () => {
     assert.strictEqual(textMsg.metadata.model, 'claude-sonnet-4-6');
   });
 
+  test('step_finish yields agent_loop with usage and service-level model', async () => {
+    const proc = createMockProcess();
+    const spawnFn = mock.fn(() => proc);
+    const service = new OpenCodeAgentService({ catId: 'opencode', spawnFn, model: 'claude-sonnet-4-6' });
+    const promise = collect(service.invoke('Test'));
+    emitOpenCodeEvents(proc, [
+      STEP_START,
+      TEXT_RESPONSE,
+      {
+        type: 'step_finish',
+        timestamp: 1773304958508,
+        sessionID: 'ses_test123',
+        part: {
+          type: 'step-finish',
+          reason: 'stop',
+          cost: 0.036973,
+          tokens: { total: 36937, input: 36928, output: 9 },
+        },
+      },
+    ]);
+    const messages = await promise;
+
+    const loopMsg = messages.find((m) => m.type === 'agent_loop');
+    assert.ok(loopMsg, 'service must emit agent_loop for step_finish events');
+    assert.ok(loopMsg.metadata?.usage, 'usage must reach invoke-single-cat');
+    assert.strictEqual(loopMsg.metadata.usage.inputTokens, 36928);
+    assert.strictEqual(loopMsg.metadata.usage.lastTurnInputTokens, 36928);
+    assert.strictEqual(loopMsg.metadata.usage.outputTokens, 9);
+    assert.strictEqual(loopMsg.metadata.usage.totalTokens, 36937);
+    assert.strictEqual(loopMsg.metadata.usage.costUsd, 0.036973);
+    assert.strictEqual(loopMsg.metadata.model, 'claude-sonnet-4-6');
+    assert.strictEqual(loopMsg.metadata.provider, 'opencode');
+  });
+
   test('metadata.sessionId set after session_init', async () => {
     const proc = createMockProcess();
     const spawnFn = mock.fn(() => proc);

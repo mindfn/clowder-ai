@@ -3921,7 +3921,7 @@ async function main(): Promise<void> {
     invokeTrigger,
     socketManager,
     defaultUserId: 'default-user' as const,
-    defaultCatId: 'opus' as CatId,
+    defaultCatId: getDefaultCatId,
     redis: redisClient ?? undefined,
     log: app.log,
     agentRegistry,

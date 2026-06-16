@@ -60,6 +60,17 @@ describe('ConnectorGateway Bootstrap', () => {
     assert.ok(result.weixinAdapter);
     assert.equal(result.weixinAdapter.hasBotToken(), false);
     assert.equal(result.webhookHandlers.size, 0);
+    assert.ok(result.pluginRegistry.has('wecom-bot'), 'WeCom Bot plugin must be registered for pre-config actions');
+    await result.stop();
+  });
+
+  it('keeps WeCom Bot plugin registered after dynamic stop', async () => {
+    const result = await startConnectorGateway({}, baseDeps);
+    assert.ok(result.pluginRegistry.has('wecom-bot'), 'WeCom Bot plugin must exist before credentials are saved');
+
+    await result.stopWeComBot();
+
+    assert.ok(result.pluginRegistry.has('wecom-bot'), 'WeCom Bot plugin must remain available after disconnect');
     await result.stop();
   });
 
