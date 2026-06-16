@@ -3,6 +3,7 @@ import { lstat, mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { DEFAULT_MOUNT_RULES } from '@cat-cafe/shared';
 import Fastify from 'fastify';
 import { writeCapabilitiesConfig } from '../dist/config/capabilities/capability-orchestrator.js';
@@ -38,7 +39,7 @@ async function exists(path) {
 }
 
 function resolveRepoSkillsDir() {
-  return resolve(process.cwd(), '..', '..', 'cat-cafe-skills');
+  return resolve(dirname(fileURLToPath(import.meta.url)), '../../..', 'cat-cafe-skills');
 }
 
 function expectedSymlinkTarget(linkPath, sourcePath) {

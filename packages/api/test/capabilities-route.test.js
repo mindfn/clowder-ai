@@ -12,6 +12,7 @@ import { chmod, lstat, mkdir, readdir, readFile, readlink, realpath, rm, symlink
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { readAuditLog } from '../dist/config/capabilities/capability-audit.js';
 import {
@@ -43,7 +44,7 @@ async function pathExists(path) {
 }
 
 function findRepoRoot() {
-  let dir = process.cwd();
+  let dir = dirname(fileURLToPath(import.meta.url));
   while (dir !== dirname(dir)) {
     if (existsSync(join(dir, 'pnpm-workspace.yaml'))) return dir;
     dir = dirname(dir);
@@ -813,7 +814,7 @@ describe('GET /api/capabilities (Fastify)', () => {
 
     const projectDir = join('/tmp', `cap-route-test-mount-rules-${Date.now()}`);
     const homeDir = join('/tmp', `cap-route-test-mount-rules-home-${Date.now()}`);
-    const sourceSkillsDir = join(process.cwd(), '..', '..', 'cat-cafe-skills');
+    const sourceSkillsDir = join(findRepoRoot(), 'cat-cafe-skills');
     const customClaudeRoot = join(projectDir, '.project-claude', 'skills');
     const prevHome = process.env.HOME;
 
@@ -1014,7 +1015,7 @@ describe('GET /api/capabilities (Fastify)', () => {
 
     const projectDir = join('/tmp', `cap-route-test-custom-health-${Date.now()}`);
     const homeDir = join('/tmp', `cap-route-test-custom-health-home-${Date.now()}`);
-    const sourceSkillsDir = join(process.cwd(), '..', '..', 'cat-cafe-skills');
+    const sourceSkillsDir = join(findRepoRoot(), 'cat-cafe-skills');
     const customSkillsDir = join('custom-client', 'skills');
     const customSkillsDirPath = join(projectDir, customSkillsDir);
     const prevHome = process.env.HOME;
@@ -1099,7 +1100,7 @@ describe('GET /api/capabilities (Fastify)', () => {
 
     const projectDir = join('/tmp', `cap-route-test-disabled-skill-health-${Date.now()}`);
     const homeDir = join('/tmp', `cap-route-test-disabled-skill-health-home-${Date.now()}`);
-    const sourceSkillsDir = join(process.cwd(), '..', '..', 'cat-cafe-skills');
+    const sourceSkillsDir = join(findRepoRoot(), 'cat-cafe-skills');
     const claudeSkillsDir = join(projectDir, '.claude', 'skills');
     const prevHome = process.env.HOME;
     const sourceSkillNames = [];
@@ -2860,7 +2861,7 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';
     const projectDir = await makeTmpDir('patch-preserve-user-skill-on-enable');
-    const mainProjectRoot = join(process.cwd(), '..', '..');
+    const mainProjectRoot = findRepoRoot();
     const mainConfig = await readCapabilitiesConfig(mainProjectRoot);
     const skillName = mainConfig?.capabilities.find(
       (cap) => cap.type === 'skill' && cap.source === 'cat-cafe' && cap.enabled,
@@ -3249,7 +3250,7 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';
     const projectDir = await makeTmpDir('patch-convert-legacy-root-on-disable');
-    const sourceSkillsDir = join(process.cwd(), '..', '..', 'cat-cafe-skills');
+    const sourceSkillsDir = join(findRepoRoot(), 'cat-cafe-skills');
     const sourceSkillNames = [];
     for (const entry of await readdir(sourceSkillsDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
@@ -3417,7 +3418,7 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';
     const projectDir = await makeTmpDir('patch-remove-custom-mount-on-disable');
-    const sourceSkillsDir = join(process.cwd(), '..', '..', 'cat-cafe-skills');
+    const sourceSkillsDir = join(findRepoRoot(), 'cat-cafe-skills');
     const customSkillsDir = join('custom-client', 'skills');
     const customSkillsDirPath = join(projectDir, customSkillsDir);
     await mkdir(customSkillsDirPath, { recursive: true });
@@ -3484,7 +3485,7 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';
     const projectDir = await makeTmpDir('patch-seed-missing-mountpaths-provider-disable');
-    const sourceSkillsDir = join(process.cwd(), '..', '..', 'cat-cafe-skills');
+    const sourceSkillsDir = join(findRepoRoot(), 'cat-cafe-skills');
     const skillId = 'debugging';
     const claudeSkillsDir = join(projectDir, '.claude/skills');
     const codexSkillsDir = join(projectDir, '.codex/skills');
