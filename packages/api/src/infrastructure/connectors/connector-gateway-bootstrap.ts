@@ -42,7 +42,6 @@ import {
   loadAllConnectorConfigs,
   resolveConnectorEnv,
 } from './im-connector-config-store.js';
-import { scanConnectorManifests } from './plugins/im-connector-manifest.js';
 import type { IMConnectorPluginContext, InboundMessageCallback } from './im-connector-plugin.js';
 import { WeComBotAdapter } from './im-connectors/wecom-bot/WeComBotAdapter.js';
 import { WeixinAdapter } from './im-connectors/weixin/WeixinAdapter.js';
@@ -53,6 +52,7 @@ import {
   type IStreamableOutboundAdapter,
   OutboundDeliveryHook,
 } from './OutboundDeliveryHook.js';
+import { scanConnectorManifests } from './plugins/im-connector-manifest.js';
 import { RedisConnectorThreadBindingStore } from './RedisConnectorThreadBindingStore.js';
 import { StreamingOutboundHook } from './StreamingOutboundHook.js';
 

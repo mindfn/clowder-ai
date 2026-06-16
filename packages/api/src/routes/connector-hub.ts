@@ -17,22 +17,21 @@ import { encodeDefault } from '../infrastructure/config-field-parser.js';
 import type { IConnectorPermissionStore } from '../infrastructure/connectors/ConnectorPermissionStore.js';
 import { executeConnectorAction } from '../infrastructure/connectors/connector-action-handler.js';
 import { getAllExternalConnectorMeta } from '../infrastructure/connectors/external-connector-registry.js';
-
 import {
   loadAllConnectorConfigs,
   readAllOperationStates,
   resolveConnectorEnv,
   writeConnectorConfig,
 } from '../infrastructure/connectors/im-connector-config-store.js';
+import type { IMConnectorPlugin } from '../infrastructure/connectors/im-connector-plugin.js';
+import type { WeComBotAdapter } from '../infrastructure/connectors/im-connectors/wecom-bot/WeComBotAdapter.js';
+import type { WeixinAdapter } from '../infrastructure/connectors/im-connectors/weixin/WeixinAdapter.js';
+import type { IOutboundAdapter } from '../infrastructure/connectors/OutboundDeliveryHook.js';
 import {
   type ConnectorManifest,
   type ManifestIconSpec,
   scanConnectorManifests,
 } from '../infrastructure/connectors/plugins/im-connector-manifest.js';
-import type { IMConnectorPlugin } from '../infrastructure/connectors/im-connector-plugin.js';
-import type { WeComBotAdapter } from '../infrastructure/connectors/im-connectors/wecom-bot/WeComBotAdapter.js';
-import type { WeixinAdapter } from '../infrastructure/connectors/im-connectors/weixin/WeixinAdapter.js';
-import type { IOutboundAdapter } from '../infrastructure/connectors/OutboundDeliveryHook.js';
 import { resolvePluginsDir } from '../infrastructure/connectors/plugins/plugin-installer.js';
 import { normalizeTelegramBotToken } from '../infrastructure/connectors/telegram-token.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
