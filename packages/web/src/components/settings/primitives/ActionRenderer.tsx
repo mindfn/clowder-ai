@@ -19,6 +19,8 @@ export interface ActionRendererProps {
   connectorId: string;
   /** Operation definition + state from the status API. */
   operation: PlatformOperationStatus;
+  /** Platform-level configured state; used when legacy config exists before operation state. */
+  configured?: boolean;
   /** Unsaved config field values from the current card, used by validation actions. */
   pendingConfigValues?: Readonly<Record<string, string>>;
   /** Called after connect/disconnect lifecycle completes. */
@@ -69,6 +71,7 @@ function classifyPollResult(raw: ActionApiResult | null, actionRender?: string):
 export function ActionRenderer({
   connectorId,
   operation,
+  configured,
   pendingConfigValues,
   onStatusChange,
   themeColor,
@@ -77,13 +80,15 @@ export function ActionRenderer({
   const firstAction = actions[0];
   const disconnectAction = actions.find((a) => a.id === 'disconnect' || a.next === firstAction?.id);
   const disconnectId = disconnectAction?.id;
+  const initialActionId = operation.currentAction ?? (configured ? disconnectId : undefined) ?? firstAction?.id;
 
   const [phase, setPhase] = useState<ActionPhase>(() => {
+    if (!operation.currentAction && configured && disconnectId) return 'connected';
     const initial = phaseForAction(operation.currentAction, actions, disconnectId);
     return initial === 'idle' && operation.lastResult ? 'result' : initial;
   });
   const [lastResult, setLastResult] = useState<ResultState | undefined>(operation.lastResult);
-  const [currentActionId, setCurrentActionId] = useState(operation.currentAction ?? firstAction?.id);
+  const [currentActionId, setCurrentActionId] = useState(initialActionId);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const expireRef = useRef<ReturnType<typeof setTimeout> | null>(null);

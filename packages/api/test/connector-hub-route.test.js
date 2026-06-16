@@ -14,6 +14,12 @@ const { clearConnectorConfigCache, writeConnectorConfig } = await import(
 const OWNER_ID = 'owner-1';
 const AUTH_HEADERS = { 'x-cat-cafe-user': OWNER_ID, 'x-test-session-user': OWNER_ID };
 const HEADER_ONLY_AUTH = { 'x-cat-cafe-user': OWNER_ID };
+const REMOTE_OWNER_HEADERS = {
+  ...AUTH_HEADERS,
+  host: 'hub.example.test',
+  origin: 'https://hub.example.test',
+  'x-forwarded-for': '203.0.113.10',
+};
 const ORIGINAL_OWNER_ID = process.env.DEFAULT_OWNER_USER_ID;
 
 async function registerConnectorHub(app, opts) {
@@ -1094,6 +1100,85 @@ describe('P1 — connector writes from non-loopback without configured owner', (
 });
 
 describe('PUT /api/connectors/:connectorId/config — external plugin reload', () => {
+  it('allows owner-authenticated remote connector config writes', async () => {
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'connector-config-remote-owner-'));
+    const previousRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    process.env.CAT_CAFE_CONFIG_ROOT = tmpDir;
+    clearConnectorConfigCache();
+    invalidateManifestCache();
+
+    try {
+      const app = Fastify();
+      await registerConnectorHub(app, {
+        threadStore: {
+          async list() {
+            return [];
+          },
+        },
+      });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/connectors/feishu/config',
+        headers: REMOTE_OWNER_HEADERS,
+        payload: { fields: [{ name: 'FEISHU_APP_ID', value: 'cli_remote_owner' }] },
+      });
+
+      assert.equal(res.statusCode, 200, res.body);
+      const raw = JSON.parse(readFileSync(join(tmpDir, '.cat-cafe', 'im-connector-config', 'feishu.json'), 'utf8'));
+      assert.equal(raw.FEISHU_APP_ID, 'cli_remote_owner');
+
+      await app.close();
+    } finally {
+      if (previousRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousRoot;
+      clearConnectorConfigCache();
+      invalidateManifestCache();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects remote connector config writes when no owner is configured', async () => {
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'connector-config-remote-no-owner-'));
+    const previousRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    process.env.CAT_CAFE_CONFIG_ROOT = tmpDir;
+    delete process.env.DEFAULT_OWNER_USER_ID;
+    clearConnectorConfigCache();
+    invalidateManifestCache();
+
+    try {
+      const app = Fastify();
+      await registerConnectorHub(app, {
+        threadStore: {
+          async list() {
+            return [];
+          },
+        },
+      });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: '/api/connectors/feishu/config',
+        headers: REMOTE_OWNER_HEADERS,
+        payload: { fields: [{ name: 'FEISHU_APP_ID', value: 'cli_remote_no_owner' }] },
+      });
+
+      assert.equal(res.statusCode, 403);
+      assert.match(JSON.parse(res.body).error, /DEFAULT_OWNER_USER_ID|non-localhost/i);
+
+      await app.close();
+    } finally {
+      process.env.DEFAULT_OWNER_USER_ID = OWNER_ID;
+      if (previousRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousRoot;
+      clearConnectorConfigCache();
+      invalidateManifestCache();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it('emits file-scope reload events for external connector env keys', async () => {
     const tmpDir = mkdtempSync(join(os.tmpdir(), 'external-config-reload-'));
     const pluginId = 'reload-probe';
@@ -1241,6 +1326,73 @@ describe('PUT /api/connectors/:connectorId/config — external plugin reload', (
       unsub();
       if (previousRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
       else process.env.CAT_CAFE_CONFIG_ROOT = previousRoot;
+      invalidateManifestCache();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('generic connector operation routes — remote owner auth', () => {
+  it('allows owner-authenticated remote reset and action writes', async () => {
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'connector-action-remote-owner-'));
+    const previousRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    process.env.CAT_CAFE_CONFIG_ROOT = tmpDir;
+    clearConnectorConfigCache();
+    invalidateManifestCache();
+    let handleCalls = 0;
+
+    try {
+      const app = Fastify();
+      await registerConnectorHub(app, {
+        threadStore: {
+          async list() {
+            return [];
+          },
+        },
+        pluginRegistry: new Map([
+          [
+            'feishu',
+            {
+              id: 'feishu',
+              async handleAction() {
+                handleCalls += 1;
+                return {
+                  render: 'status',
+                  data: { status: 'waiting' },
+                  label: 'Still waiting',
+                  advance: false,
+                };
+              },
+            },
+          ],
+        ]),
+      });
+      await app.ready();
+
+      const reset = await app.inject({
+        method: 'POST',
+        url: '/api/connectors/feishu/operations/feishu_qr_login/reset',
+        headers: REMOTE_OWNER_HEADERS,
+        payload: { currentAction: 'qr-generate' },
+      });
+      assert.equal(reset.statusCode, 200, reset.body);
+
+      const action = await app.inject({
+        method: 'POST',
+        url: '/api/connectors/feishu/actions/feishu_qr_login/qr-status',
+        headers: REMOTE_OWNER_HEADERS,
+      });
+      const body = JSON.parse(action.body);
+
+      assert.equal(action.statusCode, 200, action.body);
+      assert.equal(body.label, 'Still waiting');
+      assert.equal(handleCalls, 1);
+
+      await app.close();
+    } finally {
+      if (previousRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousRoot;
+      clearConnectorConfigCache();
       invalidateManifestCache();
       rmSync(tmpDir, { recursive: true, force: true });
     }

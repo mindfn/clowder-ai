@@ -2,7 +2,6 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isOperationField, isValueField, type ValueConfigField } from '@cat-cafe/shared';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
-import { requireLocalCapabilityWriteRequest } from '../config/capabilities/capability-write-guards.js';
 import { configEventBus, createChangeSetId } from '../config/config-event-bus.js';
 import { applyConnectorSecretUpdates } from '../config/connector-secret-updater.js';
 import {
@@ -945,11 +944,9 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
   // ── F230: Write connector config via config store ──
 
   app.put('/api/connectors/:connectorId/config', async (request, reply) => {
-    const localErr = requireLocalCapabilityWriteRequest(request);
-    if (localErr) {
-      reply.status(localErr.status);
-      return { error: localErr.error };
-    }
+    const auth = requireConnectorWriteIdentity(request, reply);
+    if (auth.error) return auth.error;
+    const { userId } = auth;
 
     const { connectorId } = request.params as {
       connectorId: string;
@@ -1008,7 +1005,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
           target: 'connector-config',
           action: `connector-config-write:${connectorId}`,
           keys: changedKeys,
-          operator: 'local',
+          operator: userId,
         },
       });
     } catch (err) {
@@ -1021,11 +1018,8 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
   // ── F231 A-3: Generic action endpoint (AC-A16) ──
 
   app.post('/api/connectors/:connectorId/operations/:operationName/reset', async (request, reply) => {
-    const localErr = requireLocalCapabilityWriteRequest(request);
-    if (localErr) {
-      reply.status(localErr.status);
-      return { error: localErr.error };
-    }
+    const auth = requireConnectorWriteIdentity(request, reply);
+    if (auth.error) return auth.error;
 
     const { connectorId, operationName } = request.params as {
       connectorId: string;
@@ -1059,11 +1053,8 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
   });
 
   app.post('/api/connectors/:connectorId/actions/:operationName/:actionId', async (request, reply) => {
-    const localErr = requireLocalCapabilityWriteRequest(request);
-    if (localErr) {
-      reply.status(localErr.status);
-      return { error: localErr.error };
-    }
+    const auth = requireConnectorWriteIdentity(request, reply);
+    if (auth.error) return auth.error;
 
     const { connectorId, operationName, actionId } = request.params as {
       connectorId: string;

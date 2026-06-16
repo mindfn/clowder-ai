@@ -186,6 +186,50 @@ describe('F134 follow-up — HubConnectorConfigTab', () => {
     expect(mockApiFetch.mock.calls[1][0]).toBe('/api/connectors/feishu/actions/connect/start');
   });
 
+  it('shows connected operation UI for configured connectors without persisted operation state', async () => {
+    mockApiFetch.mockResolvedValueOnce(
+      jsonResponse({
+        platforms: [
+          {
+            id: 'feishu',
+            name: '飞书',
+            nameEn: 'Feishu / Lark',
+            configured: true,
+            docsUrl: 'https://open.feishu.cn',
+            steps: [{ text: 'step-1' }, { text: 'step-2' }],
+            operations: [
+              {
+                name: 'connect',
+                label: 'Connect',
+                actions: [
+                  { id: 'start', label: 'Connect Feishu', render: 'button', next: 'disconnect' },
+                  { id: 'disconnect', label: 'Disconnect', render: 'button', next: 'start' },
+                ],
+              },
+            ],
+            fields: [{ envName: 'FEISHU_APP_ID', label: 'App ID', sensitive: false, currentValue: 'cli_existing' }],
+          },
+        ],
+      }),
+    );
+
+    await act(async () => {
+      root.render(React.createElement(HubConnectorConfigTab));
+    });
+    await flushEffects();
+
+    const expand = platformToggle(container, 'feishu');
+    expect(expand).toBeTruthy();
+
+    await act(async () => {
+      expand!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    expect(container.querySelector('[data-testid="feishu-connected"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="feishu-action-start"]')).toBeNull();
+  });
+
   it('passes pending config values from the expanded card into manifest actions', async () => {
     mockApiFetch
       .mockResolvedValueOnce(

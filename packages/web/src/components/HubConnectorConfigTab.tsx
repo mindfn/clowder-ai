@@ -279,6 +279,7 @@ export function HubConnectorConfigTab({ refreshKey }: { refreshKey?: number }) {
                             key={op.name}
                             connectorId={platform.id}
                             operation={op}
+                            configured={platform.configured}
                             pendingConfigValues={fieldValues}
                             onStatusChange={() => void fetchStatus()}
                             themeColor={platform.themeColor}
