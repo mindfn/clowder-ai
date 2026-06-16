@@ -477,24 +477,14 @@ describe('transformAcpEvent', () => {
     assert.equal(r1.content, 'Hello! ');
 
     // Chunk containing ## Goal — only text before marker should pass
-    const r2 = transformAcpEvent(
-      mkChunk('How can I help? ## Goal\n- Greeting exchange'),
-      catId,
-      metadata,
-      state,
-    );
+    const r2 = transformAcpEvent(mkChunk('How can I help? ## Goal\n- Greeting exchange'), catId, metadata, state);
     // Text before the marker, trailing whitespace trimmed
     assert.notEqual(r2, null);
     assert.equal(r2.type, 'text');
     assert.equal(r2.content, 'How can I help?');
 
     // Subsequent chunks suppressed
-    const r3 = transformAcpEvent(
-      mkChunk('\n\nConstraints & Preferences\n- (none)'),
-      catId,
-      metadata,
-      state,
-    );
+    const r3 = transformAcpEvent(mkChunk('\n\nConstraints & Preferences\n- (none)'), catId, metadata, state);
     assert.equal(r3, null, 'Chunks after scratchpad detection must be suppressed');
   });
 
