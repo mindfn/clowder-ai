@@ -857,6 +857,170 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     assert.equal(JSON.parse(healthInfos[0].content).health.windowTokens, 128000);
   });
 
+  it('OpenCode agent_loop defers seal side effects until final done', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const sessionChainStore = new SessionChainStore();
+    const registrySnapshot = catRegistry.getAllConfigs();
+    const opencodeConfig = catRegistry.tryGet('opencode')?.config;
+    assert.ok(opencodeConfig, 'opencode config should exist in registry');
+    const testCatId = 'opencode-agent-loop-defer-test';
+    catRegistry.register(testCatId, {
+      ...opencodeConfig,
+      id: testCatId,
+      mentionPatterns: [`@${testCatId}`],
+    });
+
+    let yieldIndex = 0;
+    let sealCalledAtIndex = -1;
+    const sealCalls = [];
+    const finalizeCalls = [];
+    const sessionSealer = {
+      requestSeal: async (input) => {
+        sealCalledAtIndex = yieldIndex;
+        sealCalls.push(input);
+        return { accepted: true, status: 'sealing' };
+      },
+      finalize: async (input) => {
+        finalizeCalls.push(input);
+      },
+      reconcileStuck: async () => 0,
+      reconcileAllStuck: async () => 0,
+    };
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke() {
+        yieldIndex = 1;
+        yield { type: 'session_init', catId: testCatId, sessionId: 'oc-defer', timestamp: Date.now() };
+        yieldIndex = 2;
+        yield { type: 'text', catId: testCatId, content: 'before tool tail', timestamp: Date.now() };
+        yieldIndex = 3;
+        yield {
+          type: 'agent_loop',
+          catId: testCatId,
+          timestamp: Date.now(),
+          metadata: {
+            provider: 'opencode',
+            model: 'openai-compat/gpt-5.3',
+            usage: {
+              inputTokens: 127000,
+              outputTokens: 20,
+            },
+          },
+        };
+        yieldIndex = 4;
+        yield { type: 'text', catId: testCatId, content: 'after tool tail', timestamp: Date.now() };
+        yieldIndex = 5;
+        yield { type: 'done', catId: testCatId, timestamp: Date.now() };
+      },
+    };
+
+    let msgs;
+    try {
+      msgs = await collect(
+        invokeSingleCat(
+          { ...makeDeps(), sessionChainStore, sessionSealer },
+          {
+            catId: testCatId,
+            service,
+            prompt: 'test',
+            userId: 'user1',
+            threadId: 'thread-opencode-agent-loop-defer',
+            isLastCat: true,
+          },
+        ),
+      );
+    } finally {
+      catRegistry.reset();
+      for (const [id, config] of Object.entries(registrySnapshot)) {
+        catRegistry.register(id, config);
+      }
+    }
+
+    assert.equal(sealCalls.length, 1, 'high-fill agent_loop usage should still request one seal');
+    assert.equal(finalizeCalls.length, 1, 'accepted deferred seal should still finalize once');
+    assert.ok(sealCalledAtIndex >= 5, `seal must be deferred until done, got yield index ${sealCalledAtIndex}`);
+
+    const afterTailIndex = msgs.findIndex((m) => m.type === 'text' && m.content === 'after tool tail');
+    const sealEventIndex = msgs.findIndex((m) => {
+      if (m.type !== 'system_info') return false;
+      try {
+        return JSON.parse(m.content).type === 'session_seal_requested';
+      } catch {
+        return false;
+      }
+    });
+    assert.ok(afterTailIndex >= 0, 'trailing text after agent_loop should remain visible');
+    assert.ok(sealEventIndex > afterTailIndex, 'session_seal_requested must be emitted after trailing text');
+  });
+
+  it('OpenCode agent_loop uses last-resort context window for unknown models', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const sessionChainStore = new SessionChainStore();
+    const registrySnapshot = catRegistry.getAllConfigs();
+    const opencodeConfig = catRegistry.tryGet('opencode')?.config;
+    assert.ok(opencodeConfig, 'opencode config should exist in registry');
+    const testCatId = 'opencode-agent-loop-unknown-window-test';
+    catRegistry.register(testCatId, {
+      ...opencodeConfig,
+      id: testCatId,
+      mentionPatterns: [`@${testCatId}`],
+    });
+
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke() {
+        yield { type: 'session_init', catId: testCatId, sessionId: 'oc-unknown-window', timestamp: Date.now() };
+        yield {
+          type: 'agent_loop',
+          catId: testCatId,
+          timestamp: Date.now(),
+          metadata: {
+            provider: 'opencode',
+            model: 'openrouter/glm-5.1-air',
+            usage: {
+              inputTokens: 64000,
+              outputTokens: 100,
+            },
+          },
+        };
+        yield { type: 'done', catId: testCatId, timestamp: Date.now() };
+      },
+    };
+
+    let msgs;
+    try {
+      msgs = await collect(
+        invokeSingleCat(
+          { ...makeDeps(), sessionChainStore },
+          {
+            catId: testCatId,
+            service,
+            prompt: 'test',
+            userId: 'user1',
+            threadId: 'thread-opencode-agent-loop-unknown-window',
+            isLastCat: true,
+          },
+        ),
+      );
+    } finally {
+      catRegistry.reset();
+      for (const [id, config] of Object.entries(registrySnapshot)) {
+        catRegistry.register(id, config);
+      }
+    }
+
+    const healthInfos = msgs.filter((m) => {
+      if (m.type !== 'system_info') return false;
+      try {
+        return JSON.parse(m.content).type === 'context_health';
+      } catch {
+        return false;
+      }
+    });
+    assert.equal(healthInfos.length, 1, 'unknown OpenCode model must still emit context_health');
+    assert.equal(JSON.parse(healthInfos[0].content).health.windowTokens, 128000);
+  });
+
   it('F24: creates SessionRecord on session_init when sessionChainStore provided', async () => {
     const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
     const sessionChainStore = new SessionChainStore();

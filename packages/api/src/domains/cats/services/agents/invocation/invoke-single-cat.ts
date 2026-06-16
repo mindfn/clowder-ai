@@ -92,6 +92,7 @@ const tracer = trace.getTracer('cat-cafe-api', '0.1.0');
 const TRANSCRIPT_DIR =
   process.env.TRANSCRIPT_DIR ?? resolve(findMonorepoRoot(), 'scripts', 'meeting-copilot', 'transcripts');
 const CAT_INVOCATION_STALL_AUTO_KILL_MS = 7 * 60_000;
+const OPENCODE_FALLBACK_CONTEXT_WINDOW_SIZE = 128_000;
 const ANTIGRAVITY_AUTOMATIC_RETRY_FRAGMENT_REASONS = new Set([
   'model_capacity',
   'empty_response',
@@ -138,7 +139,7 @@ import type {
 } from '../../runtime-session/RuntimeSessionMetadata.js';
 import type { IRuntimeSessionStore } from '../../runtime-session/RuntimeSessionStore.js';
 import type { SessionManager } from '../../session/SessionManager.js';
-import type { ISessionSealer } from '../../session/SessionSealer.js';
+import type { ISessionSealer, SealReason } from '../../session/SessionSealer.js';
 import type { TranscriptSessionInfo, TranscriptWriter } from '../../session/TranscriptWriter.js';
 import type { ISessionChainStore } from '../../stores/ports/SessionChainStore.js';
 import type { IThreadStore } from '../../stores/ports/ThreadStore.js';
@@ -1657,6 +1658,12 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     let lastErrorMessage: string | undefined;
     const userVisibleOutputSessionIds = new Set<string>();
     const userVisibleOutputCountedSessionIds = new Set<string>();
+    let pendingMidStreamSeal: {
+      sessionId: string;
+      reason: SealReason;
+      healthSnapshot: ContextHealth;
+      activeRecord: SessionRecord;
+    } | null = null;
 
     const recordActiveSessionUserVisibleOutput = async (): Promise<void> => {
       if (!deps.sessionChainStore || !sessionChainActive) return;
@@ -1683,6 +1690,80 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
 
     const processMessage = async (msg: AgentMessage): Promise<AgentMessage[]> => {
       const outputs: AgentMessage[] = [];
+
+      const requestAndEmitSeal = async (
+        activeRecord: SessionRecord,
+        reason: SealReason,
+        healthSnapshot: ContextHealth,
+        options?: { deferredFrom?: 'mid_stream_agent_loop' },
+      ): Promise<void> => {
+        if (!deps.sessionSealer) return;
+        const sealResult = await deps.sessionSealer.requestSeal({
+          sessionId: activeRecord.id,
+          reason,
+        });
+        if (!sealResult.accepted) return;
+
+        sessionManager.delete(userId, catId, threadId).catch(() => {});
+        const sealTimestamp = Date.now();
+        const continuityCapsule = params.continuityCapsule
+          ? completeCapsuleForSeal(params.continuityCapsule, {
+              invocationId,
+              createdAt: sealTimestamp,
+              seal: {
+                sessionId: activeRecord.id,
+                sessionSeq: activeRecord.seq + 1,
+                reason,
+                healthSnapshot,
+              },
+            })
+          : undefined;
+        const sealInfoMessage = {
+          type: 'system_info' as const,
+          catId,
+          content: JSON.stringify({
+            type: 'session_seal_requested',
+            catId,
+            sessionId: activeRecord.id,
+            sessionSeq: activeRecord.seq + 1,
+            reason,
+            healthSnapshot,
+            ...(options?.deferredFrom ? { deferredFrom: options.deferredFrom } : {}),
+            ...(continuityCapsule
+              ? {
+                  continuityCapsule,
+                  continuityDiagnostics: {
+                    source: 'route_state',
+                    boundary: continuityCapsule.continuationReason,
+                    generated: true,
+                    persistedVia: 'session_seal_requested',
+                    threadId,
+                    catId,
+                    invocationId,
+                    sessionId: activeRecord.id,
+                  },
+                }
+              : {}),
+          }),
+          timestamp: sealTimestamp,
+        };
+        outputs.push(sealInfoMessage);
+        if (deps.transcriptWriter) {
+          const sessInfo: TranscriptSessionInfo = {
+            sessionId: activeRecord.id,
+            threadId,
+            catId: activeRecord.catId,
+            cliSessionId: activeRecord.cliSessionId,
+            seq: activeRecord.seq,
+          };
+          deps.transcriptWriter.appendEvent(
+            sessInfo,
+            sealInfoMessage as unknown as Record<string, unknown>,
+            invocationId,
+          );
+        }
+        deps.sessionSealer.finalize({ sessionId: activeRecord.id }).catch(() => {});
+      };
 
       if (msg.type === 'error') {
         hadStreamError = true;
@@ -2091,7 +2172,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
             // then fallback to aggregated inputTokens, and finally totalTokens
             // for providers (Gemini CLI) that only expose a total count.
             const windowSize =
-              msg.metadata.usage.contextWindowSize ?? getContextWindowFallback(msg.metadata.model ?? '');
+              msg.metadata.usage.contextWindowSize ??
+              getContextWindowFallback(msg.metadata.model ?? '') ??
+              (providerSystem === 'opencode' ? OPENCODE_FALLBACK_CONTEXT_WINDOW_SIZE : undefined);
             const usedFrom =
               msg.metadata.usage.lastTurnInputTokens != null
                 ? 'last_turn'
@@ -2217,70 +2300,17 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
                       case 'seal':
                       case 'seal_after_compress': {
                         if (activeRecord) {
-                          const sealResult = await deps.sessionSealer.requestSeal({
-                            sessionId: activeRecord.id,
-                            reason: action.reason,
-                          });
-                          if (sealResult.accepted) {
-                            sessionManager.delete(userId, catId, threadId).catch(() => {});
-                            const sealTimestamp = Date.now();
-                            const continuityCapsule = params.continuityCapsule
-                              ? completeCapsuleForSeal(params.continuityCapsule, {
-                                  invocationId,
-                                  createdAt: sealTimestamp,
-                                  seal: {
-                                    sessionId: activeRecord.id,
-                                    sessionSeq: activeRecord.seq + 1,
-                                    reason: action.reason,
-                                    healthSnapshot: health,
-                                  },
-                                })
-                              : undefined;
-                            const sealInfoMessage = {
-                              type: 'system_info' as const,
-                              catId,
-                              content: JSON.stringify({
-                                type: 'session_seal_requested',
-                                catId,
-                                sessionId: activeRecord.id,
-                                sessionSeq: activeRecord.seq + 1,
-                                reason: action.reason,
-                                healthSnapshot: health,
-                                ...(continuityCapsule
-                                  ? {
-                                      continuityCapsule,
-                                      continuityDiagnostics: {
-                                        source: 'route_state',
-                                        boundary: continuityCapsule.continuationReason,
-                                        generated: true,
-                                        persistedVia: 'session_seal_requested',
-                                        threadId,
-                                        catId,
-                                        invocationId,
-                                        sessionId: activeRecord.id,
-                                      },
-                                    }
-                                  : {}),
-                              }),
-                              timestamp: sealTimestamp,
+                          if (isUsageOnlyAgentLoop) {
+                            pendingMidStreamSeal = {
+                              sessionId: activeRecord.id,
+                              reason: action.reason,
+                              healthSnapshot: health,
+                              activeRecord,
                             };
-                            outputs.push(sealInfoMessage);
-                            if (deps.transcriptWriter) {
-                              const sessInfo: TranscriptSessionInfo = {
-                                sessionId: activeRecord.id,
-                                threadId,
-                                catId: activeRecord.catId,
-                                cliSessionId: activeRecord.cliSessionId,
-                                seq: activeRecord.seq,
-                              };
-                              deps.transcriptWriter.appendEvent(
-                                sessInfo,
-                                sealInfoMessage as unknown as Record<string, unknown>,
-                                invocationId,
-                              );
-                            }
-                            deps.sessionSealer.finalize({ sessionId: activeRecord.id }).catch(() => {});
+                            break;
                           }
+                          pendingMidStreamSeal = null;
+                          await requestAndEmitSeal(activeRecord, action.reason, health);
                         }
                         break;
                       }
@@ -2307,6 +2337,14 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
               }
             }
           }
+        }
+
+        if (msg.type === 'done' && pendingMidStreamSeal) {
+          const pendingSeal = pendingMidStreamSeal;
+          pendingMidStreamSeal = null;
+          await requestAndEmitSeal(pendingSeal.activeRecord, pendingSeal.reason, pendingSeal.healthSnapshot, {
+            deferredFrom: 'mid_stream_agent_loop',
+          });
         }
 
         if (isUsageOnlyAgentLoop) {
