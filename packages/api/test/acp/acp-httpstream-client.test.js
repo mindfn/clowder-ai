@@ -66,6 +66,20 @@ function serverPort(server) {
   return address.port;
 }
 
+async function withTimeout(promise, ms, message) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 describe('AcpHttpStreamClient', () => {
   let client = null;
   let server = null;
@@ -250,5 +264,85 @@ describe('AcpHttpStreamClient', () => {
     assert.equal(capturedPermissionResponse.result?.outcome?.outcome, 'selected');
     assert.equal(capturedPermissionResponse.result?.outcome?.optionId, 'allow_once');
     assert.equal(events.at(-1)?.update?.content?.text, 'approved');
+  });
+
+  it('times out prompt streams when the permission response POST never completes', async () => {
+    let permissionResponsePostSeen = false;
+
+    server = await startJsonRpcServer((message, res) => {
+      if (message.method === 'initialize') {
+        return { jsonrpc: '2.0', id: message.id, result: INIT_RESULT };
+      }
+      if (message.method === 'session/new') {
+        return { jsonrpc: '2.0', id: message.id, result: { sessionId: 'http-session' } };
+      }
+      if (message.method === 'session/prompt') {
+        res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+        res.write(
+          `${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'perm-http-hangs',
+            method: 'session/request_permission',
+            params: {
+              sessionId: 'http-session',
+              options: [{ optionId: 'allow_once', name: 'Allow once', kind: 'allow_once' }],
+            },
+          })}\n`,
+        );
+        return undefined;
+      }
+      if (message.id === 'perm-http-hangs' && !message.method) {
+        permissionResponsePostSeen = true;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        setTimeout(() => {
+          res.destroy();
+        }, 1000);
+        return undefined;
+      }
+      return { jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'not found' } };
+    });
+    const { child, agentStdout } = createMockChild();
+    const port = serverPort(server);
+
+    client = new AcpHttpStreamClient({
+      command: 'fake-http-acp',
+      args: [],
+      cwd: '/tmp',
+      spawnFn: () => {
+        setImmediate(() => agentStdout.write(`Listening on port ${port}\n`));
+        return child;
+      },
+      portDiscoveryTimeoutMs: 500,
+    });
+
+    await client.initialize();
+    const session = await client.newSession();
+    const result = await withTimeout(
+      (async () => {
+        const events = [];
+        let caught = null;
+        try {
+          for await (const event of client.promptStream(session.sessionId, 'hello', { timeoutMs: 100 })) {
+            events.push(event);
+          }
+        } catch (err) {
+          caught = err;
+        }
+        return { caught, events };
+      })(),
+      500,
+      'promptStream did not settle after the configured turn timeout',
+    );
+
+    assert.equal(permissionResponsePostSeen, true);
+    assert.ok(result.caught, 'Expected hanging permission response POST to reject');
+    assert.match(
+      result.caught.message,
+      /ACP timeout: session\/(prompt|request_permission) did not respond within 100ms/,
+    );
+    assert.ok(
+      result.events.some((event) => (event.update ?? event).sessionUpdate === 'permission_pending'),
+      'permission_pending should be emitted before the timeout',
+    );
   });
 });

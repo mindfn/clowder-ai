@@ -65,6 +65,11 @@ export interface AcpHttpStreamClientConfig extends AcpClientConfig {
   portDiscoveryTimeoutMs?: number;
 }
 
+interface AgentResponseOptions {
+  responseTimeoutMs?: number;
+  signal?: AbortSignal;
+}
+
 // ─── Client ──────────────────────────────────────────────────
 
 export class AcpHttpStreamClient {
@@ -287,7 +292,7 @@ export class AcpHttpStreamClient {
         const params = req.params as Record<string, unknown>;
         enqueueSessionUpdate({ sessionId: params.sessionId, sessionUpdate: 'permission_pending' });
       }
-      await this.handleAgentRequest(req);
+      await this.handleAgentRequest(req, { responseTimeoutMs: timeoutMs, signal: controller.signal });
     };
 
     const isAgentRequest = (method: string | undefined, msgId: string | undefined) =>
@@ -379,6 +384,7 @@ export class AcpHttpStreamClient {
               try {
                 await handleAgentRequestFromStream(msg, msgId);
               } catch (err) {
+                if (controller.signal.aborted && promptError) return;
                 failPrompt(err);
                 return;
               }
@@ -598,30 +604,40 @@ export class AcpHttpStreamClient {
     }
   }
 
-  private async handleAgentRequest(req: AcpAgentRequest): Promise<void> {
+  private async handleAgentRequest(req: AcpAgentRequest, options: AgentResponseOptions = {}): Promise<void> {
+    const responseOptions = {
+      timeoutMs: options.responseTimeoutMs,
+      signal: options.signal,
+      method: req.method,
+    };
+
     if (req.method === ACP_METHODS.requestPermission) {
       const respond = (result: { optionId: string }) => {
         const acpResult = {
           outcome: { outcome: 'selected' as const, optionId: result.optionId },
         };
-        return this.sendAgentResponse({ jsonrpc: '2.0', id: req.id, result: acpResult });
+        return this.sendAgentResponse({ jsonrpc: '2.0', id: req.id, result: acpResult }, responseOptions);
       };
 
       if (this.config.permissionHandler) {
+        let responsePromise: Promise<void> | null = null;
         try {
-          let responsePromise: Promise<void> | null = null;
           this.config.permissionHandler(req, (result) => {
             responsePromise = respond(result);
           });
-          if (responsePromise) await responsePromise;
         } catch (err) {
           log.error('HTTP permissionHandler threw: %s', (err as Error).message);
-          await this.sendAgentResponse({
-            jsonrpc: '2.0',
-            id: req.id,
-            error: { code: -32603, message: `Permission handler error: ${(err as Error).message}` },
-          });
+          await this.sendAgentResponse(
+            {
+              jsonrpc: '2.0',
+              id: req.id,
+              error: { code: -32603, message: `Permission handler error: ${(err as Error).message}` },
+            },
+            responseOptions,
+          );
+          return;
         }
+        if (responsePromise) await responsePromise;
       } else {
         const params = req.params as unknown as AcpPermissionRequest;
         const allowOption = params.options?.find((o) => o.kind === 'allow_once') ?? params.options?.[0];
@@ -631,26 +647,44 @@ export class AcpHttpStreamClient {
     }
 
     log.warn('Unhandled ACP HTTP agent request: %s', req.method);
-    await this.sendAgentResponse({
-      jsonrpc: '2.0',
-      id: req.id,
-      error: { code: -32601, message: `Client does not handle ${req.method}` },
-    });
+    await this.sendAgentResponse(
+      {
+        jsonrpc: '2.0',
+        id: req.id,
+        error: { code: -32601, message: `Client does not handle ${req.method}` },
+      },
+      responseOptions,
+    );
   }
 
-  private async sendAgentResponse(response: AcpResponse): Promise<void> {
+  private async sendAgentResponse(
+    response: AcpResponse,
+    options: { timeoutMs?: number; signal?: AbortSignal; method?: string } = {},
+  ): Promise<void> {
     if (!this.port || this.closed || this.exited) {
       throw new Error('ACP HTTP client not connected');
     }
 
-    const resp = await fetch(this.baseUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(response),
-    });
-    if (!resp.ok) {
-      const text = await resp.text();
-      throw new Error(`ACP HTTP agent response ${resp.status}: ${text}`);
+    const timeoutMs = options.timeoutMs ?? 60_000;
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const signal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
+
+    try {
+      const resp = await fetch(this.baseUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(response),
+        signal,
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`ACP HTTP agent response ${resp.status}: ${text}`);
+      }
+    } catch (err) {
+      if (timeoutSignal.aborted) {
+        throw new AcpTimeoutError(options.method ?? 'agent/response', timeoutMs);
+      }
+      throw err;
     }
     log.debug({ id: response.id, hasError: !!response.error }, 'ACP HTTP agent response sent');
   }
