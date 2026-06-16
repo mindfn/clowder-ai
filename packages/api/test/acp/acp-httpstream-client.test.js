@@ -49,7 +49,8 @@ function startJsonRpcServer(handler) {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const message = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    const response = handler(message);
+    const response = handler(message, res);
+    if (response === undefined) return;
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(`${JSON.stringify(response)}\n`);
   });
@@ -107,5 +108,60 @@ describe('AcpHttpStreamClient', () => {
 
     assert.equal(result.agentInfo.name, 'http-acp');
     assert.deepEqual(seenMethods, ['initialize']);
+  });
+
+  it('rejects prompt streams that close before the final JSON-RPC response', async () => {
+    server = await startJsonRpcServer((message, res) => {
+      if (message.method === 'initialize') {
+        return { jsonrpc: '2.0', id: message.id, result: INIT_RESULT };
+      }
+      if (message.method === 'session/new') {
+        return { jsonrpc: '2.0', id: message.id, result: { sessionId: 'http-session' } };
+      }
+      if (message.method === 'session/prompt') {
+        res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+        res.write(
+          `${JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'session/update',
+            params: {
+              sessionId: 'http-session',
+              update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial' } },
+            },
+          })}\n`,
+        );
+        res.end();
+        return undefined;
+      }
+      return { jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'not found' } };
+    });
+    const { child, agentStdout } = createMockChild();
+    const port = serverPort(server);
+
+    client = new AcpHttpStreamClient({
+      command: 'fake-http-acp',
+      args: [],
+      cwd: '/tmp',
+      spawnFn: () => {
+        setImmediate(() => agentStdout.write(`Listening on port ${port}\n`));
+        return child;
+      },
+      portDiscoveryTimeoutMs: 500,
+    });
+
+    await client.initialize();
+    const session = await client.newSession();
+    const events = [];
+    let caught = null;
+    try {
+      for await (const event of client.promptStream(session.sessionId, 'hello')) events.push(event);
+    } catch (err) {
+      caught = err;
+    }
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].update.sessionUpdate, 'agent_message_chunk');
+    assert.ok(caught, 'Expected truncated prompt stream to reject');
+    assert.match(caught.message, /closed before final prompt response/);
   });
 });

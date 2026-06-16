@@ -219,6 +219,7 @@ export class AcpHttpStreamClient {
     let stopReason: AcpStopReason = 'end_turn';
     let promptError: Error | null = null;
     let done = false;
+    let finalResponseReceived = false;
 
     const queue: AcpSessionUpdate[] = [];
     let waitResolve: (() => void) | null = null;
@@ -319,6 +320,7 @@ export class AcpHttpStreamClient {
 
             if (msgId === id && !method) {
               // Final response to our prompt request — protocol is done
+              finalResponseReceived = true;
               const resp = msg as unknown as AcpResponse;
               if (resp.error) {
                 promptError = new AcpProtocolError(resp.error.code, resp.error.message, resp.error.data);
@@ -360,6 +362,7 @@ export class AcpHttpStreamClient {
           try {
             const msg = JSON.parse(buffer.trim()) as Record<string, unknown>;
             if (msg.id === id && !msg.method) {
+              finalResponseReceived = true;
               const resp = msg as unknown as AcpResponse;
               if (resp.error) {
                 promptError = new AcpProtocolError(resp.error.code, resp.error.message, resp.error.data);
@@ -371,6 +374,9 @@ export class AcpHttpStreamClient {
           } catch {
             /* ignore */
           }
+        }
+        if (!finalResponseReceived && !promptError && !controller.signal.aborted) {
+          promptError = new AcpProtocolError(-32000, 'ACP HTTP stream closed before final prompt response');
         }
       } catch (err) {
         if (!controller.signal.aborted) {
