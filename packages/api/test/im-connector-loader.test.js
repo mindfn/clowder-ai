@@ -22,7 +22,13 @@ afterEach(() => {
 function createPlugin(
   root,
   marker,
-  { pluginId = 'module-cache-probe', exportId = pluginId, definitionId = exportId } = {},
+  {
+    pluginId = 'module-cache-probe',
+    exportId = pluginId,
+    definitionId = exportId,
+    requiredEnvKeys = '[]',
+    optionalEnvKeys = undefined,
+  } = {},
 ) {
   const pluginDir = join(resolvePluginsDir(root), pluginId);
   mkdirSync(pluginDir, { recursive: true });
@@ -39,7 +45,8 @@ export default {
     themeColor: '#336699',
     description: marker,
   },
-  requiredEnvKeys: [],
+  requiredEnvKeys: ${requiredEnvKeys},
+  ${optionalEnvKeys === undefined ? '' : `optionalEnvKeys: ${optionalEnvKeys},`}
   isConfigured() { return true; },
   createAdapter() {
     globalThis.__moduleCacheProbeMarker = marker;
@@ -102,6 +109,16 @@ describe('loadInstalledPlugins', () => {
     tempRoots.push(root);
 
     createPlugin(root, 'bad-definition-id', { pluginId: 'manifest-id', definitionId: 'definition-id' });
+    const plugins = await loadInstalledPlugins(root, log);
+
+    assert.deepEqual(plugins, []);
+  });
+
+  it('rejects installed plugins whose env key declarations are not arrays', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'im-loader-invalid-env-keys-'));
+    tempRoots.push(root);
+
+    createPlugin(root, 'bad-required-env-keys', { requiredEnvKeys: "'TOKEN'", optionalEnvKeys: "'EXTRA'" });
     const plugins = await loadInstalledPlugins(root, log);
 
     assert.deepEqual(plugins, []);

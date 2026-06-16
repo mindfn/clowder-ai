@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
@@ -29,6 +29,45 @@ function useTempConfigRoot() {
 }
 
 describe('GET /api/connectors/plugins/:id/icon', () => {
+  it('rejects icon symlinks that resolve outside the plugin directory', async () => {
+    const root = useTempConfigRoot();
+    const pluginDir = join(root, '.cat-cafe', 'plugins', 'icon-symlink');
+    const secretPath = join(root, 'outside-secret.txt');
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(secretPath, 'outside-secret');
+    symlinkSync(secretPath, join(pluginDir, 'icon.png'));
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      [
+        'id: icon-symlink',
+        'name: Icon Symlink',
+        'nameEn: Icon Symlink',
+        'version: 1.0.0',
+        'icon:',
+        '  type: png',
+        '  src: icon.png',
+        'themeColor: "#336699"',
+        'docsUrl: https://example.com/icon-symlink',
+        'config: []',
+        'steps:',
+        '  - text: Step',
+      ].join('\n'),
+    );
+
+    const app = Fastify();
+    await app.register(connectorPluginRoutes);
+    await app.ready();
+
+    try {
+      const res = await app.inject({ method: 'GET', url: '/api/connectors/plugins/icon-symlink/icon' });
+
+      assert.equal(res.statusCode, 404);
+      assert.notEqual(res.body, 'outside-secret');
+    } finally {
+      await app.close();
+    }
+  });
+
   it('rejects icon paths that escape through a prefix sibling directory', async () => {
     const root = useTempConfigRoot();
     const pluginsDir = join(root, '.cat-cafe', 'plugins');

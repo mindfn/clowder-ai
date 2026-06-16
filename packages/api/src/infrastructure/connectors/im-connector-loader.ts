@@ -105,6 +105,10 @@ function materializeVersionedPluginModule(projectRoot: string, pluginId: string,
   return join(cacheDir, 'index.js');
 }
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
 /**
  * Load installed plugins from `.cat-cafe/plugins/` directory (Phase B).
  * Each subdirectory must contain `index.js` exporting an IMConnectorPlugin.
@@ -165,6 +169,20 @@ function validatePluginInterface(plugin: IMConnectorPlugin, source: string, log:
   }
   if (typeof plugin.isConfigured !== 'function') {
     log.warn({ source, id: plugin.id }, '[IMConnectorLoader] Plugin missing `isConfigured()` — skipped');
+    return false;
+  }
+  if (!isStringArray(plugin.requiredEnvKeys)) {
+    log.warn(
+      { source, id: plugin.id },
+      '[IMConnectorLoader] Plugin `requiredEnvKeys` must be a string array — skipped',
+    );
+    return false;
+  }
+  if (plugin.optionalEnvKeys != null && !isStringArray(plugin.optionalEnvKeys)) {
+    log.warn(
+      { source, id: plugin.id },
+      '[IMConnectorLoader] Plugin `optionalEnvKeys` must be a string array — skipped',
+    );
     return false;
   }
   return true;

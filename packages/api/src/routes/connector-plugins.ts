@@ -11,7 +11,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -33,6 +33,12 @@ import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
 import { invalidateManifestCache } from './connector-hub.js';
 
 const PLUGIN_ARCHIVE_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
+
+function isOutsideBase(relativePath: string): boolean {
+  return (
+    relativePath === '' || relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)
+  );
+}
 
 function requireSessionIdentity(request: FastifyRequest, reply: FastifyReply): string | null {
   const userId = (request as FastifyRequest & { sessionUserId?: string }).sessionUserId;
@@ -117,13 +123,20 @@ export const connectorPluginRoutes: FastifyPluginAsync = async (app) => {
       const resolvedPluginDir = resolve(pluginDir);
       const iconPath = resolve(resolvedPluginDir, iconSrc);
       const relativeIconPath = relative(resolvedPluginDir, iconPath);
-      if (
-        relativeIconPath === '' ||
-        relativeIconPath === '..' ||
-        relativeIconPath.startsWith(`..${sep}`) ||
-        isAbsolute(relativeIconPath) ||
-        !existsSync(iconPath)
-      ) {
+      if (isOutsideBase(relativeIconPath) || !existsSync(iconPath)) {
+        return reply.status(404).send({ error: 'Icon file not found' });
+      }
+
+      let realPluginDir: string;
+      let realIconPath: string;
+      try {
+        realPluginDir = realpathSync(resolvedPluginDir);
+        realIconPath = realpathSync(iconPath);
+      } catch {
+        return reply.status(404).send({ error: 'Icon file not found' });
+      }
+
+      if (isOutsideBase(relative(realPluginDir, realIconPath))) {
         return reply.status(404).send({ error: 'Icon file not found' });
       }
 
