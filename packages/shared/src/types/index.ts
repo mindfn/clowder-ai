@@ -478,6 +478,21 @@ export type {
   ResolverType,
   WorkflowAction,
 } from './pack.js';
+// Unified Config Field types (F231 KD-15 — shared by Plugin + IM Connector)
+export type {
+  ActionDef,
+  ConfigField,
+  ConfigFieldType,
+  InputConfigField,
+  ListConfigField,
+  OperationConfigField,
+  OperationState,
+  SelectConfigField,
+  ToggleConfigField,
+  ValueConfigField,
+} from './config-field.js';
+export { isOperationField, isValueField } from './config-field.js';
+export { decodeFieldValue, encodeFieldValue } from './config-field-codec.js';
 // Plugin Framework types (F202 声明式插件注册)
 export type {
   PluginConfigField,

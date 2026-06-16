@@ -18,6 +18,7 @@ export { communityIssueRoutes } from './community-issues.js';
 export { configRoutes } from './config.js';
 export { connectorHubRoutes } from './connector-hub.js';
 export { connectorMediaRoutes } from './connector-media.js';
+export { connectorPluginRoutes } from './connector-plugins.js';
 export { distillationRoutes } from './distillation-routes.js';
 export { evalHubRoutes } from './eval-hub.js';
 export { eventsRoutes } from './events.js';

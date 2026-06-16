@@ -9,7 +9,12 @@
 import type { ConnectorDefinition } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { FastifyBaseLogger } from 'fastify';
-import type { IMConnectorPlugin, MediaDownloadFn } from '../../im-connector-plugin.js';
+import type {
+  HandleActionContext,
+  HandleActionResult,
+  IMConnectorPlugin,
+  MediaDownloadFn,
+} from '../../im-connector-plugin.js';
 import type { IOutboundAdapter } from '../../OutboundDeliveryHook.js';
 import { WeixinAdapter, type WeixinSessionStateStore } from './WeixinAdapter.js';
 
@@ -128,6 +133,69 @@ const weixinPlugin: IMConnectorPlugin = {
         log: ctx.log,
       });
     };
+  },
+
+  async handleAction(_operationName: string, actionId: string, ctx: HandleActionContext): Promise<HandleActionResult> {
+    const { log } = ctx;
+
+    switch (actionId) {
+      case 'qr-generate': {
+        // Static method — no adapter needed
+        const result = await WeixinAdapter.fetchQrCode();
+        const QRCode = await import('qrcode');
+        const qrDataUri = await QRCode.toDataURL(result.qrUrl, { width: 384, margin: 2 });
+        return {
+          render: 'img',
+          data: { url: qrDataUri, qrPayload: result.qrPayload },
+        };
+      }
+
+      case 'qr-status': {
+        const qrPayload = (ctx.operationState?.lastResult?.data as { qrPayload?: string })?.qrPayload;
+        if (!qrPayload) {
+          return {
+            render: 'status',
+            data: { status: 'error', message: 'No QR payload — generate first' },
+            advance: false,
+          };
+        }
+        // Static method — no adapter needed for poll
+        const status = await WeixinAdapter.pollQrCodeStatus(qrPayload);
+        if (status.status === 'confirmed' && status.botToken) {
+          // setBotToken needs adapter — guard (Weixin always has adapter from bootstrap)
+          if (ctx.adapter) {
+            const { weixinAdapter } = getState(ctx.adapter);
+            weixinAdapter.setBotToken(status.botToken);
+          }
+          log.info('[Weixin handleAction] QR confirmed — bot_token acquired');
+          return {
+            render: 'status',
+            data: { status: 'confirmed' },
+            label: '已连接',
+            targetValues: { WEIXIN_BOT_TOKEN: status.botToken },
+          };
+        }
+        return { render: 'polling', data: { status: status.status }, advance: false };
+      }
+
+      case 'disconnect': {
+        if (ctx.adapter) {
+          const { weixinAdapter } = getState(ctx.adapter);
+          await weixinAdapter.disconnect();
+        }
+        log.info('[Weixin handleAction] Disconnected by user');
+        return {
+          render: 'status',
+          data: { status: 'disconnected' },
+          label: '已断开',
+          targetValues: { WEIXIN_BOT_TOKEN: '' },
+          activate: false,
+        };
+      }
+
+      default:
+        throw new Error(`Unknown weixin action: ${actionId}`);
+    }
   },
 };
 

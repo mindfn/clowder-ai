@@ -14,13 +14,15 @@
  */
 
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { type CatId, type ConnectorSource, catRegistry, isStaticConnectorId } from '@cat-cafe/shared';
+import { join, resolve } from 'node:path';
+import { type CatId, type ConnectorSource, catRegistry, isStaticConnectorId, isValueField } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { FastifyBaseLogger } from 'fastify';
 import { isCatAvailable } from '../../config/cat-config-loader.js';
 import type { ConnectorWebhookHandler } from '../../routes/connector-webhooks.js';
+import { resolveActiveProjectRoot } from '../../utils/active-project-root.js';
 import { getDefaultUploadDir } from '../../utils/upload-paths.js';
+import { encodeDefault } from '../config-field-parser.js';
 import { deliverConnectorMessage } from '../email/deliver-connector-message.js';
 import { ConnectorCommandLayer, type ConnectorCommandLayerDeps } from './ConnectorCommandLayer.js';
 import {
@@ -34,6 +36,13 @@ import { GitHubRepoWebhookHandler } from './github-repo-event/GitHubRepoWebhookH
 import { ReconciliationDedup } from './github-repo-event/ReconciliationDedup.js';
 import { RedisDeliveryDedup } from './github-repo-event/RedisDeliveryDedup.js';
 import { InboundMessageDedup } from './InboundMessageDedup.js';
+import {
+  clearConnectorConfigCache,
+  getStoredConnectorValue,
+  loadAllConnectorConfigs,
+  resolveConnectorEnv,
+} from './im-connector-config-store.js';
+import { scanConnectorManifests } from './im-connector-manifest.js';
 import type { IMConnectorPluginContext, InboundMessageCallback } from './im-connector-plugin.js';
 import { WeComBotAdapter } from './im-connectors/wecom-bot/WeComBotAdapter.js';
 import { WeixinAdapter } from './im-connectors/weixin/WeixinAdapter.js';
@@ -197,6 +206,14 @@ export interface ConnectorGatewayHandle {
   readonly stopWeComBot: () => Promise<void>;
   /** F132 bugfix: live adapter getter for health reporting (instance changes on restart) */
   readonly getWeComBotAdapter: () => WeComBotAdapter | null;
+  /** F231 A-3: all discovered plugins, including unconfigured (for generic action endpoint) */
+  readonly pluginRegistry: ReadonlyMap<string, import('./im-connector-plugin.js').IMConnectorPlugin>;
+  /** F231 A-3: live adapters — only configured+started connectors */
+  readonly adapterRegistry: ReadonlyMap<string, IOutboundAdapter>;
+  /** F231 A-3: activate a connector after credentials acquired via action (creates adapter + starts inbound) */
+  activateConnector(connectorId: string): Promise<void>;
+  /** F231 A-3: deactivate a connector — stop inbound, remove adapter/webhook/media */
+  deactivateConnector(connectorId: string): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -295,8 +312,11 @@ export async function startConnectorGateway(
   const dedup = new InboundMessageDedup();
   log.info({ store: deps.redis ? 'redis' : 'memory' }, '[ConnectorGateway] Binding store initialized');
   const adapters = new Map<string, IOutboundAdapter>();
+  const plugins = new Map<string, import('./im-connector-plugin.js').IMConnectorPlugin>();
   const webhookHandlers = new Map<string, ConnectorWebhookHandler>();
   const stopFns: Array<() => Promise<void>> = [];
+  /** Per-connector inbound stop handles — for targeted deactivation (F231 A-3). */
+  const connectorStopFns = new Map<string, () => Promise<void>>();
 
   // Use coCreatorUserId from config (DEFAULT_OWNER_USER_ID env) if set,
   // otherwise fall back to deps.defaultUserId.
@@ -390,18 +410,51 @@ export async function startConnectorGateway(
   });
 
   // ── F231: Load & initialize all IM connector plugins ──
-  const { loadBuiltinConnectors, loadExternalConnectors } = await import('./im-connector-loader.js');
+  const { loadBuiltinConnectors, loadExternalConnectors, loadInstalledPlugins } = await import(
+    './im-connector-loader.js'
+  );
   const { registerConnectorDefinition } = await import('@cat-cafe/shared');
   const { registerExternalConnectorMeta, updateExternalConnectorConfigured } = await import(
     './external-connector-registry.js'
   );
 
+  const projectRoot = resolveActiveProjectRoot();
   const builtinPlugins = await loadBuiltinConnectors();
-  const externalPlugins = await loadExternalConnectors(process.env.IM_CONNECTOR_PLUGINS, log);
+  const installedPlugins = await loadInstalledPlugins(projectRoot, log);
+  const legacyExternalPlugins = await loadExternalConnectors(process.env.IM_CONNECTOR_PLUGINS, log);
 
   const configEnv = configToEnvMap(config);
   const builtinIds = new Set(builtinPlugins.map((p) => p.id));
+
+  // Merge installed + legacy external, rejecting ID conflicts
+  const externalPlugins = [...installedPlugins, ...legacyExternalPlugins].filter((ext) => {
+    if (builtinIds.has(ext.id)) {
+      log.warn({ id: ext.id }, '[Gateway] External connector ID conflicts with built-in — skipped');
+      return false;
+    }
+    return true;
+  });
   const allPlugins = [...builtinPlugins, ...externalPlugins];
+
+  // ── F231: Scan connector YAML manifests & load stored configs ──
+  // Built-in manifests live in source tree; installed plugin manifests in .cat-cafe/plugins/
+  const connectorsDir = join(projectRoot, 'packages/api/src/infrastructure/connectors/im-connectors');
+  const manifests = scanConnectorManifests(connectorsDir);
+
+  // Phase B: also scan installed plugin manifests
+  const { resolvePluginsDir } = await import('./plugin-installer.js');
+  const pluginManifests = scanConnectorManifests(resolvePluginsDir(projectRoot));
+  for (const [id, manifest] of pluginManifests) {
+    if (!manifests.has(id)) manifests.set(id, manifest);
+  }
+
+  const storedConfigCount = loadAllConnectorConfigs(projectRoot, [...manifests.values()]);
+  if (manifests.size > 0 || storedConfigCount > 0) {
+    log.info(
+      { manifests: manifests.size, storedConfigs: storedConfigCount },
+      '[F231] Connector manifests and config store loaded',
+    );
+  }
 
   // Detect invalid telegram token (token provided but malformed — preserves warning for user)
   const telegramPlugin = allPlugins.find((p) => p.id === 'telegram');
@@ -451,10 +504,32 @@ export async function startConnectorGateway(
       });
     }
 
-    // Build env for this plugin: built-in reads from config, external from process.env
+    // Build env for this plugin — F231: stored (Hub UI) > config param (env/test) > YAML default
+    // KD-17: only value fields have envName; KD-18: defaults encoded through codec
+    // R5-P1 fix: installed plugins with manifest also use config store (was gated on isBuiltin)
     const pluginEnv: Record<string, string | undefined> = {};
+    const manifest = manifests.get(plugin.id);
+    const manifestValueFields = manifest ? manifest.config.filter(isValueField) : [];
     for (const key of [...plugin.requiredEnvKeys, ...(plugin.optionalEnvKeys ?? [])]) {
-      pluginEnv[key] = isBuiltin ? configEnv[key] : process.env[key];
+      if (manifest) {
+        const stored = getStoredConnectorValue(plugin.id, key);
+        if (stored === null) {
+          // KD-19 tombstone: user cleared this field in Hub — block all fallback
+          pluginEnv[key] = undefined;
+        } else if (stored !== undefined) {
+          pluginEnv[key] = stored;
+        } else {
+          // Built-in: configEnv has mapped values from loadConnectorGatewayConfig()
+          // Installed: configEnv has no mapping for plugin keys — fall to process.env
+          const envVal = isBuiltin ? configEnv[key] : process.env[key];
+          const yamlField = manifestValueFields.find((f) => f.envName === key);
+          const yamlDefault = yamlField ? encodeDefault(yamlField) : undefined;
+          pluginEnv[key] = envVal ?? yamlDefault;
+        }
+      } else {
+        // Legacy npm plugins without manifest — no config store path
+        pluginEnv[key] = isBuiltin ? configEnv[key] : process.env[key];
+      }
     }
 
     // Weixin always creates adapter (for QR login support even without credentials)
@@ -465,8 +540,15 @@ export async function startConnectorGateway(
     // Hub must use plugin's own predicate, not the all-requiredEnvKeys heuristic)
     if (!isBuiltin) updateExternalConnectorConfigured(plugin.id, isConfigured);
 
+    // F231 A-3 fix: Always register plugin (for action endpoints even when unconfigured).
+    // Adapters are only created below when configured — plugin code is always available.
+    plugins.set(plugin.id, plugin);
+
     if (!isConfigured && !isWeixin) {
-      log.info({ id: plugin.id }, `[ConnectorGateway] ${plugin.definition.displayName} not configured — skipped`);
+      log.info(
+        { id: plugin.id },
+        `[ConnectorGateway] ${plugin.definition.displayName} not configured — skipped (plugin registered for actions)`,
+      );
       continue;
     }
 
@@ -520,8 +602,13 @@ export async function startConnectorGateway(
 
       // All resources created — commit atomically
       adapters.set(plugin.id, adapter);
+      plugins.set(plugin.id, plugin);
       if (localWebhookHandler) webhookHandlers.set(plugin.id, localWebhookHandler);
-      if (localInboundHandle) stopFns.push(() => localInboundHandle!.stop());
+      if (localInboundHandle) {
+        const stopInbound = () => localInboundHandle!.stop();
+        stopFns.push(stopInbound);
+        connectorStopFns.set(plugin.id, stopInbound);
+      }
       if (localMediaDownloadFn) mediaService.registerDownloadFn(plugin.id, localMediaDownloadFn);
       // ── Weixin special lifecycle: always-create + QR login managed polling ──
       if (isWeixin) {
@@ -618,9 +705,11 @@ export async function startConnectorGateway(
     }
 
     adapters.set('wecom-bot', adapter);
+    plugins.set('wecom-bot', wecomBotPlugin);
     wecomBotStopFn = async () => {
       if (inboundHandle) await inboundHandle.stop();
       adapters.delete('wecom-bot');
+      plugins.delete('wecom-bot');
     };
     log.info('[ConnectorGateway] WeCom Bot adapter started (WebSocket mode)');
   };
@@ -633,8 +722,14 @@ export async function startConnectorGateway(
     }
   };
 
-  if (config.wecomBotId && config.wecomBotSecret) {
-    await startWeComBotStream(config.wecomBotId, config.wecomBotSecret);
+  // F231: WeComBot config — three-state resolution (KD-19 tombstone aware)
+  const storedBotId = getStoredConnectorValue('wecom-bot', 'WECOM_BOT_ID');
+  const storedBotSecret = getStoredConnectorValue('wecom-bot', 'WECOM_BOT_SECRET');
+  // null = tombstone (user cleared) → block fallback; undefined = absent → fall through
+  const effectiveWecomBotId = storedBotId === null ? undefined : (storedBotId ?? config.wecomBotId);
+  const effectiveWecomBotSecret = storedBotSecret === null ? undefined : (storedBotSecret ?? config.wecomBotSecret);
+  if (effectiveWecomBotId && effectiveWecomBotSecret) {
+    await startWeComBotStream(effectiveWecomBotId, effectiveWecomBotSecret);
   }
 
   // Log if no connectors are active (excluding weixin which is always registered)
@@ -705,6 +800,99 @@ export async function startConnectorGateway(
   cleanupJob.start();
   log.info('[ConnectorGateway] Media cleanup job started (24h TTL, 1h sweep)');
 
+  // F231 A-3: Activate a connector after credentials acquired via action.
+  // Re-reads config, creates adapter, starts inbound. Used by generic action endpoint
+  // after QR-based credential backfill.
+  async function activateConnector(connectorId: string): Promise<void> {
+    const plugin = plugins.get(connectorId);
+    if (!plugin) throw new Error(`Plugin '${connectorId}' not registered`);
+
+    // Weixin uses special lifecycle (startWeixinPollingFn)
+    if (connectorId === 'weixin') {
+      if (startWeixinPollingFn) {
+        startWeixinPollingFn();
+        log.info('[ConnectorGateway] WeChat polling activated after QR login');
+      }
+      return;
+    }
+
+    // Already has a live adapter — skip (may need restart logic later)
+    if (adapters.has(connectorId)) {
+      log.info({ id: connectorId }, '[ConnectorGateway] Connector already active — skipping activation');
+      return;
+    }
+
+    // Reload config cache from disk (action handler just wrote to .cat-cafe/)
+    // then resolve env using the standard stored > env > default chain.
+    const manifest = manifests.get(connectorId);
+    if (!manifest) throw new Error(`Manifest not found for '${connectorId}'`);
+    clearConnectorConfigCache();
+    loadAllConnectorConfigs(projectRoot, [manifest]);
+    const freshEnv = resolveConnectorEnv(connectorId, manifest.config.filter(isValueField));
+
+    if (!plugin.isConfigured(freshEnv)) {
+      log.warn({ id: connectorId }, '[ConnectorGateway] Connector still not configured after backfill');
+      return;
+    }
+
+    const ctx: IMConnectorPluginContext = { env: freshEnv, log, redis: deps.redis };
+    const adapter = await Promise.resolve(plugin.createAdapter(ctx));
+    if (plugin.setup) await plugin.setup(adapter, ctx);
+
+    const onMessage = createOnMessage(connectorId, connectorRouter);
+    adapters.set(connectorId, adapter);
+
+    if (plugin.createWebhookHandler) {
+      const wh = plugin.createWebhookHandler(adapter, onMessage, ctx);
+      if (wh) webhookHandlers.set(connectorId, wh);
+    }
+    if (plugin.startInbound) {
+      const handle = await plugin.startInbound(adapter, onMessage, ctx);
+      const stopInbound = () => handle.stop();
+      stopFns.push(stopInbound);
+      connectorStopFns.set(connectorId, stopInbound);
+    }
+    if (plugin.createMediaDownloader) {
+      mediaService.registerDownloadFn(connectorId, plugin.createMediaDownloader(adapter, ctx));
+    }
+
+    log.info(
+      { id: connectorId },
+      `[ConnectorGateway] ${plugin.definition.displayName} activated after credential backfill`,
+    );
+  }
+
+  // F231 A-3: Deactivate a connector — stop inbound, remove adapter/webhook/media.
+  // Symmetric counterpart to activateConnector. Called on explicit disconnect actions.
+  async function deactivateConnector(connectorId: string): Promise<void> {
+    // Weixin uses an always-created adapter (QR login state carrier).
+    // The handler already called weixinAdapter.disconnect() which stops polling
+    // and clears the token. We must NOT remove the adapter — it's needed for
+    // the next QR login cycle to inject a fresh token into the live object.
+    if (connectorId === 'weixin') {
+      log.info({ id: connectorId }, '[ConnectorGateway] Weixin deactivated (adapter retained for QR re-login)');
+      return;
+    }
+
+    // Stop inbound listener (WebSocket, long-poll, etc.)
+    const stopInbound = connectorStopFns.get(connectorId);
+    if (stopInbound) {
+      try {
+        await stopInbound();
+      } catch (err) {
+        log.warn({ err, id: connectorId }, '[ConnectorGateway] Error stopping inbound during deactivation');
+      }
+      connectorStopFns.delete(connectorId);
+    }
+
+    // Remove adapter, webhook handler, media downloader
+    adapters.delete(connectorId);
+    webhookHandlers.delete(connectorId);
+    mediaService.unregisterDownloadFn(connectorId);
+
+    log.info({ id: connectorId }, '[ConnectorGateway] Connector deactivated');
+  }
+
   return {
     outboundHook,
     streamingHook,
@@ -715,6 +903,10 @@ export async function startConnectorGateway(
     startWeComBotStream,
     stopWeComBot,
     getWeComBotAdapter: () => (adapters.get('wecom-bot') as WeComBotAdapter) ?? null,
+    pluginRegistry: plugins,
+    adapterRegistry: adapters,
+    activateConnector,
+    deactivateConnector,
     async stop() {
       cleanupJob.stop();
       await Promise.allSettled(stopFns.map((fn) => fn()));

@@ -10,7 +10,7 @@
  * heavy platform-specific logic. Interface + package is the right level.
  */
 
-import type { ConnectorDefinition } from '@cat-cafe/shared';
+import type { ConnectorDefinition, OperationState } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { FastifyBaseLogger } from 'fastify';
 import type { ConnectorWebhookHandler } from '../../routes/connector-webhooks.js';
@@ -65,6 +65,44 @@ export type MediaDownloadFn = (platformKey: string, type: string, messageId?: st
 /** Returned by `startInbound()` — the host calls `stop()` on shutdown. */
 export interface IMConnectorLifecycleHandle {
   stop(): Promise<void>;
+}
+
+// ── Action handling (AC-A15/A16) ──
+
+/** Result returned by a plugin's handleAction() method. */
+export interface HandleActionResult {
+  /** Frontend render type for the result (e.g. 'img' for QR code, 'status' for text) */
+  render: string;
+  /** Result data — shape depends on render type (e.g. { url } for img, { label } for status) */
+  data: unknown;
+  /** Optional display label */
+  label?: string;
+  /** Values to backfill into target input fields (envName → value). AC-A19. */
+  targetValues?: Record<string, string>;
+  /**
+   * Whether to advance currentAction to next. Default: true.
+   * Set to false for polling actions that haven't completed yet
+   * (e.g. QR scan still pending — frontend keeps polling, state stays).
+   */
+  advance?: boolean;
+  /**
+   * Whether to activate the connector after credential backfill. Default: true.
+   * Set to false for disconnect/deactivate actions that clear credentials —
+   * prevents the gateway from restarting a connector that was just stopped.
+   */
+  activate?: boolean;
+}
+
+/** Context passed to handleAction — includes adapter and current operation state. */
+export interface HandleActionContext extends IMConnectorPluginContext {
+  /**
+   * The outbound adapter for this connector (same instance from createAdapter).
+   * Undefined when the connector is not yet configured (e.g. QR login flow
+   * acquires credentials — adapter doesn't exist until after activation).
+   */
+  adapter: IOutboundAdapter | undefined;
+  /** Current persisted operation state (undefined if no state yet). */
+  operationState: OperationState | undefined;
 }
 
 // ── The Plugin Interface ──
@@ -141,4 +179,20 @@ export interface IMConnectorPlugin {
    * Use for: admin seeding, bot identity resolution, session restore, etc.
    */
   setup?(adapter: IOutboundAdapter, ctx: IMConnectorPluginContext): Promise<void>;
+
+  /**
+   * Handle an action within an operation's state machine (AC-A15).
+   * Called by the generic `POST /api/connectors/:id/actions/:operationName/:actionId` endpoint.
+   *
+   * The host automatically:
+   * - persists `currentAction = next` on success (AC-A20)
+   * - backfills `target` input fields with `targetValues` (AC-A19)
+   * - activates connector after credential backfill (creates adapter + starts inbound)
+   *
+   * Timeout rollback (AC-A21) is a frontend responsibility: frontend reads `updatedAt`
+   * from operation state + YAML `timeout`, then calls the `rollback` target action.
+   *
+   * Only connectors with operation-type fields need to implement this.
+   */
+  handleAction?(operationName: string, actionId: string, ctx: HandleActionContext): Promise<HandleActionResult>;
 }

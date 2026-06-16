@@ -1,4 +1,9 @@
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { isOperationField, isValueField } from '@cat-cafe/shared';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
+import { requireLocalCapabilityWriteRequest } from '../config/capabilities/capability-write-guards.js';
+import { configEventBus, createChangeSetId } from '../config/config-event-bus.js';
 import { applyConnectorSecretUpdates } from '../config/connector-secret-updater.js';
 import {
   requireConnectorWriteNetworkGuard,
@@ -8,13 +13,29 @@ import {
 } from '../config/connector-secret-write-guards.js';
 import { AuditEventTypes, getEventAuditLog } from '../domains/cats/services/orchestration/EventAuditLog.js';
 import { DEFAULT_THREAD_ID, type IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
+import { encodeDefault } from '../infrastructure/config-field-parser.js';
 import type { IConnectorPermissionStore } from '../infrastructure/connectors/ConnectorPermissionStore.js';
+import { executeConnectorAction } from '../infrastructure/connectors/connector-action-handler.js';
 import { getAllExternalConnectorMeta } from '../infrastructure/connectors/external-connector-registry.js';
 import { DefaultFeishuQrBindClient, type FeishuQrBindClient } from '../infrastructure/connectors/FeishuQrBindClient.js';
+import {
+  loadAllConnectorConfigs,
+  readAllOperationStates,
+  resolveConnectorEnv,
+  writeConnectorConfig,
+} from '../infrastructure/connectors/im-connector-config-store.js';
+import { type ConnectorManifest, scanConnectorManifests } from '../infrastructure/connectors/im-connector-manifest.js';
+import type { IMConnectorPlugin } from '../infrastructure/connectors/im-connector-plugin.js';
 import type { WeComBotAdapter } from '../infrastructure/connectors/im-connectors/wecom-bot/WeComBotAdapter.js';
 import type { WeixinAdapter } from '../infrastructure/connectors/im-connectors/weixin/WeixinAdapter.js';
+import type { IOutboundAdapter } from '../infrastructure/connectors/OutboundDeliveryHook.js';
+import { resolvePluginsDir } from '../infrastructure/connectors/plugin-installer.js';
 import { normalizeTelegramBotToken } from '../infrastructure/connectors/telegram-token.js';
+import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
 import { resolveHeaderUserId } from '../utils/request-identity.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 export interface ConnectorHubRoutesOptions {
   threadStore: IThreadStore;
@@ -36,6 +57,14 @@ export interface ConnectorHubRoutesOptions {
   permissionStore?: IConnectorPermissionStore | null;
   envFilePath?: string;
   feishuQrBindClient?: FeishuQrBindClient;
+  /** F231 A-3: Plugin registry for generic action endpoint (includes unconfigured plugins) */
+  pluginRegistry?: ReadonlyMap<string, IMConnectorPlugin>;
+  /** F231 A-3: Adapter registry for generic action endpoint (only configured+started connectors) */
+  adapterRegistry?: ReadonlyMap<string, IOutboundAdapter>;
+  /** F231 A-3: Activate a connector after credentials acquired via action (creates adapter + starts inbound) */
+  activateConnector?: (connectorId: string) => Promise<void>;
+  /** F231 A-3: Deactivate a connector on disconnect — stop inbound, remove adapter/webhook/media */
+  deactivateConnector?: (connectorId: string) => Promise<void>;
 }
 
 function requireTrustedHubIdentity(request: FastifyRequest, reply: FastifyReply): string | null {
@@ -114,6 +143,10 @@ interface ConnectorFieldDef {
   envName: string;
   label: string;
   sensitive: boolean;
+  /** Field type from YAML manifest (AC-A24). Frontend uses this for generic rendering. */
+  type: 'input' | 'select' | 'toggle' | 'list';
+  /** Select options (only for type: select). */
+  options?: Array<{ value: string; label: string }>;
   /** When set, this field is only required if the condition env var has the given value */
   requiredWhen?: { envName: string; value: string };
   /** When true, this field is never required for the platform to be "configured" */
@@ -138,132 +171,112 @@ interface PlatformDef {
   docsUrl: string;
   /** Steps displayed in the guided wizard — may be mode-filtered */
   steps: PlatformStepDef[];
+  /** Manifest icon for frontend rendering (AC-A23). */
+  icon?: { type: string; src?: string; iconId?: string };
+  /** Theme color from manifest (AC-A23). */
+  themeColor?: string;
+  /** AC-A25: manifest-driven permission label — renders HubPermissionsTab when present. */
+  permissionLabel?: string;
 }
 
-export const CONNECTOR_PLATFORMS: PlatformDef[] = [
-  {
-    id: 'feishu',
-    name: '飞书',
-    nameEn: 'Feishu / Lark',
-    fields: [
-      { envName: 'FEISHU_APP_ID', label: 'App ID', sensitive: false },
-      { envName: 'FEISHU_APP_SECRET', label: 'App Secret', sensitive: true },
-      {
-        envName: 'FEISHU_CONNECTION_MODE',
-        label: '连接模式 (webhook/websocket)',
-        sensitive: false,
-        optional: true,
-        defaultValue: 'webhook',
-      },
-      {
-        envName: 'FEISHU_VERIFICATION_TOKEN',
-        label: 'Verification Token',
-        sensitive: true,
-        requiredWhen: { envName: 'FEISHU_CONNECTION_MODE', value: 'webhook' },
-      },
-    ],
-    docsUrl:
-      'https://open.feishu.cn/document/home/introduction-to-custom-app-development/self-built-application-development-process',
-    steps: [
-      { text: '在飞书开放平台创建企业自建应用，获取 App ID 和 App Secret' },
-      { text: '选择连接模式：Webhook（需公网 URL）或 WebSocket（无需公网，推荐内网环境）' },
-      { text: '在「事件订阅」中配置请求地址并获取 Verification Token', mode: 'webhook' },
-      { text: '在「事件订阅」中选择「使用长连接接收事件」，无需 Verification Token', mode: 'websocket' },
-      { text: '填写以下配置并保存，重启 API 服务后生效' },
-    ],
+// ── Manifest-driven platform definitions ──
+
+// Resolve from compiled dist/routes/ → packages/api/ → src/infrastructure/…
+// YAML manifests live in src/, not dist/ (TSC doesn't copy non-TS files).
+const CONNECTORS_DIR = join(__dirname, '../../src/infrastructure/connectors/im-connectors');
+
+let _cachedManifests: Map<string, ConnectorManifest> | null = null;
+
+/**
+ * Get all connector manifests (built-in + installed plugins).
+ * Cache is invalidated on plugin install/uninstall via `invalidateManifestCache()`.
+ */
+function getConnectorManifests(): Map<string, ConnectorManifest> {
+  if (!_cachedManifests) {
+    _cachedManifests = scanConnectorManifests(CONNECTORS_DIR);
+
+    // Phase B: also scan installed plugin manifests
+    try {
+      const pluginManifests = scanConnectorManifests(resolvePluginsDir(resolveActiveProjectRoot()));
+      for (const [id, manifest] of pluginManifests) {
+        if (!_cachedManifests.has(id)) _cachedManifests.set(id, manifest);
+      }
+    } catch {
+      // Plugin dir not available — only built-in manifests
+    }
+  }
+  return _cachedManifests;
+}
+
+/** Invalidate manifest cache — called after plugin install/uninstall to pick up new manifests. */
+export function invalidateManifestCache(): void {
+  _cachedManifests = null;
+}
+
+/**
+ * Convert a ConnectorManifest to the legacy PlatformDef shape.
+ * KD-17: only value fields are mapped (operations have no envName).
+ * Hidden input fields are excluded (e.g. weixin bot token managed by QR).
+ * KD-18: defaults encoded through codec for string-uniform representation.
+ */
+function manifestToPlatformDef(m: ConnectorManifest): PlatformDef {
+  const valueFields = m.config.filter(isValueField);
+  const fields: ConnectorFieldDef[] = valueFields
+    .filter((f) => !(f.type === 'input' && f.hidden))
+    .map((f) => {
+      const isSensitive = f.type === 'input' && f.sensitive;
+      const def: ConnectorFieldDef = {
+        envName: f.envName,
+        label: f.label,
+        sensitive: isSensitive,
+        type: f.type,
+      };
+      if (f.type === 'select' && f.options) def.options = f.options;
+      const hasRequiredWhen = f.type === 'input' && f.requiredWhen;
+      // requiredWhen means conditionally required, not optional
+      if (!f.required && !hasRequiredWhen) def.optional = true;
+      const encoded = encodeDefault(f);
+      if (encoded != null) def.defaultValue = encoded;
+      if (f.type === 'input' && f.requiredWhen) def.requiredWhen = f.requiredWhen;
+      return def;
+    });
+
+  return {
+    id: m.id,
+    name: m.name,
+    nameEn: m.nameEn,
+    fields,
+    docsUrl: m.docsUrl,
+    steps: m.steps.map((s) => {
+      const step: PlatformStepDef = { text: s.text };
+      if (s.mode) step.mode = s.mode;
+      return step;
+    }),
+    ...(m.icon ? { icon: m.icon } : {}),
+    ...(m.themeColor ? { themeColor: m.themeColor } : {}),
+    ...(m.permissions?.label ? { permissionLabel: m.permissions.label } : {}),
+  };
+}
+
+function manifestsToPlatformDefs(manifests: ConnectorManifest[]): PlatformDef[] {
+  return manifests.map(manifestToPlatformDef);
+}
+
+/** Dynamically computed from YAML manifests — backward compat export. */
+export function getConnectorPlatforms(): PlatformDef[] {
+  return manifestsToPlatformDefs(Array.from(getConnectorManifests().values()));
+}
+
+/**
+ * @deprecated Use `getConnectorPlatforms()` instead.
+ * Kept as a lazy getter for backward compatibility.
+ */
+export const CONNECTOR_PLATFORMS: PlatformDef[] = new Proxy([] as PlatformDef[], {
+  get(target, prop, receiver) {
+    const live = getConnectorPlatforms();
+    return Reflect.get(live, prop, receiver);
   },
-  {
-    id: 'telegram',
-    name: 'Telegram',
-    nameEn: 'Telegram',
-    fields: [{ envName: 'TELEGRAM_BOT_TOKEN', label: 'Bot Token', sensitive: true }],
-    docsUrl: 'https://core.telegram.org/bots/tutorial',
-    steps: [
-      { text: '在 Telegram 中找到 @BotFather，发送 /newbot 创建机器人' },
-      { text: '复制生成的 Bot Token' },
-      { text: '填写以下配置并保存，重启 API 服务后生效' },
-    ],
-  },
-  {
-    id: 'dingtalk',
-    name: '钉钉',
-    nameEn: 'DingTalk',
-    fields: [
-      { envName: 'DINGTALK_APP_KEY', label: 'App Key', sensitive: false },
-      { envName: 'DINGTALK_APP_SECRET', label: 'App Secret', sensitive: true },
-    ],
-    docsUrl: 'https://open.dingtalk.com/document/orgapp/create-an-enterprise-internal-application',
-    steps: [
-      { text: '在钉钉开放平台创建企业内部应用，获取 App Key 和 App Secret' },
-      { text: '在「机器人与消息推送」中开启机器人能力' },
-      { text: '填写以下配置并保存，重启 API 服务后生效' },
-    ],
-  },
-  {
-    id: 'wecom-bot',
-    name: '企业微信',
-    nameEn: 'WeCom Bot',
-    fields: [
-      { envName: 'WECOM_BOT_ID', label: 'Bot ID', sensitive: false },
-      { envName: 'WECOM_BOT_SECRET', label: 'Bot Secret', sensitive: true },
-    ],
-    docsUrl: 'https://work.weixin.qq.com/wework_admin/frame#/aiHelper/create',
-    steps: [
-      { text: '点击上方链接直接进入创建页 → 选「API 模式」→ 连接方式选「使用长连接」' },
-      { text: '填写名称和可见范围，保存后获取 Bot ID 和 Secret' },
-      { text: '粘贴到下方并点击「测试并连接」，验证成功后自动生效' },
-    ],
-  },
-  {
-    id: 'wecom-agent',
-    name: '企微自建应用',
-    nameEn: 'WeCom Agent',
-    fields: [
-      { envName: 'WECOM_CORP_ID', label: 'Corp ID (企业 ID)', sensitive: false },
-      { envName: 'WECOM_AGENT_ID', label: 'Agent ID (应用 ID)', sensitive: false },
-      { envName: 'WECOM_AGENT_SECRET', label: 'Agent Secret', sensitive: true },
-      { envName: 'WECOM_TOKEN', label: '回调 Token', sensitive: true },
-      { envName: 'WECOM_ENCODING_AES_KEY', label: 'EncodingAESKey (43 字符)', sensitive: true },
-    ],
-    docsUrl: 'https://work.weixin.qq.com/wework_admin/frame#/app',
-    steps: [
-      { text: '点击上方链接登录企微管理后台 → 创建自建应用，获取 AgentId 和 Secret' },
-      { text: '在「API 接收消息」中设置回调 URL、Token 和 EncodingAESKey' },
-      { text: '回调 URL 需通过公网访问（可使用 Cloudflare Tunnel）' },
-      { text: '填写以下配置并保存，重启 API 服务后生效' },
-    ],
-  },
-  {
-    id: 'xiaoyi',
-    name: '小艺',
-    nameEn: 'XiaoYi (Huawei)',
-    fields: [
-      { envName: 'XIAOYI_AK', label: 'Access Key', sensitive: false },
-      { envName: 'XIAOYI_SK', label: 'Secret Key', sensitive: true },
-      { envName: 'XIAOYI_AGENT_ID', label: 'Agent ID', sensitive: false },
-    ],
-    docsUrl: 'https://developer.huawei.com/consumer/cn/service/josp/agc/index.html',
-    steps: [
-      { text: '在小艺开放平台创建 OpenClaw 模式智能体，获取 AK/SK 和 Agent ID' },
-      { text: '填写以下配置并保存，重启 API 服务后自动通过 WebSocket 连接华为 HAG' },
-      { text: '在小艺 APP 中发送消息验证对话链路是否正常' },
-    ],
-  },
-  {
-    id: 'weixin',
-    name: '微信',
-    nameEn: 'WeChat Personal',
-    fields: [],
-    docsUrl: 'https://chatbot.weixin.qq.com/',
-    steps: [
-      { text: '点击「生成二维码」按钮' },
-      { text: '使用微信扫描二维码并确认授权' },
-      { text: '授权成功后自动连接，无需重启服务' },
-    ],
-  },
-  // F202-2B: GitHub moved to plugin framework (plugins/github/plugin.yaml).
-  // Config managed via plugin-config-store, not connector-hub.
-];
+});
 
 /** Mask a sensitive value: show only that it is set, no suffix. Aligns with env-registry *** policy. */
 function maskSensitiveValue(_value: string): string {
@@ -274,6 +287,10 @@ export interface PlatformFieldStatus {
   envName: string;
   label: string;
   sensitive: boolean;
+  /** Field type — frontend uses for generic rendering (AC-A24). */
+  type: 'input' | 'select' | 'toggle' | 'list';
+  /** Select options (only for type: select). */
+  options?: Array<{ value: string; label: string }>;
   restartRequired?: boolean;
   /** null = not set, masked string = set (sensitive fields show last 4 chars) */
   currentValue: string | null;
@@ -284,6 +301,30 @@ export interface PlatformStepStatus {
   mode?: string;
 }
 
+/** Action definition from YAML manifest — forwarded to frontend for ActionRenderer (AC-A26). */
+export interface PlatformActionDef {
+  id: string;
+  label: string;
+  render: string;
+  resultRender?: string;
+  next?: string;
+  rollback?: string;
+  timeout?: number;
+}
+
+/** Operation definition + runtime state for ActionRenderer (AC-A26). */
+export interface PlatformOperationStatus {
+  name: string;
+  label: string;
+  actions: PlatformActionDef[];
+  /** Runtime state: which action the state machine is on. */
+  currentAction?: string;
+  /** Last action result (render + data + label). */
+  lastResult?: { render: string; data: unknown; label?: string };
+  /** Epoch ms of last state write. */
+  updatedAt?: number;
+}
+
 export interface PlatformStatus {
   id: string;
   name: string;
@@ -292,6 +333,14 @@ export interface PlatformStatus {
   fields: PlatformFieldStatus[];
   docsUrl: string;
   steps: PlatformStepStatus[];
+  /** Manifest icon (AC-A23). */
+  icon?: { type: string; src?: string; iconId?: string };
+  /** Theme color from manifest (AC-A23). */
+  themeColor?: string;
+  /** Operation definitions + state for ActionRenderer (AC-A26). */
+  operations?: PlatformOperationStatus[];
+  /** AC-A25: manifest-driven permission label — renders HubPermissionsTab when present. */
+  permissionLabel?: string;
 }
 
 function isConfiguredFieldValue(field: ConnectorFieldDef, raw: string | undefined): boolean {
@@ -310,8 +359,13 @@ function isRequiredFieldSatisfied(field: ConnectorFieldDef, env: Record<string, 
   return isConfiguredFieldValue(field, env[field.envName]);
 }
 
-export function buildConnectorStatus(env: Record<string, string | undefined> = process.env): PlatformStatus[] {
-  const builtinStatuses = CONNECTOR_PLATFORMS.map((platform) => {
+export function buildConnectorStatus(
+  env: Record<string, string | undefined> = process.env,
+  manifests?: ConnectorManifest[],
+): PlatformStatus[] {
+  const resolved = manifests ? manifestsToPlatformDefs(manifests) : getConnectorPlatforms();
+
+  const builtinStatuses = resolved.map((platform) => {
     const fields: PlatformFieldStatus[] = platform.fields.map((f) => {
       const raw = env[f.envName];
       const isSet = isConfiguredFieldValue(f, raw);
@@ -320,6 +374,8 @@ export function buildConnectorStatus(env: Record<string, string | undefined> = p
         envName: f.envName,
         label: f.label,
         sensitive: f.sensitive,
+        type: f.type,
+        ...(f.options ? { options: f.options } : {}),
         restartRequired: f.restartRequired,
         currentValue: effectiveValue ? (f.sensitive ? maskSensitiveValue(effectiveValue) : effectiveValue) : null,
       };
@@ -340,14 +396,17 @@ export function buildConnectorStatus(env: Record<string, string | undefined> = p
       fields,
       docsUrl: platform.docsUrl,
       steps: platform.steps,
+      ...(platform.icon ? { icon: platform.icon } : {}),
+      ...(platform.themeColor ? { themeColor: platform.themeColor } : {}),
+      ...(platform.permissionLabel ? { permissionLabel: platform.permissionLabel } : {}),
     };
   });
 
   // F231: Append external connector plugin statuses (P1-2 fix)
-  const builtinIds = new Set(CONNECTOR_PLATFORMS.map((p) => p.id));
+  const builtinIds = new Set(resolved.map((p) => p.id));
 
   for (const meta of getAllExternalConnectorMeta()) {
-    if (builtinIds.has(meta.id)) continue; // already covered by CONNECTOR_PLATFORMS
+    if (builtinIds.has(meta.id)) continue;
 
     const fields: PlatformFieldStatus[] = meta.requiredEnvKeys.map((key) => {
       const raw = env[key];
@@ -355,14 +414,12 @@ export function buildConnectorStatus(env: Record<string, string | undefined> = p
       return {
         envName: key,
         label: key,
-        sensitive: true, // external plugin env vars default to masked
+        sensitive: true,
+        type: 'input' as const,
         currentValue: isSet ? maskSensitiveValue(raw!) : null,
       };
     });
 
-    // Use plugin's own isConfigured() result stored during bootstrap,
-    // not all-requiredEnvKeys heuristic — plugins may have custom logic
-    // (e.g., TOKEN *or* APP_ID/APP_SECRET). Cloud P2 fix.
     builtinStatuses.push({
       id: meta.id,
       name: meta.definition.displayName,
@@ -407,7 +464,18 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
     if (!userId) {
       return { error: 'Identity required (session cookie)' };
     }
-    const status = buildConnectorStatus();
+    // F231 A-4 fix: resolve stored config > env > default per connector
+    // Without this, Hub UI shows stale process.env after saving via config store.
+    const manifests = Array.from(getConnectorManifests().values());
+    const projectRoot = resolveActiveProjectRoot();
+    loadAllConnectorConfigs(projectRoot, manifests);
+    const mergedEnv: Record<string, string | undefined> = { ...process.env };
+    for (const m of manifests) {
+      const valueFields = m.config.filter(isValueField);
+      const resolved = resolveConnectorEnv(m.id, valueFields);
+      Object.assign(mergedEnv, resolved);
+    }
+    const status = buildConnectorStatus(mergedEnv, manifests);
     // F137: WeChat "configured" is based on adapter having a live bot_token, not env vars
     const weixinStatus = status.find((p) => p.id === 'weixin');
     if (weixinStatus) {
@@ -422,7 +490,218 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
       const adapter = opts.getWeComBotAdapter();
       wecomBotStatus.configured = adapter?.getConnectionState() === 'connected';
     }
+
+    // F231 AC-A26: Enrich status with operation definitions + state for ActionRenderer
+    for (const m of manifests) {
+      const opFields = m.config.filter(isOperationField);
+      if (opFields.length === 0) continue;
+
+      const platformStatus = status.find((p) => p.id === m.id);
+      if (!platformStatus) continue;
+
+      const opStates = readAllOperationStates(projectRoot, m.id);
+      platformStatus.operations = opFields.map((op) => {
+        const state = opStates[op.name];
+        return {
+          name: op.name,
+          label: op.label,
+          actions: op.actions.map((a) => ({
+            id: a.id,
+            label: a.label,
+            render: a.render,
+            ...(a.resultRender ? { resultRender: a.resultRender } : {}),
+            ...(a.next ? { next: a.next } : {}),
+            ...(a.rollback ? { rollback: a.rollback } : {}),
+            ...(a.timeout ? { timeout: a.timeout } : {}),
+          })),
+          ...(state?.currentAction ? { currentAction: state.currentAction } : {}),
+          ...(state?.lastResult ? { lastResult: state.lastResult } : {}),
+          ...(state?.updatedAt ? { updatedAt: state.updatedAt } : {}),
+        };
+      });
+    }
+
     return { platforms: status };
+  });
+
+  // ── F230: Write connector config via config store ──
+
+  app.put('/api/connectors/:connectorId/config', async (request, reply) => {
+    const localErr = requireLocalCapabilityWriteRequest(request);
+    if (localErr) {
+      reply.status(localErr.status);
+      return { error: localErr.error };
+    }
+
+    const { connectorId } = request.params as {
+      connectorId: string;
+    };
+    const manifest = getConnectorManifests().get(connectorId);
+    if (!manifest) {
+      reply.status(404);
+      return { error: `Unknown connector: ${connectorId}` };
+    }
+
+    const body = request.body as {
+      fields?: { name: string; value: string | null }[];
+    };
+    if (!Array.isArray(body?.fields) || body.fields.length === 0) {
+      reply.status(400);
+      return { error: 'fields array required' };
+    }
+
+    // Validate field names against manifest — only value fields have envName (KD-17)
+    const allowed = new Set(manifest.config.filter(isValueField).map((f) => f.envName));
+    const invalid = body.fields.filter((f) => !allowed.has(f.name));
+    if (invalid.length > 0) {
+      reply.status(400);
+      return {
+        error: `Unknown fields: ${invalid.map((f) => f.name).join(', ')}`,
+      };
+    }
+
+    const projectRoot = resolveActiveProjectRoot();
+    const { changedKeys } = writeConnectorConfig(projectRoot, connectorId, body.fields);
+
+    // No process.env sync — connector config lives in .cat-cafe store, not in the
+    // host process environment. Gateway bootstrap reads config store via
+    // getStoredConnectorValue() which overrides process.env/.env fallback (L493-505).
+    // Writing to process.env would pollute the host namespace.
+
+    // Fire config change event — triggers connector-reload-subscriber gateway restart
+    if (changedKeys.length > 0) {
+      configEventBus.emitChange({
+        source: 'config-store',
+        scope: 'key',
+        changedKeys,
+        changeSetId: createChangeSetId(),
+        timestamp: Date.now(),
+      });
+    }
+
+    try {
+      await getEventAuditLog().append({
+        type: AuditEventTypes.CONFIG_UPDATED,
+        data: {
+          target: 'connector-config',
+          action: `connector-config-write:${connectorId}`,
+          keys: changedKeys,
+          operator: 'local',
+        },
+      });
+    } catch (err) {
+      app.log.warn({ err, connectorId, keys: changedKeys }, 'connector config audit append failed');
+    }
+
+    return { ok: true, changedKeys };
+  });
+
+  // ── F231 A-3: Generic action endpoint (AC-A16) ──
+
+  app.post('/api/connectors/:connectorId/actions/:operationName/:actionId', async (request, reply) => {
+    const localErr = requireLocalCapabilityWriteRequest(request);
+    if (localErr) {
+      reply.status(localErr.status);
+      return { error: localErr.error };
+    }
+
+    const { connectorId, operationName, actionId } = request.params as {
+      connectorId: string;
+      operationName: string;
+      actionId: string;
+    };
+
+    const manifest = getConnectorManifests().get(connectorId);
+    if (!manifest) {
+      reply.status(404);
+      return { error: `Unknown connector: ${connectorId}` };
+    }
+
+    const plugin = opts.pluginRegistry?.get(connectorId);
+    if (!plugin) {
+      reply.status(503);
+      return { error: `Connector '${connectorId}' plugin not loaded` };
+    }
+    // Adapter is optional — unconfigured connectors (e.g. pre-QR-login) have no adapter yet
+    const adapter = opts.adapterRegistry?.get(connectorId);
+
+    const projectRoot = resolveActiveProjectRoot();
+    // Resolve actual env (stored > env > default) so action handlers see real values
+    const valueFields = manifest.config.filter(isValueField);
+    const resolvedEnv = resolveConnectorEnv(connectorId, valueFields);
+
+    const result = await executeConnectorAction({
+      projectRoot,
+      connectorId,
+      operationName,
+      actionId,
+      manifest,
+      plugin,
+      pluginCtx: { env: resolvedEnv, log: app.log },
+      adapter,
+    });
+
+    if (!result.ok) {
+      reply.status(result.status ?? 500);
+      return { error: result.error };
+    }
+
+    // Lifecycle: activate after credential backfill, deactivate on explicit disconnect.
+    let activationStatus: 'activated' | 'deactivated' | 'failed' | undefined;
+    if (result.activate === false && opts.deactivateConnector) {
+      // Disconnect: stop inbound listener, remove adapter/webhook/media
+      try {
+        await opts.deactivateConnector(connectorId);
+        activationStatus = 'deactivated';
+        app.log.info({ connectorId }, '[ConnectorHub] Connector deactivated after disconnect');
+      } catch (err) {
+        activationStatus = 'failed';
+        app.log.warn({ err, connectorId }, '[ConnectorHub] Connector deactivation failed');
+      }
+    } else if (result.backfilledKeys && result.backfilledKeys.length > 0 && opts.activateConnector) {
+      // Connect: create adapter + start inbound after credential backfill
+      try {
+        await opts.activateConnector(connectorId);
+        activationStatus = 'activated';
+        app.log.info(
+          { connectorId, backfilledKeys: result.backfilledKeys },
+          '[ConnectorHub] Connector activated after credential backfill',
+        );
+      } catch (err) {
+        activationStatus = 'failed';
+        app.log.warn(
+          { err, connectorId },
+          '[ConnectorHub] Connector activation failed after backfill — may need restart',
+        );
+      }
+    }
+
+    return {
+      ok: true,
+      render: result.render,
+      data: result.data,
+      ...(result.label ? { label: result.label } : {}),
+      ...(result.backfilledKeys ? { backfilledKeys: result.backfilledKeys } : {}),
+      ...(activationStatus ? { activationStatus } : {}),
+    };
+  });
+
+  // ── F231 A-3: Operation state in status endpoint (AC-A20) ──
+
+  app.get('/api/connectors/:connectorId/operations', async (request, reply) => {
+    const userId = requireSessionHubIdentity(request, reply);
+    if (!userId) return { error: 'Identity required' };
+
+    const { connectorId } = request.params as { connectorId: string };
+    const manifest = getConnectorManifests().get(connectorId);
+    if (!manifest) {
+      reply.status(404);
+      return { error: `Unknown connector: ${connectorId}` };
+    }
+
+    const projectRoot = resolveActiveProjectRoot();
+    const states = readAllOperationStates(projectRoot, connectorId);
+    return { operations: states };
   });
 
   app.post('/api/connector/feishu/qrcode', async (request, reply) => {
