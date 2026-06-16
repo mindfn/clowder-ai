@@ -344,6 +344,55 @@ describe('buildConnectorStatus', () => {
     assert.equal(feishuEntries.length, 1, 'Must not duplicate built-in feishu');
   });
 
+  it('F231 R10-P2: external manifest status uses plugin isConfigured metadata', () => {
+    const pluginId = 'alt-auth-external';
+    registerExternalConnectorMeta({
+      id: pluginId,
+      definition: {
+        id: pluginId,
+        displayName: 'Alt Auth External',
+        icon: { type: 'png', src: '/test.png' },
+        themeColor: '#336699',
+        description: 'plugin predicate accepts alternate credentials',
+      },
+      requiredEnvKeys: ['ALT_AUTH_TOKEN'],
+      optionalEnvKeys: [],
+      configured: true,
+    });
+
+    const result = buildConnectorStatus({}, [
+      {
+        id: pluginId,
+        name: 'Alt Auth External',
+        nameEn: 'Alt Auth External',
+        version: '1.0.0',
+        icon: { type: 'png', src: '/test.png' },
+        themeColor: '#336699',
+        docsUrl: 'https://example.com',
+        source: 'external',
+        config: [
+          {
+            type: 'input',
+            envName: 'ALT_AUTH_TOKEN',
+            label: 'Token',
+            sensitive: true,
+            required: true,
+          },
+        ],
+        steps: [{ text: 'test' }],
+      },
+    ]);
+
+    const external = result.find((p) => p.id === pluginId);
+    assert.ok(external, 'external manifest connector must appear in status');
+    assert.equal(result.filter((p) => p.id === pluginId).length, 1, 'external manifest and meta must merge');
+    assert.equal(
+      external.configured,
+      true,
+      'external manifest status must honor plugin.isConfigured() metadata instead of YAML field heuristic',
+    );
+  });
+
   // ── F231 A-4: stored config reflected in status (review P1 regression) ──
 
   it('F231 A-4: stored config values override empty env in status via resolveConnectorEnv', () => {

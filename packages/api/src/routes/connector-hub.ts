@@ -405,6 +405,7 @@ export function buildConnectorStatus(
   manifests?: ConnectorManifest[],
 ): PlatformStatus[] {
   const resolved = manifests ? manifestsToPlatformDefs(manifests) : getConnectorPlatforms();
+  const externalMetaById = new Map(getAllExternalConnectorMeta().map((meta) => [meta.id, meta]));
 
   const builtinStatuses: PlatformStatus[] = resolved.map((platform) => {
     const fields: PlatformFieldStatus[] = platform.fields.map((f) => {
@@ -429,6 +430,9 @@ export function buildConnectorStatus(
     } else {
       configured = configuredFields.every((f) => isRequiredFieldSatisfied(f, env));
     }
+    if (platform.source === 'external') {
+      configured = externalMetaById.get(platform.id)?.configured ?? configured;
+    }
 
     return {
       id: platform.id,
@@ -447,10 +451,10 @@ export function buildConnectorStatus(
   });
 
   // F231: Append external connector plugin statuses (P1-2 fix)
-  const builtinIds = new Set(resolved.map((p) => p.id));
+  const resolvedIds = new Set(resolved.map((p) => p.id));
 
-  for (const meta of getAllExternalConnectorMeta()) {
-    if (builtinIds.has(meta.id)) continue;
+  for (const meta of externalMetaById.values()) {
+    if (resolvedIds.has(meta.id)) continue;
 
     const fields: PlatformFieldStatus[] = meta.requiredEnvKeys.map((key) => {
       const raw = env[key];
