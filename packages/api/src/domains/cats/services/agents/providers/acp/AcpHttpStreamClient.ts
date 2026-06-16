@@ -545,7 +545,6 @@ export class AcpHttpStreamClient {
           const port = Number(match[1]);
           clearTimeout(timer);
           resolve(port);
-          rl.close();
         } else {
           // Log non-port stdout lines (could be startup messages)
           log.debug({ pid: this.child?.pid }, '[acp-http stdout] %s', line.slice(0, 200));
@@ -580,7 +579,6 @@ export class AcpHttpStreamClient {
         body,
         signal: controller.signal,
       });
-      clearTimeout(timer);
 
       if (!resp.ok) {
         const text = await resp.text();
@@ -601,6 +599,8 @@ export class AcpHttpStreamClient {
       if (err instanceof AcpProtocolError) throw err;
       if (controller.signal.aborted) throw new AcpTimeoutError(method, timeoutMs);
       throw err;
+    } finally {
+      clearTimeout(timer);
     }
   }
 

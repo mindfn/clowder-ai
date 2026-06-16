@@ -95,7 +95,7 @@ describe('AcpHttpStreamClient', () => {
     }
   });
 
-  it('initializes when stdout port discovery line closes readline after match', async () => {
+  it('initializes when stdout port discovery line is matched', async () => {
     const seenMethods = [];
     server = await startJsonRpcServer((message) => {
       seenMethods.push(message.method);
@@ -122,6 +122,88 @@ describe('AcpHttpStreamClient', () => {
 
     assert.equal(result.agentInfo.name, 'http-acp');
     assert.deepEqual(seenMethods, ['initialize']);
+  });
+
+  it('keeps draining stdout after discovering the HTTP port', async () => {
+    server = await startJsonRpcServer((message) => {
+      if (message.method === 'initialize') {
+        return { jsonrpc: '2.0', id: message.id, result: INIT_RESULT };
+      }
+      return { jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'not found' } };
+    });
+    const { child, agentStdout } = createMockChild();
+    const port = serverPort(server);
+
+    client = new AcpHttpStreamClient({
+      command: 'fake-http-acp',
+      args: [],
+      cwd: '/tmp',
+      spawnFn: () => {
+        setImmediate(() => agentStdout.write(`Listening on port ${port}\n`));
+        return child;
+      },
+      portDiscoveryTimeoutMs: 500,
+    });
+
+    await client.initialize();
+
+    let backpressuredAt = -1;
+    for (let i = 0; i < 1000; i++) {
+      if (!agentStdout.write(`${'x'.repeat(1024)}\n`)) {
+        backpressuredAt = i;
+        break;
+      }
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(backpressuredAt, -1, `stdout stopped draining after chunk ${backpressuredAt}`);
+    assert.equal(agentStdout.readableLength, 0);
+  });
+
+  it('keeps HTTP request timeouts active until JSON bodies are fully read', async () => {
+    let sessionNewStarted = false;
+
+    server = await startJsonRpcServer((message, res) => {
+      if (message.method === 'initialize') {
+        return { jsonrpc: '2.0', id: message.id, result: INIT_RESULT };
+      }
+      if (message.method === 'session/new') {
+        sessionNewStarted = true;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.write('{"jsonrpc":"2.0"');
+        setTimeout(() => {
+          res.destroy();
+        }, 1000);
+        return undefined;
+      }
+      return { jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'not found' } };
+    });
+    const { child, agentStdout } = createMockChild();
+    const port = serverPort(server);
+
+    client = new AcpHttpStreamClient({
+      command: 'fake-http-acp',
+      args: [],
+      cwd: '/tmp',
+      spawnFn: () => {
+        setImmediate(() => agentStdout.write(`Listening on port ${port}\n`));
+        return child;
+      },
+      portDiscoveryTimeoutMs: 500,
+    });
+
+    await client.initialize();
+
+    await assert.rejects(
+      () =>
+        withTimeout(
+          client.httpRequest('session/new', { cwd: '/tmp', mcpServers: [] }, 100),
+          500,
+          'httpRequest did not settle after the configured timeout',
+        ),
+      /ACP timeout: session\/new did not respond within 100ms/,
+    );
+    assert.equal(sessionNewStarted, true);
   });
 
   it('rejects prompt streams that close before the final JSON-RPC response', async () => {
