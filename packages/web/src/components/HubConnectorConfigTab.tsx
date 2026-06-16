@@ -255,15 +255,17 @@ export function HubConnectorConfigTab({ refreshKey }: { refreshKey?: number }) {
                         </div>
                         {idx === 0 && (
                           <div className="ml-[26px] space-y-2.5">
-                            <a
-                              href={platform.docsUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="console-inline-link"
-                            >
-                              <ExternalLinkIcon />
-                              <span>{new URL(platform.docsUrl).hostname} → 查看官方文档</span>
-                            </a>
+                            {platform.docsUrl && URL.canParse(platform.docsUrl) && (
+                              <a
+                                href={platform.docsUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="console-inline-link"
+                              >
+                                <ExternalLinkIcon />
+                                <span>{new URL(platform.docsUrl).hostname} → 查看官方文档</span>
+                              </a>
+                            )}
                             {/* Operations (ActionRenderer) — from YAML manifest */}
                             {platform.operations?.map((op) => (
                               <ActionRenderer
