@@ -31,9 +31,16 @@ describe('getContextWindowFallback', () => {
     assert.equal(getContextWindowFallback('gemini-2.5-pro-exp'), 1_000_000);
   });
 
+  test('normalizes provider-prefixed model ids before lookup', async () => {
+    assert.equal(getContextWindowFallback('openai-compat/gpt-5.3'), 128_000);
+    assert.equal(getContextWindowFallback('anthropic/claude-opus-4-6'), 200_000);
+    assert.equal(getContextWindowFallback('google/gemini-3-pro'), 1_000_000);
+  });
+
   test('returns undefined for unknown models', async () => {
     assert.equal(getContextWindowFallback('unknown-model'), undefined);
     assert.equal(getContextWindowFallback(''), undefined);
+    assert.equal(getContextWindowFallback('unknown-provider/unknown-model'), undefined);
   });
 
   test('covers all expected model families', async () => {

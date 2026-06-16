@@ -754,6 +754,15 @@ export async function startConnectorGateway(
     log.warn('[F141] GitHub Repo Inbox partially configured — set all 3 env vars + Redis to enable');
   }
 
+  const streamableAdapters = new Map<string, IStreamableOutboundAdapter>();
+  const syncStreamableAdapter = (connectorId: string, adapter: IOutboundAdapter): void => {
+    if ('sendPlaceholder' in adapter && 'editMessage' in adapter) {
+      streamableAdapters.set(connectorId, adapter as IStreamableOutboundAdapter);
+    } else {
+      streamableAdapters.delete(connectorId);
+    }
+  };
+
   // ── WeComBot: dynamic start/stop lifecycle (F132 Phase E — Hub guided setup) ──
   const startWeComBotStream = async (botId: string, secret: string) => {
     if (!wecomBotPlugin) {
@@ -781,10 +790,12 @@ export async function startConnectorGateway(
     }
 
     adapters.set('wecom-bot', adapter);
+    syncStreamableAdapter('wecom-bot', adapter);
     plugins.set('wecom-bot', wecomBotPlugin);
     wecomBotStopFn = async () => {
       if (inboundHandle) await inboundHandle.stop();
       adapters.delete('wecom-bot');
+      streamableAdapters.delete('wecom-bot');
       connectorStopFns.delete('wecom-bot');
     };
     connectorStopFns.set('wecom-bot', wecomBotStopFn);
@@ -854,11 +865,8 @@ export async function startConnectorGateway(
   });
 
   // Build streamable adapters map (only adapters with sendPlaceholder + editMessage)
-  const streamableAdapters = new Map<string, IStreamableOutboundAdapter>();
   for (const [id, adapter] of adapters) {
-    if ('sendPlaceholder' in adapter && 'editMessage' in adapter) {
-      streamableAdapters.set(id, adapter as IStreamableOutboundAdapter);
-    }
+    syncStreamableAdapter(id, adapter);
   }
 
   const streamingHook = new StreamingOutboundHook({
@@ -918,6 +926,7 @@ export async function startConnectorGateway(
 
     const onMessage = createOnMessage(connectorId, connectorRouter);
     adapters.set(connectorId, adapter);
+    syncStreamableAdapter(connectorId, adapter);
 
     if (plugin.createWebhookHandler) {
       const wh = plugin.createWebhookHandler(adapter, onMessage, ctx);
@@ -965,6 +974,7 @@ export async function startConnectorGateway(
 
     // Remove adapter, webhook handler, media downloader
     adapters.delete(connectorId);
+    streamableAdapters.delete(connectorId);
     webhookHandlers.delete(connectorId);
     mediaService.unregisterDownloadFn(connectorId);
 

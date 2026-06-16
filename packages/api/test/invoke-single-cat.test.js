@@ -773,6 +773,90 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     assert.equal(usageInfos.length, 0, 'should not yield invocation_usage when no usage data');
   });
 
+  it('OpenCode agent_loop preserves metadata.usage telemetry while staying user-invisible', async () => {
+    const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
+    const sessionChainStore = new SessionChainStore();
+    const registrySnapshot = catRegistry.getAllConfigs();
+    const opencodeConfig = catRegistry.tryGet('opencode')?.config;
+    assert.ok(opencodeConfig, 'opencode config should exist in registry');
+    const testCatId = 'opencode-agent-loop-test';
+    catRegistry.register(testCatId, {
+      ...opencodeConfig,
+      id: testCatId,
+      mentionPatterns: [`@${testCatId}`],
+    });
+
+    const service = {
+      l0CompilerFn: dummyL0CompilerFn,
+      async *invoke() {
+        yield { type: 'session_init', catId: testCatId, sessionId: 'oc-usage', timestamp: Date.now() };
+        yield {
+          type: 'agent_loop',
+          catId: testCatId,
+          timestamp: Date.now(),
+          metadata: {
+            provider: 'opencode',
+            model: 'openai-compat/gpt-5.3',
+            usage: {
+              inputTokens: 64000,
+              outputTokens: 1200,
+            },
+          },
+        };
+        yield { type: 'done', catId: testCatId, timestamp: Date.now() };
+      },
+    };
+
+    let msgs;
+    try {
+      msgs = await collect(
+        invokeSingleCat(
+          { ...makeDeps(), sessionChainStore },
+          {
+            catId: testCatId,
+            service,
+            prompt: 'test',
+            userId: 'user1',
+            threadId: 'thread-opencode-agent-loop-usage',
+            isLastCat: true,
+          },
+        ),
+      );
+    } finally {
+      catRegistry.reset();
+      for (const [id, config] of Object.entries(registrySnapshot)) {
+        catRegistry.register(id, config);
+      }
+    }
+
+    assert.equal(
+      msgs.some((m) => m.type === 'agent_loop'),
+      false,
+      'agent_loop must remain telemetry-only and never be yielded to clients',
+    );
+    const usageInfos = msgs.filter((m) => {
+      if (m.type !== 'system_info') return false;
+      try {
+        return JSON.parse(m.content).type === 'invocation_usage';
+      } catch {
+        return false;
+      }
+    });
+    assert.equal(usageInfos.length, 1, 'agent_loop metadata.usage must still emit invocation_usage');
+    assert.equal(JSON.parse(usageInfos[0].content).usage.inputTokens, 64000);
+
+    const healthInfos = msgs.filter((m) => {
+      if (m.type !== 'system_info') return false;
+      try {
+        return JSON.parse(m.content).type === 'context_health';
+      } catch {
+        return false;
+      }
+    });
+    assert.equal(healthInfos.length, 1, 'agent_loop metadata.usage must still emit context_health');
+    assert.equal(JSON.parse(healthInfos[0].content).health.windowTokens, 128000);
+  });
+
   it('F24: creates SessionRecord on session_init when sessionChainStore provided', async () => {
     const { SessionChainStore } = await import('../dist/domains/cats/services/stores/ports/SessionChainStore.js');
     const sessionChainStore = new SessionChainStore();

@@ -114,6 +114,56 @@ describe('ConnectorGateway Bootstrap', () => {
     }
   });
 
+  it('dynamic WeCom Bot start registers adapter with StreamingOutboundHook', async () => {
+    const { WeComBotAdapter } = await import(
+      '../dist/infrastructure/connectors/im-connectors/wecom-bot/WeComBotAdapter.js'
+    );
+    const originalHydrate = WeComBotAdapter.prototype.hydrateGroupChatIds;
+    const originalStart = WeComBotAdapter.prototype.startStream;
+    const originalSendPlaceholder = WeComBotAdapter.prototype.sendPlaceholder;
+    const originalEditMessage = WeComBotAdapter.prototype.editMessage;
+    const placeholderCalls = [];
+
+    WeComBotAdapter.prototype.hydrateGroupChatIds = async function stubHydrate() {};
+    WeComBotAdapter.prototype.startStream = async function stubStart() {};
+    WeComBotAdapter.prototype.sendPlaceholder = async function stubPlaceholder(chatId, text) {
+      placeholderCalls.push({ chatId, text });
+      return 'wecom-placeholder-1';
+    };
+    WeComBotAdapter.prototype.editMessage = async function stubEditMessage() {};
+
+    const bindingStore = {
+      async getByThread(threadId) {
+        if (threadId !== 'thread-wecom-stream') return [];
+        return [
+          {
+            connectorId: 'wecom-bot',
+            externalChatId: 'wecom-chat-1',
+            threadId,
+            userId: 'owner-1',
+            createdAt: Date.now(),
+          },
+        ];
+      },
+    };
+
+    try {
+      const handle = await startConnectorGateway({}, { ...baseDeps, bindingStore });
+      await handle.startWeComBotStream('bot-id', 'bot-secret');
+      await handle.streamingHook.onStreamStart('thread-wecom-stream', 'opus');
+
+      assert.equal(placeholderCalls.length, 1, 'dynamic WeCom Bot adapter must receive stream placeholder');
+      assert.equal(placeholderCalls[0].chatId, 'wecom-chat-1');
+
+      await handle.stop();
+    } finally {
+      WeComBotAdapter.prototype.hydrateGroupChatIds = originalHydrate;
+      WeComBotAdapter.prototype.startStream = originalStart;
+      WeComBotAdapter.prototype.sendPlaceholder = originalSendPlaceholder;
+      WeComBotAdapter.prototype.editMessage = originalEditMessage;
+    }
+  });
+
   it('creates gateway without feishu when verification token missing (fail-closed)', async () => {
     const config = {
       feishuAppId: 'test-app-id',

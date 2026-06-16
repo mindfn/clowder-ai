@@ -26,11 +26,18 @@ export const CONTEXT_WINDOW_SIZES: Record<string, number> = {
   'gemini-3.1-pro-preview': 1_000_000,
 };
 
+function normalizeContextWindowModel(model: string): string {
+  const trimmed = model.trim();
+  if (!trimmed.includes('/')) return trimmed;
+  return trimmed.split('/').filter(Boolean).at(-1) ?? trimmed;
+}
+
 export function getContextWindowFallback(model: string): number | undefined {
-  if (CONTEXT_WINDOW_SIZES[model]) return CONTEXT_WINDOW_SIZES[model];
+  const normalizedModel = normalizeContextWindowModel(model);
+  if (CONTEXT_WINDOW_SIZES[normalizedModel]) return CONTEXT_WINDOW_SIZES[normalizedModel];
   // Try prefix match (e.g. 'claude-opus-4-6-20260101' matches 'claude-opus-4-6')
   for (const [key, value] of Object.entries(CONTEXT_WINDOW_SIZES)) {
-    if (model.startsWith(key)) return value;
+    if (normalizedModel.startsWith(key)) return value;
   }
   return undefined;
 }

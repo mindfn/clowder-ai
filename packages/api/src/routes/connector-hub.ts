@@ -916,7 +916,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
     if (changedKeys.length > 0) {
       configEventBus.emitChange({
         source: 'config-store',
-        scope: 'key',
+        scope: manifest.source === 'external' ? 'file' : 'key',
         changedKeys,
         changeSetId: createChangeSetId(),
         timestamp: Date.now(),

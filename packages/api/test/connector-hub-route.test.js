@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import Fastify from 'fastify';
 
-const { connectorHubRoutes } = await import('../dist/routes/connector-hub.js');
+const { connectorHubRoutes, invalidateManifestCache } = await import('../dist/routes/connector-hub.js');
+const { configEventBus } = await import('../dist/config/config-event-bus.js');
 
 const OWNER_ID = 'owner-1';
 const AUTH_HEADERS = { 'x-cat-cafe-user': OWNER_ID, 'x-test-session-user': OWNER_ID };
@@ -981,6 +982,81 @@ describe('P1 — connector writes from non-loopback without configured owner', (
     assert.notEqual(res.statusCode, 403, 'loopback connector write without owner should NOT be 403');
 
     await app.close();
+  });
+});
+
+describe('PUT /api/connectors/:connectorId/config — external plugin reload', () => {
+  it('emits file-scope reload events for external connector env keys', async () => {
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'external-config-reload-'));
+    const pluginId = 'reload-probe';
+    const pluginDir = join(tmpDir, '.cat-cafe', 'plugins', pluginId);
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: Reload Probe',
+        'nameEn: Reload Probe',
+        'version: 1.0.0',
+        'source: external',
+        "themeColor: '#336699'",
+        'icon:',
+        '  type: png',
+        '  src: /test.png',
+        'docsUrl: https://example.com/reload-probe',
+        'config:',
+        '  - envName: RELOAD_PROBE_TOKEN',
+        '    label: Token',
+        '    sensitive: true',
+        '    required: true',
+        'steps:',
+        '  - text: Save token',
+      ].join('\n'),
+    );
+
+    const previousRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    const captured = [];
+    const unsub = configEventBus.onConfigChange((event) => captured.push(event));
+    process.env.CAT_CAFE_CONFIG_ROOT = tmpDir;
+    invalidateManifestCache();
+
+    try {
+      const app = Fastify();
+      await registerConnectorHub(app, {
+        threadStore: {
+          async list() {
+            return [];
+          },
+        },
+      });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/connectors/${pluginId}/config`,
+        headers: {
+          ...AUTH_HEADERS,
+          'content-type': 'application/json',
+          host: '127.0.0.1:3002',
+          origin: 'http://127.0.0.1:3001',
+        },
+        payload: JSON.stringify({ fields: [{ name: 'RELOAD_PROBE_TOKEN', value: 'secret' }] }),
+      });
+
+      assert.equal(res.statusCode, 200);
+      const event = captured.find((entry) => entry.changedKeys?.includes('RELOAD_PROBE_TOKEN'));
+      assert.ok(event, 'connector config write must emit a reload event');
+      assert.equal(event.scope, 'file', 'external connector keys must not be dropped by static key filtering');
+      assert.deepEqual(event.changedKeys, ['RELOAD_PROBE_TOKEN']);
+
+      await app.close();
+    } finally {
+      unsub();
+      if (previousRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousRoot;
+      invalidateManifestCache();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 

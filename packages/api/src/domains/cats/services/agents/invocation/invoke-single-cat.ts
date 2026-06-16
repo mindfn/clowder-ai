@@ -1920,109 +1920,112 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         });
       }
 
-      if (msg.type === 'done') {
-        // === CAT_RESPONDED / CAT_ERROR 审计 (fire-and-forget) ===
-        // P1 fix: when error was yielded during stream, emit CAT_ERROR instead of CAT_RESPONDED
-        const durationMs = Date.now() - startTime;
-        const auditType = hadStreamError ? AuditEventTypes.CAT_ERROR : AuditEventTypes.CAT_RESPONDED;
-        auditLog
-          .append({
-            type: auditType,
-            threadId,
-            data: {
-              catId,
-              userId,
+      const isUsageOnlyAgentLoop = msg.type === 'agent_loop' && !!msg.metadata?.usage;
+      if (msg.type === 'done' || isUsageOnlyAgentLoop) {
+        if (msg.type === 'done') {
+          // === CAT_RESPONDED / CAT_ERROR 审计 (fire-and-forget) ===
+          // P1 fix: when error was yielded during stream, emit CAT_ERROR instead of CAT_RESPONDED
+          const durationMs = Date.now() - startTime;
+          const auditType = hadStreamError ? AuditEventTypes.CAT_ERROR : AuditEventTypes.CAT_RESPONDED;
+          auditLog
+            .append({
+              type: auditType,
+              threadId,
+              data: {
+                catId,
+                userId,
+                invocationId,
+                durationMs,
+                ...(hadStreamError ? { error: lastErrorMessage ?? 'unknown stream error' } : {}),
+                isFinal: isLastCat,
+                metadata: msg.metadata,
+              },
+            })
+            .catch((err) => {
+              log.warn({ threadId, invocationId, err }, `${auditType} audit write failed`);
+            });
+
+          // Increment session messageCount (best-effort).
+          // This counter is critical for unseal safety: empty sessions (0 messages)
+          // can be displaced, but sessions with user-visible output must not be
+          // silently sealed or folded away before a final done event arrives.
+          if (isBgCarrier && bgChainKey && deps.sessionChainStore && sessionChainActive) {
+            // F198 Bug #3: bg updates its chainKey record — messageCount (unless
+            // already counted this turn via recordActiveSessionUserVisibleOutput)
+            // + latestResumeSessionId (the daemon's new fork UUID from done
+            // metadata = the NEXT round's `--resume` target).
+            try {
+              const bgRec = await deps.sessionChainStore.getByChainKey(bgChainKey);
+              if (bgRec) {
+                const countThisTurn = !userVisibleOutputCountedSessionIds.has(bgRec.id);
+                const newCount = (bgRec.messageCount ?? 0) + 1;
+                const resumeSessionId = msg.metadata?.resumeSessionId;
+                const updateResume =
+                  typeof resumeSessionId === 'string' && resumeSessionId !== bgRec.latestResumeSessionId;
+                await deps.sessionChainStore.update(bgRec.id, {
+                  updatedAt: Date.now(),
+                  ...(countThisTurn ? { messageCount: newCount } : {}),
+                  ...(updateResume ? { latestResumeSessionId: resumeSessionId } : {}),
+                });
+                if (countThisTurn) {
+                  sessionRounds.record(newCount, { [AGENT_ID]: catId });
+                }
+              }
+            } catch {
+              /* best-effort: messageCount miss won't break invocation */
+            }
+          } else if (deps.sessionChainStore && sessionChainActive) {
+            try {
+              const activeRec = await deps.sessionChainStore.getActive(catId, threadId);
+              if (activeRec) {
+                if (!userVisibleOutputCountedSessionIds.has(activeRec.id)) {
+                  const newCount = (activeRec.messageCount ?? 0) + 1;
+                  await deps.sessionChainStore.update(activeRec.id, {
+                    messageCount: newCount,
+                    updatedAt: Date.now(),
+                  });
+                  sessionRounds.record(newCount, { [AGENT_ID]: catId });
+                }
+              }
+            } catch {
+              /* best-effort: messageCount miss won't break invocation */
+            }
+          }
+
+          // Push completion metrics for frontend status panel
+          outputs.push({
+            type: 'system_info' as const,
+            catId,
+            content: JSON.stringify({
+              type: 'invocation_metrics',
+              kind: 'invocation_complete',
               invocationId,
               durationMs,
-              ...(hadStreamError ? { error: lastErrorMessage ?? 'unknown stream error' } : {}),
-              isFinal: isLastCat,
-              metadata: msg.metadata,
-            },
-          })
-          .catch((err) => {
-            log.warn({ threadId, invocationId, err }, `${auditType} audit write failed`);
+              sessionId: msg.metadata?.sessionId,
+            }),
+            timestamp: Date.now(),
           });
 
-        // Increment session messageCount (best-effort).
-        // This counter is critical for unseal safety: empty sessions (0 messages)
-        // can be displaced, but sessions with user-visible output must not be
-        // silently sealed or folded away before a final done event arrives.
-        if (isBgCarrier && bgChainKey && deps.sessionChainStore && sessionChainActive) {
-          // F198 Bug #3: bg updates its chainKey record — messageCount (unless
-          // already counted this turn via recordActiveSessionUserVisibleOutput)
-          // + latestResumeSessionId (the daemon's new fork UUID from done
-          // metadata = the NEXT round's `--resume` target).
-          try {
-            const bgRec = await deps.sessionChainStore.getByChainKey(bgChainKey);
-            if (bgRec) {
-              const countThisTurn = !userVisibleOutputCountedSessionIds.has(bgRec.id);
-              const newCount = (bgRec.messageCount ?? 0) + 1;
-              const resumeSessionId = msg.metadata?.resumeSessionId;
-              const updateResume =
-                typeof resumeSessionId === 'string' && resumeSessionId !== bgRec.latestResumeSessionId;
-              await deps.sessionChainStore.update(bgRec.id, {
-                updatedAt: Date.now(),
-                ...(countThisTurn ? { messageCount: newCount } : {}),
-                ...(updateResume ? { latestResumeSessionId: resumeSessionId } : {}),
-              });
-              if (countThisTurn) {
-                sessionRounds.record(newCount, { [AGENT_ID]: catId });
-              }
+          // F070 Phase 3a: Capture execution digest for external project dispatch (best-effort)
+          if (capturedMissionPack && workingDirectory && deps.executionDigestStore) {
+            try {
+              const { captureExecutionDigest } = await import(
+                '../../../../../config/governance/execution-digest-capture.js'
+              );
+              const digestInput = captureExecutionDigest(
+                capturedMissionPack,
+                {
+                  summary: '', // Populated by HandoffDigestGenerator in future enhancement
+                  filesChanged: [],
+                  blocked: false,
+                  hadError: hadStreamError,
+                },
+                { projectPath: workingDirectory, threadId, catId: catId as string, userId },
+              );
+              deps.executionDigestStore.create(digestInput);
+            } catch {
+              /* best-effort: digest capture failure doesn't break invocation */
             }
-          } catch {
-            /* best-effort: messageCount miss won't break invocation */
-          }
-        } else if (deps.sessionChainStore && sessionChainActive) {
-          try {
-            const activeRec = await deps.sessionChainStore.getActive(catId, threadId);
-            if (activeRec) {
-              if (!userVisibleOutputCountedSessionIds.has(activeRec.id)) {
-                const newCount = (activeRec.messageCount ?? 0) + 1;
-                await deps.sessionChainStore.update(activeRec.id, {
-                  messageCount: newCount,
-                  updatedAt: Date.now(),
-                });
-                sessionRounds.record(newCount, { [AGENT_ID]: catId });
-              }
-            }
-          } catch {
-            /* best-effort: messageCount miss won't break invocation */
-          }
-        }
-
-        // Push completion metrics for frontend status panel
-        outputs.push({
-          type: 'system_info' as const,
-          catId,
-          content: JSON.stringify({
-            type: 'invocation_metrics',
-            kind: 'invocation_complete',
-            invocationId,
-            durationMs,
-            sessionId: msg.metadata?.sessionId,
-          }),
-          timestamp: Date.now(),
-        });
-
-        // F070 Phase 3a: Capture execution digest for external project dispatch (best-effort)
-        if (capturedMissionPack && workingDirectory && deps.executionDigestStore) {
-          try {
-            const { captureExecutionDigest } = await import(
-              '../../../../../config/governance/execution-digest-capture.js'
-            );
-            const digestInput = captureExecutionDigest(
-              capturedMissionPack,
-              {
-                summary: '', // Populated by HandoffDigestGenerator in future enhancement
-                filesChanged: [],
-                blocked: false,
-                hadError: hadStreamError,
-              },
-              { projectPath: workingDirectory, threadId, catId: catId as string, userId },
-            );
-            deps.executionDigestStore.create(digestInput);
-          } catch {
-            /* best-effort: digest capture failure doesn't break invocation */
           }
         }
 
@@ -2304,6 +2307,11 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
               }
             }
           }
+        }
+
+        if (isUsageOnlyAgentLoop) {
+          if (invocationSpan) recordAgentLoop(invocationSpan);
+          return outputs;
         }
 
         outputs.push({ ...msg, isFinal: isLastCat });
