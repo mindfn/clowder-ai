@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
+import { unregisterConnectorDefinition } from '@cat-cafe/shared';
 import {
   applyConnectorGatewayAutostartPolicy,
   isPreconfiguredConnectorAutostartEnabled,
@@ -1113,6 +1114,183 @@ describe('ConnectorGateway Bootstrap', () => {
       } else {
         process.env.SIBLING_CACHE_TOKEN = savedSiblingToken;
       }
+      clearExternalConnectorRegistry();
+      clearConnectorConfigCache();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('deduplicates installed and legacy external connectors with the same id before startup', async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'duplicate-external-connector-'));
+    const pluginId = 'duplicate-external-probe';
+    const pluginDir = join(resolvePluginsDir(tempRoot), pluginId);
+    const legacyPath = join(tempRoot, 'legacy-duplicate-external.mjs');
+    const starts = [];
+    let handle;
+
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: Duplicate External Probe',
+        'nameEn: Duplicate External Probe',
+        'version: 1.0.0',
+        'icon:',
+        '  type: png',
+        '  src: /test.png',
+        "themeColor: '#336699'",
+        'docsUrl: https://example.com',
+        'config: []',
+        'steps:',
+        '  - text: test',
+      ].join('\n'),
+    );
+    const pluginSource = (label) => `export default {
+      id: '${pluginId}',
+      definition: {
+        id: '${pluginId}',
+        displayName: '${label}',
+        icon: { type: 'png', src: '/test.png' },
+        themeColor: '#336699',
+        description: '${label}',
+      },
+      requiredEnvKeys: [],
+      optionalEnvKeys: [],
+      isConfigured() { return true; },
+      createAdapter() { return { id: '${pluginId}', sendMessage() {} }; },
+      async startInbound() {
+        globalThis.__duplicateExternalStarts.push('${label}');
+        return { async stop() {} };
+      },
+    };`;
+    writeFileSync(join(pluginDir, 'index.js'), pluginSource('installed'));
+    writeFileSync(legacyPath, pluginSource('legacy'));
+
+    const savedConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    const savedPlugins = process.env.IM_CONNECTOR_PLUGINS;
+    process.env.CAT_CAFE_CONFIG_ROOT = tempRoot;
+    process.env.IM_CONNECTOR_PLUGINS = legacyPath;
+    globalThis.__duplicateExternalStarts = starts;
+
+    try {
+      clearExternalConnectorRegistry();
+      clearConnectorConfigCache();
+      handle = await startConnectorGateway({}, baseDeps);
+
+      assert.deepStrictEqual(
+        starts,
+        ['installed'],
+        'installed and legacy connectors with the same id must not both start inbound lifecycles',
+      );
+      assert.equal(handle.adapterRegistry.get(pluginId)?.id, pluginId);
+    } finally {
+      if (handle) await handle.stop();
+      if (savedConfigRoot === undefined) {
+        delete process.env.CAT_CAFE_CONFIG_ROOT;
+      } else {
+        process.env.CAT_CAFE_CONFIG_ROOT = savedConfigRoot;
+      }
+      if (savedPlugins === undefined) {
+        delete process.env.IM_CONNECTOR_PLUGINS;
+      } else {
+        process.env.IM_CONNECTOR_PLUGINS = savedPlugins;
+      }
+      delete globalThis.__duplicateExternalStarts;
+      unregisterConnectorDefinition(pluginId);
+      clearExternalConnectorRegistry();
+      clearConnectorConfigCache();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rolls back dynamic activation state when inbound startup fails', async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'activation-rollback-'));
+    const pluginId = 'activation-rollback-probe';
+    const pluginDir = join(resolvePluginsDir(tempRoot), pluginId);
+    const configDir = join(tempRoot, '.cat-cafe', 'im-connector-config');
+    let handle;
+
+    mkdirSync(pluginDir, { recursive: true });
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: Activation Rollback Probe',
+        'nameEn: Activation Rollback Probe',
+        'version: 1.0.0',
+        'icon:',
+        '  type: png',
+        '  src: /test.png',
+        "themeColor: '#336699'",
+        'docsUrl: https://example.com',
+        'config:',
+        '  - envName: ACTIVATION_ROLLBACK_TOKEN',
+        '    label: Token',
+        '    sensitive: true',
+        '    required: true',
+        'steps:',
+        '  - text: test',
+      ].join('\n'),
+    );
+    writeFileSync(
+      join(pluginDir, 'index.js'),
+      `export default {
+        id: '${pluginId}',
+        definition: {
+          id: '${pluginId}',
+          displayName: 'Activation Rollback Probe',
+          icon: { type: 'png', src: '/test.png' },
+          themeColor: '#336699',
+          description: 'activation rollback regression probe',
+        },
+        requiredEnvKeys: ['ACTIVATION_ROLLBACK_TOKEN'],
+        optionalEnvKeys: [],
+        isConfigured(env) { return Boolean(env.ACTIVATION_ROLLBACK_TOKEN); },
+        createAdapter() { return { id: '${pluginId}', sendMessage() {} }; },
+        createWebhookHandler() {
+          return { async handleWebhook() { return { kind: 'skipped' }; } };
+        },
+        async startInbound() {
+          throw new Error('simulated inbound startup failure');
+        },
+      };`,
+    );
+
+    const savedConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    const savedToken = process.env.ACTIVATION_ROLLBACK_TOKEN;
+    process.env.CAT_CAFE_CONFIG_ROOT = tempRoot;
+    delete process.env.ACTIVATION_ROLLBACK_TOKEN;
+
+    try {
+      clearExternalConnectorRegistry();
+      clearConnectorConfigCache();
+      handle = await startConnectorGateway({}, baseDeps);
+      assert.equal(handle.adapterRegistry.has(pluginId), false, 'unconfigured plugin must not start at bootstrap');
+
+      writeFileSync(join(configDir, `${pluginId}.json`), JSON.stringify({ ACTIVATION_ROLLBACK_TOKEN: 'saved-token' }));
+      await assert.rejects(
+        () => handle.activateConnector(pluginId),
+        /simulated inbound startup failure/,
+        'activation must surface inbound startup failures',
+      );
+
+      assert.equal(handle.adapterRegistry.has(pluginId), false, 'failed activation must not publish adapter state');
+      assert.equal(handle.webhookHandlers.has(pluginId), false, 'failed activation must not publish webhook state');
+    } finally {
+      if (handle) await handle.stop();
+      if (savedConfigRoot === undefined) {
+        delete process.env.CAT_CAFE_CONFIG_ROOT;
+      } else {
+        process.env.CAT_CAFE_CONFIG_ROOT = savedConfigRoot;
+      }
+      if (savedToken === undefined) {
+        delete process.env.ACTIVATION_ROLLBACK_TOKEN;
+      } else {
+        process.env.ACTIVATION_ROLLBACK_TOKEN = savedToken;
+      }
+      unregisterConnectorDefinition(pluginId);
       clearExternalConnectorRegistry();
       clearConnectorConfigCache();
       rmSync(tempRoot, { recursive: true, force: true });

@@ -488,11 +488,17 @@ export async function startConnectorGateway(
   const builtinIds = new Set(builtinPlugins.map((p) => p.id));
 
   // Merge installed + legacy external, rejecting ID conflicts
+  const seenExternalIds = new Set<string>();
   const externalPlugins = [...installedPlugins, ...legacyExternalPlugins].filter((ext) => {
     if (builtinIds.has(ext.id)) {
       log.warn({ id: ext.id }, '[Gateway] External connector ID conflicts with built-in — skipped');
       return false;
     }
+    if (seenExternalIds.has(ext.id)) {
+      log.warn({ id: ext.id }, '[Gateway] Duplicate external connector ID — skipped');
+      return false;
+    }
+    seenExternalIds.add(ext.id);
     return true;
   });
   const allPlugins = [...builtinPlugins, ...externalPlugins];
@@ -935,22 +941,44 @@ export async function startConnectorGateway(
     if (plugin.setup) await plugin.setup(adapter, ctx);
 
     const onMessage = createOnMessage(connectorId, connectorRouter);
+    let localWebhookHandler: ConnectorWebhookHandler | undefined;
+    let localInboundHandle: { stop: () => Promise<void> } | undefined;
+    let localMediaDownloadFn: ((platformKey: string, type: string, messageId?: string) => Promise<Buffer>) | undefined;
+    try {
+      if (plugin.createWebhookHandler) {
+        localWebhookHandler = plugin.createWebhookHandler(adapter, onMessage, ctx) ?? undefined;
+      }
+      if (plugin.startInbound) {
+        localInboundHandle = await plugin.startInbound(adapter, onMessage, ctx);
+      }
+      if (plugin.createMediaDownloader) {
+        localMediaDownloadFn = plugin.createMediaDownloader(adapter, ctx);
+      }
+    } catch (stepErr) {
+      if (localInboundHandle) {
+        try {
+          await localInboundHandle.stop();
+        } catch (stopErr) {
+          log.warn(
+            { err: stopErr, id: connectorId },
+            '[ConnectorGateway] Failed to stop inbound during activation rollback',
+          );
+        }
+      }
+      throw stepErr;
+    }
+
     adapters.set(connectorId, adapter);
     syncStreamableAdapter(connectorId, adapter);
-
     if (plugin.createWebhookHandler) {
-      const wh = plugin.createWebhookHandler(adapter, onMessage, ctx);
-      if (wh) webhookHandlers.set(connectorId, wh);
+      if (localWebhookHandler) webhookHandlers.set(connectorId, localWebhookHandler);
     }
-    if (plugin.startInbound) {
-      const handle = await plugin.startInbound(adapter, onMessage, ctx);
-      const stopInbound = () => handle.stop();
+    if (localInboundHandle) {
+      const stopInbound = () => localInboundHandle!.stop();
       stopFns.push(stopInbound);
       connectorStopFns.set(connectorId, stopInbound);
     }
-    if (plugin.createMediaDownloader) {
-      mediaService.registerDownloadFn(connectorId, plugin.createMediaDownloader(adapter, ctx));
-    }
+    if (localMediaDownloadFn) mediaService.registerDownloadFn(connectorId, localMediaDownloadFn);
 
     log.info(
       { id: connectorId },

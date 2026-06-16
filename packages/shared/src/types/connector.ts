@@ -272,9 +272,8 @@ export function isStaticConnectorId(id: string): boolean {
  * Built-in definitions cannot be overridden.
  */
 export function registerConnectorDefinition(def: ConnectorDefinition): void {
-  if (!connectorMap.has(def.id)) {
-    connectorMap.set(def.id, def);
-  }
+  if (staticConnectorIds.has(def.id)) return;
+  connectorMap.set(def.id, def);
 }
 
 /**
