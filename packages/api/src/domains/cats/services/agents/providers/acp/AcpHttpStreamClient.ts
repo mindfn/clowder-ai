@@ -33,10 +33,12 @@ import {
   buildAcpSpawnLogFields,
 } from './AcpClient.js';
 import type {
+  AcpAgentRequest,
   AcpInitializeResult,
   AcpMcpServer,
   AcpNewSessionResult,
   AcpNotification,
+  AcpPermissionRequest,
   AcpPromptResult,
   AcpResponse,
   AcpSessionUpdate,
@@ -251,6 +253,46 @@ export class AcpHttpStreamClient {
       wakeConsumer();
     };
 
+    const failPrompt = (err: unknown) => {
+      promptError = err instanceof Error ? err : new Error(String(err));
+      done = true;
+      wakeConsumer();
+      controller.abort();
+    };
+
+    const enqueueSessionUpdate = (params: AcpSessionUpdate | Record<string, unknown>) => {
+      if (params.sessionId !== sessionId) return;
+
+      queue.push(params as AcpSessionUpdate);
+      eventCount++;
+      lastEventAt = Date.now();
+      idleWarningFired = false;
+
+      const inner = (params.update ?? params) as Record<string, unknown>;
+      const updateType = inner.sessionUpdate as string | undefined;
+      if (updateType === 'tool_call' || updateType === 'permission_pending') {
+        pendingTool = true;
+      } else if (pendingTool && updateType !== 'tool_call_update' && updateType !== 'agent_thought_chunk') {
+        pendingTool = false;
+      }
+      scheduleIdleCheck();
+      resetBudget();
+      wakeConsumer();
+    };
+
+    const handleAgentRequestFromStream = async (msg: Record<string, unknown>, msgId: string | undefined) => {
+      const requestId = msgId ?? `synth-perm-${Date.now()}`;
+      const req = { ...msg, id: requestId } as unknown as AcpAgentRequest;
+      if (req.method === ACP_METHODS.requestPermission) {
+        const params = req.params as Record<string, unknown>;
+        enqueueSessionUpdate({ sessionId: params.sessionId, sessionUpdate: 'permission_pending' });
+      }
+      await this.handleAgentRequest(req);
+    };
+
+    const isAgentRequest = (method: string | undefined, msgId: string | undefined) =>
+      !!method && (!!msgId || method === ACP_METHODS.requestPermission);
+
     const scheduleIdleCheck = () => {
       if (idleTimer) clearTimeout(idleTimer);
       if (done) return;
@@ -333,26 +375,17 @@ export class AcpHttpStreamClient {
               done = true;
               wakeConsumer();
               controller.abort();
+            } else if (isAgentRequest(method, msgId)) {
+              try {
+                await handleAgentRequestFromStream(msg, msgId);
+              } catch (err) {
+                failPrompt(err);
+                return;
+              }
             } else if (method && !msgId) {
               // Notification (session update)
               const params = (msg as unknown as AcpNotification).params as unknown as AcpSessionUpdate;
-              if (params.sessionId !== sessionId) continue;
-
-              queue.push(params);
-              eventCount++;
-              lastEventAt = Date.now();
-              idleWarningFired = false;
-
-              const inner = (params.update ?? params) as Record<string, unknown>;
-              const updateType = inner.sessionUpdate as string | undefined;
-              if (updateType === 'tool_call' || updateType === 'permission_pending') {
-                pendingTool = true;
-              } else if (pendingTool && updateType !== 'tool_call_update' && updateType !== 'agent_thought_chunk') {
-                pendingTool = false;
-              }
-              scheduleIdleCheck();
-              resetBudget();
-              wakeConsumer();
+              enqueueSessionUpdate(params);
             }
           }
         }
@@ -361,7 +394,9 @@ export class AcpHttpStreamClient {
         if (buffer.trim()) {
           try {
             const msg = JSON.parse(buffer.trim()) as Record<string, unknown>;
-            if (msg.id === id && !msg.method) {
+            const msgId = msg.id as string | undefined;
+            const method = msg.method as string | undefined;
+            if (msgId === id && !method) {
               finalResponseReceived = true;
               const resp = msg as unknown as AcpResponse;
               if (resp.error) {
@@ -370,9 +405,15 @@ export class AcpHttpStreamClient {
                 const result = resp.result as unknown as AcpPromptResult;
                 stopReason = result.stopReason;
               }
+            } else if (isAgentRequest(method, msgId)) {
+              await handleAgentRequestFromStream(msg, msgId);
+            } else if (method && !msgId) {
+              const params = (msg as unknown as AcpNotification).params as unknown as AcpSessionUpdate;
+              enqueueSessionUpdate(params);
             }
-          } catch {
-            /* ignore */
+          } catch (err) {
+            failPrompt(err);
+            return;
           }
         }
         if (!finalResponseReceived && !promptError && !controller.signal.aborted) {
@@ -555,5 +596,62 @@ export class AcpHttpStreamClient {
       if (controller.signal.aborted) throw new AcpTimeoutError(method, timeoutMs);
       throw err;
     }
+  }
+
+  private async handleAgentRequest(req: AcpAgentRequest): Promise<void> {
+    if (req.method === ACP_METHODS.requestPermission) {
+      const respond = (result: { optionId: string }) => {
+        const acpResult = {
+          outcome: { outcome: 'selected' as const, optionId: result.optionId },
+        };
+        return this.sendAgentResponse({ jsonrpc: '2.0', id: req.id, result: acpResult });
+      };
+
+      if (this.config.permissionHandler) {
+        try {
+          let responsePromise: Promise<void> | null = null;
+          this.config.permissionHandler(req, (result) => {
+            responsePromise = respond(result);
+          });
+          if (responsePromise) await responsePromise;
+        } catch (err) {
+          log.error('HTTP permissionHandler threw: %s', (err as Error).message);
+          await this.sendAgentResponse({
+            jsonrpc: '2.0',
+            id: req.id,
+            error: { code: -32603, message: `Permission handler error: ${(err as Error).message}` },
+          });
+        }
+      } else {
+        const params = req.params as unknown as AcpPermissionRequest;
+        const allowOption = params.options?.find((o) => o.kind === 'allow_once') ?? params.options?.[0];
+        await respond({ optionId: allowOption?.optionId ?? 'allow_once' });
+      }
+      return;
+    }
+
+    log.warn('Unhandled ACP HTTP agent request: %s', req.method);
+    await this.sendAgentResponse({
+      jsonrpc: '2.0',
+      id: req.id,
+      error: { code: -32601, message: `Client does not handle ${req.method}` },
+    });
+  }
+
+  private async sendAgentResponse(response: AcpResponse): Promise<void> {
+    if (!this.port || this.closed || this.exited) {
+      throw new Error('ACP HTTP client not connected');
+    }
+
+    const resp = await fetch(this.baseUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(response),
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`ACP HTTP agent response ${resp.status}: ${text}`);
+    }
+    log.debug({ id: response.id, hasError: !!response.error }, 'ACP HTTP agent response sent');
   }
 }

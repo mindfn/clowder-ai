@@ -49,7 +49,7 @@ function startJsonRpcServer(handler) {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const message = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    const response = handler(message, res);
+    const response = await handler(message, res);
     if (response === undefined) return;
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(`${JSON.stringify(response)}\n`);
@@ -163,5 +163,92 @@ describe('AcpHttpStreamClient', () => {
     assert.equal(events[0].update.sessionUpdate, 'agent_message_chunk');
     assert.ok(caught, 'Expected truncated prompt stream to reject');
     assert.match(caught.message, /closed before final prompt response/);
+  });
+
+  it('responds to id-bearing permission requests on prompt streams', async () => {
+    let resolvePermissionResponse;
+    const permissionResponseReceived = new Promise((resolve) => {
+      resolvePermissionResponse = resolve;
+    });
+    let capturedPermissionResponse = null;
+
+    server = await startJsonRpcServer((message, res) => {
+      if (message.method === 'initialize') {
+        return { jsonrpc: '2.0', id: message.id, result: INIT_RESULT };
+      }
+      if (message.method === 'session/new') {
+        return { jsonrpc: '2.0', id: message.id, result: { sessionId: 'http-session' } };
+      }
+      if (message.method === 'session/prompt') {
+        res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+        res.write(
+          `${JSON.stringify({
+            jsonrpc: '2.0',
+            id: 'perm-http',
+            method: 'session/request_permission',
+            params: {
+              sessionId: 'http-session',
+              options: [
+                { optionId: 'allow_once', name: 'Allow once', kind: 'allow_once' },
+                { optionId: 'reject_once', name: 'Reject', kind: 'reject_once' },
+              ],
+            },
+          })}\n`,
+        );
+        permissionResponseReceived.then(() => {
+          res.write(
+            `${JSON.stringify({
+              jsonrpc: '2.0',
+              method: 'session/update',
+              params: {
+                sessionId: 'http-session',
+                update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'approved' } },
+              },
+            })}\n`,
+          );
+          res.end(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { stopReason: 'end_turn' } })}\n`);
+        });
+        return undefined;
+      }
+      if (message.id === 'perm-http' && !message.method) {
+        capturedPermissionResponse = message;
+        res.writeHead(204);
+        res.end();
+        resolvePermissionResponse();
+        return undefined;
+      }
+      return { jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'not found' } };
+    });
+    const { child, agentStdout } = createMockChild();
+    const port = serverPort(server);
+
+    client = new AcpHttpStreamClient({
+      command: 'fake-http-acp',
+      args: [],
+      cwd: '/tmp',
+      spawnFn: () => {
+        setImmediate(() => agentStdout.write(`Listening on port ${port}\n`));
+        return child;
+      },
+      portDiscoveryTimeoutMs: 500,
+    });
+
+    await client.initialize();
+    const session = await client.newSession();
+    const events = [];
+    let caught = null;
+    try {
+      for await (const event of client.promptStream(session.sessionId, 'hello', { timeoutMs: 300 })) {
+        events.push(event);
+      }
+    } catch (err) {
+      caught = err;
+    }
+
+    assert.equal(caught, null, `Permission request should not stall: ${caught?.message}`);
+    assert.ok(capturedPermissionResponse, 'client should POST a JSON-RPC response for the permission request');
+    assert.equal(capturedPermissionResponse.result?.outcome?.outcome, 'selected');
+    assert.equal(capturedPermissionResponse.result?.outcome?.optionId, 'allow_once');
+    assert.equal(events.at(-1)?.update?.content?.text, 'approved');
   });
 });
