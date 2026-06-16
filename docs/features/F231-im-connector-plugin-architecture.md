@@ -465,6 +465,7 @@ for each ValueConfigField:
 **B-3: 前端插件管理 UI：**
 - [x] AC-B8: `HubConnectorPluginsSection` 组件——列表 + 上传 + 卸载，集成在 IM Connectors 页底部（Why-2）
 - [x] AC-B9: 安装/更新/卸载操作触发父组件 connector 列表刷新（Why-2+4）
+- [x] AC-B10: 安装插件按钮 hover tooltip + 插件开发文档链接（指向 `docs/guides/im-connector-plugin-guide.md`，需与指南同步刷新）（Why-2）
 
 ### Phase C（内置 connector 统一结构）
 - [x] AC-C1: 7 个内置 connector 使用与外部插件相同的目录结构（`connector.yaml` + `index.ts` + adapter），无需额外改造
