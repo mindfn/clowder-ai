@@ -116,6 +116,7 @@ interface ConnectorSecretRouteUpdate {
 
 async function applyAuditedConnectorSecretUpdates(
   app: FastifyInstance,
+  connectorId: string,
   updates: ConnectorSecretRouteUpdate[],
   opts: Pick<ConnectorHubRoutesOptions, 'envFilePath'>,
   operator: string,
@@ -125,6 +126,17 @@ async function applyAuditedConnectorSecretUpdates(
   if (validationError) return { status: 400, error: validationError };
 
   await applyConnectorSecretUpdates(updates, { envFilePath: opts.envFilePath });
+  const projectRoot = resolveActiveProjectRoot();
+  const { changedKeys } = writeConnectorConfig(projectRoot, connectorId, updates);
+  if (changedKeys.length > 0) {
+    configEventBus.emitChange({
+      source: 'config-store',
+      scope: 'key',
+      changedKeys,
+      changeSetId: createChangeSetId(),
+      timestamp: Date.now(),
+    });
+  }
 
   try {
     await getEventAuditLog().append({
@@ -629,7 +641,14 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
       if (currentMode === 'webhook' && (!verificationToken || verificationToken.trim() === '')) {
         updates.push({ name: 'FEISHU_CONNECTION_MODE', value: 'websocket' });
       }
-      const writeError = await applyAuditedConnectorSecretUpdates(app, updates, opts, userId, 'feishu-qrcode-confirm');
+      const writeError = await applyAuditedConnectorSecretUpdates(
+        app,
+        'feishu',
+        updates,
+        opts,
+        userId,
+        'feishu-qrcode-confirm',
+      );
       if (writeError) {
         reply.status(writeError.status);
         return { error: writeError.error };
@@ -649,6 +668,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
 
     const writeError = await applyAuditedConnectorSecretUpdates(
       app,
+      'feishu',
       [
         { name: 'FEISHU_APP_ID', value: null },
         { name: 'FEISHU_APP_SECRET', value: null },
@@ -710,6 +730,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
         }
         const writeError = await applyAuditedConnectorSecretUpdates(
           app,
+          'weixin',
           [{ name: 'WEIXIN_BOT_TOKEN', value: status.botToken }],
           opts,
           userId,
@@ -768,6 +789,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
     await adapter.disconnect();
     const writeError = await applyAuditedConnectorSecretUpdates(
       app,
+      'weixin',
       [{ name: 'WEIXIN_BOT_TOKEN', value: null }],
       opts,
       userId,
@@ -816,6 +838,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
 
       const writeError = await applyAuditedConnectorSecretUpdates(
         app,
+        'wecom-bot',
         [
           { name: 'WECOM_BOT_ID', value: botId },
           { name: 'WECOM_BOT_SECRET', value: secret },
@@ -835,6 +858,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
         } catch (startErr) {
           await applyAuditedConnectorSecretUpdates(
             app,
+            'wecom-bot',
             [
               { name: 'WECOM_BOT_ID', value: null },
               { name: 'WECOM_BOT_SECRET', value: null },
@@ -869,6 +893,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
 
     const writeError = await applyAuditedConnectorSecretUpdates(
       app,
+      'wecom-bot',
       [
         { name: 'WECOM_BOT_ID', value: null },
         { name: 'WECOM_BOT_SECRET', value: null },

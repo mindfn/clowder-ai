@@ -137,6 +137,7 @@ export async function loadInstalledPlugins(projectRoot: string, log: FastifyBase
       const plugin: IMConnectorPlugin = mod.default ?? mod;
 
       if (!validatePluginInterface(plugin, entry, log)) continue;
+      if (!validateInstalledPluginIdentity(plugin, entry, log)) continue;
 
       results.push(plugin);
       log.info({ id: plugin.id, dir: entry }, '[IMConnectorLoader] Installed plugin loaded');
@@ -166,6 +167,26 @@ function validatePluginInterface(plugin: IMConnectorPlugin, source: string, log:
     log.warn({ source, id: plugin.id }, '[IMConnectorLoader] Plugin missing `isConfigured()` — skipped');
     return false;
   }
+  return true;
+}
+
+function validateInstalledPluginIdentity(plugin: IMConnectorPlugin, dirId: string, log: FastifyBaseLogger): boolean {
+  if (plugin.id !== dirId) {
+    log.warn(
+      { dir: dirId, id: plugin.id },
+      '[IMConnectorLoader] Installed plugin id differs from directory id — skipped',
+    );
+    return false;
+  }
+
+  if (plugin.definition.id !== dirId) {
+    log.warn(
+      { dir: dirId, id: plugin.id, definitionId: plugin.definition.id },
+      '[IMConnectorLoader] Installed plugin definition id differs from directory id — skipped',
+    );
+    return false;
+  }
+
   return true;
 }
 

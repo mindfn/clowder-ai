@@ -19,8 +19,11 @@ afterEach(() => {
   delete globalThis.__moduleCacheProbeMarker;
 });
 
-function createPlugin(root, marker) {
-  const pluginId = 'module-cache-probe';
+function createPlugin(
+  root,
+  marker,
+  { pluginId = 'module-cache-probe', exportId = pluginId, definitionId = exportId } = {},
+) {
   const pluginDir = join(resolvePluginsDir(root), pluginId);
   mkdirSync(pluginDir, { recursive: true });
   writeFileSync(join(pluginDir, 'client.js'), `export const marker = ${JSON.stringify(marker)};\n`);
@@ -28,9 +31,9 @@ function createPlugin(root, marker) {
     join(pluginDir, 'index.js'),
     `import { marker } from './client.js';
 export default {
-  id: '${pluginId}',
+  id: '${exportId}',
   definition: {
-    id: '${pluginId}',
+    id: '${definitionId}',
     displayName: marker,
     icon: { type: 'png', src: '/test.png' },
     themeColor: '#336699',
@@ -82,5 +85,25 @@ describe('loadInstalledPlugins', () => {
     const packageJsonPath = join(cacheRoot, cacheEntries[0], 'package.json');
     assert.ok(existsSync(packageJsonPath), 'materialized plugin cache must declare its module type');
     assert.equal(JSON.parse(readFileSync(packageJsonPath, 'utf8')).type, 'module');
+  });
+
+  it('rejects installed plugins whose exported plugin id differs from the directory id', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'im-loader-export-id-mismatch-'));
+    tempRoots.push(root);
+
+    createPlugin(root, 'bad-export-id', { pluginId: 'manifest-id', exportId: 'export-id' });
+    const plugins = await loadInstalledPlugins(root, log);
+
+    assert.deepEqual(plugins, []);
+  });
+
+  it('rejects installed plugins whose definition id differs from the directory id', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'im-loader-definition-id-mismatch-'));
+    tempRoots.push(root);
+
+    createPlugin(root, 'bad-definition-id', { pluginId: 'manifest-id', definitionId: 'definition-id' });
+    const plugins = await loadInstalledPlugins(root, log);
+
+    assert.deepEqual(plugins, []);
   });
 });

@@ -104,50 +104,66 @@ describe('F134 follow-up — Feishu QR bind routes', () => {
   it('GET /api/connector/feishu/qrcode-status persists credentials and auto-switches to websocket when webhook lacks verification token', async () => {
     const tmpDir = mkdtempSync(join(os.tmpdir(), 'feishu-qr-bind-'));
     const envFilePath = join(tmpDir, '.env');
+    const previousConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
     writeFileSync(envFilePath, 'FEISHU_CONNECTION_MODE=webhook\n');
     delete process.env.FEISHU_APP_ID;
     delete process.env.FEISHU_APP_SECRET;
     delete process.env.FEISHU_VERIFICATION_TOKEN;
     process.env.FEISHU_CONNECTION_MODE = 'webhook';
+    process.env.CAT_CAFE_CONFIG_ROOT = tmpDir;
+    clearConnectorConfigCache();
 
     const app = Fastify();
-    await registerConnectorHub(app, {
-      threadStore: {
-        async list() {
-          return [];
+    try {
+      await registerConnectorHub(app, {
+        threadStore: {
+          async list() {
+            return [];
+          },
         },
-      },
-      envFilePath,
-      feishuQrBindClient: {
-        async create() {
-          throw new Error('not used');
+        envFilePath,
+        feishuQrBindClient: {
+          async create() {
+            throw new Error('not used');
+          },
+          async poll() {
+            return { status: 'confirmed', appId: 'cli_feishu', appSecret: 'sec_feishu' };
+          },
         },
-        async poll() {
-          return { status: 'confirmed', appId: 'cli_feishu', appSecret: 'sec_feishu' };
-        },
-      },
-    });
-    await app.ready();
+      });
+      await app.ready();
 
-    const res = await app.inject({
-      method: 'GET',
-      url: '/api/connector/feishu/qrcode-status?qrPayload=device-123',
-      headers: AUTH_HEADERS,
-    });
-    const body = JSON.parse(res.body);
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/connector/feishu/qrcode-status?qrPayload=device-123',
+        headers: AUTH_HEADERS,
+      });
+      const body = JSON.parse(res.body);
 
-    assert.equal(res.statusCode, 200);
-    assert.equal(body.status, 'confirmed');
-    assert.equal(process.env.FEISHU_APP_ID, 'cli_feishu');
-    assert.equal(process.env.FEISHU_APP_SECRET, 'sec_feishu');
-    assert.equal(process.env.FEISHU_CONNECTION_MODE, 'websocket');
+      assert.equal(res.statusCode, 200);
+      assert.equal(body.status, 'confirmed');
+      assert.equal(process.env.FEISHU_APP_ID, 'cli_feishu');
+      assert.equal(process.env.FEISHU_APP_SECRET, 'sec_feishu');
+      assert.equal(process.env.FEISHU_CONNECTION_MODE, 'websocket');
 
-    const envText = readFileSync(envFilePath, 'utf8');
-    assert.match(envText, /FEISHU_APP_ID=cli_feishu/);
-    assert.match(envText, /FEISHU_APP_SECRET=sec_feishu/);
-    assert.match(envText, /FEISHU_CONNECTION_MODE=websocket/);
+      const envText = readFileSync(envFilePath, 'utf8');
+      assert.match(envText, /FEISHU_APP_ID=cli_feishu/);
+      assert.match(envText, /FEISHU_APP_SECRET=sec_feishu/);
+      assert.match(envText, /FEISHU_CONNECTION_MODE=websocket/);
 
-    await app.close();
+      const storedConfig = JSON.parse(
+        readFileSync(join(tmpDir, '.cat-cafe', 'im-connector-config', 'feishu.json'), 'utf8'),
+      );
+      assert.equal(storedConfig.FEISHU_APP_ID, 'cli_feishu');
+      assert.equal(storedConfig.FEISHU_APP_SECRET, 'sec_feishu');
+      assert.equal(storedConfig.FEISHU_CONNECTION_MODE, 'websocket');
+    } finally {
+      await app.close();
+      if (previousConfigRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousConfigRoot;
+      clearConnectorConfigCache();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it('GET /api/connector/feishu/qrcode-status preserves explicit webhook mode when verification token exists', async () => {
@@ -198,38 +214,57 @@ describe('POST /api/connector/feishu/disconnect', () => {
   it('clears FEISHU_APP_ID and FEISHU_APP_SECRET via applyConnectorSecretUpdates and returns ok', async () => {
     const tmpDir = mkdtempSync(join(os.tmpdir(), 'feishu-disconnect-'));
     const envFilePath = join(tmpDir, '.env');
+    const configDir = join(tmpDir, '.cat-cafe', 'im-connector-config');
+    const previousConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    mkdirSync(configDir, { recursive: true });
     writeFileSync(envFilePath, 'FEISHU_APP_ID=cli_old\nFEISHU_APP_SECRET=sec_old\nFEISHU_CONNECTION_MODE=websocket\n');
+    writeFileSync(
+      join(configDir, 'feishu.json'),
+      JSON.stringify({ FEISHU_APP_ID: 'stored_old', FEISHU_APP_SECRET: 'stored_secret' }),
+    );
     process.env.FEISHU_APP_ID = 'cli_old';
     process.env.FEISHU_APP_SECRET = 'sec_old';
     process.env.FEISHU_CONNECTION_MODE = 'websocket';
+    process.env.CAT_CAFE_CONFIG_ROOT = tmpDir;
+    clearConnectorConfigCache();
 
     const app = Fastify();
-    await registerConnectorHub(app, {
-      threadStore: {
-        async list() {
-          return [];
+    try {
+      await registerConnectorHub(app, {
+        threadStore: {
+          async list() {
+            return [];
+          },
         },
-      },
-      envFilePath,
-    });
-    await app.ready();
+        envFilePath,
+      });
+      await app.ready();
 
-    const res = await app.inject({ method: 'POST', url: '/api/connector/feishu/disconnect', headers: AUTH_HEADERS });
-    const body = JSON.parse(res.body);
+      const res = await app.inject({ method: 'POST', url: '/api/connector/feishu/disconnect', headers: AUTH_HEADERS });
+      const body = JSON.parse(res.body);
 
-    assert.equal(res.statusCode, 200);
-    assert.equal(body.ok, true);
-    assert.equal(process.env.FEISHU_APP_ID, undefined);
-    assert.equal(process.env.FEISHU_APP_SECRET, undefined);
-    // Connection mode should NOT be cleared (user preference)
-    assert.equal(process.env.FEISHU_CONNECTION_MODE, 'websocket');
+      assert.equal(res.statusCode, 200);
+      assert.equal(body.ok, true);
+      assert.equal(process.env.FEISHU_APP_ID, undefined);
+      assert.equal(process.env.FEISHU_APP_SECRET, undefined);
+      // Connection mode should NOT be cleared (user preference)
+      assert.equal(process.env.FEISHU_CONNECTION_MODE, 'websocket');
 
-    const envText = readFileSync(envFilePath, 'utf8');
-    assert.doesNotMatch(envText, /FEISHU_APP_ID=/);
-    assert.doesNotMatch(envText, /FEISHU_APP_SECRET=/);
-    assert.match(envText, /FEISHU_CONNECTION_MODE=websocket/);
+      const envText = readFileSync(envFilePath, 'utf8');
+      assert.doesNotMatch(envText, /FEISHU_APP_ID=/);
+      assert.doesNotMatch(envText, /FEISHU_APP_SECRET=/);
+      assert.match(envText, /FEISHU_CONNECTION_MODE=websocket/);
 
-    await app.close();
+      const storedConfig = JSON.parse(readFileSync(join(configDir, 'feishu.json'), 'utf8'));
+      assert.equal(storedConfig.FEISHU_APP_ID, null);
+      assert.equal(storedConfig.FEISHU_APP_SECRET, null);
+    } finally {
+      await app.close();
+      if (previousConfigRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousConfigRoot;
+      clearConnectorConfigCache();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it('returns 401 without auth header', async () => {
