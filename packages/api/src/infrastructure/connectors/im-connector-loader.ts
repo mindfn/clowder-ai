@@ -109,6 +109,17 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isConnectorIconSpec(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (value.type === 'png') return typeof value.src === 'string';
+  if (value.type === 'svg') return typeof value.iconId === 'string' || typeof value.src === 'string';
+  return false;
+}
+
 /**
  * Load installed plugins from `.cat-cafe/plugins/` directory (Phase B).
  * Each subdirectory must contain `index.js` exporting an IMConnectorPlugin.
@@ -161,6 +172,10 @@ function validatePluginInterface(plugin: IMConnectorPlugin, source: string, log:
   }
   if (!plugin.definition || typeof plugin.definition !== 'object') {
     log.warn({ source, id: plugin.id }, '[IMConnectorLoader] Plugin missing `definition` — skipped');
+    return false;
+  }
+  if (!isConnectorIconSpec(plugin.definition.icon)) {
+    log.warn({ source, id: plugin.id }, '[IMConnectorLoader] Plugin `definition.icon` is invalid — skipped');
     return false;
   }
   if (typeof plugin.createAdapter !== 'function') {

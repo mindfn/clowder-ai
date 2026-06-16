@@ -26,6 +26,7 @@ function createPlugin(
     pluginId = 'module-cache-probe',
     exportId = pluginId,
     definitionId = exportId,
+    icon = "{ type: 'png', src: '/test.png' }",
     requiredEnvKeys = '[]',
     optionalEnvKeys = undefined,
   } = {},
@@ -41,7 +42,7 @@ export default {
   definition: {
     id: '${definitionId}',
     displayName: marker,
-    icon: { type: 'png', src: '/test.png' },
+    icon: ${icon},
     themeColor: '#336699',
     description: marker,
   },
@@ -119,6 +120,16 @@ describe('loadInstalledPlugins', () => {
     tempRoots.push(root);
 
     createPlugin(root, 'bad-required-env-keys', { requiredEnvKeys: "'TOKEN'", optionalEnvKeys: "'EXTRA'" });
+    const plugins = await loadInstalledPlugins(root, log);
+
+    assert.deepEqual(plugins, []);
+  });
+
+  it('rejects installed plugins whose definition icon is not an object', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'im-loader-invalid-icon-'));
+    tempRoots.push(root);
+
+    createPlugin(root, 'bad-icon-shape', { icon: "'github'" });
     const plugins = await loadInstalledPlugins(root, log);
 
     assert.deepEqual(plugins, []);
