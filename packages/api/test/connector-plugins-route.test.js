@@ -67,3 +67,67 @@ describe('GET /api/connectors/plugins/:id/icon', () => {
     await app.close();
   });
 });
+
+describe('GET /api/connectors/plugins', () => {
+  it('requires a session identity before listing installed plugins', async () => {
+    const root = useTempConfigRoot();
+    const pluginDir = join(root, '.cat-cafe', 'plugins', 'listed-plugin');
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      'id: listed-plugin\nname: Listed Plugin\nconfig: []\nsteps:\n  - text: Step\n',
+    );
+    writeFileSync(join(pluginDir, 'index.js'), 'export default {};\n');
+
+    const app = Fastify();
+    await app.register(connectorPluginRoutes);
+    await app.ready();
+
+    try {
+      const res = await app.inject({ method: 'GET', url: '/api/connectors/plugins' });
+
+      assert.equal(res.statusCode, 401);
+      assert.match(res.body, /session/i);
+      assert.doesNotMatch(res.body, /listed-plugin/);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('does not expose installed plugin filesystem paths', async () => {
+    const root = useTempConfigRoot();
+    const pluginDir = join(root, '.cat-cafe', 'plugins', 'listed-plugin');
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      'id: listed-plugin\nname: Listed Plugin\nconfig: []\nsteps:\n  - text: Step\n',
+    );
+    writeFileSync(join(pluginDir, 'index.js'), 'export default {};\n');
+
+    const app = Fastify();
+    app.addHook('preHandler', async (request) => {
+      const raw = request.headers['x-test-session-user'];
+      if (typeof raw === 'string' && raw.trim()) request.sessionUserId = raw.trim();
+    });
+    await app.register(connectorPluginRoutes);
+    await app.ready();
+
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/connectors/plugins',
+        headers: { 'x-test-session-user': 'viewer-user' },
+      });
+
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.plugins.length, 1);
+      assert.equal(body.plugins[0].id, 'listed-plugin');
+      assert.equal(body.plugins[0].name, 'Listed Plugin');
+      assert.equal(body.plugins[0].directory, undefined);
+      assert.doesNotMatch(res.body, /\\.cat-cafe/);
+    } finally {
+      await app.close();
+    }
+  });
+});

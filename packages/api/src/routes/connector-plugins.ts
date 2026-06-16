@@ -34,6 +34,22 @@ import { invalidateManifestCache } from './connector-hub.js';
 
 const PLUGIN_ARCHIVE_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 
+function requireSessionIdentity(request: FastifyRequest, reply: FastifyReply): string | null {
+  const userId = (request as FastifyRequest & { sessionUserId?: string }).sessionUserId;
+  if (typeof userId === 'string' && userId.trim()) return userId.trim();
+  reply.status(401);
+  return null;
+}
+
+function toPublicPluginMeta(plugins: ReturnType<typeof listInstalledPlugins>) {
+  return plugins.map((plugin) => ({
+    id: plugin.id,
+    name: plugin.name,
+    hasManifest: plugin.hasManifest,
+    hasEntry: plugin.hasEntry,
+  }));
+}
+
 export const connectorPluginRoutes: FastifyPluginAsync = async (app) => {
   await app.register(multipart, {
     limits: {
@@ -55,10 +71,13 @@ export const connectorPluginRoutes: FastifyPluginAsync = async (app) => {
 
   // ── GET /api/connectors/plugins — list installed plugins ──
 
-  app.get('/api/connectors/plugins', async (_req: FastifyRequest, reply: FastifyReply) => {
+  app.get('/api/connectors/plugins', async (req: FastifyRequest, reply: FastifyReply) => {
+    if (!requireSessionIdentity(req, reply)) {
+      return { error: 'Identity required (session cookie)' };
+    }
     const projectRoot = resolveActiveProjectRoot();
     const plugins = listInstalledPlugins(projectRoot);
-    return reply.send({ plugins });
+    return reply.send({ plugins: toPublicPluginMeta(plugins) });
   });
 
   // ── GET /api/connectors/plugins/:id/icon — serve plugin icon file ──

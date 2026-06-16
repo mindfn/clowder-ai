@@ -8,7 +8,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, lstatSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { FastifyBaseLogger } from 'fastify';
@@ -97,6 +97,10 @@ function materializeVersionedPluginModule(projectRoot: string, pluginId: string,
   if (!existsSync(cacheDir)) {
     rmSync(cacheRoot, { recursive: true, force: true });
     cpSync(sourceDir, cacheDir, { recursive: true });
+    const packageJsonPath = join(cacheDir, 'package.json');
+    if (!existsSync(packageJsonPath)) {
+      writeFileSync(packageJsonPath, '{\n  "type": "module"\n}\n');
+    }
   }
   return join(cacheDir, 'index.js');
 }

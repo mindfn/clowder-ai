@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
@@ -64,5 +64,23 @@ describe('loadInstalledPlugins', () => {
       'v2',
       'updated sibling dependency modules must not stay pinned to the first import',
     );
+  });
+
+  it('materializes installed plugins inside an ESM package boundary', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'im-loader-esm-boundary-'));
+    tempRoots.push(root);
+
+    createPlugin(root, 'esm');
+    const plugins = await loadInstalledPlugins(root, log);
+
+    assert.equal(plugins[0].id, 'module-cache-probe');
+
+    const cacheRoot = join(root, '.cat-cafe', 'plugin-module-cache', 'module-cache-probe');
+    const cacheEntries = readdirSync(cacheRoot).filter((entry) => !entry.startsWith('.'));
+    assert.equal(cacheEntries.length, 1);
+
+    const packageJsonPath = join(cacheRoot, cacheEntries[0], 'package.json');
+    assert.ok(existsSync(packageJsonPath), 'materialized plugin cache must declare its module type');
+    assert.equal(JSON.parse(readFileSync(packageJsonPath, 'utf8')).type, 'module');
   });
 });
