@@ -162,9 +162,7 @@ function parseOperationField(raw: Record<string, unknown>, context: string): Ope
     throw new Error(`${context}: operation '${name}' must have non-empty actions array`);
   }
 
-  const actions = rawActions.map((a: Record<string, unknown>, i: number) =>
-    parseAction(a, `${context}.actions[${i}]`),
-  );
+  const actions = rawActions.map((a: Record<string, unknown>, i: number) => parseAction(a, `${context}.actions[${i}]`));
 
   const field: OperationConfigField = {
     type: 'operation',

@@ -4143,8 +4143,12 @@ export function useAgentMessages() {
               });
               if (result.recoveryAction === 'none') {
                 // [DIAG:msg-disappear] Trace done handler replaceMessages
-                const codexBefore = storeSnapshot.messages.filter((m: { catId?: string | null }) => m.catId === 'codex').length;
-                const codexAfter = result.nextMessages.filter((m: { catId?: string | null }) => m.catId === 'codex').length;
+                const codexBefore = storeSnapshot.messages.filter(
+                  (m: { catId?: string | null }) => m.catId === 'codex',
+                ).length;
+                const codexAfter = result.nextMessages.filter(
+                  (m: { catId?: string | null }) => m.catId === 'codex',
+                ).length;
                 if (codexBefore !== codexAfter || msg.catId === 'codex') {
                   console.warn('[DIAG:msg-disappear] done handler replaceMessages', {
                     doneCatId: msg.catId,

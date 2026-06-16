@@ -822,14 +822,25 @@ export function useChatHistory(threadId: string) {
           // 到 1 bubble per (catId, invocationId)，确保 hydrate ≡ live。
           const projectedMerged = projectCanonicalBubbles({ records: mergedMsgs }).messages;
           // [DIAG:msg-disappear] Trace codex message through hydration pipeline
-          if (fetchForThread.includes('mq5zrg04n1votqb9') || mergedMsgs.some((m: { catId?: string | null }) => m.catId === 'codex')) {
+          if (
+            fetchForThread.includes('mq5zrg04n1votqb9') ||
+            mergedMsgs.some((m: { catId?: string | null }) => m.catId === 'codex')
+          ) {
             const codexInHistory = historyMsgs.filter((m: { catId?: string | null }) => m.catId === 'codex').length;
             const codexInMerged = mergedMsgs.filter((m: { catId?: string | null }) => m.catId === 'codex').length;
-            const codexInProjected = projectedMerged.filter((m: { catId?: string | null }) => m.catId === 'codex').length;
+            const codexInProjected = projectedMerged.filter(
+              (m: { catId?: string | null }) => m.catId === 'codex',
+            ).length;
             const codexIds = {
-              history: historyMsgs.filter((m: { catId?: string | null }) => m.catId === 'codex').map((m: { id: string }) => m.id),
-              merged: mergedMsgs.filter((m: { catId?: string | null }) => m.catId === 'codex').map((m: { id: string }) => m.id),
-              projected: projectedMerged.filter((m: { catId?: string | null }) => m.catId === 'codex').map((m: { id: string }) => m.id),
+              history: historyMsgs
+                .filter((m: { catId?: string | null }) => m.catId === 'codex')
+                .map((m: { id: string }) => m.id),
+              merged: mergedMsgs
+                .filter((m: { catId?: string | null }) => m.catId === 'codex')
+                .map((m: { id: string }) => m.id),
+              projected: projectedMerged
+                .filter((m: { catId?: string | null }) => m.catId === 'codex')
+                .map((m: { id: string }) => m.id),
             };
             console.warn('[DIAG:msg-disappear] replace hydration pipeline', {
               threadId: fetchForThread,
@@ -841,7 +852,9 @@ export function useChatHistory(threadId: string) {
               codexInMerged,
               codexInProjected,
               codexIds,
-              draftIds: historyMsgs.filter((m: { id: string }) => m.id.startsWith('draft-')).map((m: { id: string }) => m.id),
+              draftIds: historyMsgs
+                .filter((m: { id: string }) => m.id.startsWith('draft-'))
+                .map((m: { id: string }) => m.id),
             });
           }
           hydrateThread(fetchForThread, projectedMerged, data.hasMore ?? false);

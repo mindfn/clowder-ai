@@ -989,7 +989,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '企业微信智能机器人 Bot ID（WebSocket 长连接模式）',
     category: 'connector',
     sensitive: false,
-    exampleRecommended: true,
   },
   {
     name: 'WECOM_BOT_SECRET',
@@ -997,7 +996,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '企业微信智能机器人 Bot Secret',
     category: 'connector',
     sensitive: true,
-    exampleRecommended: true,
   },
   {
     name: 'WECOM_CORP_ID',
@@ -1005,7 +1003,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '企业微信企业 ID（自建应用 HTTP 回调模式）',
     category: 'connector',
     sensitive: false,
-    exampleRecommended: true,
   },
   {
     name: 'WECOM_AGENT_ID',
@@ -1013,7 +1010,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '企业微信自建应用 AgentId',
     category: 'connector',
     sensitive: false,
-    exampleRecommended: true,
   },
   {
     name: 'WECOM_AGENT_SECRET',
@@ -1021,7 +1017,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '企业微信自建应用 Secret',
     category: 'connector',
     sensitive: true,
-    exampleRecommended: true,
   },
   {
     name: 'WECOM_TOKEN',
@@ -1029,7 +1024,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '企业微信回调 Token（HTTP 模式验签）',
     category: 'connector',
     sensitive: true,
-    exampleRecommended: true,
   },
   {
     name: 'WECOM_ENCODING_AES_KEY',
@@ -1037,7 +1031,6 @@ export const ENV_VARS: EnvDefinition[] = [
     description: '企业微信回调 EncodingAESKey（43字符，HTTP 模式解密用）',
     category: 'connector',
     sensitive: true,
-    exampleRecommended: true,
   },
 
   // --- GitHub Repo Inbox (F141) ---

@@ -1,6 +1,6 @@
-import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseConfigField, parseConfigFields, getValueFields } from '../dist/infrastructure/config-field-parser.js';
+import { describe, it } from 'node:test';
+import { getValueFields, parseConfigField, parseConfigFields } from '../dist/infrastructure/config-field-parser.js';
 
 describe('config-field-parser', () => {
   // ── input fallback (no type) ───────────────────────────────────────
