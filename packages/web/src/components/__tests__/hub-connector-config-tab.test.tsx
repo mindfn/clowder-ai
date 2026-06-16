@@ -186,6 +186,75 @@ describe('F134 follow-up — HubConnectorConfigTab', () => {
     expect(mockApiFetch.mock.calls[1][0]).toBe('/api/connectors/feishu/actions/connect/start');
   });
 
+  it('passes pending config values from the expanded card into manifest actions', async () => {
+    mockApiFetch
+      .mockResolvedValueOnce(
+        jsonResponse({
+          platforms: [
+            {
+              id: 'wecom-bot',
+              name: '企微机器人',
+              nameEn: 'WeCom Bot',
+              configured: false,
+              docsUrl: 'https://developer.work.weixin.qq.com',
+              steps: [{ text: 'step-1' }, { text: 'step-2' }],
+              operations: [
+                {
+                  name: 'connect',
+                  label: 'Connect',
+                  currentAction: 'validate',
+                  actions: [{ id: 'validate', label: '测试并连接', render: 'button' }],
+                },
+              ],
+              fields: [
+                { envName: 'WECOM_BOT_ID', label: 'Bot ID', sensitive: false, currentValue: null },
+                { envName: 'WECOM_BOT_SECRET', label: 'Bot Secret', sensitive: true, currentValue: null },
+              ],
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ ok: true, render: 'status', label: 'Connected' }));
+
+    await act(async () => {
+      root.render(React.createElement(HubConnectorConfigTab));
+    });
+    await flushEffects();
+
+    const expand = platformToggle(container, 'wecom-bot');
+    expect(expand).toBeTruthy();
+
+    await act(async () => {
+      expand!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    await setInputValue(container.querySelector('[data-testid="field-WECOM_BOT_ID"]') as HTMLInputElement, 'bot-id');
+    await setInputValue(
+      container.querySelector('[data-testid="field-WECOM_BOT_SECRET"]') as HTMLInputElement,
+      'bot-secret',
+    );
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="wecom-bot-action-validate"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/connectors/wecom-bot/actions/connect/validate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        values: {
+          WECOM_BOT_ID: 'bot-id',
+          WECOM_BOT_SECRET: 'bot-secret',
+        },
+      }),
+    });
+  });
+
   it('does not collapse an expanded weixin card when the current guide step targets connector.weixin', async () => {
     mockApiFetch.mockResolvedValue(
       jsonResponse({

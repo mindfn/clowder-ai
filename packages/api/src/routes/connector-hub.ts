@@ -156,6 +156,23 @@ async function applyAuditedConnectorSecretUpdates(
   return null;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function pickPendingActionValues(body: unknown, valueFields: ValueConfigField[]): Record<string, string> {
+  if (!isRecord(body) || !isRecord(body.values)) return {};
+
+  const allowedNames = new Set(valueFields.map((field) => field.envName));
+  const values: Record<string, string> = {};
+  for (const [name, value] of Object.entries(body.values)) {
+    if (allowedNames.has(name) && typeof value === 'string') {
+      values[name] = value;
+    }
+  }
+  return values;
+}
+
 // ── Connector platform config definitions ──
 
 interface ConnectorFieldDef {
@@ -1069,6 +1086,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
     // Resolve actual env (stored > env > default) so action handlers see real values
     const valueFields = manifest.config.filter(isValueField);
     const resolvedEnv = resolveConnectorEnv(connectorId, valueFields);
+    const pendingActionValues = pickPendingActionValues(request.body, valueFields);
 
     const result = await executeConnectorAction({
       projectRoot,
@@ -1077,7 +1095,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
       actionId,
       manifest,
       plugin,
-      pluginCtx: { env: resolvedEnv, log: app.log },
+      pluginCtx: { env: { ...resolvedEnv, ...pendingActionValues }, log: app.log },
       adapter,
     });
 

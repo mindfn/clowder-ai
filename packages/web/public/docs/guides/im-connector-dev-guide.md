@@ -141,20 +141,31 @@ async handleAction(operationName, actionId, ctx) {
 Controls how your connector appears in the Hub UI:
 
 ```javascript
+// Built-in connector example (absolute path to public/ asset):
 const definition = {
-  id: 'welink',                    // Must match plugin.id
-  displayName: 'WeLink',           // Shown in UI
+  id: 'welink',
+  displayName: 'WeLink',
   icon: { type: 'png', src: '/images/connectors/welink.png' },
-  themeColor: '#FF6600',           // Hex color for UI accents
-  description: 'Huawei WeLink',   // Tooltip/description
+  themeColor: '#FF6600',
+  description: 'Huawei WeLink',
+};
+
+// External plugin example (relative path — auto-rewritten to API URL):
+const definition = {
+  id: 'myim',
+  displayName: 'My IM',
+  icon: { type: 'svg', src: 'icon.svg' },   // served via /api/connectors/plugins/myim/icon
+  themeColor: '#FF6600',
+  description: 'My custom connector',
 };
 ```
 
 **Icon options:**
-- `{ type: 'png', src: '/path/to/icon.png' }` — PNG image
-- `{ type: 'svg', iconId: 'my-icon' }` — SVG component (built-in connectors only)
+- `{ type: 'png', src: 'icon.png' }` — PNG image (relative path inside plugin directory)
+- `{ type: 'svg', src: 'icon.svg' }` — SVG image (relative path inside plugin directory)
+- `{ type: 'svg', iconId: 'feishu' }` — Built-in SVG component (built-in connectors only)
 
-For external plugins, use `type: 'png'` and place the icon in your package's `assets/` directory (future: the host will serve it from node_modules).
+For external plugins, place the icon file (PNG or SVG) in your plugin directory and use a relative path in `connector.yaml`. The host automatically rewrites relative paths to API URLs (`/api/connectors/plugins/<id>/icon`) so the frontend can fetch them without any `public/` directory changes.
 
 ### IOutboundAdapter (minimum)
 
@@ -405,7 +416,20 @@ config:
 
 **Supported field types:** `input`, `toggle`, `select`, `list`, `operation`
 
-Credentials are stored in `.cat-cafe/im-connector-config/{id}.json` (the primary store). Environment variables / `.env` serve as a legacy fallback only — users should configure via Hub UI.
+### Config Resolution Chain
+
+When the host resolves a connector config value, it follows this chain:
+
+```
+config store value (Hub UI save)  →  process.env fallback  →  YAML default
+     (highest priority)                (read-only)              (lowest)
+```
+
+1. **Config store** (primary): Values saved via Hub UI are persisted to `.cat-cafe/im-connector-config/{id}.json`. This is the intended path for all new connectors.
+2. **`process.env` fallback** (read-only): If a value is not in the config store, the host reads `process.env[envName]`. This provides backward compatibility for users who have env vars in `.env` from before the YAML migration. **Plugins never write to `process.env`** — it is a read-only fallback.
+3. **YAML default**: The `default` value from `connector.yaml` config fields, used when neither the config store nor env vars have a value.
+
+> **Note:** Connector env vars are intentionally excluded from `.env.example`. The primary configuration path is Hub UI → config store. `.env` is a legacy read-only fallback for existing deployments.
 
 ### Plugin env var declarations
 
@@ -427,10 +451,9 @@ External plugins are distributed as `.tar.gz` archives with the following struct
 
 ```
 my-connector/
-├── connector.yaml   # Manifest (id, name, config fields, steps)
+├── connector.yaml   # Manifest (id, name, config fields, steps, icon)
 ├── index.js         # Entry point — default export of IMConnectorPlugin
-└── assets/          # Optional static resources (icons, etc.)
-    └── icon.png
+└── icon.svg         # Icon file (referenced by connector.yaml icon.src)
 ```
 
 **Requirements:**
@@ -439,6 +462,17 @@ my-connector/
 - `index.js` must be present and export an `IMConnectorPlugin` as default export
 - The plugin ID in `connector.yaml` must not conflict with built-in connectors
 - All dependencies must be self-contained (no external npm packages)
+
+### Built-in vs External Connectors
+
+Every connector has a `source` attribute:
+
+| Source | Origin | Managed by |
+|--------|--------|------------|
+| `builtin` | Ships with Cat Cafe (feishu, telegram, wecom-bot, etc.) | Core repo |
+| `external` | Installed as plugin archives via Hub UI or API | Plugin system |
+
+Both render identically in the Hub UI connector card list. External connectors display a "外部" badge and a trash icon for uninstalling. The `source` field is force-written into `connector.yaml` at install time — plugin authors don't need to set it.
 
 ### Installing plugins
 
@@ -505,7 +539,7 @@ export default {
   definition: {
     id: 'my-connector',
     displayName: 'My Connector',
-    icon: { type: 'png', src: '/images/connectors/my-connector.png' },
+    icon: { type: 'svg', src: 'icon.svg' },  // relative path → API proxy
     themeColor: '#FF6600',
     description: 'My custom connector',
   },

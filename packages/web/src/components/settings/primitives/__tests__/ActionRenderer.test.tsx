@@ -102,4 +102,44 @@ describe('ActionRenderer', () => {
     expect(container.textContent).toContain('Operation timed out. Please try again.');
     expect(container.querySelector('[data-testid="weixin-action-qr-generate"]')).not.toBeNull();
   });
+
+  it('passes pending config values when executing connector actions', async () => {
+    mockApiFetch.mockResolvedValue(jsonResponse({ ok: true, render: 'status', label: 'Connected' }));
+
+    await act(async () => {
+      root.render(
+        React.createElement(ActionRenderer, {
+          connectorId: 'wecom-bot',
+          pendingConfigValues: {
+            WECOM_BOT_ID: 'bot-id-from-form',
+            WECOM_BOT_SECRET: 'secret-from-form',
+          },
+          operation: {
+            name: 'connect',
+            label: 'Connect',
+            currentAction: 'validate',
+            actions: [{ id: 'validate', label: '测试并连接', render: 'button' }],
+          },
+        }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="wecom-bot-action-validate"]')?.click();
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/connectors/wecom-bot/actions/connect/validate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        values: {
+          WECOM_BOT_ID: 'bot-id-from-form',
+          WECOM_BOT_SECRET: 'secret-from-form',
+        },
+      }),
+    });
+  });
 });

@@ -1494,6 +1494,114 @@ describe('POST /api/connectors/:connectorId/actions — activation failure', () 
   });
 });
 
+describe('POST /api/connectors/:connectorId/actions — pending config values', () => {
+  it('passes request values to action handlers without persisting them directly', async () => {
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'external-action-pending-values-'));
+    const pluginId = 'pending-values-probe';
+    const pluginDir = join(tmpDir, '.cat-cafe', 'plugins', pluginId);
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: Pending Values Probe',
+        'nameEn: Pending Values Probe',
+        'version: 1.0.0',
+        'source: external',
+        "themeColor: '#336699'",
+        'icon:',
+        '  type: png',
+        '  src: /test.png',
+        'docsUrl: https://example.com/pending-values-probe',
+        'config:',
+        '  - envName: PENDING_VALUES_TOKEN',
+        '    type: input',
+        '    label: Token',
+        '    sensitive: true',
+        '    required: true',
+        '  - name: connect',
+        '    type: operation',
+        '    label: Connect',
+        '    actions:',
+        '      - id: validate',
+        '        label: Validate',
+        '        render: button',
+        'steps:',
+        '  - text: Enter token',
+      ].join('\n'),
+    );
+
+    const plugin = {
+      id: pluginId,
+      definition: {
+        id: pluginId,
+        displayName: 'Pending Values Probe',
+        icon: { type: 'png', src: '/test.png' },
+        themeColor: '#336699',
+        description: 'pending values regression',
+      },
+      requiredEnvKeys: ['PENDING_VALUES_TOKEN'],
+      isConfigured: () => false,
+      createAdapter: () => ({ id: pluginId, sendMessage() {} }),
+      async handleAction(_operationName, _actionId, ctx) {
+        if (ctx.env.PENDING_VALUES_TOKEN !== 'typed-token') {
+          throw new Error(`missing pending token: ${ctx.env.PENDING_VALUES_TOKEN ?? '<unset>'}`);
+        }
+        return {
+          render: 'status',
+          data: { status: 'validated' },
+          label: 'Validated pending token',
+          advance: false,
+        };
+      },
+    };
+
+    const previousRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    process.env.CAT_CAFE_CONFIG_ROOT = tmpDir;
+    invalidateManifestCache();
+    clearConnectorConfigCache();
+
+    try {
+      const app = Fastify();
+      await registerConnectorHub(app, {
+        threadStore: {
+          async list() {
+            return [];
+          },
+        },
+        pluginRegistry: new Map([[pluginId, plugin]]),
+      });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/connectors/${pluginId}/actions/connect/validate`,
+        headers: {
+          ...AUTH_HEADERS,
+          host: '127.0.0.1:3002',
+          origin: 'http://127.0.0.1:3001',
+        },
+        payload: { values: { PENDING_VALUES_TOKEN: 'typed-token', OTHER_TOKEN: 'ignored' } },
+      });
+      const body = JSON.parse(res.body);
+      const configPath = join(tmpDir, '.cat-cafe', 'im-connector-config', `${pluginId}.json`);
+      const raw = existsSync(configPath) ? JSON.parse(readFileSync(configPath, 'utf8')) : {};
+
+      assert.equal(res.statusCode, 200);
+      assert.equal(body.label, 'Validated pending token');
+      assert.equal(raw.PENDING_VALUES_TOKEN, undefined, 'pending action values must not be persisted directly');
+
+      await app.close();
+    } finally {
+      if (previousRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousRoot;
+      invalidateManifestCache();
+      clearConnectorConfigCache();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('POST /api/connector/wecom-bot/disconnect', () => {
   it('returns 401 without auth header', async () => {
     const { app } = await buildApp();

@@ -19,6 +19,8 @@ export interface ActionRendererProps {
   connectorId: string;
   /** Operation definition + state from the status API. */
   operation: PlatformOperationStatus;
+  /** Unsaved config field values from the current card, used by validation actions. */
+  pendingConfigValues?: Readonly<Record<string, string>>;
   /** Called after connect/disconnect lifecycle completes. */
   onStatusChange?: () => void;
   /** Platform theme color for the primary action button. */
@@ -64,7 +66,13 @@ function classifyPollResult(raw: ActionApiResult | null, actionRender?: string):
 
 // ── Main component ──
 
-export function ActionRenderer({ connectorId, operation, onStatusChange, themeColor }: ActionRendererProps) {
+export function ActionRenderer({
+  connectorId,
+  operation,
+  pendingConfigValues,
+  onStatusChange,
+  themeColor,
+}: ActionRendererProps) {
   const actions = operation.actions;
   const firstAction = actions[0];
   const disconnectAction = actions.find((a) => a.id === 'disconnect' || a.next === firstAction?.id);
@@ -100,7 +108,12 @@ export function ActionRenderer({ connectorId, operation, onStatusChange, themeCo
     async (actionId: string): Promise<ActionApiResult | null> => {
       try {
         const url = `/api/connectors/${encodeURIComponent(connectorId)}/actions/${encodeURIComponent(operation.name)}/${encodeURIComponent(actionId)}`;
-        const res = await apiFetch(url, { method: 'POST' });
+        const requestInit: RequestInit = { method: 'POST' };
+        if (pendingConfigValues && Object.keys(pendingConfigValues).length > 0) {
+          requestInit.headers = { 'content-type': 'application/json' };
+          requestInit.body = JSON.stringify({ values: pendingConfigValues });
+        }
+        const res = await apiFetch(url, requestInit);
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           return { ok: false, label: (err as { error?: string }).error ?? 'Request failed' };
@@ -110,7 +123,7 @@ export function ActionRenderer({ connectorId, operation, onStatusChange, themeCo
         return { ok: false, label: 'Network error' };
       }
     },
-    [connectorId, operation.name],
+    [connectorId, operation.name, pendingConfigValues],
   );
 
   const resetOperation = useCallback(
