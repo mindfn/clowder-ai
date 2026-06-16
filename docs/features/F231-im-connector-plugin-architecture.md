@@ -384,8 +384,7 @@ for each ValueConfigField:
 | 前端 `<ConfigFieldRenderer>` | 共享字段渲染器（两边复用） |
 | 前端通用 action 渲染器 | 替代 WeixinQrPanel / FeishuQrPanel |
 | `.env.example` | 删除 connector 相关配置项 |
-| `examples/im-connector-example/` | 示例包 |
-| `docs/guides/im-connector-dev-guide.md` | 贡献者指南 |
+| `docs/guides/im-connector-dev-guide.md` | 开发文档（含完整代码示例，替代独立 example 包） |
 
 ### Phase B: 动态插件安装 — 自包含 tar.gz 包 + Hub UI 管理
 
