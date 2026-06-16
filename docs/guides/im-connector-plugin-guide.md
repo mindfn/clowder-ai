@@ -106,6 +106,8 @@ interface HandleActionResult {
 }
 ```
 
+**Polling data persistence:** The generic action handler persists `lastResult` on every poll cycle (replacing the previous value entirely). If your polling action reads context from `lastResult.data` (e.g. `qrPayload`), you **must** include that data in every polling response — otherwise it's lost after the first persist and subsequent polls fail.
+
 Example: a QR-based login action chain:
 
 ```javascript
@@ -123,7 +125,9 @@ async handleAction(operationName, actionId, ctx) {
           targetValues: { MY_TOKEN: status.token },  // backfill to input field
         };
       }
-      return { render: 'polling', data: { status: 'waiting' }, advance: false };
+      // IMPORTANT: carry qrPayload through — the generic handler persists lastResult
+      // on every poll cycle, so any data not included here is lost on the next read.
+      return { render: 'polling', data: { status: 'waiting', qrPayload: payload }, advance: false };
     case 'disconnect':
       await myApi.disconnect();
       return { render: 'status', data: { status: 'disconnected' }, targetValues: { MY_TOKEN: '' } };
