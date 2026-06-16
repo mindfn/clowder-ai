@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { unregisterConnectorDefinition } from '@cat-cafe/shared';
 import multipart from '@fastify/multipart';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
@@ -95,8 +95,16 @@ export const connectorPluginRoutes: FastifyPluginAsync = async (app) => {
       }
 
       // Resolve within plugin dir — path traversal guard
-      const iconPath = resolve(pluginDir, iconSrc);
-      if (!iconPath.startsWith(resolve(pluginDir)) || !existsSync(iconPath)) {
+      const resolvedPluginDir = resolve(pluginDir);
+      const iconPath = resolve(resolvedPluginDir, iconSrc);
+      const relativeIconPath = relative(resolvedPluginDir, iconPath);
+      if (
+        relativeIconPath === '' ||
+        relativeIconPath === '..' ||
+        relativeIconPath.startsWith(`..${sep}`) ||
+        isAbsolute(relativeIconPath) ||
+        !existsSync(iconPath)
+      ) {
         return reply.status(404).send({ error: 'Icon file not found' });
       }
 

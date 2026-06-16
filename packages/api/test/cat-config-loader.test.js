@@ -544,6 +544,12 @@ describe('cat-config-loader', () => {
       assert.equal(isSessionChainEnabled('antig-opus', config), true);
     });
 
+    it('project config keeps OpenCode session chain enabled', () => {
+      const templatePath = resolve(dirname(fileURLToPath(import.meta.url)), '../../../cat-template.json');
+      const config = loadCatConfig(templatePath);
+      assert.equal(isSessionChainEnabled('opencode', config), true);
+    });
+
     it('accepts features with empty object (all defaults)', () => {
       const cfg = validConfig();
       cfg.breeds[0].features = {};

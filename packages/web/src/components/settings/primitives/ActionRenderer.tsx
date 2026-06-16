@@ -161,13 +161,16 @@ export function ActionRenderer({ connectorId, operation, onStatusChange, themeCo
         abortedRef.current = true;
         stopTimers();
         if (action?.rollback) {
+          void executeAction(action.rollback).finally(() => {
+            onStatusChange?.();
+          });
           setCurrentActionId(action.rollback);
           setPhase('idle');
           setErrorMsg('Operation timed out. Please try again.');
         }
       }, timeoutMs);
     },
-    [actions, advanceTo, executeAction, stopTimers],
+    [actions, advanceTo, executeAction, onStatusChange, stopTimers],
   );
 
   // P1-3 fix: auto-resume polling when mounted with persisted polling state
