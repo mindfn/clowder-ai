@@ -464,7 +464,7 @@ describe('transformAcpEvent', () => {
 
   // --- OpenCode compaction scratchpad suppression ---
 
-  it('suppresses OpenCode compaction scratchpad starting with ## Goal in single chunk', () => {
+  it('suppresses OpenCode compaction scratchpad signature in single chunk', () => {
     const state = createAcpSessionState();
     const mkChunk = (text) => ({
       sessionId: 's1',
@@ -476,19 +476,24 @@ describe('transformAcpEvent', () => {
     assert.equal(r1.type, 'text');
     assert.equal(r1.content, 'Hello! ');
 
-    // Chunk containing ## Goal — only text before marker should pass
-    const r2 = transformAcpEvent(mkChunk('How can I help? ## Goal\n- Greeting exchange'), catId, metadata, state);
+    // Chunk containing the OpenCode compaction signature; only text before marker should pass.
+    const r2 = transformAcpEvent(
+      mkChunk('How can I help? ## Goal\n- Greeting exchange\n\nConstraints & Preferences\n- (none)'),
+      catId,
+      metadata,
+      state,
+    );
     // Text before the marker, trailing whitespace trimmed
     assert.notEqual(r2, null);
     assert.equal(r2.type, 'text');
     assert.equal(r2.content, 'How can I help?');
 
     // Subsequent chunks suppressed
-    const r3 = transformAcpEvent(mkChunk('\n\nConstraints & Preferences\n- (none)'), catId, metadata, state);
+    const r3 = transformAcpEvent(mkChunk('\n\n## Progress\n- continuing compaction'), catId, metadata, state);
     assert.equal(r3, null, 'Chunks after scratchpad detection must be suppressed');
   });
 
-  it('suppresses scratchpad that starts at beginning of chunk', () => {
+  it('suppresses scratchpad signature that starts at beginning of chunk', () => {
     const state = createAcpSessionState();
     const mkChunk = (text) => ({
       sessionId: 's1',
@@ -498,42 +503,53 @@ describe('transformAcpEvent', () => {
     const r1 = transformAcpEvent(mkChunk('Done!'), catId, metadata, state);
     assert.equal(r1.type, 'text');
 
-    // ## Goal at start of new chunk — nothing to emit
-    const r2 = transformAcpEvent(mkChunk('## Goal\n- Summary'), catId, metadata, state);
+    // Signature at start of new chunk; nothing to emit.
+    const r2 = transformAcpEvent(
+      mkChunk('## Goal\n- Summary\n\nConstraints & Preferences\n- none'),
+      catId,
+      metadata,
+      state,
+    );
     assert.equal(r2, null, 'Scratchpad at chunk start → null');
   });
 
-  it('detects scratchpad marker split across two chunks', () => {
+  it('detects scratchpad signature split across two chunks', () => {
     const state = createAcpSessionState();
     const mkChunk = (text) => ({
       sessionId: 's1',
       update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } },
     });
 
-    // First chunk ends with partial marker
-    const r1 = transformAcpEvent(mkChunk('Hi there! ## '), catId, metadata, state);
+    // First chunk has only the heading; do not classify it until the companion marker arrives.
+    const r1 = transformAcpEvent(mkChunk('Hi there! ## Goal\n- Greeting'), catId, metadata, state);
     assert.equal(r1.type, 'text');
-    assert.equal(r1.content, 'Hi there! ## ');
+    assert.equal(r1.content, 'Hi there! ## Goal\n- Greeting');
+    assert.equal(state.scratchpadDetected, false);
 
-    // Second chunk completes the marker — previous "## " was already emitted
-    // but "Goal\n-..." must be suppressed
-    const r2 = transformAcpEvent(mkChunk('Goal\n- Greeting'), catId, metadata, state);
-    assert.equal(r2, null, 'Cross-chunk marker completion must suppress');
+    // Second chunk completes the signature; it and later chunks are suppressed.
+    const r2 = transformAcpEvent(mkChunk('\n\nConstraints & Preferences\n- none'), catId, metadata, state);
+    assert.equal(r2, null, 'Cross-chunk compaction signature completion must suppress');
 
     // Further chunks remain suppressed
     const r3 = transformAcpEvent(mkChunk('\n## Progress'), catId, metadata, state);
     assert.equal(r3, null);
   });
 
-  it('does not false-positive on legitimate ## Goal in conversation', () => {
-    // Without state, scratchpad detection is disabled (backward compat)
+  it('does not false-positive on legitimate Markdown ## Goal heading with state', () => {
+    const state = createAcpSessionState();
     const mkChunk = (text) => ({
       sessionId: 's1',
       update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } },
     });
-    const result = transformAcpEvent(mkChunk('See ## Goal section'), catId, metadata);
+    const markdown = 'Spec template\n\n## Goal\nShip ACP safely\n\n## Acceptance Criteria\n- Keep Markdown intact';
+    const result = transformAcpEvent(mkChunk(markdown), catId, metadata, state);
     assert.equal(result.type, 'text');
-    assert.equal(result.content, 'See ## Goal section');
+    assert.equal(result.content, markdown);
+    assert.equal(state.scratchpadDetected, false);
+
+    const next = transformAcpEvent(mkChunk('\n\nMore requested output.'), catId, metadata, state);
+    assert.equal(next.type, 'text');
+    assert.equal(next.content, '\n\nMore requested output.');
   });
 
   it('scratchpad detection resets per session (new state)', () => {
@@ -545,7 +561,7 @@ describe('transformAcpEvent', () => {
     });
 
     // Trigger scratchpad in state1
-    transformAcpEvent(mkChunk('## Goal\n- test'), catId, metadata, state1);
+    transformAcpEvent(mkChunk('## Goal\n- test\n\nConstraints & Preferences\n- none'), catId, metadata, state1);
     assert.equal(state1.scratchpadDetected, true);
 
     // state2 should be unaffected

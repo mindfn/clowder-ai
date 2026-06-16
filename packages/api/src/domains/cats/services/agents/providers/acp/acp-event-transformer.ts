@@ -37,7 +37,7 @@ export interface AcpSessionState {
    * etc.) in its regular response text, subsequent chunks are suppressed.
    */
   scratchpadDetected: boolean;
-  /** Trailing text window (≤30 chars) for cross-chunk `## Goal` detection. */
+  /** Trailing text window for cross-chunk compaction signature detection. */
   textTail: string;
 }
 
@@ -52,11 +52,24 @@ export function createAcpSessionState(): AcpSessionState {
 }
 
 /**
- * OpenCode compaction template marker. The exact string the compaction system
- * prompt instructs the model to output (see opencode core/session/compaction.ts).
- * Models that have seen this in session context mimic it in regular responses.
+ * OpenCode compaction signature. `## Goal` alone is normal Markdown, so only
+ * suppress when the stream also carries the companion compaction section.
  */
 const SCRATCHPAD_MARKER = '## Goal';
+const SCRATCHPAD_COMPANION_MARKER = 'Constraints & Preferences';
+const SCRATCHPAD_TAIL_CHARS = 800;
+
+function findScratchpadSignature(text: string): number {
+  let searchFrom = 0;
+  while (searchFrom < text.length) {
+    const markerIdx = text.indexOf(SCRATCHPAD_MARKER, searchFrom);
+    if (markerIdx < 0) return -1;
+    const afterMarker = text.slice(markerIdx + SCRATCHPAD_MARKER.length);
+    if (afterMarker.includes(SCRATCHPAD_COMPANION_MARKER)) return markerIdx;
+    searchFrom = markerIdx + SCRATCHPAD_MARKER.length;
+  }
+  return -1;
+}
 
 /**
  * Flush any accumulated thinking text as a single system_info event.
@@ -154,7 +167,7 @@ export function transformAcpEvent(
 
         // Cross-chunk detection: combine trailing window with current chunk.
         const combined = state.textTail + text;
-        const markerIdx = combined.indexOf(SCRATCHPAD_MARKER);
+        const markerIdx = findScratchpadSignature(combined);
         if (markerIdx >= 0) {
           state.scratchpadDetected = true;
           log.info({ catId }, 'Suppressing OpenCode compaction scratchpad from ACP text stream');
@@ -167,7 +180,7 @@ export function transformAcpEvent(
           return withFlush({ type: 'text', catId, content: clean, metadata, timestamp: now });
         }
         // Keep trailing window bounded for cross-chunk detection.
-        state.textTail = combined.length > 30 ? combined.slice(-30) : combined;
+        state.textTail = combined.length > SCRATCHPAD_TAIL_CHARS ? combined.slice(-SCRATCHPAD_TAIL_CHARS) : combined;
       }
       return withFlush({ type: 'text', catId, content: text, metadata, timestamp: now });
     }

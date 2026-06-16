@@ -162,6 +162,23 @@ export class AcpHttpStreamClient {
     return resp.result as unknown as AcpNewSessionResult;
   }
 
+  async loadSession(sessionId: string, cwd?: string, mcpServers: AcpMcpServer[] = []): Promise<AcpNewSessionResult> {
+    const compatible = this.filterMcpByCapabilities(mcpServers);
+    const effectiveCwd = cwd ?? this.config.cwd;
+    log.info(
+      { sessionId, cwd: effectiveCwd, mcpServerCount: compatible.length, pid: this.child?.pid, port: this.port },
+      'ACP HTTP session/load',
+    );
+    const t0 = Date.now();
+    const resp = await this.httpRequest(ACP_METHODS.sessionLoad, {
+      sessionId,
+      cwd: effectiveCwd,
+      mcpServers: compatible,
+    });
+    log.info({ sessionId, durationMs: Date.now() - t0, hasResult: !!resp.result }, 'ACP HTTP session/load: response');
+    return resp.result as unknown as AcpNewSessionResult;
+  }
+
   async setSessionConfigOption(sessionId: string, configId: string, value: string): Promise<void> {
     if (!configId.trim() || !value.trim()) return;
     await this.httpRequest(ACP_METHODS.sessionSetConfigOption, {

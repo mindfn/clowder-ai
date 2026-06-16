@@ -119,6 +119,7 @@ export class AcpAgentService implements AgentService {
     // Pool returns AcpPoolClient; we know it's actually an AcpClient with full protocol methods
     const client = lease.client as unknown as {
       newSession(cwd: string, mcpServers?: AcpMcpServer[]): Promise<AcpNewSessionResult>;
+      loadSession(sessionId: string, cwd: string, mcpServers?: AcpMcpServer[]): Promise<AcpNewSessionResult>;
       setSessionConfigOption(sessionId: string, configId: string, value: string): Promise<void>;
       cancelSession(sessionId: string): void;
       promptStream(sessionId: string, text: string): AsyncGenerator<import('./types.js').AcpSessionUpdate>;
@@ -186,10 +187,23 @@ export class AcpAgentService implements AgentService {
       let isResumedSession = false;
 
       if (resumeSessionId) {
-        sessionId = resumeSessionId;
-        metadata.sessionId = sessionId;
-        isResumedSession = true;
-        log.info({ ...ctx, sessionId, cwd }, 'ACP session resume: reusing existing session');
+        try {
+          log.info(
+            { ...ctx, sessionId: resumeSessionId, cwd, mcpCount: sessionMcpServers.length, ...envDiag },
+            'ACP session resume: loading existing session',
+          );
+          const session = await client.loadSession(resumeSessionId, cwd, sessionMcpServers);
+          sessionId = session.sessionId || resumeSessionId;
+          metadata.sessionId = sessionId;
+          isResumedSession = true;
+          log.info({ ...ctx, sessionId, requestedSessionId: resumeSessionId }, 'ACP session resume completed');
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          log.warn(
+            { ...ctx, sessionId: resumeSessionId, cwd, err: errorMsg },
+            'ACP session resume failed; creating a fresh session',
+          );
+        }
       }
 
       if (!isResumedSession) {

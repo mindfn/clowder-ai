@@ -93,6 +93,19 @@ function createPoolWithAutoRespond() {
             }) + '\n',
           ),
         );
+      } else if (msg.method === 'session/load') {
+        setImmediate(() =>
+          agentStdout.write(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: msg.id,
+              result: {
+                sessionId: msg.params.sessionId,
+                configOptions: [],
+              },
+            }) + '\n',
+          ),
+        );
       } else if (msg.method === 'session/set_config_option') {
         setImmediate(() =>
           agentStdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { configOptions: [] } }) + '\n'),
@@ -202,6 +215,127 @@ describe('GeminiAcpAdapter', () => {
     const sessionNew = captured.find((m) => m.method === 'session/new');
     assert.ok(sessionNew, 'Expected session/new in captured messages');
     assert.deepStrictEqual(sessionNew.params.mcpServers, mcpServers);
+  });
+
+  it('reloads resumed ACP sessions with fresh callback MCP env', async () => {
+    const { pool: p, captured } = createPoolWithAutoRespond();
+    pool = p;
+    const adapter = new GeminiAcpAdapter({
+      catId: 'gemini',
+      pool,
+      poolKey: TEST_POOL_KEY,
+      projectRoot: '/tmp',
+      mcpServers: [
+        {
+          name: 'cat-cafe-collab',
+          command: 'node',
+          args: ['mcp.js'],
+          env: [
+            { name: 'CAT_CAFE_INVOCATION_ID', value: 'old-invocation' },
+            { name: 'CAT_CAFE_CALLBACK_TOKEN', value: 'old-token' },
+          ],
+        },
+      ],
+    });
+
+    for await (const _ of adapter.invoke('resume turn', {
+      sessionId: 'sess-existing',
+      callbackEnv: {
+        CAT_CAFE_API_URL: 'http://127.0.0.1:3002',
+        CAT_CAFE_INVOCATION_ID: 'new-invocation',
+        CAT_CAFE_CALLBACK_TOKEN: 'new-token',
+        CAT_CAFE_THREAD_ID: 'thread-new',
+      },
+    })) {
+      /* drain */
+    }
+
+    const sessionLoad = captured.find((m) => m.method === 'session/load');
+    assert.ok(sessionLoad, 'resumed ACP turns must call session/load to refresh per-invocation MCP env');
+    assert.equal(sessionLoad.params.sessionId, 'sess-existing');
+    assert.equal(
+      captured.some((m) => m.method === 'session/new'),
+      false,
+      'successful resume must not create a new session',
+    );
+    const env = sessionLoad.params.mcpServers[0].env;
+    assert.deepEqual(Object.fromEntries(env.map((entry) => [entry.name, entry.value])), {
+      CAT_CAFE_INVOCATION_ID: 'new-invocation',
+      CAT_CAFE_CALLBACK_TOKEN: 'new-token',
+      CAT_CAFE_API_URL: 'http://127.0.0.1:3002',
+      CAT_CAFE_THREAD_ID: 'thread-new',
+    });
+  });
+
+  it('falls back to session/new when resumed ACP session cannot be loaded', async () => {
+    const { child, clientStdin, agentStdout } = createMockChild();
+    const captured = [];
+
+    clientStdin.on('data', (chunk) => {
+      for (const line of chunk.toString().trim().split('\n')) {
+        const msg = JSON.parse(line);
+        captured.push(msg);
+        if (msg.method === 'initialize') {
+          setImmediate(() =>
+            agentStdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: INIT_RESULT }) + '\n'),
+          );
+        } else if (msg.method === 'session/load') {
+          setImmediate(() =>
+            agentStdout.write(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                id: msg.id,
+                error: { code: -32000, message: 'session not found' },
+              }) + '\n',
+            ),
+          );
+        } else if (msg.method === 'session/new') {
+          setImmediate(() =>
+            agentStdout.write(
+              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'fresh-session' } }) + '\n',
+            ),
+          );
+        } else if (msg.method === 'session/prompt') {
+          setImmediate(() => {
+            agentStdout.write(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                method: 'session/update',
+                params: {
+                  sessionId: msg.params.sessionId,
+                  update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'fresh ok' } },
+                },
+              }) + '\n',
+            );
+            agentStdout.write(
+              JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }) + '\n',
+            );
+          });
+        }
+      }
+    });
+
+    pool = createPoolWithSpawn(() => child);
+    const adapter = new GeminiAcpAdapter({
+      catId: 'gemini',
+      pool,
+      poolKey: TEST_POOL_KEY,
+      projectRoot: '/tmp',
+      providerName: 'google',
+      modelName: 'gemini-acp',
+    });
+
+    const messages = [];
+    for await (const msg of adapter.invoke('resume turn', { sessionId: 'gone-session' })) messages.push(msg);
+
+    const loadIndex = captured.findIndex((m) => m.method === 'session/load');
+    const newIndex = captured.findIndex((m) => m.method === 'session/new');
+    const promptReq = captured.find((m) => m.method === 'session/prompt');
+    assert.ok(loadIndex >= 0, 'resume should try session/load first');
+    assert.ok(newIndex > loadIndex, 'failed session/load should fall back to session/new');
+    assert.equal(promptReq.params.sessionId, 'fresh-session');
+    assert.ok(messages.some((m) => m.type === 'session_init' && m.sessionId === 'fresh-session'));
+    assert.ok(messages.some((m) => m.type === 'text' && m.content === 'fresh ok'));
   });
 
   it('sends empty mcpServers when not configured', async () => {
