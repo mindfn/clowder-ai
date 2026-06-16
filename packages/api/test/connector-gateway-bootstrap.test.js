@@ -1,6 +1,6 @@
 import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
@@ -72,6 +72,46 @@ describe('ConnectorGateway Bootstrap', () => {
 
     assert.ok(result.pluginRegistry.has('wecom-bot'), 'WeCom Bot plugin must remain available after disconnect');
     await result.stop();
+  });
+
+  it('deactivateConnector("wecom-bot") stops dynamic WeCom Bot stream', async () => {
+    const { WeComBotAdapter } = await import(
+      '../dist/infrastructure/connectors/im-connectors/wecom-bot/WeComBotAdapter.js'
+    );
+    const originalHydrate = WeComBotAdapter.prototype.hydrateGroupChatIds;
+    const originalStart = WeComBotAdapter.prototype.startStream;
+    const originalStop = WeComBotAdapter.prototype.stopStream;
+    let startCalls = 0;
+    let stopCalls = 0;
+
+    WeComBotAdapter.prototype.hydrateGroupChatIds = async function stubHydrate() {};
+    WeComBotAdapter.prototype.startStream = async function stubStart() {
+      startCalls += 1;
+    };
+    WeComBotAdapter.prototype.stopStream = async function stubStop() {
+      stopCalls += 1;
+    };
+
+    try {
+      const handle = await startConnectorGateway({}, baseDeps);
+      assert.ok(handle.pluginRegistry.has('wecom-bot'), 'WeCom Bot plugin must be registered before dynamic start');
+
+      await handle.startWeComBotStream('bot-id', 'bot-secret');
+      assert.equal(startCalls, 1, 'dynamic WeCom Bot start must open the stream');
+      assert.ok(handle.adapterRegistry.has('wecom-bot'), 'dynamic start must register the live adapter');
+
+      await handle.deactivateConnector('wecom-bot');
+
+      assert.equal(stopCalls, 1, 'generic deactivation must stop the WeCom Bot stream');
+      assert.equal(handle.adapterRegistry.has('wecom-bot'), false, 'generic deactivation must remove the live adapter');
+
+      await handle.stop();
+      assert.equal(stopCalls, 1, 'gateway stop must not stop an already-deactivated WeCom Bot stream twice');
+    } finally {
+      WeComBotAdapter.prototype.hydrateGroupChatIds = originalHydrate;
+      WeComBotAdapter.prototype.startStream = originalStart;
+      WeComBotAdapter.prototype.stopStream = originalStop;
+    }
   });
 
   it('creates gateway without feishu when verification token missing (fail-closed)', async () => {
@@ -890,5 +930,26 @@ describe('ConnectorGateway Bootstrap', () => {
         /* cleanup best-effort */
       }
     }
+  });
+
+  it('index.ts wires legacy connector action callbacks into connectorHubOpts', () => {
+    const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+
+    assert.ok(
+      source.includes(
+        '(connectorHubOpts as { startWeixinPolling?: () => void }).startWeixinPolling = handle.startWeixinPolling',
+      ),
+      'wireGatewayHooks must pass startWeixinPolling to legacy Hub routes',
+    );
+    assert.ok(
+      source.includes(').startWeComBotStream = handle.startWeComBotStream'),
+      'wireGatewayHooks must pass startWeComBotStream to legacy Hub routes',
+    );
+    assert.ok(
+      source.includes(
+        '(connectorHubOpts as { stopWeComBot?: () => Promise<void> }).stopWeComBot = handle.stopWeComBot',
+      ),
+      'wireGatewayHooks must pass stopWeComBot to legacy Hub routes',
+    );
   });
 });

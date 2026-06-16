@@ -3945,6 +3945,11 @@ async function main(): Promise<void> {
       connectorWebhookHandlers.set(id, handler);
     }
     (connectorHubOpts as { weixinAdapter?: unknown }).weixinAdapter = handle.weixinAdapter;
+    (connectorHubOpts as { startWeixinPolling?: () => void }).startWeixinPolling = handle.startWeixinPolling;
+    (
+      connectorHubOpts as { startWeComBotStream?: (botId: string, secret: string) => Promise<void> }
+    ).startWeComBotStream = handle.startWeComBotStream;
+    (connectorHubOpts as { stopWeComBot?: () => Promise<void> }).stopWeComBot = handle.stopWeComBot;
     // F132 bugfix: live health getter for status endpoint
     (connectorHubOpts as { getWeComBotAdapter?: () => unknown }).getWeComBotAdapter = handle.getWeComBotAdapter;
     (connectorHubOpts as { permissionStore?: unknown }).permissionStore = handle.permissionStore;

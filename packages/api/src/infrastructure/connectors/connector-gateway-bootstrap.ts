@@ -785,7 +785,9 @@ export async function startConnectorGateway(
     wecomBotStopFn = async () => {
       if (inboundHandle) await inboundHandle.stop();
       adapters.delete('wecom-bot');
+      connectorStopFns.delete('wecom-bot');
     };
+    connectorStopFns.set('wecom-bot', wecomBotStopFn);
     log.info('[ConnectorGateway] WeCom Bot adapter started (WebSocket mode)');
   };
 
@@ -958,6 +960,7 @@ export async function startConnectorGateway(
         log.warn({ err, id: connectorId }, '[ConnectorGateway] Error stopping inbound during deactivation');
       }
       connectorStopFns.delete(connectorId);
+      if (connectorId === 'wecom-bot') wecomBotStopFn = null;
     }
 
     // Remove adapter, webhook handler, media downloader
