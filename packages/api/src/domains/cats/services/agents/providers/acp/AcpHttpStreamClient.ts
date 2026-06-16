@@ -475,8 +475,11 @@ export class AcpHttpStreamClient {
         reject(new Error('ACP HTTP: no stdout'));
         return;
       }
+      let settled = false;
       const timeoutMs = this.config.portDiscoveryTimeoutMs ?? PORT_DISCOVERY_TIMEOUT_MS;
       const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
         reject(new Error(`ACP HTTP: port discovery timeout after ${timeoutMs}ms`));
       }, timeoutMs);
 
@@ -484,9 +487,12 @@ export class AcpHttpStreamClient {
       rl.on('line', (line) => {
         const match = PORT_RE.exec(line);
         if (match) {
+          if (settled) return;
+          settled = true;
+          const port = Number(match[1]);
           clearTimeout(timer);
+          resolve(port);
           rl.close();
-          resolve(Number(match[1]));
         } else {
           // Log non-port stdout lines (could be startup messages)
           log.debug({ pid: this.child?.pid }, '[acp-http stdout] %s', line.slice(0, 200));
@@ -494,7 +500,9 @@ export class AcpHttpStreamClient {
       });
       rl.on('close', () => {
         clearTimeout(timer);
-        if (!this.port) reject(new Error('ACP HTTP: stdout closed before port discovered'));
+        if (settled) return;
+        settled = true;
+        reject(new Error('ACP HTTP: stdout closed before port discovered'));
       });
     });
   }
