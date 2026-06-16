@@ -9,6 +9,7 @@
  * 连同 Clowder AI 自有 MCP 一起写入 capabilities.json。
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync, statSync } from 'node:fs';
 import { chmod, lstat, mkdir, readdir, readFile, rm, stat as statPath, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -34,10 +35,21 @@ import {
 // ────────── F146: Per-project mutex for capability config writes ──────────
 
 const capabilityLocks = new Map<string, Promise<unknown>>();
+const capabilityLockContext = new AsyncLocalStorage<Set<string>>();
 
 export function withCapabilityLock<T>(projectRoot: string, fn: () => Promise<T>): Promise<T> {
+  const heldLocks = capabilityLockContext.getStore();
+  if (heldLocks?.has(projectRoot)) {
+    return Promise.resolve().then(fn);
+  }
+
   const prev = capabilityLocks.get(projectRoot) ?? Promise.resolve();
-  const next = prev.then(fn, fn);
+  const run = () => {
+    const nextHeldLocks = new Set(heldLocks ?? []);
+    nextHeldLocks.add(projectRoot);
+    return capabilityLockContext.run(nextHeldLocks, fn);
+  };
+  const next = prev.then(run, run);
   capabilityLocks.set(projectRoot, next);
   const cleanup = () => {
     if (capabilityLocks.get(projectRoot) === next) capabilityLocks.delete(projectRoot);

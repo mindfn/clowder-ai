@@ -12,6 +12,7 @@ import { lstat, mkdir, rename, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { MountRules } from '@cat-cafe/shared';
+import { withCapabilityLock } from '../config/capabilities/capability-orchestrator.js';
 import { isValidSkillName } from '../config/governance/skill-sync.js';
 import { buildSkillMountTargets } from '../utils/skill-mount.js';
 import type { DriftResult } from './drift-detector.js';
@@ -26,6 +27,14 @@ export interface DriftSyncReport {
   resolvedFrom: DriftResult;
 }
 
+export interface SyncDriftOptions {
+  disabledSkills?: Iterable<string>;
+  skillMountPaths?: Record<string, readonly string[]>;
+  globalSkillMountPaths?: Record<string, readonly string[]>;
+  cascadeDisabledSkills?: Iterable<string>;
+  configOrphans?: Iterable<string>;
+}
+
 interface BlockerBackup {
   original: string;
   backup: string;
@@ -33,18 +42,22 @@ interface BlockerBackup {
 
 // ────────── Sync Drift ──────────
 
-export async function syncDrift(
+export function syncDrift(
   projectRoot: string,
   skillsSource: string,
   mountRules: MountRules,
   drift: DriftResult,
-  opts?: {
-    disabledSkills?: Iterable<string>;
-    skillMountPaths?: Record<string, readonly string[]>;
-    globalSkillMountPaths?: Record<string, readonly string[]>;
-    cascadeDisabledSkills?: Iterable<string>;
-    configOrphans?: Iterable<string>;
-  },
+  opts?: SyncDriftOptions,
+): Promise<DriftSyncReport> {
+  return withCapabilityLock(projectRoot, () => syncDriftUnlocked(projectRoot, skillsSource, mountRules, drift, opts));
+}
+
+async function syncDriftUnlocked(
+  projectRoot: string,
+  skillsSource: string,
+  mountRules: MountRules,
+  drift: DriftResult,
+  opts?: SyncDriftOptions,
 ): Promise<DriftSyncReport> {
   // Pre-delete conflict blockers so syncProject sees clean paths.
   // Scope to the specific mount point where the conflict was detected.

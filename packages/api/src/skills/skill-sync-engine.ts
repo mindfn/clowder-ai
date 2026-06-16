@@ -5,7 +5,11 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { type MountRules, STANDARD_MOUNT_POINT_IDS } from '@cat-cafe/shared';
-import { readCapabilitiesConfig, writeCapabilitiesConfig } from '../config/capabilities/capability-orchestrator.js';
+import {
+  readCapabilitiesConfig,
+  withCapabilityLock,
+  writeCapabilitiesConfig,
+} from '../config/capabilities/capability-orchestrator.js';
 import {
   isValidSkillName,
   resolveEffectiveSkillMountPaths,
@@ -126,6 +130,14 @@ export interface SyncProjectOptions {
 }
 
 export async function syncProject(
+  projectRoot: string,
+  skillsSource: string,
+  opts: SyncProjectOptions,
+): Promise<SyncProjectResult> {
+  return withCapabilityLock(projectRoot, () => syncProjectUnlocked(projectRoot, skillsSource, opts));
+}
+
+async function syncProjectUnlocked(
   projectRoot: string,
   skillsSource: string,
   opts: SyncProjectOptions,

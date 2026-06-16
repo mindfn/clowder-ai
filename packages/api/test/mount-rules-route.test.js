@@ -8,9 +8,10 @@ import { DEFAULT_MOUNT_RULES } from '@cat-cafe/shared';
 import Fastify from 'fastify';
 import {
   readCapabilitiesConfig,
+  withCapabilityLock,
   writeCapabilitiesConfig,
 } from '../dist/config/capabilities/capability-orchestrator.js';
-import { writeDefaultMountRules, writeMountRules } from '../dist/config/mount/mount-rules-store.js';
+import { readMountRules, writeDefaultMountRules, writeMountRules } from '../dist/config/mount/mount-rules-store.js';
 import { mountRulesRoutes } from '../dist/routes/mount-rules.js';
 import { mountSkillSymlinks } from '../dist/skills/skill-manage.js';
 import { syncAll } from '../dist/skills/skill-sync-all.js';
@@ -53,6 +54,10 @@ async function exists(p) {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function resolveRepoSkillsDir() {
   return resolveCatCafeSkillsSource();
 }
@@ -62,6 +67,74 @@ function expectedSymlinkTarget(linkPath, sourcePath) {
 }
 
 describe('Mount Rules Route (F228)', () => {
+  it('PUT /api/mount-rules waits for capability lock before writing project rules', async () => {
+    const prevOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = OWNER_ID;
+    const projectDir = await mkdtemp(join(tmpdir(), 'mount-rules-route-lock-'));
+    const canonicalProjectDir = await realpath(projectDir);
+    const previousRules = {
+      ...DEFAULT_MOUNT_RULES,
+      mountPoints: {
+        ...DEFAULT_MOUNT_RULES.mountPoints,
+        claude: { enabled: true, path: '.old-claude/skills' },
+      },
+    };
+    const nextRules = {
+      ...DEFAULT_MOUNT_RULES,
+      mountPoints: {
+        ...DEFAULT_MOUNT_RULES.mountPoints,
+        claude: { enabled: true, path: '.new-claude/skills' },
+      },
+    };
+    await writeMountRules(canonicalProjectDir, previousRules);
+
+    const app = await buildMountRulesApp({ mainProjectRoot: canonicalProjectDir });
+    let releaseLock = () => {};
+    let enteredLock = () => {};
+    const releasePromise = new Promise((resolve) => {
+      releaseLock = resolve;
+    });
+    const enteredPromise = new Promise((resolve) => {
+      enteredLock = resolve;
+    });
+    const lockPromise = withCapabilityLock(canonicalProjectDir, async () => {
+      enteredLock();
+      await releasePromise;
+    });
+
+    await enteredPromise;
+    const putPromise = app.inject({
+      method: 'PUT',
+      url: '/api/mount-rules',
+      headers: LOCAL_WRITE_HEADERS,
+      payload: { projectPath: projectDir, rules: nextRules },
+    });
+
+    try {
+      await sleep(50);
+      const duringLock = await readMountRules(canonicalProjectDir, canonicalProjectDir);
+      assert.equal(
+        duringLock.mountPoints.claude.path,
+        '.old-claude/skills',
+        'route must not write mount rules while capability lock is held',
+      );
+
+      releaseLock();
+      const res = await putPromise;
+      await lockPromise;
+      assert.equal(res.statusCode, 200);
+      const after = await readMountRules(canonicalProjectDir, canonicalProjectDir);
+      assert.equal(after.mountPoints.claude.path, '.new-claude/skills');
+    } finally {
+      releaseLock();
+      await Promise.allSettled([lockPromise, putPromise]);
+      if (prevOwner === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+      else process.env.DEFAULT_OWNER_USER_ID = prevOwner;
+      await app.close();
+      await rm(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it('PUT /api/mount-rules reconciles existing skill symlinks before returning', async () => {
     const prevOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = OWNER_ID;

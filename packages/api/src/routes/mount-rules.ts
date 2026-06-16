@@ -16,7 +16,7 @@ import { homedir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { type MountRules, STANDARD_MOUNT_POINT_IDS } from '@cat-cafe/shared';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
-import { readCapabilitiesConfig } from '../config/capabilities/capability-orchestrator.js';
+import { readCapabilitiesConfig, withCapabilityLock } from '../config/capabilities/capability-orchestrator.js';
 import { requireLocalCapabilityWriteRequest } from '../config/capabilities/capability-write-guards.js';
 import {
   clearProjectMountRulesOverride,
@@ -105,39 +105,43 @@ export const mountRulesRoutes: FastifyPluginAsync<MountRulesRouteOptions> = asyn
 
     // scope=default: write global default, sync main project, cascade to registered projects
     if (body.scope === 'default') {
-      const previousDefaultRules = await readDefaultMountRules(globalRoot);
-      await writeDefaultMountRules(globalRoot, validated);
-      await syncProject(globalRoot, skillsSrc, {
-        mountRules: validated,
-        previousMountRules: previousDefaultRules,
-        pruneMountPaths: true,
-      });
-      await reconcilePluginMounts(globalRoot, skillsSrc, validated, previousDefaultRules);
-      const syncResult = await syncAll(globalRoot, skillsSrc, {
-        mountRules: validated,
-        previousMountRules: previousDefaultRules,
-      });
-      // Reconcile plugin mounts for registered projects that inherit default rules
-      for (const projectPath of syncResult.perProject.keys()) {
-        try {
-          const projectRules = await readMountRules(projectPath, globalRoot);
-          await reconcilePluginMounts(projectPath, skillsSrc, projectRules, previousDefaultRules);
-        } catch (err) {
-          syncResult.warnings.push(`${projectPath}: plugin reconciliation failed: ${(err as Error).message}`);
+      return withCapabilityLock(globalRoot, async () => {
+        const previousDefaultRules = await readDefaultMountRules(globalRoot);
+        await writeDefaultMountRules(globalRoot, validated);
+        await syncProject(globalRoot, skillsSrc, {
+          mountRules: validated,
+          previousMountRules: previousDefaultRules,
+          pruneMountPaths: true,
+        });
+        await reconcilePluginMounts(globalRoot, skillsSrc, validated, previousDefaultRules);
+        const syncResult = await syncAll(globalRoot, skillsSrc, {
+          mountRules: validated,
+          previousMountRules: previousDefaultRules,
+        });
+        // Reconcile plugin mounts for registered projects that inherit default rules
+        for (const projectPath of syncResult.perProject.keys()) {
+          try {
+            await withCapabilityLock(projectPath, async () => {
+              const projectRules = await readMountRules(projectPath, globalRoot);
+              await reconcilePluginMounts(projectPath, skillsSrc, projectRules, previousDefaultRules);
+            });
+          } catch (err) {
+            syncResult.warnings.push(`${projectPath}: plugin reconciliation failed: ${(err as Error).message}`);
+          }
         }
-      }
-      if (syncResult.warnings.length > 0) {
-        reply.status(500);
-        return {
-          ok: false,
-          error: `Default rules saved but ${syncResult.warnings.length} project(s) failed to reconcile`,
-          failedProjects: syncResult.warnings,
-          rules: validated,
-          projectRoot: globalRoot,
-          scope: 'default',
-        };
-      }
-      return { ok: true, rules: validated, projectRoot: globalRoot, scope: 'default' };
+        if (syncResult.warnings.length > 0) {
+          reply.status(500);
+          return {
+            ok: false,
+            error: `Default rules saved but ${syncResult.warnings.length} project(s) failed to reconcile`,
+            failedProjects: syncResult.warnings,
+            rules: validated,
+            projectRoot: globalRoot,
+            scope: 'default',
+          };
+        }
+        return { ok: true, rules: validated, projectRoot: globalRoot, scope: 'default' };
+      });
     }
 
     // Project-specific: write + reconcile, rollback on failure
@@ -147,56 +151,58 @@ export const mountRulesRoutes: FastifyPluginAsync<MountRulesRouteOptions> = asyn
       return { error: 'Invalid project path: must be an existing directory under allowed roots' };
     }
 
-    const previousProjectRules = await readProjectMountRulesOverride(projectRoot);
-    const previousRules = await readMountRules(projectRoot, globalRoot);
+    return withCapabilityLock(projectRoot, async () => {
+      const previousProjectRules = await readProjectMountRulesOverride(projectRoot);
+      const previousRules = await readMountRules(projectRoot, globalRoot);
 
-    // Extract global cascade policy for external projects
-    const cascadeDisabled = new Set<string>();
-    let globalMountPathsBySkill: Map<string, readonly string[]> | undefined;
-    if (projectRoot !== globalRoot) {
-      const globalConfig = await readCapabilitiesConfig(globalRoot);
-      const globalManagedCaps =
-        globalConfig?.capabilities.filter((c) => c.type === 'skill' && c.source === 'cat-cafe' && !c.pluginId) ?? [];
-      for (const cap of globalManagedCaps) {
-        if (!(cap.globalEnabled ?? cap.enabled)) cascadeDisabled.add(cap.id);
+      // Extract global cascade policy for external projects
+      const cascadeDisabled = new Set<string>();
+      let globalMountPathsBySkill: Map<string, readonly string[]> | undefined;
+      if (projectRoot !== globalRoot) {
+        const globalConfig = await readCapabilitiesConfig(globalRoot);
+        const globalManagedCaps =
+          globalConfig?.capabilities.filter((c) => c.type === 'skill' && c.source === 'cat-cafe' && !c.pluginId) ?? [];
+        for (const cap of globalManagedCaps) {
+          if (!(cap.globalEnabled ?? cap.enabled)) cascadeDisabled.add(cap.id);
+        }
+        const mountMap = new Map<string, readonly string[]>();
+        for (const cap of globalManagedCaps) {
+          if (Array.isArray(cap.mountPaths)) mountMap.set(cap.id, cap.mountPaths);
+        }
+        if (mountMap.size > 0) globalMountPathsBySkill = mountMap;
       }
-      const mountMap = new Map<string, readonly string[]>();
-      for (const cap of globalManagedCaps) {
-        if (Array.isArray(cap.mountPaths)) mountMap.set(cap.id, cap.mountPaths);
-      }
-      if (mountMap.size > 0) globalMountPathsBySkill = mountMap;
-    }
-    const cascadeOpt = cascadeDisabled.size > 0 ? cascadeDisabled : undefined;
+      const cascadeOpt = cascadeDisabled.size > 0 ? cascadeDisabled : undefined;
 
-    await writeMountRules(projectRoot, validated);
-    try {
-      await syncProject(projectRoot, skillsSrc, {
-        mountRules: validated,
-        previousMountRules: previousRules,
-        pruneMountPaths: true,
-        cascadeDisabledSkills: cascadeOpt,
-        globalMountPathsBySkill,
-      });
-      await reconcilePluginMounts(projectRoot, skillsSrc, validated, previousRules);
-    } catch (err) {
-      if (previousProjectRules) {
-        await writeMountRules(projectRoot, previousProjectRules).catch(() => {});
-      } else {
-        await clearProjectMountRulesOverride(projectRoot).catch(() => {});
+      await writeMountRules(projectRoot, validated);
+      try {
+        await syncProject(projectRoot, skillsSrc, {
+          mountRules: validated,
+          previousMountRules: previousRules,
+          pruneMountPaths: true,
+          cascadeDisabledSkills: cascadeOpt,
+          globalMountPathsBySkill,
+        });
+        await reconcilePluginMounts(projectRoot, skillsSrc, validated, previousRules);
+      } catch (err) {
+        if (previousProjectRules) {
+          await writeMountRules(projectRoot, previousProjectRules).catch(() => {});
+        } else {
+          await clearProjectMountRulesOverride(projectRoot).catch(() => {});
+        }
+        await syncProject(projectRoot, skillsSrc, {
+          mountRules: previousRules,
+          previousMountRules: validated,
+          pruneMountPaths: true,
+          cascadeDisabledSkills: cascadeOpt,
+          globalMountPathsBySkill,
+        }).catch((re) => {
+          console.warn(`[F228] Rollback mount-rules reconciliation failed: ${(re as Error).message}`);
+        });
+        await reconcilePluginMounts(projectRoot, skillsSrc, previousRules, validated).catch(() => {});
+        throw err;
       }
-      await syncProject(projectRoot, skillsSrc, {
-        mountRules: previousRules,
-        previousMountRules: validated,
-        pruneMountPaths: true,
-        cascadeDisabledSkills: cascadeOpt,
-        globalMountPathsBySkill,
-      }).catch((re) => {
-        console.warn(`[F228] Rollback mount-rules reconciliation failed: ${(re as Error).message}`);
-      });
-      await reconcilePluginMounts(projectRoot, skillsSrc, previousRules, validated).catch(() => {});
-      throw err;
-    }
-    return { ok: true, rules: validated, projectRoot };
+      return { ok: true, rules: validated, projectRoot };
+    });
   });
 };
 

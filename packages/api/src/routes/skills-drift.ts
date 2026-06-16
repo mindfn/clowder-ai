@@ -13,7 +13,7 @@
 import { dirname } from 'node:path';
 import { type CapabilitiesConfig, type MountRules, STANDARD_MOUNT_POINT_IDS } from '@cat-cafe/shared';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
-import { readCapabilitiesConfig } from '../config/capabilities/capability-orchestrator.js';
+import { readCapabilitiesConfig, withCapabilityLock } from '../config/capabilities/capability-orchestrator.js';
 import { requireLocalCapabilityWriteRequest } from '../config/capabilities/capability-write-guards.js';
 import { resolveEffectiveSkillMountPaths } from '../config/governance/skill-sync.js';
 import { readMountRules } from '../config/mount/mount-rules-store.js';
@@ -275,13 +275,22 @@ export const skillsDriftRoutes: FastifyPluginAsync<SkillsDriftRouteOptions> = as
       reply.status(400);
       return { error: 'Required: action ("sync")' };
     }
-    const ctx = await computeDrift(body.projectPath);
-    if (!ctx) {
+
+    const targetRoot = await resolveTargetProjectRoot(body.projectPath);
+    if (!targetRoot) {
       reply.status(400);
       return { error: 'Invalid project path: must be an existing directory under allowed roots' };
     }
 
-    const report = await syncDrift(ctx.effectiveRoot, ctx.skillsSource, ctx.mountRules, ctx.drift, ctx.syncOpts);
-    return { action: 'sync', report, projectRoot: ctx.effectiveRoot };
+    return withCapabilityLock(targetRoot, async () => {
+      const ctx = await computeDrift(body.projectPath);
+      if (!ctx) {
+        reply.status(400);
+        return { error: 'Invalid project path: must be an existing directory under allowed roots' };
+      }
+
+      const report = await syncDrift(ctx.effectiveRoot, ctx.skillsSource, ctx.mountRules, ctx.drift, ctx.syncOpts);
+      return { action: 'sync', report, projectRoot: ctx.effectiveRoot };
+    });
   });
 };

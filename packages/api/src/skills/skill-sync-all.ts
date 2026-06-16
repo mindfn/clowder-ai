@@ -8,7 +8,7 @@
 
 import { stat } from 'node:fs/promises';
 import type { MountRules } from '@cat-cafe/shared';
-import { readCapabilitiesConfig } from '../config/capabilities/capability-orchestrator.js';
+import { readCapabilitiesConfig, withCapabilityLock } from '../config/capabilities/capability-orchestrator.js';
 import { readMountRules } from '../config/mount/mount-rules-store.js';
 import { readSkillsSyncState } from './skill-sync-config.js';
 import { type SyncProjectResult, syncProject } from './skill-sync-engine.js';
@@ -43,7 +43,15 @@ export interface SyncAllOptions {
  * 3. For each external project: read local config → syncProject with cascade
  * 4. Aggregate results + warnings (per-project errors don't abort the loop)
  */
-export async function syncAll(catCafeRoot: string, skillsSource: string, opts: SyncAllOptions): Promise<SyncAllResult> {
+export function syncAll(catCafeRoot: string, skillsSource: string, opts: SyncAllOptions): Promise<SyncAllResult> {
+  return withCapabilityLock(catCafeRoot, () => syncAllUnlocked(catCafeRoot, skillsSource, opts));
+}
+
+async function syncAllUnlocked(
+  catCafeRoot: string,
+  skillsSource: string,
+  opts: SyncAllOptions,
+): Promise<SyncAllResult> {
   const { force = false } = opts;
   const perProject = new Map<string, SyncProjectResult>();
   const warnings: string[] = [];
@@ -98,51 +106,53 @@ export async function syncAll(catCafeRoot: string, skillsSource: string, opts: S
     }
 
     try {
-      const projectMountRules = await readMountRules(projectPath, catCafeRoot);
-      const projectConfig = await readCapabilitiesConfig(projectPath);
-      const projectManagedCaps =
-        projectConfig?.capabilities.filter(
-          (cap) => cap.type === 'skill' && cap.source === 'cat-cafe' && !cap.pluginId,
-        ) ?? [];
+      const result = await withCapabilityLock(projectPath, async () => {
+        const projectMountRules = await readMountRules(projectPath, catCafeRoot);
+        const projectConfig = await readCapabilitiesConfig(projectPath);
+        const projectManagedCaps =
+          projectConfig?.capabilities.filter(
+            (cap) => cap.type === 'skill' && cap.source === 'cat-cafe' && !cap.pluginId,
+          ) ?? [];
 
-      // Exclude skills that were cascade-disabled (no local opinion) from disabledSkills.
-      // Without this filter, a globally re-enabled skill stays disabled because
-      // syncProject seeds disabledSet from opts.disabledSkills before consulting
-      // prevCascadeDisabled, blocking the re-enable path.
-      const prevCascade = new Set((await readSkillsSyncState(projectPath))?.cascadeDisabledSkills ?? []);
-      const locallyDisabledSkills = new Set(
-        projectManagedCaps
-          .filter(
-            (cap) =>
-              (Array.isArray(cap.mountPaths) ? cap.mountPaths.length === 0 : !(cap.globalEnabled ?? cap.enabled)) &&
-              !prevCascade.has(cap.id),
-          )
-          .map((cap) => cap.id),
-      );
+        // Exclude skills that were cascade-disabled (no local opinion) from disabledSkills.
+        // Without this filter, a globally re-enabled skill stays disabled because
+        // syncProject seeds disabledSet from opts.disabledSkills before consulting
+        // prevCascadeDisabled, blocking the re-enable path.
+        const prevCascade = new Set((await readSkillsSyncState(projectPath))?.cascadeDisabledSkills ?? []);
+        const locallyDisabledSkills = new Set(
+          projectManagedCaps
+            .filter(
+              (cap) =>
+                (Array.isArray(cap.mountPaths) ? cap.mountPaths.length === 0 : !(cap.globalEnabled ?? cap.enabled)) &&
+                !prevCascade.has(cap.id),
+            )
+            .map((cap) => cap.id),
+        );
 
-      // F228: per-mount-point cascade — if a mount point was removed globally
-      // for a skill, remove it from the project's mountPaths too. Without this,
-      // the project's own mountPaths take precedence and block the cascade.
-      const projectMountPathsBySkill = new Map(
-        projectManagedCaps.flatMap((cap) => {
-          if (!Array.isArray(cap.mountPaths)) return [];
-          const globalPaths = globalMountPathsBySkill.get(cap.id);
-          // Constrain: keep only mount points that exist in the global list.
-          // Global removal cascades; global addition is handled by newlyEnabled logic.
-          const paths = globalPaths ? cap.mountPaths.filter((p) => globalPaths.includes(p)) : cap.mountPaths;
-          return [[cap.id, paths] as const];
-        }),
-      );
+        // F228: per-mount-point cascade — if a mount point was removed globally
+        // for a skill, remove it from the project's mountPaths too. Without this,
+        // the project's own mountPaths take precedence and block the cascade.
+        const projectMountPathsBySkill = new Map(
+          projectManagedCaps.flatMap((cap) => {
+            if (!Array.isArray(cap.mountPaths)) return [];
+            const globalPaths = globalMountPathsBySkill.get(cap.id);
+            // Constrain: keep only mount points that exist in the global list.
+            // Global removal cascades; global addition is handled by newlyEnabled logic.
+            const paths = globalPaths ? cap.mountPaths.filter((p) => globalPaths.includes(p)) : cap.mountPaths;
+            return [[cap.id, paths] as const];
+          }),
+        );
 
-      const result = await syncProject(projectPath, skillsSource, {
-        mountRules: projectMountRules,
-        previousMountRules: opts.previousMountRules,
-        pruneMountPaths: !!opts.previousMountRules,
-        disabledSkills: locallyDisabledSkills,
-        cascadeDisabledSkills: globalDisabledSkills,
-        mountPathsBySkill: projectMountPathsBySkill,
-        globalMountPathsBySkill,
-        force,
+        return syncProject(projectPath, skillsSource, {
+          mountRules: projectMountRules,
+          previousMountRules: opts.previousMountRules,
+          pruneMountPaths: !!opts.previousMountRules,
+          disabledSkills: locallyDisabledSkills,
+          cascadeDisabledSkills: globalDisabledSkills,
+          mountPathsBySkill: projectMountPathsBySkill,
+          globalMountPathsBySkill,
+          force,
+        });
       });
       perProject.set(projectPath, result);
     } catch (err) {

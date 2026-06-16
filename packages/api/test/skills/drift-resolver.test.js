@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, test } from 'node:test';
 import { DEFAULT_MOUNT_RULES } from '@cat-cafe/shared';
 import {
   readCapabilitiesConfig,
+  withCapabilityLock,
   writeCapabilitiesConfig,
 } from '../../dist/config/capabilities/capability-orchestrator.js';
 import { checkGlobal } from '../../dist/skills/drift-detector.js';
@@ -61,6 +62,10 @@ async function exists(p) {
   } catch {
     return false;
   }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function expectedSymlinkTarget(linkPath, sourcePath) {
@@ -1040,5 +1045,49 @@ describe('DriftResolver (F228 Phase 2B)', () => {
     // Verify content integrity, not just existence
     const restored = await readFile(join(userDir, 'local.txt'), 'utf8');
     assert.equal(restored, 'user content that must survive', 'restored content must match original');
+  });
+
+  test('syncDrift waits for capability lock before moving conflict blockers', async () => {
+    await makeSkill('tdd');
+
+    const userDir = join(projectRoot, '.claude/skills/tdd');
+    const userFile = join(userDir, 'local.txt');
+    await mkdir(userDir, { recursive: true });
+    await writeFile(userFile, 'user content');
+
+    const drift = await checkMount(projectRoot, skillsSource, DEFAULT_MOUNT_RULES);
+    assert.ok(
+      drift.conflicts.some((conflict) => conflict.skill === 'tdd' && conflict.mountPointId === 'claude'),
+      'fixture must create a tdd conflict',
+    );
+
+    let releaseLock = () => {};
+    let enteredLock = () => {};
+    const releasePromise = new Promise((resolve) => {
+      releaseLock = resolve;
+    });
+    const enteredPromise = new Promise((resolve) => {
+      enteredLock = resolve;
+    });
+    const lockPromise = withCapabilityLock(projectRoot, async () => {
+      enteredLock();
+      await releasePromise;
+    });
+
+    await enteredPromise;
+    const syncPromise = syncDrift(projectRoot, skillsSource, DEFAULT_MOUNT_RULES, drift);
+
+    try {
+      await sleep(50);
+      assert.equal(await exists(userFile), true, 'conflict blocker must not move while capability lock is held');
+
+      releaseLock();
+      const report = await syncPromise;
+      await lockPromise;
+      assert.ok(report.overridden.includes('tdd'), 'conflict should resolve after lock release');
+    } finally {
+      releaseLock();
+      await Promise.allSettled([lockPromise, syncPromise]);
+    }
   });
 });

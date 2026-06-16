@@ -95,7 +95,7 @@ const mountRulesPayload = {
   projectRoot: '/path/to/project',
   rules: {
     version: 1,
-    providers: {
+    mountPoints: {
       claude: { enabled: true, path: '.claude/skills' },
       codex: { enabled: true, path: '.codex/skills' },
       gemini: { enabled: true, path: '.gemini/skills' },
