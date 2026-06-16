@@ -4,14 +4,13 @@
 
 ## Overview
 
-Cat Cafe's IM connector plugin system (F231) lets you integrate any messaging platform by publishing an npm package that implements the `IMConnectorPlugin` interface. Install the package, set a few environment variables, restart — done.
+Cat Cafe's IM connector plugin system (F231) lets you integrate any messaging platform by packaging a self-contained plugin archive. Upload via Hub UI, configure credentials — done.
 
 ```
-pnpm add @mycompany/connector-welink
-# .env
-IM_CONNECTOR_PLUGINS=@mycompany/connector-welink
-WELINK_APP_KEY=xxx
-WELINK_APP_SECRET=yyy
+# Package your connector as a tar.gz:
+tar czf my-connector.tar.gz my-connector/
+# Upload via Hub UI → IM Connectors → 扩展插件 → 安装插件
+# Credentials are saved to .cat-cafe/im-connector-config/my-connector.json
 ```
 
 ## Architecture
@@ -81,10 +80,56 @@ interface IMConnectorPlugin {
     adapter: IOutboundAdapter,
     ctx: IMConnectorPluginContext,
   ): MediaDownloadFn;
+
+  // Action handler — for YAML-declared operation actions (QR scan, OAuth, etc.)
+  handleAction?(
+    operationName: string,
+    actionId: string,
+    ctx: HandleActionContext,
+  ): Promise<HandleActionResult>;
 }
 ```
 
 At least one of `createWebhookHandler` or `startInbound` is needed to receive messages.
+
+### HandleActionResult
+
+When your connector declares `type: operation` fields in YAML with an `actions` chain, implement `handleAction()` to process each action:
+
+```typescript
+interface HandleActionResult {
+  render: string;        // Frontend render type: 'button', 'img', 'polling', 'status'
+  data: unknown;         // Payload for the frontend renderer
+  label?: string;        // Optional display label
+  targetValues?: Record<string, string>;  // Values to backfill into target input fields
+  advance?: boolean;     // false = don't advance to next action (for polling)
+}
+```
+
+Example: a QR-based login action chain:
+
+```javascript
+async handleAction(operationName, actionId, ctx) {
+  switch (actionId) {
+    case 'qr-generate':
+      const qr = await myApi.generateQrCode();
+      return { render: 'img', data: { url: qr.imageUrl, qrPayload: qr.id } };
+    case 'qr-status':
+      const payload = ctx.operationState?.lastResult?.data?.qrPayload;
+      const status = await myApi.checkQrStatus(payload);
+      if (status.confirmed) {
+        return {
+          render: 'status', data: { status: 'confirmed' },
+          targetValues: { MY_TOKEN: status.token },  // backfill to input field
+        };
+      }
+      return { render: 'polling', data: { status: 'waiting' }, advance: false };
+    case 'disconnect':
+      await myApi.disconnect();
+      return { render: 'status', data: { status: 'disconnected' }, targetValues: { MY_TOKEN: '' } };
+  }
+}
+```
 
 ### ConnectorDefinition
 
@@ -312,58 +357,171 @@ const plugin = {
 
 The host calls this function when processing inbound attachments and stores files locally for LLM consumption.
 
-## Environment Variables
+## Configuration
 
-### Plugin env vars
+### YAML Manifest (`connector.yaml`)
 
-Declare all env vars your plugin needs:
+Every connector ships a `connector.yaml` that declares its config fields, visual metadata, and optional action chains. The Hub UI renders config forms directly from this manifest — no frontend changes needed for new connectors.
+
+```yaml
+id: myim
+name: My IM
+description: My custom IM connector
+icon: { type: png, src: /images/connectors/myim.png }
+themeColor: '#FF6600'
+docsUrl: https://docs.myim.com
+
+config:
+  - envName: MYIM_APP_KEY
+    label: App Key
+    type: input
+    required: true
+
+  - envName: MYIM_APP_SECRET
+    label: App Secret
+    type: input
+    sensitive: true
+    required: true
+
+  - envName: MYIM_CONNECTION_MODE
+    label: Connection Mode
+    type: select
+    options:
+      - { value: webhook, label: Webhook }
+      - { value: websocket, label: WebSocket }
+    default: webhook
+
+  - envName: MYIM_ADMIN_IDS
+    label: Admin User IDs
+    type: list
+    itemLabel: User ID
+    group: permissions
+```
+
+**Supported field types:** `input`, `toggle`, `select`, `list`, `operation`
+
+Credentials are stored in `.cat-cafe/im-connector-config/{id}.json` (the primary store). Environment variables / `.env` serve as a legacy fallback only — users should configure via Hub UI.
+
+### Plugin env var declarations
+
+Declare the env keys your plugin needs (these must match your YAML `envName` values):
 
 ```javascript
 const plugin = {
   requiredEnvKeys: ['MYIM_APP_KEY', 'MYIM_APP_SECRET'],
-  optionalEnvKeys: ['MYIM_WEBHOOK_TOKEN', 'MYIM_ADMIN_IDS'],
+  optionalEnvKeys: ['MYIM_CONNECTION_MODE', 'MYIM_ADMIN_IDS'],
   isConfigured(env) {
     return Boolean(env.MYIM_APP_KEY && env.MYIM_APP_SECRET);
   },
 };
 ```
 
-### Host env var
+### Plugin Package Format
 
-Users activate external plugins via `IM_CONNECTOR_PLUGINS`:
+External plugins are distributed as `.tar.gz` archives with the following structure:
+
+```
+my-connector/
+├── connector.yaml   # Manifest (id, name, config fields, steps)
+├── index.js         # Entry point — default export of IMConnectorPlugin
+└── assets/          # Optional static resources (icons, etc.)
+    └── icon.png
+```
+
+**Requirements:**
+- Archive must contain exactly one top-level directory (the connector ID)
+- `connector.yaml` must be present and valid (id, config fields, steps)
+- `index.js` must be present and export an `IMConnectorPlugin` as default export
+- The plugin ID in `connector.yaml` must not conflict with built-in connectors
+- All dependencies must be self-contained (no external npm packages)
+
+### Installing plugins
+
+**Via Hub UI (recommended):**
+1. Go to Hub → IM Connectors → scroll to "扩展插件" section
+2. Click "安装插件" and select your `.tar.gz` archive
+3. The plugin is extracted to `.cat-cafe/plugins/<id>/` and the gateway reloads
+
+**Via API:**
+```bash
+curl -X POST http://localhost:3002/api/connectors/plugins/install \
+  -F "file=@my-connector.tar.gz"
+```
+
+**Updating:** Upload the same plugin again — files are replaced but user config is preserved.
+
+**Uninstalling:**
+```bash
+# Via API (config preserved by default)
+curl -X DELETE http://localhost:3002/api/connectors/plugins/my-connector
+
+# Clear config too
+curl -X DELETE http://localhost:3002/api/connectors/plugins/my-connector?clearConfig=true
+```
+
+### Legacy: npm-based loading
+
+For backward compatibility, plugins can also be loaded from npm packages via `IM_CONNECTOR_PLUGINS`:
 
 ```bash
-# Single plugin
-IM_CONNECTOR_PLUGINS=@mycompany/connector-welink
-
-# Multiple plugins (comma-separated)
 IM_CONNECTOR_PLUGINS=@mycompany/connector-welink,@other/connector-slack
 ```
+
+> **Note:** The tar.gz package format is preferred. npm-based loading is retained as a legacy escape hatch.
 
 ## Development Workflow
 
 ### Local development
 
 ```bash
-# 1. Create your plugin package
+# 1. Create your plugin directory
 mkdir my-connector && cd my-connector
-npm init -y
-# Set "type": "module" and "main": "src/index.js" in package.json
 
-# 2. Implement the plugin (copy from examples/im-connector-example/)
+# 2. Create connector.yaml (manifest)
+cat > connector.yaml << 'YAML'
+id: my-connector
+name: My Connector
+docsUrl: https://docs.example.com
+config:
+  - envName: MY_CONNECTOR_TOKEN
+    label: API Token
+    sensitive: true
+steps:
+  - text: Register a bot on the platform
+  - text: Copy the API token
+  - text: Paste the token above and save
+YAML
 
-# 3. Link into your Cat Cafe dev instance
-npm link
-cd /path/to/cat-cafe
-npm link my-connector
+# 3. Create index.js (plugin entry point)
+cat > index.js << 'JS'
+export default {
+  id: 'my-connector',
+  definition: {
+    id: 'my-connector',
+    displayName: 'My Connector',
+    icon: { type: 'png', src: '/images/connectors/my-connector.png' },
+    themeColor: '#FF6600',
+    description: 'My custom connector',
+  },
+  requiredEnvKeys: ['MY_CONNECTOR_TOKEN'],
+  isConfigured: (env) => Boolean(env.MY_CONNECTOR_TOKEN),
+  createAdapter: (ctx) => new MyAdapter(ctx),
+  // ... implement startInbound or createWebhookHandler
+};
+JS
 
-# 4. Add to .env
-echo 'IM_CONNECTOR_PLUGINS=my-connector' >> .env
-echo 'MY_WEBHOOK_SECRET=test-123' >> .env
+# 4. Package as tar.gz
+cd .. && tar czf my-connector.tar.gz my-connector/
 
-# 5. Start Cat Cafe
-pnpm start
-# Look for: [IMConnectorLoader] External connector loaded { id: 'myid' }
+# 5. Install via Hub UI → IM Connectors → 扩展插件 → 安装插件
+# Or via API:
+curl -X POST http://localhost:3002/api/connectors/plugins/install \
+  -F "file=@my-connector.tar.gz"
+
+# Look for: [IMConnectorLoader] Installed plugin loaded { id: 'my-connector' }
+
+# 6. Configure credentials via Hub UI → IM Connectors → your connector
+# Saved to .cat-cafe/im-connector-config/my-connector.json
 ```
 
 ### Testing your webhook handler
@@ -376,20 +534,16 @@ curl -X POST http://localhost:3002/api/connectors/myid/webhook \
   -d '{"chat_id": "test", "text": "Hello!", "message_id": "1"}'
 ```
 
-### Publishing
+### Packaging for distribution
 
 ```bash
-# Build (if using TypeScript)
+# If using TypeScript, compile first:
 tsc
 
-# Publish
-npm publish --access public
-```
+# Package — must have exactly one top-level directory matching the connector ID
+tar czf my-connector.tar.gz my-connector/
 
-Users install with:
-
-```bash
-pnpm add @mycompany/connector-myim
+# Users install by uploading via Hub UI or API
 ```
 
 ## Validation & Error Handling
@@ -417,8 +571,8 @@ Study these built-in plugins as references (from simplest to most complex):
 | `im-connectors/dingtalk/` | ~117 | Webhook + signature | HMAC verification with raw body |
 | `im-connectors/wecom-bot/` | ~109 | WebSocket stream | Dynamic start/stop lifecycle |
 | `im-connectors/wecom-agent/` | ~136 | Webhook (GET+POST) | XML parsing + AES decryption |
-| `im-connectors/weixin/` | ~134 | Polling | Session state management; always-create pattern |
-| `im-connectors/feishu/` | ~325 | Webhook + WebSocket | Most complex; OAuth token, card actions, media |
+| `im-connectors/weixin/` | ~196 | Polling + QR action | Session state; QR login action chain |
+| `im-connectors/feishu/` | ~335 | Webhook + WS + QR action | Most complex; OAuth, card actions, media, QR |
 
 ## FAQ
 

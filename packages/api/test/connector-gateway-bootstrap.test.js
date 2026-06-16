@@ -1,6 +1,6 @@
 import './helpers/setup-cat-registry.js';
 import assert from 'node:assert/strict';
-import { unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
@@ -13,8 +13,10 @@ import {
   clearExternalConnectorRegistry,
   getAllExternalConnectorMeta,
 } from '../dist/infrastructure/connectors/external-connector-registry.js';
+import { clearConnectorConfigCache } from '../dist/infrastructure/connectors/im-connector-config-store.js';
 import { FeishuTokenManager } from '../dist/infrastructure/connectors/im-connectors/feishu/FeishuTokenManager.js';
 import { TelegramAdapter } from '../dist/infrastructure/connectors/im-connectors/telegram/TelegramAdapter.js';
+import { resolvePluginsDir } from '../dist/infrastructure/connectors/plugin-installer.js';
 
 function noopLog() {
   const noop = () => {};
@@ -677,6 +679,141 @@ describe('ConnectorGateway Bootstrap', () => {
     delete process.env.FEISHU_CONNECTION_MODE;
     const config3 = loadConnectorGatewayConfig();
     assert.equal(config3.feishuConnectionMode, 'webhook', 'Should default to webhook when not set');
+  });
+
+  // ── F231 R4-P2: deactivateConnector preserves Weixin adapter for QR re-login ──
+
+  it('deactivateConnector("weixin") preserves adapter in registry (QR re-login regression)', async () => {
+    const handle = await startConnectorGateway({}, baseDeps);
+    assert.ok(handle);
+
+    // Weixin adapter is always created at bootstrap — even without credentials
+    const adapter = handle.adapterRegistry.get('weixin');
+    assert.ok(adapter, 'Weixin adapter must exist in registry at bootstrap');
+    assert.strictEqual(adapter, handle.weixinAdapter, 'Registry and handle must reference same adapter');
+
+    // Deactivate — must NOT remove adapter (it's the QR login state carrier)
+    await handle.deactivateConnector('weixin');
+
+    // Adapter still in registry — next QR confirm can inject fresh token
+    assert.strictEqual(
+      handle.adapterRegistry.get('weixin'),
+      adapter,
+      'Weixin adapter must survive deactivation for QR re-login cycle',
+    );
+    assert.strictEqual(handle.weixinAdapter, adapter, 'weixinAdapter ref must not change');
+
+    await handle.stop();
+  });
+
+  // ── F231 R5-P1: installed plugins use config store, not just process.env ──
+
+  it('R5-P1: installed plugin reads Hub-saved config from config store at bootstrap', async () => {
+    // Use isolated temp directory via CAT_CAFE_CONFIG_ROOT to avoid touching real .cat-cafe/
+    const tempRoot = mkdtempSync(join(tmpdir(), 'r5-probe-'));
+    const pluginId = 'test-r5-config-probe';
+    const pluginDir = join(resolvePluginsDir(tempRoot), pluginId);
+    const configDir = join(tempRoot, '.cat-cafe', 'im-connector-config');
+
+    // Ensure directories exist
+    mkdirSync(pluginDir, { recursive: true });
+    mkdirSync(configDir, { recursive: true });
+
+    // 1. connector.yaml — declares one required env key
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: R5 Config Probe',
+        'nameEn: R5 Config Probe',
+        'version: 1.0.0',
+        'icon:',
+        '  type: png',
+        '  src: /test.png',
+        "themeColor: '#FF0000'",
+        'docsUrl: https://example.com',
+        'config:',
+        '  - envName: R5_PROBE_TOKEN',
+        '    label: Token',
+        '    sensitive: true',
+        '    required: true',
+        'steps:',
+        '  - text: test',
+      ].join('\n'),
+    );
+
+    // 2. index.js — plugin that stashes the env it receives via globalThis for assertion
+    writeFileSync(
+      join(pluginDir, 'index.js'),
+      `export default {
+        id: '${pluginId}',
+        definition: {
+          id: '${pluginId}',
+          displayName: 'R5 Config Probe',
+          icon: { type: 'png', src: '/test.png' },
+          themeColor: '#FF0000',
+          description: 'R5-P1 regression: installed plugin must use config store',
+        },
+        requiredEnvKeys: ['R5_PROBE_TOKEN'],
+        optionalEnvKeys: [],
+        isConfigured(env) { return Boolean(env.R5_PROBE_TOKEN); },
+        createAdapter(ctx) {
+          globalThis.__r5ProbeEnv = ctx.env;
+          return { id: '${pluginId}', sendMessage() {} };
+        },
+      };`,
+    );
+
+    // 3. Write Hub-saved config — simulates user saving in Hub UI
+    const configPath = join(configDir, `${pluginId}.json`);
+    writeFileSync(configPath, JSON.stringify({ R5_PROBE_TOKEN: 'hub-saved-secret-token' }));
+
+    // Redirect bootstrap to temp root; do NOT set R5_PROBE_TOKEN in process.env.
+    // Before the fix, bootstrap read process.env (undefined) and skipped the plugin.
+    const savedConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    const savedEnvVal = process.env.R5_PROBE_TOKEN;
+    process.env.CAT_CAFE_CONFIG_ROOT = tempRoot;
+    delete process.env.R5_PROBE_TOKEN;
+
+    try {
+      clearExternalConnectorRegistry();
+      clearConnectorConfigCache();
+      const handle = await startConnectorGateway({}, baseDeps);
+
+      // The plugin should be configured via config store, not process.env
+      assert.ok(
+        globalThis.__r5ProbeEnv,
+        'Installed plugin adapter must be created — config store value should satisfy isConfigured()',
+      );
+      assert.equal(
+        globalThis.__r5ProbeEnv.R5_PROBE_TOKEN,
+        'hub-saved-secret-token',
+        'Plugin env must come from config store (.cat-cafe/im-connector-config/), not process.env',
+      );
+
+      await handle.stop();
+    } finally {
+      // Restore env
+      if (savedConfigRoot === undefined) {
+        delete process.env.CAT_CAFE_CONFIG_ROOT;
+      } else {
+        process.env.CAT_CAFE_CONFIG_ROOT = savedConfigRoot;
+      }
+      if (savedEnvVal === undefined) {
+        delete process.env.R5_PROBE_TOKEN;
+      } else {
+        process.env.R5_PROBE_TOKEN = savedEnvVal;
+      }
+      delete globalThis.__r5ProbeEnv;
+      clearExternalConnectorRegistry();
+      clearConnectorConfigCache();
+      // Remove entire temp root — no artifacts left behind
+      try {
+        rmSync(tempRoot, { recursive: true, force: true });
+      } catch {
+        /* cleanup best-effort */
+      }
+    }
   });
 
   // ── F231 R2-P2: external plugin metadata registered even when unconfigured ──

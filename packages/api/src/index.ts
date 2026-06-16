@@ -181,6 +181,7 @@ import {
   configRoutes,
   connectorHubRoutes,
   connectorMediaRoutes,
+  connectorPluginRoutes,
   distillationRoutes,
   eventsRoutes,
   evidenceRoutes,
@@ -1915,6 +1916,7 @@ async function main(): Promise<void> {
   });
   const connectorHubOpts: Parameters<typeof connectorHubRoutes>[1] = { threadStore };
   await app.register(connectorHubRoutes, connectorHubOpts);
+  await app.register(connectorPluginRoutes);
   await app.register(brakeRoutes, { activityTracker });
 
   // F101: Game routes (store created earlier for /game command interception)
@@ -3952,6 +3954,11 @@ async function main(): Promise<void> {
     // F132 bugfix: live health getter for status endpoint
     (connectorHubOpts as { getWeComBotAdapter?: () => unknown }).getWeComBotAdapter = handle.getWeComBotAdapter;
     (connectorHubOpts as { permissionStore?: unknown }).permissionStore = handle.permissionStore;
+    // F231 A-3: plugin + adapter registries + activation for generic action endpoint
+    (connectorHubOpts as { pluginRegistry?: unknown }).pluginRegistry = handle.pluginRegistry;
+    (connectorHubOpts as { adapterRegistry?: unknown }).adapterRegistry = handle.adapterRegistry;
+    (connectorHubOpts as { activateConnector?: unknown }).activateConnector = handle.activateConnector;
+    (connectorHubOpts as { deactivateConnector?: unknown }).deactivateConnector = handle.deactivateConnector;
   }
 
   let connectorGatewayHandle: Awaited<ReturnType<typeof startConnectorGateway>> = null;

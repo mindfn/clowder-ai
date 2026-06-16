@@ -11,10 +11,17 @@
 import type { ConnectorDefinition } from '@cat-cafe/shared';
 import * as lark from '@larksuiteoapi/node-sdk';
 import type { WebhookHandleResult } from '../../../../routes/connector-webhooks.js';
-import type { IMConnectorPlugin, InboundMessageCallback, MediaDownloadFn } from '../../im-connector-plugin.js';
+import type {
+  HandleActionContext,
+  HandleActionResult,
+  IMConnectorPlugin,
+  InboundMessageCallback,
+  MediaDownloadFn,
+} from '../../im-connector-plugin.js';
 import type { IOutboundAdapter } from '../../OutboundDeliveryHook.js';
 import { FeishuAdapter } from './FeishuAdapter.js';
 import { FeishuTokenManager } from './FeishuTokenManager.js';
+import { handleFeishuAction } from './feishu-action-handler.js';
 
 const FEISHU_OPEN_API_BASE = 'https://open.feishu.cn/open-apis';
 
@@ -318,6 +325,10 @@ const feishuPlugin: IMConnectorPlugin = {
       }
       return Buffer.from(await res.arrayBuffer());
     };
+  },
+
+  async handleAction(_operationName: string, actionId: string, ctx: HandleActionContext): Promise<HandleActionResult> {
+    return handleFeishuAction(actionId, ctx);
   },
 };
 

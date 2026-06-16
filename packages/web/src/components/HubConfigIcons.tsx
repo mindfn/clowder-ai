@@ -192,12 +192,37 @@ export interface PlatformFieldStatus {
   envName: string;
   label: string;
   sensitive: boolean;
+  /** Field type from manifest (AC-A24). Frontend renders generically based on this. */
+  type?: 'input' | 'select' | 'toggle' | 'list';
+  /** Select options (only for type: select). */
+  options?: Array<{ value: string; label: string }>;
   currentValue: string | null;
 }
 
 export interface PlatformStepStatus {
   text: string;
   mode?: string;
+}
+
+/** Action definition from YAML manifest (AC-A26). */
+export interface PlatformActionDef {
+  id: string;
+  label: string;
+  render: string;
+  resultRender?: string;
+  next?: string;
+  rollback?: string;
+  timeout?: number;
+}
+
+/** Operation definition + runtime state (AC-A26). */
+export interface PlatformOperationStatus {
+  name: string;
+  label: string;
+  actions: PlatformActionDef[];
+  currentAction?: string;
+  lastResult?: { render: string; data: unknown; label?: string };
+  updatedAt?: number;
 }
 
 export interface PlatformStatus {
@@ -211,8 +236,20 @@ export interface PlatformStatus {
   fields: PlatformFieldStatus[];
   docsUrl: string;
   steps: PlatformStepStatus[];
+  /** Manifest icon (AC-A23). */
+  icon?: { type: string; src?: string; iconId?: string };
+  /** Theme color from manifest (AC-A23). */
+  themeColor?: string;
+  /** Operation definitions + state for ActionRenderer (AC-A26). */
+  operations?: PlatformOperationStatus[];
+  /** AC-A25: manifest-driven permission label — renders HubPermissionsTab when present. */
+  permissionLabel?: string;
 }
 
+/**
+ * @deprecated Use `platform.permissionLabel` from status API (AC-A25).
+ * Kept for backward compat — remove once all consumers use manifest-driven data.
+ */
 export const PERMISSION_CONNECTORS: Record<string, string> = {
   feishu: '飞书',
   'wecom-bot': '企业微信',

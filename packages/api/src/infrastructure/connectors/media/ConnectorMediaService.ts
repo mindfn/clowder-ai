@@ -51,6 +51,11 @@ export class ConnectorMediaService {
     this.downloadFns.set(connectorId, fn);
   }
 
+  /** Remove a download function (called during connector deactivation). */
+  unregisterDownloadFn(connectorId: string): void {
+    this.downloadFns.delete(connectorId);
+  }
+
   async download(connectorId: string, attachment: MediaAttachment): Promise<DownloadedMedia> {
     await mkdir(this.opts.mediaDir, { recursive: true });
 
