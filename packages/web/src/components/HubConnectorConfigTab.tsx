@@ -266,20 +266,25 @@ export function HubConnectorConfigTab({ refreshKey }: { refreshKey?: number }) {
                                 <span>{new URL(platform.docsUrl).hostname} → 查看官方文档</span>
                               </a>
                             )}
-                            {/* Operations (ActionRenderer) — from YAML manifest */}
-                            {platform.operations?.map((op) => (
-                              <ActionRenderer
-                                key={op.name}
-                                connectorId={platform.id}
-                                operation={op}
-                                onStatusChange={() => void fetchStatus()}
-                                themeColor={platform.themeColor}
-                              />
-                            ))}
                           </div>
                         )}
                       </div>
                     ))}
+
+                    {/* Operations (ActionRenderer) — from YAML manifest */}
+                    {platform.operations && platform.operations.length > 0 && (
+                      <div className="ml-[26px] space-y-2.5">
+                        {platform.operations.map((op) => (
+                          <ActionRenderer
+                            key={op.name}
+                            connectorId={platform.id}
+                            operation={op}
+                            onStatusChange={() => void fetchStatus()}
+                            themeColor={platform.themeColor}
+                          />
+                        ))}
+                      </div>
+                    )}
 
                     {/* Config fields (ConfigFieldRenderer) — from YAML manifest */}
                     {platform.fields.length > 0 && (

@@ -4,18 +4,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { useGuideStore } from '@/stores/guideStore';
 
 vi.mock('@/utils/api-client', () => ({ apiFetch: vi.fn() }));
-vi.mock('../FeishuQrPanel', () => ({
-  FeishuQrPanel: ({ onConfirmed }: { onConfirmed?: () => void }) =>
-    React.createElement(
-      'button',
-      {
-        type: 'button',
-        'data-testid': 'feishu-qr-panel-mock',
-        onClick: () => onConfirmed?.(),
-      },
-      'Feishu QR Mock',
-    ),
-}));
 vi.mock('../HubPermissionsTab', () => ({
   default: () => React.createElement('div', { 'data-testid': 'permissions-mock' }, 'Permissions Mock'),
 }));
@@ -73,6 +61,10 @@ function feishuStatus(
   };
 }
 
+function platformToggle(container: HTMLElement, platformId: string): HTMLElement | null {
+  return container.querySelector(`[data-guide-id="connector.${platformId}"] [role="button"]`);
+}
+
 describe('F134 follow-up — HubConnectorConfigTab', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -103,7 +95,7 @@ describe('F134 follow-up — HubConnectorConfigTab', () => {
     vi.clearAllMocks();
   });
 
-  it('renders FeishuQrPanel inside expanded Feishu card and refreshes status after confirm', async () => {
+  it('renders manifest action UI inside expanded Feishu card and refreshes status after action transition', async () => {
     mockApiFetch
       .mockResolvedValueOnce(
         jsonResponse({
@@ -115,6 +107,17 @@ describe('F134 follow-up — HubConnectorConfigTab', () => {
               configured: false,
               docsUrl: 'https://open.feishu.cn',
               steps: [{ text: 'step-1' }, { text: 'step-2' }],
+              operations: [
+                {
+                  name: 'connect',
+                  label: 'Connect',
+                  currentAction: 'start',
+                  actions: [
+                    { id: 'start', label: 'Connect Feishu', render: 'button', next: 'disconnect' },
+                    { id: 'disconnect', label: 'Disconnect', render: 'button', next: 'start' },
+                  ],
+                },
+              ],
               fields: [
                 { envName: 'FEISHU_APP_ID', label: 'App ID', sensitive: false, currentValue: null },
                 { envName: 'FEISHU_APP_SECRET', label: 'App Secret', sensitive: true, currentValue: null },
@@ -130,6 +133,7 @@ describe('F134 follow-up — HubConnectorConfigTab', () => {
           ],
         }),
       )
+      .mockResolvedValueOnce(jsonResponse({ ok: true, render: 'status', label: 'Connected' }))
       .mockResolvedValueOnce(
         jsonResponse({
           platforms: [
@@ -140,6 +144,17 @@ describe('F134 follow-up — HubConnectorConfigTab', () => {
               configured: true,
               docsUrl: 'https://open.feishu.cn',
               steps: [{ text: 'step-1' }, { text: 'step-2' }],
+              operations: [
+                {
+                  name: 'connect',
+                  label: 'Connect',
+                  currentAction: 'disconnect',
+                  actions: [
+                    { id: 'start', label: 'Connect Feishu', render: 'button', next: 'disconnect' },
+                    { id: 'disconnect', label: 'Disconnect', render: 'button', next: 'start' },
+                  ],
+                },
+              ],
               fields: [],
             },
           ],
@@ -151,7 +166,7 @@ describe('F134 follow-up — HubConnectorConfigTab', () => {
     });
     await flushEffects();
 
-    const expand = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('飞书'));
+    const expand = platformToggle(container, 'feishu');
     expect(expand).toBeTruthy();
 
     await act(async () => {
@@ -159,15 +174,16 @@ describe('F134 follow-up — HubConnectorConfigTab', () => {
     });
     await flushEffects();
 
-    const qr = container.querySelector('[data-testid="feishu-qr-panel-mock"]');
-    expect(qr).toBeTruthy();
+    const action = container.querySelector('[data-testid="feishu-action-start"]');
+    expect(action).toBeTruthy();
 
     await act(async () => {
-      (qr as HTMLButtonElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      (action as HTMLButtonElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await flushEffects();
 
-    expect(mockApiFetch).toHaveBeenCalledTimes(2);
+    expect(mockApiFetch).toHaveBeenCalledTimes(3);
+    expect(mockApiFetch.mock.calls[1][0]).toBe('/api/connectors/feishu/actions/connect/start');
   });
 
   it('does not collapse an expanded weixin card when the current guide step targets connector.weixin', async () => {
@@ -193,9 +209,7 @@ describe('F134 follow-up — HubConnectorConfigTab', () => {
     await flushEffects();
 
     const card = container.querySelector('[data-guide-id="connector.weixin"]');
-    const expand = Array.from(container.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('微信'),
-    );
+    const expand = platformToggle(container, 'weixin');
     expect(card).toBeTruthy();
     expect(expand).toBeTruthy();
 
@@ -204,7 +218,7 @@ describe('F134 follow-up — HubConnectorConfigTab', () => {
     });
     await flushEffects();
 
-    expect(container.querySelector('[data-guide-id="connector.weixin.qr-panel"]')).toBeTruthy();
+    expect(card?.getAttribute('data-active')).toBe('true');
 
     await act(async () => {
       useGuideStore.getState().startGuide(CONNECT_WECHAT_FLOW);
@@ -216,7 +230,7 @@ describe('F134 follow-up — HubConnectorConfigTab', () => {
     });
     await flushEffects();
 
-    expect(container.querySelector('[data-guide-id="connector.weixin.qr-panel"]')).toBeTruthy();
+    expect(card?.getAttribute('data-active')).toBe('true');
   });
 
   it('saves only touched fields and does not submit masked secret placeholders', async () => {
@@ -227,7 +241,7 @@ describe('F134 follow-up — HubConnectorConfigTab', () => {
     });
     await flushEffects();
 
-    const expand = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('飞书'));
+    const expand = platformToggle(container, 'feishu');
     await act(async () => {
       expand!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
@@ -244,9 +258,9 @@ describe('F134 follow-up — HubConnectorConfigTab', () => {
 
     expect(mockApiFetch).toHaveBeenCalledTimes(3);
     const saveCall = mockApiFetch.mock.calls[1];
-    expect(saveCall[0]).toBe('/api/config/secrets');
+    expect(saveCall[0]).toBe('/api/connectors/feishu/config');
     expect(JSON.parse((saveCall[1] as RequestInit).body as string)).toEqual({
-      updates: [{ name: 'FEISHU_APP_ID', value: 'cli_new' }],
+      fields: [{ name: 'FEISHU_APP_ID', value: 'cli_new' }],
     });
   });
 
@@ -258,7 +272,7 @@ describe('F134 follow-up — HubConnectorConfigTab', () => {
     });
     await flushEffects();
 
-    const expand = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('飞书'));
+    const expand = platformToggle(container, 'feishu');
     await act(async () => {
       expand!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
@@ -289,7 +303,7 @@ describe('F134 follow-up — HubConnectorConfigTab', () => {
     });
     await flushEffects();
 
-    const expand = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('飞书'));
+    const expand = platformToggle(container, 'feishu');
     await act(async () => {
       expand!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
@@ -305,5 +319,49 @@ describe('F134 follow-up — HubConnectorConfigTab', () => {
     await flushEffects();
 
     expect(container.querySelector('[data-testid="save-result"]')?.textContent).toContain('configured owner');
+  });
+
+  it('renders manifest operations even when a connector has only one setup step', async () => {
+    mockApiFetch.mockResolvedValueOnce(
+      jsonResponse({
+        platforms: [
+          {
+            id: 'single-step-plugin',
+            name: 'Single Step Plugin',
+            nameEn: 'Single Step Plugin',
+            source: 'external',
+            configured: false,
+            docsUrl: '',
+            steps: [{ text: 'Install plugin' }],
+            fields: [],
+            themeColor: '#00AAFF',
+            operations: [
+              {
+                name: 'connect',
+                label: 'Connect',
+                currentAction: 'connect',
+                actions: [{ id: 'connect', label: 'Connect plugin', render: 'button' }],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+
+    await act(async () => {
+      root.render(React.createElement(HubConnectorConfigTab));
+    });
+    await flushEffects();
+
+    const card = container.querySelector('[data-guide-id="connector.single-step-plugin"]');
+    const expand = card?.querySelector('[role="button"]');
+    expect(expand).toBeTruthy();
+
+    await act(async () => {
+      expand!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    expect(container.querySelector('[data-testid="single-step-plugin-action-connect"]')).toBeTruthy();
   });
 });

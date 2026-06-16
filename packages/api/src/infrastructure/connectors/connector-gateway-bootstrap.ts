@@ -922,7 +922,7 @@ export async function startConnectorGateway(
     const manifest = manifests.get(connectorId);
     if (!manifest) throw new Error(`Manifest not found for '${connectorId}'`);
     clearConnectorConfigCache();
-    loadAllConnectorConfigs(projectRoot, [manifest]);
+    loadAllConnectorConfigs(projectRoot, [...manifests.values()]);
     const freshEnv = resolveConnectorEnv(connectorId, manifest.config.filter(isValueField));
 
     if (!plugin.isConfigured(freshEnv)) {

@@ -13,7 +13,10 @@ import {
   clearExternalConnectorRegistry,
   getAllExternalConnectorMeta,
 } from '../dist/infrastructure/connectors/external-connector-registry.js';
-import { clearConnectorConfigCache } from '../dist/infrastructure/connectors/im-connector-config-store.js';
+import {
+  clearConnectorConfigCache,
+  resolveConnectorEnv,
+} from '../dist/infrastructure/connectors/im-connector-config-store.js';
 import { FeishuTokenManager } from '../dist/infrastructure/connectors/im-connectors/feishu/FeishuTokenManager.js';
 import { TelegramAdapter } from '../dist/infrastructure/connectors/im-connectors/telegram/TelegramAdapter.js';
 import { resolvePluginsDir } from '../dist/infrastructure/connectors/plugins/plugin-installer.js';
@@ -963,6 +966,154 @@ describe('ConnectorGateway Bootstrap', () => {
       }
       TelegramAdapter.prototype.startPolling = originalStartPolling;
       TelegramAdapter.prototype.stopPolling = originalStopPolling;
+      clearConnectorConfigCache();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('dynamic activation preserves saved config cache for other connectors', async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'activation-cache-'));
+    const pluginsRoot = resolvePluginsDir(tempRoot);
+    const configDir = join(tempRoot, '.cat-cafe', 'im-connector-config');
+    const activationId = 'activation-cache-probe';
+    const siblingId = 'sibling-cache-probe';
+    const activationDir = join(pluginsRoot, activationId);
+    const siblingDir = join(pluginsRoot, siblingId);
+    const siblingFields = [{ envName: 'SIBLING_CACHE_TOKEN', label: 'Token', required: true, sensitive: true }];
+    let handle;
+
+    mkdirSync(activationDir, { recursive: true });
+    mkdirSync(siblingDir, { recursive: true });
+    mkdirSync(configDir, { recursive: true });
+
+    writeFileSync(
+      join(activationDir, 'connector.yaml'),
+      [
+        `id: ${activationId}`,
+        'name: Activation Cache Probe',
+        'nameEn: Activation Cache Probe',
+        'version: 1.0.0',
+        'icon:',
+        '  type: png',
+        '  src: /test.png',
+        "themeColor: '#FF0000'",
+        'docsUrl: https://example.com',
+        'config:',
+        '  - envName: ACTIVATION_CACHE_TOKEN',
+        '    label: Token',
+        '    sensitive: true',
+        '    required: true',
+        'steps:',
+        '  - text: test',
+      ].join('\n'),
+    );
+    writeFileSync(
+      join(activationDir, 'index.js'),
+      `export default {
+        id: '${activationId}',
+        definition: {
+          id: '${activationId}',
+          displayName: 'Activation Cache Probe',
+          icon: { type: 'png', src: '/test.png' },
+          themeColor: '#FF0000',
+          description: 'activation cache regression probe',
+        },
+        requiredEnvKeys: ['ACTIVATION_CACHE_TOKEN'],
+        optionalEnvKeys: [],
+        isConfigured(env) { return Boolean(env.ACTIVATION_CACHE_TOKEN); },
+        createAdapter() { return { id: '${activationId}', sendMessage() {} }; },
+      };`,
+    );
+    writeFileSync(
+      join(siblingDir, 'connector.yaml'),
+      [
+        `id: ${siblingId}`,
+        'name: Sibling Cache Probe',
+        'nameEn: Sibling Cache Probe',
+        'version: 1.0.0',
+        'icon:',
+        '  type: png',
+        '  src: /test.png',
+        "themeColor: '#00AAFF'",
+        'docsUrl: https://example.com',
+        'config:',
+        '  - envName: SIBLING_CACHE_TOKEN',
+        '    label: Token',
+        '    sensitive: true',
+        '    required: true',
+        'steps:',
+        '  - text: test',
+      ].join('\n'),
+    );
+    writeFileSync(
+      join(siblingDir, 'index.js'),
+      `export default {
+        id: '${siblingId}',
+        definition: {
+          id: '${siblingId}',
+          displayName: 'Sibling Cache Probe',
+          icon: { type: 'png', src: '/test.png' },
+          themeColor: '#00AAFF',
+          description: 'sibling cache regression probe',
+        },
+        requiredEnvKeys: ['SIBLING_CACHE_TOKEN'],
+        optionalEnvKeys: [],
+        isConfigured(env) { return Boolean(env.SIBLING_CACHE_TOKEN); },
+        createAdapter() { return { id: '${siblingId}', sendMessage() {} }; },
+      };`,
+    );
+    writeFileSync(join(configDir, `${siblingId}.json`), JSON.stringify({ SIBLING_CACHE_TOKEN: 'sibling-saved' }));
+
+    const savedConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    const savedActivationToken = process.env.ACTIVATION_CACHE_TOKEN;
+    const savedSiblingToken = process.env.SIBLING_CACHE_TOKEN;
+    process.env.CAT_CAFE_CONFIG_ROOT = tempRoot;
+    delete process.env.ACTIVATION_CACHE_TOKEN;
+    delete process.env.SIBLING_CACHE_TOKEN;
+
+    try {
+      clearExternalConnectorRegistry();
+      clearConnectorConfigCache();
+      handle = await startConnectorGateway({}, baseDeps);
+      assert.equal(
+        resolveConnectorEnv(siblingId, siblingFields).SIBLING_CACHE_TOKEN,
+        'sibling-saved',
+        'bootstrap must preload saved config for sibling connector',
+      );
+
+      writeFileSync(
+        join(configDir, `${activationId}.json`),
+        JSON.stringify({ ACTIVATION_CACHE_TOKEN: 'activation-saved' }),
+      );
+      await handle.activateConnector(activationId);
+
+      assert.ok(
+        handle.adapterRegistry.has(activationId),
+        'dynamic activation must create the newly configured adapter',
+      );
+      assert.equal(
+        resolveConnectorEnv(siblingId, siblingFields).SIBLING_CACHE_TOKEN,
+        'sibling-saved',
+        'activation must not clear saved config cache entries for other connectors',
+      );
+    } finally {
+      if (handle) await handle.stop();
+      if (savedConfigRoot === undefined) {
+        delete process.env.CAT_CAFE_CONFIG_ROOT;
+      } else {
+        process.env.CAT_CAFE_CONFIG_ROOT = savedConfigRoot;
+      }
+      if (savedActivationToken === undefined) {
+        delete process.env.ACTIVATION_CACHE_TOKEN;
+      } else {
+        process.env.ACTIVATION_CACHE_TOKEN = savedActivationToken;
+      }
+      if (savedSiblingToken === undefined) {
+        delete process.env.SIBLING_CACHE_TOKEN;
+      } else {
+        process.env.SIBLING_CACHE_TOKEN = savedSiblingToken;
+      }
+      clearExternalConnectorRegistry();
       clearConnectorConfigCache();
       rmSync(tempRoot, { recursive: true, force: true });
     }
