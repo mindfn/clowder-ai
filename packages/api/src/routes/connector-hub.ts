@@ -479,6 +479,23 @@ export function buildConnectorStatus(
   return builtinStatuses;
 }
 
+function buildConnectorStatusWithStoredConfig(): {
+  projectRoot: string;
+  manifests: ConnectorManifest[];
+  status: PlatformStatus[];
+} {
+  const manifests = Array.from(getConnectorManifests().values());
+  const projectRoot = resolveActiveProjectRoot();
+  loadAllConnectorConfigs(projectRoot, manifests);
+  const mergedEnv: Record<string, string | undefined> = { ...process.env };
+  for (const m of manifests) {
+    const valueFields = m.config.filter(isValueField);
+    const resolved = resolveConnectorEnv(m.id, valueFields);
+    Object.assign(mergedEnv, resolved);
+  }
+  return { projectRoot, manifests, status: buildConnectorStatus(mergedEnv, manifests) };
+}
+
 export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> = async (app, opts) => {
   const { threadStore } = opts;
   const feishuQrBindClient = opts.feishuQrBindClient ?? new DefaultFeishuQrBindClient();
@@ -511,16 +528,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
     }
     // F231 A-4 fix: resolve stored config > env > default per connector
     // Without this, Hub UI shows stale process.env after saving via config store.
-    const manifests = Array.from(getConnectorManifests().values());
-    const projectRoot = resolveActiveProjectRoot();
-    loadAllConnectorConfigs(projectRoot, manifests);
-    const mergedEnv: Record<string, string | undefined> = { ...process.env };
-    for (const m of manifests) {
-      const valueFields = m.config.filter(isValueField);
-      const resolved = resolveConnectorEnv(m.id, valueFields);
-      Object.assign(mergedEnv, resolved);
-    }
-    const status = buildConnectorStatus(mergedEnv, manifests);
+    const { projectRoot, manifests, status } = buildConnectorStatusWithStoredConfig();
     // F137: WeChat "configured" is based on adapter having a live bot_token, not env vars
     const weixinStatus = status.find((p) => p.id === 'weixin');
     if (weixinStatus) {
@@ -1183,13 +1191,13 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
     }
 
     if (id === 'feishu') {
-      const status = buildConnectorStatus();
+      const { status } = buildConnectorStatusWithStoredConfig();
       const feishu = status.find((p) => p.id === 'feishu');
       return { valid: feishu?.configured === true, error: !feishu?.configured ? '飞书未配置或凭据无效' : undefined };
     }
 
     if (id === 'telegram') {
-      const status = buildConnectorStatus();
+      const { status } = buildConnectorStatusWithStoredConfig();
       const tg = status.find((p) => p.id === 'telegram');
       return { valid: tg?.configured === true, error: !tg?.configured ? 'Telegram Bot Token 未配置' : undefined };
     }

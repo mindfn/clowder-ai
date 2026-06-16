@@ -7,6 +7,7 @@ import Fastify from 'fastify';
 
 const { connectorHubRoutes, invalidateManifestCache } = await import('../dist/routes/connector-hub.js');
 const { configEventBus } = await import('../dist/config/config-event-bus.js');
+const { clearConnectorConfigCache } = await import('../dist/infrastructure/connectors/im-connector-config-store.js');
 
 const OWNER_ID = 'owner-1';
 const AUTH_HEADERS = { 'x-cat-cafe-user': OWNER_ID, 'x-test-session-user': OWNER_ID };
@@ -1135,6 +1136,57 @@ describe('GET /api/connector/status — external hidden fields', () => {
       if (previousToken === undefined) delete process.env.HIDDEN_PROBE_TOKEN;
       else process.env.HIDDEN_PROBE_TOKEN = previousToken;
       invalidateManifestCache();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('POST /api/connector/:id/test — saved config store', () => {
+  it('tests Telegram against Hub-saved config when process.env is unset', async () => {
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'connector-test-saved-config-'));
+    const configDir = join(tmpDir, '.cat-cafe', 'im-connector-config');
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(configDir, 'telegram.json'),
+      JSON.stringify({ TELEGRAM_BOT_TOKEN: '123456:stored_token_abc123' }),
+    );
+
+    const previousRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    const previousToken = process.env.TELEGRAM_BOT_TOKEN;
+    process.env.CAT_CAFE_CONFIG_ROOT = tmpDir;
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    invalidateManifestCache();
+    clearConnectorConfigCache();
+
+    try {
+      const app = Fastify();
+      await registerConnectorHub(app, {
+        threadStore: {
+          async list() {
+            return [];
+          },
+        },
+      });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/connector/telegram/test',
+        headers: AUTH_HEADERS,
+      });
+      const body = JSON.parse(res.body);
+
+      assert.equal(res.statusCode, 200);
+      assert.equal(body.valid, true, 'test route must use stored connector config, not only process.env');
+
+      await app.close();
+    } finally {
+      if (previousRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousRoot;
+      if (previousToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
+      else process.env.TELEGRAM_BOT_TOKEN = previousToken;
+      invalidateManifestCache();
+      clearConnectorConfigCache();
       rmSync(tmpDir, { recursive: true, force: true });
     }
   });

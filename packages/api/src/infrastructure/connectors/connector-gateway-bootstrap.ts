@@ -14,7 +14,8 @@
  */
 
 import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { type CatId, type ConnectorSource, catRegistry, isStaticConnectorId, isValueField } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { FastifyBaseLogger } from 'fastify';
@@ -55,6 +56,15 @@ import {
 import { scanConnectorManifests } from './plugins/im-connector-manifest.js';
 import { RedisConnectorThreadBindingStore } from './RedisConnectorThreadBindingStore.js';
 import { StreamingOutboundHook } from './StreamingOutboundHook.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+function resolveBuiltinConnectorsDir(): string {
+  const sourceAdjacentDir = join(__dirname, 'im-connectors');
+  if (existsSync(join(sourceAdjacentDir, 'telegram', 'connector.yaml'))) return sourceAdjacentDir;
+  return join(__dirname, '../../../src/infrastructure/connectors/im-connectors');
+}
 
 export interface ConnectorGatewayConfig {
   telegramBotToken?: string | undefined;
@@ -489,7 +499,7 @@ export async function startConnectorGateway(
 
   // ── F231: Scan connector YAML manifests & load stored configs ──
   // Built-in manifests live in source tree; installed plugin manifests in .cat-cafe/plugins/
-  const connectorsDir = join(projectRoot, 'packages/api/src/infrastructure/connectors/im-connectors');
+  const connectorsDir = resolveBuiltinConnectorsDir();
   const manifests = scanConnectorManifests(connectorsDir);
 
   // Phase B: also scan installed plugin manifests

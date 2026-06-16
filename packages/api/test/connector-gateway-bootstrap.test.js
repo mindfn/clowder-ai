@@ -917,6 +917,57 @@ describe('ConnectorGateway Bootstrap', () => {
     }
   });
 
+  it('loads built-in connector manifests from source tree when config root is external', async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'builtin-config-root-'));
+    const configDir = join(tempRoot, '.cat-cafe', 'im-connector-config');
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(configDir, 'telegram.json'),
+      JSON.stringify({ TELEGRAM_BOT_TOKEN: '123456:stored_token_abc123' }),
+    );
+
+    const savedConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    const savedToken = process.env.TELEGRAM_BOT_TOKEN;
+    const originalStartPolling = TelegramAdapter.prototype.startPolling;
+    const originalStopPolling = TelegramAdapter.prototype.stopPolling;
+    let pollingStarted = 0;
+
+    process.env.CAT_CAFE_CONFIG_ROOT = tempRoot;
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    TelegramAdapter.prototype.startPolling = function stubStartPolling() {
+      pollingStarted += 1;
+    };
+    TelegramAdapter.prototype.stopPolling = async function stubStopPolling() {};
+
+    try {
+      clearConnectorConfigCache();
+      const handle = await startConnectorGateway({}, baseDeps);
+
+      assert.ok(
+        handle.adapterRegistry.has('telegram'),
+        'built-in Telegram should use Hub-saved config even when CAT_CAFE_CONFIG_ROOT is outside the repo',
+      );
+      assert.equal(pollingStarted, 1, 'Telegram polling should start from stored config');
+
+      await handle.stop();
+    } finally {
+      if (savedConfigRoot === undefined) {
+        delete process.env.CAT_CAFE_CONFIG_ROOT;
+      } else {
+        process.env.CAT_CAFE_CONFIG_ROOT = savedConfigRoot;
+      }
+      if (savedToken === undefined) {
+        delete process.env.TELEGRAM_BOT_TOKEN;
+      } else {
+        process.env.TELEGRAM_BOT_TOKEN = savedToken;
+      }
+      TelegramAdapter.prototype.startPolling = originalStartPolling;
+      TelegramAdapter.prototype.stopPolling = originalStopPolling;
+      clearConnectorConfigCache();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   // ── F231 R2-P2: external plugin metadata registered even when unconfigured ──
 
   it('F231 R2-P2: registers external plugin metadata before isConfigured check (bootstrap path)', async () => {
@@ -1000,6 +1051,15 @@ describe('ConnectorGateway Bootstrap', () => {
         '(connectorHubOpts as { stopWeComBot?: () => Promise<void> }).stopWeComBot = handle.stopWeComBot',
       ),
       'wireGatewayHooks must pass stopWeComBot to legacy Hub routes',
+    );
+    assert.ok(
+      source.includes('function syncConnectorWebhookHandlers('),
+      'wireGatewayHooks must centralize webhook handler map synchronization',
+    );
+    assert.ok(
+      source.includes('await handle.activateConnector(connectorId)') &&
+        source.includes('syncConnectorWebhookHandlers(handle)'),
+      'live connector activation must refresh the shared webhook route handler map',
     );
   });
 });

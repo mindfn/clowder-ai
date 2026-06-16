@@ -3931,6 +3931,14 @@ async function main(): Promise<void> {
   };
 
   /** Re-wire all hook consumers after gateway (re)start */
+  function syncConnectorWebhookHandlers(handle: NonNullable<Awaited<ReturnType<typeof startConnectorGateway>>>): void {
+    // P1-1 fix: clear stale handlers before re-populating (hot-reload may remove connectors)
+    connectorWebhookHandlers.clear();
+    for (const [id, handler] of handle.webhookHandlers) {
+      connectorWebhookHandlers.set(id, handler);
+    }
+  }
+
   function wireGatewayHooks(handle: NonNullable<Awaited<ReturnType<typeof startConnectorGateway>>>): void {
     invokeTrigger.setOutboundHook(handle.outboundHook);
     invokeTrigger.setStreamingHook(handle.streamingHook);
@@ -3939,11 +3947,7 @@ async function main(): Promise<void> {
     (callbackOpts as { outboundHook?: typeof handle.outboundHook }).outboundHook = handle.outboundHook;
     (messagesOpts as { outboundHook?: typeof handle.outboundHook }).outboundHook = handle.outboundHook;
     (messagesOpts as { streamingHook?: typeof handle.streamingHook }).streamingHook = handle.streamingHook;
-    // P1-1 fix: clear stale handlers before re-populating (hot-reload may remove connectors)
-    connectorWebhookHandlers.clear();
-    for (const [id, handler] of handle.webhookHandlers) {
-      connectorWebhookHandlers.set(id, handler);
-    }
+    syncConnectorWebhookHandlers(handle);
     (connectorHubOpts as { weixinAdapter?: unknown }).weixinAdapter = handle.weixinAdapter;
     (connectorHubOpts as { startWeixinPolling?: () => void }).startWeixinPolling = handle.startWeixinPolling;
     (
@@ -3956,8 +3960,18 @@ async function main(): Promise<void> {
     // F231 A-3: plugin + adapter registries + activation for generic action endpoint
     (connectorHubOpts as { pluginRegistry?: unknown }).pluginRegistry = handle.pluginRegistry;
     (connectorHubOpts as { adapterRegistry?: unknown }).adapterRegistry = handle.adapterRegistry;
-    (connectorHubOpts as { activateConnector?: unknown }).activateConnector = handle.activateConnector;
-    (connectorHubOpts as { deactivateConnector?: unknown }).deactivateConnector = handle.deactivateConnector;
+    (connectorHubOpts as { activateConnector?: (connectorId: string) => Promise<void> }).activateConnector = async (
+      connectorId,
+    ) => {
+      await handle.activateConnector(connectorId);
+      syncConnectorWebhookHandlers(handle);
+    };
+    (connectorHubOpts as { deactivateConnector?: (connectorId: string) => Promise<void> }).deactivateConnector = async (
+      connectorId,
+    ) => {
+      await handle.deactivateConnector(connectorId);
+      syncConnectorWebhookHandlers(handle);
+    };
   }
 
   let connectorGatewayHandle: Awaited<ReturnType<typeof startConnectorGateway>> = null;
