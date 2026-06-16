@@ -61,7 +61,7 @@ export function QrImagePanel({
   showSpinner: boolean;
 }) {
   return (
-    <div className="flex flex-col items-center gap-3 bg-cafe-surface-elevated border border-cafe rounded-xl p-4">
+    <div className="console-list-card flex flex-col items-center gap-3 rounded-xl p-4 shadow-[var(--console-shadow-soft)]">
       <Image
         src={url}
         alt={`${connectorId} QR code`}

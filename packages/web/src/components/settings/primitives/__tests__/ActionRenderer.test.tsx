@@ -22,6 +22,12 @@ async function flushEffects() {
   });
 }
 
+function queryButton(el: HTMLElement, text: string): HTMLButtonElement {
+  const btn = Array.from(el.querySelectorAll('button')).find((b) => b.textContent?.includes(text));
+  if (!btn) throw new Error(`Missing button: ${text}`);
+  return btn as HTMLButtonElement;
+}
+
 describe('ActionRenderer', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -187,5 +193,147 @@ describe('ActionRenderer', () => {
         },
       }),
     });
+  });
+
+  it('renders a generic QR action and displays the returned QR image', async () => {
+    mockApiFetch
+      .mockResolvedValueOnce(
+        jsonResponse({
+          ok: true,
+          render: 'img',
+          data: { url: 'data:image/png;base64,abc' },
+          label: 'Scan with Feishu',
+        }),
+      )
+      .mockResolvedValue(jsonResponse({ ok: true, render: 'polling', label: 'Waiting for scan' }));
+
+    await act(async () => {
+      root.render(
+        React.createElement(ActionRenderer, {
+          connectorId: 'feishu',
+          operation: {
+            name: 'connect',
+            label: 'Connect',
+            actions: [
+              {
+                id: 'qr-generate',
+                label: 'Generate QR Code',
+                render: 'button',
+                resultRender: 'img',
+                next: 'qr-status',
+              },
+              { id: 'qr-status', label: 'Waiting', render: 'polling', timeout: 60 },
+            ],
+          },
+        }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      queryButton(container, 'Generate QR Code').click();
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    const img = container.querySelector<HTMLImageElement>('[data-testid="feishu-qr-image"]');
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/connectors/feishu/actions/connect/qr-generate', {
+      method: 'POST',
+    });
+    expect(img).not.toBeNull();
+    expect(img!.src).toContain('data:image/png;base64,abc');
+    expect(container.textContent).toContain('Scan with Feishu');
+  });
+
+  it('advances a completed QR polling action to the connected state', async () => {
+    mockApiFetch.mockImplementation(async (url) => {
+      const path = String(url);
+      if (path.endsWith('/qr-generate')) {
+        return jsonResponse({
+          ok: true,
+          render: 'img',
+          data: { url: 'https://example.com/qr.png' },
+          label: 'Scan QR',
+        });
+      }
+      if (path.endsWith('/qr-status')) {
+        return jsonResponse({ ok: true, render: 'status', label: 'WeChat connected' });
+      }
+      return jsonResponse({ ok: false, label: 'unexpected action' }, 500);
+    });
+
+    await act(async () => {
+      root.render(
+        React.createElement(ActionRenderer, {
+          connectorId: 'weixin',
+          operation: {
+            name: 'connect',
+            label: 'Connect',
+            actions: [
+              {
+                id: 'qr-generate',
+                label: 'Generate QR Code',
+                render: 'button',
+                resultRender: 'img',
+                next: 'qr-status',
+              },
+              { id: 'qr-status', label: 'Waiting', render: 'polling', next: 'disconnect', timeout: 60 },
+              { id: 'disconnect', label: 'Disconnect', render: 'button', next: 'qr-generate' },
+            ],
+          },
+        }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      queryButton(container, 'Generate QR Code').click();
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    await act(async () => {
+      vi.advanceTimersByTime(150);
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    expect(container.querySelector('[data-testid="weixin-connected"]')).not.toBeNull();
+    expect(container.textContent).toContain('WeChat connected');
+  });
+
+  it('executes the generic disconnect action from a configured connector state', async () => {
+    mockApiFetch.mockResolvedValue(jsonResponse({ ok: true, render: 'status', label: 'Disconnected' }));
+
+    await act(async () => {
+      root.render(
+        React.createElement(ActionRenderer, {
+          connectorId: 'feishu',
+          configured: true,
+          operation: {
+            name: 'connect',
+            label: 'Connect',
+            actions: [
+              { id: 'qr-generate', label: 'Generate QR Code', render: 'button', next: 'disconnect' },
+              { id: 'disconnect', label: 'Disconnect', render: 'button', next: 'qr-generate' },
+            ],
+          },
+        }),
+      );
+    });
+    await flushEffects();
+
+    expect(container.querySelector('[data-testid="feishu-connected"]')).not.toBeNull();
+
+    await act(async () => {
+      queryButton(container, 'Disconnect').click();
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/connectors/feishu/actions/connect/disconnect', {
+      method: 'POST',
+    });
+    expect(container.querySelector('[data-testid="feishu-action-qr-generate"]')).not.toBeNull();
   });
 });

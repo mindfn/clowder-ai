@@ -99,7 +99,7 @@ export function ConfigFieldRenderer({ field, value, onChange, idPrefix = 'config
             className="console-form-input py-2.5 text-sm font-mono"
             data-testid={`field-${field.envName}`}
           />
-          <p className="text-[10px] text-cafe-muted mt-0.5">{'JSON array, e.g. ["a","b"]'}</p>
+          <p className="text-micro text-cafe-muted mt-0.5">{'JSON array, e.g. ["a","b"]'}</p>
         </div>
       );
 

@@ -198,7 +198,7 @@ export function HubConnectorConfigTab({ refreshKey }: { refreshKey?: number }) {
                   {platform.name}
                   {platform.nameEn !== platform.name ? ` ${platform.nameEn}` : ''}
                   {platform.source === 'external' && (
-                    <span className="rounded bg-cafe-surface-sunken px-1.5 py-0.5 text-[10px] font-medium text-cafe-muted">
+                    <span className="rounded bg-cafe-surface-sunken px-1.5 py-0.5 text-micro font-medium text-cafe-muted">
                       外部
                     </span>
                   )}
