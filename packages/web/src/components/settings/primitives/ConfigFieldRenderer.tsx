@@ -78,7 +78,7 @@ export function ConfigFieldRenderer({ field, value, onChange, idPrefix = 'config
             data-testid={`field-${field.envName}`}
           >
             <span
-              className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+              className={`inline-block h-3.5 w-3.5 rounded-full bg-cafe-white transition-transform ${
                 value === 'true' || (!value && field.currentValue === 'true') ? 'translate-x-4' : 'translate-x-0.5'
               }`}
             />
@@ -99,7 +99,7 @@ export function ConfigFieldRenderer({ field, value, onChange, idPrefix = 'config
             className="console-form-input py-2.5 text-sm font-mono"
             data-testid={`field-${field.envName}`}
           />
-          <p className="text-[10px] text-cafe-muted mt-0.5">JSON array, e.g. ["a","b"]</p>
+          <p className="text-[10px] text-cafe-muted mt-0.5">{'JSON array, e.g. ["a","b"]'}</p>
         </div>
       );
 
