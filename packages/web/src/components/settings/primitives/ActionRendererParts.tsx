@@ -3,6 +3,8 @@
  * Extracted to keep ActionRenderer.tsx under 350 lines.
  */
 
+import Image from 'next/image';
+
 import { CheckCircleIcon, type PlatformActionDef, QrCodeIcon, SpinnerIcon } from '../../HubConfigIcons';
 
 // Re-export types used by ActionRenderer for its internal state
@@ -60,11 +62,13 @@ export function QrImagePanel({
 }) {
   return (
     <div className="flex flex-col items-center gap-3 bg-cafe-surface-elevated border border-cafe rounded-xl p-4">
-      {/* biome-ignore lint/performance/noImgElement: QR codes are data URLs, not static assets */}
-      <img
+      <Image
         src={url}
         alt={`${connectorId} QR code`}
-        className="w-48 h-48 rounded-lg"
+        width={192}
+        height={192}
+        unoptimized
+        className="h-48 w-48 rounded-lg"
         data-testid={`${connectorId}-qr-image`}
       />
       {showSpinner && (

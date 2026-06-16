@@ -208,7 +208,7 @@ export function HubConnectorConfigTab() {
         return (
           <div
             key={platform.id}
-            className="console-list-card rounded-xl overflow-hidden shadow-[0_8px_22px_rgba(43,33,26,0.04)] hover:shadow-md"
+            className="console-list-card rounded-xl overflow-hidden shadow-[var(--console-shadow-soft)] hover:shadow-md"
             data-testid={`platform-card-${platform.id}`}
             data-guide-id={`connector.${platform.id}`}
             data-active={isExpanded ? 'true' : 'false'}
