@@ -1916,6 +1916,110 @@ describe('POST /api/connectors/:connectorId/actions — pending config values', 
       rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it('rejects redacted pending values before action handlers run', async () => {
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'external-action-redacted-values-'));
+    const pluginId = 'redacted-action-values-probe';
+    const pluginDir = join(tmpDir, '.cat-cafe', 'plugins', pluginId);
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: Redacted Action Values Probe',
+        'nameEn: Redacted Action Values Probe',
+        'version: 1.0.0',
+        'source: external',
+        "themeColor: '#884422'",
+        'icon:',
+        '  type: png',
+        '  src: /test.png',
+        'docsUrl: https://example.com/redacted-action-values-probe',
+        'config:',
+        '  - envName: REDACTED_ACTION_TOKEN',
+        '    type: input',
+        '    label: Token',
+        '    sensitive: true',
+        '    required: true',
+        '  - name: connect',
+        '    type: operation',
+        '    label: Connect',
+        '    actions:',
+        '      - id: validate',
+        '        label: Validate',
+        '        render: button',
+        'steps:',
+        '  - text: Enter token',
+      ].join('\n'),
+    );
+
+    let actionCalled = false;
+    const plugin = {
+      id: pluginId,
+      definition: {
+        id: pluginId,
+        displayName: 'Redacted Action Values Probe',
+        icon: { type: 'png', src: '/test.png' },
+        themeColor: '#884422',
+        description: 'redacted action values regression',
+      },
+      requiredEnvKeys: ['REDACTED_ACTION_TOKEN'],
+      isConfigured: () => false,
+      createAdapter: () => ({ id: pluginId, sendMessage() {} }),
+      async handleAction() {
+        actionCalled = true;
+        return {
+          render: 'status',
+          data: { status: 'validated' },
+          label: 'Should not run',
+          advance: false,
+        };
+      },
+    };
+
+    const previousRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    process.env.CAT_CAFE_CONFIG_ROOT = tmpDir;
+    invalidateManifestCache();
+    clearConnectorConfigCache();
+
+    try {
+      const app = Fastify();
+      await registerConnectorHub(app, {
+        threadStore: {
+          async list() {
+            return [];
+          },
+        },
+        pluginRegistry: new Map([[pluginId, plugin]]),
+      });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/connectors/${pluginId}/actions/connect/validate`,
+        headers: {
+          ...AUTH_HEADERS,
+          host: '127.0.0.1:3002',
+          origin: 'http://127.0.0.1:3001',
+        },
+        payload: { values: { REDACTED_ACTION_TOKEN: '••••••' } },
+      });
+      const configPath = join(tmpDir, '.cat-cafe', 'im-connector-config', `${pluginId}.json`);
+
+      assert.equal(res.statusCode, 400);
+      assert.match(JSON.parse(res.body).error, /redacted/i);
+      assert.equal(actionCalled, false, 'redacted pending values must be rejected before plugin action execution');
+      assert.equal(existsSync(configPath), false, 'redacted pending values must not be persisted by action backfill');
+
+      await app.close();
+    } finally {
+      if (previousRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousRoot;
+      invalidateManifestCache();
+      clearConnectorConfigCache();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('POST /api/connector/wecom-bot/disconnect', () => {

@@ -1081,6 +1081,10 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
     const valueFields = manifest.config.filter(isValueField);
     const resolvedEnv = resolveConnectorEnv(connectorId, valueFields);
     const pendingActionValues = pickPendingActionValues(request.body, valueFields);
+    if (containsRedactedPlaceholder(pendingActionValues)) {
+      reply.status(400);
+      return { error: 'Refusing to use redacted connector placeholder values' };
+    }
 
     const result = await executeConnectorAction({
       projectRoot,
