@@ -433,13 +433,15 @@ function isRequiredFieldSatisfied(field: ConnectorFieldDef, env: Record<string, 
 export function buildConnectorStatus(
   env: Record<string, string | undefined> = process.env,
   manifests?: ConnectorManifest[],
+  connectorEnvById?: ReadonlyMap<string, Record<string, string | undefined>>,
 ): PlatformStatus[] {
   const resolved = manifests ? manifestsToPlatformDefs(manifests) : getConnectorPlatforms();
   const externalMetaById = new Map(getAllExternalConnectorMeta().map((meta) => [meta.id, meta]));
 
   const builtinStatuses: PlatformStatus[] = resolved.map((platform) => {
+    const platformEnv = connectorEnvById?.get(platform.id) ?? env;
     const fields: PlatformFieldStatus[] = platform.fields.map((f) => {
-      const raw = env[f.envName];
+      const raw = platformEnv[f.envName];
       const isSet = isConfiguredFieldValue(f, raw);
       const effectiveValue = isSet ? raw : (f.defaultValue ?? null);
       return {
@@ -458,7 +460,7 @@ export function buildConnectorStatus(
     if (configuredFields.length === 0) {
       configured = false;
     } else {
-      configured = configuredFields.every((f) => isRequiredFieldSatisfied(f, env));
+      configured = configuredFields.every((f) => isRequiredFieldSatisfied(f, platformEnv));
     }
     if (platform.source === 'external') {
       configured = externalMetaById.get(platform.id)?.configured ?? configured;
@@ -485,9 +487,10 @@ export function buildConnectorStatus(
 
   for (const meta of externalMetaById.values()) {
     if (resolvedIds.has(meta.id)) continue;
+    const metaEnv = connectorEnvById?.get(meta.id) ?? env;
 
     const fields: PlatformFieldStatus[] = meta.requiredEnvKeys.map((key) => {
-      const raw = env[key];
+      const raw = metaEnv[key];
       const isSet = raw != null && raw !== '' && !raw.startsWith('(未设置');
       return {
         envName: key,
@@ -521,13 +524,13 @@ function buildConnectorStatusWithStoredConfig(): {
   const manifests = Array.from(getConnectorManifests().values());
   const projectRoot = resolveActiveProjectRoot();
   loadAllConnectorConfigs(projectRoot, manifests);
-  const mergedEnv: Record<string, string | undefined> = { ...process.env };
+  const connectorEnvById = new Map<string, Record<string, string | undefined>>();
   for (const m of manifests) {
     const valueFields = m.config.filter(isValueField);
     const resolved = resolveConnectorEnv(m.id, valueFields);
-    Object.assign(mergedEnv, resolved);
+    connectorEnvById.set(m.id, { ...process.env, ...resolved });
   }
-  return { projectRoot, manifests, status: buildConnectorStatus(mergedEnv, manifests) };
+  return { projectRoot, manifests, status: buildConnectorStatus(process.env, manifests, connectorEnvById) };
 }
 
 function resolveStoredConnectorEnv(

@@ -154,12 +154,14 @@ export function ActionRenderer({
   );
 
   const startPolling = useCallback(
-    (actionId: string, intervalMs = 2500) => {
+    (actionId: string, intervalMs = 2500, restoredUpdatedAt?: number) => {
       stopTimers();
       abortedRef.current = false;
 
       const action = actions.find((a) => a.id === actionId);
       const timeoutMs = (action?.timeout ?? 60) * 1000;
+      const elapsedMs = typeof restoredUpdatedAt === 'number' ? Math.max(0, Date.now() - restoredUpdatedAt) : 0;
+      const remainingTimeoutMs = timeoutMs - elapsedMs;
 
       const poll = async () => {
         if (abortedRef.current) return;
@@ -186,8 +188,7 @@ export function ActionRenderer({
         if (action?.next) advanceTo(action.next);
       };
 
-      pollRef.current = setTimeout(poll, 100);
-      expireRef.current = setTimeout(() => {
+      const expire = () => {
         abortedRef.current = true;
         stopTimers();
         if (action?.rollback) {
@@ -198,7 +199,15 @@ export function ActionRenderer({
           setPhase('idle');
           setErrorMsg('Operation timed out. Please try again.');
         }
-      }, timeoutMs);
+      };
+
+      if (remainingTimeoutMs <= 0) {
+        expire();
+        return;
+      }
+
+      pollRef.current = setTimeout(poll, 100);
+      expireRef.current = setTimeout(expire, remainingTimeoutMs);
     },
     [actions, advanceTo, executeAction, onStatusChange, resetOperation, stopTimers],
   );
@@ -207,9 +216,9 @@ export function ActionRenderer({
   useEffect(() => {
     if (phase === 'polling' && currentActionId && !autoStartedRef.current && !pollRef.current) {
       autoStartedRef.current = true;
-      startPolling(currentActionId);
+      startPolling(currentActionId, undefined, operation.updatedAt);
     }
-  }, [phase, currentActionId, startPolling]);
+  }, [phase, currentActionId, operation.updatedAt, startPolling]);
 
   const handleAction = useCallback(
     async (actionId: string) => {

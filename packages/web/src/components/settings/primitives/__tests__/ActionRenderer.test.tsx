@@ -103,6 +103,50 @@ describe('ActionRenderer', () => {
     expect(container.querySelector('[data-testid="weixin-action-qr-generate"]')).not.toBeNull();
   });
 
+  it('resets immediately when restored polling state is already past its persisted deadline', async () => {
+    const now = new Date('2026-01-01T00:00:00.000Z');
+    vi.setSystemTime(now);
+    mockApiFetch.mockImplementation(async (url) => {
+      const path = String(url);
+      if (path.endsWith('/operations/connect/reset')) {
+        return jsonResponse({ ok: true, currentAction: 'qr-generate' });
+      }
+      if (path.endsWith('/qr-status')) {
+        return jsonResponse({ ok: true, render: 'polling', label: 'Waiting for scan' });
+      }
+      return jsonResponse({ ok: false, label: 'unexpected action' }, 500);
+    });
+
+    await act(async () => {
+      root.render(
+        React.createElement(ActionRenderer, {
+          connectorId: 'weixin',
+          operation: {
+            name: 'connect',
+            label: 'Connect',
+            currentAction: 'qr-status',
+            updatedAt: now.getTime() - 1500,
+            lastResult: { render: 'img', data: { url: 'https://example.com/qr.png' }, label: 'Scan QR' },
+            actions: [
+              { id: 'qr-generate', label: 'Generate QR Code', render: 'button', next: 'qr-status' },
+              { id: 'qr-status', label: 'Waiting', render: 'polling', rollback: 'qr-generate', timeout: 1 },
+            ],
+          },
+        }),
+      );
+    });
+    await flushEffects();
+    await flushEffects();
+
+    expect(mockApiFetch).toHaveBeenCalledWith('/api/connectors/weixin/operations/connect/reset', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ currentAction: 'qr-generate' }),
+    });
+    expect(container.textContent).toContain('Operation timed out. Please try again.');
+    expect(container.querySelector('[data-testid="weixin-action-qr-generate"]')).not.toBeNull();
+  });
+
   it('passes pending config values when executing connector actions', async () => {
     mockApiFetch.mockResolvedValue(jsonResponse({ ok: true, render: 'status', label: 'Connected' }));
 

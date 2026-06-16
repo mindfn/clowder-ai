@@ -1248,6 +1248,92 @@ describe('PUT /api/connectors/:connectorId/config — external plugin reload', (
 });
 
 describe('GET /api/connector/status — external hidden fields', () => {
+  it('scopes duplicate external env names to each connector when rendering status', async () => {
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'external-status-env-scope-'));
+    const pluginsDir = join(tmpDir, '.cat-cafe', 'plugins');
+    const configDir = join(tmpDir, '.cat-cafe', 'im-connector-config');
+    const firstId = 'status-env-scope-a';
+    const secondId = 'status-env-scope-b';
+    mkdirSync(join(pluginsDir, firstId), { recursive: true });
+    mkdirSync(join(pluginsDir, secondId), { recursive: true });
+    mkdirSync(configDir, { recursive: true });
+
+    for (const [id, name] of [
+      [firstId, 'Status Env Scope A'],
+      [secondId, 'Status Env Scope B'],
+    ]) {
+      writeFileSync(
+        join(pluginsDir, id, 'connector.yaml'),
+        [
+          `id: ${id}`,
+          `name: ${name}`,
+          `nameEn: ${name}`,
+          'version: 1.0.0',
+          'source: external',
+          "themeColor: '#336699'",
+          'icon:',
+          '  type: png',
+          '  src: /test.png',
+          `docsUrl: https://example.com/${id}`,
+          'config:',
+          '  - envName: API_TOKEN',
+          '    type: input',
+          '    label: API Token',
+          '    sensitive: false',
+          '    required: true',
+          'steps:',
+          '  - text: Save token',
+        ].join('\n'),
+      );
+    }
+    writeFileSync(join(configDir, `${firstId}.json`), JSON.stringify({ API_TOKEN: 'first-connector-token' }));
+    writeFileSync(join(configDir, `${secondId}.json`), JSON.stringify({ API_TOKEN: 'second-connector-token' }));
+
+    const previousRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    const previousToken = process.env.API_TOKEN;
+    process.env.CAT_CAFE_CONFIG_ROOT = tmpDir;
+    delete process.env.API_TOKEN;
+    invalidateManifestCache();
+    clearConnectorConfigCache();
+
+    try {
+      const app = Fastify();
+      await registerConnectorHub(app, {
+        threadStore: {
+          async list() {
+            return [];
+          },
+        },
+      });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/connector/status',
+        headers: AUTH_HEADERS,
+      });
+      const body = JSON.parse(res.body);
+      const first = body.platforms.find((p) => p.id === firstId);
+      const second = body.platforms.find((p) => p.id === secondId);
+
+      assert.equal(res.statusCode, 200);
+      assert.equal(first?.configured, true);
+      assert.equal(second?.configured, true);
+      assert.equal(first?.fields.find((f) => f.envName === 'API_TOKEN')?.currentValue, 'first-connector-token');
+      assert.equal(second?.fields.find((f) => f.envName === 'API_TOKEN')?.currentValue, 'second-connector-token');
+
+      await app.close();
+    } finally {
+      if (previousRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousRoot;
+      if (previousToken === undefined) delete process.env.API_TOKEN;
+      else process.env.API_TOKEN = previousToken;
+      invalidateManifestCache();
+      clearConnectorConfigCache();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it('uses hidden value fields for configured calculation without rendering them', async () => {
     const tmpDir = mkdtempSync(join(os.tmpdir(), 'external-hidden-configured-'));
     const pluginId = 'hidden-config-probe';
