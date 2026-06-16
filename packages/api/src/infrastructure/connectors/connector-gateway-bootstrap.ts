@@ -956,7 +956,7 @@ export async function startConnectorGateway(
 
     if (!plugin.isConfigured(freshEnv)) {
       log.warn({ id: connectorId }, '[ConnectorGateway] Connector still not configured after backfill');
-      return;
+      throw new Error(`Connector '${connectorId}' still not configured after backfill`);
     }
 
     const ctx: IMConnectorPluginContext = { env: freshEnv, log, redis: deps.redis };

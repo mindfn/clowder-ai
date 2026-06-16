@@ -108,7 +108,13 @@ const wecomBotPlugin: IMConnectorPlugin = {
           throw new Error(result.error ?? '凭据验证失败');
         }
         log.info('[WeComBot handleAction] Credentials validated — activating');
-        return { render: 'status', data: { status: 'connected' }, label: '已连接', activate: true };
+        return {
+          render: 'status',
+          data: { status: 'connected' },
+          label: '已连接',
+          targetValues: { WECOM_BOT_ID: botId, WECOM_BOT_SECRET: secret },
+          activate: true,
+        };
       }
 
       case 'disconnect': {

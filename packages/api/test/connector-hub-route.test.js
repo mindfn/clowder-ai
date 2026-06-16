@@ -1495,6 +1495,84 @@ describe('POST /api/connectors/:connectorId/actions — activation failure', () 
 });
 
 describe('POST /api/connectors/:connectorId/actions — pending config values', () => {
+  it('persists WeCom Bot pending credentials before activating', async () => {
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'wecom-action-persist-'));
+    const { default: wecomBotPlugin } = await import(
+      '../dist/infrastructure/connectors/im-connectors/wecom-bot/index.js'
+    );
+    const { WeComBotAdapter } = await import(
+      '../dist/infrastructure/connectors/im-connectors/wecom-bot/WeComBotAdapter.js'
+    );
+    const originalValidate = WeComBotAdapter.validateCredentials;
+    const previousRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    const previousBotId = process.env.WECOM_BOT_ID;
+    const previousSecret = process.env.WECOM_BOT_SECRET;
+    process.env.CAT_CAFE_CONFIG_ROOT = tmpDir;
+    delete process.env.WECOM_BOT_ID;
+    delete process.env.WECOM_BOT_SECRET;
+    invalidateManifestCache();
+    clearConnectorConfigCache();
+    WeComBotAdapter.validateCredentials = async (botId, secret) => {
+      assert.equal(botId, 'typed-bot-id');
+      assert.equal(secret, 'typed-secret');
+      return { valid: true };
+    };
+    let activationSawPersistedCredentials = false;
+
+    try {
+      const app = Fastify();
+      await registerConnectorHub(app, {
+        threadStore: {
+          async list() {
+            return [];
+          },
+        },
+        pluginRegistry: new Map([['wecom-bot', wecomBotPlugin]]),
+        activateConnector: async (connectorId) => {
+          assert.equal(connectorId, 'wecom-bot');
+          const raw = JSON.parse(
+            readFileSync(join(tmpDir, '.cat-cafe', 'im-connector-config', 'wecom-bot.json'), 'utf8'),
+          );
+          activationSawPersistedCredentials =
+            raw.WECOM_BOT_ID === 'typed-bot-id' && raw.WECOM_BOT_SECRET === 'typed-secret';
+        },
+      });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/connectors/wecom-bot/actions/wecom_validate/validate',
+        headers: {
+          ...AUTH_HEADERS,
+          host: '127.0.0.1:3002',
+          origin: 'http://127.0.0.1:3001',
+        },
+        payload: { values: { WECOM_BOT_ID: 'typed-bot-id', WECOM_BOT_SECRET: 'typed-secret' } },
+      });
+      const body = JSON.parse(res.body);
+      const raw = JSON.parse(readFileSync(join(tmpDir, '.cat-cafe', 'im-connector-config', 'wecom-bot.json'), 'utf8'));
+
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(new Set(body.backfilledKeys), new Set(['WECOM_BOT_ID', 'WECOM_BOT_SECRET']));
+      assert.equal(raw.WECOM_BOT_ID, 'typed-bot-id');
+      assert.equal(raw.WECOM_BOT_SECRET, 'typed-secret');
+      assert.equal(activationSawPersistedCredentials, true, 'activation must reload the saved credentials');
+
+      await app.close();
+    } finally {
+      WeComBotAdapter.validateCredentials = originalValidate;
+      if (previousRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousRoot;
+      if (previousBotId === undefined) delete process.env.WECOM_BOT_ID;
+      else process.env.WECOM_BOT_ID = previousBotId;
+      if (previousSecret === undefined) delete process.env.WECOM_BOT_SECRET;
+      else process.env.WECOM_BOT_SECRET = previousSecret;
+      invalidateManifestCache();
+      clearConnectorConfigCache();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it('passes request values to action handlers without persisting them directly', async () => {
     const tmpDir = mkdtempSync(join(os.tmpdir(), 'external-action-pending-values-'));
     const pluginId = 'pending-values-probe';

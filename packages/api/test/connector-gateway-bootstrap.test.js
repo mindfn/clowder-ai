@@ -1481,6 +1481,88 @@ describe('ConnectorGateway Bootstrap', () => {
     }
   });
 
+  it('rejects dynamic activation when stored config is still incomplete', async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'activation-incomplete-'));
+    const pluginId = 'activation-incomplete-probe';
+    const pluginDir = join(resolvePluginsDir(tempRoot), pluginId);
+    let handle;
+
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: Activation Incomplete Probe',
+        'nameEn: Activation Incomplete Probe',
+        'version: 1.0.0',
+        'icon:',
+        '  type: png',
+        '  src: /test.png',
+        "themeColor: '#336699'",
+        'docsUrl: https://example.com',
+        'config:',
+        '  - envName: ACTIVATION_INCOMPLETE_TOKEN',
+        '    label: Token',
+        '    sensitive: true',
+        '    required: true',
+        'steps:',
+        '  - text: test',
+      ].join('\n'),
+    );
+    writeFileSync(
+      join(pluginDir, 'index.js'),
+      `export default {
+        id: '${pluginId}',
+        definition: {
+          id: '${pluginId}',
+          displayName: 'Activation Incomplete Probe',
+          icon: { type: 'png', src: '/test.png' },
+          themeColor: '#336699',
+          description: 'activation incomplete regression probe',
+        },
+        requiredEnvKeys: ['ACTIVATION_INCOMPLETE_TOKEN'],
+        optionalEnvKeys: [],
+        isConfigured(env) { return Boolean(env.ACTIVATION_INCOMPLETE_TOKEN); },
+        createAdapter() { throw new Error('adapter must not be created from incomplete config'); },
+      };`,
+    );
+
+    const savedConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    const savedToken = process.env.ACTIVATION_INCOMPLETE_TOKEN;
+    process.env.CAT_CAFE_CONFIG_ROOT = tempRoot;
+    delete process.env.ACTIVATION_INCOMPLETE_TOKEN;
+
+    try {
+      clearExternalConnectorRegistry();
+      clearConnectorConfigCache();
+      handle = await startConnectorGateway({}, baseDeps);
+      assert.equal(handle.adapterRegistry.has(pluginId), false, 'unconfigured plugin must not start at bootstrap');
+
+      await assert.rejects(
+        () => handle.activateConnector(pluginId),
+        /not configured/i,
+        'activation must surface incomplete config instead of reporting success',
+      );
+      assert.equal(handle.adapterRegistry.has(pluginId), false, 'incomplete activation must not publish adapter state');
+    } finally {
+      if (handle) await handle.stop();
+      if (savedConfigRoot === undefined) {
+        delete process.env.CAT_CAFE_CONFIG_ROOT;
+      } else {
+        process.env.CAT_CAFE_CONFIG_ROOT = savedConfigRoot;
+      }
+      if (savedToken === undefined) {
+        delete process.env.ACTIVATION_INCOMPLETE_TOKEN;
+      } else {
+        process.env.ACTIVATION_INCOMPLETE_TOKEN = savedToken;
+      }
+      unregisterConnectorDefinition(pluginId);
+      clearExternalConnectorRegistry();
+      clearConnectorConfigCache();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   // ── F231 R2-P2: external plugin metadata registered even when unconfigured ──
 
   it('F231 R2-P2: registers external plugin metadata before isConfigured check (bootstrap path)', async () => {
