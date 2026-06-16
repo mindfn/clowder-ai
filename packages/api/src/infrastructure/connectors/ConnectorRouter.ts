@@ -48,6 +48,7 @@ function emitConnectorMessage(
 
 function connectorSourceIcon(def: ConnectorDefinition | undefined): string {
   if (!def) return 'message';
+  if ('src' in def.icon && def.icon.src) return def.icon.src;
   return def.icon.type === 'png' ? def.icon.src : def.icon.iconId;
 }
 

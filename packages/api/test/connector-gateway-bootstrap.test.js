@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { unregisterConnectorDefinition } from '@cat-cafe/shared';
+import { getConnectorDefinition, unregisterConnectorDefinition } from '@cat-cafe/shared';
 import {
   applyConnectorGatewayAutostartPolicy,
   isPreconfiguredConnectorAutostartEnabled,
@@ -1197,6 +1197,105 @@ describe('ConnectorGateway Bootstrap', () => {
         process.env.IM_CONNECTOR_PLUGINS = savedPlugins;
       }
       delete globalThis.__duplicateExternalStarts;
+      unregisterConnectorDefinition(pluginId);
+      clearExternalConnectorRegistry();
+      clearConnectorConfigCache();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('normalizes installed external plugin icon definitions before registry and routing', async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'external-icon-normalization-'));
+    const pluginId = 'icon-normalization-probe';
+    const pluginDir = join(resolvePluginsDir(tempRoot), pluginId);
+    const messages = [];
+    let handle;
+
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: Icon Normalization Probe',
+        'nameEn: Icon Normalization Probe',
+        'version: 1.0.0',
+        'source: external',
+        'icon:',
+        '  type: svg',
+        '  src: icon.svg',
+        "themeColor: '#336699'",
+        'docsUrl: https://example.com/icon-normalization-probe',
+        'config: []',
+        'steps:',
+        '  - text: test',
+      ].join('\n'),
+    );
+    writeFileSync(join(pluginDir, 'icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+    writeFileSync(
+      join(pluginDir, 'index.js'),
+      `export default {
+        id: '${pluginId}',
+        definition: {
+          id: '${pluginId}',
+          displayName: 'Icon Normalization Probe',
+          icon: { type: 'svg', src: 'icon.svg' },
+          themeColor: '#336699',
+          description: 'external icon normalization regression probe',
+        },
+        requiredEnvKeys: [],
+        optionalEnvKeys: [],
+        isConfigured() { return true; },
+        createAdapter() { return { id: '${pluginId}', sendMessage() {} }; },
+        async startInbound(_adapter, onMessage) {
+          await onMessage({
+            chatId: 'external-icon-chat',
+            text: 'hello from icon probe',
+            messageId: 'external-icon-message-1',
+            chatType: 'p2p',
+          });
+          return { async stop() {} };
+        },
+      };`,
+    );
+
+    const savedConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    process.env.CAT_CAFE_CONFIG_ROOT = tempRoot;
+
+    const deps = {
+      ...baseDeps,
+      messageStore: {
+        async append(input) {
+          const msg = { id: `msg-${messages.length + 1}`, ...input };
+          messages.push(msg);
+          return msg;
+        },
+      },
+    };
+
+    try {
+      clearExternalConnectorRegistry();
+      clearConnectorConfigCache();
+      handle = await startConnectorGateway({}, deps);
+
+      const expectedIconUrl = `/api/connectors/plugins/${encodeURIComponent(pluginId)}/icon`;
+      assert.equal(
+        getConnectorDefinition(pluginId)?.icon.src,
+        expectedIconUrl,
+        'runtime connector definition must expose a browser-fetchable plugin icon URL',
+      );
+      assert.equal(messages.length, 1, 'plugin inbound startup should route one probe message');
+      assert.equal(
+        messages[0].source.icon,
+        expectedIconUrl,
+        'routed connector messages must use the normalized plugin icon URL',
+      );
+    } finally {
+      if (handle) await handle.stop();
+      if (savedConfigRoot === undefined) {
+        delete process.env.CAT_CAFE_CONFIG_ROOT;
+      } else {
+        process.env.CAT_CAFE_CONFIG_ROOT = savedConfigRoot;
+      }
       unregisterConnectorDefinition(pluginId);
       clearExternalConnectorRegistry();
       clearConnectorConfigCache();

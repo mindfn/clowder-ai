@@ -16,7 +16,14 @@
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type CatId, type ConnectorSource, catRegistry, isStaticConnectorId, isValueField } from '@cat-cafe/shared';
+import {
+  type CatId,
+  type ConnectorDefinition,
+  type ConnectorSource,
+  catRegistry,
+  isStaticConnectorId,
+  isValueField,
+} from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { FastifyBaseLogger } from 'fastify';
 import { isCatAvailable } from '../../config/cat-config-loader.js';
@@ -361,6 +368,21 @@ function createOnMessage(connectorId: string, connectorRouter: ConnectorRouter):
   };
 }
 
+function isReachableIconSrc(src: string): boolean {
+  return src.startsWith('/') || src.startsWith('http://') || src.startsWith('https://');
+}
+
+function normalizeExternalConnectorDefinitionIcon(definition: ConnectorDefinition): ConnectorDefinition {
+  const icon = definition.icon;
+  if (!('src' in icon) || !icon.src || isReachableIconSrc(icon.src)) return definition;
+
+  const src = `/api/connectors/plugins/${encodeURIComponent(definition.id)}/icon`;
+  const normalizedIcon =
+    icon.type === 'svg' ? { ...icon, iconId: icon.iconId ?? definition.id, src } : { ...icon, src };
+
+  return { ...definition, icon: normalizedIcon };
+}
+
 export async function startConnectorGateway(
   config: ConnectorGatewayConfig,
   deps: ConnectorGatewayDeps,
@@ -562,13 +584,14 @@ export async function startConnectorGateway(
         );
         continue;
       }
+      const normalizedDefinition = normalizeExternalConnectorDefinitionIcon(plugin.definition);
       // Register metadata early for Hub discovery — even unconfigured plugins
       // should appear in status so users can see what env vars to fill.
       // (R2 fix: moved from post-init to post-validation)
-      registerConnectorDefinition(plugin.definition);
+      registerConnectorDefinition(normalizedDefinition);
       registerExternalConnectorMeta({
         id: plugin.id,
-        definition: plugin.definition,
+        definition: normalizedDefinition,
         requiredEnvKeys: plugin.requiredEnvKeys,
         optionalEnvKeys: plugin.optionalEnvKeys ?? [],
         configured: false, // updated after isConfigured() check below

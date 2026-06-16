@@ -69,10 +69,10 @@ export interface ConnectorSource {
 // ── Connector Definition (registry entry) ──
 
 /** How a connector's avatar icon is rendered.
- *  - `svg`: maps to a React SVG component by `iconId` (see ConnectorIcon)
- *  - `png`: renders a PNG image from `src` path */
+ *  - `svg`: maps to a React SVG component by `iconId` or renders a bundled SVG file from `src`
+ *  - `png`: renders an image from `src` path */
 export type ConnectorIconSpec =
-  | { readonly type: 'svg'; readonly iconId: string }
+  | { readonly type: 'svg'; readonly iconId: string; readonly src?: string }
   | { readonly type: 'png'; readonly src: string };
 
 /** Static definition of a connector type for frontend rendering.
