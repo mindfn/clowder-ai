@@ -475,11 +475,11 @@ export async function startConnectorGateway(
     './im-connector-loader.js'
   );
   const { registerConnectorDefinition } = await import('@cat-cafe/shared');
-  const { registerExternalConnectorMeta, updateExternalConnectorConfigured } = await import(
-    './external-connector-registry.js'
-  );
+  const { clearExternalConnectorRegistry, registerExternalConnectorMeta, updateExternalConnectorConfigured } =
+    await import('./external-connector-registry.js');
 
   const projectRoot = resolveActiveProjectRoot();
+  clearExternalConnectorRegistry();
   const builtinPlugins = await loadBuiltinConnectors();
   const installedPlugins = await loadInstalledPlugins(projectRoot, log);
   const legacyExternalPlugins = await loadExternalConnectors(process.env.IM_CONNECTOR_PLUGINS, log);

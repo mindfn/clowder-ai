@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
@@ -7,7 +7,9 @@ import Fastify from 'fastify';
 
 const { connectorHubRoutes, invalidateManifestCache } = await import('../dist/routes/connector-hub.js');
 const { configEventBus } = await import('../dist/config/config-event-bus.js');
-const { clearConnectorConfigCache } = await import('../dist/infrastructure/connectors/im-connector-config-store.js');
+const { clearConnectorConfigCache, writeConnectorConfig } = await import(
+  '../dist/infrastructure/connectors/im-connector-config-store.js'
+);
 
 const OWNER_ID = 'owner-1';
 const AUTH_HEADERS = { 'x-cat-cafe-user': OWNER_ID, 'x-test-session-user': OWNER_ID };
@@ -207,6 +209,76 @@ describe('F134 follow-up — Feishu QR bind routes', () => {
     assert.doesNotMatch(readFileSync(envFilePath, 'utf8'), /FEISHU_CONNECTION_MODE=websocket/);
 
     await app.close();
+  });
+
+  it('GET /api/connector/feishu/qrcode-status preserves config-store webhook settings', async () => {
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'feishu-qr-bind-store-'));
+    const envFilePath = join(tmpDir, '.env');
+    const previousConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    const previousMode = process.env.FEISHU_CONNECTION_MODE;
+    const previousToken = process.env.FEISHU_VERIFICATION_TOKEN;
+    writeFileSync(envFilePath, 'FEISHU_CONNECTION_MODE=webhook\n');
+    delete process.env.FEISHU_APP_ID;
+    delete process.env.FEISHU_APP_SECRET;
+    delete process.env.FEISHU_VERIFICATION_TOKEN;
+    process.env.FEISHU_CONNECTION_MODE = 'webhook';
+    process.env.CAT_CAFE_CONFIG_ROOT = tmpDir;
+    clearConnectorConfigCache();
+    writeConnectorConfig(tmpDir, 'feishu', [
+      { name: 'FEISHU_CONNECTION_MODE', value: 'webhook' },
+      { name: 'FEISHU_VERIFICATION_TOKEN', value: 'vt_store' },
+    ]);
+
+    const app = Fastify();
+    try {
+      await registerConnectorHub(app, {
+        threadStore: {
+          async list() {
+            return [];
+          },
+        },
+        envFilePath,
+        feishuQrBindClient: {
+          async create() {
+            throw new Error('not used');
+          },
+          async poll() {
+            return { status: 'confirmed', appId: 'cli_feishu_store', appSecret: 'sec_feishu_store' };
+          },
+        },
+      });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/connector/feishu/qrcode-status?qrPayload=device-store',
+        headers: AUTH_HEADERS,
+      });
+      const body = JSON.parse(res.body);
+
+      assert.equal(res.statusCode, 200);
+      assert.equal(body.status, 'confirmed');
+      assert.equal(process.env.FEISHU_CONNECTION_MODE, 'webhook');
+      assert.doesNotMatch(readFileSync(envFilePath, 'utf8'), /FEISHU_CONNECTION_MODE=websocket/);
+
+      const storedConfig = JSON.parse(
+        readFileSync(join(tmpDir, '.cat-cafe', 'im-connector-config', 'feishu.json'), 'utf8'),
+      );
+      assert.equal(storedConfig.FEISHU_CONNECTION_MODE, 'webhook');
+      assert.equal(storedConfig.FEISHU_VERIFICATION_TOKEN, 'vt_store');
+      assert.equal(storedConfig.FEISHU_APP_ID, 'cli_feishu_store');
+      assert.equal(storedConfig.FEISHU_APP_SECRET, 'sec_feishu_store');
+    } finally {
+      await app.close();
+      if (previousConfigRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousConfigRoot;
+      if (previousMode === undefined) delete process.env.FEISHU_CONNECTION_MODE;
+      else process.env.FEISHU_CONNECTION_MODE = previousMode;
+      if (previousToken === undefined) delete process.env.FEISHU_VERIFICATION_TOKEN;
+      else process.env.FEISHU_VERIFICATION_TOKEN = previousToken;
+      clearConnectorConfigCache();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1084,6 +1156,85 @@ describe('PUT /api/connectors/:connectorId/config — external plugin reload', (
       assert.ok(event, 'connector config write must emit a reload event');
       assert.equal(event.scope, 'file', 'external connector keys must not be dropped by static key filtering');
       assert.deepEqual(event.changedKeys, ['RELOAD_PROBE_TOKEN']);
+
+      await app.close();
+    } finally {
+      unsub();
+      if (previousRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousRoot;
+      invalidateManifestCache();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects redacted placeholders before writing external connector config', async () => {
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'external-config-redacted-'));
+    const pluginId = 'redacted-probe';
+    const pluginDir = join(tmpDir, '.cat-cafe', 'plugins', pluginId);
+    const configPath = join(tmpDir, '.cat-cafe', 'im-connector-config', `${pluginId}.json`);
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: Redacted Probe',
+        'nameEn: Redacted Probe',
+        'version: 1.0.0',
+        'source: external',
+        "themeColor: '#336699'",
+        'icon:',
+        '  type: png',
+        '  src: /test.png',
+        'docsUrl: https://example.com/redacted-probe',
+        'config:',
+        '  - envName: REDACTED_PROBE_TOKEN',
+        '    label: Token',
+        '    sensitive: true',
+        '    required: true',
+        'steps:',
+        '  - text: Save token',
+      ].join('\n'),
+    );
+
+    const previousRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    const captured = [];
+    const unsub = configEventBus.onConfigChange((event) => captured.push(event));
+    process.env.CAT_CAFE_CONFIG_ROOT = tmpDir;
+    invalidateManifestCache();
+
+    try {
+      const app = Fastify();
+      await registerConnectorHub(app, {
+        threadStore: {
+          async list() {
+            return [];
+          },
+        },
+      });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'PUT',
+        url: `/api/connectors/${pluginId}/config`,
+        headers: {
+          ...AUTH_HEADERS,
+          'content-type': 'application/json',
+          host: '127.0.0.1:3002',
+          origin: 'http://127.0.0.1:3001',
+        },
+        payload: JSON.stringify({
+          fields: [{ name: 'REDACTED_PROBE_TOKEN', value: '\u2022\u2022\u2022\u2022\u2022\u2022' }],
+        }),
+      });
+
+      assert.equal(res.statusCode, 400);
+      assert.match(JSON.parse(res.body).error, /redacted/i);
+      assert.equal(existsSync(configPath), false, 'redacted placeholder must not be persisted');
+      assert.equal(
+        captured.some((entry) => entry.changedKeys?.includes('REDACTED_PROBE_TOKEN')),
+        false,
+        'redacted placeholder must not emit reload events',
+      );
 
       await app.close();
     } finally {

@@ -1204,6 +1204,91 @@ describe('ConnectorGateway Bootstrap', () => {
     }
   });
 
+  it('removes external metadata when an installed plugin fails to load on gateway rebuild', async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'stale-external-registry-'));
+    const pluginId = 'stale-registry-probe';
+    const pluginDir = join(resolvePluginsDir(tempRoot), pluginId);
+    let handle;
+
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: Stale Registry Probe',
+        'nameEn: Stale Registry Probe',
+        'version: 1.0.0',
+        'source: external',
+        'icon:',
+        '  type: png',
+        '  src: /test.png',
+        "themeColor: '#336699'",
+        'docsUrl: https://example.com/stale-registry-probe',
+        'config: []',
+        'steps:',
+        '  - text: test',
+      ].join('\n'),
+    );
+    writeFileSync(
+      join(pluginDir, 'index.js'),
+      `export default {
+        id: '${pluginId}',
+        definition: {
+          id: '${pluginId}',
+          displayName: 'Stale Registry Probe',
+          icon: { type: 'png', src: '/test.png' },
+          themeColor: '#336699',
+          description: 'valid first version',
+        },
+        requiredEnvKeys: [],
+        optionalEnvKeys: [],
+        isConfigured() { return true; },
+        createAdapter() { return { id: '${pluginId}', sendMessage() {} }; },
+      };`,
+    );
+
+    const savedConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    process.env.CAT_CAFE_CONFIG_ROOT = tempRoot;
+
+    try {
+      clearExternalConnectorRegistry();
+      clearConnectorConfigCache();
+      handle = await startConnectorGateway({}, baseDeps);
+      assert.ok(
+        getAllExternalConnectorMeta().some((meta) => meta.id === pluginId && meta.configured === true),
+        'valid first load must register external metadata',
+      );
+      await handle.stop();
+      handle = null;
+
+      writeFileSync(
+        join(pluginDir, 'index.js'),
+        `export default {
+          id: '${pluginId}',
+          definition: { id: '${pluginId}' },
+        };`,
+      );
+
+      handle = await startConnectorGateway({}, baseDeps);
+      assert.equal(
+        getAllExternalConnectorMeta().some((meta) => meta.id === pluginId),
+        false,
+        'failed reload must not leave stale external metadata visible in Hub status',
+      );
+    } finally {
+      if (handle) await handle.stop();
+      if (savedConfigRoot === undefined) {
+        delete process.env.CAT_CAFE_CONFIG_ROOT;
+      } else {
+        process.env.CAT_CAFE_CONFIG_ROOT = savedConfigRoot;
+      }
+      unregisterConnectorDefinition(pluginId);
+      clearExternalConnectorRegistry();
+      clearConnectorConfigCache();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it('rolls back dynamic activation state when inbound startup fails', async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), 'activation-rollback-'));
     const pluginId = 'activation-rollback-probe';

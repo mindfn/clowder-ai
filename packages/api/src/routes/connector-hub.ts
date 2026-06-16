@@ -6,6 +6,7 @@ import { requireLocalCapabilityWriteRequest } from '../config/capabilities/capab
 import { configEventBus, createChangeSetId } from '../config/config-event-bus.js';
 import { applyConnectorSecretUpdates } from '../config/connector-secret-updater.js';
 import {
+  containsRedactedPlaceholder,
   requireConnectorWriteNetworkGuard,
   requireConnectorWriteOwner,
   resolveConnectorSessionUserId,
@@ -512,6 +513,14 @@ function buildConnectorStatusWithStoredConfig(): {
   return { projectRoot, manifests, status: buildConnectorStatus(mergedEnv, manifests) };
 }
 
+function resolveStoredConnectorEnv(
+  connectorId: string,
+  manifest: ConnectorManifest,
+): Record<string, string | undefined> {
+  loadAllConnectorConfigs(resolveActiveProjectRoot(), [manifest]);
+  return resolveConnectorEnv(connectorId, manifest.config.filter(isValueField));
+}
+
 export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> = async (app, opts) => {
   const { threadStore } = opts;
   const feishuQrBindClient = opts.feishuQrBindClient ?? new DefaultFeishuQrBindClient();
@@ -636,8 +645,10 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
         { name: 'FEISHU_APP_ID', value: status.appId ?? null },
         { name: 'FEISHU_APP_SECRET', value: status.appSecret ?? null },
       ];
-      const currentMode = process.env.FEISHU_CONNECTION_MODE === 'websocket' ? 'websocket' : 'webhook';
-      const verificationToken = process.env.FEISHU_VERIFICATION_TOKEN;
+      const feishuManifest = getConnectorManifests().get('feishu');
+      const feishuEnv = feishuManifest ? resolveStoredConnectorEnv('feishu', feishuManifest) : process.env;
+      const currentMode = feishuEnv.FEISHU_CONNECTION_MODE === 'websocket' ? 'websocket' : 'webhook';
+      const verificationToken = feishuEnv.FEISHU_VERIFICATION_TOKEN;
       if (currentMode === 'webhook' && (!verificationToken || verificationToken.trim() === '')) {
         updates.push({ name: 'FEISHU_CONNECTION_MODE', value: 'websocket' });
       }
@@ -945,6 +956,10 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
       return {
         error: `Unknown fields: ${invalid.map((f) => f.name).join(', ')}`,
       };
+    }
+    if (body.fields.some((field) => containsRedactedPlaceholder(field.value))) {
+      reply.status(400);
+      return { error: 'Refusing to write redacted connector placeholder values' };
     }
 
     const projectRoot = resolveActiveProjectRoot();
