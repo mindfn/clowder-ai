@@ -268,6 +268,51 @@ describe('executeConnectorAction (AC-A15/A16)', () => {
     assert.equal(state?.currentAction, 'qr-status', 'should not advance when advance=false');
   });
 
+  it('advance: false preserves the original polling deadline timestamp', async () => {
+    const originalDateNow = Date.now;
+    try {
+      Date.now = () => 1_000;
+      writeOperationState(PROJECT_ROOT, CONNECTOR_ID, 'qr_login', {
+        currentAction: 'qr-status',
+        lastResult: { render: 'img', data: { url: 'data:image/png;base64,QR_DATA' } },
+      });
+
+      const mockPlugin = {
+        id: CONNECTOR_ID,
+        handleAction: async () => ({
+          render: 'polling',
+          data: { status: 'waiting' },
+          label: 'Still waiting',
+          advance: false,
+        }),
+      };
+
+      Date.now = () => 7_000;
+      const result = await executeConnectorAction({
+        projectRoot: PROJECT_ROOT,
+        connectorId: CONNECTOR_ID,
+        operationName: 'qr_login',
+        actionId: 'qr-status',
+        manifest: mockManifest,
+        plugin: mockPlugin,
+        pluginCtx: { env: {}, log: console },
+        adapter: {},
+      });
+
+      assert.equal(result.ok, true);
+      const state = readOperationState(PROJECT_ROOT, CONNECTOR_ID, 'qr_login');
+      assert.equal(state?.currentAction, 'qr-status');
+      assert.equal(state?.updatedAt, 1_000, 'polling timeout deadline must not move on non-advance polls');
+      assert.deepEqual(state?.lastResult, {
+        render: 'polling',
+        data: { status: 'waiting' },
+        label: 'Still waiting',
+      });
+    } finally {
+      Date.now = originalDateNow;
+    }
+  });
+
   it('advance: false does not backfill target fields', async () => {
     const mockPlugin = {
       id: CONNECTOR_ID,

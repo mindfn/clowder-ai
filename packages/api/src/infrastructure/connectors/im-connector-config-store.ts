@@ -261,6 +261,7 @@ export function writeOperationState(
   connectorId: string,
   operationName: string,
   state: OperationState,
+  options: { preserveUpdatedAt?: boolean } = {},
 ): void {
   const dir = resolveConfigDir(projectRoot);
   mkdirSync(dir, { recursive: true });
@@ -270,7 +271,18 @@ export function writeOperationState(
     typeof full._operations === 'object' && full._operations !== null && !Array.isArray(full._operations)
       ? { ...(full._operations as Record<string, unknown>) }
       : {};
-  existingOps[operationName] = { ...state, updatedAt: Date.now() };
+  const existingState = existingOps[operationName];
+  const existingUpdatedAt =
+    typeof existingState === 'object' &&
+    existingState !== null &&
+    !Array.isArray(existingState) &&
+    typeof (existingState as Record<string, unknown>).updatedAt === 'number'
+      ? ((existingState as Record<string, unknown>).updatedAt as number)
+      : undefined;
+  existingOps[operationName] = {
+    ...state,
+    updatedAt: options.preserveUpdatedAt && existingUpdatedAt !== undefined ? existingUpdatedAt : Date.now(),
+  };
   full._operations = existingOps;
 
   const configPath = resolveConfigPath(projectRoot, connectorId);

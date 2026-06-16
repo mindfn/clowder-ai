@@ -100,6 +100,7 @@ describe('ActionRenderer', () => {
       method: 'POST',
     });
     expect(container.textContent).toContain('Operation timed out. Please try again.');
+    expect(container.querySelector('[data-testid="weixin-qr-image"]')).toBeNull();
     expect(container.querySelector('[data-testid="weixin-action-qr-generate"]')).not.toBeNull();
   });
 
@@ -144,6 +145,7 @@ describe('ActionRenderer', () => {
       body: JSON.stringify({ currentAction: 'qr-generate' }),
     });
     expect(container.textContent).toContain('Operation timed out. Please try again.');
+    expect(container.querySelector('[data-testid="weixin-qr-image"]')).toBeNull();
     expect(container.querySelector('[data-testid="weixin-action-qr-generate"]')).not.toBeNull();
   });
 

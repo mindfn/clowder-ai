@@ -118,10 +118,16 @@ export async function executeConnectorAction(input: ExecuteActionInput): Promise
     });
   } else {
     // Still persist lastResult for frontend rendering, but keep current action
-    writeOperationState(projectRoot, connectorId, operationName, {
-      currentAction: actionId,
-      lastResult,
-    });
+    writeOperationState(
+      projectRoot,
+      connectorId,
+      operationName,
+      {
+        currentAction: actionId,
+        lastResult,
+      },
+      { preserveUpdatedAt: true },
+    );
   }
 
   // 7. Backfill target fields only on advance (AC-A19)

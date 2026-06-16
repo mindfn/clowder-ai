@@ -196,6 +196,7 @@ export function ActionRenderer({
             onStatusChange?.();
           });
           setCurrentActionId(action.rollback);
+          setLastResult(undefined);
           setPhase('idle');
           setErrorMsg('Operation timed out. Please try again.');
         }
