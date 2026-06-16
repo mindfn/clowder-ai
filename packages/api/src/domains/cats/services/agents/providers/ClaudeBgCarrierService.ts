@@ -238,13 +238,14 @@ export class ClaudeBgCarrierService implements AgentService {
           envOverrides[k] = v;
         }
       }
-      // #883: Subscription deny-list must survive accountEnv merge (same as
-      // ClaudeAgentService). Check the CALLER's explicit mode — not the bg
-      // carrier's defaulted callbackEnvWithMode (which always includes
-      // 'subscription'). When accountEnv provides ANTHROPIC_API_KEY without
-      // an explicit subscription callbackEnv, the cat is opting into api_key
-      // mode and the key must survive.
-      if (options?.callbackEnv?.[ANTHROPIC_PROFILE_MODE_KEY] === 'subscription') {
+      // #883: Subscription deny-list must survive accountEnv merge.
+      // bg carrier is ALWAYS subscription (api_key fallback routes to
+      // ClaudeAgentService per KD-3). Use the effective mode from
+      // callbackEnvWithMode — which defaults to 'subscription' — so the
+      // deny-list fires even when the caller doesn't explicitly pass mode.
+      // Only an explicit api_key callbackEnv (which overrides the default
+      // at line 233) bypasses the deny-list.
+      if (callbackEnvWithMode[ANTHROPIC_PROFILE_MODE_KEY] === 'subscription') {
         for (const key of SUBSCRIPTION_MODE_DENY_KEYS) envOverrides[key] = null;
       }
       envOverrides.CLAUDE_CODE_ENTRYPOINT = null;
