@@ -461,4 +461,107 @@ describe('transformAcpEvent', () => {
     assert.equal(result.type, 'text');
     assert.equal(result.content, '');
   });
+
+  // --- OpenCode compaction scratchpad suppression ---
+
+  it('suppresses OpenCode compaction scratchpad starting with ## Goal in single chunk', () => {
+    const state = createAcpSessionState();
+    const mkChunk = (text) => ({
+      sessionId: 's1',
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } },
+    });
+
+    // Normal text chunk first
+    const r1 = transformAcpEvent(mkChunk('Hello! '), catId, metadata, state);
+    assert.equal(r1.type, 'text');
+    assert.equal(r1.content, 'Hello! ');
+
+    // Chunk containing ## Goal — only text before marker should pass
+    const r2 = transformAcpEvent(
+      mkChunk('How can I help? ## Goal\n- Greeting exchange'),
+      catId,
+      metadata,
+      state,
+    );
+    // Text before the marker, trailing whitespace trimmed
+    assert.notEqual(r2, null);
+    assert.equal(r2.type, 'text');
+    assert.equal(r2.content, 'How can I help?');
+
+    // Subsequent chunks suppressed
+    const r3 = transformAcpEvent(
+      mkChunk('\n\nConstraints & Preferences\n- (none)'),
+      catId,
+      metadata,
+      state,
+    );
+    assert.equal(r3, null, 'Chunks after scratchpad detection must be suppressed');
+  });
+
+  it('suppresses scratchpad that starts at beginning of chunk', () => {
+    const state = createAcpSessionState();
+    const mkChunk = (text) => ({
+      sessionId: 's1',
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } },
+    });
+
+    const r1 = transformAcpEvent(mkChunk('Done!'), catId, metadata, state);
+    assert.equal(r1.type, 'text');
+
+    // ## Goal at start of new chunk — nothing to emit
+    const r2 = transformAcpEvent(mkChunk('## Goal\n- Summary'), catId, metadata, state);
+    assert.equal(r2, null, 'Scratchpad at chunk start → null');
+  });
+
+  it('detects scratchpad marker split across two chunks', () => {
+    const state = createAcpSessionState();
+    const mkChunk = (text) => ({
+      sessionId: 's1',
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } },
+    });
+
+    // First chunk ends with partial marker
+    const r1 = transformAcpEvent(mkChunk('Hi there! ## '), catId, metadata, state);
+    assert.equal(r1.type, 'text');
+    assert.equal(r1.content, 'Hi there! ## ');
+
+    // Second chunk completes the marker — previous "## " was already emitted
+    // but "Goal\n-..." must be suppressed
+    const r2 = transformAcpEvent(mkChunk('Goal\n- Greeting'), catId, metadata, state);
+    assert.equal(r2, null, 'Cross-chunk marker completion must suppress');
+
+    // Further chunks remain suppressed
+    const r3 = transformAcpEvent(mkChunk('\n## Progress'), catId, metadata, state);
+    assert.equal(r3, null);
+  });
+
+  it('does not false-positive on legitimate ## Goal in conversation', () => {
+    // Without state, scratchpad detection is disabled (backward compat)
+    const mkChunk = (text) => ({
+      sessionId: 's1',
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } },
+    });
+    const result = transformAcpEvent(mkChunk('See ## Goal section'), catId, metadata);
+    assert.equal(result.type, 'text');
+    assert.equal(result.content, 'See ## Goal section');
+  });
+
+  it('scratchpad detection resets per session (new state)', () => {
+    const state1 = createAcpSessionState();
+    const state2 = createAcpSessionState();
+    const mkChunk = (text) => ({
+      sessionId: 's1',
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } },
+    });
+
+    // Trigger scratchpad in state1
+    transformAcpEvent(mkChunk('## Goal\n- test'), catId, metadata, state1);
+    assert.equal(state1.scratchpadDetected, true);
+
+    // state2 should be unaffected
+    const r = transformAcpEvent(mkChunk('Normal text'), catId, metadata, state2);
+    assert.equal(r.type, 'text');
+    assert.equal(r.content, 'Normal text');
+    assert.equal(state2.scratchpadDetected, false);
+  });
 });

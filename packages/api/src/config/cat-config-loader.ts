@@ -261,7 +261,7 @@ function readTemplate(templatePath: string): string {
  * across provider switches (e.g. template cli.defaultArgs surviving into a
  * catalog variant that switched to a different client).
  */
-const ATOMIC_OBJECT_KEYS = new Set(['cli', 'agyProfile', 'color', 'contextBudget', 'voiceConfig']);
+const ATOMIC_OBJECT_KEYS = new Set(['cli', 'agyProfile', 'color', 'contextBudget', 'voiceConfig', 'acp']);
 
 /**
  * Deep merge two plain objects. `overlay` fields override `base` fields.
@@ -871,6 +871,8 @@ export function getCatContextWindowConfig(catId: string): CatContextWindowConfig
 export interface AcpVariantConfig {
   command: string;
   startupArgs: string[];
+  /** F161 Phase C: ACP wire transport. 'stdio' = NDJSON over stdin/stdout (default). 'httpstream' = spawn process that listens on HTTP port. */
+  transport?: 'stdio' | 'httpstream';
   mcpWhitelist?: string[];
   supportsMultiplexing?: boolean;
   /** Phase C: optional pool config overrides */
@@ -890,7 +892,7 @@ export function getAcpConfig(catId: string): AcpVariantConfig | undefined {
     const templatePath = process.env.CAT_TEMPLATE_PATH ?? DEFAULT_CAT_TEMPLATE_PATH;
     const raw = mergeTemplateWithCatalog(templatePath) ?? readTemplate(templatePath);
     const json = JSON.parse(raw) as {
-      breeds?: Array<{ catId?: string; variants?: Array<{ catId?: string; acp?: AcpVariantConfig }> }>;
+      breeds?: Array<{ catId?: string; variants?: Array<{ catId?: string; acp?: AcpVariantConfig | null }> }>;
     };
     for (const breed of json.breeds ?? []) {
       for (const variant of breed.variants ?? []) {

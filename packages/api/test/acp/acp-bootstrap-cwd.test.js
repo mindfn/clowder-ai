@@ -155,6 +155,18 @@ describe('acp bootstrap cwd', () => {
     ]);
   });
 
+  it('expands model templates in startupArgs before spawning ACP clients', () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'acp-project-'));
+    createdDirs.add(projectRoot);
+
+    assert.deepEqual(
+      resolveAcpBootstrapArgs(projectRoot, ['--model', '${base_model}', 'acp'], {
+        base_model: 'anthropic/claude-sonnet-4-6',
+      }),
+      ['--model', 'anthropic/claude-sonnet-4-6', 'acp'],
+    );
+  });
+
   it('scopes bootstrap root by current uid or equivalent user identity', () => {
     const root = resolveAcpBootstrapRoot();
     assert.ok(root.startsWith(tmpdir()), `bootstrap root should stay under tmpdir(), got ${root}`);
@@ -181,6 +193,74 @@ describe('acp bootstrap cwd', () => {
     assert.ok(
       source.includes('resolveAcpBootstrapArgs'),
       'REGRESSION: index.ts must resolve path-like startupArgs against the project root.',
+    );
+  });
+
+  it('REGRESSION: ACP static envVars merge must be outside authType guard (R5 P2)', () => {
+    // After extraction to acp-spawn-env.ts, the guard reads the extracted module.
+    const source = readFileSync(
+      new URL('../../src/domains/cats/services/agents/providers/acp/acp-spawn-env.ts', import.meta.url),
+      'utf-8',
+    );
+    // The static envVars pass-through must NOT be gated on authType === 'api_key'.
+    // OAuth and static-only accounts also have envVars that must reach the subprocess.
+    // Pattern: the `account?.envVars` loop must appear AFTER the api_key block closes.
+    const apiKeyBlockEnd = source.indexOf("account?.authType === 'api_key'");
+    const staticEnvLoop = source.indexOf('account?.envVars');
+    assert.ok(apiKeyBlockEnd > 0, 'acp-spawn-env.ts must contain api_key auth block');
+    assert.ok(staticEnvLoop > 0, 'acp-spawn-env.ts must contain static envVars pass-through');
+    assert.ok(
+      staticEnvLoop > apiKeyBlockEnd,
+      'REGRESSION: static envVars merge must be outside authType === api_key guard (F171 CLI-path parity)',
+    );
+  });
+
+  it('REGRESSION: --pure is NOT auto-injected; generic ACP is not command-sniffed', () => {
+    const source = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf-8');
+    // F161 Phase C: --pure is no longer auto-injected for OpenCode members.
+    // Internal opencode agents may not support --pure; the user provides it via
+    // startup args (e.g. "acp --pure") if their agent needs it.
+    // Generic ACP (clientId='acp') is never auto-managed by sniffing the command
+    // basename — the operator configures startup args explicitly.
+    assert.ok(
+      !source.includes("!acpArgs.includes('--pure')"),
+      'REGRESSION: index.ts must NOT auto-inject --pure (user-configurable via startup args)',
+    );
+    assert.ok(
+      !source.includes('isOpenCodeCommand'),
+      'REGRESSION: index.ts must NOT sniff command basename (isOpenCodeCommand) to auto-manage ACP',
+    );
+  });
+
+  it('REGRESSION: generic ACP env mapping must not infer built-in clients from command', () => {
+    const source = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf-8');
+    assert.ok(
+      !source.includes('resolveEnvMapClientId'),
+      'REGRESSION: generic clientId=acp must use only user envVars templates, not command basename aliases',
+    );
+  });
+
+  it('REGRESSION: AcpClient must filter MCP servers by client mcpCapabilities', () => {
+    const source = readFileSync(
+      new URL('../../src/domains/cats/services/agents/providers/acp/AcpClient.ts', import.meta.url),
+      'utf-8',
+    );
+    // Sending stdio MCP servers to clients that only support http/sse (e.g. OpenCode)
+    // causes session/new to hang. AcpClient.filterMcpByCapabilities() must exist and
+    // be called in both newSession() and loadSession().
+    assert.ok(
+      source.includes('filterMcpByCapabilities'),
+      'REGRESSION: AcpClient must implement filterMcpByCapabilities to prevent sending unsupported MCP transports',
+    );
+    // newSession uses it
+    assert.ok(
+      source.includes('filterMcpByCapabilities(mcpServers)'),
+      'REGRESSION: newSession() and loadSession() must filter MCP servers before sending to client',
+    );
+    // The filter checks mcpCapabilities from initResult
+    assert.ok(
+      source.includes('initResult?.agentCapabilities?.mcpCapabilities'),
+      'REGRESSION: filter must read mcpCapabilities from the ACP initialize result',
     );
   });
 

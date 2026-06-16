@@ -1616,6 +1616,47 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     assert.equal(patchBody.cat.accountRef, 'codex');
   });
 
+  it('PATCH /api/cats/:id preserves builtin accountRef when switching to generic ACP', async () => {
+    const projectRoot = createProjectRoot();
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    const beforeRes = await app.inject({ method: 'GET', url: '/api/cats' });
+    assert.equal(beforeRes.statusCode, 200);
+    const beforeBody = JSON.parse(beforeRes.body);
+    const opusBefore = beforeBody.cats.find((cat) => cat.id === 'opus');
+    assert.ok(opusBefore, 'seed opus member must exist');
+    assert.equal(opusBefore.clientId, 'anthropic');
+    assert.equal(opusBefore.accountRef, 'claude');
+
+    const patchRes = await app.inject({
+      method: 'PATCH',
+      url: '/api/cats/opus',
+      headers: {
+        'content-type': 'application/json',
+        'x-cat-cafe-user': 'codex',
+      },
+      // Generic ACP is a transport: switching to it must keep the selected account
+      // instead of rebasing the old builtin accountRef to a nonexistent "acp" account.
+      body: JSON.stringify({
+        clientId: 'acp',
+        defaultModel: 'acp-model',
+        accountRef: opusBefore.accountRef,
+        acp: { command: 'custom-acp-agent', startupArgs: ['--acp'] },
+      }),
+    });
+
+    assert.equal(patchRes.statusCode, 200, `generic ACP switch should keep account binding: ${patchRes.body}`);
+    const patchBody = JSON.parse(patchRes.body);
+    assert.equal(patchBody.cat.clientId, 'acp');
+    assert.equal(patchBody.cat.accountRef, 'claude');
+    assert.equal(patchBody.cat.provider, undefined);
+  });
+
   it('PATCH /api/cats/:id resets stale CLI config when switching client families', async () => {
     const projectRoot = createProjectRootFromRepoTemplate();
     process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
@@ -2023,5 +2064,326 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
       listBody.cats.some((cat) => cat.id === 'opus'),
       false,
     );
+  });
+
+  // ── F161: Generic ACP client route tests ─────────────────────────────────
+
+  it('POST /api/cats creates generic ACP member with acp config', async () => {
+    const projectRoot = createMonorepoProjectRoot();
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
+
+    const { createProviderProfile } = await import('./helpers/create-test-account.js');
+    const acpProfile = await createProviderProfile(projectRoot, {
+      displayName: 'DeepSeek ACP',
+      authType: 'api_key',
+      protocol: 'openai',
+      baseUrl: 'https://api.deepseek.com',
+      apiKey: 'sk-deepseek-xxx',
+      models: ['deepseek-chat'],
+    });
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    const acpConfig = {
+      command: 'deepseek-cli',
+      startupArgs: ['--acp'],
+      mcpWhitelist: ['cat-cafe-memory'],
+      pool: { maxLiveProcesses: 2, idleTtlMs: 1_800_000 },
+    };
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/cats',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        catId: 'acp-deepseek',
+        name: 'DeepSeek ACP',
+        displayName: 'DeepSeek ACP',
+        avatar: '/avatars/default.png',
+        color: { primary: '#0f172a', secondary: '#e2e8f0' },
+        mentionPatterns: ['@acp-deepseek'],
+        roleDescription: 'ACP agent',
+        clientId: 'acp',
+        accountRef: acpProfile.id,
+        defaultModel: 'deepseek-chat',
+        acp: acpConfig,
+      }),
+    });
+
+    assert.equal(createRes.statusCode, 201, `Expected 201 but got ${createRes.statusCode}: ${createRes.body}`);
+    const body = JSON.parse(createRes.body);
+    assert.equal(body.cat.adapterMode, 'acp', 'generic ACP member should have adapterMode=acp');
+    assert.deepEqual(body.cat.acp, acpConfig, 'ACP response should include editable non-secret transport config');
+
+    const listRes = await app.inject({ method: 'GET', url: '/api/cats' });
+    assert.equal(listRes.statusCode, 200, `Expected GET 200 but got ${listRes.statusCode}: ${listRes.body}`);
+    const listBody = JSON.parse(listRes.body);
+    const listed = listBody.cats.find((cat) => cat.id === 'acp-deepseek');
+    assert.deepEqual(listed.acp, acpConfig, 'GET /api/cats should include ACP config for Hub editing');
+  });
+
+  it('POST /api/cats rejects generic ACP member without acp config', async () => {
+    const projectRoot = createMonorepoProjectRoot();
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
+
+    const { createProviderProfile } = await import('./helpers/create-test-account.js');
+    const acpProfile = await createProviderProfile(projectRoot, {
+      displayName: 'Bare ACP',
+      authType: 'api_key',
+      protocol: 'openai',
+      apiKey: 'sk-bare',
+      models: ['some-model'],
+    });
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/cats',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        catId: 'acp-bare',
+        name: 'Bare ACP',
+        displayName: 'Bare ACP',
+        avatar: '/avatars/default.png',
+        color: { primary: '#0f172a', secondary: '#e2e8f0' },
+        mentionPatterns: ['@acp-bare'],
+        roleDescription: 'ACP agent',
+        clientId: 'acp',
+        accountRef: acpProfile.id,
+        defaultModel: 'some-model',
+        // acp section deliberately omitted
+      }),
+    });
+
+    assert.equal(createRes.statusCode, 400, 'clientId acp without acp config should be rejected');
+  });
+
+  it('PATCH /api/cats/:id rejects removing acp config from an ACP member', async () => {
+    const projectRoot = createMonorepoProjectRoot();
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
+
+    const { createProviderProfile } = await import('./helpers/create-test-account.js');
+    const acpProfile = await createProviderProfile(projectRoot, {
+      displayName: 'Patchable ACP',
+      authType: 'api_key',
+      protocol: 'openai',
+      apiKey: 'sk-patch',
+      models: ['test-model'],
+    });
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    // Step 1: Create ACP member
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/cats',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        catId: 'acp-patchable',
+        name: 'Patchable ACP',
+        displayName: 'Patchable ACP',
+        avatar: '/avatars/default.png',
+        color: { primary: '#0f172a', secondary: '#e2e8f0' },
+        mentionPatterns: ['@acp-patchable'],
+        roleDescription: 'ACP agent',
+        clientId: 'acp',
+        accountRef: acpProfile.id,
+        defaultModel: 'test-model',
+        acp: { command: 'test-cli', startupArgs: ['--acp'] },
+      }),
+    });
+    assert.equal(createRes.statusCode, 201, `create failed: ${createRes.body}`);
+
+    // Step 2: Try to remove acp config while clientId stays 'acp' → must 400
+    const patchRes = await app.inject({
+      method: 'PATCH',
+      url: '/api/cats/acp-patchable',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({ acp: null }),
+    });
+    assert.equal(patchRes.statusCode, 400, 'removing acp from ACP member should be rejected');
+
+    // Step 3: Switch to non-ACP client + remove acp → must succeed
+    const switchRes = await app.inject({
+      method: 'PATCH',
+      url: '/api/cats/acp-patchable',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({ clientId: 'openai', accountRef: acpProfile.id, acp: null }),
+    });
+    assert.equal(switchRes.statusCode, 200, `client switch failed: ${switchRes.body}`);
+    const switchBody = JSON.parse(switchRes.body);
+    assert.equal(switchBody.cat.adapterMode, 'cli', 'after switch should be cli mode');
+  });
+
+  it('POST /api/cats strips provider for generic ACP (AC-A5/KD-1: acp is transport, not provider identity)', async () => {
+    const projectRoot = createMonorepoProjectRoot();
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
+
+    const { createProviderProfile } = await import('./helpers/create-test-account.js');
+    const acpProfile = await createProviderProfile(projectRoot, {
+      displayName: 'Kimi ACP',
+      authType: 'api_key',
+      protocol: 'openai',
+      apiKey: 'sk-moonshot',
+      models: ['kimi-k2'],
+    });
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/cats',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        catId: 'acp-kimi-noprovider',
+        name: 'Kimi ACP',
+        displayName: 'Kimi ACP',
+        avatar: '/avatars/default.png',
+        color: { primary: '#0f172a', secondary: '#e2e8f0' },
+        mentionPatterns: ['@acp-kimi-noprovider'],
+        roleDescription: 'ACP agent',
+        clientId: 'acp',
+        accountRef: acpProfile.id,
+        defaultModel: 'kimi-k2',
+        provider: 'anthropic', // must be stripped — generic ACP never carries provider
+        acp: { command: 'kimi', startupArgs: ['acp'] },
+      }),
+    });
+    assert.equal(createRes.statusCode, 201, `create failed: ${createRes.body}`);
+    const created = JSON.parse(createRes.body);
+    assert.equal(created.cat.provider, undefined, 'generic ACP must not persist provider on create');
+
+    const listRes = await app.inject({ method: 'GET', url: '/api/cats' });
+    const listed = JSON.parse(listRes.body).cats.find((cat) => cat.id === 'acp-kimi-noprovider');
+    assert.equal(listed.provider, undefined, 'GET should confirm generic ACP has no persisted provider');
+  });
+
+  it('PATCH /api/cats/:id strips provider for generic ACP — stays transport-only', async () => {
+    const projectRoot = createMonorepoProjectRoot();
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
+
+    const { createProviderProfile } = await import('./helpers/create-test-account.js');
+    const acpProfile = await createProviderProfile(projectRoot, {
+      displayName: 'Patch ACP NoProvider',
+      authType: 'api_key',
+      protocol: 'openai',
+      apiKey: 'sk-patch2',
+      models: ['test-model'],
+    });
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/cats',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        catId: 'acp-patch-noprovider',
+        name: 'Patch ACP',
+        displayName: 'Patch ACP',
+        avatar: '/avatars/default.png',
+        color: { primary: '#0f172a', secondary: '#e2e8f0' },
+        mentionPatterns: ['@acp-patch-noprovider'],
+        roleDescription: 'ACP agent',
+        clientId: 'acp',
+        accountRef: acpProfile.id,
+        defaultModel: 'test-model',
+        acp: { command: 'test-cli', startupArgs: ['--acp'] },
+      }),
+    });
+    assert.equal(createRes.statusCode, 201, `create failed: ${createRes.body}`);
+
+    // Direct API PATCH tries to set a provider on a generic ACP member — must be stripped.
+    const patchRes = await app.inject({
+      method: 'PATCH',
+      url: '/api/cats/acp-patch-noprovider',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({ provider: 'anthropic' }),
+    });
+    assert.equal(patchRes.statusCode, 200, `patch failed: ${patchRes.body}`);
+    const patched = JSON.parse(patchRes.body);
+    assert.equal(patched.cat.provider, undefined, 'generic ACP must not persist provider on update');
+  });
+
+  it('PATCH /api/cats/:id clears stale provider when migrating opencode → generic ACP (covers the currentCat.provider != null clear branch)', async () => {
+    // F161 R7 P3: the migration/stale path. A clientId=opencode member legitimately carries a
+    // provider; migrating it to generic ACP (clientId=acp) must clear that stale provider
+    // (provider:null) so it cannot leak into the ACP env-map. This is the exact path the
+    // @acp-opencode runtime member takes. Locks cats.ts buildProviderPatch acp clear branch.
+    const projectRoot = createMonorepoProjectRoot();
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
+
+    const { createProviderProfile } = await import('./helpers/create-test-account.js');
+    const profile = await createProviderProfile(projectRoot, {
+      displayName: 'OpenAI Key Profile',
+      authType: 'api_key',
+      protocol: 'openai',
+      baseUrl: 'https://api.bound.example',
+      apiKey: 'sk-bound',
+      models: ['openai/claude-sonnet-4-6'],
+    });
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    // Step 1: create an opencode member that legitimately carries a provider.
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/cats',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        catId: 'migrate-oc-to-acp',
+        name: 'Migrate OC',
+        displayName: 'Migrate OC',
+        avatar: '/avatars/default.png',
+        color: { primary: '#0f172a', secondary: '#e2e8f0' },
+        mentionPatterns: ['@migrate-oc-to-acp'],
+        roleDescription: 'migration',
+        clientId: 'opencode',
+        accountRef: profile.id,
+        defaultModel: 'openai/claude-sonnet-4-6',
+        provider: 'openai',
+      }),
+    });
+    assert.equal(createRes.statusCode, 201, `create failed: ${createRes.body}`);
+    assert.equal(JSON.parse(createRes.body).cat.provider, 'openai', 'opencode should persist provider');
+
+    // Step 2: migrate to generic ACP — the stale provider must be cleared (provider:null).
+    const patchRes = await app.inject({
+      method: 'PATCH',
+      url: '/api/cats/migrate-oc-to-acp',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        clientId: 'acp',
+        accountRef: profile.id,
+        acp: { command: 'opencode', startupArgs: ['acp', '--pure'] },
+      }),
+    });
+    assert.equal(patchRes.statusCode, 200, `migration patch failed: ${patchRes.body}`);
+    const patched = JSON.parse(patchRes.body);
+    assert.equal(patched.cat.clientId, 'acp', 'should be generic ACP after migration');
+    assert.equal(patched.cat.provider, undefined, 'stale provider must be cleared on migration to generic ACP');
+
+    const listRes = await app.inject({ method: 'GET', url: '/api/cats' });
+    const listed = JSON.parse(listRes.body).cats.find((cat) => cat.id === 'migrate-oc-to-acp');
+    assert.equal(listed.provider, undefined, 'GET should confirm no stale provider remains after migration');
   });
 });

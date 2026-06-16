@@ -57,7 +57,33 @@ const cliSchema = z.object({
   effort: cliEffortSchema.nullable().optional(),
 });
 
-const clientSchema = z.enum(['anthropic', 'openai', 'google', 'kimi', 'dare', 'antigravity', 'opencode', 'catagent']);
+const clientSchema = z.enum([
+  'anthropic',
+  'openai',
+  'google',
+  'kimi',
+  'dare',
+  'antigravity',
+  'opencode',
+  'catagent',
+  'acp',
+]);
+
+/** F161: ACP transport config schema — matches AcpVariantConfig from cat-config-loader. */
+const acpConfigSchema = z.object({
+  command: z.string().min(1),
+  startupArgs: z.array(z.string()),
+  /** F161 Phase C: wire transport. 'stdio' (default, omitted) or 'httpstream'. */
+  transport: z.enum(['stdio', 'httpstream']).optional(),
+  mcpWhitelist: z.array(z.string().min(1)).optional(),
+  supportsMultiplexing: z.boolean().optional(),
+  pool: z
+    .object({
+      maxLiveProcesses: z.number().int().positive().optional(),
+      idleTtlMs: z.number().int().positive().optional(),
+    })
+    .optional(),
+});
 const catIdSchema = z
   .string()
   .min(1)
@@ -104,12 +130,13 @@ const baseCatSchema = z.object({
 const modelSchema = z.string().transform((v) => v.replace(/\/+$/, ''));
 
 const createNormalCatSchema = baseCatSchema.extend({
-  clientId: clientSchema.exclude(['antigravity']),
+  clientId: clientSchema.exclude(['antigravity', 'acp']),
   defaultModel: modelSchema,
   mcpSupport: z.boolean().optional(),
   cli: cliSchema.optional(),
   cliConfigArgs: z.array(z.string().min(1)).optional(),
   provider: z.string().min(1).optional(),
+  acp: acpConfigSchema.optional(), // F161: optional ACP transport for any client
 });
 
 const createAntigravityCatSchema = baseCatSchema.extend({
@@ -119,7 +146,22 @@ const createAntigravityCatSchema = baseCatSchema.extend({
   commandArgs: z.array(z.string().min(1)).min(1).optional(),
 });
 
-const createCatSchema = z.discriminatedUnion('clientId', [createNormalCatSchema, createAntigravityCatSchema]);
+/** F161: Generic ACP client — acp section required (it's the only transport). */
+const createAcpCatSchema = baseCatSchema.extend({
+  clientId: z.literal('acp'),
+  defaultModel: modelSchema,
+  mcpSupport: z.boolean().optional(),
+  // F161 AC-A5 / KD-1: generic ACP is a transport, not a provider identity — no provider field.
+  // Env customization flows through the account's envVars templates. Any incoming provider is
+  // dropped by zod (unknown key) so it never reaches persistence.
+  acp: acpConfigSchema,
+});
+
+const createCatSchema = z.discriminatedUnion('clientId', [
+  createNormalCatSchema,
+  createAntigravityCatSchema,
+  createAcpCatSchema,
+]);
 
 const updateCatSchema = z.object({
   name: z.string().min(1).optional(),
@@ -146,6 +188,7 @@ const updateCatSchema = z.object({
   cliConfigArgs: z.array(z.string().min(1)).optional(),
   provider: z.string().min(1).nullable().optional(),
   voiceConfig: voiceConfigSchema.nullable().optional(),
+  acp: acpConfigSchema.nullable().optional(), // F161: nullable to allow removing ACP transport
 });
 
 type UpdateCatRequestBody = z.infer<typeof updateCatSchema>;
@@ -351,6 +394,7 @@ async function toCatResponse(
   metadata: CatResponseMetadata,
   resolveEffectiveAccountRef: (cat: CatConfig & { contextBudget?: ContextBudget }) => Promise<string | undefined>,
 ) {
+  const acpConfig = getAcpConfig(cat.id as string);
   return {
     id: cat.id,
     name: cat.name,
@@ -379,6 +423,7 @@ async function toCatResponse(
     isDefaultVariant: cat.isDefaultVariant ?? undefined,
     breedDisplayName: cat.breedDisplayName ?? undefined,
     mcpSupport: cat.mcpSupport,
+    ...(acpConfig ? { acp: acpConfig } : {}),
     roster: metadata.roster
       ? {
           family: metadata.roster.family,
@@ -388,7 +433,8 @@ async function toCatResponse(
           evaluation: metadata.roster.evaluation,
         }
       : null,
-    adapterMode: cat.clientId === 'google' ? (getAcpConfig(cat.id as string) ? 'acp' : 'cli') : undefined,
+    // F161: adapterMode is now provider-agnostic — any clientId can have ACP config
+    adapterMode: acpConfig ? 'acp' : 'cli',
   };
 }
 
@@ -555,6 +601,33 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
           commandArgs: body.commandArgs,
           ...(body.voiceConfig ? { voiceConfig: body.voiceConfig } : {}),
         });
+      } else if (body.clientId === 'acp') {
+        // F161: Generic ACP client — no CLI config, ACP section is the transport.
+        createRuntimeCat(projectRoot, {
+          catId: body.catId,
+          name: body.name,
+          displayName: body.displayName,
+          variantLabel: body.variantLabel,
+          nickname: body.nickname,
+          avatar: resolvedAvatar,
+          color: body.color,
+          mentionPatterns: body.mentionPatterns,
+          ...(accountRef !== undefined ? { accountRef: accountRef ?? undefined } : {}),
+          contextBudget: body.contextBudget,
+          roleDescription: body.roleDescription,
+          personality: body.personality,
+          teamStrengths: body.teamStrengths,
+          caution: body.caution,
+          strengths: body.strengths,
+          sessionChain: body.sessionChain,
+          clientId: 'acp',
+          defaultModel: body.defaultModel,
+          mcpSupport: body.mcpSupport ?? false,
+          cli: defaultCliForClient('acp'),
+          // F161 AC-A5 / KD-1: generic ACP never carries provider (already stripped by schema).
+          ...(body.voiceConfig ? { voiceConfig: body.voiceConfig } : {}),
+          acp: body.acp,
+        });
       } else {
         const resolvedCli = buildResolvedCliConfig(body.clientId, defaultCliForClient(body.clientId), body.cli);
         createRuntimeCat(projectRoot, {
@@ -588,6 +661,7 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
             ? { provider: body.provider ?? providerNameForValidation }
             : {}),
           ...(body.voiceConfig ? { voiceConfig: body.voiceConfig } : {}),
+          ...(body.acp ? { acp: body.acp } : {}),
         });
       }
     } catch (err) {
@@ -677,7 +751,9 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
 
     if (providerConfigTouched) {
       try {
-        const effectiveProviderName = body.provider !== undefined ? body.provider : currentCat.provider;
+        // F161 AC-A5 / KD-1: generic ACP carries no provider — exclude it from binding validation.
+        const effectiveProviderName =
+          effectiveClient === 'acp' ? undefined : body.provider !== undefined ? body.provider : currentCat.provider;
         // Legacy compat: existing opencode+api_key members without provider name
         // can still be edited for non-binding changes (name, model, etc.).
         // NOT allowed when: switching accountRef, or switching clientId to opencode
@@ -705,6 +781,16 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
         const message = err instanceof Error ? err.message : String(err);
         reply.status(400);
         return { error: message };
+      }
+    }
+
+    // F161 invariant: clientId 'acp' must have an effective acp config.
+    // Prevents persisting an unroutable ACP member (no command/startupArgs).
+    if (effectiveClient === 'acp') {
+      const effectiveAcpConfig = body.acp !== undefined ? body.acp : getAcpConfig(request.params.id as string);
+      if (!effectiveAcpConfig) {
+        reply.status(400);
+        return { error: 'clientId "acp" requires an acp transport config (command + startupArgs)' };
       }
     }
 
@@ -746,16 +832,23 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
         ...(nextCli !== undefined ? { cli: nextCli } : {}),
         ...(body.available !== undefined ? { available: body.available } : {}),
         ...(body.cliConfigArgs !== undefined ? { cliConfigArgs: body.cliConfigArgs } : {}),
-        ...(body.provider !== undefined
-          ? body.provider === null
+        // F161 AC-A5 / KD-1: generic ACP never carries provider — clear any stale value and
+        // ignore incoming provider; other clients keep the explicit set/clear semantics.
+        ...(effectiveClient === 'acp'
+          ? currentCat.provider != null
             ? { provider: null }
-            : { provider: body.provider }
-          : {}),
+            : {}
+          : body.provider !== undefined
+            ? body.provider === null
+              ? { provider: null }
+              : { provider: body.provider }
+            : {}),
         ...(body.voiceConfig !== undefined
           ? body.voiceConfig === null
             ? { voiceConfig: null }
             : { voiceConfig: body.voiceConfig }
           : {}),
+        ...(body.acp !== undefined ? (body.acp === null ? { acp: null } : { acp: body.acp }) : {}),
       });
       const resolved = await reconcileCatRegistry(projectRoot, managedIdsBefore);
       await configEventBus.emitChangeAsync({
