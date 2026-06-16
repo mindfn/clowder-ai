@@ -744,15 +744,17 @@ describe('GET /api/capabilities (Fastify)', () => {
   });
 
   it('treats directory-level project skills symlinks as mounted for all providers', async () => {
+    const previousCwd = process.cwd();
     const Fastify = (await import('fastify')).default;
-    const { capabilitiesRoutes } = await import('../dist/routes/capabilities.js');
 
+    const mainDir = await makeTmpDir('dir-symlink-main');
     const projectDir = join('/tmp', `cap-route-test-dir-symlink-${Date.now()}`);
     const homeDir = join('/tmp', `cap-route-test-home-${Date.now()}`);
     const sourceSkillsDir = join(findRepoRoot(), 'cat-cafe-skills');
     const prevHome = process.env.HOME;
 
     await Promise.all([
+      writeFile(join(mainDir, 'pnpm-workspace.yaml'), 'packages: []\n'),
       mkdir(join(projectDir, '.claude'), { recursive: true }),
       mkdir(join(projectDir, '.codex'), { recursive: true }),
       mkdir(join(projectDir, '.gemini'), { recursive: true }),
@@ -768,6 +770,10 @@ describe('GET /api/capabilities (Fastify)', () => {
     await writeCapabilitiesConfig(projectDir, { version: 1, capabilities: [] });
 
     process.env.HOME = homeDir;
+    process.chdir(mainDir);
+
+    const routeModuleUrl = new URL(`../dist/routes/capabilities.js?dir-symlink=${Date.now()}`, import.meta.url);
+    const { capabilitiesRoutes } = await import(routeModuleUrl.href);
 
     const app = Fastify();
     await app.register(capabilitiesRoutes);
@@ -793,7 +799,9 @@ describe('GET /api/capabilities (Fastify)', () => {
     } finally {
       if (prevHome === undefined) delete process.env.HOME;
       else process.env.HOME = prevHome;
+      process.chdir(previousCwd);
       await app.close();
+      await rm(mainDir, { recursive: true, force: true });
       await rm(projectDir, { recursive: true, force: true });
       await rm(homeDir, { recursive: true, force: true });
     }
@@ -1507,12 +1515,14 @@ describe('GET /api/capabilities (Fastify)', () => {
   });
 
   it('creates Cat Cafe source skill capability beside a same-id plugin-owned skill on GET', async () => {
+    const previousCwd = process.cwd();
     const Fastify = (await import('fastify')).default;
-    const { capabilitiesRoutes } = await import('../dist/routes/capabilities.js');
 
     const pluginId = `same-id-source-plugin-${Date.now()}`;
+    const mainDir = await makeTmpDir('source-plugin-main');
     const projectDir = await makeTmpDir('source-plugin-same-id');
     const pluginDir = join(projectDir, 'plugins', pluginId);
+    await writeFile(join(mainDir, 'pnpm-workspace.yaml'), 'packages: []\n');
     await mkdir(join(pluginDir, 'skills', 'debugging'), { recursive: true });
     await writeFile(join(pluginDir, 'skills', 'debugging', 'SKILL.md'), '# plugin debugging\n');
     await writeFile(
@@ -1539,6 +1549,9 @@ describe('GET /api/capabilities (Fastify)', () => {
         },
       ],
     });
+    process.chdir(mainDir);
+    const routeModuleUrl = new URL(`../dist/routes/capabilities.js?source-plugin=${Date.now()}`, import.meta.url);
+    const { capabilitiesRoutes } = await import(routeModuleUrl.href);
     const app = Fastify();
     await app.register(capabilitiesRoutes);
     await app.ready();
@@ -1561,15 +1574,19 @@ describe('GET /api/capabilities (Fastify)', () => {
       assert.equal(catCafeCap.enabled, true);
     } finally {
       await app.close();
+      process.chdir(previousCwd);
+      await rm(mainDir, { recursive: true, force: true });
       await rm(projectDir, { recursive: true, force: true });
     }
   });
 
   it('preserves same-id external skill capability when adding Cat Cafe source skill on GET', async () => {
+    const previousCwd = process.cwd();
     const Fastify = (await import('fastify')).default;
-    const { capabilitiesRoutes } = await import('../dist/routes/capabilities.js');
 
+    const mainDir = await makeTmpDir('source-external-main');
     const projectDir = await makeTmpDir('source-external-same-id');
+    await writeFile(join(mainDir, 'pnpm-workspace.yaml'), 'packages: []\n');
     await mkdir(join(projectDir, '.claude', 'skills', 'debugging'), { recursive: true });
     await writeFile(join(projectDir, '.claude', 'skills', 'debugging', 'SKILL.md'), '# external debugging\n');
     await writeCapabilitiesConfig(projectDir, {
@@ -1584,6 +1601,9 @@ describe('GET /api/capabilities (Fastify)', () => {
         },
       ],
     });
+    process.chdir(mainDir);
+    const routeModuleUrl = new URL(`../dist/routes/capabilities.js?source-external=${Date.now()}`, import.meta.url);
+    const { capabilitiesRoutes } = await import(routeModuleUrl.href);
     const app = Fastify();
     await app.register(capabilitiesRoutes);
     await app.ready();
@@ -1609,6 +1629,8 @@ describe('GET /api/capabilities (Fastify)', () => {
       assert.equal(catCafeCap.enabled, true);
     } finally {
       await app.close();
+      process.chdir(previousCwd);
+      await rm(mainDir, { recursive: true, force: true });
       await rm(projectDir, { recursive: true, force: true });
     }
   });

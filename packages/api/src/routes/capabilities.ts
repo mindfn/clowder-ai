@@ -377,6 +377,7 @@ interface SkillScanPlan {
 
 export async function scanProviderSkillDirs(plans: SkillScanPlan[]): Promise<{
   mountPointSkills: Record<string, string[]>;
+  providerSkills: Record<string, string[]>;
   scanResults: Record<string, string[] | null>;
   scansOk: boolean;
 }> {
@@ -404,7 +405,7 @@ export async function scanProviderSkillDirs(plans: SkillScanPlan[]): Promise<{
     mountPointSkills[plan.provider] = [...new Set([...(mountPointSkills[plan.provider] ?? []), ...names])];
   }
 
-  return { mountPointSkills, scanResults, scansOk };
+  return { mountPointSkills, providerSkills: mountPointSkills, scanResults, scansOk };
 }
 /** Known MCP server descriptions */
 const MCP_DESCRIPTIONS: Record<string, string> = {
@@ -1142,7 +1143,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
         // R14 P2-2: external projects need global cascade policy
         let cascadeDisabledSkills: Set<string> | undefined;
         let globalMountPathsBySkill: Map<string, readonly string[]> | undefined;
-        if (!pathsEqual(projectRoot, getProjectRoot())) {
+        if (body.scope === 'global' && !pathsEqual(projectRoot, getProjectRoot())) {
           const globalConfig = await readCapabilitiesConfig(getProjectRoot());
           const globalManagedCaps =
             globalConfig?.capabilities.filter((c) => c.type === 'skill' && c.source === 'cat-cafe' && !c.pluginId) ??
@@ -1159,10 +1160,15 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
 
         try {
           // Sync this project's filesystem
+          const localMountPathsBySkill =
+            body.scope === 'project' && Array.isArray(cap.mountPaths)
+              ? new Map<string, readonly string[]>([[cap.id, cap.mountPaths]])
+              : undefined;
           const syncResult = await syncProject(projectRoot, skillsSource, {
             mountRules,
             force: false,
             cascadeDisabledSkills,
+            mountPathsBySkill: localMountPathsBySkill,
             globalMountPathsBySkill,
           });
           localSyncConflicts = syncResult.conflicts;
