@@ -175,7 +175,9 @@ const weixinPlugin: IMConnectorPlugin = {
             targetValues: { WEIXIN_BOT_TOKEN: status.botToken },
           };
         }
-        return { render: 'polling', data: { status: status.status }, advance: false };
+        // Carry qrPayload through polling iterations — without it, the next poll
+        // reads persisted lastResult and finds qrPayload wiped (was the QR flash bug).
+        return { render: 'polling', data: { status: status.status, qrPayload }, advance: false };
       }
 
       case 'disconnect': {
