@@ -14,7 +14,16 @@
  */
 
 import { execFile } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
@@ -90,13 +99,11 @@ export async function installPlugin(
   archivePath: string,
   builtinIds: ReadonlySet<string>,
 ): Promise<PluginInstallResult | PluginInstallError> {
-  const tmpDir = join(resolvePluginsDir(projectRoot), '.tmp-install');
+  const pluginsDir = resolvePluginsDir(projectRoot);
+  mkdirSync(pluginsDir, { recursive: true });
+  const tmpDir = mkdtempSync(join(pluginsDir, '.tmp-install-'));
 
   try {
-    // Clean and create temp extraction directory
-    if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true });
-    mkdirSync(tmpDir, { recursive: true });
-
     // Extract tar.gz
     try {
       await execFileAsync('tar', ['xzf', archivePath, '-C', tmpDir]);

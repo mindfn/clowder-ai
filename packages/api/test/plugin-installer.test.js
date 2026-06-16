@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import {
@@ -20,6 +20,16 @@ function envPrefix(id) {
 
 function cleanup() {
   if (existsSync(TEST_ROOT)) rmSync(TEST_ROOT, { recursive: true });
+}
+
+async function waitForFile(path, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(path)) {
+    if (Date.now() > deadline) {
+      throw new Error(`Timed out waiting for ${path}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 /** Create a minimal valid plugin tar.gz for testing. */
@@ -149,6 +159,79 @@ describe('installPlugin', () => {
 
     assert.equal(result.id, 'with-assets');
     assert.ok(existsSync(join(resolvePluginsDir(TEST_ROOT), 'with-assets', 'assets', 'icon.png')));
+  });
+
+  it('keeps concurrent install extractions isolated per request', async () => {
+    const archiveA = createTestPlugin('race-a');
+    const archiveB = createTestPlugin('race-b');
+    const fakeBin = join(TEST_ROOT, 'fake-bin');
+    const controlDir = join(TEST_ROOT, 'tar-control');
+    const fakeTar = join(fakeBin, 'tar');
+    mkdirSync(fakeBin, { recursive: true });
+    mkdirSync(controlDir, { recursive: true });
+    writeFileSync(
+      fakeTar,
+      `#!/bin/sh
+set -eu
+archive="$2"
+dest="$4"
+base="$(basename "$archive")"
+id="\${base%.tar.gz}"
+env_name="$(printf '%s' "$id" | tr '[:lower:]-' '[:upper:]_')_TOKEN"
+mkdir -p "$dest/$id"
+cat > "$dest/$id/connector.yaml" <<YAML
+id: $id
+name: $id
+docs_url: https://example.com
+config:
+  - envName: $env_name
+    label: Token
+    sensitive: true
+steps:
+  - text: Step 1
+  - text: Step 2
+  - text: Step 3
+YAML
+cat > "$dest/$id/index.js" <<JS
+export default {
+  id: '$id',
+  definition: { id: '$id', name: '$id', icon: '$id' },
+  requiredEnvKeys: ['$env_name'],
+  isConfigured: (env) => !!env['$env_name'],
+  createAdapter: () => ({}),
+};
+JS
+touch "${controlDir}/$id-started"
+while [ ! -e "${controlDir}/$id-release" ]; do
+  sleep 0.01
+done
+`,
+    );
+    chmodSync(fakeTar, 0o755);
+
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${fakeBin}:${originalPath ?? ''}`;
+    try {
+      const first = installPlugin(TEST_ROOT, archiveA, BUILTIN_IDS);
+      await waitForFile(join(controlDir, 'race-a-started'));
+
+      const second = installPlugin(TEST_ROOT, archiveB, BUILTIN_IDS);
+      await waitForFile(join(controlDir, 'race-b-started'));
+
+      writeFileSync(join(controlDir, 'race-a-release'), '');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      writeFileSync(join(controlDir, 'race-b-release'), '');
+
+      const [resultA, resultB] = await Promise.all([first, second]);
+      assert.equal(resultA.id, 'race-a');
+      assert.equal(resultB.id, 'race-b');
+      assert.ok(existsSync(join(resolvePluginsDir(TEST_ROOT), 'race-a', 'connector.yaml')));
+      assert.ok(existsSync(join(resolvePluginsDir(TEST_ROOT), 'race-b', 'connector.yaml')));
+    } finally {
+      writeFileSync(join(controlDir, 'race-a-release'), '');
+      writeFileSync(join(controlDir, 'race-b-release'), '');
+      process.env.PATH = originalPath;
+    }
   });
 });
 
