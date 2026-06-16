@@ -258,6 +258,14 @@ export class AcpHttpStreamClient {
       wakeConsumer();
     };
 
+    const capacityInjector = (signal: AcpCapacitySignal) => {
+      injectSynthetic({
+        sessionUpdate: 'provider_capacity_signal',
+        message: signal.message,
+        timestamp: signal.timestamp,
+      });
+    };
+
     const failPrompt = (err: unknown) => {
       promptError = err instanceof Error ? err : new Error(String(err));
       done = true;
@@ -322,6 +330,7 @@ export class AcpHttpStreamClient {
     };
 
     // Start HTTP streaming request
+    this.capacityListeners.add(capacityInjector);
     resetBudget();
 
     const streamPromise = (async () => {
@@ -453,7 +462,7 @@ export class AcpHttpStreamClient {
     } finally {
       if (idleTimer) clearTimeout(idleTimer);
       if (budgetTimer) clearTimeout(budgetTimer);
-      this.capacityListeners.delete(() => {}); // noop — capacity injector not used for HTTP
+      this.capacityListeners.delete(capacityInjector);
     }
   }
 

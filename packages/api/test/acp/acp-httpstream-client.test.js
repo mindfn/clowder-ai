@@ -427,4 +427,68 @@ describe('AcpHttpStreamClient', () => {
       'permission_pending should be emitted before the timeout',
     );
   });
+
+  it('injects capacity signals into zero-event prompt streams', async () => {
+    let promptResponse = null;
+    let promptRequestId = null;
+    let resolvePromptSeen;
+    const promptSeen = new Promise((resolve) => {
+      resolvePromptSeen = resolve;
+    });
+
+    server = await startJsonRpcServer((message, res) => {
+      if (message.method === 'initialize') {
+        return { jsonrpc: '2.0', id: message.id, result: INIT_RESULT };
+      }
+      if (message.method === 'session/new') {
+        return { jsonrpc: '2.0', id: message.id, result: { sessionId: 'http-session' } };
+      }
+      if (message.method === 'session/prompt') {
+        promptRequestId = message.id;
+        promptResponse = res;
+        res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+        res.flushHeaders();
+        resolvePromptSeen();
+        return undefined;
+      }
+      return { jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'not found' } };
+    });
+    const { child, agentStdout } = createMockChild();
+    const port = serverPort(server);
+
+    client = new AcpHttpStreamClient({
+      command: 'fake-http-acp',
+      args: [],
+      cwd: '/tmp',
+      spawnFn: () => {
+        setImmediate(() => agentStdout.write(`Listening on port ${port}\n`));
+        return child;
+      },
+      portDiscoveryTimeoutMs: 500,
+    });
+
+    await client.initialize();
+    const session = await client.newSession();
+    const iterator = client.promptStream(session.sessionId, 'hello', { timeoutMs: 1000 });
+    const firstEventPromise = iterator.next();
+
+    await promptSeen;
+    child.stderr.write('MODEL_CAPACITY_EXHAUSTED: No capacity available for model x\n');
+
+    const firstEvent = await withTimeout(
+      firstEventPromise,
+      300,
+      'capacity signal did not unblock the HTTP prompt queue',
+    );
+    assert.equal(firstEvent.done, false);
+    assert.equal(firstEvent.value.update.sessionUpdate, 'provider_capacity_signal');
+    assert.match(firstEvent.value.update.message, /MODEL_CAPACITY_EXHAUSTED/);
+
+    promptResponse.end(
+      `${JSON.stringify({ jsonrpc: '2.0', id: promptRequestId, result: { stopReason: 'end_turn' } })}\n`,
+    );
+    const final = await withTimeout(iterator.next(), 300, 'prompt stream did not finish after final response');
+    assert.equal(final.done, true);
+    assert.equal(final.value, 'end_turn');
+  });
 });
