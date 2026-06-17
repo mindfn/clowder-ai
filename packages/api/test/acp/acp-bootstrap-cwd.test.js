@@ -204,6 +204,23 @@ describe('acp bootstrap cwd', () => {
     );
   });
 
+  it('REGRESSION: ACP registry sync detects config from the active project root', () => {
+    const indexSource = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf-8');
+
+    assert.ok(
+      indexSource.includes('resolveActiveProjectRoot'),
+      'REGRESSION: index.ts must be able to resolve the active runtime project root during registry sync.',
+    );
+    assert.ok(
+      indexSource.includes('getAcpConfig(id, projectRoot)'),
+      'REGRESSION: syncAgentRegistry must pass the active project root to getAcpConfig().',
+    );
+    assert.ok(
+      !indexSource.includes('const acpConfig = getAcpConfig(id);'),
+      'REGRESSION: syncAgentRegistry must not read ACP config from the default template root.',
+    );
+  });
+
   it('REGRESSION: ACP static envVars merge must be outside authType guard (R5 P2)', () => {
     // After extraction to acp-spawn-env.ts, the guard reads the extracted module.
     const source = readFileSync(

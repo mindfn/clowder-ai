@@ -257,6 +257,7 @@ import { terminalRoutes } from './routes/terminal.js';
 import { threadExportRoutes } from './routes/thread-export.js';
 import { threadMemberStrategyRoutes } from './routes/thread-member-strategy.js';
 import { ApiInstanceLease, type ApiInstanceLeaseInvalidation } from './services/ApiInstanceLease.js';
+import { resolveActiveProjectRoot } from './utils/active-project-root.js';
 import { resolveMemoryRepoPaths } from './utils/memory-root.js';
 import { findMonorepoRoot } from './utils/monorepo-root.js';
 import { resolveUserId } from './utils/request-identity.js';
@@ -1162,6 +1163,7 @@ async function main(): Promise<void> {
   const syncAgentRegistry = async (configs: Record<string, CatConfig>) => {
     agentRegistry.reset();
     clearL0Cache(); // Invalidate stale L0 compilations from previous sync
+    const projectRoot = resolveActiveProjectRoot();
     const activeAcpProfileIds = new Set<string>();
     for (const [id, config] of Object.entries(configs)) {
       const catId = config.id;
@@ -1172,7 +1174,7 @@ async function main(): Promise<void> {
       // ── F161: Generic ACP transport path (provider-agnostic) ──
       // Any clientId with an `acp` config section uses AcpAgentService.
       // This check runs BEFORE the clientId switch — ACP is a transport, not a provider.
-      const acpConfig = getAcpConfig(id);
+      const acpConfig = getAcpConfig(id, projectRoot);
       if (acpConfig) {
         activeAcpProfileIds.add(id);
         const acpService = await createAcpServiceForConfig({
@@ -2092,8 +2094,6 @@ async function main(): Promise<void> {
       './config/capabilities/capability-orchestrator.js'
     );
     const { resolveStartupCliConfigContext } = await import('./config/capabilities/startup-cli-config.js');
-    const { resolveActiveProjectRoot } = await import('./utils/active-project-root.js');
-
     const monorepoRoot = findMonorepoRoot(process.cwd());
     const pluginsDir = join(monorepoRoot, 'plugins');
     const { loadAllPluginConfigs, resolvePluginEnv } = await import('./domains/plugin/plugin-config-store.js');
