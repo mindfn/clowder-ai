@@ -145,6 +145,34 @@ export function SkillsContent() {
     });
   }, [activeCategory, scopeItems, query]);
 
+  // F228: Batch toggle — enable/disable all currently filtered skills at once.
+  // Uses capabilityIds[] so config is written once and syncProject runs once.
+  // Placed after filteredSkills to avoid block-scoped variable reference error.
+  const handleBatchToggle = useCallback(
+    async (enabled: boolean) => {
+      const toggleScope = scope === SCOPE_PROJECT ? 'project' : 'global';
+      // Only toggle managed cat-cafe skills (those with controls).
+      const ids = filteredSkills.filter((s) => s.controls).map((s) => s.id);
+      if (ids.length === 0) return;
+      await controls.handleBatchToggle(ids, enabled, toggleScope);
+      await fetchSkills(scope === SCOPE_PROJECT ? selectedProjectPath : undefined);
+      setDriftRefreshToken((v) => v + 1);
+    },
+    [controls, scope, filteredSkills, fetchSkills, selectedProjectPath],
+  );
+
+  // F228: Compute whether the majority of visible managed skills are enabled
+  // to drive the batch toggle's initial state.
+  const batchEnabled = useMemo(() => {
+    const managed = filteredSkills.filter((s) => s.controls);
+    if (managed.length === 0) return false;
+    const isProject = scope === SCOPE_PROJECT;
+    const enabledCount = managed.filter((s) =>
+      isProject ? (s.mountPaths?.length ?? 0) > 0 : (s.controls?.enabled ?? false),
+    ).length;
+    return enabledCount > managed.length / 2;
+  }, [filteredSkills, scope]);
+
   const combinedError = error || controls.error;
   return (
     <div className="space-y-5">
@@ -216,6 +244,9 @@ export function SkillsContent() {
           onCategoryChange={setActiveCategory}
           query={query}
           onQueryChange={setQuery}
+          batchEnabled={batchEnabled}
+          batchBusy={controls.toggling === '__batch__'}
+          onBatchToggle={handleBatchToggle}
         />
       )}
 
