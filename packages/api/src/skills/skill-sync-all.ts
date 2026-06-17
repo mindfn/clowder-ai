@@ -10,7 +10,6 @@ import { stat } from 'node:fs/promises';
 import type { MountRules } from '@cat-cafe/shared';
 import { readCapabilitiesConfig, withCapabilityLock } from '../config/capabilities/capability-orchestrator.js';
 import { readMountRules } from '../config/mount/mount-rules-store.js';
-import { readSkillsSyncState } from './skill-sync-config.js';
 import { type SyncProjectResult, syncProject } from './skill-sync-engine.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -114,20 +113,10 @@ async function syncAllUnlocked(
             (cap) => cap.type === 'skill' && cap.source === 'cat-cafe' && !cap.pluginId,
           ) ?? [];
 
-        // Exclude skills that were cascade-disabled (no local opinion) from disabledSkills.
-        // Without this filter, a globally re-enabled skill stays disabled because
-        // syncProject seeds disabledSet from opts.disabledSkills before consulting
-        // prevCascadeDisabled, blocking the re-enable path.
-        const prevCascade = new Set((await readSkillsSyncState(projectPath))?.cascadeDisabledSkills ?? []);
-        const locallyDisabledSkills = new Set(
-          projectManagedCaps
-            .filter(
-              (cap) =>
-                (Array.isArray(cap.mountPaths) ? cap.mountPaths.length === 0 : !(cap.globalEnabled ?? cap.enabled)) &&
-                !prevCascade.has(cap.id),
-            )
-            .map((cap) => cap.id),
-        );
+        // F228 scenarios 6/7: global cascade is unconditional.
+        // disabledSkills = globalDisabledSkills — global state is authoritative.
+        // Per feat doc: "全局禁用 skill → 逐项目执行场景 4" (unconditional),
+        // "全局启用 skill → 逐项目执行场景 5" (unconditional).
 
         // F228: per-mount-point cascade — if a mount point was removed globally
         // for a skill, remove it from the project's mountPaths too. Without this,
@@ -147,8 +136,7 @@ async function syncAllUnlocked(
           mountRules: projectMountRules,
           previousMountRules: opts.previousMountRules,
           pruneMountPaths: !!opts.previousMountRules,
-          disabledSkills: locallyDisabledSkills,
-          cascadeDisabledSkills: globalDisabledSkills,
+          disabledSkills: globalDisabledSkills,
           mountPathsBySkill: projectMountPathsBySkill,
           globalMountPathsBySkill,
           force,

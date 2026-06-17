@@ -1140,8 +1140,8 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
         const mountRules = await readMountRules(projectRoot, getProjectRoot());
         const skillsSource = await resolveCatCafeSkillsSource();
 
-        // R14 P2-2: external projects need global cascade policy
-        let cascadeDisabledSkills: Set<string> | undefined;
+        // F228: external projects on global scope need global disabled policy
+        let globalDisabledSkills: Set<string> | undefined;
         let globalMountPathsBySkill: Map<string, readonly string[]> | undefined;
         if (body.scope === 'global' && !pathsEqual(projectRoot, getProjectRoot())) {
           const globalConfig = await readCapabilitiesConfig(getProjectRoot());
@@ -1154,7 +1154,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
             if (!(gc.globalEnabled ?? gc.enabled)) disabled.add(gc.id);
             if (Array.isArray(gc.mountPaths)) mountMap.set(gc.id, gc.mountPaths);
           }
-          if (disabled.size > 0) cascadeDisabledSkills = disabled;
+          if (disabled.size > 0) globalDisabledSkills = disabled;
           if (mountMap.size > 0) globalMountPathsBySkill = mountMap;
         }
 
@@ -1167,7 +1167,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
           const syncResult = await syncProject(projectRoot, skillsSource, {
             mountRules,
             force: false,
-            cascadeDisabledSkills,
+            disabledSkills: globalDisabledSkills,
             mountPathsBySkill: localMountPathsBySkill,
             globalMountPathsBySkill,
           });

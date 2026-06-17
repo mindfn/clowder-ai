@@ -76,18 +76,18 @@ export const skillsWriteRoutes: FastifyPluginAsync<SkillsWriteRouteOptions> = as
         readCapabilitiesConfig(globalProjectRoot),
       ]);
 
-      // Extract global policy for cascade
-      const cascadeDisabled = new Set<string>();
+      // Extract global policy for external projects
+      const globalDisabledSkills = new Set<string>();
       const globalMountPaths = new Map<string, readonly string[]>();
       for (const cap of globalConfig?.capabilities ?? []) {
         if (cap.type !== 'skill' || cap.source !== 'cat-cafe' || cap.pluginId) continue;
-        if (!(cap.globalEnabled ?? cap.enabled)) cascadeDisabled.add(cap.id);
+        if (!(cap.globalEnabled ?? cap.enabled)) globalDisabledSkills.add(cap.id);
         if (Array.isArray(cap.mountPaths)) globalMountPaths.set(cap.id, cap.mountPaths);
       }
 
       const result = await syncProject(projectRoot, skillsSrc, {
         mountRules,
-        cascadeDisabledSkills: projectRoot !== globalProjectRoot ? cascadeDisabled : undefined,
+        disabledSkills: projectRoot !== globalProjectRoot ? globalDisabledSkills : undefined,
         globalMountPathsBySkill: globalMountPaths,
       });
 
@@ -191,18 +191,18 @@ export const skillsWriteRoutes: FastifyPluginAsync<SkillsWriteRouteOptions> = as
       const mainRoot = opts.mainProjectRoot ?? (await resolveMainRepoPath());
       const mountRules = await readMountRules(projectRoot, mainRoot);
       const globalConfig = await readCapabilitiesConfig(globalProjectRoot);
-      const cascadeDisabled = new Set<string>();
+      const globalDisabledSkills = new Set<string>();
       const globalMountPaths = new Map<string, readonly string[]>();
       for (const cap of globalConfig?.capabilities ?? []) {
         if (cap.type !== 'skill' || cap.source !== 'cat-cafe' || cap.pluginId) continue;
-        if (!(cap.globalEnabled ?? cap.enabled)) cascadeDisabled.add(cap.id);
+        if (!(cap.globalEnabled ?? cap.enabled)) globalDisabledSkills.add(cap.id);
         if (Array.isArray(cap.mountPaths)) globalMountPaths.set(cap.id, cap.mountPaths);
       }
 
       // syncProject reconciles all skills including the target — idempotent
       const result = await syncProject(projectRoot, skillsSrc, {
         mountRules,
-        cascadeDisabledSkills: projectRoot !== globalProjectRoot ? cascadeDisabled : undefined,
+        disabledSkills: projectRoot !== globalProjectRoot ? globalDisabledSkills : undefined,
         globalMountPathsBySkill: globalMountPaths,
       });
       const updatedConfig = await readCapabilitiesConfig(projectRoot);
