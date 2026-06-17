@@ -438,6 +438,28 @@ describe('WeixinAdapter', () => {
       assert.ok(result.messages[0].messageId.startsWith('weixin-'));
     });
 
+    it('generates stable fallback messageId for re-delivered messages without message_id', () => {
+      const adapter = new WeixinAdapter('test-token', noopLog());
+      const raw = {
+        ret: 0,
+        msgs: [
+          {
+            from_user_id: 'user1',
+            context_token: 'ctx-1',
+            create_time_ms: 1700000000123,
+            item_list: [{ type: 1, text_item: { text: 'same logical message' } }],
+          },
+        ],
+      };
+
+      const first = adapter.parseUpdates(raw);
+      const second = adapter.parseUpdates(raw);
+
+      assert.equal(first.messages.length, 1);
+      assert.equal(second.messages.length, 1);
+      assert.equal(second.messages[0].messageId, first.messages[0].messageId);
+    });
+
     it('handles response with both ret and errcode (errcode wins for session expired)', () => {
       const adapter = new WeixinAdapter('test-token', noopLog());
       const raw = { errcode: -14, ret: 0 };

@@ -401,11 +401,6 @@ export class WeixinAdapter implements IOutboundAdapter {
     const contextToken = msg.context_token;
     if (!senderId || !contextToken) return null;
 
-    const msgId =
-      msg.message_id != null
-        ? String(msg.message_id)
-        : `weixin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
     const firstItem = msg.item_list?.[0];
     if (!firstItem) {
       this.log.debug({ messageId: msg.message_id }, '[WeixinAdapter] Message with empty item_list, skipping');
@@ -413,6 +408,10 @@ export class WeixinAdapter implements IOutboundAdapter {
     }
 
     const itemType = firstItem.type ?? MessageItemType.TEXT;
+    const msgId =
+      msg.message_id != null
+        ? String(msg.message_id)
+        : this.buildFallbackMessageId(msg, senderId, contextToken, firstItem);
 
     if (itemType === MessageItemType.TEXT) {
       const text = firstItem.text_item?.text;
@@ -476,6 +475,31 @@ export class WeixinAdapter implements IOutboundAdapter {
 
     this.log.debug({ itemType, messageId: msg.message_id }, '[WeixinAdapter] Unsupported item type, skipping');
     return null;
+  }
+
+  private buildFallbackMessageId(
+    msg: ILinkWeixinMessage,
+    senderId: string,
+    contextToken: string,
+    firstItem: ILinkMessageItem,
+  ): string {
+    const itemType = firstItem.type ?? MessageItemType.TEXT;
+    const media =
+      firstItem.image_item?.media ??
+      firstItem.voice_item?.media ??
+      firstItem.file_item?.media ??
+      firstItem.video_item?.media;
+    const text = firstItem.text_item?.text ?? firstItem.voice_item?.text ?? '';
+    const fileName = firstItem.file_item?.file_name ?? '';
+    const mediaKey = this.buildMediaKey(media);
+    const fingerprint = crypto
+      .createHash('sha256')
+      .update(
+        `${senderId}\0${contextToken}\0${msg.create_time_ms ?? 0}\0${itemType}\0${text}\0${mediaKey}\0${fileName}`,
+      )
+      .digest('hex')
+      .slice(0, 16);
+    return `weixin-${fingerprint}`;
   }
 
   /**
