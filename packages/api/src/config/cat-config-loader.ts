@@ -873,6 +873,8 @@ export interface AcpVariantConfig {
   startupArgs: string[];
   /** F161 Phase C: ACP wire transport. 'stdio' = NDJSON over stdin/stdout (default). 'httpstream' = spawn process that listens on HTTP port. */
   transport?: 'stdio' | 'httpstream';
+  /** Required for httpstream until ACP publishes a stable HTTP transport spec. */
+  experimental?: boolean;
   mcpWhitelist?: string[];
   supportsMultiplexing?: boolean;
   /** Phase C: optional pool config overrides */

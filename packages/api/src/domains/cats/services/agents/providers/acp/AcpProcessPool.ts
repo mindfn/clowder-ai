@@ -81,6 +81,7 @@ function resolveSupportsMultiplexing(variantConfig: unknown): boolean {
 // ── Pool ──────────────────────────────────────────────────────
 
 export class AcpProcessPool {
+  readonly spawnSignature?: string;
   private readonly config: AcpPoolConfig;
   private readonly supportsMultiplexing: boolean;
   private readonly entries = new Map<string, PoolEntry[]>();
@@ -103,7 +104,9 @@ export class AcpProcessPool {
     config: Partial<AcpPoolConfig> & Pick<AcpPoolConfig, 'maxLiveProcesses'>,
     variantConfig: unknown,
     clientFactory: AcpClientFactory,
+    spawnSignature?: string,
   ) {
+    this.spawnSignature = spawnSignature;
     this.config = {
       maxLiveProcesses: config.maxLiveProcesses,
       idleTtlMs: config.idleTtlMs ?? DEFAULT_ACP_IDLE_TTL_MS,

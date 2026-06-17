@@ -23,6 +23,13 @@ const SUPPORTED_TEMPLATE_VARIABLES = new Set<string>(['api_key', 'base_url', 'ba
 const VALID_ENV_KEY = /^[A-Z_][A-Za-z0-9_]*$/;
 
 /**
+ * These direct-provider maps intentionally set OPENROUTER_API_KEY for OpenCode
+ * routing compatibility. This is an alias, not provider identity conversion.
+ */
+export const OPENROUTER_COMPAT_ENV_ALIAS_CLIENTS = ['openai', 'google'] as const;
+const OPENROUTER_API_KEY_TEMPLATE = '${api_key}';
+
+/**
  * Built-in env mappings for known clients/providers.
  * Key = clientId or provider name.
  * Value = { TARGET_ENV_VAR: '${canonical_var}' }
@@ -34,14 +41,14 @@ export const BUILTIN_ENV_MAPS: Record<string, Record<string, string>> = {
   },
   openai: {
     OPENAI_API_KEY: '${api_key}',
-    OPENROUTER_API_KEY: '${api_key}', // OpenCode routing compat
+    OPENROUTER_API_KEY: OPENROUTER_API_KEY_TEMPLATE,
     OPENAI_BASE_URL: '${base_url}',
     OPENAI_API_BASE: '${base_url}', // Legacy alias for older SDKs
   },
   google: {
     GEMINI_API_KEY: '${api_key}',
     GOOGLE_API_KEY: '${api_key}',
-    OPENROUTER_API_KEY: '${api_key}', // OpenCode routing compat
+    OPENROUTER_API_KEY: OPENROUTER_API_KEY_TEMPLATE,
     GEMINI_BASE_URL: '${base_url}',
   },
   opencode: {
@@ -49,7 +56,7 @@ export const BUILTIN_ENV_MAPS: Record<string, Record<string, string>> = {
     OPENCODE_BASE_URL: '${base_url}',
   },
   openrouter: {
-    OPENROUTER_API_KEY: '${api_key}',
+    OPENROUTER_API_KEY: OPENROUTER_API_KEY_TEMPLATE,
   },
   kimi: {
     MOONSHOT_API_KEY: '${api_key}',

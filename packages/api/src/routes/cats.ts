@@ -70,20 +70,32 @@ const clientSchema = z.enum([
 ]);
 
 /** F161: ACP transport config schema — matches AcpVariantConfig from cat-config-loader. */
-const acpConfigSchema = z.object({
-  command: z.string().min(1),
-  startupArgs: z.array(z.string()),
-  /** F161 Phase C: wire transport. 'stdio' (default, omitted) or 'httpstream'. */
-  transport: z.enum(['stdio', 'httpstream']).optional(),
-  mcpWhitelist: z.array(z.string().min(1)).optional(),
-  supportsMultiplexing: z.boolean().optional(),
-  pool: z
-    .object({
-      maxLiveProcesses: z.number().int().positive().optional(),
-      idleTtlMs: z.number().int().positive().optional(),
-    })
-    .optional(),
-});
+const acpConfigSchema = z
+  .object({
+    command: z.string().min(1),
+    startupArgs: z.array(z.string()),
+    /** F161 Phase C: wire transport. 'stdio' (default, omitted) or 'httpstream'. */
+    transport: z.enum(['stdio', 'httpstream']).optional(),
+    /** Required for httpstream until ACP publishes a stable HTTP transport spec. */
+    experimental: z.literal(true).optional(),
+    mcpWhitelist: z.array(z.string().min(1)).optional(),
+    supportsMultiplexing: z.boolean().optional(),
+    pool: z
+      .object({
+        maxLiveProcesses: z.number().int().positive().optional(),
+        idleTtlMs: z.number().int().positive().optional(),
+      })
+      .optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.transport === 'httpstream' && value.experimental !== true) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['experimental'],
+        message: 'ACP httpstream transport is experimental; set acp.experimental=true to enable it',
+      });
+    }
+  });
 type AcpRouteConfig = z.infer<typeof acpConfigSchema>;
 
 function resolveGenericAcpMcpSupport(

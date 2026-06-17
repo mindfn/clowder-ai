@@ -94,6 +94,15 @@ describe('AcpProcessPool', () => {
       assert.equal(DEFAULT_ACP_IDLE_TTL_MS, 30 * 60 * 1000);
       assert.equal(pool.config.idleTtlMs, DEFAULT_ACP_IDLE_TTL_MS);
     });
+
+    test('exposes the typed spawn signature used for registry staleness checks', async () => {
+      const { AcpProcessPool } = await import(
+        '../../dist/domains/cats/services/agents/providers/acp/AcpProcessPool.js'
+      );
+      pool = new AcpProcessPool(defaultPoolConfig, defaultVariantConfig, createMockClient, 'spawn:v1');
+      assert.equal(pool.spawnSignature, 'spawn:v1');
+      assert.equal(Object.prototype.hasOwnProperty.call(pool, '_spawnSignature'), false);
+    });
   });
 
   describe('acquire / release basics', () => {

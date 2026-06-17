@@ -2171,6 +2171,69 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     assert.equal(createRes.statusCode, 400, 'clientId acp without acp config should be rejected');
   });
 
+  it('POST /api/cats gates httpstream ACP transport behind explicit experimental opt-in', async () => {
+    const projectRoot = createMonorepoProjectRoot();
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
+
+    const { createProviderProfile } = await import('./helpers/create-test-account.js');
+    const acpProfile = await createProviderProfile(projectRoot, {
+      displayName: 'HTTP ACP',
+      authType: 'api_key',
+      protocol: 'openai',
+      apiKey: 'sk-http',
+      models: ['test-model'],
+    });
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    const baseBody = {
+      name: 'HTTP ACP',
+      displayName: 'HTTP ACP',
+      avatar: '/avatars/default.png',
+      color: { primary: '#0f172a', secondary: '#e2e8f0' },
+      roleDescription: 'experimental ACP agent',
+      clientId: 'acp',
+      accountRef: acpProfile.id,
+      defaultModel: 'test-model',
+    };
+
+    const rejected = await app.inject({
+      method: 'POST',
+      url: '/api/cats',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        ...baseBody,
+        catId: 'acp-http-rejected',
+        mentionPatterns: ['@acp-http-rejected'],
+        acp: { command: 'http-acp', startupArgs: ['--serve'], transport: 'httpstream' },
+      }),
+    });
+    assert.equal(rejected.statusCode, 400, 'httpstream without explicit experimental opt-in should be rejected');
+    assert.match(JSON.stringify(JSON.parse(rejected.body).details), /experimental/i);
+
+    const accepted = await app.inject({
+      method: 'POST',
+      url: '/api/cats',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        ...baseBody,
+        catId: 'acp-http-accepted',
+        mentionPatterns: ['@acp-http-accepted'],
+        acp: { command: 'http-acp', startupArgs: ['--serve'], transport: 'httpstream', experimental: true },
+      }),
+    });
+    assert.equal(accepted.statusCode, 201, `experimental httpstream should be accepted: ${accepted.body}`);
+    assert.deepEqual(JSON.parse(accepted.body).cat.acp, {
+      command: 'http-acp',
+      startupArgs: ['--serve'],
+      transport: 'httpstream',
+      experimental: true,
+    });
+  });
+
   it('PATCH /api/cats/:id rejects removing acp config from an ACP member', async () => {
     const projectRoot = createMonorepoProjectRoot();
     process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
@@ -2229,6 +2292,65 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     assert.equal(switchRes.statusCode, 200, `client switch failed: ${switchRes.body}`);
     const switchBody = JSON.parse(switchRes.body);
     assert.equal(switchBody.cat.adapterMode, 'cli', 'after switch should be cli mode');
+  });
+
+  it('PATCH /api/cats/:id gates httpstream ACP transport behind explicit experimental opt-in', async () => {
+    const projectRoot = createMonorepoProjectRoot();
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
+
+    const { createProviderProfile } = await import('./helpers/create-test-account.js');
+    const acpProfile = await createProviderProfile(projectRoot, {
+      displayName: 'Patch HTTP ACP',
+      authType: 'api_key',
+      protocol: 'openai',
+      apiKey: 'sk-patch-http',
+      models: ['test-model'],
+    });
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/cats',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        catId: 'acp-patch-http',
+        name: 'Patch HTTP ACP',
+        displayName: 'Patch HTTP ACP',
+        avatar: '/avatars/default.png',
+        color: { primary: '#0f172a', secondary: '#e2e8f0' },
+        mentionPatterns: ['@acp-patch-http'],
+        roleDescription: 'ACP agent',
+        clientId: 'acp',
+        accountRef: acpProfile.id,
+        defaultModel: 'test-model',
+        acp: { command: 'test-cli', startupArgs: ['--acp'] },
+      }),
+    });
+    assert.equal(createRes.statusCode, 201, `create failed: ${createRes.body}`);
+
+    const rejected = await app.inject({
+      method: 'PATCH',
+      url: '/api/cats/acp-patch-http',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({ acp: { command: 'http-acp', startupArgs: ['--serve'], transport: 'httpstream' } }),
+    });
+    assert.equal(rejected.statusCode, 400, 'PATCH httpstream without opt-in should be rejected');
+    assert.match(JSON.stringify(JSON.parse(rejected.body).details), /experimental/i);
+
+    const accepted = await app.inject({
+      method: 'PATCH',
+      url: '/api/cats/acp-patch-http',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        acp: { command: 'http-acp', startupArgs: ['--serve'], transport: 'httpstream', experimental: true },
+      }),
+    });
+    assert.equal(accepted.statusCode, 200, `experimental httpstream patch should be accepted: ${accepted.body}`);
+    assert.equal(JSON.parse(accepted.body).cat.acp.experimental, true);
   });
 
   it('PATCH /api/cats/:id clears stale acp config when switching away from ACP without acp:null', async () => {

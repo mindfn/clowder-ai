@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-const { resolveEnvMap, extractUserEnvTemplates, BUILTIN_ENV_MAPS } = await import(
+const { resolveEnvMap, extractUserEnvTemplates, BUILTIN_ENV_MAPS, OPENROUTER_COMPAT_ENV_ALIAS_CLIENTS } = await import(
   '../dist/domains/cats/services/agents/providers/env-map.js'
 );
 
@@ -41,6 +41,15 @@ describe('F161: env-map — resolveEnvMap', () => {
       GOOGLE_API_KEY: 'AIza-xxx',
       OPENROUTER_API_KEY: 'AIza-xxx',
     });
+  });
+
+  it('documents the exact built-in clients that intentionally alias credentials to OPENROUTER_API_KEY', () => {
+    assert.deepEqual([...OPENROUTER_COMPAT_ENV_ALIAS_CLIENTS], ['openai', 'google']);
+    const aliasMaps = Object.entries(BUILTIN_ENV_MAPS)
+      .filter(([client, envMap]) => client !== 'openrouter' && envMap.OPENROUTER_API_KEY === '${api_key}')
+      .map(([client]) => client)
+      .sort();
+    assert.deepEqual(aliasMaps, ['google', 'openai']);
   });
 
   it('resolves openrouter via provider name (not clientId)', () => {

@@ -40,6 +40,8 @@ export interface CatData {
     startupArgs: string[];
     /** F161 Phase C: wire transport. 'stdio' (default) or 'httpstream'. */
     transport?: 'stdio' | 'httpstream';
+    /** Required for httpstream until ACP publishes a stable HTTP transport spec. */
+    experimental?: boolean;
     mcpWhitelist?: string[];
     supportsMultiplexing?: boolean;
     pool?: {
