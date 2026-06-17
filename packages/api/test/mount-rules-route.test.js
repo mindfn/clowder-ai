@@ -660,7 +660,14 @@ describe('Mount Rules Route (F228)', () => {
     await writeCapabilitiesConfig(mainDir, {
       version: 2,
       capabilities: [
-        { id: 'tdd', type: 'skill', enabled: true, globalEnabled: true, source: 'cat-cafe', mountPaths: ['claude', 'codex', 'gemini', 'kimi'] },
+        {
+          id: 'tdd',
+          type: 'skill',
+          enabled: true,
+          globalEnabled: true,
+          source: 'cat-cafe',
+          mountPaths: ['claude', 'codex', 'gemini', 'kimi'],
+        },
       ],
     });
 
