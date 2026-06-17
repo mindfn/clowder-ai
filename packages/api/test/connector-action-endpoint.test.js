@@ -268,7 +268,7 @@ describe('executeConnectorAction (AC-A15/A16)', () => {
     assert.equal(state?.currentAction, 'qr-status', 'should not advance when advance=false');
   });
 
-  it('advance: false preserves the original polling deadline timestamp', async () => {
+  it('advance: false preserves the QR image state during polling', async () => {
     const originalDateNow = Date.now;
     try {
       Date.now = () => 1_000;
@@ -304,8 +304,8 @@ describe('executeConnectorAction (AC-A15/A16)', () => {
       assert.equal(state?.currentAction, 'qr-status');
       assert.equal(state?.updatedAt, 1_000, 'polling timeout deadline must not move on non-advance polls');
       assert.deepEqual(state?.lastResult, {
-        render: 'polling',
-        data: { status: 'waiting' },
+        render: 'img',
+        data: { url: 'data:image/png;base64,QR_DATA', status: 'waiting' },
         label: 'Still waiting',
       });
     } finally {

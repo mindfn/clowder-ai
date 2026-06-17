@@ -12,7 +12,7 @@
  * - Persist lastResult for frontend rendering
  */
 
-import { isOperationField, type OperationConfigField } from '@cat-cafe/shared';
+import { isOperationField, type OperationConfigField, type OperationState } from '@cat-cafe/shared';
 import { readOperationState, writeConnectorConfig, writeOperationState } from './im-connector-config-store.js';
 import type {
   HandleActionContext,
@@ -55,6 +55,34 @@ interface ExecuteActionError {
 }
 
 export type ExecuteActionResult = ExecuteActionSuccess | ExecuteActionError;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function buildPersistedLastResult(
+  result: HandleActionResult,
+  previousLastResult: OperationState['lastResult'],
+): OperationState['lastResult'] {
+  const nextLastResult = {
+    render: result.render,
+    data: result.data,
+    ...(result.label ? { label: result.label } : {}),
+  };
+
+  if (result.advance === false && result.render === 'polling' && previousLastResult?.render === 'img') {
+    return {
+      render: previousLastResult.render,
+      data:
+        isRecord(previousLastResult.data) && isRecord(result.data)
+          ? { ...previousLastResult.data, ...result.data }
+          : previousLastResult.data,
+      ...(result.label ? { label: result.label } : previousLastResult.label ? { label: previousLastResult.label } : {}),
+    };
+  }
+
+  return nextLastResult;
+}
 
 // ── Implementation ──────────────────────────────────────────────────
 
@@ -104,11 +132,7 @@ export async function executeConnectorAction(input: ExecuteActionInput): Promise
 
   // 6. Persist state — advance only when plugin signals completion (default: true)
   const shouldAdvance = result.advance !== false;
-  const lastResult = {
-    render: result.render,
-    data: result.data,
-    ...(result.label ? { label: result.label } : {}),
-  };
+  const lastResult = buildPersistedLastResult(result, operationState?.lastResult);
 
   if (shouldAdvance) {
     const nextAction = actionDef.next ?? actionId;
