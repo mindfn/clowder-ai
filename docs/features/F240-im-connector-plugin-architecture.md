@@ -534,7 +534,7 @@ for each ValueConfigField:
 | 2026-06-11 | Phase A 前半段：接口定义 + 7 adapter 迁移 + 外部加载器 + 示例包 + 文档 |
 | 2026-06-12 | @codex R3 APPROVED（接口+迁移部分） |
 | 2026-06-13 | Maintainer review: 4×P1 provenance fix + cloud P2 (Hub status heuristic) |
-| 2026-06-15 | #925 weixin duplicate message fix 带入 PR |
+| 2026-06-15 | #925 weixin duplicate message fix 拆出为独立修复，不随 F240 PR 合入 |
 | 2026-06-15 | 铲屎官重新定义 scope：YAML 清单 + 配置持久化 + Hub 写端点 纳入 Phase A |
 | 2026-06-15 | Phase A 后半段：YAML 清单 + config store + bootstrap 三层解析 + visual metadata |
 | 2026-06-15 | ~~三阶段拆分~~ → 合并为两阶段：Phase A 完整闭环 + Phase B 动态安装 |
@@ -566,4 +566,4 @@ for each ValueConfigField:
 | **Codebase** | `packages/web/src/components/settings/PluginsContent.tsx` | F202 插件卡片（复用目标） |
 | **Upstream** | `https://github.com/zts212653/clowder-ai/pull/903` | PR #903（draft） |
 | **Upstream** | `https://github.com/zts212653/clowder-ai/issues/907` | Issue #907 |
-| **Bug Fix** | `https://github.com/zts212653/clowder-ai/issues/925` | #925 weixin 重复消息（随 #903 合入） |
+| **Bug Fix** | `https://github.com/zts212653/clowder-ai/issues/925` | #925 weixin 重复消息（独立修复，非 F240 scope） |
