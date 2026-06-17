@@ -266,7 +266,7 @@ export function isStaticConnectorId(id: string): boolean {
 }
 
 /**
- * Register a connector definition at runtime (F230 dynamic plugins).
+ * Register a connector definition at runtime (F240 dynamic plugins).
  * External IM connector plugins call this to make their definition
  * available to frontend rendering (icon, color, displayName).
  * Built-in definitions cannot be overridden.
@@ -277,7 +277,7 @@ export function registerConnectorDefinition(def: ConnectorDefinition): void {
 }
 
 /**
- * Unregister a runtime-added connector definition (F234 plugin uninstall).
+ * Unregister a runtime-added connector definition (F240 plugin uninstall).
  * Static (compile-time) definitions are immune — only dynamically registered
  * entries can be removed.
  */

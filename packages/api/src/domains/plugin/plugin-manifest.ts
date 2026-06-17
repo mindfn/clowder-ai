@@ -87,7 +87,7 @@ export function parsePluginManifest(yamlPath: string): PluginManifest {
     );
   }
 
-  // F234 KD-15: use shared parser, plugins only have value fields (no operations)
+  // F240 KD-15: use shared parser, plugins only have value fields (no operations)
   const rawConfig = doc['config'];
   let config: ValueConfigField[];
   if (Array.isArray(rawConfig)) {

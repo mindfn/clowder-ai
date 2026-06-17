@@ -4,7 +4,7 @@
 
 ## Overview
 
-Cat Cafe's IM connector plugin system (F234) lets you integrate any messaging platform by packaging a self-contained plugin archive. Upload via Hub UI, configure credentials — done.
+Cat Cafe's IM connector plugin system (F240) lets you integrate any messaging platform by packaging a self-contained plugin archive. Upload via Hub UI, configure credentials — done.
 
 ```
 # Package your connector as a tar.gz:

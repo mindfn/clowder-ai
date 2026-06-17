@@ -4,7 +4,7 @@
  * Resolution order: stored value (Hub UI write) > env var > YAML default.
  * This means users who already have env vars configured get seamless migration.
  *
- * F234 KD-15/KD-18: uses shared ValueConfigField types.
+ * F240 KD-15/KD-18: uses shared ValueConfigField types.
  * Defaults encoded through codec (toggle→"true"/"false", list→JSON array string).
  */
 

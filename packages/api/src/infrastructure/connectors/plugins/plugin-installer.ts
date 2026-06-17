@@ -1,5 +1,5 @@
 /**
- * Plugin Installer — F234 Phase B
+ * Plugin Installer — F240 Phase B
  *
  * Installs, updates, and uninstalls external IM connector plugins.
  * Plugin packages are tar.gz archives containing:

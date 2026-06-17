@@ -72,7 +72,7 @@ describe('env-registry', () => {
     assert.equal(apiKey.sensitive, true);
   });
 
-  it('F234 P1-1: IM_CONNECTOR_PLUGINS must be sensitive (controls dynamic import() code execution)', () => {
+  it('F240 P1-1: IM_CONNECTOR_PLUGINS must be sensitive (controls dynamic import() code execution)', () => {
     const entry = ENV_VARS.find((v) => v.name === 'IM_CONNECTOR_PLUGINS');
     assert.ok(entry, 'IM_CONNECTOR_PLUGINS must be in ENV_VARS');
     assert.equal(

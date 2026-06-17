@@ -1,5 +1,5 @@
 /**
- * IM Connector Loader — F234
+ * IM Connector Loader — F240
  *
  * Discovers and loads built-in, installed, and legacy external IM connector plugins.
  * - Built-in: statically imported from `im-connectors/`

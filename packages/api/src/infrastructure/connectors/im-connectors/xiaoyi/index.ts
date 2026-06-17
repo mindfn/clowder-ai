@@ -1,5 +1,5 @@
 /**
- * XiaoYi IM Connector Plugin — F234
+ * XiaoYi IM Connector Plugin — F240
  *
  * Wraps XiaoyiAdapter into the IMConnectorPlugin interface.
  * Uses OpenClaw WebSocket mode for inbound messages.

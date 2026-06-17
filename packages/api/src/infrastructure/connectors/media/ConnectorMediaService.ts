@@ -29,7 +29,7 @@ const TYPE_TO_EXT: Record<string, string> = {
 };
 
 /**
- * F234: All connectors register download functions via registerDownloadFn().
+ * F240: All connectors register download functions via registerDownloadFn().
  * Per-connector setter methods have been removed — plugins use the unified registry.
  */
 export class ConnectorMediaService {

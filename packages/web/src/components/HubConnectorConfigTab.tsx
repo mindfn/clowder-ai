@@ -89,7 +89,7 @@ export function HubConnectorConfigTab({ refreshKey }: { refreshKey?: number }) {
   };
 
   const handleSave = async (platform: PlatformStatus) => {
-    // F234: save to .cat-cafe config store via PUT /api/connectors/:id/config (not legacy /api/config/secrets)
+    // F240: save to .cat-cafe config store via PUT /api/connectors/:id/config (not legacy /api/config/secrets)
     const fields = platform.fields
       .filter((f) => fieldValues[f.envName] !== undefined)
       .map((f) => ({ name: f.envName, value: fieldValues[f.envName] || null }));

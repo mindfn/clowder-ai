@@ -1,5 +1,5 @@
 /**
- * WeCom Agent IM Connector Plugin — F234
+ * WeCom Agent IM Connector Plugin — F240
  *
  * Wraps WeComAgentAdapter into the IMConnectorPlugin interface.
  * Uses HTTP callback (webhook) for inbound messages with XML encryption.

@@ -5,7 +5,7 @@
  * fields, setup steps, and display metadata via a `connector.yaml` file.
  * This module parses and validates those manifests.
  *
- * F234 KD-15: uses shared ConfigField types + parseConfigFields() — same
+ * F240 KD-15: uses shared ConfigField types + parseConfigFields() — same
  * parser as plugin-manifest.ts. Connector manifests may include operation
  * fields (e.g. QR login) alongside value fields.
  */
@@ -35,14 +35,14 @@ export interface ConnectorManifest {
   /** Brand theme color hex — drives OKLCH avatar derivation + ring color */
   themeColor: string;
   docsUrl: string;
-  /** F234: ConfigField[] includes value + operation fields; filter with isValueField/getValueFields for env paths */
+  /** F240: ConfigField[] includes value + operation fields; filter with isValueField/getValueFields for env paths */
   config: ConfigField[];
   steps: ConnectorStepDef[];
   /** AC-A25: manifest-driven permission support. If present, renders HubPermissionsTab. */
   permissions?: { label: string };
-  /** F234: YAML-declared health-check capability — controls test button visibility. */
+  /** F240: YAML-declared health-check capability — controls test button visibility. */
   testable?: boolean;
-  /** F234: 'external' for user-installed plugins (force-written at install time). Absent/undefined = builtin. */
+  /** F240: 'external' for user-installed plugins (force-written at install time). Absent/undefined = builtin. */
   source?: 'builtin' | 'external';
 }
 

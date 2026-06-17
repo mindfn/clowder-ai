@@ -1,5 +1,5 @@
 /**
- * Connector Plugin Management API — F234 Phase B-2
+ * Connector Plugin Management API — F240 Phase B-2
  *
  * Provides install/uninstall/update/list endpoints for external IM connector plugins.
  * Plugins are uploaded as tar.gz archives and extracted to `.cat-cafe/plugins/<id>/`.

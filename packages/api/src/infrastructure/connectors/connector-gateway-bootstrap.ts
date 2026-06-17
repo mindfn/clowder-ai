@@ -8,7 +8,7 @@
  * - Returns lifecycle handle { stop }
  *
  * F088 Multi-Platform Chat Gateway
- * F234 IM Connector Plugin Architecture — unified plugin loop replaces
+ * F240 IM Connector Plugin Architecture — unified plugin loop replaces
  *      per-connector inline init blocks. All connectors (built-in + external)
  *      go through the same IMConnectorPlugin interface.
  */
@@ -223,13 +223,13 @@ export interface ConnectorGatewayHandle {
   readonly stopWeComBot: () => Promise<void>;
   /** F132 bugfix: live adapter getter for health reporting (instance changes on restart) */
   readonly getWeComBotAdapter: () => WeComBotAdapter | null;
-  /** F234 A-3: all discovered plugins, including unconfigured (for generic action endpoint) */
+  /** F240 A-3: all discovered plugins, including unconfigured (for generic action endpoint) */
   readonly pluginRegistry: ReadonlyMap<string, import('./im-connector-plugin.js').IMConnectorPlugin>;
-  /** F234 A-3: live adapters — only configured+started connectors */
+  /** F240 A-3: live adapters — only configured+started connectors */
   readonly adapterRegistry: ReadonlyMap<string, IOutboundAdapter>;
-  /** F234 A-3: activate a connector after credentials acquired via action (creates adapter + starts inbound) */
+  /** F240 A-3: activate a connector after credentials acquired via action (creates adapter + starts inbound) */
   activateConnector(connectorId: string): Promise<void>;
-  /** F234 A-3: deactivate a connector — stop inbound, remove adapter/webhook/media */
+  /** F240 A-3: deactivate a connector — stop inbound, remove adapter/webhook/media */
   deactivateConnector(connectorId: string): Promise<void>;
   stop(): Promise<void>;
 }
@@ -398,7 +398,7 @@ export async function startConnectorGateway(
   const plugins = new Map<string, import('./im-connector-plugin.js').IMConnectorPlugin>();
   const webhookHandlers = new Map<string, ConnectorWebhookHandler>();
   const stopFns: Array<() => Promise<void>> = [];
-  /** Per-connector inbound stop handles — for targeted deactivation (F234 A-3). */
+  /** Per-connector inbound stop handles — for targeted deactivation (F240 A-3). */
   const connectorStopFns = new Map<string, () => Promise<void>>();
 
   // Use coCreatorUserId from config (DEFAULT_OWNER_USER_ID env) if set,
@@ -492,7 +492,7 @@ export async function startConnectorGateway(
     sttProvider,
   });
 
-  // ── F234: Load & initialize all IM connector plugins ──
+  // ── F240: Load & initialize all IM connector plugins ──
   const { loadBuiltinConnectors, loadExternalConnectors, loadInstalledPlugins } = await import(
     './im-connector-loader.js'
   );
@@ -525,7 +525,7 @@ export async function startConnectorGateway(
   });
   const allPlugins = [...builtinPlugins, ...externalPlugins];
 
-  // ── F234: Scan connector YAML manifests & load stored configs ──
+  // ── F240: Scan connector YAML manifests & load stored configs ──
   // Built-in manifests live in source tree; installed plugin manifests in .cat-cafe/plugins/
   const connectorsDir = resolveBuiltinConnectorsDir();
   const manifests = scanConnectorManifests(connectorsDir);
@@ -541,7 +541,7 @@ export async function startConnectorGateway(
   if (manifests.size > 0 || storedConfigCount > 0) {
     log.info(
       { manifests: manifests.size, storedConfigs: storedConfigCount },
-      '[F234] Connector manifests and config store loaded',
+      '[F240] Connector manifests and config store loaded',
     );
   }
 
@@ -574,13 +574,13 @@ export async function startConnectorGateway(
     // External plugin validation
     if (!isBuiltin) {
       if (isStaticConnectorId(plugin.id)) {
-        log.warn({ id: plugin.id }, '[F234] External plugin ID conflicts with built-in connector — skipped');
+        log.warn({ id: plugin.id }, '[F240] External plugin ID conflicts with built-in connector — skipped');
         continue;
       }
       if (plugin.definition.id !== plugin.id) {
         log.warn(
           { pluginId: plugin.id, definitionId: plugin.definition.id },
-          '[F234] Plugin id/definition.id mismatch — skipped',
+          '[F240] Plugin id/definition.id mismatch — skipped',
         );
         continue;
       }
@@ -598,7 +598,7 @@ export async function startConnectorGateway(
       });
     }
 
-    // Build env for this plugin — F234: stored (Hub UI) > config param (env/test) > YAML default
+    // Build env for this plugin — F240: stored (Hub UI) > config param (env/test) > YAML default
     // KD-17: only value fields have envName; KD-18: defaults encoded through codec
     // R5-P1 fix: installed plugins with manifest also use config store (was gated on isBuiltin)
     const pluginEnv: Record<string, string | undefined> = {};
@@ -634,7 +634,7 @@ export async function startConnectorGateway(
     // Hub must use plugin's own predicate, not the all-requiredEnvKeys heuristic)
     if (!isBuiltin) updateExternalConnectorConfigured(plugin.id, isConfigured);
 
-    // F234 A-3 fix: Always register plugin (for action endpoints even when unconfigured).
+    // F240 A-3 fix: Always register plugin (for action endpoints even when unconfigured).
     // Adapters are only created below when configured — plugin code is always available.
     plugins.set(plugin.id, plugin);
 
@@ -849,7 +849,7 @@ export async function startConnectorGateway(
     }
   };
 
-  // F234: WeComBot config — three-state resolution (KD-19 tombstone aware)
+  // F240: WeComBot config — three-state resolution (KD-19 tombstone aware)
   const storedBotId = getStoredConnectorValue('wecom-bot', 'WECOM_BOT_ID');
   const storedBotSecret = getStoredConnectorValue('wecom-bot', 'WECOM_BOT_SECRET');
   // null = tombstone (user cleared) → block fallback; undefined = absent → fall through
@@ -924,7 +924,7 @@ export async function startConnectorGateway(
   cleanupJob.start();
   log.info('[ConnectorGateway] Media cleanup job started (24h TTL, 1h sweep)');
 
-  // F234 A-3: Activate a connector after credentials acquired via action.
+  // F240 A-3: Activate a connector after credentials acquired via action.
   // Re-reads config, creates adapter, starts inbound. Used by generic action endpoint
   // after QR-based credential backfill.
   async function activateConnector(connectorId: string): Promise<void> {
@@ -1009,7 +1009,7 @@ export async function startConnectorGateway(
     );
   }
 
-  // F234 A-3: Deactivate a connector — stop inbound, remove adapter/webhook/media.
+  // F240 A-3: Deactivate a connector — stop inbound, remove adapter/webhook/media.
   // Symmetric counterpart to activateConnector. Called on explicit disconnect actions.
   async function deactivateConnector(connectorId: string): Promise<void> {
     // Weixin uses an always-created adapter (QR login state carrier).

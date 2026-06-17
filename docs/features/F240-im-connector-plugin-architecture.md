@@ -1,12 +1,12 @@
 ---
-feature_ids: [F234]
+feature_ids: [F240]
 related_features: [F088, F202, F132, F134, F137, F142, F151]
 topics: [connector, im-connector-plugin, adapter, plugin-architecture, extensibility]
 doc_kind: spec
 created: 2026-06-11
 ---
 
-# F234: IM Connector Plugin Architecture — YAML 驱动的统一接口 + 配置 + 前端 + Action 状态机
+# F240: IM Connector Plugin Architecture — YAML 驱动的统一接口 + 配置 + 前端 + Action 状态机
 
 > **Status**: in-progress | **Owner**: Ragdoll Opus-4.6 | **Priority**: P1
 
@@ -80,7 +80,7 @@ Why: 将现有 hardcoded adapter switch-case 改为 YAML 驱动的注册表模�
 
 #### A-2: 统一 Config Field 类型系统 + 共享解析器（KD-15）
 
-**F202 Plugin 和 F234 IM Connector 共用同一套字段类型和解析器**。YAML 配置文件各自独立管理（业务域不同），但类型定义和解析逻辑是同一份代码。代码不考虑兼容（客户端应用），数据层 YAML 无 `type` 字段时 fallback 到 `input`。
+**F202 Plugin 和 F240 IM Connector 共用同一套字段类型和解析器**。YAML 配置文件各自独立管理（业务域不同），但类型定义和解析逻辑是同一份代码。代码不考虑兼容（客户端应用），数据层 YAML 无 `type` 字段时 fallback 到 `input`。
 
 **五种 config field 类型**（F202 plugin 和 IM connector 共用）：
 
@@ -520,7 +520,7 @@ for each ValueConfigField:
 | KD-12 | 后端+前端+action 合入单一 Phase A，不拆 Phase；action 是状态机链，前端是纯状态机渲染器 | 铲屎官："没有必要到 Phase B 我们 Phase A 应该就把整个做完的...action 委托给不同的插件自己去处理...yaml回显当前 action 是哪个就好了" | 2026-06-15 |
 | KD-13 | action 状态（持久化，用户下一步）≠ 连接状态（runtime health check），两者独立 | 铲屎官："connected 应该是 health 的检测是独立的" | 2026-06-15 |
 | KD-14 | operation 是独立字段（有 `name`，无 `envName`），不挂在 input 字段上。通过 `target` 声明回填到哪些 input 字段 | 铲屎官："应该要用一个独立的字段来承载...不应该把 operation 字段放到 WEIXIN_BOT_TOKEN 上" | 2026-06-15 |
-| KD-15 | Config field 解析逻辑 F202 plugin 和 F234 IM connector 共用一份（`ConfigField` 联合类型直接替换 `PluginConfigField` + `parseConfigField()`），YAML 配置文件各自独立管理。代码不考虑兼容（客户端应用直接改到位），数据层 YAML 无 `type` 字段 fallback 到 `input` | 铲屎官："两边的逻辑基本上是差不多的；配置文件可以是两边独立管理的(业务上有区分)，但对yaml的解析和处理可以是同一份的"；"代码上不用考虑兼容；只数据上需要稍微考虑下；因为我们是一个客户端应用" | 2026-06-15 |
+| KD-15 | Config field 解析逻辑 F202 plugin 和 F240 IM connector 共用一份（`ConfigField` 联合类型直接替换 `PluginConfigField` + `parseConfigField()`），YAML 配置文件各自独立管理。代码不考虑兼容（客户端应用直接改到位），数据层 YAML 无 `type` 字段 fallback 到 `input` | 铲屎官："两边的逻辑基本上是差不多的；配置文件可以是两边独立管理的(业务上有区分)，但对yaml的解析和处理可以是同一份的"；"代码上不用考虑兼容；只数据上需要稍微考虑下；因为我们是一个客户端应用" | 2026-06-15 |
 | KD-16 | `.cat-cafe/im-connector-config/` 是配置的主存储，`.env` / 环境变量仅在无运行时数据时作为 fallback（旧版本升级兼容）。后续 `.env.example` 应删除 connector 相关配置项 | 铲屎官："迁移后保存数据是保存到.cat-cafe的运行时数据；.env文件和环境变量的只是作为没有运行时数据的fallback；后续我们.env是不需要这些配置了的（.env.example应删掉）" | 2026-06-15 |
 | KD-17 | 所有 env-backed 代码路径只操作 `ValueConfigField[]`（通过 `isValueField()` type guard 过滤），`OperationConfigField` 不含 `envName` 属性 → 漏过滤则 TS 编译报错 | Review P1: operation 字段混入 env 持久化链会 crash 或产生空 key | 2026-06-15 |
 | KD-18 | Value codec 契约：store 层保持 `Record<string, string \| null>`，typed 值通过 string codec 序列化（toggle→`"true"`/`"false"`, list→JSON string array, select→options value string）。Codec 在 shared `config-field-codec.ts`，前后端共用 | Review P1: spec 声明了 toggle/select/list 但没定义序列化格式，实现会不一致 | 2026-06-15 |

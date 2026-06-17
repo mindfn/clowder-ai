@@ -292,7 +292,7 @@ export type {
   TriagePlanTarget,
 } from './concierge.js';
 export { CONCIERGE_CONFIG_DEFAULTS } from './concierge.js';
-// Unified Config Field types (F234 KD-15 — shared by Plugin + IM Connector)
+// Unified Config Field types (F240 KD-15 — shared by Plugin + IM Connector)
 export type {
   ActionDef,
   ConfigField,

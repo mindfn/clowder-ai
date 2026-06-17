@@ -1,5 +1,5 @@
 /**
- * DingTalk IM Connector Plugin — F234
+ * DingTalk IM Connector Plugin — F240
  *
  * Wraps DingTalkAdapter into the IMConnectorPlugin interface.
  * Uses DingTalk Stream mode for inbound messages.

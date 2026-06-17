@@ -63,13 +63,13 @@ export interface ConnectorHubRoutesOptions {
   envFilePath?: string;
   feishuQrBindClient?: FeishuQrBindClient;
 
-  /** F234 A-3: Plugin registry for generic action endpoint (includes unconfigured plugins) */
+  /** F240 A-3: Plugin registry for generic action endpoint (includes unconfigured plugins) */
   pluginRegistry?: ReadonlyMap<string, IMConnectorPlugin>;
-  /** F234 A-3: Adapter registry for generic action endpoint (only configured+started connectors) */
+  /** F240 A-3: Adapter registry for generic action endpoint (only configured+started connectors) */
   adapterRegistry?: ReadonlyMap<string, IOutboundAdapter>;
-  /** F234 A-3: Activate a connector after credentials acquired via action (creates adapter + starts inbound) */
+  /** F240 A-3: Activate a connector after credentials acquired via action (creates adapter + starts inbound) */
   activateConnector?: (connectorId: string) => Promise<void>;
-  /** F234 A-3: Deactivate a connector on disconnect — stop inbound, remove adapter/webhook/media */
+  /** F240 A-3: Deactivate a connector on disconnect — stop inbound, remove adapter/webhook/media */
   deactivateConnector?: (connectorId: string) => Promise<void>;
 }
 
@@ -214,9 +214,9 @@ interface PlatformDef {
   themeColor?: string;
   /** AC-A25: manifest-driven permission label — renders HubPermissionsTab when present. */
   permissionLabel?: string;
-  /** F234: YAML-declared health-check — controls test button visibility. */
+  /** F240: YAML-declared health-check — controls test button visibility. */
   testable?: boolean;
-  /** F234: 'external' for user-installed plugins. Absent = builtin. */
+  /** F240: 'external' for user-installed plugins. Absent = builtin. */
   source?: 'builtin' | 'external';
 }
 
@@ -395,7 +395,7 @@ export interface PlatformStatus {
   id: string;
   name: string;
   nameEn: string;
-  /** F234: 'external' for user-installed connectors. Absent/undefined = builtin. */
+  /** F240: 'external' for user-installed connectors. Absent/undefined = builtin. */
   source?: 'builtin' | 'external';
   configured: boolean;
   fields: PlatformFieldStatus[];
@@ -409,7 +409,7 @@ export interface PlatformStatus {
   operations?: PlatformOperationStatus[];
   /** AC-A25: manifest-driven permission label — renders HubPermissionsTab when present. */
   permissionLabel?: string;
-  /** F234: YAML-declared health-check — controls test button visibility. */
+  /** F240: YAML-declared health-check — controls test button visibility. */
   testable?: boolean;
 }
 
@@ -481,7 +481,7 @@ export function buildConnectorStatus(
     };
   });
 
-  // F234: Append external connector plugin statuses (P1-2 fix)
+  // F240: Append external connector plugin statuses (P1-2 fix)
   const resolvedIds = new Set(resolved.map((p) => p.id));
 
   for (const meta of externalMetaById.values()) {
@@ -570,7 +570,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
     if (!userId) {
       return { error: 'Identity required (session cookie)' };
     }
-    // F234 A-4 fix: resolve stored config > env > default per connector
+    // F240 A-4 fix: resolve stored config > env > default per connector
     // Without this, Hub UI shows stale process.env after saving via config store.
     const { projectRoot, manifests, status } = buildConnectorStatusWithStoredConfig();
     // F137: WeChat "configured" is based on adapter having a live bot_token, not env vars
@@ -588,7 +588,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
       wecomBotStatus.configured = adapter?.getConnectionState() === 'connected';
     }
 
-    // F234 AC-A26: Enrich status with operation definitions + state for ActionRenderer
+    // F240 AC-A26: Enrich status with operation definitions + state for ActionRenderer
     for (const m of manifests) {
       const opFields = m.config.filter(isOperationField);
       if (opFields.length === 0) continue;
@@ -623,7 +623,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
 
   // Legacy connector action aliases.
   //
-  // F234 added the generic /api/connectors/:id/actions/... state machine, but
+  // F240 added the generic /api/connectors/:id/actions/... state machine, but
   // these /api/connector/... endpoints are still part of the public Hub
   // contract and preserve .env/process.env side effects used by existing setup
   // flows. Keep them as compatibility shims until the frontend and public API
@@ -941,7 +941,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
     return { ok: true };
   });
 
-  // ── F230: Write connector config via config store ──
+  // ── F240: Write connector config via config store ──
 
   app.put('/api/connectors/:connectorId/config', async (request, reply) => {
     const auth = requireConnectorWriteIdentity(request, reply);
@@ -1015,7 +1015,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
     return { ok: true, changedKeys };
   });
 
-  // ── F234 A-3: Generic action endpoint (AC-A16) ──
+  // ── F240 A-3: Generic action endpoint (AC-A16) ──
 
   app.post('/api/connectors/:connectorId/operations/:operationName/reset', async (request, reply) => {
     const auth = requireConnectorWriteIdentity(request, reply);
@@ -1159,7 +1159,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
     };
   });
 
-  // ── F234 A-3: Operation state in status endpoint (AC-A20) ──
+  // ── F240 A-3: Operation state in status endpoint (AC-A20) ──
 
   app.get('/api/connectors/:connectorId/operations', async (request, reply) => {
     const userId = requireSessionHubIdentity(request, reply);
@@ -1262,7 +1262,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
       return { valid: tg?.configured === true, error: !tg?.configured ? 'Telegram Bot Token 未配置' : undefined };
     }
 
-    // F234: Known connector but no dedicated test handler — report unsupported.
+    // F240: Known connector but no dedicated test handler — report unsupported.
     // Real connection testing should be a YAML-declared operation/action (like qr-generate).
     const manifest = getConnectorManifests().get(id);
     const extMeta = !manifest ? getAllExternalConnectorMeta().find((m) => m.id === id) : undefined;

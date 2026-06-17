@@ -1,5 +1,5 @@
 /**
- * External Connector Registry — F234
+ * External Connector Registry — F240
  *
  * Lightweight metadata store for external IM connector plugins.
  * Bootstrap registers plugin metadata here; connector-hub reads it
