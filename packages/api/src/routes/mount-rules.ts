@@ -155,23 +155,22 @@ export const mountRulesRoutes: FastifyPluginAsync<MountRulesRouteOptions> = asyn
       const previousProjectRules = await readProjectMountRulesOverride(projectRoot);
       const previousRules = await readMountRules(projectRoot, globalRoot);
 
-      // Extract global cascade policy for external projects
-      const cascadeDisabled = new Set<string>();
+      // Extract global disabled policy for external projects
+      let globalDisabledSkills: Set<string> | undefined;
       let globalMountPathsBySkill: Map<string, readonly string[]> | undefined;
       if (projectRoot !== globalRoot) {
         const globalConfig = await readCapabilitiesConfig(globalRoot);
         const globalManagedCaps =
           globalConfig?.capabilities.filter((c) => c.type === 'skill' && c.source === 'cat-cafe' && !c.pluginId) ?? [];
-        for (const cap of globalManagedCaps) {
-          if (!(cap.globalEnabled ?? cap.enabled)) cascadeDisabled.add(cap.id);
-        }
+        const disabled = new Set<string>();
         const mountMap = new Map<string, readonly string[]>();
         for (const cap of globalManagedCaps) {
+          if (!(cap.globalEnabled ?? cap.enabled)) disabled.add(cap.id);
           if (Array.isArray(cap.mountPaths)) mountMap.set(cap.id, cap.mountPaths);
         }
+        if (disabled.size > 0) globalDisabledSkills = disabled;
         if (mountMap.size > 0) globalMountPathsBySkill = mountMap;
       }
-      const cascadeOpt = cascadeDisabled.size > 0 ? cascadeDisabled : undefined;
 
       await writeMountRules(projectRoot, validated);
       try {
@@ -179,7 +178,7 @@ export const mountRulesRoutes: FastifyPluginAsync<MountRulesRouteOptions> = asyn
           mountRules: validated,
           previousMountRules: previousRules,
           pruneMountPaths: true,
-          cascadeDisabledSkills: cascadeOpt,
+          disabledSkills: globalDisabledSkills,
           globalMountPathsBySkill,
         });
         await reconcilePluginMounts(projectRoot, skillsSrc, validated, previousRules);
@@ -193,7 +192,7 @@ export const mountRulesRoutes: FastifyPluginAsync<MountRulesRouteOptions> = asyn
           mountRules: previousRules,
           previousMountRules: validated,
           pruneMountPaths: true,
-          cascadeDisabledSkills: cascadeOpt,
+          disabledSkills: globalDisabledSkills,
           globalMountPathsBySkill,
         }).catch((re) => {
           console.warn(`[F228] Rollback mount-rules reconciliation failed: ${(re as Error).message}`);

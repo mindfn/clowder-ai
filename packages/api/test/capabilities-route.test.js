@@ -2633,6 +2633,51 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
     }
   });
 
+  it('project-scope enable of one skill does not re-enable disabled siblings', async () => {
+    // F228: project-scope toggle only changes the toggled skill's mountPaths.
+    // Other disabled skills (mountPaths:[]) must remain disabled — syncProject
+    // reads configDisabledSet from config when disabledSkills is not provided.
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const toggledSkill = 'debugging';
+    const siblingSkill = 'tdd';
+    const projectDir = await makeTmpDir('project-enable-sibling');
+    const app = await buildSessionApp();
+
+    try {
+      // Set up: both skills disabled (mountPaths:[])
+      await writeCapabilitiesConfig(projectDir, {
+        version: 2,
+        capabilities: [
+          { id: toggledSkill, type: 'skill', enabled: false, globalEnabled: false, source: 'cat-cafe', mountPaths: [] },
+          { id: siblingSkill, type: 'skill', enabled: false, globalEnabled: false, source: 'cat-cafe', mountPaths: [] },
+        ],
+      });
+
+      // Enable ONLY toggledSkill at project scope
+      const res = await patchSkillCapability(app, projectDir, toggledSkill, true, 'project');
+      assert.equal(res.statusCode, 200, res.payload);
+
+      // toggledSkill should be enabled (has mount paths)
+      const config = await readCapabilitiesConfig(projectDir);
+      const toggled = config?.capabilities.find((c) => c.id === toggledSkill);
+      assert.ok(toggled?.mountPaths?.length > 0, 'toggled skill must have mount paths');
+
+      // siblingSkill must remain disabled — must NOT have symlinks
+      const sibling = config?.capabilities.find((c) => c.id === siblingSkill);
+      assert.deepEqual(sibling?.mountPaths, [], 'disabled sibling must keep empty mountPaths');
+      for (const mp of ['.claude', '.codex', '.gemini', '.kimi']) {
+        const linkPath = join(projectDir, mp, 'skills', siblingSkill);
+        assert.equal(existsSync(linkPath), false, `${mp} symlink for disabled sibling must not exist`);
+      }
+    } finally {
+      await app.close();
+      await rm(projectDir, { recursive: true, force: true });
+      if (previousOwner === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+      else process.env.DEFAULT_OWNER_USER_ID = previousOwner;
+    }
+  });
+
   it('rejects trusted header identity without a real session', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';
