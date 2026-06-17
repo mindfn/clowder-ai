@@ -285,9 +285,36 @@ export function bootstrapCatCatalog(projectRoot: string, templatePath: string): 
   const { catalog: template } = readBootstrapSourceConfig(templatePath);
   const { catalog: migratedCatalog } = migrateCatalogVariants(template);
 
-  // Always start empty — first-run wizard guides users to add their first cat.
-  // Template breeds are used as a menu when adding members, not seeded on startup.
-  const runtimeCatalog = createEmptyRuntimeCatalog(migratedCatalog);
+  // #948: When DEFAULT_CAT_ID is set (packaged desktop), seed that breed from the
+  // template so the app starts with at least one usable member. Without this, the
+  // registry is empty and the frontend crashes before the first-run wizard is reachable.
+  // When DEFAULT_CAT_ID is not set (dev environments), start empty as before —
+  // developers use the wizard or manual config to add members.
+  const defaultCatId = process.env.DEFAULT_CAT_ID?.trim();
+  const templateBreeds = Array.isArray(migratedCatalog.breeds) ? migratedCatalog.breeds : [];
+
+  let runtimeCatalog: CatCafeConfig;
+  if (defaultCatId && templateBreeds.length > 0) {
+    // Find the breed that owns the default cat ID (either as breed.catId or variant.catId)
+    type BreedLike = { id: string; catId?: string; variants?: Array<{ catId?: string }> };
+    const seedBreed = (templateBreeds as BreedLike[]).find(
+      (breed) =>
+        breed.catId === defaultCatId ||
+        breed.variants?.some((v) => v.catId === defaultCatId),
+    ) ?? templateBreeds[0];
+    runtimeCatalog = {
+      ...migratedCatalog,
+      breeds: seedBreed ? [seedBreed as CatCafeConfig['breeds'][number]] : [],
+    };
+    // Preserve owner in roster
+    const ownerEntry = buildOwnerRosterEntry();
+    if ('roster' in runtimeCatalog) {
+      (runtimeCatalog.roster as Record<string, RosterEntry>)[OWNER_ROSTER_KEY] = ownerEntry;
+    }
+  } else {
+    // No DEFAULT_CAT_ID — start empty (first-run wizard guides member addition).
+    runtimeCatalog = createEmptyRuntimeCatalog(migratedCatalog);
+  }
 
   mkdirSync(dirname(catalogPath), { recursive: true });
   writeFileAtomic(catalogPath, `${JSON.stringify(runtimeCatalog, null, 2)}\n`);
