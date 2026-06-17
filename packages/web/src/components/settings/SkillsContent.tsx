@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
+import { SettingsResourceToggleSwitch } from '../SettingsResourceCard';
 import { AllProjectsSyncBanner } from './AllProjectsSyncBanner';
 import { ProjectSelector } from './capability-settings-ui';
 import { MountRulesPanel } from './MountRulesPanel';
@@ -236,7 +237,7 @@ export function SkillsContent() {
         />
       )}
 
-      {data && (
+      {scope === SCOPE_ALL && data && (
         <AllProjectsSyncBanner
           scopes={sync.scopeIssues}
           scopesWithIssues={sync.scopesWithIssues}
@@ -244,10 +245,21 @@ export function SkillsContent() {
           error={sync.syncAllError}
           onSyncAll={sync.handleSyncAllScopes}
           onSyncScope={sync.handleSyncScope}
-          batchEnabled={batchEnabled}
-          batchBusy={controls.toggling === '__batch__'}
-          onBatchToggle={handleBatchToggle}
         />
+      )}
+
+      {data && filteredSkills.some((s) => s.controls) && (
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-cafe-muted">
+            {batchEnabled ? '批量禁用当前筛选的 Skill' : '批量启用当前筛选的 Skill'}
+          </p>
+          <SettingsResourceToggleSwitch
+            enabled={batchEnabled}
+            busy={controls.toggling === '__batch__'}
+            onClick={() => handleBatchToggle(!batchEnabled)}
+            title={batchEnabled ? '批量禁用当前筛选的 Skill' : '批量启用当前筛选的 Skill'}
+          />
+        </div>
       )}
 
       {!data && !error && <SettingsStatusStrip tone="muted">加载中...</SettingsStatusStrip>}
