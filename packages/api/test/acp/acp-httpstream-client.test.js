@@ -348,6 +348,47 @@ describe('AcpHttpStreamClient', () => {
     assert.equal(events.at(-1)?.update?.content?.text, 'approved');
   });
 
+  it('treats 204 agent response acknowledgements as complete', async () => {
+    let agentResponsePostSeen = false;
+
+    server = await startJsonRpcServer((message, res) => {
+      if (message.method === 'initialize') {
+        return { jsonrpc: '2.0', id: message.id, result: INIT_RESULT };
+      }
+      if (message.id === 'agent-response-ack' && !message.method) {
+        agentResponsePostSeen = true;
+        res.writeHead(204);
+        res.end();
+        return undefined;
+      }
+      return { jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'not found' } };
+    });
+    const { child, agentStdout } = createMockChild();
+    const port = serverPort(server);
+
+    client = new AcpHttpStreamClient({
+      command: 'fake-http-acp',
+      args: [],
+      cwd: '/tmp',
+      spawnFn: () => {
+        setImmediate(() => agentStdout.write(`Listening on port ${port}\n`));
+        return child;
+      },
+      portDiscoveryTimeoutMs: 500,
+    });
+
+    await client.initialize();
+    await withTimeout(
+      client.sendAgentResponse(
+        { jsonrpc: '2.0', id: 'agent-response-ack', result: {} },
+        { timeoutMs: 100, method: 'session/request_permission' },
+      ),
+      500,
+      'sendAgentResponse did not finish after a 204 acknowledgement',
+    );
+    assert.equal(agentResponsePostSeen, true);
+  });
+
   it('keeps agent response timeouts active until response bodies finish', async () => {
     let agentResponsePostSeen = false;
     let hangingAgentResponse = null;

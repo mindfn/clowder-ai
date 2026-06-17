@@ -18,6 +18,7 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { spawn as nodeSpawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { request as nodeHttpRequest } from 'node:http';
 import { dirname, isAbsolute } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -384,11 +385,10 @@ export class AcpHttpStreamClient {
                 const result = resp.result as unknown as AcpPromptResult;
                 stopReason = result.stopReason;
               }
-              // Don't wait for HTTP connection close — wake consumer immediately.
-              // controller.abort() terminates the reader; the catch block ignores AbortError.
               done = true;
               wakeConsumer();
-              controller.abort();
+              await reader.cancel();
+              return;
             } else if (isAgentRequest(method, msgId)) {
               try {
                 await handleAgentRequestFromStream(msg, msgId);
@@ -677,19 +677,42 @@ export class AcpHttpStreamClient {
     const timeoutMs = options.timeoutMs ?? 60_000;
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const signal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
+    const body = JSON.stringify(response);
 
     try {
-      const resp = await fetch(this.baseUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(response),
-        signal,
+      await new Promise<void>((resolve, reject) => {
+        const req = nodeHttpRequest(
+          this.baseUrl,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(body),
+              Connection: 'close',
+            },
+            agent: false,
+            signal,
+          },
+          (resp) => {
+            const chunks: Buffer[] = [];
+            resp.on('data', (chunk: Buffer | string) => {
+              chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+            });
+            resp.on('end', () => {
+              if ((resp.statusCode ?? 0) < 200 || (resp.statusCode ?? 0) >= 300) {
+                reject(
+                  new Error(`ACP HTTP agent response ${resp.statusCode ?? 0}: ${Buffer.concat(chunks).toString()}`),
+                );
+                return;
+              }
+              resolve();
+            });
+            resp.on('error', reject);
+          },
+        );
+        req.on('error', reject);
+        req.end(body);
       });
-      if (!resp.ok) {
-        const text = await resp.text();
-        throw new Error(`ACP HTTP agent response ${resp.status}: ${text}`);
-      }
-      await resp.arrayBuffer();
     } catch (err) {
       if (timeoutSignal.aborted) {
         throw new AcpTimeoutError(options.method ?? 'agent/response', timeoutMs);
