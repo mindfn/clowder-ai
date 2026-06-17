@@ -79,6 +79,17 @@ export function parseOwnerRepoFromGitRemoteUrl(remoteUrl: string): string {
 export function createGitWorktreePublisher(deps: GitWorktreePublisherDeps): GitPublisher {
   return {
     async publishOnIsolatedWorktree(opts: PublishOnIsolatedWorktreeOpts) {
+      // 砚砚 2026-06-17 P1: derive the explicit gh target from `origin` (where we
+      // push the branch) FIRST — before any side effect — so the failure-cleanup
+      // `gh pr list` probe in `finally` targets the right repo. Doing this before
+      // mkdtempSync means a missing/invalid `origin` throws with NO temp dir
+      // created (砚砚 P3: the try/finally cleanup hasn't been entered yet, so an
+      // origin-lookup failure can't leak a temp worktree dir).
+      const originUrlResult = await exec('git', ['-C', deps.repoRoot, 'remote', 'get-url', 'origin'], {
+        timeout: 10_000,
+      });
+      const originRepo = parseOwnerRepoFromGitRemoteUrl(originUrlResult.stdout.trim());
+
       // Use mkdtemp to get a guaranteed-unique path; suffix with PID for debuggability
       const worktreePath = mkdtempSync(`${tmpdir()}/cat-cafe-publish-verdict-${process.pid}-`);
 
@@ -90,16 +101,6 @@ export function createGitWorktreePublisher(deps: GitWorktreePublisherDeps): GitP
       let pushSucceeded = false;
       let prUrl: string | null = null;
       let branchExistedBefore = false;
-
-      // 砚砚 2026-06-17 P1: derive the explicit gh target from `origin` (where we
-      // push the branch) BEFORE the try, so the failure-cleanup `gh pr list`
-      // probe in `finally` also targets the right repo. Hard-fail here if origin
-      // is missing — we cannot publish without it, and failing before any side
-      // effect is the safe outcome.
-      const originUrlResult = await exec('git', ['-C', deps.repoRoot, 'remote', 'get-url', 'origin'], {
-        timeout: 10_000,
-      });
-      const originRepo = parseOwnerRepoFromGitRemoteUrl(originUrlResult.stdout.trim());
 
       try {
         // 1. Fetch latest origin/main to ensure isolated worktree is current
