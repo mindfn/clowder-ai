@@ -309,42 +309,23 @@ export function SkillsFilterToolbar({
   onCategoryChange,
   query,
   onQueryChange,
-  batchEnabled,
-  batchBusy,
-  onBatchToggle,
 }: {
   categories: string[];
   activeCategory: string;
   onCategoryChange: (c: string) => void;
   query: string;
   onQueryChange: (q: string) => void;
-  /** Whether the majority of visible skills are currently enabled. */
-  batchEnabled?: boolean;
-  /** Whether a batch toggle operation is in progress. */
-  batchBusy?: boolean;
-  /** Toggle all visible skills. Called with the NEW enabled state. */
-  onBatchToggle?: (enabled: boolean) => void;
 }) {
   const categoryTabs = categories.map((c) => ({ key: c, label: c }));
   return (
     <SettingsToolbar>
       <SettingsFilterTabs tabs={categoryTabs} activeKey={activeCategory} onTabChange={onCategoryChange} />
-      <div className="flex items-center gap-2">
-        <SettingsSearchInput
-          icon={<HubIcon name="search" className="h-3.5 w-3.5" />}
-          value={query}
-          onChange={onQueryChange}
-          placeholder="筛选 Skill"
-        />
-        {onBatchToggle && (
-          <SettingsResourceToggleSwitch
-            enabled={!!batchEnabled}
-            busy={!!batchBusy}
-            onClick={() => onBatchToggle(!batchEnabled)}
-            title={batchEnabled ? '批量禁用当前筛选的 Skill' : '批量启用当前筛选的 Skill'}
-          />
-        )}
-      </div>
+      <SettingsSearchInput
+        icon={<HubIcon name="search" className="h-3.5 w-3.5" />}
+        value={query}
+        onChange={onQueryChange}
+        placeholder="筛选 Skill"
+      />
     </SettingsToolbar>
   );
 }

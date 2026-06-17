@@ -233,9 +233,6 @@ export function SkillsContent() {
           onCategoryChange={setActiveCategory}
           query={query}
           onQueryChange={setQuery}
-          batchEnabled={batchEnabled}
-          batchBusy={controls.toggling === '__batch__'}
-          onBatchToggle={handleBatchToggle}
         />
       )}
 
@@ -247,6 +244,9 @@ export function SkillsContent() {
           error={sync.syncAllError}
           onSyncAll={sync.handleSyncAllScopes}
           onSyncScope={sync.handleSyncScope}
+          batchEnabled={batchEnabled}
+          batchBusy={controls.toggling === '__batch__'}
+          onBatchToggle={handleBatchToggle}
         />
       )}
 

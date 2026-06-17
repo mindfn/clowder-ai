@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { SettingsResourceToggleSwitch } from '../SettingsResourceCard';
 import { ModalOverlay, type SkillIssue, SkillIssueList } from './skill-issue-view';
 
 /** One scope (global or a project) with its backend-computed issue list. */
@@ -27,6 +28,9 @@ export function AllProjectsSyncBanner({
   error,
   onSyncAll,
   onSyncScope,
+  batchEnabled,
+  batchBusy,
+  onBatchToggle,
 }: {
   scopes: ScopeIssues[];
   scopesWithIssues: ScopeIssues[];
@@ -34,15 +38,40 @@ export function AllProjectsSyncBanner({
   error: string | null;
   onSyncAll: () => void;
   onSyncScope?: (projectPath?: string) => void;
+  /** Whether the majority of visible skills are currently enabled. */
+  batchEnabled?: boolean;
+  /** Whether a batch toggle operation is in progress. */
+  batchBusy?: boolean;
+  /** Toggle all visible skills. Called with the NEW enabled state. */
+  onBatchToggle?: (enabled: boolean) => void;
 }) {
   const [showDetail, setShowDetail] = useState(false);
   const issueScopeCount = scopesWithIssues.length;
 
+  const batchToggleEl = onBatchToggle ? (
+    <SettingsResourceToggleSwitch
+      enabled={!!batchEnabled}
+      busy={!!batchBusy}
+      onClick={() => onBatchToggle(!batchEnabled)}
+      title={batchEnabled ? '批量禁用当前筛选的 Skill' : '批量启用当前筛选的 Skill'}
+    />
+  ) : null;
+
   if (scopes.length === 0) {
-    return <p className="text-xs text-cafe-muted">未发现项目</p>;
+    return (
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-cafe-muted">未发现项目</p>
+        {batchToggleEl}
+      </div>
+    );
   }
   if (issueScopeCount === 0) {
-    return <p className="text-xs text-cafe-muted">✓ 全部 Skill 同步一致</p>;
+    return (
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-cafe-muted">✓ 全部 Skill 同步一致</p>
+        {batchToggleEl}
+      </div>
+    );
   }
 
   return (
@@ -56,6 +85,7 @@ export function AllProjectsSyncBanner({
         >
           查看详情
         </button>
+        <div className="ml-auto">{batchToggleEl}</div>
       </div>
 
       {error && <p className="mt-1 text-xs text-conn-red-text">⚠ {error}</p>}
