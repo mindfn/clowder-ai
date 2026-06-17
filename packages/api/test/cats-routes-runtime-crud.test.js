@@ -1593,6 +1593,7 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     assert.ok(opusBefore, 'seed opus member must exist');
     assert.equal(opusBefore.clientId, 'anthropic');
     assert.equal(opusBefore.accountRef, 'claude');
+    assert.equal(opusBefore.mcpSupport, true, 'seed builtin client starts with MCP support enabled');
 
     const patchRes = await app.inject({
       method: 'PATCH',
@@ -1655,6 +1656,16 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     assert.equal(patchBody.cat.clientId, 'acp');
     assert.equal(patchBody.cat.accountRef, 'claude');
     assert.equal(patchBody.cat.provider, undefined);
+    assert.equal(
+      patchBody.cat.mcpSupport,
+      false,
+      'generic ACP switch without explicit mcpSupport or whitelist must reset stale MCP support',
+    );
+
+    const afterRes = await app.inject({ method: 'GET', url: '/api/cats' });
+    const afterBody = JSON.parse(afterRes.body);
+    const opusAfter = afterBody.cats.find((cat) => cat.id === 'opus');
+    assert.equal(opusAfter.mcpSupport, false, 'GET should confirm generic ACP migration is MCP-off by default');
   });
 
   it('PATCH /api/cats/:id resets stale CLI config when switching client families', async () => {

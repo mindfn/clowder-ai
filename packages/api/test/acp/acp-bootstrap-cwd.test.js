@@ -176,23 +176,31 @@ describe('acp bootstrap cwd', () => {
     );
   });
 
-  it('guards index.ts against wiring Gemini ACP back to repo cwd', () => {
-    const source = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf-8');
-    assert.ok(
-      source.includes('resolveAcpBootstrapCwd'),
-      'REGRESSION: index.ts must compute an isolated Gemini ACP bootstrap cwd.',
+  it('guards AcpServiceFactory against wiring ACP clients back to repo cwd', () => {
+    const indexSource = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf-8');
+    const factorySource = readFileSync(
+      new URL('../../src/domains/cats/services/agents/providers/acp/AcpServiceFactory.ts', import.meta.url),
+      'utf-8',
     );
     assert.ok(
-      source.includes('cwd: resolveAcpBootstrapCwd(acpProjectRoot, id)'),
+      indexSource.includes('createAcpServiceForConfig'),
+      'REGRESSION: index.ts must keep generic ACP service construction delegated to AcpServiceFactory.',
+    );
+    assert.ok(
+      factorySource.includes('resolveAcpBootstrapCwd'),
+      'REGRESSION: AcpServiceFactory must compute an isolated ACP bootstrap cwd.',
+    );
+    assert.ok(
+      factorySource.includes('cwd: resolveAcpBootstrapCwd(projectRoot, profileId)'),
       'REGRESSION: AcpClient spawn cwd must be re-resolved per cold start, not reused from registry init.',
     );
     assert.ok(
-      source.includes('resolveAcpBootstrapCommand'),
-      'REGRESSION: index.ts must preserve repo-relative ACP command resolution when using bootstrap cwd.',
+      factorySource.includes('resolveAcpBootstrapCommand(projectRoot, acpConfig.command)'),
+      'REGRESSION: AcpServiceFactory must preserve repo-relative ACP command resolution when using bootstrap cwd.',
     );
     assert.ok(
-      source.includes('resolveAcpBootstrapArgs'),
-      'REGRESSION: index.ts must resolve path-like startupArgs against the project root.',
+      factorySource.includes('resolveAcpBootstrapArgs(projectRoot, acpConfig.startupArgs'),
+      'REGRESSION: AcpServiceFactory must resolve path-like startupArgs against the project root.',
     );
   });
 
