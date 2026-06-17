@@ -38,24 +38,24 @@ function parseIntEnv(raw: string | undefined): number | null {
 }
 
 function isOutboxEnabled(): boolean {
-  const raw = (process.env['CAT_CAFE_CALLBACK_OUTBOX_ENABLED'] ?? 'true').toLowerCase();
+  const raw = (process.env.CAT_CAFE_CALLBACK_OUTBOX_ENABLED ?? 'true').toLowerCase();
   return raw !== '0' && raw !== 'false' && raw !== 'off';
 }
 
 function getOutboxDir(): string {
-  const fromEnv = process.env['CAT_CAFE_CALLBACK_OUTBOX_DIR'];
+  const fromEnv = process.env.CAT_CAFE_CALLBACK_OUTBOX_DIR;
   if (fromEnv && fromEnv.trim().length > 0) return fromEnv;
   return join(homedir(), '.cat-cafe', 'callback-outbox');
 }
 
 function getOutboxMaxFlushBatch(): number {
-  const parsed = parseIntEnv(process.env['CAT_CAFE_CALLBACK_OUTBOX_MAX_FLUSH_BATCH']);
+  const parsed = parseIntEnv(process.env.CAT_CAFE_CALLBACK_OUTBOX_MAX_FLUSH_BATCH);
   if (parsed === null || parsed < 0) return DEFAULT_OUTBOX_MAX_FLUSH_BATCH;
   return parsed;
 }
 
 function getOutboxMaxAttempts(): number {
-  const parsed = parseIntEnv(process.env['CAT_CAFE_CALLBACK_OUTBOX_MAX_ATTEMPTS']);
+  const parsed = parseIntEnv(process.env.CAT_CAFE_CALLBACK_OUTBOX_MAX_ATTEMPTS);
   if (parsed === null || parsed < 0) return DEFAULT_OUTBOX_MAX_ATTEMPTS;
   return parsed;
 }
@@ -183,15 +183,9 @@ export async function sendCallbackRequest(
   // safety net for "did it publish", not client retries.
   const retryDelaysMs = options?.retryDelaysMs ?? getRetryDelaysMs();
   const payload = JSON.stringify(request.body);
-  const result = await postJsonWithRetry(
-    `${request.apiUrl}${request.path}`,
-    payload,
-    retryDelaysMs,
-    request.headers,
-    {
-      fetchTimeoutMs: options?.fetchTimeoutMs,
-    },
-  );
+  const result = await postJsonWithRetry(`${request.apiUrl}${request.path}`, payload, retryDelaysMs, request.headers, {
+    fetchTimeoutMs: options?.fetchTimeoutMs,
+  });
   if (result.ok) return { ok: true, data: result.data };
 
   if (enableOutbox && result.failure.retryable) {

@@ -1722,7 +1722,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           codexAfter,
           totalBefore: prevMsgs.length,
           totalAfter: msgs.length,
-          codexIdsBefore: prevMsgs.filter((m: { catId?: string | null }) => m.catId === 'codex').map((m: { id: string }) => m.id),
+          codexIdsBefore: prevMsgs
+            .filter((m: { catId?: string | null }) => m.catId === 'codex')
+            .map((m: { id: string }) => m.id),
         });
         console.trace('[DIAG:msg-disappear] replaceMessages caller stack');
       }
@@ -1785,7 +1787,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           codexAfter,
           totalBefore: prevMsgs.length,
           totalAfter: msgs.length,
-          codexIdsBefore: prevMsgs.filter((m: { catId?: string | null }) => m.catId === 'codex').map((m: { id: string }) => m.id),
+          codexIdsBefore: prevMsgs
+            .filter((m: { catId?: string | null }) => m.catId === 'codex')
+            .map((m: { id: string }) => m.id),
         });
         console.trace('[DIAG:msg-disappear] hydrateThread caller stack');
       }

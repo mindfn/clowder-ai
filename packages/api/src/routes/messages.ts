@@ -1799,7 +1799,7 @@ export const messagesRoutes: FastifyPluginAsync<MessagesRoutesOptions> = async (
           {
             diag: 'msg-disappear',
             threadId: resolvedThreadId,
-            totalFetched: messages.length,
+            totalFetched: allVisible.length,
             pageSize: page.length,
             hasMore,
             codexCount: codexMsgs.length,

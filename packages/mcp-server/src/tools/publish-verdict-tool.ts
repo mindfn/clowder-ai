@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { callbackPost } from './callback-tools.js';
 import type { ToolResult } from './file-tools.js';
 
-const PUBLISH_VERDICT_FETCH_TIMEOUT_MS = 120_000;
+const PUBLISH_VERDICT_FETCH_TIMEOUT_MS = 180_000;
 
 /**
  * F192 Phase H AC-H4: cat_cafe_publish_verdict MCP tool.
@@ -333,8 +333,6 @@ type PublishVerdictToolInput = {
 // publishes that race on the same `verdict/auto/<domain>/<id>` branch. We give
 // this one call a long single attempt with NO retry; idempotency guards on the
 // server (verdict_already_exists / branch-exists) are the real safety net.
-const PUBLISH_VERDICT_FETCH_TIMEOUT_MS = 180_000;
-
 export async function handlePublishVerdict(input: PublishVerdictToolInput): Promise<ToolResult> {
   return callbackPost(
     `/api/eval-domains/${encodeURIComponent(input.domainId)}/publish-verdict`,
