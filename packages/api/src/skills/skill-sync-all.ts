@@ -121,6 +121,12 @@ async function syncAllUnlocked(
         // F228: per-mount-point cascade — if a mount point was removed globally
         // for a skill, remove it from the project's mountPaths too. Without this,
         // the project's own mountPaths take precedence and block the cascade.
+        //
+        // P1-1 fix: When a skill is globally enabled (NOT in globalDisabledSkills)
+        // but has empty mountPaths in the project config (from a previous global
+        // disable), do NOT include it as explicit policy. This allows syncProject's
+        // scenario 7 logic to clear the stale empty mountPaths and re-enable the
+        // skill with all active mount points.
         const projectMountPathsBySkill = new Map(
           projectManagedCaps.flatMap((cap) => {
             if (!Array.isArray(cap.mountPaths)) return [];
@@ -128,6 +134,9 @@ async function syncAllUnlocked(
             // Constrain: keep only mount points that exist in the global list.
             // Global removal cascades; global addition is handled by newlyEnabled logic.
             const paths = globalPaths ? cap.mountPaths.filter((p) => globalPaths.includes(p)) : cap.mountPaths;
+            // Globally enabled + empty project paths = stale disable state.
+            // Omit from explicit policy so syncProject scenario 7 can re-enable.
+            if (paths.length === 0 && !globalDisabledSkills.has(cap.id)) return [];
             return [[cap.id, paths] as const];
           }),
         );

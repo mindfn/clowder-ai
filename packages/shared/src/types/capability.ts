@@ -363,8 +363,12 @@ export interface CapabilityAuditEntry {
 
 /** PATCH request body for toggling capabilities */
 export interface CapabilityPatchRequest {
-  /** Capability ID to modify (single skill) */
-  capabilityId: string;
+  /**
+   * Capability ID to modify (single skill).
+   * Optional when capabilityIds[] is provided (batch mode).
+   * At least one of capabilityId or capabilityIds[] must be present.
+   */
+  capabilityId?: string;
   /**
    * F228 batch mode: toggle multiple skills in one request.
    * When provided, overrides capabilityId — all skills share the same

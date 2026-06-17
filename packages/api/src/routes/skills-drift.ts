@@ -140,14 +140,14 @@ export function mergeSkillMountPolicies(
   projectPolicy: ProjectSkillMountPolicy,
   globalPolicy: ProjectSkillMountPolicy,
 ): ProjectSkillMountPolicy {
-  // F228: disabled = project-local disabled ∪ globally disabled (not yet in project).
-  // Global disabled always cascades unconditionally.
+  // F228 scenarios 6/7: global disabled cascades unconditionally to all projects,
+  // regardless of whether the project has configured that skill.
+  // P1-2 fix: removed the `!projectPolicy.configuredSkills.has(skillName)` guard
+  // which was incorrectly blocking global disable from overriding project state.
   const disabledSkills: string[] = [...projectPolicy.disabledSkills];
   for (const skillName of globalPolicy.disabledSkills) {
-    if (!projectPolicy.configuredSkills.has(skillName)) {
-      if (!disabledSkills.includes(skillName)) {
-        disabledSkills.push(skillName);
-      }
+    if (!disabledSkills.includes(skillName)) {
+      disabledSkills.push(skillName);
     }
   }
 
