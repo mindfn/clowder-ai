@@ -726,6 +726,33 @@ describe('DriftResolver (F228 Phase 2B)', () => {
     assert.ok(merged.disabledSkills.includes('tdd'), 'project-disabled skill stays disabled in drift merge');
   });
 
+  test('mergeSkillMountPolicies cascades global disabled to CONFIGURED project skills (P1-2 regression)', async () => {
+    const { mergeSkillMountPolicies } = await import('../../dist/routes/skills-drift.js');
+
+    // Project has tdd configured AND enabled; global disables it.
+    // Per F228 scenarios 6/7: global disable is UNCONDITIONAL — must cascade
+    // regardless of whether the project has configured that skill.
+    // Regression: 97c522e6a2 introduced a configuredSkills.has() guard that
+    // blocked cascade for configured skills; fixed in 70d78194c.
+    const projectPolicy = {
+      disabledSkills: [],
+      skillMountPaths: { tdd: ['claude', 'codex'] },
+      configuredSkills: new Set(['tdd']),
+    };
+    const globalPolicy = {
+      disabledSkills: ['tdd'],
+      skillMountPaths: {},
+      configuredSkills: new Set(['tdd']),
+    };
+
+    const merged = mergeSkillMountPolicies(projectPolicy, globalPolicy);
+
+    assert.ok(
+      merged.disabledSkills.includes('tdd'),
+      'globally disabled skill must cascade even when project has it configured and enabled',
+    );
+  });
+
   test('readCatCafeSkillMountPolicy treats non-empty mountPaths as desired mounts even with enabled:false (maintainer P1)', async () => {
     const { readCatCafeSkillMountPolicy } = await import('../../dist/routes/skills-drift.js');
 
