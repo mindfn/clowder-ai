@@ -241,9 +241,9 @@ export function createGitWorktreePublisher(deps: GitWorktreePublisherDeps): GitP
         const commitSha = shaResult.stdout.trim();
 
         // 7. Open auto-PR via gh.
-        // 砚砚 R4 P1 cloud: `--repo .` is NOT valid gh syntax (fails with
-        // 'expected the "[HOST/]OWNER/REPO" format'). Rely on cwd inside the
-        // worktree — gh auto-detects owner/repo from the git remote.
+        // 砚砚 R4 P1 cloud: `--repo .` is NOT valid gh syntax. Pin every gh
+        // invocation to the canonical repo validated by the publication contract;
+        // cwd auto-detection can select the upstream parent in a fork checkout.
         //
         // PR-3 (砚砚 R2): pass each label via separate `--label` flag (gh CLI accepts
         // repeated --label X; not comma-separated). `computePublishPolicy` decides
