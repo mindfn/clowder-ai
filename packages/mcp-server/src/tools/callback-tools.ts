@@ -175,7 +175,17 @@ export function formatCatRoutingErrorPrefix(body: {
 export async function callbackPost(
   path: string,
   body: Record<string, unknown>,
-  options?: { enableOutbox?: boolean; agentKeyCatId?: string; forceAgentKey?: boolean },
+  options?: {
+    enableOutbox?: boolean;
+    agentKeyCatId?: string;
+    forceAgentKey?: boolean;
+    // 砚砚 2026-06-17 P1: per-call overrides for long, side-effectful routes
+    // (cat_cafe_publish_verdict). fetchTimeoutMs widens the per-attempt abort
+    // bound; retryDelaysMs=[] disables auto-retry so the route is not POSTed
+    // concurrently (overlapping publishes race on the same branch).
+    fetchTimeoutMs?: number;
+    retryDelaysMs?: number[];
+  },
 ): Promise<ToolResult> {
   const config = getCallbackConfig({
     agentKeyCatId: options?.agentKeyCatId,
@@ -190,7 +200,11 @@ export async function callbackPost(
       body, // headers-only auth (Phase F AC-F2)
       headers: buildAuthHeaders(config),
     },
-    { enableOutbox: options?.enableOutbox === true },
+    {
+      enableOutbox: options?.enableOutbox === true,
+      ...(options?.fetchTimeoutMs !== undefined ? { fetchTimeoutMs: options.fetchTimeoutMs } : {}),
+      ...(options?.retryDelaysMs !== undefined ? { retryDelaysMs: options.retryDelaysMs } : {}),
+    },
   );
   if (result.ok) return successResult(JSON.stringify(result.data));
 

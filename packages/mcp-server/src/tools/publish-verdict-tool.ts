@@ -215,6 +215,15 @@ type PublishVerdictToolInput = {
   agentKeyCatId?: string | undefined;
 };
 
+// 砚砚 2026-06-17 P1: publish-verdict runs a synchronous git worktree + push +
+// `gh pr create` on the server (~17s typical; the publisher's own step timeouts
+// sum much higher). The default 10s-per-attempt + [1s,2s,4s] retry callback
+// policy aborts before the route returns AND fires 4 overlapping server-side
+// publishes that race on the same `verdict/auto/<domain>/<id>` branch. We give
+// this one call a long single attempt with NO retry; idempotency guards on the
+// server (verdict_already_exists / branch-exists) are the real safety net.
+const PUBLISH_VERDICT_FETCH_TIMEOUT_MS = 180_000;
+
 export async function handlePublishVerdict(input: PublishVerdictToolInput): Promise<ToolResult> {
   return callbackPost(
     `/api/eval-domains/${encodeURIComponent(input.domainId)}/publish-verdict`,
@@ -222,7 +231,11 @@ export async function handlePublishVerdict(input: PublishVerdictToolInput): Prom
       packet: input.packet,
       sourceRefs: input.sourceRefs,
     },
-    { agentKeyCatId: input.agentKeyCatId },
+    {
+      agentKeyCatId: input.agentKeyCatId,
+      fetchTimeoutMs: PUBLISH_VERDICT_FETCH_TIMEOUT_MS,
+      retryDelaysMs: [], // single attempt — no overlapping-publish retries
+    },
   );
 }
 

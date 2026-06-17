@@ -77,9 +77,16 @@ export async function postJsonWithRetry(
   payload: string,
   retryDelaysMs: number[],
   extraHeaders?: Record<string, string>,
+  // 砚砚 2026-06-17 P1: per-call timeout override. Long-running, side-effectful
+  // routes (e.g. cat_cafe_publish_verdict → git worktree + push + gh pr create,
+  // ~17s+) exceed the global 10s per-attempt timeout. Bumping the global env var
+  // would make EVERY callback wait that long on a hung socket — wrong. Instead
+  // the specific caller passes its own bound. Falls back to the env/default.
+  fetchTimeoutMs?: number,
 ): Promise<CallbackPostResult> {
   let lastError = 'Callback failed';
   let retryable = true;
+  const attemptTimeoutMs = fetchTimeoutMs ?? getFetchTimeoutMs();
 
   for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
     try {
@@ -89,7 +96,7 @@ export async function postJsonWithRetry(
         body: payload,
         // #1368-class fix: bound each attempt so a hung socket aborts (→ a
         // timeout error, caught below as retryable) instead of pending forever.
-        signal: AbortSignal.timeout(getFetchTimeoutMs()),
+        signal: AbortSignal.timeout(attemptTimeoutMs),
       });
 
       if (response.ok) {
