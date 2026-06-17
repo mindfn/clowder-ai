@@ -72,17 +72,6 @@ describe('env-registry', () => {
     assert.equal(apiKey.sensitive, true);
   });
 
-  it('F240 P1-1: IM_CONNECTOR_PLUGINS must be sensitive (controls dynamic import() code execution)', () => {
-    const entry = ENV_VARS.find((v) => v.name === 'IM_CONNECTOR_PLUGINS');
-    assert.ok(entry, 'IM_CONNECTOR_PLUGINS must be in ENV_VARS');
-    assert.equal(
-      entry.sensitive,
-      true,
-      'Must be sensitive — value controls which npm modules are import()ed at startup',
-    );
-    assert.equal(entry.category, 'connector');
-  });
-
   it('registers KIMI_QUOTA_API_FALLBACK_ENABLED as bootstrap-only quota config', () => {
     const def = ENV_VARS.find((v) => v.name === 'KIMI_QUOTA_API_FALLBACK_ENABLED');
     assert.ok(def, 'KIMI_QUOTA_API_FALLBACK_ENABLED should be in registry');

@@ -3,8 +3,8 @@
  *
  * Unified contract for all IM connector adapters (built-in and external).
  * Built-in connectors (Feishu, DingTalk, etc.) implement this interface
- * as reference implementations. External npm packages export a default
- * `IMConnectorPlugin` to be loaded via `IM_CONNECTOR_PLUGINS` env var.
+ * as reference implementations. External plugins are installed as tar.gz
+ * archives via the Hub UI (`.cat-cafe/plugins/<id>/`).
  *
  * Design decision (KD-1): No YAML templating — every real-world IM has
  * heavy platform-specific logic. Interface + package is the right level.

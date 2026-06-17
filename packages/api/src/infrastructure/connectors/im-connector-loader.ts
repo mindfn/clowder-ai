@@ -1,10 +1,9 @@
 /**
  * IM Connector Loader — F240
  *
- * Discovers and loads built-in, installed, and legacy external IM connector plugins.
+ * Discovers and loads built-in and installed IM connector plugins.
  * - Built-in: statically imported from `im-connectors/`
  * - Installed: dynamically imported from `.cat-cafe/plugins/<id>/index.js` (Phase B)
- * - Legacy external: dynamically imported from npm packages via `IM_CONNECTOR_PLUGINS` env
  */
 
 import { createHash } from 'node:crypto';
@@ -30,41 +29,6 @@ export async function loadBuiltinConnectors(): Promise<IMConnectorPlugin[]> {
     import('./im-connectors/weixin/index.js'),
   ]);
   return modules.map((m) => m.default);
-}
-
-/**
- * Load external IM connector plugins from npm packages.
- * Package names come from `IM_CONNECTOR_PLUGINS` env var (comma-separated).
- * Exported for use by connector-gateway-bootstrap (external plugins only).
- */
-export async function loadExternalConnectors(
-  envValue: string | undefined,
-  log: FastifyBaseLogger,
-): Promise<IMConnectorPlugin[]> {
-  if (!envValue?.trim()) return [];
-
-  const packageNames = envValue
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  const results: IMConnectorPlugin[] = [];
-
-  for (const name of packageNames) {
-    try {
-      const mod = await import(name);
-      const plugin: IMConnectorPlugin = mod.default ?? mod;
-
-      if (!validatePluginInterface(plugin, name, log)) continue;
-
-      results.push(plugin);
-      log.info({ id: plugin.id, package: name }, '[IMConnectorLoader] External connector loaded');
-    } catch (err) {
-      log.warn({ err, package: name }, '[IMConnectorLoader] Failed to load external connector');
-    }
-  }
-
-  return results;
 }
 
 function hashPluginModuleGraph(dir: string): string {
@@ -224,7 +188,7 @@ function validateInstalledPluginIdentity(plugin: IMConnectorPlugin, dirId: strin
 }
 
 /**
- * Load all IM connector plugins (built-in + installed + legacy external).
+ * Load all IM connector plugins (built-in + installed).
  * IDs that conflict with built-in IDs are rejected.
  */
 export async function loadAllIMConnectors(log: FastifyBaseLogger, projectRoot?: string): Promise<IMConnectorPlugin[]> {
@@ -234,15 +198,11 @@ export async function loadAllIMConnectors(log: FastifyBaseLogger, projectRoot?: 
   // Phase B: load from .cat-cafe/plugins/ directory
   const installed = projectRoot ? await loadInstalledPlugins(projectRoot, log) : [];
 
-  // Legacy: load from IM_CONNECTOR_PLUGINS env var (npm packages)
-  const legacyExternals = await loadExternalConnectors(process.env.IM_CONNECTOR_PLUGINS, log);
-
-  // Merge installed + legacy, rejecting ID conflicts
-  const allExternals = [...installed, ...legacyExternals];
+  // Reject installed plugins that conflict with built-in IDs or each other
   const validExternals: IMConnectorPlugin[] = [];
   const seenIds = new Set<string>();
 
-  for (const ext of allExternals) {
+  for (const ext of installed) {
     if (builtinIds.has(ext.id)) {
       log.warn({ id: ext.id }, '[IMConnectorLoader] External connector ID conflicts with built-in — skipped');
       continue;
@@ -257,7 +217,7 @@ export async function loadAllIMConnectors(log: FastifyBaseLogger, projectRoot?: 
 
   const all = [...builtins, ...validExternals];
   log.info(
-    { builtin: builtins.length, installed: installed.length, legacy: legacyExternals.length, total: all.length },
+    { builtin: builtins.length, installed: installed.length, total: all.length },
     '[IMConnectorLoader] All IM connectors loaded',
   );
   return all;

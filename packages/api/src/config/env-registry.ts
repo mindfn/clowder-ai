@@ -924,13 +924,6 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
     runtimeEditable: false,
   },
-  {
-    name: 'IM_CONNECTOR_PLUGINS',
-    defaultValue: '',
-    description: 'F240: Comma-separated npm package names for external IM connector plugins (restart required)',
-    category: 'connector',
-    sensitive: true,
-  },
 
   // --- codex ---
   {

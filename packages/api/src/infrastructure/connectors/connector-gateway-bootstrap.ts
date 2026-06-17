@@ -493,9 +493,7 @@ export async function startConnectorGateway(
   });
 
   // ── F240: Load & initialize all IM connector plugins ──
-  const { loadBuiltinConnectors, loadExternalConnectors, loadInstalledPlugins } = await import(
-    './im-connector-loader.js'
-  );
+  const { loadBuiltinConnectors, loadInstalledPlugins } = await import('./im-connector-loader.js');
   const { registerConnectorDefinition } = await import('@cat-cafe/shared');
   const { clearExternalConnectorRegistry, registerExternalConnectorMeta, updateExternalConnectorConfigured } =
     await import('./external-connector-registry.js');
@@ -504,14 +502,13 @@ export async function startConnectorGateway(
   clearExternalConnectorRegistry();
   const builtinPlugins = await loadBuiltinConnectors();
   const installedPlugins = await loadInstalledPlugins(projectRoot, log);
-  const legacyExternalPlugins = await loadExternalConnectors(process.env.IM_CONNECTOR_PLUGINS, log);
 
   const configEnv = configToEnvMap(config);
   const builtinIds = new Set(builtinPlugins.map((p) => p.id));
 
-  // Merge installed + legacy external, rejecting ID conflicts
+  // Reject installed plugins that conflict with built-in IDs or each other
   const seenExternalIds = new Set<string>();
-  const externalPlugins = [...installedPlugins, ...legacyExternalPlugins].filter((ext) => {
+  const externalPlugins = installedPlugins.filter((ext) => {
     if (builtinIds.has(ext.id)) {
       log.warn({ id: ext.id }, '[Gateway] External connector ID conflicts with built-in — skipped');
       return false;
