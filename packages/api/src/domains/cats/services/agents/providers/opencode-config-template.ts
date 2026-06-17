@@ -41,6 +41,14 @@ interface OpenCodeConfig {
   mcp?: Record<string, unknown>;
   /** F203 Phase I: instruction file paths for native L0 injection (compression-immune system role). */
   instructions?: string[];
+  /**
+   * #935: OpenCode permission grants for directories outside the working directory.
+   * Without this, OpenCode on Windows rejects tool calls that access external project
+   * directories, forcing users to edit global config manually.
+   */
+  permission?: {
+    external_directory?: string[];
+  };
 }
 
 export function generateOpenCodeConfig(options: OpenCodeConfigOptions): OpenCodeConfig {
@@ -118,6 +126,12 @@ export interface OpenCodeRuntimeConfigOptions {
    * Typical contents: [compiledL0Path, "OPENCODE.md"].
    */
   instructions?: readonly string[];
+  /**
+   * #935: Directories outside the OpenCode working directory that should be
+   * granted `permission.external_directory` access. Typically includes the
+   * Cat Cafe host project root when the thread's working directory is external.
+   */
+  externalDirectories?: readonly string[];
 }
 
 export interface OpenCodeRuntimeConfigDebugSummary {
@@ -176,6 +190,7 @@ export function generateOpenCodeRuntimeConfig(options: OpenCodeRuntimeConfigOpti
     omitProviderAuth = false,
     mcpServerPath,
     instructions,
+    externalDirectories,
   } = options;
 
   const configName = safeProviderName(providerName);
@@ -221,6 +236,15 @@ export function generateOpenCodeRuntimeConfig(options: OpenCodeRuntimeConfigOpti
   // so these are additive to any project-root opencode.json instructions.
   if (instructions && instructions.length > 0) {
     config.instructions = [...instructions];
+  }
+
+  // #935: Grant external_directory permission for Clowder-approved workspace roots.
+  // Without this, OpenCode on Windows rejects tool calls that touch paths outside
+  // the working directory, forcing users to edit global config manually.
+  if (externalDirectories && externalDirectories.length > 0) {
+    config.permission = {
+      external_directory: [...externalDirectories],
+    };
   }
 
   return config;

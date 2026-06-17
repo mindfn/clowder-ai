@@ -1487,6 +1487,18 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       callbackEnv.CAT_CAFE_ANTHROPIC_MODEL_OVERRIDE = safeModel;
       const apiType = deriveOpenCodeApiType(effectiveProviderName);
       const rawModels = resolvedAccount.models?.length ? resolvedAccount.models : [effectiveModel];
+      // #935: Collect directories that OpenCode should be allowed to access outside
+      // its working directory. This avoids Windows users having to edit global
+      // OpenCode config to grant `permission.external_directory` manually.
+      const externalDirs: string[] = [];
+      if (workingDirectory && !isSameProject(workingDirectory, hostProjectRoot)) {
+        // External project — grant access to Cat Cafe host root (configs, MCP, etc.)
+        externalDirs.push(hostProjectRoot);
+      }
+      if (workingProjectRoot && workingProjectRoot !== workingDirectory) {
+        // Working directory is a subdirectory of a monorepo — grant monorepo root
+        externalDirs.push(workingProjectRoot);
+      }
       const runtimeConfigOptions = {
         providerName: effectiveProviderName,
         models: rawModels,
@@ -1497,6 +1509,8 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
         mcpServerPath,
         // F203 Phase I: inject compiled L0 + OPENCODE.md into instructions.
         instructions: openCodeL0InstructionPaths,
+        // #935: External directory permissions for Windows/cross-project access.
+        ...(externalDirs.length > 0 ? { externalDirectories: externalDirs } : {}),
       } as const;
       openCodeRuntimeConfigPath = writeOpenCodeRuntimeConfig(
         projectRoot,
