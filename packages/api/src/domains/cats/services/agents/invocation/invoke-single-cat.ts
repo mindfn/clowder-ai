@@ -1668,6 +1668,9 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
       ...(spawnCliOverride ? { spawnCliOverride } : {}),
       invocationId,
       ...(sessionId ? { cliSessionId: sessionId } : {}),
+      ...(isResume && !injectSystemPrompt && params.systemPrompt
+        ? { resumeFallbackSystemPrompt: params.systemPrompt }
+        : {}),
       // F118 Phase B: Enable liveness probe for all CLI providers.
       // #774: stallAutoKill clears truly stuck idle-silent CLIs before F216's 10m stale-processing guard.
       // #854: Windows cannot sample CPU; suppress suspected_stall there so CLI_TIMEOUT_MS stays binding.

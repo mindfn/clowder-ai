@@ -423,10 +423,11 @@ async function validateAccountBindingOrThrow(
 
 async function toCatResponse(
   cat: CatConfig & { contextBudget?: ContextBudget },
+  projectRoot: string,
   metadata: CatResponseMetadata,
   resolveEffectiveAccountRef: (cat: CatConfig & { contextBudget?: ContextBudget }) => Promise<string | undefined>,
 ) {
-  const acpConfig = getAcpConfig(cat.id as string);
+  const acpConfig = getAcpConfig(cat.id as string, projectRoot);
   return {
     id: cat.id,
     name: cat.name,
@@ -548,7 +549,7 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
     return {
       cats: await Promise.all(
         Object.values(getResolvedCats(projectRoot)).map((cat) =>
-          toCatResponse(cat, resolveMetadata(cat.id), resolveEffectiveAccountRef),
+          toCatResponse(cat, projectRoot, resolveMetadata(cat.id), resolveEffectiveAccountRef),
         ),
       ),
     };
@@ -714,7 +715,7 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
     const metadata = buildCatResponseMetadataResolver(projectRoot);
     const resolveEffectiveAccountRef = buildEffectiveAccountRefResolver();
     reply.status(201);
-    return { cat: await toCatResponse(cat, metadata(cat.id), resolveEffectiveAccountRef), updatedBy: operator };
+    return { cat: await toCatResponse(cat, projectRoot, metadata(cat.id), resolveEffectiveAccountRef), updatedBy: operator };
   });
 
   app.patch<{ Params: { id: string } }>('/api/cats/:id', async (request, reply) => {
@@ -765,7 +766,7 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
     // When the editor sends the old client's builtin accountRef during a provider switch,
     // rebase to the new client's builtin so validation doesn't reject the stale ref.
     const isClientSwitch = body.clientId !== undefined && body.clientId !== currentCat.clientId;
-    const currentAcpConfig = getAcpConfig(request.params.id as string);
+    const currentAcpConfig = getAcpConfig(request.params.id as string, projectRoot);
     if (isClientSwitch && effectiveAccountRef) {
       const oldBuiltin = resolveBuiltinClientForProvider(currentCat.clientId);
       if (oldBuiltin && builtinAccountIdForClient(oldBuiltin) === effectiveAccountRef) {
@@ -906,7 +907,7 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
       });
       const cat = resolved[request.params.id];
       const metadata = buildCatResponseMetadataResolver(projectRoot);
-      return { cat: await toCatResponse(cat, metadata(cat.id), resolveEffectiveAccountRef), updatedBy: operator };
+      return { cat: await toCatResponse(cat, projectRoot, metadata(cat.id), resolveEffectiveAccountRef), updatedBy: operator };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (/not found/i.test(message)) {

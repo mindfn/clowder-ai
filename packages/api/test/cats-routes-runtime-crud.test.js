@@ -133,10 +133,12 @@ function createProjectRootFromRepoTemplate() {
 
 describe('cats routes runtime CRUD', { concurrency: false }, () => {
   /** @type {string | undefined} */ let savedGlobalRoot;
+  /** @type {string | undefined} */ let savedConfigRoot;
 
   beforeEach(() => {
     savedTemplatePath = process.env.CAT_TEMPLATE_PATH;
     savedGlobalRoot = process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT;
+    savedConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
     resetRegistryToBuiltins();
     _clearRuntimeOverrides();
   });
@@ -144,6 +146,8 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
   afterEach(() => {
     if (savedGlobalRoot === undefined) delete process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT;
     else process.env.CAT_CAFE_GLOBAL_CONFIG_ROOT = savedGlobalRoot;
+    if (savedConfigRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+    else process.env.CAT_CAFE_CONFIG_ROOT = savedConfigRoot;
     if (savedTemplatePath === undefined) {
       delete process.env.CAT_TEMPLATE_PATH;
     } else {
@@ -2140,6 +2144,79 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     const listed = listBody.cats.find((cat) => cat.id === 'acp-deepseek');
     assert.equal(listed.mcpSupport, true, 'GET /api/cats should preserve MCP support implied by the ACP whitelist');
     assert.deepEqual(listed.acp, acpConfig, 'GET /api/cats should include ACP config for Hub editing');
+  });
+
+  it('GET/PATCH /api/cats resolves ACP config from active project root, not CAT_TEMPLATE_PATH', async () => {
+    const projectRoot = createMonorepoProjectRoot();
+    process.env.CAT_CAFE_CONFIG_ROOT = projectRoot;
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
+
+    const { createProviderProfile } = await import('./helpers/create-test-account.js');
+    const acpProfile = await createProviderProfile(projectRoot, {
+      displayName: 'Active ACP',
+      authType: 'api_key',
+      protocol: 'openai',
+      baseUrl: 'https://api.example.test',
+      apiKey: 'sk-active',
+      models: ['active-chat'],
+    });
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    const acpConfig = {
+      command: 'active-acp',
+      startupArgs: ['--serve'],
+      mcpWhitelist: ['cat-cafe-memory'],
+    };
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/cats',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        catId: 'acp-active-root',
+        name: 'Active ACP',
+        displayName: 'Active ACP',
+        avatar: '/avatars/default.png',
+        color: { primary: '#1f2937', secondary: '#f9fafb' },
+        mentionPatterns: ['@acp-active-root'],
+        roleDescription: 'ACP agent',
+        clientId: 'acp',
+        accountRef: acpProfile.id,
+        defaultModel: 'active-chat',
+        acp: acpConfig,
+      }),
+    });
+    assert.equal(createRes.statusCode, 201, `Expected 201 but got ${createRes.statusCode}: ${createRes.body}`);
+
+    const staleRoot = mkdtempSync(join(tmpdir(), 'cats-route-crud-stale-acp-'));
+    tempDirs.push(staleRoot);
+    writeFileSync(join(staleRoot, 'cat-template.json'), JSON.stringify(makeTemplate(), null, 2));
+    process.env.CAT_TEMPLATE_PATH = join(staleRoot, 'cat-template.json');
+
+    const listRes = await app.inject({ method: 'GET', url: '/api/cats' });
+    assert.equal(listRes.statusCode, 200, `Expected GET 200 but got ${listRes.statusCode}: ${listRes.body}`);
+    const listBody = JSON.parse(listRes.body);
+    const listed = listBody.cats.find((cat) => cat.id === 'acp-active-root');
+    assert.deepEqual(listed.acp, acpConfig, 'GET /api/cats should read ACP config from the active catalog');
+
+    const patchRes = await app.inject({
+      method: 'PATCH',
+      url: '/api/cats/acp-active-root',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({ displayName: 'Renamed ACP' }),
+    });
+    assert.equal(
+      patchRes.statusCode,
+      200,
+      `PATCH without resending acp should use active catalog config: ${patchRes.body}`,
+    );
+    const patchBody = JSON.parse(patchRes.body);
+    assert.equal(patchBody.cat.displayName, 'Renamed ACP');
+    assert.deepEqual(patchBody.cat.acp, acpConfig, 'PATCH response should preserve active catalog ACP config');
   });
 
   it('POST /api/cats rejects generic ACP member without acp config', async () => {

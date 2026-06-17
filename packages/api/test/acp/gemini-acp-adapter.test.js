@@ -326,7 +326,12 @@ describe('GeminiAcpAdapter', () => {
     });
 
     const messages = [];
-    for await (const msg of adapter.invoke('resume turn', { sessionId: 'gone-session' })) messages.push(msg);
+    for await (const msg of adapter.invoke('resume turn', {
+      sessionId: 'gone-session',
+      resumeFallbackSystemPrompt: 'Static identity prompt',
+    })) {
+      messages.push(msg);
+    }
 
     const loadIndex = captured.findIndex((m) => m.method === 'session/load');
     const newIndex = captured.findIndex((m) => m.method === 'session/new');
@@ -334,6 +339,11 @@ describe('GeminiAcpAdapter', () => {
     assert.ok(loadIndex >= 0, 'resume should try session/load first');
     assert.ok(newIndex > loadIndex, 'failed session/load should fall back to session/new');
     assert.equal(promptReq.params.sessionId, 'fresh-session');
+    assert.equal(
+      promptReq.params.prompt[0].text,
+      'Static identity prompt\n\nresume turn',
+      'fresh fallback sessions must receive static identity when the outer resume turn skipped it',
+    );
     assert.ok(messages.some((m) => m.type === 'session_init' && m.sessionId === 'fresh-session'));
     assert.ok(messages.some((m) => m.type === 'text' && m.content === 'fresh ok'));
   });

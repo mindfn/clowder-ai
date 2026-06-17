@@ -185,6 +185,7 @@ export class AcpAgentService implements AgentService {
       // history server-side, so reusing the session avoids "amnesia" across turns.
       const resumeSessionId = options?.sessionId;
       let isResumedSession = false;
+      let resumeSessionLoadFailed = false;
 
       if (resumeSessionId) {
         try {
@@ -198,6 +199,7 @@ export class AcpAgentService implements AgentService {
           isResumedSession = true;
           log.info({ ...ctx, sessionId, requestedSessionId: resumeSessionId }, 'ACP session resume completed');
         } catch (err) {
+          resumeSessionLoadFailed = true;
           const errorMsg = err instanceof Error ? err.message : String(err);
           log.warn(
             { ...ctx, sessionId: resumeSessionId, cwd, err: errorMsg },
@@ -267,8 +269,16 @@ export class AcpAgentService implements AgentService {
         return;
       }
 
-      // Prepend system prompt (ACP agents have no system prompt flag)
-      const effectivePrompt = options?.systemPrompt ? `${options.systemPrompt}\n\n${prompt}` : prompt;
+      // Prepend system prompt (ACP agents have no system prompt flag).
+      // If a resume load failed, the outer invocation skipped identity because it
+      // expected session memory; the fresh fallback session must receive it once.
+      const fallbackSystemPrompt =
+        resumeSessionLoadFailed && options?.resumeFallbackSystemPrompt ? options.resumeFallbackSystemPrompt : undefined;
+      const effectivePrompt = options?.systemPrompt
+        ? `${options.systemPrompt}\n\n${prompt}`
+        : fallbackSystemPrompt
+          ? `${fallbackSystemPrompt}\n\n${prompt}`
+          : prompt;
 
       // Window 4: onAbort listener covers the duration of promptStream
       promptStreamStartedAt = Date.now();
