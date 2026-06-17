@@ -76,7 +76,7 @@ export function ConnectorPluginInstallButton({ onInstalled }: Props) {
         className="inline-flex items-center gap-1 text-xs text-cafe-muted underline decoration-cafe-border underline-offset-2 transition-colors hover:text-cafe-secondary"
       >
         <DocIcon />
-        插件开发文档
+        IM Connector 开发文档
       </a>
       {message && (
         <div
