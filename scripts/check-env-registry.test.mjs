@@ -64,9 +64,6 @@ const ALLOWLIST = new Map([
   ['WECOM_AGENT_SECRET', 'F240: defined in connectors/wecom/connector.yaml'],
   ['WECOM_TOKEN', 'F240: defined in connectors/wecom/connector.yaml'],
   ['WECOM_ENCODING_AES_KEY', 'F240: defined in connectors/wecom/connector.yaml'],
-  ['GITHUB_WEBHOOK_SECRET', 'F240: defined in plugins/github/plugin.yaml'],
-  ['GITHUB_REPO_ALLOWLIST', 'F240: defined in plugins/github/plugin.yaml'],
-  ['GITHUB_REPO_INBOX_CAT_ID', 'F240: defined in plugins/github/plugin.yaml'],
   ['GITHUB_AUTHORITATIVE_REVIEW_LOGINS', 'F240: deprecated, defined in plugins/github/plugin.yaml'],
   ['GITHUB_SETUP_NOISE_BOT_LOGINS', 'F240: defined in plugins/github/plugin.yaml'],
   ['GITHUB_SELF_LOGIN', 'F240: defined in plugins/github/plugin.yaml'],
@@ -153,10 +150,18 @@ function extractEnvRefs(dirs) {
 describe('env-registry completeness', () => {
   const registeredNames = loadRegisteredNames();
   const envRefs = extractEnvRefs(['packages/api/src', 'packages/mcp-server/src']);
+  const repoInboxEnvNames = ['GITHUB_WEBHOOK_SECRET', 'GITHUB_REPO_ALLOWLIST', 'GITHUB_REPO_INBOX_CAT_ID'];
 
   it('every allowlist entry has a non-empty reason', () => {
     for (const [name, reason] of ALLOWLIST) {
       assert.ok(reason && reason.length > 0, `ALLOWLIST entry "${name}" has no reason`);
+    }
+  });
+
+  it('keeps GitHub Repo Inbox process env vars in env-registry', () => {
+    for (const name of repoInboxEnvNames) {
+      assert.ok(registeredNames.has(name), `${name} should be registered in env-registry.ts`);
+      assert.ok(!ALLOWLIST.has(name), `${name} is runtime user config and must not be allowlisted`);
     }
   });
 
