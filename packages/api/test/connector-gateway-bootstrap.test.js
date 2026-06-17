@@ -811,6 +811,47 @@ describe('ConnectorGateway Bootstrap', () => {
     await handle.stop();
   });
 
+  it('Weixin polling handler rejects when routing fails', async () => {
+    const { WeixinAdapter } = await import('../dist/infrastructure/connectors/im-connectors/weixin/WeixinAdapter.js');
+    const originalStartPolling = WeixinAdapter.prototype.startPolling;
+    const originalStopPolling = WeixinAdapter.prototype.stopPolling;
+    let capturedHandler;
+
+    WeixinAdapter.prototype.startPolling = function stubStartPolling(handler) {
+      capturedHandler = handler;
+    };
+    WeixinAdapter.prototype.stopPolling = async function stubStopPolling() {};
+
+    const deps = {
+      ...baseDeps,
+      messageStore: {
+        async append() {
+          throw new Error('route failed before append');
+        },
+      },
+    };
+
+    try {
+      const handle = await startConnectorGateway({ weixinBotToken: 'test-token' }, deps);
+      assert.equal(typeof capturedHandler, 'function', 'Weixin polling handler should be registered');
+
+      await assert.rejects(
+        () =>
+          capturedHandler({
+            chatId: 'wx-user-1',
+            text: 'route me',
+            messageId: 'wx-msg-1',
+          }),
+        /route failed before append/,
+      );
+
+      await handle.stop();
+    } finally {
+      WeixinAdapter.prototype.startPolling = originalStartPolling;
+      WeixinAdapter.prototype.stopPolling = originalStopPolling;
+    }
+  });
+
   // ── F240 R5-P1: installed plugins use config store, not just process.env ──
 
   it('R5-P1: installed plugin reads Hub-saved config from config store at bootstrap', async () => {

@@ -723,7 +723,7 @@ export async function startConnectorGateway(
               platformKey: a.mediaUrl,
               ...(a.fileName ? { fileName: a.fileName } : {}),
             }));
-            capturedOnMessage({ chatId: msg.chatId, text: msg.text, messageId: msg.messageId, attachments });
+            await capturedOnMessage({ chatId: msg.chatId, text: msg.text, messageId: msg.messageId, attachments });
           });
         };
         stopFns.push(async () => weixinAdapterRef!.stopPolling());
