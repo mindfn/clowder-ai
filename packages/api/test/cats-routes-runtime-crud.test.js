@@ -2116,12 +2116,18 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     assert.equal(createRes.statusCode, 201, `Expected 201 but got ${createRes.statusCode}: ${createRes.body}`);
     const body = JSON.parse(createRes.body);
     assert.equal(body.cat.adapterMode, 'acp', 'generic ACP member should have adapterMode=acp');
+    assert.equal(
+      body.cat.mcpSupport,
+      true,
+      'generic ACP member should enable MCP support when an explicit MCP whitelist is provided',
+    );
     assert.deepEqual(body.cat.acp, acpConfig, 'ACP response should include editable non-secret transport config');
 
     const listRes = await app.inject({ method: 'GET', url: '/api/cats' });
     assert.equal(listRes.statusCode, 200, `Expected GET 200 but got ${listRes.statusCode}: ${listRes.body}`);
     const listBody = JSON.parse(listRes.body);
     const listed = listBody.cats.find((cat) => cat.id === 'acp-deepseek');
+    assert.equal(listed.mcpSupport, true, 'GET /api/cats should preserve MCP support implied by the ACP whitelist');
     assert.deepEqual(listed.acp, acpConfig, 'GET /api/cats should include ACP config for Hub editing');
   });
 
@@ -2382,6 +2388,66 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     assert.equal(patchRes.statusCode, 200, `patch failed: ${patchRes.body}`);
     const patched = JSON.parse(patchRes.body);
     assert.equal(patched.cat.provider, undefined, 'generic ACP must not persist provider on update');
+  });
+
+  it('PATCH /api/cats/:id enables MCP support when updating a generic ACP whitelist', async () => {
+    const projectRoot = createMonorepoProjectRoot();
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
+
+    const { createProviderProfile } = await import('./helpers/create-test-account.js');
+    const acpProfile = await createProviderProfile(projectRoot, {
+      displayName: 'Patch ACP Whitelist',
+      authType: 'api_key',
+      protocol: 'openai',
+      apiKey: 'sk-patch-whitelist',
+      models: ['test-model'],
+    });
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/cats',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        catId: 'acp-patch-whitelist',
+        name: 'Patch ACP Whitelist',
+        displayName: 'Patch ACP Whitelist',
+        avatar: '/avatars/default.png',
+        color: { primary: '#0f172a', secondary: '#e2e8f0' },
+        mentionPatterns: ['@acp-patch-whitelist'],
+        roleDescription: 'ACP agent',
+        clientId: 'acp',
+        accountRef: acpProfile.id,
+        defaultModel: 'test-model',
+        acp: { command: 'test-cli', startupArgs: ['--acp'] },
+      }),
+    });
+    assert.equal(createRes.statusCode, 201, `create failed: ${createRes.body}`);
+    assert.equal(JSON.parse(createRes.body).cat.mcpSupport, false, 'generic ACP without whitelist stays MCP-off');
+
+    const acpConfig = {
+      command: 'test-cli',
+      startupArgs: ['--acp'],
+      mcpWhitelist: ['cat-cafe-memory'],
+    };
+    const patchRes = await app.inject({
+      method: 'PATCH',
+      url: '/api/cats/acp-patch-whitelist',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({ acp: acpConfig }),
+    });
+    assert.equal(patchRes.statusCode, 200, `patch failed: ${patchRes.body}`);
+    const patched = JSON.parse(patchRes.body);
+    assert.equal(patched.cat.mcpSupport, true, 'ACP whitelist patch should imply MCP support');
+    assert.deepEqual(patched.cat.acp, acpConfig, 'ACP whitelist patch should persist');
+
+    const listRes = await app.inject({ method: 'GET', url: '/api/cats' });
+    const listed = JSON.parse(listRes.body).cats.find((cat) => cat.id === 'acp-patch-whitelist');
+    assert.equal(listed.mcpSupport, true, 'GET should confirm MCP support implied by patched whitelist');
   });
 
   it('PATCH /api/cats/:id clears stale provider when migrating opencode → generic ACP (covers the currentCat.provider != null clear branch)', async () => {

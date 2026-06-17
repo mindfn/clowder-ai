@@ -84,6 +84,16 @@ const acpConfigSchema = z.object({
     })
     .optional(),
 });
+type AcpRouteConfig = z.infer<typeof acpConfigSchema>;
+
+function resolveGenericAcpMcpSupport(
+  explicitMcpSupport: boolean | undefined,
+  acpConfig: AcpRouteConfig | null | undefined,
+): boolean | undefined {
+  if (explicitMcpSupport !== undefined) return explicitMcpSupport;
+  return (acpConfig?.mcpWhitelist?.length ?? 0) > 0 ? true : undefined;
+}
+
 const catIdSchema = z
   .string()
   .min(1)
@@ -622,7 +632,7 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
           sessionChain: body.sessionChain,
           clientId: 'acp',
           defaultModel: body.defaultModel,
-          mcpSupport: body.mcpSupport ?? false,
+          mcpSupport: resolveGenericAcpMcpSupport(body.mcpSupport, body.acp) ?? false,
           cli: defaultCliForClient('acp'),
           // F161 AC-A5 / KD-1: generic ACP never carries provider (already stripped by schema).
           ...(body.voiceConfig ? { voiceConfig: body.voiceConfig } : {}),
@@ -809,6 +819,8 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
         hasCommandArgsPatch,
         nextCommandArgs,
       });
+      const nextGenericAcpMcpSupport =
+        effectiveClient === 'acp' ? resolveGenericAcpMcpSupport(body.mcpSupport, body.acp) : body.mcpSupport;
       updateRuntimeCat(projectRoot, request.params.id, {
         ...(body.name !== undefined ? { name: body.name } : {}),
         ...(body.displayName !== undefined ? { displayName: body.displayName } : {}),
@@ -827,7 +839,7 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
         ...(body.sessionChain !== undefined ? { sessionChain: body.sessionChain } : {}),
         ...(body.clientId !== undefined ? { clientId: body.clientId } : {}),
         ...(body.defaultModel !== undefined ? { defaultModel: body.defaultModel } : {}),
-        ...(body.mcpSupport !== undefined ? { mcpSupport: body.mcpSupport } : {}),
+        ...(nextGenericAcpMcpSupport !== undefined ? { mcpSupport: nextGenericAcpMcpSupport } : {}),
         ...(hasCommandArgsPatch
           ? {
               commandArgs: body.commandArgs,
