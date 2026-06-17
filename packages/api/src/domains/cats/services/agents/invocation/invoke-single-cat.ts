@@ -1256,7 +1256,11 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
 
     // Inject standard provider env vars for api_key accounts
     if (resolvedAccount?.authType === 'api_key') {
-      const credentialAccount = { apiKey: resolvedAccount.apiKey, baseUrl: resolvedAccount.baseUrl };
+      const credentialAccount = {
+        apiKey: resolvedAccount.apiKey,
+        baseUrl: resolvedAccount.baseUrl,
+        baseModel: defaultModel,
+      };
       // Protocol-level mapping (anthropic → ANTHROPIC_API_KEY, openai → OPENAI_API_KEY, google → GEMINI_API_KEY, etc.)
       if (effectiveProtocol) {
         const protocolKey = effectiveProtocol === 'openai-responses' ? 'openai' : effectiveProtocol;

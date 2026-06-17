@@ -4523,6 +4523,8 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     accounts[boundProfile.id].envVars = {
       CUSTOM_TOKEN: '${api_key}',
       CUSTOM_BASE: '${base_url}',
+      CUSTOM_BASE_MODEL: '${base_model}',
+      CUSTOM_MODEL: '${model}',
     };
     accounts[boundProfile.id].baseUrl = 'https://anthropic-proxy.example/v1';
     await writeFile(accountsPath, `${JSON.stringify(accounts, null, 2)}\n`, 'utf-8');
@@ -4580,6 +4582,8 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
     assert.equal(callbackEnv.CAT_CAFE_ANTHROPIC_PROFILE_MODE, 'api_key');
     assert.equal(callbackEnv.CUSTOM_TOKEN, 'sk-custom-ant');
     assert.equal(callbackEnv.CUSTOM_BASE, 'https://anthropic-proxy.example/v1');
+    assert.equal(callbackEnv.CUSTOM_BASE_MODEL, 'claude-opus-4-6');
+    assert.equal(callbackEnv.CUSTOM_MODEL, 'claude-opus-4-6');
   });
 
   it('F127 P2: ignores unreadable CAT_TEMPLATE_PATH before switching account roots', async () => {
