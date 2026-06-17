@@ -399,7 +399,7 @@ for each ValueConfigField:
 - **API 路由**：`connector-plugins.ts` — `GET /api/connectors/plugins`、`POST .../install`（multipart 上传）、`DELETE .../:id`、`GET .../:id/icon`
 - **前端 UI**：`ConnectorPluginInstallButton` — "安装 IM Connector" 上传按钮 + 开发文档下载链接，集成在 IM Connectors 页顶部
 - **Loader 集成**：`loadInstalledPlugins()` 动态导入已安装插件，gateway bootstrap 扫描插件 manifest
-- `IM_CONNECTOR_PLUGINS` env var 保留为 legacy escape hatch
+- ~~`IM_CONNECTOR_PLUGINS` env var~~ 已移除；tar.gz Hub 安装为唯一外部插件路径
 
 ### Phase C: 内置 connector 统一结构
 
@@ -511,7 +511,7 @@ for each ValueConfigField:
 | KD-3 | IM connector 配置对齐 F202 插件框架设计模式 | 铲屎官：参考插件管理那边的设计，YAML 清单 + .cat-cafe 持久化 + Hub UI 配置 | 2026-06-15 |
 | KD-4 | ~~Phase A 后端 + Phase B 前端~~ → 合并为单一 Phase A（见 KD-12） | 铲屎官："一次性做完，这样我可以去完整的闭环验证" | 2026-06-15 |
 | KD-5 | env 配置作为默认值 fallback，不要求用户迁移 | 铲屎官：env 当历史配置和默认值做兼容 | 2026-06-15 |
-| KD-6 | `IM_CONNECTOR_PLUGINS` env var 降级为高级用户 escape hatch | 安装包用户没有 node 环境，主路径应是 Hub UI / plugin 目录 | 2026-06-15 |
+| KD-6 | ~~`IM_CONNECTOR_PLUGINS` env var 降级为 escape hatch~~ → 已移除（`9135333`） | 安装包用户没有 node 环境，tar.gz Hub 安装为唯一外部插件路径 | 2026-06-15 |
 | KD-7 | 飞书/钉钉/微信均可外网测试，不需要内网环境 | 铲屎官：内网是基于新接口+YAML去实现对接内部 IM connector | 2026-06-15 |
 | KD-8 | IM 前端卡片可复用插件卡片渲染，但保留 QR 面板等 IM 特有能力 | 铲屎官："之前定制的逻辑是不是可以清理了，直接复用插件那边的卡片" | 2026-06-15 |
 | KD-9 | 心跳/健康检查作为 YAML capabilities 通用声明，有就支持无就不显示 | 铲屎官："心跳是不是可以作为通用配置项的；就和健康检查一样" | 2026-06-15 |

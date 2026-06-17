@@ -499,16 +499,6 @@ curl -X DELETE http://localhost:3002/api/connectors/plugins/my-connector
 curl -X DELETE http://localhost:3002/api/connectors/plugins/my-connector?clearConfig=true
 ```
 
-### Legacy: npm-based loading
-
-For backward compatibility, plugins can also be loaded from npm packages via `IM_CONNECTOR_PLUGINS`:
-
-```bash
-IM_CONNECTOR_PLUGINS=@mycompany/connector-welink,@other/connector-slack
-```
-
-> **Note:** The tar.gz package format is preferred. npm-based loading is retained as a legacy escape hatch.
-
 ## Development Workflow
 
 ### Local development
