@@ -453,7 +453,16 @@ describe('OpenCodeAgentService', () => {
     assert.strictEqual(textMsg.metadata.model, 'claude-sonnet-4-6');
   });
 
-  test('step_finish yields agent_loop with usage and service-level model', async () => {
+  test('step_finish yields agent_loop with usage AND service-level model (clowder#915 R1 P1)', async () => {
+    // 砚砚 R1 P1 (#2271): transformer carries metadata.usage but pre-fix the
+    // service layer's `metadata: yieldMetadata` clobbered the transformer's
+    // metadata via spread-with-override. Without this merge, usage never
+    // reached invoke-single-cat → F24 contextHealth never fired → handoff
+    // never triggered → opencode hung at context limit (the clowder#915 bug).
+    //
+    // This test asserts the END-TO-END contract: step_finish → service yield →
+    // a yielded message that carries BOTH (a) the usage payload from the
+    // transformer AND (b) the effective model from the service layer (not '').
     const proc = createMockProcess();
     const spawnFn = mock.fn(() => proc);
     const service = new OpenCodeAgentService({ catId: 'opencode', spawnFn, model: 'claude-sonnet-4-6' });
@@ -477,12 +486,16 @@ describe('OpenCodeAgentService', () => {
 
     const loopMsg = messages.find((m) => m.type === 'agent_loop');
     assert.ok(loopMsg, 'service must emit agent_loop for step_finish events');
-    assert.ok(loopMsg.metadata?.usage, 'usage must reach invoke-single-cat');
+    assert.ok(loopMsg.metadata, 'agent_loop must carry metadata');
+    // usage from transformer must survive the service layer's metadata override
+    assert.ok(loopMsg.metadata.usage, 'usage must reach invoke-single-cat for F8/F24 to fire');
     assert.strictEqual(loopMsg.metadata.usage.inputTokens, 36928);
     assert.strictEqual(loopMsg.metadata.usage.lastTurnInputTokens, 36928);
     assert.strictEqual(loopMsg.metadata.usage.outputTokens, 9);
     assert.strictEqual(loopMsg.metadata.usage.totalTokens, 36937);
     assert.strictEqual(loopMsg.metadata.usage.costUsd, 0.036973);
+    // model comes from the service layer (effectiveModel), NOT transformer's ''
+    // (砚砚 R1 P2: empty model would break getContextWindowFallback in invoke-single-cat).
     assert.strictEqual(loopMsg.metadata.model, 'claude-sonnet-4-6');
     assert.strictEqual(loopMsg.metadata.provider, 'opencode');
   });

@@ -101,22 +101,27 @@ describe('Ralph Loop + Context Management (AC-11)', () => {
     const dones = messages.filter((m) => m.type === 'done');
     assert.strictEqual(dones.length, 1, 'must have exactly 1 done');
 
-    // step_finish events emit telemetry-only agent_loop messages.
-    // Total: 1 session_init + 3 text + 3 tool_use + 3 agent_loop + 1 done = 11
+    // clowder#915: step_finish now emits agent_loop with metadata.usage so
+    // invoke-single-cat's F8 token block + F24 contextHealth path can compute
+    // fillRatio and trigger handoff before context fills.
+    // Total: 1 session_init + 3 text + 3 tool_use + 3 step_finish (agent_loop) + 1 done = 11
     assert.strictEqual(messages.length, 11, `expected 11 messages total, got ${messages.length}`);
-    assert.strictEqual(messages.filter((m) => m.type === 'agent_loop').length, 3);
+    const agentLoops = messages.filter((m) => m.type === 'agent_loop');
+    assert.strictEqual(agentLoops.length, 3, 'must have 3 agent_loop telemetry markers (one per step_finish)');
   });
 
   // ── Context management: elevated token counts surface as usage telemetry ──
 
-  test('OMOC context management: high token counts surface in step_finish telemetry', () => {
+  test('OMOC context management: high token counts surface in step_finish telemetry (clowder#915)', () => {
     // OMOC adds ~12K system prompt tokens, so step_finish often shows 36K+ total.
+    // Pre-clowder#915 this was discarded; post-fix it must surface so handoff fires.
     const highTokenFinish = makeStepFinish(5000, 36937);
     const result = transformOpenCodeEvent(highTokenFinish, 'opencode');
 
-    assert.ok(result);
+    assert.ok(result, 'step_finish with token data must emit a message (clowder#915)');
     assert.strictEqual(result.type, 'agent_loop');
     assert.ok(result.metadata?.usage);
+    // makeStepFinish helper only sets tokens.total — assert on totalTokens (Gemini-style fallback path)
     assert.strictEqual(result.metadata.usage.totalTokens, 36937);
     assert.strictEqual(result.metadata.usage.costUsd, 0.01);
   });
@@ -198,8 +203,9 @@ describe('Ralph Loop + Context Management (AC-11)', () => {
     emitOpenCodeEvents(proc, events);
     const messages = await promise;
 
-    // Unknown events should be dropped; step_finish emits agent_loop telemetry.
-    // Expected: 1 session_init + 2 text + 2 agent_loop + 1 done = 6
+    // Unknown events should be dropped (transformOpenCodeEvent returns null).
+    // clowder#915: step_finish now emits agent_loop with usage telemetry.
+    // Expected: 1 session_init + 2 text + 2 step_finish (agent_loop) + 1 done = 6
     assert.strictEqual(messages.length, 6, `expected 6 messages, got ${messages.length}`);
     assert.strictEqual(messages.filter((m) => m.type === 'agent_loop').length, 2);
   });
