@@ -2660,6 +2660,63 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     assert.equal(listed.mcpSupport, true, 'GET should confirm MCP support implied by patched whitelist');
   });
 
+  it('PATCH /api/cats/:id preserves generic ACP MCP support on ACP-only edits without a whitelist', async () => {
+    const projectRoot = createMonorepoProjectRoot();
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
+
+    const { createProviderProfile } = await import('./helpers/create-test-account.js');
+    const acpProfile = await createProviderProfile(projectRoot, {
+      displayName: 'Patch ACP Preserve MCP',
+      authType: 'api_key',
+      protocol: 'openai',
+      apiKey: 'sk-patch-preserve-mcp',
+      models: ['test-model'],
+    });
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/cats',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        catId: 'acp-preserve-mcp',
+        name: 'Patch ACP Preserve MCP',
+        displayName: 'Patch ACP Preserve MCP',
+        avatar: '/avatars/default.png',
+        color: { primary: '#0f172a', secondary: '#e2e8f0' },
+        mentionPatterns: ['@acp-preserve-mcp'],
+        roleDescription: 'ACP agent',
+        clientId: 'acp',
+        accountRef: acpProfile.id,
+        defaultModel: 'test-model',
+        mcpSupport: true,
+        acp: { command: 'test-cli', startupArgs: ['--acp'] },
+      }),
+    });
+    assert.equal(createRes.statusCode, 201, `create failed: ${createRes.body}`);
+    assert.equal(JSON.parse(createRes.body).cat.mcpSupport, true, 'explicit MCP support should persist on create');
+
+    const commandOnlyAcpConfig = { command: 'test-cli', startupArgs: ['--acp', '--edited'] };
+    const patchRes = await app.inject({
+      method: 'PATCH',
+      url: '/api/cats/acp-preserve-mcp',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({ acp: commandOnlyAcpConfig }),
+    });
+    assert.equal(patchRes.statusCode, 200, `patch failed: ${patchRes.body}`);
+    const patched = JSON.parse(patchRes.body);
+    assert.equal(patched.cat.mcpSupport, true, 'ACP-only edit should preserve existing MCP support');
+    assert.deepEqual(patched.cat.acp, commandOnlyAcpConfig, 'command-only ACP edit should persist');
+
+    const listRes = await app.inject({ method: 'GET', url: '/api/cats' });
+    const listed = JSON.parse(listRes.body).cats.find((cat) => cat.id === 'acp-preserve-mcp');
+    assert.equal(listed.mcpSupport, true, 'GET should confirm ACP-only edit preserved MCP support');
+  });
+
   it('PATCH /api/cats/:id resets generic ACP MCP support when replacing the whitelist with command-only config', async () => {
     const projectRoot = createMonorepoProjectRoot();
     process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');

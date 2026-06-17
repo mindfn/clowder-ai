@@ -110,9 +110,15 @@ function resolveGenericAcpMcpSupportForPatch(
   explicitMcpSupport: boolean | undefined,
   acpConfig: AcpRouteConfig | null | undefined,
   isClientSwitchToGenericAcp: boolean,
+  currentAcpConfig: { mcpWhitelist?: string[] } | undefined,
 ): boolean | undefined {
   if (explicitMcpSupport !== undefined) return explicitMcpSupport;
-  if (acpConfig !== undefined && acpConfig !== null) return (acpConfig.mcpWhitelist?.length ?? 0) > 0;
+  if (acpConfig !== undefined && acpConfig !== null) {
+    if (acpConfig.mcpWhitelist !== undefined) return acpConfig.mcpWhitelist.length > 0;
+    if (isClientSwitchToGenericAcp) return false;
+    if ((currentAcpConfig?.mcpWhitelist?.length ?? 0) > 0) return false;
+    return undefined;
+  }
   return isClientSwitchToGenericAcp ? false : undefined;
 }
 
@@ -847,7 +853,7 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
       });
       const nextGenericAcpMcpSupport =
         effectiveClient === 'acp'
-          ? resolveGenericAcpMcpSupportForPatch(body.mcpSupport, body.acp, isClientSwitch)
+          ? resolveGenericAcpMcpSupportForPatch(body.mcpSupport, body.acp, isClientSwitch, currentAcpConfig)
           : body.mcpSupport;
       updateRuntimeCat(projectRoot, request.params.id, {
         ...(body.name !== undefined ? { name: body.name } : {}),
