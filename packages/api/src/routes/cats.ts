@@ -733,6 +733,7 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
     // When the editor sends the old client's builtin accountRef during a provider switch,
     // rebase to the new client's builtin so validation doesn't reject the stale ref.
     const isClientSwitch = body.clientId !== undefined && body.clientId !== currentCat.clientId;
+    const currentAcpConfig = getAcpConfig(request.params.id as string);
     if (isClientSwitch && effectiveAccountRef) {
       const oldBuiltin = resolveBuiltinClientForProvider(currentCat.clientId);
       if (oldBuiltin && builtinAccountIdForClient(oldBuiltin) === effectiveAccountRef) {
@@ -787,12 +788,15 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
     // F161 invariant: clientId 'acp' must have an effective acp config.
     // Prevents persisting an unroutable ACP member (no command/startupArgs).
     if (effectiveClient === 'acp') {
-      const effectiveAcpConfig = body.acp !== undefined ? body.acp : getAcpConfig(request.params.id as string);
+      const effectiveAcpConfig = body.acp !== undefined ? body.acp : currentAcpConfig;
       if (!effectiveAcpConfig) {
         reply.status(400);
         return { error: 'clientId "acp" requires an acp transport config (command + startupArgs)' };
       }
     }
+
+    const shouldClearAcpOnClientSwitch =
+      isClientSwitch && effectiveClient !== 'acp' && body.acp === undefined && currentAcpConfig !== undefined;
 
     const managedIdsBefore = getManagedCatalogIds(projectRoot);
     try {
@@ -848,7 +852,13 @@ export const catsRoutes: FastifyPluginAsync<CatsRoutesOptions> = async (app, opt
             ? { voiceConfig: null }
             : { voiceConfig: body.voiceConfig }
           : {}),
-        ...(body.acp !== undefined ? (body.acp === null ? { acp: null } : { acp: body.acp }) : {}),
+        ...(body.acp !== undefined
+          ? body.acp === null
+            ? { acp: null }
+            : { acp: body.acp }
+          : shouldClearAcpOnClientSwitch
+            ? { acp: null }
+            : {}),
       });
       const resolved = await reconcileCatRegistry(projectRoot, managedIdsBefore);
       await configEventBus.emitChangeAsync({

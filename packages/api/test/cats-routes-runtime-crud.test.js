@@ -2225,6 +2225,69 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     assert.equal(switchBody.cat.adapterMode, 'cli', 'after switch should be cli mode');
   });
 
+  it('PATCH /api/cats/:id clears stale acp config when switching away from ACP without acp:null', async () => {
+    const projectRoot = createMonorepoProjectRoot();
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
+
+    const { createProviderProfile } = await import('./helpers/create-test-account.js');
+    const acpProfile = await createProviderProfile(projectRoot, {
+      displayName: 'ACP Switch',
+      authType: 'api_key',
+      protocol: 'openai',
+      apiKey: 'sk-switch',
+      models: ['test-model'],
+    });
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/cats',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        catId: 'acp-switch',
+        name: 'ACP Switch',
+        displayName: 'ACP Switch',
+        avatar: '/avatars/default.png',
+        color: { primary: '#0f172a', secondary: '#e2e8f0' },
+        mentionPatterns: ['@acp-switch'],
+        roleDescription: 'ACP agent',
+        clientId: 'acp',
+        accountRef: acpProfile.id,
+        defaultModel: 'test-model',
+        acp: { command: 'test-cli', startupArgs: ['--acp'] },
+      }),
+    });
+    assert.equal(createRes.statusCode, 201, `create failed: ${createRes.body}`);
+
+    const switchRes = await app.inject({
+      method: 'PATCH',
+      url: '/api/cats/acp-switch',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        clientId: 'openai',
+        accountRef: acpProfile.id,
+        defaultModel: 'test-model',
+      }),
+    });
+    assert.equal(switchRes.statusCode, 200, `client switch failed: ${switchRes.body}`);
+    const switchBody = JSON.parse(switchRes.body);
+    assert.equal(switchBody.cat.clientId, 'openai');
+    assert.equal(switchBody.cat.adapterMode, 'cli', 'after switch should be cli mode');
+    assert.equal(switchBody.cat.acp, undefined, 'response must not expose stale ACP config');
+
+    const listRes = await app.inject({ method: 'GET', url: '/api/cats' });
+    assert.equal(listRes.statusCode, 200, `Expected GET 200 but got ${listRes.statusCode}: ${listRes.body}`);
+    const listBody = JSON.parse(listRes.body);
+    const listed = listBody.cats.find((cat) => cat.id === 'acp-switch');
+    assert.equal(listed.clientId, 'openai');
+    assert.equal(listed.adapterMode, 'cli', 'listed cat should be cli mode after switch');
+    assert.equal(listed.acp, undefined, 'catalog must not retain stale ACP config');
+  });
+
   it('POST /api/cats strips provider for generic ACP (AC-A5/KD-1: acp is transport, not provider identity)', async () => {
     const projectRoot = createMonorepoProjectRoot();
     process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
