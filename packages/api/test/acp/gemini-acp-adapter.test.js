@@ -2076,6 +2076,72 @@ describe('GeminiAcpAdapter integration', () => {
     assert.ok(thinkingIdx < errorIdx, `thinking (idx=${thinkingIdx}) must precede error (idx=${errorIdx})`);
   });
 
+  it('surfaces compaction loop cancellation as an error instead of a successful turn', async () => {
+    let cancelCount = 0;
+    const fakeClient = {
+      isAlive: true,
+      initialize: async () => ({}),
+      close: async () => {},
+      onCapacity: () => {},
+      offCapacity: () => {},
+      recentCapacitySignal: null,
+      clearRecentCapacitySignal: () => {},
+      newSession: async () => ({ sessionId: 'scratchpad-loop-sess' }),
+      cancelSession: (sessionId) => {
+        assert.equal(sessionId, 'scratchpad-loop-sess');
+        cancelCount++;
+      },
+      async *promptStream() {
+        yield {
+          sessionId: 'scratchpad-loop-sess',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: {
+              type: 'text',
+              text: 'Visible answer before compaction. ## Goal\n- summarize context\n\nConstraints & Preferences\n- continue',
+            },
+          },
+        };
+        for (let i = 0; i < 50; i++) {
+          yield {
+            sessionId: 'scratchpad-loop-sess',
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              content: { type: 'text', text: `\n## Progress\n- compacting ${i}` },
+            },
+          };
+        }
+      },
+    };
+
+    const mockPool = {
+      acquire: async () => ({ client: fakeClient, release: () => {} }),
+      closeAll: async () => {},
+    };
+
+    const adapter = new GeminiAcpAdapter({
+      catId: 'gemini',
+      pool: mockPool,
+      poolKey: TEST_POOL_KEY,
+      projectRoot: '/tmp',
+    });
+
+    const messages = [];
+    for await (const msg of adapter.invoke('hello')) {
+      messages.push(msg);
+    }
+
+    assert.equal(cancelCount, 1, 'Compaction loop breaker must cancel the ACP session exactly once');
+    const errorMsg = messages.find((m) => m.type === 'error');
+    assert.ok(errorMsg, `Expected compaction cancellation error, got: ${JSON.stringify(messages.map((m) => m.type))}`);
+    assert.equal(errorMsg.errorCode, 'prompt_failure');
+    assert.ok(errorMsg.error.includes('compaction'), `Error should explain compaction cancellation: ${errorMsg.error}`);
+
+    const doneIdx = messages.findIndex((m) => m.type === 'done');
+    const errorIdx = messages.indexOf(errorMsg);
+    assert.ok(doneIdx > errorIdx, 'done should be emitted only after the compaction error');
+  });
+
   it('F149: liveness_signal warning appears before stream_idle_stall error', async () => {
     const fakeClient = {
       isAlive: true,

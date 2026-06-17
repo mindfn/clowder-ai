@@ -338,7 +338,9 @@ export class AcpAgentService implements AgentService {
               'ACP compaction auto-continue loop detected — cancelling session',
             );
             client.cancelSession(sessionId);
-            break;
+            throw new Error(
+              `ACP compaction auto-continue loop cancelled after ${scratchpadSuppressedEvents} suppressed events`,
+            );
           }
         }
 

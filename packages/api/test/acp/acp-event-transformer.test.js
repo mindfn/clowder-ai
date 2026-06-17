@@ -552,6 +552,36 @@ describe('transformAcpEvent', () => {
     assert.equal(next.content, '\n\nMore requested output.');
   });
 
+  it('does not suppress ordinary plan Markdown with Goal and Constraints sections', () => {
+    const state = createAcpSessionState();
+    const mkChunk = (text) => ({
+      sessionId: 's1',
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } },
+    });
+    const markdown = [
+      'Implementation plan',
+      '',
+      '## Goal',
+      'Ship the ACP route safely.',
+      '',
+      '## Constraints & Preferences',
+      '- Keep callback MCP support enabled for whitelisted tools.',
+      '',
+      '## Steps',
+      '1. Add tests.',
+      '2. Patch the route.',
+    ].join('\n');
+
+    const result = transformAcpEvent(mkChunk(markdown), catId, metadata, state);
+    assert.equal(result.type, 'text');
+    assert.equal(result.content, markdown);
+    assert.equal(state.scratchpadDetected, false);
+
+    const next = transformAcpEvent(mkChunk('\n\nContinue with validation evidence.'), catId, metadata, state);
+    assert.equal(next.type, 'text');
+    assert.equal(next.content, '\n\nContinue with validation evidence.');
+  });
+
   it('scratchpad detection resets per session (new state)', () => {
     const state1 = createAcpSessionState();
     const state2 = createAcpSessionState();

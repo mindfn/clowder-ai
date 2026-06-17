@@ -52,11 +52,12 @@ export function createAcpSessionState(): AcpSessionState {
 }
 
 /**
- * OpenCode compaction signature. `## Goal` alone is normal Markdown, so only
- * suppress when the stream also carries the companion compaction section.
+ * OpenCode compaction signature. `## Goal` alone is normal Markdown, and
+ * `## Constraints & Preferences` is a normal planning heading. Suppress only
+ * when the companion marker appears as the bare compaction-template line.
  */
 const SCRATCHPAD_MARKER = '## Goal';
-const SCRATCHPAD_COMPANION_MARKER = 'Constraints & Preferences';
+const SCRATCHPAD_COMPANION_MARKER_RE = /(?:^|\n)(?![ \t]*#{1,6}\s)[ \t]*Constraints & Preferences\b/;
 const SCRATCHPAD_TAIL_CHARS = 800;
 
 function findScratchpadSignature(text: string): number {
@@ -65,7 +66,7 @@ function findScratchpadSignature(text: string): number {
     const markerIdx = text.indexOf(SCRATCHPAD_MARKER, searchFrom);
     if (markerIdx < 0) return -1;
     const afterMarker = text.slice(markerIdx + SCRATCHPAD_MARKER.length);
-    if (afterMarker.includes(SCRATCHPAD_COMPANION_MARKER)) return markerIdx;
+    if (SCRATCHPAD_COMPANION_MARKER_RE.test(afterMarker)) return markerIdx;
     searchFrom = markerIdx + SCRATCHPAD_MARKER.length;
   }
   return -1;
