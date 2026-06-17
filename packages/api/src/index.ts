@@ -60,6 +60,7 @@ import {
   resolveAcpBootstrapCwd,
 } from './domains/cats/services/agents/providers/acp/acp-bootstrap-cwd.js';
 import { closeStaleAcpPools } from './domains/cats/services/agents/providers/acp/acp-pool-registry.js';
+import { createAcpPoolSpawnSignature } from './domains/cats/services/agents/providers/acp/acp-pool-signature.js';
 import { AntigravityAgentService } from './domains/cats/services/agents/providers/antigravity/AntigravityAgentService.js';
 import { RedisAntigravitySupervisorStore } from './domains/cats/services/agents/providers/antigravity/AntigravitySupervisorStore.js';
 import {
@@ -1282,8 +1283,8 @@ async function main(): Promise<void> {
         // Shared pool per variant — reuse across cats with same variant.
         // Detect stale pools: if spawn-affecting inputs OR pool settings changed,
         // close old pool so a fresh one picks up the new config.
-        const spawnSignature = JSON.stringify({
-          cmd: acpCommand,
+        const spawnSignature = createAcpPoolSpawnSignature({
+          command: acpCommand,
           args: acpArgs,
           cwd: resolveAcpBootstrapCwd(acpProjectRoot, id),
           env: acpSpawnEnv ?? null,
@@ -1291,6 +1292,7 @@ async function main(): Promise<void> {
           maxLiveProcesses: acpConfig.pool?.maxLiveProcesses ?? 3,
           idleTtlMs: acpConfig.pool?.idleTtlMs ?? DEFAULT_ACP_IDLE_TTL_MS,
           transport: acpConfig.transport ?? 'stdio',
+          supportsMultiplexing: acpConfig.supportsMultiplexing,
         });
         const existingPool = acpPoolRegistry.get(id);
         if (existingPool && existingPool._spawnSignature !== spawnSignature) {
