@@ -218,9 +218,6 @@ export function SkillsContent() {
             projectPath={selectedProjectPath}
             refreshToken={driftRefreshToken}
             onResolved={refreshSelectedSkills}
-            batchEnabled={batchEnabled}
-            batchBusy={controls.toggling === '__batch__'}
-            onBatchToggle={handleBatchToggle}
           />
         </>
       )}
@@ -239,7 +236,7 @@ export function SkillsContent() {
         />
       )}
 
-      {scope === SCOPE_ALL && data && (
+      {data && (
         <AllProjectsSyncBanner
           scopes={sync.scopeIssues}
           scopesWithIssues={sync.scopesWithIssues}
