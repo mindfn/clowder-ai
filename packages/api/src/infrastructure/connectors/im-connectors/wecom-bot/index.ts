@@ -1,5 +1,5 @@
 /**
- * WeCom Bot IM Connector Plugin — F231
+ * WeCom Bot IM Connector Plugin — F234
  *
  * Wraps WeComBotAdapter into the IMConnectorPlugin interface.
  * Uses WebSocket mode via @wecom/aibot-node-sdk for inbound messages.

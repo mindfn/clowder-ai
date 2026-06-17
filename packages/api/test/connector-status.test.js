@@ -262,9 +262,9 @@ describe('buildConnectorStatus', () => {
   // F202-2B: "marks GitHub plugin as configured" test removed — GitHub config
   // moved to plugin framework (plugin-config-store), no longer in connector-hub.
 
-  // ── F231 P1-2 regression: external connector plugins must appear in status ──
+  // ── F234 P1-2 regression: external connector plugins must appear in status ──
 
-  it('F231 P1-2: includes external connector plugin in status when registered', () => {
+  it('F234 P1-2: includes external connector plugin in status when registered', () => {
     registerExternalConnectorMeta({
       id: 'welink',
       definition: {
@@ -301,7 +301,7 @@ describe('buildConnectorStatus', () => {
     }
   });
 
-  it('F231 P1-2: external connector shows not-configured when env vars missing', () => {
+  it('F234 P1-2: external connector shows not-configured when env vars missing', () => {
     registerExternalConnectorMeta({
       id: 'welink',
       definition: {
@@ -323,7 +323,7 @@ describe('buildConnectorStatus', () => {
     assert.equal(welink.fields[0].currentValue, null);
   });
 
-  it('F231 P1-2: external connector does not duplicate built-in platform', () => {
+  it('F234 P1-2: external connector does not duplicate built-in platform', () => {
     // Register with a built-in ID — should be skipped
     registerExternalConnectorMeta({
       id: 'feishu',
@@ -344,7 +344,7 @@ describe('buildConnectorStatus', () => {
     assert.equal(feishuEntries.length, 1, 'Must not duplicate built-in feishu');
   });
 
-  it('F231 R10-P2: external manifest status uses plugin isConfigured metadata', () => {
+  it('F234 R10-P2: external manifest status uses plugin isConfigured metadata', () => {
     const pluginId = 'alt-auth-external';
     registerExternalConnectorMeta({
       id: pluginId,
@@ -393,9 +393,9 @@ describe('buildConnectorStatus', () => {
     );
   });
 
-  // ── F231 A-4: stored config reflected in status (review P1 regression) ──
+  // ── F234 A-4: stored config reflected in status (review P1 regression) ──
 
-  it('F231 A-4: stored config values override empty env in status via resolveConnectorEnv', () => {
+  it('F234 A-4: stored config values override empty env in status via resolveConnectorEnv', () => {
     // Simulates the exact chain used in the status route handler:
     // 1. Write config to .cat-cafe store
     // 2. Load all configs into cache
@@ -441,7 +441,7 @@ describe('buildConnectorStatus', () => {
     assert.equal(secretField.currentValue, '••••••••', 'Sensitive stored value must be masked');
   });
 
-  it('F231 A-4: stored tombstone (null) blocks env fallback in status', () => {
+  it('F234 A-4: stored tombstone (null) blocks env fallback in status', () => {
     // KD-19: stored null = tombstone — even if process.env has the key, it should be absent
     const manifests = scanConnectorManifests(
       new URL('../src/infrastructure/connectors/im-connectors', import.meta.url).pathname,
@@ -472,7 +472,7 @@ describe('buildConnectorStatus', () => {
     assert.equal(keyField.currentValue, null, 'Tombstoned field must show null');
   });
 
-  it('F231 AC-A25: permissionLabel from manifest drives HubPermissionsTab rendering', () => {
+  it('F234 AC-A25: permissionLabel from manifest drives HubPermissionsTab rendering', () => {
     const status = buildConnectorStatus();
 
     // Connectors with permissions declared in YAML should have permissionLabel
@@ -498,7 +498,7 @@ describe('buildConnectorStatus', () => {
     assert.equal(weixin.permissionLabel, undefined, 'weixin has no permissions in manifest');
   });
 
-  it('F231 P1-1 regression: config store write fires configEventBus with changedKeys for gateway reload', () => {
+  it('F234 P1-1 regression: config store write fires configEventBus with changedKeys for gateway reload', () => {
     // Simulate the PUT route: writeConnectorConfig → emit configEventBus if changedKeys
     // No process.env sync — config store is the sole source, gateway reads it directly
     const captured = [];
@@ -538,7 +538,7 @@ describe('buildConnectorStatus', () => {
     }
   });
 
-  it('F231 tombstone: clearing absent store key (undefined → null) reports changedKeys for reload', () => {
+  it('F234 tombstone: clearing absent store key (undefined → null) reports changedKeys for reload', () => {
     // KD-19 three-state: store has no entry (undefined) → user sends null (tombstone).
     // writeConnectorConfig must detect this as a change (undefined !== null),
     // so the route fires configEventBus and gateway restarts.
@@ -558,7 +558,7 @@ describe('buildConnectorStatus', () => {
     assert.equal(process.env.DINGTALK_APP_KEY, envBefore, 'must NOT modify process.env');
   });
 
-  it('F231 idempotent: re-sending same tombstone (null → null) reports no changedKeys', () => {
+  it('F234 idempotent: re-sending same tombstone (null → null) reports no changedKeys', () => {
     // After a tombstone is written, sending null again should not trigger reload
     writeConnectorConfig(STORE_PROJECT_ROOT, 'dingtalk', [{ name: 'DINGTALK_APP_KEY', value: null }]);
 

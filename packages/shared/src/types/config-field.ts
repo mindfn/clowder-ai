@@ -1,7 +1,7 @@
 /**
- * Unified Config Field Types — F231 KD-15/KD-17
+ * Unified Config Field Types — F234 KD-15/KD-17
  *
- * Shared by F202 Plugin Framework and F231 IM Connector Plugin Architecture.
+ * Shared by F202 Plugin Framework and F234 IM Connector Plugin Architecture.
  * YAML config files are managed independently per domain, but type definitions
  * and parsing logic are the same codebase.
  *

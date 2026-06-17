@@ -1,5 +1,5 @@
 /**
- * Config Field Value Codec — F231 KD-18
+ * Config Field Value Codec — F234 KD-18
  *
  * Store layer is Record<string, string | null>. All typed values are
  * serialized/deserialized through this codec. The store never sees

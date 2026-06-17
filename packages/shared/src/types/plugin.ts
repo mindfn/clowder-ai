@@ -1,7 +1,7 @@
 /**
  * Plugin Framework Types — F202 声明式插件注册与资源编排
  *
- * F231 KD-15: PluginConfigField replaced by shared ValueConfigField.
+ * F234 KD-15: PluginConfigField replaced by shared ValueConfigField.
  * Alias kept for import compatibility during transition; will be removed.
  */
 

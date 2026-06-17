@@ -75,7 +75,7 @@ describe('CONNECTOR_SECRETS_ALLOWLIST', () => {
     assert.equal(CONNECTOR_GATEWAY_RELOAD_KEYS.has('GITHUB_MCP_PAT'), false);
   });
 
-  it('F231 P1-1/P2-1: IM_CONNECTOR_PLUGINS must NOT be in secrets allowlist or reload keys', () => {
+  it('F234 P1-1/P2-1: IM_CONNECTOR_PLUGINS must NOT be in secrets allowlist or reload keys', () => {
     // IM_CONNECTOR_PLUGINS controls dynamic import() — it must NOT be writable from Hub
     // (env-registry marks it sensitive for display, but it's not in the write allowlist)
     assert.equal(

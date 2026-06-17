@@ -277,7 +277,7 @@ export function registerConnectorDefinition(def: ConnectorDefinition): void {
 }
 
 /**
- * Unregister a runtime-added connector definition (F231 plugin uninstall).
+ * Unregister a runtime-added connector definition (F234 plugin uninstall).
  * Static (compile-time) definitions are immune — only dynamically registered
  * entries can be removed.
  */

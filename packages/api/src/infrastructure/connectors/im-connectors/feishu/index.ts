@@ -1,5 +1,5 @@
 /**
- * Feishu IM Connector Plugin — F231 reference implementation
+ * Feishu IM Connector Plugin — F234 reference implementation
  *
  * Wraps the existing FeishuAdapter + FeishuTokenManager into the
  * IMConnectorPlugin interface. This is the most complex connector

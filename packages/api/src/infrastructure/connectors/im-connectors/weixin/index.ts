@@ -1,5 +1,5 @@
 /**
- * Weixin (WeChat Personal) IM Connector Plugin — F231
+ * Weixin (WeChat Personal) IM Connector Plugin — F234
  *
  * Wraps WeixinAdapter into the IMConnectorPlugin interface.
  * Uses iLink Bot long polling for inbound messages.

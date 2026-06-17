@@ -1,5 +1,5 @@
 /**
- * Telegram IM Connector Plugin — F231
+ * Telegram IM Connector Plugin — F234
  *
  * Wraps TelegramAdapter into the IMConnectorPlugin interface.
  * Uses long polling for inbound messages.

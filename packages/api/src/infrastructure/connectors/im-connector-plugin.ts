@@ -1,5 +1,5 @@
 /**
- * IM Connector Plugin Interface — F231
+ * IM Connector Plugin Interface — F234
  *
  * Unified contract for all IM connector adapters (built-in and external).
  * Built-in connectors (Feishu, DingTalk, etc.) implement this interface

@@ -2,7 +2,7 @@
 
 import { type ReactNode, useState } from 'react';
 
-// ── Manifest-driven visual config (F231: replaces hardcoded PLATFORM_VISUALS) ──
+// ── Manifest-driven visual config (F234: replaces hardcoded PLATFORM_VISUALS) ──
 
 export interface PlatformVisual {
   iconBg: string;
@@ -246,7 +246,7 @@ export interface PlatformStatus {
   operations?: PlatformOperationStatus[];
   /** AC-A25: manifest-driven permission label — renders HubPermissionsTab when present. */
   permissionLabel?: string;
-  /** F231: YAML-declared health-check — controls test button visibility. */
+  /** F234: YAML-declared health-check — controls test button visibility. */
   testable?: boolean;
 }
 

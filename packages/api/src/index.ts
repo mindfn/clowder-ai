@@ -3957,7 +3957,7 @@ async function main(): Promise<void> {
     // F132 bugfix: live health getter for status endpoint
     (connectorHubOpts as { getWeComBotAdapter?: () => unknown }).getWeComBotAdapter = handle.getWeComBotAdapter;
     (connectorHubOpts as { permissionStore?: unknown }).permissionStore = handle.permissionStore;
-    // F231 A-3: plugin + adapter registries + activation for generic action endpoint
+    // F234 A-3: plugin + adapter registries + activation for generic action endpoint
     (connectorHubOpts as { pluginRegistry?: unknown }).pluginRegistry = handle.pluginRegistry;
     (connectorHubOpts as { adapterRegistry?: unknown }).adapterRegistry = handle.adapterRegistry;
     (connectorHubOpts as { activateConnector?: (connectorId: string) => Promise<void> }).activateConnector = async (

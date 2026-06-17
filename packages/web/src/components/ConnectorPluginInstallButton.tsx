@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * ConnectorPluginInstallButton — F231 Phase B
+ * ConnectorPluginInstallButton — F234 Phase B
  *
  * Upload button + plugin-dev-doc link, rendered at page-top-right
  * inside HubConnectorConfigTab. Self-contained upload state.

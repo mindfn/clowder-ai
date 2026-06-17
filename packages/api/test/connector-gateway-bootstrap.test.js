@@ -786,7 +786,7 @@ describe('ConnectorGateway Bootstrap', () => {
     assert.equal(config3.feishuConnectionMode, 'webhook', 'Should default to webhook when not set');
   });
 
-  // ── F231 R4-P2: deactivateConnector preserves Weixin adapter for QR re-login ──
+  // ── F234 R4-P2: deactivateConnector preserves Weixin adapter for QR re-login ──
 
   it('deactivateConnector("weixin") preserves adapter in registry (QR re-login regression)', async () => {
     const handle = await startConnectorGateway({}, baseDeps);
@@ -811,7 +811,7 @@ describe('ConnectorGateway Bootstrap', () => {
     await handle.stop();
   });
 
-  // ── F231 R5-P1: installed plugins use config store, not just process.env ──
+  // ── F234 R5-P1: installed plugins use config store, not just process.env ──
 
   it('R5-P1: installed plugin reads Hub-saved config from config store at bootstrap', async () => {
     // Use isolated temp directory via CAT_CAFE_CONFIG_ROOT to avoid touching real .cat-cafe/
@@ -1563,9 +1563,9 @@ describe('ConnectorGateway Bootstrap', () => {
     }
   });
 
-  // ── F231 R2-P2: external plugin metadata registered even when unconfigured ──
+  // ── F234 R2-P2: external plugin metadata registered even when unconfigured ──
 
-  it('F231 R2-P2: registers external plugin metadata before isConfigured check (bootstrap path)', async () => {
+  it('F234 R2-P2: registers external plugin metadata before isConfigured check (bootstrap path)', async () => {
     // Create a temp external plugin — deliberately NOT set its required env vars
     const pluginPath = join(tmpdir(), `f230-probe-${Date.now()}.mjs`);
     writeFileSync(
@@ -1577,7 +1577,7 @@ describe('ConnectorGateway Bootstrap', () => {
           displayName: 'Test Probe',
           icon: { type: 'png', src: '/test.png' },
           themeColor: '#FF0000',
-          description: 'F231 R2 regression probe',
+          description: 'F234 R2 regression probe',
         },
         requiredEnvKeys: ['TEST_PROBE_SECRET_TOKEN'],
         optionalEnvKeys: [],
