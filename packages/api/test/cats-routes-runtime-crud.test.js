@@ -2660,6 +2660,66 @@ describe('cats routes runtime CRUD', { concurrency: false }, () => {
     assert.equal(listed.mcpSupport, true, 'GET should confirm MCP support implied by patched whitelist');
   });
 
+  it('PATCH /api/cats/:id resets generic ACP MCP support when replacing the whitelist with command-only config', async () => {
+    const projectRoot = createMonorepoProjectRoot();
+    process.env.CAT_TEMPLATE_PATH = join(projectRoot, 'cat-template.json');
+
+    const { createProviderProfile } = await import('./helpers/create-test-account.js');
+    const acpProfile = await createProviderProfile(projectRoot, {
+      displayName: 'Patch ACP Remove Whitelist',
+      authType: 'api_key',
+      protocol: 'openai',
+      apiKey: 'sk-patch-remove-whitelist',
+      models: ['test-model'],
+    });
+
+    const Fastify = (await import('fastify')).default;
+    const { catsRoutes } = await import('../dist/routes/cats.js');
+    const app = Fastify();
+    await app.register(catsRoutes);
+
+    const createRes = await app.inject({
+      method: 'POST',
+      url: '/api/cats',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({
+        catId: 'acp-remove-whitelist',
+        name: 'Patch ACP Remove Whitelist',
+        displayName: 'Patch ACP Remove Whitelist',
+        avatar: '/avatars/default.png',
+        color: { primary: '#0f172a', secondary: '#e2e8f0' },
+        mentionPatterns: ['@acp-remove-whitelist'],
+        roleDescription: 'ACP agent',
+        clientId: 'acp',
+        accountRef: acpProfile.id,
+        defaultModel: 'test-model',
+        acp: {
+          command: 'test-cli',
+          startupArgs: ['--acp'],
+          mcpWhitelist: ['cat-cafe-memory'],
+        },
+      }),
+    });
+    assert.equal(createRes.statusCode, 201, `create failed: ${createRes.body}`);
+    assert.equal(JSON.parse(createRes.body).cat.mcpSupport, true, 'initial whitelist should imply MCP support');
+
+    const commandOnlyAcpConfig = { command: 'test-cli', startupArgs: ['--acp', '--new-command'] };
+    const patchRes = await app.inject({
+      method: 'PATCH',
+      url: '/api/cats/acp-remove-whitelist',
+      headers: { 'content-type': 'application/json', 'x-cat-cafe-user': 'codex' },
+      body: JSON.stringify({ acp: commandOnlyAcpConfig }),
+    });
+    assert.equal(patchRes.statusCode, 200, `patch failed: ${patchRes.body}`);
+    const patched = JSON.parse(patchRes.body);
+    assert.equal(patched.cat.mcpSupport, false, 'removing whitelist should reset generic ACP MCP support');
+    assert.deepEqual(patched.cat.acp, commandOnlyAcpConfig, 'command-only ACP patch should persist');
+
+    const listRes = await app.inject({ method: 'GET', url: '/api/cats' });
+    const listed = JSON.parse(listRes.body).cats.find((cat) => cat.id === 'acp-remove-whitelist');
+    assert.equal(listed.mcpSupport, false, 'GET should confirm removed whitelist leaves generic ACP MCP-off');
+  });
+
   it('PATCH /api/cats/:id clears stale provider when migrating opencode → generic ACP (covers the currentCat.provider != null clear branch)', async () => {
     // F161 R7 P3: the migration/stale path. A clientId=opencode member legitimately carries a
     // provider; migrating it to generic ACP (clientId=acp) must clear that stale provider

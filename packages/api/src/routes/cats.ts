@@ -111,8 +111,8 @@ function resolveGenericAcpMcpSupportForPatch(
   acpConfig: AcpRouteConfig | null | undefined,
   isClientSwitchToGenericAcp: boolean,
 ): boolean | undefined {
-  const inferredMcpSupport = resolveGenericAcpMcpSupport(explicitMcpSupport, acpConfig);
-  if (inferredMcpSupport !== undefined) return inferredMcpSupport;
+  if (explicitMcpSupport !== undefined) return explicitMcpSupport;
+  if (acpConfig !== undefined && acpConfig !== null) return (acpConfig.mcpWhitelist?.length ?? 0) > 0;
   return isClientSwitchToGenericAcp ? false : undefined;
 }
 

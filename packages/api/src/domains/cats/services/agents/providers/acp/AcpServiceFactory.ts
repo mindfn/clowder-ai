@@ -8,7 +8,6 @@ import {
 } from '../../../../../../config/account-resolver.js';
 import { resolveBoundAccountRefForCat } from '../../../../../../config/cat-account-binding.js';
 import type { AcpVariantConfig } from '../../../../../../config/cat-config-loader.js';
-import { findMonorepoRoot } from '../../../../../../utils/monorepo-root.js';
 import { prepareOpenCodeAcpSpawnConfig } from '../opencode-acp-spawn-config.js';
 import { AcpAgentService } from './AcpAgentService.js';
 import { AcpClient } from './AcpClient.js';
@@ -22,6 +21,7 @@ import { tryPrepareAcpProcessEnv } from './acp-spawn-env.js';
 export type AcpPoolRegistry = Map<string, AcpProcessPool>;
 
 export interface CreateAcpServiceForConfigInput {
+  projectRoot: string;
   profileId: string;
   config: CatConfig;
   acpConfig: AcpVariantConfig;
@@ -77,8 +77,12 @@ async function skipAcpProfile(
   return null;
 }
 
-function resolveAcpBootstrap(profileId: string, config: CatConfig, acpConfig: AcpVariantConfig): AcpBootstrapContext {
-  const projectRoot = findMonorepoRoot();
+function resolveAcpBootstrap(
+  projectRoot: string,
+  profileId: string,
+  config: CatConfig,
+  acpConfig: AcpVariantConfig,
+): AcpBootstrapContext {
   const model = config.defaultModel?.trim() || undefined;
   const args = resolveAcpBootstrapArgs(projectRoot, acpConfig.startupArgs, {
     base_model: model,
@@ -222,7 +226,7 @@ async function ensureAcpPool(
 export async function createAcpServiceForConfig(
   input: CreateAcpServiceForConfigInput,
 ): Promise<AcpAgentService | null> {
-  const { profileId, config, acpConfig } = input;
+  const { projectRoot, profileId, config, acpConfig } = input;
   const catId = config.id;
 
   if (acpConfig.transport === 'httpstream' && acpConfig.experimental !== true) {
@@ -234,7 +238,7 @@ export async function createAcpServiceForConfig(
     );
   }
 
-  const bootstrap = resolveAcpBootstrap(profileId, config, acpConfig);
+  const bootstrap = resolveAcpBootstrap(projectRoot, profileId, config, acpConfig);
   const accountContext = resolveAcpAccount(bootstrap.projectRoot, config);
   if (accountContext.accountRef && !accountContext.account) {
     return skipAcpProfile(

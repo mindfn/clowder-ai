@@ -1178,6 +1178,7 @@ async function main(): Promise<void> {
       if (acpConfig) {
         activeAcpProfileIds.add(id);
         const acpService = await createAcpServiceForConfig({
+          projectRoot,
           profileId: id,
           config,
           acpConfig,
