@@ -38,6 +38,41 @@ afterEach(() => {
   syncBuiltinESMExports();
 });
 
+describe('parseOwnerRepoFromGitRemoteUrl', () => {
+  it('parses every git/gh remote URL form to owner/repo (砚砚 2026-06-17 P1)', async () => {
+    const { parseOwnerRepoFromGitRemoteUrl } = await import(
+      '../../dist/infrastructure/harness-eval/publish-verdict/git-worktree-publisher.js'
+    );
+    const cases = [
+      // scp-like SSH (what `git remote get-url origin` returns for github SSH)
+      ['git@github.com:mindfn/clowder-ai.git', 'mindfn/clowder-ai'],
+      ['git@github.com:mindfn/clowder-ai', 'mindfn/clowder-ai'],
+      // ssh:// form
+      ['ssh://git@github.com/zts212653/clowder-ai.git', 'zts212653/clowder-ai'],
+      // https forms (with and without .git, with and without creds)
+      ['https://github.com/mindfn/clowder-ai.git', 'mindfn/clowder-ai'],
+      ['https://github.com/mindfn/clowder-ai', 'mindfn/clowder-ai'],
+      ['https://x-access-token:ghp_abc@github.com/mindfn/clowder-ai.git', 'mindfn/clowder-ai'],
+      // trailing slash tolerance
+      ['https://github.com/mindfn/clowder-ai/', 'mindfn/clowder-ai'],
+      // whitespace (stdout trim defense-in-depth)
+      ['  git@github.com:mindfn/clowder-ai.git\n', 'mindfn/clowder-ai'],
+    ];
+    for (const [input, expected] of cases) {
+      assert.equal(parseOwnerRepoFromGitRemoteUrl(input), expected, `failed for input: ${JSON.stringify(input)}`);
+    }
+  });
+
+  it('throws on URLs that have no owner/repo (defensive)', async () => {
+    const { parseOwnerRepoFromGitRemoteUrl } = await import(
+      '../../dist/infrastructure/harness-eval/publish-verdict/git-worktree-publisher.js'
+    );
+    assert.throws(() => parseOwnerRepoFromGitRemoteUrl(''), /empty git remote url/);
+    assert.throws(() => parseOwnerRepoFromGitRemoteUrl('git@github.com:justrepo'), /cannot derive owner\/repo/);
+    assert.throws(() => parseOwnerRepoFromGitRemoteUrl('https://github.com/onlyowner'), /cannot derive owner\/repo/);
+  });
+});
+
 describe('createGitWorktreePublisher', () => {
   it('cleans up a partially-created local branch when worktree add fails before stage', async (t) => {
     const { repoRoot, remoteRoot } = createRepoWithOrigin();
