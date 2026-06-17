@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../../utils/api-client';
+import { SettingsResourceToggleSwitch } from '../SettingsResourceCard';
 import { SkillIssueDetailDialog } from './SkillIssueDetailDialog';
 import type { SkillIssue } from './skill-issue-view';
 
@@ -20,11 +21,24 @@ interface SkillsDriftBannerProps {
   refreshToken?: number;
   /** Called after a successful sync so parent can refresh the skill list. */
   onResolved?: () => void | Promise<void>;
+  /** Whether the majority of visible skills are currently enabled. */
+  batchEnabled?: boolean;
+  /** Whether a batch toggle operation is in progress. */
+  batchBusy?: boolean;
+  /** Toggle all visible skills. Called with the NEW enabled state. */
+  onBatchToggle?: (enabled: boolean) => void;
 }
 
 const EMPTY_DRIFT: DriftResult = { issues: [], driftHash: '' };
 
-export function SkillsDriftBanner({ projectPath, refreshToken = 0, onResolved }: SkillsDriftBannerProps) {
+export function SkillsDriftBanner({
+  projectPath,
+  refreshToken = 0,
+  onResolved,
+  batchEnabled,
+  batchBusy,
+  onBatchToggle,
+}: SkillsDriftBannerProps) {
   const [drift, setDrift] = useState<DriftResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -90,11 +104,30 @@ export function SkillsDriftBanner({ projectPath, refreshToken = 0, onResolved }:
   const current = drift ?? EMPTY_DRIFT;
   const issues = current.issues ?? [];
 
+  const batchToggleEl = onBatchToggle ? (
+    <SettingsResourceToggleSwitch
+      enabled={!!batchEnabled}
+      busy={!!batchBusy}
+      onClick={() => onBatchToggle(!batchEnabled)}
+      title={batchEnabled ? '批量禁用当前筛选的 Skill' : '批量启用当前筛选的 Skill'}
+    />
+  ) : null;
+
   if (loading && !drift && issues.length === 0) {
-    return <p className="text-xs text-cafe-muted">Skill 异常检测中…</p>;
+    return (
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-cafe-muted">Skill 异常检测中…</p>
+        {batchToggleEl}
+      </div>
+    );
   }
   if (issues.length === 0) {
-    return <p className="text-xs text-cafe-muted">✓ Skill 与源池完全同步</p>;
+    return (
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-cafe-muted">✓ Skill 与源池完全同步</p>
+        {batchToggleEl}
+      </div>
+    );
   }
 
   return (
@@ -108,6 +141,7 @@ export function SkillsDriftBanner({ projectPath, refreshToken = 0, onResolved }:
         >
           查看详情
         </button>
+        <div className="ml-auto">{batchToggleEl}</div>
       </div>
 
       {error && <p className="mt-1 text-xs text-conn-red-text">⚠ {error}</p>}
