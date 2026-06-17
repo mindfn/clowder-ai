@@ -146,13 +146,13 @@ export {
   perspectiveTools,
   runPerspectiveInputSchema,
 } from './perspective-tools.js';
-// F192 Phase H AC-H4: cat_cafe_publish_verdict tool
-export { handlePublishVerdict, publishVerdictInputSchema, publishVerdictTools } from './publish-verdict-tool.js';
 export {
   buildCredentialsFromEnv,
   buildProviderFromEnv,
   createProtocolTools,
 } from './protocol-tools.js';
+// F192 Phase H AC-H4: cat_cafe_publish_verdict tool
+export { handlePublishVerdict, publishVerdictInputSchema, publishVerdictTools } from './publish-verdict-tool.js';
 export {
   handleListRecent,
   listRecentInputSchema,
