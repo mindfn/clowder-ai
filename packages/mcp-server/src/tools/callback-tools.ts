@@ -179,8 +179,12 @@ export async function callbackPost(
     enableOutbox?: boolean;
     agentKeyCatId?: string;
     forceAgentKey?: boolean;
-    retryDelaysMs?: number[];
+    // 砚砚 2026-06-17 P1: per-call overrides for long, side-effectful routes
+    // (cat_cafe_publish_verdict). fetchTimeoutMs widens the per-attempt abort
+    // bound; retryDelaysMs=[] disables auto-retry so the route is not POSTed
+    // concurrently (overlapping publishes race on the same branch).
     fetchTimeoutMs?: number;
+    retryDelaysMs?: number[];
   },
 ): Promise<ToolResult> {
   const config = getCallbackConfig({
@@ -198,8 +202,8 @@ export async function callbackPost(
     },
     {
       enableOutbox: options?.enableOutbox === true,
-      retryDelaysMs: options?.retryDelaysMs,
-      fetchTimeoutMs: options?.fetchTimeoutMs,
+      ...(options?.fetchTimeoutMs !== undefined ? { fetchTimeoutMs: options.fetchTimeoutMs } : {}),
+      ...(options?.retryDelaysMs !== undefined ? { retryDelaysMs: options.retryDelaysMs } : {}),
     },
   );
   if (result.ok) return successResult(JSON.stringify(result.data));
