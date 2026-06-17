@@ -521,6 +521,65 @@ describe('AcpHttpStreamClient', () => {
     );
   });
 
+  it('sends session/cancel before aborting prompt streams on turn budget timeout', async () => {
+    let resolveCancelSeen;
+    const cancelSeen = new Promise((resolve) => {
+      resolveCancelSeen = resolve;
+    });
+
+    server = await startJsonRpcServer((message, res) => {
+      if (message.method === 'initialize') {
+        return { jsonrpc: '2.0', id: message.id, result: INIT_RESULT };
+      }
+      if (message.method === 'session/new') {
+        return { jsonrpc: '2.0', id: message.id, result: { sessionId: 'http-session' } };
+      }
+      if (message.method === 'session/prompt') {
+        res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+        return undefined;
+      }
+      if (message.method === 'session/cancel') {
+        resolveCancelSeen(message);
+        res.writeHead(204);
+        res.end();
+        return undefined;
+      }
+      return { jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'not found' } };
+    });
+    const { child, agentStdout } = createMockChild();
+    const port = serverPort(server);
+
+    client = new AcpHttpStreamClient({
+      command: 'fake-http-acp',
+      args: [],
+      cwd: '/tmp',
+      spawnFn: () => {
+        setImmediate(() => agentStdout.write(`Listening on port ${port}\n`));
+        return child;
+      },
+      portDiscoveryTimeoutMs: 500,
+    });
+
+    await client.initialize();
+    const session = await client.newSession();
+
+    let caught = null;
+    try {
+      for await (const _event of client.promptStream(session.sessionId, 'hello', { timeoutMs: 100 })) {
+        // no-op
+      }
+    } catch (err) {
+      caught = err;
+    }
+
+    assert.ok(caught, 'Expected prompt stream to reject on turn budget timeout');
+    assert.match(caught.message, /ACP timeout: session\/prompt did not respond within 100ms/);
+
+    const cancelMessage = await withTimeout(cancelSeen, 300, 'session/cancel was not sent before timeout abort');
+    assert.equal(cancelMessage.method, 'session/cancel');
+    assert.deepEqual(cancelMessage.params, { sessionId: session.sessionId });
+  });
+
   it('injects capacity signals into zero-event prompt streams', async () => {
     let promptResponse = null;
     let promptRequestId = null;

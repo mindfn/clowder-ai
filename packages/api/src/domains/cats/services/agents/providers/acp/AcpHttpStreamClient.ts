@@ -247,6 +247,7 @@ export class AcpHttpStreamClient {
       budgetTimer = setTimeout(() => {
         if (done) return;
         log.error({ sessionId, eventCount, timeoutMs }, 'HTTP turn budget exceeded');
+        this.cancelSession(sessionId);
         controller.abort();
         promptError = new AcpTimeoutError('session/prompt', timeoutMs);
         done = true;
@@ -322,6 +323,7 @@ export class AcpHttpStreamClient {
           scheduleIdleCheck();
         } else if (!pendingTool) {
           log.error({ sessionId, idleSinceMs, eventCount }, 'HTTP stream idle stall — terminating');
+          this.cancelSession(sessionId);
           controller.abort();
           promptError = new AcpStreamIdleError(sessionId, idleSinceMs, eventCount);
           done = true;
