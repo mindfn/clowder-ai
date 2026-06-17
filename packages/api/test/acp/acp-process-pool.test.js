@@ -60,6 +60,12 @@ const defaultVariantConfig = {
   supportsMultiplexing: true,
 };
 
+const nonMultiplexedVariantConfig = {
+  command: 'single-flight-agent',
+  startupArgs: ['--acp'],
+  supportsMultiplexing: false,
+};
+
 const key1 = { projectPath: '/tmp/a', providerProfile: 'gemini-default' };
 const key2 = { projectPath: '/tmp/b', providerProfile: 'gemini-default' };
 const key3 = { projectPath: '/tmp/c', providerProfile: 'gemini-default' };
@@ -140,6 +146,39 @@ describe('AcpProcessPool', () => {
       assert.notStrictEqual(lease1.client, lease2.client);
       assert.strictEqual(pool.getMetrics().coldStartCount, 2);
       lease1.release();
+      lease2.release();
+    });
+
+    test('non-multiplexed carriers do not share an active warm process for the same key', async () => {
+      const { AcpProcessPool } = await import(
+        '../../dist/domains/cats/services/agents/providers/acp/AcpProcessPool.js'
+      );
+      pool = new AcpProcessPool(defaultPoolConfig, nonMultiplexedVariantConfig, createMockClient);
+
+      const lease1 = await pool.acquire(key1);
+      const lease2 = await pool.acquire(key1);
+
+      assert.notStrictEqual(lease1.client, lease2.client);
+      assert.strictEqual(pool.getMetrics().liveProcessCount, 2);
+      assert.strictEqual(pool.getMetrics().coldStartCount, 2);
+
+      lease1.release();
+      lease2.release();
+    });
+
+    test('non-multiplexed carriers still reuse idle processes for later turns', async () => {
+      const { AcpProcessPool } = await import(
+        '../../dist/domains/cats/services/agents/providers/acp/AcpProcessPool.js'
+      );
+      pool = new AcpProcessPool(defaultPoolConfig, nonMultiplexedVariantConfig, createMockClient);
+
+      const lease1 = await pool.acquire(key1);
+      const client = lease1.client;
+      lease1.release();
+
+      const lease2 = await pool.acquire(key1);
+      assert.strictEqual(lease2.client, client);
+      assert.strictEqual(pool.getMetrics().liveProcessCount, 1);
       lease2.release();
     });
 
@@ -343,6 +382,26 @@ describe('AcpProcessPool', () => {
       assert.strictEqual(m.liveProcessCount, 1, 'should only have 1 process');
       assert.strictEqual(m.coldStartCount, 1, 'should only cold start once');
       assert.strictEqual(l1.client, l2.client, 'should share same client');
+      l1.release();
+      l2.release();
+    });
+
+    test('concurrent acquire for non-multiplexed same key starts separate processes', async () => {
+      const { AcpProcessPool } = await import(
+        '../../dist/domains/cats/services/agents/providers/acp/AcpProcessPool.js'
+      );
+      pool = new AcpProcessPool(
+        { ...defaultPoolConfig, maxLiveProcesses: 2, healthCheckIntervalMs: 999_999 },
+        nonMultiplexedVariantConfig,
+        createMockClient,
+      );
+
+      const [l1, l2] = await Promise.all([pool.acquire(key1), pool.acquire(key1)]);
+
+      assert.notStrictEqual(l1.client, l2.client);
+      assert.strictEqual(pool.getMetrics().liveProcessCount, 2);
+      assert.strictEqual(pool.getMetrics().coldStartCount, 2);
+
       l1.release();
       l2.release();
     });

@@ -57,6 +57,10 @@ export type AcpClientFactory = () => AcpPoolClient; // eslint-disable-line @type
 
 // ── Internal ──────────────────────────────────────────────────
 
+interface AcpPoolVariantConfig {
+  supportsMultiplexing?: boolean;
+}
+
 interface PoolEntry {
   client: AcpPoolClient;
   leaseCount: number;
@@ -69,10 +73,16 @@ function serializeKey(key: PoolKey): string {
   return `${key.projectPath}::${key.providerProfile}`;
 }
 
+function resolveSupportsMultiplexing(variantConfig: unknown): boolean {
+  if (!variantConfig || typeof variantConfig !== 'object') return false;
+  return (variantConfig as AcpPoolVariantConfig).supportsMultiplexing === true;
+}
+
 // ── Pool ──────────────────────────────────────────────────────
 
 export class AcpProcessPool {
   private readonly config: AcpPoolConfig;
+  private readonly supportsMultiplexing: boolean;
   private readonly entries = new Map<string, PoolEntry[]>();
   private readonly clientFactory: AcpClientFactory;
   private readonly pendingSpawns = new Map<string, Promise<PoolEntry>>();
@@ -91,7 +101,7 @@ export class AcpProcessPool {
 
   constructor(
     config: Partial<AcpPoolConfig> & Pick<AcpPoolConfig, 'maxLiveProcesses'>,
-    _variantConfig: unknown,
+    variantConfig: unknown,
     clientFactory: AcpClientFactory,
   ) {
     this.config = {
@@ -100,6 +110,7 @@ export class AcpProcessPool {
       evictionPolicy: config.evictionPolicy ?? 'lru',
       healthCheckIntervalMs: config.healthCheckIntervalMs ?? 30_000,
     };
+    this.supportsMultiplexing = resolveSupportsMultiplexing(variantConfig);
     this.clientFactory = clientFactory;
     this.startHealthCheck();
   }
@@ -112,8 +123,10 @@ export class AcpProcessPool {
     const key = serializeKey(poolKey);
     const entries = this.entries.get(key) ?? [];
 
-    // 1. Try warm reuse (multiplexing: any ready entry)
-    const warm = entries.find((e) => e.state === 'ready' && e.client.isAlive);
+    // 1. Try warm reuse. Single-flight carriers may reuse only idle processes.
+    const warm = entries.find(
+      (e) => e.state === 'ready' && e.client.isAlive && (this.supportsMultiplexing || e.leaseCount === 0),
+    );
     if (warm) {
       if (warm.leaseCount === 0) {
         this._metrics.idleProcessCount--;
@@ -126,15 +139,17 @@ export class AcpProcessPool {
       return this.createLease(warm, poolKey);
     }
 
-    // 2. Coalesce with in-flight spawn for same key (prevents concurrent duplicate cold starts)
-    const pending = this.pendingSpawns.get(key);
-    if (pending) {
-      const entry = await pending;
-      entry.leaseCount++;
-      entry.lastUsedAt = Date.now();
-      this._metrics.activeLeaseCount++;
-      this._metrics.warmHitCount++;
-      return this.createLease(entry, poolKey);
+    // 2. Coalesce in-flight spawns only for carriers that permit concurrent prompts.
+    if (this.supportsMultiplexing) {
+      const pending = this.pendingSpawns.get(key);
+      if (pending) {
+        const entry = await pending;
+        entry.leaseCount++;
+        entry.lastUsedAt = Date.now();
+        this._metrics.activeLeaseCount++;
+        this._metrics.warmHitCount++;
+        return this.createLease(entry, poolKey);
+      }
     }
 
     // 3. Cold start — check capacity, reject if full and nothing to evict
@@ -147,8 +162,8 @@ export class AcpProcessPool {
     // 4. Reserve slot atomically (sync) before async spawn
     this._metrics.liveProcessCount++;
 
-    const spawnPromise = this.doSpawn(poolKey, key);
-    this.pendingSpawns.set(key, spawnPromise);
+    const spawnPromise = this.doSpawn(poolKey, key, this.supportsMultiplexing ? key : undefined);
+    if (this.supportsMultiplexing) this.pendingSpawns.set(key, spawnPromise);
 
     const entry = await spawnPromise;
     entry.leaseCount++;
@@ -156,7 +171,7 @@ export class AcpProcessPool {
     return this.createLease(entry, poolKey);
   }
 
-  private async doSpawn(poolKey: PoolKey, key: string): Promise<PoolEntry> {
+  private async doSpawn(poolKey: PoolKey, key: string, pendingKey?: string): Promise<PoolEntry> {
     try {
       const entry = await this.spawnEntry(poolKey);
       if (!this.entries.has(key)) this.entries.set(key, []);
@@ -167,7 +182,7 @@ export class AcpProcessPool {
       this._metrics.liveProcessCount--; // release reservation on failure
       throw err;
     } finally {
-      this.pendingSpawns.delete(key);
+      if (pendingKey) this.pendingSpawns.delete(pendingKey);
     }
   }
 
