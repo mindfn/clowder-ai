@@ -1,6 +1,7 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isOperationField, isValueField, type ValueConfigField } from '@cat-cafe/shared';
+import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { configEventBus, createChangeSetId } from '../config/config-event-bus.js';
 import { applyConnectorSecretUpdates } from '../config/connector-secret-updater.js';
@@ -60,6 +61,8 @@ export interface ConnectorHubRoutesOptions {
   getWeComBotAdapter?: () => WeComBotAdapter | null;
   /** F134 Phase D: Permission store for group whitelist + admin management */
   permissionStore?: IConnectorPermissionStore | null;
+  /** Shared Redis dependency for external connector action handlers. */
+  redis?: RedisClient | undefined;
   envFilePath?: string;
   feishuQrBindClient?: FeishuQrBindClient;
 
@@ -1093,7 +1096,7 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
       actionId,
       manifest,
       plugin,
-      pluginCtx: { env: { ...resolvedEnv, ...pendingActionValues }, log: app.log },
+      pluginCtx: { env: { ...resolvedEnv, ...pendingActionValues }, log: app.log, redis: opts.redis },
       adapter,
     });
 

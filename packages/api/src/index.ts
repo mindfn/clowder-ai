@@ -1898,7 +1898,7 @@ async function main(): Promise<void> {
     evidenceStore: memoryServices?.evidenceStore,
     messageStore,
   });
-  const connectorHubOpts: Parameters<typeof connectorHubRoutes>[1] = { threadStore };
+  const connectorHubOpts: Parameters<typeof connectorHubRoutes>[1] = { threadStore, redis: redisClient ?? undefined };
   await app.register(connectorHubRoutes, connectorHubOpts);
   await app.register(connectorPluginRoutes);
   await app.register(brakeRoutes, { activityTracker });

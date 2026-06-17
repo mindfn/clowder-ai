@@ -1120,6 +1120,107 @@ describe('ConnectorGateway Bootstrap', () => {
     }
   });
 
+  it('keeps external configured metadata in sync across dynamic activate and deactivate', async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'activation-configured-meta-'));
+    const pluginId = 'activation-configured-meta-probe';
+    const pluginDir = join(resolvePluginsDir(tempRoot), pluginId);
+    const configDir = join(tempRoot, '.cat-cafe', 'im-connector-config');
+    let handle;
+
+    mkdirSync(pluginDir, { recursive: true });
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: Activation Configured Meta Probe',
+        'nameEn: Activation Configured Meta Probe',
+        'version: 1.0.0',
+        'source: external',
+        'icon:',
+        '  type: png',
+        '  src: /test.png',
+        "themeColor: '#336699'",
+        'docsUrl: https://example.com/activation-configured-meta-probe',
+        'config:',
+        '  - envName: ACTIVATION_CONFIGURED_META_TOKEN',
+        '    label: Token',
+        '    sensitive: true',
+        '    required: true',
+        'steps:',
+        '  - text: test',
+      ].join('\n'),
+    );
+    writeFileSync(
+      join(pluginDir, 'index.js'),
+      `export default {
+        id: '${pluginId}',
+        definition: {
+          id: '${pluginId}',
+          displayName: 'Activation Configured Meta Probe',
+          icon: { type: 'png', src: '/test.png' },
+          themeColor: '#336699',
+          description: 'configured metadata dynamic lifecycle regression probe',
+        },
+        requiredEnvKeys: ['ACTIVATION_CONFIGURED_META_TOKEN'],
+        optionalEnvKeys: [],
+        isConfigured(env) { return Boolean(env.ACTIVATION_CONFIGURED_META_TOKEN); },
+        createAdapter() { return { id: '${pluginId}', sendMessage() {} }; },
+      };`,
+    );
+
+    const savedConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    const savedToken = process.env.ACTIVATION_CONFIGURED_META_TOKEN;
+    process.env.CAT_CAFE_CONFIG_ROOT = tempRoot;
+    delete process.env.ACTIVATION_CONFIGURED_META_TOKEN;
+
+    try {
+      clearExternalConnectorRegistry();
+      clearConnectorConfigCache();
+      handle = await startConnectorGateway({}, baseDeps);
+      assert.equal(
+        getAllExternalConnectorMeta().find((meta) => meta.id === pluginId)?.configured,
+        false,
+        'unconfigured external plugin should start with configured=false metadata',
+      );
+
+      writeFileSync(
+        join(configDir, `${pluginId}.json`),
+        JSON.stringify({ ACTIVATION_CONFIGURED_META_TOKEN: 'saved-token' }),
+      );
+      await handle.activateConnector(pluginId);
+      assert.equal(
+        getAllExternalConnectorMeta().find((meta) => meta.id === pluginId)?.configured,
+        true,
+        'successful dynamic activation must refresh external configured metadata',
+      );
+
+      writeFileSync(join(configDir, `${pluginId}.json`), JSON.stringify({ ACTIVATION_CONFIGURED_META_TOKEN: null }));
+      await handle.deactivateConnector(pluginId);
+      assert.equal(
+        getAllExternalConnectorMeta().find((meta) => meta.id === pluginId)?.configured,
+        false,
+        'dynamic deactivation after credential clear must refresh external configured metadata',
+      );
+    } finally {
+      if (handle) await handle.stop();
+      if (savedConfigRoot === undefined) {
+        delete process.env.CAT_CAFE_CONFIG_ROOT;
+      } else {
+        process.env.CAT_CAFE_CONFIG_ROOT = savedConfigRoot;
+      }
+      if (savedToken === undefined) {
+        delete process.env.ACTIVATION_CONFIGURED_META_TOKEN;
+      } else {
+        process.env.ACTIVATION_CONFIGURED_META_TOKEN = savedToken;
+      }
+      unregisterConnectorDefinition(pluginId);
+      clearExternalConnectorRegistry();
+      clearConnectorConfigCache();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it('normalizes installed external plugin icon definitions before registry and routing', async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), 'external-icon-normalization-'));
     const pluginId = 'icon-normalization-probe';

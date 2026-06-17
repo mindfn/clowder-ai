@@ -506,6 +506,17 @@ export async function startConnectorGateway(
   const configEnv = configToEnvMap(config);
   const builtinIds = new Set(builtinPlugins.map((p) => p.id));
 
+  function refreshExternalConfiguredStatus(connectorId: string): void {
+    if (isStaticConnectorId(connectorId)) return;
+    const plugin = plugins.get(connectorId);
+    const manifest = manifests.get(connectorId);
+    if (!plugin || !manifest) return;
+    clearConnectorConfigCache();
+    loadAllConnectorConfigs(projectRoot, [...manifests.values()]);
+    const freshEnv = resolveConnectorEnv(connectorId, manifest.config.filter(isValueField));
+    updateExternalConnectorConfigured(connectorId, plugin.isConfigured(freshEnv));
+  }
+
   // Reject installed plugins that conflict with built-in IDs or each other
   const seenExternalIds = new Set<string>();
   const externalPlugins = installedPlugins.filter((ext) => {
@@ -939,6 +950,7 @@ export async function startConnectorGateway(
 
     // Already has a live adapter — skip (may need restart logic later)
     if (adapters.has(connectorId)) {
+      if (!isStaticConnectorId(connectorId)) updateExternalConnectorConfigured(connectorId, true);
       log.info({ id: connectorId }, '[ConnectorGateway] Connector already active — skipping activation');
       return;
     }
@@ -999,6 +1011,7 @@ export async function startConnectorGateway(
       connectorStopFns.set(connectorId, stopInbound);
     }
     if (localMediaDownloadFn) mediaService.registerDownloadFn(connectorId, localMediaDownloadFn);
+    if (!isStaticConnectorId(connectorId)) updateExternalConnectorConfigured(connectorId, true);
 
     log.info(
       { id: connectorId },
@@ -1035,6 +1048,7 @@ export async function startConnectorGateway(
     streamableAdapters.delete(connectorId);
     webhookHandlers.delete(connectorId);
     mediaService.unregisterDownloadFn(connectorId);
+    refreshExternalConfiguredStatus(connectorId);
 
     log.info({ id: connectorId }, '[ConnectorGateway] Connector deactivated');
   }

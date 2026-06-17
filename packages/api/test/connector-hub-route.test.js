@@ -1917,6 +1917,114 @@ describe('POST /api/connectors/:connectorId/actions — pending config values', 
     }
   });
 
+  it('passes Redis to connector action handlers', async () => {
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'external-action-redis-ctx-'));
+    const pluginId = 'redis-action-context-probe';
+    const pluginDir = join(tmpDir, '.cat-cafe', 'plugins', pluginId);
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: Redis Action Context Probe',
+        'nameEn: Redis Action Context Probe',
+        'version: 1.0.0',
+        'source: external',
+        "themeColor: '#336699'",
+        'icon:',
+        '  type: png',
+        '  src: /test.png',
+        'docsUrl: https://example.com/redis-action-context-probe',
+        'config:',
+        '  - envName: REDIS_ACTION_TOKEN',
+        '    type: input',
+        '    label: Token',
+        '    sensitive: true',
+        '    required: false',
+        '  - name: connect',
+        '    type: operation',
+        '    label: Connect',
+        '    actions:',
+        '      - id: validate',
+        '        label: Validate',
+        '        render: button',
+        'steps:',
+        '  - text: Validate',
+      ].join('\n'),
+    );
+
+    const redis = {
+      async get() {
+        return 'cached-token';
+      },
+    };
+    let seenRedis;
+    const plugin = {
+      id: pluginId,
+      definition: {
+        id: pluginId,
+        displayName: 'Redis Action Context Probe',
+        icon: { type: 'png', src: '/test.png' },
+        themeColor: '#336699',
+        description: 'redis action context regression',
+      },
+      requiredEnvKeys: [],
+      isConfigured: () => true,
+      createAdapter: () => ({ id: pluginId, sendMessage() {} }),
+      async handleAction(_operationName, _actionId, ctx) {
+        seenRedis = ctx.redis;
+        return {
+          render: 'status',
+          data: { status: await ctx.redis?.get('probe-key') },
+          label: 'Redis checked',
+          advance: false,
+        };
+      },
+    };
+
+    const previousRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    process.env.CAT_CAFE_CONFIG_ROOT = tmpDir;
+    invalidateManifestCache();
+    clearConnectorConfigCache();
+
+    try {
+      const app = Fastify();
+      await registerConnectorHub(app, {
+        threadStore: {
+          async list() {
+            return [];
+          },
+        },
+        pluginRegistry: new Map([[pluginId, plugin]]),
+        redis,
+      });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/connectors/${pluginId}/actions/connect/validate`,
+        headers: {
+          ...AUTH_HEADERS,
+          host: '127.0.0.1:3002',
+          origin: 'http://127.0.0.1:3001',
+        },
+      });
+      const body = JSON.parse(res.body);
+
+      assert.equal(res.statusCode, 200, res.body);
+      assert.strictEqual(seenRedis, redis, 'action ctx must receive the gateway Redis dependency');
+      assert.equal(body.data.status, 'cached-token');
+
+      await app.close();
+    } finally {
+      if (previousRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousRoot;
+      invalidateManifestCache();
+      clearConnectorConfigCache();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects redacted pending values before action handlers run', async () => {
     const tmpDir = mkdtempSync(join(os.tmpdir(), 'external-action-redacted-values-'));
     const pluginId = 'redacted-action-values-probe';
