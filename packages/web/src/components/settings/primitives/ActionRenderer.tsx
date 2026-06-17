@@ -53,6 +53,25 @@ function phaseForAction(
   return 'idle';
 }
 
+function deriveActionState(
+  operation: PlatformOperationStatus,
+  actions: PlatformActionDef[],
+  configured: boolean | undefined,
+  disconnectId: string | undefined,
+  firstActionId: string | undefined,
+): { currentActionId: string | undefined; lastResult: ResultState | undefined; phase: ActionPhase } {
+  const currentActionId = operation.currentAction ?? (configured ? disconnectId : undefined) ?? firstActionId;
+  if (!operation.currentAction && configured && disconnectId) {
+    return { currentActionId, lastResult: operation.lastResult, phase: 'connected' };
+  }
+  const initial = phaseForAction(operation.currentAction, actions, disconnectId);
+  return {
+    currentActionId,
+    lastResult: operation.lastResult,
+    phase: initial === 'idle' && operation.lastResult ? 'result' : initial,
+  };
+}
+
 /** Classify a poll response into retry / continue / done with parsed state. */
 type PollVerdict =
   | { outcome: 'retry' }
@@ -80,19 +99,16 @@ export function ActionRenderer({
   const firstAction = actions[0];
   const disconnectAction = actions.find((a) => a.id === 'disconnect' || a.next === firstAction?.id);
   const disconnectId = disconnectAction?.id;
-  const initialActionId = operation.currentAction ?? (configured ? disconnectId : undefined) ?? firstAction?.id;
+  const initialState = deriveActionState(operation, actions, configured, disconnectId, firstAction?.id);
 
-  const [phase, setPhase] = useState<ActionPhase>(() => {
-    if (!operation.currentAction && configured && disconnectId) return 'connected';
-    const initial = phaseForAction(operation.currentAction, actions, disconnectId);
-    return initial === 'idle' && operation.lastResult ? 'result' : initial;
-  });
-  const [lastResult, setLastResult] = useState<ResultState | undefined>(operation.lastResult);
-  const [currentActionId, setCurrentActionId] = useState(initialActionId);
+  const [phase, setPhase] = useState<ActionPhase>(() => initialState.phase);
+  const [lastResult, setLastResult] = useState<ResultState | undefined>(() => initialState.lastResult);
+  const [currentActionId, setCurrentActionId] = useState(() => initialState.currentActionId);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const expireRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortedRef = useRef(false);
+  const autoStartedRef = useRef(false);
 
   const stopTimers = useCallback(() => {
     if (pollRef.current) {
@@ -107,7 +123,15 @@ export function ActionRenderer({
 
   useEffect(() => () => stopTimers(), [stopTimers]);
 
-  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    const nextState = deriveActionState(operation, actions, configured, disconnectId, firstAction?.id);
+    stopTimers();
+    autoStartedRef.current = false;
+    setCurrentActionId(nextState.currentActionId);
+    setLastResult(nextState.lastResult);
+    setPhase(nextState.phase);
+    setErrorMsg(null);
+  }, [actions, configured, disconnectId, firstAction?.id, operation, stopTimers]);
 
   const executeAction = useCallback(
     async (actionId: string): Promise<ActionApiResult | null> => {

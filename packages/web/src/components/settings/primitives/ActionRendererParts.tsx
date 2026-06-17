@@ -101,6 +101,10 @@ export function ActionPanelBody({
   const isButtonAction = currentAction?.render === 'button';
   const canTrigger = phase === 'idle' || phase === 'error' || phase === 'result';
   const imgData = lastResult?.render === 'img' ? (lastResult.data as { url?: string }) : null;
+  const statusLabel =
+    phase === 'result' && lastResult?.render === 'status'
+      ? (lastResult.label ?? (typeof lastResult.data === 'string' ? lastResult.data : null))
+      : null;
 
   return (
     <div className="space-y-3" data-testid={`${connectorId}-action-panel`}>
@@ -127,6 +131,16 @@ export function ActionPanelBody({
         <div className="flex items-center gap-2 text-cafe-secondary text-sm">
           <SpinnerIcon />
           <span>{currentAction?.label ?? 'Processing...'}...</span>
+        </div>
+      )}
+
+      {statusLabel && (
+        <div
+          className="flex items-center gap-2 rounded-lg border border-conn-green-ring bg-conn-green-bg px-3 py-2 text-sm font-medium text-conn-green-text"
+          data-testid={`${connectorId}-status-result`}
+        >
+          <CheckCircleIcon />
+          <span>{statusLabel}</span>
         </div>
       )}
 

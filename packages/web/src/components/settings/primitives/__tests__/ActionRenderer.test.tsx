@@ -195,6 +195,73 @@ describe('ActionRenderer', () => {
     });
   });
 
+  it('syncs action phase when refreshed connector status becomes unconfigured', async () => {
+    const operation = {
+      name: 'connect',
+      label: 'Connect',
+      actions: [
+        { id: 'start', label: 'Connect Feishu', render: 'button', next: 'disconnect' },
+        { id: 'disconnect', label: 'Disconnect', render: 'button', next: 'start' },
+      ],
+    };
+
+    await act(async () => {
+      root.render(
+        React.createElement(ActionRenderer, {
+          connectorId: 'feishu',
+          configured: true,
+          operation,
+        }),
+      );
+    });
+    await flushEffects();
+
+    expect(container.querySelector('[data-testid="feishu-connected"]')).not.toBeNull();
+
+    await act(async () => {
+      root.render(
+        React.createElement(ActionRenderer, {
+          connectorId: 'feishu',
+          configured: false,
+          operation: { ...operation, currentAction: 'start' },
+        }),
+      );
+    });
+    await flushEffects();
+
+    expect(container.querySelector('[data-testid="feishu-connected"]')).toBeNull();
+    expect(container.querySelector('[data-testid="feishu-action-start"]')).not.toBeNull();
+  });
+
+  it('renders terminal status results from one-shot actions', async () => {
+    mockApiFetch.mockResolvedValue(jsonResponse({ ok: true, render: 'status', label: 'Validation complete' }));
+
+    await act(async () => {
+      root.render(
+        React.createElement(ActionRenderer, {
+          connectorId: 'custom-im',
+          operation: {
+            name: 'setup',
+            label: 'Setup',
+            currentAction: 'validate',
+            actions: [{ id: 'validate', label: 'Validate', render: 'button' }],
+          },
+        }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      queryButton(container, 'Validate').click();
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    expect(container.querySelector('[data-testid="custom-im-status-result"]')?.textContent).toContain(
+      'Validation complete',
+    );
+  });
+
   it('renders a generic QR action and displays the returned QR image', async () => {
     mockApiFetch
       .mockResolvedValueOnce(
