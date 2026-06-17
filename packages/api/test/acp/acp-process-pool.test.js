@@ -191,6 +191,31 @@ describe('AcpProcessPool', () => {
       lease2.release();
     });
 
+    test('session affinity leases the client that owns a resumed session', async () => {
+      const { AcpProcessPool } = await import(
+        '../../dist/domains/cats/services/agents/providers/acp/AcpProcessPool.js'
+      );
+      pool = new AcpProcessPool(defaultPoolConfig, nonMultiplexedVariantConfig, createMockClient);
+
+      const lease1 = await pool.acquire(key1);
+      const firstClient = lease1.client;
+      const lease2 = await pool.acquire(key1);
+      const secondClient = lease2.client;
+      pool.rememberSession(key1, 'sess-on-second-client', lease2);
+
+      lease1.release();
+      lease2.release();
+
+      const resumeLease = await pool.acquire(key1, { sessionId: 'sess-on-second-client' });
+      assert.strictEqual(
+        resumeLease.client,
+        secondClient,
+        'resume must lease the remembered session owner, not the first idle warm client',
+      );
+      assert.notStrictEqual(resumeLease.client, firstClient);
+      resumeLease.release();
+    });
+
     test('double release is safe (no-op)', async () => {
       const { AcpProcessPool } = await import(
         '../../dist/domains/cats/services/agents/providers/acp/AcpProcessPool.js'

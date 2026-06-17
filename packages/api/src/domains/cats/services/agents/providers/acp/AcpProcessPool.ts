@@ -44,6 +44,11 @@ export interface AcpLease {
   release(): void;
 }
 
+export interface AcpAcquireOptions {
+  /** Existing ACP session id that should resume on the client that owns it. */
+  sessionId?: string;
+}
+
 /** Minimal AcpClient interface needed by the pool. */
 export interface AcpPoolClient {
   readonly isAlive: boolean;
@@ -73,6 +78,10 @@ function serializeKey(key: PoolKey): string {
   return `${key.projectPath}::${key.providerProfile}`;
 }
 
+function serializeSessionKey(key: PoolKey, sessionId: string): string {
+  return `${serializeKey(key)}::${sessionId}`;
+}
+
 function resolveSupportsMultiplexing(variantConfig: unknown): boolean {
   if (!variantConfig || typeof variantConfig !== 'object') return false;
   return (variantConfig as AcpPoolVariantConfig).supportsMultiplexing === true;
@@ -85,6 +94,7 @@ export class AcpProcessPool {
   private readonly config: AcpPoolConfig;
   private readonly supportsMultiplexing: boolean;
   private readonly entries = new Map<string, PoolEntry[]>();
+  private readonly sessionOwners = new Map<string, PoolEntry>();
   private readonly clientFactory: AcpClientFactory;
   private readonly pendingSpawns = new Map<string, Promise<PoolEntry>>();
   private healthTimer: ReturnType<typeof setInterval> | null = null;
@@ -120,26 +130,31 @@ export class AcpProcessPool {
 
   // ── Public API ──────────────────────────────────────────────
 
-  async acquire(poolKey: PoolKey): Promise<AcpLease> {
+  async acquire(poolKey: PoolKey, options: AcpAcquireOptions = {}): Promise<AcpLease> {
     if (this.closed) throw new Error('Pool is closed');
 
     const key = serializeKey(poolKey);
     const entries = this.entries.get(key) ?? [];
+    const sessionId = options.sessionId?.trim();
+
+    if (sessionId) {
+      const sessionKey = serializeSessionKey(poolKey, sessionId);
+      const owner = this.sessionOwners.get(sessionKey);
+      if (owner && owner.state === 'ready' && owner.client.isAlive) {
+        if (this.supportsMultiplexing || owner.leaseCount === 0) {
+          return this.leaseReadyEntry(owner, poolKey);
+        }
+        throw new Error(`ACP session ${sessionId} is already active on its owning process`);
+      }
+      if (owner) this.sessionOwners.delete(sessionKey);
+    }
 
     // 1. Try warm reuse. Single-flight carriers may reuse only idle processes.
     const warm = entries.find(
       (e) => e.state === 'ready' && e.client.isAlive && (this.supportsMultiplexing || e.leaseCount === 0),
     );
     if (warm) {
-      if (warm.leaseCount === 0) {
-        this._metrics.idleProcessCount--;
-      }
-      this.clearIdleTimer(warm);
-      warm.leaseCount++;
-      warm.lastUsedAt = Date.now();
-      this._metrics.activeLeaseCount++;
-      this._metrics.warmHitCount++;
-      return this.createLease(warm, poolKey);
+      return this.leaseReadyEntry(warm, poolKey);
     }
 
     // 2. Coalesce in-flight spawns only for carriers that permit concurrent prompts.
@@ -172,6 +187,20 @@ export class AcpProcessPool {
     entry.leaseCount++;
     this._metrics.activeLeaseCount++;
     return this.createLease(entry, poolKey);
+  }
+
+  rememberSession(poolKey: PoolKey, sessionId: string, lease: AcpLease): void {
+    const trimmedSessionId = sessionId.trim();
+    if (!trimmedSessionId) return;
+
+    const key = serializeKey(poolKey);
+    const entry = this.entries.get(key)?.find((candidate) => candidate.client === lease.client);
+    if (!entry || entry.state === 'closing' || !entry.client.isAlive) {
+      log.warn({ poolKey, sessionId: trimmedSessionId }, 'ACP session affinity skipped for missing pool entry');
+      return;
+    }
+
+    this.sessionOwners.set(serializeSessionKey(poolKey, trimmedSessionId), entry);
   }
 
   private async doSpawn(poolKey: PoolKey, key: string, pendingKey?: string): Promise<PoolEntry> {
@@ -217,12 +246,25 @@ export class AcpProcessPool {
       entries.length = 0;
     }
     this.entries.clear();
+    this.sessionOwners.clear();
     this._metrics.liveProcessCount = 0;
     this._metrics.activeLeaseCount = 0;
     this._metrics.idleProcessCount = 0;
   }
 
   // ── Internal ────────────────────────────────────────────────
+
+  private leaseReadyEntry(entry: PoolEntry, poolKey: PoolKey): AcpLease {
+    if (entry.leaseCount === 0) {
+      this._metrics.idleProcessCount--;
+    }
+    this.clearIdleTimer(entry);
+    entry.leaseCount++;
+    entry.lastUsedAt = Date.now();
+    this._metrics.activeLeaseCount++;
+    this._metrics.warmHitCount++;
+    return this.createLease(entry, poolKey);
+  }
 
   private createLease(entry: PoolEntry, poolKey: PoolKey): AcpLease {
     let released = false;
@@ -282,6 +324,7 @@ export class AcpProcessPool {
     }
 
     this.clearIdleTimer(oldest.entry);
+    this.forgetSessionsForEntry(oldest.entry);
     oldest.entry.state = 'closing';
     oldest.entry.client.close().catch(() => {});
     const entries = this.entries.get(oldest.key)!;
@@ -305,6 +348,7 @@ export class AcpProcessPool {
       if (idx < 0) return;
 
       entry.state = 'closing';
+      this.forgetSessionsForEntry(entry);
       entry.client.close().catch(() => {});
       entries.splice(idx, 1);
       if (entries.length === 0) this.entries.delete(key);
@@ -330,6 +374,7 @@ export class AcpProcessPool {
           if (entry.state === 'closing') continue;
           if (!entry.client.isAlive) {
             this.clearIdleTimer(entry);
+            this.forgetSessionsForEntry(entry);
             entries.splice(i, 1);
             this._metrics.liveProcessCount--;
             if (entry.leaseCount > 0) {
@@ -350,6 +395,12 @@ export class AcpProcessPool {
     if (this.healthTimer) {
       clearInterval(this.healthTimer);
       this.healthTimer = null;
+    }
+  }
+
+  private forgetSessionsForEntry(entry: PoolEntry): void {
+    for (const [sessionKey, owner] of this.sessionOwners) {
+      if (owner === entry) this.sessionOwners.delete(sessionKey);
     }
   }
 }

@@ -100,7 +100,7 @@ export class AcpAgentService implements AgentService {
 
     let lease: AcpLease | null = null;
     try {
-      lease = await this.pool.acquire(this.poolKey);
+      lease = await this.pool.acquire(this.poolKey, { sessionId: options?.sessionId });
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       log.error({ ...ctx, err: errMsg }, 'ACP init failure');
@@ -195,6 +195,8 @@ export class AcpAgentService implements AgentService {
           );
           const session = await client.loadSession(resumeSessionId, cwd, sessionMcpServers);
           sessionId = session.sessionId || resumeSessionId;
+          this.pool.rememberSession?.(this.poolKey, sessionId, lease);
+          if (sessionId !== resumeSessionId) this.pool.rememberSession?.(this.poolKey, resumeSessionId, lease);
           metadata.sessionId = sessionId;
           isResumedSession = true;
           log.info({ ...ctx, sessionId, requestedSessionId: resumeSessionId }, 'ACP session resume completed');
@@ -215,6 +217,7 @@ export class AcpAgentService implements AgentService {
         );
         const session = await client.newSession(cwd, sessionMcpServers);
         sessionId = session.sessionId;
+        this.pool.rememberSession?.(this.poolKey, sessionId, lease);
         metadata.sessionId = sessionId;
         log.info({ ...ctx, sessionId }, 'ACP newSession completed');
 

@@ -267,6 +267,81 @@ describe('GeminiAcpAdapter', () => {
     });
   });
 
+  it('preserves ACP session affinity when resuming across idle pool clients', async () => {
+    const makeClient = (name, ownedSessionIds) => {
+      const client = {
+        name,
+        loadSessionCalls: [],
+        newSessionCalls: 0,
+        promptedSessionIds: [],
+        recentCapacitySignal: null,
+        async newSession() {
+          client.newSessionCalls++;
+          return { sessionId: `${name}-fresh-session` };
+        },
+        async loadSession(sessionId) {
+          client.loadSessionCalls.push(sessionId);
+          if (!ownedSessionIds.has(sessionId)) throw new Error(`${name} does not own ${sessionId}`);
+          return { sessionId };
+        },
+        async setSessionConfigOption() {},
+        cancelSession() {},
+        async *promptStream(sessionId) {
+          client.promptedSessionIds.push(sessionId);
+          yield {
+            sessionId,
+            update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `resumed via ${name}` } },
+          };
+        },
+        onCapacity() {},
+        offCapacity() {},
+        clearRecentCapacitySignal() {},
+      };
+      return client;
+    };
+
+    const owningClient = makeClient('owner', new Set(['sess-owned']));
+    const wrongClient = makeClient('wrong', new Set());
+    const acquireCalls = [];
+    const rememberedSessions = [];
+    const fakePool = {
+      async acquire(poolKey, options) {
+        acquireCalls.push({ poolKey, options });
+        const client = options?.sessionId === 'sess-owned' ? owningClient : wrongClient;
+        return {
+          client,
+          poolKey,
+          release() {},
+        };
+      },
+      rememberSession(_poolKey, sessionId, lease) {
+        rememberedSessions.push({ sessionId, client: lease.client.name });
+      },
+    };
+
+    const adapter = new GeminiAcpAdapter({
+      catId: 'gemini',
+      pool: fakePool,
+      poolKey: TEST_POOL_KEY,
+      projectRoot: '/tmp',
+      providerName: 'google',
+      modelName: 'gemini-acp',
+    });
+
+    const messages = [];
+    for await (const msg of adapter.invoke('resume turn', { sessionId: 'sess-owned' })) {
+      messages.push(msg);
+    }
+
+    assert.equal(acquireCalls[0].options?.sessionId, 'sess-owned', 'resume acquire must request session affinity');
+    assert.deepEqual(owningClient.loadSessionCalls, ['sess-owned']);
+    assert.deepEqual(wrongClient.loadSessionCalls, []);
+    assert.equal(wrongClient.newSessionCalls, 0, 'resume must not fresh-fallback on a wrong idle client');
+    assert.deepEqual(owningClient.promptedSessionIds, ['sess-owned']);
+    assert.deepEqual(rememberedSessions, [{ sessionId: 'sess-owned', client: 'owner' }]);
+    assert.ok(messages.some((m) => m.type === 'text' && m.content === 'resumed via owner'));
+  });
+
   it('falls back to session/new when resumed ACP session cannot be loaded', async () => {
     const { child, clientStdin, agentStdout } = createMockChild();
     const captured = [];
