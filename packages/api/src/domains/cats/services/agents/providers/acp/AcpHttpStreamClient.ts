@@ -689,6 +689,7 @@ export class AcpHttpStreamClient {
         const text = await resp.text();
         throw new Error(`ACP HTTP agent response ${resp.status}: ${text}`);
       }
+      await resp.arrayBuffer();
     } catch (err) {
       if (timeoutSignal.aborted) {
         throw new AcpTimeoutError(options.method ?? 'agent/response', timeoutMs);
