@@ -236,6 +236,14 @@ export async function createAcpServiceForConfig(
 
   const bootstrap = resolveAcpBootstrap(profileId, config, acpConfig);
   const accountContext = resolveAcpAccount(bootstrap.projectRoot, config);
+  if (accountContext.accountRef && !accountContext.account) {
+    return skipAcpProfile(
+      input,
+      'missing-account-binding',
+      { catId, profileId, accountRef: accountContext.accountRef },
+      'ACP registry sync skipped member because bound accountRef could not be resolved',
+    );
+  }
   const spawn = await prepareAcpSpawnContext(input, bootstrap, accountContext);
   if (!spawn) return null;
   const pool = await ensureAcpPool(input, bootstrap, spawn);
