@@ -59,6 +59,7 @@ import {
   resolveAcpBootstrapCommand,
   resolveAcpBootstrapCwd,
 } from './domains/cats/services/agents/providers/acp/acp-bootstrap-cwd.js';
+import { closeStaleAcpPools } from './domains/cats/services/agents/providers/acp/acp-pool-registry.js';
 import { AntigravityAgentService } from './domains/cats/services/agents/providers/antigravity/AntigravityAgentService.js';
 import { RedisAntigravitySupervisorStore } from './domains/cats/services/agents/providers/antigravity/AntigravitySupervisorStore.js';
 import {
@@ -1181,6 +1182,7 @@ async function main(): Promise<void> {
   const syncAgentRegistry = async (configs: Record<string, CatConfig>) => {
     agentRegistry.reset();
     clearL0Cache(); // Invalidate stale L0 compilations from previous sync
+    const activeAcpProfileIds = new Set<string>();
     for (const [id, config] of Object.entries(configs)) {
       const catId = config.id;
       // F32-b P1 fix: do NOT pass model here — let constructors resolve via
@@ -1192,6 +1194,7 @@ async function main(): Promise<void> {
       // This check runs BEFORE the clientId switch — ACP is a transport, not a provider.
       const acpConfig = getAcpConfig(id);
       if (acpConfig) {
+        activeAcpProfileIds.add(id);
         const { AcpAgentService } = await import('./domains/cats/services/agents/providers/acp/AcpAgentService.js');
         const { AcpProcessPool, DEFAULT_ACP_IDLE_TTL_MS } = await import(
           './domains/cats/services/agents/providers/acp/AcpProcessPool.js'
@@ -1402,6 +1405,12 @@ async function main(): Promise<void> {
         }
       agentRegistry.register(id, service);
     }
+    await closeStaleAcpPools(acpPoolRegistry, activeAcpProfileIds, {
+      reason: 'config-sync',
+      onCloseError: (err, profileId, reason) => {
+        app.log.warn({ err, profileId, reason }, 'ACP registry sync failed to close stale member pool');
+      },
+    });
     if (router) router.refreshFromRegistry(agentRegistry);
 
     // Pre-compile L0 system prompts for all registered cats in parallel.
