@@ -226,17 +226,6 @@ export function SkillsContent() {
 
       {scope === SCOPE_ALL && <MountRulesPanel scope="default" onSaved={handleMountRulesSaved} />}
 
-      {scope === SCOPE_ALL && data && (
-        <AllProjectsSyncBanner
-          scopes={sync.scopeIssues}
-          scopesWithIssues={sync.scopesWithIssues}
-          syncing={sync.syncing}
-          error={sync.syncAllError}
-          onSyncAll={sync.handleSyncAllScopes}
-          onSyncScope={sync.handleSyncScope}
-        />
-      )}
-
       {data && (
         <SkillsFilterToolbar
           categories={categories}
@@ -247,6 +236,17 @@ export function SkillsContent() {
           batchEnabled={batchEnabled}
           batchBusy={controls.toggling === '__batch__'}
           onBatchToggle={handleBatchToggle}
+        />
+      )}
+
+      {scope === SCOPE_ALL && data && (
+        <AllProjectsSyncBanner
+          scopes={sync.scopeIssues}
+          scopesWithIssues={sync.scopesWithIssues}
+          syncing={sync.syncing}
+          error={sync.syncAllError}
+          onSyncAll={sync.handleSyncAllScopes}
+          onSyncScope={sync.handleSyncScope}
         />
       )}
 
