@@ -18,8 +18,12 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { unregisterConnectorDefinition } from '@cat-cafe/shared';
 import multipart from '@fastify/multipart';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
-import { requireLocalCapabilityWriteRequest } from '../config/capabilities/capability-write-guards.js';
+import {
+  type CapabilityWriteRouteError,
+  requireCapabilityWriteOwner,
+} from '../config/capabilities/capability-write-guards.js';
 import { configEventBus, createChangeSetId } from '../config/config-event-bus.js';
+import { isOriginAllowed, PRIVATE_NETWORK_ORIGIN, resolveFrontendCorsOrigins } from '../config/frontend-origin.js';
 import { unregisterExternalConnectorMeta } from '../infrastructure/connectors/external-connector-registry.js';
 import { loadBuiltinConnectors } from '../infrastructure/connectors/im-connector-loader.js';
 import { parseConnectorManifest } from '../infrastructure/connectors/plugins/im-connector-manifest.js';
@@ -30,6 +34,7 @@ import {
   uninstallPlugin,
 } from '../infrastructure/connectors/plugins/plugin-installer.js';
 import { resolveActiveProjectRoot } from '../utils/active-project-root.js';
+import { resolveSessionUserId } from '../utils/request-identity.js';
 import { invalidateManifestCache } from './connector-hub.js';
 
 const PLUGIN_ARCHIVE_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
@@ -45,6 +50,32 @@ function requireSessionIdentity(request: FastifyRequest, reply: FastifyReply): s
   if (typeof userId === 'string' && userId.trim()) return userId.trim();
   reply.status(401);
   return null;
+}
+
+function firstHeaderValue(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) return value[0];
+  return value;
+}
+
+function trustedPluginWriteOrigins(): (string | RegExp)[] {
+  return resolveFrontendCorsOrigins(process.env).filter((origin) => origin !== PRIVATE_NETWORK_ORIGIN);
+}
+
+function requirePluginWriteAccess(request: FastifyRequest): CapabilityWriteRouteError | null {
+  const userId = resolveSessionUserId(request);
+  if (!userId) {
+    return { status: 401, error: 'Plugin writes require session authentication' };
+  }
+
+  const origin = firstHeaderValue(request.headers.origin);
+  if (!origin || !isOriginAllowed(origin, trustedPluginWriteOrigins())) {
+    return { status: 403, error: 'Connector plugin writes require same-origin Hub access' };
+  }
+
+  return requireCapabilityWriteOwner(userId, {
+    requireConfiguredOwner: true,
+    missingOwnerError: 'Connector plugin writes require DEFAULT_OWNER_USER_ID to be configured',
+  });
 }
 
 function toPublicPluginMeta(plugins: ReturnType<typeof listInstalledPlugins>) {
@@ -150,8 +181,8 @@ export const connectorPluginRoutes: FastifyPluginAsync = async (app) => {
   // ── POST /api/connectors/plugins/install — install/update a plugin ──
 
   app.post('/api/connectors/plugins/install', async (req: FastifyRequest, reply: FastifyReply) => {
-    const localErr = requireLocalCapabilityWriteRequest(req);
-    if (localErr) return reply.status(localErr.status).send({ error: localErr.error });
+    const accessErr = requirePluginWriteAccess(req);
+    if (accessErr) return reply.status(accessErr.status).send({ error: accessErr.error });
 
     const file = await req.file();
     if (!file) {
@@ -212,8 +243,8 @@ export const connectorPluginRoutes: FastifyPluginAsync = async (app) => {
       req: FastifyRequest<{ Params: { id: string }; Querystring: { clearConfig?: string } }>,
       reply: FastifyReply,
     ) => {
-      const localErr = requireLocalCapabilityWriteRequest(req);
-      if (localErr) return reply.status(localErr.status).send({ error: localErr.error });
+      const accessErr = requirePluginWriteAccess(req);
+      if (accessErr) return reply.status(accessErr.status).send({ error: accessErr.error });
 
       const { id } = req.params;
       const clearConfig = req.query.clearConfig === 'true';

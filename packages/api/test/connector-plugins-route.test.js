@@ -8,12 +8,22 @@ import Fastify from 'fastify';
 const { connectorPluginRoutes } = await import('../dist/routes/connector-plugins.js');
 
 let previousConfigRoot;
+let previousOwnerUserId;
+let previousFrontendUrl;
 const tempRoots = [];
 
 afterEach(() => {
   if (previousConfigRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
   else process.env.CAT_CAFE_CONFIG_ROOT = previousConfigRoot;
   previousConfigRoot = undefined;
+
+  if (previousOwnerUserId === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+  else process.env.DEFAULT_OWNER_USER_ID = previousOwnerUserId;
+  previousOwnerUserId = undefined;
+
+  if (previousFrontendUrl === undefined) delete process.env.FRONTEND_URL;
+  else process.env.FRONTEND_URL = previousFrontendUrl;
+  previousFrontendUrl = undefined;
 
   for (const root of tempRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
@@ -26,6 +36,32 @@ function useTempConfigRoot() {
   tempRoots.push(root);
   process.env.CAT_CAFE_CONFIG_ROOT = root;
   return root;
+}
+
+function setOwnerUserId(ownerUserId) {
+  previousOwnerUserId = process.env.DEFAULT_OWNER_USER_ID;
+  process.env.DEFAULT_OWNER_USER_ID = ownerUserId;
+}
+
+function clearOwnerUserId() {
+  previousOwnerUserId = process.env.DEFAULT_OWNER_USER_ID;
+  delete process.env.DEFAULT_OWNER_USER_ID;
+}
+
+function setFrontendUrl(frontendUrl) {
+  previousFrontendUrl = process.env.FRONTEND_URL;
+  process.env.FRONTEND_URL = frontendUrl;
+}
+
+async function buildPluginRouteApp() {
+  const app = Fastify();
+  app.addHook('preHandler', async (request) => {
+    const raw = request.headers['x-test-session-user'];
+    if (typeof raw === 'string' && raw.trim()) request.sessionUserId = raw.trim();
+  });
+  await app.register(connectorPluginRoutes);
+  await app.ready();
+  return app;
 }
 
 describe('GET /api/connectors/plugins/:id/icon', () => {
@@ -104,6 +140,166 @@ describe('GET /api/connectors/plugins/:id/icon', () => {
     assert.notEqual(res.body, 'neighbor-secret');
 
     await app.close();
+  });
+});
+
+describe('POST /api/connectors/plugins/install auth boundary', () => {
+  it('requires a session identity before plugin install', async () => {
+    setOwnerUserId('owner-user');
+    const app = await buildPluginRouteApp();
+
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/connectors/plugins/install',
+        headers: { origin: 'http://localhost:3003', host: 'localhost:3003' },
+      });
+
+      assert.equal(res.statusCode, 401);
+      assert.match(res.body, /authentication|session/i);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('requires DEFAULT_OWNER_USER_ID before plugin install', async () => {
+    clearOwnerUserId();
+    const app = await buildPluginRouteApp();
+
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/connectors/plugins/install',
+        headers: {
+          'x-test-session-user': 'single-user',
+          origin: 'http://localhost:3003',
+          host: 'localhost:3003',
+        },
+      });
+
+      assert.equal(res.statusCode, 403);
+      assert.match(res.body, /DEFAULT_OWNER_USER_ID|configured owner/i);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects non-owner sessions before plugin install', async () => {
+    setOwnerUserId('owner-user');
+    const app = await buildPluginRouteApp();
+
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/connectors/plugins/install',
+        headers: {
+          'x-test-session-user': 'other-user',
+          origin: 'http://localhost:3003',
+          host: 'localhost:3003',
+        },
+      });
+
+      assert.equal(res.statusCode, 403);
+      assert.match(res.body, /owner/i);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects cross-origin browser plugin install attempts', async () => {
+    setOwnerUserId('owner-user');
+    const app = await buildPluginRouteApp();
+
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/connectors/plugins/install',
+        headers: {
+          'x-test-session-user': 'owner-user',
+          origin: 'https://evil.example',
+          host: 'localhost:3003',
+        },
+      });
+
+      assert.equal(res.statusCode, 403);
+      assert.match(res.body, /same-origin|origin/i);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('allows configured owner from trusted frontend origin through to upload validation', async () => {
+    setOwnerUserId('owner-user');
+    setFrontendUrl('https://hub.example.test');
+    const app = await buildPluginRouteApp();
+
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/connectors/plugins/install',
+        headers: {
+          'x-test-session-user': 'owner-user',
+          origin: 'https://hub.example.test',
+          host: 'api.example.test',
+          'content-type': 'multipart/form-data; boundary=test-boundary',
+        },
+        payload: '--test-boundary--\r\n',
+        remoteAddress: '203.0.113.10',
+      });
+
+      assert.equal(res.statusCode, 400);
+      assert.match(res.body, /No file uploaded/);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe('DELETE /api/connectors/plugins/:id auth boundary', () => {
+  it('rejects non-owner sessions before plugin uninstall', async () => {
+    setOwnerUserId('owner-user');
+    const app = await buildPluginRouteApp();
+
+    try {
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/connectors/plugins/missing-plugin',
+        headers: {
+          'x-test-session-user': 'other-user',
+          origin: 'http://localhost:3003',
+          host: 'localhost:3003',
+        },
+      });
+
+      assert.equal(res.statusCode, 403);
+      assert.match(res.body, /owner/i);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('allows configured owner from trusted frontend origin through to uninstall lookup', async () => {
+    setOwnerUserId('owner-user');
+    setFrontendUrl('https://hub.example.test');
+    const app = await buildPluginRouteApp();
+
+    try {
+      const res = await app.inject({
+        method: 'DELETE',
+        url: '/api/connectors/plugins/missing-plugin',
+        headers: {
+          'x-test-session-user': 'owner-user',
+          origin: 'https://hub.example.test',
+          host: 'api.example.test',
+        },
+        remoteAddress: '203.0.113.10',
+      });
+
+      assert.equal(res.statusCode, 404);
+      assert.match(res.body, /not installed/);
+    } finally {
+      await app.close();
+    }
   });
 });
 
