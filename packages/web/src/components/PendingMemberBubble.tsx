@@ -26,19 +26,21 @@ export function PendingMemberBubble({ catId, invocationId }: PendingMemberBubble
     <MessageBubble
       messageId={`pending-${invocationId}`}
       avatar={<CatAvatar catId={catId} size={32} status="streaming" />}
-      header={
-        <span className="text-sm font-medium text-cafe-fg-secondary">
-          {catName}
-        </span>
-      }
+      header={<span className="text-sm font-medium text-cafe-fg-secondary">{catName}</span>}
       wrapperClassName="group cat-persona-derived"
     >
       <div className="flex items-center gap-1 py-2 text-cafe-fg-muted">
         <span className="text-sm">分析处理中</span>
         <span className="inline-flex gap-0.5">
-          <span className="animate-bounce text-sm" style={{ animationDelay: '0ms' }}>.</span>
-          <span className="animate-bounce text-sm" style={{ animationDelay: '150ms' }}>.</span>
-          <span className="animate-bounce text-sm" style={{ animationDelay: '300ms' }}>.</span>
+          <span className="animate-bounce text-sm" style={{ animationDelay: '0ms' }}>
+            .
+          </span>
+          <span className="animate-bounce text-sm" style={{ animationDelay: '150ms' }}>
+            .
+          </span>
+          <span className="animate-bounce text-sm" style={{ animationDelay: '300ms' }}>
+            .
+          </span>
         </span>
       </div>
     </MessageBubble>

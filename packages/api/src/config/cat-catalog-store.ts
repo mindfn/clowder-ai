@@ -297,11 +297,10 @@ export function bootstrapCatCatalog(projectRoot: string, templatePath: string): 
   if (defaultCatId && templateBreeds.length > 0) {
     // Find the breed that owns the default cat ID (either as breed.catId or variant.catId)
     type BreedLike = { id: string; catId?: string; variants?: Array<{ catId?: string }> };
-    const seedBreed = (templateBreeds as BreedLike[]).find(
-      (breed) =>
-        breed.catId === defaultCatId ||
-        breed.variants?.some((v) => v.catId === defaultCatId),
-    ) ?? templateBreeds[0];
+    const seedBreed =
+      (templateBreeds as BreedLike[]).find(
+        (breed) => breed.catId === defaultCatId || breed.variants?.some((v) => v.catId === defaultCatId),
+      ) ?? templateBreeds[0];
     runtimeCatalog = {
       ...migratedCatalog,
       breeds: seedBreed ? [seedBreed as CatCafeConfig['breeds'][number]] : [],

@@ -461,11 +461,16 @@ class ServiceManager {
     // (e.g. packaged Windows installs where the default 10000 exceeds the
     // process file descriptor limit).  512 is far above local desktop needs.
     const redisArgs = [
-      '--port', '6399',
-      '--dir', redisDataDir,
-      '--save', '60 1',
-      '--appendonly', 'yes',
-      '--maxclients', '512',
+      '--port',
+      '6399',
+      '--dir',
+      redisDataDir,
+      '--save',
+      '60 1',
+      '--appendonly',
+      'yes',
+      '--maxclients',
+      '512',
     ];
     let redisCwd = this.root;
 

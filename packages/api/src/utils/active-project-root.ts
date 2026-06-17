@@ -55,8 +55,8 @@ export function resolveActiveProjectRoot(start = process.cwd()): string {
   // Only cache when the result came from a valid source — if env pointed to an
   // invalid path and we fell through, don't cache the fallback under those env
   // values (the env path might become valid later on first-run).
-  const envWasInvalid = (configRoot && result !== resolve(configRoot))
-    || (templatePath && result !== dirname(resolve(templatePath)));
+  const envWasInvalid =
+    (configRoot && result !== resolve(configRoot)) || (templatePath && result !== dirname(resolve(templatePath)));
   if (!envWasInvalid) {
     _activeRootCache.set(cacheKey, result);
   }

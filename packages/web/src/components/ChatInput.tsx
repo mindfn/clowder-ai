@@ -34,7 +34,13 @@ import {
 import { WhisperCatSelector, WhisperTargetChips } from './WhisperCatSelector';
 
 /** Module-level draft storage — survives component unmount/remount across thread switches */
-export { syncDraftToStorage, syncReplyDraftToStorage, threadDrafts, threadImageDrafts, threadReplyDrafts } from './thread-drafts';
+export {
+  syncDraftToStorage,
+  syncReplyDraftToStorage,
+  threadDrafts,
+  threadImageDrafts,
+  threadReplyDrafts,
+} from './thread-drafts';
 
 const MAX_IMAGE_DRAFT_THREADS = 5;
 

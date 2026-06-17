@@ -58,13 +58,13 @@ import { MessageActions } from './MessageActions';
 import { MessageNavigator } from './MessageNavigator';
 import { MobileStatusSheet } from './MobileStatusSheet';
 import { ParallelStatusBar } from './ParallelStatusBar';
+import { PendingMemberBubble } from './PendingMemberBubble';
 import { ProjectSetupCard } from './ProjectSetupCard';
 
 import { QueuePanel } from './QueuePanel';
 import { RightStatusPanel } from './RightStatusPanel';
 import { ScrollToBottomButton } from './ScrollToBottomButton';
 import { SplitPaneView } from './SplitPaneView';
-import { PendingMemberBubble } from './PendingMemberBubble';
 import { ThinkingIndicator } from './ThinkingIndicator';
 import { ThreadExecutionBar } from './ThreadExecutionBar';
 import { ThreadSidebar } from './ThreadSidebar';
