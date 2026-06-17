@@ -2678,6 +2678,72 @@ describe('PATCH /api/capabilities write auth (Fastify)', () => {
     }
   });
 
+  it('batch toggle: capabilityIds disables multiple skills in one request', async () => {
+    // F228: PATCH with capabilityIds[] toggles multiple skills, writes config once, syncs once.
+    const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
+    process.env.DEFAULT_OWNER_USER_ID = 'you';
+    const skills = ['debugging', 'tdd'];
+    const projectDir = await makeTmpDir('batch-toggle');
+    const app = await buildSessionApp();
+
+    try {
+      // Set up: both skills enabled with all standard mount points
+      const allMountIds = ['claude', 'codex', 'gemini', 'kimi'];
+      await writeCapabilitiesConfig(projectDir, {
+        version: 2,
+        capabilities: skills.map((id) => ({
+          id,
+          type: 'skill',
+          enabled: true,
+          globalEnabled: true,
+          source: 'cat-cafe',
+          mountPaths: allMountIds,
+        })),
+      });
+
+      // Batch disable both
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/capabilities',
+        headers: localOwnerHeaders(),
+        payload: {
+          projectPath: projectDir,
+          capabilityIds: skills,
+          capabilityId: skills[0],
+          capabilityType: 'skill',
+          scope: 'project',
+          enabled: false,
+        },
+      });
+      assert.equal(res.statusCode, 200, res.payload);
+      const result = JSON.parse(res.payload);
+      assert.equal(result.ok, true);
+      // Batch returns capabilities[] array
+      assert.ok(Array.isArray(result.capabilities), 'batch response must have capabilities array');
+      assert.equal(result.capabilities.length, 2, 'must return results for both skills');
+
+      // Both skills must be disabled in config
+      const config = await readCapabilitiesConfig(projectDir);
+      for (const id of skills) {
+        const cap = config?.capabilities.find((c) => c.id === id);
+        assert.deepEqual(cap?.mountPaths, [], `${id} must have empty mountPaths after batch disable`);
+      }
+
+      // No symlinks for either skill
+      for (const id of skills) {
+        for (const mp of ['.claude', '.codex', '.gemini', '.kimi']) {
+          const linkPath = join(projectDir, mp, 'skills', id);
+          assert.equal(existsSync(linkPath), false, `${mp}/${id} symlink must not exist`);
+        }
+      }
+    } finally {
+      await app.close();
+      await rm(projectDir, { recursive: true, force: true });
+      if (previousOwner === undefined) delete process.env.DEFAULT_OWNER_USER_ID;
+      else process.env.DEFAULT_OWNER_USER_ID = previousOwner;
+    }
+  });
+
   it('rejects trusted header identity without a real session', async () => {
     const previousOwner = process.env.DEFAULT_OWNER_USER_ID;
     process.env.DEFAULT_OWNER_USER_ID = 'you';
