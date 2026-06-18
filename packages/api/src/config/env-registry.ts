@@ -924,6 +924,34 @@ export const ENV_VARS: EnvDefinition[] = [
     sensitive: false,
     runtimeEditable: false,
   },
+  {
+    name: 'WEIXIN_VOICE_ITEM_MODE',
+    defaultValue: '(未设置)',
+    description:
+      '微信原生 voice_item 发送实验模式；未设置时音频按文件附件发送。可选 minimal / playtime / playtime-sec / playtime-encode / metadata',
+    category: 'connector',
+    sensitive: false,
+    runtimeEditable: true,
+    allowedValues: ['minimal', 'playtime', 'playtime-sec', 'playtime-encode', 'metadata'],
+  },
+  {
+    name: 'WEIXIN_ENABLE_UNSAFE_VOICE_MODES',
+    defaultValue: '0',
+    description: '设为 1 时允许已知不稳定的微信原生 voice_item 实验模式（playtime-encode / metadata）',
+    category: 'connector',
+    sensitive: false,
+    runtimeEditable: true,
+    allowedValues: ['0', '1'],
+  },
+  {
+    name: 'WEIXIN_CAPTURE_INBOUND_VOICE_MEDIA',
+    defaultValue: '0',
+    description: '设为 1 时将微信入站语音媒体捕获为文件附件，便于调试语音/媒体链路',
+    category: 'connector',
+    sensitive: false,
+    runtimeEditable: true,
+    allowedValues: ['0', '1'],
+  },
 
   // --- codex ---
   {

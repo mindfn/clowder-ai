@@ -151,6 +151,11 @@ describe('env-registry completeness', () => {
   const registeredNames = loadRegisteredNames();
   const envRefs = extractEnvRefs(['packages/api/src', 'packages/mcp-server/src']);
   const repoInboxEnvNames = ['GITHUB_WEBHOOK_SECRET', 'GITHUB_REPO_ALLOWLIST', 'GITHUB_REPO_INBOX_CAT_ID'];
+  const weixinRuntimeFlagNames = [
+    'WEIXIN_VOICE_ITEM_MODE',
+    'WEIXIN_ENABLE_UNSAFE_VOICE_MODES',
+    'WEIXIN_CAPTURE_INBOUND_VOICE_MEDIA',
+  ];
 
   it('every allowlist entry has a non-empty reason', () => {
     for (const [name, reason] of ALLOWLIST) {
@@ -162,6 +167,13 @@ describe('env-registry completeness', () => {
     for (const name of repoInboxEnvNames) {
       assert.ok(registeredNames.has(name), `${name} should be registered in env-registry.ts`);
       assert.ok(!ALLOWLIST.has(name), `${name} is runtime user config and must not be allowlisted`);
+    }
+  });
+
+  it('keeps Weixin runtime voice flags in env-registry', () => {
+    for (const name of weixinRuntimeFlagNames) {
+      assert.ok(registeredNames.has(name), `${name} should stay registered; it is not a connector credential`);
+      assert.ok(!ALLOWLIST.has(name), `${name} is not declared in connectors/weixin/connector.yaml`);
     }
   });
 
