@@ -8,9 +8,13 @@ import type { TaskProgressState } from '@/stores/chat-types';
 export function buildContinueMessage(mentionHandle: string, progress: TaskProgressState): string {
   const tasks = progress.tasks ?? [];
   const remaining = tasks.filter((t) => t.status !== 'completed');
+  const trimmedMentionHandle = mentionHandle.trim();
+  const normalizedMentionHandle = trimmedMentionHandle.startsWith('@')
+    ? trimmedMentionHandle
+    : `@${trimmedMentionHandle}`;
 
   const lines: string[] = [];
-  lines.push(`${mentionHandle} 🔁 继续上次任务（已中断，上次 checklist 见下）`);
+  lines.push(`${normalizedMentionHandle} 🔁 继续上次任务（已中断，上次 checklist 见下）`);
   lines.push('');
 
   const render = (label: string, list: typeof tasks) => {
