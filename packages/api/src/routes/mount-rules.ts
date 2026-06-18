@@ -11,7 +11,7 @@
  * the removed mount-rules-reconciliation module.
  */
 
-import { lstat, mkdir, rm, symlink } from 'node:fs/promises';
+import { lstat, mkdir, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { type MountRules, STANDARD_MOUNT_POINT_IDS } from '@cat-cafe/shared';
@@ -33,7 +33,7 @@ import { resolveOwnerGate } from '../utils/owner-gate.js';
 import { resolvePluginSkillSourcesForProject } from '../utils/plugin-skill-source.js';
 import { validateProjectPath } from '../utils/project-path.js';
 import { resolveSessionUserId, resolveUserId } from '../utils/request-identity.js';
-import { buildSkillMountTargets, type MountTarget } from '../utils/skill-mount.js';
+import { buildSkillMountTargets, createSkillSymlink, type MountTarget } from '../utils/skill-mount.js';
 import { resolveStartupProjectRoot } from '../utils/startup-root.js';
 import { resolveSkillsSourceDir } from './skills.js';
 
@@ -250,7 +250,7 @@ async function reconcilePluginMounts(
           process.platform === 'win32'
             ? join(ps.skillsSource, ps.skillName)
             : relative(dirname(linkPath), join(ps.skillsSource, ps.skillName));
-        await symlink(rel, linkPath);
+        await createSkillSymlink(rel, linkPath);
       } else if (!shouldMount && status === 'managed') {
         // Guard: skip symlinked provider dirs (mirror the mount branch above)
         try {

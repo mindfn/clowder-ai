@@ -150,7 +150,8 @@ export async function createSkillSymlink(target: string, path: string): Promise<
   try {
     await symlink(target, path);
   } catch (err) {
-    if (process.platform === 'win32' && (err as NodeJS.ErrnoException).code === 'EPERM') {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (process.platform === 'win32' && (code === 'EPERM' || code === 'EACCES')) {
       await symlink(target, path, 'junction');
     } else {
       throw err;
