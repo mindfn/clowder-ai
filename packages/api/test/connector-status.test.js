@@ -393,6 +393,65 @@ describe('buildConnectorStatus', () => {
     );
   });
 
+  it('evaluates external manifest requiredWhen values without mode-specific coercion', () => {
+    const pluginId = 'oauth-required-when-external';
+    const result = buildConnectorStatus(
+      {
+        AUTH_MODE: 'oauth',
+        API_TOKEN: 'api-token',
+      },
+      [
+        {
+          id: pluginId,
+          name: 'OAuth RequiredWhen External',
+          nameEn: 'OAuth RequiredWhen External',
+          version: '1.0.0',
+          icon: { type: 'png', src: '/test.png' },
+          themeColor: '#336699',
+          docsUrl: 'https://example.com',
+          source: 'external',
+          config: [
+            {
+              type: 'select',
+              envName: 'AUTH_MODE',
+              label: 'Auth Mode',
+              required: false,
+              default: 'api_key',
+              options: [
+                { value: 'api_key', label: 'API Key' },
+                { value: 'oauth', label: 'OAuth' },
+              ],
+            },
+            {
+              type: 'input',
+              envName: 'API_TOKEN',
+              label: 'API Token',
+              sensitive: true,
+              required: true,
+            },
+            {
+              type: 'input',
+              envName: 'OAUTH_CLIENT_SECRET',
+              label: 'OAuth Client Secret',
+              sensitive: true,
+              required: false,
+              requiredWhen: { envName: 'AUTH_MODE', value: 'oauth' },
+            },
+          ],
+          steps: [{ text: 'test' }],
+        },
+      ],
+    );
+
+    const external = result.find((p) => p.id === pluginId);
+    assert.ok(external, 'external manifest connector must appear in status');
+    assert.equal(
+      external.configured,
+      false,
+      'requiredWhen must compare against the manifest value, not Feishu websocket/webhook modes',
+    );
+  });
+
   // ── F240 A-4: stored config reflected in status (review P1 regression) ──
 
   it('F240 A-4: stored config values override empty env in status via resolveConnectorEnv', () => {

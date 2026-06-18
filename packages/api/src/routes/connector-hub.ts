@@ -422,11 +422,25 @@ function isConfiguredFieldValue(field: ConnectorFieldDef, raw: string | undefine
   return true;
 }
 
-function isRequiredFieldSatisfied(field: ConnectorFieldDef, env: Record<string, string | undefined>): boolean {
+function resolveRequiredWhenConditionValue(
+  conditionField: ConnectorFieldDef | undefined,
+  rawValue: string | undefined,
+): string | undefined {
+  if (rawValue && (!conditionField?.options || conditionField.options.some((option) => option.value === rawValue))) {
+    return rawValue;
+  }
+  return conditionField?.defaultValue;
+}
+
+function isRequiredFieldSatisfied(
+  field: ConnectorFieldDef,
+  env: Record<string, string | undefined>,
+  fields: readonly ConnectorFieldDef[],
+): boolean {
   if (field.optional) return true;
   if (field.requiredWhen) {
-    const rawCondition = env[field.requiredWhen.envName];
-    const conditionValue = rawCondition === 'websocket' ? 'websocket' : 'webhook';
+    const conditionField = fields.find((candidate) => candidate.envName === field.requiredWhen?.envName);
+    const conditionValue = resolveRequiredWhenConditionValue(conditionField, env[field.requiredWhen.envName]);
     if (conditionValue !== field.requiredWhen.value) return true;
   }
   return isConfiguredFieldValue(field, env[field.envName]);
@@ -462,7 +476,7 @@ export function buildConnectorStatus(
     if (configuredFields.length === 0) {
       configured = false;
     } else {
-      configured = configuredFields.every((f) => isRequiredFieldSatisfied(f, platformEnv));
+      configured = configuredFields.every((f) => isRequiredFieldSatisfied(f, platformEnv, configuredFields));
     }
     if (platform.source === 'external') {
       configured = externalMetaById.get(platform.id)?.configured ?? configured;
