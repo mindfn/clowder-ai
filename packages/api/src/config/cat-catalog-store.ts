@@ -294,33 +294,11 @@ function pickSeedBreed(catalog: CatCafeConfig): CatCafeConfig['breeds'][number] 
   return breeds[0];
 }
 
-/**
- * #948 R2: If an existing catalog has zero breeds (persisted empty from a previous
- * failed/incomplete install), seed from the template so the first-run wizard
- * is reachable on next startup.
- */
-function repairEmptyBreeds(catalogPath: string, templatePath: string): void {
-  let catalog: CatCafeConfig;
-  try {
-    catalog = JSON.parse(readFileSync(catalogPath, 'utf-8')) as CatCafeConfig;
-  } catch {
-    return; // broken catalog — leave for the loader to handle
-  }
-  if (Array.isArray(catalog.breeds) && catalog.breeds.length > 0) return; // has breeds, no repair needed
-
-  let template: CatCafeConfig;
-  try {
-    template = JSON.parse(readFileSync(templatePath, 'utf-8')) as CatCafeConfig;
-  } catch {
-    return; // no template — nothing to seed from
-  }
-
-  const seedBreed = pickSeedBreed(template);
-  if (!seedBreed) return;
-
-  (catalog as { breeds: CatCafeConfig['breeds'] }).breeds = [seedBreed as CatCafeConfig['breeds'][number]];
-  writeFileAtomic(catalogPath, `${JSON.stringify(catalog, null, 2)}\n`);
-}
+// NOTE: Repairing existing empty catalogs (e.g. Windows reinstall where user-data
+// dir survives) is intentionally NOT done here — we cannot distinguish "broken
+// install with empty breeds" from "user intentionally deleted all members".
+// Existing-install repair needs a separate mechanism (e.g. _bootstrapVersion marker).
+// See #948 for follow-up.
 
 export function bootstrapCatCatalog(projectRoot: string, templatePath: string): string {
   const catalogPath = resolveCatCatalogPath(projectRoot);
@@ -330,12 +308,6 @@ export function bootstrapCatCatalog(projectRoot: string, templatePath: string): 
     stripLegacySourceField(catalogPath);
     // Ensure owner is always present in roster.
     ensureOwnerInRoster(catalogPath);
-
-    // #948 R2: Repair existing catalogs that persisted with empty breeds (e.g.
-    // uninstall/reinstall on Windows where user-data dir survives). Seed from
-    // template so the first-run wizard is reachable.
-    repairEmptyBreeds(catalogPath, templatePath);
-
     return catalogPath;
   }
 
