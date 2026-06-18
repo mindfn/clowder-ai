@@ -264,6 +264,7 @@ export class WeixinAdapter implements IOutboundAdapter {
   private readonly typingTickets = new Map<string, string>();
   private readonly typingTimers = new Map<string, ReturnType<typeof setInterval>>();
   private readonly typingEpoch = new Map<string, number>();
+  private fallbackMessageSequence = 0;
 
   constructor(botToken: string, log: FastifyBaseLogger, sessionStateStore?: WeixinSessionStateStore) {
     this.botToken = botToken;
@@ -372,8 +373,8 @@ export class WeixinAdapter implements IOutboundAdapter {
     const messages: WeixinInboundMessage[] = [];
 
     if (raw.msgs) {
-      for (const msg of raw.msgs) {
-        const parsed = this.parseMessage(msg);
+      for (const [index, msg] of raw.msgs.entries()) {
+        const parsed = this.parseMessage(msg, raw.get_updates_buf, index);
         if (parsed) messages.push(parsed);
       }
     }
@@ -396,7 +397,11 @@ export class WeixinAdapter implements IOutboundAdapter {
     return '';
   }
 
-  private parseMessage(msg: ILinkWeixinMessage): WeixinInboundMessage | null {
+  private parseMessage(
+    msg: ILinkWeixinMessage,
+    responseCursor: string | undefined,
+    messageIndex: number,
+  ): WeixinInboundMessage | null {
     const senderId = msg.from_user_id;
     const contextToken = msg.context_token;
     if (!senderId || !contextToken) return null;
@@ -411,7 +416,7 @@ export class WeixinAdapter implements IOutboundAdapter {
     const msgId =
       msg.message_id != null
         ? String(msg.message_id)
-        : this.buildFallbackMessageId(msg, senderId, contextToken, firstItem);
+        : this.buildFallbackMessageId(msg, senderId, contextToken, firstItem, responseCursor, messageIndex);
 
     if (itemType === MessageItemType.TEXT) {
       const text = firstItem.text_item?.text;
@@ -482,6 +487,8 @@ export class WeixinAdapter implements IOutboundAdapter {
     senderId: string,
     contextToken: string,
     firstItem: ILinkMessageItem,
+    responseCursor: string | undefined,
+    messageIndex: number,
   ): string {
     const itemType = firstItem.type ?? MessageItemType.TEXT;
     const media =
@@ -492,14 +499,23 @@ export class WeixinAdapter implements IOutboundAdapter {
     const text = firstItem.text_item?.text ?? firstItem.voice_item?.text ?? '';
     const fileName = firstItem.file_item?.file_name ?? '';
     const mediaKey = this.buildMediaKey(media);
+    const deliveryScope =
+      msg.create_time_ms != null
+        ? `time:${msg.create_time_ms}`
+        : responseCursor
+          ? `cursor:${responseCursor}:index:${messageIndex}`
+          : `sequence:${this.nextFallbackMessageSequence()}`;
     const fingerprint = crypto
       .createHash('sha256')
-      .update(
-        `${senderId}\0${contextToken}\0${msg.create_time_ms ?? 0}\0${itemType}\0${text}\0${mediaKey}\0${fileName}`,
-      )
+      .update(`${senderId}\0${contextToken}\0${deliveryScope}\0${itemType}\0${text}\0${mediaKey}\0${fileName}`)
       .digest('hex')
       .slice(0, 16);
     return `weixin-${fingerprint}`;
+  }
+
+  private nextFallbackMessageSequence(): number {
+    this.fallbackMessageSequence = (this.fallbackMessageSequence % Number.MAX_SAFE_INTEGER) + 1;
+    return this.fallbackMessageSequence;
   }
 
   /**
