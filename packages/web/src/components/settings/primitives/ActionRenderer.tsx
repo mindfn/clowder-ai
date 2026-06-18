@@ -151,7 +151,7 @@ export function ActionRenderer({
         }
         return (await res.json()) as ActionApiResult;
       } catch {
-        return { ok: false, label: 'Network error' };
+        return null;
       }
     },
     [connectorId, operation.name, pendingConfigValues],
@@ -269,7 +269,7 @@ export function ActionRenderer({
 
       if (!result || !result.ok) {
         setPhase('error');
-        setErrorMsg(result?.label ?? 'Action failed');
+        setErrorMsg(result?.label ?? 'Network error');
         return;
       }
       setLastResult(toResultState(result));

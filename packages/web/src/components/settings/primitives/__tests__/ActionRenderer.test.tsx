@@ -436,6 +436,79 @@ describe('ActionRenderer', () => {
     expect(statusPollCalls()).toBe(1);
   });
 
+  it('retries transient polling fetch failures without leaving the QR flow', async () => {
+    let statusPollCalls = 0;
+    mockApiFetch.mockImplementation(async (url) => {
+      const path = String(url);
+      if (path.endsWith('/qr-generate')) {
+        return jsonResponse({
+          ok: true,
+          render: 'img',
+          data: { url: 'https://example.com/qr.png' },
+          label: 'Scan QR',
+        });
+      }
+      if (path.endsWith('/qr-status')) {
+        statusPollCalls += 1;
+        if (statusPollCalls === 1) {
+          throw new Error('temporary network failure');
+        }
+        return jsonResponse({ ok: true, render: 'status', label: 'WeChat connected' });
+      }
+      return jsonResponse({ ok: false, label: 'unexpected action' }, 500);
+    });
+
+    await act(async () => {
+      root.render(
+        React.createElement(ActionRenderer, {
+          connectorId: 'weixin',
+          operation: {
+            name: 'connect',
+            label: 'Connect',
+            actions: [
+              {
+                id: 'qr-generate',
+                label: 'Generate QR Code',
+                render: 'button',
+                resultRender: 'img',
+                next: 'qr-status',
+              },
+              { id: 'qr-status', label: 'Waiting', render: 'polling', next: 'disconnect', timeout: 60 },
+              { id: 'disconnect', label: 'Disconnect', render: 'button', next: 'qr-generate' },
+            ],
+          },
+        }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      queryButton(container, 'Generate QR Code').click();
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    await act(async () => {
+      vi.advanceTimersByTime(150);
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    expect(statusPollCalls).toBe(1);
+    expect(container.textContent).not.toContain('Network error');
+    expect(container.querySelector('[data-testid="weixin-qr-image"]')).not.toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    expect(statusPollCalls).toBe(2);
+    expect(container.querySelector('[data-testid="weixin-connected"]')).not.toBeNull();
+    expect(container.textContent).toContain('WeChat connected');
+  });
+
   it('executes the generic disconnect action from a configured connector state', async () => {
     mockApiFetch.mockResolvedValue(jsonResponse({ ok: true, render: 'status', label: 'Disconnected' }));
 
