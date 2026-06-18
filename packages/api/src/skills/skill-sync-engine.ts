@@ -1,6 +1,6 @@
 /** Skill Sync Engine — F228: syncProject reconciles symlinks with config. */
 
-import { lstat, mkdir, readdir, readlink, realpath, rm, symlink } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readlink, realpath, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
@@ -16,7 +16,11 @@ import {
   validateSkillName,
 } from '../config/governance/skill-sync.js';
 import { pathsEqual } from '../utils/project-path.js';
-import { buildSkillMountTargets, isManagedDirectoryLevelSkillsSymlink } from '../utils/skill-mount.js';
+import {
+  buildSkillMountTargets,
+  createSkillSymlink,
+  isManagedDirectoryLevelSkillsSymlink,
+} from '../utils/skill-mount.js';
 import { computeSourceManifestHash, listSourceSkillNames } from '../utils/skill-source.js';
 import { updateConfigAfterSync, writeSkillsSyncState } from './skill-sync-config.js';
 
@@ -65,7 +69,7 @@ async function convertDirectoryLevelMount(
   await mkdir(skillsDir, { recursive: true });
   for (const skillName of enabledSkillNames) {
     const linkPath = join(skillsDir, skillName);
-    await symlink(symlinkTargetFor(linkPath, join(skillsSource, skillName)), linkPath);
+    await createSkillSymlink(symlinkTargetFor(linkPath, join(skillsSource, skillName)), linkPath);
   }
   return true;
 }
@@ -296,7 +300,7 @@ async function syncProjectUnlocked(
         const status = await classifyMountPath(linkPath, skillsSource, skillName);
         if (status === 'missing' || (status === 'conflict' && force)) {
           if (status === 'conflict') await rm(linkPath, { recursive: true, force: true });
-          await symlink(symlinkTargetFor(linkPath, join(skillsSource, skillName)), linkPath);
+          await createSkillSymlink(symlinkTargetFor(linkPath, join(skillsSource, skillName)), linkPath);
           result.mounted.push({ skillName, mountPointId: target.id, path: linkPath });
         } else if (status === 'conflict') {
           result.conflicts.push({ skillName, mountPointId: target.id, path: linkPath });
@@ -412,7 +416,7 @@ async function syncProjectUnlocked(
     for (const op of result.unmounted) {
       if (!op.path || op.skillName === '*') continue; // No path or directory-level rollback not feasible
       const target = join(skillsSource, op.skillName);
-      await symlink(symlinkTargetFor(op.path, target), op.path).catch(() => {});
+      await createSkillSymlink(symlinkTargetFor(op.path, target), op.path).catch(() => {});
     }
     throw configWriteErr;
   }
