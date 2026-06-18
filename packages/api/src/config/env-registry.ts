@@ -1248,6 +1248,14 @@ export const ENV_VARS: EnvDefinition[] = [
     runtimeEditable: true,
   },
   {
+    name: 'GITHUB_SELF_LOGIN',
+    defaultValue: '(未设置 → 自动使用 gh api /user 识别)',
+    description: 'GitHub review feedback 自身账号 fallback；当 gh api /user 无法识别时用于防止处理自己发出的评论',
+    category: 'github_review',
+    sensitive: false,
+    runtimeEditable: true,
+  },
+  {
     name: 'GITHUB_WEBHOOK_SECRET',
     defaultValue: '(未设置 → Repo Inbox webhook 不启用)',
     description: 'GitHub Repo Inbox webhook secret（需与 GitHub 仓库 webhook 配置一致）',
