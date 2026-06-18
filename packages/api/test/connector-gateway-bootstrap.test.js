@@ -1325,6 +1325,108 @@ describe('ConnectorGateway Bootstrap', () => {
     }
   });
 
+  it('rejects deactivation when the inbound stop handle fails and keeps the connector live', async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'deactivation-stop-failure-'));
+    const pluginId = 'deactivation-stop-failure-probe';
+    const pluginDir = join(resolvePluginsDir(tempRoot), pluginId);
+    const configDir = join(tempRoot, '.cat-cafe', 'im-connector-config');
+    let handle;
+
+    mkdirSync(pluginDir, { recursive: true });
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: Deactivation Stop Failure Probe',
+        'nameEn: Deactivation Stop Failure Probe',
+        'version: 1.0.0',
+        'source: external',
+        'icon:',
+        '  type: png',
+        '  src: /test.png',
+        "themeColor: '#336699'",
+        'docsUrl: https://example.com/deactivation-stop-failure-probe',
+        'config:',
+        '  - envName: DEACTIVATION_STOP_FAILURE_TOKEN',
+        '    label: Token',
+        '    sensitive: true',
+        '    required: true',
+        'steps:',
+        '  - text: test',
+      ].join('\n'),
+    );
+    writeFileSync(
+      join(pluginDir, 'index.js'),
+      `export default {
+        id: '${pluginId}',
+        definition: {
+          id: '${pluginId}',
+          displayName: 'Deactivation Stop Failure Probe',
+          icon: { type: 'png', src: '/test.png' },
+          themeColor: '#336699',
+          description: 'deactivation stop failure regression probe',
+        },
+        requiredEnvKeys: ['DEACTIVATION_STOP_FAILURE_TOKEN'],
+        optionalEnvKeys: [],
+        isConfigured(env) { return Boolean(env.DEACTIVATION_STOP_FAILURE_TOKEN); },
+        createAdapter() { return { id: '${pluginId}', sendMessage() {} }; },
+        async startInbound() {
+          return {
+            async stop() {
+              throw new Error('stop failed');
+            },
+          };
+        },
+      };`,
+    );
+    writeFileSync(
+      join(configDir, `${pluginId}.json`),
+      JSON.stringify({ DEACTIVATION_STOP_FAILURE_TOKEN: 'saved-token' }),
+    );
+
+    const savedConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    const savedToken = process.env.DEACTIVATION_STOP_FAILURE_TOKEN;
+    process.env.CAT_CAFE_CONFIG_ROOT = tempRoot;
+    delete process.env.DEACTIVATION_STOP_FAILURE_TOKEN;
+
+    try {
+      clearExternalConnectorRegistry();
+      clearConnectorConfigCache();
+      handle = await startConnectorGateway({}, baseDeps);
+      assert.equal(handle.adapterRegistry.has(pluginId), true, 'configured external connector should start live');
+
+      await assert.rejects(() => handle.deactivateConnector(pluginId), /stop failed/);
+
+      assert.equal(
+        handle.adapterRegistry.has(pluginId),
+        true,
+        'failed deactivation must not remove the live adapter from the registry',
+      );
+      assert.equal(
+        getAllExternalConnectorMeta().find((meta) => meta.id === pluginId)?.configured,
+        true,
+        'failed deactivation must not report the external connector as unconfigured',
+      );
+    } finally {
+      if (handle) await handle.stop().catch(() => {});
+      if (savedConfigRoot === undefined) {
+        delete process.env.CAT_CAFE_CONFIG_ROOT;
+      } else {
+        process.env.CAT_CAFE_CONFIG_ROOT = savedConfigRoot;
+      }
+      if (savedToken === undefined) {
+        delete process.env.DEACTIVATION_STOP_FAILURE_TOKEN;
+      } else {
+        process.env.DEACTIVATION_STOP_FAILURE_TOKEN = savedToken;
+      }
+      unregisterConnectorDefinition(pluginId);
+      clearExternalConnectorRegistry();
+      clearConnectorConfigCache();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it('normalizes installed external plugin icon definitions before registry and routing', async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), 'external-icon-normalization-'));
     const pluginId = 'icon-normalization-probe';

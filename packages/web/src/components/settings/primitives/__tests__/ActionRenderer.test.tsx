@@ -233,6 +233,30 @@ describe('ActionRenderer', () => {
     expect(container.querySelector('[data-testid="feishu-action-start"]')).not.toBeNull();
   });
 
+  it('does not render connected from a persisted disconnect action when connector is unconfigured', async () => {
+    await act(async () => {
+      root.render(
+        React.createElement(ActionRenderer, {
+          connectorId: 'feishu',
+          configured: false,
+          operation: {
+            name: 'connect',
+            label: 'Connect',
+            currentAction: 'disconnect',
+            actions: [
+              { id: 'start', label: 'Connect Feishu', render: 'button', next: 'disconnect' },
+              { id: 'disconnect', label: 'Disconnect', render: 'button', next: 'start' },
+            ],
+          },
+        }),
+      );
+    });
+    await flushEffects();
+
+    expect(container.querySelector('[data-testid="feishu-connected"]')).toBeNull();
+    expect(container.querySelector('[data-testid="feishu-action-start"]')).not.toBeNull();
+  });
+
   it('renders terminal status results from one-shot actions', async () => {
     mockApiFetch.mockResolvedValue(jsonResponse({ ok: true, render: 'status', label: 'Validation complete' }));
 

@@ -60,7 +60,12 @@ function deriveActionState(
   disconnectId: string | undefined,
   firstActionId: string | undefined,
 ): { currentActionId: string | undefined; lastResult: ResultState | undefined; phase: ActionPhase } {
-  const currentActionId = operation.currentAction ?? (configured ? disconnectId : undefined) ?? firstActionId;
+  const persistedActionId = operation.currentAction;
+  if (persistedActionId && disconnectId && persistedActionId === disconnectId && configured !== true) {
+    return { currentActionId: firstActionId, lastResult: undefined, phase: 'idle' };
+  }
+
+  const currentActionId = persistedActionId ?? (configured ? disconnectId : undefined) ?? firstActionId;
   if (!operation.currentAction && configured && disconnectId) {
     return { currentActionId, lastResult: operation.lastResult, phase: 'connected' };
   }

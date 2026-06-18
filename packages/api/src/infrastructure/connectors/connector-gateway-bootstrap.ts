@@ -1051,6 +1051,7 @@ export async function startConnectorGateway(
         await stopInbound();
       } catch (err) {
         log.warn({ err, id: connectorId }, '[ConnectorGateway] Error stopping inbound during deactivation');
+        throw err;
       }
       connectorStopFns.delete(connectorId);
       if (connectorId === 'wecom-bot') wecomBotStopFn = null;

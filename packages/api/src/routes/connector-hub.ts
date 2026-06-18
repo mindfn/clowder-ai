@@ -22,6 +22,7 @@ import { DefaultFeishuQrBindClient, type FeishuQrBindClient } from '../infrastru
 import {
   loadAllConnectorConfigs,
   readAllOperationStates,
+  readConnectorConfig,
   resolveConnectorEnv,
   writeConnectorConfig,
   writeOperationState,
@@ -479,7 +480,12 @@ export function buildConnectorStatus(
       configured = configuredFields.every((f) => isRequiredFieldSatisfied(f, platformEnv, configuredFields));
     }
     if (platform.source === 'external') {
-      configured = externalMetaById.get(platform.id)?.configured ?? false;
+      const externalMeta = externalMetaById.get(platform.id);
+      if (externalMeta) {
+        configured = externalMeta.configured;
+      } else if (!connectorEnvById?.has(platform.id)) {
+        configured = false;
+      }
     }
 
     return {
@@ -1102,6 +1108,16 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
       reply.status(400);
       return { error: 'Refusing to use redacted connector placeholder values' };
     }
+    const operationDef = manifest.config.find((f) => isOperationField(f) && f.name === operationName);
+    const operationTargetEnvNames =
+      operationDef && isOperationField(operationDef) && Array.isArray(operationDef.target) ? operationDef.target : [];
+    const previousTargetValues = new Map<string, string | null>();
+    if (operationTargetEnvNames.length > 0) {
+      const previousConfig = readConnectorConfig(projectRoot, connectorId);
+      for (const name of operationTargetEnvNames) {
+        previousTargetValues.set(name, previousConfig[name] ?? null);
+      }
+    }
 
     const result = await executeConnectorAction({
       projectRoot,
@@ -1131,7 +1147,37 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
         app.log.info({ connectorId }, '[ConnectorHub] Connector deactivated after disconnect');
       } catch (err) {
         activationStatus = 'failed';
+        if (operationTargetEnvNames.length > 0) {
+          const rollbackUpdates = operationTargetEnvNames.map((name) => ({
+            name,
+            value: previousTargetValues.get(name) ?? null,
+          }));
+          const { changedKeys } = writeConnectorConfig(projectRoot, connectorId, rollbackUpdates);
+          if (changedKeys.length > 0) {
+            configEventBus.emitChange({
+              source: 'config-store',
+              scope: manifest.source === 'external' ? 'file' : 'key',
+              changedKeys,
+              changeSetId: createChangeSetId(),
+              timestamp: Date.now(),
+            });
+          }
+        }
+        writeOperationState(projectRoot, connectorId, operationName, {
+          currentAction: actionId,
+          lastResult: {
+            render: 'status',
+            data: { status: 'deactivation_failed' },
+            label: 'Deactivation failed',
+          },
+        });
         app.log.warn({ err, connectorId }, '[ConnectorHub] Connector deactivation failed');
+        reply.status(502);
+        return {
+          ok: false,
+          error: 'Connector deactivation failed after action succeeded',
+          activationStatus,
+        };
       }
     } else if (
       (result.activate === true || (result.backfilledKeys && result.backfilledKeys.length > 0)) &&

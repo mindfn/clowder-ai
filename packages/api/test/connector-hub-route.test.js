@@ -1730,6 +1730,130 @@ describe('POST /api/connectors/:connectorId/actions — activation failure', () 
       rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it('returns failure and keeps disconnect state when deactivation throws', async () => {
+    const tmpDir = mkdtempSync(join(os.tmpdir(), 'external-deactivation-failure-'));
+    const pluginId = 'deactivation-failure-probe';
+    const pluginDir = join(tmpDir, '.cat-cafe', 'plugins', pluginId);
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      [
+        `id: ${pluginId}`,
+        'name: Deactivation Failure Probe',
+        'nameEn: Deactivation Failure Probe',
+        'version: 1.0.0',
+        'source: external',
+        "themeColor: '#336699'",
+        'icon:',
+        '  type: png',
+        '  src: /test.png',
+        'docsUrl: https://example.com/deactivation-failure-probe',
+        'config:',
+        '  - envName: DEACTIVATION_FAILURE_TOKEN',
+        '    type: input',
+        '    label: Token',
+        '    sensitive: true',
+        '    required: true',
+        '  - name: connect',
+        '    type: operation',
+        '    label: Connect',
+        '    target: [DEACTIVATION_FAILURE_TOKEN]',
+        '    actions:',
+        '      - id: finish',
+        '        label: Finish',
+        '        render: button',
+        '        next: disconnect',
+        '      - id: disconnect',
+        '        label: Disconnect',
+        '        render: button',
+        '        next: finish',
+        'steps:',
+        '  - text: Save token',
+      ].join('\n'),
+    );
+
+    const plugin = {
+      id: pluginId,
+      definition: {
+        id: pluginId,
+        displayName: 'Deactivation Failure Probe',
+        icon: { type: 'png', src: '/test.png' },
+        themeColor: '#336699',
+        description: 'deactivation failure regression',
+      },
+      requiredEnvKeys: ['DEACTIVATION_FAILURE_TOKEN'],
+      isConfigured: () => true,
+      createAdapter: () => ({ id: pluginId, sendMessage() {} }),
+      async handleAction() {
+        return {
+          render: 'status',
+          data: { status: 'disconnecting' },
+          label: 'Disconnecting',
+          targetValues: { DEACTIVATION_FAILURE_TOKEN: '' },
+          activate: false,
+        };
+      },
+    };
+
+    const previousRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    process.env.CAT_CAFE_CONFIG_ROOT = tmpDir;
+    invalidateManifestCache();
+    writeConnectorConfig(tmpDir, pluginId, [{ name: 'DEACTIVATION_FAILURE_TOKEN', value: 'secret-token' }]);
+
+    try {
+      const app = Fastify();
+      await registerConnectorHub(app, {
+        threadStore: {
+          async list() {
+            return [];
+          },
+        },
+        pluginRegistry: new Map([[pluginId, plugin]]),
+        deactivateConnector: async () => {
+          throw new Error('adapter failed to stop');
+        },
+      });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/connectors/${pluginId}/actions/connect/disconnect`,
+        headers: {
+          ...AUTH_HEADERS,
+          host: '127.0.0.1:3002',
+          origin: 'http://127.0.0.1:3001',
+        },
+      });
+      const body = JSON.parse(res.body);
+      const statesRes = await app.inject({
+        method: 'GET',
+        url: `/api/connectors/${pluginId}/operations`,
+        headers: AUTH_HEADERS,
+      });
+      const states = JSON.parse(statesRes.body).operations;
+      const raw = JSON.parse(
+        readFileSync(join(tmpDir, '.cat-cafe', 'im-connector-config', `${pluginId}.json`), 'utf8'),
+      );
+
+      assert.equal(res.statusCode, 502);
+      assert.equal(body.ok, false);
+      assert.match(body.error, /deactivation failed/i);
+      assert.equal(states.connect.currentAction, 'disconnect', 'deactivation failure must keep the connected step');
+      assert.equal(
+        raw.DEACTIVATION_FAILURE_TOKEN,
+        'secret-token',
+        'deactivation failure must restore the previous connector credentials',
+      );
+
+      await app.close();
+    } finally {
+      if (previousRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousRoot;
+      invalidateManifestCache();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('POST /api/connectors/:connectorId/actions — pending config values', () => {
