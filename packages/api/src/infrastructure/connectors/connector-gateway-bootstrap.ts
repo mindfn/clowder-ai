@@ -1006,7 +1006,20 @@ export async function startConnectorGateway(
       if (localWebhookHandler) webhookHandlers.set(connectorId, localWebhookHandler);
     }
     if (localInboundHandle) {
-      const stopInbound = () => localInboundHandle!.stop();
+      let stopInbound = () => localInboundHandle!.stop();
+      if (connectorId === 'wecom-bot') {
+        let stopped = false;
+        stopInbound = async () => {
+          if (stopped) return;
+          stopped = true;
+          await localInboundHandle!.stop();
+          adapters.delete('wecom-bot');
+          streamableAdapters.delete('wecom-bot');
+          connectorStopFns.delete('wecom-bot');
+          mediaService.unregisterDownloadFn('wecom-bot');
+        };
+        wecomBotStopFn = stopInbound;
+      }
       stopFns.push(stopInbound);
       connectorStopFns.set(connectorId, stopInbound);
     }

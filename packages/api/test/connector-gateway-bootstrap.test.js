@@ -17,6 +17,7 @@ import {
 import {
   clearConnectorConfigCache,
   resolveConnectorEnv,
+  writeConnectorConfig,
 } from '../dist/infrastructure/connectors/im-connector-config-store.js';
 import { FeishuTokenManager } from '../dist/infrastructure/connectors/im-connectors/feishu/FeishuTokenManager.js';
 import { TelegramAdapter } from '../dist/infrastructure/connectors/im-connectors/telegram/TelegramAdapter.js';
@@ -115,6 +116,68 @@ describe('ConnectorGateway Bootstrap', () => {
       WeComBotAdapter.prototype.hydrateGroupChatIds = originalHydrate;
       WeComBotAdapter.prototype.startStream = originalStart;
       WeComBotAdapter.prototype.stopStream = originalStop;
+    }
+  });
+
+  it('legacy stopWeComBot stops WeCom Bot activated through generic connector activation', async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'wecom-generic-stop-'));
+    const { WeComBotAdapter } = await import(
+      '../dist/infrastructure/connectors/im-connectors/wecom-bot/WeComBotAdapter.js'
+    );
+    const originalHydrate = WeComBotAdapter.prototype.hydrateGroupChatIds;
+    const originalStart = WeComBotAdapter.prototype.startStream;
+    const originalStop = WeComBotAdapter.prototype.stopStream;
+    const previousRoot = process.env.CAT_CAFE_CONFIG_ROOT;
+    const previousBotId = process.env.WECOM_BOT_ID;
+    const previousSecret = process.env.WECOM_BOT_SECRET;
+    let startCalls = 0;
+    let stopCalls = 0;
+
+    process.env.CAT_CAFE_CONFIG_ROOT = tempRoot;
+    delete process.env.WECOM_BOT_ID;
+    delete process.env.WECOM_BOT_SECRET;
+    clearConnectorConfigCache();
+    WeComBotAdapter.prototype.hydrateGroupChatIds = async function stubHydrate() {};
+    WeComBotAdapter.prototype.startStream = async function stubStart() {
+      startCalls += 1;
+    };
+    WeComBotAdapter.prototype.stopStream = async function stubStop() {
+      stopCalls += 1;
+    };
+
+    try {
+      const handle = await startConnectorGateway({}, baseDeps);
+      assert.ok(
+        handle.pluginRegistry.has('wecom-bot'),
+        'WeCom Bot plugin must be registered before generic activation',
+      );
+
+      writeConnectorConfig(tempRoot, 'wecom-bot', [
+        { name: 'WECOM_BOT_ID', value: 'typed-bot-id' },
+        { name: 'WECOM_BOT_SECRET', value: 'typed-secret' },
+      ]);
+
+      await handle.activateConnector('wecom-bot');
+      assert.equal(startCalls, 1, 'generic activation must start the WeCom Bot stream');
+
+      await handle.stopWeComBot();
+
+      assert.equal(stopCalls, 1, 'legacy stopWeComBot must stop generic-activated WeCom Bot stream');
+      assert.equal(handle.adapterRegistry.has('wecom-bot'), false, 'legacy stop should remove live adapter');
+      await handle.stop();
+      assert.equal(stopCalls, 1, 'gateway stop must not stop an already-stopped generic WeCom Bot stream twice');
+    } finally {
+      if (previousRoot === undefined) delete process.env.CAT_CAFE_CONFIG_ROOT;
+      else process.env.CAT_CAFE_CONFIG_ROOT = previousRoot;
+      if (previousBotId === undefined) delete process.env.WECOM_BOT_ID;
+      else process.env.WECOM_BOT_ID = previousBotId;
+      if (previousSecret === undefined) delete process.env.WECOM_BOT_SECRET;
+      else process.env.WECOM_BOT_SECRET = previousSecret;
+      WeComBotAdapter.prototype.hydrateGroupChatIds = originalHydrate;
+      WeComBotAdapter.prototype.startStream = originalStart;
+      WeComBotAdapter.prototype.stopStream = originalStop;
+      clearConnectorConfigCache();
+      rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 
