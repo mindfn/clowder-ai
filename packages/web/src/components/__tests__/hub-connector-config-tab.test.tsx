@@ -65,6 +65,12 @@ function platformToggle(container: HTMLElement, platformId: string): HTMLElement
   return container.querySelector(`[data-guide-id="connector.${platformId}"] [role="button"]`);
 }
 
+function buttonByText(container: HTMLElement, text: string): HTMLButtonElement | undefined {
+  return Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes(text)) as
+    | HTMLButtonElement
+    | undefined;
+}
+
 describe('F134 follow-up — HubConnectorConfigTab', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -476,5 +482,183 @@ describe('F134 follow-up — HubConnectorConfigTab', () => {
     await flushEffects();
 
     expect(container.querySelector('[data-testid="single-step-plugin-action-connect"]')).toBeTruthy();
+  });
+
+  it('keeps pending save state scoped to the connector being saved', async () => {
+    let resolveSave: (response: Response) => void = () => {};
+    const savePromise = new Promise<Response>((resolve) => {
+      resolveSave = resolve;
+    });
+    mockApiFetch.mockImplementation(async (url, init) => {
+      if (url === '/api/connector/status') {
+        return jsonResponse({
+          platforms: [
+            {
+              id: 'feishu',
+              name: '飞书',
+              nameEn: 'Feishu / Lark',
+              configured: false,
+              docsUrl: 'https://open.feishu.cn',
+              steps: [{ text: 'step-1' }, { text: 'step-2' }],
+              fields: [{ envName: 'FEISHU_APP_ID', label: 'App ID', sensitive: false, currentValue: null }],
+            },
+            {
+              id: 'dingtalk',
+              name: '钉钉',
+              nameEn: 'DingTalk',
+              configured: false,
+              docsUrl: 'https://open.dingtalk.com',
+              steps: [{ text: 'step-1' }, { text: 'step-2' }],
+              fields: [{ envName: 'DINGTALK_APP_KEY', label: 'App Key', sensitive: false, currentValue: null }],
+            },
+          ],
+        });
+      }
+      if (url === '/api/connectors/feishu/config' && init?.method === 'PUT') return savePromise;
+      return jsonResponse({ ok: true });
+    });
+
+    await act(async () => {
+      root.render(React.createElement(HubConnectorConfigTab));
+    });
+    await flushEffects();
+
+    await act(async () => {
+      platformToggle(container, 'feishu')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+    await setInputValue(container.querySelector('[data-testid="field-FEISHU_APP_ID"]') as HTMLInputElement, 'cli_new');
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="save-feishu"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="save-feishu"]')?.textContent).toContain('保存中');
+
+    await act(async () => {
+      platformToggle(container, 'dingtalk')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    const dingtalkSave = container.querySelector('[data-testid="save-dingtalk"]') as HTMLButtonElement;
+    expect(dingtalkSave.disabled).toBe(false);
+    expect(dingtalkSave.textContent).toContain('保存配置');
+
+    await act(async () => {
+      resolveSave(jsonResponse({ ok: true }));
+      await Promise.resolve();
+    });
+    await flushEffects();
+  });
+
+  it('keeps pending test state scoped to the connector being tested', async () => {
+    let resolveTest: (response: Response) => void = () => {};
+    const testPromise = new Promise<Response>((resolve) => {
+      resolveTest = resolve;
+    });
+    mockApiFetch.mockImplementation(async (url, init) => {
+      if (url === '/api/connector/status') {
+        return jsonResponse({
+          platforms: [
+            {
+              id: 'feishu',
+              name: '飞书',
+              nameEn: 'Feishu / Lark',
+              configured: true,
+              testable: true,
+              docsUrl: 'https://open.feishu.cn',
+              steps: [{ text: 'step-1' }, { text: 'step-2' }],
+              fields: [],
+            },
+            {
+              id: 'dingtalk',
+              name: '钉钉',
+              nameEn: 'DingTalk',
+              configured: true,
+              testable: true,
+              docsUrl: 'https://open.dingtalk.com',
+              steps: [{ text: 'step-1' }, { text: 'step-2' }],
+              fields: [],
+            },
+          ],
+        });
+      }
+      if (url === '/api/connector/feishu/test' && init?.method === 'POST') return testPromise;
+      return jsonResponse({ valid: true });
+    });
+
+    await act(async () => {
+      root.render(React.createElement(HubConnectorConfigTab));
+    });
+    await flushEffects();
+
+    await act(async () => {
+      platformToggle(container, 'feishu')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    await act(async () => {
+      buttonByText(container, '测试连接')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(buttonByText(container, '测试中')?.disabled).toBe(true);
+
+    await act(async () => {
+      platformToggle(container, 'dingtalk')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    const dingtalkTest = buttonByText(container, '测试连接');
+    expect(dingtalkTest?.disabled).toBe(false);
+
+    await act(async () => {
+      resolveTest(jsonResponse({ valid: true }));
+      await Promise.resolve();
+    });
+    await flushEffects();
+  });
+
+  it('requires confirmation before uninstalling an external connector plugin', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    mockApiFetch.mockResolvedValueOnce(
+      jsonResponse({
+        platforms: [
+          {
+            id: 'external-chat',
+            name: 'External Chat',
+            nameEn: 'External Chat',
+            source: 'external',
+            configured: false,
+            docsUrl: '',
+            steps: [{ text: 'Install plugin' }],
+            fields: [],
+          },
+        ],
+      }),
+    );
+
+    try {
+      await act(async () => {
+        root.render(React.createElement(HubConnectorConfigTab));
+      });
+      await flushEffects();
+
+      await act(async () => {
+        container
+          .querySelector<HTMLButtonElement>('[title="卸载插件"]')
+          ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+      await flushEffects();
+
+      expect(confirmSpy).toHaveBeenCalledTimes(1);
+      expect(mockApiFetch).toHaveBeenCalledTimes(1);
+      expect(mockApiFetch.mock.calls[0][0]).toBe('/api/connector/status');
+    } finally {
+      confirmSpy.mockRestore();
+    }
   });
 });

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, rmSync, unlinkSync } from 'node:fs';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import {
   clearConnectorConfigCache,
   getStoredConnectorValue,
   loadAllConnectorConfigs,
+  readConnectorConfig,
   resolveConnectorEnv,
   writeConnectorConfig,
 } from '../dist/infrastructure/connectors/im-connector-config-store.js';
@@ -77,6 +78,28 @@ describe('connector-config-store tombstone (AC-A8a)', () => {
 
     const resolved = resolveConnectorEnv(CONNECTOR_ID, fields);
     assert.equal(resolved[ENV_NAME], 'hub-value');
+  });
+});
+
+describe('connector-config-store connectorId validation', () => {
+  const projectRoot = '/tmp/cat-cafe-config-id-validation-test';
+
+  afterEach(() => {
+    clearConnectorConfigCache();
+    rmSync(projectRoot, { recursive: true, force: true });
+  });
+
+  it('rejects traversal connector IDs before writing outside im-connector-config', () => {
+    assert.throws(
+      () => writeConnectorConfig(projectRoot, '../escape', [{ name: 'TOKEN', value: 'secret' }]),
+      /Invalid connector ID/i,
+    );
+
+    assert.equal(existsSync(`${projectRoot}/.cat-cafe/escape.json`), false);
+  });
+
+  it('rejects traversal connector IDs before reading outside im-connector-config', () => {
+    assert.throws(() => readConnectorConfig(projectRoot, '../escape'), /Invalid connector ID/i);
   });
 });
 

@@ -16,16 +16,29 @@ import type { ConnectorManifest } from './plugins/im-connector-manifest.js';
 
 const CONFIG_DIR = '.cat-cafe';
 const CONNECTOR_CONFIG_SUBDIR = 'im-connector-config';
+const CONNECTOR_ID_PATTERN = /^[a-z][a-z0-9-]{0,62}[a-z0-9]$/;
 
 type StoredValues = Record<string, string | null>;
 
 const configCache = new Map<string, StoredValues>();
+
+function assertValidConnectorId(connectorId: string): void {
+  if (
+    connectorId.length < 1 ||
+    connectorId.length > 64 ||
+    !CONNECTOR_ID_PATTERN.test(connectorId) ||
+    connectorId.includes('--')
+  ) {
+    throw new Error(`Invalid connector ID '${connectorId}': must be lowercase alphanumeric with hyphens, 1-64 chars`);
+  }
+}
 
 function resolveConfigDir(projectRoot: string): string {
   return resolve(projectRoot, CONFIG_DIR, CONNECTOR_CONFIG_SUBDIR);
 }
 
 function resolveConfigPath(projectRoot: string, connectorId: string): string {
+  assertValidConnectorId(connectorId);
   return resolve(resolveConfigDir(projectRoot), `${connectorId}.json`);
 }
 

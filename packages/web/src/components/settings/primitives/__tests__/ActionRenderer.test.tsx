@@ -155,6 +155,37 @@ describe('ActionRenderer', () => {
     expect(container.querySelector('[data-testid="weixin-action-qr-generate"]')).not.toBeNull();
   });
 
+  it('shows a timeout error instead of spinning forever when polling has no rollback action', async () => {
+    mockApiFetch.mockResolvedValue(jsonResponse({ ok: true, render: 'polling', label: 'Still waiting' }));
+
+    await act(async () => {
+      root.render(
+        React.createElement(ActionRenderer, {
+          connectorId: 'custom-im',
+          operation: {
+            name: 'connect',
+            label: 'Connect',
+            currentAction: 'wait-ready',
+            lastResult: { render: 'status', data: { status: 'pending' }, label: 'Still waiting' },
+            actions: [{ id: 'wait-ready', label: 'Waiting', render: 'polling', timeout: 1 }],
+          },
+        }),
+      );
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain('Still waiting');
+
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain('Operation timed out. Please try again.');
+    expect(container.textContent).not.toContain('Processing...');
+  });
+
   it('passes pending config values when executing connector actions', async () => {
     mockApiFetch.mockResolvedValue(jsonResponse({ ok: true, render: 'status', label: 'Connected' }));
 

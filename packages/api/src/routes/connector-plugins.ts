@@ -39,6 +39,10 @@ import { invalidateManifestCache } from './connector-hub.js';
 
 const PLUGIN_ARCHIVE_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 
+export async function writeUploadedPluginArchive(tmpPath: string, buffer: Buffer): Promise<void> {
+  await writeFile(tmpPath, buffer, { mode: 0o600 });
+}
+
 function isOutsideBase(relativePath: string): boolean {
   return (
     relativePath === '' || relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)
@@ -193,7 +197,7 @@ export const connectorPluginRoutes: FastifyPluginAsync = async (app) => {
     const tmpPath = join(tmpdir(), `cat-cafe-plugin-${randomUUID()}.tar.gz`);
     try {
       const buffer = await file.toBuffer();
-      await writeFile(tmpPath, buffer);
+      await writeUploadedPluginArchive(tmpPath, buffer);
 
       // Get built-in connector IDs to prevent conflicts
       const builtins = await loadBuiltinConnectors();

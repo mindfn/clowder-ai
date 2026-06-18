@@ -75,7 +75,7 @@ afterEach(() => {
   cleanup();
 });
 
-describe('installPlugin', () => {
+describe('installPlugin', { concurrency: false }, () => {
   it('installs a valid plugin to .cat-cafe/plugins/<id>/', async () => {
     const archive = createTestPlugin('my-chat');
     const result = await installPlugin(TEST_ROOT, archive, BUILTIN_IDS);
@@ -129,8 +129,66 @@ describe('installPlugin', () => {
 
     const result = await installPlugin(TEST_ROOT, archivePath, BUILTIN_IDS);
     assert.equal(result.code, 'INVALID_ARCHIVE');
-    assert.match(result.message, /regular file/i);
+    assert.match(result.message, /symlink/i);
     assert.equal(readFileSync(victimPath, 'utf8'), victimContent, 'external symlink target must not be rewritten');
+  });
+
+  it('rejects symlinked index.js before installing the plugin entrypoint', async () => {
+    const entryTarget = join(TEST_ROOT, 'external-entry.js');
+    writeFileSync(entryTarget, "export default { id: 'external-entry' };\n");
+
+    const tmpDir = join(TEST_ROOT, '.tmp-symlink-entry');
+    const pluginDir = join(tmpDir, 'symlink-entry');
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      'id: symlink-entry\nname: Symlink Entry\ndocs_url: https://example.com\nconfig:\n  - envName: SYMLINK_ENTRY_TOKEN\n    label: Token\n    sensitive: true\nsteps:\n  - text: Step\n  - text: Step\n  - text: Step\n',
+    );
+    symlinkSync(entryTarget, join(pluginDir, 'index.js'));
+
+    const archivePath = join(TEST_ROOT, 'symlink-entry.tar.gz');
+    execSync(`tar czf ${archivePath} -C ${tmpDir} symlink-entry`);
+    rmSync(tmpDir, { recursive: true });
+
+    const result = await installPlugin(TEST_ROOT, archivePath, BUILTIN_IDS);
+    assert.equal(result.code, 'INVALID_ARCHIVE');
+    assert.match(result.message, /symlink/i);
+    assert.equal(
+      existsSync(join(resolvePluginsDir(TEST_ROOT), 'symlink-entry')),
+      false,
+      'symlinked entrypoint archive must not be installed',
+    );
+  });
+
+  it('rejects extracted plugin archives containing symlinked asset files', async () => {
+    const assetTarget = join(TEST_ROOT, 'external-icon.png');
+    writeFileSync(assetTarget, 'private-icon');
+
+    const tmpDir = join(TEST_ROOT, '.tmp-symlink-asset');
+    const pluginDir = join(tmpDir, 'symlink-asset');
+    mkdirSync(join(pluginDir, 'assets'), { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      'id: symlink-asset\nname: Symlink Asset\ndocs_url: https://example.com\nconfig:\n  - envName: SYMLINK_ASSET_TOKEN\n    label: Token\n    sensitive: true\nsteps:\n  - text: Step\n  - text: Step\n  - text: Step\n',
+    );
+    writeFileSync(
+      join(pluginDir, 'index.js'),
+      "export default { id: 'symlink-asset', definition: {}, requiredEnvKeys: [], isConfigured: () => false, createAdapter: () => ({}) };",
+    );
+    symlinkSync(assetTarget, join(pluginDir, 'assets', 'icon.png'));
+
+    const archivePath = join(TEST_ROOT, 'symlink-asset.tar.gz');
+    execSync(`tar czf ${archivePath} -C ${tmpDir} symlink-asset`);
+    rmSync(tmpDir, { recursive: true });
+
+    const result = await installPlugin(TEST_ROOT, archivePath, BUILTIN_IDS);
+    assert.equal(result.code, 'INVALID_ARCHIVE');
+    assert.match(result.message, /symlink/i);
+    assert.equal(
+      existsSync(join(resolvePluginsDir(TEST_ROOT), 'symlink-asset')),
+      false,
+      'plugin archives with symlinked assets must not be installed',
+    );
   });
 
   it('updates an existing plugin (replaces files, preserves config)', async () => {
@@ -260,7 +318,7 @@ done
   });
 });
 
-describe('uninstallPlugin', () => {
+describe('uninstallPlugin', { concurrency: false }, () => {
   it('removes plugin directory', async () => {
     const archive = createTestPlugin('to-remove');
     await installPlugin(TEST_ROOT, archive, BUILTIN_IDS);
@@ -323,7 +381,7 @@ describe('uninstallPlugin', () => {
   });
 });
 
-describe('listInstalledPlugins', () => {
+describe('listInstalledPlugins', { concurrency: false }, () => {
   it('returns empty array when no plugins installed', () => {
     const result = listInstalledPlugins(TEST_ROOT);
     assert.deepEqual(result, []);

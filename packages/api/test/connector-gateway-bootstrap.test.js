@@ -1325,11 +1325,12 @@ describe('ConnectorGateway Bootstrap', () => {
     }
   });
 
-  it('rejects deactivation when the inbound stop handle fails and keeps the connector live', async () => {
+  it('rejects deactivation when the inbound stop handle fails but clears runtime registries once', async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), 'deactivation-stop-failure-'));
     const pluginId = 'deactivation-stop-failure-probe';
     const pluginDir = join(resolvePluginsDir(tempRoot), pluginId);
     const configDir = join(tempRoot, '.cat-cafe', 'im-connector-config');
+    const stopCountFile = join(tempRoot, 'stop-count.txt');
     let handle;
 
     mkdirSync(pluginDir, { recursive: true });
@@ -1358,7 +1359,9 @@ describe('ConnectorGateway Bootstrap', () => {
     );
     writeFileSync(
       join(pluginDir, 'index.js'),
-      `export default {
+      `import { appendFileSync } from 'node:fs';
+
+      export default {
         id: '${pluginId}',
         definition: {
           id: '${pluginId}',
@@ -1374,6 +1377,7 @@ describe('ConnectorGateway Bootstrap', () => {
         async startInbound() {
           return {
             async stop() {
+              appendFileSync(process.env.DEACTIVATION_STOP_FAILURE_COUNT_FILE, 'x');
               throw new Error('stop failed');
             },
           };
@@ -1387,7 +1391,9 @@ describe('ConnectorGateway Bootstrap', () => {
 
     const savedConfigRoot = process.env.CAT_CAFE_CONFIG_ROOT;
     const savedToken = process.env.DEACTIVATION_STOP_FAILURE_TOKEN;
+    const savedCountFile = process.env.DEACTIVATION_STOP_FAILURE_COUNT_FILE;
     process.env.CAT_CAFE_CONFIG_ROOT = tempRoot;
+    process.env.DEACTIVATION_STOP_FAILURE_COUNT_FILE = stopCountFile;
     delete process.env.DEACTIVATION_STOP_FAILURE_TOKEN;
 
     try {
@@ -1400,14 +1406,14 @@ describe('ConnectorGateway Bootstrap', () => {
 
       assert.equal(
         handle.adapterRegistry.has(pluginId),
-        true,
-        'failed deactivation must not remove the live adapter from the registry',
+        false,
+        'failed deactivation must still remove the adapter from runtime registries',
       );
-      assert.equal(
-        getAllExternalConnectorMeta().find((meta) => meta.id === pluginId)?.configured,
-        true,
-        'failed deactivation must not report the external connector as unconfigured',
-      );
+      assert.equal(readFileSync(stopCountFile, 'utf8'), 'x', 'deactivation should call stop exactly once');
+
+      await handle.stop();
+      assert.equal(readFileSync(stopCountFile, 'utf8'), 'x', 'gateway shutdown must not double-call failed stop');
+      handle = null;
     } finally {
       if (handle) await handle.stop().catch(() => {});
       if (savedConfigRoot === undefined) {
@@ -1419,6 +1425,11 @@ describe('ConnectorGateway Bootstrap', () => {
         delete process.env.DEACTIVATION_STOP_FAILURE_TOKEN;
       } else {
         process.env.DEACTIVATION_STOP_FAILURE_TOKEN = savedToken;
+      }
+      if (savedCountFile === undefined) {
+        delete process.env.DEACTIVATION_STOP_FAILURE_COUNT_FILE;
+      } else {
+        process.env.DEACTIVATION_STOP_FAILURE_COUNT_FILE = savedCountFile;
       }
       unregisterConnectorDefinition(pluginId);
       clearExternalConnectorRegistry();

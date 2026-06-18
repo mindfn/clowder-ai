@@ -241,7 +241,11 @@ export function ActionRenderer({
           setLastResult(undefined);
           setPhase('idle');
           setErrorMsg('Operation timed out. Please try again.');
+          return;
         }
+        setLastResult(undefined);
+        setPhase('error');
+        setErrorMsg('Operation timed out. Please try again.');
       };
 
       if (remainingTimeoutMs <= 0) {

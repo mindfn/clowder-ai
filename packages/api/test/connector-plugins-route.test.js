@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import Fastify from 'fastify';
 
-const { connectorPluginRoutes } = await import('../dist/routes/connector-plugins.js');
+const { connectorPluginRoutes, writeUploadedPluginArchive } = await import('../dist/routes/connector-plugins.js');
 
 let previousConfigRoot;
 let previousOwnerUserId;
@@ -63,6 +63,18 @@ async function buildPluginRouteApp() {
   await app.ready();
   return app;
 }
+
+describe('writeUploadedPluginArchive', () => {
+  it('creates uploaded plugin archives with owner-only permissions', async () => {
+    const root = mkdtempSync(join(os.tmpdir(), 'connector-plugin-upload-mode-'));
+    tempRoots.push(root);
+    const archivePath = join(root, 'plugin.tar.gz');
+
+    await writeUploadedPluginArchive(archivePath, Buffer.from('archive-bytes'));
+
+    assert.equal(statSync(archivePath).mode & 0o777, 0o600);
+  });
+});
 
 describe('GET /api/connectors/plugins/:id/icon', () => {
   it('rejects icon symlinks that resolve outside the plugin directory', async () => {

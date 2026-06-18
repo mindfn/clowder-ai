@@ -397,7 +397,7 @@ export async function startConnectorGateway(
   const adapters = new Map<string, IOutboundAdapter>();
   const plugins = new Map<string, import('./im-connector-plugin.js').IMConnectorPlugin>();
   const webhookHandlers = new Map<string, ConnectorWebhookHandler>();
-  const stopFns: Array<() => Promise<void>> = [];
+  const stopFns = new Set<() => Promise<void>>();
   /** Per-connector inbound stop handles — for targeted deactivation (F240 A-3). */
   const connectorStopFns = new Map<string, () => Promise<void>>();
 
@@ -565,7 +565,7 @@ export async function startConnectorGateway(
 
   // WeComBot dynamic lifecycle (Hub-managed start/stop)
   let wecomBotStopFn: (() => Promise<void>) | null = null;
-  stopFns.push(async () => wecomBotStopFn?.());
+  stopFns.add(async () => wecomBotStopFn?.());
   const wecomBotPlugin = allPlugins.find((p) => p.id === 'wecom-bot');
 
   // ── Unified plugin initialization loop ──
@@ -708,7 +708,7 @@ export async function startConnectorGateway(
       if (localWebhookHandler) webhookHandlers.set(plugin.id, localWebhookHandler);
       if (localInboundHandle) {
         const stopInbound = () => localInboundHandle!.stop();
-        stopFns.push(stopInbound);
+        stopFns.add(stopInbound);
         connectorStopFns.set(plugin.id, stopInbound);
       }
       if (localMediaDownloadFn) mediaService.registerDownloadFn(plugin.id, localMediaDownloadFn);
@@ -726,7 +726,7 @@ export async function startConnectorGateway(
             await capturedOnMessage({ chatId: msg.chatId, text: msg.text, messageId: msg.messageId, attachments });
           });
         };
-        stopFns.push(async () => weixinAdapterRef!.stopPolling());
+        stopFns.add(async () => weixinAdapterRef!.stopPolling());
 
         if (isConfigured) {
           startWeixinPollingFn();
@@ -1020,7 +1020,7 @@ export async function startConnectorGateway(
         };
         wecomBotStopFn = stopInbound;
       }
-      stopFns.push(stopInbound);
+      stopFns.add(stopInbound);
       connectorStopFns.set(connectorId, stopInbound);
     }
     if (localMediaDownloadFn) mediaService.registerDownloadFn(connectorId, localMediaDownloadFn);
@@ -1046,15 +1046,18 @@ export async function startConnectorGateway(
 
     // Stop inbound listener (WebSocket, long-poll, etc.)
     const stopInbound = connectorStopFns.get(connectorId);
+    let stopErr: unknown;
     if (stopInbound) {
       try {
         await stopInbound();
       } catch (err) {
         log.warn({ err, id: connectorId }, '[ConnectorGateway] Error stopping inbound during deactivation');
-        throw err;
+        stopErr = err;
+      } finally {
+        connectorStopFns.delete(connectorId);
+        stopFns.delete(stopInbound);
+        if (connectorId === 'wecom-bot') wecomBotStopFn = null;
       }
-      connectorStopFns.delete(connectorId);
-      if (connectorId === 'wecom-bot') wecomBotStopFn = null;
     }
 
     // Remove adapter, webhook handler, media downloader
@@ -1065,6 +1068,7 @@ export async function startConnectorGateway(
     refreshExternalConfiguredStatus(connectorId);
 
     log.info({ id: connectorId }, '[ConnectorGateway] Connector deactivated');
+    if (stopErr) throw stopErr;
   }
 
   return {
@@ -1083,7 +1087,7 @@ export async function startConnectorGateway(
     deactivateConnector,
     async stop() {
       cleanupJob.stop();
-      await Promise.allSettled(stopFns.map((fn) => fn()));
+      await Promise.allSettled([...stopFns].map((fn) => fn()));
       log.info('[ConnectorGateway] Stopped');
     },
   };

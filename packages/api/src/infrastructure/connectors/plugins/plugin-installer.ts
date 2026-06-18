@@ -85,6 +85,33 @@ function resolvePluginDir(projectRoot: string, connectorId: string): string {
   return join(resolvePluginsDir(projectRoot), connectorId);
 }
 
+function validateExtractedTreeHasNoSymlinks(rootDir: string): PluginInstallError | null {
+  let rootStat;
+  try {
+    rootStat = lstatSync(rootDir);
+  } catch (err) {
+    return { code: 'INVALID_ARCHIVE', message: `Invalid plugin archive: ${(err as Error).message}` };
+  }
+  if (!rootStat.isDirectory()) {
+    return { code: 'INVALID_ARCHIVE', message: 'Archive top-level entry must be a directory' };
+  }
+
+  const stack = [rootDir];
+  while (stack.length > 0) {
+    const dir = stack.pop()!;
+    for (const entry of readdirSync(dir)) {
+      const path = join(dir, entry);
+      const stat = lstatSync(path);
+      if (stat.isSymbolicLink()) {
+        return { code: 'INVALID_ARCHIVE', message: `Plugin archive must not contain symlinks: ${entry}` };
+      }
+      if (stat.isDirectory()) stack.push(path);
+    }
+  }
+
+  return null;
+}
+
 // ── Install ──
 
 /**
@@ -126,6 +153,8 @@ export async function installPlugin(
     }
 
     const extractedDir = join(tmpDir, entries[0]);
+    const treeError = validateExtractedTreeHasNoSymlinks(extractedDir);
+    if (treeError) return treeError;
 
     // Validate connector.yaml
     const yamlPath = join(extractedDir, CONNECTOR_YAML);
@@ -155,6 +184,9 @@ export async function installPlugin(
     const entryPath = join(extractedDir, PLUGIN_ENTRY);
     if (!existsSync(entryPath)) {
       return { code: 'MISSING_ENTRY', message: `Plugin must contain ${PLUGIN_ENTRY}` };
+    }
+    if (!lstatSync(entryPath).isFile()) {
+      return { code: 'INVALID_ARCHIVE', message: `Plugin ${PLUGIN_ENTRY} must be a regular file` };
     }
 
     // Force-write source: 'external' into manifest — overrides any user-supplied value.

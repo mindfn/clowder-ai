@@ -1,6 +1,6 @@
 'use client';
 
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useGuideStore } from '@/stores/guideStore';
 import { apiFetch } from '@/utils/api-client';
 import { ConnectorActionBar } from './ConnectorActionBar';
@@ -20,6 +20,7 @@ import { ConfigFieldRenderer } from './settings/primitives/ConfigFieldRenderer';
 const HubPermissionsTab = lazy(() => import('./HubPermissionsTab'));
 
 const REDACTED_PLACEHOLDER = '••••••';
+type SaveResult = { type: 'success' | 'error'; message: string };
 
 export function HubConnectorConfigTab({ refreshKey }: { refreshKey?: number }) {
   const activeGuideStep = useGuideStore((s) => {
@@ -31,10 +32,45 @@ export function HubConnectorConfigTab({ refreshKey }: { refreshKey?: number }) {
   const [isLoading, setIsLoading] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [saveResult, setSaveResult] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [savingById, setSavingById] = useState<Record<string, boolean>>({});
+  const [testingById, setTestingById] = useState<Record<string, boolean>>({});
+  const [saveResultsById, setSaveResultsById] = useState<Record<string, SaveResult | undefined>>({});
   const [uninstallingId, setUninstallingId] = useState<string | null>(null);
+  const expandedIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    expandedIdRef.current = expandedId;
+  }, [expandedId]);
+
+  const clearSaveResult = (platformId: string) => {
+    setSaveResultsById((prev) => {
+      const next = { ...prev };
+      delete next[platformId];
+      return next;
+    });
+  };
+
+  const setSavingFor = (platformId: string, active: boolean) => {
+    setSavingById((prev) => {
+      const next = { ...prev };
+      if (active) next[platformId] = true;
+      else delete next[platformId];
+      return next;
+    });
+  };
+
+  const setTestingFor = (platformId: string, active: boolean) => {
+    setTestingById((prev) => {
+      const next = { ...prev };
+      if (active) next[platformId] = true;
+      else delete next[platformId];
+      return next;
+    });
+  };
+
+  const setSaveResultFor = (platformId: string, result: SaveResult) => {
+    setSaveResultsById((prev) => ({ ...prev, [platformId]: result }));
+  };
 
   const fetchStatus = useCallback(async () => {
     setIsLoading(true);
@@ -53,6 +89,7 @@ export function HubConnectorConfigTab({ refreshKey }: { refreshKey?: number }) {
 
   const handleUninstallPlugin = useCallback(
     async (id: string) => {
+      if (!window.confirm(`确定要卸载插件 ${id} 吗？`)) return;
       setUninstallingId(id);
       try {
         const res = await apiFetch(`/api/connectors/plugins/${encodeURIComponent(id)}`, { method: 'DELETE' });
@@ -80,12 +117,12 @@ export function HubConnectorConfigTab({ refreshKey }: { refreshKey?: number }) {
       }
       setExpandedId(null);
       setFieldValues({});
-      setSaveResult(null);
+      clearSaveResult(platformId);
       return;
     }
     setExpandedId(platformId);
     setFieldValues({});
-    setSaveResult(null);
+    clearSaveResult(platformId);
   };
 
   const handleSave = async (platform: PlatformStatus) => {
@@ -95,17 +132,17 @@ export function HubConnectorConfigTab({ refreshKey }: { refreshKey?: number }) {
       .map((f) => ({ name: f.envName, value: fieldValues[f.envName] || null }));
 
     if (fields.length === 0) {
-      setSaveResult({ type: 'error', message: '请填写至少一个配置项' });
+      setSaveResultFor(platform.id, { type: 'error', message: '请填写至少一个配置项' });
       return;
     }
 
     if (fields.some((f) => f.value?.includes(REDACTED_PLACEHOLDER))) {
-      setSaveResult({ type: 'error', message: '不能保存脱敏占位符，请输入新的完整凭据' });
+      setSaveResultFor(platform.id, { type: 'error', message: '不能保存脱敏占位符，请输入新的完整凭据' });
       return;
     }
 
-    setSaving(true);
-    setSaveResult(null);
+    setSavingFor(platform.id, true);
+    clearSaveResult(platform.id);
     try {
       const res = await apiFetch(`/api/connectors/${encodeURIComponent(platform.id)}/config`, {
         method: 'PUT',
@@ -114,36 +151,36 @@ export function HubConnectorConfigTab({ refreshKey }: { refreshKey?: number }) {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setSaveResult({ type: 'error', message: data.error ?? '保存失败' });
+        setSaveResultFor(platform.id, { type: 'error', message: data.error ?? '保存失败' });
         return;
       }
-      setSaveResult({ type: 'success', message: '配置已保存，连接器正在自动重连...' });
-      setFieldValues({});
+      setSaveResultFor(platform.id, { type: 'success', message: '配置已保存，连接器正在自动重连...' });
+      if (expandedIdRef.current === platform.id) setFieldValues({});
       await fetchStatus();
     } catch {
-      setSaveResult({ type: 'error', message: '网络错误' });
+      setSaveResultFor(platform.id, { type: 'error', message: '网络错误' });
     } finally {
-      setSaving(false);
+      setSavingFor(platform.id, false);
     }
   };
 
   const handleTest = async (platform: PlatformStatus) => {
-    setTesting(true);
-    setSaveResult(null);
+    setTestingFor(platform.id, true);
+    clearSaveResult(platform.id);
     try {
       const res = await apiFetch(`/api/connector/${encodeURIComponent(platform.id)}/test`, {
         method: 'POST',
       });
       const data = (await res.json().catch(() => ({}))) as { valid?: boolean; error?: string };
       if (data.valid) {
-        setSaveResult({ type: 'success', message: '连接正常' });
+        setSaveResultFor(platform.id, { type: 'success', message: '连接正常' });
       } else {
-        setSaveResult({ type: 'error', message: data.error || '连接失败' });
+        setSaveResultFor(platform.id, { type: 'error', message: data.error || '连接失败' });
       }
     } catch {
-      setSaveResult({ type: 'error', message: '网络错误' });
+      setSaveResultFor(platform.id, { type: 'error', message: '网络错误' });
     } finally {
-      setTesting(false);
+      setTestingFor(platform.id, false);
     }
   };
 
@@ -318,11 +355,11 @@ export function HubConnectorConfigTab({ refreshKey }: { refreshKey?: number }) {
 
                 <ConnectorActionBar
                   platformId={platform.id}
-                  saveResult={saveResult}
-                  saving={saving}
+                  saveResult={saveResultsById[platform.id] ?? null}
+                  saving={savingById[platform.id] === true}
                   onSave={() => handleSave(platform)}
                   showTest={platform.testable === true}
-                  testing={testing}
+                  testing={testingById[platform.id] === true}
                   onTest={() => handleTest(platform)}
                 />
               </div>
