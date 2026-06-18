@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import {
@@ -106,6 +106,31 @@ describe('installPlugin', () => {
 
     assert.equal(result.code, 'ID_CONFLICT');
     assert.ok(result.message.includes('feishu'));
+  });
+
+  it('rejects symlinked connector.yaml before rewriting the manifest', async () => {
+    const victimPath = join(TEST_ROOT, 'victim-connector.yaml');
+    const victimContent =
+      'id: feishu\nname: Feishu\ndocs_url: https://example.com\nconfig: []\nsteps:\n  - text: Step\n  - text: Step\n  - text: Step\n';
+    writeFileSync(victimPath, victimContent);
+
+    const tmpDir = join(TEST_ROOT, '.tmp-symlink');
+    const pluginDir = join(tmpDir, 'symlink-manifest');
+    mkdirSync(pluginDir, { recursive: true });
+    symlinkSync(victimPath, join(pluginDir, 'connector.yaml'));
+    writeFileSync(
+      join(pluginDir, 'index.js'),
+      "export default { id: 'symlink-manifest', definition: {}, requiredEnvKeys: [], isConfigured: () => false, createAdapter: () => ({}) };",
+    );
+
+    const archivePath = join(TEST_ROOT, 'symlink-manifest.tar.gz');
+    execSync(`tar czf ${archivePath} -C ${tmpDir} symlink-manifest`);
+    rmSync(tmpDir, { recursive: true });
+
+    const result = await installPlugin(TEST_ROOT, archivePath, BUILTIN_IDS);
+    assert.equal(result.code, 'INVALID_ARCHIVE');
+    assert.match(result.message, /regular file/i);
+    assert.equal(readFileSync(victimPath, 'utf8'), victimContent, 'external symlink target must not be rewritten');
   });
 
   it('updates an existing plugin (replaces files, preserves config)', async () => {

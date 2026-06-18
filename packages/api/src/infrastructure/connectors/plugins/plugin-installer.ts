@@ -132,6 +132,9 @@ export async function installPlugin(
     if (!existsSync(yamlPath)) {
       return { code: 'MISSING_MANIFEST', message: `Plugin must contain ${CONNECTOR_YAML}` };
     }
+    if (!lstatSync(yamlPath).isFile()) {
+      return { code: 'INVALID_ARCHIVE', message: `Plugin ${CONNECTOR_YAML} must be a regular file` };
+    }
 
     let manifest: ConnectorManifest;
     try {
