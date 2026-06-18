@@ -17,12 +17,22 @@ function cacheKey(p: string): string {
   return _isWin ? resolved.toLowerCase() : resolved;
 }
 
-const _monorepoRootCache = new Map<string, string>();
+type MonorepoRootCacheEntry = {
+  root: string;
+  /**
+   * Workspace hits are safe to reuse for descendants/ancestors in the traversal
+   * trail. Fallback hits are exact-start only because "no workspace found"
+   * returns the original start directory by contract.
+   */
+  shared: boolean;
+};
+
+const _monorepoRootCache = new Map<string, MonorepoRootCacheEntry>();
 
 export function findMonorepoRoot(start = process.cwd()): string {
   const startKey = cacheKey(start);
   const cached = _monorepoRootCache.get(startKey);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) return cached.root;
 
   const trail: string[] = [];
   let dir = resolve(start);
@@ -31,8 +41,8 @@ export function findMonorepoRoot(start = process.cwd()): string {
   while (dir !== dirname(dir)) {
     const dirKey = cacheKey(dir);
     const dirCached = _monorepoRootCache.get(dirKey);
-    if (dirCached !== undefined) {
-      root = dirCached;
+    if (dirCached?.shared) {
+      root = dirCached.root;
       break;
     }
     trail.push(dirKey);
@@ -44,10 +54,15 @@ export function findMonorepoRoot(start = process.cwd()): string {
   }
 
   const result = root ?? resolve(start);
-  // Memoize all directories we traversed — they all share the same root.
-  _monorepoRootCache.set(startKey, result);
-  for (const key of trail) {
-    _monorepoRootCache.set(key, result);
+  if (root) {
+    const entry: MonorepoRootCacheEntry = { root: result, shared: true };
+    // Memoize all directories we traversed — they all share the same workspace root.
+    _monorepoRootCache.set(startKey, entry);
+    for (const key of trail) {
+      _monorepoRootCache.set(key, entry);
+    }
+  } else {
+    _monorepoRootCache.set(startKey, { root: result, shared: false });
   }
   return result;
 }

@@ -84,17 +84,19 @@ export function ChatInput({
   const clearReplyTo = useChatStore((s) => s.clearReplyTo);
   // Only surface the reply when it belongs to this ChatInput's thread
   const replyToMessage = rawReplyToMessage?.threadId === threadId ? rawReplyToMessage : null;
+  const replyHydrationThreadRef = useRef<string | null>(null);
+  const replyPersistenceThreadRef = useRef<string | null>(null);
 
-  // #934: Restore reply context from thread draft store on mount.
+  // #934: Restore reply context from thread draft store before mount-time persistence.
   // ChatInput is keyed by threadId so this runs once per thread visit.
-  useEffect(() => {
-    if (!threadId) return;
+  useLayoutEffect(() => {
+    if (!threadId || replyHydrationThreadRef.current === threadId) return;
+    replyHydrationThreadRef.current = threadId;
     const savedReply = threadReplyDrafts.get(threadId);
-    if (savedReply && !rawReplyToMessage) {
+    if (savedReply && rawReplyToMessage?.threadId !== threadId) {
       setReplyToStore(savedReply);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: run once on mount
-  }, [threadId]);
+  }, [threadId, rawReplyToMessage, setReplyToStore]);
 
   // F122B AC-B10: track which cats are actively executing (for whisper disable)
   const activeInvocations = useChatStore((s) => s.activeInvocations);
@@ -211,7 +213,7 @@ export function ChatInput({
     }
     setPendingChatInsert(null);
     textareaRef.current?.focus();
-  }, [pendingChatInsert, setPendingChatInsert, threadId]);
+  }, [pendingChatInsert, setPendingChatInsert, setThreadHasDraft, threadId]);
 
   const handleTranscript = useCallback((text: string) => {
     setInput((prev) => {
@@ -615,9 +617,11 @@ export function ChatInput({
   useLayoutEffect(() => {
     if (!threadId) return;
     const hasDraft = input.trim().length > 0 || images.length > 0;
+    const firstPersistenceForThread = replyPersistenceThreadRef.current !== threadId;
+    const replyDraft = replyToMessage ?? (firstPersistenceForThread ? (threadReplyDrafts.get(threadId) ?? null) : null);
     syncDraftToStorage(threadId, input || undefined);
     // #934: Persist reply context alongside text/image drafts
-    syncReplyDraftToStorage(threadId, replyToMessage ?? null);
+    syncReplyDraftToStorage(threadId, replyDraft);
     if (images.length > 0) {
       threadImageDrafts.delete(threadId); // move to end (Map insertion order)
       threadImageDrafts.set(threadId, images);
@@ -632,7 +636,8 @@ export function ChatInput({
     } else {
       threadImageDrafts.delete(threadId);
     }
-    setThreadHasDraft(threadId, hasDraft || Boolean(replyToMessage));
+    setThreadHasDraft(threadId, hasDraft || Boolean(replyDraft));
+    replyPersistenceThreadRef.current = threadId;
   }, [input, images, threadId, setThreadHasDraft, replyToMessage]);
 
   // F080: recalculate ghost suggestion whenever input changes (covers all setInput paths)
