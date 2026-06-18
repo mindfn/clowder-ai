@@ -13,6 +13,8 @@
  */
 
 import { isOperationField, type OperationConfigField, type OperationState } from '@cat-cafe/shared';
+import { configEventBus, createChangeSetId } from '../../config/config-event-bus.js';
+import { AuditEventTypes, type EventAuditLog } from '../../domains/cats/services/orchestration/EventAuditLog.js';
 import { readOperationState, writeConnectorConfig, writeOperationState } from './im-connector-config-store.js';
 import type {
   HandleActionContext,
@@ -29,11 +31,14 @@ interface ExecuteActionInput {
   connectorId: string;
   operationName: string;
   actionId: string;
-  manifest: { id: string; config: ReadonlyArray<{ type: string }> };
+  manifest: { id: string; source?: string; config: ReadonlyArray<{ type: string }> };
   plugin: Pick<IMConnectorPlugin, 'id' | 'handleAction'>;
   pluginCtx: IMConnectorPluginContext;
   /** Undefined when connector not yet configured (pre-activation actions like QR generate). */
   adapter: IOutboundAdapter | undefined;
+  /** Session/user identity for config audit events. */
+  operator?: string;
+  auditLog?: Pick<EventAuditLog, 'append'>;
 }
 
 interface ExecuteActionSuccess {
@@ -87,7 +92,18 @@ function buildPersistedLastResult(
 // ── Implementation ──────────────────────────────────────────────────
 
 export async function executeConnectorAction(input: ExecuteActionInput): Promise<ExecuteActionResult> {
-  const { projectRoot, connectorId, operationName, actionId, manifest, plugin, pluginCtx, adapter } = input;
+  const {
+    projectRoot,
+    connectorId,
+    operationName,
+    actionId,
+    manifest,
+    plugin,
+    pluginCtx,
+    adapter,
+    operator,
+    auditLog,
+  } = input;
 
   // 1. Find the operation in manifest
   const operation = (manifest.config as OperationConfigField[]).find(
@@ -167,6 +183,30 @@ export async function executeConnectorAction(input: ExecuteActionInput): Promise
     if (updates.length > 0) {
       const { changedKeys } = writeConnectorConfig(projectRoot, connectorId, updates);
       backfilledKeys = changedKeys;
+      if (changedKeys.length > 0) {
+        configEventBus.emitChange({
+          source: 'config-store',
+          scope: manifest.source === 'external' ? 'file' : 'key',
+          changedKeys,
+          changeSetId: createChangeSetId(),
+          timestamp: Date.now(),
+        });
+      }
+      if (operator && auditLog) {
+        try {
+          await auditLog.append({
+            type: AuditEventTypes.CONFIG_UPDATED,
+            data: {
+              target: 'connector-config',
+              action: `connector-action:${connectorId}:${operationName}:${actionId}`,
+              keys: changedKeys,
+              operator,
+            },
+          });
+        } catch (err) {
+          pluginCtx.log.warn({ err, connectorId, keys: changedKeys }, 'connector action backfill audit append failed');
+        }
+      }
     }
   }
 

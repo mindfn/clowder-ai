@@ -369,6 +369,73 @@ describe('ActionRenderer', () => {
     expect(container.textContent).toContain('WeChat connected');
   });
 
+  it('surfaces terminal polling action failures instead of retrying forever', async () => {
+    mockApiFetch.mockImplementation(async (url) => {
+      const path = String(url);
+      if (path.endsWith('/qr-generate')) {
+        return jsonResponse({
+          ok: true,
+          render: 'img',
+          data: { url: 'https://example.com/qr.png' },
+          label: 'Scan QR',
+        });
+      }
+      if (path.endsWith('/qr-status')) {
+        return jsonResponse({ error: 'Activation failed after QR confirmation' }, 502);
+      }
+      return jsonResponse({ ok: false, label: 'unexpected action' }, 500);
+    });
+
+    await act(async () => {
+      root.render(
+        React.createElement(ActionRenderer, {
+          connectorId: 'weixin',
+          operation: {
+            name: 'connect',
+            label: 'Connect',
+            actions: [
+              {
+                id: 'qr-generate',
+                label: 'Generate QR Code',
+                render: 'button',
+                resultRender: 'img',
+                next: 'qr-status',
+              },
+              { id: 'qr-status', label: 'Waiting', render: 'polling', next: 'disconnect', timeout: 60 },
+              { id: 'disconnect', label: 'Disconnect', render: 'button', next: 'qr-generate' },
+            ],
+          },
+        }),
+      );
+    });
+    await flushEffects();
+
+    await act(async () => {
+      queryButton(container, 'Generate QR Code').click();
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    await act(async () => {
+      vi.advanceTimersByTime(150);
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain('Activation failed after QR confirmation');
+
+    const statusPollCalls = () => mockApiFetch.mock.calls.filter(([url]) => String(url).endsWith('/qr-status')).length;
+    expect(statusPollCalls()).toBe(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(3000);
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    expect(statusPollCalls()).toBe(1);
+  });
+
   it('executes the generic disconnect action from a configured connector state', async () => {
     mockApiFetch.mockResolvedValue(jsonResponse({ ok: true, render: 'status', label: 'Disconnected' }));
 

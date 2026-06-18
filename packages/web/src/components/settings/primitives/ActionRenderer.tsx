@@ -75,11 +75,13 @@ function deriveActionState(
 /** Classify a poll response into retry / continue / done with parsed state. */
 type PollVerdict =
   | { outcome: 'retry' }
+  | { outcome: 'error'; message: string }
   | { outcome: 'continue'; state: ResultState }
   | { outcome: 'done'; state: ResultState };
 
 function classifyPollResult(raw: ActionApiResult | null, actionRender?: string): PollVerdict {
-  if (!raw || !raw.ok) return { outcome: 'retry' };
+  if (!raw) return { outcome: 'retry' };
+  if (!raw.ok) return { outcome: 'error', message: raw.label ?? 'Action failed' };
   const state = toResultState(raw);
   if (raw.render === 'polling' || raw.render === actionRender) return { outcome: 'continue', state };
   return { outcome: 'done', state };
@@ -200,6 +202,12 @@ export function ActionRenderer({
         const verdict = classifyPollResult(result, action?.render);
         if (verdict.outcome === 'retry') {
           pollRef.current = setTimeout(poll, intervalMs);
+          return;
+        }
+        if (verdict.outcome === 'error') {
+          stopTimers();
+          setPhase('error');
+          setErrorMsg(verdict.message);
           return;
         }
         if (verdict.outcome === 'continue') {

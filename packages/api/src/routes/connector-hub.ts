@@ -1112,6 +1112,8 @@ export const connectorHubRoutes: FastifyPluginAsync<ConnectorHubRoutesOptions> =
       plugin,
       pluginCtx: { env: { ...resolvedEnv, ...pendingActionValues }, log: app.log, redis: opts.redis },
       adapter,
+      operator: auth.userId,
+      auditLog: getEventAuditLog(),
     });
 
     if (!result.ok) {

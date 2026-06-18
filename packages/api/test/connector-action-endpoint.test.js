@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { existsSync, unlinkSync } from 'node:fs';
 import { afterEach, beforeEach, describe, it } from 'node:test';
+import { configEventBus } from '../dist/config/config-event-bus.js';
+import { AuditEventTypes } from '../dist/domains/cats/services/orchestration/EventAuditLog.js';
 import { executeConnectorAction } from '../dist/infrastructure/connectors/connector-action-handler.js';
 import {
   clearConnectorConfigCache,
@@ -123,6 +125,114 @@ describe('executeConnectorAction (AC-A15/A16)', () => {
     assert.equal(state?.currentAction, 'disconnect');
     // target field should be backfilled (check changedKeys)
     assert.deepEqual(result.backfilledKeys, ['MY_TOKEN']);
+  });
+
+  it('emits config change and audit event when target values are backfilled', async () => {
+    const captured = [];
+    const auditEvents = [];
+    const unsub = configEventBus.onConfigChange((event) => captured.push(event));
+    const mockPlugin = {
+      id: CONNECTOR_ID,
+      handleAction: async () => ({
+        render: 'status',
+        data: { label: 'Connected' },
+        targetValues: { MY_TOKEN: 'scanned-token-123' },
+      }),
+    };
+
+    try {
+      const result = await executeConnectorAction({
+        projectRoot: PROJECT_ROOT,
+        connectorId: CONNECTOR_ID,
+        operationName: 'qr_login',
+        actionId: 'qr-status',
+        manifest: mockManifest,
+        plugin: mockPlugin,
+        pluginCtx: { env: {}, log: console },
+        adapter: {},
+        operator: 'owner-1',
+        auditLog: {
+          append: async (input) => {
+            auditEvents.push(input);
+            return { id: 'audit-test-id', timestamp: Date.now(), ...input };
+          },
+        },
+      });
+
+      assert.equal(result.ok, true);
+      assert.deepEqual(result.backfilledKeys, ['MY_TOKEN']);
+      assert.equal(captured.length, 1);
+      assert.equal(captured[0].source, 'config-store');
+      assert.equal(captured[0].scope, 'key');
+      assert.deepEqual(captured[0].changedKeys, ['MY_TOKEN']);
+      assert.equal(auditEvents.length, 1);
+      assert.equal(auditEvents[0].type, AuditEventTypes.CONFIG_UPDATED);
+      assert.deepEqual(auditEvents[0].data, {
+        target: 'connector-config',
+        action: 'connector-action:test-connector:qr_login:qr-status',
+        keys: ['MY_TOKEN'],
+        operator: 'owner-1',
+      });
+    } finally {
+      unsub();
+    }
+  });
+
+  it('audits target value backfills even when stored values are unchanged', async () => {
+    const mockPlugin = {
+      id: CONNECTOR_ID,
+      handleAction: async () => ({
+        render: 'status',
+        data: { label: 'Connected' },
+        targetValues: { MY_TOKEN: 'same-token' },
+      }),
+    };
+    await executeConnectorAction({
+      projectRoot: PROJECT_ROOT,
+      connectorId: CONNECTOR_ID,
+      operationName: 'qr_login',
+      actionId: 'qr-status',
+      manifest: mockManifest,
+      plugin: mockPlugin,
+      pluginCtx: { env: {}, log: console },
+      adapter: {},
+    });
+
+    const captured = [];
+    const auditEvents = [];
+    const unsub = configEventBus.onConfigChange((event) => captured.push(event));
+    try {
+      const result = await executeConnectorAction({
+        projectRoot: PROJECT_ROOT,
+        connectorId: CONNECTOR_ID,
+        operationName: 'qr_login',
+        actionId: 'qr-status',
+        manifest: mockManifest,
+        plugin: mockPlugin,
+        pluginCtx: { env: {}, log: console },
+        adapter: {},
+        operator: 'owner-1',
+        auditLog: {
+          append: async (input) => {
+            auditEvents.push(input);
+            return { id: 'audit-test-id', timestamp: Date.now(), ...input };
+          },
+        },
+      });
+
+      assert.equal(result.ok, true);
+      assert.equal(result.backfilledKeys, undefined);
+      assert.equal(captured.length, 0, 'unchanged values must not trigger reload');
+      assert.equal(auditEvents.length, 1);
+      assert.deepEqual(auditEvents[0].data, {
+        target: 'connector-config',
+        action: 'connector-action:test-connector:qr_login:qr-status',
+        keys: [],
+        operator: 'owner-1',
+      });
+    } finally {
+      unsub();
+    }
   });
 
   it('returns error for unknown operation', async () => {
