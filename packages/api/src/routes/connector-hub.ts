@@ -479,7 +479,7 @@ export function buildConnectorStatus(
       configured = configuredFields.every((f) => isRequiredFieldSatisfied(f, platformEnv, configuredFields));
     }
     if (platform.source === 'external') {
-      configured = externalMetaById.get(platform.id)?.configured ?? configured;
+      configured = externalMetaById.get(platform.id)?.configured ?? false;
     }
 
     return {

@@ -393,6 +393,45 @@ describe('buildConnectorStatus', () => {
     );
   });
 
+  it('treats an external manifest without loaded plugin metadata as unconfigured', () => {
+    const pluginId = 'unloaded-external';
+    const result = buildConnectorStatus(
+      {
+        UNLOADED_EXTERNAL_TOKEN: 'stored-token',
+      },
+      [
+        {
+          id: pluginId,
+          name: 'Unloaded External',
+          nameEn: 'Unloaded External',
+          version: '1.0.0',
+          icon: { type: 'png', src: '/test.png' },
+          themeColor: '#336699',
+          docsUrl: 'https://example.com',
+          source: 'external',
+          config: [
+            {
+              type: 'input',
+              envName: 'UNLOADED_EXTERNAL_TOKEN',
+              label: 'Token',
+              sensitive: true,
+              required: true,
+            },
+          ],
+          steps: [{ text: 'test' }],
+        },
+      ],
+    );
+
+    const external = result.find((p) => p.id === pluginId);
+    assert.ok(external, 'external manifest connector must appear in status');
+    assert.equal(
+      external.configured,
+      false,
+      'external manifest without loaded plugin metadata must not fall back to field heuristics',
+    );
+  });
+
   it('evaluates external manifest requiredWhen values without mode-specific coercion', () => {
     const pluginId = 'oauth-required-when-external';
     const result = buildConnectorStatus(

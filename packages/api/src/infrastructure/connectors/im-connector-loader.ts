@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { FastifyBaseLogger } from 'fastify';
 import type { IMConnectorPlugin } from './im-connector-plugin.js';
-import { resolvePluginsDir } from './plugins/plugin-installer.js';
+import { resolvePluginModuleCacheDir, resolvePluginsDir } from './plugins/plugin-installer.js';
 
 /**
  * Load all built-in IM connector plugins.
@@ -56,7 +56,7 @@ function hashPluginModuleGraph(dir: string): string {
 
 function materializeVersionedPluginModule(projectRoot: string, pluginId: string, sourceDir: string): string {
   const graphHash = hashPluginModuleGraph(sourceDir);
-  const cacheRoot = join(projectRoot, '.cat-cafe', 'plugin-module-cache', pluginId);
+  const cacheRoot = resolvePluginModuleCacheDir(projectRoot, pluginId);
   const cacheDir = join(cacheRoot, graphHash);
   if (!existsSync(cacheDir)) {
     rmSync(cacheRoot, { recursive: true, force: true });

@@ -32,6 +32,7 @@ import { type ConnectorManifest, parseConnectorManifest } from './im-connector-m
 const execFileAsync = promisify(execFile);
 
 const PLUGINS_DIR_NAME = 'plugins';
+const PLUGIN_MODULE_CACHE_DIR_NAME = 'plugin-module-cache';
 const CONNECTOR_YAML = 'connector.yaml';
 const PLUGIN_ENTRY = 'index.js';
 
@@ -74,6 +75,10 @@ export interface PluginInstallError {
 
 export function resolvePluginsDir(projectRoot: string): string {
   return join(projectRoot, '.cat-cafe', PLUGINS_DIR_NAME);
+}
+
+export function resolvePluginModuleCacheDir(projectRoot: string, connectorId: string): string {
+  return join(projectRoot, '.cat-cafe', PLUGIN_MODULE_CACHE_DIR_NAME, connectorId);
 }
 
 function resolvePluginDir(projectRoot: string, connectorId: string): string {
@@ -221,6 +226,7 @@ export function uninstallPlugin(
   }
 
   rmSync(pluginDir, { recursive: true });
+  rmSync(resolvePluginModuleCacheDir(projectRoot, connectorId), { recursive: true, force: true });
 
   if (opts.clearConfig) {
     const configPath = join(projectRoot, '.cat-cafe', 'im-connector-config', `${connectorId}.json`);

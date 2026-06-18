@@ -246,6 +246,19 @@ describe('uninstallPlugin', () => {
     assert.ok(!existsSync(join(resolvePluginsDir(TEST_ROOT), 'to-remove')));
   });
 
+  it('removes cached plugin module copies', async () => {
+    const archive = createTestPlugin('remove-cache');
+    await installPlugin(TEST_ROOT, archive, BUILTIN_IDS);
+
+    const cacheRoot = join(TEST_ROOT, '.cat-cafe', 'plugin-module-cache', 'remove-cache');
+    mkdirSync(join(cacheRoot, 'abc123'), { recursive: true });
+    writeFileSync(join(cacheRoot, 'abc123', 'index.js'), 'export default {};');
+
+    const result = uninstallPlugin(TEST_ROOT, 'remove-cache');
+    assert.equal(result.action, 'uninstalled');
+    assert.ok(!existsSync(cacheRoot), 'module cache subtree must be removed with the plugin');
+  });
+
   it('preserves config by default', async () => {
     const archive = createTestPlugin('keep-config');
     await installPlugin(TEST_ROOT, archive, BUILTIN_IDS);
