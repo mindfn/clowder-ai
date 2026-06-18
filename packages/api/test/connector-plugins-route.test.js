@@ -341,7 +341,97 @@ describe('GET /api/connectors/plugins', () => {
     }
   });
 
+  it('requires DEFAULT_OWNER_USER_ID before listing installed plugins', async () => {
+    clearOwnerUserId();
+    const root = useTempConfigRoot();
+    const pluginDir = join(root, '.cat-cafe', 'plugins', 'listed-plugin');
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      'id: listed-plugin\nname: Listed Plugin\nconfig: []\nsteps:\n  - text: Step\n',
+    );
+    writeFileSync(join(pluginDir, 'index.js'), 'export default {};\n');
+
+    const app = await buildPluginRouteApp();
+
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/connectors/plugins',
+        headers: { 'x-test-session-user': 'single-user' },
+      });
+
+      assert.equal(res.statusCode, 403);
+      assert.match(res.body, /DEFAULT_OWNER_USER_ID|configured owner/i);
+      assert.doesNotMatch(res.body, /listed-plugin/);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects non-owner sessions before listing installed plugins', async () => {
+    setOwnerUserId('owner-user');
+    const root = useTempConfigRoot();
+    const pluginDir = join(root, '.cat-cafe', 'plugins', 'listed-plugin');
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      'id: listed-plugin\nname: Listed Plugin\nconfig: []\nsteps:\n  - text: Step\n',
+    );
+    writeFileSync(join(pluginDir, 'index.js'), 'export default {};\n');
+
+    const app = await buildPluginRouteApp();
+
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/connectors/plugins',
+        headers: { 'x-test-session-user': 'other-user' },
+      });
+
+      assert.equal(res.statusCode, 403);
+      assert.match(res.body, /owner/i);
+      assert.doesNotMatch(res.body, /listed-plugin/);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects cross-origin browser plugin list attempts', async () => {
+    setOwnerUserId('owner-user');
+    const root = useTempConfigRoot();
+    const pluginDir = join(root, '.cat-cafe', 'plugins', 'listed-plugin');
+    mkdirSync(pluginDir, { recursive: true });
+    writeFileSync(
+      join(pluginDir, 'connector.yaml'),
+      'id: listed-plugin\nname: Listed Plugin\nconfig: []\nsteps:\n  - text: Step\n',
+    );
+    writeFileSync(join(pluginDir, 'index.js'), 'export default {};\n');
+
+    const app = await buildPluginRouteApp();
+
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/connectors/plugins',
+        headers: {
+          'x-test-session-user': 'owner-user',
+          origin: 'https://evil.example',
+          host: 'localhost:3003',
+        },
+      });
+
+      assert.equal(res.statusCode, 403);
+      assert.match(res.body, /same-origin|origin/i);
+      assert.doesNotMatch(res.body, /listed-plugin/);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('does not expose installed plugin filesystem paths', async () => {
+    setOwnerUserId('owner-user');
+    setFrontendUrl('https://hub.example.test');
     const root = useTempConfigRoot();
     const pluginDir = join(root, '.cat-cafe', 'plugins', 'listed-plugin');
     mkdirSync(pluginDir, { recursive: true });
@@ -363,7 +453,12 @@ describe('GET /api/connectors/plugins', () => {
       const res = await app.inject({
         method: 'GET',
         url: '/api/connectors/plugins',
-        headers: { 'x-test-session-user': 'viewer-user' },
+        headers: {
+          'x-test-session-user': 'owner-user',
+          origin: 'https://hub.example.test',
+          host: 'api.example.test',
+        },
+        remoteAddress: '203.0.113.10',
       });
 
       assert.equal(res.statusCode, 200);

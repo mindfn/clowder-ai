@@ -49,13 +49,6 @@ function isOutsideBase(relativePath: string): boolean {
   );
 }
 
-function requireSessionIdentity(request: FastifyRequest, reply: FastifyReply): string | null {
-  const userId = (request as FastifyRequest & { sessionUserId?: string }).sessionUserId;
-  if (typeof userId === 'string' && userId.trim()) return userId.trim();
-  reply.status(401);
-  return null;
-}
-
 function firstHeaderValue(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) return value[0];
   return value;
@@ -79,6 +72,23 @@ function requirePluginWriteAccess(request: FastifyRequest): CapabilityWriteRoute
   return requireCapabilityWriteOwner(userId, {
     requireConfiguredOwner: true,
     missingOwnerError: 'Connector plugin writes require DEFAULT_OWNER_USER_ID to be configured',
+  });
+}
+
+function requirePluginListAccess(request: FastifyRequest): CapabilityWriteRouteError | null {
+  const userId = resolveSessionUserId(request);
+  if (!userId) {
+    return { status: 401, error: 'Plugin listing requires session authentication' };
+  }
+
+  const origin = firstHeaderValue(request.headers.origin);
+  if (origin && !isOriginAllowed(origin, trustedPluginWriteOrigins())) {
+    return { status: 403, error: 'Connector plugin listing requires same-origin Hub access' };
+  }
+
+  return requireCapabilityWriteOwner(userId, {
+    requireConfiguredOwner: true,
+    missingOwnerError: 'Connector plugin listing requires DEFAULT_OWNER_USER_ID to be configured',
   });
 }
 
@@ -113,9 +123,9 @@ export const connectorPluginRoutes: FastifyPluginAsync = async (app) => {
   // ── GET /api/connectors/plugins — list installed plugins ──
 
   app.get('/api/connectors/plugins', async (req: FastifyRequest, reply: FastifyReply) => {
-    if (!requireSessionIdentity(req, reply)) {
-      return { error: 'Identity required (session cookie)' };
-    }
+    const accessErr = requirePluginListAccess(req);
+    if (accessErr) return reply.status(accessErr.status).send({ error: accessErr.error });
+
     const projectRoot = resolveActiveProjectRoot();
     const plugins = listInstalledPlugins(projectRoot);
     return reply.send({ plugins: toPublicPluginMeta(plugins) });
