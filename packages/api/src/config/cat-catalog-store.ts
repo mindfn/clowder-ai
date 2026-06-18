@@ -271,6 +271,57 @@ function readBootstrapSourceConfig(templatePath: string): { catalog: CatCafeConf
   };
 }
 
+/**
+ * #948 R2: Pick the best seed breed from the catalog.
+ * Prefers the breed matching DEFAULT_CAT_ID env (if set), otherwise falls back
+ * to the first breed in the template. Returns undefined when no breeds exist
+ * (dev environments with empty templates).
+ */
+type BreedLike = { id: string; catId?: string; variants?: Array<{ catId?: string }> };
+
+function pickSeedBreed(catalog: CatCafeConfig): CatCafeConfig['breeds'][number] | undefined {
+  const breeds = Array.isArray(catalog.breeds) ? catalog.breeds : [];
+  if (breeds.length === 0) return undefined;
+
+  const defaultCatId = process.env.DEFAULT_CAT_ID?.trim();
+  if (defaultCatId) {
+    const match = (breeds as BreedLike[]).find(
+      (breed) => breed.catId === defaultCatId || breed.variants?.some((v) => v.catId === defaultCatId),
+    );
+    if (match) return match as unknown as CatCafeConfig['breeds'][number];
+  }
+  // Fallback: first breed in template (works even without DEFAULT_CAT_ID)
+  return breeds[0];
+}
+
+/**
+ * #948 R2: If an existing catalog has zero breeds (persisted empty from a previous
+ * failed/incomplete install), seed from the template so the first-run wizard
+ * is reachable on next startup.
+ */
+function repairEmptyBreeds(catalogPath: string, templatePath: string): void {
+  let catalog: CatCafeConfig;
+  try {
+    catalog = JSON.parse(readFileSync(catalogPath, 'utf-8')) as CatCafeConfig;
+  } catch {
+    return; // broken catalog — leave for the loader to handle
+  }
+  if (Array.isArray(catalog.breeds) && catalog.breeds.length > 0) return; // has breeds, no repair needed
+
+  let template: CatCafeConfig;
+  try {
+    template = JSON.parse(readFileSync(templatePath, 'utf-8')) as CatCafeConfig;
+  } catch {
+    return; // no template — nothing to seed from
+  }
+
+  const seedBreed = pickSeedBreed(template);
+  if (!seedBreed) return;
+
+  (catalog as { breeds: CatCafeConfig['breeds'] }).breeds = [seedBreed as CatCafeConfig['breeds'][number]];
+  writeFileAtomic(catalogPath, `${JSON.stringify(catalog, null, 2)}\n`);
+}
+
 export function bootstrapCatCatalog(projectRoot: string, templatePath: string): string {
   const catalogPath = resolveCatCatalogPath(projectRoot);
   if (existsSync(catalogPath)) {
@@ -279,31 +330,30 @@ export function bootstrapCatCatalog(projectRoot: string, templatePath: string): 
     stripLegacySourceField(catalogPath);
     // Ensure owner is always present in roster.
     ensureOwnerInRoster(catalogPath);
+
+    // #948 R2: Repair existing catalogs that persisted with empty breeds (e.g.
+    // uninstall/reinstall on Windows where user-data dir survives). Seed from
+    // template so the first-run wizard is reachable.
+    repairEmptyBreeds(catalogPath, templatePath);
+
     return catalogPath;
   }
 
   const { catalog: template } = readBootstrapSourceConfig(templatePath);
   const { catalog: migratedCatalog } = migrateCatalogVariants(template);
 
-  // #948: When DEFAULT_CAT_ID is set (packaged desktop), seed that breed from the
-  // template so the app starts with at least one usable member. Without this, the
-  // registry is empty and the frontend crashes before the first-run wizard is reachable.
-  // When DEFAULT_CAT_ID is not set (dev environments), start empty as before —
-  // developers use the wizard or manual config to add members.
-  const defaultCatId = process.env.DEFAULT_CAT_ID?.trim();
-  const templateBreeds = Array.isArray(migratedCatalog.breeds) ? migratedCatalog.breeds : [];
+  // #948: Seed the first breed from the template so the app starts with at least
+  // one usable member. Without this, the registry is empty and the frontend
+  // crashes before the first-run wizard is reachable.
+  // In dev environments (template has no breeds), start empty — developers use
+  // the wizard or manual config to add members.
+  const seedBreed = pickSeedBreed(migratedCatalog);
 
   let runtimeCatalog: CatCafeConfig;
-  if (defaultCatId && templateBreeds.length > 0) {
-    // Find the breed that owns the default cat ID (either as breed.catId or variant.catId)
-    type BreedLike = { id: string; catId?: string; variants?: Array<{ catId?: string }> };
-    const seedBreed =
-      (templateBreeds as BreedLike[]).find(
-        (breed) => breed.catId === defaultCatId || breed.variants?.some((v) => v.catId === defaultCatId),
-      ) ?? templateBreeds[0];
+  if (seedBreed) {
     runtimeCatalog = {
       ...migratedCatalog,
-      breeds: seedBreed ? [seedBreed as CatCafeConfig['breeds'][number]] : [],
+      breeds: [seedBreed as CatCafeConfig['breeds'][number]],
     };
     // Preserve owner in roster
     const ownerEntry = buildOwnerRosterEntry();
@@ -311,7 +361,7 @@ export function bootstrapCatCatalog(projectRoot: string, templatePath: string): 
       (runtimeCatalog.roster as Record<string, RosterEntry>)[OWNER_ROSTER_KEY] = ownerEntry;
     }
   } else {
-    // No DEFAULT_CAT_ID — start empty (first-run wizard guides member addition).
+    // Template has no breeds — start empty (first-run wizard guides member addition).
     runtimeCatalog = createEmptyRuntimeCatalog(migratedCatalog);
   }
 
