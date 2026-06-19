@@ -499,12 +499,21 @@ export class WeixinAdapter implements IOutboundAdapter {
     const text = firstItem.text_item?.text ?? firstItem.voice_item?.text ?? '';
     const fileName = firstItem.file_item?.file_name ?? '';
     const mediaKey = this.buildMediaKey(media);
-    const deliveryScope =
-      msg.create_time_ms != null
-        ? `time:${msg.create_time_ms}`
-        : responseCursor
-          ? `cursor:${responseCursor}:index:${messageIndex}`
-          : `sequence:${this.nextFallbackMessageSequence()}`;
+    let deliveryScope: string;
+    if (msg.create_time_ms != null) {
+      deliveryScope = `time:${msg.create_time_ms}`;
+    } else if (responseCursor) {
+      // iLink redeliveries replay the same cursor; the index keeps same-content messages distinct within that batch.
+      deliveryScope = `cursor:${responseCursor}:index:${messageIndex}`;
+    } else {
+      const sequence = this.nextFallbackMessageSequence();
+      this.log.warn(
+        { itemType, messageIndex, senderId },
+        '[WeixinAdapter] Building non-deterministic fallback message id without message_id, timestamp, or cursor',
+      );
+      // Last resort: avoids over-deduping legitimate same-content messages, but cannot guarantee redelivery dedup.
+      deliveryScope = `sequence:${sequence}`;
+    }
     const fingerprint = crypto
       .createHash('sha256')
       .update(`${senderId}\0${contextToken}\0${deliveryScope}\0${itemType}\0${text}\0${mediaKey}\0${fileName}`)

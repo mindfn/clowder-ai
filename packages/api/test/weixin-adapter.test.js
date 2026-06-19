@@ -18,6 +18,13 @@ function noopLog() {
   };
 }
 
+function captureWarnLog() {
+  const warnings = [];
+  const log = noopLog();
+  log.warn = (...args) => warnings.push(args);
+  return { log, warnings };
+}
+
 async function waitForCondition(predicate, timeoutMs = 500) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -535,6 +542,30 @@ describe('WeixinAdapter', () => {
       assert.equal(first.messages.length, 1);
       assert.equal(second.messages.length, 1);
       assert.equal(second.messages[0].messageId, first.messages[0].messageId);
+    });
+
+    it('warns when fallback messageId has no stable protocol anchor', () => {
+      const { log, warnings } = captureWarnLog();
+      const adapter = new WeixinAdapter('test-token', log);
+      const raw = {
+        ret: 0,
+        msgs: [
+          {
+            from_user_id: 'user1',
+            context_token: 'ctx-1',
+            item_list: [{ type: 1, text_item: { text: 'same body without stable anchor' } }],
+          },
+        ],
+      };
+
+      const first = adapter.parseUpdates(raw);
+      const second = adapter.parseUpdates(raw);
+
+      assert.equal(first.messages.length, 1);
+      assert.equal(second.messages.length, 1);
+      assert.notEqual(second.messages[0].messageId, first.messages[0].messageId);
+      assert.equal(warnings.length, 2);
+      assert.match(warnings[0][1], /non-deterministic fallback message id/);
     });
 
     it('handles response with both ret and errcode (errcode wins for session expired)', () => {
