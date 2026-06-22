@@ -136,6 +136,9 @@ export interface ConfigSyncCtx {
   pruneMountPaths?: boolean;
   /** When true, inherited-only global mount paths are skipped to preserve cascade. */
   preserveGlobalCascade?: boolean;
+  /** Skill names that already exist in the project config (used with preserveGlobalCascade
+   *  to distinguish existing skills from newly discovered ones — fixes #991). */
+  existingProjectSkills?: ReadonlySet<string>;
   /** Mount point IDs that were just enabled (absent in previous rules, present now).
    *  When set, active skills (mountPaths.length > 0) get these IDs supplemented. */
   newlyEnabledMountPointIds?: string[];
@@ -157,7 +160,13 @@ export async function updateConfigAfterSync(projectRoot: string, ctx: ConfigSync
         // Only active in drift-resolve context (preserveGlobalCascade=true) where global
         // policy changes should propagate without freezing. Explicit sync operations
         // (sync/sync-skill) write mount paths to establish local baseline.
-        if (ctx.preserveGlobalCascade && !hasLocalPolicy && !ctx.mountPathsBySkill.has(name)) continue;
+        if (
+          ctx.preserveGlobalCascade &&
+          ctx.existingProjectSkills?.has(name) &&
+          !hasLocalPolicy &&
+          !ctx.mountPathsBySkill.has(name)
+        )
+          continue;
         const shouldPrune = ctx.pruneMountPaths || !hasLocalPolicy;
         const mountPointIds = shouldPrune ? declared.filter((id) => activeSet.has(id)) : [...declared];
         // F228: When a mount point is newly enabled, supplement active skills
