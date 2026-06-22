@@ -80,10 +80,10 @@ function requirePluginWriteAccess(request: FastifyRequest): CapabilityWriteRoute
     return { status: 403, error: 'Connector plugin writes require same-origin Hub access' };
   }
 
-  return requireCapabilityWriteOwner(userId, {
-    requireConfiguredOwner: true,
-    missingOwnerError: 'Connector plugin writes require DEFAULT_OWNER_USER_ID to be configured',
-  });
+  // #995: Use allowMissingOwner (not requireConfiguredOwner) so local single-user
+  // mode works without DEFAULT_OWNER_USER_ID — consistent with plugin-routes.ts
+  // and the unified pattern established by #794.
+  return requireCapabilityWriteOwner(userId, { allowMissingOwner: true });
 }
 
 function requirePluginListAccess(request: FastifyRequest): CapabilityWriteRouteError | null {
@@ -97,10 +97,8 @@ function requirePluginListAccess(request: FastifyRequest): CapabilityWriteRouteE
     return { status: 403, error: 'Connector plugin listing requires same-origin Hub access' };
   }
 
-  return requireCapabilityWriteOwner(userId, {
-    requireConfiguredOwner: true,
-    missingOwnerError: 'Connector plugin listing requires DEFAULT_OWNER_USER_ID to be configured',
-  });
+  // #995: Same fix — fall through in single-user mode (#794 pattern).
+  return requireCapabilityWriteOwner(userId, { allowMissingOwner: true });
 }
 
 function toPublicPluginMeta(plugins: ReturnType<typeof listInstalledPlugins>) {
