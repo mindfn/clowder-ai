@@ -456,9 +456,15 @@ server.listen(3010,'127.0.0.1',()=>setInterval(()=>{},1000));`,
     assert.match(result.stdout, /retrying pnpm install --no-frozen-lockfile/);
     assert.match(result.stdout, /STARTED:/);
     const pnpmLog = readFileSync(env.RUNTIME_TEST_PNPM_LOG, 'utf8').trim().split('\n');
+    // After the no-frozen-lockfile install succeeds, the ADR-039 build invariant
+    // rebuilds the missing dist artifacts (shared/api/mcp-server/web) before start.
     assert.deepEqual(pnpmLog, [
       '-C ' + projectDir + ' install --frozen-lockfile',
       '-C ' + projectDir + ' install --no-frozen-lockfile',
+      '-C ' + projectDir + '/packages/shared run build',
+      '-C ' + projectDir + '/packages/api run build',
+      '-C ' + projectDir + '/packages/mcp-server run build',
+      '-C ' + projectDir + '/packages/web run build',
     ]);
   });
 
