@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Clowder AI",
-  "short_name": "Clowder AI",
-  "description": "Your AI team collaboration space",
+  "name": "Cat Café",
+  "short_name": "Cat Café",
+  "description": "你的 AI 团队协作空间",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#FDF8F3",

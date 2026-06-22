@@ -1,5 +1,5 @@
 /**
- * Unified API client for Clowder AI frontend.
+ * Unified API client for Cat Café frontend.
  *
  * - Auto-prepends NEXT_PUBLIC_API_URL
  * - Identity via HttpOnly session cookie (F156 D-1), not header self-reporting
