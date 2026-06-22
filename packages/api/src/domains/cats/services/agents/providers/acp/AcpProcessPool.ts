@@ -144,7 +144,17 @@ export class AcpProcessPool {
         if (this.supportsMultiplexing || owner.leaseCount === 0) {
           return this.leaseReadyEntry(owner, poolKey);
         }
-        throw new Error(`ACP session ${sessionId} is already active on its owning process`);
+        // #992: Stale lease recovery — the previous lease holder is a zombie (e.g. Windows
+        // console disconnect where the async generator finally block never ran). Since the
+        // caller is re-acquiring the SAME sessionId, the previous consumer is necessarily
+        // gone. Force-release the orphaned lease so the process can be reused.
+        log.warn(
+          { poolKey, sessionId, staleLeaseCount: owner.leaseCount },
+          'ACP stale lease detected — force-releasing zombie lease for session re-acquire',
+        );
+        this._metrics.activeLeaseCount -= owner.leaseCount;
+        owner.leaseCount = 0;
+        return this.leaseReadyEntry(owner, poolKey);
       }
       if (owner) this.sessionOwners.delete(sessionKey);
     }
