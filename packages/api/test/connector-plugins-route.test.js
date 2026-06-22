@@ -212,12 +212,13 @@ describe('POST /api/connectors/plugins/install auth boundary', () => {
     }
   });
 
-  it('requires DEFAULT_OWNER_USER_ID before plugin install', async () => {
+  it('allows single-user mode plugin install without DEFAULT_OWNER_USER_ID (#995)', async () => {
     clearOwnerUserId();
     setFrontendUrl('http://localhost:3003');
     const app = await buildPluginRouteApp();
 
     try {
+      // Auth passes through (allowMissingOwner: true), reaches file validation
       const res = await app.inject({
         method: 'POST',
         url: '/api/connectors/plugins/install',
@@ -225,11 +226,13 @@ describe('POST /api/connectors/plugins/install auth boundary', () => {
           'x-test-session-user': 'single-user',
           origin: 'http://localhost:3003',
           host: 'localhost:3003',
+          'content-type': 'multipart/form-data; boundary=test-boundary',
         },
+        payload: '--test-boundary--\r\n',
       });
 
-      assert.equal(res.statusCode, 403);
-      assert.match(res.body, /DEFAULT_OWNER_USER_ID|configured owner/i);
+      assert.equal(res.statusCode, 400);
+      assert.match(res.body, /No file uploaded/);
     } finally {
       await app.close();
     }
@@ -382,7 +385,7 @@ describe('GET /api/connectors/plugins', () => {
     }
   });
 
-  it('requires DEFAULT_OWNER_USER_ID before listing installed plugins', async () => {
+  it('allows single-user mode plugin listing without DEFAULT_OWNER_USER_ID (#995)', async () => {
     clearOwnerUserId();
     const root = useTempConfigRoot();
     const pluginDir = join(root, '.cat-cafe', 'plugins', 'listed-plugin');
@@ -396,15 +399,17 @@ describe('GET /api/connectors/plugins', () => {
     const app = await buildPluginRouteApp();
 
     try {
+      // Auth passes through (allowMissingOwner: true), returns plugin list
       const res = await app.inject({
         method: 'GET',
         url: '/api/connectors/plugins',
         headers: { 'x-test-session-user': 'single-user' },
       });
 
-      assert.equal(res.statusCode, 403);
-      assert.match(res.body, /DEFAULT_OWNER_USER_ID|configured owner/i);
-      assert.doesNotMatch(res.body, /listed-plugin/);
+      assert.equal(res.statusCode, 200);
+      const body = JSON.parse(res.body);
+      assert.equal(body.plugins.length, 1);
+      assert.equal(body.plugins[0].id, 'listed-plugin');
     } finally {
       await app.close();
     }
