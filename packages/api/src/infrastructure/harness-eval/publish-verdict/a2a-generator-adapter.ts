@@ -52,8 +52,16 @@ export function createA2aGeneratorAdapter(): VerdictGenerator {
     copyFileSync(liveRefs.refs.snapshotPath, isoSnapPath);
     copyFileSync(liveRefs.refs.attributionPath, isoAttrPath);
 
-    // Load domain entry from registry inside the isolated worktree's harness root.
-    const domains = loadDomains(deps.harnessFeedbackRoot);
+    // 砚砚 2026-06-24 P1: load the domain entry from the LIVE registry, NOT the
+    // isolated worktree's. The isolated worktree is built from the publish base
+    // branch (origin/main), which in a fork lags the runtime: the live registry
+    // can carry schema fields (e.g. required `sourceRefsKind`) that the base
+    // branch hasn't yet. Re-parsing the stale base registry here threw
+    // `generator_failed: sourceRefsKind Required` and blocked ALL eval:a2a
+    // publishes. The registry is the runtime contract — the handler already
+    // validated against the live root, and this adapter already resolves its
+    // evidence YAMLs from the live root — so read the domain from there too.
+    const domains = loadDomains(deps.liveHarnessFeedbackRoot);
     const domain = domains.get(packet.domainId);
     if (!domain) throw new Error(`unknown_domain: ${packet.domainId} not in registry`);
 

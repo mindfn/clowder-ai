@@ -202,7 +202,10 @@ describe('createCapabilityWakeupGeneratorAdapter', () => {
   it('happy path: passes packet+trials+domain to generator and returns artifact paths', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'cw-adapter-happy-repo-'));
     const harnessFeedbackRoot = join(repoRoot, 'docs', 'harness-feedback');
-    seedDomainRegistry(harnessFeedbackRoot);
+    // 砚砚 2026-06-24 P1: registry is read from the LIVE root now. Bundle/raw inputs
+    // still write under harnessFeedbackRoot (the isolated worktree target).
+    const liveRoot = join(repoRoot, 'live', 'docs', 'harness-feedback');
+    seedDomainRegistry(liveRoot);
     let resolveCalledWith = null;
     let resolveScope = null;
     const provider = {
@@ -225,7 +228,7 @@ describe('createCapabilityWakeupGeneratorAdapter', () => {
 
     const result = await adapter(packet, selector, {
       harnessFeedbackRoot,
-      liveHarnessFeedbackRoot: '/tmp/live-unused-for-cw',
+      liveHarnessFeedbackRoot: liveRoot,
       ownerUserId: 'default-user',
     });
 

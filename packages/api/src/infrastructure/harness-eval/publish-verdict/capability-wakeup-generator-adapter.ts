@@ -56,7 +56,10 @@ export function createCapabilityWakeupGeneratorAdapter(provider: CapabilityWakeu
       );
     }
 
-    const domains = loadDomains(deps.harnessFeedbackRoot);
+    // 砚砚 2026-06-24 P1: read the domain from the LIVE registry (runtime contract
+    // the handler validated against), not the isolated worktree's base-branch copy
+    // which can lag the runtime schema (e.g. required `sourceRefsKind`).
+    const domains = loadDomains(deps.liveHarnessFeedbackRoot);
     const domain = domains.get(packet.domainId);
     if (!domain) {
       throw new Error(`unknown_domain: ${packet.domainId} not in registry`);

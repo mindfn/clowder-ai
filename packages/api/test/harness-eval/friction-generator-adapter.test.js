@@ -165,8 +165,11 @@ describe('createFrictionGeneratorAdapter', () => {
 
   it('happy path: passes selector to provider unchanged and returns bundle-only artifact paths', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'friction-adapter-happy-repo-'));
-    const harnessFeedbackRoot = join(repoRoot, 'docs', 'harness-feedback');
-    seedFrictionDomain(harnessFeedbackRoot);
+    // 砚砚 2026-06-24 P1: the domain registry is read from the LIVE root now (runtime
+    // contract), not the isolated bundle-write root. Seed it accordingly.
+    const isolatedRoot = join(repoRoot, 'iso', 'docs', 'harness-feedback');
+    const liveRoot = join(repoRoot, 'live', 'docs', 'harness-feedback');
+    seedFrictionDomain(liveRoot);
 
     let resolveCalledWith = null;
     const provider = {
@@ -179,8 +182,8 @@ describe('createFrictionGeneratorAdapter', () => {
 
     const packet = buildSubmittedPacket();
     const result = await adapter(packet, SELECTOR, {
-      harnessFeedbackRoot,
-      liveHarnessFeedbackRoot: '/tmp/live-unused-for-friction',
+      harnessFeedbackRoot: isolatedRoot,
+      liveHarnessFeedbackRoot: liveRoot,
     });
 
     assert.deepEqual(resolveCalledWith, SELECTOR, 'adapter passes selector to provider unchanged');
@@ -195,5 +198,62 @@ describe('createFrictionGeneratorAdapter', () => {
     // bundle snapshot exists + carries F245
     const snapshot = JSON.parse(readFileSync(join(result.bundleDir, 'snapshot.json'), 'utf8'));
     assert.equal(snapshot.featureId, 'F245');
+  });
+
+  // 砚砚 2026-06-24 P1 regression: the generator must read the domain registry from
+  // the LIVE root, NOT the isolated publish-base worktree. In a fork the isolated
+  // worktree is built from origin/main, which lags the runtime and can carry a
+  // STALE registry (e.g. missing the now-required `sourceRefsKind`). Re-parsing
+  // that stale registry threw `generator_failed: sourceRefsKind Required` and
+  // blocked ALL eval publishes. This pins that the live registry is the source.
+  it('reads registry from LIVE root, immune to a stale base-branch registry (sourceRefsKind missing)', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'friction-adapter-stale-base-'));
+    const isolatedRoot = join(repoRoot, 'iso', 'docs', 'harness-feedback');
+    const liveRoot = join(repoRoot, 'live', 'docs', 'harness-feedback');
+
+    // Isolated (origin/main base) carries a STALE eval-friction.yaml WITHOUT
+    // sourceRefsKind — exactly the artifact that threw on parse pre-fix.
+    const isoDomainsDir = join(isolatedRoot, 'eval-domains');
+    mkdirSync(isoDomainsDir, { recursive: true });
+    writeFileSync(
+      join(isoDomainsDir, 'eval-friction.yaml'),
+      `domainId: eval:friction
+displayName: Friction Signal Eval
+systemThreadId: thread_eval_friction
+evalCat:
+  catId: gpt52
+  handle: '@gpt52'
+  model: gpt-5.4
+frequency: weekly
+sourceAdapter: f245-friction-rollup
+threadPolicy:
+  role: working-home
+  stateSot: registry
+  allowedContent:
+    - longitudinal-analysis
+legacyScheduledTaskIds: []
+handoffTargetResolver:
+  featureId: F245
+  ownerCatId: opus-47
+  threadLookup: feature-thread
+sla:
+  acknowledgeHours: 48
+  reevalWithinHours: 168
+fixtures: []
+enabled: true
+`,
+    );
+    // Live (runtime) carries the current registry WITH sourceRefsKind.
+    seedFrictionDomain(liveRoot);
+
+    const provider = { resolve: async () => buildRollupInput({ clusters: 1 }) };
+    const adapter = createFrictionGeneratorAdapter(provider);
+
+    // Must NOT throw sourceRefsKind / unknown_domain — succeeds via the live registry.
+    const result = await adapter(buildSubmittedPacket(), SELECTOR, {
+      harnessFeedbackRoot: isolatedRoot,
+      liveHarnessFeedbackRoot: liveRoot,
+    });
+    assert.match(result.bundleDir, /bundles\/vhp-friction-adapter-test$/);
   });
 });
