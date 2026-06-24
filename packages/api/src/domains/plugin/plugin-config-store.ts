@@ -105,13 +105,6 @@ export function loadAllPluginConfigs(projectRoot: string, manifests: PluginManif
   let loaded = 0;
   for (const manifest of manifests) {
     const allowedEnvNames = new Set(manifest.config.map((f) => f.envName));
-    for (const f of manifest.config) {
-      if (f.oneOf) {
-        for (const group of Object.values(f.oneOf)) {
-          for (const sub of group) allowedEnvNames.add(sub.envName);
-        }
-      }
-    }
     const raw = readRawConfig(projectRoot, manifest.id);
     const filtered: StoredValues = {};
     for (const [name, value] of Object.entries(raw)) {
@@ -141,11 +134,6 @@ export function resolvePluginEnv(manifests: PluginManifest[]): Record<string, st
     const cached = configCache.get(manifest.id);
     for (const field of manifest.config) {
       resolveField(cached, field.envName);
-      if (field.oneOf) {
-        for (const group of Object.values(field.oneOf)) {
-          for (const sub of group) resolveField(cached, sub.envName);
-        }
-      }
     }
   }
   return result;

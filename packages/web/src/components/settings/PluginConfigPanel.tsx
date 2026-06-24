@@ -1,7 +1,7 @@
 'use client';
 
-import type { PluginConfigField, PluginInfo } from '@cat-cafe/shared';
-import { useEffect, useMemo, useState } from 'react';
+import type { PluginInfo } from '@cat-cafe/shared';
+import { useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { ExternalLinkIcon, StepBadge } from '../HubConfigIcons';
 
@@ -26,6 +26,12 @@ function resourceBadgeKey(resource: PluginInfo['resources'][number], index: numb
   return `${resource.type}:${resource.path ?? resource.name ?? index}`;
 }
 
+function fieldPlaceholder(f: PluginInfo['config'][number]): string {
+  if (f.sensitive) return f.currentValue ? '已设置（输入新值覆盖）' : '未设置';
+  if (f.currentValue) return '';
+  return '未设置';
+}
+
 interface Props {
   plugin: PluginInfo;
   onUpdated: () => void;
@@ -37,40 +43,8 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
 
-  const allConfigFields = useMemo(() => {
-    const fields: PluginConfigField[] = [];
-    for (const f of plugin.config) {
-      fields.push(f);
-      if (f.oneOf) {
-        for (const group of Object.values(f.oneOf)) {
-          fields.push(...group);
-        }
-      }
-    }
-    return fields;
-  }, [plugin.config]);
-
-  useEffect(() => {
-    const val = (envName: string) =>
-      fieldValues[envName] ?? plugin.config.find((c) => c.envName === envName)?.currentValue ?? '';
-    const updates: Record<string, string> = {};
-    for (const f of plugin.config) {
-      if (f.type !== 'select' || !f.options) continue;
-      const visible = f.options.filter((o) => {
-        if (!o.supportedBy) return true;
-        return Object.entries(o.supportedBy).every(([dep, allowed]) => !val(dep) || allowed.includes(val(dep)));
-      });
-      if (visible.length === 1 && val(f.envName) !== visible[0].value) {
-        updates[f.envName] = visible[0].value;
-      }
-    }
-    if (Object.keys(updates).length > 0) {
-      setFieldValues((prev) => ({ ...prev, ...updates }));
-    }
-  }, [fieldValues, plugin.config]);
-
   const handleSave = async () => {
-    const updates = allConfigFields
+    const updates = plugin.config
       .filter((f) => fieldValues[f.envName] !== undefined)
       .map((f) => {
         const v = fieldValues[f.envName] as string;
@@ -167,17 +141,7 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
             {plugin.config.map((f) => {
               const rawValue = fieldValues[f.envName] ?? f.currentValue ?? '';
 
-              const visibleOptions =
-                f.type === 'select' && f.options
-                  ? f.options.filter((o) => {
-                      if (!o.supportedBy) return true;
-                      return Object.entries(o.supportedBy).every(([depEnv, allowed]) => {
-                        const depVal =
-                          fieldValues[depEnv] ?? plugin.config.find((c) => c.envName === depEnv)?.currentValue ?? '';
-                        return !depVal || allowed.includes(depVal);
-                      });
-                    })
-                  : [];
+              const visibleOptions = f.type === 'select' && f.options ? f.options : [];
 
               const selectedValue =
                 f.type === 'select'
@@ -187,7 +151,6 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
                       ? rawValue
                       : ''
                   : rawValue;
-              const activeOneOf = f.oneOf && selectedValue ? f.oneOf[selectedValue] : undefined;
 
               return (
                 <div key={f.envName} className="space-y-2.5">
@@ -227,50 +190,7 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
                         data-testid={`field-${f.envName}`}
                       />
                     )}
-                    {f.type === 'select' &&
-                      visibleOptions.find((o) => o.value === selectedValue) &&
-                      (() => {
-                        const sel = visibleOptions.find((o) => o.value === selectedValue)!;
-                        if (!sel.hint && !sel.docsUrl) return null;
-                        return (
-                          <div className="mt-1.5 space-y-1">
-                            {sel.hint && <p className="text-xs text-cafe-secondary">{sel.hint}</p>}
-                            {sel.docsUrl && isSafeUrl(sel.docsUrl) && (
-                              <a
-                                href={sel.docsUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="console-inline-link"
-                              >
-                                <ExternalLinkIcon />
-                                <span>{safeHostname(sel.docsUrl)} → 查看文档</span>
-                              </a>
-                            )}
-                          </div>
-                        );
-                      })()}
                   </div>
-                  {activeOneOf?.map((sub) => (
-                    <div key={sub.envName}>
-                      <label
-                        htmlFor={`plugin-${sub.envName}`}
-                        className="mb-1 block font-medium"
-                        style={{ fontSize: 'var(--console-font-xs)', color: 'var(--cafe-text-secondary)' }}
-                      >
-                        {sub.label}
-                      </label>
-                      <input
-                        id={`plugin-${sub.envName}`}
-                        type={sub.sensitive ? 'password' : 'text'}
-                        placeholder={fieldPlaceholder(sub)}
-                        value={fieldValues[sub.envName] ?? (!sub.sensitive && sub.currentValue ? sub.currentValue : '')}
-                        onChange={(e) => setFieldValues((prev) => ({ ...prev, [sub.envName]: e.target.value }))}
-                        className="console-form-input"
-                        style={{ paddingBlock: '0.625rem', fontSize: 'var(--console-font-compact)' }}
-                        data-testid={`field-${sub.envName}`}
-                      />
-                    </div>
-                  ))}
                 </div>
               );
             })}
