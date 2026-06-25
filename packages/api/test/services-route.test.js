@@ -142,6 +142,8 @@ describe('services routes', () => {
       assert.match(res.payload, /HF_HOME/);
       assert.doesNotMatch(res.payload, /~\/\.cat-cafe\/piper-models/);
       assert.match(res.payload, /CAT_CAFE_HOME[\s\S]*piper-models/);
+      assert.doesNotMatch(res.payload, /download-source-overrides\.ps1/);
+      assert.match(res.payload, /start-windows\.ps1/);
     } finally {
       await app.close();
     }

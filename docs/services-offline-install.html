@@ -30,7 +30,7 @@ PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 # 可选 fallback 到官方源（清华没同步的包会走这里）
 PIP_EXTRA_INDEX_URL=https://pypi.org/simple
 </code></pre>
-<p>重启 Cat Café 后重新点击安装即可。这两个 env 通过 <code>scripts/download-source-overrides.sh</code> / <code>download-source-overrides.ps1</code> 注入到子进程，覆盖 pip 与 huggingface_hub 默认源。</p>
+<p>重启 Cat Café 后重新点击安装即可。macOS / Linux 由 <code>scripts/download-source-overrides.sh</code> 注入到子进程；Windows 由 <code>scripts/start-windows.ps1</code> 加载 <code>.env</code> 后传给安装脚本。它们会覆盖 pip、<code>huggingface_hub</code> 与 Piper voice 直链下载源。</p>
 <blockquote>
 <p>其它常用 pip 镜像：阿里 <code>https://mirrors.aliyun.com/pypi/simple/</code>、腾讯 <code>https://mirrors.cloud.tencent.com/pypi/simple/</code>。</p>
 </blockquote>
