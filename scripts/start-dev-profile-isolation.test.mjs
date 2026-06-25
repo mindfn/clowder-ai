@@ -691,6 +691,9 @@ describe('TTS sidecar startup guards', () => {
     assert.match(serverScript, /HF_HUB_OFFLINE/);
     assert.match(serverScript, /mlx-audio\|qwen3-clone/);
     assert.doesNotMatch(apiScript, /except Exception:\s*\n\s*pass\s+# Warmup may fail/);
+    assert.match(apiScript, /os\.environ\.get\(["']CAT_CAFE_HOME["']\)/);
+    assert.match(apiScript, /CAT_CAFE_HOME[\s\S]*piper-models/);
+    assert.doesNotMatch(apiScript, /Path\.home\(\)\s*\/\s*["']\.cat-cafe["']\s*\/\s*["']piper-models["']/);
   });
 });
 
