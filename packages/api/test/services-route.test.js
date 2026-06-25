@@ -138,6 +138,10 @@ describe('services routes', () => {
       assert.equal(res.statusCode, 200, res.payload);
       assert.match(res.headers['content-type'], /^text\/html/);
       assert.match(res.payload, /服务离线\/受限网络安装指南/);
+      assert.doesNotMatch(res.payload, /--local-dir/);
+      assert.match(res.payload, /HF_HOME/);
+      assert.doesNotMatch(res.payload, /~\/\.cat-cafe\/piper-models/);
+      assert.match(res.payload, /CAT_CAFE_HOME[\s\S]*piper-models/);
     } finally {
       await app.close();
     }

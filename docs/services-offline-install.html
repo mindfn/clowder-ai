@@ -71,35 +71,36 @@ PIP_EXTRA_INDEX_URL=https://pypi.org/simple   # 若内部源没同步，回落�
 <td><code>~/.cache/huggingface/hub/models--jinaai--jina-embeddings-v2-base-zh/</code></td>
 </tr>
 </tbody></table>
-<p>最简单的手动准备方法：</p>
+<p>最简单的手动准备方法：让 CLI 写入 HuggingFace Hub cache，而不是下载到普通目录：</p>
 <pre><code class="language-bash"># 在能上网的机器上拉好
-pip install huggingface_hub
-HF_HUB_ENABLE_HF_TRANSFER=1 \
-  huggingface-cli download &lt;repo-id&gt; --local-dir /tmp/&lt;repo-id&gt;
+python -m pip install -U huggingface_hub
+export HF_HOME="$PWD/hf-cache"
+huggingface-cli download &lt;repo-id&gt;
 
-# 也可以从 hf-mirror.com 下载 zip 然后解压
-# 把整个 cache 目录拷到内网机器对应位置
-tar czf hf-cache.tgz -C ~/.cache/huggingface hub
+# 把整个 Hub cache 目录拷到内网机器对应位置
+tar czf hf-cache.tgz -C "$HF_HOME" hub
 # 内网机器上：
 mkdir -p ~/.cache/huggingface
 tar xzf hf-cache.tgz -C ~/.cache/huggingface
 </code></pre>
 <p>放好后 Console 点击「重试安装」（或者「安装」），脚本会跑 <code>snapshot_download</code>，发现本地已存在就直接返回，不再尝试网络下载。</p>
 <h3>3.2 Piper voice 模型路径</h3>
-<p>Piper voice 不走 huggingface_hub，是 install 脚本直接 curl 的：</p>
-<pre><code>~/.cat-cafe/piper-models/&lt;voice&gt;.onnx
-~/.cat-cafe/piper-models/&lt;voice&gt;.onnx.json
+<p>Piper voice 不走 huggingface_hub，是 install 脚本直接 curl 到 <code>${CAT_CAFE_HOME}/piper-models</code>。默认 <code>CAT_CAFE_HOME</code> 是仓库根目录下的 <code>.cat-cafe</code>；如果你启动 Cat Café 时覆盖了它，手动下载也要使用同一个值：</p>
+<pre><code>${CAT_CAFE_HOME}/piper-models/&lt;voice&gt;.onnx
+${CAT_CAFE_HOME}/piper-models/&lt;voice&gt;.onnx.json
 </code></pre>
 <p>例：</p>
-<pre><code>~/.cat-cafe/piper-models/zh_CN-huayan-medium.onnx
-~/.cat-cafe/piper-models/zh_CN-huayan-medium.onnx.json
+<pre><code>${CAT_CAFE_HOME}/piper-models/zh_CN-huayan-medium.onnx
+${CAT_CAFE_HOME}/piper-models/zh_CN-huayan-medium.onnx.json
 </code></pre>
 <p>手动下载：</p>
-<pre><code class="language-bash">mkdir -p ~/.cat-cafe/piper-models
+<pre><code class="language-bash"># 在 Clowder AI 仓库根目录运行；如已设置 CAT_CAFE_HOME，请保持相同值
+CAT_CAFE_HOME="${CAT_CAFE_HOME:-$PWD/.cat-cafe}"
+mkdir -p "$CAT_CAFE_HOME/piper-models"
 # 直链（国内镜像）：
-curl -L -o ~/.cat-cafe/piper-models/zh_CN-huayan-medium.onnx \
+curl -L -o "$CAT_CAFE_HOME/piper-models/zh_CN-huayan-medium.onnx" \
   https://hf-mirror.com/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx
-curl -L -o ~/.cat-cafe/piper-models/zh_CN-huayan-medium.onnx.json \
+curl -L -o "$CAT_CAFE_HOME/piper-models/zh_CN-huayan-medium.onnx.json" \
   https://hf-mirror.com/rhasspy/piper-voices/resolve/main/zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx.json
 </code></pre>
 <p>放好后重试 install，脚本检测到文件存在就跳过下载（见 <code>scripts/services/tts-install.sh</code> 中的文件存在判断）。</p>
@@ -173,7 +174,7 @@ pip install --no-index --find-links=./wheels fastembed onnxruntime fastapi uvico
 <tr>
 <td><code>Failed to download model: &lt;voice&gt;.onnx</code></td>
 <td>Piper voice 拉取失败</td>
-<td>手动放到 ~/.cat-cafe/piper-models/</td>
+<td>手动放到 ${CAT_CAFE_HOME}/piper-models/</td>
 </tr>
 <tr>
 <td><code>is not supported in TextEmbedding</code></td>
