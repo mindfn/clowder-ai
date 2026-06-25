@@ -127,6 +127,22 @@ describe('services routes', () => {
     }
   });
 
+  it('serves the offline install guide as checked-in HTML', async () => {
+    const app = await buildApp();
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/services/docs/offline-install',
+      });
+
+      assert.equal(res.statusCode, 200, res.payload);
+      assert.match(res.headers['content-type'], /^text\/html/);
+      assert.match(res.payload, /服务离线\/受限网络安装指南/);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('install preview suggests an available default service port', async () => {
     const app = await buildApp({
       lifecycle: {
