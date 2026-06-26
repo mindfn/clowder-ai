@@ -22,6 +22,7 @@ import type {
   Thread,
   ThreadMemoryV1,
   ThreadMentionRoutingFeedback,
+  ThreadMetadataPatch,
   ThreadMetadataV1,
   ThreadParticipantActivity,
   ThreadRoutingPolicyV1,
@@ -30,6 +31,7 @@ import type {
 import {
   buildExternalRuntimeAnchorThreadId,
   DEFAULT_THREAD_ID,
+  mergeThreadMetadata,
   parseThreadMetadataJson,
 } from '../ports/ThreadStore.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
@@ -48,6 +50,25 @@ if redis.call('HEXISTS', KEYS[1], 'id') == 0 then
 end
 redis.call('HSET', KEYS[1], unpack(ARGV))
 return 1
+`;
+
+/**
+ * #872 P2: Compare-And-Swap guard for thread metadata merge atomicity.
+ * Only writes if (a) thread exists (has `id`) AND (b) current field value
+ * matches the snapshot the caller read. Returns 1 on success, 0 on conflict.
+ * KEYS[1] = detail key, ARGV[1] = field, ARGV[2] = expected, ARGV[3] = new.
+ */
+const CAS_HSET_IF_HAS_ID_LUA = `
+if redis.call('HEXISTS', KEYS[1], 'id') == 0 then
+  return 0
+end
+local cur = redis.call('HGET', KEYS[1], ARGV[1])
+if cur == false then cur = '' end
+if cur == ARGV[2] then
+  redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
+  return 1
+end
+return 0
 `;
 
 /**
@@ -1270,6 +1291,37 @@ export class RedisThreadStore implements IThreadStore {
     } else {
       await this.setDetailFields(key, 'threadMetadata', JSON.stringify(metadata));
     }
+  }
+
+  /**
+   * #872 P2: Atomically read-merge-write thread metadata using CAS.
+   * Prevents concurrent callers from losing each other's appends.
+   * Retries up to 5 times on CAS conflict before falling through.
+   */
+  async atomicMergeThreadMetadata(threadId: string, patch: ThreadMetadataPatch): Promise<ThreadMetadataV1> {
+    const key = ThreadKeys.detail(threadId);
+    const maxRetries = 5;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const raw = await this.redis.hget(key, 'threadMetadata');
+      const existing = raw ? parseThreadMetadataJson(raw) : null;
+      const merged = mergeThreadMetadata(existing ?? undefined, patch);
+      const newJson = JSON.stringify(merged);
+      const ok = (await this.redis.eval(
+        CAS_HSET_IF_HAS_ID_LUA,
+        1,
+        key,
+        'threadMetadata',
+        raw ?? '',
+        newJson,
+      )) as number;
+      if (ok === 1) return merged;
+    }
+    // Exhausted CAS retries — fall back to non-atomic write (best-effort)
+    const raw = await this.redis.hget(key, 'threadMetadata');
+    const existing = raw ? parseThreadMetadataJson(raw) : null;
+    const merged = mergeThreadMetadata(existing ?? undefined, patch);
+    await this.setDetailFields(key, 'threadMetadata', JSON.stringify(merged));
+    return merged;
   }
 
   async updateMemberSessionStrategy(

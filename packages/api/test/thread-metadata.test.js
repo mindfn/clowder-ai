@@ -254,6 +254,33 @@ describe('ThreadStore (in-memory) — threadMetadata', () => {
   });
 });
 
+describe('atomicMergeThreadMetadata (in-memory)', () => {
+  test('merges patch into empty metadata and returns result', async () => {
+    const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const store = new ThreadStore();
+    const thread = store.create('user-1', 'Test');
+    const result = store.atomicMergeThreadMetadata(thread.id, {
+      worktrees: ['/path/a'],
+      prs: [{ repo: 'owner/repo', number: 1 }],
+    });
+    assert.deepEqual(result.worktrees, ['/path/a']);
+    assert.deepEqual(result.prs, [{ repo: 'owner/repo', number: 1 }]);
+    // Verify persisted
+    assert.deepEqual(store.getThreadMetadata(thread.id), result);
+  });
+
+  test('merges into existing metadata with append+dedupe', async () => {
+    const { ThreadStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const store = new ThreadStore();
+    const thread = store.create('user-1', 'Test');
+    store.updateThreadMetadata(thread.id, { v: 1, worktrees: ['/a'] });
+    const result = store.atomicMergeThreadMetadata(thread.id, {
+      worktrees: ['/a', '/b'],
+    });
+    assert.deepEqual(result.worktrees, ['/a', '/b']);
+  });
+});
+
 describe('refKey', () => {
   test('generates lowercase dedupe key', async () => {
     const { refKey } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');

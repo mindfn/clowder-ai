@@ -345,22 +345,25 @@ export function refKey(ref: { repo: string; number: number }): string {
   return `${ref.repo.toLowerCase()}#${ref.number}`;
 }
 
+/** #872: Patch shape for thread metadata merge operations. */
+export type ThreadMetadataPatch = {
+  worktrees?: string[];
+  prs?: Array<{ repo: string; number: number }>;
+  issues?: Array<{ repo: string; number: number }>;
+  features?: string[];
+  notes?: Record<string, string | null>;
+  removeWorktrees?: string[];
+  removePrs?: Array<{ repo: string; number: number }>;
+  removeIssues?: Array<{ repo: string; number: number }>;
+  removeFeatures?: string[];
+};
+
 /** #872: Merge thread metadata with append-dedupe semantics for arrays and merge semantics for notes.
  *  - Arrays: incoming items appended, deduped; removeX items removed.
  *  - Notes: incoming keys overwrite, null deletes, absent keys unchanged. */
 export function mergeThreadMetadata(
   existing: ThreadMetadataV1 | undefined,
-  patch: {
-    worktrees?: string[];
-    prs?: Array<{ repo: string; number: number }>;
-    issues?: Array<{ repo: string; number: number }>;
-    features?: string[];
-    notes?: Record<string, string | null>;
-    removeWorktrees?: string[];
-    removePrs?: Array<{ repo: string; number: number }>;
-    removeIssues?: Array<{ repo: string; number: number }>;
-    removeFeatures?: string[];
-  },
+  patch: ThreadMetadataPatch,
 ): ThreadMetadataV1 {
   const base: ThreadMetadataV1 = existing ? { ...existing } : { v: 1 };
 
@@ -550,6 +553,8 @@ export interface IThreadStore {
   getThreadMetadata(threadId: string): ThreadMetadataV1 | null | Promise<ThreadMetadataV1 | null>;
   /** #872: Update thread metadata (replace entire object). Use mergeThreadMetadata() to build the merged value. */
   updateThreadMetadata(threadId: string, metadata: ThreadMetadataV1 | null): void | Promise<void>;
+  /** #872 P2: Atomically read-merge-write thread metadata so concurrent callers cannot lose appends. */
+  atomicMergeThreadMetadata(threadId: string, patch: ThreadMetadataPatch): ThreadMetadataV1 | Promise<ThreadMetadataV1>;
   /** #836: Update per-cat session strategy for a thread member. `null` clears. */
   updateMemberSessionStrategy(
     threadId: string,
@@ -1065,6 +1070,13 @@ export class ThreadStore implements IThreadStore {
     } else {
       thread.threadMetadata = metadata;
     }
+  }
+
+  atomicMergeThreadMetadata(threadId: string, patch: ThreadMetadataPatch): ThreadMetadataV1 {
+    const existing = this.getThreadMetadata(threadId);
+    const merged = mergeThreadMetadata(existing ?? undefined, patch);
+    this.updateThreadMetadata(threadId, merged);
+    return merged;
   }
 
   updateMemberSessionStrategy(threadId: string, catId: string, strategy: 'resume' | 'reborn' | null): void {

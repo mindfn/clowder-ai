@@ -53,7 +53,6 @@ import {
 } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { type ITaskStore, isSubjectOwnershipConflictError } from '../domains/cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore, VotingStateV1 } from '../domains/cats/services/stores/ports/ThreadStore.js';
-import { mergeThreadMetadata } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import {
   canViewMessage,
   isInternalNonQuotableParent,
@@ -522,6 +521,8 @@ export interface CallbackRoutesOptions {
   featIndexProvider?: () => Promise<FeatIndexEntry[]>;
   /** F073 P1: workflow SOP store for bulletin board */
   workflowSopStore?: import('../domains/cats/services/stores/ports/WorkflowSopStore.js').IWorkflowSopStore;
+  /** #872 P2: keep evidence index in sync when set-thread-metadata changes title. */
+  indexBuilder?: { markThreadDirty(threadId: string): void; flushDirtyThreads?(): number | Promise<number> };
   /** F102: DI memory services — SQLite-backed evidence store */
   evidenceStore: IEvidenceStore;
   markerQueue: IMarkerQueue;
@@ -2774,6 +2775,13 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // Update existing thread-level fields
     if (title !== undefined) {
       await threadStore.updateTitle(effectiveThreadId, title);
+      // #872 P2: refresh evidence index after title change (same as PATCH /api/threads/:id)
+      try {
+        opts.indexBuilder?.markThreadDirty(effectiveThreadId);
+        await opts.indexBuilder?.flushDirtyThreads?.();
+      } catch {
+        // Best-effort: evidence index refresh must not block metadata write
+      }
     }
     if (labels !== undefined) {
       // #872 P2 fix: reuse label validation from PATCH /api/threads/:id
@@ -2793,12 +2801,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       await threadStore.updateLabels(effectiveThreadId, labels);
     }
 
-    // Merge new metadata fields
+    // #872 P2: Atomically merge metadata to prevent concurrent write races
     const hasMetadataUpdate = Object.keys(metadataFields).length > 0;
     if (hasMetadataUpdate) {
-      const existing = await threadStore.getThreadMetadata(effectiveThreadId);
-      const merged = mergeThreadMetadata(existing ?? undefined, metadataFields);
-      await threadStore.updateThreadMetadata(effectiveThreadId, merged);
+      await threadStore.atomicMergeThreadMetadata(effectiveThreadId, metadataFields);
     }
 
     // Return the updated state
