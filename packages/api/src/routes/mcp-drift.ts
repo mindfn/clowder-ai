@@ -188,11 +188,21 @@ export const mcpDriftRoutes: FastifyPluginAsync = async (app) => {
   // ── POST /api/mcp/:id/tools — probe tools (spec §4.4) ──
   // Accepts optional body with ad-hoc config for live probing from the edit modal
   // (user can verify connection before saving). Without body fields, probes saved config.
+  //
+  // Security (#712 review P1): probe spawns processes (stdio) or connects to URLs (HTTP).
+  // Always require local access; ad-hoc probes (body.command/url) additionally require owner.
   app.post('/api/mcp/:id/tools', async (request, reply) => {
     const userId = resolveUserId(request);
     if (!userId) {
       reply.status(401);
       return { error: 'Identity required' };
+    }
+
+    // Gate: local-only — probe spawns child processes, not safe for remote access
+    const localError = requireLocalCapabilityWriteRequest(request);
+    if (localError) {
+      reply.status(localError.status);
+      return { error: localError.error };
     }
 
     const { id } = request.params as { id: string };
@@ -213,11 +223,28 @@ export const mcpDriftRoutes: FastifyPluginAsync = async (app) => {
       projectPath?: string;
     };
 
+    // Gate: ad-hoc probes (arbitrary command/url from body) require owner authorization
+    // to prevent untrusted users from spawning arbitrary processes or triggering SSRF.
+    const isAdHoc = !!(body.command || body.url);
+    if (isAdHoc) {
+      const ownerError = resolveOwnerGate(userId, {
+        errorMessage: 'Ad-hoc MCP probe requires owner authorization',
+      });
+      if (ownerError) {
+        reply.status(ownerError.status);
+        return { error: ownerError.error };
+      }
+    }
+
     // #712 P2-1: use project-scoped root when probing from a project tab
     let probeRoot = STARTUP_REPO_ROOT;
     if (body.projectPath) {
       const validated = await validateProjectPath(body.projectPath);
-      if (validated) probeRoot = validated;
+      if (!validated) {
+        reply.status(400);
+        return { error: `Invalid project path: ${body.projectPath}` };
+      }
+      probeRoot = validated;
     }
 
     const cap = await resolveProbeTarget(id, body, probeRoot);
