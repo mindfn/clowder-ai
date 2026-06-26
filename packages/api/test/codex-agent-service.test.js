@@ -495,13 +495,11 @@ describe('CodexAgentService Tests (CLI mode)', { concurrency: false }, () => {
       await promise;
 
       const args = spawnFn.mock.calls[0].arguments[1];
+      // Disabled capabilities are skipped entirely (no CLI args injected).
+      // L5 writeCodexMcpConfig already removes disabled entries from .codex/config.toml.
       assert.ok(
-        args.includes('mcp_servers.cat-cafe-collab.enabled=false'),
-        'disabled runtime capability must stay disabled even when cwd is a user project',
-      );
-      assert.ok(
-        args.includes('mcp_servers.cat-cafe-collab.command="echo"'),
-        'disabled entry must include dummy command so Codex CLI can infer stdio transport',
+        !args.some((a) => a.includes('mcp_servers.cat-cafe-collab')),
+        'disabled runtime capability must not appear in CLI args at all',
       );
       assert.ok(
         args.includes(`mcp_servers.cat-cafe-memory.command=${JSON.stringify(process.execPath)}`),

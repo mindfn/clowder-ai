@@ -416,21 +416,15 @@ function buildCatCafeMcpArgs(callbackEnv?: Record<string, string>, workingDirect
         source: string;
         workingDir?: string;
       }>) {
-        // Explicitly disable off-capabilities servers so stale .codex/config.toml doesn't leak.
-        // Include dummy command/args so Codex CLI can infer stdio transport —
-        // a bare `enabled=false` entry has no transport hint, causing
-        // "invalid transport" validation failure on Codex CLI ≥0.142.
+        // Skip disabled servers entirely. L5 writeCodexMcpConfig already
+        // deletes disabled managed entries from .codex/config.toml, so there's
+        // nothing to override at L4. Injecting a bare `enabled=false` (or even
+        // a dummy command + enabled=false) adds CLI noise and risks Codex CLI
+        // validation errors (≥0.142 requires valid transport on all entries).
+        // The legacy `cat-cafe` shim above is the only exception — user-level
+        // ~/.codex/config.toml may have old entries that L5 cannot reach.
         if (!s.enabled) {
           disabledServers.push(s.name);
-          const tomlOff = /^[A-Za-z0-9_-]+$/.test(s.name) ? s.name : `"${s.name}"`;
-          args.push(
-            '--config',
-            `mcp_servers.${tomlOff}.command="echo"`,
-            '--config',
-            `mcp_servers.${tomlOff}.args=[${toTomlString('disabled')}]`,
-            '--config',
-            `mcp_servers.${tomlOff}.enabled=false`,
-          );
           continue;
         }
         // Codex only supports stdio — skip streamableHttp and pencil (async resolver)
