@@ -144,6 +144,9 @@ const EXPECTED_TOOLS = [
   'cat_cafe_publish_verdict',
   // F168 Phase B Task 6: declare awaiting_external state for a community case
   'cat_cafe_community_await_external',
+  // #872: Thread Metadata MCP
+  'cat_cafe_get_thread_metadata',
+  'cat_cafe_set_thread_metadata',
 ];
 
 const EXPECTED_COLLAB_TOOLS = [
@@ -212,6 +215,9 @@ const EXPECTED_COLLAB_TOOLS = [
   'cat_cafe_set_thread_metadata',
   // F168 Phase B Task 6: declare awaiting_external state for a community case
   'cat_cafe_community_await_external',
+  // #872: Thread Metadata MCP
+  'cat_cafe_get_thread_metadata',
+  'cat_cafe_set_thread_metadata',
 ];
 
 const EXPECTED_MEMORY_TOOLS = [

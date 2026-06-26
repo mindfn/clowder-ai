@@ -2776,6 +2776,20 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       await threadStore.updateTitle(effectiveThreadId, title);
     }
     if (labels !== undefined) {
+      // #872 P2 fix: reuse label validation from PATCH /api/threads/:id
+      if (labels.length > 20) {
+        reply.status(400);
+        return { error: 'Too many labels (max 20)' };
+      }
+      if (labels.length > 0 && opts.labelStore) {
+        const userLabels = await opts.labelStore.list(principal.userId);
+        const validIds = new Set(userLabels.map((l) => l.id));
+        const invalid = labels.filter((lid: string) => !validIds.has(lid));
+        if (invalid.length > 0) {
+          reply.status(400);
+          return { error: 'Invalid label IDs', invalidIds: invalid };
+        }
+      }
       await threadStore.updateLabels(effectiveThreadId, labels);
     }
 
