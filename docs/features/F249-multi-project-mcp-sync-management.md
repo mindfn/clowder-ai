@@ -4,6 +4,7 @@ related_features: [F041, F043, F145, F178, F213, F228]
 topics: [mcp, capability-dashboard, multi-project, sync, drift-detection, plugin]
 doc_kind: spec
 created: 2026-06-17
+tips_exempt: design-phase spec — capability tips added when feature reaches implementation
 ---
 
 # F249: Multi-Project MCP Sync Management — 多项目 MCP 配置同步管理
