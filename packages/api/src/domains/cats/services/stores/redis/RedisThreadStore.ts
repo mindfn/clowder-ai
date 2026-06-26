@@ -22,11 +22,16 @@ import type {
   Thread,
   ThreadMemoryV1,
   ThreadMentionRoutingFeedback,
+  ThreadMetadataV1,
   ThreadParticipantActivity,
   ThreadRoutingPolicyV1,
   VotingStateV1,
 } from '../ports/ThreadStore.js';
-import { buildExternalRuntimeAnchorThreadId, DEFAULT_THREAD_ID } from '../ports/ThreadStore.js';
+import {
+  buildExternalRuntimeAnchorThreadId,
+  DEFAULT_THREAD_ID,
+  parseThreadMetadataJson,
+} from '../ports/ThreadStore.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import { ThreadKeys } from '../redis-keys/thread-keys.js';
 
@@ -1065,6 +1070,9 @@ export class RedisThreadStore implements IThreadStore {
     if (thread.labels && thread.labels.length > 0) {
       result.labels = JSON.stringify(thread.labels);
     }
+    if (thread.threadMetadata) {
+      result.threadMetadata = JSON.stringify(thread.threadMetadata);
+    }
     // F229: Concierge thread marker (set separately via updateThreadKind; also persisted here for
     // cold-create paths where the full thread object is serialized before updateThreadKind is called)
     if (thread.threadKind) {
@@ -1231,6 +1239,11 @@ export class RedisThreadStore implements IThreadStore {
         /* ignore malformed JSON */
       }
     }
+    // #872: Thread metadata anchor
+    if (data.threadMetadata) {
+      const meta = parseThreadMetadataJson(data.threadMetadata);
+      if (meta) result.threadMetadata = meta;
+    }
     // F229 / F167: Restore thread kind marker (written by updateThreadKind; validate value)
     if (data.threadKind === 'concierge' || data.threadKind === 'gate-keeping') {
       result.threadKind = data.threadKind;
@@ -1241,6 +1254,22 @@ export class RedisThreadStore implements IThreadStore {
   async updateLabels(threadId: string, labelIds: string[]): Promise<void> {
     const key = ThreadKeys.detail(threadId);
     await this.redis.hset(key, { labels: JSON.stringify(labelIds) });
+  }
+
+  async getThreadMetadata(threadId: string): Promise<ThreadMetadataV1 | null> {
+    const key = ThreadKeys.detail(threadId);
+    const raw = await this.redis.hget(key, 'threadMetadata');
+    if (!raw) return null;
+    return parseThreadMetadataJson(raw);
+  }
+
+  async updateThreadMetadata(threadId: string, metadata: ThreadMetadataV1 | null): Promise<void> {
+    const key = ThreadKeys.detail(threadId);
+    if (metadata === null) {
+      await this.deleteDetailFields(key, 'threadMetadata');
+    } else {
+      await this.setDetailFields(key, 'threadMetadata', JSON.stringify(metadata));
+    }
   }
 
   async updateMemberSessionStrategy(

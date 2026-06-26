@@ -53,6 +53,7 @@ import {
 } from '../domains/cats/services/stores/ports/MessageStore.js';
 import { type ITaskStore, isSubjectOwnershipConflictError } from '../domains/cats/services/stores/ports/TaskStore.js';
 import type { IThreadStore, VotingStateV1 } from '../domains/cats/services/stores/ports/ThreadStore.js';
+import { mergeThreadMetadata } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import {
   canViewMessage,
   isInternalNonQuotableParent,
@@ -602,6 +603,21 @@ const listThreadsQuerySchema = z.object({
 
 const listLabelsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional(),
+});
+
+const refItemSchema = z.object({ repo: z.string().min(1), number: z.number().int().positive() });
+const setThreadMetadataSchema = z.object({
+  title: z.string().min(1).optional(),
+  labels: z.array(z.string()).optional(),
+  worktrees: z.array(z.string()).optional(),
+  prs: z.array(refItemSchema).optional(),
+  issues: z.array(refItemSchema).optional(),
+  features: z.array(z.string()).optional(),
+  notes: z.record(z.string(), z.string().nullable()).optional(),
+  removeWorktrees: z.array(z.string()).optional(),
+  removePrs: z.array(refItemSchema).optional(),
+  removeIssues: z.array(refItemSchema).optional(),
+  removeFeatures: z.array(z.string()).optional(),
 });
 
 const featIndexQuerySchema = z.object({
@@ -2688,6 +2704,102 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     }));
 
     return { labels: result };
+  });
+
+  // #872: Thread Metadata MCP — read
+  app.get('/api/callbacks/thread-metadata', async (request, reply) => {
+    const principal = requireCallbackPrincipal(request, reply);
+    if (!principal) return;
+
+    if (!threadStore) {
+      reply.status(503);
+      return { error: 'Thread store not configured' };
+    }
+
+    const effectiveThreadId = principal.kind === 'invocation' ? principal.threadId : undefined;
+    if (!effectiveThreadId) {
+      reply.status(400);
+      return { error: 'Agent-key callers must use invocation auth for thread metadata' };
+    }
+
+    const thread = await threadStore.get(effectiveThreadId);
+    if (!thread) {
+      reply.status(404);
+      return { error: 'Thread not found' };
+    }
+
+    const meta = thread.threadMetadata;
+    return {
+      threadId: effectiveThreadId,
+      title: thread.title,
+      labels: thread.labels ?? [],
+      ...(meta?.worktrees ? { worktrees: meta.worktrees } : {}),
+      ...(meta?.prs ? { prs: meta.prs } : {}),
+      ...(meta?.issues ? { issues: meta.issues } : {}),
+      ...(meta?.features ? { features: meta.features } : {}),
+      ...(meta?.notes ? { notes: meta.notes } : {}),
+    };
+  });
+
+  // #872: Thread Metadata MCP — write (merge semantics)
+  app.post('/api/callbacks/set-thread-metadata', async (request, reply) => {
+    const principal = requireCallbackPrincipal(request, reply);
+    if (!principal) return;
+
+    const parsed = setThreadMetadataSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.status(400);
+      return { error: 'Invalid request body', details: parsed.error.issues };
+    }
+
+    if (!threadStore) {
+      reply.status(503);
+      return { error: 'Thread store not configured' };
+    }
+
+    const effectiveThreadId = principal.kind === 'invocation' ? principal.threadId : undefined;
+    if (!effectiveThreadId) {
+      reply.status(400);
+      return { error: 'Agent-key callers must use invocation auth for thread metadata' };
+    }
+
+    const thread = await threadStore.get(effectiveThreadId);
+    if (!thread) {
+      reply.status(404);
+      return { error: 'Thread not found' };
+    }
+
+    const { title, labels, ...metadataFields } = parsed.data;
+
+    // Update existing thread-level fields
+    if (title !== undefined) {
+      await threadStore.updateTitle(effectiveThreadId, title);
+    }
+    if (labels !== undefined) {
+      await threadStore.updateLabels(effectiveThreadId, labels);
+    }
+
+    // Merge new metadata fields
+    const hasMetadataUpdate = Object.keys(metadataFields).length > 0;
+    if (hasMetadataUpdate) {
+      const existing = await threadStore.getThreadMetadata(effectiveThreadId);
+      const merged = mergeThreadMetadata(existing ?? undefined, metadataFields);
+      await threadStore.updateThreadMetadata(effectiveThreadId, merged);
+    }
+
+    // Return the updated state
+    const updated = await threadStore.get(effectiveThreadId);
+    const meta = updated?.threadMetadata;
+    return {
+      threadId: effectiveThreadId,
+      title: updated?.title ?? thread.title,
+      labels: updated?.labels ?? thread.labels ?? [],
+      ...(meta?.worktrees ? { worktrees: meta.worktrees } : {}),
+      ...(meta?.prs ? { prs: meta.prs } : {}),
+      ...(meta?.issues ? { issues: meta.issues } : {}),
+      ...(meta?.features ? { features: meta.features } : {}),
+      ...(meta?.notes ? { notes: meta.notes } : {}),
+    };
   });
 
   app.get('/api/callbacks/feat-index', async (request, reply) => {

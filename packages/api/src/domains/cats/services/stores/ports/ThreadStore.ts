@@ -183,6 +183,8 @@ export interface Thread {
     | 'trajectory';
   /** F187: User-defined label IDs for thread categorization. */
   labels?: string[];
+  /** #872: Thread metadata anchor for session recovery (worktrees, PRs, issues, features, notes). */
+  threadMetadata?: ThreadMetadataV1;
   /** F229 / F167: Thread kind marker.
    *  'concierge' = 专属前台猫载体（per-user，sidebar 默认隐藏，F229）
    *  'gate-keeping' = 守门 thread (per-repo inbox / community ops 看板载体，F167 trigger-time guard)
@@ -321,6 +323,116 @@ export interface GuideStateV1 {
   offeredBy?: string;
 }
 
+/** #872: Thread-level metadata anchor for session recovery.
+ *  Low-frequency anchors (worktree paths, PR/issue refs, feature links, free-form notes)
+ *  that survive session seal / handoff / new-member join. */
+export interface ThreadMetadataV1 {
+  v: 1;
+  /** Dev worktree absolute paths */
+  worktrees?: string[];
+  /** Associated PRs — dedupe key: `${repo.toLowerCase()}#${number}` */
+  prs?: Array<{ repo: string; number: number }>;
+  /** Associated issues — dedupe key: `${repo.toLowerCase()}#${number}` */
+  issues?: Array<{ repo: string; number: number }>;
+  /** Associated feature IDs (e.g. "F095", "F187") */
+  features?: string[];
+  /** Free-form stable KV for any thread type */
+  notes?: Record<string, string>;
+}
+
+/** #872: Dedupe key for PR/issue refs */
+export function refKey(ref: { repo: string; number: number }): string {
+  return `${ref.repo.toLowerCase()}#${ref.number}`;
+}
+
+/** #872: Merge thread metadata with append-dedupe semantics for arrays and merge semantics for notes.
+ *  - Arrays: incoming items appended, deduped; removeX items removed.
+ *  - Notes: incoming keys overwrite, null deletes, absent keys unchanged. */
+export function mergeThreadMetadata(
+  existing: ThreadMetadataV1 | undefined,
+  patch: {
+    worktrees?: string[];
+    prs?: Array<{ repo: string; number: number }>;
+    issues?: Array<{ repo: string; number: number }>;
+    features?: string[];
+    notes?: Record<string, string | null>;
+    removeWorktrees?: string[];
+    removePrs?: Array<{ repo: string; number: number }>;
+    removeIssues?: Array<{ repo: string; number: number }>;
+    removeFeatures?: string[];
+  },
+): ThreadMetadataV1 {
+  const base: ThreadMetadataV1 = existing ? { ...existing } : { v: 1 };
+
+  // --- worktrees: append + dedupe, then remove ---
+  if (patch.worktrees || patch.removeWorktrees) {
+    const set = new Set(base.worktrees ?? []);
+    for (const w of patch.worktrees ?? []) set.add(w);
+    for (const w of patch.removeWorktrees ?? []) set.delete(w);
+    base.worktrees = set.size > 0 ? [...set] : undefined;
+  }
+
+  // --- prs: append + dedupe by repo#number, then remove ---
+  if (patch.prs || patch.removePrs) {
+    const map = new Map<string, { repo: string; number: number }>();
+    for (const pr of base.prs ?? []) map.set(refKey(pr), pr);
+    for (const pr of patch.prs ?? []) {
+      const key = refKey(pr);
+      if (!map.has(key)) map.set(key, { repo: pr.repo.toLowerCase(), number: pr.number });
+    }
+    for (const pr of patch.removePrs ?? []) map.delete(refKey(pr));
+    base.prs = map.size > 0 ? [...map.values()] : undefined;
+  }
+
+  // --- issues: append + dedupe by repo#number, then remove ---
+  if (patch.issues || patch.removeIssues) {
+    const map = new Map<string, { repo: string; number: number }>();
+    for (const issue of base.issues ?? []) map.set(refKey(issue), issue);
+    for (const issue of patch.issues ?? []) {
+      const key = refKey(issue);
+      if (!map.has(key)) map.set(key, { repo: issue.repo.toLowerCase(), number: issue.number });
+    }
+    for (const issue of patch.removeIssues ?? []) map.delete(refKey(issue));
+    base.issues = map.size > 0 ? [...map.values()] : undefined;
+  }
+
+  // --- features: append + dedupe, then remove ---
+  if (patch.features || patch.removeFeatures) {
+    const set = new Set(base.features ?? []);
+    for (const f of patch.features ?? []) set.add(f);
+    for (const f of patch.removeFeatures ?? []) set.delete(f);
+    base.features = set.size > 0 ? [...set] : undefined;
+  }
+
+  // --- notes: merge with null-delete ---
+  if (patch.notes) {
+    const merged = { ...(base.notes ?? {}) };
+    for (const [k, v] of Object.entries(patch.notes)) {
+      if (v === null) {
+        delete merged[k];
+      } else {
+        merged[k] = v;
+      }
+    }
+    base.notes = Object.keys(merged).length > 0 ? merged : undefined;
+  }
+
+  return base;
+}
+
+/** #872: Parse threadMetadata JSON from Redis with fail-open semantics. */
+export function parseThreadMetadataJson(raw: string): ThreadMetadataV1 | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && parsed.v === 1) {
+      return parsed as ThreadMetadataV1;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** F079: Voting state stored in thread metadata */
 export interface VotingStateV1 {
   v: 1;
@@ -434,6 +546,10 @@ export interface IThreadStore {
   ): void | Promise<void>;
   /** F187: Update thread labels (replaces entire array). */
   updateLabels(threadId: string, labelIds: string[]): void | Promise<void>;
+  /** #872: Get thread metadata anchor. */
+  getThreadMetadata(threadId: string): ThreadMetadataV1 | null | Promise<ThreadMetadataV1 | null>;
+  /** #872: Update thread metadata (replace entire object). Use mergeThreadMetadata() to build the merged value. */
+  updateThreadMetadata(threadId: string, metadata: ThreadMetadataV1 | null): void | Promise<void>;
   /** #836: Update per-cat session strategy for a thread member. `null` clears. */
   updateMemberSessionStrategy(
     threadId: string,
@@ -934,6 +1050,21 @@ export class ThreadStore implements IThreadStore {
   updateLabels(threadId: string, labelIds: string[]): void {
     const thread = this.get(threadId);
     if (thread) thread.labels = labelIds;
+  }
+
+  getThreadMetadata(threadId: string): ThreadMetadataV1 | null {
+    const thread = this.get(threadId);
+    return thread?.threadMetadata ?? null;
+  }
+
+  updateThreadMetadata(threadId: string, metadata: ThreadMetadataV1 | null): void {
+    const thread = this.get(threadId);
+    if (!thread) return;
+    if (metadata === null) {
+      delete thread.threadMetadata;
+    } else {
+      thread.threadMetadata = metadata;
+    }
   }
 
   updateMemberSessionStrategy(threadId: string, catId: string, strategy: 'resume' | 'reborn' | null): void {
