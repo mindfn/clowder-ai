@@ -417,10 +417,20 @@ function buildCatCafeMcpArgs(callbackEnv?: Record<string, string>, workingDirect
         workingDir?: string;
       }>) {
         // Explicitly disable off-capabilities servers so stale .codex/config.toml doesn't leak.
+        // Include dummy command/args so Codex CLI can infer stdio transport —
+        // a bare `enabled=false` entry has no transport hint, causing
+        // "invalid transport" validation failure on Codex CLI ≥0.142.
         if (!s.enabled) {
           disabledServers.push(s.name);
           const tomlOff = /^[A-Za-z0-9_-]+$/.test(s.name) ? s.name : `"${s.name}"`;
-          args.push('--config', `mcp_servers.${tomlOff}.enabled=false`);
+          args.push(
+            '--config',
+            `mcp_servers.${tomlOff}.command="echo"`,
+            '--config',
+            `mcp_servers.${tomlOff}.args=[${toTomlString('disabled')}]`,
+            '--config',
+            `mcp_servers.${tomlOff}.enabled=false`,
+          );
           continue;
         }
         // Codex only supports stdio — skip streamableHttp and pencil (async resolver)
