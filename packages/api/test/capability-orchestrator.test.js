@@ -2191,6 +2191,55 @@ describe('resolveServersForCat', () => {
     assert.equal(opusServers[0].enabled, true);
   });
 
+  it('falls back to legacy enabled when globalEnabled is absent (#712 P1-4 regression)', () => {
+    // Invoke-time paths read raw JSON (readFileSync), bypassing
+    // readCapabilitiesConfig's in-memory migration.  isMcpEnabledForCat must
+    // honor legacy `enabled` as fallback when `globalEnabled` is missing.
+    const config = makeConfig([
+      {
+        id: 'legacy-disabled',
+        type: 'mcp',
+        enabled: false,
+        // no globalEnabled — simulate a config that hasn't been migrated yet
+        source: 'external',
+        mcpServer: { command: 'echo', args: [] },
+      },
+      {
+        id: 'legacy-enabled',
+        type: 'mcp',
+        enabled: true,
+        // no globalEnabled
+        source: 'external',
+        mcpServer: { command: 'echo', args: ['hi'] },
+      },
+      {
+        id: 'canonical-overrides-legacy',
+        type: 'mcp',
+        enabled: true,
+        globalEnabled: false, // canonical wins over legacy
+        source: 'external',
+        mcpServer: { command: 'echo', args: [] },
+      },
+    ]);
+
+    const servers = resolveServersForCat(config, 'opus');
+    assert.equal(
+      servers.find((s) => s.name === 'legacy-disabled')?.enabled,
+      false,
+      'legacy enabled:false must disable when globalEnabled is absent',
+    );
+    assert.equal(
+      servers.find((s) => s.name === 'legacy-enabled')?.enabled,
+      true,
+      'legacy enabled:true must enable when globalEnabled is absent',
+    );
+    assert.equal(
+      servers.find((s) => s.name === 'canonical-overrides-legacy')?.enabled,
+      false,
+      'globalEnabled:false must override legacy enabled:true',
+    );
+  });
+
   it('treats resolver-backed stdio MCPs as transport-usable before local resolution', () => {
     const config = makeConfig([
       {

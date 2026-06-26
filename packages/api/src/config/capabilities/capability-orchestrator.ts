@@ -1332,10 +1332,12 @@ const STREAMABLE_HTTP_PROVIDERS = new Set(['anthropic', 'kimi', 'opencode']);
  * Single source of truth for per-cat MCP access resolution (invoke-time).
  *
  * - `globalEnabled` = master switch (off → all cats disabled)
+ * - `enabled` = legacy field; used as fallback when `globalEnabled` is absent
+ *   (invoke-time paths read raw JSON, bypassing readCapabilitiesConfig migration)
  * - `blockedCats` = per-cat blacklist (cat in list → disabled)
  */
 export function isMcpEnabledForCat(cap: CapabilityEntry, catId: string): boolean {
-  if (!(cap.globalEnabled ?? true)) return false;
+  if (!(cap.globalEnabled ?? cap.enabled ?? true)) return false;
   return !cap.blockedCats?.includes(catId);
 }
 
