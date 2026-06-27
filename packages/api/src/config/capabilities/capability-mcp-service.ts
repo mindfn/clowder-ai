@@ -128,7 +128,13 @@ export async function installMcpCapability(
       config.capabilities.push(entry);
     }
 
-    const afterEntry = structuredClone(config.capabilities.find((c) => c.id === entry.id && c.type === 'mcp')!);
+    // #712 review P1-7: safe access — entry may have been a type-transition (pluginId match, not type=mcp)
+    const afterIdx = entry.pluginId
+      ? config.capabilities.findIndex((c) => c.id === entry.id && c.pluginId === entry.pluginId)
+      : config.capabilities.findIndex((c) => c.id === entry.id && c.type === 'mcp');
+    const afterEntry = structuredClone(
+      config.capabilities[afterIdx >= 0 ? afterIdx : existingIdx >= 0 ? existingIdx : config.capabilities.length - 1],
+    );
 
     try {
       await io.writeAndRegenCli(config);
@@ -196,14 +202,18 @@ export async function removeMcpCapability(
     try {
       if (opts?.hard) {
         // Phase 1: Disable so CLI writers see the disabled state and clean up
-        if (before.enabled) {
+        if (before.enabled || before.globalEnabled !== false) {
           nextConfig.capabilities[idx].enabled = false;
+          // #712 review P2-13: set globalEnabled=false (canonical field) alongside legacy enabled
+          nextConfig.capabilities[idx].globalEnabled = false;
           await io.writeAndRegenCli(nextConfig);
         }
         // Phase 2: Remove entry entirely
         nextConfig.capabilities.splice(idx, 1);
       } else {
         nextConfig.capabilities[idx].enabled = false;
+        // #712 review P2-13: set globalEnabled=false (canonical field) alongside legacy enabled
+        nextConfig.capabilities[idx].globalEnabled = false;
       }
 
       await io.writeAndRegenCli(nextConfig);

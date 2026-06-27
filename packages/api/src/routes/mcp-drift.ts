@@ -158,15 +158,25 @@ export const mcpDriftRoutes: FastifyPluginAsync = async (app) => {
     }
 
     // #712 review P1-9: validate resolutions array shape before passing to resolver
+    const VALID_DECISIONS = new Set(['accept', 'reject', 'skip']);
+    const MAX_RESOLUTIONS = 200;
     if (body.resolutions !== undefined) {
       if (!Array.isArray(body.resolutions)) {
         reply.status(400);
         return { error: 'resolutions must be an array' };
       }
+      if (body.resolutions.length > MAX_RESOLUTIONS) {
+        reply.status(400);
+        return { error: `resolutions exceeds maximum of ${MAX_RESOLUTIONS}` };
+      }
       for (const r of body.resolutions) {
         if (typeof r !== 'object' || r === null || typeof r.mcpId !== 'string' || typeof r.decision !== 'string') {
           reply.status(400);
           return { error: 'Each resolution must have string mcpId and decision' };
+        }
+        if (!VALID_DECISIONS.has(r.decision)) {
+          reply.status(400);
+          return { error: `Invalid decision "${r.decision}"; must be one of: ${[...VALID_DECISIONS].join(', ')}` };
         }
       }
     }

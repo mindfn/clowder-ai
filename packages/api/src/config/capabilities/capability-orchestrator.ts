@@ -11,7 +11,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync, statSync } from 'node:fs';
-import { chmod, lstat, mkdir, readdir, readFile, rm, stat as statPath, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, readFile, rename, rm, stat as statPath, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import type { CapabilitiesConfig, CapabilityEntry, McpServerDescriptor } from '@cat-cafe/shared';
@@ -632,7 +632,10 @@ export async function writeCapabilitiesConfig(projectRoot: string, config: Capab
   const dir = safePath(projectRoot, CONFIG_SUBDIR);
   await mkdir(dir, { recursive: true });
   const filePath = safePath(projectRoot, CONFIG_SUBDIR, CAPABILITIES_FILENAME);
-  await writeFile(filePath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
+  // #712 review P1-2: atomic write — temp file + rename prevents TOCTOU / partial-write corruption
+  const tmpPath = `${filePath}.${process.pid}.tmp`;
+  await writeFile(tmpPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
+  await rename(tmpPath, filePath);
 }
 
 export async function inheritFullyBlockedMcpCapabilitiesForNewCat(
