@@ -130,6 +130,17 @@ async function probeHttpMcp(capability: CapabilityEntry, options: { timeoutMs?: 
   const url = capability.mcpServer?.url;
   if (!url) return { connectionStatus: 'unknown' };
 
+  // #712 review P1-10: validate URL scheme to prevent SSRF via file:// / gopher:// etc.
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { connectionStatus: 'disconnected', error: 'Invalid URL' };
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { connectionStatus: 'disconnected', error: `Unsupported scheme: ${parsed.protocol}` };
+  }
+
   const timeoutMs = options.timeoutMs ?? DEFAULT_HTTP_PROBE_TIMEOUT_MS;
   const deadlineMs = Date.now() + timeoutMs;
   const requestInit: RequestInit = {};
@@ -137,7 +148,7 @@ async function probeHttpMcp(capability: CapabilityEntry, options: { timeoutMs?: 
     requestInit.headers = resolveEnvVarsInRecord(capability.mcpServer.headers);
   }
 
-  const transport = new StreamableHTTPClientTransport(new URL(url), { requestInit });
+  const transport = new StreamableHTTPClientTransport(parsed, { requestInit });
   const client = new Client({ name: 'cat-cafe-capability-probe', version: '0.1.0' }, { capabilities: {} });
 
   try {

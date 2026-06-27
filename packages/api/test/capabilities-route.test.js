@@ -535,7 +535,7 @@ describe('resolveServersForCat with overrides', () => {
   it('returns project-only MCPs from single project config (R4 P1-1)', async () => {
     const { resolveServersForCat } = await import('../dist/config/capabilities/capability-orchestrator.js');
 
-    // F240: resolver takes a single project config — no global+project merge
+    // F249: resolver takes a single project config — no global+project merge
     /** @type {any} */
     const projectConfig = {
       version: 1,
@@ -567,7 +567,7 @@ describe('resolveServersForCat with overrides', () => {
   it('applies blockedCats to project MCPs (R4 P1-1)', async () => {
     const { resolveServersForCat } = await import('../dist/config/capabilities/capability-orchestrator.js');
 
-    // F240: resolver takes single project config directly
+    // F249: resolver takes single project config directly
     /** @type {any} */
     const projectConfig = {
       version: 1,
@@ -593,7 +593,7 @@ describe('resolveServersForCat with overrides', () => {
   it('single config preserves blockedCats per-tool (R4 P1-1)', async () => {
     const { resolveServersForCat } = await import('../dist/config/capabilities/capability-orchestrator.js');
 
-    // F240: resolver takes a single project config — no global+project merge
+    // F249: resolver takes a single project config — no global+project merge
     /** @type {any} */
     const projectConfig = {
       version: 1,
@@ -631,7 +631,7 @@ describe('resolveServersForCat with overrides', () => {
   it('project enabled derives from blockedCats, not globalEnabled (R5 P1 regression)', async () => {
     const { resolveServersForCat } = await import('../dist/config/capabilities/capability-orchestrator.js');
 
-    // F240: resolver takes a single project config. Project enabled derives from
+    // F249: resolver takes a single project config. Project enabled derives from
     // blockedCats, regardless of what globalEnabled says.
     /** @type {any} */
     const projectUnblocked = {

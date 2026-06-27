@@ -308,7 +308,7 @@ describe('capabilities MCP write routes', () => {
     });
 
     assert.equal(res.statusCode, 200, res.payload);
-    // F240: sanitizeCapabilityForResponse returns raw values for frontend eye-toggle editing.
+    // F249: sanitizeCapabilityForResponse returns raw values for frontend eye-toggle editing.
     // Response contains plaintext — frontend handles display masking.
     assert.equal(res.json().capability.mcpServer.env.API_KEY, 'new-secret');
     assert.equal(res.json().capability.mcpServer.headers.Authorization, 'Bearer new-secret');
@@ -519,7 +519,7 @@ describe('capabilities MCP write routes', () => {
   });
 
   it('returns raw secrets in preview/install responses for frontend eye-toggle editing', async () => {
-    // F240: sanitizeCapabilityForResponse returns raw values — frontend masks display.
+    // F249: sanitizeCapabilityForResponse returns raw values — frontend masks display.
     // Persisted config also stores raw values. Audit logs still use sanitizeCapabilityForAudit.
     setEnv('DEFAULT_OWNER_USER_ID', 'you');
     const payload = {
@@ -582,7 +582,7 @@ describe('capabilities MCP write routes', () => {
     });
 
     assert.equal(res.statusCode, 200, res.payload);
-    // F240: response returns raw values for frontend eye-toggle editing
+    // F249: response returns raw values for frontend eye-toggle editing
     assert.match(res.payload, /new-secret/);
     const config = await readCapabilitiesConfig(projectRoot);
     const cap = config?.capabilities.find((entry) => entry.id === 'secret-mcp');

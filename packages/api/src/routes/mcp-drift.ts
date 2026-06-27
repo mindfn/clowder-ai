@@ -157,6 +157,20 @@ export const mcpDriftRoutes: FastifyPluginAsync = async (app) => {
       return { error: 'Required: projectPath' };
     }
 
+    // #712 review P1-9: validate resolutions array shape before passing to resolver
+    if (body.resolutions !== undefined) {
+      if (!Array.isArray(body.resolutions)) {
+        reply.status(400);
+        return { error: 'resolutions must be an array' };
+      }
+      for (const r of body.resolutions) {
+        if (typeof r !== 'object' || r === null || typeof r.mcpId !== 'string' || typeof r.decision !== 'string') {
+          reply.status(400);
+          return { error: 'Each resolution must have string mcpId and decision' };
+        }
+      }
+    }
+
     const projectRoot = await validateProjectPath(body.projectPath);
     if (!projectRoot) {
       reply.status(400);
