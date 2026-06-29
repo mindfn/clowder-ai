@@ -719,6 +719,25 @@ export class PluginResourceActivator {
     // Remaining (non-MCP) orphans: limb + schedule — batch in one lock.
     const limbNodeIds: string[] = [];
     const scheduleTaskIds: string[] = [];
+
+    // #712: Delegate orphaned MCP removal to MCP service (handles disable + CLI cleanup + remove)
+    {
+      const config = await this.deps.readCapabilities();
+      if (config) {
+        for (const c of config.capabilities) {
+          if (c.pluginId === manifest.id && c.type === 'mcp' && !declaredIds.has(normalizeCapId(c.id))) {
+            const projectRoot = this.deps.resolveProjectRoot();
+            await removeMcpCapability(projectRoot, normalizeCapId(c.id), this.mcpConfigIO(), {
+              hard: true,
+              pluginId: manifest.id,
+              userId: `plugin:${manifest.id}`,
+            });
+          }
+        }
+      }
+    }
+
+    // Handle non-MCP orphans via direct manipulation
     await this.deps.withCapabilityLock(async () => {
       const config = await this.deps.readCapabilities();
       if (!config) return;

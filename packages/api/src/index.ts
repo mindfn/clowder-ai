@@ -2378,60 +2378,6 @@ async function main(): Promise<void> {
       // F202-2B: Mutable deps ref — populated via rehydrateGitHubSchedules after GitHub services created
       scheduleFactoryDeps:
         scheduleFactoryDeps as import('./domains/plugin/ScheduleFactoryRegistry.js').ScheduleFactoryDeps,
-      // F205: Delegate MCP lifecycle to MCP capability system
-      installMcp: async (capId, mcpServer, pluginId) => {
-        const root = resolveActiveProjectRoot();
-        await withCapabilityLock(root, async () => {
-          let config = (await readCapabilitiesConfig(root)) ?? { version: 1, capabilities: [] as CapabilityEntry[] };
-          const catCafeRepoRoot = await resolveMainRepoPath();
-          config = healCatCafeMcpTopology(config, { catCafeRepoRoot }).config;
-          const idx = config.capabilities.findIndex((c) => c.id === capId && c.type === 'mcp');
-          if (idx >= 0) {
-            const existing = config.capabilities[idx];
-            if (existing.pluginId && existing.pluginId !== pluginId) {
-              throw new Error(`MCP capability '${capId}' is owned by plugin '${existing.pluginId}'`);
-            }
-            existing.enabled = true;
-            existing.mcpServer = mcpServer;
-            existing.pluginId = pluginId;
-            existing.source = 'cat-cafe';
-          } else {
-            config.capabilities.push({
-              id: capId,
-              type: 'mcp',
-              enabled: true,
-              source: 'cat-cafe',
-              pluginId,
-              mcpServer,
-            });
-          }
-          await writeCapabilitiesConfig(root, config);
-          const { paths } = resolveStartupCliConfigContext(root);
-          await generateCliConfigs(config, paths);
-        });
-      },
-      removeMcp: async (capId, pluginId) => {
-        const root = resolveActiveProjectRoot();
-        await withCapabilityLock(root, async () => {
-          let config = await readCapabilitiesConfig(root);
-          if (!config) return;
-          const catCafeRepoRoot = await resolveMainRepoPath();
-          config = healCatCafeMcpTopology(config, { catCafeRepoRoot }).config;
-          const idx = config.capabilities.findIndex(
-            (c) => c.id === capId && c.type === 'mcp' && c.pluginId === pluginId,
-          );
-          if (idx < 0) return;
-          // Disable first so CLI writers see the disabled entry and remove stale config
-          config.capabilities[idx].enabled = false;
-          await writeCapabilitiesConfig(root, config);
-          const { paths } = resolveStartupCliConfigContext(root);
-          await generateCliConfigs(config, paths);
-          // Then remove the entry
-          config.capabilities.splice(idx, 1);
-          await writeCapabilitiesConfig(root, config);
-          await generateCliConfigs(config, paths);
-        });
-      },
     });
 
     const startupCaps = await readCapabilitiesConfig(resolveActiveProjectRoot());
