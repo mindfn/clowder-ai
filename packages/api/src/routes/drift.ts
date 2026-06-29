@@ -156,21 +156,19 @@ export const unifiedDriftRoutes: FastifyPluginAsync = async (app) => {
       reply.status(400);
       return { error: 'Required: projectPath for MCP resolve' };
     }
-    const projectRoot = await validateProjectPath(projectPath);
-    if (!projectRoot) {
-      reply.status(400);
-      return { error: 'Invalid project path' };
-    }
-    const drift = await checkMcpProject(projectRoot, STARTUP_REPO_ROOT);
-    if (drift.issues.length === 0) {
-      return {
-        action: 'sync',
-        report: { added: [], removed: [], updated: [], skipped: [], syncedHash: drift.driftHash },
-      };
-    }
-    // #712 review: validate resolutions against resolver contract before passing through
+
+    // #712 review: validate resolutions early (before drift check) to fail fast on malformed input
+    const MAX_RESOLUTIONS = 200;
     let resolutions: McpDriftResolution[] | undefined;
-    if (Array.isArray(body.resolutions)) {
+    if (body.resolutions !== undefined) {
+      if (!Array.isArray(body.resolutions)) {
+        reply.status(400);
+        return { error: 'resolutions must be an array' };
+      }
+      if (body.resolutions.length > MAX_RESOLUTIONS) {
+        reply.status(400);
+        return { error: `resolutions exceeds maximum of ${MAX_RESOLUTIONS}` };
+      }
       for (const r of body.resolutions) {
         if (typeof r !== 'object' || r === null || typeof r.mcpId !== 'string' || typeof r.decision !== 'string') {
           reply.status(400);
@@ -184,6 +182,19 @@ export const unifiedDriftRoutes: FastifyPluginAsync = async (app) => {
         }
       }
       resolutions = body.resolutions as McpDriftResolution[];
+    }
+
+    const projectRoot = await validateProjectPath(projectPath);
+    if (!projectRoot) {
+      reply.status(400);
+      return { error: 'Invalid project path' };
+    }
+    const drift = await checkMcpProject(projectRoot, STARTUP_REPO_ROOT);
+    if (drift.issues.length === 0) {
+      return {
+        action: 'sync',
+        report: { added: [], removed: [], updated: [], skipped: [], syncedHash: drift.driftHash },
+      };
     }
     const report = await syncMcpDrift(projectRoot, STARTUP_REPO_ROOT, drift, resolutions);
     return { action: 'sync', report, projectRoot };
