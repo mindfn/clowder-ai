@@ -225,4 +225,111 @@ describe('#1049 — healCatCafeMcpTopology restores missing managed MCPs', () =>
       );
     }
   });
+
+  it('preserves legacy overrides in partial-legacy form (codex PR #13 re-review P1)', () => {
+    // Regression test: legacy `cat-cafe` with overrides PLUS an existing managed
+    // split (cat-cafe-collab). migrateLegacyCatCafeCapability bails because
+    // hasManagedSplit=true; ensureCoreManagedMcps must:
+    //   1. Propagate legacy overrides→blockedCats to newly added splits
+    //   2. Propagate legacy overrides→blockedCats to the existing split (cat-cafe-collab)
+    // Without this fix, ensureCatCafeMainServer removes legacy `cat-cafe` and
+    // all splits end up with blockedCats=undefined — silently re-enabling blocked cats.
+    const config = {
+      version: 2,
+      capabilities: [
+        {
+          id: 'cat-cafe',
+          type: 'mcp',
+          enabled: true,
+          globalEnabled: true,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['index.js'] },
+          overrides: [
+            { catId: 'codex', enabled: false },
+            { catId: 'ragdoll', enabled: true },
+          ],
+        },
+        {
+          id: 'cat-cafe-collab',
+          type: 'mcp',
+          enabled: true,
+          globalEnabled: true,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['collab.js'] },
+          // No blockedCats — the partial split was created without overrides conversion
+        },
+      ],
+    };
+
+    const result = healCatCafeMcpTopology(config, { catCafeRepoRoot: '/fake/root' });
+    assert.ok(result.migrated, 'should report migration occurred');
+
+    // Legacy `cat-cafe` entry should be removed
+    const legacyEntry = result.config.capabilities.find((c) => c.id === 'cat-cafe' && c.source === 'cat-cafe');
+    assert.equal(legacyEntry, undefined, 'legacy cat-cafe entry should be removed');
+
+    // ALL managed splits (including pre-existing cat-cafe-collab) must have blockedCats
+    for (const id of ALL_SPLIT_IDS) {
+      const split = result.config.capabilities.find((c) => c.id === id && c.source === 'cat-cafe');
+      assert.ok(split, `managed split ${id} should exist`);
+
+      assert.ok(
+        Array.isArray(split.blockedCats) && split.blockedCats.includes('codex'),
+        `${id} must have codex in blockedCats (partial-legacy overrides propagation)`,
+      );
+
+      // ragdoll was enabled:true in overrides — should NOT appear in blockedCats
+      assert.ok(
+        !split.blockedCats.includes('ragdoll'),
+        `${id} must NOT have ragdoll in blockedCats (ragdoll was allowed)`,
+      );
+    }
+  });
+
+  it('preserves existing blockedCats when legacy overrides are also present', () => {
+    // Edge case: existing split already has its own blockedCats.
+    // Legacy overrides should NOT overwrite explicit blockedCats on existing splits.
+    const config = {
+      version: 2,
+      capabilities: [
+        {
+          id: 'cat-cafe',
+          type: 'mcp',
+          enabled: true,
+          globalEnabled: true,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['index.js'] },
+          overrides: [{ catId: 'codex', enabled: false }],
+        },
+        {
+          id: 'cat-cafe-collab',
+          type: 'mcp',
+          enabled: true,
+          globalEnabled: true,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['collab.js'] },
+          blockedCats: ['siamese'],
+        },
+      ],
+    };
+
+    const result = healCatCafeMcpTopology(config, { catCafeRepoRoot: '/fake/root' });
+    assert.ok(result.migrated, 'should report migration occurred');
+
+    // cat-cafe-collab had explicit blockedCats — those should be preserved, not overwritten
+    const collab = result.config.capabilities.find((c) => c.id === 'cat-cafe-collab' && c.source === 'cat-cafe');
+    assert.ok(collab, 'cat-cafe-collab should exist');
+    assert.ok(
+      Array.isArray(collab.blockedCats) && collab.blockedCats.includes('siamese'),
+      'cat-cafe-collab should keep its original blockedCats',
+    );
+
+    // Newly added splits (no pre-existing blockedCats) should get legacy overrides
+    const memory = result.config.capabilities.find((c) => c.id === 'cat-cafe-memory' && c.source === 'cat-cafe');
+    assert.ok(memory, 'cat-cafe-memory should exist');
+    assert.ok(
+      Array.isArray(memory.blockedCats) && memory.blockedCats.includes('codex'),
+      'cat-cafe-memory should inherit codex from legacy overrides',
+    );
+  });
 });

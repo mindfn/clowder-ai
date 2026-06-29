@@ -1363,6 +1363,18 @@ export function ensureCoreManagedMcps(
   const binaryRoot = resolveBinaryRoot(opts?.catCafeRepoRoot);
   const descriptors = buildCatCafeSplitMcpDescriptors(binaryRoot);
 
+  // #1049 partial-legacy: detect legacy `cat-cafe` entry with `overrides`.
+  // When migrateLegacyCatCafeCapability bails (because hasManagedSplit=true),
+  // legacy `cat-cafe` with overrides coexists with partial managed splits.
+  // ensureCatCafeMainServer (step 3) will remove the legacy entry later —
+  // we must propagate its overrides→blockedCats to splits HERE to preserve them.
+  const legacyMain = config.capabilities.find(
+    (cap) => cap.type === 'mcp' && cap.source === 'cat-cafe' && cap.id === 'cat-cafe',
+  );
+  const legacyBlockedCats = legacyMain?.overrides
+    ? legacyMain.overrides.filter((o) => !o.enabled).map((o) => o.catId)
+    : [];
+
   // Check which managed splits already exist (by source + id)
   const existingManagedIds = new Set(
     config.capabilities.filter((cap) => cap.type === 'mcp' && cap.source === 'cat-cafe').map((cap) => cap.id),
@@ -1370,7 +1382,9 @@ export function ensureCoreManagedMcps(
 
   // Find missing managed splits
   const missingDescriptors = descriptors.filter((d) => !existingManagedIds.has(d.name));
-  if (missingDescriptors.length === 0) {
+
+  // Nothing to add AND no legacy overrides to propagate → no-op
+  if (missingDescriptors.length === 0 && legacyBlockedCats.length === 0) {
     return { migrated: false, config };
   }
 
@@ -1378,14 +1392,21 @@ export function ensureCoreManagedMcps(
   // a non-managed entry (same logic as migrateLegacyCatCafeCapability).
   const allMcpIds = new Set(config.capabilities.filter((cap) => cap.type === 'mcp').map((cap) => cap.id));
   const safeToAdd = missingDescriptors.filter((d) => !allMcpIds.has(d.name));
-  if (safeToAdd.length === 0) {
+
+  // No splits to add AND no legacy overrides to propagate → no-op
+  if (safeToAdd.length === 0 && legacyBlockedCats.length === 0) {
     return { migrated: false, config };
   }
 
-  // Inherit settings from first existing managed split (if any)
-  const inheritFrom = config.capabilities.find((cap) => cap.type === 'mcp' && cap.source === 'cat-cafe');
-
+  let migrated = false;
   const capabilities = [...config.capabilities];
+
+  // Inherit settings from first existing managed SPLIT (exclude legacy `cat-cafe`
+  // which has `overrides` not `blockedCats` — handled separately via legacyBlockedCats).
+  const inheritFrom = capabilities.find(
+    (cap) => cap.type === 'mcp' && cap.source === 'cat-cafe' && cap.id !== 'cat-cafe',
+  );
+
   for (const descriptor of safeToAdd) {
     const entry = toCapabilityEntry(descriptor);
     if (inheritFrom) {
@@ -1401,6 +1422,22 @@ export function ensureCoreManagedMcps(
       if (inheritFrom.mcpServer?.workingDir) {
         entry.mcpServer!.workingDir = inheritFrom.mcpServer.workingDir;
       }
+    } else if (legacyMain) {
+      // No existing splits to inherit from — inherit enabled/env from legacy main
+      const inheritedEnabled = legacyMain.globalEnabled ?? legacyMain.enabled ?? true;
+      entry.enabled = inheritedEnabled;
+      entry.globalEnabled = inheritedEnabled;
+      if (legacyMain.mcpServer?.env) {
+        entry.mcpServer!.env = { ...legacyMain.mcpServer.env };
+      }
+      if (legacyMain.mcpServer?.workingDir) {
+        entry.mcpServer!.workingDir = legacyMain.mcpServer.workingDir;
+      }
+    }
+
+    // Legacy overrides→blockedCats take precedence over inherited blockedCats
+    if (legacyBlockedCats.length > 0) {
+      entry.blockedCats = [...legacyBlockedCats];
     }
 
     // Insert near other managed splits for readability
@@ -1419,6 +1456,25 @@ export function ensureCoreManagedMcps(
       // No managed MCPs at all — prepend (managed MCPs conventionally come first)
       capabilities.unshift(entry);
     }
+    migrated = true;
+  }
+
+  // Propagate legacy overrides→blockedCats to existing managed splits that lack them.
+  // This ensures the partial-legacy scenario preserves per-cat access restrictions
+  // even for pre-existing splits (not just newly added ones).
+  if (legacyBlockedCats.length > 0) {
+    for (let i = 0; i < capabilities.length; i++) {
+      const cap = capabilities[i]!;
+      if (cap.type === 'mcp' && cap.source === 'cat-cafe' && cap.id !== 'cat-cafe' && !cap.blockedCats) {
+        // Clone to avoid mutating original config entry
+        capabilities[i] = { ...cap, blockedCats: [...legacyBlockedCats] };
+        migrated = true;
+      }
+    }
+  }
+
+  if (!migrated) {
+    return { migrated: false, config };
   }
 
   return { migrated: true, config: { ...config, capabilities } };
