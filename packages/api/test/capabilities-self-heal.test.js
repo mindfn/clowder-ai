@@ -332,4 +332,92 @@ describe('#1049 — healCatCafeMcpTopology restores missing managed MCPs', () =>
       'cat-cafe-memory should inherit codex from legacy overrides',
     );
   });
+
+  it('inherits legacy main disabled/env/workingDir over existing splits (codex PR #13 R3 P1)', () => {
+    // Regression test: 3 core splits exist + legacy main with disabled state,
+    // custom env, and workingDir. ensureCoreManagedMcps adds supplemental splits
+    // (limb/audio/finance) and must inherit from legacy main (P1 priority), NOT
+    // from the first existing split. Legacy main represents user intent for these
+    // tools since it hosted them via registerFullToolset.
+    const config = {
+      version: 2,
+      capabilities: [
+        {
+          id: 'cat-cafe',
+          type: 'mcp',
+          enabled: false,
+          globalEnabled: false,
+          source: 'cat-cafe',
+          mcpServer: {
+            command: 'node',
+            args: ['index.js'],
+            env: { CUSTOM_VAR: 'legacy-value' },
+            workingDir: '/legacy/working/dir',
+          },
+          overrides: [{ catId: 'codex', enabled: false }],
+        },
+        {
+          id: 'cat-cafe-collab',
+          type: 'mcp',
+          enabled: true,
+          globalEnabled: true,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['collab.js'] },
+        },
+        {
+          id: 'cat-cafe-memory',
+          type: 'mcp',
+          enabled: true,
+          globalEnabled: true,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['memory.js'] },
+        },
+        {
+          id: 'cat-cafe-signals',
+          type: 'mcp',
+          enabled: true,
+          globalEnabled: true,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['signals.js'] },
+        },
+      ],
+    };
+
+    const result = healCatCafeMcpTopology(config, { catCafeRepoRoot: '/fake/root' });
+    assert.ok(result.migrated, 'should report migration occurred');
+
+    // Legacy main should be removed
+    const legacyEntry = result.config.capabilities.find((c) => c.id === 'cat-cafe' && c.source === 'cat-cafe');
+    assert.equal(legacyEntry, undefined, 'legacy cat-cafe entry should be removed');
+
+    // Supplemental splits (limb/audio/finance) must inherit from legacy main, NOT from collab
+    for (const id of ['cat-cafe-limb', 'cat-cafe-audio', 'cat-cafe-finance']) {
+      const split = result.config.capabilities.find((c) => c.id === id && c.source === 'cat-cafe');
+      assert.ok(split, `${id} should exist`);
+
+      // enabled/globalEnabled from legacy main (disabled)
+      assert.equal(split.enabled, false, `${id} should inherit disabled from legacy main`);
+      assert.equal(split.globalEnabled, false, `${id} should inherit globalEnabled=false from legacy main`);
+
+      // env from legacy main
+      assert.deepEqual(
+        split.mcpServer?.env,
+        { CUSTOM_VAR: 'legacy-value' },
+        `${id} should inherit env from legacy main`,
+      );
+
+      // workingDir from legacy main
+      assert.equal(
+        split.mcpServer?.workingDir,
+        '/legacy/working/dir',
+        `${id} should inherit workingDir from legacy main`,
+      );
+
+      // blockedCats from legacy overrides
+      assert.ok(
+        Array.isArray(split.blockedCats) && split.blockedCats.includes('codex'),
+        `${id} should have codex in blockedCats from legacy overrides`,
+      );
+    }
+  });
 });
