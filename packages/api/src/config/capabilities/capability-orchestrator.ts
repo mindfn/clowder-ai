@@ -1343,6 +1343,88 @@ export async function bootstrapCapabilities(
 }
 
 /**
+ * #1049: Ensure all managed Clowder AI split MCP servers exist in capabilities.json.
+ *
+ * Catches the gap where capabilities.json exists but managed MCPs are partially
+ * or entirely missing (e.g., manual deletion, corrupt bootstrap, or migration
+ * from an older version that didn't create all splits).
+ *
+ * Unlike `migrateLegacyCatCafeCapability` (requires legacy `cat-cafe` entry) or
+ * `ensureCatCafeMainServer` (requires core 3 splits to already exist), this
+ * function unconditionally ensures ALL 6 managed split servers are present.
+ *
+ * Newly added entries inherit enabled/blockedCats from the first existing
+ * managed split (if any), maintaining user intent for the managed MCP surface.
+ */
+export function ensureCoreManagedMcps(
+  config: CapabilitiesConfig,
+  opts?: { catCafeRepoRoot?: string },
+): { migrated: boolean; config: CapabilitiesConfig } {
+  const binaryRoot = resolveBinaryRoot(opts?.catCafeRepoRoot);
+  const descriptors = buildCatCafeSplitMcpDescriptors(binaryRoot);
+
+  // Check which managed splits already exist (by source + id)
+  const existingManagedIds = new Set(
+    config.capabilities.filter((cap) => cap.type === 'mcp' && cap.source === 'cat-cafe').map((cap) => cap.id),
+  );
+
+  // Find missing managed splits
+  const missingDescriptors = descriptors.filter((d) => !existingManagedIds.has(d.name));
+  if (missingDescriptors.length === 0) {
+    return { migrated: false, config };
+  }
+
+  // Collision guard: skip any managed split whose id is already taken by
+  // a non-managed entry (same logic as migrateLegacyCatCafeCapability).
+  const allMcpIds = new Set(config.capabilities.filter((cap) => cap.type === 'mcp').map((cap) => cap.id));
+  const safeToAdd = missingDescriptors.filter((d) => !allMcpIds.has(d.name));
+  if (safeToAdd.length === 0) {
+    return { migrated: false, config };
+  }
+
+  // Inherit settings from first existing managed split (if any)
+  const inheritFrom = config.capabilities.find((cap) => cap.type === 'mcp' && cap.source === 'cat-cafe');
+
+  const capabilities = [...config.capabilities];
+  for (const descriptor of safeToAdd) {
+    const entry = toCapabilityEntry(descriptor);
+    if (inheritFrom) {
+      const inheritedEnabled = inheritFrom.globalEnabled ?? inheritFrom.enabled ?? true;
+      entry.enabled = inheritedEnabled;
+      entry.globalEnabled = inheritedEnabled;
+      if (inheritFrom.blockedCats && inheritFrom.blockedCats.length > 0) {
+        entry.blockedCats = [...inheritFrom.blockedCats];
+      }
+      if (inheritFrom.mcpServer?.env) {
+        entry.mcpServer!.env = { ...inheritFrom.mcpServer.env };
+      }
+      if (inheritFrom.mcpServer?.workingDir) {
+        entry.mcpServer!.workingDir = inheritFrom.mcpServer.workingDir;
+      }
+    }
+
+    // Insert near other managed splits for readability
+    const lastManagedIdx = (() => {
+      let lastIdx = -1;
+      for (let i = 0; i < capabilities.length; i++) {
+        const cap = capabilities[i];
+        if (cap && cap.type === 'mcp' && cap.source === 'cat-cafe') lastIdx = i;
+      }
+      return lastIdx;
+    })();
+
+    if (lastManagedIdx >= 0) {
+      capabilities.splice(lastManagedIdx + 1, 0, entry);
+    } else {
+      // No managed MCPs at all — prepend (managed MCPs conventionally come first)
+      capabilities.unshift(entry);
+    }
+  }
+
+  return { migrated: true, config: { ...config, capabilities } };
+}
+
+/**
  * F193 Phase C: shared migration chain for any code path that mutates
  * capabilities.json or generates CLI configs from it.
  *
@@ -1355,6 +1437,7 @@ export async function bootstrapCapabilities(
  *
  * Single source of truth: every config read → full chain → write/CLI-gen.
  * Order matters:
+ *   0. ensureCoreManagedMcps — restore any missing managed splits (#1049)
  *   1. migrateLegacyCatCafeCapability — legacy 1-server → 5 split servers
  *   2. migrateResolverBackedCapabilities — pencil resolver-backed paths
  *   3. ensureCatCafeMainServer — split topology (remove legacy, add supplemental splits)
@@ -1364,12 +1447,13 @@ export function healCatCafeMcpTopology(
   config: CapabilitiesConfig,
   opts?: { catCafeRepoRoot?: string; projectRoot?: string },
 ): { migrated: boolean; config: CapabilitiesConfig } {
-  const a = migrateLegacyCatCafeCapability(config, opts);
+  const z = ensureCoreManagedMcps(config, opts);
+  const a = migrateLegacyCatCafeCapability(z.config, opts);
   const b = migrateResolverBackedCapabilities(a.config);
   const c = ensureCatCafeMainServer(b.config, opts);
   const d = realignManagedCatCafeServerPaths(c.config, opts);
   return {
-    migrated: a.migrated || b.migrated || c.migrated || d.migrated,
+    migrated: z.migrated || a.migrated || b.migrated || c.migrated || d.migrated,
     config: d.config,
   };
 }
