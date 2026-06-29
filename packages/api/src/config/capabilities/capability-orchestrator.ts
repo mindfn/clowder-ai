@@ -1340,11 +1340,14 @@ export function ensureCoreManagedMcps(
   let migrated = false;
   const capabilities = [...config.capabilities];
 
-  // Inherit settings from first existing managed SPLIT (exclude legacy `cat-cafe`
-  // which has `overrides` not `blockedCats` — handled separately via legacyBlockedCats).
-  const inheritFrom = capabilities.find(
-    (cap) => cap.type === 'mcp' && cap.source === 'cat-cafe' && cap.id !== 'cat-cafe',
-  );
+  // P1 inheritance priority (matches ensureCatCafeMainServer line 1149):
+  //   1. Legacy main (if exists) — it hosted these split tools, so its
+  //      enabled/env/workingDir represent user intent for the split surface
+  //   2. First existing managed split (fallback for installs with no legacy main)
+  // Note: legacy `cat-cafe` has `overrides` not `blockedCats` — that conversion
+  // is handled separately via legacyBlockedCats below.
+  const inheritFrom =
+    legacyMain ?? capabilities.find((cap) => cap.type === 'mcp' && cap.source === 'cat-cafe' && cap.id !== 'cat-cafe');
 
   for (const descriptor of safeToAdd) {
     const entry = toCapabilityEntry(descriptor);
@@ -1360,17 +1363,6 @@ export function ensureCoreManagedMcps(
       }
       if (inheritFrom.mcpServer?.workingDir) {
         entry.mcpServer!.workingDir = inheritFrom.mcpServer.workingDir;
-      }
-    } else if (legacyMain) {
-      // No existing splits to inherit from — inherit enabled/env from legacy main
-      const inheritedEnabled = legacyMain.globalEnabled ?? legacyMain.enabled ?? true;
-      entry.enabled = inheritedEnabled;
-      entry.globalEnabled = inheritedEnabled;
-      if (legacyMain.mcpServer?.env) {
-        entry.mcpServer!.env = { ...legacyMain.mcpServer.env };
-      }
-      if (legacyMain.mcpServer?.workingDir) {
-        entry.mcpServer!.workingDir = legacyMain.mcpServer.workingDir;
       }
     }
 
