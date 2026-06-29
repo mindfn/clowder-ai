@@ -181,4 +181,48 @@ describe('#1049 — healCatCafeMcpTopology restores missing managed MCPs', () =>
     assert.ok(newMemory, 'cat-cafe-memory should be added');
     assert.equal(newMemory.globalEnabled, false, 'should inherit disabled state');
   });
+
+  it('preserves legacy overrides→blockedCats during migration (codex PR #13 P1)', () => {
+    // Regression test: legacy `cat-cafe` entry has per-cat overrides.
+    // The heal chain must run legacy migration FIRST (overrides→blockedCats),
+    // then ensureCoreManagedMcps fills gaps. If ensureCoreManagedMcps ran first,
+    // the legacy migration would become a no-op and overrides would be lost,
+    // silently re-enabling access for blocked cats.
+    const config = {
+      version: 2,
+      capabilities: [
+        {
+          id: 'cat-cafe',
+          type: 'mcp',
+          enabled: true,
+          globalEnabled: true,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['index.js'] },
+          overrides: [
+            { catId: 'ragdoll', enabled: false },
+            { catId: 'maine-coon', enabled: true },
+          ],
+        },
+      ],
+    };
+
+    const result = healCatCafeMcpTopology(config, { catCafeRepoRoot: '/fake/root' });
+    assert.ok(result.migrated, 'should report migration occurred');
+
+    // Legacy `cat-cafe` entry should be removed (migrated to splits)
+    const legacyEntry = result.config.capabilities.find((c) => c.id === 'cat-cafe' && c.source === 'cat-cafe');
+    assert.equal(legacyEntry, undefined, 'legacy cat-cafe entry should be removed');
+
+    // All managed splits should exist
+    for (const id of ALL_SPLIT_IDS) {
+      const split = result.config.capabilities.find((c) => c.id === id && c.source === 'cat-cafe');
+      assert.ok(split, `managed split ${id} should exist`);
+
+      // The blocked cat from overrides must be preserved as blockedCats
+      assert.ok(
+        Array.isArray(split.blockedCats) && split.blockedCats.includes('ragdoll'),
+        `${id} must have ragdoll in blockedCats (legacy overrides preservation)`,
+      );
+    }
+  });
 });
