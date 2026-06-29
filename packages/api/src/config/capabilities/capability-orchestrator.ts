@@ -1376,8 +1376,10 @@ export function ensureCoreManagedMcps(
  *
  * Single source of truth: every config read → full chain → write/CLI-gen.
  * Order matters:
- *   0. ensureCoreManagedMcps — restore any missing managed splits (#1049)
  *   1. migrateLegacyCatCafeCapability — legacy 1-server → 5 split servers
+ *   1.5 ensureCoreManagedMcps — restore any missing managed splits (#1049)
+ *       (AFTER legacy migration so overrides→blockedCats conversion happens first;
+ *        codex review on PR #13: step 0 placement skipped overrides inheritance)
  *   2. migrateResolverBackedCapabilities — pencil resolver-backed paths
  *   3. ensureCatCafeMainServer — split topology (remove legacy, add supplemental splits)
  *   4. realignManagedCatCafeServerPaths — stable binary path realignment
@@ -1386,13 +1388,16 @@ export function healCatCafeMcpTopology(
   config: CapabilitiesConfig,
   opts?: { catCafeRepoRoot?: string; projectRoot?: string },
 ): { migrated: boolean; config: CapabilitiesConfig } {
-  const z = ensureCoreManagedMcps(config, opts);
-  const a = migrateLegacyCatCafeCapability(z.config, opts);
-  const b = migrateResolverBackedCapabilities(a.config);
+  const a = migrateLegacyCatCafeCapability(config, opts);
+  // #1049: ensure managed splits AFTER legacy migration (codex review PR #13 P1).
+  // Legacy migration converts overrides→blockedCats; running ensureCoreManagedMcps
+  // first would skip that conversion, silently re-enabling blocked cats.
+  const z = ensureCoreManagedMcps(a.config, opts);
+  const b = migrateResolverBackedCapabilities(z.config);
   const c = ensureCatCafeMainServer(b.config, opts);
   const d = realignManagedCatCafeServerPaths(c.config, opts);
   return {
-    migrated: z.migrated || a.migrated || b.migrated || c.migrated || d.migrated,
+    migrated: a.migrated || z.migrated || b.migrated || c.migrated || d.migrated,
     config: d.config,
   };
 }
