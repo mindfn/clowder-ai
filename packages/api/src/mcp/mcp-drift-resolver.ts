@@ -19,6 +19,9 @@ import { computeGlobalMcpHash, extractMcpEntries } from './mcp-sync-engine.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+/** Valid decision values for MCP drift resolution — the resolver contract. */
+export const VALID_MCP_DRIFT_DECISIONS = new Set(['use-global', 'keep-project'] as const);
+
 export interface McpDriftResolution {
   mcpId: string;
   /** use-global: overwrite with global config. keep-project: skip (user wants to keep). */

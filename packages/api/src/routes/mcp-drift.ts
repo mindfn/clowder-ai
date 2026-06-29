@@ -16,7 +16,7 @@ import { readCapabilitiesConfig } from '../config/capabilities/capability-orches
 import { requireLocalCapabilityWriteRequest } from '../config/capabilities/capability-write-guards.js';
 import { checkMcpGlobal, checkMcpProject } from '../mcp/mcp-drift-detector.js';
 import type { McpDriftResolution } from '../mcp/mcp-drift-resolver.js';
-import { syncMcpDrift } from '../mcp/mcp-drift-resolver.js';
+import { syncMcpDrift, VALID_MCP_DRIFT_DECISIONS } from '../mcp/mcp-drift-resolver.js';
 import { syncMcpAll } from '../mcp/mcp-sync-all.js';
 import { resolveOwnerGate } from '../utils/owner-gate.js';
 import { pathsEqual, validateProjectPath } from '../utils/project-path.js';
@@ -157,8 +157,7 @@ export const mcpDriftRoutes: FastifyPluginAsync = async (app) => {
       return { error: 'Required: projectPath' };
     }
 
-    // #712 review P1-9: validate resolutions array shape before passing to resolver
-    const VALID_DECISIONS = new Set(['accept', 'reject', 'skip']);
+    // #712 review: validate resolutions array against resolver contract (use-global | keep-project)
     const MAX_RESOLUTIONS = 200;
     if (body.resolutions !== undefined) {
       if (!Array.isArray(body.resolutions)) {
@@ -174,9 +173,11 @@ export const mcpDriftRoutes: FastifyPluginAsync = async (app) => {
           reply.status(400);
           return { error: 'Each resolution must have string mcpId and decision' };
         }
-        if (!VALID_DECISIONS.has(r.decision)) {
+        if (!VALID_MCP_DRIFT_DECISIONS.has(r.decision)) {
           reply.status(400);
-          return { error: `Invalid decision "${r.decision}"; must be one of: ${[...VALID_DECISIONS].join(', ')}` };
+          return {
+            error: `Invalid decision "${r.decision}"; must be one of: ${[...VALID_MCP_DRIFT_DECISIONS].join(', ')}`,
+          };
         }
       }
     }

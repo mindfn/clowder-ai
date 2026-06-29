@@ -15,7 +15,7 @@ import { withCapabilityLock } from '../config/capabilities/capability-orchestrat
 import { requireLocalCapabilityWriteRequest } from '../config/capabilities/capability-write-guards.js';
 import { checkMcpProject } from '../mcp/mcp-drift-detector.js';
 import type { McpDriftResolution } from '../mcp/mcp-drift-resolver.js';
-import { syncMcpDrift } from '../mcp/mcp-drift-resolver.js';
+import { syncMcpDrift, VALID_MCP_DRIFT_DECISIONS } from '../mcp/mcp-drift-resolver.js';
 import { syncDrift } from '../skills/drift-resolver.js';
 import { resolveOwnerGate } from '../utils/owner-gate.js';
 import { validateProjectPath } from '../utils/project-path.js';
@@ -168,7 +168,23 @@ export const unifiedDriftRoutes: FastifyPluginAsync = async (app) => {
         report: { added: [], removed: [], updated: [], skipped: [], syncedHash: drift.driftHash },
       };
     }
-    const resolutions = Array.isArray(body.resolutions) ? (body.resolutions as McpDriftResolution[]) : undefined;
+    // #712 review: validate resolutions against resolver contract before passing through
+    let resolutions: McpDriftResolution[] | undefined;
+    if (Array.isArray(body.resolutions)) {
+      for (const r of body.resolutions) {
+        if (typeof r !== 'object' || r === null || typeof r.mcpId !== 'string' || typeof r.decision !== 'string') {
+          reply.status(400);
+          return { error: 'Each resolution must have string mcpId and decision' };
+        }
+        if (!VALID_MCP_DRIFT_DECISIONS.has(r.decision)) {
+          reply.status(400);
+          return {
+            error: `Invalid decision "${r.decision}"; must be one of: ${[...VALID_MCP_DRIFT_DECISIONS].join(', ')}`,
+          };
+        }
+      }
+      resolutions = body.resolutions as McpDriftResolution[];
+    }
     const report = await syncMcpDrift(projectRoot, STARTUP_REPO_ROOT, drift, resolutions);
     return { action: 'sync', report, projectRoot };
   });

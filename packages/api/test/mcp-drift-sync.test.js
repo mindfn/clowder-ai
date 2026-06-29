@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 
 const { checkMcpProject } = await import('../dist/mcp/mcp-drift-detector.js');
-const { syncMcpDrift } = await import('../dist/mcp/mcp-drift-resolver.js');
+const { VALID_MCP_DRIFT_DECISIONS, syncMcpDrift } = await import('../dist/mcp/mcp-drift-resolver.js');
 const { canonicalJson, computeGlobalMcpHash, extractMcpEntries, syncMcpProject } = await import(
   '../dist/mcp/mcp-sync-engine.js'
 );
@@ -452,5 +452,50 @@ describe('mcp-sync-engine: syncMcpProject', () => {
     const mcpEntries = written.capabilities.filter((c) => c.type === 'mcp');
     assert.equal(mcpEntries.length, 1);
     assert.equal(mcpEntries[0].id, 'ext-mcp');
+  });
+});
+
+// ── Resolver contract: VALID_MCP_DRIFT_DECISIONS ──────────────────────────
+
+describe('VALID_MCP_DRIFT_DECISIONS (resolver contract)', () => {
+  it('contains exactly use-global and keep-project', () => {
+    assert.ok(VALID_MCP_DRIFT_DECISIONS.has('use-global'));
+    assert.ok(VALID_MCP_DRIFT_DECISIONS.has('keep-project'));
+    assert.equal(VALID_MCP_DRIFT_DECISIONS.size, 2);
+  });
+
+  it('rejects invalid decision values', () => {
+    assert.ok(!VALID_MCP_DRIFT_DECISIONS.has('accept'));
+    assert.ok(!VALID_MCP_DRIFT_DECISIONS.has('reject'));
+    assert.ok(!VALID_MCP_DRIFT_DECISIONS.has('skip'));
+  });
+
+  it('syncMcpDrift treats unknown decisions as use-global (default)', async () => {
+    const globalRoot = join(tmpdir(), `drift-contract-g-${Date.now()}`);
+    const projectRoot = join(tmpdir(), `drift-contract-p-${Date.now()}`);
+    mkdirSync(join(globalRoot, '.cat-cafe'), { recursive: true });
+    mkdirSync(join(projectRoot, '.cat-cafe'), { recursive: true });
+
+    const globalServer = { command: 'python', args: ['new.py'] };
+    const projectServer = { command: 'node', args: ['old.js'] };
+    writeCapConfig(globalRoot, capConfig([mcpEntry('shared-mcp', { mcpServer: globalServer })]));
+    writeCapConfig(projectRoot, capConfig([mcpEntry('shared-mcp', { mcpServer: projectServer })]));
+
+    const drift = {
+      issues: [{ type: 'config-mismatch', mcpId: 'shared-mcp', message: 'test' }],
+      driftHash: 'test',
+      summary: { new: 0, orphan: 0, mismatch: 1 },
+    };
+
+    // Pass an unknown decision — resolver should default to use-global
+    const result = await syncMcpDrift(projectRoot, globalRoot, drift, [
+      { mcpId: 'shared-mcp', decision: 'unknown-garbage' },
+    ]);
+
+    // use-global is the default when decision doesn't match keep-project
+    assert.ok(result.updated.includes('shared-mcp') || result.skipped.length === 0);
+
+    rmSync(globalRoot, { recursive: true, force: true });
+    rmSync(projectRoot, { recursive: true, force: true });
   });
 });

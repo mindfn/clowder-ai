@@ -649,7 +649,7 @@ describe('resolveDisabledServerIds', () => {
     temps.length = 0;
   });
 
-  it('includes servers with blockedCats containing the catId (F240)', () => {
+  it('includes servers with blockedCats containing the catId (F249)', () => {
     const dir = makeTempDir(temps, {
       capabilities: {
         version: 2,
