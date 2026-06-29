@@ -608,8 +608,9 @@ const listLabelsQuerySchema = z.object({
 
 const refItemSchema = z.object({ repo: z.string().min(1), number: z.number().int().positive() });
 const setThreadMetadataSchema = z.object({
-  title: z.string().min(1).optional(),
-  labels: z.array(z.string()).optional(),
+  // P2: match PATCH /api/threads/:id invariants — trim + min(1) + max
+  title: z.string().trim().min(1).max(200).optional(),
+  labels: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
   worktrees: z.array(z.string()).optional(),
   prs: z.array(refItemSchema).optional(),
   issues: z.array(refItemSchema).optional(),

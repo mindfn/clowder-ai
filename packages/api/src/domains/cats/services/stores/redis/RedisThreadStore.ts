@@ -1296,13 +1296,20 @@ export class RedisThreadStore implements IThreadStore {
   /**
    * #872 P2: Atomically read-merge-write thread metadata using CAS.
    * Prevents concurrent callers from losing each other's appends.
-   * Retries up to 5 times on CAS conflict before falling through.
+   * Retries up to 5 times on CAS conflict; throws on exhaustion (no fallback).
    */
   async atomicMergeThreadMetadata(threadId: string, patch: ThreadMetadataPatch): Promise<ThreadMetadataV1> {
     const key = ThreadKeys.detail(threadId);
     const maxRetries = 5;
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const raw = await this.redis.hget(key, 'threadMetadata');
+      // P1-2: if stored data exists but cannot be parsed (malformed / future version),
+      // refuse to merge rather than silently overwriting it with a fresh v:1 object.
+      if (raw && !parseThreadMetadataJson(raw)) {
+        throw new Error(
+          `Thread ${threadId} has unparseable metadata (${raw.length} bytes); refusing merge to prevent data loss`,
+        );
+      }
       const existing = raw ? parseThreadMetadataJson(raw) : null;
       const merged = mergeThreadMetadata(existing ?? undefined, patch);
       const newJson = JSON.stringify(merged);
@@ -1316,12 +1323,8 @@ export class RedisThreadStore implements IThreadStore {
       )) as number;
       if (ok === 1) return merged;
     }
-    // Exhausted CAS retries — fall back to non-atomic write (best-effort)
-    const raw = await this.redis.hget(key, 'threadMetadata');
-    const existing = raw ? parseThreadMetadataJson(raw) : null;
-    const merged = mergeThreadMetadata(existing ?? undefined, patch);
-    await this.setDetailFields(key, 'threadMetadata', JSON.stringify(merged));
-    return merged;
+    // P1-1: No fallback write — throwing preserves the concurrent-safety guarantee.
+    throw new Error(`Thread metadata CAS conflict after ${maxRetries} retries for thread ${threadId}`);
   }
 
   async updateMemberSessionStrategy(

@@ -281,6 +281,71 @@ describe('atomicMergeThreadMetadata (in-memory)', () => {
   });
 });
 
+describe('setThreadMetadataSchema validation (P2 PATCH-parity)', () => {
+  // Import the schema from the built callbacks module isn't practical,
+  // so we replicate the exact Zod schema definition to test it in isolation.
+  let z;
+  const refItemSchema = () => z.object({ repo: z.string(), number: z.number().int().positive() });
+  const buildSchema = () =>
+    z.object({
+      title: z.string().trim().min(1).max(200).optional(),
+      labels: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
+      worktrees: z.array(z.string()).optional(),
+      prs: z.array(refItemSchema()).optional(),
+      issues: z.array(refItemSchema()).optional(),
+      features: z.array(z.string()).optional(),
+      notes: z.record(z.string(), z.string().nullable()).optional(),
+      removeWorktrees: z.array(z.string()).optional(),
+      removePrs: z.array(refItemSchema()).optional(),
+      removeIssues: z.array(refItemSchema()).optional(),
+      removeFeatures: z.array(z.string()).optional(),
+    });
+
+  test('rejects whitespace-only title', async () => {
+    z = (await import('zod')).z;
+    const schema = buildSchema();
+    const result = schema.safeParse({ title: '   ' });
+    assert.equal(result.success, false);
+  });
+
+  test('trims title and accepts valid trimmed result', async () => {
+    z = (await import('zod')).z;
+    const schema = buildSchema();
+    const result = schema.safeParse({ title: '  Hello  ' });
+    assert.equal(result.success, true);
+    assert.equal(result.data.title, 'Hello');
+  });
+
+  test('rejects title exceeding 200 chars', async () => {
+    z = (await import('zod')).z;
+    const schema = buildSchema();
+    const result = schema.safeParse({ title: 'x'.repeat(201) });
+    assert.equal(result.success, false);
+  });
+
+  test('rejects empty-string label after trim', async () => {
+    z = (await import('zod')).z;
+    const schema = buildSchema();
+    const result = schema.safeParse({ labels: ['valid', '  '] });
+    assert.equal(result.success, false);
+  });
+
+  test('trims label strings', async () => {
+    z = (await import('zod')).z;
+    const schema = buildSchema();
+    const result = schema.safeParse({ labels: ['  abc  '] });
+    assert.equal(result.success, true);
+    assert.deepEqual(result.data.labels, ['abc']);
+  });
+
+  test('rejects more than 20 labels at schema level', async () => {
+    z = (await import('zod')).z;
+    const schema = buildSchema();
+    const result = schema.safeParse({ labels: Array.from({ length: 21 }, (_, i) => `l${i}`) });
+    assert.equal(result.success, false);
+  });
+});
+
 describe('refKey', () => {
   test('generates lowercase dedupe key', async () => {
     const { refKey } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
