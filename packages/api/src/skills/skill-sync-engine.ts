@@ -141,7 +141,7 @@ export interface SyncProjectOptions {
    *  already in the project config — new plugin skills would be invisible.
    *  Values should be RESOLVED absolute paths (resolved by the caller against
    *  the main project root — not the target project root). */
-  globalCustomSourceSkills?: ReadonlyMap<string, { skillsSource: string }>;
+  globalCustomSourceSkills?: ReadonlyMap<string, { skillsSource: string; pluginId?: string }>;
   /** Main project root for resolving relative skillsSource paths in project
    *  config entries. Plugin skillsSource paths are relative to the Cat Café
    *  instance root, not the target project being synced. When syncing external

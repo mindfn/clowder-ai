@@ -60,7 +60,7 @@ export async function updateSkillMountPaths(
     forceEnabled?: boolean;
     /** Metadata for custom-source skills. When creating new entries,
      *  includes skillsSource so the entry is complete. */
-    customSourceMeta?: ReadonlyMap<string, { skillsSource: string }>;
+    customSourceMeta?: ReadonlyMap<string, { skillsSource: string; pluginId?: string }>;
   },
 ): Promise<void> {
   if (skillNames.length === 0) return;
@@ -105,6 +105,7 @@ export async function updateSkillMountPaths(
         globalEnabled: resolvedEnabled ?? true,
         mountPaths: [...mountPointIds],
         ...(meta?.skillsSource ? { skillsSource: meta.skillsSource } : {}),
+        ...(meta?.pluginId ? { pluginId: meta.pluginId } : {}),
       });
     }
   }
@@ -155,7 +156,7 @@ export interface ConfigSyncCtx {
   newlyEnabledMountPointIds?: string[];
   /** Custom-source skills from global config. Passed through to updateSkillMountPaths
    *  so new entries include skillsSource metadata. */
-  globalCustomSourceSkills?: ReadonlyMap<string, { skillsSource: string }>;
+  globalCustomSourceSkills?: ReadonlyMap<string, { skillsSource: string; pluginId?: string }>;
 }
 
 export async function updateConfigAfterSync(projectRoot: string, ctx: ConfigSyncCtx): Promise<void> {
@@ -235,6 +236,7 @@ export async function updateConfigAfterSync(projectRoot: string, ctx: ConfigSync
             enabled: true,
             globalEnabled: true,
             ...(meta?.skillsSource ? { skillsSource: meta.skillsSource } : {}),
+            ...(meta?.pluginId ? { pluginId: meta.pluginId } : {}),
           });
           changed = true;
         }
