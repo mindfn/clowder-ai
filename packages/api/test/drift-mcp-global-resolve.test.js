@@ -82,3 +82,67 @@ describe('#1050 — MCP drift resolve without projectPath', () => {
     assert.equal(res.json().error, 'Invalid project path');
   });
 });
+
+describe('#1049 Phase D — conflictPolicy parameter validation', () => {
+  /** @type {import('fastify').FastifyInstance} */
+  let app;
+
+  beforeEach(async () => {
+    app = Fastify({ logger: false });
+    app.addHook('preHandler', async (request) => {
+      const raw = request.headers['x-test-session-user'];
+      if (typeof raw === 'string' && raw.trim()) {
+        request.sessionUserId = raw.trim();
+      }
+    });
+    await app.register(unifiedDriftRoutes);
+    await app.ready();
+  });
+
+  afterEach(async () => {
+    await app?.close();
+  });
+
+  it('accepts conflictPolicy use-global without error', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/drift/resolve',
+      headers: AUTH_HEADERS,
+      payload: { type: 'mcp', action: 'sync', conflictPolicy: 'use-global' },
+    });
+    // Should not fail at validation — may fail deeper (no drift), but not 400 for conflictPolicy
+    assert.notEqual(res.json().error?.includes?.('conflictPolicy'), true);
+  });
+
+  it('accepts conflictPolicy keep-project without error', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/drift/resolve',
+      headers: AUTH_HEADERS,
+      payload: { type: 'mcp', action: 'sync', conflictPolicy: 'keep-project' },
+    });
+    assert.notEqual(res.json().error?.includes?.('conflictPolicy'), true);
+  });
+
+  it('rejects invalid conflictPolicy with 400', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/drift/resolve',
+      headers: AUTH_HEADERS,
+      payload: { type: 'mcp', action: 'sync', conflictPolicy: 'invalid-policy' },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().error.includes('conflictPolicy'));
+  });
+
+  it('ignores conflictPolicy for skill resolve (MCP-only parameter)', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/drift/resolve',
+      headers: AUTH_HEADERS,
+      payload: { type: 'skill', action: 'sync', conflictPolicy: 'keep-project' },
+    });
+    // conflictPolicy is MCP-only; skill resolve should not fail because of it
+    assert.notEqual(res.json().error?.includes?.('conflictPolicy'), true);
+  });
+});

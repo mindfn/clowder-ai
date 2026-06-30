@@ -157,6 +157,20 @@ export const unifiedDriftRoutes: FastifyPluginAsync = async (app) => {
     // which both fall back to STARTUP_REPO_ROOT when projectPath is absent.
     // The frontend handleSyncAllScopes sends undefined for global scope sync.
 
+    // #1049 Phase D: validate conflictPolicy — default decision for config-mismatch
+    // issues when no per-issue resolution is provided. MCP-only (skill resolve ignores it).
+    type ConflictPolicy = 'use-global' | 'keep-project';
+    let conflictPolicy: ConflictPolicy | undefined;
+    if (typeof body.conflictPolicy === 'string') {
+      if (body.conflictPolicy !== 'use-global' && body.conflictPolicy !== 'keep-project') {
+        reply.status(400);
+        return {
+          error: `Invalid conflictPolicy "${body.conflictPolicy}"; must be one of: ${[...VALID_MCP_DRIFT_DECISIONS].join(', ')}`,
+        };
+      }
+      conflictPolicy = body.conflictPolicy;
+    }
+
     // #712 review: validate resolutions early (before drift check) to fail fast on malformed input
     const MAX_RESOLUTIONS = 200;
     let resolutions: McpDriftResolution[] | undefined;
@@ -197,7 +211,7 @@ export const unifiedDriftRoutes: FastifyPluginAsync = async (app) => {
         report: { added: [], removed: [], updated: [], skipped: [], syncedHash: drift.driftHash },
       };
     }
-    const report = await syncMcpDrift(effectiveRoot, STARTUP_REPO_ROOT, drift, resolutions);
+    const report = await syncMcpDrift(effectiveRoot, STARTUP_REPO_ROOT, drift, resolutions, conflictPolicy);
     return { action: 'sync', report, projectRoot: effectiveRoot };
   });
 };
