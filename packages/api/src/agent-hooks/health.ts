@@ -292,9 +292,11 @@ export async function syncAgentHooks(options: AgentHookOptions): Promise<AgentHo
   // MCP overrides), unlike Console manual sync which uses use-global.
   // Guards:
   //   1. ownerAuthorized — capability mutations require owner auth (P2-4 defense-in-depth)
-  //   2. hasCapabilities — uninitialised projects skip (no side-effect creation)
-  const hasCapabilities =
-    options.ownerAuthorized === true && existsSync(join(options.projectRoot, '.cat-cafe', 'capabilities.json'));
+  //   2. hasCapabilities — uninitialised/malformed projects skip (no side-effect creation).
+  //      Parse-validates the project config, not just file existence — malformed JSON
+  //      could cause skill/MCP sync to treat the project as empty and wipe entries.
+  const projectConfig = options.ownerAuthorized === true ? await readCapabilitiesConfig(options.projectRoot) : null;
+  const hasCapabilities = projectConfig !== null;
 
   if (hasCapabilities) {
     try {
