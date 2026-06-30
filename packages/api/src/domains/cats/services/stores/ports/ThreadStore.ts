@@ -459,14 +459,48 @@ export function validateMergedTotals(merged: ThreadMetadataV1): void {
   }
 }
 
-/** #872: Parse threadMetadata JSON from Redis with fail-open semantics. */
+/** #872: Validate a PR/issue ref shape: { repo: string, number: positive int } */
+function isValidRef(r: unknown): boolean {
+  return (
+    !!r &&
+    typeof r === 'object' &&
+    typeof (r as Record<string, unknown>).repo === 'string' &&
+    Number.isInteger((r as Record<string, unknown>).number) &&
+    ((r as Record<string, unknown>).number as number) > 0
+  );
+}
+
+/**
+ * #872: Parse threadMetadata JSON with shape validation.
+ * Returns null for anything that isn't a well-formed ThreadMetadataV1:
+ * malformed JSON, wrong version, or fields with wrong types.
+ * Read path: fail-open (caller treats null as "no metadata").
+ * Write path: fail-closed (caller rejects merge when raw exists but parse returns null).
+ */
 export function parseThreadMetadataJson(raw: string): ThreadMetadataV1 | null {
   try {
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object' && parsed.v === 1) {
-      return parsed as ThreadMetadataV1;
+    if (!parsed || typeof parsed !== 'object' || parsed.v !== 1) return null;
+
+    // Shape validation — reject malformed v1 to prevent merge corruption
+    if (parsed.worktrees !== undefined) {
+      if (!Array.isArray(parsed.worktrees) || parsed.worktrees.some((w: unknown) => typeof w !== 'string')) return null;
     }
-    return null;
+    if (parsed.prs !== undefined) {
+      if (!Array.isArray(parsed.prs) || parsed.prs.some((p: unknown) => !isValidRef(p))) return null;
+    }
+    if (parsed.issues !== undefined) {
+      if (!Array.isArray(parsed.issues) || parsed.issues.some((i: unknown) => !isValidRef(i))) return null;
+    }
+    if (parsed.features !== undefined) {
+      if (!Array.isArray(parsed.features) || parsed.features.some((f: unknown) => typeof f !== 'string')) return null;
+    }
+    if (parsed.notes !== undefined) {
+      if (!parsed.notes || typeof parsed.notes !== 'object' || Array.isArray(parsed.notes)) return null;
+      if (Object.values(parsed.notes).some((v: unknown) => typeof v !== 'string')) return null;
+    }
+
+    return parsed as ThreadMetadataV1;
   } catch {
     return null;
   }

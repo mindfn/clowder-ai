@@ -196,6 +196,73 @@ describe('parseThreadMetadataJson', () => {
     assert.equal(parseThreadMetadataJson('42'), null);
     assert.equal(parseThreadMetadataJson('null'), null);
   });
+
+  test('empty string returns null', async () => {
+    const { parseThreadMetadataJson } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    assert.equal(parseThreadMetadataJson(''), null);
+  });
+
+  // Shape validation regression tests (P2: malformed v1 shapes must return null)
+  test('worktrees as non-array returns null', async () => {
+    const { parseThreadMetadataJson } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    assert.equal(parseThreadMetadataJson(JSON.stringify({ v: 1, worktrees: 'abc' })), null);
+    assert.equal(parseThreadMetadataJson(JSON.stringify({ v: 1, worktrees: 123 })), null);
+  });
+
+  test('worktrees with non-string elements returns null', async () => {
+    const { parseThreadMetadataJson } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    assert.equal(parseThreadMetadataJson(JSON.stringify({ v: 1, worktrees: ['/ok', 42] })), null);
+  });
+
+  test('prs with invalid ref shape returns null', async () => {
+    const { parseThreadMetadataJson } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    // Not an array
+    assert.equal(parseThreadMetadataJson(JSON.stringify({ v: 1, prs: 'bad' })), null);
+    // Missing repo
+    assert.equal(parseThreadMetadataJson(JSON.stringify({ v: 1, prs: [{ number: 1 }] })), null);
+    // Non-positive number
+    assert.equal(parseThreadMetadataJson(JSON.stringify({ v: 1, prs: [{ repo: 'a/b', number: -1 }] })), null);
+    // Non-integer number
+    assert.equal(parseThreadMetadataJson(JSON.stringify({ v: 1, prs: [{ repo: 'a/b', number: 1.5 }] })), null);
+  });
+
+  test('issues with invalid ref shape returns null', async () => {
+    const { parseThreadMetadataJson } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    assert.equal(parseThreadMetadataJson(JSON.stringify({ v: 1, issues: [{ repo: 'a', number: 'x' }] })), null);
+  });
+
+  test('features with non-string elements returns null', async () => {
+    const { parseThreadMetadataJson } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    assert.equal(parseThreadMetadataJson(JSON.stringify({ v: 1, features: [123, 'F001'] })), null);
+  });
+
+  test('notes as non-object returns null', async () => {
+    const { parseThreadMetadataJson } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    assert.equal(parseThreadMetadataJson(JSON.stringify({ v: 1, notes: [123] })), null);
+    assert.equal(parseThreadMetadataJson(JSON.stringify({ v: 1, notes: 'bad' })), null);
+  });
+
+  test('notes with non-string values returns null', async () => {
+    const { parseThreadMetadataJson } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    assert.equal(parseThreadMetadataJson(JSON.stringify({ v: 1, notes: { ok: 'fine', bad: 42 } })), null);
+  });
+
+  test('valid v1 with all fields passes shape validation', async () => {
+    const { parseThreadMetadataJson } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const result = parseThreadMetadataJson(
+      JSON.stringify({
+        v: 1,
+        worktrees: ['/a', '/b'],
+        prs: [{ repo: 'o/r', number: 1 }],
+        issues: [{ repo: 'o/r', number: 2 }],
+        features: ['F001'],
+        notes: { key: 'value' },
+      }),
+    );
+    assert.ok(result);
+    assert.equal(result.v, 1);
+    assert.deepEqual(result.worktrees, ['/a', '/b']);
+  });
 });
 
 describe('ThreadStore (in-memory) — threadMetadata', () => {

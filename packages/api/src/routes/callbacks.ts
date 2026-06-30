@@ -2803,7 +2803,18 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     // a throw doesn't leave visible fields partially committed.
     const hasMetadataUpdate = Object.keys(metadataFields).length > 0;
     if (hasMetadataUpdate) {
-      await threadStore.atomicMergeThreadMetadata(effectiveThreadId, metadataFields);
+      try {
+        await threadStore.atomicMergeThreadMetadata(effectiveThreadId, metadataFields);
+      } catch (err) {
+        // #872: total-limits rejection is a client error (deterministic, not retryable).
+        // Surface as 422 so MCP retry helpers don't retry a request that can never succeed.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('total limits exceeded')) {
+          reply.code(422);
+          return { error: msg };
+        }
+        throw err; // CAS exhaustion / unparseable data → still 500
+      }
     }
     if (title !== undefined) {
       await threadStore.updateTitle(effectiveThreadId, title);

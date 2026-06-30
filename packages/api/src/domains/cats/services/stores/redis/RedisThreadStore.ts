@@ -1304,10 +1304,11 @@ export class RedisThreadStore implements IThreadStore {
     const maxRetries = 5;
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       const raw = await this.redis.hget(key, 'threadMetadata');
-      const existing = raw ? parseThreadMetadataJson(raw) : null;
-      // P1-2: if stored data exists but cannot be parsed (malformed / future version),
+      const existing = raw != null ? parseThreadMetadataJson(raw) : null;
+      // P1-2: if stored data exists but cannot be parsed (malformed / future version / empty string),
       // refuse to merge rather than silently overwriting it with a fresh v:1 object.
-      if (raw && !existing) {
+      // Uses `raw != null` (not truthy) so empty-string fields are correctly rejected.
+      if (raw != null && !existing) {
         throw new Error(
           `Thread ${threadId} has unparseable metadata (${raw.length} bytes); refusing merge to prevent data loss`,
         );
