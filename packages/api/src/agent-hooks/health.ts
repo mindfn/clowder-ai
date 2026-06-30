@@ -259,26 +259,33 @@ export async function syncAgentHooks(options: AgentHookOptions): Promise<AgentHo
   // #1049 Step 3: sync skills + MCPs with keep-project policy.
   // Health-triggered sync preserves user-customized content (skill symlinks,
   // MCP overrides), unlike Console manual sync which uses use-global.
-  try {
-    const ctx = await computeSkillDrift(options.projectRoot);
-    if (ctx) {
-      const { newSkills, stale, conflicts } = ctx.drift;
-      if (newSkills.length + stale.length + conflicts.length > 0) {
-        await syncDrift(ctx.effectiveRoot, ctx.skillsSource, ctx.mountRules, ctx.drift, ctx.syncOpts, 'keep-project');
-      }
-    }
-  } catch {
-    /* skill sync failure should not block hook sync result */
-  }
+  // Guard: skip if the project has no capabilities.json — uninitialised
+  // projects should not have skill/MCP config created as a side effect
+  // of hook sync.  Same guard as the status path (checkSkillHealth/checkMcpHealth).
+  const hasCapabilities = existsSync(join(options.projectRoot, '.cat-cafe', 'capabilities.json'));
 
-  try {
-    const startupRoot = resolveStartupProjectRoot();
-    const drift = await checkMcpProject(options.projectRoot, startupRoot);
-    if (drift.issues.length > 0) {
-      await syncMcpDrift(options.projectRoot, startupRoot, drift, undefined, 'keep-project');
+  if (hasCapabilities) {
+    try {
+      const ctx = await computeSkillDrift(options.projectRoot);
+      if (ctx) {
+        const { newSkills, stale, conflicts } = ctx.drift;
+        if (newSkills.length + stale.length + conflicts.length > 0) {
+          await syncDrift(ctx.effectiveRoot, ctx.skillsSource, ctx.mountRules, ctx.drift, ctx.syncOpts, 'keep-project');
+        }
+      }
+    } catch {
+      /* skill sync failure should not block hook sync result */
     }
-  } catch {
-    /* MCP sync failure should not block hook sync result */
+
+    try {
+      const startupRoot = resolveStartupProjectRoot();
+      const drift = await checkMcpProject(options.projectRoot, startupRoot);
+      if (drift.issues.length > 0) {
+        await syncMcpDrift(options.projectRoot, startupRoot, drift, undefined, 'keep-project');
+      }
+    } catch {
+      /* MCP sync failure should not block hook sync result */
+    }
   }
 
   const status = await getAgentHookStatus(options);
