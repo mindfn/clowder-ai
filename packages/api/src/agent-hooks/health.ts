@@ -299,21 +299,35 @@ export async function syncAgentHooks(options: AgentHookOptions): Promise<AgentHo
   const hasCapabilities = projectConfig !== null;
 
   if (hasCapabilities) {
-    try {
-      const ctx = await computeSkillDrift(options.projectRoot);
-      if (ctx) {
-        const { newSkills, stale, conflicts } = ctx.drift;
-        if (newSkills.length + stale.length + conflicts.length > 0) {
-          await syncDrift(ctx.effectiveRoot, ctx.skillsSource, ctx.mountRules, ctx.drift, ctx.syncOpts, 'keep-project');
+    // Read global config once — both skill and MCP sync compare project
+    // against global.  When global is unreadable (missing / malformed),
+    // every project entry looks like an orphan; skip destructive sync
+    // paths to avoid wiping valid project config.
+    const startupRoot = resolveStartupProjectRoot();
+    const globalConfig = await readCapabilitiesConfig(startupRoot);
+
+    if (globalConfig !== null) {
+      try {
+        const ctx = await computeSkillDrift(options.projectRoot);
+        if (ctx) {
+          const { newSkills, stale, conflicts } = ctx.drift;
+          if (newSkills.length + stale.length + conflicts.length > 0) {
+            await syncDrift(
+              ctx.effectiveRoot,
+              ctx.skillsSource,
+              ctx.mountRules,
+              ctx.drift,
+              ctx.syncOpts,
+              'keep-project',
+            );
+          }
         }
+      } catch {
+        /* skill sync failure should not block hook sync result */
       }
-    } catch {
-      /* skill sync failure should not block hook sync result */
     }
 
     try {
-      const startupRoot = resolveStartupProjectRoot();
-      const globalConfig = await readCapabilitiesConfig(startupRoot);
       const drift = await checkMcpProject(options.projectRoot, startupRoot, globalConfig);
       const nonDestructiveIssues = filterOrphanIssues(drift, globalConfig !== null);
       if (nonDestructiveIssues.length > 0) {
