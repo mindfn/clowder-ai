@@ -2773,19 +2773,10 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
 
     const { title, labels, ...metadataFields } = parsed.data;
 
-    // Update existing thread-level fields
-    if (title !== undefined) {
-      await threadStore.updateTitle(effectiveThreadId, title);
-      // #872 P2: refresh evidence index after title change (same as PATCH /api/threads/:id)
-      try {
-        opts.indexBuilder?.markThreadDirty(effectiveThreadId);
-        await opts.indexBuilder?.flushDirtyThreads?.();
-      } catch {
-        // Best-effort: evidence index refresh must not block metadata write
-      }
-    }
+    // #872 cloud-review P2: validate all rejectable inputs BEFORE applying any mutations.
+    // Without this gate, a request with valid title + invalid labels would commit the title
+    // change and then return 400, leaving the thread in a partially-mutated state.
     if (labels !== undefined) {
-      // #872 P2 fix: reuse label validation from PATCH /api/threads/:id
       if (labels.length > 20) {
         reply.status(400);
         return { error: 'Too many labels (max 20)' };
@@ -2799,6 +2790,20 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
           return { error: 'Invalid label IDs', invalidIds: invalid };
         }
       }
+    }
+
+    // All validation passed — apply mutations
+    if (title !== undefined) {
+      await threadStore.updateTitle(effectiveThreadId, title);
+      // #872 P2: refresh evidence index after title change (same as PATCH /api/threads/:id)
+      try {
+        opts.indexBuilder?.markThreadDirty(effectiveThreadId);
+        await opts.indexBuilder?.flushDirtyThreads?.();
+      } catch {
+        // Best-effort: evidence index refresh must not block metadata write
+      }
+    }
+    if (labels !== undefined) {
       await threadStore.updateLabels(effectiveThreadId, labels);
     }
 

@@ -1321,7 +1321,12 @@ export class RedisThreadStore implements IThreadStore {
         raw ?? '',
         newJson,
       )) as number;
-      if (ok === 1) return merged;
+      if (ok === 1) {
+        // #872 cloud-review P2: CAS bypasses setDetailFields, so refresh retention
+        // explicitly — otherwise metadata-only writes leave TTL stale when THREAD_TTL_SECONDS is set.
+        await this.applyKeyRetention([key]);
+        return merged;
+      }
     }
     // P1-1: No fallback write — throwing preserves the concurrent-safety guarantee.
     throw new Error(`Thread metadata CAS conflict after ${maxRetries} retries for thread ${threadId}`);
