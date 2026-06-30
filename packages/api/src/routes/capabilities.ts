@@ -1183,7 +1183,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
           reply.status(404);
           return { error: `Capability "${skillId}" (type=${body.capabilityType}) not found` };
         }
-        const cap = config.capabilities[capIndex]!
+        const cap = config.capabilities[capIndex]!;
         targets.push({ cap, index: capIndex, skillId });
       }
 
