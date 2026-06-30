@@ -60,7 +60,12 @@ import { resourceCapId } from '../domains/plugin/PluginRegistry.js';
 import { parsePluginManifest } from '../domains/plugin/plugin-manifest.js';
 import { syncMcpAll } from '../mcp/mcp-sync-all.js';
 import { mountSkillSymlinks } from '../skills/skill-manage.js';
-import { parseManifestSkillMeta, readSkillMeta, type SkillMeta } from '../skills/skill-meta.js';
+import {
+  parseManifestSkillMeta,
+  readSkillMeta,
+  resolveSkillMcpStatuses,
+  type SkillMeta,
+} from '../skills/skill-meta.js';
 import { syncAll } from '../skills/skill-sync-all.js';
 import { type MountConflict, syncProject } from '../skills/skill-sync-engine.js';
 import { pathsEqual, validateProjectPath } from '../utils/project-path.js';
@@ -781,6 +786,14 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
+    // Resolve MCP dependency statuses for skills declaring requires_mcp.
+    // Merge manifest + filesystem meta so all requiresMcp entries are covered.
+    const mergedMetaForMcp = new Map(manifestMetaMap);
+    for (const [name, meta] of skillMetaMap) {
+      if (!mergedMetaForMcp.has(name)) mergedMetaForMcp.set(name, meta);
+    }
+    const mcpStatuses = await resolveSkillMcpStatuses(projectRoot, mergedMetaForMcp);
+
     // 5. Build board items from capabilities.json
     const catIds = catRegistry.getAllIds().map((id) => id as string);
     const items: CapabilityBoardItem[] = [];
@@ -874,6 +887,9 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
       }
       if (meta?.description) skillItem.description = meta.description;
       if (meta?.triggers) skillItem.triggers = meta.triggers;
+      if (meta?.requiresMcp?.length) {
+        skillItem.requiresMcp = meta.requiresMcp.map((id) => mcpStatuses.get(id) ?? { id, status: 'missing' as const });
+      }
       // Category from manifest.yaml (F228: moved from BOOTSTRAP.md)
       const manifestCategory = manifestMetaMap.get(cap.id)?.category;
       if (manifestCategory) skillItem.category = manifestCategory;

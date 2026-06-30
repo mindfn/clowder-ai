@@ -128,7 +128,7 @@ export function composeSkillItems(
         requiredMountCount,
         allMounted,
         enabledMountPoints,
-        requiresMcp: [],
+        requiresMcp: (cap.requiresMcp ?? []) as SkillMcpDependency[],
         isStaleNew: staleNewNames.has(cap.id),
         isStaleRemoved: staleRemovedNames.has(cap.id),
       },

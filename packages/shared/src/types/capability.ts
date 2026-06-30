@@ -247,6 +247,8 @@ export interface CapabilityBoardItem {
   lockVersion?: LockVersion;
   /** F202: Plugin that owns this capability */
   pluginId?: string;
+  /** Skill MCP dependencies with resolved statuses (from SKILL.md requires_mcp). */
+  requiresMcp?: Array<{ id: string; status: 'ready' | 'missing' | 'unresolved' }>;
   /** F249: Blacklist — cat IDs that cannot use this MCP in this project. */
   blockedCats?: string[];
   /** F249: Whether this MCP has a project-level config override. */
