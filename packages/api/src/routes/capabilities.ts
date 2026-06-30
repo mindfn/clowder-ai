@@ -1398,7 +1398,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
             disabledSkills: globalDisabledSkills,
             mountPathsBySkill: localMountPathsBySkill?.size ? localMountPathsBySkill : undefined,
             globalMountPathsBySkill,
-            globalCustomSourceSkills: globalCustomSourceSkills.size > 0 ? globalCustomSourceSkills : undefined,
+            globalCustomSourceSkills,
             mainProjectRoot: pathsEqual(projectRoot, mainProjectRoot) ? undefined : mainProjectRoot,
           });
           localSyncConflicts = syncResult.conflicts;
@@ -1435,7 +1435,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
             force: false,
             disabledSkills: globalDisabledSkills,
             globalMountPathsBySkill,
-            globalCustomSourceSkills: globalCustomSourceSkills.size > 0 ? globalCustomSourceSkills : undefined,
+            globalCustomSourceSkills,
             mainProjectRoot: pathsEqual(projectRoot, mainProjectRoot) ? undefined : mainProjectRoot,
           }).catch((rollbackSyncErr) => {
             console.warn(

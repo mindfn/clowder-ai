@@ -301,7 +301,7 @@ export async function computeSkillDrift(projectPath?: string, mainProjectRoot?: 
       skillMountPaths: projectPolicy.skillMountPaths,
       globalSkillMountPaths: globalPolicy.skillMountPaths,
       configOrphans,
-      globalCustomSourceSkills: globalCustomSourceSkills.size > 0 ? globalCustomSourceSkills : undefined,
+      globalCustomSourceSkills,
       mainProjectRoot: globalProjectRoot,
     },
   };

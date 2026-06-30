@@ -99,7 +99,7 @@ export const skillsWriteRoutes: FastifyPluginAsync<SkillsWriteRouteOptions> = as
         mountRules,
         disabledSkills: projectRoot !== globalProjectRoot ? globalDisabledSkills : undefined,
         globalMountPathsBySkill: globalMountPaths,
-        globalCustomSourceSkills: globalCustomSourceSkills.size > 0 ? globalCustomSourceSkills : undefined,
+        globalCustomSourceSkills,
         mainProjectRoot: projectRoot !== globalProjectRoot ? globalProjectRoot : undefined,
       });
 
@@ -225,7 +225,7 @@ export const skillsWriteRoutes: FastifyPluginAsync<SkillsWriteRouteOptions> = as
         mountRules,
         disabledSkills: projectRoot !== globalProjectRoot ? globalDisabledSkills : undefined,
         globalMountPathsBySkill: globalMountPaths,
-        globalCustomSourceSkills: globalCustomSources.size > 0 ? globalCustomSources : undefined,
+        globalCustomSourceSkills: globalCustomSources,
         mainProjectRoot: projectRoot !== globalProjectRoot ? globalProjectRoot : undefined,
       });
       const updatedConfig = await readCapabilitiesConfig(projectRoot);
