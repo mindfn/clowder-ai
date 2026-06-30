@@ -135,14 +135,25 @@ describe('#1049 Phase D — conflictPolicy parameter validation', () => {
     assert.ok(res.json().error.includes('conflictPolicy'));
   });
 
-  it('ignores conflictPolicy for skill resolve (MCP-only parameter)', async () => {
+  it('accepts conflictPolicy for skill resolve (unified across both resolvers)', async () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/drift/resolve',
       headers: AUTH_HEADERS,
       payload: { type: 'skill', action: 'sync', conflictPolicy: 'keep-project' },
     });
-    // conflictPolicy is MCP-only; skill resolve should not fail because of it
+    // conflictPolicy is unified across MCP and skill — should not fail at validation
     assert.notEqual(res.json().error?.includes?.('conflictPolicy'), true);
+  });
+
+  it('rejects invalid conflictPolicy for skill resolve too', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/drift/resolve',
+      headers: AUTH_HEADERS,
+      payload: { type: 'skill', action: 'sync', conflictPolicy: 'bad-value' },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.json().error.includes('conflictPolicy'));
   });
 });
