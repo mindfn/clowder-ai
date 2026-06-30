@@ -1542,12 +1542,22 @@ describe('Skills Route', () => {
       ].join('\n'),
     );
 
-    // Set up capabilities with one enabled and one disabled plugin skill
+    // Set up capabilities with one enabled and one disabled plugin skill.
+    // F228: plugin skills must include skillsSource — it's the sole architectural
+    // discriminator between built-in and plugin skills.
+    const pluginSkillsSource = join(pluginsDir, pluginId, 'skills');
     await writeCapabilitiesConfig(projectDir, {
       version: 2,
       capabilities: [
-        { id: skillName, type: 'skill', enabled: true, source: 'cat-cafe', pluginId },
-        { id: disabledSkillName, type: 'skill', enabled: false, source: 'cat-cafe', pluginId },
+        { id: skillName, type: 'skill', enabled: true, source: 'cat-cafe', pluginId, skillsSource: pluginSkillsSource },
+        {
+          id: disabledSkillName,
+          type: 'skill',
+          enabled: false,
+          source: 'cat-cafe',
+          pluginId,
+          skillsSource: pluginSkillsSource,
+        },
       ],
     });
 
@@ -1558,7 +1568,7 @@ describe('Skills Route', () => {
     const disabledLinkTarget = relative(dirname(disabledLinkPath), disabledSkillSourceDir);
     await symlink(disabledLinkTarget, disabledLinkPath);
 
-    const app = await buildSessionSkillsApp();
+    const app = await buildSessionSkillsApp({ mainProjectRoot: projectDir });
     try {
       const res = await app.inject({
         method: 'POST',
