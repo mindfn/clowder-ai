@@ -208,11 +208,12 @@ async function loadDriftPolicies(projectRoot: string, globalProjectRoot: string)
   // Plugin skillsSource paths are relative to the Cat Café instance root —
   // resolving them later against the target project root would be wrong
   // for external projects.
-  const globalCustomSourceSkills = new Map<string, { skillsSource: string }>();
+  const globalCustomSourceSkills = new Map<string, { skillsSource: string; pluginId?: string }>();
   for (const cap of globalConfig?.capabilities ?? []) {
     if (cap.type === 'skill' && cap.source === 'cat-cafe' && cap.skillsSource) {
       globalCustomSourceSkills.set(cap.id, {
         skillsSource: isAbsolute(cap.skillsSource) ? cap.skillsSource : resolve(globalProjectRoot, cap.skillsSource),
+        ...(cap.pluginId ? { pluginId: cap.pluginId } : {}),
       });
     }
   }
