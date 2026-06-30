@@ -338,6 +338,7 @@ export class PluginResourceActivator {
           pluginId: manifest.id,
           capabilityId: capId,
           skillsSource: relativeSkillsSource,
+          builtInSkillsSource: this.deps.skillsSourceDir,
           configStore: {
             readCapabilities: this.deps.readCapabilities,
             writeCapabilities: this.deps.writeCapabilities,

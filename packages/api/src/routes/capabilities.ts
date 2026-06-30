@@ -864,13 +864,11 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
           : skillMetaMap.get(cap.id);
       // Fallback: plugin skills store their source path — read SKILL.md directly
       // when mount-point scan didn't find it (e.g. skill registered but not yet mounted).
-      // Plugin skillsSource paths are relative to the Cat Café instance root,
-      // not the target project. Use mainSkillsSrc parent (instance root) for resolution.
+      // Config is read from projectRoot, so relative skillsSource is relative to
+      // projectRoot (project-local plugins). Global→project propagation stores
+      // absolute paths, so isAbsolute covers that case.
       if (!meta?.description && cap.skillsSource) {
-        const instanceRoot = dirname(mainSkillsSrc);
-        const resolvedSource = isAbsolute(cap.skillsSource)
-          ? cap.skillsSource
-          : resolve(instanceRoot, cap.skillsSource);
+        const resolvedSource = isAbsolute(cap.skillsSource) ? cap.skillsSource : resolve(projectRoot, cap.skillsSource);
         const pluginSkillDir = join(resolvedSource, cap.id);
         meta = await readSkillMeta(pluginSkillDir);
       }
@@ -930,16 +928,16 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
     );
     // Unified mount health: all cat-cafe skills (including those with custom
     // skillsSource from plugins). Per-skill effective source: if the config
-    // entry has skillsSource, resolve it against instance root (not project root).
-    // Plugin skillsSource paths are relative to the Cat Café instance, not the target project.
+    // entry has skillsSource, resolve it against projectRoot (project-local
+    // plugins store relative paths against their project). Global→project
+    // propagation resolves to absolute, so isAbsolute covers that case.
     const catCafeSkillItems = items.filter((i) => i.type === 'skill' && i.source === 'cat-cafe');
     const effectiveSourceBySkill = new Map<string, string>();
-    const skillsSrcInstanceRoot = dirname(mainSkillsSrc);
     for (const cap of config.capabilities) {
       if (cap.type === 'skill' && cap.source === 'cat-cafe' && cap.skillsSource) {
         effectiveSourceBySkill.set(
           cap.id,
-          isAbsolute(cap.skillsSource) ? cap.skillsSource : resolve(skillsSrcInstanceRoot, cap.skillsSource),
+          isAbsolute(cap.skillsSource) ? cap.skillsSource : resolve(projectRoot, cap.skillsSource),
         );
       }
     }
