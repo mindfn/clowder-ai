@@ -1,5 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
+import { checkMcpProject } from '../mcp/mcp-drift-detector.js';
+import { syncMcpDrift } from '../mcp/mcp-drift-resolver.js';
+import { computeSkillDrift } from '../routes/skills-drift.js';
+import { syncDrift } from '../skills/drift-resolver.js';
+import { resolveStartupProjectRoot } from '../utils/startup-root.js';
 import { claudeSettingsHealth, syncClaudeSettings } from './claude-settings.js';
 import {
   applySync,
@@ -167,9 +172,77 @@ function targetHealth(target: SyncTarget): HealthResult {
   }
 }
 
+// ── Skill & MCP drift helpers (#1049 Step 3) ────────────────────────────────
+
+async function checkSkillHealth(projectRoot: string): Promise<HealthResult> {
+  try {
+    // Skip skill drift check if the project has no capabilities.json —
+    // uninitialised projects have no skill config to drift against.
+    if (!existsSync(join(projectRoot, '.cat-cafe', 'capabilities.json'))) {
+      return {
+        name: 'skills',
+        drifted: false,
+        status: 'configured',
+        targetPath: '',
+        reason: 'no project capabilities',
+      };
+    }
+    const ctx = await computeSkillDrift(projectRoot);
+    if (!ctx) {
+      return { name: 'skills', drifted: false, status: 'configured', targetPath: '', reason: 'no skill source' };
+    }
+    const { newSkills, stale, conflicts } = ctx.drift;
+    const total = newSkills.length + stale.length + conflicts.length;
+    if (total === 0) {
+      return { name: 'skills', drifted: false, status: 'configured', targetPath: '', reason: 'configured' };
+    }
+    const parts: string[] = [];
+    if (newSkills.length) parts.push(`${newSkills.length} new`);
+    if (stale.length) parts.push(`${stale.length} stale`);
+    if (conflicts.length) parts.push(`${conflicts.length} conflicts`);
+    return { name: 'skills', drifted: true, status: 'stale', targetPath: '', reason: parts.join(', ') };
+  } catch {
+    return { name: 'skills', drifted: false, status: 'configured', targetPath: '', reason: 'configured' };
+  }
+}
+
+async function checkMcpHealth(projectRoot: string): Promise<HealthResult> {
+  try {
+    // Skip MCP drift check if the project has no capabilities.json —
+    // uninitialised projects have no MCP config to drift against.
+    if (!existsSync(join(projectRoot, '.cat-cafe', 'capabilities.json'))) {
+      return { name: 'mcp', drifted: false, status: 'configured', targetPath: '', reason: 'no project capabilities' };
+    }
+    const startupRoot = resolveStartupProjectRoot();
+    const drift = await checkMcpProject(projectRoot, startupRoot);
+    if (drift.issues.length === 0) {
+      return { name: 'mcp', drifted: false, status: 'configured', targetPath: '', reason: 'configured' };
+    }
+    return {
+      name: 'mcp',
+      drifted: true,
+      status: 'stale',
+      targetPath: '',
+      reason: `${drift.issues.length} drift issue${drift.issues.length > 1 ? 's' : ''}`,
+    };
+  } catch {
+    return { name: 'mcp', drifted: false, status: 'configured', targetPath: '', reason: 'configured' };
+  }
+}
+
+// ── Public API ───────────────────────────────────────────────────────────────
+
 export async function getAgentHookStatus(options: AgentHookOptions): Promise<AgentHookStatusResponse> {
   const targets = buildSelectedAgentHookTargets(options);
-  const results = [...targets.map(targetHealth), claudeSettingsHealth(options.targetRoot)];
+  const hookResults = [...targets.map(targetHealth), claudeSettingsHealth(options.targetRoot)];
+
+  // #1049 Step 3: unified health check — hooks + skills + MCPs
+  const [skillHealth, mcpHealth] = await Promise.all([
+    checkSkillHealth(options.projectRoot),
+    checkMcpHealth(options.projectRoot),
+  ]);
+  const results = [...hookResults, skillHealth, mcpHealth];
+
   return {
     status: aggregateStatus(results),
     targets: results,
@@ -177,10 +250,36 @@ export async function getAgentHookStatus(options: AgentHookOptions): Promise<Age
 }
 
 export async function syncAgentHooks(options: AgentHookOptions): Promise<AgentHookStatusResponse> {
+  // Sync hooks (existing behavior)
   for (const target of buildSelectedAgentHookTargets(options)) {
     applySync(target, false);
   }
   await syncClaudeSettings(options.targetRoot);
+
+  // #1049 Step 3: sync skills + MCPs with keep-project policy.
+  // Health-triggered sync preserves user-customized content (skill symlinks,
+  // MCP overrides), unlike Console manual sync which uses use-global.
+  try {
+    const ctx = await computeSkillDrift(options.projectRoot);
+    if (ctx) {
+      const { newSkills, stale, conflicts } = ctx.drift;
+      if (newSkills.length + stale.length + conflicts.length > 0) {
+        await syncDrift(ctx.effectiveRoot, ctx.skillsSource, ctx.mountRules, ctx.drift, ctx.syncOpts, 'keep-project');
+      }
+    }
+  } catch {
+    /* skill sync failure should not block hook sync result */
+  }
+
+  try {
+    const startupRoot = resolveStartupProjectRoot();
+    const drift = await checkMcpProject(options.projectRoot, startupRoot);
+    if (drift.issues.length > 0) {
+      await syncMcpDrift(options.projectRoot, startupRoot, drift, undefined, 'keep-project');
+    }
+  } catch {
+    /* MCP sync failure should not block hook sync result */
+  }
 
   const status = await getAgentHookStatus(options);
   // `hooks.json` semantic equality is canonicalized in health checks; preserve
