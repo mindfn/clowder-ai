@@ -10,6 +10,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { chmod, lstat, mkdir, readdir, readFile, rename, rm, stat as statPath, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -633,7 +634,9 @@ export async function writeCapabilitiesConfig(projectRoot: string, config: Capab
   await mkdir(dir, { recursive: true });
   const filePath = safePath(projectRoot, CONFIG_SUBDIR, CAPABILITIES_FILENAME);
   // #712 review P1-2: atomic write — temp file + rename prevents TOCTOU / partial-write corruption
-  const tmpPath = `${filePath}.${process.pid}.tmp`;
+  // Use PID + UUID to ensure uniqueness across concurrent async writes within the same process.
+  // PID-only caused ENOENT when multiple @mentions triggered parallel capability writes (#1049).
+  const tmpPath = `${filePath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   await writeFile(tmpPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
   await rename(tmpPath, filePath);
 }
