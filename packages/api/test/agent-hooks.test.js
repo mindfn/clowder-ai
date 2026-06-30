@@ -361,6 +361,39 @@ describe('agent hook sync targets', () => {
     assert.equal(pluginEntry.pluginId, 'test-plugin');
   });
 
+  it('health status reports configured (not stale) when only orphan MCP drift exists', async () => {
+    // Regression: checkMcpHealth must filter project-orphan issues the same way
+    // syncAgentHooks does. Otherwise the UI shows an un-clearable stale badge
+    // for projects with plugin MCPs not in global config.
+    //
+    // Strategy: seed an empty capabilities.json so syncAgentHooks populates
+    // all global MCPs, then inject a plugin-owned orphan entry that has no
+    // global counterpart. After sync, global-new drift = 0; only orphan remains.
+    const catCafeDir = join(projectRoot, '.cat-cafe');
+    const capPath = join(catCafeDir, 'capabilities.json');
+    await mkdir(catCafeDir, { recursive: true });
+    await writeFile(capPath, JSON.stringify({ version: 2, capabilities: [] }), 'utf-8');
+    await syncAgentHooks({ projectRoot, targetRoot, ownerAuthorized: true });
+    const synced = JSON.parse(await readFile(capPath, 'utf-8'));
+
+    const pluginMcpId = `orphan-only-${randomUUID().slice(0, 8)}`;
+    synced.capabilities.push({
+      type: 'mcp',
+      id: pluginMcpId,
+      source: 'cat-cafe',
+      pluginId: 'test-plugin',
+      enabled: true,
+      mcpServer: { command: 'echo', args: ['test'] },
+    });
+    await writeFile(capPath, JSON.stringify(synced, null, 2), 'utf-8');
+
+    const status = await getAgentHookStatus({ projectRoot, targetRoot, ownerAuthorized: true });
+    const mcpResult = status.targets.find((t) => t.name === 'mcp');
+    assert.ok(mcpResult, 'health status must include mcp target');
+    assert.equal(mcpResult.status, 'configured', 'orphan-only MCP drift must not report stale');
+    assert.equal(mcpResult.drifted, false, 'orphan-only MCP drift must not report drifted');
+  });
+
   it('ownerAuthorized omitted defaults to fail-closed (no capability sync)', async () => {
     // When ownerAuthorized is not passed at all (undefined), capability sync should NOT run.
     // This is the fail-closed default demanded by P2-4 re-review.

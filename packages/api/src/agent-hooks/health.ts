@@ -221,7 +221,11 @@ async function checkMcpHealth(projectRoot: string): Promise<HealthResult> {
     }
     const startupRoot = resolveStartupProjectRoot();
     const drift = await checkMcpProject(projectRoot, startupRoot);
-    if (drift.issues.length === 0) {
+    // Filter project-orphan issues: health sync is non-destructive and skips
+    // orphan removal, so reporting them as stale creates an un-clearable badge.
+    // Only actionable (sync-resolvable) issues should drive the health status.
+    const actionableIssues = drift.issues.filter((i) => i.type !== 'project-orphan');
+    if (actionableIssues.length === 0) {
       return { name: 'mcp', drifted: false, status: 'configured', targetPath: '', reason: 'configured' };
     }
     return {
@@ -229,7 +233,7 @@ async function checkMcpHealth(projectRoot: string): Promise<HealthResult> {
       drifted: true,
       status: 'stale',
       targetPath: '',
-      reason: `${drift.issues.length} drift issue${drift.issues.length > 1 ? 's' : ''}`,
+      reason: `${actionableIssues.length} drift issue${actionableIssues.length > 1 ? 's' : ''}`,
     };
   } catch {
     return { name: 'mcp', drifted: false, status: 'configured', targetPath: '', reason: 'configured' };
