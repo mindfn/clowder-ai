@@ -329,6 +329,38 @@ describe('agent hook sync targets', () => {
     assert.ok(result.targets.length > 0);
   });
 
+  it('health sync preserves project-local plugin MCP entries (no orphan removal)', async () => {
+    // Regression: syncAgentHooks with ownerAuthorized=true must NOT remove
+    // project-local MCP entries that are absent from the global config.
+    // The keep-project policy only protects config-mismatch; project-orphan
+    // issues must be filtered out of the health sync path entirely.
+    const catCafeDir = join(projectRoot, '.cat-cafe');
+    await mkdir(catCafeDir, { recursive: true });
+
+    const pluginMcpId = `probe-plugin-${randomUUID().slice(0, 8)}`;
+    const capabilities = {
+      version: 2,
+      capabilities: [
+        {
+          type: 'mcp',
+          id: pluginMcpId,
+          source: 'cat-cafe',
+          pluginId: 'test-plugin',
+          enabled: true,
+          mcpServer: { command: 'echo', args: ['test'] },
+        },
+      ],
+    };
+    await writeFile(join(catCafeDir, 'capabilities.json'), JSON.stringify(capabilities, null, 2), 'utf-8');
+
+    await syncAgentHooks({ projectRoot, targetRoot, ownerAuthorized: true });
+
+    const afterSync = JSON.parse(await readFile(join(catCafeDir, 'capabilities.json'), 'utf-8'));
+    const pluginEntry = afterSync.capabilities.find((c) => c.id === pluginMcpId);
+    assert.ok(pluginEntry, `Plugin MCP "${pluginMcpId}" must survive health sync (not removed as orphan)`);
+    assert.equal(pluginEntry.pluginId, 'test-plugin');
+  });
+
   it('ownerAuthorized omitted defaults to fail-closed (no capability sync)', async () => {
     // When ownerAuthorized is not passed at all (undefined), capability sync should NOT run.
     // This is the fail-closed default demanded by P2-4 re-review.

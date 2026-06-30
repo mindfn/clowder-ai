@@ -287,8 +287,15 @@ export async function syncAgentHooks(options: AgentHookOptions): Promise<AgentHo
     try {
       const startupRoot = resolveStartupProjectRoot();
       const drift = await checkMcpProject(options.projectRoot, startupRoot);
-      if (drift.issues.length > 0) {
-        await syncMcpDrift(options.projectRoot, startupRoot, drift, undefined, 'keep-project');
+      // Filter out project-orphan issues: health sync is non-destructive.
+      // Orphan removal deletes project-local MCP entries (e.g., plugin MCPs)
+      // that aren't in the global config — the keep-project policy only
+      // protects config-mismatch, not orphans. Explicit drift resolve
+      // (POST /api/drift/resolve) still handles orphans when users choose to.
+      const nonDestructiveIssues = drift.issues.filter((i) => i.type !== 'project-orphan');
+      if (nonDestructiveIssues.length > 0) {
+        const safeDrift = { ...drift, issues: nonDestructiveIssues };
+        await syncMcpDrift(options.projectRoot, startupRoot, safeDrift, undefined, 'keep-project');
       }
     } catch {
       /* MCP sync failure should not block hook sync result */
