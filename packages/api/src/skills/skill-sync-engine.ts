@@ -202,9 +202,14 @@ async function syncProjectUnlocked(
     if (cap.skillsSource) {
       // F228 scenario 13: During cascade (globalCustomSourceSkills provided),
       // a custom-source skill in project config that is NOT in
-      // globalCustomSourceSkills was removed globally. Skip it so it falls to
-      // removedNames and gets cleaned from config + symlinks.
+      // globalCustomSourceSkills was removed globally. Skip adding to
+      // allSkillNames so it falls to removedNames and gets cleaned from config.
+      // BUT: still populate effectiveSourceMap so Phase 3 can correctly identify
+      // and remove the managed symlink (which points to the plugin source, not
+      // the default cat-cafe-skills dir).
       if (opts.globalCustomSourceSkills && !opts.globalCustomSourceSkills.has(cap.id)) {
+        const resolved = isAbsolute(cap.skillsSource) ? cap.skillsSource : resolve(instanceRoot, cap.skillsSource);
+        effectiveSourceMap.set(cap.id, resolved);
         continue;
       }
       const resolved = isAbsolute(cap.skillsSource) ? cap.skillsSource : resolve(instanceRoot, cap.skillsSource);
