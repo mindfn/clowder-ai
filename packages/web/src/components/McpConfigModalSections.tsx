@@ -21,7 +21,6 @@ export interface McpEditData {
   resolvedCommand?: string;
   resolvedArgs?: string[];
   envKeys?: string[];
-  pluginId?: string;
 }
 
 export interface McpTool {
@@ -209,7 +208,6 @@ function McpStdioFields({
       {readOnly && editData?.envKeys && editData.envKeys.length > 0 && (
         <FormItem label="环境变量">
           <SecretKeyChips keys={editData.envKeys} />
-          {editData.pluginId && <p className="mt-1.5 text-label text-cafe-muted">值引用自插件配置，无需单独设置</p>}
         </FormItem>
       )}
     </FormSection>

@@ -340,9 +340,7 @@ async function buildBoardMcpServer(
     ...(server.transport && { transport: server.transport }),
     ...(server.resolver && { resolver: server.resolver }),
   };
-  // Plugin-managed MCPs: manifest is public, always expose launch fields.
-  // User-added MCPs: gate behind sensitive-config read permission.
-  if (options?.includeLaunchFields || cap.pluginId) {
+  if (options?.includeLaunchFields) {
     let command = server.command;
     let args = server.args;
     // Resolver-based MCPs (e.g. pencil) store no command/args in config —

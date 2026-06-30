@@ -44,7 +44,6 @@ function buildEditData(item: CapabilityBoardItem): McpConfigModalProps['editData
     headers: server.headers,
     envKeys: server.envKeys ?? Object.keys(server.env ?? {}),
     resolver: server.resolver,
-    pluginId: item.pluginId,
   };
 }
 
