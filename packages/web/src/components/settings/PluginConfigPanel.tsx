@@ -4,6 +4,7 @@ import type { PluginInfo } from '@cat-cafe/shared';
 import { useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import { ExternalLinkIcon, StepBadge } from '../HubConfigIcons';
+import { ConfigFieldRenderer } from './primitives/ConfigFieldRenderer';
 
 function isSafeUrl(url: string): boolean {
   try {
@@ -24,12 +25,6 @@ function safeHostname(url: string): string {
 
 function resourceBadgeKey(resource: PluginInfo['resources'][number], index: number): string {
   return `${resource.type}:${resource.path ?? resource.name ?? index}`;
-}
-
-function fieldPlaceholder(f: PluginInfo['config'][number]): string {
-  if (f.sensitive) return f.currentValue ? '已设置（输入新值覆盖）' : '未设置';
-  if (f.currentValue) return '';
-  return '未设置';
 }
 
 interface Props {
@@ -138,62 +133,15 @@ export function PluginConfigPanel({ plugin, onUpdated }: Props) {
             </div>
           )}
           <div className={hasSteps ? 'ml-[26px] space-y-2.5' : 'space-y-2.5'}>
-            {plugin.config.map((f) => {
-              const rawValue = fieldValues[f.envName] ?? f.currentValue ?? '';
-
-              const visibleOptions = f.type === 'select' && f.options ? f.options : [];
-
-              const selectedValue =
-                f.type === 'select'
-                  ? visibleOptions.length === 1
-                    ? visibleOptions[0].value
-                    : visibleOptions.some((o) => o.value === rawValue)
-                      ? rawValue
-                      : ''
-                  : rawValue;
-
-              return (
-                <div key={f.envName} className="space-y-2.5">
-                  <div>
-                    <label
-                      htmlFor={`plugin-${f.envName}`}
-                      className="mb-1 block font-medium"
-                      style={{ fontSize: 'var(--console-font-xs)', color: 'var(--cafe-text-secondary)' }}
-                    >
-                      {f.label}
-                    </label>
-                    {f.type === 'select' && f.options ? (
-                      <select
-                        id={`plugin-${f.envName}`}
-                        value={selectedValue}
-                        onChange={(e) => setFieldValues((prev) => ({ ...prev, [f.envName]: e.target.value }))}
-                        className="console-form-input"
-                        style={{ paddingBlock: '0.625rem', fontSize: 'var(--console-font-compact)' }}
-                        data-testid={`field-${f.envName}`}
-                      >
-                        <option value="">请选择</option>
-                        {visibleOptions.map((o) => (
-                          <option key={o.value} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        id={`plugin-${f.envName}`}
-                        type={f.sensitive ? 'password' : 'text'}
-                        placeholder={fieldPlaceholder(f)}
-                        value={fieldValues[f.envName] ?? (!f.sensitive && f.currentValue ? f.currentValue : '')}
-                        onChange={(e) => setFieldValues((prev) => ({ ...prev, [f.envName]: e.target.value }))}
-                        className="console-form-input"
-                        style={{ paddingBlock: '0.625rem', fontSize: 'var(--console-font-compact)' }}
-                        data-testid={`field-${f.envName}`}
-                      />
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+            {plugin.config.map((f) => (
+              <ConfigFieldRenderer
+                key={f.envName}
+                field={f}
+                value={fieldValues[f.envName] ?? ''}
+                onChange={(envName, val) => setFieldValues((prev) => ({ ...prev, [envName]: val }))}
+                idPrefix="plugin"
+              />
+            ))}
           </div>
         </div>
       )}
