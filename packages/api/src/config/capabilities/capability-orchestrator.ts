@@ -1375,10 +1375,12 @@ export function ensureCoreManagedMcps(
     ? legacyMain.overrides.filter((o) => !o.enabled).map((o) => o.catId)
     : [];
 
-  // Check which managed splits already exist (by source + id)
-  const existingManagedIds = new Set(
-    config.capabilities.filter((cap) => cap.type === 'mcp' && cap.source === 'cat-cafe').map((cap) => cap.id),
-  );
+  // Check which managed splits already exist (by source + id).
+  // Exclude plugin MCPs (source='cat-cafe' + pluginId) — they are user-installed
+  // extensions, not built-in splits (codex upstream review P2).
+  const isBuiltinManaged = (cap: CapabilityEntry): boolean =>
+    cap.type === 'mcp' && cap.source === 'cat-cafe' && !cap.pluginId;
+  const existingManagedIds = new Set(config.capabilities.filter(isBuiltinManaged).map((cap) => cap.id));
 
   // Find missing managed splits
   const missingDescriptors = descriptors.filter((d) => !existingManagedIds.has(d.name));
@@ -1407,8 +1409,7 @@ export function ensureCoreManagedMcps(
   //   2. First existing managed split (fallback for installs with no legacy main)
   // Note: legacy `cat-cafe` has `overrides` not `blockedCats` — that conversion
   // is handled separately via legacyBlockedCats below.
-  const inheritFrom =
-    legacyMain ?? capabilities.find((cap) => cap.type === 'mcp' && cap.source === 'cat-cafe' && cap.id !== 'cat-cafe');
+  const inheritFrom = legacyMain ?? capabilities.find((cap) => isBuiltinManaged(cap) && cap.id !== 'cat-cafe');
 
   for (const descriptor of safeToAdd) {
     const entry = toCapabilityEntry(descriptor);
@@ -1457,7 +1458,7 @@ export function ensureCoreManagedMcps(
   if (legacyBlockedCats.length > 0) {
     for (let i = 0; i < capabilities.length; i++) {
       const cap = capabilities[i]!;
-      if (cap.type === 'mcp' && cap.source === 'cat-cafe' && cap.id !== 'cat-cafe' && !cap.blockedCats) {
+      if (isBuiltinManaged(cap) && cap.id !== 'cat-cafe' && !cap.blockedCats) {
         // Clone to avoid mutating original config entry
         capabilities[i] = { ...cap, blockedCats: [...legacyBlockedCats] };
         migrated = true;

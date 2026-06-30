@@ -420,4 +420,58 @@ describe('#1049 — healCatCafeMcpTopology restores missing managed MCPs', () =>
       );
     }
   });
+
+  it('does not inherit from or propagate overrides to plugin MCPs (upstream review P2)', () => {
+    // Plugin MCPs have source='cat-cafe' + pluginId. They should NOT be used
+    // as inheritFrom source (would leak plugin env/disabled state to core splits)
+    // and should NOT receive legacy overrides (would block cats from unrelated plugins).
+    const config = {
+      version: 2,
+      capabilities: [
+        {
+          id: 'cat-cafe',
+          type: 'mcp',
+          enabled: true,
+          globalEnabled: true,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['index.js'] },
+          overrides: [{ catId: 'codex', enabled: false }],
+        },
+        {
+          id: 'my-plugin-mcp',
+          type: 'mcp',
+          enabled: false,
+          globalEnabled: false,
+          source: 'cat-cafe',
+          pluginId: 'my-plugin',
+          mcpServer: { command: 'node', args: ['plugin.js'], env: { PLUGIN_KEY: 'secret' } },
+        },
+      ],
+    };
+
+    const result = healCatCafeMcpTopology(config, { catCafeRepoRoot: '/fake/root' });
+    assert.ok(result.migrated, 'should report migration occurred');
+
+    // All 6 managed splits should exist and be enabled (from legacy main, which was enabled)
+    for (const id of ALL_SPLIT_IDS) {
+      const split = result.config.capabilities.find((c) => c.id === id && c.source === 'cat-cafe' && !c.pluginId);
+      assert.ok(split, `${id} should exist`);
+      // Should NOT inherit plugin's disabled state or env
+      assert.equal(split.enabled, true, `${id} should inherit enabled from legacy main, not from plugin`);
+      assert.equal(split.mcpServer?.env?.PLUGIN_KEY, undefined, `${id} should not have plugin env`);
+      // SHOULD have legacy blockedCats
+      assert.ok(
+        Array.isArray(split.blockedCats) && split.blockedCats.includes('codex'),
+        `${id} should have legacy blockedCats`,
+      );
+    }
+
+    // Plugin MCP should NOT have legacy blockedCats applied
+    const plugin = result.config.capabilities.find((c) => c.id === 'my-plugin-mcp');
+    assert.ok(plugin, 'plugin MCP should still exist');
+    assert.ok(
+      !plugin.blockedCats || !plugin.blockedCats.includes('codex'),
+      'plugin MCP should NOT receive legacy blockedCats',
+    );
+  });
 });
