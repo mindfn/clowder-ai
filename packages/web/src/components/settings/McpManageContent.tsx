@@ -8,14 +8,7 @@ import { McpConfigModal, type McpConfigModalProps } from '../McpConfigModal';
 import { SettingsResourceIconButton } from '../SettingsResourceCard';
 import { useConfirm } from '../useConfirm';
 import { AllProjectsSyncBanner } from './AllProjectsSyncBanner';
-import {
-  CapabilityRow,
-  PerCatToggles,
-  PluginManagedLink,
-  ProjectSelector,
-  ScopeTabs,
-  ToggleSwitch,
-} from './capability-settings-ui';
+import { CapabilityRow, PerCatToggles, ProjectSelector, ScopeTabs, ToggleSwitch } from './capability-settings-ui';
 import { DriftBanner } from './DriftBanner';
 import {
   SettingsBadge,
@@ -289,8 +282,8 @@ export function McpManageContent() {
                   <ToggleSwitch
                     enabled={effectiveEnabled}
                     busy={busy}
-                    disabled={pluginManaged}
-                    title={pluginManaged ? `由插件 ${pluginId} 管理` : effectiveEnabled ? '禁用' : '启用'}
+                    disabled={false}
+                    title={effectiveEnabled ? '禁用' : '启用'}
                     onClick={(event) => {
                       event.stopPropagation();
                       cap.handleToggle(item, !effectiveEnabled);
@@ -329,7 +322,7 @@ export function McpManageContent() {
                 </>
               }
               expandedContent={
-                expanded && !pluginManaged ? (
+                expanded ? (
                   <PerCatToggles
                     item={item}
                     catFamilies={cap.catFamilies}
