@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { checkMcpProject } from '../mcp/mcp-drift-detector.js';
+import { checkMcpProject, type McpDriftResult, type McpIssue } from '../mcp/mcp-drift-detector.js';
 import { syncMcpDrift } from '../mcp/mcp-drift-resolver.js';
 import { computeSkillDrift } from '../routes/skills-drift.js';
 import { syncDrift } from '../skills/drift-resolver.js';
@@ -212,6 +212,25 @@ async function checkSkillHealth(projectRoot: string): Promise<HealthResult> {
   }
 }
 
+/**
+ * Filter orphan issues based on global config availability.
+ *
+ * When the global capabilities.json is readable, only plugin-owned orphans
+ * are filtered (non-plugin orphans are real drift).  When the global config
+ * is missing or unreadable, ALL orphans are filtered to avoid destructive
+ * sync — an empty global map makes every project MCP look like an orphan.
+ */
+function filterOrphanIssues(drift: McpDriftResult, startupRoot: string): McpIssue[] {
+  const globalCapsExists = existsSync(join(startupRoot, '.cat-cafe', 'capabilities.json'));
+  return drift.issues.filter((i) => {
+    if (i.type !== 'project-orphan') return true;
+    // Global config unreadable → orphan detection unreliable, skip all
+    if (!globalCapsExists) return false;
+    // Global config readable → only filter plugin-owned orphans
+    return !i.pluginId;
+  });
+}
+
 async function checkMcpHealth(projectRoot: string): Promise<HealthResult> {
   try {
     // Skip MCP drift check if the project has no capabilities.json —
@@ -221,11 +240,7 @@ async function checkMcpHealth(projectRoot: string): Promise<HealthResult> {
     }
     const startupRoot = resolveStartupProjectRoot();
     const drift = await checkMcpProject(projectRoot, startupRoot);
-    // Filter plugin-owned orphan issues: health sync is non-destructive and
-    // skips plugin orphan removal, so reporting them as stale creates an
-    // un-clearable badge.  Non-plugin orphans (managed MCPs removed from
-    // global config) should still surface as stale — they indicate real drift.
-    const actionableIssues = drift.issues.filter((i) => i.type !== 'project-orphan' || !i.pluginId);
+    const actionableIssues = filterOrphanIssues(drift, startupRoot);
     if (actionableIssues.length === 0) {
       return { name: 'mcp', drifted: false, status: 'configured', targetPath: '', reason: 'configured' };
     }
@@ -292,11 +307,7 @@ export async function syncAgentHooks(options: AgentHookOptions): Promise<AgentHo
     try {
       const startupRoot = resolveStartupProjectRoot();
       const drift = await checkMcpProject(options.projectRoot, startupRoot);
-      // Filter out plugin-owned orphan issues: health sync is non-destructive
-      // for plugin MCPs (they're project-local by design and shouldn't be
-      // auto-removed).  Non-plugin orphans (managed MCPs removed from global)
-      // should still be synced — they represent real stale config.
-      const nonDestructiveIssues = drift.issues.filter((i) => i.type !== 'project-orphan' || !i.pluginId);
+      const nonDestructiveIssues = filterOrphanIssues(drift, startupRoot);
       if (nonDestructiveIssues.length > 0) {
         const safeDrift = { ...drift, issues: nonDestructiveIssues };
         await syncMcpDrift(options.projectRoot, startupRoot, safeDrift, undefined, 'keep-project');
