@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { readCapabilitiesConfig } from '../config/capabilities/capability-orchestrator.js';
 import { checkMcpProject, type McpDriftResult, type McpIssue } from '../mcp/mcp-drift-detector.js';
 import { syncMcpDrift } from '../mcp/mcp-drift-resolver.js';
 import { computeSkillDrift } from '../routes/skills-drift.js';
@@ -213,20 +214,23 @@ async function checkSkillHealth(projectRoot: string): Promise<HealthResult> {
 }
 
 /**
- * Filter orphan issues based on global config availability.
+ * Filter orphan issues based on global config validity.
  *
- * When the global capabilities.json is readable, only plugin-owned orphans
+ * When the global config was successfully parsed, only plugin-owned orphans
  * are filtered (non-plugin orphans are real drift).  When the global config
- * is missing or unreadable, ALL orphans are filtered to avoid destructive
- * sync — an empty global map makes every project MCP look like an orphan.
+ * is missing, malformed, or otherwise unreadable (readCapabilitiesConfig
+ * returned null), ALL orphans are filtered to avoid destructive sync — an
+ * empty global map makes every project MCP look like an orphan.
+ *
+ * @param globalConfigValid — true when readCapabilitiesConfig returned a
+ *   non-null result for the startup root.
  */
-function filterOrphanIssues(drift: McpDriftResult, startupRoot: string): McpIssue[] {
-  const globalCapsExists = existsSync(join(startupRoot, '.cat-cafe', 'capabilities.json'));
+function filterOrphanIssues(drift: McpDriftResult, globalConfigValid: boolean): McpIssue[] {
   return drift.issues.filter((i) => {
     if (i.type !== 'project-orphan') return true;
-    // Global config unreadable → orphan detection unreliable, skip all
-    if (!globalCapsExists) return false;
-    // Global config readable → only filter plugin-owned orphans
+    // Global config invalid → orphan detection unreliable, skip all
+    if (!globalConfigValid) return false;
+    // Global config valid → only filter plugin-owned orphans
     return !i.pluginId;
   });
 }
@@ -239,8 +243,9 @@ async function checkMcpHealth(projectRoot: string): Promise<HealthResult> {
       return { name: 'mcp', drifted: false, status: 'configured', targetPath: '', reason: 'no project capabilities' };
     }
     const startupRoot = resolveStartupProjectRoot();
-    const drift = await checkMcpProject(projectRoot, startupRoot);
-    const actionableIssues = filterOrphanIssues(drift, startupRoot);
+    const globalConfig = await readCapabilitiesConfig(startupRoot);
+    const drift = await checkMcpProject(projectRoot, startupRoot, globalConfig);
+    const actionableIssues = filterOrphanIssues(drift, globalConfig !== null);
     if (actionableIssues.length === 0) {
       return { name: 'mcp', drifted: false, status: 'configured', targetPath: '', reason: 'configured' };
     }
@@ -306,8 +311,9 @@ export async function syncAgentHooks(options: AgentHookOptions): Promise<AgentHo
 
     try {
       const startupRoot = resolveStartupProjectRoot();
-      const drift = await checkMcpProject(options.projectRoot, startupRoot);
-      const nonDestructiveIssues = filterOrphanIssues(drift, startupRoot);
+      const globalConfig = await readCapabilitiesConfig(startupRoot);
+      const drift = await checkMcpProject(options.projectRoot, startupRoot, globalConfig);
+      const nonDestructiveIssues = filterOrphanIssues(drift, globalConfig !== null);
       if (nonDestructiveIssues.length > 0) {
         const safeDrift = { ...drift, issues: nonDestructiveIssues };
         await syncMcpDrift(options.projectRoot, startupRoot, safeDrift, undefined, 'keep-project');
