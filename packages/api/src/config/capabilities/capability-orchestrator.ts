@@ -1395,6 +1395,16 @@ export function ensureCoreManagedMcps(
   const allMcpIds = new Set(config.capabilities.filter((cap) => cap.type === 'mcp').map((cap) => cap.id));
   const safeToAdd = missingDescriptors.filter((d) => !allMcpIds.has(d.name));
 
+  // #1049 upstream P2: all-or-nothing when legacy is active.
+  // If legacy main exists and some splits are collision-blocked by non-managed
+  // MCPs, adding only the non-colliding splits would create duplicate tool
+  // exposure: legacy registerFullToolset + partial split servers.
+  // ensureCatCafeMainServer (step 3) can't remove legacy without the full set.
+  // Clear the add set; legacy overrides propagation below still runs if needed.
+  if (legacyMain && missingDescriptors.length > 0 && safeToAdd.length < missingDescriptors.length) {
+    safeToAdd.splice(0);
+  }
+
   // No splits to add AND no legacy overrides to propagate → no-op
   if (safeToAdd.length === 0 && legacyBlockedCats.length === 0) {
     return { migrated: false, config };

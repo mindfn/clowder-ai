@@ -474,4 +474,56 @@ describe('#1049 — healCatCafeMcpTopology restores missing managed MCPs', () =>
       'plugin MCP should NOT receive legacy blockedCats',
     );
   });
+
+  it('does not add partial splits when legacy exists and some IDs are collision-blocked (upstream P2)', () => {
+    // Scenario: legacy `cat-cafe` coexists with a non-managed MCP that owns
+    // a split id (e.g., user-created `cat-cafe-collab` with source='external').
+    // migrateLegacyCatCafeCapability bails (hasManagedSplit=false, but collision).
+    // ensureCoreManagedMcps must NOT add partial splits — legacy all-in-one +
+    // partial split servers would expose duplicate tools, and ensureCatCafeMainServer
+    // can't remove legacy without the full set.
+    const config = {
+      version: 2,
+      capabilities: [
+        {
+          id: 'cat-cafe',
+          type: 'mcp',
+          enabled: true,
+          globalEnabled: true,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['index.js'] },
+        },
+        {
+          // Non-managed MCP that owns a split id — collision blocker
+          id: 'cat-cafe-collab',
+          type: 'mcp',
+          enabled: true,
+          source: 'external',
+          mcpServer: { command: 'node', args: ['user-collab.js'] },
+        },
+      ],
+    };
+
+    const result = healCatCafeMcpTopology(config, { catCafeRepoRoot: '/fake/root' });
+
+    // Legacy `cat-cafe` should still exist (can't be removed without full split set)
+    const legacyEntry = result.config.capabilities.find((c) => c.id === 'cat-cafe' && c.source === 'cat-cafe');
+    assert.ok(legacyEntry, 'legacy cat-cafe entry should be preserved');
+
+    // The non-managed collision blocker should be untouched
+    const collisionBlocker = result.config.capabilities.find(
+      (c) => c.id === 'cat-cafe-collab' && c.source === 'external',
+    );
+    assert.ok(collisionBlocker, 'collision blocker should be preserved');
+
+    // No managed split servers should be added (all-or-nothing)
+    const addedSplits = result.config.capabilities.filter(
+      (c) => c.type === 'mcp' && c.source === 'cat-cafe' && c.id !== 'cat-cafe',
+    );
+    assert.equal(
+      addedSplits.length,
+      0,
+      'no managed splits should be added when legacy + collision (duplicate tool prevention)',
+    );
+  });
 });
