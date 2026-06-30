@@ -423,6 +423,42 @@ export function mergeThreadMetadata(
   return base;
 }
 
+/**
+ * #872: Post-merge total caps.
+ * Per-request schema caps only bound a single patch; accumulated totals can grow unbounded.
+ * This validator rejects (throws) when the merged result exceeds contract limits.
+ * Callers invoke this AFTER merge, BEFORE write — no silent truncation.
+ */
+export const METADATA_TOTAL_LIMITS = {
+  worktrees: 100,
+  prs: 200,
+  issues: 200,
+  features: 200,
+  notes: 200,
+} as const;
+
+export function validateMergedTotals(merged: ThreadMetadataV1): void {
+  const violations: string[] = [];
+  if (merged.worktrees && merged.worktrees.length > METADATA_TOTAL_LIMITS.worktrees) {
+    violations.push(`worktrees: ${merged.worktrees.length}/${METADATA_TOTAL_LIMITS.worktrees}`);
+  }
+  if (merged.prs && merged.prs.length > METADATA_TOTAL_LIMITS.prs) {
+    violations.push(`prs: ${merged.prs.length}/${METADATA_TOTAL_LIMITS.prs}`);
+  }
+  if (merged.issues && merged.issues.length > METADATA_TOTAL_LIMITS.issues) {
+    violations.push(`issues: ${merged.issues.length}/${METADATA_TOTAL_LIMITS.issues}`);
+  }
+  if (merged.features && merged.features.length > METADATA_TOTAL_LIMITS.features) {
+    violations.push(`features: ${merged.features.length}/${METADATA_TOTAL_LIMITS.features}`);
+  }
+  if (merged.notes && Object.keys(merged.notes).length > METADATA_TOTAL_LIMITS.notes) {
+    violations.push(`notes: ${Object.keys(merged.notes).length}/${METADATA_TOTAL_LIMITS.notes}`);
+  }
+  if (violations.length > 0) {
+    throw new Error(`Thread metadata total limits exceeded: ${violations.join(', ')}`);
+  }
+}
+
 /** #872: Parse threadMetadata JSON from Redis with fail-open semantics. */
 export function parseThreadMetadataJson(raw: string): ThreadMetadataV1 | null {
   try {
@@ -1075,6 +1111,7 @@ export class ThreadStore implements IThreadStore {
   atomicMergeThreadMetadata(threadId: string, patch: ThreadMetadataPatch): ThreadMetadataV1 {
     const existing = this.getThreadMetadata(threadId);
     const merged = mergeThreadMetadata(existing ?? undefined, patch);
+    validateMergedTotals(merged);
     this.updateThreadMetadata(threadId, merged);
     return merged;
   }

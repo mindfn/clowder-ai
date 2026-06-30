@@ -33,6 +33,7 @@ import {
   DEFAULT_THREAD_ID,
   mergeThreadMetadata,
   parseThreadMetadataJson,
+  validateMergedTotals,
 } from '../ports/ThreadStore.js';
 import { MessageKeys } from '../redis-keys/message-keys.js';
 import { ThreadKeys } from '../redis-keys/thread-keys.js';
@@ -1312,6 +1313,7 @@ export class RedisThreadStore implements IThreadStore {
         );
       }
       const merged = mergeThreadMetadata(existing ?? undefined, patch);
+      validateMergedTotals(merged);
       const newJson = JSON.stringify(merged);
       const ok = (await this.redis.eval(
         CAS_HSET_IF_HAS_ID_LUA,

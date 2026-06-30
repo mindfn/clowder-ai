@@ -390,6 +390,73 @@ describe('setThreadMetadataSchema validation (P2 PATCH-parity)', () => {
   });
 });
 
+describe('validateMergedTotals — post-merge rejection', () => {
+  test('accepts metadata within limits', async () => {
+    const { validateMergedTotals } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    // Should not throw
+    validateMergedTotals({ v: 1, worktrees: Array.from({ length: 100 }, (_, i) => `/w/${i}`) });
+  });
+
+  test('rejects worktrees exceeding 100', async () => {
+    const { validateMergedTotals, METADATA_TOTAL_LIMITS } = await import(
+      '../dist/domains/cats/services/stores/ports/ThreadStore.js'
+    );
+    assert.equal(METADATA_TOTAL_LIMITS.worktrees, 100);
+    assert.throws(
+      () => validateMergedTotals({ v: 1, worktrees: Array.from({ length: 101 }, (_, i) => `/w/${i}`) }),
+      /total limits exceeded.*worktrees: 101\/100/,
+    );
+  });
+
+  test('rejects prs exceeding 200', async () => {
+    const { validateMergedTotals } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const prs = Array.from({ length: 201 }, (_, i) => ({ repo: 'r', number: i + 1 }));
+    assert.throws(() => validateMergedTotals({ v: 1, prs }), /total limits exceeded.*prs: 201\/200/);
+  });
+
+  test('rejects notes exceeding 200 keys', async () => {
+    const { validateMergedTotals } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const notes = Object.fromEntries(Array.from({ length: 201 }, (_, i) => [`k${i}`, `v${i}`]));
+    assert.throws(() => validateMergedTotals({ v: 1, notes }), /total limits exceeded.*notes: 201\/200/);
+  });
+
+  test('reports all violations at once', async () => {
+    const { validateMergedTotals } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    assert.throws(
+      () =>
+        validateMergedTotals({
+          v: 1,
+          worktrees: Array.from({ length: 101 }, (_, i) => `/w/${i}`),
+          features: Array.from({ length: 201 }, (_, i) => `F${i}`),
+        }),
+      /worktrees: 101\/100.*features: 201\/200/,
+    );
+  });
+
+  test('in-memory atomicMerge rejects when accumulated patches exceed limits', async () => {
+    const { ThreadStore: MemStore } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
+    const store = new MemStore();
+    const thread = store.create('u1', 'test');
+    // Accumulate 6 batches × 20 worktrees each = 120 > 100 limit
+    for (let batch = 0; batch < 5; batch++) {
+      store.atomicMergeThreadMetadata(thread.id, {
+        worktrees: Array.from({ length: 20 }, (_, i) => `/w/${batch * 20 + i}`),
+      });
+    }
+    // 6th batch pushes to 120, should reject
+    assert.throws(
+      () =>
+        store.atomicMergeThreadMetadata(thread.id, {
+          worktrees: Array.from({ length: 20 }, (_, i) => `/w/${100 + i}`),
+        }),
+      /total limits exceeded/,
+    );
+    // Verify the 5th batch (100 worktrees) was the last successful write
+    const meta = store.getThreadMetadata(thread.id);
+    assert.equal(meta.worktrees.length, 100);
+  });
+});
+
 describe('refKey', () => {
   test('generates lowercase dedupe key', async () => {
     const { refKey } = await import('../dist/domains/cats/services/stores/ports/ThreadStore.js');
