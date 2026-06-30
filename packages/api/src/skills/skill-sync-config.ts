@@ -273,6 +273,10 @@ export async function updateConfigAfterSync(projectRoot: string, ctx: ConfigSync
       else noConfig.push(name);
     }
     if (hasConfig.length > 0) await updateSkillMountPaths(projectRoot, hasConfig, []);
-    if (noConfig.length > 0) await updateSkillMountPaths(projectRoot, noConfig, [], { forceDisabled: true });
+    if (noConfig.length > 0)
+      await updateSkillMountPaths(projectRoot, noConfig, [], {
+        forceDisabled: true,
+        customSourceMeta: ctx.globalCustomSourceSkills,
+      });
   }
 }
