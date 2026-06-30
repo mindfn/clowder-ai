@@ -285,20 +285,23 @@ describe('setThreadMetadataSchema validation (P2 PATCH-parity)', () => {
   // Import the schema from the built callbacks module isn't practical,
   // so we replicate the exact Zod schema definition to test it in isolation.
   let z;
-  const refItemSchema = () => z.object({ repo: z.string(), number: z.number().int().positive() });
+  const refItemSchema = () => z.object({ repo: z.string().min(1).max(200), number: z.number().int().positive() });
   const buildSchema = () =>
     z.object({
       title: z.string().trim().min(1).max(200).optional(),
       labels: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
-      worktrees: z.array(z.string()).optional(),
-      prs: z.array(refItemSchema()).optional(),
-      issues: z.array(refItemSchema()).optional(),
-      features: z.array(z.string()).optional(),
-      notes: z.record(z.string(), z.string().nullable()).optional(),
-      removeWorktrees: z.array(z.string()).optional(),
-      removePrs: z.array(refItemSchema()).optional(),
-      removeIssues: z.array(refItemSchema()).optional(),
-      removeFeatures: z.array(z.string()).optional(),
+      worktrees: z.array(z.string().max(500)).max(20).optional(),
+      prs: z.array(refItemSchema()).max(50).optional(),
+      issues: z.array(refItemSchema()).max(50).optional(),
+      features: z.array(z.string().max(50)).max(50).optional(),
+      notes: z
+        .record(z.string().max(100), z.string().max(2000).nullable())
+        .refine((r) => Object.keys(r).length <= 50, { message: 'Too many notes (max 50)' })
+        .optional(),
+      removeWorktrees: z.array(z.string().max(500)).max(20).optional(),
+      removePrs: z.array(refItemSchema()).max(50).optional(),
+      removeIssues: z.array(refItemSchema()).max(50).optional(),
+      removeFeatures: z.array(z.string().max(50)).max(50).optional(),
     });
 
   test('rejects whitespace-only title', async () => {
@@ -343,6 +346,47 @@ describe('setThreadMetadataSchema validation (P2 PATCH-parity)', () => {
     const schema = buildSchema();
     const result = schema.safeParse({ labels: Array.from({ length: 21 }, (_, i) => `l${i}`) });
     assert.equal(result.success, false);
+  });
+
+  test('rejects more than 20 worktrees per request', async () => {
+    z = (await import('zod')).z;
+    const schema = buildSchema();
+    const result = schema.safeParse({ worktrees: Array.from({ length: 21 }, (_, i) => `/path/${i}`) });
+    assert.equal(result.success, false);
+  });
+
+  test('rejects worktree path exceeding 500 chars', async () => {
+    z = (await import('zod')).z;
+    const schema = buildSchema();
+    const result = schema.safeParse({ worktrees: ['/' + 'a'.repeat(501)] });
+    assert.equal(result.success, false);
+  });
+
+  test('rejects more than 50 features per request', async () => {
+    z = (await import('zod')).z;
+    const schema = buildSchema();
+    const result = schema.safeParse({ features: Array.from({ length: 51 }, (_, i) => `F${i}`) });
+    assert.equal(result.success, false);
+  });
+
+  test('rejects more than 50 notes', async () => {
+    z = (await import('zod')).z;
+    const schema = buildSchema();
+    const notes = Object.fromEntries(Array.from({ length: 51 }, (_, i) => [`k${i}`, `v${i}`]));
+    const result = schema.safeParse({ notes });
+    assert.equal(result.success, false);
+  });
+
+  test('accepts payload within all caps', async () => {
+    z = (await import('zod')).z;
+    const schema = buildSchema();
+    const result = schema.safeParse({
+      worktrees: ['/path/a'],
+      prs: [{ repo: 'owner/repo', number: 1 }],
+      features: ['F001'],
+      notes: { branch: 'main' },
+    });
+    assert.equal(result.success, true);
   });
 });
 

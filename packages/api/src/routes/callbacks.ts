@@ -606,20 +606,25 @@ const listLabelsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional(),
 });
 
-const refItemSchema = z.object({ repo: z.string().min(1), number: z.number().int().positive() });
+const refItemSchema = z.object({ repo: z.string().min(1).max(200), number: z.number().int().positive() });
 const setThreadMetadataSchema = z.object({
   // P2: match PATCH /api/threads/:id invariants — trim + min(1) + max
   title: z.string().trim().min(1).max(200).optional(),
   labels: z.array(z.string().trim().min(1).max(50)).max(20).optional(),
-  worktrees: z.array(z.string()).optional(),
-  prs: z.array(refItemSchema).optional(),
-  issues: z.array(refItemSchema).optional(),
-  features: z.array(z.string()).optional(),
-  notes: z.record(z.string(), z.string().nullable()).optional(),
-  removeWorktrees: z.array(z.string()).optional(),
-  removePrs: z.array(refItemSchema).optional(),
-  removeIssues: z.array(refItemSchema).optional(),
-  removeFeatures: z.array(z.string()).optional(),
+  // #872 cloud-review P2 (R4): cap per-request payload sizes to prevent unbounded growth.
+  // These are low-frequency anchors; generous caps that no real usage should hit.
+  worktrees: z.array(z.string().max(500)).max(20).optional(),
+  prs: z.array(refItemSchema).max(50).optional(),
+  issues: z.array(refItemSchema).max(50).optional(),
+  features: z.array(z.string().max(50)).max(50).optional(),
+  notes: z
+    .record(z.string().max(100), z.string().max(2000).nullable())
+    .refine((r) => Object.keys(r).length <= 50, { message: 'Too many notes (max 50)' })
+    .optional(),
+  removeWorktrees: z.array(z.string().max(500)).max(20).optional(),
+  removePrs: z.array(refItemSchema).max(50).optional(),
+  removeIssues: z.array(refItemSchema).max(50).optional(),
+  removeFeatures: z.array(z.string().max(50)).max(50).optional(),
 });
 
 const featIndexQuerySchema = z.object({
