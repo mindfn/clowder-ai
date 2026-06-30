@@ -310,6 +310,38 @@ describe('agent hook sync targets', () => {
     assert.equal(codex?.status, 'configured');
     assert.equal(codex?.drifted, false);
   });
+
+  it('ownerAuthorized=false syncs hooks but does not create capabilities.json', async () => {
+    // Ensure no capabilities.json exists
+    const capPath = join(projectRoot, '.cat-cafe', 'capabilities.json');
+    await rm(capPath, { force: true });
+
+    const result = await syncAgentHooks({ projectRoot, targetRoot, ownerAuthorized: false });
+
+    // Hooks should still be written
+    const startScript = join(targetRoot, '.claude', 'hooks', 'session-start-recall.sh');
+    assert.equal(await readFile(startScript, 'utf8'), '#!/bin/bash\necho start\n');
+
+    // capabilities.json must NOT be created (fail-closed)
+    const capExists = (await readFile(capPath, 'utf8').catch(() => null)) !== null;
+    assert.equal(capExists, false, 'capabilities.json should not be created by non-owner sync');
+
+    assert.ok(result.targets.length > 0);
+  });
+
+  it('ownerAuthorized omitted defaults to fail-closed (no capability sync)', async () => {
+    // When ownerAuthorized is not passed at all (undefined), capability sync should NOT run.
+    // This is the fail-closed default demanded by P2-4 re-review.
+    const capPath = join(projectRoot, '.cat-cafe', 'capabilities.json');
+    await rm(capPath, { force: true });
+
+    // Call without ownerAuthorized (undefined)
+    const result = await syncAgentHooks({ projectRoot, targetRoot });
+
+    const capExists = (await readFile(capPath, 'utf8').catch(() => null)) !== null;
+    assert.equal(capExists, false, 'capabilities.json should not be created when ownerAuthorized is omitted');
+    assert.ok(result.targets.length > 0);
+  });
 });
 
 describe('agent hook routes', () => {

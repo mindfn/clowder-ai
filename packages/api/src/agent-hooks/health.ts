@@ -40,8 +40,8 @@ export interface AgentHookOptions {
   projectRoot: string;
   targetRoot: string;
   /**
-   * When true, capability-level mutations (skill/MCP sync) are allowed.
-   * Hook file sync (write to targetRoot) always runs regardless.
+   * Fail-closed: only `true` enables capability-level mutations (skill/MCP sync).
+   * Omitted / undefined / false → hook file sync only, no capability writes.
    * Set by the route layer after passing the owner gate (#1049 P2-4).
    */
   ownerAuthorized?: boolean;
@@ -269,7 +269,7 @@ export async function syncAgentHooks(options: AgentHookOptions): Promise<AgentHo
   //   1. ownerAuthorized — capability mutations require owner auth (P2-4 defense-in-depth)
   //   2. hasCapabilities — uninitialised projects skip (no side-effect creation)
   const hasCapabilities =
-    options.ownerAuthorized !== false && existsSync(join(options.projectRoot, '.cat-cafe', 'capabilities.json'));
+    options.ownerAuthorized === true && existsSync(join(options.projectRoot, '.cat-cafe', 'capabilities.json'));
 
   if (hasCapabilities) {
     try {
