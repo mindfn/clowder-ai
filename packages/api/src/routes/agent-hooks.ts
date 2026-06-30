@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { getAgentHookStatus, syncAgentHooks } from '../agent-hooks/index.js';
 import { findMonorepoRoot } from '../utils/monorepo-root.js';
+import { resolveOwnerGate } from '../utils/owner-gate.js';
 
 export interface AgentHooksRouteOptions {
   projectRoot?: string;
@@ -110,6 +111,11 @@ export const agentHooksRoutes: FastifyPluginAsync<AgentHooksRouteOptions> = asyn
       return { error: 'Agent hook sync requires an explicit targetRoot or a local API host' };
     }
 
-    return syncAgentHooks(resolved);
+    // Capability-level mutations (skill/MCP sync) require owner authorization.
+    // Hook file sync (writing to targetRoot) always runs for any session user.
+    const ownerAuthorized = !resolveOwnerGate(userId, {
+      errorMessage: 'Capability sync requires owner authorization',
+    });
+    return syncAgentHooks({ ...resolved, ownerAuthorized });
   });
 };

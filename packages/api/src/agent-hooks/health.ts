@@ -39,6 +39,12 @@ export interface AgentHookStatusResponse {
 export interface AgentHookOptions {
   projectRoot: string;
   targetRoot: string;
+  /**
+   * When true, capability-level mutations (skill/MCP sync) are allowed.
+   * Hook file sync (write to targetRoot) always runs regardless.
+   * Set by the route layer after passing the owner gate (#1049 P2-4).
+   */
+  ownerAuthorized?: boolean;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -259,10 +265,11 @@ export async function syncAgentHooks(options: AgentHookOptions): Promise<AgentHo
   // #1049 Step 3: sync skills + MCPs with keep-project policy.
   // Health-triggered sync preserves user-customized content (skill symlinks,
   // MCP overrides), unlike Console manual sync which uses use-global.
-  // Guard: skip if the project has no capabilities.json — uninitialised
-  // projects should not have skill/MCP config created as a side effect
-  // of hook sync.  Same guard as the status path (checkSkillHealth/checkMcpHealth).
-  const hasCapabilities = existsSync(join(options.projectRoot, '.cat-cafe', 'capabilities.json'));
+  // Guards:
+  //   1. ownerAuthorized — capability mutations require owner auth (P2-4 defense-in-depth)
+  //   2. hasCapabilities — uninitialised projects skip (no side-effect creation)
+  const hasCapabilities =
+    options.ownerAuthorized !== false && existsSync(join(options.projectRoot, '.cat-cafe', 'capabilities.json'));
 
   if (hasCapabilities) {
     try {
