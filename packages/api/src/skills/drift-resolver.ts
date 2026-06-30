@@ -37,7 +37,7 @@ export interface SyncDriftOptions {
   /** Custom-source skills from global config. Passed to syncProject so it
    *  knows about plugin skills that aren't yet in the project config.
    *  Values should be resolved absolute paths. */
-  globalCustomSourceSkills?: ReadonlyMap<string, { skillsSource: string; pluginId?: string }>;
+  globalCustomSourceSkills?: ReadonlyMap<string, { skillsSource: string }>;
   /** Main project root. Passed to syncProject for resolving relative
    *  skillsSource paths in external project config entries. */
   mainProjectRoot?: string;

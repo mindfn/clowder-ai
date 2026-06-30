@@ -93,9 +93,11 @@ function findCatCafeSkillCapability(
   config: { capabilities: CapabilityEntry[] } | null | undefined,
   skillId: string,
 ): CapabilityEntry | null {
+  // pluginId is an identity label, not a filter — all cat-cafe skills
+  // are looked up uniformly (built-in and plugin alike).
   return (
     config?.capabilities.find(
-      (entry) => entry.type === 'skill' && entry.id === skillId && entry.source === 'cat-cafe' && !entry.pluginId,
+      (entry) => entry.type === 'skill' && entry.id === skillId && entry.source === 'cat-cafe',
     ) ?? null
   );
 }
@@ -675,8 +677,9 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
     for (const skillName of allSkillNames) {
       const isCatCafe = catCafeOwnSkills !== null && catCafeOwnSkills.includes(skillName);
       if (!isCatCafe) continue; // Skip non-cat-cafe skills — don't add external entries
+      // pluginId is an identity label — any cat-cafe skill entry with this id counts.
       const exists = config.capabilities.some(
-        (c) => c.type === 'skill' && c.id === skillName && c.source === 'cat-cafe' && !c.pluginId,
+        (c) => c.type === 'skill' && c.id === skillName && c.source === 'cat-cafe',
       );
       if (!exists) {
         config.capabilities.push(
@@ -691,7 +694,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
     // external entries from user-directory scan results).
     for (const cap of config.capabilities) {
       if (cap.type !== 'skill') continue;
-      if (cap.skillsSource || cap.pluginId || cap.source === 'external') continue;
+      if (cap.skillsSource || cap.source === 'external') continue;
       const shouldBeCatCafe = catCafeOwnSkills !== null && catCafeOwnSkills.includes(cap.id);
       if (shouldBeCatCafe && cap.source !== 'cat-cafe') {
         cap.source = 'cat-cafe';
@@ -987,14 +990,9 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
     const unregistered = [...mountSourceNames].filter((n) => !capSkillNames.has(n));
     // Skills with custom skillsSource live outside the default source dir —
     // they are expected to not appear in mountSourceNames and should not be phantom.
-    // Legacy plugin entries (pluginId without skillsSource) are also excluded —
-    // their source is resolved via plugin manifests, not the default source dir.
-    const pluginOwnedNames = new Set(
-      config.capabilities.filter((c) => c.type === 'skill' && c.source === 'cat-cafe' && c.pluginId).map((c) => c.id),
-    );
-    const phantom = [...capSkillNames].filter(
-      (n) => !mountSourceNames.has(n) && !effectiveSourceBySkill.has(n) && !pluginOwnedNames.has(n),
-    );
+    // effectiveSourceBySkill already tracks all custom-source skills (including
+    // plugin-provided ones), so no separate pluginId-based exclusion is needed.
+    const phantom = [...capSkillNames].filter((n) => !mountSourceNames.has(n) && !effectiveSourceBySkill.has(n));
     // F228: mountPaths-first — only mountPaths determines active state (enabled is legacy)
     const mountRequiredCatCafeSkillItems = catCafeSkillItems.filter((item) => (item.mountPaths?.length ?? 0) > 0);
     let allMounted = mountRequiredCatCafeSkillItems.every((item) => item.mountHealth?.allMounted === true);
@@ -1341,7 +1339,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
         // Build globalCustomSourceSkills from main config — needed for plugin
         // skill source resolution in syncProject (co-creator formula:
         // resolve(instanceRoot, skillsSource)).
-        const globalCustomSourceSkills = new Map<string, { skillsSource: string; pluginId?: string }>();
+        const globalCustomSourceSkills = new Map<string, { skillsSource: string }>();
         {
           const sourceConfig = pathsEqual(projectRoot, mainProjectRoot)
             ? config
@@ -1350,7 +1348,6 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
             if (gc.type === 'skill' && gc.source === 'cat-cafe' && gc.skillsSource) {
               globalCustomSourceSkills.set(gc.id, {
                 skillsSource: isAbsolute(gc.skillsSource) ? gc.skillsSource : resolve(mainProjectRoot, gc.skillsSource),
-                ...(gc.pluginId ? { pluginId: gc.pluginId } : {}),
               });
             }
           }

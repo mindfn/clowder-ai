@@ -77,12 +77,11 @@ async function syncAllUnlocked(
 
   // Collect custom-source skills (plugins) from global config.
   // resolve(instanceRoot, skillsSource) — co-creator's formula.
-  const globalCustomSourceSkills = new Map<string, { skillsSource: string; pluginId?: string }>();
+  const globalCustomSourceSkills = new Map<string, { skillsSource: string }>();
   for (const cap of mainManagedCaps) {
     if (cap.skillsSource) {
       globalCustomSourceSkills.set(cap.id, {
         skillsSource: isAbsolute(cap.skillsSource) ? cap.skillsSource : resolve(catCafeRoot, cap.skillsSource),
-        ...(cap.pluginId ? { pluginId: cap.pluginId } : {}),
       });
     }
   }
