@@ -139,6 +139,7 @@ describe('Skills Route', () => {
           enabled: true,
           source: 'cat-cafe',
           pluginId: 'test-registration-plugin',
+          skillsSource: join(projectDir, 'plugins', 'test-registration-plugin', 'skills'),
           mountPaths: [],
         },
       ],

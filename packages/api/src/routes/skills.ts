@@ -323,7 +323,7 @@ export const skillsRoutes: FastifyPluginAsync<SkillsRouteOptions> = async (app, 
     const sourceNames = new Set(sourceSkills);
     const capSkillNames = new Set(
       capConfig?.capabilities
-        .filter((c) => c.type === 'skill' && c.source === 'cat-cafe' && !c.pluginId)
+        .filter((c) => c.type === 'skill' && c.source === 'cat-cafe' && !c.skillsSource)
         .map((c) => c.id) ?? [],
     );
     const unregistered = sourceSkills.filter((n) => !capSkillNames.has(n));

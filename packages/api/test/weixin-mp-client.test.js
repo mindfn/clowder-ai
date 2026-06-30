@@ -51,9 +51,9 @@ describe('PluginRestExecutor', () => {
     globalThis.fetch = async (url) => {
       urls.push(String(url));
       if (urls.length === 1) {
-        return { json: async () => ({ errcode: 40001, errmsg: 'invalid access_token' }) };
+        return { ok: true, json: async () => ({ errcode: 40001, errmsg: 'invalid access_token' }) };
       }
-      return { json: async () => ({ errcode: 0, media_id: 'draft-media-id' }) };
+      return { ok: true, json: async () => ({ errcode: 0, media_id: 'draft-media-id' }) };
     };
 
     let tokenCalls = 0;
@@ -100,7 +100,7 @@ describe('PluginRestExecutor', () => {
     const requests = [];
     globalThis.fetch = async (url, init) => {
       requests.push({ url: String(url), headers: init?.headers ?? {} });
-      return { json: async () => ({ ok: true }) };
+      return { ok: true, json: async () => ({ ok: true }) };
     };
 
     const tokenManager = {

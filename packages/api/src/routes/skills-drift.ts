@@ -10,7 +10,7 @@
  * so the client doesn't have to send (and can't lie about) mount policy.
  */
 
-import { dirname, resolve } from 'node:path';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import { type CapabilitiesConfig, type MountRules, STANDARD_MOUNT_POINT_IDS } from '@cat-cafe/shared';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { readCapabilitiesConfig, withCapabilityLock } from '../config/capabilities/capability-orchestrator.js';
@@ -212,7 +212,7 @@ async function loadDriftPolicies(projectRoot: string, globalProjectRoot: string)
   for (const cap of globalConfig?.capabilities ?? []) {
     if (cap.type === 'skill' && cap.source === 'cat-cafe' && cap.skillsSource) {
       globalCustomSourceSkills.set(cap.id, {
-        skillsSource: resolve(globalProjectRoot, cap.skillsSource),
+        skillsSource: isAbsolute(cap.skillsSource) ? cap.skillsSource : resolve(globalProjectRoot, cap.skillsSource),
       });
     }
   }
@@ -241,7 +241,10 @@ export async function computeSkillDrift(projectPath?: string, mainProjectRoot?: 
     const globalEffSourceMap = new Map<string, string>();
     for (const cap of globalConfig?.capabilities ?? []) {
       if (cap.type === 'skill' && cap.source === 'cat-cafe' && cap.skillsSource) {
-        globalEffSourceMap.set(cap.id, resolve(globalProjectRoot, cap.skillsSource));
+        globalEffSourceMap.set(
+          cap.id,
+          isAbsolute(cap.skillsSource) ? cap.skillsSource : resolve(globalProjectRoot, cap.skillsSource),
+        );
       }
     }
     const drift = await checkGlobal(globalProjectRoot, skillsSource, mountRules, {

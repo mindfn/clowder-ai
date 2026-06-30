@@ -152,7 +152,7 @@ async function writeCapabilitiesWithRollback(
   try {
     await store.writeCapabilities(next);
   } catch (err) {
-    const rollback = previous ?? { version: 1, capabilities: [] };
+    const rollback = previous ?? { version: 2 as const, capabilities: [] as CapabilityEntry[] };
     try {
       await store.writeCapabilities(structuredClone(rollback));
     } catch {
@@ -428,7 +428,7 @@ export async function removeSkill(
   // Design note: removeSkill order differs for plugin vs built-in skills.
   //
   // Built-in (toggle off):
-  //   disable main config → cascade (propagates disable) → unmount
+  //   disable main config → unmount → cascade (propagates disable)
   //   Entry stays in config with mountPaths:[] for re-enable later.
   //
   // Plugin (permanent removal):

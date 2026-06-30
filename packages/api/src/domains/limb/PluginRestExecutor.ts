@@ -49,6 +49,9 @@ export class PluginRestExecutor {
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
     });
+    if (!res.ok) {
+      throw new Error(`API request failed: HTTP ${res.status} ${res.statusText}`);
+    }
 
     const data = (await res.json()) as Record<string, unknown>;
     this.checkResponseError(data);

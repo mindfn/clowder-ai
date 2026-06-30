@@ -36,6 +36,9 @@ async function uploadFormData(url: string, blob: Blob, fileName: string): Promis
     body: form,
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
+  if (!res.ok) {
+    throw new Error(`Upload request failed: HTTP ${res.status} ${res.statusText}`);
+  }
   return (await res.json()) as Record<string, unknown>;
 }
 

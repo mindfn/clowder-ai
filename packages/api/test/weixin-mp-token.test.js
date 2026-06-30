@@ -25,6 +25,7 @@ const AUTH_CONFIG = {
 
 function tokenResponse(token) {
   return {
+    ok: true,
     json: async () => ({ access_token: token, expires_in: 7200 }),
   };
 }

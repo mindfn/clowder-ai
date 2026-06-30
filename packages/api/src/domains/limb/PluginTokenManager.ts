@@ -20,6 +20,8 @@ export class PluginTokenManager {
   private memExpiresAt = 0;
   private memCacheKey: string | undefined;
   private skipRedisOnceCacheKey: string | undefined;
+  /** Single-flight guard: dedup concurrent refresh() calls */
+  private inflightRefresh: Promise<string> | undefined;
 
   constructor(
     private readonly auth: LimbAuthConfig,
@@ -63,7 +65,13 @@ export class PluginTokenManager {
       }
     }
 
-    return this.refresh(cacheKey);
+    // Single-flight: dedup concurrent refreshes to avoid WeChat rate limit
+    // issues (latest token invalidates previous one).
+    if (this.inflightRefresh) return this.inflightRefresh;
+    this.inflightRefresh = this.refresh(cacheKey).finally(() => {
+      this.inflightRefresh = undefined;
+    });
+    return this.inflightRefresh;
   }
 
   async invalidateAccessToken(): Promise<void> {
@@ -112,6 +120,9 @@ export class PluginTokenManager {
     const res = await fetch(`${tokenUrl}?${params.toString()}`, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
+    if (!res.ok) {
+      throw new Error(`Token endpoint returned HTTP ${res.status} ${res.statusText}`);
+    }
     const data = (await res.json()) as TokenResponse;
 
     const token = this.extractNestedValue(data, this.auth.tokenResponsePath) as string | undefined;
@@ -121,7 +132,8 @@ export class PluginTokenManager {
       throw new Error(`Token error: ${errcode} ${errmsg}`);
     }
 
-    const ttlSec = ((data['expires_in'] as number) ?? this.auth.ttlSeconds) - REFRESH_MARGIN_SEC;
+    const rawTtl = (data['expires_in'] as number | undefined) ?? this.auth.ttlSeconds;
+    const ttlSec = Math.max(60, rawTtl - REFRESH_MARGIN_SEC);
     if (this.redis) {
       try {
         await this.redis.setex(cacheKey, ttlSec, token);
