@@ -175,12 +175,12 @@ Clowder AI 的记忆系统（ADR-020 建立）当前紧耦合在宿主进程内�
 
 | 数据 | 当前表 | 映射到原语 | 为什么移出 | EchoMem 协作归属（§11） |
 |------|--------|-----------|-----------|----------------------|
-| 文档级索引 | `evidence_docs` + `evidence_fts` | **TextBlock** | 核心检索 | kind≠thread → 我们；kind=thread → EchoMem |
-| Passage 级索引 | `evidence_passages` + `passage_fts` | **TextBlock**（parentId 模式） | 核心检索 | 对话 passage → EchoMem（实测 100% 为 thread-*） |
-| 文档嵌入 | `evidence_vectors` | TextBlock 基础设施 | 语义搜索 | 各自管各自嵌入 |
-| Passage 嵌入 | `passage_vectors` | TextBlock 基础设施 | 语义搜索 | EchoMem 管对话 passage 嵌入 |
-| 实体注册表 + 别名 | `entity_registry` + `entity_aliases` | **EntityResolver**（基础设施层） | 搜索增强 | 共享基础设施（种子由我们管理） |
-| 关系图 | `edges` | **RelationEdge** | graph_resolve 支持 | 我们（doc-to-doc 关系） |
+| 文档级索引 | `evidence_docs` + `evidence_fts` | **TextBlock** | 核心检索 | 按来源切：scanner 产物 → DocMemory；对话事件流 → ConversationMemory |
+| Passage 级索引 | `evidence_passages` + `passage_fts` | **TextBlock**（parentId 模式） | 核心检索 | 按来源切：round-result / 消息流 → ConversationMemory |
+| 文档嵌入 | `evidence_vectors` | TextBlock 基础设施 | 语义搜索 | 各 provider 自有嵌入索引 |
+| Passage 嵌入 | `passage_vectors` | TextBlock 基础设施 | 语义搜索 | 各 provider 自有嵌入索引 |
+| 实体注册表 + 别名 | `entity_registry` + `entity_aliases` | **EntityResolver**（基础设施层） | 搜索增强 | provider-local + 可选共享 normalizer（§11.2） |
+| 关系图 | `edges` | **RelationEdge** | graph_resolve 支持 | 当前 DocMemory；ConversationMemory 后续可自建（§11.2） |
 
 ### 留在 Clowder 宿主
 
@@ -894,6 +894,9 @@ edge changes    ──► store.edges.link(...)           ──► service POST
 > 目的：验证我们的组件拆分是否正确，不是现在就接入。
 > EchoMem 由独立团队开发。评测平台和 EchoMem 的能力都可以
 > 基于我们的接口规范来增强。这是一个取长补短的过程，不是单向接入。
+>
+> **2026-06-30 更新**：基于本节 review 发现和 EchoAgent 代码分析，
+> 正式的 EchoMem 协作设计方案已收敛到 **§11**。
 
 ### 9.1 我们做对了什么
 
@@ -1598,75 +1601,94 @@ Memory-System-Eval-Harness 的 MemoryPlugin Protocol 定义了 9 个必需方法
 
 ### 11.1 对称架构
 
-两个记忆系统各管擅长的领域，通过三原语模型的接口包对齐：
+两个记忆系统各管擅长的领域。协议包（`@clowder-ai/memory-protocol`）发布完整的三原语模型（TextBlock / RelationEdge / Timeline），每个 provider 通过 `StoreCapabilities`（§10.6）声明自己实现了哪些原语。
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        Clowder AI 宿主                              │
 │                                                                     │
-│  KnowledgeResolver ─── 扇出到 N 个 collection/provider              │
+│  KnowledgeResolver ─── 扇出到 N 个 MemoryProvider                   │
 │       │                    │                  │                      │
 │       ▼                    ▼                  ▼                      │
 │  DocMemory             ConversationMemory   GlobalMemory            │
 │  Provider (我们)       Provider (EchoMem)   Provider (我们)         │
-│       │                    │                  │                      │
-│  本地 SQLite           EchoMem HTTP          本地 SQLite            │
-│  evidence_docs         endpoint              evidence_docs          │
-│  (feature/plan/...)    (对话消息记忆)         (global knowledge)     │
+│  ┌─────────────┐      ┌─────────────────┐  ┌─────────────┐        │
+│  │ TextBlock ✅ │      │ TextBlock    ✅  │  │ TextBlock ✅ │        │
+│  │ RelEdge  ✅ │      │ RelEdge  ❌(P1) │  │ RelEdge  ✅ │        │
+│  │ Timeline ✅ │      │ Timeline ❌(P1) │  │ Timeline ❌ │        │
+│  │ Entity local │      │ Entity   local  │  │ Entity local │        │
+│  └──────┬──────┘      └───────┬─────────┘  └──────┬──────┘        │
+│         │                     │                     │               │
+│    本地 SQLite           EchoMem HTTP          本地 SQLite          │
+│    (scanner 产物)        (对话事件流)           (global knowledge)   │
 │                                                                     │
-│  ──────── 我们独有 ────────                                         │
-│  Timeline（EventMemory：认知转变事件）                               │
+│  ──── 宿主独有（不属于 provider） ────                               │
 │  治理层（markers、recall_events、scheduler）                         │
-│  实体注册表（EntityResolver：共享基础设施）                           │
+│  可选共享 entity alias normalizer（跨 provider query expansion）    │
 └─────────────────────────────────────────────────────────────────────┘
+
+  ── 反向接入（§11.5.4） ──
+  EchoAgentMemoryEngineAdapter 把 DocMemory 包装为
+  EchoAgent memory_query dialect，让 EchoAgent 也能搜索文档知识
 ```
 
 **关键设计选择**：
 
-- ConversationMemoryProvider 接入 KnowledgeResolver 的方式与其他 collection 一致（§4.1 架构不变）
-- EchoMem 作为 `providerId: 'echomem'` 注册到 `MemoryBackendRegistry`（§4.4 工厂不变）
+- **协议包发布三原语**（P1-1 codex review）：TextBlock 是 Phase 1 唯一必需原语，RelationEdge / Timeline 是 optional。ConversationMemory Phase 1 声明 `textBlock=true`，后续可逐步实现 RelationEdge（EchoMem 的 SPO 三元组）和 Timeline（EchoMem 的 EpisodeEvent）
+- **每个 provider 实现标准 MemoryStore**（§10.6）：不定义额外的 ConversationMemoryProvider 接口。KnowledgeResolver 通过 MemoryServiceAdapter（§4.2）统一适配，按 capabilities 降级
+- **双向适配**（P2-1 codex review）：Clowder 通过 EchoMemAdapter 消费 ConversationMemory；EchoAgent 通过 EchoAgentMemoryEngineAdapter 消费 DocMemory
+- **EntityResolver provider-local**（P2-2 codex review）：每个 provider 各自维护实体解析，宿主层可选提供共享 alias normalizer 做跨 provider query expansion
 - 降级策略复用 §6（EchoMem 不可达 → collection 标记 error → 对话搜索为空 + degraded=true）
 
 ### 11.2 职责分工
 
-| 记忆类型 | 负责方 | 理由 |
-|---------|--------|------|
-| **文档知识**（feature/plan/decision/lesson/discussion/research） | Clowder（我们） | 从 repo `docs/*.md` 扫描编译，是我们的核心能力 |
-| **对话消息**（thread messages、session 消息历史） | EchoMem | 对话记忆检索是 EchoMem 的核心能力（Atomic Truth + Episode 模型） |
-| **认知转变事件**（EventMemory：magic word、猫刹车等） | Clowder（我们） | 绑定 Clowder 治理框架（F227），EchoMem 无此概念 |
-| **实体解析**（人/猫/feature 别名） | 共享 | 两侧都需要实体解析增强召回，种子由 Clowder 管理并推送 |
-| **关系图**（文档间 edge） | Clowder（我们） | doc-to-doc 关系由 repo 扫描产生 |
-| **对话摘要**（summary_segments） | 待定（Phase 2 讨论） | 当前留在宿主；EchoMem 的 Episode 摘要能力更强 |
+> **所有权按数据来源切，不按当前 SQLite kind 切**（P1-2 codex review）。
+> `kind` 只作为路由/过滤 hint，不作为 ownership rule。
+> 理由：`kind=thread` 是 Clowder IndexBuilder 的编译产物标签，不是稳定的组件边界。
+> 按来源切避免双写 / 重复召回 / 迁移时 source-of-truth 不清。
 
-**分流规则简述**：
+| 记忆类型 | 负责方 | 数据来源（ownership 依据） |
+|---------|--------|-------------------------|
+| **文档知识**（feature/plan/decision/lesson/...） | DocMemory（我们） | repo scanner（`CatCafeScanner.discover()`）产物 |
+| **对话消息**（raw messages、passage） | ConversationMemory（EchoMem） | conversation event stream / round-result 回调 |
+| **对话摘要**（episode summary） | ConversationMemory（EchoMem，Phase 2） | EchoMem Episode 模型产物；当前暂留宿主 |
+| **认知转变事件**（EventMemory） | DocMemory（我们） | Clowder 治理框架（F227），绑定 magic word / 猫刹车 |
+| **实体解析** | provider-local | 每个 provider 各自维护。宿主可选提供共享 alias normalizer 做跨 provider query expansion |
+| **关系图**（edge） | 当前 DocMemory；ConversationMemory 后续可自建 | DocMemory edges 来自 scanner；EchoMem 的 SPO 三元组可映射为 RelationEdge |
+
+**分流规则**（按来源，不按 kind）：
 
 ```
-evidence_docs.kind === 'thread'  →  ConversationMemory（EchoMem）
-evidence_docs.kind !== 'thread'  →  DocMemory（我们）
-evidence_passages.doc_anchor     →  全部 thread-*，归 EchoMem
+数据来自 repo scanner / doc frontmatter  →  DocMemory（我们）
+数据来自 round-result / 消息流 / 对话回调  →  ConversationMemory（EchoMem）
+
+实际路由 hint（当前 SQLite 中的观察值，不是 ownership rule）：
+  evidence_docs.kind ∈ {feature,plan,decision,lesson,...}  →  scanner 产物
+  evidence_docs.kind === 'thread'                          →  对话事件流产物
+  evidence_passages.doc_anchor = thread-*                  →  对话消息
 ```
 
 ### 11.3 已有数据映射（实测数据）
 
 > 以下数据来自 Clowder AI 实例的 `evidence.sqlite`（2026-06-30 快照）。
 
-#### 11.3.1 evidence_docs 分流
+#### 11.3.1 evidence_docs — 按数据来源归属
 
-| kind | 数量 | 状态分布 | 映射到 |
-|------|------|---------|--------|
-| `feature` | 236 | active:221, done:13, in-progress:1, spec:1 | **DocMemory（我们）** |
-| `plan` | 38 | active:37, draft:1 | **DocMemory（我们）** |
-| `decision` | 10 | active:6, accepted:3, drifted:1 | **DocMemory（我们）** |
-| `thread` | 7 | active:7 | **ConversationMemory（EchoMem）** |
-| `session` | 0 | — | DocMemory（我们）— session digest |
-| `lesson` | 0 | — | DocMemory（我们） |
-| `discussion` | 0 | — | DocMemory（我们） |
-| `research` | 0 | — | DocMemory（我们） |
-| `pack-knowledge` | 0 | — | DocMemory（我们） |
+| kind | 数量 | 状态分布 | 数据来源 | 映射到 |
+|------|------|---------|---------|--------|
+| `feature` | 236 | active:221, done:13, in-progress:1, spec:1 | scanner 产物 | **DocMemory** |
+| `plan` | 38 | active:37, draft:1 | scanner 产物 | **DocMemory** |
+| `decision` | 10 | active:6, accepted:3, drifted:1 | scanner 产物 | **DocMemory** |
+| `thread` | 7 | active:7 | IndexBuilder 编译对话 | **ConversationMemory** |
+| `session` | 0 | — | scanner 产物 | DocMemory（session digest） |
+| `lesson` | 0 | — | scanner 产物 | DocMemory |
+| `discussion` | 0 | — | scanner 产物 | DocMemory |
+| `research` | 0 | — | scanner 产物 | DocMemory |
+| `pack-knowledge` | 0 | — | scanner 产物 | DocMemory |
 
-**合计**：284 DocMemory + 7 ConversationMemory = 291 总文档。
+**合计**：284 来自 scanner（→ DocMemory）+ 7 来自 IndexBuilder 对话编译（→ ConversationMemory）= 291 总文档。
 
-**分流规则**：`kind === 'thread'` → ConversationMemory（作为 passage 的父文档）；其余 → DocMemory。
+**归属依据**：`kind` 是路由 hint，真正的 ownership 看数据来源。scanner 产物归 DocMemory；对话事件流产物归 ConversationMemory。当前 `kind === 'thread'` 的文档恰好全部来自 IndexBuilder 对话编译，但这是观测结论，不是 ownership rule。
 
 #### 11.3.2 evidence_passages — 100% 对话消息
 
@@ -1724,83 +1746,79 @@ EchoMem 若需对话内关系图（如 SPO 三元组提取），在 Conversation
                     │           (2026-06-30 快照)              │
                     └─────────────────────────────────────────┘
 
-  DocMemory（我们）                    ConversationMemory（EchoMem）
-  ═══════════════                     ════════════════════════════
+  DocMemory（来源：scanner）           ConversationMemory（来源：对话事件流）
+  ═══════════════════════             ══════════════════════════════════
   evidence_docs:                      evidence_docs:
-    feature    236                      thread     7  ← passage 父文档
-    plan        38                      (+ 188 个缺失的 thread 父文档
-    decision    10                       应由 EchoMem 补齐)
+    feature    236  (scanner)           thread     7  ← passage 父文档
+    plan        38  (scanner)           (+ 188 个缺失的 thread 父文档
+    decision    10  (scanner)            应由 EchoMem 补齐)
     session/lesson/...  0
                                       evidence_passages:
-  edges:                                21,946 条对话消息
+  edges:                                21,946 条对话消息（round-result）
     2,437 条 doc-to-doc 关系             193 个 thread，100% thread-*
-                                      
-  evidence_fts:                       passage_fts:
-    文档 title+summary 索引              对话消息全文索引
+    (scanner frontmatter/wikilink)
+                                      passage_fts + passage_vectors:
+  evidence_fts + evidence_vectors:      对话消息索引（provider-local）
+    文档索引（provider-local）
 
-  evidence_vectors:                   passage_vectors:
-    文档语义向量                          对话消息语义向量
-
-  ──── 我们独有 ────                  ──── 宿主留存（待定） ────
-  EventMemory (Timeline)              summary_segments（Phase 2 讨论）
-  entity_registry（共享基础设施）        summary_state（Phase 2 讨论）
-  markers（治理流程）
+  ──── 宿主独有 ────                  ──── Phase 2 讨论 ────
+  EventMemory (Timeline)              summary_segments → EchoMem Episode
+  markers（治理流程）                  summary_state
   recall_events（消费追踪）
   anchor_recall_metrics（rerank）
+
+  ──── EntityResolver ────
+  各 provider 维护自己的实体解析
+  宿主可选共享 alias normalizer（跨 provider query expansion）
 ```
 
-### 11.4 ConversationMemoryProvider 接口
+### 11.4 Provider Profile：标准 MemoryStore + Capabilities
 
-EchoMem 作为 ConversationMemoryProvider 接入 Clowder 时需实现的精简接口。
-设计原则：只暴露 Clowder 宿主调用的搜索面；写入由 EchoMem 自主完成。
+> **P1-1 codex review 修正**：不定义单独的 ConversationMemoryProvider 接口。
+> 所有 provider（DocMemory / ConversationMemory / GlobalMemory）实现标准
+> `MemoryStore`（§10.6），通过 `StoreCapabilities` 声明自己实现了哪些原语。
+> 宿主通过 `MemoryServiceAdapter`（§4.2）统一适配，按 capabilities 降级。
+
+#### DocMemory Profile
 
 ```typescript
-/**
- * ConversationMemoryProvider — EchoMem 接入 Clowder 的最小接口。
- *
- * 与 IEvidenceStore 的区别：
- * 1. 只暴露搜索面（search + getByAnchor），无 upsert/delete
- *    — EchoMem 写入走 Session Memory Engine 协议（result mode）
- * 2. 搜索选项是 SearchOptions 的子集（去掉宿主路由字段）
- * 3. 返回格式与 EvidenceItem 一致，KnowledgeResolver 无感知
- */
-interface ConversationMemoryProvider {
-  // ── 搜索（KnowledgeResolver 扇出调用） ──
-
-  /** 搜索对话记忆 */
-  search(query: string, options?: ConversationSearchOptions): Promise<EvidenceItem[]>;
-
-  /** 带元数据搜索（explain / 降级信息） */
-  searchWithMeta?(
-    query: string,
-    options?: ConversationSearchOptions,
-  ): Promise<EvidenceSearchExecution>;
-
-  /** 精确获取（anchor = thread-${threadId}） */
-  getByAnchor(anchor: string): Promise<EvidenceItem | null>;
-
-  // ── 生命周期 ──
-
-  health(): Promise<boolean>;
-  initialize(): Promise<void>;
-}
-
-/**
- * 对话搜索选项 — SearchOptions 的子集。
- * 不包含 scope/dimension/collections/intent 等宿主路由字段
- * （这些由 KnowledgeResolver 在扇出前消费）。
- */
-interface ConversationSearchOptions {
-  mode?: 'lexical' | 'semantic' | 'hybrid';
-  limit?: number;
-  dateFrom?: string;            // ISO8601
-  dateTo?: string;              // ISO8601
-  threadId?: string;            // 限定在某 thread 下搜索
-  depth?: 'summary' | 'raw';   // summary=thread 级摘要; raw=passage 级消息
-  contextWindow?: number;       // 返回匹配 passage 前后 N 条消息
-  explain?: boolean;            // 返回匹配原因
+// DocMemory：scanner 产物存储
+// 来源：CatCafeScanner.discover() + IndexBuilder 编译
+capabilities: {
+  textBlock: true,          // feature/plan/decision/... 文档索引
+  relationEdge: true,       // doc-to-doc 关系图
+  timeline: true,           // EventMemory（认知转变事件）
+  lexicalSearch: true,
+  semanticSearch: true,     // 取决于 EmbeddingProvider
+  hybridSearch: true,
+  graphTraversal: true,
+  entityResolution: true,   // provider-local EntityResolver
 }
 ```
+
+#### ConversationMemory Profile（Phase 1）
+
+```typescript
+// ConversationMemory：对话事件流存储
+// 来源：round-result 回调 / raw messages / episode summaries
+// Phase 1 只实现 TextBlock；后续可实现 RelationEdge（SPO）和 Timeline（Episode）
+capabilities: {
+  textBlock: true,          // 对话消息 passage + thread 摘要
+  relationEdge: false,      // Phase 2: EchoMem 的 SPO → RelationEdge
+  timeline: false,          // Phase 2: EchoMem 的 EpisodeEvent → Timeline
+  lexicalSearch: true,
+  semanticSearch: true,
+  hybridSearch: true,
+  graphTraversal: false,
+  entityResolution: false,  // Phase 2: provider-local 实体解析
+}
+```
+
+#### 为什么不定义单独接口
+
+- 协议包只有一套接口（`MemoryStore`，§10.6），避免 ConversationMemory 后续加 RelationEdge / Timeline 时变成第二套协议
+- `KnowledgeResolver` 已经按 capabilities 降级（capability=false → 该原语操作返回空 / 抛 NotSupportedError）
+- EchoMem develop 分支已有 `AtomicMemory`（SPO）、`EpisodeEvent`、`GraphEdge` — 这些映射到 `RelationEdge` 和 `Timeline` 是自然的（§10.9），只是 Phase 1 暂不实现
 
 ### 11.5 协议适配：EchoAgent Session Memory Engine → 三原语
 
@@ -1810,13 +1828,13 @@ EchoAgent 已有的 Session Memory Engine 协议（`protocolVersion: 2026-05-25`
 
 #### 11.5.1 Mode 到原语映射
 
-| EchoAgent mode | 方向 | 对应三原语操作 | 说明 |
-|----------------|------|-------------|------|
-| `probe` | EchoMem → Clowder | `health()` + `capabilities()` | 健康检查 + 能力声明 |
-| `transform` | EchoMem → 宿主 | `TextBlockStore.search()` | 根据对话上下文检索记忆，注入 request messages |
-| `result` | 宿主 → EchoMem | `TextBlockStore.put()` | 接收轮次结果，提取并存储对话记忆 |
-| `memory_query` (help) | 宿主 → EchoMem | `StoreCapabilities` | 返回引擎能力说明 |
-| `memory_query` (query) | 宿主 → EchoMem | `TextBlockStore.search()` | 工具调用触发的显式记忆查询 |
+| EchoAgent mode | 方向 | Phase 1 对应操作 | Phase 2+ 扩展 |
+|----------------|------|----------------|--------------|
+| `probe` | EchoMem → Clowder | `health()` + `capabilities()` | — |
+| `transform` | EchoMem → 宿主 | `TextBlockStore.search()` | + `RelationEdgeStore.neighbors()` |
+| `result` | 宿主 → EchoMem | `TextBlockStore.put()` | + `RelationEdgeStore.link()` + `TimelineStore.append()` |
+| `memory_query` (help) | 宿主 → EchoMem | `StoreCapabilities` | — |
+| `memory_query` (query) | 宿主 → EchoMem | `TextBlockStore.search()` | + `RelationEdgeStore.traverse()` |
 
 #### 11.5.2 协议差异适配
 
@@ -1832,12 +1850,20 @@ EchoAgent 已有的 Session Memory Engine 协议（`protocolVersion: 2026-05-25`
 ```typescript
 /**
  * EchoMemAdapter — 桥接 EchoAgent Session Memory Engine 协议与
- * ConversationMemoryProvider 接口。
+ * 标准 MemoryStore 接口（§10.6）。
  *
- * 内部使用 memory_query mode 实现搜索，probe mode 实现健康检查。
+ * Phase 1 只实现 TextBlockStore（搜索面），probe mode 实现健康检查。
  * 写入不经过此 adapter（EchoMem 通过 result mode 自主收集）。
+ * 后续 Phase 2 可实现 RelationEdgeStore / TimelineStore。
+ *
+ * 宿主通过 MemoryServiceAdapter（§4.2）把 MemoryStore 包装为
+ * IEvidenceStore，KnowledgeResolver 无感知。
  */
-class EchoMemAdapter implements ConversationMemoryProvider {
+class EchoMemAdapter implements MemoryStore {
+  // Phase 1: 只实现 blocks
+  readonly blocks: EchoMemTextBlockAdapter;
+  readonly edges = NOT_SUPPORTED;    // Phase 2
+  readonly timelines = NOT_SUPPORTED; // Phase 2
   constructor(
     private endpoint: string,
     private namespace: string,
@@ -1908,6 +1934,57 @@ class EchoMemAdapter implements ConversationMemoryProvider {
   }
 }
 ```
+
+#### 11.5.4 反向适配：DocMemory → EchoAgent（P2-1）
+
+> EchoAgent 的 `memory_query_via_engine` 工具把 query/result schema
+> 完全透传给插件（`data: unknown`），平台只做最小校验。
+> 因此 DocMemory 接入 EchoAgent 不是"EchoAgent 实现 KnowledgeResolver 就行"，
+> 而是需要一个 `EchoAgentMemoryEngineAdapter`。
+
+```typescript
+/**
+ * EchoAgentMemoryEngineAdapter — 把 Clowder DocMemory 包装为
+ * EchoAgent memory_query dialect。
+ *
+ * 部署在 EchoAgent 侧作为 memory engine 插件，
+ * 让 EchoAgent 的 AI agent 在对话中能搜索 Clowder 的文档知识。
+ *
+ * 生命周期：
+ *   probe  → 返回 DocMemory 的 capabilities
+ *   transform → 用 DocMemory 搜索相关文档，注入对话上下文
+ *   result → 可选：接收对话结果用于更新知识关联
+ *   memory_query → 把 EchoAgent query payload 翻译为 TextSearchOptions
+ */
+class EchoAgentMemoryEngineAdapter {
+  constructor(
+    private docMemoryEndpoint: string,  // Clowder 记忆服务 §3.3 endpoint
+    private namespace: string,
+  ) {}
+
+  /** EchoAgent query payload → Clowder TextSearchOptions */
+  async handleMemoryQuery(payload: {
+    action: 'help' | 'query';
+    query?: Record<string, unknown>;
+  }): Promise<{ ok: true; result: unknown }> {
+    if (payload.action === 'help') {
+      return { ok: true, result: { capabilities: '...' } };
+    }
+    // 翻译 EchoAgent 的 query dialect → POST /blocks/search
+    const searchOpts = this.translateQuery(payload.query);
+    const results = await this.post(
+      `${this.docMemoryEndpoint}/blocks/search`,
+      { query: searchOpts.query, options: searchOpts },
+    );
+    // 包装成 EchoAgent 期望的 result 格式
+    return { ok: true, result: results };
+  }
+}
+```
+
+**部署模式**：EchoAgentMemoryEngineAdapter 作为一个独立 HTTP 服务，
+注册为 EchoAgent session 的 custom memory engine endpoint。
+EchoAgent 通过现有 `memory_query` mode 透传查询，adapter 翻译后调用 Clowder 记忆服务。
 
 ### 11.6 SearchOptions → 两侧 Provider 分流映射
 
@@ -1988,7 +2065,7 @@ registry.register('echomem', new EchoMemBackendProvider());
 }
 ```
 
-4. **实体种子注入**：Clowder 定期推送 EntitySeed 到 EchoMem。可通过 `memory_query` 的扩展 action `seed_entities` 实现，或通过独立的管理 API。
+4. **EntityResolver（provider-local）**：EchoMem 维护自己的实体解析（从对话中提取人名、概念等）。Clowder 宿主可选提供一个轻量的共享 alias normalizer，用于跨 provider query expansion（如用户搜 "砚砚" 时两侧都能扩展到 "缅因猫"），但不要求所有 provider 共享同一个实体库（避免跨租户 / 跨 session 边界混淆）。
 
 ### 11.8 回退策略
 
@@ -2014,10 +2091,12 @@ registry.register('echomem', new EchoMemBackendProvider());
 | # | 问题 | 当前立场 |
 |---|------|---------|
 | 1 | EchoMem 的 `memory_query` response 格式如何与 EvidenceItem 对齐？ | 需要 EchoMem 侧定义结构化返回（当前 `data` 是 unknown） |
-| 2 | 实体种子推送走什么协议？ | 倾向扩展 `memory_query` action（加 `seed_entities`）；避免新增端点 |
-| 3 | Thread 摘要（summary_segments）何时移交 EchoMem？ | Phase 2 讨论。当前 Clowder 能用，不急 |
+| 2 | 共享 alias normalizer 的 scope 如何划定？ | provider-local 实体是默认；共享 normalizer 只做 query expansion，不强制同步全量实体库。跨租户 / 跨 session 边界需要隔离 |
+| 3 | Thread 摘要（summary_segments）何时移交 EchoMem Episode？ | Phase 2 讨论。当前 Clowder 能用，不急 |
 | 4 | EchoMem 如何处理 193 个 thread 中 188 个孤儿 anchor 的 passage？ | EchoMem 接管后应补建 parent doc；或放宽 FK 约束 |
 | 5 | 两侧搜索结果的 RRF 融合权重如何调？ | 默认等权。消费 rerank（F200）在融合后由宿主统一做 |
+| 6 | EchoAgentMemoryEngineAdapter 部署架构？ | 倾向独立 HTTP 服务 + 注册为 EchoAgent memory engine endpoint。需要 EchoAgent 侧配合 |
+| 7 | ConversationMemory Phase 2 何时实现 RelationEdge / Timeline？ | 取决于 EchoMem develop 分支稳定性（SPO / EpisodeEvent 成熟度） |
 
 ---
 
