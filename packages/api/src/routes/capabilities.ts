@@ -1353,7 +1353,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
         // Build globalCustomSourceSkills from main config — needed for plugin
         // skill source resolution in syncProject (co-creator formula:
         // resolve(instanceRoot, skillsSource)).
-        const globalCustomSourceSkills = new Map<string, { skillsSource: string }>();
+        const globalCustomSourceSkills = new Map<string, { skillsSource: string; pluginId?: string }>();
         {
           const sourceConfig = pathsEqual(projectRoot, mainProjectRoot)
             ? config
@@ -1362,6 +1362,7 @@ export const capabilitiesRoutes: FastifyPluginAsync = async (app) => {
             if (gc.type === 'skill' && gc.source === 'cat-cafe' && gc.skillsSource) {
               globalCustomSourceSkills.set(gc.id, {
                 skillsSource: isAbsolute(gc.skillsSource) ? gc.skillsSource : resolve(mainProjectRoot, gc.skillsSource),
+                ...(gc.pluginId ? { pluginId: gc.pluginId } : {}),
               });
             }
           }
