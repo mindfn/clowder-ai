@@ -79,7 +79,7 @@ export const skillsWriteRoutes: FastifyPluginAsync<SkillsWriteRouteOptions> = as
       // Extract global policy for external projects
       const globalDisabledSkills = new Set<string>();
       const globalMountPaths = new Map<string, readonly string[]>();
-      const globalCustomSourceSkills = new Map<string, { skillsSource: string; pluginId?: string }>();
+      const globalCustomSourceSkills = new Map<string, { skillsSource: string }>();
       for (const cap of globalConfig?.capabilities ?? []) {
         if (cap.type !== 'skill' || cap.source !== 'cat-cafe') continue;
         if (!(cap.globalEnabled ?? cap.enabled)) globalDisabledSkills.add(cap.id);
@@ -90,7 +90,6 @@ export const skillsWriteRoutes: FastifyPluginAsync<SkillsWriteRouteOptions> = as
             skillsSource: isAbsolute(cap.skillsSource)
               ? cap.skillsSource
               : resolve(globalProjectRoot, cap.skillsSource),
-            ...(cap.pluginId ? { pluginId: cap.pluginId } : {}),
           });
         }
       }
@@ -205,7 +204,7 @@ export const skillsWriteRoutes: FastifyPluginAsync<SkillsWriteRouteOptions> = as
       const globalConfig = await readCapabilitiesConfig(globalProjectRoot);
       const globalDisabledSkills = new Set<string>();
       const globalMountPaths = new Map<string, readonly string[]>();
-      const globalCustomSources = new Map<string, { skillsSource: string; pluginId?: string }>();
+      const globalCustomSources = new Map<string, { skillsSource: string }>();
       for (const cap of globalConfig?.capabilities ?? []) {
         if (cap.type !== 'skill' || cap.source !== 'cat-cafe') continue;
         if (!(cap.globalEnabled ?? cap.enabled)) globalDisabledSkills.add(cap.id);
@@ -215,7 +214,6 @@ export const skillsWriteRoutes: FastifyPluginAsync<SkillsWriteRouteOptions> = as
             skillsSource: isAbsolute(cap.skillsSource)
               ? cap.skillsSource
               : resolve(globalProjectRoot, cap.skillsSource),
-            ...(cap.pluginId ? { pluginId: cap.pluginId } : {}),
           });
         }
       }

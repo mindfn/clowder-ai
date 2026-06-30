@@ -1623,10 +1623,19 @@ describe('Skills Route', () => {
     );
     await writeCapabilitiesConfig(projectDir, {
       version: 2,
-      capabilities: [{ id: skillName, type: 'skill', enabled: true, source: 'cat-cafe', pluginId }],
+      capabilities: [
+        {
+          id: skillName,
+          type: 'skill',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId,
+          skillsSource: join(pluginsDir, pluginId, 'skills'),
+        },
+      ],
     });
 
-    const app = await buildSessionSkillsApp();
+    const app = await buildSessionSkillsApp({ mainProjectRoot: projectDir });
     try {
       const res = await app.inject({
         method: 'POST',
@@ -1685,13 +1694,19 @@ describe('Skills Route', () => {
         `    path: skills/${skillName}`,
       ].join('\n'),
     );
+    const pluginSkillsSource = join(pluginsDir, pluginId, 'skills');
     await writeCapabilitiesConfig(projectDir, {
       version: 2,
-      capabilities: [{ id: skillName, type: 'skill', enabled: true, source: 'cat-cafe', pluginId }],
+      capabilities: [
+        { id: skillName, type: 'skill', enabled: true, source: 'cat-cafe', pluginId, skillsSource: pluginSkillsSource },
+      ],
     });
     await writeCapabilitiesConfig(mainRoot, {
       version: 2,
-      capabilities: [{ id: 'debugging', type: 'skill', enabled: true, source: 'cat-cafe' }],
+      capabilities: [
+        { id: 'debugging', type: 'skill', enabled: true, source: 'cat-cafe' },
+        { id: skillName, type: 'skill', enabled: true, source: 'cat-cafe', pluginId, skillsSource: pluginSkillsSource },
+      ],
     });
 
     const app = await buildSessionSkillsApp({ mainProjectRoot: mainRoot });
@@ -1757,7 +1772,15 @@ describe('Skills Route', () => {
     await writeCapabilitiesConfig(projectDir, {
       version: 2,
       capabilities: [
-        { id: skillName, type: 'skill', enabled: true, source: 'cat-cafe', pluginId, mountPaths: ['claude'] },
+        {
+          id: skillName,
+          type: 'skill',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId,
+          mountPaths: ['claude'],
+          skillsSource: join(pluginsDir, pluginId, 'skills'),
+        },
       ],
     });
     for (const provider of ['codex', 'gemini', 'kimi']) {
@@ -1767,7 +1790,7 @@ describe('Skills Route', () => {
       await symlink(relative(dirname(staleLink), skillSourceDir), staleLink);
     }
 
-    const app = await buildSessionSkillsApp();
+    const app = await buildSessionSkillsApp({ mainProjectRoot: projectDir });
     try {
       const res = await app.inject({
         method: 'POST',
@@ -1825,7 +1848,17 @@ describe('Skills Route', () => {
 
     await writeCapabilitiesConfig(projectDir, {
       version: 2,
-      capabilities: [{ id: skillName, type: 'skill', enabled: true, source: 'cat-cafe', pluginId, mountPaths: [] }],
+      capabilities: [
+        {
+          id: skillName,
+          type: 'skill',
+          enabled: true,
+          source: 'cat-cafe',
+          pluginId,
+          mountPaths: [],
+          skillsSource: join(pluginsDir, pluginId, 'skills'),
+        },
+      ],
     });
     for (const provider of ['claude', 'codex', 'gemini', 'kimi']) {
       const staleDir = join(projectDir, `.${provider}/skills`);
@@ -1834,7 +1867,7 @@ describe('Skills Route', () => {
       await symlink(relative(dirname(staleLink), skillSourceDir), staleLink);
     }
 
-    const app = await buildSessionSkillsApp();
+    const app = await buildSessionSkillsApp({ mainProjectRoot: projectDir });
     try {
       const res = await app.inject({
         method: 'POST',
