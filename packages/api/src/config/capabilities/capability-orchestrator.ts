@@ -1779,37 +1779,5 @@ export async function orchestrate(
   }
   await generateCliConfigs(config, cliConfigPaths, projectRoot);
 
-  // F070: Governance bootstrap for external projects
-  if (opts?.catCafeRepoRoot && projectRoot !== opts.catCafeRepoRoot) {
-    await tryGovernanceBootstrap(projectRoot, opts.catCafeRepoRoot);
-  }
-
   return config;
-}
-
-/**
- * F070: Check governance state and auto-bootstrap for confirmed external projects.
- * Returns the governance health summary (for inclusion in API responses).
- */
-export async function tryGovernanceBootstrap(
-  projectRoot: string,
-  catCafeRoot: string,
-): Promise<{ bootstrapped: boolean; needsConfirmation: boolean }> {
-  const { GovernanceBootstrapService } = await import('../governance/governance-bootstrap.js');
-  const service = new GovernanceBootstrapService(catCafeRoot);
-  const registry = service.getRegistry();
-  const existing = await registry.get(projectRoot);
-
-  if (!existing) {
-    // Never bootstrapped — needs first-time user confirmation
-    return { bootstrapped: false, needsConfirmation: true };
-  }
-
-  if (existing.confirmedByUser) {
-    // Already confirmed — auto-sync (idempotent)
-    await service.bootstrap(projectRoot, { dryRun: false });
-    return { bootstrapped: true, needsConfirmation: false };
-  }
-
-  return { bootstrapped: false, needsConfirmation: true };
 }
