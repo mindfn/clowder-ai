@@ -2792,7 +2792,14 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
       }
     }
 
-    // All validation passed — apply mutations
+    // All validation passed — apply mutations.
+    // #872 cloud-review P2 (R3): failable operations first. atomicMergeThreadMetadata can
+    // throw on CAS exhaustion or unparseable stored data; run it before title/labels so
+    // a throw doesn't leave visible fields partially committed.
+    const hasMetadataUpdate = Object.keys(metadataFields).length > 0;
+    if (hasMetadataUpdate) {
+      await threadStore.atomicMergeThreadMetadata(effectiveThreadId, metadataFields);
+    }
     if (title !== undefined) {
       await threadStore.updateTitle(effectiveThreadId, title);
       // #872 P2: refresh evidence index after title change (same as PATCH /api/threads/:id)
@@ -2805,12 +2812,6 @@ export const callbacksRoutes: FastifyPluginAsync<CallbackRoutesOptions> = async 
     }
     if (labels !== undefined) {
       await threadStore.updateLabels(effectiveThreadId, labels);
-    }
-
-    // #872 P2: Atomically merge metadata to prevent concurrent write races
-    const hasMetadataUpdate = Object.keys(metadataFields).length > 0;
-    if (hasMetadataUpdate) {
-      await threadStore.atomicMergeThreadMetadata(effectiveThreadId, metadataFields);
     }
 
     // Return the updated state
