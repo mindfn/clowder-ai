@@ -318,6 +318,11 @@ export async function addSkill(
     const builtInConfigCollision = config.capabilities.find(
       (c) => c.type === 'skill' && c.id === capId && c.source === 'cat-cafe' && !c.pluginId,
     );
+    // Plugin addSkill is always called from PluginResourceActivator with cascade
+    // provided. The fallback is defensive — if hit, it means the caller didn't
+    // provide the built-in skills source, so we use the project root heuristic.
+    // This is correct when projectRoot IS the instance root (the only valid
+    // call site for plugin registration).
     const builtInSkillsRoot = opts.cascade?.catCafeSkillsSource ?? join(projectRoot, 'cat-cafe-skills');
     const builtInDirExists = existsSync(join(builtInSkillsRoot, capId));
     if (builtInConfigCollision || builtInDirExists) {

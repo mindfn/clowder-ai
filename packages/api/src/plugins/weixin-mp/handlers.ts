@@ -66,7 +66,8 @@ async function uploadWithTokenRetry(
   const perform = async () => {
     const token = await ctx.tokenManager.getAccessToken();
     const sep = path.includes('?') ? '&' : '?';
-    const data = await deps.uploadFormData(`${BASE}${path}${sep}access_token=${token}`, blob, fileName);
+    const encoded = encodeURIComponent(token);
+    const data = await deps.uploadFormData(`${BASE}${path}${sep}access_token=${encoded}`, blob, fileName);
     checkUploadResponse(data);
     return data;
   };
