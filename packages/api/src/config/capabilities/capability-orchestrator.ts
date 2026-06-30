@@ -1468,7 +1468,7 @@ export function ensureCoreManagedMcps(
   if (legacyBlockedCats.length > 0) {
     for (let i = 0; i < capabilities.length; i++) {
       const cap = capabilities[i]!;
-      if (isBuiltinManaged(cap) && cap.id !== 'cat-cafe' && !cap.blockedCats) {
+      if (isBuiltinManaged(cap) && cap.id !== 'cat-cafe' && !cap.blockedCats?.length) {
         // Clone to avoid mutating original config entry
         capabilities[i] = { ...cap, blockedCats: [...legacyBlockedCats] };
         migrated = true;

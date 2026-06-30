@@ -333,6 +333,44 @@ describe('#1049 — healCatCafeMcpTopology restores missing managed MCPs', () =>
     );
   });
 
+  it('applies legacy overrides to existing splits with empty blockedCats array (bot P1)', () => {
+    // Edge case: existing split has blockedCats: [] (e.g., from MCP global-new sync).
+    // Empty array should be treated as "no blocks set yet" — legacy overrides apply.
+    const config = {
+      version: 2,
+      capabilities: [
+        {
+          id: 'cat-cafe',
+          type: 'mcp',
+          enabled: true,
+          globalEnabled: true,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['index.js'] },
+          overrides: [{ catId: 'codex', enabled: false }],
+        },
+        {
+          id: 'cat-cafe-collab',
+          type: 'mcp',
+          enabled: true,
+          globalEnabled: true,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['collab.js'] },
+          blockedCats: [],
+        },
+      ],
+    };
+
+    const result = healCatCafeMcpTopology(config, { catCafeRepoRoot: '/fake/root' });
+    assert.ok(result.migrated, 'should report migration occurred');
+
+    const collab = result.config.capabilities.find((c) => c.id === 'cat-cafe-collab' && c.source === 'cat-cafe');
+    assert.ok(collab, 'cat-cafe-collab should exist');
+    assert.ok(
+      Array.isArray(collab.blockedCats) && collab.blockedCats.includes('codex'),
+      'cat-cafe-collab with empty blockedCats should receive legacy overrides',
+    );
+  });
+
   it('inherits legacy main disabled/env/workingDir over existing splits (codex PR #13 R3 P1)', () => {
     // Regression test: 3 core splits exist + legacy main with disabled state,
     // custom env, and workingDir. ensureCoreManagedMcps adds supplemental splits
