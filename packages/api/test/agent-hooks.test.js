@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +9,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import Fastify from 'fastify';
 import { buildAgentHookTargets, getAgentHookStatus, syncAgentHooks } from '../dist/agent-hooks/index.js';
 import { agentHooksRoutes } from '../dist/routes/agent-hooks.js';
+import { resolveStartupProjectRoot } from '../dist/utils/startup-root.js';
 
 const HEADERS = { 'x-cat-cafe-user': 'test-user' };
 const SESSION_HEADERS = { 'x-test-session-user': 'test-user' };
@@ -397,6 +399,19 @@ describe('agent hook sync targets', () => {
   it('health status reports stale for non-plugin managed MCP orphans', async () => {
     // Non-plugin orphans (managed MCPs removed from global config) should
     // surface as stale — they represent real drift, unlike plugin orphans.
+    //
+    // The orphan filter requires a valid global config at the startup root
+    // (filterOrphanIssues falls back to filtering ALL orphans when global
+    // is unreadable). Ensure a minimal global config exists for CI envs
+    // where .cat-cafe/ is not checked in.
+    const startupRoot = resolveStartupProjectRoot();
+    const globalCapsPath = join(startupRoot, '.cat-cafe', 'capabilities.json');
+    const globalCapsExisted = existsSync(globalCapsPath);
+    if (!globalCapsExisted) {
+      await mkdir(join(startupRoot, '.cat-cafe'), { recursive: true });
+      await writeFile(globalCapsPath, JSON.stringify({ version: 2, capabilities: [] }), 'utf-8');
+    }
+
     const catCafeDir = join(projectRoot, '.cat-cafe');
     const capPath = join(catCafeDir, 'capabilities.json');
     await mkdir(catCafeDir, { recursive: true });
@@ -415,11 +430,18 @@ describe('agent hook sync targets', () => {
     });
     await writeFile(capPath, JSON.stringify(synced, null, 2), 'utf-8');
 
-    const status = await getAgentHookStatus({ projectRoot, targetRoot, ownerAuthorized: true });
-    const mcpResult = status.targets.find((t) => t.name === 'mcp');
-    assert.ok(mcpResult, 'health status must include mcp target');
-    assert.equal(mcpResult.status, 'stale', 'non-plugin managed orphan must report stale');
-    assert.equal(mcpResult.drifted, true, 'non-plugin managed orphan must report drifted');
+    try {
+      const status = await getAgentHookStatus({ projectRoot, targetRoot, ownerAuthorized: true });
+      const mcpResult = status.targets.find((t) => t.name === 'mcp');
+      assert.ok(mcpResult, 'health status must include mcp target');
+      assert.equal(mcpResult.status, 'stale', 'non-plugin managed orphan must report stale');
+      assert.equal(mcpResult.drifted, true, 'non-plugin managed orphan must report drifted');
+    } finally {
+      // Clean up global config if we created it (don't leave artifacts in repo root)
+      if (!globalCapsExisted) {
+        await rm(globalCapsPath, { force: true });
+      }
+    }
   });
 
   it('ownerAuthorized omitted defaults to fail-closed (no capability sync)', async () => {
