@@ -394,6 +394,34 @@ describe('agent hook sync targets', () => {
     assert.equal(mcpResult.drifted, false, 'orphan-only MCP drift must not report drifted');
   });
 
+  it('health status reports stale for non-plugin managed MCP orphans', async () => {
+    // Non-plugin orphans (managed MCPs removed from global config) should
+    // surface as stale — they represent real drift, unlike plugin orphans.
+    const catCafeDir = join(projectRoot, '.cat-cafe');
+    const capPath = join(catCafeDir, 'capabilities.json');
+    await mkdir(catCafeDir, { recursive: true });
+    await writeFile(capPath, JSON.stringify({ version: 2, capabilities: [] }), 'utf-8');
+    await syncAgentHooks({ projectRoot, targetRoot, ownerAuthorized: true });
+    const synced = JSON.parse(await readFile(capPath, 'utf-8'));
+
+    // Inject a managed (non-plugin) orphan — source 'cat-cafe' but NO pluginId
+    const managedOrphanId = `managed-orphan-${randomUUID().slice(0, 8)}`;
+    synced.capabilities.push({
+      type: 'mcp',
+      id: managedOrphanId,
+      source: 'cat-cafe',
+      enabled: true,
+      mcpServer: { command: 'echo', args: ['test'] },
+    });
+    await writeFile(capPath, JSON.stringify(synced, null, 2), 'utf-8');
+
+    const status = await getAgentHookStatus({ projectRoot, targetRoot, ownerAuthorized: true });
+    const mcpResult = status.targets.find((t) => t.name === 'mcp');
+    assert.ok(mcpResult, 'health status must include mcp target');
+    assert.equal(mcpResult.status, 'stale', 'non-plugin managed orphan must report stale');
+    assert.equal(mcpResult.drifted, true, 'non-plugin managed orphan must report drifted');
+  });
+
   it('ownerAuthorized omitted defaults to fail-closed (no capability sync)', async () => {
     // When ownerAuthorized is not passed at all (undefined), capability sync should NOT run.
     // This is the fail-closed default demanded by P2-4 re-review.
