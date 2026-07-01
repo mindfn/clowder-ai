@@ -1,4 +1,6 @@
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { getAgentHookStatus, syncAgentHooks } from '../agent-hooks/index.js';
 import { findMonorepoRoot } from '../utils/monorepo-root.js';
@@ -72,11 +74,21 @@ function isTrustedLocalApiRequest(request: FastifyRequest): boolean {
   return hasTrustedLocalOrigin(request.headers.origin);
 }
 
-function resolveOptions(options: AgentHooksRouteOptions, request: FastifyRequest) {
+/**
+ * Validate that `requestProjectRoot` points to an initialised project directory
+ * (.cat-cafe/ exists).  Returns the validated path or null.
+ */
+function validateProjectRoot(requestProjectRoot: string | null): string | null {
+  if (!requestProjectRoot) return null;
+  if (!existsSync(join(requestProjectRoot, '.cat-cafe'))) return null;
+  return requestProjectRoot;
+}
+
+function resolveOptions(options: AgentHooksRouteOptions, request: FastifyRequest, requestProjectRoot?: string | null) {
   const targetRoot = options.targetRoot ?? (isTrustedLocalApiRequest(request) ? homedir() : null);
   if (!targetRoot) return null;
   return {
-    projectRoot: options.projectRoot ?? findMonorepoRoot(process.cwd()),
+    projectRoot: requestProjectRoot ?? options.projectRoot ?? findMonorepoRoot(process.cwd()),
     targetRoot,
   };
 }
@@ -89,7 +101,9 @@ export const agentHooksRoutes: FastifyPluginAsync<AgentHooksRouteOptions> = asyn
       return { error: 'Session identity required for browser requests' };
     }
 
-    const resolved = resolveOptions(options, request);
+    const query = request.query as Record<string, unknown>;
+    const projectRoot = validateProjectRoot(nonEmptyString(query.projectPath));
+    const resolved = resolveOptions(options, request, projectRoot);
     if (!resolved) {
       reply.status(403);
       return { error: 'Agent hook health requires an explicit targetRoot or a local API host' };
@@ -105,7 +119,9 @@ export const agentHooksRoutes: FastifyPluginAsync<AgentHooksRouteOptions> = asyn
       return { error: 'Session identity required for browser requests' };
     }
 
-    const resolved = resolveOptions(options, request);
+    const body = request.body as Record<string, unknown> | null;
+    const projectRoot = validateProjectRoot(nonEmptyString(body?.projectPath));
+    const resolved = resolveOptions(options, request, projectRoot);
     if (!resolved) {
       reply.status(403);
       return { error: 'Agent hook sync requires an explicit targetRoot or a local API host' };
