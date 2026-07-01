@@ -223,11 +223,15 @@ export class GovernanceBootstrapService {
     // 2b. MCP entries from global config (#1049 Step 2)
     // New projects start with skill-only capabilities; seed MCP entries
     // from the root config so MCP management works from first use.
+    // Only sync global-new issues — project-orphan/config-mismatch could
+    // remove plugin MCPs or overwrite user customizations on re-bootstrap.
     if (!opts.dryRun && globalConfig) {
       try {
         const drift = await checkMcpProject(targetProject, this.catCafeRoot, globalConfig);
-        if (drift.issues.some((i) => i.type === 'global-new')) {
-          await syncMcpDrift(targetProject, this.catCafeRoot, drift, undefined, 'use-global');
+        const seedIssues = drift.issues.filter((i) => i.type === 'global-new');
+        if (seedIssues.length > 0) {
+          const seedDrift = { ...drift, issues: seedIssues };
+          await syncMcpDrift(targetProject, this.catCafeRoot, seedDrift, undefined, 'use-global');
         }
       } catch {
         /* MCP sync failure should not block bootstrap */
