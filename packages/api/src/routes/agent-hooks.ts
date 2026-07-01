@@ -84,12 +84,19 @@ function validateProjectRoot(requestProjectRoot: string | null): string | null {
   return requestProjectRoot;
 }
 
-function resolveOptions(options: AgentHooksRouteOptions, request: FastifyRequest, requestProjectRoot?: string | null) {
+function resolveOptions(
+  options: AgentHooksRouteOptions,
+  request: FastifyRequest,
+  capabilityProjectRoot?: string | null,
+) {
   const targetRoot = options.targetRoot ?? (isTrustedLocalApiRequest(request) ? homedir() : null);
   if (!targetRoot) return null;
   return {
-    projectRoot: requestProjectRoot ?? options.projectRoot ?? findMonorepoRoot(process.cwd()),
+    projectRoot: options.projectRoot ?? findMonorepoRoot(process.cwd()),
     targetRoot,
+    // When the thread targets an external project, skill/MCP checks use
+    // that project's config.  Hook templates always come from projectRoot.
+    ...(capabilityProjectRoot ? { capabilityProjectRoot } : {}),
   };
 }
 

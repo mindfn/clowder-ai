@@ -38,8 +38,15 @@ export interface AgentHookStatusResponse {
 }
 
 export interface AgentHookOptions {
+  /** Install/root repo — source for hook templates (.claude/hooks/). */
   projectRoot: string;
   targetRoot: string;
+  /**
+   * When the thread targets an external project, this is that project's path.
+   * Skill/MCP health and sync operate against this root instead of projectRoot.
+   * Defaults to projectRoot when not set (root project thread).
+   */
+  capabilityProjectRoot?: string;
   /**
    * Fail-closed: only `true` enables capability-level mutations (skill/MCP sync).
    * Omitted / undefined / false → hook file sync only, no capability writes.
@@ -268,10 +275,10 @@ export async function getAgentHookStatus(options: AgentHookOptions): Promise<Age
   const hookResults = [...targets.map(targetHealth), claudeSettingsHealth(options.targetRoot)];
 
   // #1049 Step 3: unified health check — hooks + skills + MCPs
-  const [skillHealth, mcpHealth] = await Promise.all([
-    checkSkillHealth(options.projectRoot),
-    checkMcpHealth(options.projectRoot),
-  ]);
+  // capabilityProjectRoot targets the thread's project; projectRoot stays
+  // the install repo for hook templates.
+  const capRoot = options.capabilityProjectRoot ?? options.projectRoot;
+  const [skillHealth, mcpHealth] = await Promise.all([checkSkillHealth(capRoot), checkMcpHealth(capRoot)]);
   const results = [...hookResults, skillHealth, mcpHealth];
 
   return {
@@ -295,7 +302,10 @@ export async function syncAgentHooks(options: AgentHookOptions): Promise<AgentHo
   //   2. hasCapabilities — uninitialised/malformed projects skip (no side-effect creation).
   //      Parse-validates the project config, not just file existence — malformed JSON
   //      could cause skill/MCP sync to treat the project as empty and wipe entries.
-  const projectConfig = options.ownerAuthorized === true ? await readCapabilitiesConfig(options.projectRoot) : null;
+  // capabilityProjectRoot targets the thread's project for skill/MCP sync;
+  // projectRoot stays the install repo for hook templates.
+  const capRoot = options.capabilityProjectRoot ?? options.projectRoot;
+  const projectConfig = options.ownerAuthorized === true ? await readCapabilitiesConfig(capRoot) : null;
   const hasCapabilities = projectConfig !== null;
 
   if (hasCapabilities) {
@@ -308,7 +318,7 @@ export async function syncAgentHooks(options: AgentHookOptions): Promise<AgentHo
 
     if (globalConfig !== null) {
       try {
-        const ctx = await computeSkillDrift(options.projectRoot);
+        const ctx = await computeSkillDrift(capRoot);
         if (ctx) {
           const { newSkills, stale, conflicts } = ctx.drift;
           if (newSkills.length + stale.length + conflicts.length > 0) {
@@ -328,11 +338,11 @@ export async function syncAgentHooks(options: AgentHookOptions): Promise<AgentHo
     }
 
     try {
-      const drift = await checkMcpProject(options.projectRoot, startupRoot, globalConfig);
+      const drift = await checkMcpProject(capRoot, startupRoot, globalConfig);
       const nonDestructiveIssues = filterOrphanIssues(drift, globalConfig !== null);
       if (nonDestructiveIssues.length > 0) {
         const safeDrift = { ...drift, issues: nonDestructiveIssues };
-        await syncMcpDrift(options.projectRoot, startupRoot, safeDrift, undefined, 'keep-project');
+        await syncMcpDrift(capRoot, startupRoot, safeDrift, undefined, 'keep-project');
       }
     } catch {
       /* MCP sync failure should not block hook sync result */

@@ -43,6 +43,7 @@ interface UseAgentHookHealthResult {
 let cachedHealth: AgentHookStatusResponse | null = null;
 let cachedProjectPath: string | undefined;
 let hasCachedHealth = false;
+let inFlightProjectPath: string | undefined;
 let inFlightStatus: Promise<AgentHookStatusResponse> | null = null;
 
 function isAgentHookStatusResponse(value: unknown): value is AgentHookStatusResponse {
@@ -56,12 +57,13 @@ function isAgentHookStatusResponse(value: unknown): value is AgentHookStatusResp
 
 async function readAgentHookStatus(projectPath?: string): Promise<AgentHookStatusResponse> {
   if (hasCachedHealth && cachedHealth && cachedProjectPath === projectPath) return cachedHealth;
-  if (inFlightStatus) return inFlightStatus;
+  if (inFlightStatus && inFlightProjectPath === projectPath) return inFlightStatus;
 
   const url = projectPath
     ? `/api/agent-hooks/status?projectPath=${encodeURIComponent(projectPath)}`
     : '/api/agent-hooks/status';
 
+  inFlightProjectPath = projectPath;
   inFlightStatus = apiFetch(url)
     .then(async (res) => {
       if (!res.ok) throw new Error(`agent hook status failed (${res.status})`);
