@@ -37,6 +37,7 @@ export function PluginsContent() {
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState<string | null>(null);
 
   const fetchPlugins = useCallback(async () => {
     try {
@@ -54,10 +55,24 @@ export function PluginsContent() {
     async (plugin: PluginInfo) => {
       const isEnabled = plugin.status === 'enabled' || plugin.status === 'partial';
       const action = isEnabled ? 'disable' : 'enable';
+      const actionLabel = action === 'enable' ? '启用' : '禁用';
       setTogglingId(plugin.id);
+      setToggleError(null);
       try {
-        await apiFetch(`/api/plugins/${plugin.id}/${action}`, { method: 'POST' });
+        const res = await apiFetch(`/api/plugins/${plugin.id}/${action}`, { method: 'POST' });
+        if (!res.ok) {
+          setToggleError(`插件${actionLabel}失败 (${res.status})`);
+          return;
+        }
+        const data = (await res.json().catch(() => ({}))) as { status?: string; error?: string };
+        const isFailed = data.status === 'failed';
+        const isPartial = data.status === 'partial';
+        if (isFailed || isPartial) {
+          setToggleError(data.error ?? `插件${actionLabel}${isPartial ? '部分成功' : '失败'}`);
+        }
         await fetchPlugins();
+      } catch {
+        setToggleError('网络错误');
       } finally {
         setTogglingId(null);
       }
@@ -103,6 +118,11 @@ export function PluginsContent() {
 
   return (
     <div className="flex flex-col gap-3.5" data-testid="plugins-list">
+      {toggleError && (
+        <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300">
+          {toggleError}
+        </div>
+      )}
       {plugins.map((plugin) => {
         const isExpanded = expandedId === plugin.id;
         const isRuntimeEnabled = plugin.status === 'enabled' || plugin.status === 'partial';

@@ -191,6 +191,13 @@ async function syncProjectUnlocked(
   // resolved by the caller against the instance root).
   if (opts.globalCustomSourceSkills) {
     for (const [name, meta] of opts.globalCustomSourceSkills) {
+      // Guard: reject plugin skill names that don't match governance naming rules.
+      // Without this, invalid names (e.g. `My_Skill`) would flow to Phase 3 where
+      // validateSkillName throws and breaks sync for the entire project.
+      if (!isValidSkillName(name)) {
+        console.warn(`[syncProject] Skipping plugin skill with invalid name: "${name}"`);
+        continue;
+      }
       const resolved = isAbsolute(meta.skillsSource) ? meta.skillsSource : resolve(instanceRoot, meta.skillsSource);
       effectiveSourceMap.set(name, resolved);
       customSourceSkillNames.add(name);
