@@ -690,4 +690,68 @@ describe('agent hook routes', () => {
       await chmod(startPath, 0o755);
     }
   });
+
+  it('GET rejects explicit invalid projectPath instead of falling back to host (#1049 regression)', async () => {
+    // An explicit projectPath that does not exist must return 400,
+    // NOT silently fall back to host repo health.
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/agent-hooks/status?projectPath=/nonexistent/path/that/does/not/exist`,
+      headers: SESSION_HEADERS,
+    });
+    assert.equal(res.statusCode, 400, 'invalid projectPath must fail loud with 400');
+    const body = JSON.parse(res.payload);
+    assert.ok(body.error, 'response must include error message');
+    // Must NOT contain health targets (which would mean it read host state)
+    assert.equal(body.targets, undefined, 'must not return host health targets');
+  });
+
+  it('GET rejects explicit uninitialized projectPath (no .cat-cafe/) instead of falling back to host', async () => {
+    // A valid directory that is not initialized as a project must not fall back to host
+    const uninitDir = await mkdtemp(join(tmpdir(), 'agent-hooks-uninit-'));
+    try {
+      const res = await app.inject({
+        method: 'GET',
+        url: `/api/agent-hooks/status?projectPath=${encodeURIComponent(uninitDir)}`,
+        headers: SESSION_HEADERS,
+      });
+      assert.equal(res.statusCode, 400, 'uninitialized projectPath must fail loud with 400');
+      const body = JSON.parse(res.payload);
+      assert.ok(body.error, 'response must include error message');
+      assert.equal(body.targets, undefined, 'must not return host health targets');
+    } finally {
+      await rm(uninitDir, { recursive: true, force: true });
+    }
+  });
+
+  it('POST rejects explicit invalid projectPath instead of mutating host capabilities (#1049 regression)', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/agent-hooks/sync',
+      headers: SESSION_HEADERS,
+      payload: { projectPath: '/nonexistent/sync/target' },
+    });
+    assert.equal(res.statusCode, 400, 'invalid projectPath must fail loud with 400');
+    const body = JSON.parse(res.payload);
+    assert.ok(body.error, 'response must include error message');
+    assert.equal(body.targets, undefined, 'must not return sync results');
+  });
+
+  it('POST rejects explicit uninitialized projectPath instead of mutating host capabilities', async () => {
+    const uninitDir = await mkdtemp(join(tmpdir(), 'agent-hooks-uninit-sync-'));
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/agent-hooks/sync',
+        headers: SESSION_HEADERS,
+        payload: { projectPath: uninitDir },
+      });
+      assert.equal(res.statusCode, 400, 'uninitialized projectPath must fail loud with 400');
+      const body = JSON.parse(res.payload);
+      assert.ok(body.error, 'response must include error message');
+      assert.equal(body.targets, undefined, 'must not return sync results');
+    } finally {
+      await rm(uninitDir, { recursive: true, force: true });
+    }
+  });
 });

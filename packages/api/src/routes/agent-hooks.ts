@@ -5,6 +5,7 @@ import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import { getAgentHookStatus, syncAgentHooks } from '../agent-hooks/index.js';
 import { findMonorepoRoot } from '../utils/monorepo-root.js';
 import { resolveOwnerGate } from '../utils/owner-gate.js';
+import { validateProjectPath } from '../utils/project-path.js';
 
 export interface AgentHooksRouteOptions {
   projectRoot?: string;
@@ -75,13 +76,28 @@ function isTrustedLocalApiRequest(request: FastifyRequest): boolean {
 }
 
 /**
- * Validate that `requestProjectRoot` points to an initialised project directory
- * (.cat-cafe/ exists).  Returns the validated path or null.
+ * Validate an explicit project path using the shared project-path validator
+ * (canonicalization, symlink resolution, denylist) and verify .cat-cafe/ exists.
+ *
+ * @returns `{ ok: true, path }` when valid, `{ ok: false, error }` when invalid.
+ *          Returns `{ ok: true, path: null }` when no explicit path was supplied
+ *          (host-scope request — no error, no project override).
  */
-function validateProjectRoot(requestProjectRoot: string | null): string | null {
-  if (!requestProjectRoot) return null;
-  if (!existsSync(join(requestProjectRoot, '.cat-cafe'))) return null;
-  return requestProjectRoot;
+async function validateExplicitProjectPath(
+  rawPath: string | null,
+): Promise<{ ok: true; path: string | null } | { ok: false; error: string }> {
+  if (!rawPath) return { ok: true, path: null };
+
+  const validated = await validateProjectPath(rawPath);
+  if (!validated) {
+    return { ok: false, error: `Invalid project path: not found, denied, or not a directory: ${rawPath}` };
+  }
+
+  if (!existsSync(join(validated, '.cat-cafe'))) {
+    return { ok: false, error: `Project not initialized (missing .cat-cafe/): ${validated}` };
+  }
+
+  return { ok: true, path: validated };
 }
 
 function resolveOptions(
@@ -109,8 +125,12 @@ export const agentHooksRoutes: FastifyPluginAsync<AgentHooksRouteOptions> = asyn
     }
 
     const query = request.query as Record<string, unknown>;
-    const projectRoot = validateProjectRoot(nonEmptyString(query.projectPath));
-    const resolved = resolveOptions(options, request, projectRoot);
+    const projectValidation = await validateExplicitProjectPath(nonEmptyString(query.projectPath));
+    if (!projectValidation.ok) {
+      reply.status(400);
+      return { error: projectValidation.error };
+    }
+    const resolved = resolveOptions(options, request, projectValidation.path);
     if (!resolved) {
       reply.status(403);
       return { error: 'Agent hook health requires an explicit targetRoot or a local API host' };
@@ -127,8 +147,12 @@ export const agentHooksRoutes: FastifyPluginAsync<AgentHooksRouteOptions> = asyn
     }
 
     const body = request.body as Record<string, unknown> | null;
-    const projectRoot = validateProjectRoot(nonEmptyString(body?.projectPath));
-    const resolved = resolveOptions(options, request, projectRoot);
+    const projectValidation = await validateExplicitProjectPath(nonEmptyString(body?.projectPath));
+    if (!projectValidation.ok) {
+      reply.status(400);
+      return { error: projectValidation.error };
+    }
+    const resolved = resolveOptions(options, request, projectValidation.path);
     if (!resolved) {
       reply.status(403);
       return { error: 'Agent hook sync requires an explicit targetRoot or a local API host' };
