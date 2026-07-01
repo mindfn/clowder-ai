@@ -1465,16 +1465,20 @@ export function ensureCoreManagedMcps(
     migrated = true;
   }
 
-  // Propagate legacy overrides→blockedCats to existing managed splits that lack them.
-  // This ensures the partial-legacy scenario preserves per-cat access restrictions
-  // even for pre-existing splits (not just newly added ones).
+  // Propagate legacy overrides→blockedCats to existing managed splits.
+  // Union with any existing blockedCats so pre-existing per-cat restrictions
+  // are preserved AND legacy-blocked cats are not silently unblocked when
+  // ensureCatCafeMainServer removes the legacy entry.
   if (legacyBlockedCats.length > 0) {
     for (let i = 0; i < capabilities.length; i++) {
       const cap = capabilities[i]!;
-      if (isBuiltinManaged(cap) && cap.id !== 'cat-cafe' && !cap.blockedCats?.length) {
-        // Clone to avoid mutating original config entry
-        capabilities[i] = { ...cap, blockedCats: [...legacyBlockedCats] };
-        migrated = true;
+      if (isBuiltinManaged(cap) && cap.id !== 'cat-cafe') {
+        const existing = cap.blockedCats ?? [];
+        const merged = [...new Set([...existing, ...legacyBlockedCats])];
+        if (merged.length !== existing.length) {
+          capabilities[i] = { ...cap, blockedCats: merged };
+          migrated = true;
+        }
       }
     }
   }

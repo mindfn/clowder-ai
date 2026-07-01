@@ -371,6 +371,53 @@ describe('#1049 — healCatCafeMcpTopology restores missing managed MCPs', () =>
     );
   });
 
+  it('unions legacy blockedCats into existing splits with partial blockedCats (codex R13 P1)', () => {
+    // Regression: a pre-existing split already has blockedCats: ['catA'] but
+    // legacy main blocks both 'catA' and 'catB'. The migration must union them
+    // (not skip non-empty lists), otherwise removing the legacy entry silently
+    // unblocks 'catB' on that split.
+    const config = {
+      version: 2,
+      capabilities: [
+        {
+          id: 'cat-cafe',
+          type: 'mcp',
+          enabled: true,
+          globalEnabled: true,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['index.js'] },
+          overrides: [
+            { catId: 'codex', enabled: false },
+            { catId: 'gemini', enabled: false },
+          ],
+        },
+        {
+          id: 'cat-cafe-collab',
+          type: 'mcp',
+          enabled: true,
+          globalEnabled: true,
+          source: 'cat-cafe',
+          mcpServer: { command: 'node', args: ['collab.js'] },
+          blockedCats: ['codex'],
+        },
+      ],
+    };
+
+    const result = healCatCafeMcpTopology(config, { catCafeRepoRoot: '/fake/root' });
+    assert.ok(result.migrated, 'should report migration occurred');
+
+    const collab = result.config.capabilities.find((c) => c.id === 'cat-cafe-collab' && c.source === 'cat-cafe');
+    assert.ok(collab, 'cat-cafe-collab should exist');
+    assert.ok(
+      Array.isArray(collab.blockedCats) && collab.blockedCats.includes('codex'),
+      'cat-cafe-collab should keep existing blocked cat',
+    );
+    assert.ok(
+      collab.blockedCats.includes('gemini'),
+      'cat-cafe-collab should also receive legacy-blocked gemini (union, not skip)',
+    );
+  });
+
   it('inherits legacy main disabled/env/workingDir over existing splits (codex PR #13 R3 P1)', () => {
     // Regression test: 3 core splits exist + legacy main with disabled state,
     // custom env, and workingDir. ensureCoreManagedMcps adds supplemental splits
