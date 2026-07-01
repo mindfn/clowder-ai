@@ -63,18 +63,19 @@ export function SkillsContent() {
     setDriftRefreshToken((value) => value + 1);
   }, [refreshMountRulesScopeSkills]);
 
-  // Unified toggle handler: PATCH capabilities then re-fetch capabilities
-  // so the mount display also updates.
+  // Unified toggle handler: PATCH capabilities via controls (which internally
+  // refreshes items after the API call). No extra refetch — controls.handleToggle
+  // already calls fetchItems with the correct project context, and a second
+  // fetchItems would clear the propagationConflicts warning via setError(null).
   const handleToggle = useCallback(
     async (skill: SettingsSkillItem, enabled: boolean) => {
       await controls.handleToggle(skill.id, enabled, scope === SCOPE_PROJECT ? 'project' : 'global', {
         source: skill.controls?.source ?? skill.source,
         pluginId: skill.pluginId,
       });
-      await refetchControls(scope === SCOPE_PROJECT ? selectedProjectPath : undefined);
       setDriftRefreshToken((v) => v + 1);
     },
-    [controls, scope, refetchControls, selectedProjectPath],
+    [controls, scope],
   );
 
   const handleMountPointToggle = useCallback(
@@ -83,10 +84,9 @@ export function SkillsContent() {
         source: skill.controls?.source ?? skill.source,
         pluginId: skill.pluginId,
       });
-      await refetchControls(toggleScope === 'project' ? selectedProjectPath : undefined);
       setDriftRefreshToken((v) => v + 1);
     },
-    [controls, refetchControls, selectedProjectPath],
+    [controls],
   );
 
   const sync = useSkillsSync({
@@ -126,10 +126,9 @@ export function SkillsContent() {
       const ids = filteredSkills.filter((s) => s.controls).map((s) => s.id);
       if (ids.length === 0) return;
       await controls.handleBatchToggle(ids, enabled, toggleScope);
-      await refetchControls(scope === SCOPE_PROJECT ? selectedProjectPath : undefined);
       setDriftRefreshToken((v) => v + 1);
     },
-    [controls, scope, filteredSkills, refetchControls, selectedProjectPath],
+    [controls, scope, filteredSkills],
   );
 
   // F228: Compute whether the majority of visible managed skills are enabled
