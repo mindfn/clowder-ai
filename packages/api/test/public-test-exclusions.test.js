@@ -98,7 +98,7 @@ test('registry preserves metadata for active legacy exclusions and drops stale o
       category: 'source_only',
       owner: '@zts212653',
       introducedBy: '069d0f0fb',
-      expiresOn: '2026-06-30',
+      expiresOn: '2026-07-31',
     },
   );
 });
@@ -143,7 +143,7 @@ test('validator rejects malformed, expired, or zero-match exclusion entries', as
               category: 'source_only',
               reason: 'missing owner should fail',
               introducedBy: 'deadbeef0',
-              expiresOn: '2026-06-30',
+              expiresOn: '2026-07-31',
             },
           ],
         },
@@ -187,7 +187,7 @@ test('validator rejects malformed, expired, or zero-match exclusion entries', as
               reason: 'stale entry should fail',
               owner: '@zts212653',
               introducedBy: 'deadbeef2',
-              expiresOn: '2026-06-30',
+              expiresOn: '2026-07-31',
             },
           ],
         },
