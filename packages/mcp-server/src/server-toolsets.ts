@@ -353,6 +353,7 @@ export const EXPLICIT_TOOL_ANNOTATIONS: Record<string, Annotation> = {
   signal_list_studies: A_READ_LOCAL,
   signal_get_article: A_READ_LOCAL,
   limb_list_available: A_READ_LOCAL,
+  limb_list_tools: A_READ_LOCAL,
   limb_pair_list: A_READ_LOCAL,
   // ── Library reads (dry_run + verify are read-only despite "library_" prefix) ──
   cat_cafe_library_list: A_READ_LOCAL,
@@ -416,7 +417,7 @@ export const EXPLICIT_TOOL_ANNOTATIONS: Record<string, Annotation> = {
   signal_link_thread: A_DESTRUCTIVE,
   signal_generate_podcast: A_WRITE_OPEN_WORLD, // calls external TTS
   // ── Limb actions (write) ───────────────────────────────────────────
-  limb_invoke: A_WRITE_SAFE,
+  limb_invoke_tool: A_WRITE_SAFE,
   limb_pair_approve: A_WRITE_SAFE,
   // ── Destructive (data loss / unrecoverable) ────────────────────────
   cat_cafe_shell_exec: A_DESTRUCTIVE,

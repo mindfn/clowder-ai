@@ -1,8 +1,9 @@
 /**
  * Callback Limb Routes — F126 四肢控制面 MCP 回调端点
  *
- * POST /api/callback/limb/list  — 列出可用四肢节点
- * POST /api/callback/limb/invoke — 调用四肢节点能力
+ * POST /api/callback/limb/list       — 列出可用 limb 及其 tool 名
+ * POST /api/callback/limb/list-tools — 查询指定 limb 的 tool 详细 schema
+ * POST /api/callback/limb/invoke     — 调用 limb 上的指定 tool
  */
 
 import type { FastifyInstance } from 'fastify';
@@ -14,6 +15,11 @@ import { requireCallbackAuth } from './callback-auth-prehandler.js';
 
 const limbListSchema = z.object({
   capability: z.string().optional(),
+});
+
+const limbListToolsSchema = z.object({
+  nodeId: z.string().min(1),
+  command: z.string().optional(),
 });
 
 const limbInvokeSchema = z.object({
@@ -46,16 +52,36 @@ export function registerCallbackLimbRoutes(
 
     const nodes = capability ? limbRegistry.findByCapability(capability) : limbRegistry.listAvailable();
 
+    // Discovery only — return tool names via capabilities.commands, not detailed schemas.
+    // Agents call limb_list_tools for param schemas.
     return reply.send({
       nodes: nodes.map((n) => ({
         nodeId: n.nodeId,
         displayName: n.displayName,
         platform: n.platform,
         capabilities: n.capabilities,
-        ...(n.commandSchemas ? { commandSchemas: n.commandSchemas } : {}),
         status: n.status,
       })),
     });
+  });
+
+  app.post('/api/callback/limb/list-tools', async (request, reply) => {
+    const record = requireCallbackAuth(request, reply);
+    if (!record) return;
+
+    const parsed = limbListToolsSchema.safeParse(request.body);
+    if (!parsed.success) return reply.status(400).send({ error: parsed.error.message });
+
+    const { nodeId, command } = parsed.data;
+    const node = limbRegistry.getNode(nodeId);
+    if (!node) return reply.send({ tools: {}, error: `Unknown node: ${nodeId}` });
+
+    const schemas = node.commandSchemas ?? {};
+    if (command) {
+      const single = schemas[command];
+      return reply.send({ tools: single ? { [command]: single } : {}, nodeId });
+    }
+    return reply.send({ tools: schemas, nodeId });
   });
 
   app.post('/api/callback/limb/invoke', async (request, reply) => {

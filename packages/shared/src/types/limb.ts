@@ -37,7 +37,7 @@ export interface LimbAccessEntry {
   authLevel: LimbAuthLevel;
 }
 
-// ─── Command Schemas (for limb_list_available discovery) ─────
+// ─── Command Schemas (for limb_list_tools discovery) ─────────
 
 /** Single command parameter schema — exposed to agents for tool invocation */
 export interface LimbCommandParamSchema {
@@ -47,7 +47,7 @@ export interface LimbCommandParamSchema {
   desc?: string;
 }
 
-/** Command schema — description + typed params, exposed via limb_list_available */
+/** Command schema — description + typed params, exposed via limb_list_tools */
 export interface LimbCommandSchema {
   description: string;
   params: Record<string, LimbCommandParamSchema>;
@@ -78,7 +78,7 @@ export interface ILimbNode {
   readonly platform: string;
   /** 节点暴露的能力列表 */
   readonly capabilities: LimbCapability[];
-  /** 命令参数 schema — 供 agent 构建 invoke 请求（可选，plugin 节点提供） */
+  /** 命令参数 schema — 供 limb_list_tools 返回给 agent 构建 invoke 请求（可选，plugin 节点提供） */
   readonly commandSchemas?: Readonly<Record<string, LimbCommandSchema>>;
 
   /** 向 Registry 注册 */
@@ -130,7 +130,7 @@ export interface LimbNodeRecord {
   displayName: string;
   platform: string;
   capabilities: LimbCapability[];
-  /** 命令参数 schema — agent 用来构建 invoke 请求 */
+  /** 命令参数 schema — limb_list_tools 返回，agent 用来构建 invoke_tool 请求 */
   commandSchemas?: Record<string, LimbCommandSchema>;
   status: LimbNodeStatus;
   registeredAt: number;

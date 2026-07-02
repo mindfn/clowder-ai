@@ -133,10 +133,12 @@ export {
   libraryVerifyInputSchema,
 } from './library-lifecycle-tools.js';
 export {
-  handleLimbInvoke,
+  handleLimbInvokeTool,
   handleLimbListAvailable,
-  limbInvokeInputSchema,
+  handleLimbListTools,
+  limbInvokeToolInputSchema,
   limbListAvailableInputSchema,
+  limbListToolsInputSchema,
   limbTools,
 } from './limb-tools.js';
 export {

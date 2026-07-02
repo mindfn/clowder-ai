@@ -70,7 +70,7 @@ describe('callback-limb-routes (Fastify injection)', () => {
     assert.equal(body.nodes[0].nodeId, 'iphone-1');
   });
 
-  it('POST /api/callback/limb/list includes commandSchemas when node provides them', async () => {
+  it('POST /api/callback/limb/list does NOT include commandSchemas (discovery only)', async () => {
     const schemas = {
       'camera.snap': {
         description: 'Take a photo',
@@ -87,22 +87,128 @@ describe('callback-limb-routes (Fastify injection)', () => {
     });
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.payload);
-    assert.deepEqual(body.nodes[0].commandSchemas, schemas);
+    assert.equal(body.nodes[0].commandSchemas, undefined, 'commandSchemas should not be in list response');
+    assert.equal(body.nodes[0].nodeId, 'iphone-1');
   });
 
-  it('POST /api/callback/limb/list omits commandSchemas when node has none', async () => {
+  // ── list-tools tests ──────────────────────────────────────────
+
+  it('POST /api/callback/limb/list-tools returns all schemas for a node', async () => {
+    const schemas = {
+      'camera.snap': {
+        description: 'Take a photo',
+        params: { resolution: { type: 'string', required: false, desc: 'Photo resolution' } },
+      },
+      'camera.record': {
+        description: 'Record video',
+        params: { duration: { type: 'number', required: true, desc: 'Duration in seconds' } },
+      },
+    };
+    await limbRegistry.register(mockNode({ commandSchemas: schemas }));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callback/limb/list-tools',
+      headers: { 'x-invocation-id': validInvocationId, 'x-callback-token': validToken },
+      payload: { nodeId: 'iphone-1' },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.payload);
+    assert.equal(body.nodeId, 'iphone-1');
+    assert.deepEqual(body.tools, schemas);
+  });
+
+  it('POST /api/callback/limb/list-tools filters by command name', async () => {
+    const schemas = {
+      'camera.snap': {
+        description: 'Take a photo',
+        params: { resolution: { type: 'string', required: false, desc: 'Photo resolution' } },
+      },
+      'camera.record': {
+        description: 'Record video',
+        params: { duration: { type: 'number', required: true, desc: 'Duration in seconds' } },
+      },
+    };
+    await limbRegistry.register(mockNode({ commandSchemas: schemas }));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callback/limb/list-tools',
+      headers: { 'x-invocation-id': validInvocationId, 'x-callback-token': validToken },
+      payload: { nodeId: 'iphone-1', command: 'camera.snap' },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.payload);
+    assert.deepEqual(Object.keys(body.tools), ['camera.snap']);
+    assert.equal(body.tools['camera.snap'].description, 'Take a photo');
+  });
+
+  it('POST /api/callback/limb/list-tools returns empty for unknown node', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callback/limb/list-tools',
+      headers: { 'x-invocation-id': validInvocationId, 'x-callback-token': validToken },
+      payload: { nodeId: 'nonexistent' },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.payload);
+    assert.deepEqual(body.tools, {});
+    assert.ok(body.error.includes('Unknown node'));
+  });
+
+  it('POST /api/callback/limb/list-tools returns empty for unknown command', async () => {
+    const schemas = {
+      'camera.snap': { description: 'Take a photo', params: {} },
+    };
+    await limbRegistry.register(mockNode({ commandSchemas: schemas }));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callback/limb/list-tools',
+      headers: { 'x-invocation-id': validInvocationId, 'x-callback-token': validToken },
+      payload: { nodeId: 'iphone-1', command: 'nonexistent.cmd' },
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.payload);
+    assert.deepEqual(body.tools, {});
+  });
+
+  it('POST /api/callback/limb/list-tools returns empty when node has no schemas', async () => {
     await limbRegistry.register(mockNode());
 
     const res = await app.inject({
       method: 'POST',
-      url: '/api/callback/limb/list',
+      url: '/api/callback/limb/list-tools',
       headers: { 'x-invocation-id': validInvocationId, 'x-callback-token': validToken },
-      payload: {},
+      payload: { nodeId: 'iphone-1' },
     });
     assert.equal(res.statusCode, 200);
     const body = JSON.parse(res.payload);
-    assert.equal(body.nodes[0].commandSchemas, undefined);
+    assert.deepEqual(body.tools, {});
+    assert.equal(body.nodeId, 'iphone-1');
   });
+
+  it('POST /api/callback/limb/list-tools returns 401 with bad credentials', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callback/limb/list-tools',
+      headers: { 'x-invocation-id': 'bad', 'x-callback-token': 'bad' },
+      payload: { nodeId: 'iphone-1' },
+    });
+    assert.equal(res.statusCode, 401);
+  });
+
+  it('POST /api/callback/limb/list-tools returns 400 for missing nodeId', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callback/limb/list-tools',
+      headers: { 'x-invocation-id': validInvocationId, 'x-callback-token': validToken },
+      payload: {},
+    });
+    assert.equal(res.statusCode, 400);
+  });
+
+  // ── list filter tests ──────────────────────────────────────────
 
   it('POST /api/callback/limb/list filters by capability', async () => {
     await limbRegistry.register(mockNode());
