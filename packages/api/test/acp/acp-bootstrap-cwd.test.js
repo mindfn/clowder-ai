@@ -9,7 +9,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join, relative, resolve, win32 } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 
@@ -42,8 +42,8 @@ describe('acp bootstrap cwd', () => {
 
     assert.equal(first, second, 'same project/profile should reuse the same bootstrap dir');
     assert.ok(
-      first.startsWith(join(homedir(), '.cache', 'cat-cafe', 'acp-bootstrap')),
-      `bootstrap dir should live under ~/.cache/cat-cafe/acp-bootstrap, got ${first}`,
+      first.startsWith('/tmp/cat-cafe-acp-bootstrap-'),
+      `bootstrap dir should live under /tmp/cat-cafe-acp-bootstrap-*, got ${first}`,
     );
     assert.ok(existsSync(first), 'bootstrap dir should be created eagerly');
     assert.ok(
@@ -172,10 +172,9 @@ describe('acp bootstrap cwd', () => {
 
   it('scopes bootstrap root by current uid or equivalent user identity', () => {
     const root = resolveAcpBootstrapRoot();
-    const expectedPrefix = join(homedir(), '.cache', 'cat-cafe', 'acp-bootstrap');
     assert.ok(
-      root.startsWith(expectedPrefix) || root === expectedPrefix,
-      `bootstrap root should be under ~/.cache/cat-cafe/acp-bootstrap, got ${root}`,
+      root.startsWith('/tmp/cat-cafe-acp-bootstrap-'),
+      `bootstrap root should match /tmp/cat-cafe-acp-bootstrap-*, got ${root}`,
     );
   });
 
