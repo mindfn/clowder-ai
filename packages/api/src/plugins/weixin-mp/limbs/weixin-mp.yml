@@ -70,10 +70,10 @@ commands:
     params:
       imageUrl:
         type: string
-        desc: 图片 URL（支持 jpg/png/gif/bmp，与 filePath 二选一）
+        desc: 图片的 HTTP/HTTPS URL（如 https://example.com/photo.jpg）。支持 jpg/png/gif/bmp。与 filePath 二选一，必须提供其中一个
       filePath:
         type: string
-        desc: 本地文件路径（与 imageUrl 二选一）
+        desc: 本地文件绝对路径（如 /tmp/photo.png）。支持 jpg/png/gif/bmp。与 imageUrl 二选一，必须提供其中一个
 
   weixin_mp.upload_material:
     type: invoke
@@ -82,10 +82,10 @@ commands:
     params:
       imageUrl:
         type: string
-        desc: 图片 URL（与 filePath 二选一）
+        desc: 图片的 HTTP/HTTPS URL（如 https://example.com/cover.jpg）。支持 jpg/png/gif/bmp。与 filePath 二选一，必须提供其中一个
       filePath:
         type: string
-        desc: 本地文件路径（与 imageUrl 二选一）
+        desc: 本地文件绝对路径（如 /tmp/cover.png）。支持 jpg/png/gif/bmp。与 imageUrl 二选一，必须提供其中一个
 
   # ── rest 类型（YAML 驱动 HTTP 调用）────────────────────
 
