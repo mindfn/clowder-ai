@@ -111,8 +111,11 @@ export class CiCdRouter {
             outcome: 'success',
             threadId: task.threadId,
           });
-        } catch {
-          // Best-effort: don't break CI/CD routing
+        } catch (err) {
+          log.warn(
+            { err, repoFullName: poll.repoFullName, prNumber: poll.prNumber, threadId: task.threadId },
+            '[CiCdRouter] onPrLifecycle callback failed (best-effort)',
+          );
         }
       }
 
@@ -166,8 +169,11 @@ export class CiCdRouter {
           if (appended && this.opts.projector) {
             await this.opts.projector.apply(communityEvent);
           }
-        } catch {
-          // Best-effort: event log failure MUST NOT block CI/CD routing (spec §Task6)
+        } catch (err) {
+          log.warn(
+            { err, repoFullName: poll.repoFullName, prNumber: poll.prNumber, subjectKey: sk },
+            '[CiCdRouter] event log append failed (best-effort, spec §Task6)',
+          );
         }
       }
 
