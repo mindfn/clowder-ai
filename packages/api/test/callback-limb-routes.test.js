@@ -70,6 +70,40 @@ describe('callback-limb-routes (Fastify injection)', () => {
     assert.equal(body.nodes[0].nodeId, 'iphone-1');
   });
 
+  it('POST /api/callback/limb/list includes commandSchemas when node provides them', async () => {
+    const schemas = {
+      'camera.snap': {
+        description: 'Take a photo',
+        params: { resolution: { type: 'string', required: false, desc: 'Photo resolution' } },
+      },
+    };
+    await limbRegistry.register(mockNode({ commandSchemas: schemas }));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callback/limb/list',
+      headers: { 'x-invocation-id': validInvocationId, 'x-callback-token': validToken },
+      payload: {},
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.payload);
+    assert.deepEqual(body.nodes[0].commandSchemas, schemas);
+  });
+
+  it('POST /api/callback/limb/list omits commandSchemas when node has none', async () => {
+    await limbRegistry.register(mockNode());
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/callback/limb/list',
+      headers: { 'x-invocation-id': validInvocationId, 'x-callback-token': validToken },
+      payload: {},
+    });
+    assert.equal(res.statusCode, 200);
+    const body = JSON.parse(res.payload);
+    assert.equal(body.nodes[0].commandSchemas, undefined);
+  });
+
   it('POST /api/callback/limb/list filters by capability', async () => {
     await limbRegistry.register(mockNode());
     await limbRegistry.register(

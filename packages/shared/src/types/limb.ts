@@ -37,6 +37,22 @@ export interface LimbAccessEntry {
   authLevel: LimbAuthLevel;
 }
 
+// ─── Command Schemas (for limb_list_available discovery) ─────
+
+/** Single command parameter schema — exposed to agents for tool invocation */
+export interface LimbCommandParamSchema {
+  type: string;
+  required?: boolean;
+  default?: unknown;
+  desc?: string;
+}
+
+/** Command schema — description + typed params, exposed via limb_list_available */
+export interface LimbCommandSchema {
+  description: string;
+  params: Record<string, LimbCommandParamSchema>;
+}
+
 // ─── ILimbNode Interface ─────────────────────────────────────
 
 /** 四肢调用结果 */
@@ -62,6 +78,8 @@ export interface ILimbNode {
   readonly platform: string;
   /** 节点暴露的能力列表 */
   readonly capabilities: LimbCapability[];
+  /** 命令参数 schema — 供 agent 构建 invoke 请求（可选，plugin 节点提供） */
+  readonly commandSchemas?: Readonly<Record<string, LimbCommandSchema>>;
 
   /** 向 Registry 注册 */
   register(): Promise<void>;
@@ -112,6 +130,8 @@ export interface LimbNodeRecord {
   displayName: string;
   platform: string;
   capabilities: LimbCapability[];
+  /** 命令参数 schema — agent 用来构建 invoke 请求 */
+  commandSchemas?: Record<string, LimbCommandSchema>;
   status: LimbNodeStatus;
   registeredAt: number;
   lastHeartbeatAt: number;

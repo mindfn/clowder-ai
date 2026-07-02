@@ -44,6 +44,7 @@ export class LimbRegistry {
       displayName: node.displayName,
       platform: node.platform,
       capabilities: [...node.capabilities],
+      ...(node.commandSchemas ? { commandSchemas: node.commandSchemas } : {}),
       status: 'online',
       registeredAt: now,
       lastHeartbeatAt: now,

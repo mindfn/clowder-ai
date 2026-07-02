@@ -52,6 +52,7 @@ export function registerCallbackLimbRoutes(
         displayName: n.displayName,
         platform: n.platform,
         capabilities: n.capabilities,
+        ...(n.commandSchemas ? { commandSchemas: n.commandSchemas } : {}),
         status: n.status,
       })),
     });

@@ -1,4 +1,4 @@
-import type { ILimbNode, LimbCapability, LimbInvokeResult, LimbNodeStatus } from '@cat-cafe/shared';
+import type { ILimbNode, LimbCapability, LimbCommandSchema, LimbInvokeResult, LimbNodeStatus } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { LimbDeclaration } from './limb-yaml-loader.js';
 import { PluginRestExecutor } from './PluginRestExecutor.js';
@@ -33,6 +33,7 @@ export class PluginLimbAdapter implements ILimbNode {
   readonly displayName: string;
   readonly platform: string;
   readonly capabilities: LimbCapability[];
+  readonly commandSchemas: Readonly<Record<string, LimbCommandSchema>>;
 
   private readonly declaration: LimbDeclaration;
   private readonly pluginConfig: Record<string, string>;
@@ -48,6 +49,13 @@ export class PluginLimbAdapter implements ILimbNode {
     this.platform = config.declaration.platform;
     this.capabilities = config.declaration.capabilities;
     this.handlers = config.handlers ?? {};
+
+    // Build command schemas from declaration — expose description + params only (no internal REST/handler details)
+    const schemas: Record<string, LimbCommandSchema> = {};
+    for (const [name, def] of Object.entries(config.declaration.commands)) {
+      schemas[name] = { description: def.description, params: def.params };
+    }
+    this.commandSchemas = schemas;
 
     if (config.declaration.auth && config.declaration.baseUrl) {
       this.tokenManager = new PluginTokenManager(
