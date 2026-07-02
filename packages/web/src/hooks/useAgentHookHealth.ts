@@ -161,6 +161,7 @@ export function useAgentHookHealth({
 
     setLoading(true);
     setError(null);
+    setHealth(null);
     readAgentHookStatus(projectPath)
       .then(
         (status) => {
