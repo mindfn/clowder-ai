@@ -1,4 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { z } from 'zod';
+import { jsonSchemaToZod } from './json-schema-to-zod.js';
 import { callbackPost, getCallbackConfig } from './tools/callback-tools.js';
 import {
   audioTools,
@@ -442,15 +444,17 @@ type RegisteredToolHandler = (args: never) => Promise<{
 }>;
 
 /**
- * Type-erased registerTool config. SDK 1.26.0's server.tool() overload parser
- * uses isZodRawShapeCompat to distinguish inputSchema from annotations — our
- * plain JSON Schema objects fail the check and get mis-parsed as annotations,
- * shifting the callback slot → "typedHandler is not a function" at runtime.
+ * Type-erased registerTool config. SDK 1.26.0 requires Zod schemas for:
+ *   - Tool listing: normalizeObjectSchema() reads .shape for JSON Schema serialization
+ *   - Tool calls: safeParseAsync() validates incoming arguments
+ *
+ * Our tool definitions use plain JSON Schema objects, so jsonSchemaToZod()
+ * converts them to Zod v3 at registration time.
  * server.registerTool(name, config, cb) bypasses the overload parser entirely.
  */
 type RegisterToolConfig = {
   description: string;
-  inputSchema: Record<string, unknown>;
+  inputSchema: z.ZodObject<z.ZodRawShape>;
   annotations: {
     readOnlyHint: boolean;
     destructiveHint: boolean;
@@ -515,9 +519,10 @@ function registerTools(server: McpServer, tools: readonly ToolDef[]): void {
   ) => void;
   for (const tool of tools) {
     const annotations = inferAnnotations(tool.name);
+    const zodSchema = jsonSchemaToZod(tool.inputSchema);
     registerExplicit(
       tool.name,
-      { description: tool.description, inputSchema: tool.inputSchema, annotations },
+      { description: tool.description, inputSchema: zodSchema, annotations },
       async (args: never) => {
         const result = await tool.handler(args);
         const typed = {
