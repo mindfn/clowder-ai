@@ -559,13 +559,21 @@ function classifyError(
   clientRecentSignal?: AcpCapacitySignal | null,
 ): { errorCode: string; errorMsg: string } {
   if (err instanceof AcpProtocolError) {
-    if (err.code === -32000 || err.message.includes('capacity')) {
-      return { errorCode: 'model_capacity', errorMsg: err.message };
+    // JSON-RPC data.error carries the real cause (e.g. Kimi wraps exceptions
+    // as -32603 "Internal error" with the detail in data). Surface it.
+    const dataDetail =
+      typeof err.data === 'object' && err.data !== null && 'error' in (err.data as Record<string, unknown>)
+        ? String((err.data as Record<string, unknown>).error)
+        : null;
+    const fullMsg = dataDetail ? `${err.message} — ${dataDetail}` : err.message;
+
+    if (err.code === -32000 || fullMsg.includes('capacity')) {
+      return { errorCode: 'model_capacity', errorMsg: fullMsg };
     }
-    if (/\bmcp\b/i.test(err.message)) {
-      return { errorCode: 'mcp_pollution', errorMsg: err.message };
+    if (/\bmcp\b/i.test(fullMsg)) {
+      return { errorCode: 'mcp_pollution', errorMsg: fullMsg };
     }
-    return { errorCode: 'prompt_failure', errorMsg: err.message };
+    return { errorCode: 'prompt_failure', errorMsg: fullMsg };
   }
   if (err instanceof AcpTimeoutError) {
     // Priority 1: invoke-level listener captured signal in real time
