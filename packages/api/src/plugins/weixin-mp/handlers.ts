@@ -24,6 +24,7 @@ interface WeixinMpHandlerDeps {
   fetchExternalUrlPinned?: typeof fetchExternalUrlPinned;
   uploadFormData?: typeof uploadFormData;
   readLocalFile?: (filePath: string) => Promise<Buffer>;
+  jsonPost?: (url: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
 }
 
 // ─── Utilities ──────────────────────────────────────────────
@@ -53,83 +54,86 @@ async function uploadFormData(url: string, blob: Blob, fileName: string): Promis
   return (await res.json()) as Record<string, unknown>;
 }
 
-class WeixinUploadError extends Error {
+class WeixinApiError extends Error {
   constructor(
     readonly errcode: number,
     readonly errmsg: string,
   ) {
-    super(`Upload failed: ${errcode} ${errmsg}`);
-    this.name = 'WeixinUploadError';
+    super(`WeChat API error: ${errcode} ${errmsg}`);
+    this.name = 'WeixinApiError';
   }
 }
 
-function checkUploadResponse(data: Record<string, unknown>): void {
+function checkWeixinResponse(data: Record<string, unknown>): void {
   const errcode = data.errcode;
   if (typeof errcode === 'number' && errcode !== 0) {
-    throw new WeixinUploadError(errcode, (data.errmsg as string | undefined) ?? '');
+    throw new WeixinApiError(errcode, (data.errmsg as string | undefined) ?? '');
   }
 }
 
-async function uploadWithTokenRetry(
+/** Call WeChat API with automatic token-expired retry. */
+async function withTokenRetry(
   ctx: InvokeContext,
-  deps: Required<WeixinMpHandlerDeps>,
   path: string,
-  blob: Blob,
-  fileName: string,
+  perform: (url: string) => Promise<Record<string, unknown>>,
 ): Promise<Record<string, unknown>> {
-  const perform = async () => {
+  const buildUrl = async () => {
     const token = await ctx.tokenManager.getAccessToken();
     const sep = path.includes('?') ? '&' : '?';
-    const encoded = encodeURIComponent(token);
-    const data = await deps.uploadFormData(`${BASE}${path}${sep}access_token=${encoded}`, blob, fileName);
-    checkUploadResponse(data);
+    return `${BASE}${path}${sep}access_token=${encodeURIComponent(token)}`;
+  };
+  const call = async () => {
+    const data = await perform(await buildUrl());
+    checkWeixinResponse(data);
     return data;
   };
-
   try {
-    return await perform();
+    return await call();
   } catch (err) {
-    if (err instanceof WeixinUploadError && ctx.tokenManager.isTokenExpiredError(err.errcode)) {
+    if (err instanceof WeixinApiError && ctx.tokenManager.isTokenExpiredError(err.errcode)) {
       await ctx.tokenManager.invalidateAccessToken();
-      return perform();
+      return call();
     }
     throw err;
   }
 }
 
-/**
- * Resolve image from either a URL (SSRF-safe fetch) or a local file path.
- * Returns blob + fileName ready for WeChat upload, or an error object.
- */
+function isHttpUrl(value: string): boolean {
+  return value.startsWith('http://') || value.startsWith('https://');
+}
+
+/** Resolve image URI — HTTP(S) URL or local file path — into a Blob for WeChat upload. */
 async function resolveImageSource(
-  params: Record<string, unknown>,
+  uri: string,
   deps: Required<WeixinMpHandlerDeps>,
   baseName = 'image',
-): Promise<{ blob: Blob; fileName: string } | { error: string }> {
-  const imageUrl = params.imageUrl as string | undefined;
-  const filePath = params.filePath as string | undefined;
-  if (!imageUrl && !filePath) return { error: 'imageUrl or filePath is required' };
-
-  if (filePath) {
-    const buffer = await deps.readLocalFile(filePath);
-    if (buffer.byteLength > MAX_IMAGE_BYTES) {
-      throw new Error(`Image exceeds ${MAX_IMAGE_BYTES} bytes limit`);
-    }
-    const ext = extname(filePath).slice(1).toLowerCase();
-    const mimeType = EXTENSION_MIME_MAP[ext];
-    if (!mimeType) throw new Error(`Unsupported image extension: .${ext}`);
-    return {
-      blob: new Blob([buffer], { type: mimeType }),
-      fileName: `${baseName}.${ext === 'jpeg' ? 'jpg' : ext}`,
-    };
+): Promise<{ blob: Blob; fileName: string }> {
+  if (isHttpUrl(uri)) {
+    const imgRes = await deps.fetchExternalUrlPinned(uri, { timeoutMs: TIMEOUT_MS, maxBytes: MAX_IMAGE_BYTES });
+    const meta = deriveImageMeta(imgRes.contentType, baseName);
+    return { blob: new Blob([imgRes.body], { type: meta.mimeType }), fileName: meta.fileName };
   }
+  const buffer = await deps.readLocalFile(uri);
+  if (buffer.byteLength > MAX_IMAGE_BYTES) {
+    throw new Error(`Image exceeds ${MAX_IMAGE_BYTES} bytes limit`);
+  }
+  const ext = extname(uri).slice(1).toLowerCase();
+  const mimeType = EXTENSION_MIME_MAP[ext];
+  if (!mimeType) throw new Error(`Unsupported image extension: .${ext}`);
+  return {
+    blob: new Blob([buffer], { type: mimeType }),
+    fileName: `${baseName}.${ext === 'jpeg' ? 'jpg' : ext}`,
+  };
+}
 
-  const imgRes = await deps.fetchExternalUrlPinned(imageUrl!, {
-    timeoutMs: TIMEOUT_MS,
-    maxBytes: MAX_IMAGE_BYTES,
-  });
-  const meta = deriveImageMeta(imgRes.contentType, baseName);
-  return { blob: new Blob([imgRes.body], { type: meta.mimeType }), fileName: meta.fileName };
+/** Read text content from either an inline param or a local file path. */
+async function resolveTextContent(
+  inline: string | undefined,
+  filePath: string | undefined,
+  readFn: (fp: string) => Promise<Buffer>,
+): Promise<string | undefined> {
+  if (filePath) return (await readFn(filePath)).toString('utf-8');
+  return inline;
 }
 
 // ─── Handlers ───────────────────────────────────────────────
@@ -139,41 +143,79 @@ export function createWeixinMpHandlers(deps: WeixinMpHandlerDeps = {}): Record<s
     fetchExternalUrlPinned,
     uploadFormData,
     readLocalFile: async (fp: string) => readFile(fp),
+    jsonPost: async (url, body) => {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+      if (!res.ok) throw new Error(`Request failed: HTTP ${res.status}`);
+      return (await res.json()) as Record<string, unknown>;
+    },
     ...deps,
   };
 
   const convertMarkdown: InvokeHandler = async (params) => {
-    const markdown = params.markdown as string | undefined;
-    if (!markdown) return { success: false, error: 'markdown is required' };
+    const markdown = await resolveTextContent(
+      params.markdown as string | undefined,
+      params.markdownFilePath as string | undefined,
+      resolvedDeps.readLocalFile,
+    );
+    if (!markdown) return { success: false, error: 'markdown or markdownFilePath is required' };
     const html = markdownToWxHtml(markdown);
     return { success: true, data: { html } };
   };
 
   const uploadImage: InvokeHandler = async (params, ctx) => {
-    const source = await resolveImageSource(params, resolvedDeps);
-    if ('error' in source) return { success: false, error: source.error };
-
-    const data = await uploadWithTokenRetry(ctx, resolvedDeps, '/media/uploadimg', source.blob, source.fileName);
+    const uri = params.uri as string | undefined;
+    if (!uri) return { success: false, error: 'uri is required' };
+    const source = await resolveImageSource(uri, resolvedDeps);
+    const data = await withTokenRetry(ctx, '/media/uploadimg', (url) =>
+      resolvedDeps.uploadFormData(url, source.blob, source.fileName),
+    );
     if (!data.url) throw new Error('Upload returned no url');
     return { success: true, data: { url: data.url } };
   };
 
   const uploadMaterial: InvokeHandler = async (params, ctx) => {
-    const source = await resolveImageSource(params, resolvedDeps, 'cover');
-    if ('error' in source) return { success: false, error: source.error };
-
-    const data = await uploadWithTokenRetry(
-      ctx,
-      resolvedDeps,
-      '/material/add_material?type=image',
-      source.blob,
-      source.fileName,
+    const uri = params.uri as string | undefined;
+    if (!uri) return { success: false, error: 'uri is required' };
+    const source = await resolveImageSource(uri, resolvedDeps, 'cover');
+    const data = await withTokenRetry(ctx, '/material/add_material?type=image', (url) =>
+      resolvedDeps.uploadFormData(url, source.blob, source.fileName),
     );
     if (!data.media_id) throw new Error('Material upload returned no media_id');
-    return {
-      success: true,
-      data: { mediaId: data.media_id, url: data.url ?? '' },
+    return { success: true, data: { mediaId: data.media_id, url: data.url ?? '' } };
+  };
+
+  const createDraft: InvokeHandler = async (params, ctx) => {
+    const content = await resolveTextContent(
+      params.content as string | undefined,
+      params.contentFilePath as string | undefined,
+      resolvedDeps.readLocalFile,
+    );
+    if (!content) return { success: false, error: 'content or contentFilePath is required' };
+    const title = params.title as string;
+    const thumbMediaId = params.thumbMediaId as string;
+    if (!title || !thumbMediaId) {
+      return { success: false, error: 'title and thumbMediaId are required' };
+    }
+    const body = {
+      articles: [
+        {
+          title,
+          content,
+          thumb_media_id: thumbMediaId,
+          show_cover_pic: 1,
+          ...(params.author ? { author: params.author } : {}),
+          ...(params.digest ? { digest: params.digest } : {}),
+        },
+      ],
     };
+    const data = await withTokenRetry(ctx, '/draft/add', (url) => resolvedDeps.jsonPost(url, body));
+    if (!data.media_id) throw new Error('Draft creation returned no media_id');
+    return { success: true, data: { mediaId: data.media_id } };
   };
 
   const checkStatus: InvokeHandler = async (_params, ctx) => {
@@ -196,6 +238,7 @@ export function createWeixinMpHandlers(deps: WeixinMpHandlerDeps = {}): Record<s
   return {
     'weixin-mp:check_status': checkStatus,
     'weixin-mp:convert_markdown': convertMarkdown,
+    'weixin-mp:create_draft': createDraft,
     'weixin-mp:upload_image': uploadImage,
     'weixin-mp:upload_material': uploadMaterial,
   };
