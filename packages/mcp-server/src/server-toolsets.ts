@@ -441,22 +441,21 @@ type RegisteredToolHandler = (args: never) => Promise<{
 }>;
 
 /**
- * Type-erased view of `McpServer.tool`'s 5-arg overload.
- * SDK 1.26.0 strict generics (ZodRawShapeCompat) collide with our generic
- * `Record<string, unknown>` ToolDef.inputSchema; we cast the call site once
- * and keep runtime behaviour identical (SDK reads inputSchema at handler time).
+ * Type-erased registerTool config. SDK 1.26.0's server.tool() overload parser
+ * uses isZodRawShapeCompat to distinguish inputSchema from annotations — our
+ * plain JSON Schema objects fail the check and get mis-parsed as annotations,
+ * shifting the callback slot → "typedHandler is not a function" at runtime.
+ * server.registerTool(name, config, cb) bypasses the overload parser entirely.
  */
-type TypeErasedToolRegistration = (
-  name: string,
-  description: string,
-  inputSchema: Record<string, unknown>,
+type RegisterToolConfig = {
+  description: string;
+  inputSchema: Record<string, unknown>;
   annotations: {
     readOnlyHint: boolean;
     destructiveHint: boolean;
     openWorldHint: boolean;
-  },
-  cb: RegisteredToolHandler,
-) => void;
+  };
+};
 
 // ── F254 Phase B1: In-memory freshness notice state (per MCP server process = per invocation) ──
 const freshnessNoticeState = { toolCallCount: 0, noticeDeliveredCount: 0, lastNoticeToolCallNum: 0 };
@@ -503,33 +502,42 @@ async function maybeFreshnessNotice(toolName: string, isReadOnly: boolean): Prom
 }
 
 function registerTools(server: McpServer, tools: readonly ToolDef[]): void {
-  // 5-arg overload: server.tool(name, description, paramsSchema, annotations, cb)
-  // — MCP SDK 1.26.0 内部 generics 太严，我们 ToolDef.inputSchema 是 Record<string,unknown>
-  // 不匹配 ZodRawShapeCompat → 用 type-erased view 让 TS 通过，runtime 行为不变。
-  // annotations 会通过 list_tools 暴露给 ChatGPT / Claude 客户端。
-  const registerToolErased = server.tool.bind(server) as unknown as TypeErasedToolRegistration;
+  // Use server.registerTool(name, config, cb) — the explicit config-object API.
+  // server.tool()'s overload parser uses isZodRawShapeCompat to detect whether
+  // an arg is inputSchema vs annotations. Our plain JSON Schema objects fail the
+  // Zod check → get mis-parsed as annotations → handler slot shifts → runtime crash.
+  // registerTool() takes { description, inputSchema, annotations } explicitly, no ambiguity.
+  const registerExplicit = server.registerTool.bind(server) as unknown as (
+    name: string,
+    config: RegisterToolConfig,
+    cb: RegisteredToolHandler,
+  ) => void;
   for (const tool of tools) {
     const annotations = inferAnnotations(tool.name);
-    registerToolErased(tool.name, tool.description, tool.inputSchema, annotations, async (args: never) => {
-      const result = await tool.handler(args);
-      const typed = {
-        ...(result as Record<string, unknown>),
-      } as {
-        content: Array<{ type: 'text'; text: string }>;
-        isError?: boolean;
-        [key: string]: unknown;
-      };
+    registerExplicit(
+      tool.name,
+      { description: tool.description, inputSchema: tool.inputSchema, annotations },
+      async (args: never) => {
+        const result = await tool.handler(args);
+        const typed = {
+          ...(result as Record<string, unknown>),
+        } as {
+          content: Array<{ type: 'text'; text: string }>;
+          isError?: boolean;
+          [key: string]: unknown;
+        };
 
-      // F254 B1: Piggyback freshness notice on successful read-only tool results
-      if (!typed.isError && annotations.readOnlyHint) {
-        const noticeText = await maybeFreshnessNotice(tool.name, annotations.readOnlyHint);
-        if (noticeText) {
-          typed.content = [...typed.content, { type: 'text', text: `\n\n${noticeText}` }];
+        // F254 B1: Piggyback freshness notice on successful read-only tool results
+        if (!typed.isError && annotations.readOnlyHint) {
+          const noticeText = await maybeFreshnessNotice(tool.name, annotations.readOnlyHint);
+          if (noticeText) {
+            typed.content = [...typed.content, { type: 'text', text: `\n\n${noticeText}` }];
+          }
         }
-      }
 
-      return typed;
-    });
+        return typed;
+      },
+    );
   }
 }
 
