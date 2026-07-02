@@ -2,8 +2,9 @@
  * Weixin-MP invoke handlers — platform-specific logic for commands
  * that cannot be expressed as pure REST calls in YAML.
  */
-import { readFile } from 'node:fs/promises';
-import { extname } from 'node:path';
+import { readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { extname, join } from 'node:path';
 import type { InvokeContext, InvokeHandler } from '../../domains/limb/PluginLimbAdapter.js';
 import { fetchExternalUrlPinned } from '../../utils/url-safety.js';
 import { markdownToWxHtml } from './markdown-to-wx-html.js';
@@ -25,6 +26,7 @@ interface WeixinMpHandlerDeps {
   uploadFormData?: typeof uploadFormData;
   readLocalFile?: (filePath: string) => Promise<Buffer>;
   jsonPost?: (url: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  writeLocalFile?: (filePath: string, content: string) => Promise<void>;
 }
 
 // ─── Utilities ──────────────────────────────────────────────
@@ -153,6 +155,9 @@ export function createWeixinMpHandlers(deps: WeixinMpHandlerDeps = {}): Record<s
       if (!res.ok) throw new Error(`Request failed: HTTP ${res.status}`);
       return (await res.json()) as Record<string, unknown>;
     },
+    writeLocalFile: async (fp, content) => {
+      await writeFile(fp, content, 'utf-8');
+    },
     ...deps,
   };
 
@@ -164,13 +169,18 @@ export function createWeixinMpHandlers(deps: WeixinMpHandlerDeps = {}): Record<s
     );
     if (!markdown) return { success: false, error: 'markdown or markdownFilePath is required' };
     const html = markdownToWxHtml(markdown);
-    return { success: true, data: { html } };
+    const mdPath = params.markdownFilePath as string | undefined;
+    const outputPath = mdPath
+      ? `${mdPath.replace(/\.(md|markdown)$/i, '')}.wx.html`
+      : join(tmpdir(), `wx-converted-${Date.now()}.html`);
+    await resolvedDeps.writeLocalFile(outputPath, html);
+    return { success: true, data: { filePath: outputPath } };
   };
 
   const uploadImage: InvokeHandler = async (params, ctx) => {
-    const uri = params.uri as string | undefined;
-    if (!uri) return { success: false, error: 'uri is required' };
-    const source = await resolveImageSource(uri, resolvedDeps);
+    const fileLocation = params.fileLocation as string | undefined;
+    if (!fileLocation) return { success: false, error: 'fileLocation is required' };
+    const source = await resolveImageSource(fileLocation, resolvedDeps);
     const data = await withTokenRetry(ctx, '/media/uploadimg', (url) =>
       resolvedDeps.uploadFormData(url, source.blob, source.fileName),
     );
@@ -179,9 +189,9 @@ export function createWeixinMpHandlers(deps: WeixinMpHandlerDeps = {}): Record<s
   };
 
   const uploadMaterial: InvokeHandler = async (params, ctx) => {
-    const uri = params.uri as string | undefined;
-    if (!uri) return { success: false, error: 'uri is required' };
-    const source = await resolveImageSource(uri, resolvedDeps, 'cover');
+    const fileLocation = params.fileLocation as string | undefined;
+    if (!fileLocation) return { success: false, error: 'fileLocation is required' };
+    const source = await resolveImageSource(fileLocation, resolvedDeps, 'cover');
     const data = await withTokenRetry(ctx, '/material/add_material?type=image', (url) =>
       resolvedDeps.uploadFormData(url, source.blob, source.fileName),
     );
@@ -218,6 +228,32 @@ export function createWeixinMpHandlers(deps: WeixinMpHandlerDeps = {}): Record<s
     return { success: true, data: { mediaId: data.media_id } };
   };
 
+  const updateDraft: InvokeHandler = async (params, ctx) => {
+    const mediaId = params.mediaId as string;
+    if (!mediaId) return { success: false, error: 'mediaId is required' };
+    const content = await resolveTextContent(
+      params.content as string | undefined,
+      params.contentFilePath as string | undefined,
+      resolvedDeps.readLocalFile,
+    );
+    const articles: Record<string, unknown> = {};
+    if (params.title) articles.title = params.title;
+    if (content) articles.content = content;
+    if (params.thumbMediaId) articles.thumb_media_id = params.thumbMediaId;
+    if (params.author) articles.author = params.author;
+    if (params.digest) articles.digest = params.digest;
+    if (Object.keys(articles).length === 0) {
+      return { success: false, error: 'At least one field to update is required' };
+    }
+    const body = {
+      media_id: mediaId,
+      index: (params.index as number | undefined) ?? 0,
+      articles,
+    };
+    await withTokenRetry(ctx, '/draft/update', (url) => resolvedDeps.jsonPost(url, body));
+    return { success: true, data: { mediaId } };
+  };
+
   const checkStatus: InvokeHandler = async (_params, ctx) => {
     const appId = ctx.pluginConfig.WEIXIN_MP_APP_ID;
     const appSecret = ctx.pluginConfig.WEIXIN_MP_APP_SECRET;
@@ -239,6 +275,7 @@ export function createWeixinMpHandlers(deps: WeixinMpHandlerDeps = {}): Record<s
     'weixin-mp:check_status': checkStatus,
     'weixin-mp:convert_markdown': convertMarkdown,
     'weixin-mp:create_draft': createDraft,
+    'weixin-mp:update_draft': updateDraft,
     'weixin-mp:upload_image': uploadImage,
     'weixin-mp:upload_material': uploadMaterial,
   };

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
@@ -76,7 +76,7 @@ describe('PluginLimbAdapter (weixin-mp)', () => {
     const handlers = {
       'weixin-mp:convert_markdown': async (params) => ({
         success: true,
-        data: { html: `<p>${params.markdown}</p>` },
+        data: { filePath: `/tmp/mock-${params.markdown}.html` },
       }),
     };
     const adapter = new PluginLimbAdapter({
@@ -87,7 +87,7 @@ describe('PluginLimbAdapter (weixin-mp)', () => {
 
     const result = await adapter.invoke('weixin_mp.convert_markdown', { markdown: 'hello' });
     assert.equal(result.success, true);
-    assert.equal(result.data.html, '<p>hello</p>');
+    assert.equal(result.data.filePath, '/tmp/mock-hello.html');
   });
 
   it('loads YAML with auth, error, and command type fields', () => {
@@ -141,7 +141,7 @@ describe('PluginLimbAdapter (weixin-mp)', () => {
       isTokenExpiredError: (code) => code === 40001,
     };
 
-    const result = await adapter.invoke('weixin_mp.upload_image', { uri: 'https://example.com/image.png' });
+    const result = await adapter.invoke('weixin_mp.upload_image', { fileLocation: 'https://example.com/image.png' });
 
     assert.equal(result.success, true, result.error);
     assert.deepEqual(result.data, { url: 'https://mmbiz.qpic.cn/fresh.png' });
@@ -152,9 +152,9 @@ describe('PluginLimbAdapter (weixin-mp)', () => {
   });
 });
 
-// ─── Upload with unified uri param ──────────────────────────
+// ─── Upload with fileLocation param ─────────────────────────
 
-describe('upload_image / upload_material with uri param', () => {
+describe('upload_image / upload_material with fileLocation param', () => {
   let tmpDir;
 
   afterEach(async () => {
@@ -186,36 +186,36 @@ describe('upload_image / upload_material with uri param', () => {
     return { adapter, uploadUrls };
   }
 
-  it('uploads image from local file path via uri', async () => {
+  it('uploads image from local file path via fileLocation', async () => {
     tmpDir = await mkdtemp(join(tmpdir(), 'cat-cafe-upload-'));
     const imgPath = join(tmpDir, 'test.png');
     await writeFile(imgPath, Buffer.from('fake-png-bytes'));
 
     const { adapter } = makeUploadAdapter({ errcode: 0, url: 'https://mmbiz.qpic.cn/local.png' });
-    const result = await adapter.invoke('weixin_mp.upload_image', { uri: imgPath });
+    const result = await adapter.invoke('weixin_mp.upload_image', { fileLocation: imgPath });
 
     assert.equal(result.success, true, result.error);
     assert.equal(result.data.url, 'https://mmbiz.qpic.cn/local.png');
   });
 
-  it('uploads material from local file path via uri', async () => {
+  it('uploads material from local file path via fileLocation', async () => {
     tmpDir = await mkdtemp(join(tmpdir(), 'cat-cafe-upload-'));
     const imgPath = join(tmpDir, 'cover.jpg');
     await writeFile(imgPath, Buffer.from('fake-jpg-bytes'));
 
     const { adapter } = makeUploadAdapter({ errcode: 0, media_id: 'mid_123', url: 'https://mmbiz.qpic.cn/cover.jpg' });
-    const result = await adapter.invoke('weixin_mp.upload_material', { uri: imgPath });
+    const result = await adapter.invoke('weixin_mp.upload_material', { fileLocation: imgPath });
 
     assert.equal(result.success, true, result.error);
     assert.equal(result.data.mediaId, 'mid_123');
   });
 
-  it('returns error when uri not provided', async () => {
+  it('returns error when fileLocation not provided', async () => {
     const { adapter } = makeUploadAdapter({});
     const result = await adapter.invoke('weixin_mp.upload_image', {});
 
     assert.equal(result.success, false);
-    assert.match(result.error, /uri/);
+    assert.match(result.error, /fileLocation/);
   });
 
   it('returns error for unsupported file extension', async () => {
@@ -224,19 +224,19 @@ describe('upload_image / upload_material with uri param', () => {
     await writeFile(badPath, Buffer.from('fake-pdf'));
 
     const { adapter } = makeUploadAdapter({});
-    const result = await adapter.invoke('weixin_mp.upload_image', { uri: badPath });
+    const result = await adapter.invoke('weixin_mp.upload_image', { fileLocation: badPath });
     assert.equal(result.success, false);
     assert.match(result.error, /Unsupported image extension.*\.pdf/);
   });
 
-  it('YAML declares uri param for upload commands', () => {
+  it('YAML declares fileLocation param for upload commands', () => {
     const decl = loadLimbDeclaration(WEIXIN_MP_LIMB_PATH);
     const imgParams = decl.commands['weixin_mp.upload_image']?.params;
     const matParams = decl.commands['weixin_mp.upload_material']?.params;
 
-    assert.ok(imgParams.uri, 'upload_image should have uri param');
-    assert.ok(matParams.uri, 'upload_material should have uri param');
-    assert.equal(imgParams.uri.required, true, 'uri should be required');
+    assert.ok(imgParams.fileLocation, 'upload_image should have fileLocation param');
+    assert.ok(matParams.fileLocation, 'upload_material should have fileLocation param');
+    assert.equal(imgParams.fileLocation.required, true, 'fileLocation should be required');
   });
 });
 
@@ -277,7 +277,7 @@ describe('convert_markdown / create_draft with file path params', () => {
     return { adapter, postBodies };
   }
 
-  it('converts markdown from a local file', async () => {
+  it('converts markdown from a local file and writes HTML to output file', async () => {
     tmpDir = await mkdtemp(join(tmpdir(), 'cat-cafe-md-'));
     const mdPath = join(tmpDir, 'article.md');
     await writeFile(mdPath, '# Hello\n\nWorld', 'utf-8');
@@ -286,7 +286,10 @@ describe('convert_markdown / create_draft with file path params', () => {
     const result = await adapter.invoke('weixin_mp.convert_markdown', { markdownFilePath: mdPath });
 
     assert.equal(result.success, true, result.error);
-    assert.ok(result.data.html.includes('Hello'), 'HTML should contain heading text');
+    assert.ok(result.data.filePath, 'Should return filePath');
+    assert.match(result.data.filePath, /\.wx\.html$/, 'Output file should have .wx.html extension');
+    const htmlContent = await readFile(result.data.filePath, 'utf-8');
+    assert.ok(htmlContent.includes('Hello'), 'HTML file should contain heading text');
   });
 
   it('returns error when neither markdown nor markdownFilePath provided', async () => {
@@ -351,13 +354,54 @@ describe('convert_markdown / create_draft with file path params', () => {
     assert.match(result.error, /title.*thumbMediaId/);
   });
 
-  it('YAML declares file path params for content commands', () => {
-    const decl = loadLimbDeclaration(WEIXIN_MP_LIMB_PATH);
-    const mdParams = decl.commands['weixin_mp.convert_markdown']?.params;
-    const draftParams = decl.commands['weixin_mp.create_draft']?.params;
+  it('updates draft with inline content', async () => {
+    const { adapter, postBodies } = makeContentAdapter({ errcode: 0 });
+    const result = await adapter.invoke('weixin_mp.update_draft', {
+      mediaId: 'mid_001',
+      title: 'Updated Title',
+      content: '<p>New content</p>',
+    });
+    assert.equal(result.success, true, result.error);
+    assert.equal(postBodies[0].media_id, 'mid_001');
+    assert.equal(postBodies[0].index, 0);
+    assert.equal(postBodies[0].articles.title, 'Updated Title');
+    assert.equal(postBodies[0].articles.content, '<p>New content</p>');
+  });
 
-    assert.ok(mdParams.markdownFilePath, 'convert_markdown should have markdownFilePath param');
-    assert.ok(draftParams.contentFilePath, 'create_draft should have contentFilePath param');
-    assert.equal(draftParams.content?.required, undefined, 'content should not be required');
+  it('updates draft from a local HTML file', async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'cat-cafe-update-'));
+    const htmlPath = join(tmpDir, 'updated.html');
+    await writeFile(htmlPath, '<section>Updated article</section>', 'utf-8');
+    const { adapter, postBodies } = makeContentAdapter({ errcode: 0 });
+    const result = await adapter.invoke('weixin_mp.update_draft', {
+      mediaId: 'mid_002',
+      contentFilePath: htmlPath,
+    });
+    assert.equal(result.success, true, result.error);
+    assert.ok(postBodies[0].articles.content.includes('Updated article'));
+  });
+
+  it('returns error when no update fields provided', async () => {
+    const { adapter } = makeContentAdapter({});
+    const result = await adapter.invoke('weixin_mp.update_draft', { mediaId: 'mid_003' });
+    assert.equal(result.success, false);
+    assert.match(result.error, /At least one field/);
+  });
+
+  it('YAML declares all P0/P1/P2 commands', () => {
+    const decl = loadLimbDeclaration(WEIXIN_MP_LIMB_PATH);
+    const cmds = Object.keys(decl.commands);
+    // P0
+    assert.ok(cmds.includes('weixin_mp.update_draft'), 'should have update_draft');
+    assert.ok(cmds.includes('weixin_mp.delete_draft'), 'should have delete_draft');
+    // P1
+    assert.ok(cmds.includes('weixin_mp.delete_material'), 'should have delete_material');
+    assert.ok(cmds.includes('weixin_mp.list_material'), 'should have list_material');
+    assert.ok(cmds.includes('weixin_mp.get_material_count'), 'should have get_material_count');
+    // P2
+    assert.ok(cmds.includes('weixin_mp.list_articles'), 'should have list_articles');
+    assert.ok(cmds.includes('weixin_mp.delete_article'), 'should have delete_article');
+    // GET method for material count
+    assert.equal(decl.commands['weixin_mp.get_material_count']?.method, 'GET');
   });
 });
