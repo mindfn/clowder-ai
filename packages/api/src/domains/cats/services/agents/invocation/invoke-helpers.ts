@@ -47,9 +47,11 @@ export function classifyResumeFailure(message: string | undefined): ResumeFailur
   //   (narrowed to "Invalid session identifier" to avoid matching auth/rate-limit
   //   errors that also start with "Error resuming session:")
   // OpenCode: "Session not found"
-  // (Kimi silently accepts any session ID — no error produced)
+  // Kimi:   "ACP error -32603: Internal error" — session/load succeeds but
+  //   session/prompt fails instantly when the CLI's bootstrap CWD is deleted
+  //   (macOS temp dir cleanup). os.getcwd() → FileNotFoundError → -32603.
   if (
-    /(No conversation found with session ID|no rollout found|missing_rollout|Invalid session identifier|Session not found)/i.test(
+    /(No conversation found with session ID|no rollout found|missing_rollout|Invalid session identifier|Session not found|ACP error -32603: Internal error)/i.test(
       message,
     )
   ) {

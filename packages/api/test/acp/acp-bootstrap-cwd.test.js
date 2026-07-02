@@ -9,7 +9,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, relative, resolve, win32 } from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 
@@ -41,7 +41,10 @@ describe('acp bootstrap cwd', () => {
     createdDirs.add(bootstrapRoot);
 
     assert.equal(first, second, 'same project/profile should reuse the same bootstrap dir');
-    assert.ok(first.startsWith(tmpdir()), `bootstrap dir should live under tmpdir(), got ${first}`);
+    assert.ok(
+      first.startsWith(join(homedir(), '.cache', 'cat-cafe', 'acp-bootstrap')),
+      `bootstrap dir should live under ~/.cache/cat-cafe/acp-bootstrap, got ${first}`,
+    );
     assert.ok(existsSync(first), 'bootstrap dir should be created eagerly');
     assert.ok(
       !first.startsWith(`${projectRoot}/`) && first !== projectRoot,
@@ -169,10 +172,10 @@ describe('acp bootstrap cwd', () => {
 
   it('scopes bootstrap root by current uid or equivalent user identity', () => {
     const root = resolveAcpBootstrapRoot();
-    assert.ok(root.startsWith(tmpdir()), `bootstrap root should stay under tmpdir(), got ${root}`);
+    const expectedPrefix = join(homedir(), '.cache', 'cat-cafe', 'acp-bootstrap');
     assert.ok(
-      /cat-cafe-gemini-acp-(uid|user)-/.test(root),
-      `bootstrap root should be namespaced per owner identity, got ${root}`,
+      root.startsWith(expectedPrefix) || root === expectedPrefix,
+      `bootstrap root should be under ~/.cache/cat-cafe/acp-bootstrap, got ${root}`,
     );
   });
 

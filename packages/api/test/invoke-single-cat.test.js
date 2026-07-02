@@ -2570,6 +2570,8 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       ),
       'invalid_thinking_signature',
     );
+    // Kimi: session/load succeeds but session/prompt fails with -32603 when bootstrap CWD is deleted
+    assert.equal(classifyResumeFailure('prompt_failure: ACP error -32603: Internal error'), 'missing_session');
     assert.equal(classifyResumeFailure('upstream timeout'), null);
   });
 

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync } from 'node:fs';
-import { tmpdir, userInfo } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { basename, isAbsolute, join, type PlatformPath, relative, resolve } from 'node:path';
 
 const SAFE_SEGMENT_RE = /[^a-zA-Z0-9._-]+/g;
@@ -31,8 +31,15 @@ function bootstrapOwnerSegment(): string {
   }
 }
 
+/**
+ * Persistent bootstrap root under ~/.cache instead of system tmpdir.
+ *
+ * macOS periodically cleans /var/folders/.../T/ — when the bootstrap CWD is
+ * deleted while a CLI process idles, the next prompt fails with os.getcwd()
+ * → FileNotFoundError → ACP -32603. Using ~/.cache prevents this.
+ */
 export function resolveAcpBootstrapRoot(): string {
-  return join(tmpdir(), `cat-cafe-gemini-acp-${bootstrapOwnerSegment()}`);
+  return join(homedir(), '.cache', 'cat-cafe', 'acp-bootstrap');
 }
 
 export function isPathWithinRoot(
