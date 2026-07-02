@@ -125,8 +125,8 @@ Clowder AI 的记忆系统（ADR-020 建立）当前紧耦合在宿主进程内�
 │  edges（关系图：anchor → anchor）                                   │
 │  entity_registry + entity_aliases + entity_mentions                 │
 │                                                                     │
-│  ──── 仅宿主表（不属于检索索引） ────                               │
-│  markers（候选记忆队列）                                            │
+│  ──── 仅宿主（不属于检索索引） ────                                 │
+│  markers（候选记忆队列，YAML 后端 git-tracked）                     │
 │  recall_events + anchor_recall_metrics（F200 消费追踪）             │
 │  summary_segments + summary_state（thread 摘要）                    │
 │  task_trajectories, scheduler_*, f163_*（治理/分析）                │
@@ -186,7 +186,8 @@ Clowder AI 的记忆系统（ADR-020 建立）当前紧耦合在宿主进程内�
 
 | 数据 | 当前表 | 为什么留下 | EchoMem 协作归属（§11） |
 |------|--------|-----------|----------------------|
-| 候选记忆队列 | `markers` | 治理流程（捕获 → 审批 → 物化） | 我们 |
+| 候选记忆队列 | `markers`（YAML 后端，git-tracked） | 治理流程（捕获 → 审批 → 物化） | 我们 |
+| 认知转变事件 | EventMemory（`event_memory` 表） | Timeline 原语，归 DocMemory（§11.2） | 我们 |
 | 召回分析 | `recall_events`, `anchor_recall_metrics`, `global_ctr_baseline` | 宿主侧消费行为，用于 rerank | 我们 |
 | Thread 摘要 | `summary_segments`, `summary_state` | 绑定 thread 生命周期 | 待定（EchoMem Episode 摘要更强，§11.2） |
 | 任务追踪 | `task_trajectories`, `task_run_ledger` | 调度器领域 | 我们 |
@@ -808,18 +809,46 @@ edge changes    ──► store.edges.link(...)           ──► service POST
 编译逻辑（scanner、passage 提取、实体加载）留在 Clowder 宿主。
 服务是纯粹的存储 + 检索后端。
 
-### 迁移说明：IndexBuilder 需要重构
+### 迁移说明：`getDb()` 逃逸面治理
 
-当前 `IndexBuilder` 绕过 `IEvidenceStore` 写 passage — 它调用
-`store.getDb()` 直接执行 SQLite `INSERT INTO evidence_passages`。
-（见 `IndexBuilder.ts:1000` 的 prepared statement，以及 `:1065` 的
-`backfillPassagesFromTranscript`。）
+当前 `SqliteEvidenceStore.getDb()` 被 **13 个文件** 直接调用，绕过
+`IEvidenceStore` 接口。对于 service-backed store 这些调用全部断开。
 
-对于 service-backed store，`IndexBuilder` 必须重构为调用
-`store.blocks.put()` 写入 TextBlock（带 `parentId` 表示从属关系）。
-这是 Phase 1 的前置条件：
-先把 `SqliteEvidenceStore` 的直接写入包装到 TextBlockStore 接口背后，
-然后 service adapter 通过 HTTP 实现相同接口。
+#### 完整逃逸面清单
+
+| 文件 | 调用数 | 风格 | 阻塞 Phase |
+|------|--------|------|-----------|
+| `IndexBuilder.ts` | 12+ | 直接 | Phase 1 — passage 写入、cleanup、embedding、重建 |
+| `factory.ts` | 5 | 直接 | Phase 1 — VectorStore/PassageVectorStore 初始化、summary compaction |
+| `CollectionIndexBuilder.ts` | 3 | 直接 | **Phase 2 灰度阻塞** — 外部 collection 重建路径断 |
+| `GlobalIndexBuilder.ts` | 1 | 直接 | Phase 1 — global index 重建 |
+| `bootstrap-collection-bridge.ts` | 1 | 直接 | Phase 1 — collection 初始化 |
+| `f163-admin.ts` | 4 | 直接 | Phase 1 — 管理路由直接读 DB |
+| `f163-audit-routes.ts` | 9 | 直接 | Phase 1 — 审计路由直接读 DB |
+| `evidence.ts` (routes) | 3 | duck-typed | Phase 1 — evidence 路由直接读 DB |
+| `RecentBrowseResolver.ts` | 2 | duck-typed | Phase 1 — `list_recent` 入口（见 §11.6 三入口分析） |
+| `index.ts` (main app) | 8 | 直接 | Phase 1 — IndexStateManager、scheduler、启动流程 |
+| `route-serial.ts` | 1 | duck-typed | Phase 2 — agent 路由搜索 |
+| `route-parallel.ts` | 1 | duck-typed | Phase 2 — agent 路由搜索 |
+
+> **§5 原文只提到 IndexBuilder 两处**。实际逃逸面远大于此。
+> 特别注意：**Phase 2 灰度计划**（§7 第 11 步"一个非核心 collection 使用 service backend"）
+> 第一步就会撞上 `CollectionIndexBuilder.ts:56` 的 `store.getDb()` —
+> 外部 collection 的重建路径在 service-backed store 上直接断。
+
+#### duck-typed 调用的额外风险
+
+`RecentBrowseResolver`、`evidence.ts`、`route-serial.ts`、`route-parallel.ts`
+使用 `(store as StoreWithDb).getDb?.()` — 可选链让 service-backed store
+**静默降级**而不是显式报错。对 `list_recent` 来说，`scope=threads`
+（对话数据的主场）会返回空结果且无 `degraded` 提示。
+
+#### 治理优先级
+
+1. **Phase 1 前置**：IndexBuilder / factory / bootstrap — 重构为通过 MemoryStore 接口写入
+2. **Phase 1 清理**：routes 层（f163-admin、f163-audit、evidence.ts）— 重构为通过服务接口查询
+3. **Phase 2 前置**：CollectionIndexBuilder — 灰度方案的硬前提
+4. **Phase 2+**：agent 路由（route-serial/route-parallel）— duck-typed，当前降级安全
 
 ### 重建
 
@@ -846,7 +875,13 @@ edge changes    ──► store.edges.link(...)           ──► service POST
 ### Phase 1：Backend SPI 骨架（零行为变更）
 
 1. 提取 `MemoryBackendProvider` 接口 + `MemoryBackendRegistry`
-2. 将 `IndexBuilder` 的直接 SQLite 写入重构为通过 `TextBlockStore.put()` 写入
+2. **`getDb()` 逃逸面治理**（见 §5 完整清单，13 个文件）：
+   - 2a. `IndexBuilder` 的直接 SQLite 写入 → `TextBlockStore.put()`
+   - 2b. `factory.ts` 的 VectorStore/PassageVectorStore 初始化 → 抽到 provider 内部
+   - 2c. `GlobalIndexBuilder` / `bootstrap-collection-bridge` → 通过 provider 接口
+   - 2d. routes 层（`f163-admin`、`f163-audit-routes`、`evidence.ts`）→ 通过服务接口查询
+   - 2e. `RecentBrowseResolver` duck-typed getDb → 新增 `recency` 查询到 `TextBlockStore`（见 §11.6.2）
+   - 2f. `index.ts` 启动流程（IndexStateManager、scheduler 等 8 处）→ 通过 provider 初始化钩子
 3. 将现有 `SqliteEvidenceStore` 包装为 `SqliteBackendProvider`
    （实现 `MemoryStore` 三原语接口：TextBlockStore + RelationEdgeStore + TimelineStore）
 4. `EntityRegistry` 包装为 `EntityResolver` 基础设施注入
@@ -859,7 +894,11 @@ edge changes    ──► store.edges.link(...)           ──► service POST
 8. 实现 `MemoryServiceClient`（服务契约 v0 的 HTTP 客户端）
 9. 实现 `MemoryServiceAdapter`（IEvidenceStore + GraphStore → 内部通过 MemoryStore 通信）
 10. 将 `MemoryServiceBackendProvider` 添加到注册表
-11. 灰度：一个非核心 collection 使用 service backend
+11. **`CollectionIndexBuilder` getDb 治理**（Phase 2 灰度硬前提）：
+    外部 collection 重建路径 `CollectionIndexBuilder.ts:56` 直接调 `store.getDb()` —
+    service-backed store 上断。重构为通过 `MemoryStore.blocks.batchPut()`
+12. 灰度：一个非核心 collection 使用 service backend
+13. agent 路由 duck-typed getDb（`route-serial.ts`、`route-parallel.ts`）→ 降级安全，按需治理
 
 ### Phase 3：清理 + 加固
 
@@ -1703,11 +1742,29 @@ Memory-System-Eval-Harness 的 MemoryPlugin Protocol 定义了 9 个必需方法
 **关键发现**：
 
 1. 当前所有 passage 都是对话消息（doc_anchor 全部是 `thread-*`）。evidence_passages 表的全部内容语义上属于 ConversationMemory。
-2. 存在 188 个孤儿 anchor — passage 已索引但没有对应的 evidence_docs 父文档。这是当前的数据质量问题：IndexBuilder 写 passage 时不总是创建对应的 thread parent doc。EchoMem 接管后应确保每个 thread 都有父文档。
+2. 存在 188 个孤儿 anchor — passage 已索引但没有对应的 evidence_docs 父文档。
 
-> **doc_anchor FK 约束**：schema.ts 中 `evidence_passages.doc_anchor` 没有 FOREIGN KEY 约束
-> （V3 建表只有 UNIQUE(doc_anchor, passage_id)），导致孤儿 passage 可以存在。
-> EchoMem 接管后建议在 provider 层强制 parent doc 存在性。
+> **孤儿根因是"删时不级联"，不是"写时缺建"**（Fable review P1-B 修正）：
+>
+> - `IndexBuilder.ts:529-542` cleanup 阶段：删除所有不在 `threadListFn` 返回集里的
+>   evidence_docs anchor（thread 关闭/消失 → thread doc 被清理）
+> - `SqliteEvidenceStore.ts:1365` `deleteByAnchor()`：只 `DELETE FROM evidence_docs`，
+>   **不级联删 evidence_passages**（全 codebase 无 `DELETE FROM evidence_passages`）
+> - `schema.ts` V3 建表：`evidence_passages.doc_anchor` 无 FOREIGN KEY
+>   （只有 `UNIQUE(doc_anchor, passage_id)`），数据库层面不阻止孤儿
+> - → thread doc 被 cleanup 删除，其下 passage 永久残留
+>
+> **这暴露了更深的治理问题**：历史 thread 的对话记忆保留策略当前是矛盾态
+> （doc 层不保留 → 被 cleanup；passage 层永久保留 → 无清理代码路径）。
+> 这个问题应先在我们的治理层回答，再谈移交 EchoMem——
+> 否则是把自己没想清楚的生命周期问题打包给外部团队。
+>
+> **对 OQ4 方案的影响**：原方案"EchoMem 接管后补建 parent doc"不稳定——
+> 补建的 doc 下一轮 `IndexBuilder.rebuild()` cleanup 会再次删掉
+> （thread 仍不在 `threadListFn` 返回集里）。正确方案：
+> (a) 在 cleanup 前检查 passage 存在性，有 passage 的 anchor 不删；或
+> (b) cascade 删除（doc 删时同步清理 passage）；或
+> (c) EchoMem 接管后，这些 passage 迁入外部存储，本地 cleanup 无感。
 
 **Top 10 passage 分布（按 thread）**：
 
@@ -1750,8 +1807,8 @@ EchoMem 若需对话内关系图（如 SPO 三元组提取），在 Conversation
   ═══════════════════════             ══════════════════════════════════
   evidence_docs:                      evidence_docs:
     feature    236  (scanner)           thread     7  ← passage 父文档
-    plan        38  (scanner)           (+ 188 个缺失的 thread 父文档
-    decision    10  (scanner)            应由 EchoMem 补齐)
+    plan        38  (scanner)           (+ 188 个孤儿 anchor：parent doc
+    decision    10  (scanner)            被 cleanup 删除，见 §11.3.2)
     session/lesson/...  0
                                       evidence_passages:
   edges:                                21,946 条对话消息（round-result）
@@ -1986,9 +2043,42 @@ class EchoAgentMemoryEngineAdapter {
 注册为 EchoAgent session 的 custom memory engine endpoint。
 EchoAgent 通过现有 `memory_query` mode 透传查询，adapter 翻译后调用 Clowder 记忆服务。
 
-### 11.6 SearchOptions → 两侧 Provider 分流映射
+#### 11.5.5 Ingestion 通道：Clowder → EchoMem（前置设计缺口）
 
-当 KnowledgeResolver 扇出搜索时，SearchOptions 字段按以下规则分发到两个 Provider：
+> **Fable review P1-A**：§11.5.3 说"写入不经过 adapter（EchoMem 通过 result mode 自主收集）"，
+> 但 `result` mode 是 EchoAgent session round 生命周期回调
+> （`session-memory-engine.service.ts:450/:481`）。**Clowder 不是 EchoAgent，没有 session round** ——
+> 当前没有任何机制把 Clowder 的 thread 消息灌进 EchoMem。
+> 没有 ingestion，EchoMem collection 搜出来永远是空的。
+> **这是 §11 成立的前提条件。**
+
+##### 可选方案（需与 EchoMem 团队对齐）
+
+| 方案 | 触发方 | payload | 增量/全量 | 侵入性 |
+|------|--------|---------|----------|--------|
+| **A. 消息事件钩子** | Clowder 消息处理管线 | 每条消息实时推送到 EchoMem `result` mode endpoint | 增量 | 中 — 需要在消息处理管线加 hook |
+| **B. IndexBuilder 改推** | `IndexBuilder.rebuild()` 完成后 | 批量推送 passage 到 EchoMem | 全量+增量 | 低 — 在现有 rebuild 流程末尾加推送步骤 |
+| **C. EchoMem 主动拉取** | EchoMem 定时轮询 | 通过 §3.3 `POST /blocks/search` 拉取新消息 | 增量 | 低 — 无 Clowder 侧改动，但实时性差 |
+| **D. 共享存储** | 无 | EchoMem 直接读 Clowder SQLite（只读） | 实时 | **高风险** — 违反边界隔离原则 |
+
+##### 前置问题（必须先回答）
+
+1. **EchoMem 是否愿意接非 EchoAgent 事件源？** — `result` mode 的 payload schema 假设 EchoAgent round 结构（input/output/metadata），Clowder thread 消息不满足此 schema
+2. **存量迁移**：21,946 条现存 passage 如何批量灌入 EchoMem？需要一次性迁移工具
+3. **增量保序**：消息推送是否需要保证 thread 内有序？跨 thread 呢？
+4. **Clowder thread 消息 → EchoMem round-result 的 schema 适配**：需要定义翻译层（或 EchoMem 接受自由格式 payload）
+
+> **建议**：方案 A（消息事件钩子）或 B（IndexBuilder 改推）最自然。
+> 但这是与 EchoMem 团队对齐的**第一议题** — 他们是否愿意接非 EchoAgent 事件源
+> 决定了整个 §11 的可行性。加入 §11.11 开放问题表。
+
+### 11.6 三入口 Provider 分流设计
+
+猫猫面对三个记忆检索入口（§1 检索层）。每个入口的 Provider 路由方式不同：
+
+#### 11.6.1 search_evidence → KnowledgeResolver 扇出
+
+SearchOptions 字段按以下规则分发到两个 Provider：
 
 | SearchOptions 字段 | DocMemoryProvider | ConversationMemoryProvider | 说明 |
 |-------------------|------------------|--------------------------|------|
@@ -2009,6 +2099,50 @@ EchoAgent 通过现有 `memory_query` mode 透传查询，adapter 翻译后调�
 | `provenanceTier` | ✅ 过滤 | ❌ 忽略 | 对话消息无 provenance tier |
 | `worldId` / `sceneId` | ✅ → extra | ❌ 忽略 | 文档专属维度 |
 | `includeBackstop` | ✅ → extra | ❌ 忽略 | 文档压缩专属（F163） |
+
+#### 11.6.2 list_recent → RecentBrowseResolver 分流
+
+**当前问题**（Fable review P1-C）：`RecentBrowseResolver` 使用 duck-typed
+`(store as StoreWithDb).getDb?.()` 直接读 SQLite（`:60/:109/:168`）。
+service-backed store 没有 `getDb()` → **被静默跳过，无 degraded 提示**。
+EchoMem 接管对话后，`scope=threads`（恰好是对话数据主场）在 `list_recent` 里会缺数据。
+
+**设计方案**：
+
+```
+list_recent(scope=threads)
+  │
+  ├─ Phase 1（当前）：
+  │    RecentBrowseResolver 走 getDb() → SQLite 直读
+  │    service-backed store 静默跳过（已有行为）
+  │    → 降级安全，但 EchoMem 数据不可见
+  │
+  └─ Phase 2（需要新增）：
+       TextBlockStore 新增 recency 查询语义：
+         POST /blocks/list { orderBy: 'updatedAt', direction: 'desc', limit, kind?, ... }
+       RecentBrowseResolver 对 service-backed store 走 HTTP 接口
+       → EchoMem 的最近对话可见
+```
+
+服务契约 §3.3 需要补充 `POST /blocks/list` 端点（带 `orderBy` 排序参数），
+或在 `TextSearchOptions` 中增加 `orderBy?: 'relevance' | 'recency'` 字段。
+
+#### 11.6.3 graph_resolve → GraphStore 分流
+
+**当前状态**：edges 100% doc-to-doc（2,437 条），全部归 DocMemory。
+`GraphStore` 当前直接绑定在 project store 上，不经过 provider 路由。
+
+**分流规则**：
+
+| 场景 | 路由 | 说明 |
+|------|------|------|
+| 起点 anchor 是 doc（非 `thread-*`） | DocMemory GraphStore | 当前行为不变 |
+| 起点 anchor 是 `thread-*` | Phase 1: 本地 GraphStore（无 thread edge） | Phase 2: ConversationMemory 若实现 RelationEdge |
+| 跨 provider 关系（doc ↔ thread） | Phase 3: 宿主层 merge | 需要跨 provider edge 聚合机制 |
+
+**Phase 1 不阻塞**：当前没有 thread 相关 edge，graph_resolve 不会查到
+ConversationMemory 里的东西。EchoMem Phase 2 实现 RelationEdge（SPO）后，
+需要 GraphStore 支持 provider 路由。
 
 ### 11.7 两侧集成方式
 
@@ -2086,17 +2220,61 @@ registry.register('echomem', new EchoMemBackendProvider());
 > EchoMem 是一个可选的外部 collection，不是核心依赖。
 > 不用 EchoMem 时，Clowder 回到纯本地模式，功能完全不受影响。
 
-### 11.9 开放问题
+### 11.9 隐私与部署边界（硬约束）
+
+> **Fable review P2-E**：对话消息是全系统最敏感数据。
+> 写路径把全量对话交给外部团队存储——部署边界、访问控制、
+> private thread 范围必须是显式硬约束，不能靠示例暗示。
+
+**部署约束**：
+
+| 约束 | 要求 | 来源 |
+|------|------|------|
+| **部署位置** | EchoMem 必须 localhost / 同机部署。对话数据不出本机网络 | 铁律 #1（Data Storage Sanctuary）+ W5 |
+| **传输加密** | localhost 可免 TLS；跨网络部署（未来）必须 mTLS | 安全基线 |
+| **private thread** | `sensitivity=private` 的 thread 消息**不推送到 EchoMem** | ingestion hook 过滤 |
+| **访问控制** | EchoMem endpoint 仅接受 Clowder 宿主连接（IP 白名单 / Unix socket / Bearer token） | 最小权限 |
+| **数据保留** | EchoMem 侧对话数据保留策略须不低于 Clowder 本地（当前无 TTL） | 铁律 #5（用户数据持久化） |
+| **删除传播** | 用户请求删除对话 → Clowder 须同步通知 EchoMem 删除对应数据 | GDPR / 数据主权 |
+
+> §11.7 示例中 `"endpoint": "http://localhost:8080/api/memory-engine"` 的
+> `localhost` 不是随意选择——**localhost 部署是 Phase 1 硬约束**。
+
+### 11.10 验收基线
+
+> **Fable review P2-G**：P5（可验证才算完成）——
+> "按擅长分工"是假设，需要可验证的判据。
+
+**验收方案**：挂载 **F200 Memory Recall Eval**，先固化本地 passage 搜索的
+对话召回基线，EchoMem 接入后同题对比。
+
+| 指标 | 基线来源 | 门槛 |
+|------|---------|------|
+| 对话召回率（recall@10） | 当前 passage_fts + passage_vectors 搜索 | 不劣于基线（≥95%） |
+| 搜索延迟 P95 | 当前 KnowledgeResolver 单 store 延迟 | ≤ 2× 本地延迟 |
+| 降级正确性 | EchoMem 不可达 → `degraded=true` + 对话结果为空 | 100% |
+| list_recent 完整性 | `scope=threads` 返回最近 N 个 thread | 不劣于本地（Phase 2） |
+
+**实施步骤**：
+
+1. Phase 1 前：用 F200 Eval 在本地 SQLite passage 搜索上跑基线测试集
+2. EchoMem 接入后：同一测试集在 EchoMem collection 上跑，对比召回率
+3. 验收门槛未达 → 回退到本地（§11.8 回退成本 = 1 行配置改动）
+
+### 11.11 开放问题
 
 | # | 问题 | 当前立场 |
 |---|------|---------|
 | 1 | EchoMem 的 `memory_query` response 格式如何与 EvidenceItem 对齐？ | 需要 EchoMem 侧定义结构化返回（当前 `data` 是 unknown） |
 | 2 | 共享 alias normalizer 的 scope 如何划定？ | provider-local 实体是默认；共享 normalizer 只做 query expansion，不强制同步全量实体库。跨租户 / 跨 session 边界需要隔离 |
 | 3 | Thread 摘要（summary_segments）何时移交 EchoMem Episode？ | Phase 2 讨论。当前 Clowder 能用，不急 |
-| 4 | EchoMem 如何处理 193 个 thread 中 188 个孤儿 anchor 的 passage？ | EchoMem 接管后应补建 parent doc；或放宽 FK 约束 |
+| 4 | 孤儿 anchor 的 passage 治理方案？ | 根因是 cleanup 不级联（§11.3.2），需先在我们治理层解决保留策略矛盾（doc 不保留 vs passage 永久保留），再谈移交 |
 | 5 | 两侧搜索结果的 RRF 融合权重如何调？ | 默认等权。消费 rerank（F200）在融合后由宿主统一做 |
 | 6 | EchoAgentMemoryEngineAdapter 部署架构？ | 倾向独立 HTTP 服务 + 注册为 EchoAgent memory engine endpoint。需要 EchoAgent 侧配合 |
 | 7 | ConversationMemory Phase 2 何时实现 RelationEdge / Timeline？ | 取决于 EchoMem develop 分支稳定性（SPO / EpisodeEvent 成熟度） |
+| 8 | **Ingestion 通道方案选择？**（P1-A） | 方案 A（消息事件钩子）或 B（IndexBuilder 改推）最自然。但 EchoMem 是否愿意接非 EchoAgent 事件源是第一前置问题（见 §11.5.5） |
+| 9 | **EchoAgent session ≠ Clowder thread 语义映射？**（P2-F） | namespace `project:cat-cafe` 塞进 `sessionId` — 一个"session"装 193 个 thread 的无限长多猫对话，EchoMem 的 episode 分段是否语义正确？需 EchoMem 团队确认 |
+| 10 | **MemoryServiceAdapter 遍历统计损失？** | adapter 的 `getRelated` 硬编码 `traversalCount:0 / lastTraversedAt:null`（§4.2）— service-backed collection 丢失 F200 遍历信号。记为已知损失，Phase 3 可通过 service 侧遍历计数弥补 |
 
 ---
 
