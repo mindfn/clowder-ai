@@ -70,8 +70,10 @@ commands:
     params:
       imageUrl:
         type: string
-        required: true
-        desc: 图片 URL（支持 jpg/png/gif/bmp）
+        desc: 图片 URL（支持 jpg/png/gif/bmp，与 filePath 二选一）
+      filePath:
+        type: string
+        desc: 本地文件路径（与 imageUrl 二选一）
 
   weixin_mp.upload_material:
     type: invoke
@@ -80,8 +82,10 @@ commands:
     params:
       imageUrl:
         type: string
-        required: true
-        desc: 图片 URL
+        desc: 图片 URL（与 filePath 二选一）
+      filePath:
+        type: string
+        desc: 本地文件路径（与 imageUrl 二选一）
 
   # ── rest 类型（YAML 驱动 HTTP 调用）────────────────────
 

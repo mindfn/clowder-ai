@@ -2,6 +2,8 @@
  * Weixin-MP invoke handlers — platform-specific logic for commands
  * that cannot be expressed as pure REST calls in YAML.
  */
+import { readFile } from 'node:fs/promises';
+import { extname } from 'node:path';
 import type { InvokeContext, InvokeHandler } from '../../domains/limb/PluginLimbAdapter.js';
 import { fetchExternalUrlPinned } from '../../utils/url-safety.js';
 import { markdownToWxHtml } from './markdown-to-wx-html.js';
@@ -10,9 +12,18 @@ const TIMEOUT_MS = 30_000;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const BASE = 'https://api.weixin.qq.com/cgi-bin';
 
+const EXTENSION_MIME_MAP: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  bmp: 'image/bmp',
+};
+
 interface WeixinMpHandlerDeps {
   fetchExternalUrlPinned?: typeof fetchExternalUrlPinned;
   uploadFormData?: typeof uploadFormData;
+  readLocalFile?: (filePath: string) => Promise<Buffer>;
 }
 
 // ─── Utilities ──────────────────────────────────────────────
@@ -86,12 +97,48 @@ async function uploadWithTokenRetry(
   }
 }
 
+/**
+ * Resolve image from either a URL (SSRF-safe fetch) or a local file path.
+ * Returns blob + fileName ready for WeChat upload, or an error object.
+ */
+async function resolveImageSource(
+  params: Record<string, unknown>,
+  deps: Required<WeixinMpHandlerDeps>,
+  baseName = 'image',
+): Promise<{ blob: Blob; fileName: string } | { error: string }> {
+  const imageUrl = params.imageUrl as string | undefined;
+  const filePath = params.filePath as string | undefined;
+  if (!imageUrl && !filePath) return { error: 'imageUrl or filePath is required' };
+
+  if (filePath) {
+    const buffer = await deps.readLocalFile(filePath);
+    if (buffer.byteLength > MAX_IMAGE_BYTES) {
+      throw new Error(`Image exceeds ${MAX_IMAGE_BYTES} bytes limit`);
+    }
+    const ext = extname(filePath).slice(1).toLowerCase();
+    const mimeType = EXTENSION_MIME_MAP[ext];
+    if (!mimeType) throw new Error(`Unsupported image extension: .${ext}`);
+    return {
+      blob: new Blob([buffer], { type: mimeType }),
+      fileName: `${baseName}.${ext === 'jpeg' ? 'jpg' : ext}`,
+    };
+  }
+
+  const imgRes = await deps.fetchExternalUrlPinned(imageUrl!, {
+    timeoutMs: TIMEOUT_MS,
+    maxBytes: MAX_IMAGE_BYTES,
+  });
+  const meta = deriveImageMeta(imgRes.contentType, baseName);
+  return { blob: new Blob([imgRes.body], { type: meta.mimeType }), fileName: meta.fileName };
+}
+
 // ─── Handlers ───────────────────────────────────────────────
 
 export function createWeixinMpHandlers(deps: WeixinMpHandlerDeps = {}): Record<string, InvokeHandler> {
   const resolvedDeps: Required<WeixinMpHandlerDeps> = {
     fetchExternalUrlPinned,
     uploadFormData,
+    readLocalFile: async (fp: string) => readFile(fp),
     ...deps,
   };
 
@@ -103,39 +150,25 @@ export function createWeixinMpHandlers(deps: WeixinMpHandlerDeps = {}): Record<s
   };
 
   const uploadImage: InvokeHandler = async (params, ctx) => {
-    const imageUrl = params.imageUrl as string | undefined;
-    if (!imageUrl) return { success: false, error: 'imageUrl is required' };
+    const source = await resolveImageSource(params, resolvedDeps);
+    if ('error' in source) return { success: false, error: source.error };
 
-    const imgRes = await resolvedDeps.fetchExternalUrlPinned(imageUrl, {
-      timeoutMs: TIMEOUT_MS,
-      maxBytes: MAX_IMAGE_BYTES,
-    });
-    const meta = deriveImageMeta(imgRes.contentType);
-    const blob = new Blob([imgRes.body], { type: meta.mimeType });
-    const data = await uploadWithTokenRetry(ctx, resolvedDeps, '/media/uploadimg', blob, meta.fileName);
-
+    const data = await uploadWithTokenRetry(ctx, resolvedDeps, '/media/uploadimg', source.blob, source.fileName);
     if (!data.url) throw new Error('Upload returned no url');
     return { success: true, data: { url: data.url } };
   };
 
   const uploadMaterial: InvokeHandler = async (params, ctx) => {
-    const imageUrl = params.imageUrl as string | undefined;
-    if (!imageUrl) return { success: false, error: 'imageUrl is required' };
+    const source = await resolveImageSource(params, resolvedDeps, 'cover');
+    if ('error' in source) return { success: false, error: source.error };
 
-    const imgRes = await resolvedDeps.fetchExternalUrlPinned(imageUrl, {
-      timeoutMs: TIMEOUT_MS,
-      maxBytes: MAX_IMAGE_BYTES,
-    });
-    const meta = deriveImageMeta(imgRes.contentType, 'cover');
-    const blob = new Blob([imgRes.body], { type: meta.mimeType });
     const data = await uploadWithTokenRetry(
       ctx,
       resolvedDeps,
       '/material/add_material?type=image',
-      blob,
-      meta.fileName,
+      source.blob,
+      source.fileName,
     );
-
     if (!data.media_id) throw new Error('Material upload returned no media_id');
     return {
       success: true,

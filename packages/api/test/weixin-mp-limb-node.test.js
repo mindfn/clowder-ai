@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { LimbAccessPolicy } from '../dist/domains/limb/LimbAccessPolicy.js';
@@ -144,5 +147,109 @@ describe('PluginLimbAdapter (weixin-mp)', () => {
     assert.equal(tokenCalls, 2);
     assert.match(uploadUrls[0], /access_token=stale-token/);
     assert.match(uploadUrls[1], /access_token=fresh-token/);
+  });
+});
+
+// ─── Local file upload tests ─────────────────────────────────
+
+describe('upload_image / upload_material with local filePath', () => {
+  let tmpDir;
+
+  afterEach(async () => {
+    if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeAdapter(uploadResults) {
+    const declaration = loadLimbDeclaration(WEIXIN_MP_LIMB_PATH);
+    const uploadUrls = [];
+    const handlers = createWeixinMpHandlers({
+      fetchExternalUrlPinned: async () => {
+        throw new Error('should not fetch URL when filePath is provided');
+      },
+      uploadFormData: async (url) => {
+        uploadUrls.push(url);
+        return uploadResults;
+      },
+    });
+    const adapter = new PluginLimbAdapter({
+      declaration,
+      pluginConfig: { WEIXIN_MP_APP_ID: 'id', WEIXIN_MP_APP_SECRET: 'secret' },
+      handlers,
+    });
+    adapter.tokenManager = {
+      getAccessToken: async () => 'test-token',
+      invalidateAccessToken: async () => {},
+      isTokenExpiredError: () => false,
+    };
+    return { adapter, uploadUrls };
+  }
+
+  it('uploads image from local file path', async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'cat-cafe-upload-'));
+    const imgPath = join(tmpDir, 'test.png');
+    await writeFile(imgPath, Buffer.from('fake-png-bytes'));
+
+    const { adapter } = makeAdapter({ errcode: 0, url: 'https://mmbiz.qpic.cn/local.png' });
+    const result = await adapter.invoke('weixin_mp.upload_image', { filePath: imgPath });
+
+    assert.equal(result.success, true, result.error);
+    assert.equal(result.data.url, 'https://mmbiz.qpic.cn/local.png');
+  });
+
+  it('uploads material from local file path', async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'cat-cafe-upload-'));
+    const imgPath = join(tmpDir, 'cover.jpg');
+    await writeFile(imgPath, Buffer.from('fake-jpg-bytes'));
+
+    const { adapter } = makeAdapter({ errcode: 0, media_id: 'mid_123', url: 'https://mmbiz.qpic.cn/cover.jpg' });
+    const result = await adapter.invoke('weixin_mp.upload_material', { filePath: imgPath });
+
+    assert.equal(result.success, true, result.error);
+    assert.equal(result.data.mediaId, 'mid_123');
+  });
+
+  it('returns error when neither imageUrl nor filePath provided', async () => {
+    const { adapter } = makeAdapter({});
+    const result = await adapter.invoke('weixin_mp.upload_image', {});
+
+    assert.equal(result.success, false);
+    assert.match(result.error, /imageUrl or filePath is required/);
+  });
+
+  it('returns error for unsupported file extension', async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'cat-cafe-upload-'));
+    const badPath = join(tmpDir, 'doc.pdf');
+    await writeFile(badPath, Buffer.from('fake-pdf'));
+
+    const { adapter } = makeAdapter({});
+    const result = await adapter.invoke('weixin_mp.upload_image', { filePath: badPath });
+    assert.equal(result.success, false);
+    assert.match(result.error, /Unsupported image extension.*\.pdf/);
+  });
+
+  it('prefers filePath over imageUrl when both provided', async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'cat-cafe-upload-'));
+    const imgPath = join(tmpDir, 'both.png');
+    await writeFile(imgPath, Buffer.from('local-bytes'));
+
+    const { adapter } = makeAdapter({ errcode: 0, url: 'https://mmbiz.qpic.cn/local.png' });
+    // filePath takes precedence — fetchExternalUrlPinned mock would throw if called
+    const result = await adapter.invoke('weixin_mp.upload_image', {
+      imageUrl: 'https://example.com/remote.png',
+      filePath: imgPath,
+    });
+
+    assert.equal(result.success, true, result.error);
+  });
+
+  it('YAML declares filePath param for upload commands', () => {
+    const decl = loadLimbDeclaration(WEIXIN_MP_LIMB_PATH);
+    const imgParams = decl.commands['weixin_mp.upload_image']?.params;
+    const matParams = decl.commands['weixin_mp.upload_material']?.params;
+
+    assert.ok(imgParams.filePath, 'upload_image should have filePath param');
+    assert.ok(matParams.filePath, 'upload_material should have filePath param');
+    assert.equal(imgParams.imageUrl?.required, undefined, 'imageUrl should not be required');
+    assert.equal(matParams.imageUrl?.required, undefined, 'imageUrl should not be required');
   });
 });
