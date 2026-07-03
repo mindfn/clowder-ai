@@ -2,7 +2,7 @@
  * Limb Node Routes — F126 Phase C 远程节点注册/配对/心跳
  *
  * These routes are called BY remote nodes (not by cats).
- * Cats use MCP callback tools (limb_list_available, limb_invoke, limb_pair_approve).
+ * Cats use MCP callback tools (limb_list_available, limb_list_tools, limb_invoke_tool, limb_pair_approve).
  */
 
 import type { FastifyInstance } from 'fastify';

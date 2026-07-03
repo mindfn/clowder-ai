@@ -224,7 +224,7 @@ describe('buildLimbTools — F178 Phase D cloud-review P1 (limb defense-in-depth
 
   it('desktopMode=fable-phase0: limb tools fully denied (strict whitelist)', () => {
     const out = buildLimbTools({ desktopMode: 'fable-phase0' });
-    assert.equal(out.length, 0, 'fable Desktop must NOT expose limb_invoke / limb_pair_approve');
+    assert.equal(out.length, 0, 'fable Desktop must NOT expose limb_invoke_tool / limb_pair_approve');
   });
 
   it('desktopMode=fable-phase0 + readonly + agent-key: still denied (mode highest precedence)', () => {

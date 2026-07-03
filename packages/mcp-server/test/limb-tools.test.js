@@ -4,11 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import {
-  handleLimbInvoke,
+  handleLimbInvokeTool,
   handleLimbListAvailable,
+  handleLimbListTools,
   handleLimbPairList,
-  limbInvokeInputSchema,
+  limbInvokeToolInputSchema,
   limbListAvailableInputSchema,
+  limbListToolsInputSchema,
   limbPairApproveInputSchema,
   limbPairListInputSchema,
   limbTools,
@@ -21,12 +23,12 @@ describe('limb-tools schema', () => {
     assert.ok(limbListAvailableInputSchema.properties.agentKeyCatId);
   });
 
-  it('limbInvokeInputSchema has required fields', () => {
-    assert.equal(limbInvokeInputSchema.type, 'object');
-    assert.ok(limbInvokeInputSchema.properties.nodeId);
-    assert.ok(limbInvokeInputSchema.properties.command);
-    assert.ok(limbInvokeInputSchema.properties.agentKeyCatId);
-    assert.deepEqual(limbInvokeInputSchema.required, ['nodeId', 'command']);
+  it('limbInvokeToolInputSchema has required fields', () => {
+    assert.equal(limbInvokeToolInputSchema.type, 'object');
+    assert.ok(limbInvokeToolInputSchema.properties.nodeId);
+    assert.ok(limbInvokeToolInputSchema.properties.command);
+    assert.ok(limbInvokeToolInputSchema.properties.agentKeyCatId);
+    assert.deepEqual(limbInvokeToolInputSchema.required, ['nodeId', 'command']);
   });
 
   it('pairing schemas expose agentKeyCatId for shared Antigravity MCP', () => {
@@ -36,12 +38,13 @@ describe('limb-tools schema', () => {
     assert.ok(limbPairApproveInputSchema.properties.agentKeyCatId);
   });
 
-  it('limbTools array has 4 tools', () => {
-    assert.equal(limbTools.length, 4);
+  it('limbTools array has 5 tools (3-step flow + pairing)', () => {
+    assert.equal(limbTools.length, 5);
     assert.equal(limbTools[0].name, 'limb_list_available');
-    assert.equal(limbTools[1].name, 'limb_invoke');
-    assert.equal(limbTools[2].name, 'limb_pair_list');
-    assert.equal(limbTools[3].name, 'limb_pair_approve');
+    assert.equal(limbTools[1].name, 'limb_list_tools');
+    assert.equal(limbTools[2].name, 'limb_invoke_tool');
+    assert.equal(limbTools[3].name, 'limb_pair_list');
+    assert.equal(limbTools[4].name, 'limb_pair_approve');
   });
 
   it('each tool has name, description, inputSchema, handler', () => {
@@ -80,8 +83,8 @@ describe('limb-tools handlers (no callback config)', () => {
     assert.ok(result.content[0].text.includes('not configured'));
   });
 
-  it('handleLimbInvoke returns error without config', async () => {
-    const result = await handleLimbInvoke({
+  it('handleLimbInvokeTool returns error without config', async () => {
+    const result = await handleLimbInvokeTool({
       nodeId: 'test',
       command: 'test.cmd',
     });

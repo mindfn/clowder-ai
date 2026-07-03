@@ -245,7 +245,7 @@ test('L0 template includes limb tool quick index (via L5 segment)', () => {
   const l5Path = resolve(import.meta.dirname, '../../../assets/prompt-templates/l5-mcp-tools-index.md');
   const content = readFileSync(l5Path, 'utf8');
   assert.match(content, /limb_list_available/, 'L5 MCP tools template must mention limb_list_available');
-  assert.match(content, /limb_invoke/, 'L5 MCP tools template must mention limb_invoke');
+  assert.match(content, /limb_invoke_tool/, 'L5 MCP tools template must mention limb_invoke_tool');
 });
 
 // --- AC-G10 (Phase G native L0 closure / KD-44): in-flight Promise dedup ---

@@ -2570,8 +2570,14 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       ),
       'invalid_thinking_signature',
     );
-    // Kimi: session/load succeeds but session/prompt fails with -32603 when bootstrap CWD is deleted
-    assert.equal(classifyResumeFailure('prompt_failure: ACP error -32603: Internal error'), 'missing_session');
+    // Kimi: generic -32603 must NOT be classified as missing_session (PR #1058 P1-3)
+    assert.equal(classifyResumeFailure('prompt_failure: ACP error -32603: Internal error'), null);
+    // Only -32603 with bootstrap CWD/FileNotFoundError evidence → missing_session
+    assert.equal(
+      classifyResumeFailure('ACP error -32603: Internal error: FileNotFoundError: [Errno 2] No such file or directory'),
+      'missing_session',
+    );
+    assert.equal(classifyResumeFailure('ACP error -32603: os.getcwd() failed'), 'missing_session');
     assert.equal(classifyResumeFailure('upstream timeout'), null);
   });
 

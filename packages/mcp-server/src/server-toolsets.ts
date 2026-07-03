@@ -1,5 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { z } from 'zod';
+import { z } from 'zod';
 import { jsonSchemaToZod } from './json-schema-to-zod.js';
 import { callbackPost, getCallbackConfig } from './tools/callback-tools.js';
 import {
@@ -519,7 +519,13 @@ function registerTools(server: McpServer, tools: readonly ToolDef[]): void {
   ) => void;
   for (const tool of tools) {
     const annotations = inferAnnotations(tool.name);
-    const zodSchema = jsonSchemaToZod(tool.inputSchema);
+    // Distinguish Zod raw shape (callback tools) from plain JSON Schema (limb tools).
+    // Zod raw shapes have Zod instances as values; JSON Schema has type/properties keys.
+    const schema = tool.inputSchema;
+    const zodSchema =
+      typeof schema.type === 'string' && typeof schema.properties === 'object' && schema.properties !== null
+        ? jsonSchemaToZod(schema)
+        : z.object(schema as z.ZodRawShape);
     registerExplicit(
       tool.name,
       { description: tool.description, inputSchema: zodSchema, annotations },
@@ -564,7 +570,7 @@ export function registerSignalToolset(server: McpServer): void {
 //
 // 但 F178 Phase D V3（cloud codex review 2026-06-13 P1）：DESKTOP_MODE=fable-phase0
 // 是 strict-whitelist 模式 + 最高优先级，在 legacy createServer + registerFullToolset
-// 路径下（fable Desktop config 误指 dist/index.js）必须杜绝 limb_invoke /
+// 路径下（fable Desktop config 误指 dist/index.js）必须杜绝 limb_invoke_tool /
 // limb_pair_approve 等设备控制面暴露。defense-in-depth：DESKTOP_FABLE_PHASE0_ALLOWED_TOOLS
 // 不含任何 limb 工具，所以 fable-phase0 mode 下 limb 全 deny。
 const LIMB_TOOL_SOURCES: readonly ToolDef[] = [...limbTools];

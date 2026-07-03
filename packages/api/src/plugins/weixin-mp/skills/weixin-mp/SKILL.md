@@ -16,7 +16,10 @@ triggers:
 
 # 微信公众号发文
 
-通过 Limb 体系 (`limb_invoke`) 操作微信公众号。
+通过 Limb 体系三步调用操作微信公众号：
+1. `limb_list_available` — 发现在线节点
+2. `limb_list_tools` — 查询工具 schema
+3. `limb_invoke_tool` — 调用具体工具
 
 ## 使用前检查
 
@@ -26,42 +29,53 @@ triggers:
 ## 接口发现
 
 `limb_list_available()` 返回当前在线节点的 capability、command 和 authLevel；这是可调用命令白名单。
+调用 `limb_list_tools({ nodeId: "weixin-mp" })` 获取每个工具的参数 schema。
 详细参数以本 skill 的"核心能力"说明为准。当前列表中没有的命令不要猜测调用；如果缺少预期命令，提示用户重新启用或同步微信公众号插件。
 
 ## 核心能力
 
-- **检查连接** — `limb_invoke({ nodeId: "weixin-mp", command: "weixin_mp.check_status" })`
+- **检查连接** — `limb_invoke_tool({ nodeId: "weixin-mp", command: "weixin_mp.check_status" })`
   确认公众号是否配置并可连接。
 
-- **Markdown 转 HTML** — `limb_invoke({ nodeId: "weixin-mp", command: "weixin_mp.convert_markdown", params: { markdown } })`
-  将 Markdown 转为微信兼容内联样式 HTML。返回 `{ html }`。发文前必须调用。
+- **Markdown 转 HTML** — `limb_invoke_tool({ nodeId: "weixin-mp", command: "weixin_mp.convert_markdown", params: { markdown } })`
+  将 Markdown 转为微信兼容内联样式 HTML，写入 `.wx.html` 文件并返回 `{ filePath }`。发文前必须调用。
 
-- **上传正文图片** — `limb_invoke({ nodeId: "weixin-mp", command: "weixin_mp.upload_image", params: { imageUrl } })`
-  上传图片到微信 CDN，返回可在文章正文中使用的 `{ url }`。
+- **上传正文图片** — `limb_invoke_tool({ nodeId: "weixin-mp", command: "weixin_mp.upload_image", params: { fileLocation } })`
+  上传图片到微信 CDN，返回可在文章正文中使用的 `{ url }`。`fileLocation` 支持 HTTP/HTTPS URL 或本地绝对路径。
 
-- **上传封面素材** — `limb_invoke({ nodeId: "weixin-mp", command: "weixin_mp.upload_material", params: { imageUrl } })`
+- **上传封面素材** — `limb_invoke_tool({ nodeId: "weixin-mp", command: "weixin_mp.upload_material", params: { fileLocation } })`
   上传永久图片素材，返回 `{ mediaId, url }`。用作封面图的 `thumbMediaId`。
 
-- **创建草稿** — `limb_invoke({ nodeId: "weixin-mp", command: "weixin_mp.create_draft", params: { title, content, thumbMediaId, author?, digest? } })`
-  创建草稿箱文章。`content` 须是微信 HTML（先调 `convert_markdown`），`thumbMediaId` 是封面 media_id（先调 `upload_material`）。
+- **创建草稿** — `limb_invoke_tool({ nodeId: "weixin-mp", command: "weixin_mp.create_draft", params: { title, content, thumbMediaId, author?, digest? } })`
+  创建草稿箱文章。`content` 须是微信 HTML（先调 `convert_markdown`），`thumbMediaId` 是封面 media_id（先调 `upload_material`）。支持 `contentFilePath` 替代 `content` 传入大段内容。
 
-- **发布草稿** — `limb_invoke({ nodeId: "weixin-mp", command: "weixin_mp.submit_publish", params: { mediaId } })`
+- **更新草稿** — `limb_invoke_tool({ nodeId: "weixin-mp", command: "weixin_mp.update_draft", params: { mediaId, title?, content?, thumbMediaId?, author?, digest? } })`
+  更新草稿箱文章，仅传需要修改的字段。支持 `contentFilePath` 替代 `content`。
+
+- **删除草稿** — `limb_invoke_tool({ nodeId: "weixin-mp", command: "weixin_mp.delete_draft", params: { mediaId } })`
+  删除草稿箱中的指定草稿。
+
+- **发布草稿** — `limb_invoke_tool({ nodeId: "weixin-mp", command: "weixin_mp.submit_publish", params: { mediaId } })`
   将草稿发布。`mediaId` 是 `create_draft` 返回的 `media_id`。
 
-- **查看草稿** — `limb_invoke({ nodeId: "weixin-mp", command: "weixin_mp.list_drafts", params: { offset?, count? } })`
+- **查看草稿** — `limb_invoke_tool({ nodeId: "weixin-mp", command: "weixin_mp.list_drafts", params: { offset?, count? } })`
   列出草稿箱中的文章及其 media_id。
 
-- **发布状态** — `limb_invoke({ nodeId: "weixin-mp", command: "weixin_mp.publish_status", params: { publishId } })`
+- **发布状态** — `limb_invoke_tool({ nodeId: "weixin-mp", command: "weixin_mp.publish_status", params: { publishId } })`
   查询发布任务的处理状态和文章链接。
+
+- **素材管理** — `list_material`、`get_material_count`、`delete_material` 管理永久素材。
+
+- **已发布文章** — `list_articles`、`delete_article` 管理已发布文章。
 
 ## 发文流程（编排示例）
 
 发布一篇 Markdown 文章的标准步骤：
 
-1. `convert_markdown` — Markdown → 微信 HTML
+1. `convert_markdown` — Markdown → 微信 HTML（返回 filePath）
 2. 正文中的外部图片 → 逐个 `upload_image` → 替换为微信 CDN URL
 3. `upload_material` — 上传封面图 → 得到 `thumbMediaId`
-4. `create_draft` — 创建草稿（传入 HTML + thumbMediaId）
+4. `create_draft` — 创建草稿（传入 contentFilePath + thumbMediaId）
 5. 可选：`submit_publish` — 发布草稿
 
 ## 常见错误
@@ -69,6 +83,7 @@ triggers:
 - 忘记先调 `convert_markdown` 就直接传 Markdown 给 `create_draft`
 - 文章正文中使用外部图片链接（必须先 `upload_image` 到微信 CDN）
 - 混淆草稿 media_id 和发布 publishId
+- 使用旧工具名 `limb_invoke`（已更名为 `limb_invoke_tool`，需配合 `limb_list_tools` 查 schema）
 
 ## 限制
 

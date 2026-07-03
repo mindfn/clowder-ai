@@ -107,9 +107,10 @@ const EXPECTED_TOOLS = [
   'cat_cafe_read_invocation_detail',
   'cat_cafe_list_external_runtime_sessions',
   'cat_cafe_read_external_runtime_session',
-  // Limb tools
+  // Limb tools (3-step flow: list_available → list_tools → invoke_tool)
   'limb_list_available',
-  'limb_invoke',
+  'limb_list_tools',
+  'limb_invoke_tool',
   'limb_pair_list',
   'limb_pair_approve',
   // F101 Phase I: Game action tool
@@ -255,7 +256,13 @@ const EXPECTED_SIGNAL_TOOLS = [
 ];
 
 // F193 Phase C: limb tools (布偶猫专属能力 namespace) get their own server.
-const EXPECTED_LIMB_TOOLS = ['limb_list_available', 'limb_invoke', 'limb_pair_list', 'limb_pair_approve'];
+const EXPECTED_LIMB_TOOLS = [
+  'limb_list_available',
+  'limb_list_tools',
+  'limb_invoke_tool',
+  'limb_pair_list',
+  'limb_pair_approve',
+];
 
 // F207 Phase B0: finance fact tools get their own read-only data-plane server.
 const EXPECTED_AUDIO_TOOLS = [
@@ -531,7 +538,7 @@ const KNOWN_WRITE_TOOLS = [
   'signal_update_article',
   'signal_delete_article',
   'signal_link_thread',
-  'limb_invoke',
+  'limb_invoke_tool',
   'limb_pair_approve',
 ];
 
