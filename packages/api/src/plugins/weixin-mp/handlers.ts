@@ -2,15 +2,54 @@
  * Weixin-MP invoke handlers — platform-specific logic for commands
  * that cannot be expressed as pure REST calls in YAML.
  */
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { extname, join } from 'node:path';
+import { extname, join, resolve } from 'node:path';
 import type { InvokeContext, InvokeHandler } from '../../domains/limb/PluginLimbAdapter.js';
 import { fetchExternalUrlPinned } from '../../utils/url-safety.js';
 import { markdownToWxHtml } from './markdown-to-wx-html.js';
 
 const TIMEOUT_MS = 30_000;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_TEXT_READ_BYTES = 2 * 1024 * 1024; // 2 MB text read limit
+
+/**
+ * Validate that a file path resolves to an allowed directory.
+ * Prevents path traversal and symlink escapes.
+ */
+export async function validateFilePath(
+  filePath: string,
+  allowedRoots: readonly string[],
+  label: string,
+): Promise<string> {
+  const abs = resolve(filePath);
+  let resolved: string;
+  try {
+    resolved = await realpath(abs);
+  } catch {
+    // File doesn't exist yet (write case) — resolve parent dir
+    const parent = resolve(abs, '..');
+    const parentReal = await realpath(parent).catch(() => {
+      throw new Error(`${label}: parent directory does not exist: ${parent}`);
+    });
+    resolved = join(parentReal, abs.slice(abs.lastIndexOf('/') + 1));
+  }
+  const under = allowedRoots.some((root) => resolved.startsWith(root + '/') || resolved === root);
+  if (!under) {
+    throw new Error(`${label}: path escapes allowed roots: ${resolved}`);
+  }
+  return resolved;
+}
+
+/** Resolve allowed read roots — uses realpath to match symlink-resolved paths (macOS /tmp). */
+async function getAllowedReadRoots(): Promise<string[]> {
+  return Promise.all([process.cwd(), tmpdir()].map((d) => realpath(resolve(d))));
+}
+
+/** Resolve allowed write roots — restricted to temp/export directory. */
+async function getAllowedWriteRoots(): Promise<string[]> {
+  return Promise.all([tmpdir()].map((d) => realpath(resolve(d))));
+}
 const BASE = 'https://api.weixin.qq.com/cgi-bin';
 
 const EXTENSION_MIME_MAP: Record<string, string> = {
@@ -21,12 +60,14 @@ const EXTENSION_MIME_MAP: Record<string, string> = {
   bmp: 'image/bmp',
 };
 
-interface WeixinMpHandlerDeps {
+export interface WeixinMpHandlerDeps {
   fetchExternalUrlPinned?: typeof fetchExternalUrlPinned;
   uploadFormData?: typeof uploadFormData;
   readLocalFile?: (filePath: string) => Promise<Buffer>;
   jsonPost?: (url: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
   writeLocalFile?: (filePath: string, content: string) => Promise<void>;
+  /** Override for testing; production uses validateFilePath. */
+  validatePath?: typeof validateFilePath;
 }
 
 // ─── Utilities ──────────────────────────────────────────────
@@ -141,10 +182,18 @@ async function resolveTextContent(
 // ─── Handlers ───────────────────────────────────────────────
 
 export function createWeixinMpHandlers(deps: WeixinMpHandlerDeps = {}): Record<string, InvokeHandler> {
+  const validate = deps.validatePath ?? validateFilePath;
   const resolvedDeps: Required<WeixinMpHandlerDeps> = {
     fetchExternalUrlPinned,
     uploadFormData,
-    readLocalFile: async (fp: string) => readFile(fp),
+    readLocalFile: async (fp: string) => {
+      const safe = await validate(fp, await getAllowedReadRoots(), 'readLocalFile');
+      const info = await stat(safe);
+      if (info.size > MAX_TEXT_READ_BYTES) {
+        throw new Error(`readLocalFile: file too large (${info.size} bytes, limit ${MAX_TEXT_READ_BYTES})`);
+      }
+      return readFile(safe);
+    },
     jsonPost: async (url, body) => {
       const res = await fetch(url, {
         method: 'POST',
@@ -156,8 +205,10 @@ export function createWeixinMpHandlers(deps: WeixinMpHandlerDeps = {}): Record<s
       return (await res.json()) as Record<string, unknown>;
     },
     writeLocalFile: async (fp, content) => {
-      await writeFile(fp, content, 'utf-8');
+      const safe = await validate(fp, await getAllowedWriteRoots(), 'writeLocalFile');
+      await writeFile(safe, content, 'utf-8');
     },
+    validatePath: validate,
     ...deps,
   };
 
@@ -169,10 +220,8 @@ export function createWeixinMpHandlers(deps: WeixinMpHandlerDeps = {}): Record<s
     );
     if (!markdown) return { success: false, error: 'markdown or markdownFilePath is required' };
     const html = markdownToWxHtml(markdown);
-    const mdPath = params.markdownFilePath as string | undefined;
-    const outputPath = mdPath
-      ? `${mdPath.replace(/\.(md|markdown)$/i, '')}.wx.html`
-      : join(tmpdir(), `wx-converted-${Date.now()}.html`);
+    // Always write to controlled temp directory — never derive output from input path
+    const outputPath = join(tmpdir(), `wx-converted-${Date.now()}.html`);
     await resolvedDeps.writeLocalFile(outputPath, html);
     return { success: true, data: { filePath: outputPath } };
   };

@@ -287,7 +287,7 @@ describe('convert_markdown / create_draft with file path params', () => {
 
     assert.equal(result.success, true, result.error);
     assert.ok(result.data.filePath, 'Should return filePath');
-    assert.match(result.data.filePath, /\.wx\.html$/, 'Output file should have .wx.html extension');
+    assert.match(result.data.filePath, /wx-converted-\d+\.html$/, 'Output should use tmpdir naming pattern');
     const htmlContent = await readFile(result.data.filePath, 'utf-8');
     assert.ok(htmlContent.includes('Hello'), 'HTML file should contain heading text');
   });

@@ -144,6 +144,30 @@ describe('F247 R8 P1-1: EXPLICIT_TOOL_ANNOTATIONS regression guard', () => {
     }
   });
 
+  describe('F197 PR#1058 P1-1: limb_invoke_tool max-risk annotation', () => {
+    /**
+     * Upstream review P1: limb_invoke_tool routes to plugin commands that
+     * include destructive ops (delete_draft, delete_material) AND open-world
+     * external API calls (WeChat). Max-risk rule requires both
+     * destructiveHint=true AND openWorldHint=true.
+     */
+    it('limb_invoke_tool has destructiveHint=true (routes to delete commands)', () => {
+      const ann = EXPLICIT_TOOL_ANNOTATIONS.limb_invoke_tool;
+      assert.ok(ann, 'limb_invoke_tool must be in explicit table');
+      assert.equal(ann.destructiveHint, true, 'routes to delete_draft/delete_material — must be destructive');
+    });
+
+    it('limb_invoke_tool has openWorldHint=true (routes to external APIs)', () => {
+      const ann = EXPLICIT_TOOL_ANNOTATIONS.limb_invoke_tool;
+      assert.equal(ann.openWorldHint, true, 'routes to WeChat API calls — must be openWorld');
+    });
+
+    it('limb_invoke_tool is not read-only', () => {
+      const ann = EXPLICIT_TOOL_ANNOTATIONS.limb_invoke_tool;
+      assert.equal(ann.readOnlyHint, false, 'destructive+openWorld tool cannot be read-only');
+    });
+  });
+
   describe('R8.2: explicit table covers ALL registered tools (no silent fallback)', () => {
     /**
      * 砚砚 R8.2 review extra build: pin the table 1:1 against actually-registered tools.

@@ -309,6 +309,11 @@ const A_DESTRUCTIVE: Annotation = {
   destructiveHint: true,
   openWorldHint: false,
 };
+const A_DESTRUCTIVE_OPEN_WORLD: Annotation = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  openWorldHint: true,
+};
 
 /**
  * Explicit annotation table for every cat-cafe MCP tool.
@@ -419,7 +424,9 @@ export const EXPLICIT_TOOL_ANNOTATIONS: Record<string, Annotation> = {
   signal_link_thread: A_DESTRUCTIVE,
   signal_generate_podcast: A_WRITE_OPEN_WORLD, // calls external TTS
   // ── Limb actions (write) ───────────────────────────────────────────
-  limb_invoke_tool: A_WRITE_SAFE,
+  // Max-risk rule: limb_invoke_tool routes to plugin commands including
+  // destructive ops (delete_draft, delete_material) + open-world external APIs (WeChat).
+  limb_invoke_tool: A_DESTRUCTIVE_OPEN_WORLD,
   limb_pair_approve: A_WRITE_SAFE,
   // ── Destructive (data loss / unrecoverable) ────────────────────────
   cat_cafe_shell_exec: A_DESTRUCTIVE,
