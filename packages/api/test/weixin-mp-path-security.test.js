@@ -152,6 +152,31 @@ describe('createWeixinMpHandlers path security', () => {
     assert.equal(result.success, false);
     assert.match(result.error, /path escapes allowed roots/);
   });
+
+  it('R2 P1: rejects files under server cwd (exfiltration path)', async () => {
+    // Simulate a sensitive file under the API process cwd.
+    // Since cwd is intentionally excluded from read roots, any path
+    // under cwd (that isn't also under tmpdir) must be rejected.
+    const cwdFile = join(process.cwd(), 'package.json');
+    const adapter = makeSecureAdapter();
+
+    const result = await adapter.invoke('weixin_mp.convert_markdown', {
+      markdownFilePath: cwdFile,
+    });
+    assert.equal(result.success, false);
+    assert.match(result.error, /path escapes allowed roots/);
+  });
+
+  it('R2 P1: rejects .env-style files under cwd via upload_image', async () => {
+    // A caller with limb_invoke_tool could try fileLocation: '.env'
+    // which resolves to cwd/.env — must be blocked.
+    const adapter = makeSecureAdapter();
+    const result = await adapter.invoke('weixin_mp.upload_image', {
+      fileLocation: join(process.cwd(), '.env.example'),
+    });
+    assert.equal(result.success, false);
+    assert.match(result.error, /path escapes allowed roots/);
+  });
 });
 
 // ─── Size limit ─────────────────────────────────────────────
@@ -163,14 +188,14 @@ describe('readLocalFile size limit', () => {
     if (tmpDir) await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it('rejects files exceeding 2 MB text read limit', async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), 'cat-cafe-size-'));
-    const bigFile = join(tmpDir, 'huge.md');
-    // Write 2 MB + 1 byte to exceed the limit
-    await writeFile(bigFile, Buffer.alloc(2 * 1024 * 1024 + 1, 'A'));
-
+  function makeSizeTestAdapter(uploadResults = {}) {
     const declaration = loadLimbDeclaration(WEIXIN_MP_LIMB_PATH);
-    const handlers = createWeixinMpHandlers();
+    const handlers = createWeixinMpHandlers({
+      fetchExternalUrlPinned: async () => {
+        throw new Error('should not fetch URL');
+      },
+      uploadFormData: async () => uploadResults,
+    });
     const adapter = new PluginLimbAdapter({
       declaration,
       pluginConfig: { WEIXIN_MP_APP_ID: 'id', WEIXIN_MP_APP_SECRET: 'secret' },
@@ -181,9 +206,46 @@ describe('readLocalFile size limit', () => {
       invalidateAccessToken: async () => {},
       isTokenExpiredError: () => false,
     };
+    return adapter;
+  }
 
+  it('rejects text files exceeding 2 MB limit', async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'cat-cafe-size-'));
+    const bigFile = join(tmpDir, 'huge.md');
+    await writeFile(bigFile, Buffer.alloc(2 * 1024 * 1024 + 1, 'A'));
+
+    const adapter = makeSizeTestAdapter();
     const result = await adapter.invoke('weixin_mp.convert_markdown', {
       markdownFilePath: bigFile,
+    });
+
+    assert.equal(result.success, false);
+    assert.match(result.error, /file too large/);
+  });
+
+  it('R2 P2: local images between 2-10 MB succeed (not blocked by text limit)', async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'cat-cafe-img-size-'));
+    const imgPath = join(tmpDir, 'large-photo.png');
+    // 3 MB image — above 2 MB text limit, below 10 MB image limit
+    await writeFile(imgPath, Buffer.alloc(3 * 1024 * 1024, 0x89));
+
+    const adapter = makeSizeTestAdapter({ errcode: 0, url: 'https://mmbiz.qpic.cn/large.png' });
+    const result = await adapter.invoke('weixin_mp.upload_image', {
+      fileLocation: imgPath,
+    });
+
+    assert.equal(result.success, true, result.error);
+    assert.equal(result.data.url, 'https://mmbiz.qpic.cn/large.png');
+  });
+
+  it('R2 P2: local images exceeding 10 MB are still rejected', async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'cat-cafe-img-size-'));
+    const imgPath = join(tmpDir, 'huge-photo.png');
+    await writeFile(imgPath, Buffer.alloc(10 * 1024 * 1024 + 1, 0x89));
+
+    const adapter = makeSizeTestAdapter();
+    const result = await adapter.invoke('weixin_mp.upload_image', {
+      fileLocation: imgPath,
     });
 
     assert.equal(result.success, false);

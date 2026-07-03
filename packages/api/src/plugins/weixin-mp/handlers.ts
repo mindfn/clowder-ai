@@ -41,9 +41,14 @@ export async function validateFilePath(
   return resolved;
 }
 
-/** Resolve allowed read roots — uses realpath to match symlink-resolved paths (macOS /tmp). */
+/**
+ * Resolve allowed read roots — restricted to tmpdir only.
+ * process.cwd() is intentionally excluded: it contains app config, .env,
+ * source code, and runtime data that should never be exfiltrable via
+ * WeChat upload commands. Content must be placed in tmpdir first.
+ */
 async function getAllowedReadRoots(): Promise<string[]> {
-  return Promise.all([process.cwd(), tmpdir()].map((d) => realpath(resolve(d))));
+  return Promise.all([tmpdir()].map((d) => realpath(resolve(d))));
 }
 
 /** Resolve allowed write roots — restricted to temp/export directory. */
@@ -63,7 +68,10 @@ const EXTENSION_MIME_MAP: Record<string, string> = {
 export interface WeixinMpHandlerDeps {
   fetchExternalUrlPinned?: typeof fetchExternalUrlPinned;
   uploadFormData?: typeof uploadFormData;
+  /** Read text files (markdown, HTML) — enforces MAX_TEXT_READ_BYTES (2 MB). */
   readLocalFile?: (filePath: string) => Promise<Buffer>;
+  /** Read image files — enforces MAX_IMAGE_BYTES (10 MB). */
+  readLocalImageFile?: (filePath: string) => Promise<Buffer>;
   jsonPost?: (url: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
   writeLocalFile?: (filePath: string, content: string) => Promise<void>;
   /** Override for testing; production uses validateFilePath. */
@@ -156,10 +164,8 @@ async function resolveImageSource(
     const meta = deriveImageMeta(imgRes.contentType, baseName);
     return { blob: new Blob([imgRes.body], { type: meta.mimeType }), fileName: meta.fileName };
   }
-  const buffer = await deps.readLocalFile(uri);
-  if (buffer.byteLength > MAX_IMAGE_BYTES) {
-    throw new Error(`Image exceeds ${MAX_IMAGE_BYTES} bytes limit`);
-  }
+  // Use image-specific reader (10 MB limit) instead of text reader (2 MB limit)
+  const buffer = await deps.readLocalImageFile(uri);
   const ext = extname(uri).slice(1).toLowerCase();
   const mimeType = EXTENSION_MIME_MAP[ext];
   if (!mimeType) throw new Error(`Unsupported image extension: .${ext}`);
@@ -191,6 +197,14 @@ export function createWeixinMpHandlers(deps: WeixinMpHandlerDeps = {}): Record<s
       const info = await stat(safe);
       if (info.size > MAX_TEXT_READ_BYTES) {
         throw new Error(`readLocalFile: file too large (${info.size} bytes, limit ${MAX_TEXT_READ_BYTES})`);
+      }
+      return readFile(safe);
+    },
+    readLocalImageFile: async (fp: string) => {
+      const safe = await validate(fp, await getAllowedReadRoots(), 'readLocalImageFile');
+      const info = await stat(safe);
+      if (info.size > MAX_IMAGE_BYTES) {
+        throw new Error(`readLocalImageFile: file too large (${info.size} bytes, limit ${MAX_IMAGE_BYTES})`);
       }
       return readFile(safe);
     },
