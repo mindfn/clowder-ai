@@ -38,19 +38,19 @@ triggers:
   确认公众号是否配置并可连接。
 
 - **Markdown 转 HTML** — `limb_invoke_tool({ nodeId: "weixin-mp", command: "weixin_mp.convert_markdown", params: { markdown } })`
-  将 Markdown 转为微信兼容内联样式 HTML，写入 `.wx.html` 文件并返回 `{ filePath }`。发文前必须调用。
+  将 Markdown 转为微信兼容内联样式 HTML，写入系统临时目录并返回 `{ filePath }`。发文前必须调用。支持 `markdownFilePath` 替代 `markdown` 读取本地文件（必须在系统临时目录下，上限 2 MB）。
 
 - **上传正文图片** — `limb_invoke_tool({ nodeId: "weixin-mp", command: "weixin_mp.upload_image", params: { fileLocation } })`
-  上传图片到微信 CDN，返回可在文章正文中使用的 `{ url }`。`fileLocation` 支持 HTTP/HTTPS URL 或本地绝对路径。
+  上传图片到微信 CDN，返回可在文章正文中使用的 `{ url }`。`fileLocation` 支持 HTTP/HTTPS URL 或 OS 临时目录下的本地路径（如 `/tmp/photo.png`）。本地文件必须在系统临时目录下，其他路径会被拒绝。格式：jpg/png/gif/bmp，上限 10 MB。
 
 - **上传封面素材** — `limb_invoke_tool({ nodeId: "weixin-mp", command: "weixin_mp.upload_material", params: { fileLocation } })`
-  上传永久图片素材，返回 `{ mediaId, url }`。用作封面图的 `thumbMediaId`。
+  上传永久图片素材，返回 `{ mediaId, url }`。用作封面图的 `thumbMediaId`。同 `upload_image`，本地路径限系统临时目录，上限 10 MB。
 
 - **创建草稿** — `limb_invoke_tool({ nodeId: "weixin-mp", command: "weixin_mp.create_draft", params: { title, content, thumbMediaId, author?, digest? } })`
-  创建草稿箱文章。`content` 须是微信 HTML（先调 `convert_markdown`），`thumbMediaId` 是封面 media_id（先调 `upload_material`）。支持 `contentFilePath` 替代 `content` 传入大段内容。
+  创建草稿箱文章。`content` 须是微信 HTML（先调 `convert_markdown`），`thumbMediaId` 是封面 media_id（先调 `upload_material`）。支持 `contentFilePath` 替代 `content` 传入大段内容（必须在系统临时目录下，上限 2 MB）。
 
 - **更新草稿** — `limb_invoke_tool({ nodeId: "weixin-mp", command: "weixin_mp.update_draft", params: { mediaId, title?, content?, thumbMediaId?, author?, digest? } })`
-  更新草稿箱文章，仅传需要修改的字段。支持 `contentFilePath` 替代 `content`。
+  更新草稿箱文章，仅传需要修改的字段。支持 `contentFilePath` 替代 `content`（同上，限系统临时目录）。
 
 - **删除草稿** — `limb_invoke_tool({ nodeId: "weixin-mp", command: "weixin_mp.delete_draft", params: { mediaId } })`
   删除草稿箱中的指定草稿。
@@ -89,3 +89,4 @@ triggers:
 
 - 微信 HTML 不支持外部 CSS/JS，所有样式内联处理
 - access_token 2h 过期，系统自动刷新，无需手动管理
+- **本地文件限制**：所有本地文件路径（`fileLocation`、`markdownFilePath`、`contentFilePath`）必须在 OS 系统临时目录下（如 `/tmp/`）。文本文件上限 2 MB，图片文件上限 10 MB。需要上传工作区文件时，先复制到临时目录再传入路径

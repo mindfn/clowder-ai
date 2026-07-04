@@ -70,7 +70,7 @@ commands:
         desc: Markdown 格式正文（内联传入，超过 2000 字符建议使用 markdownFilePath）。与 markdownFilePath 二选一
       markdownFilePath:
         type: string
-        desc: 本地 Markdown 文件绝对路径（如 /tmp/article.md）。与 markdown 二选一
+        desc: OS 临时目录下的 Markdown 文件路径（如 /tmp/article.md）。必须在系统临时目录下，上限 2 MB。与 markdown 二选一
 
   weixin_mp.upload_image:
     type: invoke
@@ -80,7 +80,7 @@ commands:
       fileLocation:
         type: string
         required: true
-        desc: 图片文件位置。支持 HTTP/HTTPS URL（如 https://example.com/photo.jpg）或本地绝对路径（如 /tmp/photo.png、/home/user/images/pic.jpg）。格式：jpg/png/gif/bmp
+        desc: 图片文件位置。支持 HTTP/HTTPS URL（如 https://example.com/photo.jpg）或 OS 临时目录下的本地路径（如 /tmp/photo.png）。本地文件必须在系统临时目录下，其他路径会被拒绝。格式：jpg/png/gif/bmp，上限 10 MB
 
   weixin_mp.upload_material:
     type: invoke
@@ -90,7 +90,7 @@ commands:
       fileLocation:
         type: string
         required: true
-        desc: 图片文件位置。支持 HTTP/HTTPS URL（如 https://example.com/cover.jpg）或本地绝对路径（如 /tmp/cover.png、/home/user/images/cover.jpg）。格式：jpg/png/gif/bmp
+        desc: 图片文件位置。支持 HTTP/HTTPS URL（如 https://example.com/cover.jpg）或 OS 临时目录下的本地路径（如 /tmp/cover.png）。本地文件必须在系统临时目录下，其他路径会被拒绝。格式：jpg/png/gif/bmp，上限 10 MB
 
   weixin_mp.create_draft:
     type: invoke
@@ -106,7 +106,7 @@ commands:
         desc: 微信兼容 HTML 正文（先调用 convert_markdown）。内联传入，超过 2000 字符建议使用 contentFilePath。与 contentFilePath 二选一
       contentFilePath:
         type: string
-        desc: 本地 HTML 文件绝对路径（如 /tmp/article.html）。与 content 二选一
+        desc: OS 临时目录下的 HTML 文件路径（如 /tmp/article.html）。必须在系统临时目录下，上限 2 MB。与 content 二选一
       thumbMediaId:
         type: string
         required: true
@@ -139,7 +139,7 @@ commands:
         desc: 微信兼容 HTML 正文（先调用 convert_markdown）。超过 2000 字符建议使用 contentFilePath。与 contentFilePath 二选一
       contentFilePath:
         type: string
-        desc: 本地 HTML 文件绝对路径（如 /tmp/article.html）。与 content 二选一
+        desc: OS 临时目录下的 HTML 文件路径（如 /tmp/article.html）。必须在系统临时目录下，上限 2 MB。与 content 二选一
       thumbMediaId:
         type: string
         desc: 封面图素材 media_id（先调用 upload_material）
