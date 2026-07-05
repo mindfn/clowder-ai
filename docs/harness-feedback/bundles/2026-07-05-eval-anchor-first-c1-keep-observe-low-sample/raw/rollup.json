@@ -1,0 +1,51 @@
+{
+  "verdictId": "2026-07-05-eval-anchor-first-c1-keep-observe-low-sample",
+  "selector": {
+    "kind": "anchor-telemetry-snapshot",
+    "windowStartMs": 1783134000000,
+    "windowEndMs": 1783220400000
+  },
+  "rollup": {
+    "perTool": {
+      "thread-context": {
+        "previewResponses": 2,
+        "previewedItems": 28,
+        "drills": 4,
+        "drilledUniqueItems": 4,
+        "openRateByItem": 0.14285714285714285,
+        "returnedChars": 6461,
+        "originalChars": 55502,
+        "charsSaved": 49041,
+        "drillChars": 3506,
+        "netBenefit": 45535
+      }
+    },
+    "orphanDrills": 1,
+    "adoption": {
+      "explicitAnchorCalls": 1,
+      "explicitFullCalls": 3,
+      "defaultAnchorCalls": 1,
+      "defaultFullCalls": 0,
+      "legacyEquivalentAnchorCalls": 0,
+      "legacyEquivalentFullCalls": 5,
+      "unknownModeCalls": 0,
+      "uniqueCatsExplicitAnchor": 1
+    },
+    "track1Snapshot": {
+      "returnedByTool": {
+        "thread-context": 5,
+        "pending-mentions": 1
+      },
+      "returnedCharsByTool": {
+        "thread-context": 32027,
+        "pending-mentions": 15
+      },
+      "drillByTool": {
+        "get-message": 7
+      },
+      "drillCharsByTool": {
+        "get-message": 42571
+      }
+    }
+  }
+}
