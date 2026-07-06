@@ -176,6 +176,8 @@ describe('F041 Cloud P1-1: bootstrap generates CLI configs', () => {
         CAT_CAFE_SIGNAL_USER: '${CAT_CAFE_SIGNAL_USER}',
         CAT_CAFE_RUN_TYPE: '${CAT_CAFE_RUN_TYPE}',
         CAT_CAFE_AUDIT_TOPIC: '${CAT_CAFE_AUDIT_TOPIC}',
+        // #1092: credential file path for cross-invocation refresh
+        CAT_CAFE_CREDENTIAL_FILE: '${CAT_CAFE_CREDENTIAL_FILE}',
       });
     }
   });
