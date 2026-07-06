@@ -24,6 +24,7 @@ import { configEventBus, createChangeSetId } from '../config/config-event-bus.js
 import type { ConfigSnapshot } from '../config/config-snapshot.js';
 import {
   buildEnvSummary,
+  buildSystemEnvSummary,
   ENV_CATEGORIES,
   filterSensitiveEditableKeys,
   hasSensitiveEditableVars,
@@ -265,12 +266,14 @@ export async function configRoutes(app: FastifyInstance, opts: ConfigRoutesOptio
     return handleCoCreatorPatch(request, reply);
   });
 
-  app.get('/api/config/env-summary', async () => {
+  app.get('/api/config/env-summary', async (request) => {
+    const { surface } = request.query as { surface?: string };
     const apiCwd = process.cwd();
     const home = os.homedir();
+    const variables = surface === 'system' ? buildSystemEnvSummary() : buildEnvSummary();
     return {
       categories: ENV_CATEGORIES,
-      variables: buildEnvSummary(),
+      variables,
       paths: {
         projectRoot,
         homeDir: home,
