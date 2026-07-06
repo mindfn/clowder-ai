@@ -1,6 +1,12 @@
 /**
  * MCP Callback Tools — core callbacks
  * 鉴权: process.env CAT_CAFE_INVOCATION_ID + CAT_CAFE_CALLBACK_TOKEN
+ *
+ * #1092 credential refresh: When CAT_CAFE_CREDENTIAL_FILE is set, invocationId
+ * and callbackToken are re-read from the file on each callback call. This lets
+ * the MCP server subprocess pick up fresh credentials after a session resume
+ * without needing to be restarted. The API writes the file before each invocation;
+ * the MCP server reads it before each callback.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -105,17 +111,47 @@ function resolveAgentKeySecret(options?: AgentKeyOptions): string | undefined {
   return readAgentKeyFile(process.env.CAT_CAFE_AGENT_KEY_FILE);
 }
 
+/**
+ * #1092: Read fresh invocation credentials from a file.
+ * The API writes { invocationId, callbackToken } to this file before each
+ * invocation. The MCP server re-reads it on every callback call so that
+ * a long-lived subprocess (persisting across ACP session resume) always
+ * sends the current invocationId — not the stale one from process.env.
+ *
+ * Returns null on any error (missing file, bad JSON, missing fields) —
+ * callers fall back to process.env values.
+ */
+function readCredentialFile(): { invocationId: string; callbackToken: string } | null {
+  const filePath = process.env.CAT_CAFE_CREDENTIAL_FILE;
+  if (!filePath) return null;
+  try {
+    const raw = readFileSync(filePath, 'utf-8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const invocationId = typeof parsed.invocationId === 'string' ? parsed.invocationId : '';
+    const callbackToken = typeof parsed.callbackToken === 'string' ? parsed.callbackToken : '';
+    if (invocationId && callbackToken) return { invocationId, callbackToken };
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function getCallbackConfig(options?: AgentKeyOptions): CallbackConfig | null {
   const apiUrl = process.env.CAT_CAFE_API_URL;
   if (!apiUrl) return null;
 
-  const invocationId = process.env.CAT_CAFE_INVOCATION_ID;
-  const callbackToken = process.env.CAT_CAFE_CALLBACK_TOKEN;
   const agentKeySecret = resolveAgentKeySecret(options);
   if (options?.forceAgentKey === true) {
     if (!agentKeySecret) return null;
     return { apiUrl, agentKeySecret };
   }
+
+  // #1092: Prefer credential file over process.env for invocation creds.
+  // The file is updated per-invocation by the API; process.env is set once
+  // at subprocess spawn and goes stale after session resume.
+  const fileCreds = readCredentialFile();
+  const invocationId = fileCreds?.invocationId ?? process.env.CAT_CAFE_INVOCATION_ID;
+  const callbackToken = fileCreds?.callbackToken ?? process.env.CAT_CAFE_CALLBACK_TOKEN;
 
   if (!invocationId && !callbackToken && !agentKeySecret) return null;
 
