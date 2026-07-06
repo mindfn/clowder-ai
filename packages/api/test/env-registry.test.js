@@ -11,12 +11,14 @@ import { afterEach, describe, it } from 'node:test';
 import Fastify from 'fastify';
 import {
   buildEnvSummary,
+  buildSystemEnvSummary,
   ENV_CATEGORIES,
   ENV_VARS,
   hasSensitiveEditableVars,
   isEditableEnvVar,
   isSensitiveEditableEnvVar,
   maskUrlCredentials,
+  SYSTEM_VARS,
 } from '../dist/config/env-registry.js';
 
 // Save and restore env vars around tests
@@ -108,13 +110,12 @@ describe('env-registry', () => {
     assert.equal(redis.maskMode, 'url');
   });
 
-  it('keeps API server port bootstrap-only while allowing preview gateway hot edits', () => {
-    const apiPort = ENV_VARS.find((v) => v.name === 'API_SERVER_PORT');
-    const previewPort = ENV_VARS.find((v) => v.name === 'PREVIEW_GATEWAY_PORT');
-    assert.ok(apiPort, 'API_SERVER_PORT should be in registry');
-    assert.ok(previewPort, 'PREVIEW_GATEWAY_PORT should be in registry');
-    assert.equal(apiPort.runtimeEditable, false);
-    assert.equal(previewPort.runtimeEditable, true);
+  it('keeps server ports bootstrap-only (bind at startup, no hot-reload)', () => {
+    for (const name of ['API_SERVER_PORT', 'PREVIEW_GATEWAY_PORT']) {
+      const def = ENV_VARS.find((v) => v.name === name);
+      assert.ok(def, `${name} should be in registry`);
+      assert.equal(def.runtimeEditable, false, `${name} binds at startup — must be bootstrap-only`);
+    }
   });
 
   it('marks CAT_TEMPLATE_PATH and REDIS_URL as bootstrap-only in hub env editor', () => {
@@ -653,7 +654,7 @@ describe('PATCH /api/config/env (route)', () => {
     }
   });
 
-  it('rejects API_SERVER_PORT from hub writes but keeps PREVIEW_GATEWAY_PORT editable', async () => {
+  it('rejects all server port writes because ports bind at startup', async () => {
     const { configRoutes } = await import('../dist/routes/config.js');
     const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
     const envFilePath = resolve(tempRoot, '.env');
@@ -668,30 +669,23 @@ describe('PATCH /api/config/env (route)', () => {
       });
       await app.ready();
 
-      const apiPortRes = await app.inject({
-        method: 'PATCH',
-        url: '/api/config/env',
-        headers: { 'x-cat-cafe-user': 'codex' },
-        payload: {
-          updates: [{ name: 'API_SERVER_PORT', value: '3203' }],
-        },
-      });
-      assert.equal(apiPortRes.statusCode, 400);
-      assert.match(JSON.parse(apiPortRes.payload).error, /not editable/i);
-
-      const previewPortRes = await app.inject({
-        method: 'PATCH',
-        url: '/api/config/env',
-        headers: { 'x-cat-cafe-user': 'codex' },
-        payload: {
-          updates: [{ name: 'PREVIEW_GATEWAY_PORT', value: '4200' }],
-        },
-      });
-      assert.equal(previewPortRes.statusCode, 200);
+      for (const [name, value] of [
+        ['API_SERVER_PORT', '3203'],
+        ['PREVIEW_GATEWAY_PORT', '4200'],
+      ]) {
+        const res = await app.inject({
+          method: 'PATCH',
+          url: '/api/config/env',
+          headers: { 'x-cat-cafe-user': 'codex' },
+          payload: { updates: [{ name, value }] },
+        });
+        assert.equal(res.statusCode, 400, `${name} should be rejected`);
+        assert.match(JSON.parse(res.payload).error, /not editable/i);
+      }
 
       const nextEnv = readFileSync(envFilePath, 'utf8');
       assert.match(nextEnv, /API_SERVER_PORT=3003/);
-      assert.match(nextEnv, /PREVIEW_GATEWAY_PORT=4200/);
+      assert.match(nextEnv, /PREVIEW_GATEWAY_PORT=4100/);
     } finally {
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });
@@ -776,6 +770,217 @@ describe('PATCH /api/config/env (route)', () => {
     } finally {
       await app.close();
       rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects non-sensitive env vars unless runtimeEditable is explicitly true (#770)', async () => {
+    const { configRoutes } = await import('../dist/routes/config.js');
+    const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
+    const envFilePath = resolve(tempRoot, '.env');
+    writeFileSync(envFilePath, 'LOG_LEVEL=info\n', 'utf8');
+
+    const app = Fastify({ logger: false });
+    try {
+      await configRoutes(app, {
+        projectRoot: tempRoot,
+        envFilePath,
+        auditLog: { append: async () => {} },
+      });
+      await app.ready();
+
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/config/env',
+        headers: { 'x-cat-cafe-user': 'codex' },
+        payload: {
+          updates: [{ name: 'LOG_LEVEL', value: 'debug' }],
+        },
+      });
+
+      assert.equal(res.statusCode, 400);
+      const body = JSON.parse(res.payload);
+      assert.match(body.error, /not editable/i);
+      assert.equal(readFileSync(envFilePath, 'utf8'), 'LOG_LEVEL=info\n');
+    } finally {
+      await app.close();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── #770: System settings surface allowlist ──────────────────────────
+
+const EXPECTED_SYSTEM_VARS = [
+  'API_SERVER_PORT',
+  'API_SERVER_HOST',
+  'BACKLOG_TTL_SECONDS',
+  'CAT_CAFE_DATA_DIR',
+  'CORS_ALLOW_PRIVATE_NETWORK',
+  'DEFAULT_OWNER_USER_ID',
+  'DRAFT_TTL_SECONDS',
+  'FRONTEND_PORT',
+  'FRONTEND_URL',
+  'MEMORY_STORE',
+  'MESSAGE_TTL_SECONDS',
+  'PREVIEW_GATEWAY_ENABLED',
+  'PREVIEW_GATEWAY_PORT',
+  'PROJECT_ALLOWED_ROOTS',
+  'PROJECT_ALLOWED_ROOTS_APPEND',
+  'PROJECT_DENIED_ROOTS',
+  'REDIS_KEY_PREFIX',
+  'REDIS_URL',
+  'SUMMARY_TTL_SECONDS',
+  'TASK_TTL_SECONDS',
+  'THREAD_TTL_SECONDS',
+  'TRANSCRIPT_DATA_DIR',
+  'UPLOAD_DIR',
+].sort();
+
+describe('#770 system settings surface', () => {
+  it('SYSTEM_VARS contains exactly the expected 23 vars', () => {
+    const actual = [...SYSTEM_VARS].sort();
+    assert.deepEqual(
+      actual,
+      EXPECTED_SYSTEM_VARS,
+      `Allowlist mismatch.\nActual: ${actual}\nExpected: ${EXPECTED_SYSTEM_VARS}`,
+    );
+  });
+
+  it('no connector-category var is in the system allowlist', () => {
+    const connectorSystem = ENV_VARS.filter((d) => d.category === 'connector' && SYSTEM_VARS.has(d.name));
+    assert.equal(
+      connectorSystem.length,
+      0,
+      `Connector vars should not be in system allowlist: ${connectorSystem.map((d) => d.name)}`,
+    );
+  });
+
+  it('every system var has explicit runtimeEditable (true or false)', () => {
+    const missing = ENV_VARS.filter((d) => SYSTEM_VARS.has(d.name) && d.runtimeEditable === undefined);
+    assert.equal(missing.length, 0, `System vars without explicit runtimeEditable: ${missing.map((d) => d.name)}`);
+  });
+
+  it('buildSystemEnvSummary returns only system vars', () => {
+    const summary = buildSystemEnvSummary();
+    const nonSystem = summary.filter((v) => !SYSTEM_VARS.has(v.name));
+    assert.equal(nonSystem.length, 0, `Non-system vars in system summary: ${nonSystem.map((v) => v.name)}`);
+    assert.equal(summary.length, EXPECTED_SYSTEM_VARS.length);
+    const names = summary.map((v) => v.name).sort();
+    assert.deepEqual(names, EXPECTED_SYSTEM_VARS);
+  });
+
+  it('startup-captured editable vars have restartRequired metadata', () => {
+    const RESTART_REQUIRED = [
+      'FRONTEND_URL',
+      'MESSAGE_TTL_SECONDS',
+      'THREAD_TTL_SECONDS',
+      'TASK_TTL_SECONDS',
+      'SUMMARY_TTL_SECONDS',
+      'BACKLOG_TTL_SECONDS',
+      'DRAFT_TTL_SECONDS',
+    ];
+    for (const name of RESTART_REQUIRED) {
+      const def = ENV_VARS.find((d) => d.name === name);
+      assert.ok(def, `${name} should be in registry`);
+      assert.equal(def.runtimeEditable, true, `${name} should be editable (writes .env for next restart)`);
+      assert.equal(def.restartRequired, true, `${name} is startup-captured — must have restartRequired: true`);
+    }
+  });
+
+  it('buildSystemEnvSummary is a strict subset of buildEnvSummary', () => {
+    const full = new Set(buildEnvSummary().map((v) => v.name));
+    const system = buildSystemEnvSummary().map((v) => v.name);
+    for (const name of system) {
+      assert.ok(full.has(name), `System var ${name} missing from full summary`);
+    }
+  });
+});
+
+describe('#770 fail-closed write guard (end-to-end)', () => {
+  afterEach(() => restoreEnv());
+
+  it('rejects non-editable vars from hub writes', async () => {
+    const { configRoutes } = await import('../dist/routes/config.js');
+    const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-env-'));
+    const envFilePath = resolve(tempRoot, '.env');
+    writeFileSync(envFilePath, 'CONNECTOR_GATEWAY_AUTOSTART=never\n', 'utf8');
+
+    const app = Fastify({ logger: false });
+    try {
+      await configRoutes(app, {
+        projectRoot: tempRoot,
+        envFilePath,
+        auditLog: { append: async () => {} },
+      });
+      await app.ready();
+
+      for (const name of ['CONNECTOR_GATEWAY_AUTOSTART', 'CORS_ALLOW_PRIVATE_NETWORK']) {
+        const res = await app.inject({
+          method: 'PATCH',
+          url: '/api/config/env',
+          headers: { 'x-cat-cafe-user': 'codex' },
+          payload: { updates: [{ name, value: 'new-value' }] },
+        });
+        assert.equal(res.statusCode, 400, `${name} should be rejected`);
+        assert.match(JSON.parse(res.payload).error, /not editable/i, `${name} error message`);
+      }
+
+      assert.equal(readFileSync(envFilePath, 'utf8'), 'CONNECTOR_GATEWAY_AUTOSTART=never\n');
+    } finally {
+      await app.close();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('filesystem boundary vars are read-only (P1 security fix)', () => {
+    for (const name of ['PROJECT_ALLOWED_ROOTS', 'PROJECT_ALLOWED_ROOTS_APPEND', 'PROJECT_DENIED_ROOTS']) {
+      const def = ENV_VARS.find((d) => d.name === name);
+      assert.ok(def, `${name} should be in registry`);
+      assert.equal(
+        def.runtimeEditable,
+        false,
+        `${name} is a filesystem security boundary — must not be editable from Hub`,
+      );
+      assert.equal(isEditableEnvVar(def), false, `${name} must be rejected by isEditableEnvVar`);
+    }
+  });
+
+  it('startup-bound system vars are read-only (P2 correctness fix)', () => {
+    for (const name of [
+      'API_SERVER_HOST',
+      'FRONTEND_PORT',
+      'MEMORY_STORE',
+      'PREVIEW_GATEWAY_ENABLED',
+      'PREVIEW_GATEWAY_PORT',
+      'CAT_CAFE_DATA_DIR',
+      'TRANSCRIPT_DATA_DIR',
+      'UPLOAD_DIR',
+    ]) {
+      const def = ENV_VARS.find((d) => d.name === name);
+      assert.ok(def, `${name} should be in registry`);
+      assert.equal(def.runtimeEditable, false, `${name} is startup-bound — must not be editable from Hub`);
+      assert.equal(isEditableEnvVar(def), false, `${name} must be rejected by isEditableEnvVar`);
+    }
+  });
+
+  it('F102 evidence toggles remain hot-editable (fail-closed regression guard)', () => {
+    for (const name of ['F102_ABSTRACTIVE', 'F102_DURABLE_CANDIDATES', 'F102_TOPIC_SEGMENTS']) {
+      const def = ENV_VARS.find((d) => d.name === name);
+      assert.ok(def, `${name} should be in registry`);
+      assert.equal(def.runtimeEditable, true, `${name} is checked via lambda at runtime — must stay editable`);
+      assert.equal(isEditableEnvVar(def), true, `${name} must pass isEditableEnvVar`);
+    }
+    // EMBED_MODE is startup-captured (resolvedEmbedMode in index.ts) — must NOT be editable
+    const embed = ENV_VARS.find((d) => d.name === 'EMBED_MODE');
+    assert.ok(embed, 'EMBED_MODE should be in registry');
+    assert.equal(embed.runtimeEditable, false, 'EMBED_MODE is startup-captured — must be read-only');
+  });
+
+  it('non-editable connector vars are not in the editable set', () => {
+    const nonEditableConn = ENV_VARS.filter((d) => d.category === 'connector' && !isEditableEnvVar(d));
+    assert.ok(nonEditableConn.length > 0, 'Should have non-editable connector vars');
+    for (const def of nonEditableConn) {
+      assert.equal(isEditableEnvVar(def), false, `Non-editable connector var ${def.name} must stay read-only`);
     }
   });
 });

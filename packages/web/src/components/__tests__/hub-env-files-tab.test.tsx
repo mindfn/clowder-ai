@@ -21,6 +21,7 @@ const MOCK_ENV_SUMMARY = {
       category: 'server',
       sensitive: false,
       runtimeEditable: false,
+
       currentValue: '3002',
     },
     {
@@ -30,6 +31,7 @@ const MOCK_ENV_SUMMARY = {
       category: 'server',
       sensitive: false,
       runtimeEditable: false,
+
       currentValue: '4100',
     },
     {
@@ -39,6 +41,8 @@ const MOCK_ENV_SUMMARY = {
       category: 'server',
       sensitive: false,
       runtimeEditable: true,
+      restartRequired: true,
+
       currentValue: 'http://localhost:3004',
     },
     {
@@ -49,6 +53,7 @@ const MOCK_ENV_SUMMARY = {
       sensitive: false,
       maskMode: 'url',
       runtimeEditable: false,
+
       currentValue: 'redis://***@localhost:6379/15',
     },
     {
@@ -98,9 +103,18 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+/** Mock env-summary filtered to system vars (simulates ?surface=system backend filter). */
+const MOCK_SYSTEM_ENV_SUMMARY = {
+  ...MOCK_ENV_SUMMARY,
+  variables: MOCK_ENV_SUMMARY.variables.filter((v) => v.name !== 'OPENAI_API_KEY'),
+};
+
 function defaultEnvApiFetch(path: string, init?: RequestInit) {
   if (path === '/api/config/env-summary' && !init?.method) {
     return Promise.resolve(jsonResponse(MOCK_ENV_SUMMARY));
+  }
+  if (path === '/api/config/env-summary?surface=system' && !init?.method) {
+    return Promise.resolve(jsonResponse(MOCK_SYSTEM_ENV_SUMMARY));
   }
   if (path === '/api/system/status' && !init?.method) {
     return Promise.resolve(jsonResponse(MOCK_SYSTEM_STATUS_REDIS));
@@ -223,6 +237,19 @@ describe('HubEnvFilesTab', () => {
     expect(String(patchCall?.[1]?.body)).not.toContain('REDIS_URL');
     expect(String(patchCall?.[1]?.body)).not.toContain('OPENAI_API_KEY');
     expect(container.textContent).toContain('已写回 .env 并刷新摘要；部分变量需重启相关服务生效');
+  });
+
+  it('filters the System surface to explicit system env vars', async () => {
+    await act(async () => {
+      root.render(<HubEnvFilesTab surface="system" />);
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain('FRONTEND_URL');
+    expect(container.textContent).toContain('REDIS_URL');
+    expect(container.textContent).not.toContain('OPENAI_API_KEY');
+    expect(container.querySelector('input[aria-label="FRONTEND_URL"]')).toBeTruthy();
+    expect(container.querySelector('input[aria-label="OPENAI_API_KEY"]')).toBeNull();
   });
 
   it('shows a save error when /api/config/env PATCH fails', async () => {

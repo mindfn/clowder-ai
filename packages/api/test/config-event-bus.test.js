@@ -172,7 +172,8 @@ describe('ConfigEventBus', () => {
     it('emits config:change with source=env after successful PATCH', async () => {
       const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-event-bus-'));
       const envFilePath = resolve(tempRoot, '.env');
-      writeFileSync(envFilePath, 'PREVIEW_GATEWAY_PORT=4100\n', 'utf8');
+      // Use FRONTEND_URL — runtimeEditable: true in env-registry (#770 fail-closed)
+      writeFileSync(envFilePath, 'FRONTEND_URL=http://localhost:3003\n', 'utf8');
 
       app = Fastify();
       await app.register(configRoutes, { projectRoot: tempRoot, envFilePath });
@@ -186,7 +187,7 @@ describe('ConfigEventBus', () => {
         url: '/api/config/env',
         headers: { 'x-cat-cafe-user': 'test-user' },
         payload: {
-          updates: [{ name: 'PREVIEW_GATEWAY_PORT', value: '4200' }],
+          updates: [{ name: 'FRONTEND_URL', value: 'http://localhost:3200' }],
         },
       });
 
@@ -196,25 +197,26 @@ describe('ConfigEventBus', () => {
       assert.equal(received.length, 1);
       assert.equal(received[0].source, 'env');
       assert.equal(received[0].scope, 'key');
-      assert.deepEqual(received[0].changedKeys, ['PREVIEW_GATEWAY_PORT']);
+      assert.deepEqual(received[0].changedKeys, ['FRONTEND_URL']);
       assert.ok(received[0].changeSetId);
       assert.ok(received[0].timestamp);
 
       // Restore env
-      delete process.env.PREVIEW_GATEWAY_PORT;
+      delete process.env.FRONTEND_URL;
     });
 
     it('does not emit when patching the same value (no-op)', async () => {
       const tempRoot = mkdtempSync(resolve(tmpdir(), 'cat-cafe-event-bus-noop-'));
       const envFilePath = resolve(tempRoot, '.env');
-      writeFileSync(envFilePath, 'PREVIEW_GATEWAY_PORT=4100\n', 'utf8');
+      // Use FRONTEND_URL — runtimeEditable: true in env-registry (#770 fail-closed)
+      writeFileSync(envFilePath, 'FRONTEND_URL=http://localhost:3003\n', 'utf8');
 
       app = Fastify();
       await app.register(configRoutes, { projectRoot: tempRoot, envFilePath });
       await app.ready();
 
       // Set env to match file value
-      process.env.PREVIEW_GATEWAY_PORT = '4100';
+      process.env.FRONTEND_URL = 'http://localhost:3003';
 
       const received = [];
       const unsub = configEventBus.onConfigChange((e) => received.push(e));
@@ -224,7 +226,7 @@ describe('ConfigEventBus', () => {
         url: '/api/config/env',
         headers: { 'x-cat-cafe-user': 'test-user' },
         payload: {
-          updates: [{ name: 'PREVIEW_GATEWAY_PORT', value: '4100' }],
+          updates: [{ name: 'FRONTEND_URL', value: 'http://localhost:3003' }],
         },
       });
 
@@ -233,7 +235,7 @@ describe('ConfigEventBus', () => {
       assert.equal(res.statusCode, 200);
       assert.equal(received.length, 0, 'no-op PATCH should not emit');
 
-      delete process.env.PREVIEW_GATEWAY_PORT;
+      delete process.env.FRONTEND_URL;
     });
   });
 
