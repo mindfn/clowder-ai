@@ -856,6 +856,31 @@ export async function* invokeSingleCat(deps: InvocationDeps, params: InvocationP
     ),
   };
 
+  // #1092: Write credential file for MCP server credential refresh.
+  // ACP session resume reuses the same CLI process (and its MCP server subprocesses)
+  // across invocations. The MCP server reads CAT_CAFE_INVOCATION_ID from process.env
+  // which was set at spawn time and goes stale after session resume. Writing the fresh
+  // credentials to a file lets the MCP server re-read on each callback call.
+  // Path is deterministic per thread+cat so the MCP server always finds the latest.
+  const credentialFileDir = resolve(findMonorepoRoot(process.cwd()), '.cat-cafe', 'mcp-creds');
+  const credentialFilePath = join(credentialFileDir, `${threadId}_${catId}.json`);
+  try {
+    mkdirSync(credentialFileDir, { recursive: true });
+    writeFileSync(
+      credentialFilePath,
+      JSON.stringify({ invocationId, callbackToken, ts: Date.now() }),
+      { mode: 0o600 }, // owner-only read/write — contains secrets
+    );
+    callbackEnv.CAT_CAFE_CREDENTIAL_FILE = credentialFilePath;
+  } catch (credErr) {
+    // Fail-open: if file write fails, MCP server falls back to process.env values.
+    // This is the pre-existing behavior (stale creds on resume) — no regression.
+    log.warn(
+      { invocationId, catId, threadId, err: credErr instanceof Error ? credErr.message : String(credErr) },
+      '#1092: credential file write failed — MCP server will use process.env fallback',
+    );
+  }
+
   // F254 AC-C2: Persist carrier tier at invocation start (fire-and-forget, fail-open).
   // Callback routes read this via FreshnessInvocationStateStore.get() to derive
   // RuntimeCapabilityDescriptor — closing the producer/consumer chain.
