@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '@/utils/api-client';
 import {
   ConfigFilesSection,
@@ -39,7 +39,15 @@ function StorageModeStatus({ mode }: { mode: StorageMode | null }) {
   return <SettingsStatusStrip tone="success">Redis persistent mode</SettingsStatusStrip>;
 }
 
-export function HubEnvFilesTab({ excludeCategories }: { excludeCategories?: string[] } = {}) {
+interface HubEnvFilesTabProps {
+  /**
+   * Settings-surface filter.  When `'system'`, the backend returns only the
+   * platform-level allowlist (#770).  Unset = all hub-visible vars.
+   */
+  surface?: 'system';
+}
+
+export function HubEnvFilesTab({ surface }: HubEnvFilesTabProps = {}) {
   const [data, setData] = useState<EnvSummaryData | null>(null);
   const [storageMode, setStorageMode] = useState<StorageMode | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +60,8 @@ export function HubEnvFilesTab({ excludeCategories }: { excludeCategories?: stri
   });
 
   useEffect(() => {
-    apiFetch('/api/config/env-summary')
+    const url = surface ? `/api/config/env-summary?surface=${surface}` : '/api/config/env-summary';
+    apiFetch(url)
       .then(async (res) => {
         if (res.ok) {
           const body = (await res.json()) as EnvSummaryData;
@@ -67,7 +76,14 @@ export function HubEnvFilesTab({ excludeCategories }: { excludeCategories?: stri
         }
       })
       .catch(() => setError('环境信息加载失败'));
-  }, []);
+  }, [surface]);
+
+  // Backend already filters when surface is set — derive categories from returned vars
+  const visibleCategories = useMemo(() => {
+    if (!data) return {};
+    const usedCategories = new Set(data.variables.map((v) => v.category));
+    return Object.fromEntries(Object.entries(data.categories).filter(([k]) => usedCategories.has(k)));
+  }, [data]);
 
   useEffect(() => {
     let cancelled = false;
@@ -155,14 +171,8 @@ export function HubEnvFilesTab({ excludeCategories }: { excludeCategories?: stri
       <PageIntro />
       <StorageModeStatus mode={storageMode} />
       <EnvVarsSection
-        categories={
-          excludeCategories
-            ? Object.fromEntries(Object.entries(data.categories).filter(([k]) => !excludeCategories.includes(k)))
-            : data.categories
-        }
-        variables={
-          excludeCategories ? data.variables.filter((v) => !excludeCategories.includes(v.category)) : data.variables
-        }
+        categories={visibleCategories}
+        variables={data.variables}
         drafts={drafts}
         isDirty={isDirty}
         saveState={saveState}

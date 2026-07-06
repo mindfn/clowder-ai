@@ -28,6 +28,8 @@ export interface EnvVar {
   runtimeEditable?: boolean;
   deprecated?: string;
   allowedValues?: string[];
+  /** If true, changes take effect only after service restart. */
+  restartRequired?: boolean;
   currentValue: string | null;
 }
 
@@ -86,16 +88,14 @@ function classifyPath(absPath: string, projectRoot: string, isDir: boolean): { k
   return { kind: isDir ? 'dir-inside' : 'file', relPath };
 }
 
-const RESTART_REQUIRED_ENV_VARS = new Set(['API_SERVER_PORT', 'PREVIEW_GATEWAY_PORT']);
-
 function needsRestart(variable: EnvVar): boolean {
-  return variable.runtimeEditable === false || RESTART_REQUIRED_ENV_VARS.has(variable.name);
+  return variable.runtimeEditable === false || variable.restartRequired === true;
 }
 
 export function isEditableVariable(variable: EnvVar): boolean {
-  if (variable.runtimeEditable === true) return true;
-  if (variable.runtimeEditable === false) return false;
-  return !variable.sensitive;
+  // #770 fail-closed: only explicit runtimeEditable opt-in allows editing.
+  // Must stay in sync with isEditableEnvVar() in env-registry.ts.
+  return variable.runtimeEditable === true;
 }
 
 export function isSensitiveEditable(variable: EnvVar): boolean {

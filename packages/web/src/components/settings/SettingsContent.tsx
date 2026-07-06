@@ -204,7 +204,7 @@ export function SettingsContent({ section, initialEditCatId }: SettingsContentPr
           </div>
         );
       case 'system':
-        return <HubEnvFilesTab excludeCategories={['connector']} />;
+        return <HubEnvFilesTab surface="system" />;
       case 'notify':
         return <PushSettingsPanel />;
       case 'ops':
