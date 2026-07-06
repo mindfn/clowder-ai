@@ -413,6 +413,85 @@ export class AcpAgentService implements AgentService {
         }
       }
       log.info({ ...ctx, sessionId, eventCount }, 'ACP promptStream completed');
+
+      // #1091: Zero-event resume detection. Some ACP providers (e.g. kimi) return
+      // success from session/load but don't actually restore conversation context.
+      // The subsequent promptStream produces zero content events and exits immediately.
+      // Detect this and retry with a fresh session so the cat isn't silently dead.
+      const promptElapsedMs = Date.now() - promptStreamStartedAt;
+      const RESUME_EMPTY_THRESHOLD_MS = 3_000;
+      if (isResumedSession && eventCount === 0 && promptElapsedMs < RESUME_EMPTY_THRESHOLD_MS) {
+        log.warn(
+          { ...ctx, sessionId, promptElapsedMs },
+          '#1091: ACP resumed session produced zero events in <3s — retrying with fresh session',
+        );
+        // Create fresh session and retry promptStream once (not recursive — single retry)
+        try {
+          const freshSession = await client.newSession(cwd, sessionMcpServers);
+          const freshSessionId = freshSession.sessionId;
+          this.pool.rememberSession?.(this.poolKey, freshSessionId, lease);
+          metadata.sessionId = freshSessionId;
+
+          // Apply session model if configured
+          const sessionModel = this.sessionModel;
+          const modelConfig = sessionModel ? resolveSessionModelConfigOption(freshSession, sessionModel) : null;
+          if (modelConfig && sessionModel) {
+            try {
+              await client.setSessionConfigOption(freshSessionId, modelConfig.configId, sessionModel);
+            } catch {
+              /* best-effort — continue with agent default */
+            }
+          }
+
+          // Build effective prompt with system prompt (fresh session has no memory)
+          const retryPrompt = options?.systemPrompt
+            ? `${options.systemPrompt}\n\n${prompt}`
+            : options?.resumeFallbackSystemPrompt
+              ? `${options.resumeFallbackSystemPrompt}\n\n${prompt}`
+              : prompt;
+
+          const retryState = createAcpSessionState();
+          let retryEventCount = 0;
+          log.info({ ...ctx, sessionId: freshSessionId }, '#1091: retry promptStream on fresh session');
+          for await (const event of client.promptStream(freshSessionId, retryPrompt)) {
+            // Skip synthetic events (capacity/idle/tool-wait warnings)
+            if (event.update?.sessionUpdate === 'provider_capacity_signal') continue;
+            if (event.update?.sessionUpdate === 'stream_idle_warning') continue;
+            if (event.update?.sessionUpdate === 'stream_tool_wait_warning') continue;
+
+            retryEventCount++;
+            const result = transformAcpEvent(event, this.catId, metadata, retryState);
+            if (!result) continue;
+            if (Array.isArray(result)) {
+              for (const msg of result) yield msg;
+            } else {
+              yield result;
+            }
+          }
+          log.info({ ...ctx, sessionId: freshSessionId, retryEventCount }, '#1091: retry promptStream completed');
+
+          // Flush trailing thinking from retry
+          const retryThinking = flushAcpThinking(retryState, this.catId, metadata);
+          if (retryThinking) yield retryThinking;
+          client.clearRecentCapacitySignal();
+          yield { type: 'done', catId: this.catId, metadata, timestamp: Date.now() };
+          return; // Exit — retry path handled completion
+        } catch (retryErr) {
+          const retryErrMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+          log.error({ ...ctx, err: retryErrMsg }, '#1091: retry with fresh session also failed');
+          yield {
+            type: 'error',
+            catId: this.catId,
+            error: `resume_empty_retry_failed: ${retryErrMsg}`,
+            errorCode: 'prompt_failure',
+            metadata,
+            timestamp: Date.now(),
+          };
+          yield { type: 'done', catId: this.catId, metadata, timestamp: Date.now() };
+          return; // Exit — error path handled completion
+        }
+      }
+
       // Flush any remaining accumulated thinking before done.
       const trailingThinking = flushAcpThinking(acpState, this.catId, metadata);
       if (trailingThinking) yield trailingThinking;

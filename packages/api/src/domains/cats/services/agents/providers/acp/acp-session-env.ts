@@ -20,6 +20,8 @@ const CALLBACK_ENV_KEYS = [
   'CAT_CAFE_USER_ID',
   'CAT_CAFE_CAT_ID',
   'CAT_CAFE_SIGNAL_USER',
+  // #1092: File path for credential refresh across ACP session resume.
+  'CAT_CAFE_CREDENTIAL_FILE',
 ] as const;
 
 function isCatCafeStdioServer(server: AcpMcpServer): server is AcpMcpServerStdio {

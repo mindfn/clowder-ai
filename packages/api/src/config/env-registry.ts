@@ -510,7 +510,7 @@ export const ENV_VARS: EnvDefinition[] = [
     name: 'CAT_CAFE_RUNTIME_ROOT',
     defaultValue: '(未设置 → process.cwd())',
     description:
-      'F061: Clowder AI runtime 二进制根目录（runtime startup 自动 export 为 $RUNTIME_DIR），优先级高于 capability orchestrator 的 auto-detection，用于 Antigravity MCP config args 路径',
+      'F061: Cat Café runtime 二进制根目录（runtime startup 自动 export 为 $RUNTIME_DIR），优先级高于 capability orchestrator 的 auto-detection，用于 Antigravity MCP config args 路径',
     category: 'server',
     sensitive: false,
     runtimeEditable: false,
@@ -876,6 +876,15 @@ export const ENV_VARS: EnvDefinition[] = [
     name: 'CAT_CAFE_INVOCATION_ID',
     defaultValue: '(运行时注入)',
     description: '当前 invocation ID（由 API 进程注入 MCP Server 子进程 env）',
+    category: 'cli',
+    sensitive: false,
+    hubVisible: false,
+  },
+  {
+    name: 'CAT_CAFE_CREDENTIAL_FILE',
+    defaultValue: '(运行时注入)',
+    description:
+      '#1092: MCP credential refresh file path. API writes fresh invocationId+callbackToken to this file per invocation; MCP server reads it on each callback to pick up credentials that survive ACP session resume.',
     category: 'cli',
     sensitive: false,
     hubVisible: false,
