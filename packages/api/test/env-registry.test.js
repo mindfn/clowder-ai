@@ -23,6 +23,8 @@ import {
 
 // Save and restore env vars around tests
 const savedEnv = {};
+// #770: NEXT_PUBLIC_* vars removed from registry (build-time only, not user-configurable).
+// PATCH route tests below still verify rejection of unknown var names.
 const BOOTSTRAP_ONLY_NEXT_PUBLIC_VARS = [
   'NEXT_PUBLIC_API_URL',
   'NEXT_PUBLIC_WHISPER_URL',
@@ -69,18 +71,10 @@ describe('env-registry', () => {
     }
   });
 
-  it('OPENAI_API_KEY is marked sensitive', () => {
-    const apiKey = ENV_VARS.find((v) => v.name === 'OPENAI_API_KEY');
-    assert.ok(apiKey, 'OPENAI_API_KEY should be in registry');
-    assert.equal(apiKey.sensitive, true);
-  });
-
-  it('registers KIMI_QUOTA_API_FALLBACK_ENABLED as bootstrap-only quota config', () => {
-    const def = ENV_VARS.find((v) => v.name === 'KIMI_QUOTA_API_FALLBACK_ENABLED');
-    assert.ok(def, 'KIMI_QUOTA_API_FALLBACK_ENABLED should be in registry');
-    assert.equal(def.category, 'quota');
-    assert.equal(def.runtimeEditable, false);
-    assert.equal(def.hubVisible, false);
+  it('GITHUB_WEBHOOK_SECRET is marked sensitive', () => {
+    const def = ENV_VARS.find((v) => v.name === 'GITHUB_WEBHOOK_SECRET');
+    assert.ok(def, 'GITHUB_WEBHOOK_SECRET should be in registry');
+    assert.equal(def.sensitive, true);
   });
 
   it('exposes official quota credential configuration in Hub as bootstrap-only paths', () => {
@@ -94,14 +88,6 @@ describe('env-registry', () => {
       const def = ENV_VARS.find((entry) => entry.name === name);
       assert.equal(def.runtimeEditable, false, `${name} should require restart instead of a misleading hot edit`);
     }
-  });
-
-  it('registers KIMI_CONFIG_FILE as bootstrap-only kimi config', () => {
-    const def = ENV_VARS.find((v) => v.name === 'KIMI_CONFIG_FILE');
-    assert.ok(def, 'KIMI_CONFIG_FILE should be in registry');
-    assert.equal(def.category, 'kimi');
-    assert.equal(def.runtimeEditable, false);
-    assert.equal(def.hubVisible, false);
   });
 
   it('REDIS_URL has maskMode url', () => {
@@ -118,21 +104,13 @@ describe('env-registry', () => {
     }
   });
 
-  it('marks CAT_TEMPLATE_PATH and REDIS_URL as bootstrap-only in hub env editor', () => {
-    const templatePath = ENV_VARS.find((v) => v.name === 'CAT_TEMPLATE_PATH');
+  it('marks REDIS_URL and MEMORY_STORE as bootstrap-only in hub env editor', () => {
     const redisUrl = ENV_VARS.find((v) => v.name === 'REDIS_URL');
-    assert.ok(templatePath, 'CAT_TEMPLATE_PATH should be in registry');
+    const memStore = ENV_VARS.find((v) => v.name === 'MEMORY_STORE');
     assert.ok(redisUrl, 'REDIS_URL should be in registry');
-    assert.equal(templatePath.runtimeEditable, false);
+    assert.ok(memStore, 'MEMORY_STORE should be in registry');
     assert.equal(redisUrl.runtimeEditable, false);
-  });
-
-  it('marks client-bundled NEXT_PUBLIC vars as bootstrap-only in the hub env editor', () => {
-    for (const name of BOOTSTRAP_ONLY_NEXT_PUBLIC_VARS) {
-      const envVar = ENV_VARS.find((v) => v.name === name);
-      assert.ok(envVar, `${name} should be in registry`);
-      assert.equal(envVar.runtimeEditable, false, `${name} should be bootstrap-only`);
-    }
+    assert.equal(memStore.runtimeEditable, false);
   });
 
   it('no HINDSIGHT_* vars remain after D-1 cleanup', () => {
@@ -140,7 +118,7 @@ describe('env-registry', () => {
     assert.equal(hindsightVars.length, 0, 'All HINDSIGHT_* vars should be removed');
   });
 
-  it('marks GITHUB_MCP_PAT, F102_API_KEY as sensitive + runtimeEditable (#340 P6: OPENAI_API_KEY removed)', () => {
+  it('marks GITHUB_MCP_PAT, F102_API_KEY as sensitive + runtimeEditable', () => {
     for (const name of ['GITHUB_MCP_PAT', 'F102_API_KEY']) {
       const def = ENV_VARS.find((v) => v.name === name);
       assert.ok(def, `${name} should be in registry`);
@@ -148,18 +126,12 @@ describe('env-registry', () => {
       assert.equal(def.runtimeEditable, true, `${name} should be runtimeEditable`);
       assert.ok(isSensitiveEditableEnvVar(def), `${name} should pass isSensitiveEditableEnvVar`);
     }
-    // #340 P6: OPENAI_API_KEY is no longer runtimeEditable (managed by accounts system)
-    const openai = ENV_VARS.find((v) => v.name === 'OPENAI_API_KEY');
-    assert.ok(openai, 'OPENAI_API_KEY should still be in registry');
-    assert.equal(openai.sensitive, true, 'OPENAI_API_KEY should remain sensitive');
-    assert.ok(!openai.runtimeEditable, 'OPENAI_API_KEY should not be runtimeEditable');
   });
 
   it('hasSensitiveEditableVars detects whitelisted sensitive vars', () => {
     assert.ok(hasSensitiveEditableVars(['GITHUB_MCP_PAT']));
     assert.ok(hasSensitiveEditableVars(['FRONTEND_URL', 'F102_API_KEY']));
-    assert.ok(!hasSensitiveEditableVars(['FRONTEND_URL', 'AUDIT_LOG_DIR']));
-    assert.ok(!hasSensitiveEditableVars(['OPENAI_API_KEY']), 'OPENAI_API_KEY is no longer editable (#340 P6)');
+    assert.ok(!hasSensitiveEditableVars(['FRONTEND_URL', 'CORS_ALLOW_PRIVATE_NETWORK']));
   });
 
   it('marks DEFAULT_OWNER_USER_ID as non-editable (trust anchor)', () => {
@@ -242,9 +214,9 @@ describe('buildEnvSummary', () => {
   });
 
   it('masks sensitive env vars with ***', () => {
-    setEnv('OPENAI_API_KEY', 'sk-secret-key-12345');
+    setEnv('GITHUB_WEBHOOK_SECRET', 'whsec-secret-12345');
     const summary = buildEnvSummary();
-    const entry = summary.find((v) => v.name === 'OPENAI_API_KEY');
+    const entry = summary.find((v) => v.name === 'GITHUB_WEBHOOK_SECRET');
     assert.ok(entry);
     assert.equal(entry.currentValue, '***');
   });
@@ -976,11 +948,11 @@ describe('#770 fail-closed write guard (end-to-end)', () => {
     assert.equal(embed.runtimeEditable, false, 'EMBED_MODE is startup-captured — must be read-only');
   });
 
-  it('non-editable connector vars are not in the editable set', () => {
-    const nonEditableConn = ENV_VARS.filter((d) => d.category === 'connector' && !isEditableEnvVar(d));
-    assert.ok(nonEditableConn.length > 0, 'Should have non-editable connector vars');
-    for (const def of nonEditableConn) {
-      assert.equal(isEditableEnvVar(def), false, `Non-editable connector var ${def.name} must stay read-only`);
+  it('remaining connector vars (Weixin runtime flags) are all editable (#770)', () => {
+    const connVars = ENV_VARS.filter((d) => d.category === 'connector');
+    assert.ok(connVars.length > 0, 'Should have connector vars (Weixin runtime flags)');
+    for (const def of connVars) {
+      assert.equal(isEditableEnvVar(def), true, `Connector var ${def.name} should be runtimeEditable`);
     }
   });
 });
