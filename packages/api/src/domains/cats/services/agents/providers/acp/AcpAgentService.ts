@@ -24,6 +24,13 @@ import { createPromptDigest } from '../../../context/prompt-digest.js';
 import type { AgentMessage, AgentService, AgentServiceOptions, MessageMetadata } from '../../../types.js';
 import { type AcpCapacitySignal, AcpProtocolError, AcpTimeoutError } from './AcpClient.js';
 import type { AcpLease, AcpProcessPool, PoolKey } from './AcpProcessPool.js';
+import {
+  bindSessionCredentialFile,
+  type PreparedCredentialEnv,
+  prepareSessionCredentialFile,
+  resolveSessionCredentialFile,
+  writeSessionCredentialFile,
+} from './acp-credential-file.js';
 import { createAcpSessionState, flushAcpThinking, transformAcpEvent } from './acp-event-transformer.js';
 import { resolveAcpMcpServers, resolveDisabledServerIds, resolveUserProjectMcpServers } from './acp-mcp-resolver.js';
 import { callbackEnvDiagnostic, materializeSessionMcpServers } from './acp-session-env.js';
@@ -226,8 +233,19 @@ export class AcpAgentService implements AgentService {
 
       // Per-invocation: merge callbackEnv into cat-cafe* MCP servers so callback tools
       // (multi_mention, post_message, etc.) get CAT_CAFE_API_URL / token / invocationId.
-      const sessionMcpServers = materializeSessionMcpServers(invokeServers, options?.callbackEnv);
-      const envDiag = callbackEnvDiagnostic(options?.callbackEnv);
+      // #1099 review P1: the credential refresh file is SESSION-scoped — the nonce path
+      // is decided before session/new (MCP subprocess env freezes at session creation),
+      // and resume rewrites the same file with fresh creds. A superseded process keeps
+      // its own file, which stops updating — its late callbacks fail registry.isLatest().
+      const buildSessionConfig = (preparedCreds: PreparedCredentialEnv | null) => {
+        const sessionCallbackEnv = preparedCreds?.env ?? options?.callbackEnv;
+        return {
+          mcpServers: materializeSessionMcpServers(invokeServers, sessionCallbackEnv),
+          envDiag: callbackEnvDiagnostic(sessionCallbackEnv),
+        };
+      };
+      let sessionMcpServers: AcpMcpServer[] = invokeServers;
+      let envDiag = callbackEnvDiagnostic(options?.callbackEnv);
       // Session reuse: if options.sessionId is provided (from session chain), try to
       // reuse the existing ACP session for multi-turn memory. The agent keeps conversation
       // history server-side, so reusing the session avoids "amnesia" across turns.
@@ -236,15 +254,30 @@ export class AcpAgentService implements AgentService {
       let resumeSessionLoadFailed = false;
 
       if (resumeSessionId) {
+        const resumeCreds = resolveSessionCredentialFile(options?.callbackEnv, resumeSessionId);
+        const resumeConfig = buildSessionConfig(resumeCreds);
         try {
           log.info(
-            { ...ctx, sessionId: resumeSessionId, cwd, mcpCount: sessionMcpServers.length, ...envDiag },
+            {
+              ...ctx,
+              sessionId: resumeSessionId,
+              cwd,
+              mcpCount: resumeConfig.mcpServers.length,
+              ...resumeConfig.envDiag,
+            },
             'ACP session resume: loading existing session',
           );
-          const session = await client.loadSession(resumeSessionId, cwd, sessionMcpServers);
+          const session = await client.loadSession(resumeSessionId, cwd, resumeConfig.mcpServers);
           sessionId = session.sessionId || resumeSessionId;
           this.pool.rememberSession?.(this.poolKey, sessionId, lease);
           if (sessionId !== resumeSessionId) this.pool.rememberSession?.(this.poolKey, resumeSessionId, lease);
+          if (resumeCreds) {
+            writeSessionCredentialFile(options?.callbackEnv, resumeCreds.path);
+            bindSessionCredentialFile(sessionId, resumeCreds.path);
+            if (sessionId !== resumeSessionId) bindSessionCredentialFile(resumeSessionId, resumeCreds.path);
+          }
+          sessionMcpServers = resumeConfig.mcpServers;
+          envDiag = resumeConfig.envDiag;
           metadata.sessionId = sessionId;
           isResumedSession = true;
           log.info({ ...ctx, sessionId, requestedSessionId: resumeSessionId }, 'ACP session resume completed');
@@ -259,6 +292,10 @@ export class AcpAgentService implements AgentService {
       }
 
       if (!isResumedSession) {
+        const freshCreds = prepareSessionCredentialFile(options?.callbackEnv);
+        const freshConfig = buildSessionConfig(freshCreds);
+        sessionMcpServers = freshConfig.mcpServers;
+        envDiag = freshConfig.envDiag;
         log.info(
           { ...ctx, cwd, promptLen: prompt.length, mcpCount: sessionMcpServers.length, ...envDiag },
           'ACP newSession starting',
@@ -266,6 +303,7 @@ export class AcpAgentService implements AgentService {
         const session = await client.newSession(cwd, sessionMcpServers);
         sessionId = session.sessionId;
         this.pool.rememberSession?.(this.poolKey, sessionId, lease);
+        if (freshCreds) bindSessionCredentialFile(sessionId, freshCreds.path);
         metadata.sessionId = sessionId;
         log.info({ ...ctx, sessionId }, 'ACP newSession completed');
 
@@ -427,9 +465,15 @@ export class AcpAgentService implements AgentService {
         );
         // Create fresh session and retry promptStream once (not recursive — single retry)
         try {
-          const freshSession = await client.newSession(cwd, sessionMcpServers);
+          const retryCreds = prepareSessionCredentialFile(options?.callbackEnv);
+          const retryConfig = buildSessionConfig(retryCreds);
+          const freshSession = await client.newSession(cwd, retryConfig.mcpServers);
           const freshSessionId = freshSession.sessionId;
           this.pool.rememberSession?.(this.poolKey, freshSessionId, lease);
+          // Replacement retry is a NEW ACP session, so it must get a fresh
+          // credential file path. Reusing the failed resume path would let the
+          // dead session read future replacement-session credentials.
+          if (retryCreds) bindSessionCredentialFile(freshSessionId, retryCreds.path);
           metadata.sessionId = freshSessionId;
           // Repoint the outer sessionId so the abort handler cancels the fresh
           // session, not the dead resumed one.

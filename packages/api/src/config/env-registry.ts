@@ -884,8 +884,17 @@ export const ENV_VARS: EnvDefinition[] = [
     name: 'CAT_CAFE_CREDENTIAL_FILE',
     defaultValue: '(运行时注入)',
     description:
-      '#1092: MCP credential refresh file path. API writes fresh invocationId+callbackToken to this file per invocation; MCP server reads it on each callback to pick up credentials that survive ACP session resume.',
+      "#1092/#1099-P1: MCP credential refresh file path, SESSION-scoped (<threadId>_<catId>_<nonce>.json). The ACP layer injects it into a session's MCP server env at session creation and rewrites the same file with fresh invocationId+callbackToken on each resume; MCP server re-reads it per callback. Superseded processes keep their own file so registry.isLatest() still rejects their late writes.",
     category: 'cli',
+    sensitive: false,
+    hubVisible: false,
+  },
+  {
+    name: 'CAT_CAFE_MCP_CREDS_DIR',
+    defaultValue: '(未设置 → <monorepoRoot>/.cat-cafe/mcp-creds)',
+    description:
+      '#1099-P1: Override directory for session-scoped MCP credential files (primarily for tests — production uses the monorepo-root default).',
+    category: 'server',
     sensitive: false,
     hubVisible: false,
   },
