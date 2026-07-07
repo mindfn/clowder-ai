@@ -7,6 +7,7 @@ import {
   DataDirsSection,
   type EnvSaveResponse,
   type EnvSummaryData,
+  type EnvVar,
   EnvVarsSection,
   initialDraftValue,
   isEditableVariable,
@@ -142,17 +143,29 @@ export function HubEnvFilesTab({ surface }: HubEnvFilesTabProps = {}) {
         setSaveState({ saving: false, error: body.error ?? '保存失败', success: null });
         return;
       }
-      const nextVariables = Array.isArray(body.summary)
-        ? body.summary
-        : data.variables.map((variable) => {
-            const update = changedUpdates.find((item) => item.name === variable.name);
-            if (!update) return variable;
-            if (isSensitiveEditable(variable)) {
-              return { ...variable, currentValue: update.value ? '***' : null };
-            }
-            return { ...variable, currentValue: update.value || null };
-          });
-      setData((prev) => (prev ? { ...prev, variables: nextVariables } : prev));
+      // #770 P1 fix: re-fetch with surface filter to preserve System allowlist.
+      // PATCH /api/config/env returns buildEnvSummary() (unfiltered), so using
+      // body.summary directly would expose non-system vars on the System page.
+      const refreshUrl = surface ? `/api/config/env-summary?surface=${surface}` : '/api/config/env-summary';
+      const refreshRes = await apiFetch(refreshUrl);
+      let nextVariables: EnvVar[];
+      if (refreshRes.ok) {
+        const refreshBody = (await refreshRes.json()) as EnvSummaryData;
+        setData(refreshBody);
+        nextVariables = refreshBody.variables;
+      } else {
+        // Fallback: optimistic update from current (already-filtered) data.
+        // Never use body.summary which is unfiltered.
+        nextVariables = data.variables.map((variable) => {
+          const update = changedUpdates.find((item) => item.name === variable.name);
+          if (!update) return variable;
+          if (isSensitiveEditable(variable)) {
+            return { ...variable, currentValue: update.value ? '***' : null };
+          }
+          return { ...variable, currentValue: update.value || null };
+        });
+        setData((prev) => (prev ? { ...prev, variables: nextVariables } : prev));
+      }
       setDrafts(
         Object.fromEntries(
           nextVariables.filter(isEditableVariable).map((variable) => [variable.name, initialDraftValue(variable)]),

@@ -184,6 +184,15 @@ const ALLOWLIST = new Map([
   ['HTTPS_PROXY', '#770: standard — proxy convention (uppercase variant)'],
   ['HTTP_PROXY', '#770: standard — proxy convention (uppercase variant)'],
   ['ALL_PROXY', '#770: standard — proxy convention (uppercase variant)'],
+  // ── #770: ACP credential refresh (#1099) — session-scoped internal vars ──
+  [
+    'CAT_CAFE_CREDENTIAL_FILE',
+    '#770/#1099: internal — session-scoped MCP credential file path (ACP layer injects per resume)',
+  ],
+  [
+    'CAT_CAFE_MCP_CREDS_DIR',
+    '#770/#1099: internal — override dir for session-scoped MCP credential files (primarily tests)',
+  ],
 ]);
 
 // ── Extract registered names from env-registry.ts ──

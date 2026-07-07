@@ -252,6 +252,51 @@ describe('HubEnvFilesTab', () => {
     expect(container.querySelector('input[aria-label="OPENAI_API_KEY"]')).toBeNull();
   });
 
+  it('#770 P1 regression: System surface is preserved after save (no non-system vars leak)', async () => {
+    // PATCH returns the FULL unfiltered summary — this is the real API behavior.
+    // Before #770 P1 fix, frontend blindly used body.summary, replacing the
+    // filtered System list with all hub-visible vars.
+    mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/config/env' && init?.method === 'PATCH') {
+        return Promise.resolve(jsonResponse({ ok: true, summary: MOCK_ENV_SUMMARY.variables }));
+      }
+      return defaultEnvApiFetch(path, init);
+    });
+
+    await act(async () => {
+      root.render(<HubEnvFilesTab surface="system" />);
+    });
+    await flushEffects();
+
+    // Precondition: system surface excludes OPENAI_API_KEY
+    expect(container.textContent).not.toContain('OPENAI_API_KEY');
+    expect(container.textContent).toContain('FRONTEND_URL');
+
+    // Edit a system var and save
+    await changeField(
+      container.querySelector('input[aria-label="FRONTEND_URL"]') as HTMLInputElement,
+      'http://localhost:3200',
+    );
+    const saveButton = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === '保存到 .env',
+    );
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flushEffects();
+
+    // After save, system surface must still exclude non-system vars
+    expect(container.textContent).not.toContain('OPENAI_API_KEY');
+    // Verify the re-fetch used the correct surface parameter
+    const surfaceFetches = mockApiFetch.mock.calls.filter(
+      ([path]) => path === '/api/config/env-summary?surface=system',
+    );
+    // Initial load + post-save re-fetch = 2 calls
+    expect(surfaceFetches.length).toBeGreaterThanOrEqual(2);
+    // Save success message still shows
+    expect(container.textContent).toContain('已写回 .env 并刷新摘要');
+  });
+
   it('shows a save error when /api/config/env PATCH fails', async () => {
     mockApiFetch.mockImplementation((path: string, init?: RequestInit) => {
       if (path === '/api/config/env' && init?.method === 'PATCH') {
