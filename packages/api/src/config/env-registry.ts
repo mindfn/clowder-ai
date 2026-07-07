@@ -366,7 +366,8 @@ export const ENV_VARS: EnvDefinition[] = [
     category: 'evidence',
     sensitive: false,
     allowedValues: ['off', 'shadow', 'on'],
-    runtimeEditable: false,
+    runtimeEditable: true,
+    restartRequired: true,
   },
   {
     name: 'F102_ABSTRACTIVE',

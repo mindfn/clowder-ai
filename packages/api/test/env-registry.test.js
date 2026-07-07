@@ -942,10 +942,12 @@ describe('#770 fail-closed write guard (end-to-end)', () => {
       assert.equal(def.runtimeEditable, true, `${name} is checked via lambda at runtime — must stay editable`);
       assert.equal(isEditableEnvVar(def), true, `${name} must pass isEditableEnvVar`);
     }
-    // EMBED_MODE is startup-captured (resolvedEmbedMode in index.ts) — must NOT be editable
+    // EMBED_MODE is startup-captured (resolvedEmbedMode in index.ts) — writable to .env
+    // but takes effect only after restart. Memory page toggle must work (cloud P2 fix).
     const embed = ENV_VARS.find((d) => d.name === 'EMBED_MODE');
     assert.ok(embed, 'EMBED_MODE should be in registry');
-    assert.equal(embed.runtimeEditable, false, 'EMBED_MODE is startup-captured — must be read-only');
+    assert.equal(embed.runtimeEditable, true, 'EMBED_MODE must be writable to .env from Hub');
+    assert.equal(embed.restartRequired, true, 'EMBED_MODE takes effect after restart');
   });
 
   it('remaining connector vars (Weixin runtime flags) are all editable (#770)', () => {
