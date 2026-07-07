@@ -431,6 +431,16 @@ export class AcpAgentService implements AgentService {
           const freshSessionId = freshSession.sessionId;
           this.pool.rememberSession?.(this.poolKey, freshSessionId, lease);
           metadata.sessionId = freshSessionId;
+          // Repoint the outer sessionId so the abort handler cancels the fresh
+          // session, not the dead resumed one.
+          sessionId = freshSessionId;
+
+          // Abort may have fired during the fresh newSession (mirrors Window 2)
+          if (options?.signal?.aborted) {
+            client.cancelSession(freshSessionId);
+            yield { type: 'done', catId: this.catId, metadata, timestamp: Date.now() };
+            return;
+          }
 
           // Apply session model if configured
           const sessionModel = this.sessionModel;
@@ -441,6 +451,25 @@ export class AcpAgentService implements AgentService {
             } catch {
               /* best-effort — continue with agent default */
             }
+          }
+
+          // Announce the replacement session so the invocation layer rebinds the
+          // session chain to the fresh sessionId. Without this, the next resume
+          // would target the dead session and hit the zero-event path again.
+          yield {
+            type: 'session_init',
+            catId: this.catId,
+            sessionId: freshSessionId,
+            ephemeralSession: false,
+            metadata,
+            timestamp: Date.now(),
+          };
+
+          // Consumer may abort during the yield above (mirrors Window 3)
+          if (options?.signal?.aborted) {
+            client.cancelSession(freshSessionId);
+            yield { type: 'done', catId: this.catId, metadata, timestamp: Date.now() };
+            return;
           }
 
           // Build effective prompt with system prompt (fresh session has no memory)
@@ -478,7 +507,7 @@ export class AcpAgentService implements AgentService {
           return; // Exit — retry path handled completion
         } catch (retryErr) {
           const retryErrMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
-          log.error({ ...ctx, err: retryErrMsg }, '#1091: retry with fresh session also failed');
+          log.error({ ...ctx, sessionId, err: retryErrMsg }, '#1091: retry with fresh session also failed');
           yield {
             type: 'error',
             catId: this.catId,
