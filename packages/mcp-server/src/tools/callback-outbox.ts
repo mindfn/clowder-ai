@@ -183,15 +183,9 @@ export async function sendCallbackRequest(
   // safety net for "did it publish", not client retries.
   const retryDelaysMs = options?.retryDelaysMs ?? getRetryDelaysMs();
   const payload = JSON.stringify(request.body);
-  const result = await postJsonWithRetry(
-    `${request.apiUrl}${request.path}`,
-    payload,
-    retryDelaysMs,
-    request.headers,
-    {
-      fetchTimeoutMs: options?.fetchTimeoutMs,
-    },
-  );
+  const result = await postJsonWithRetry(`${request.apiUrl}${request.path}`, payload, retryDelaysMs, request.headers, {
+    fetchTimeoutMs: options?.fetchTimeoutMs,
+  });
   if (result.ok) return { ok: true, data: result.data };
 
   if (enableOutbox && result.failure.retryable) {
