@@ -313,6 +313,16 @@ YES（event-backed `issue_tracking` 绑 ownerCatId + comment cursor）→ **不�
 - `verified` sample 1/20 + 全局日 cap
 - 7 天 retention；no raw body；only `sourceRef` + hash/status
 
+## Thread Metadata 作为 Resolver 输入
+
+接球时调 `cat_cafe_get_thread_metadata()` 可快速获取本 thread 已注册的 worktree / PR / issue / feature 关联。这些是 **T1 级 resolver 输入**（平台持久化数据，非 cat-writable narrative）：
+
+- claim "PR 在 #123" → `metadata.prs` 里有没有？有 = corroborate；没有 = 需要二次验证
+- claim "worktree 在 /path/xxx" → `metadata.worktrees` 里有没有？有 = verified path
+- claim "这是 Fxxx 的活" → `metadata.features` 里有没有？有 = thread-level association exists
+
+> metadata 本身不替代三问——但它是一个高效的 resolver source，减少查 git/GitHub API 的 round trip。
+
 ## 上下游 skill
 
 - **上一步 / 触发源**：cross-thread-sync / cross-cat-handoff / opensource-ops（intake）

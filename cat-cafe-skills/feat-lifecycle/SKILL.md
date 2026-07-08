@@ -98,6 +98,12 @@ search_evidence("{topic}", scope="all")  # 找历史讨论 + thread
 
    **Gotcha**: 只在有 threadId 的会话中创建。operator在非 thread 环境立项（如 BACKLOG 批量整理）时跳过此步。
 
+7. **Thread Metadata 注册**：在当前 thread 记录 feature 关联：
+   ```
+   cat_cafe_set_thread_metadata({ features: ["Fxxx"] })
+   ```
+   handoff / 新 session 时，`get_thread_metadata()` 直接拿到本 thread 正在做的 feature，不用从聊天记录里反推。
+
 ### 立项愿景硬度自检（F216→F219 教训）🔴
 
 > **为什么**：F216 立项 Why 写"降 complexity"，AC 却落成"修 bug + 可测性"，两者执行中悄悄分叉，直到 close 前愿景守护才发现 gap。根因是**立项时愿景表述不够硬 + 交接丢上下文**（operator 2026-06-02）。这是 LL-067（后半段被前半段工程量吃）/ LL-069（scope 跟"自我解读"走不跟 spec 走）在**立项时刻**的前置防线——审计时才抓分叉太晚，立项就钉死。

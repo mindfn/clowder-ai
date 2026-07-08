@@ -25,6 +25,15 @@ search_evidence("{feature关键词}")
 search_evidence("{topic}", scope="all")
 ```
 
+同时读取 thread metadata，检查本 thread 是否已有关联 worktree / feature：
+
+```
+cat_cafe_get_thread_metadata()
+// → { worktrees: [...], features: [...], prs: [...], ... }
+```
+
+已有 worktree → 直接 `cd` 过去继续开发，**不要重复创建**（LL: feedback_single_worktree）。
+
 不搜就开工 = 从零开始，可能重蹈覆辙。
 
 ## 目录位置（铁律）
@@ -89,6 +98,19 @@ echo $REDIS_URL   # 必须是 redis://localhost:6398，不能是 6399
 # 5. 验证基线测试通过
 pnpm test
 ```
+
+## Thread Metadata 注册（创建后必做）
+
+Worktree 创建完成后，调用 `set_thread_metadata` 注册路径和关联 feature：
+
+```
+cat_cafe_set_thread_metadata({
+  worktrees: ["/absolute/path/to/cat-cafe-{feature-name}"],
+  features: ["Fxxx"]  // 关联了具体 feature 时填
+})
+```
+
+**为什么**：handoff / 新 session 时，下一棒猫调 `get_thread_metadata()` 直接拿到 worktree 路径，不用从 `git worktree list` 里猜。
 
 ## Redis 隔离（数据安全红线）
 
@@ -162,6 +184,14 @@ pnpm check:worktree-port-offset   # 验证全部 7 个大赛 OFFSET 派生 + 端
 git worktree remove ../cat-cafe-{feature-name}
 git branch -d feat/{feature-name}
 git worktree prune
+```
+
+同步清理 thread metadata：
+
+```
+cat_cafe_set_thread_metadata({
+  removeWorktrees: ["/absolute/path/to/cat-cafe-{feature-name}"]
+})
 ```
 
 检查是否有积压未清理：
