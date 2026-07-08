@@ -2,8 +2,6 @@ import { z } from 'zod';
 import { callbackPost } from './callback-tools.js';
 import type { ToolResult } from './file-tools.js';
 
-const PUBLISH_VERDICT_FETCH_TIMEOUT_MS = 120_000;
-
 /**
  * F192 Phase H AC-H4: cat_cafe_publish_verdict MCP tool.
  *
