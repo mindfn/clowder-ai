@@ -32,7 +32,14 @@ cat_cafe_get_thread_metadata()
 // → { worktrees: [...], features: [...], prs: [...], ... }
 ```
 
-已有 worktree → 直接 `cd` 过去继续开发，**不要重复创建**（LL: feedback_single_worktree）。
+已有 worktree → **验证后复用**，不要重复创建（LL: feedback_single_worktree）：
+
+1. **路径存在？** `test -d <path>` — 不存在 = metadata stale，跳过该条目
+2. **分支匹配？** `git -C <path> branch --show-current` — 确认分支与当前任务一致
+3. **状态干净？** `git -C <path> status --short` — 有脏改动先了解原因再决定
+4. **多条 worktree？** metadata 返回多个 → 列出候选让猫/operator选择，不默认取第一个
+
+全部通过 → `cd <path>` 继续开发。任一失败 → 走正常创建流程。
 
 不搜就开工 = 从零开始，可能重蹈覆辙。
 

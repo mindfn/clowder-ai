@@ -398,6 +398,13 @@ git checkout main && git pull origin main
 git worktree remove ../cat-cafe-{feature-name}
 git branch -d {branch-name} && git worktree prune
 
+# 8.1 Thread Metadata 清理（与 Step 3.5 对称）
+# 移除已合入的 worktree 路径和 PR 关联，避免 stale anchor 积累。
+# → 调用 MCP: cat_cafe_set_thread_metadata({
+#     removeWorktrees: ["/absolute/path/to/cat-cafe-{feature-name}"],
+#     removePrs: [{ repo: "owner/repo", number: PR_NUMBER }]
+#   })
+
 # 8.5 回收 review 沙盒（review-target-id 与 request-review 约定一致）
 REVIEW_TARGET_ID="{review-target-id}"  # e.g. f113 or fix-redis-keyprefix
 REVIEW_BASE="/tmp/cat-cafe-review/${REVIEW_TARGET_ID}"
