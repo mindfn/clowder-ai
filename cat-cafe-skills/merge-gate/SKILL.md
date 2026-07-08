@@ -248,6 +248,11 @@ EOF
 # - rebase 成功后继续原工作流
 # - 复杂冲突 → 通知operator，等指示后再继续
 
+# 3.5 Thread Metadata 注册（PR 关联持久化，handoff 上下文）
+# register_pr_tracking 管事件通知路由；thread metadata 管跨 session 上下文恢复。
+# → 调用 MCP: cat_cafe_set_thread_metadata({ prs: [{ repo: "owner/repo", number: PR_NUMBER }] })
+# handoff / 新 session 时，get_thread_metadata() 直接拿到关联 PR，不用从聊天记录里翻。
+
 # 4. PR body 防呆检查（禁止任何 @句柄出现在 body）
 PR_BODY="$(gh pr view {PR_NUMBER} --json body --jq '.body')" || \
   { echo "❌ 无法读取 PR body，停止流程"; exit 1; }
