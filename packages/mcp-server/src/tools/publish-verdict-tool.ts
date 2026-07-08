@@ -16,8 +16,22 @@ const defineTool = defineMcpCanonicalFactory('publish-verdict-tool.ts', undefine
   resourceFamily: 'eval-feedback',
   authority: 'eval-callback',
 });
-
-const PUBLISH_VERDICT_FETCH_TIMEOUT_MS = 120_000;
+/**
+ * F192 Phase H AC-H4: cat_cafe_publish_verdict MCP tool.
+ *
+ * 砚砚 R3 P1 #1 cloud: previously DOMAIN_INSTRUCTIONS referenced this tool but
+ * it wasn't registered anywhere — cats would loop. Now wired to
+ * POST /api/eval-domains/:domainId/publish-verdict which calls
+ * handlePublishVerdict (validates packet → resolves sourceRefs → invokes
+ * isolated-worktree publisher → opens auto-PR).
+ *
+ * F192 Phase H 收尾 PR-2 (砚砚 R1 Q3): sourceRefs is now a discriminated union
+ * supporting eval:a2a (snapshot/attribution YAML basenames),
+ * eval:capability-wakeup (replayable window selector), eval:memory
+ * (recall metrics selector), eval:sop (replayable SOP trace selector),
+ * and eval:task-outcome (snapshot replay window). Tool routes to the same
+ * API endpoint; per-domain generator dispatch happens in the route layer.
+ */
 
 const verdictPacketShape = z
   .object({
