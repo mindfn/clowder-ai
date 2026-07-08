@@ -9,8 +9,6 @@ import {
 } from './publish-verdict-refresh-action.js';
 import { sopSourceRefsShape } from './publish-verdict-sop-source-refs.js';
 
-const PUBLISH_VERDICT_FETCH_TIMEOUT_MS = 120_000;
-
 /**
  * F192 Phase H AC-H4: cat_cafe_publish_verdict MCP tool.
  *
