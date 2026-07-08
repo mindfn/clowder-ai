@@ -327,13 +327,13 @@ YES（event-backed `issue_tracking` 绑 ownerCatId + comment cursor）→ **不�
 
 ## Thread Metadata 作为 Resolver 输入
 
-接球时调 `cat_cafe_get_thread_metadata()` 可快速获取本 thread 已注册的 worktree / PR / issue / feature 关联。这些是 **T1 级 resolver 输入**（平台持久化数据，非 cat-writable narrative）：
+接球时调 `cat_cafe_get_thread_metadata()` 可快速获取本 thread 已注册的 worktree / PR / issue / feature 关联。这些是 **T2 级 continuity anchor**（猫可写入的 MCP 状态，非平台推导的事实）：
 
-- claim "PR 在 #123" → `metadata.prs` 里有没有？有 = corroborate；没有 = 需要二次验证
-- claim "worktree 在 /path/xxx" → `metadata.worktrees` 里有没有？有 = verified path
-- claim "这是 Fxxx 的活" → `metadata.features` 里有没有？有 = thread-level association exists
+- claim "PR 在 #123" → `metadata.prs` 命中 = 快速定位候选，但 **high-risk action 仍需 T0/T1 二次验证**（`gh pr view` / GitHub API）
+- claim "worktree 在 /path/xxx" → `metadata.worktrees` 命中 = 候选路径，需 `test -d` + `git branch --show-current` 确认存在且分支匹配
+- claim "这是 Fxxx 的活" → `metadata.features` 命中 = thread-level association hint，归属判定仍需 feat_index / git log / operator evidence
 
-> metadata 本身不替代三问——但它是一个高效的 resolver source，减少查 git/GitHub API 的 round trip。
+> **⚠️ metadata 是 T2，不是 T1**——`set_thread_metadata` 是猫可写入的 MCP 状态。High-risk action（merge / takeover / owner_reassignment）不能仅靠 metadata 满足"必须 T0/T1"的要求。metadata 的价值是减少 resolver 的搜索空间，不是替代独立验证。
 
 ## 上下游 skill
 
