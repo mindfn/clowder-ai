@@ -145,6 +145,115 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
       assert.match(result.detail, /retry/i);
       assert.equal(messageStoreCalls.length, 1, 'message delivered even though wake dropped');
     });
+
+    // F167: evidenceProducer hook — mirrors eval-domain-daily tests for manual trigger path
+    it('injects evidence sourceRefs section when evidenceProducer returns artifact names (F167)', async () => {
+      const producerCalls = [];
+      const messageStoreCalls = [];
+
+      const result = await handleTriggerNow(
+        {
+          harnessFeedbackRoot: root,
+          invokeTriggerProvider: { get: () => ({ trigger: () => 'dispatched' }) },
+          messageStore: {
+            append: async (msg) => {
+              messageStoreCalls.push(msg);
+              return { id: 'msg-evidence' };
+            },
+          },
+          evidenceProducer: async (domainId) => {
+            producerCalls.push(domainId);
+            return {
+              snapshotName: 'eval-F167-2026-07-09.yaml',
+              attributionName: 'eval-F167-2026-07-09-attribution.yaml',
+            };
+          },
+        },
+        { domainId: 'eval:a2a', userId: 'test-user' },
+      );
+
+      assert.ok(!('error' in result), `expected success, got: ${JSON.stringify(result)}`);
+      assert.equal(producerCalls.length, 1, 'evidenceProducer must be called once');
+      assert.equal(producerCalls[0], 'eval:a2a', 'must receive correct domainId');
+
+      assert.equal(messageStoreCalls.length, 1);
+      const content = messageStoreCalls[0].content;
+      assert.ok(
+        content.includes('## Evidence Files (pre-materialized sourceRefs)'),
+        'content must include evidence header when producer returns artifact names',
+      );
+      assert.ok(content.includes('eval-F167-2026-07-09.yaml'), 'content must include snapshotName');
+      assert.ok(content.includes('eval-F167-2026-07-09-attribution.yaml'), 'content must include attributionName');
+      assert.ok(!content.includes('⚠️'), 'content must NOT include fallback warning when evidence is produced');
+    });
+
+    it('injects fallback warning when evidenceProducer returns null (OTel disabled)', async () => {
+      const messageStoreCalls = [];
+
+      await handleTriggerNow(
+        {
+          harnessFeedbackRoot: root,
+          invokeTriggerProvider: { get: () => ({ trigger: () => 'dispatched' }) },
+          messageStore: {
+            append: async (msg) => {
+              messageStoreCalls.push(msg);
+              return { id: 'msg-null' };
+            },
+          },
+          evidenceProducer: async () => null,
+        },
+        { domainId: 'eval:a2a', userId: 'test-user' },
+      );
+
+      assert.equal(messageStoreCalls.length, 1);
+      const content = messageStoreCalls[0].content;
+      assert.ok(
+        content.includes('⚠️ No live sourceRefs available'),
+        'content must include fallback warning when evidenceProducer returns null',
+      );
+      assert.ok(
+        content.includes('Skip this eval run'),
+        'fallback must say "Skip this eval run", not "Publish without sourceRefs"',
+      );
+    });
+
+    it('injects fallback warning and still calls trigger when evidenceProducer throws (non-fatal)', async () => {
+      const triggerCalls = [];
+      const messageStoreCalls = [];
+
+      const result = await handleTriggerNow(
+        {
+          harnessFeedbackRoot: root,
+          invokeTriggerProvider: {
+            get: () => ({
+              trigger: (...args) => {
+                triggerCalls.push(args);
+                return 'dispatched';
+              },
+            }),
+          },
+          messageStore: {
+            append: async (msg) => {
+              messageStoreCalls.push(msg);
+              return { id: 'msg-throw' };
+            },
+          },
+          evidenceProducer: async () => {
+            throw new Error('telemetry unavailable');
+          },
+        },
+        { domainId: 'eval:a2a', userId: 'test-user' },
+      );
+
+      assert.ok(!('error' in result), 'evidenceProducer throw must NOT fail the manual trigger');
+      assert.equal(triggerCalls.length, 1, 'trigger still called even when evidenceProducer throws');
+      assert.equal(messageStoreCalls.length, 1);
+      const content = messageStoreCalls[0].content;
+      assert.ok(
+        content.includes('⚠️ No live sourceRefs available'),
+        'content must include fallback warning when evidenceProducer throws',
+      );
+    });
   });
 
   // ==========================================================================
