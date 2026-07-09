@@ -59,6 +59,19 @@ export interface EvalDomainScheduleOpts {
    * checks for a known-post-fix symbol (e.g. `isA2aSourceRefs` for `eval:a2a`).
    */
   publishPrereqProbe?: (domainId: EvalDomainRegistryEntry['domainId']) => boolean | Promise<boolean>;
+  /**
+   * F167 evidence producer — runs BEFORE invoking the eval cat, materializes fresh
+   * `snapshots/*.yaml` and `attributions/*.yaml` from live telemetry, and returns
+   * the basenames so the eval cat can pass them as `sourceRefs` to publish_verdict.
+   *
+   * Omit/undefined → backward-compat (no evidence produced; eval cat invoked without
+   * pre-materialized sourceRefs, same behaviour as before this hook was added).
+   * If the producer throws or returns null (OTel disabled), evaluation proceeds but
+   * the invocation message will note that no live sourceRefs are available.
+   */
+  evidenceProducer?: (
+    domainId: EvalDomainRegistryEntry['domainId'],
+  ) => Promise<{ snapshotName: string; attributionName: string } | null>;
 }
 
 /** @deprecated Use EvalDomainScheduleOpts — kept for backward compat. */
@@ -233,6 +246,19 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
           }
         }
 
+        // F167 evidence producer: materialize fresh snapshot/attribution YAML
+        // BEFORE invoking the eval cat so publish_verdict has valid sourceRefs.
+        // Best-effort: null result (OTel disabled / producer threw) is allowed;
+        // the eval cat is still invoked but without pre-materialized sourceRefs.
+        let evidenceRefs: { snapshotName: string; attributionName: string } | null = null;
+        if (config.evidenceProducer) {
+          try {
+            evidenceRefs = await config.evidenceProducer(domain.domainId);
+          } catch {
+            // Non-fatal: proceed without evidence (logged in evidenceRefs=null path below)
+          }
+        }
+
         const invocation = buildEvalCatInvocation(
           {
             domain: effectiveDomain,
@@ -246,6 +272,28 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
           { wiredPublishDomains: config.wiredPublishDomains },
         );
         if (ctx.deliver) {
+          const evidenceSection = evidenceRefs
+            ? [
+                '',
+                '## Evidence Files (pre-materialized sourceRefs)',
+                '',
+                'Pass these basenames as `sourceRefs` when calling `cat_cafe_publish_verdict`:',
+                '```json',
+                JSON.stringify(
+                  { snapshotName: evidenceRefs.snapshotName, attributionName: evidenceRefs.attributionName },
+                  null,
+                  2,
+                ),
+                '```',
+              ].join('\n')
+            : [
+                '',
+                '## Evidence Files',
+                '',
+                '⚠️ No live sourceRefs available (OTel disabled or evidence producer returned null). ' +
+                  'Publish verdict without sourceRefs or skip this run.',
+              ].join('\n');
+
           const content = [
             `## Eval Domain: ${invocation.domainId}`,
             '',
@@ -254,6 +302,7 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
             '```json',
             JSON.stringify(invocation.context, null, 2),
             '```',
+            evidenceSection,
           ].join('\n');
           const messageId = await ctx.deliver({
             threadId: invocation.targetThreadId,

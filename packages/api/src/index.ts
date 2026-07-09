@@ -4395,6 +4395,22 @@ async function main(): Promise<void> {
     return ok;
   };
 
+  // F167 evidence producer: captures telemetry store refs in closure so the
+  // daily cron can materialize fresh YAML artifacts before invoking the eval cat.
+  // Only eval:a2a uses pre-materialized YAML sourceRefs; other domains are skipped.
+  const { produceEvalA2aEvidence } = await import('./infrastructure/harness-eval/a2a/eval-a2a-evidence-producer.js');
+  const liveHarnessFeedbackRoot = resolve(repoRoot, 'docs', 'harness-feedback');
+  const evalA2aEvidenceProducer = async (domainId: string) => {
+    if (domainId !== 'eval:a2a') return null;
+    return produceEvalA2aEvidence({
+      harnessFeedbackRoot: liveHarnessFeedbackRoot,
+      traceStore: telemetryHandle.traceStore,
+      getMetricsText: telemetryHandle.getMetricsText ?? undefined,
+      metricsSnapshotStore: telemetryHandle.metricsSnapshotStore ?? undefined,
+      groundingSampleStore: getGroundingSampleStore(),
+    });
+  };
+
   const evalScheduleOpts = {
     harnessFeedbackRoot: resolve(repoRoot, 'docs', 'harness-feedback'),
     threadStore,
@@ -4403,6 +4419,7 @@ async function main(): Promise<void> {
     redis: redisClient ?? undefined,
     wiredPublishDomains,
     publishPrereqProbe,
+    evidenceProducer: evalA2aEvidenceProducer,
   };
   taskRunnerV2.register(createEvalDomainDailySpec(evalScheduleOpts));
   taskRunnerV2.register(createEvalDomainWeeklySpec(evalScheduleOpts));
