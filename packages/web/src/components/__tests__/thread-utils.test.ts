@@ -535,7 +535,8 @@ describe('sidebar tab selectors', () => {
     expect(tabIds).toEqual(['pinned', 'recent', 'project', 'system', 'favorites']);
     expect(tabs.map((tab) => tab.label)).toEqual(['置顶', '最近', '项目', '系统', '收藏']);
     // pinned tab has 1 (the pinned thread); recent still includes it (additive) so stays 4
-    expect(tabs.map((tab) => tab.count)).toEqual([1, 4, 4, 1, 1]);
+    // system tab has 2: 'default' (lobby) + 'system' (eval_domain) — isSystemThread matches both
+    expect(tabs.map((tab) => tab.count)).toEqual([1, 4, 4, 2, 1]);
   });
 
   it('pinned tab is a flat view of pinned threads sorted by lastActiveAt desc', () => {
@@ -556,7 +557,8 @@ describe('sidebar tab selectors', () => {
     const favorites = buildSidebarTabContent('favorites', tabThreads, new Set());
 
     expect(system.kind).toBe('flat');
-    expect(system.threads.map((thread) => thread.id)).toEqual(['system']);
+    // 'default' (lobby) is also a system thread (id === 'default'), sorted by title: 大厅 > System
+    expect(system.threads.map((thread) => thread.id)).toEqual(['default', 'system']);
     expect(favorites.kind).toBe('flat');
     expect(favorites.threads.map((thread) => thread.id)).toEqual(['fav']);
   });
