@@ -235,7 +235,22 @@ export function ThreadItem({
           />
         ) : (
           <span className="flex min-w-0 flex-1 items-center gap-1">
-            {isPinned && (
+            {isPinned && canPin && (
+              <button
+                type="button"
+                className="inline-flex flex-shrink-0 rounded text-cafe-accent transition-colors hover:bg-[var(--console-hover-bg)] hover:text-cafe-interactive"
+                aria-label={`取消置顶 ${displayTitle}`}
+                title="取消置顶"
+                data-testid={`thread-pin-toggle-${id}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  togglePin();
+                }}
+              >
+                <PinIcon />
+              </button>
+            )}
+            {isPinned && !canPin && (
               <span className="inline-flex flex-shrink-0 text-cafe-accent" role="img" aria-label="已置顶">
                 <PinIcon />
               </span>
