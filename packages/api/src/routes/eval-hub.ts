@@ -14,6 +14,7 @@ import {
   handleGenerateNow,
   handleTriggerNow,
   type InvokeTriggerProvider,
+  type ManualTriggerDeps,
 } from '../infrastructure/harness-eval/manual-trigger/index.js';
 import {
   type GitPublisher,
@@ -73,6 +74,8 @@ export interface EvalHubRoutesOptions {
    * publish-verdict — same gap as F178/F223 (post_message, workspace_navigate).
    */
   agentKeyRegistry?: AgentKeyAuthRegistry;
+  /** F167: evidence producer for eval:a2a manual trigger (same hook as cron path). */
+  evidenceProducer?: ManualTriggerDeps['evidenceProducer'];
 }
 
 function requireSession(request: FastifyRequest, reply: FastifyReply): string | null {
@@ -225,6 +228,7 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
         // cloud R5 P2 (PR-2): pass wired publish-verdict domain set so
         // buildEvalCatInvocation omits publish instructions for unwired domains.
         wiredPublishDomains: new Set(Object.keys(opts.verdictGenerators ?? {})),
+        evidenceProducer: opts.evidenceProducer,
       },
       { domainId, userId },
     );

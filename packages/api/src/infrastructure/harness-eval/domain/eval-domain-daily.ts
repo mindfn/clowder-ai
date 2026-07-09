@@ -291,7 +291,8 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
                 '## Evidence Files',
                 '',
                 '⚠️ No live sourceRefs available (OTel disabled or evidence producer returned null). ' +
-                  'Publish verdict without sourceRefs or skip this run.',
+                  'Skip this eval run — eval:a2a `publish_verdict` requires valid sourceRefs and will be ' +
+                  'rejected (400 `missing_evidence_refs`) without them.',
               ].join('\n');
 
           const content = [

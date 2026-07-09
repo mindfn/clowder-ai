@@ -50,6 +50,14 @@ export interface ManualTriggerDeps {
    * legacy default (all known-wireable domains get publish instructions).
    */
   wiredPublishDomains?: ReadonlySet<string>;
+  /**
+   * F167 evidence producer — same hook as `EvalDomainScheduleOpts.evidenceProducer`.
+   * When provided, materializes fresh `snapshots/*.yaml` + `attributions/*.yaml`
+   * from live telemetry BEFORE the eval cat is invoked so `publish_verdict`
+   * receives valid sourceRefs. Omit/undefined → eval cat invoked without
+   * pre-materialized sourceRefs (OTel disabled path).
+   */
+  evidenceProducer?: (domainId: string) => Promise<{ snapshotName: string; attributionName: string } | null>;
 }
 
 export interface HandlerError {
