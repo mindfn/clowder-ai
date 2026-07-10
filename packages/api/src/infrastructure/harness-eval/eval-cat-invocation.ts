@@ -318,8 +318,7 @@ You must also supply \`sourceRefs\` (NOT part of packet, separate input field) a
 Fields:
 - \`kind\` — REQUIRED literal \`"prompt-segments"\`
 - \`windowStartMs\` / \`windowEndMs\` — REQUIRED finite ms epoch; \`windowEndMs\` must be > \`windowStartMs\` (the window over which guard rejection events — http_rate_limit, route_decision_block — were pre-queried)
-- \`evalRunId\` — REQUIRED string; the run ID from the pre-computed snapshot injected into your invocation. The generator reads the stored snapshot by this ID (single-read, fail-closed on missing). **Copy the exact evalRunId from the snapshot section in your invocation message** — do NOT invent one.
-- \`guardId\` — OPTIONAL string; restrict to a specific guard id (e.g. \`"hold_ball_rate_limit"\`, \`"a2a_block_pingpong"\`)
+- \`evalRunId\` — REQUIRED string; the run ID from the pre-computed snapshot injected into your invocation. The generator reads the stored snapshot by this ID (single-read, fail-closed on missing). **Copy the exact evalRunId from the snapshot section in your invocation message** — do NOT invent one. Must match format \`hlr-<timestamp>-<hex8>\`.
 
 **Snapshot-first (KD-17)**: Your invocation message includes a pre-computed guard rejection snapshot with event counts, guard distributions, and the evalRunId. Use this data for your verdict analysis — it IS the evidence. The generator reuses the same stored snapshot at publish time (no re-query). Decision and artifact share one data source.
 

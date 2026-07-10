@@ -276,13 +276,12 @@ export function validatePromptSegmentsSelector(selector: PromptSegmentsSourceSel
   if (selector.windowEndMs <= selector.windowStartMs) {
     return 'windowEndMs must be greater than windowStartMs';
   }
-  if (selector.guardId !== undefined) {
-    if (typeof selector.guardId !== 'string' || selector.guardId.length === 0) {
-      return 'guardId must be a non-empty string when provided';
-    }
-    if (/[\r\n]/.test(selector.guardId)) {
-      return 'guardId must not contain newlines';
-    }
+  // KD-17: evalRunId is required and must match generator format (path-safe).
+  if (!selector.evalRunId || typeof selector.evalRunId !== 'string') {
+    return 'evalRunId is required (KD-17 snapshot-first)';
+  }
+  if (!/^hlr-\d+-[a-f0-9]{8}$/.test(selector.evalRunId)) {
+    return 'evalRunId must match generator format: hlr-<timestamp>-<hex8> (path traversal rejected)';
   }
   return null;
 }

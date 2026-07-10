@@ -60,6 +60,13 @@ export function createHarnessLedgerGeneratorAdapter(): VerdictGenerator {
           'Trigger must call produceHarnessLedgerRunSnapshot before eval cat invocation (KD-17).',
       );
     }
+    // Path-safety: evalRunId format is validated at MCP + validation layers,
+    // but defense-in-depth here prevents path traversal even if upstream skips.
+    if (!/^hlr-\d+-[a-f0-9]{8}$/.test(evalRunId)) {
+      throw new Error(
+        `harness_ledger_adapter_invalid_run_id: evalRunId '${evalRunId}' does not match safe format hlr-<ts>-<hex8>.`,
+      );
+    }
     const snapshotFilePath = join(deps.liveHarnessFeedbackRoot, 'run-snapshots', `${evalRunId}.json`);
     if (!existsSync(snapshotFilePath)) {
       throw new Error(
@@ -68,6 +75,19 @@ export function createHarnessLedgerGeneratorAdapter(): VerdictGenerator {
       );
     }
     const storedSnapshot = JSON.parse(readFileSync(snapshotFilePath, 'utf8')) as HarnessLedgerRunSnapshot;
+
+    // KD-17 single-source: verify selector window matches stored snapshot window.
+    // Prevents drift where cat claims different window than what snapshot actually covers.
+    if (
+      selector.windowStartMs !== storedSnapshot.window.startMs ||
+      selector.windowEndMs !== storedSnapshot.window.endMs
+    ) {
+      throw new Error(
+        `harness_ledger_adapter_window_mismatch: selector window [${selector.windowStartMs}, ${selector.windowEndMs}) ` +
+          `does not match stored snapshot window [${storedSnapshot.window.startMs}, ${storedSnapshot.window.endMs}). ` +
+          'KD-17 invariant: decision and artifact must share the same data source.',
+      );
+    }
 
     // Extract aggregates from stored snapshot (no re-query).
     const { totalEvents, byKind, byGuard } = storedSnapshot;
@@ -98,7 +118,6 @@ export function createHarnessLedgerGeneratorAdapter(): VerdictGenerator {
       featureId: 'F257',
       generatedAt,
       window: { startMs: selector.windowStartMs, endMs: selector.windowEndMs, durationHours: windowHours },
-      ...(selector.guardId ? { guardIdFilter: selector.guardId } : {}),
       totalEvents,
       byKind,
       byGuard: guardCountMap,

@@ -278,7 +278,13 @@ const promptSegmentsSourceRefsShape = z
       .number()
       .finite()
       .describe('Exclusive epoch ms window end for guard rejection events. Must be > windowStartMs.'),
-    guardId: z.string().min(1).optional().describe('Optional guard id filter (e.g. "hold_ball_rate_limit").'),
+    evalRunId: z
+      .string()
+      .min(1)
+      .regex(/^hlr-\d+-[a-f0-9]{8}$/, 'evalRunId must match generator format: hlr-<timestamp>-<hex8>')
+      .describe(
+        'KD-17 snapshot-first: run ID from the pre-computed snapshot. Copy the exact evalRunId from your invocation message. Generator reads the stored snapshot by this ID (fail-closed on missing).',
+      ),
   })
   .describe('eval:harness-ledger sourceRefs — replayable prompt-segments guard rejection window selector.');
 
@@ -371,7 +377,7 @@ type PublishVerdictToolInput = {
         kind: 'prompt-segments';
         windowStartMs: number;
         windowEndMs: number;
-        guardId?: string;
+        evalRunId: string;
       };
   agentKeyCatId?: string | undefined;
 };

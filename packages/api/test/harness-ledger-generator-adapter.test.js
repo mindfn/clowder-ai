@@ -17,6 +17,10 @@ const { createHarnessLedgerGeneratorAdapter } = await import(
 
 // ── Test helpers ──
 
+/** Stable window constants — both helpers use the same values so KD-17 window mismatch check passes. */
+const DEFAULT_WINDOW_START = 1700000000000;
+const DEFAULT_WINDOW_END = 1700604800000; // 7 days later (168 hours)
+
 function makeTmpDir() {
   const dir = join(tmpdir(), `hlga-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(dir, { recursive: true });
@@ -31,12 +35,18 @@ function makePacket(overrides = {}) {
   };
 }
 
+/** Counter for generating unique but format-valid evalRunIds. */
+let evalRunCounter = 0;
+function safeEvalRunId() {
+  return `hlr-${1700000000000 + evalRunCounter++}-a1b2c3d4`;
+}
+
 function makeSourceRefs(overrides = {}) {
   return {
     kind: 'prompt-segments',
-    windowStartMs: Date.now() - 7 * 24 * 3600 * 1000,
-    windowEndMs: Date.now(),
-    evalRunId: 'test-run-default',
+    windowStartMs: DEFAULT_WINDOW_START,
+    windowEndMs: DEFAULT_WINDOW_END,
+    evalRunId: safeEvalRunId(),
     ...overrides,
   };
 }
@@ -55,7 +65,7 @@ function writeRunSnapshot(rootDir, evalRunId, snapshotData = {}) {
   const snapshot = {
     evalRunId,
     producedAt: new Date().toISOString(),
-    window: { startMs: Date.now() - 7 * 24 * 3600 * 1000, endMs: Date.now(), durationHours: 168 },
+    window: { startMs: DEFAULT_WINDOW_START, endMs: DEFAULT_WINDOW_END, durationHours: 168 },
     totalEvents: 0,
     byKind: {},
     byGuard: {},
@@ -137,7 +147,7 @@ describe('harness-ledger-generator-adapter', () => {
     const tmpDir = makeTmpDir();
 
     await assert.rejects(
-      () => generator(makePacket(), makeSourceRefs({ evalRunId: 'nonexistent-run' }), makeDeps(tmpDir)),
+      () => generator(makePacket(), makeSourceRefs({ evalRunId: 'hlr-9999999999999-deadbeef' }), makeDeps(tmpDir)),
       (err) => {
         assert.ok(err.message.includes('harness_ledger_adapter_snapshot_missing'));
         return true;
@@ -150,7 +160,7 @@ describe('harness-ledger-generator-adapter', () => {
   test('produces zero-event verdict with noFindingRecord', async () => {
     const generator = createHarnessLedgerGeneratorAdapter();
     const tmpDir = makeTmpDir();
-    const evalRunId = 'test-zero-events';
+    const evalRunId = safeEvalRunId();
     const packet = makePacket({ id: 'zero-events' });
 
     writeRunSnapshot(tmpDir, evalRunId, { totalEvents: 0, byKind: {}, byGuard: {} });
@@ -193,9 +203,8 @@ describe('harness-ledger-generator-adapter', () => {
 
   test('produces verdict with events from mixed kinds', async () => {
     const generator = createHarnessLedgerGeneratorAdapter();
-    const now = Date.now();
     const tmpDir = makeTmpDir();
-    const evalRunId = 'test-mixed-events';
+    const evalRunId = safeEvalRunId();
     const packet = makePacket({ id: 'mixed-events' });
 
     writeRunSnapshot(tmpDir, evalRunId, {
@@ -207,11 +216,7 @@ describe('harness-ledger-generator-adapter', () => {
       },
     });
 
-    const result = await generator(
-      packet,
-      makeSourceRefs({ windowStartMs: now - 10000, windowEndMs: now, evalRunId }),
-      makeDeps(tmpDir),
-    );
+    const result = await generator(packet, makeSourceRefs({ evalRunId }), makeDeps(tmpDir));
 
     // Check snapshot
     const snapshot = JSON.parse(readFileSync(join(result.bundleDir, 'snapshot.json'), 'utf8'));
@@ -251,31 +256,72 @@ describe('harness-ledger-generator-adapter', () => {
     rmSync(tmpDir, { recursive: true });
   });
 
-  test('guardId filter is passed through to snapshot', async () => {
+  test('rejects window mismatch between selector and stored snapshot (KD-17)', async () => {
     const generator = createHarnessLedgerGeneratorAdapter();
-    const now = Date.now();
     const tmpDir = makeTmpDir();
-    const evalRunId = 'test-filtered';
-    const packet = makePacket({ id: 'filtered' });
+    const evalRunId = safeEvalRunId();
+    const packet = makePacket({ id: 'window-mismatch' });
 
-    // Snapshot already filtered (provider would have filtered at query time)
-    writeRunSnapshot(tmpDir, evalRunId, {
-      totalEvents: 1,
-      byKind: { http_rate_limit: 1 },
-      byGuard: { target_guard: { count: 1, kinds: ['http_rate_limit'] } },
-    });
+    // Snapshot stored with default window [DEFAULT_WINDOW_START, DEFAULT_WINDOW_END)
+    writeRunSnapshot(tmpDir, evalRunId, { totalEvents: 0, byKind: {}, byGuard: {} });
 
-    const result = await generator(
-      packet,
-      makeSourceRefs({ windowStartMs: now - 10000, windowEndMs: now, evalRunId, guardId: 'target_guard' }),
-      makeDeps(tmpDir),
+    // Selector claims a DIFFERENT window — KD-17 invariant: decision and artifact must share the same data source
+    const driftedStart = DEFAULT_WINDOW_START + 1000;
+    const driftedEnd = DEFAULT_WINDOW_END + 1000;
+
+    await assert.rejects(
+      () =>
+        generator(
+          packet,
+          makeSourceRefs({ windowStartMs: driftedStart, windowEndMs: driftedEnd, evalRunId }),
+          makeDeps(tmpDir),
+        ),
+      (err) => {
+        assert.ok(err.message.includes('harness_ledger_adapter_window_mismatch'));
+        assert.ok(err.message.includes('KD-17'));
+        return true;
+      },
     );
 
-    const snapshot = JSON.parse(readFileSync(join(result.bundleDir, 'snapshot.json'), 'utf8'));
-    assert.equal(snapshot.totalEvents, 1);
-    assert.equal(snapshot.guardIdFilter, 'target_guard');
-    assert.equal(snapshot.byGuard.target_guard, 1);
-    assert.ok(!snapshot.byGuard.other_guard);
+    rmSync(tmpDir, { recursive: true });
+  });
+
+  test('rejects evalRunId with invalid format (path traversal defense)', async () => {
+    const generator = createHarnessLedgerGeneratorAdapter();
+    const tmpDir = makeTmpDir();
+    const packet = makePacket({ id: 'traversal' });
+
+    // These are all format-invalid: defense-in-depth rejects them before filesystem access
+    const maliciousIds = [
+      '../../../etc/passwd',
+      'hlr-123-GGGGGGGG', // uppercase hex
+      'hlr-notanumber-abcdef01', // non-numeric timestamp
+      'run-1700000000000-abcdef01', // wrong prefix
+      'hlr-1700000000000-abc', // too-short hex
+    ];
+
+    for (const badId of maliciousIds) {
+      await assert.rejects(
+        () =>
+          generator(
+            packet,
+            {
+              kind: 'prompt-segments',
+              windowStartMs: DEFAULT_WINDOW_START,
+              windowEndMs: DEFAULT_WINDOW_END,
+              evalRunId: badId,
+            },
+            makeDeps(tmpDir),
+          ),
+        (err) => {
+          assert.ok(
+            err.message.includes('harness_ledger_adapter_invalid_run_id'),
+            `expected invalid_run_id error for '${badId}', got: ${err.message}`,
+          );
+          return true;
+        },
+      );
+    }
 
     rmSync(tmpDir, { recursive: true });
   });
@@ -284,7 +330,7 @@ describe('harness-ledger-generator-adapter', () => {
     const { createHash } = await import('node:crypto');
     const generator = createHarnessLedgerGeneratorAdapter();
     const tmpDir = makeTmpDir();
-    const evalRunId = 'test-prov-check';
+    const evalRunId = safeEvalRunId();
     const packet = makePacket({ id: 'prov-check' });
 
     writeRunSnapshot(tmpDir, evalRunId);
@@ -305,8 +351,7 @@ describe('harness-ledger-generator-adapter', () => {
   test('verdict markdown uses packet fields when present', async () => {
     const generator = createHarnessLedgerGeneratorAdapter();
     const tmpDir = makeTmpDir();
-    const evalRunId = 'test-custom-verdict';
-    const now = Date.now();
+    const evalRunId = safeEvalRunId();
 
     writeRunSnapshot(tmpDir, evalRunId, {
       totalEvents: 1,
@@ -323,11 +368,7 @@ describe('harness-ledger-generator-adapter', () => {
       acceptanceReevalPlan: { nextEvalAt: '2026-07-17T00:00:00Z' },
     });
 
-    const result = await generator(
-      packet,
-      makeSourceRefs({ windowStartMs: now - 10000, windowEndMs: now, evalRunId }),
-      makeDeps(tmpDir),
-    );
+    const result = await generator(packet, makeSourceRefs({ evalRunId }), makeDeps(tmpDir));
 
     const md = readFileSync(result.verdictPath, 'utf8');
     assert.ok(md.includes('`regress`'), 'uses packet verdict');
@@ -342,7 +383,7 @@ describe('harness-ledger-generator-adapter', () => {
   test('verdict YAML frontmatter includes all required Eval Hub fields', async () => {
     const generator = createHarnessLedgerGeneratorAdapter();
     const tmpDir = makeTmpDir();
-    const evalRunId = 'test-frontmatter';
+    const evalRunId = safeEvalRunId();
     const packet = makePacket({ id: 'frontmatter-check' });
 
     writeRunSnapshot(tmpDir, evalRunId);
@@ -363,22 +404,17 @@ describe('harness-ledger-generator-adapter', () => {
   test('bundle snapshot window matches selector', async () => {
     const generator = createHarnessLedgerGeneratorAdapter();
     const tmpDir = makeTmpDir();
-    const evalRunId = 'test-window';
+    const evalRunId = safeEvalRunId();
     const packet = makePacket({ id: 'window-check' });
-    const start = 1700000000000;
-    const end = 1700604800000; // ~7 days later
 
+    // Uses default window from helpers — both makeSourceRefs and writeRunSnapshot share DEFAULT_WINDOW_START/END
     writeRunSnapshot(tmpDir, evalRunId);
 
-    const result = await generator(
-      packet,
-      makeSourceRefs({ windowStartMs: start, windowEndMs: end, evalRunId }),
-      makeDeps(tmpDir),
-    );
+    const result = await generator(packet, makeSourceRefs({ evalRunId }), makeDeps(tmpDir));
 
     const snapshot = JSON.parse(readFileSync(join(result.bundleDir, 'snapshot.json'), 'utf8'));
-    assert.equal(snapshot.window.startMs, start);
-    assert.equal(snapshot.window.endMs, end);
+    assert.equal(snapshot.window.startMs, DEFAULT_WINDOW_START);
+    assert.equal(snapshot.window.endMs, DEFAULT_WINDOW_END);
     assert.equal(snapshot.window.durationHours, 168); // 7 days × 24h
 
     rmSync(tmpDir, { recursive: true });
@@ -392,7 +428,7 @@ describe('harness-ledger-generator-adapter', () => {
     );
     const generator = createHarnessLedgerGeneratorAdapter();
     const tmpDir = makeTmpDir();
-    const evalRunId = 'test-rt-zero';
+    const evalRunId = safeEvalRunId();
     const packet = makePacket({ id: 'roundtrip-zero' });
 
     writeRunSnapshot(tmpDir, evalRunId, { totalEvents: 0, byKind: {}, byGuard: {} });
@@ -416,8 +452,7 @@ describe('harness-ledger-generator-adapter', () => {
     );
     const generator = createHarnessLedgerGeneratorAdapter();
     const tmpDir = makeTmpDir();
-    const evalRunId = 'test-rt-mixed';
-    const now = Date.now();
+    const evalRunId = safeEvalRunId();
     const packet = makePacket({ id: 'roundtrip-mixed' });
 
     writeRunSnapshot(tmpDir, evalRunId, {
@@ -429,11 +464,7 @@ describe('harness-ledger-generator-adapter', () => {
       },
     });
 
-    const result = await generator(
-      packet,
-      makeSourceRefs({ windowStartMs: now - 10000, windowEndMs: now, evalRunId }),
-      makeDeps(tmpDir),
-    );
+    const result = await generator(packet, makeSourceRefs({ evalRunId }), makeDeps(tmpDir));
 
     const resolved = resolveA2aEvidenceBundle({ verdictId: packet.id, bundleDir: result.bundleDir });
 
