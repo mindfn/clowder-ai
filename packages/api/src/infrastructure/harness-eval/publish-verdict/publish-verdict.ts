@@ -27,12 +27,14 @@ import {
   isFrictionSourceRefs,
   isKnownSourceRefsKind,
   isMemorySourceRefs,
+  isPromptSegmentsSourceRefs,
   isQcMetricsSourceRefs,
   isSopSourceRefs,
   isTaskOutcomeSourceRefs,
   validateAnchorTelemetrySelector,
   validateFrictionRollupSelector,
   validateMemoryRecallSelector,
+  validatePromptSegmentsSelector,
   validateQcMetricsSelector,
   validateSopTraceSelector,
   validateSourceRefsFormat,
@@ -237,6 +239,10 @@ export async function handlePublishVerdict(
   } else if (isQcMetricsSourceRefs(input.sourceRefs)) {
     // F253 Phase C: qc-metrics-rollup selector.
     const selectorError = validateQcMetricsSelector(input.sourceRefs);
+    if (selectorError) return { status: 400, error: 'invalid_source_ref', detail: selectorError };
+  } else if (isPromptSegmentsSourceRefs(input.sourceRefs)) {
+    // F257 Phase A Line B: prompt-segments selector (harness-ledger, fail-closed).
+    const selectorError = validatePromptSegmentsSelector(input.sourceRefs);
     if (selectorError) return { status: 400, error: 'invalid_source_ref', detail: selectorError };
   } else if (isA2aSourceRefs(input.sourceRefs)) {
     const refsCheck = validateSourceRefsFormat(input.sourceRefs);

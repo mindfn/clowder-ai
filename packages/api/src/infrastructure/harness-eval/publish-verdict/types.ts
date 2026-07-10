@@ -128,6 +128,21 @@ export interface AnchorTelemetrySourceSelector {
 }
 
 /**
+ * F257 Phase A Line B — replayable prompt-segments guard rejection selector for eval:harness-ledger.
+ * Provider resolves this window selector → GuardRejectionEventLog.queryWindow → events.
+ * Shape follows the standard window pattern (like anchor-telemetry, qc-metrics, friction).
+ */
+export interface PromptSegmentsSourceSelector {
+  kind: 'prompt-segments';
+  /** Window start (inclusive), epoch ms */
+  windowStartMs: number;
+  /** Window end (exclusive), epoch ms; must be > windowStartMs */
+  windowEndMs: number;
+  /** Optional filter: restrict to a specific guard id */
+  guardId?: string;
+}
+
+/**
  * F192 Phase H 收尾 PR-2 — `VerdictSourceRefs` is a discriminated union (砚砚 R1 Q3).
  * - a2a branch: `{snapshotName, attributionName}` (kind optional, default a2a)
  * - capability-wakeup branch: `CapabilityWakeupSourceSelector` (kind required)
@@ -137,6 +152,7 @@ export interface AnchorTelemetrySourceSelector {
  * - friction branch: `FrictionRollupSourceSelector` (kind required, F245 PR1b live sink)
  * - anchor-telemetry branch: `AnchorTelemetrySourceSelector` (kind required, F236 Track-2)
  * - qc branch: `QcMetricsSelector` (kind required, F253 Phase C)
+ * - prompt-segments branch: `PromptSegmentsSourceSelector` (kind required, F257 Phase A Line B)
  *
  * 砚砚 R1 P1 #2: generator MUST receive explicit `sources` (sanitized
  * evidence refs / replayable selector); tool NEVER fabricates evidence.
@@ -149,7 +165,8 @@ export type VerdictSourceRefs =
   | SopTraceSourceSelector
   | FrictionRollupSourceSelector
   | AnchorTelemetrySourceSelector
-  | QcMetricsSelector;
+  | QcMetricsSelector
+  | PromptSegmentsSourceSelector;
 
 /**
  * Resolved evidence source paths (a2a only — for backward-compat helpers in validation.ts).

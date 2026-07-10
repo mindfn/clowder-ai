@@ -1,0 +1,37 @@
+---
+domainId: eval:harness-ledger
+displayName: Harness Ledger Eval
+systemThreadId: thread_eval_harness_ledger
+# F257 owner: opus-47 (布偶猫) — same eval cell owner as eval:a2a / eval:friction.
+# Cross-family eval cat: gpt52 (Maine Coon GPT-5.4) — Ragdoll authors the segment
+# harness, Maine Coon evaluates guard rejection patterns.
+evalCat:
+  catId: gpt52
+  handle: "@gpt52"
+  model: gpt-5.4
+# Weekly cadence — guard rejection patterns accumulate slowly; daily would produce
+# low-event-count noise. Adjustable after Phase A bootstrap establishes baseline.
+frequency: weekly
+sourceAdapter: f257-prompt-segments
+sourceRefsKind: prompt-segments
+threadPolicy:
+  role: working-home
+  stateSot: registry
+  allowedContent:
+    - longitudinal-analysis
+    - verdict-discussion
+    - handoff-drafts
+legacyScheduledTaskIds: []
+handoffTargetResolver:
+  featureId: F257
+  ownerCatId: opus-47
+  threadLookup: feature-thread
+sla:
+  acknowledgeHours: 48
+  reevalWithinHours: 168
+# Gated OFF until the GuardRejectionEventLog producer (Phase A Line B items 2-3)
+# and verdict generator are wired end-to-end. Flip to true when:
+# 1. GuardRejectionEventLog.append emits at both guard sites (hold_ball + block_pingpong)
+# 2. publish_verdict prompt-segments → validator → generator pipeline is green
+# Phase A Line B registers the domain (fail-closed) but does NOT wire the generator.
+enabled: false
