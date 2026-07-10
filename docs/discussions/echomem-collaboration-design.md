@@ -102,17 +102,32 @@ Clowder AI 的记忆系统（[ADR: 三原语模型](memory-service-componentizat
 宿主侧领域接口。每个 provider 声明 capability，RetrievalCoordinator 按路由表分发。
 
 ```typescript
-/** 读侧：检索 */
+type CanonicalDomain = 'doc' | 'conv' | 'global';
+
+/** 读侧：检索（所有 provider 必须实现） */
 interface RetrievalProvider {
-  readonly domain: 'doc' | 'conversation' | 'global';
+  readonly domain: CanonicalDomain;    // 统一使用 grammar domain
   search(request: SearchRequest): Promise<RetrievalExecution>;
   capabilities(): ProviderCapabilities;
   health(): Promise<boolean>;
 }
 
-/** 读侧：anchor 精确查找 — 由 CanonicalIdCodec + RetrievalCoordinator 组合实现（§4.4） */
+/** 读侧：anchor 精确查找（capability-specific port） */
+// 不是 RetrievalProvider 的必需方法——不是所有 provider 都支持精确查找。
+// 类型守卫 isAnchorLookupCapable() 与 capabilities().anchorLookup 联动，
+// 避免布尔值和可调用方法靠隐含约定同步。
+interface AnchorLookupCapable {
+  /** nativeId → item（null = 合法未命中，不触发 fallback） */
+  getByAnchor(nativeId: string): Promise<WireGetResponse | null>;
+}
+
+function isAnchorLookupCapable(p: RetrievalProvider): p is RetrievalProvider & AnchorLookupCapable {
+  return p.capabilities().anchorLookup && 'getByAnchor' in p;
+}
+
+/** 读侧：anchor 路由 — 由 CanonicalIdCodec + RetrievalCoordinator 组合实现（§4.4） */
 // CanonicalIdCodec.parse(canonicalId): { domain, nativeId } — 纯编解码，无 provider 依赖
-// RetrievalCoordinator.getByCanonicalId(): 用 codec + RouteSlot 选 provider
+// RetrievalCoordinator.getByCanonicalId(): 用 codec + RouteSlot + 类型守卫选 provider
 
 /** 读侧：最近浏览（optional） */
 interface BrowseProvider {
@@ -134,7 +149,7 @@ interface ProviderCapabilities {
   search: boolean;
   browse: boolean;
   graph: boolean;
-  anchorLookup: boolean;
+  anchorLookup: boolean;      // true ⟺ provider implements AnchorLookupCapable
   entityResolution: boolean;
   semanticSearch: boolean;
 }
@@ -183,14 +198,14 @@ interface WireSearchResponse {
 
 interface WireResponseMeta {
   degraded: boolean;
-  degradeReason?: DegradeReason;
-  effectiveMode?: string;
+  degradeReason?: WireDegradeReason;
+  effectiveMode?: WireSearchMode;
   traceId?: string;
-  servedBy?: string;        // 'primary' | 'fallback'（§10.1）
+  servedBy?: 'primary' | 'fallback';
 }
 
-/** 宿主封闭联合——适配器将 service 侧任意 reason 映射到此集合 */
-type DegradeReason =
+/** Wire 封闭联合 — 降级原因 */
+type WireDegradeReason =
   | 'timeout'                // 服务超时
   | 'unhealthy'              // health() = false
   | 'contract_error'         // 返回不符合 Wire schema
@@ -198,12 +213,34 @@ type DegradeReason =
   | 'evidence_store_error'   // 兜底：服务侧未知 reason 统一映射到此
   ;
 
-// Adapter 映射规则（不直接透传服务侧字符串）：
-// EchoMem 'rate_limited' → 'timeout'
-// EchoMem 'internal_error' → 'evidence_store_error'
-// EchoMem 'model_unavailable' → 'evidence_store_error'
-// LegacyConv 任何非空 reason → 'evidence_store_error'
-// 未识别的 reason string → 'evidence_store_error'（兜底，永不透传原始字符串）
+type WireSearchMode = 'lexical' | 'semantic' | 'hybrid';
+
+/** Wire→Host 降级元数据适配（不能直接 `meta: response.meta` 透传）
+ *
+ * Wire 和宿主的 degradeReason 是不同联合：
+ * - Wire: WireDegradeReason（上述 5 值）
+ * - 宿主 SearchResponse.meta: degradeReason?: string（parent ADR §3）
+ *
+ * 适配器必须显式映射，不直接赋值。
+ */
+
+// Wire → Host adapter 映射规则：
+// wire 'timeout'             → host 'evidence_store_error'（宿主无细粒度超时）
+// wire 'unhealthy'           → host 'evidence_store_error'
+// wire 'contract_error'      → host 'evidence_store_error'
+// wire 'scope_not_available' → host 'scope_not_available_in_dimension'（路由表 nudge）
+// wire 'evidence_store_error'→ host 'evidence_store_error'
+// wire effectiveMode         → host effectiveMode（同一联合，可直接赋值）
+// wire servedBy              → host 不透传（宿主 SearchResponse.meta 无此字段）
+//
+// EchoMem service → Wire adapter 映射：
+// EchoMem 'rate_limited'       → wire 'timeout'
+// EchoMem 'internal_error'     → wire 'evidence_store_error'
+// EchoMem 'model_unavailable'  → wire 'evidence_store_error'
+// 未识别的 reason string       → wire 'evidence_store_error'（永不透传原始字符串）
+//
+// **scope 决策**：parent ADR §5 `meta: response.meta` 直赋在此设计落地时
+// 必须改为显式 adapter 调用——scope 限定在 EchoMem adapter，不改宿主类型。
 
 /** Wire Contract v0 — GetByCanonicalId */
 interface WireGetRequest {
@@ -228,8 +265,8 @@ interface WireHealthResponse {
 /** Wire Contract v0 — Capabilities（唯一能力真相源，握手 / 按需获取） */
 interface WireCapabilitiesResponse {
   capabilities: WireCapabilities;
-  version: string;            // 'v0'
-  supportedModes: Array<'lexical' | 'semantic' | 'hybrid'>;
+  version: 'v0';              // 字面量（与请求 version 匹配）
+  supportedModes: WireSearchMode[];
   supportedDepths: Array<'summary' | 'raw'>;
   supportedFilters: Array<'dateRange' | 'contextWindow' | 'explain' | 'sessionScope'>;
   // 请求中的 filter 不在 supportedFilters 中 → WireError { code: 'not_supported' }
@@ -238,10 +275,19 @@ interface WireCapabilitiesResponse {
 
 /** Wire Contract v0 — Error envelope */
 interface WireError {
-  code: string;               // 'not_supported' | 'invalid_request' | 'internal' | ...
+  code: WireErrorCode;
   message: string;
   requestId: string;
 }
+
+type WireErrorCode =
+  | 'unsupported_version'     // 版本不兼容
+  | 'not_supported'           // 请求的 filter/mode 不被支持
+  | 'invalid_request'         // 请求格式错误（含非法 canonicalId）
+  | 'not_found'               // getByCanonicalId 查无
+  | 'rate_limited'            // 限流
+  | 'internal'                // 服务内部错误
+  ;
 
 interface WireSearchItem {
   canonicalId: string;        // tenant-scoped 唯一（见 §4）
@@ -257,7 +303,7 @@ interface WireSearchItem {
 }
 
 interface WireProvenance {
-  type: string;               // 'scanner' | 'conversation' | 'derived' | ...
+  type: 'scanner' | 'conversation' | 'derived';
   sourceUri?: string;
   sourceRevision?: string;    // 用于 lineage 追踪
   confidence?: number;
@@ -271,7 +317,7 @@ interface IdentityScope {
 }
 
 interface RequestOrigin {
-  source: string;             // 'clowder' | 'echomem'
+  source: 'clowder' | 'echomem';
   requestId: string;          // correlation ID（不是读请求幂等键）
   hopCount: number;           // 防环（>1 拒绝）
 }
@@ -407,9 +453,9 @@ Clowder↔EchoMem 直接对话用 Wire Contract v0。
 **Grammar（Phase 0 必须固定）**
 
 ```
-canonicalId := domain ":" opaqueNativeId
-domain      := "doc" | "conv" | "global"
-opaqueNativeId := percentEncoded*       // 完整 percent-encode（RFC 3986）
+canonicalId    := domain ":" opaqueNativeId
+domain         := "doc" | "conv" | "global"
+opaqueNativeId := percentEncoded+       // 非空，完整 percent-encode（RFC 3986）
                                         // 不含结构化 path segment 层
                                         // `/` `:`  等保留字符一律编码
 ```
@@ -474,6 +520,16 @@ opaqueNativeId := percentEncoded*       // 完整 percent-encode（RFC 3986）
 | "thread-thread_abc"    | "thread_abc"                      | prefix stripped |
 | "global:methods/TDD"   | "methods/TDD"                     | `global:` prefix stripped |
 | "has/slash"            | "has/slash"                       | 恒等（编码/解码 roundtrip） |
+
+// negative vectors: parse() 对非法输入返回 null
+| canonicalId               | expected | 原因 |
+|---------------------------|----------|------|
+| "F102"                    | null     | 无 `:` 分隔符 |
+| "unknown:F102"            | null     | 未知 domain |
+| "doc:"                    | null     | 空 nativeId |
+| ":F102"                   | null     | 空 domain（不在 allowlist） |
+| "doc:has%ZZslash"         | null     | 畸形 percent-encoding |
+| ""                        | null     | 空字符串 |
 ```
 
 ### 4.4 CanonicalId Codec 与 Route Slot 分离
@@ -485,6 +541,7 @@ opaqueNativeId := percentEncoded*       // 完整 percent-encode（RFC 3986）
 **Layer 1: CanonicalIdCodec（纯编解码，无 provider 依赖）**
 
 ```typescript
+// CanonicalDomain 定义见 §2.2（同一类型，自包含引用）
 type CanonicalDomain = 'doc' | 'conv' | 'global';
 
 interface ParsedCanonicalId {
@@ -511,13 +568,33 @@ class CanonicalIdCodec {
     return `${rule.domain}:${encodeOpaque(nativeId)}`;
   }
 
-  /** canonicalId → { domain, nativeId } */
+  private static VALID_DOMAINS = new Set<CanonicalDomain>(['doc', 'conv', 'global']);
+
+  /** canonicalId → { domain, nativeId } | null
+   *  非法输入统一返回 null（调用方转为 WireError { code: 'invalid_request' }）：
+   *  - 无 `:` 分隔符
+   *  - 未知 domain
+   *  - 空 nativeId
+   *  - 畸形 percent-encoding（decode 异常）
+   */
   parse(canonicalId: string): ParsedCanonicalId | null {
     const colonIdx = canonicalId.indexOf(':');
-    if (colonIdx < 0) return null;
-    const domain = canonicalId.slice(0, colonIdx) as CanonicalDomain;
-    const nativeId = decodeOpaque(canonicalId.slice(colonIdx + 1));
-    return { domain, nativeId };
+    if (colonIdx < 0) return null;                              // 无分隔符
+
+    const domainStr = canonicalId.slice(0, colonIdx);
+    if (!CanonicalIdCodec.VALID_DOMAINS.has(domainStr as CanonicalDomain)) return null;  // 未知 domain
+
+    const encoded = canonicalId.slice(colonIdx + 1);
+    if (encoded.length === 0) return null;                      // 空 nativeId
+
+    let nativeId: string;
+    try {
+      nativeId = decodeOpaque(encoded);                         // 畸形 % → 异常
+    } catch {
+      return null;
+    }
+
+    return { domain: domainStr as CanonicalDomain, nativeId };
   }
 }
 ```
@@ -535,32 +612,55 @@ class RetrievalCoordinator {
   private codec = new CanonicalIdCodec();
   private routes = new Map<CanonicalDomain, RouteSlot>();
 
-  /** anchor 精确查找 — 按 domain route slot 选 provider */
-  async getByCanonicalId(canonicalId: string): Promise<...> {
+  /** anchor 精确查找 — 按 domain route slot + 类型守卫选 provider */
+  async getByCanonicalId(canonicalId: string): Promise<WireGetResponse | null> {
     const parsed = this.codec.parse(canonicalId);
-    if (!parsed) return null;
+    if (!parsed) return null;           // 非法 canonicalId → null（调用方转 invalid_request）
 
     const slot = this.routes.get(parsed.domain);
     if (!slot) return null;
 
-    // 先试 primary；primary anchorLookup=false 时降级到 fallback
-    const provider = slot.primary.capabilities().anchorLookup
-      ? slot.primary
-      : slot.fallback;  // e.g. EchoMem anchorLookup=false → 落 LegacyConv
+    // 1. 选 capable provider（类型守卫，不靠布尔值隐含约定）
+    const primary = isAnchorLookupCapable(slot.primary) ? slot.primary : null;
+    const fallback = slot.fallback && isAnchorLookupCapable(slot.fallback)
+      ? slot.fallback : null;
 
-    if (!provider) return null;
+    // 2. primary 不具备 anchor lookup → 直接用 fallback（不是 error fallback）
+    if (!primary && !fallback) return null;
 
-    // provider adapter 负责 nativeId ↔ provider-local ID
-    // (e.g. LegacyConv 补回 `thread-` 前缀)
-    return provider.getByAnchor(parsed.nativeId);
+    // 3. 先试 primary；timeout/unhealthy/contract-error → fallback
+    if (primary) {
+      try {
+        if (!(await slot.primary.health())) throw new Error('unhealthy');
+        const result = await primary.getByAnchor(parsed.nativeId);
+        // null = 合法未命中，不触发 fallback
+        return result;
+      } catch (err) {
+        // timeout / unhealthy / contract-error → 降级到 fallback
+        if (!fallback) return null;
+        // fall through to fallback
+      }
+    }
+
+    // 4. fallback（fallback 失败不再级联）
+    if (fallback) {
+      try {
+        return await fallback.getByAnchor(parsed.nativeId);
+      } catch {
+        return null;
+      }
+    }
+
+    return null;
   }
 }
 ```
 
 > **职责边界**：
 > - `CanonicalIdCodec`: 纯函数，无状态，无 provider 依赖。Phase 0 conformance vectors 针对它。
-> - `RetrievalCoordinator`: 持有 `Map<domain, RouteSlot>`，用 codec + route slot + capability 选 provider。
+> - `RetrievalCoordinator`: 持有 `Map<domain, RouteSlot>`，用 codec + route slot + `isAnchorLookupCapable` 类型守卫选 provider。
 > - Provider adapter: 负责 nativeId ↔ provider-local ID 转换（e.g. LegacyConv 补回 `thread-` 前缀）。
+> - **Exact lookup 与 search 的 fallback 语义一致**：timeout/unhealthy/contract-error 触发 fallback；null（合法未命中）不触发。
 
 ### 4.5 Identity Scope（Phase 1 推荐）
 
