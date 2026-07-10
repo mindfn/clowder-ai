@@ -69,7 +69,9 @@ export class TranscriptReader {
   }
 
   /**
-   * Read events from a sealed session transcript with pagination.
+   * Read events from a session transcript with pagination.
+   * Falls back to `events.live.jsonl` for active sessions whose transcript
+   * hasn't been sealed yet (renamed to `events.jsonl`).
    */
   async readEvents(
     sessionId: string,
@@ -79,14 +81,8 @@ export class TranscriptReader {
     limit = 50,
   ): Promise<ReadEventsResult> {
     const sessionDir = this.sessionDir(threadId, catId, sessionId);
-    const jsonlPath = join(sessionDir, 'events.jsonl');
-
-    // Check if transcript exists
-    try {
-      await stat(jsonlPath);
-    } catch {
-      return { events: [], total: 0 };
-    }
+    const jsonlPath = await this.resolveEventsPath(sessionDir);
+    if (!jsonlPath) return { events: [], total: 0 };
 
     // Try to read index for optimized pagination
     const index = await this.readIndex(sessionDir);
@@ -211,9 +207,11 @@ export class TranscriptReader {
 
         // Search transcripts
         if ((scope === 'transcripts' || scope === 'both') && hits.length < limit) {
+          const eventsPath = await this.resolveEventsPath(sessionDir);
+          if (!eventsPath) continue;
           try {
             const rl = createInterface({
-              input: createReadStream(join(sessionDir, 'events.jsonl'), 'utf-8'),
+              input: createReadStream(eventsPath, 'utf-8'),
               crlfDelay: Infinity,
             });
             for await (const line of rl) {
@@ -257,13 +255,8 @@ export class TranscriptReader {
     invocationId: string,
   ): Promise<TranscriptEvent[] | null> {
     const sessionDir = this.sessionDir(threadId, catId, sessionId);
-    const jsonlPath = join(sessionDir, 'events.jsonl');
-
-    try {
-      await stat(jsonlPath);
-    } catch {
-      return null;
-    }
+    const jsonlPath = await this.resolveEventsPath(sessionDir);
+    if (!jsonlPath) return null;
 
     const events: TranscriptEvent[] = [];
     const rl = createInterface({
@@ -305,13 +298,9 @@ export class TranscriptReader {
    * F065 Phase C: needed for handoff digest generation on long sessions.
    */
   async readAllEvents(sessionId: string, threadId: string, catId: string): Promise<TranscriptEvent[]> {
-    const jsonlPath = join(this.sessionDir(threadId, catId, sessionId), 'events.jsonl');
-
-    try {
-      await stat(jsonlPath);
-    } catch {
-      return [];
-    }
+    const sessionDir = this.sessionDir(threadId, catId, sessionId);
+    const jsonlPath = await this.resolveEventsPath(sessionDir);
+    if (!jsonlPath) return [];
 
     const events: TranscriptEvent[] = [];
     const rl = createInterface({
@@ -336,14 +325,10 @@ export class TranscriptReader {
     return this.sessionDir(threadId, catId, sessionId);
   }
 
-  /** Check if a session has a transcript on disk. */
+  /** Check if a session has a transcript on disk (sealed or live). */
   async hasTranscript(sessionId: string, threadId: string, catId: string): Promise<boolean> {
-    try {
-      await stat(join(this.sessionDir(threadId, catId, sessionId), 'events.jsonl'));
-      return true;
-    } catch {
-      return false;
-    }
+    const sessionDir = this.sessionDir(threadId, catId, sessionId);
+    return (await this.resolveEventsPath(sessionDir)) !== null;
   }
 
   private async readIndex(sessionDir: string): Promise<TranscriptIndex | null> {
@@ -357,6 +342,28 @@ export class TranscriptReader {
 
   private sessionDir(threadId: string, catId: string, sessionId: string): string {
     return join(this.dataDir, 'threads', threadId, catId, 'sessions', sessionId);
+  }
+
+  /**
+   * Resolve the events JSONL path for a session.
+   * Sealed sessions use `events.jsonl`; active sessions use `events.live.jsonl`.
+   * Returns null if neither file exists.
+   */
+  private async resolveEventsPath(sessionDir: string): Promise<string | null> {
+    const sealed = join(sessionDir, 'events.jsonl');
+    try {
+      await stat(sealed);
+      return sealed;
+    } catch {
+      // fallback to live transcript for active sessions
+    }
+    const live = join(sessionDir, 'events.live.jsonl');
+    try {
+      await stat(live);
+      return live;
+    } catch {
+      return null;
+    }
   }
 
   /** Parse a handoff digest markdown file with YAML frontmatter. */
