@@ -1965,6 +1965,14 @@ async function main(): Promise<void> {
     'eval:task-outcome': createTaskOutcomeGeneratorAdapter(),
     'eval:qc': createQcGeneratorAdapter(),
   };
+  // F257 eval engine wiring: harness-ledger generator adapter.
+  // Conditional on guardRejectionLog (requires Redis for ZSET event store).
+  if (guardRejectionLog) {
+    const { createHarnessLedgerGeneratorAdapter } = await import(
+      './infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
+    );
+    verdictGenerators['eval:harness-ledger'] = createHarnessLedgerGeneratorAdapter(guardRejectionLog);
+  }
   if (toolEventLog && skillLoadEventLog) {
     const { createCapabilityWakeupGeneratorAdapter } = await import(
       './infrastructure/harness-eval/publish-verdict/capability-wakeup-generator-adapter.js'
@@ -4390,6 +4398,11 @@ async function main(): Promise<void> {
   // F253 Phase C: eval:qc provider is unconditionally wired (pure ctor, zero-baseline
   // metrics, no runtime deps). Phase C bootstrap → keep_observe verdicts.
   wiredPublishDomains.add('eval:qc');
+  // F257 eval engine wiring: harness-ledger domain gated on guardRejectionLog (Redis).
+  // Must match verdictGenerators entry above — split-brain ⇒ scheduled fire 501.
+  if (guardRejectionLog) {
+    wiredPublishDomains.add('eval:harness-ledger');
+  }
   if (toolEventLog && skillLoadEventLog) {
     wiredPublishDomains.add('eval:capability-wakeup');
   }
