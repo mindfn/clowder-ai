@@ -8,6 +8,7 @@ import {
 import type { IMessageStore } from '../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../domains/cats/services/stores/ports/ThreadStore.js';
 import { getEvalCatOverride, setEvalCatOverride } from '../infrastructure/harness-eval/domain/eval-domain-override.js';
+import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
 import { loadDomains, loadEvalHubSummary } from '../infrastructure/harness-eval/hub/eval-hub-read-model.js';
 import { ensureEvalDomainThreads } from '../infrastructure/harness-eval/hub/eval-hub-thread-ensure.js';
 import {
@@ -73,6 +74,8 @@ export interface EvalHubRoutesOptions {
    * publish-verdict — same gap as F178/F223 (post_message, workspace_navigate).
    */
   agentKeyRegistry?: AgentKeyAuthRegistry;
+  /** KD-17: GuardRejectionEventLog for eval:harness-ledger snapshot-first manual trigger. */
+  guardRejectionLog?: GuardRejectionEventLog;
 }
 
 function requireSession(request: FastifyRequest, reply: FastifyReply): string | null {
@@ -225,6 +228,8 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
         // cloud R5 P2 (PR-2): pass wired publish-verdict domain set so
         // buildEvalCatInvocation omits publish instructions for unwired domains.
         wiredPublishDomains: new Set(Object.keys(opts.verdictGenerators ?? {})),
+        // KD-17: pass guardRejectionLog for eval:harness-ledger snapshot-first.
+        guardRejectionLog: opts.guardRejectionLog,
       },
       { domainId, userId },
     );

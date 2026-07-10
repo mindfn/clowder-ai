@@ -29,9 +29,9 @@ handoffTargetResolver:
 sla:
   acknowledgeHours: 48
   reevalWithinHours: 168
-# Gated OFF until the GuardRejectionEventLog producer (Phase A Line B items 2-3)
-# and verdict generator are wired end-to-end. Flip to true when:
-# 1. GuardRejectionEventLog.append emits at both guard sites (hold_ball + block_pingpong)
-# 2. publish_verdict prompt-segments → validator → generator pipeline is green
-# Phase A Line B registers the domain (fail-closed) but does NOT wire the generator.
-enabled: false
+# Phase A Line B: producers wired (hold_ball 429 + block_pingpong emits).
+# Eval engine wiring: generator adapter → publish_verdict pipeline green.
+# KD-17 snapshot-first: eval cat data access resolved — trigger produces
+# normalized guard-rejection snapshot before invocation; generator reads
+# same stored snapshot by evalRunId (single source, zero drift).
+# Re-enabled after PR #24 review rounds (codex P1 #3 → Fable KD-17 ruling).

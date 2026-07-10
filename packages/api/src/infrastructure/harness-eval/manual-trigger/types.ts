@@ -1,6 +1,7 @@
 import type { Redis } from 'ioredis';
 import type { IMessageStore } from '../../../domains/cats/services/stores/ports/MessageStore.js';
 import type { IThreadStore } from '../../../domains/cats/services/stores/ports/ThreadStore.js';
+import type { GuardRejectionEventLog } from '../GuardRejectionEventLog.js';
 
 /**
  * F192 OQ-21 — Shared types for manual eval trigger handlers.
@@ -50,6 +51,12 @@ export interface ManualTriggerDeps {
    * legacy default (all known-wireable domains get publish instructions).
    */
   wiredPublishDomains?: ReadonlySet<string>;
+  /**
+   * KD-17 snapshot-first: GuardRejectionEventLog for eval:harness-ledger
+   * pre-invocation snapshot production. Optional — when absent, harness-ledger
+   * trigger skips snapshot injection (eval cat gets instructions only).
+   */
+  guardRejectionLog?: GuardRejectionEventLog;
 }
 
 export interface HandlerError {

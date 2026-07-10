@@ -167,6 +167,45 @@ export class GuardRejectionEventLog {
   }
 
   /**
+   * Strict (fail-closed) query for the eval read path.
+   *
+   * Same logic as queryWindow but does NOT swallow Redis errors.
+   * Eval generators MUST use this — a Redis outage must produce a 500
+   * (generator throws), NOT a false "zero events" verdict.
+   *
+   * Business-facing callers keep using queryWindow (fail-open).
+   *
+   * P1 fix (codex review 04a8c368b): Redis fail-open queryWindow returned []
+   * on error, which the generator misinterpreted as genuine zero events and
+   * wrote a false noFindingRecord verdict polluting the eval chain.
+   */
+  async queryWindowStrict(opts: {
+    since: number;
+    until?: number;
+    guardId?: string;
+    threadId?: string;
+    catId?: string;
+    limit?: number;
+  }): Promise<GuardRejectionEvent[]> {
+    const until = opts.until ?? Date.now();
+    const limit = opts.limit ?? DEFAULT_QUERY_LIMIT;
+    const upperBound = until - 1;
+    const raw = await this.redis.zrangebyscore(EVENTS_ZSET, opts.since, upperBound);
+    let events: GuardRejectionEvent[] = [];
+    for (const s of raw) {
+      try {
+        events.push(JSON.parse(s) as GuardRejectionEvent);
+      } catch {
+        /* skip corrupted entries — parse errors are data-quality, not infra */
+      }
+    }
+    if (opts.guardId) events = events.filter((e) => e.guardId === opts.guardId);
+    if (opts.threadId) events = events.filter((e) => e.threadId === opts.threadId);
+    if (opts.catId) events = events.filter((e) => e.catId === opts.catId);
+    return events.slice(0, limit);
+  }
+
+  /**
    * Count events matching a guardId within a time window.
    * Useful for threshold-driven attribution triggers (default 3/7d).
    *

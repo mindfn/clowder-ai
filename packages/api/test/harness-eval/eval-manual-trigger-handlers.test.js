@@ -148,6 +148,96 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
   });
 
   // ==========================================================================
+  // KD-17 snapshot-first error paths (eval:harness-ledger manual trigger)
+  // ==========================================================================
+  describe('handleTriggerNow KD-17 harness-ledger error paths', () => {
+    it('returns 503 when guardRejectionLog provider is absent for eval:harness-ledger', async () => {
+      const result = await handleTriggerNow(
+        {
+          harnessFeedbackRoot: root,
+          invokeTriggerProvider: { get: () => ({ trigger: () => 'dispatched' }) },
+          messageStore: { append: async () => ({ id: 'msg-hl' }) },
+          // guardRejectionLog intentionally absent
+        },
+        { domainId: 'eval:harness-ledger', userId: 'test-user' },
+      );
+      assert.ok('error' in result, 'must return error when provider absent');
+      assert.equal(result.status, 503);
+      assert.equal(result.error, 'harness_ledger_snapshot_unavailable');
+      assert.ok(result.detail.includes('KD-17'), 'detail should reference KD-17');
+    });
+
+    it('returns 503 when snapshot production throws (Redis error)', async () => {
+      const throwingLog = {
+        queryWindowStrict: async () => {
+          throw new Error('READONLY: Redis failover');
+        },
+        queryWindow: async () => [],
+      };
+      const result = await handleTriggerNow(
+        {
+          harnessFeedbackRoot: root,
+          invokeTriggerProvider: { get: () => ({ trigger: () => 'dispatched' }) },
+          messageStore: { append: async () => ({ id: 'msg-hl-err' }) },
+          guardRejectionLog: throwingLog,
+        },
+        { domainId: 'eval:harness-ledger', userId: 'test-user' },
+      );
+      assert.ok('error' in result, 'must return error when snapshot throws');
+      assert.equal(result.status, 503);
+      assert.equal(result.error, 'harness_ledger_snapshot_failed');
+      assert.ok(result.detail.includes('Redis failover'), 'detail should contain error message');
+    });
+
+    it('invokes eval cat with evidence when snapshot succeeds', async () => {
+      const successLog = {
+        queryWindowStrict: async () => [
+          { eventId: 'e1', kind: 'hold_ball_429', guardId: 'guard-1', timestamp: Date.now(), rawPayload: {} },
+        ],
+        queryWindow: async () => [],
+      };
+      const messageStoreCalls = [];
+      const result = await handleTriggerNow(
+        {
+          harnessFeedbackRoot: root,
+          invokeTriggerProvider: { get: () => ({ trigger: () => 'dispatched' }) },
+          messageStore: {
+            append: async (msg) => {
+              messageStoreCalls.push(msg);
+              return { id: 'msg-hl-ok' };
+            },
+          },
+          guardRejectionLog: successLog,
+        },
+        { domainId: 'eval:harness-ledger', userId: 'test-user' },
+      );
+      assert.ok(!('error' in result), `expected success, got: ${JSON.stringify(result)}`);
+      assert.equal(result.ok, true);
+      assert.equal(result.domainId, 'eval:harness-ledger');
+
+      // Delivered content must contain pre-computed evidence
+      assert.equal(messageStoreCalls.length, 1);
+      const content = messageStoreCalls[0].content;
+      assert.ok(content.includes('Pre-computed Guard Rejection Snapshot'), 'content should contain evidence');
+      assert.ok(content.includes('evalRunId'), 'content should contain evalRunId');
+
+      // KD-17 last-hop: exact sourceRefs JSON must be in the delivered content.
+      // Eval cat copies this block verbatim — no ISO→epoch conversion needed.
+      assert.ok(content.includes('"windowStartMs"'), 'should contain exact windowStartMs');
+      assert.ok(content.includes('"windowEndMs"'), 'should contain exact windowEndMs');
+      const allJsonBlocks = [...content.matchAll(/```json\s*\n([\s\S]*?)\n\s*```/g)];
+      const sourceRefsBlock = allJsonBlocks.find((m) => m[1].includes('"prompt-segments"'));
+      assert.ok(sourceRefsBlock, 'should have fenced JSON with sourceRefs');
+      const sourceRefs = JSON.parse(sourceRefsBlock[1]);
+      assert.equal(sourceRefs.kind, 'prompt-segments');
+      assert.equal(typeof sourceRefs.windowStartMs, 'number', 'windowStartMs must be number');
+      assert.equal(typeof sourceRefs.windowEndMs, 'number', 'windowEndMs must be number');
+      assert.ok(sourceRefs.windowEndMs > sourceRefs.windowStartMs, 'window must be valid');
+      assert.ok(/^hlr-\d+-[a-f0-9]{8}$/.test(sourceRefs.evalRunId), 'evalRunId must match safe format');
+    });
+  });
+
+  // ==========================================================================
   // handleGenerateNow — domain validation order + security + eval:a2a only
   // ==========================================================================
   describe('handleGenerateNow', () => {
