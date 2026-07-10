@@ -305,22 +305,16 @@ The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits 
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_HARNESS_LEDGER = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
-You must also supply \`sourceRefs\` (NOT part of packet, separate input field) as a replayable prompt-segments selector:
-\`\`\`json
-{
-  "kind": "prompt-segments",
-  "windowStartMs": 1759276800000,
-  "windowEndMs": 1759363200000,
-  "evalRunId": "hlr-1759363200000-a1b2c3d4"
-}
-\`\`\`
+You must also supply \`sourceRefs\` (NOT part of packet, separate input field) as a replayable prompt-segments selector.
+
+**Copy the exact sourceRefs JSON from the "Pre-computed Guard Rejection Snapshot" section in your invocation message.** The snapshot section includes a fenced JSON block with the exact \`kind\`, \`windowStartMs\`, \`windowEndMs\`, and \`evalRunId\` values. Copy them verbatim — do NOT convert, round, or re-derive any values.
 
 Fields:
 - \`kind\` — REQUIRED literal \`"prompt-segments"\`
-- \`windowStartMs\` / \`windowEndMs\` — REQUIRED finite ms epoch; \`windowEndMs\` must be > \`windowStartMs\` (the window over which guard rejection events — http_rate_limit, route_decision_block — were pre-queried)
-- \`evalRunId\` — REQUIRED string; the run ID from the pre-computed snapshot injected into your invocation. The generator reads the stored snapshot by this ID (single-read, fail-closed on missing). **Copy the exact evalRunId from the snapshot section in your invocation message** — do NOT invent one. Must match format \`hlr-<timestamp>-<hex8>\`.
+- \`windowStartMs\` / \`windowEndMs\` — REQUIRED exact epoch-ms values from the snapshot section. The generator verifies these match the stored snapshot's window exactly — any difference (even 1ms) is rejected.
+- \`evalRunId\` — REQUIRED string from the snapshot section. The generator reads the stored snapshot by this ID (single-read, fail-closed on missing). Must match format \`hlr-<timestamp>-<hex8>\`.
 
-**Snapshot-first (KD-17)**: Your invocation message includes a pre-computed guard rejection snapshot with event counts, guard distributions, and the evalRunId. Use this data for your verdict analysis — it IS the evidence. The generator reuses the same stored snapshot at publish time (no re-query). Decision and artifact share one data source.
+**Snapshot-first (KD-17)**: Your invocation message includes a pre-computed guard rejection snapshot with event counts, guard distributions, and the complete sourceRefs. Use this data for your verdict analysis — it IS the evidence. The generator reuses the same stored snapshot at publish time (no re-query). Decision and artifact share one data source.
 
 The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
 

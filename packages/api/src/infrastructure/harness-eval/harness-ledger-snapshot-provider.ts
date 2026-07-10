@@ -123,9 +123,17 @@ export async function produceHarnessLedgerRunSnapshot(deps: ProduceSnapshotDeps)
   writeFileSync(storagePath, JSON.stringify(snapshot, null, 2));
 
   // Build human-readable summary for eval cat injection.
+  // KD-17 last-hop: provide exact sourceRefs JSON so eval cat copies raw values
+  // (no ISO→epoch conversion that could drift by 1ms and trigger window_mismatch).
   const guardSummary = Object.entries(byGuard)
     .map(([g, agg]) => `  - ${g}: ${agg.count} event(s) [${agg.kinds.join(', ')}]`)
     .join('\n');
+  const exactSourceRefs = {
+    kind: 'prompt-segments' as const,
+    windowStartMs,
+    windowEndMs: now,
+    evalRunId,
+  };
   const summary = [
     `### Pre-computed Guard Rejection Snapshot (evalRunId: ${evalRunId})`,
     '',
@@ -135,7 +143,10 @@ export async function produceHarnessLedgerRunSnapshot(deps: ProduceSnapshotDeps)
       ? `- **By guard**:\n${guardSummary}`
       : '- No guard rejection events in this window (baseline accumulation phase)',
     '',
-    `Use \`evalRunId: "${evalRunId}"\` in your sourceRefs when publishing.`,
+    '**Copy this exact sourceRefs when publishing** (do NOT modify values or convert formats):',
+    '```json',
+    JSON.stringify(exactSourceRefs, null, 2),
+    '```',
   ].join('\n');
 
   return { evalRunId, storagePath, snapshot, summary };

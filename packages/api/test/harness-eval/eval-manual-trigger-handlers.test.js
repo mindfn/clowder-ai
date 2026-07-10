@@ -220,6 +220,20 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
       const content = messageStoreCalls[0].content;
       assert.ok(content.includes('Pre-computed Guard Rejection Snapshot'), 'content should contain evidence');
       assert.ok(content.includes('evalRunId'), 'content should contain evalRunId');
+
+      // KD-17 last-hop: exact sourceRefs JSON must be in the delivered content.
+      // Eval cat copies this block verbatim — no ISO→epoch conversion needed.
+      assert.ok(content.includes('"windowStartMs"'), 'should contain exact windowStartMs');
+      assert.ok(content.includes('"windowEndMs"'), 'should contain exact windowEndMs');
+      const allJsonBlocks = [...content.matchAll(/```json\s*\n([\s\S]*?)\n\s*```/g)];
+      const sourceRefsBlock = allJsonBlocks.find((m) => m[1].includes('"prompt-segments"'));
+      assert.ok(sourceRefsBlock, 'should have fenced JSON with sourceRefs');
+      const sourceRefs = JSON.parse(sourceRefsBlock[1]);
+      assert.equal(sourceRefs.kind, 'prompt-segments');
+      assert.equal(typeof sourceRefs.windowStartMs, 'number', 'windowStartMs must be number');
+      assert.equal(typeof sourceRefs.windowEndMs, 'number', 'windowEndMs must be number');
+      assert.ok(sourceRefs.windowEndMs > sourceRefs.windowStartMs, 'window must be valid');
+      assert.ok(/^hlr-\d+-[a-f0-9]{8}$/.test(sourceRefs.evalRunId), 'evalRunId must match safe format');
     });
   });
 

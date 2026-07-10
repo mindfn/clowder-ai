@@ -365,6 +365,25 @@ describe('KD-17 snapshot-first error paths (eval:harness-ledger)', () => {
     assert.ok(content.includes('Pre-computed Guard Rejection Snapshot'), 'should contain pre-computed evidence');
     assert.ok(content.includes('evalRunId'), 'should contain evalRunId reference');
 
+    // KD-17 last-hop: delivered content must include exact sourceRefs JSON
+    // with windowStartMs, windowEndMs, and evalRunId as copyable values.
+    // Eval cat copies this block verbatim — no ISO→epoch conversion needed.
+    assert.ok(content.includes('"windowStartMs"'), 'should contain exact windowStartMs field');
+    assert.ok(content.includes('"windowEndMs"'), 'should contain exact windowEndMs field');
+    assert.ok(content.includes('"kind": "prompt-segments"'), 'should contain kind in sourceRefs JSON');
+
+    // Extract the sourceRefs JSON from the fenced code block and verify
+    // it would pass the generator's exact-window check against the stored snapshot.
+    const allJsonBlocks = [...content.matchAll(/```json\s*\n([\s\S]*?)\n\s*```/g)];
+    const sourceRefsBlock = allJsonBlocks.find((m) => m[1].includes('"prompt-segments"'));
+    assert.ok(sourceRefsBlock, 'should have a fenced JSON block with sourceRefs');
+    const sourceRefs = JSON.parse(sourceRefsBlock[1]);
+    assert.equal(sourceRefs.kind, 'prompt-segments');
+    assert.equal(typeof sourceRefs.windowStartMs, 'number', 'windowStartMs must be a number');
+    assert.equal(typeof sourceRefs.windowEndMs, 'number', 'windowEndMs must be a number');
+    assert.ok(sourceRefs.windowEndMs > sourceRefs.windowStartMs, 'window must be valid');
+    assert.ok(/^hlr-\d+-[a-f0-9]{8}$/.test(sourceRefs.evalRunId), 'evalRunId must match safe format');
+
     // invokeTrigger must be called (cat invoked)
     assert.equal(triggerMock.mock.callCount(), 1, 'eval cat must be invoked with evidence');
 
