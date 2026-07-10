@@ -4,7 +4,7 @@
  */
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { buildGhCliEnv } from '../github/gh-cli-env.js';
+import { buildGhCliEnv, withHiddenGhCliWindow } from '../github/gh-cli-env.js';
 import type { CiBucket, CiCheckDetail, CiPollResult } from './CiCdRouter.js';
 
 const execFileAsync = promisify(execFile);
@@ -30,7 +30,7 @@ export async function fetchPrCiStatus(
     const { stdout } = await execFileAsync(
       'gh',
       ['pr', 'view', String(prNumber), '-R', repoFullName, '--json', 'headRefOid,state,mergedAt,statusCheckRollup'],
-      { timeout: GH_TIMEOUT_MS, env: buildGhCliEnv({ token: options.ghToken }) },
+      withHiddenGhCliWindow({ timeout: GH_TIMEOUT_MS, env: buildGhCliEnv({ token: options.ghToken }) }),
     );
     prViewJson = stdout;
   } catch (err) {
@@ -86,10 +86,14 @@ async function fetchCheckDetails(
       ];
       if (requiredFlag) args.push(requiredFlag);
 
-      const { stdout } = await execFileAsync('gh', args, {
-        timeout: GH_TIMEOUT_MS,
-        env: buildGhCliEnv({ token: options.ghToken }),
-      });
+      const { stdout } = await execFileAsync(
+        'gh',
+        args,
+        withHiddenGhCliWindow({
+          timeout: GH_TIMEOUT_MS,
+          env: buildGhCliEnv({ token: options.ghToken }),
+        }),
+      );
       const parsed: Array<{ name: string; bucket: string; link?: string; workflow?: string; description?: string }> =
         JSON.parse(stdout);
 

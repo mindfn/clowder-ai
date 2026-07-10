@@ -9,6 +9,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { FastifyBaseLogger } from 'fastify';
 import { listWorktrees } from '../../domains/workspace/workspace-security.js';
+import { withHiddenGhCliWindow } from '../github/gh-cli-env.js';
 
 const execFileAsync = promisify(execFile);
 const GIT_TIMEOUT_MS = 30_000;
@@ -101,7 +102,7 @@ export class ConflictAutoExecutor {
       const { stdout } = await execFileAsync(
         'gh',
         ['api', `repos/${repoFullName}/pulls/${prNumber}`, '--jq', '.head.ref'],
-        { timeout: GH_TIMEOUT_MS },
+        withHiddenGhCliWindow({ timeout: GH_TIMEOUT_MS }),
       );
       return stdout.trim() || null;
     } catch {

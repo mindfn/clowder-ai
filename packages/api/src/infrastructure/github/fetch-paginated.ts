@@ -14,7 +14,7 @@
  * support `since`/`direction` params, so we still scan all pages
  * client-side. A future optimization could use GraphQL `last:N`.
  */
-import { buildGhCliEnv } from './gh-cli-env.js';
+import { buildGhCliEnv, withHiddenGhCliWindow } from './gh-cli-env.js';
 
 export interface FetchPaginatedOptions {
   /** Items with id > sinceId are collected. 0 or omitted = collect all. */
@@ -25,7 +25,7 @@ export interface FetchPaginatedOptions {
   execFileAsync?: (
     file: string,
     args: string[],
-    opts: { timeout: number; maxBuffer: number; env?: NodeJS.ProcessEnv },
+    opts: { timeout: number; maxBuffer: number; env?: NodeJS.ProcessEnv; windowsHide: boolean },
   ) => Promise<{ stdout: string }>;
 }
 
@@ -42,7 +42,11 @@ export async function fetchPaginated(endpoint: string, options: FetchPaginatedOp
   const { sinceId, ghToken, execFileAsync: execOverride } = options;
   const execFn =
     execOverride ??
-    (async (file: string, args: string[], opts: { timeout: number; maxBuffer: number; env?: NodeJS.ProcessEnv }) => {
+    (async (
+      file: string,
+      args: string[],
+      opts: { timeout: number; maxBuffer: number; env?: NodeJS.ProcessEnv; windowsHide: boolean },
+    ) => {
       const { execFile } = await import('node:child_process');
       const { promisify } = await import('node:util');
       return promisify(execFile)(file, args, opts);
@@ -54,11 +58,15 @@ export async function fetchPaginated(endpoint: string, options: FetchPaginatedOp
   let page = 1;
 
   while (true) {
-    const { stdout } = await execFn('gh', ['api', `${endpoint}?per_page=100&page=${page}`, '--jq', '.[]'], {
-      timeout: 15_000,
-      maxBuffer: 2 * 1024 * 1024,
-      env: buildGhCliEnv({ token: ghToken }),
-    });
+    const { stdout } = await execFn(
+      'gh',
+      ['api', `${endpoint}?per_page=100&page=${page}`, '--jq', '.[]'],
+      withHiddenGhCliWindow({
+        timeout: 15_000,
+        maxBuffer: 2 * 1024 * 1024,
+        env: buildGhCliEnv({ token: ghToken }),
+      }),
+    );
     if (!stdout.trim()) break; // empty page = no more data
 
     const items = stdout

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { withHiddenGhCliWindow } from '../../github/gh-cli-env.js';
 import type { GitPublisher, PublishOnIsolatedWorktreeOpts } from './publish-verdict.js';
 
 const exec = promisify(execFile);
@@ -125,7 +126,7 @@ export function createGitWorktreePublisher(deps: GitWorktreePublisherDeps): GitP
             args.push('--color', meta.color, '--description', meta.description);
           }
           try {
-            await exec('gh', args, { cwd: worktreePath, timeout: 15_000 });
+            await exec('gh', args, withHiddenGhCliWindow({ cwd: worktreePath, timeout: 15_000 }));
           } catch (err) {
             // Best-effort: surface error on gh pr create below if it actually breaks PR.
             // (Swallowing here = avoid double-fail on label step; PR create will retry.)
@@ -148,7 +149,7 @@ export function createGitWorktreePublisher(deps: GitWorktreePublisherDeps): GitP
             prBody,
             ...labelFlags,
           ],
-          { cwd: worktreePath, timeout: 60_000 },
+          withHiddenGhCliWindow({ cwd: worktreePath, timeout: 60_000 }),
         );
         prUrl =
           prResult.stdout
@@ -172,7 +173,7 @@ export function createGitWorktreePublisher(deps: GitWorktreePublisherDeps): GitP
                 '--comment',
                 'Closing stale auto-verdict PR because post-publish writeback failed.',
               ],
-              { cwd: worktreePath, timeout: 60_000 },
+              withHiddenGhCliWindow({ cwd: worktreePath, timeout: 60_000 }),
             );
             prOpened = false;
           } catch (cleanupErr) {
@@ -226,7 +227,7 @@ export function createGitWorktreePublisher(deps: GitWorktreePublisherDeps): GitP
               const probe = await exec(
                 'gh',
                 ['pr', 'list', '--head', opts.branchName, '--state', 'open', '--json', 'state', '--limit', '1'],
-                { cwd: deps.repoRoot, timeout: 30_000 },
+                withHiddenGhCliWindow({ cwd: deps.repoRoot, timeout: 30_000 }),
               );
               const parsed = JSON.parse(probe.stdout) as Array<{ state?: string }>;
               if (Array.isArray(parsed) && parsed.length === 0) safeToDelete = true;

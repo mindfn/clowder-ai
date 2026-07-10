@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-const { buildGhCliEnv, resolveGhCliToken } = await import('../dist/infrastructure/github/gh-cli-env.js');
+const { buildGhCliEnv, resolveGhCliToken, withHiddenGhCliWindow } = await import(
+  '../dist/infrastructure/github/gh-cli-env.js'
+);
 
 describe('buildGhCliEnv', () => {
   it('strips ambient GitHub token env when no explicit token is provided', () => {
@@ -100,5 +102,17 @@ describe('buildGhCliEnv', () => {
 
     assert.equal(env.GITHUB_TOKEN, 'ambient-gh-token');
     assert.equal(env.GH_TOKEN, undefined);
+  });
+});
+
+describe('withHiddenGhCliWindow', () => {
+  it('forces gh child processes to stay hidden on Windows', () => {
+    const options = withHiddenGhCliWindow({
+      timeout: 15_000,
+      windowsHide: false,
+    });
+
+    assert.equal(options.timeout, 15_000);
+    assert.equal(options.windowsHide, true);
   });
 });

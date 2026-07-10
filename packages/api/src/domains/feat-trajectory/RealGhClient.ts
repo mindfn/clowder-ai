@@ -20,6 +20,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { withHiddenGhCliWindow } from '../../infrastructure/github/gh-cli-env.js';
 import type { GhClient, PrInfo } from './GitRefSnapshotCollector.js';
 
 /** 注入式 gh 命令执行器 — 返回 stdout 字符串，非零退出抛错。 */
@@ -148,9 +149,13 @@ export class RealGhClient implements GhClient {
 /** Default real spawn-based gh command runner (production). */
 const defaultGhCmd: GhCmdRunner = (args) =>
   new Promise((resolve, reject) => {
-    const proc = spawn('gh', args as readonly string[], {
-      env: { ...process.env, GH_PROMPT_DISABLED: '1' },
-    });
+    const proc = spawn(
+      'gh',
+      args as readonly string[],
+      withHiddenGhCliWindow({
+        env: { ...process.env, GH_PROMPT_DISABLED: '1' },
+      }),
+    );
     let stdout = '';
     let stderr = '';
     proc.stdout.on('data', (d: Buffer) => {

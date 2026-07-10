@@ -43,3 +43,13 @@ export function buildGhCliEnv(options: GhCliEnvOptions = {}): NodeJS.ProcessEnv 
 
   return env;
 }
+
+/**
+ * Keep `gh` subprocesses from creating transient console windows on Windows.
+ *
+ * Apply this to every Node child-process invocation of `gh`. The final
+ * assignment intentionally overrides a caller-provided false value.
+ */
+export function withHiddenGhCliWindow<T extends object>(options: T): T & { readonly windowsHide: true } {
+  return { ...options, windowsHide: true };
+}

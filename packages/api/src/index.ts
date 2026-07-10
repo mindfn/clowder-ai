@@ -157,7 +157,7 @@ import {
   ReviewFeedbackRouter,
 } from './infrastructure/email/index.js';
 import { fetchLatestIssueCommentCursor, maxGithubId } from './infrastructure/github/comment-cursors.js';
-import { buildGhCliEnv, resolveGhCliToken } from './infrastructure/github/gh-cli-env.js';
+import { buildGhCliEnv, resolveGhCliToken, withHiddenGhCliWindow } from './infrastructure/github/gh-cli-env.js';
 import type { EvalDomainId } from './infrastructure/harness-eval/domain/eval-domain-registry.js';
 import { runSchedulerReplyUserIdBackfill } from './infrastructure/scheduler/scheduler-reply-userid-backfill.js';
 import { securityHeadersPlugin } from './infrastructure/security-headers.js';
@@ -2248,11 +2248,11 @@ async function main(): Promise<void> {
   const getGitHubToken = (): string | undefined => {
     return resolveGhCliToken({ pluginEnv: getGitHubPluginEnv() });
   };
-  const getGitHubExecOptions = (timeout: number): { timeout: number; env?: NodeJS.ProcessEnv } => {
-    return {
+  const getGitHubExecOptions = (timeout: number): { timeout: number; env?: NodeJS.ProcessEnv; windowsHide: true } => {
+    return withHiddenGhCliWindow({
       timeout,
       env: buildGhCliEnv({ token: getGitHubToken() }),
-    };
+    });
   };
   const { createRepoActivityTemplate } = await import('./infrastructure/scheduler/templates/repo-activity.js');
   templateRegistry.register(createRepoActivityTemplate({ getGitHubToken }));
@@ -2889,7 +2889,7 @@ async function main(): Promise<void> {
         '-f',
         'per_page=100',
       ],
-      { timeout: 60_000 },
+      getGitHubExecOptions(60_000),
     );
     if (!stdout.trim()) return [];
     return stdout
@@ -2916,7 +2916,7 @@ async function main(): Promise<void> {
         '-f',
         'per_page=100',
       ],
-      { timeout: 60_000 },
+      getGitHubExecOptions(60_000),
     );
     if (!stdout.trim()) return [];
     return stdout
@@ -2939,7 +2939,7 @@ async function main(): Promise<void> {
         '--jq',
         '.[] | {user: .user.login, state, commit_id}',
       ],
-      { timeout: 30_000 },
+      getGitHubExecOptions(30_000),
     );
     if (!stdout.trim()) return [];
     return stdout
