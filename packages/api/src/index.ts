@@ -1600,6 +1600,17 @@ async function main(): Promise<void> {
   const { InjectionTraceStore: _ITSEarly } = await import('./domains/prompt-hooks/InjectionTraceStore.js');
   const injectionTraceStore = redis ? new _ITSEarly(redis) : undefined;
 
+  // F257 Phase A (Line B): GuardRejectionEventLog — guard rejection observation layer.
+  // Fail-open: observation never blocks business. Used by emit points (hold_ball 429,
+  // A2A block_pingpong) and consumed by eval:harness-ledger domain.
+  let guardRejectionLog:
+    | import('./infrastructure/harness-eval/GuardRejectionEventLog.js').GuardRejectionEventLog
+    | undefined;
+  if (redis) {
+    const { GuardRejectionEventLog } = await import('./infrastructure/harness-eval/GuardRejectionEventLog.js');
+    guardRejectionLog = new GuardRejectionEventLog(redis);
+  }
+
   // F237 PR3: HookOverrideStore — per-workspace runtime override layer.
   // Wire into PipelinePromptBuilder singleton so refreshOverrideSnapshot()
   // can load overrides before synchronous pipeline execution.
@@ -1654,6 +1665,7 @@ async function main(): Promise<void> {
     ...(freshnessReinvokeCheck ? { freshnessReinvokeCheck } : {}),
     ...(freshnessStateStore ? { freshnessStateStore } : {}),
     ...(injectionTraceStore ? { injectionTraceStore } : {}),
+    ...(guardRejectionLog ? { guardRejectionLog } : {}),
   });
 
   // F39: Message queue delivery
@@ -2569,6 +2581,7 @@ async function main(): Promise<void> {
       threadStore,
       taskStore,
       ...(ballCustodyIngest ? { ballCustody: ballCustodyIngest } : {}),
+      ...(guardRejectionLog ? { guardRejectionLog } : {}),
       onHoldBallCancelFeedback: (input) => {
         void import('./domains/cats/services/frustration/FrustrationDetector.js')
           .then(({ evaluate }) =>

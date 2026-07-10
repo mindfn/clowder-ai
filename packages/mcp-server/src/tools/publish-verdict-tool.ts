@@ -263,6 +263,25 @@ const anchorTelemetrySourceRefsShape = z
   })
   .describe('eval:anchor-first sourceRefs — replayable anchor telemetry rollup window selector.');
 
+/**
+ * F257 Phase A Line B — prompt-segments sourceRefs. Replayable guard rejection
+ * event window selector: provider resolves to GuardRejectionEventLog query.
+ *
+ * KEEP IN SYNC: packages/api/.../publish-verdict/types.ts PromptSegmentsSourceSelector
+ * + packages/api/.../publish-verdict/validation.ts validatePromptSegmentsSelector.
+ */
+const promptSegmentsSourceRefsShape = z
+  .object({
+    kind: z.literal('prompt-segments'),
+    windowStartMs: z.number().finite().describe('Inclusive epoch ms window start for guard rejection events.'),
+    windowEndMs: z
+      .number()
+      .finite()
+      .describe('Exclusive epoch ms window end for guard rejection events. Must be > windowStartMs.'),
+    guardId: z.string().min(1).optional().describe('Optional guard id filter (e.g. "hold_ball_rate_limit").'),
+  })
+  .describe('eval:harness-ledger sourceRefs — replayable prompt-segments guard rejection window selector.');
+
 const sourceRefsShape = z
   .union([
     a2aSourceRefsShape,
@@ -272,9 +291,10 @@ const sourceRefsShape = z
     sopSourceRefsShape,
     frictionRollupSourceRefsShape,
     anchorTelemetrySourceRefsShape,
+    promptSegmentsSourceRefsShape,
   ])
   .describe(
-    'Discriminated union by `kind` field. a2a kind is default (backward compat); capability-wakeup-trial-window kind wired in PR-2; memory-recall-snapshot kind wired in F192 memory wire-up; task-outcome-snapshot kind wired in task-outcome PR; sop-trace-eval kind wired in F192 sop-wiring; friction-rollup-snapshot kind wired in F245 PR1b; anchor-telemetry-snapshot kind wired in F236 Track-2.',
+    'Discriminated union by `kind` field. a2a kind is default (backward compat); capability-wakeup-trial-window kind wired in PR-2; memory-recall-snapshot kind wired in F192 memory wire-up; task-outcome-snapshot kind wired in task-outcome PR; sop-trace-eval kind wired in F192 sop-wiring; friction-rollup-snapshot kind wired in F245 PR1b; anchor-telemetry-snapshot kind wired in F236 Track-2; prompt-segments kind wired in F257 Phase A Line B.',
   );
 
 export const publishVerdictInputSchema = {

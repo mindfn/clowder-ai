@@ -77,6 +77,8 @@ import {
 import { triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
 import { drainCapturedTraces, refreshOverrideSnapshot } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
 import { getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
+// F257: Pipeline trace bridge — richer per-hook traces, replaces redundant v0 re-collection
+import { buildFromPipeline } from '../../../../prompt-hooks/trace-bridge.js';
 // F237: Injection trace (v0 — fire-and-forget observability)
 import { buildTraceDetail, buildTraceSummary, collectTrace } from '../../../../prompt-hooks/trace-collector.js';
 import { assembleContext } from '../../context/ContextAssembler.js';
@@ -698,7 +700,8 @@ export async function* routeSerial(
         : buildStaticIdentity(catId, { mcpAvailable, packBlocks });
       // F237: drain session trace synchronously — before any await between
       // buildStaticIdentity and buildInvocationContext (race-safety for parallel reuse).
-      drainCapturedTraces();
+      // F257: capture pipeline trace for bridge persistence (was discarded pre-F257).
+      const pipelineSessionTrace = drainCapturedTraces();
       // L0-budget-defense PR-B-impl (ADR-038 件套 ④): staging is NOT prepended
       // to staticIdentity here. Cloud R2 P1 #2237 L1099: folding staging into
       // staticIdentity breaks ADR-038 "每轮注入生效" contract on resumed
@@ -804,7 +807,8 @@ export async function* routeSerial(
         ...conciergeContextForCat(conciergeCtx, catId as string),
       });
       // F237: drain turn trace synchronously — no yield between build and drain.
-      drainCapturedTraces();
+      // F257: capture pipeline trace for bridge persistence (was discarded pre-F257).
+      const pipelineTurnTrace = drainCapturedTraces();
       const continuityCapsule = buildCapsuleFromRouteState({
         threadId,
         catId: catId as string,
@@ -868,34 +872,48 @@ export async function* routeSerial(
         }
       }
 
-      // F237: fire-and-forget injection trace persist (v0 — observability only)
-      // Placed after bootstrapContext so per-turn trace covers ALL route-level
-      // injected system/control content (invocation + mode prompt + bootstrap + MCP).
+      // F237/F257: fire-and-forget injection trace persist.
+      // F257 bridge: prefer pipeline traces (per-hook, no redundant buildStaticIdentity call).
+      // Falls back to v0 collectTrace when pipeline traces are unavailable.
       try {
         const traceStore = getTraceStore();
         if (traceStore) {
           const traceTurnId = crypto.randomUUID();
-          const traceModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt ?? '';
-          const traceTurnContent = [invocationContext, traceModePrompt, bootstrapContext, mcpInstructions]
-            .filter(Boolean)
-            .join('\n\n---\n\n');
-          const trace = collectTrace(catId as string, staticIdentity, traceTurnContent, hasNativeL0, {
-            mcpAvailable,
-            packBlocks,
+          // F257: try pipeline bridge first — richer per-hook data
+          const bridgeResult = buildFromPipeline(pipelineSessionTrace.session, pipelineTurnTrace.turn, {
+            turnId: traceTurnId,
+            threadId,
+            catId: catId as string,
+            hasNativeL0,
           });
-          const traceMeta = { turnId: traceTurnId, threadId, catId: catId as string };
-          const summary = buildTraceSummary(trace, traceMeta);
-          const detail = buildTraceDetail(trace, traceMeta);
-          traceStore.persist(summary, detail).catch((err) => {
-            log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (fire-and-forget)');
-          });
+          if (bridgeResult) {
+            traceStore.persist(bridgeResult.summary, bridgeResult.detail).catch((err) => {
+              log.warn({ err, threadId, catId }, '[F257] pipeline trace persist failed (fire-and-forget)');
+            });
+          } else {
+            // v0 fallback: re-collect traces via annotateSegments (legacy path)
+            const traceModePrompt = modeSystemPromptByCat?.[catId as string] ?? modeSystemPrompt ?? '';
+            const traceTurnContent = [invocationContext, traceModePrompt, bootstrapContext, mcpInstructions]
+              .filter(Boolean)
+              .join('\n\n---\n\n');
+            const traceV0 = collectTrace(catId as string, staticIdentity, traceTurnContent, hasNativeL0, {
+              mcpAvailable,
+              packBlocks,
+            });
+            const traceMeta = { turnId: traceTurnId, threadId, catId: catId as string };
+            const summary = buildTraceSummary(traceV0, traceMeta);
+            const detail = buildTraceDetail(traceV0, traceMeta);
+            traceStore.persist(summary, detail).catch((err) => {
+              log.warn({ err, threadId, catId }, '[F237] injection trace persist failed (fire-and-forget)');
+            });
+          }
         }
         // v0 collectTrace → buildStaticIdentity(annotateSegments: true) re-populates
         // the module-global capturedSessionTrace without draining. Clear it so the next
         // invocation (especially native-L0 pack-only) doesn't persist stale session traces.
         if (deps.injectionTraceStore) drainCapturedTraces();
       } catch {
-        /* F237: trace collection must never break invocation */
+        /* F237/F257: trace collection must never break invocation */
       }
 
       let deliveryBoundaryId: string | undefined;
@@ -2888,6 +2906,23 @@ export async function* routeSerial(
                 }),
                 timestamp: Date.now(),
               } as AgentMessage;
+              // F257: emit route_decision_block event (fail-open, fire-and-forget)
+              if (deps.guardRejectionLog) {
+                deps.guardRejectionLog
+                  .append({
+                    eventId: crypto.randomUUID(),
+                    kind: 'route_decision_block',
+                    threadId,
+                    catId: catId as string,
+                    guardId: 'a2a_block_pingpong',
+                    timestamp: Date.now(),
+                    correlationConfidence: 'window',
+                    fromCatId: catId as string,
+                    targetCatId: nextCat,
+                    streakCount: streak.count,
+                  })
+                  .catch(() => {});
+              }
               continue;
             }
 
@@ -3057,6 +3092,23 @@ export async function* routeSerial(
                 }),
                 timestamp: Date.now(),
               } as AgentMessage;
+              // F257: emit route_decision_block for deferred path (fail-open)
+              if (deps.guardRejectionLog) {
+                deps.guardRejectionLog
+                  .append({
+                    eventId: crypto.randomUUID(),
+                    kind: 'route_decision_block',
+                    threadId,
+                    catId: catId as string,
+                    guardId: 'a2a_block_pingpong',
+                    timestamp: Date.now(),
+                    correlationConfidence: 'window',
+                    fromCatId: catId as string,
+                    targetCatId: nextCat,
+                    streakCount: streakDeferred.count,
+                  })
+                  .catch(() => {});
+              }
               continue;
             }
             // decision.action === 'defer_queue'
