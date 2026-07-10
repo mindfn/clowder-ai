@@ -809,3 +809,4 @@ Separately accepted upstream. Not blocked by Phase 2 — can land independently 
 | 2026-06-16 | PR #859 merged, Phase 1 complete |
 | 2026-06-24 | Phase 2 design: hook pipeline + injection trace spec |
 | 2026-06-25 | Phase 2 design review passed (codex R1: 3 P1 + 1 P2 fixed) |
+| 2026-07-10 | PR3 (HookOverrideStore runtime override layer) merged fork-internal — mindfn#22 squash `a9e591f8b`; scope per F257 KD-15 (auth/writeback/version-switch deferred to runway) |
