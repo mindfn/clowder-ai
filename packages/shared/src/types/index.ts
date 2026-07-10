@@ -473,6 +473,14 @@ export {
   isValidActionStatus,
   isValidScope,
 } from './game.js';
+// Hook override types (F237 PR3 — HookOverrideStore)
+export type {
+  HookOverride,
+  HookOverrideSnapshot,
+  HookOverrideSource,
+  OverrideAction,
+  OverrideChangeEvent,
+} from './hook-override.js';
 // ID types
 export type {
   CatId,

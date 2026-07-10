@@ -75,7 +75,7 @@ import {
   prepareGuideContext,
 } from '../../../../guides/GuideRoutingInterceptor.js';
 import { triggerRecallCorrelation } from '../../../../memory/recall-correlation-hook.js';
-import { drainCapturedTraces } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
+import { drainCapturedTraces, refreshOverrideSnapshot } from '../../../../prompt-hooks/PipelinePromptBuilder.js';
 import { getTraceStore } from '../../../../prompt-hooks/trace-bootstrap.js';
 // F237: Injection trace (v0 — fire-and-forget observability)
 import { buildTraceDetail, buildTraceSummary, collectTrace } from '../../../../prompt-hooks/trace-collector.js';
@@ -690,6 +690,9 @@ export async function* routeSerial(
       const service = getService(deps.services, catId);
       const needsServerRoutingGuard = service.needsServerRoutingGuard?.() ?? false;
       const hasNativeL0 = service.injectsL0Natively?.() ?? false;
+      // F237 PR3: refresh override snapshot before synchronous pipeline execution.
+      // No-ops if no override store is configured (Redis unavailable).
+      await refreshOverrideSnapshot();
       const staticIdentity = hasNativeL0
         ? buildStaticIdentityPackOnly(catId, { packBlocks })
         : buildStaticIdentity(catId, { mcpAvailable, packBlocks });
