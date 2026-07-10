@@ -389,7 +389,7 @@ describe('eval-domain-weekly task spec (AC-E19, AC-E20)', () => {
     assert.equal(spec.display.category, 'system');
   });
 
-  it('weekly gate includes enabled weekly domains (capability-wakeup + sop), excludes daily', async () => {
+  it('weekly gate includes enabled weekly domains (capability-wakeup + sop + harness-ledger), excludes daily', async () => {
     const spec = createEvalDomainWeeklySpec({ harnessFeedbackRoot: repoHarnessFeedbackRoot });
 
     const result = await spec.admission.gate();
@@ -402,6 +402,11 @@ describe('eval-domain-weekly task spec (AC-E19, AC-E20)', () => {
     );
     // Re-enabled 2026-06-10 by feat/f192-sop-wiring: all 3 wiring conditions met.
     assert.ok(domainIds.includes('eval:sop'), 'eval:sop (re-enabled) must appear in weekly gate');
+    // KD-17 snapshot-first: eval:harness-ledger re-enabled after data access resolved.
+    assert.ok(
+      domainIds.includes('eval:harness-ledger'),
+      'eval:harness-ledger (weekly + re-enabled after KD-17) must appear in weekly gate',
+    );
     assert.ok(!domainIds.includes('eval:a2a'), 'eval:a2a (daily) must NOT appear in weekly gate');
     assert.ok(!domainIds.includes('eval:memory'), 'eval:memory (daily) must NOT appear in weekly gate');
     assert.ok(!domainIds.includes('eval:task-outcome'), 'eval:task-outcome (daily) must NOT appear in weekly gate');
