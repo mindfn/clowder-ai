@@ -1965,13 +1965,14 @@ async function main(): Promise<void> {
     'eval:task-outcome': createTaskOutcomeGeneratorAdapter(),
     'eval:qc': createQcGeneratorAdapter(),
   };
-  // F257 eval engine wiring: harness-ledger generator adapter.
-  // Conditional on guardRejectionLog (requires Redis for ZSET event store).
+  // F257 eval engine wiring: harness-ledger generator adapter (KD-17 snapshot-first).
+  // Generator reads stored run snapshot — no direct GuardRejectionEventLog dependency.
+  // Still gated on guardRejectionLog existence: snapshot provider needs it at trigger time.
   if (guardRejectionLog) {
     const { createHarnessLedgerGeneratorAdapter } = await import(
       './infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
     );
-    verdictGenerators['eval:harness-ledger'] = createHarnessLedgerGeneratorAdapter(guardRejectionLog);
+    verdictGenerators['eval:harness-ledger'] = createHarnessLedgerGeneratorAdapter();
   }
   if (toolEventLog && skillLoadEventLog) {
     const { createCapabilityWakeupGeneratorAdapter } = await import(
@@ -2063,6 +2064,8 @@ async function main(): Promise<void> {
     agentKeyRegistry,
     taskOutcomeDbPath,
     eventMemoryDbPath: memoryServices.eventMemoryDbPath,
+    // KD-17: GuardRejectionEventLog for eval:harness-ledger snapshot-first manual trigger.
+    guardRejectionLog,
   });
   // AC-G13: Cancel burst detector (in-memory, per-process)
   const { buildProposalRejectSignal } = await import(
@@ -4449,6 +4452,9 @@ async function main(): Promise<void> {
     redis: redisClient ?? undefined,
     wiredPublishDomains,
     publishPrereqProbe,
+    // KD-17 snapshot-first: pass guardRejectionLog so scheduled eval:harness-ledger
+    // trigger can produce run snapshot before eval cat invocation.
+    guardRejectionLog,
   };
   taskRunnerV2.register(createEvalDomainDailySpec(evalScheduleOpts));
   taskRunnerV2.register(createEvalDomainWeeklySpec(evalScheduleOpts));

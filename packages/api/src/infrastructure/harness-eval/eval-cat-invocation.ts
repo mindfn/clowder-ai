@@ -10,6 +10,12 @@ export interface EvalCatInvocationInput {
   trendRefs: string[];
   verdictRefs: string[];
   legacyCleanup: LegacyCleanupStatus;
+  /**
+   * KD-17 snapshot-first: pre-computed evidence summary for domains that
+   * produce a run snapshot before eval cat invocation (e.g. eval:harness-ledger).
+   * Injected into the invocation context so the eval cat sees real data.
+   */
+  precomputedEvidence?: string;
 }
 
 export interface EvalCatInvocationPacket {
@@ -26,6 +32,8 @@ export interface EvalCatInvocationPacket {
     legacyCleanup: LegacyCleanupStatus;
     sla: EvalDomainRegistryEntry['sla'];
   };
+  /** KD-17: pre-computed evidence summary (injected as extra content, not in context JSON). */
+  precomputedEvidence?: string;
 }
 
 const DOMAIN_INSTRUCTIONS: Partial<Record<string, string>> = {
@@ -302,16 +310,18 @@ You must also supply \`sourceRefs\` (NOT part of packet, separate input field) a
 {
   "kind": "prompt-segments",
   "windowStartMs": 1759276800000,
-  "windowEndMs": 1759363200000
+  "windowEndMs": 1759363200000,
+  "evalRunId": "hlr-1759363200000-a1b2c3d4"
 }
 \`\`\`
 
 Fields:
 - \`kind\` — REQUIRED literal \`"prompt-segments"\`
-- \`windowStartMs\` / \`windowEndMs\` — REQUIRED finite ms epoch; \`windowEndMs\` must be > \`windowStartMs\` (the window over which guard rejection events — http_rate_limit, route_decision_block — are queried)
+- \`windowStartMs\` / \`windowEndMs\` — REQUIRED finite ms epoch; \`windowEndMs\` must be > \`windowStartMs\` (the window over which guard rejection events — http_rate_limit, route_decision_block — were pre-queried)
+- \`evalRunId\` — REQUIRED string; the run ID from the pre-computed snapshot injected into your invocation. The generator reads the stored snapshot by this ID (single-read, fail-closed on missing). **Copy the exact evalRunId from the snapshot section in your invocation message** — do NOT invent one.
 - \`guardId\` — OPTIONAL string; restrict to a specific guard id (e.g. \`"hold_ball_rate_limit"\`, \`"a2a_block_pingpong"\`)
 
-Tool resolves the selector by querying the GuardRejectionEventLog ZSET over the specified window and bundling the event snapshot. Tool will NOT fabricate evidence.
+**Snapshot-first (KD-17)**: Your invocation message includes a pre-computed guard rejection snapshot with event counts, guard distributions, and the evalRunId. Use this data for your verdict analysis — it IS the evidence. The generator reuses the same stored snapshot at publish time (no re-query). Decision and artifact share one data source.
 
 The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
 
@@ -384,5 +394,6 @@ export function buildEvalCatInvocation(
       legacyCleanup: input.legacyCleanup,
       sla: domain.sla,
     },
+    ...(input.precomputedEvidence ? { precomputedEvidence: input.precomputedEvidence } : {}),
   };
 }

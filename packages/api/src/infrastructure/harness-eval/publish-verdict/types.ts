@@ -140,6 +140,12 @@ export interface PromptSegmentsSourceSelector {
   windowEndMs: number;
   /** Optional filter: restrict to a specific guard id */
   guardId?: string;
+  /**
+   * KD-17 snapshot-first: trigger pre-produces a run snapshot and passes
+   * this ID so the generator reads the SAME stored data (single-read,
+   * no re-query). Generator fails closed on missing snapshot.
+   */
+  evalRunId?: string;
 }
 
 /**

@@ -16,6 +16,8 @@ import { parse as parseYaml } from 'yaml';
 import type { IThreadStore } from '../../../domains/cats/services/stores/ports/ThreadStore.js';
 import type { TaskSpec_P1 } from '../../scheduler/types.js';
 import { buildEvalCatInvocation } from '../eval-cat-invocation.js';
+import type { GuardRejectionEventLog } from '../GuardRejectionEventLog.js';
+import { produceHarnessLedgerRunSnapshot } from '../harness-ledger-snapshot-provider.js';
 import { ensureEvalDomainThreads } from '../hub/eval-hub-thread-ensure.js';
 import { inventoryLegacyTasks, type LegacyScheduledTaskLike } from '../legacy-task-cleanup.js';
 import { getEvalCatOverride } from './eval-domain-override.js';
@@ -30,6 +32,12 @@ export interface EvalDomainScheduleOpts {
   listDynamicTasks?: () => LegacyScheduledTaskLike[];
   /** OQ-20: Redis client for reading evalCat overrides (community users may assign different cats). */
   redis?: import('ioredis').Redis;
+  /**
+   * KD-17 snapshot-first: GuardRejectionEventLog for eval:harness-ledger
+   * pre-invocation snapshot production. Optional — when absent, harness-ledger
+   * scheduled eval skips snapshot injection.
+   */
+  guardRejectionLog?: GuardRejectionEventLog;
   /**
    * cloud R6 P2 (PR-2): runtime-wired publish-verdict domain set. Bootstrap (index.ts)
    * passes `new Set(Object.keys(verdictGenerators))` here so the scheduled daily/weekly
@@ -233,12 +241,30 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
           }
         }
 
+        // KD-17 snapshot-first: for eval:harness-ledger, produce run snapshot
+        // BEFORE building invocation so eval cat sees real guard rejection data.
+        let precomputedEvidence: string | undefined;
+        if (domain.domainId === 'eval:harness-ledger' && config.guardRejectionLog) {
+          try {
+            const snapshotResult = await produceHarnessLedgerRunSnapshot({
+              guardRejectionLog: config.guardRejectionLog,
+              harnessFeedbackRoot: config.harnessFeedbackRoot,
+            });
+            precomputedEvidence = snapshotResult.summary;
+          } catch {
+            // Fail-open for scheduled trigger: snapshot production failure
+            // should not prevent the eval cat from being invoked (it just
+            // won't have pre-computed data and will need to report no-data).
+          }
+        }
+
         const invocation = buildEvalCatInvocation(
           {
             domain: effectiveDomain,
             trendRefs: [],
             verdictRefs: [],
             legacyCleanup: { status: legacyStatus },
+            precomputedEvidence,
           },
           // cloud R6 P2 (PR-2): gate scheduled invocation's publish instructions on
           // actual runtime support so weekly cw scheduled eval doesn't tell cat to
@@ -246,7 +272,7 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
           { wiredPublishDomains: config.wiredPublishDomains },
         );
         if (ctx.deliver) {
-          const content = [
+          const contentParts = [
             `## Eval Domain: ${invocation.domainId}`,
             '',
             invocation.instructions,
@@ -254,7 +280,12 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
             '```json',
             JSON.stringify(invocation.context, null, 2),
             '```',
-          ].join('\n');
+          ];
+          // KD-17: inject pre-computed evidence after context JSON
+          if (invocation.precomputedEvidence) {
+            contentParts.push('', invocation.precomputedEvidence);
+          }
+          const content = contentParts.join('\n');
           const messageId = await ctx.deliver({
             threadId: invocation.targetThreadId,
             content,
