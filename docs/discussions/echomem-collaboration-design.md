@@ -243,25 +243,44 @@ Clowder↔EchoMem 直接对话用 Wire Contract v0。
 
 ### 3.1 Phase 1 路由表（v1）
 
-| dimension | scope | depth | Provider calls | 说明 |
-|-----------|-------|-------|---------------|------|
-| `project` | — | any | DocRetrieval only | 文档知识 |
-| `global` | — | any | GlobalRetrieval only | 全局知识 |
-| any | `threads` | any | **ConversationRetrieval** only | 对话消息 |
-| any | `sessions` | any | **DocRetrieval** only | session digest 是 scanner 产物（`kind=session`） |
-| any | `docs` | any | DocRetrieval only | 文档搜索 |
-| any | `memory` | any | DocRetrieval only | 记忆搜索 |
-| `all` | — | any | Doc + Conv + Global 并发 → RRF 融合 | 全域搜索 |
-| `library` | — | any | 按 CollectionManifest 扇出 | N-collection 联邦（不含 Conv） |
-| `collection` | — | any | 指定 collection IDs | 精确 collection |
+> **匹配语义**：规则按序匹配，**scope 特定规则优先于 dimension 规则**，第一命中生效。
+> `depth` 不参与路由——它只影响请求返回形状（`summary` 返回摘要，`raw` 返回原文 + passages），
+> 不改变 provider 选择。因此路由表是 **dimension × scope → provider** 的二维表。
 
-> **sessions→Doc 而非 Conv**：`scope='sessions'` 在 store 层映射为 `kind='session'`
-> （SqliteEvidenceStore.ts:176-177），搜的是 **session digest 文档**——这是 scanner/编译产物，
-> 按 source-based ownership 归 Doc domain（Fable × Sol R1 修正）。
+**Tier 1: scope 特定规则（最高优先级，覆盖任何 dimension）**
+
+| # | scope | Provider calls | 说明 | Phase 绑定 |
+|---|-------|---------------|------|-----------|
+| 1 | `threads` | **ConversationRetrieval** only | 对话消息 | P1-2: LegacyConv; P3+: EchoMem(primary) + LegacyConv(fallback) |
+| 2 | `sessions` | **DocRetrieval** only | session digest 是 scanner 产物 | 全 Phase: Doc |
+| 3 | `docs` | DocRetrieval only | 文档搜索 | 全 Phase: Doc |
+| 4 | `memory` | DocRetrieval only | 记忆搜索 | 全 Phase: Doc |
+
+**Tier 2: dimension 规则（scope 未指定或 scope=all 时生效）**
+
+| # | dimension | Provider calls | 说明 |
+|---|-----------|---------------|------|
+| 5 | `project` | DocRetrieval only | 文档知识 |
+| 6 | `global` | GlobalRetrieval only | 全局知识 |
+| 7 | `all` | Doc + Conv + Global 并发 → RRF 融合 | 全域搜索 |
+| 8 | `library` | 按 CollectionManifest 扇出（不含 Conv） | N-collection 联邦 |
+| 9 | `collection` | 指定 collection IDs | 精确 collection |
+
+**Fallback: scope 和 dimension 均未指定**
+
+| # | 条件 | Provider calls | 说明 |
+|---|------|---------------|------|
+| 10 | `scope=undefined, dimension=undefined` | DocRetrieval only | 保守默认，兼容现有行为 |
+
+> **sessions→Doc 而非 Conv**（Fable × Sol R1 修正）：`scope='sessions'` 在 store 层映射为
+> `kind='session'`（SqliteEvidenceStore.ts:176-177），搜的是 **session digest 文档**——
+> 这是 scanner/编译产物，按 source-based ownership 归 Doc domain。
 
 ### 3.2 设计约束
 
 - **路由表是版本化 routing policy**：未来 ownership 迁移（如 session digest 改由 EchoMem 管理）只改这一处真相源
+- **scope 优先于 dimension**：避免 `dimension=project, scope=threads` 这类组合产生矛盾——scope 是更强的意图信号
+- **depth 不参与路由**：depth 只影响返回形状（summary vs raw + passages），不改变 provider 选择
 - **Conversation 不走 CollectionManifest 体系**：
   - `CollectionKind` 只有 `project|world|domain|research|global`，无 `conversation`
   - collection `sensitivity` 是 per-collection 静态标签；对话隐私是 per-thread/per-message 的
@@ -441,19 +460,43 @@ EchoAgentMemoryEngineAdapter 保留在 EchoAgent 边缘，把 DocMemory
 | 6 | **Thread 内有序** | 同一 thread 的消息保证有序投递。跨 thread 不要求 |
 | 7 | **Backfill checkpoint/cursor** | 存量迁移支持断点续传 |
 | 8 | **Ack / partial failure / retry ownership** | 部分失败重试由 Clowder outbox 负责，不由 EchoMem 主动拉取 |
-| 9 | **Egress privacy filter** | `sensitivity=private` 的 thread / secret-scan 命中的消息**永不进入 outbox**。过滤在宿主侧，决策可审计 |
+| 9 | **Egress privacy filter** | 被标记为 private 的 thread / secret-scan 命中的消息**永不进入 outbox**。过滤在宿主侧，决策可审计。**前置依赖**：thread 隐私标记机制 + 消息级 secret-scan 均为需新建（见 §9） |
 | 10 | **Tombstone 投递** | 删除事件作为特殊 event 进入 outbox，而非直接 DELETE 调用 |
 
-### 7.2 可选方案
+### 7.2 IngestEvent v0 Schema
+
+> **Fable P1-3**：TombstoneEvent（§8.2）有完整 interface，普通 IngestEvent 没有——
+> 不对称导致 Phase 0 出口条件"conformance test fixture 通过"无法执行。
+
+```typescript
+interface IngestEvent {
+  eventId: string;                  // 全局唯一（语义 #3）
+  idempotencyKey: string;           // 幂等消费键（语义 #3）
+  type: 'message';                  // 普通消息（vs TombstoneEvent.type='tombstone'）
+  sourceRevision: string;           // 数据版本号（语义 #4，用于 backfill cursor + lineage）
+  scope: IdentityScope;             // tenant/user/agent/session（语义 #5）
+  canonicalId: string;              // 全局稳定 ID（§4）
+  content: string;                  // 消息正文
+  speaker: string;                  // 发言者（猫 ID / co-creator / system）
+  timestamp: string;                // ISO8601（语义 #6 thread 内有序）
+  position: number;                 // thread 内序号（语义 #6）
+  metadata?: Record<string, unknown>; // 扩展字段（featureIds, toolCalls 等）
+}
+```
+
+### 7.3 可选方案
 
 | 方案 | 触发方 | 侵入性 | 推荐 |
 |------|--------|--------|------|
-| **A. 消息事件钩子 + outbox** | Clowder 消息处理管线 | 中 | ✅ **首选** |
-| B. IndexBuilder 改推 | rebuild 完成后批量推送 | 低 | 全量 backfill 用 |
+| **A. 消息事件钩子 + outbox** | Clowder 消息处理管线 | 中 | ✅ **增量首选** |
+| **B. IndexBuilder 改推** | rebuild 完成后批量推送 | 低 | ✅ **存量 backfill 首选** |
 | C. EchoMem 主动拉取 | 定时轮询 | 低 | 实时性差 |
 | D. 共享存储 | 直接读 SQLite | **高风险** | ❌ 违反隔离 |
 
-### 7.3 前置问题
+> **最终方案 = A + B 组合**：A 负责增量消息实时推送（Phase 3+），B 负责存量 passage backfill（Phase 2）。
+> 两者不是单选，而是覆盖不同阶段的互补机制。
+
+### 7.4 前置问题
 
 1. EchoMem 是否接受非 EchoAgent 事件源？（`result` mode payload schema 假设 round 结构）
 2. 21,946 条存量 passage 如何 backfill？需要一次性迁移工具 + cursor
@@ -504,10 +547,27 @@ EchoMem 侧需要维护 `sourceEvent → derivedMemory` 的映射，
 |------|------|------|
 | **部署位置** | EchoMem 必须 localhost / 同机部署。对话数据不出本机网络 | 铁律 #1 + W5 |
 | **传输加密** | localhost 免 TLS；跨网络（未来）必须 mTLS | 安全基线 |
-| **private thread** | `sensitivity=private` 的 thread 不推送到 EchoMem（§7.1 #9） | egress filter |
-| **访问控制** | EchoMem endpoint 仅接受 Clowder 宿主连接 | 最小权限 |
+| **private thread** | 被标记为 private 的 thread 不推送到 EchoMem（§7.1 #9） | egress filter |
+| **访问控制** | EchoMem endpoint 仅接受 Clowder 宿主连接（bind 127.0.0.1 + bearer token，参考 parent ADR §3.5） | 最小权限 |
 | **数据保留** | EchoMem 侧保留策略不低于 Clowder 本地（当前无 TTL） | 铁律 #5 |
 | **删除传播** | 用户删除对话 → Clowder 发 tombstone → EchoMem 级联删除（§8） | GDPR / 数据主权 |
+
+### 9.1 前置依赖：隐私标记机制（需新建）
+
+> **⚠️ 实然 vs 应然**（Fable P1-2 修正）：以下隐私过滤能力在当前系统中**均不存在**——
+> ThreadSnapshot 没有 sensitivity 字段（仅 id/title/participants/threadMemory/lastActiveAt/featureIds），
+> 消息级 secret-scan 仅存在于 marker 物化管道（`secretScanFingerprint`），不覆盖 outbox 场景。
+> 今天的本地 passage 索引是无过滤全量索引。
+
+| 需新建机制 | 说明 | 阻塞阶段 |
+|-----------|------|---------|
+| **Thread 隐私标记** | ThreadSnapshot 新增 `sensitivity: 'shared' \| 'private'` 字段 | Phase 3（outbox 上线前） |
+| **消息级 secret-scan** | outbox 入口前扫描消息内容，命中 secret pattern → 拦截 | Phase 3 |
+| **隐私标记默认值** | **价值决策**（见 §13 OQ#11）：默认 private（保守，EchoMem 初期只拿显式共享的 thread）vs 默认 shared（激进，全量进） | Phase 3 前 operator 拍板 |
+
+> **"过滤在前、分区在后"论证链修正**：egress privacy filter（过滤层）是**待建机制**，
+> 不能作为已有保障来论证 agentId 分区（分区层）的安全性。
+> 两层都是设计目标，非既有防线。Decision Packet（§13 OQ#8 + OQ#11）必须如实声明。
 
 ---
 
@@ -518,8 +578,8 @@ EchoMem 侧需要维护 `sourceEvent → derivedMemory` 的映射，
 
 ```
 Phase 0: 协议
-  canonicalId 格式 + IdentityScope + Wire Contract v0 schema
-  → 两侧 conformance test fixture 通过
+  canonicalId 格式 + IdentityScope + Wire Contract v0 schema + IngestEvent v0 schema
+  → 两侧 conformance test fixture 通过（SearchRequest/Response + IngestEvent + TombstoneEvent）
     │
     ▼
 Phase 1: 薄桥
@@ -558,7 +618,7 @@ Phase 3: Ownership 切换
 
 | 指标 | 基线来源 | 门槛 |
 |------|---------|------|
-| 对话召回率（recall@10） | 当前 passage_fts + passage_vectors | ≥ 95% 不劣于基线 |
+| 对话召回率（recall@10） | 当前 passage_fts + passage_vectors | ≥ 0.95 × LegacyConv 基线值（相对门槛，非绝对 95%） |
 | 搜索延迟 P95 | 当前 KnowledgeResolver 单 store | ≤ 2× 本地延迟 |
 | 降级正确性 | EchoMem 不可达 → degraded=true | 100% |
 | list_recent 完整性 | scope=threads 返回最近 N 个 thread | 不劣于本地（Phase 2+） |
@@ -601,9 +661,10 @@ Phase 3: Ownership 切换
 
 | # | 问题 | 推荐 | 替代 |
 |---|------|------|------|
-| 8 | EchoMem `agentId` 分区 | **team-shared**（同一 thread 共享记忆，猫作为 speaker） | per-cat（隔离强但跨猫召回不一致，迁移成本高） |
+| 8 | EchoMem `agentId` 分区 | **team-shared**（同一 thread 共享记忆，猫作为 speaker）。注：与 OQ#11 是同一问题的两层——*什么进 EchoMem（过滤）× 进去后谁可见（分区）*，合成一个 Decision Packet | per-cat（隔离强但跨猫召回不一致，迁移成本高） |
 | 9 | EchoMem 是否愿意接非 EchoAgent 事件源 | 与 EchoMem 团队对齐的第一议题 | — |
 | 10 | 历史 thread 记忆保留策略 | 先在宿主治理层回答 | — |
+| 11 | **Thread 隐私标记默认值** | **默认 private**（保守：EchoMem 初期只拿显式标记为 shared 的 thread，最小暴露面） | 默认 shared（激进：全量进 EchoMem，用 per-thread opt-out） |
 
 ---
 
