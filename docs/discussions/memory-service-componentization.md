@@ -490,17 +490,17 @@ class MemoryServiceAdapter implements IEvidenceStore, GraphStore {
 
   async search(query: string, options?: SearchOptions): Promise<EvidenceItem[]> {
     const searchOpts = this.mapSearchOptions(options);
-    const results = await this.store.blocks.search(query, searchOpts);
-    return this.hydrateResults(results, options?.depth);
+    const response = await this.store.blocks.search(query, searchOpts);
+    return this.hydrateResults(response.results, options?.depth);
   }
 
   async searchWithMeta(query: string, options?: SearchOptions): Promise<EvidenceSearchExecution> {
     const searchOpts = this.mapSearchOptions(options);
     searchOpts.explain = true;
-    const results = await this.store.blocks.search(query, searchOpts);
-    const items = await this.hydrateResults(results, options?.depth);
+    const response = await this.store.blocks.search(query, searchOpts);
+    const items = await this.hydrateResults(response.results, options?.depth);
     // entityMatches 挂到每个 EvidenceItem 上，与现有 searchWithMeta 返回形状一致
-    results.forEach((r, i) => {
+    response.results.forEach((r, i) => {
       if (r.entityMatches?.length && items[i]) {
         items[i].entityMatches = r.entityMatches.map(m => ({
           entityId: m.entityId,
@@ -515,7 +515,7 @@ class MemoryServiceAdapter implements IEvidenceStore, GraphStore {
     });
     return {
       items,
-      meta: { degraded: false }, // TODO: 从 store 传播实际降级状态，不应硬编码
+      meta: response.meta,  // 从 store SearchResponse.meta 传播降级状态
     };
   }
 
@@ -876,7 +876,7 @@ edge changes    ──► store.edges.link(...)           ──► service POST
 ### Phase 1：Backend SPI 骨架（零行为变更）
 
 1. 提取 `MemoryBackendProvider` 接口 + `MemoryBackendRegistry`
-2. **`getDb()` 逃逸面治理**（见 §5 完整清单，14 个文件）：
+2. **`getDb()` 逃逸面治理**（见 §5 完整清单，13 callers）：
    - 2a. `IndexBuilder` 的直接 SQLite 写入 → `TextBlockStore.put()`
    - 2b. `factory.ts` 的 VectorStore/PassageVectorStore 初始化 → 抽到 provider 内部
    - 2c. `GlobalIndexBuilder` / `bootstrap-collection-bridge` → 通过 provider 接口
@@ -1165,8 +1165,8 @@ interface TextBlockStore {
   get(id: string): Promise<TextBlock | null>;
   /** 删除 */
   delete(id: string): Promise<void>;
-  /** 搜索（语义/词法/混合） */
-  search(query: string, options?: TextSearchOptions): Promise<TextSearchResult[]>;
+  /** 搜索（语义/词法/混合）— 返回结果 + meta（降级/mode/trace） */
+  search(query: string, options?: TextSearchOptions): Promise<SearchResponse>;
   /** 条件列表 */
   list(filter?: TextBlockFilter): Promise<TextBlock[]>;
 }

@@ -144,7 +144,7 @@ interface ProviderCapabilities {
 **为什么不复用 IEvidenceStore**：
 - `IEvidenceStore` 混合了读写（`upsert` + `search`），而 ConversationMemory 的写侧语义（durable outbox）
   与文档 upsert 完全不同
-- `getDb()` 逃逸面（14 个文件）证明 IEvidenceStore 的抽象边界已经被实现细节穿透
+- `getDb()` 逃逸面（13 个 caller）证明 IEvidenceStore 的抽象边界已经被实现细节穿透
 - collection 的 `sensitivity` 是 per-collection 静态标签，而对话隐私是 per-thread/per-message 的
 
 **迁移期薄桥**：projectStore 包装为 DocRetrievalProvider + LegacyConversationProvider，
@@ -157,6 +157,7 @@ interface ProviderCapabilities {
 ```typescript
 /** Wire Contract v0 — SearchRequest */
 interface WireSearchRequest {
+  version: 'v0';              // 请求必带版本（单一真相源，不用 header）
   query: string;
   options?: {
     mode?: 'lexical' | 'semantic' | 'hybrid';
@@ -171,12 +172,14 @@ interface WireSearchRequest {
   identity: IdentityScope;
   origin: RequestOrigin;
 }
+// 版本不兼容 → WireError { code: 'unsupported_version' }
 
 /** Wire Contract v0 — SearchResponse */
 interface WireSearchResponse {
   items: WireSearchItem[];
   meta: WireResponseMeta;
-  capabilities: WireCapabilities;
+  // capabilities 不在每个 response 中附带（避免两个能力真相源漂移）
+  // 能力快照仅由 capabilities endpoint / 握手返回
 }
 
 interface WireResponseMeta {
@@ -206,12 +209,15 @@ interface WireHealthResponse {
   message?: string;
 }
 
-/** Wire Contract v0 — Capabilities */
+/** Wire Contract v0 — Capabilities（唯一能力真相源，握手 / 按需获取） */
 interface WireCapabilitiesResponse {
   capabilities: WireCapabilities;
   version: string;            // 'v0'
   supportedModes: Array<'lexical' | 'semantic' | 'hybrid'>;
   supportedDepths: Array<'summary' | 'raw'>;
+  supportedFilters: Array<'dateRange' | 'contextWindow' | 'explain' | 'sessionScope'>;
+  // 请求中的 filter 不在 supportedFilters 中 → WireError { code: 'not_supported' }
+  // 不允许静默忽略不支持的 filter
 }
 
 /** Wire Contract v0 — Error envelope */
@@ -415,22 +421,35 @@ segment     := pchar*                   // RFC 3986 pchar，保留字符 percent
 
 ### 4.3 Conformance vectors（Phase 0 交付物）
 
+> table-driven：每行写 legacy anchor、expected canonicalId、expected resolve 输出。
+> 不使用模糊断言——strip prefix 意味着 roundtrip 不恒等（`thread-thread_abc` → `thread_abc`），
+> 必须逐行验证。
+
 ```
 // canonicalize: legacy anchor → canonicalId
-assert canonicalize("F102")                == "doc:F102"
-assert canonicalize("thread-thread_abc")   == "conv:thread_abc"
-assert canonicalize("session-sess_123")    == "doc:session-sess_123"
-assert canonicalize("global:methods/TDD")  == "global:methods/TDD"
-assert canonicalize("has/slash")           == "doc:has%2Fslash"   // percent-encode
+| legacy anchor          | expected canonicalId       |
+|------------------------|---------------------------|
+| "F102"                 | "doc:F102"                |
+| "ADR-020"              | "doc:ADR-020"             |
+| "thread-thread_abc"    | "conv:thread_abc"         |
+| "session-sess_123"     | "doc:session-sess_123"    |
+| "global:methods/TDD"   | "global:methods/TDD"      |
+| "has/slash"            | "doc:has%2Fslash"         |
 
-// resolve: canonicalId → { domain, nativeId, provider }
-assert resolve("doc:F102")             == { domain: "doc",    nativeId: "F102" }
-assert resolve("conv:thread_abc")      == { domain: "conv",   nativeId: "thread_abc" }
-assert resolve("global:methods/TDD")   == { domain: "global", nativeId: "methods/TDD" }
+// resolve: canonicalId → { domain, localId }
+| canonicalId            | expected domain | expected localId  |
+|------------------------|----------------|-------------------|
+| "doc:F102"             | "doc"          | "F102"            |
+| "conv:thread_abc"      | "conv"         | "thread_abc"      |
+| "global:methods/TDD"   | "global"       | "methods/TDD"     |
+| "doc:has%2Fslash"      | "doc"          | "has/slash"       |
 
-// roundtrip
-for each legacy anchor a:
-  assert resolve(canonicalize(a)).nativeId ⊇ a   // 可反解
+// roundtrip: canonicalize then resolve
+| legacy anchor          | resolve(canonicalize(a)).localId | 说明 |
+|------------------------|---------------------------------|------|
+| "F102"                 | "F102"                          | 恒等 |
+| "thread-thread_abc"    | "thread_abc"                    | prefix stripped, not equal to legacy |
+| "global:methods/TDD"   | "methods/TDD"                   | `global:` prefix stripped |
 ```
 
 ### 4.4 Anchor Namespace Registry
@@ -438,15 +457,23 @@ for each legacy anchor a:
 Layer 2 一等设施。实现完整 `AnchorRouter` 接口：`canonicalize`（legacy→canonical）+
 `resolve`（canonical→provider+localId）+ `owns`（判断归属）。
 
+> **domain 类型对齐**：grammar domain = `doc | conv | global`。
+> Registry rule 和 provider map 均使用 grammar domain（`conv`），不是 `conversation`。
+
 ```typescript
+// domain 类型与 grammar 一致
+type CanonicalDomain = 'doc' | 'conv' | 'global';
+
 class AnchorNamespaceRegistry implements AnchorRouter {
+  private providers = new Map<CanonicalDomain, RetrievalProvider>();
+
   private rules: Array<{
     pattern: RegExp;
-    domain: 'doc' | 'conversation' | 'global';
+    domain: CanonicalDomain;
     stripPrefix: string;  // legacy anchor 去前缀
   }> = [
-    { pattern: /^thread-/, domain: 'conversation', stripPrefix: 'thread-' },
-    { pattern: /^global:/, domain: 'global', stripPrefix: '' },
+    { pattern: /^thread-/, domain: 'conv', stripPrefix: 'thread-' },
+    { pattern: /^global:/, domain: 'global', stripPrefix: 'global:' },  // strip `global:` prefix
     // session-* stays in doc domain (session digests are scanner products)
     { pattern: /^session-/, domain: 'doc', stripPrefix: '' },
     // default: doc domain, no prefix strip
@@ -455,7 +482,7 @@ class AnchorNamespaceRegistry implements AnchorRouter {
 
   // legacy anchor → canonicalId
   canonicalize(legacyAnchor: string): string {
-    const rule = this.rules.find(r => r.pattern.test(legacyAnchor));
+    const rule = this.rules.find(r => r.pattern.test(legacyAnchor))!;
     const nativeId = legacyAnchor.replace(rule.stripPrefix, '');
     return `${rule.domain}:${encodeSegments(nativeId)}`;
   }
@@ -464,7 +491,7 @@ class AnchorNamespaceRegistry implements AnchorRouter {
   resolve(canonicalId: string): { provider: RetrievalProvider; localId: string } | null {
     const colonIdx = canonicalId.indexOf(':');
     if (colonIdx < 0) return null;
-    const domain = canonicalId.slice(0, colonIdx) as 'doc' | 'conversation' | 'global';
+    const domain = canonicalId.slice(0, colonIdx) as CanonicalDomain;
     const localId = decodeSegments(canonicalId.slice(colonIdx + 1));
     const provider = this.providers.get(domain);
     return provider ? { provider, localId } : null;
@@ -477,7 +504,7 @@ class AnchorNamespaceRegistry implements AnchorRouter {
 }
 ```
 
-### 4.4 Identity Scope（Phase 1 推荐）
+### 4.5 Identity Scope（Phase 1 推荐）
 
 > **Fable × Sol 收敛 + operator 待确认**：Phase 1 推荐 team-shared。
 
@@ -813,7 +840,7 @@ Phase 4: Rollback window 到期
 
 | # | 问题 | 当前立场 |
 |---|------|---------|
-| 1 | canonicalId 具体语法 | 本稿固定"全局稳定/可路由/可映射 legacy/可携带 lineage"；具体格式留实施 spec |
+| 1 | ~~canonicalId 具体语法~~ | **已关闭**：§4.1 已固定 Phase 0 grammar（`domain ":" nativeId`，RFC 3986 encoding）+ conformance vectors。剩余：编码库选择（手写 vs URI 库） |
 | 2 | routing table 完整矩阵 | 由 §3.1 列出，reviewer 复核 dimension/scope/depth 覆盖 |
 | 3 | EchoMem `memory_query` response 格式对齐 | Wire Contract v0 定义结构化返回；EchoMemAdapter 翻译 |
 | 4 | 孤儿 passage 治理方案 | 根因是 cleanup 不级联（§5.2）；治理策略先在宿主层回答 |
