@@ -230,6 +230,8 @@ export interface HoldBallRouteDeps {
       policy?: { sourceCategory?: string },
     ): void | Promise<unknown>;
   };
+  /** F257 Phase A (Line B): Guard rejection event log — fail-open observation layer */
+  guardRejectionLog?: import('../infrastructure/harness-eval/GuardRejectionEventLog.js').GuardRejectionEventLog;
 }
 
 /**
@@ -483,6 +485,24 @@ export function registerCallbackHoldBallRoutes(app: FastifyInstance, deps: HoldB
         'F167 C1: hold_ball rejected — maxHoldsPerWindow reached',
       );
       reply.status(429);
+      // F257: emit http_rate_limit event (fail-open, fire-and-forget)
+      if (deps.guardRejectionLog) {
+        const { randomUUID } = await import('node:crypto');
+        deps.guardRejectionLog
+          .append({
+            eventId: randomUUID(),
+            kind: 'http_rate_limit',
+            threadId,
+            catId: catIdStr,
+            guardId: 'hold_ball_rate_limit',
+            timestamp: Date.now(),
+            correlationConfidence: 'window',
+            currentCount,
+            maxAllowed: MAX_HOLDS_PER_WINDOW,
+            windowMs: HOLD_WINDOW_MS,
+          })
+          .catch(() => {});
+      }
       return {
         error:
           `maxHoldsPerWindow (${MAX_HOLDS_PER_WINDOW} per ~1h window) reached. ` +

@@ -21,6 +21,19 @@ export interface ObservedSegment {
   charCount: number;
   /** Approximate token count (tiktoken cl100k_base). */
   tokenEstimate: number;
+
+  // F257 Phase A Line B: optional pipeline-rich fields (backward compatible).
+  // v0 collector leaves these undefined; pipeline bridge populates them.
+  /** Hook manifest version (fired events only). */
+  version?: number;
+  /** Fine-grained pipeline status: 'fired' | 'skipped' | 'disabled' | 'observed'. */
+  pipelineStatus?: string;
+  /** Skip reason code (skipped events only). */
+  reasonCode?: string;
+  /** Human-readable skip reason (skipped events only). */
+  reason?: string;
+  /** Who disabled the hook: 'manifest' | 'operator' | 'auto-eval' (disabled events only). */
+  disabledBy?: string;
 }
 
 /**
