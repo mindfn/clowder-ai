@@ -122,12 +122,16 @@ export class GuardRejectionEventLog {
    *
    * **Fail-open**: returns empty array on any error.
    *
+   * Fetches ALL events in the time window from Redis, then filters in-app.
+   * LIMIT is applied AFTER filtering to prevent non-matching events from
+   * consuming result slots (P2 fix: codex review 629795f29).
+   *
    * @param opts.since - Window start (inclusive), Unix epoch ms.
-   * @param opts.until - Window end (inclusive), Unix epoch ms. Defaults to now.
+   * @param opts.until - Window end (exclusive), Unix epoch ms. Defaults to now.
    * @param opts.guardId - Filter by guard identifier.
    * @param opts.threadId - Filter by thread.
    * @param opts.catId - Filter by cat.
-   * @param opts.limit - Max results (default 200).
+   * @param opts.limit - Max results after filtering (default 200).
    */
   async queryWindow(opts: {
     since: number;
@@ -140,7 +144,10 @@ export class GuardRejectionEventLog {
     try {
       const until = opts.until ?? Date.now();
       const limit = opts.limit ?? DEFAULT_QUERY_LIMIT;
-      const raw = await this.redis.zrangebyscore(EVENTS_ZSET, opts.since, until, 'LIMIT', 0, limit);
+      // Exclusive upper bound: subtract 1ms from until (ZRANGEBYSCORE is inclusive).
+      // This aligns with PromptSegmentsSourceSelector [windowStartMs, windowEndMs).
+      const upperBound = until - 1;
+      const raw = await this.redis.zrangebyscore(EVENTS_ZSET, opts.since, upperBound);
       let events: GuardRejectionEvent[] = [];
       for (const s of raw) {
         try {
@@ -149,10 +156,11 @@ export class GuardRejectionEventLog {
           /* skip corrupted entries */
         }
       }
+      // Filter in-app BEFORE applying limit
       if (opts.guardId) events = events.filter((e) => e.guardId === opts.guardId);
       if (opts.threadId) events = events.filter((e) => e.threadId === opts.threadId);
       if (opts.catId) events = events.filter((e) => e.catId === opts.catId);
-      return events;
+      return events.slice(0, limit);
     } catch {
       return []; // Fail-open
     }

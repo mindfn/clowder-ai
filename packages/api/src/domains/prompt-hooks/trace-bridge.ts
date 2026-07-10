@@ -14,13 +14,13 @@
  * L0 without pipeline), callers fall back to the existing v0 path.
  */
 
+import { createHash } from 'node:crypto';
 import type {
   DeliveryChannel,
   InjectionTraceDetail,
   InjectionTraceSummary,
   ObservedSegment,
   StageDeliveryDecision,
-  TraceEvent,
 } from '@cat-cafe/shared';
 import type { PipelineResult } from './HookPipeline.js';
 
@@ -84,8 +84,8 @@ export function buildFromPipeline(
     threadId: meta.threadId,
     catId: meta.catId,
     timestamp,
-    sessionContentHash: firstFiredHash(sessionResult),
-    turnContentHash: firstFiredHash(turnResult),
+    sessionContentHash: assembledContentHash(sessionResult),
+    turnContentHash: assembledContentHash(turnResult),
     sessionCharCount: sessionChars,
     sessionTokenEstimate: sessionTokens,
     turnCharCount: turnChars,
@@ -102,7 +102,13 @@ export function buildFromPipeline(
 
 type InjectionStage = 'session-init' | 'per-turn';
 
-/** Convert pipeline TraceEvent[] to v0 ObservedSegment[]. */
+/**
+ * Convert pipeline TraceEvent[] to ObservedSegment[] with pipeline-rich fields.
+ *
+ * P1 fix (codex review 629795f29): preserves version, pipelineStatus,
+ * reasonCode/reason (skipped), disabledBy (disabled) — the evidence tuple
+ * F257 needs: (hookId, version, fired/skipped + reason, token).
+ */
 function eventsToSegments(result: PipelineResult, stage: InjectionStage): ObservedSegment[] {
   const patchMap = new Map(result.patches.map((p) => [p.hookId, p]));
   return result.events.map((ev): ObservedSegment => {
@@ -115,16 +121,45 @@ function eventsToSegments(result: PipelineResult, stage: InjectionStage): Observ
         contentHash: ev.contentHash,
         charCount: patch?.content.length ?? 0,
         tokenEstimate: ev.tokenEstimate,
+        // F257 pipeline-rich fields
+        version: ev.version,
+        pipelineStatus: 'fired',
       };
     }
-    // skipped / disabled / observed-without-content
+    if (ev.status === 'skipped') {
+      return {
+        segmentId: ev.hookId,
+        stage,
+        status: 'absent',
+        contentHash: null,
+        charCount: 0,
+        tokenEstimate: 0,
+        pipelineStatus: 'skipped',
+        reasonCode: ev.reasonCode,
+        reason: ev.reason,
+      };
+    }
+    if (ev.status === 'disabled') {
+      return {
+        segmentId: ev.hookId,
+        stage,
+        status: 'absent',
+        contentHash: null,
+        charCount: 0,
+        tokenEstimate: 0,
+        pipelineStatus: 'disabled',
+        disabledBy: ev.disabledBy,
+      };
+    }
+    // 'observed' status (observed-without-content)
     return {
       segmentId: ev.hookId,
       stage,
-      status: 'absent',
-      contentHash: null,
+      status: 'observed',
+      contentHash: 'contentHash' in ev ? ev.contentHash : null,
       charCount: 0,
-      tokenEstimate: 0,
+      tokenEstimate: 'tokenEstimate' in ev ? ev.tokenEstimate : 0,
+      pipelineStatus: 'observed',
     };
   });
 }
@@ -138,13 +173,18 @@ function sumChars(result: PipelineResult | null): number {
   return result.patches.reduce((acc, p) => acc + p.content.length, 0);
 }
 
-/** Get content hash of assembled content (first non-empty patch hash, or null). */
-function firstFiredHash(result: PipelineResult | null): string | null {
-  if (!result) return null;
-  const fired = result.events.find(
-    (ev): ev is TraceEvent & { status: 'fired'; contentHash: string } => ev.status === 'fired',
-  );
-  return fired?.contentHash ?? null;
+/**
+ * Hash all assembled patch content for a stage.
+ *
+ * P1 fix (codex review 629795f29): previous `firstFiredHash` used only the first
+ * fired hook's hash, producing false aggregate hashes for multi-hook stages.
+ * Now hashes the concatenation of all patch content (ordered by hookId for stability).
+ */
+function assembledContentHash(result: PipelineResult | null): string | null {
+  if (!result || result.patches.length === 0) return null;
+  const sorted = [...result.patches].sort((a, b) => a.hookId.localeCompare(b.hookId));
+  const combined = sorted.map((p) => p.content).join('');
+  return createHash('sha256').update(combined).digest('hex').slice(0, 16);
 }
 
 function buildDelivery(

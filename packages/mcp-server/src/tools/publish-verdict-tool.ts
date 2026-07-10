@@ -366,6 +366,12 @@ type PublishVerdictToolInput = {
         kind: 'anchor-telemetry-snapshot';
         windowStartMs: number;
         windowEndMs: number;
+      }
+    | {
+        kind: 'prompt-segments';
+        windowStartMs: number;
+        windowEndMs: number;
+        guardId?: string;
       };
   agentKeyCatId?: string | undefined;
 };

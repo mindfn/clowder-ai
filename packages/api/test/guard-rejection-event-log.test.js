@@ -252,4 +252,57 @@ describe('GuardRejectionEventLog', async () => {
     assert.ok(results[0].timestamp <= results[1].timestamp);
     assert.ok(results[1].timestamp <= results[2].timestamp);
   });
+
+  test('P2 regression: filtered query finds target after 200 unrelated events', async () => {
+    // Terra's repro: 200 earlier unrelated events + 1 later target event.
+    // Old code applied Redis LIMIT before in-app filtering → target lost.
+    const redis = new FakeRedis();
+    const log = new GuardRejectionEventLog(redis);
+    const base = Date.now();
+
+    // 200 events with guardId 'unrelated'
+    for (let i = 0; i < 200; i++) {
+      await log.append(makeEvent({ timestamp: base + i, guardId: 'unrelated' }));
+    }
+    // 1 target event after the 200 unrelated ones
+    await log.append(makeEvent({ timestamp: base + 300, guardId: 'target' }));
+
+    const filtered = await log.queryWindow({ since: base - 1, until: base + 400, guardId: 'target' });
+    assert.equal(filtered.length, 1, 'target event must survive past 200 unrelated predecessors');
+    assert.equal(filtered[0].guardId, 'target');
+  });
+
+  test('queryWindow limit applies after filtering', async () => {
+    const redis = new FakeRedis();
+    const log = new GuardRejectionEventLog(redis);
+    const base = Date.now();
+
+    // 5 matching events
+    for (let i = 0; i < 5; i++) {
+      await log.append(makeEvent({ timestamp: base + i, guardId: 'match' }));
+    }
+    // 5 non-matching events
+    for (let i = 0; i < 5; i++) {
+      await log.append(makeEvent({ timestamp: base + 100 + i, guardId: 'other' }));
+    }
+
+    const results = await log.queryWindow({ since: base - 1, until: base + 200, guardId: 'match', limit: 3 });
+    assert.equal(results.length, 3, 'limit=3 should apply after guardId filter');
+    assert.ok(results.every((e) => e.guardId === 'match'));
+  });
+
+  test('queryWindow until is exclusive (selector contract)', async () => {
+    const redis = new FakeRedis();
+    const log = new GuardRejectionEventLog(redis);
+    const base = 1000000;
+
+    await log.append(makeEvent({ timestamp: base }));
+    await log.append(makeEvent({ timestamp: base + 10 }));
+    await log.append(makeEvent({ timestamp: base + 20 }));
+
+    // until=base+20 should be exclusive — event AT base+20 excluded
+    const results = await log.queryWindow({ since: base, until: base + 20 });
+    assert.equal(results.length, 2);
+    assert.ok(results.every((e) => e.timestamp < base + 20));
+  });
 });

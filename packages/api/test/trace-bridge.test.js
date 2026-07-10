@@ -148,13 +148,92 @@ describe('trace-bridge buildFromPipeline', () => {
     assert.equal(sessionDelivery2.channel, 'pack-only');
   });
 
-  test('contentHash comes from first fired event', () => {
-    const session = makePipelineResult([{ id: 'h1', status: 'fired', hash: 'abc123', tokens: 10, content: 'x' }]);
+  test('sessionContentHash is combined hash of all patches, not first', () => {
+    // P1 regression: multi-hook stage must hash ALL assembled content
+    const session = makePipelineResult([
+      { id: 'D1', status: 'fired', hash: 'hash-d1', tokens: 50, content: 'alpha' },
+      { id: 'D2', status: 'fired', hash: 'hash-d2', tokens: 30, content: 'beta' },
+    ]);
     const result = buildFromPipeline(session, null, META);
 
     assert.ok(result);
-    assert.equal(result.detail.sessionContentHash, 'abc123');
+    // Hash should NOT be just 'hash-d1' (first hook's hash)
+    assert.notEqual(result.detail.sessionContentHash, 'hash-d1');
+    assert.notEqual(result.detail.sessionContentHash, 'hash-d2');
+    // Should be a 16-char hex string (sha256 truncated)
+    assert.ok(typeof result.detail.sessionContentHash === 'string');
+    assert.equal(result.detail.sessionContentHash.length, 16);
+    assert.match(result.detail.sessionContentHash, /^[0-9a-f]{16}$/);
     assert.equal(result.detail.turnContentHash, null);
+  });
+
+  test('fired events carry version in ObservedSegment', () => {
+    // P1 regression: version must survive bridge for F257 evidence tuple
+    const session = makePipelineResult([{ id: 'h1', status: 'fired', tokens: 10, content: 'x' }]);
+    // Manually set version on the event (makePipelineResult doesn't set it)
+    session.events[0].version = 3;
+    const result = buildFromPipeline(session, null, META);
+
+    assert.ok(result);
+    const seg = result.summary.segments[0];
+    assert.equal(seg.version, 3);
+    assert.equal(seg.pipelineStatus, 'fired');
+  });
+
+  test('skipped events carry reasonCode and reason', () => {
+    // P1 regression: skip reason must survive bridge
+    const session = makePipelineResult([{ id: 'h1', status: 'skipped', tokens: 0 }]);
+    // Manually add skipped-specific fields
+    session.events[0].reasonCode = 'no_thread_context';
+    session.events[0].reason = 'Thread context unavailable';
+    const result = buildFromPipeline(session, null, META);
+
+    assert.ok(result);
+    const seg = result.summary.segments[0];
+    assert.equal(seg.status, 'absent');
+    assert.equal(seg.pipelineStatus, 'skipped');
+    assert.equal(seg.reasonCode, 'no_thread_context');
+    assert.equal(seg.reason, 'Thread context unavailable');
+  });
+
+  test('disabled events carry disabledBy', () => {
+    // P1 regression: disable source must survive bridge
+    const session = makePipelineResult([{ id: 'h1', status: 'disabled', tokens: 0 }]);
+    session.events[0].disabledBy = 'operator';
+    const result = buildFromPipeline(session, null, META);
+
+    assert.ok(result);
+    const seg = result.summary.segments[0];
+    assert.equal(seg.status, 'absent');
+    assert.equal(seg.pipelineStatus, 'disabled');
+    assert.equal(seg.disabledBy, 'operator');
+  });
+
+  test('multi-hook mixed status: D1 fired + D2 skipped preserves both', () => {
+    // P1 regression: Terra's exact repro scenario
+    const session = makePipelineResult([
+      { id: 'D1', status: 'fired', tokens: 100, content: 'content-D1' },
+      { id: 'D2', status: 'skipped', tokens: 0 },
+    ]);
+    session.events[0].version = 2;
+    session.events[1].reasonCode = 'resolver_false';
+    session.events[1].reason = 'Resolver returned false';
+    const result = buildFromPipeline(session, null, META);
+
+    assert.ok(result);
+    assert.equal(result.summary.segments.length, 2);
+
+    const d1 = result.summary.segments.find((s) => s.segmentId === 'D1');
+    const d2 = result.summary.segments.find((s) => s.segmentId === 'D2');
+
+    assert.equal(d1.status, 'observed');
+    assert.equal(d1.pipelineStatus, 'fired');
+    assert.equal(d1.version, 2);
+    assert.equal(d1.charCount, 10); // 'content-D1'.length
+
+    assert.equal(d2.status, 'absent');
+    assert.equal(d2.pipelineStatus, 'skipped');
+    assert.equal(d2.reasonCode, 'resolver_false');
   });
 
   test('optional sessionId is included when provided', () => {
