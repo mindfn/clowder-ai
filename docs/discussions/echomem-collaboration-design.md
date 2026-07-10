@@ -67,7 +67,8 @@ Clowder AI 的记忆系统（[ADR: 三原语模型](memory-service-componentizat
 │  ─────────────────────────────────────────                          │
 │  读侧：                                                             │
 │    RetrievalProvider.search(request): RetrievalExecution            │
-│    AnchorRouter.resolve(canonicalId): provider + lookup             │
+│    CanonicalIdCodec.parse(canonicalId): { domain, nativeId }        │
+│    RetrievalCoordinator: domain → RouteSlot (primary/fallback/shadow[]) │
 │    BrowseProvider.listRecent(request)          [optional]           │
 │    GraphProvider.getRelated/traverse(request)  [optional]           │
 │  写侧（独立端口）：                                                  │
@@ -109,11 +110,9 @@ interface RetrievalProvider {
   health(): Promise<boolean>;
 }
 
-/** 读侧：anchor 精确查找 */
-interface AnchorRouter {
-  resolve(canonicalId: string): { provider: RetrievalProvider; localId: string } | null;
-  owns(canonicalId: string): boolean;
-}
+/** 读侧：anchor 精确查找 — 由 CanonicalIdCodec + RetrievalCoordinator 组合实现（§4.4） */
+// CanonicalIdCodec.parse(canonicalId): { domain, nativeId } — 纯编解码，无 provider 依赖
+// RetrievalCoordinator.getByCanonicalId(): 用 codec + RouteSlot 选 provider
 
 /** 读侧：最近浏览（optional） */
 interface BrowseProvider {
@@ -184,14 +183,31 @@ interface WireSearchResponse {
 
 interface WireResponseMeta {
   degraded: boolean;
-  degradeReason?: string;
+  degradeReason?: DegradeReason;
   effectiveMode?: string;
   traceId?: string;
   servedBy?: string;        // 'primary' | 'fallback'（§10.1）
 }
 
+/** 宿主封闭联合——适配器将 service 侧任意 reason 映射到此集合 */
+type DegradeReason =
+  | 'timeout'                // 服务超时
+  | 'unhealthy'              // health() = false
+  | 'contract_error'         // 返回不符合 Wire schema
+  | 'scope_not_available'    // 该 scope 在此 dimension 无可用 provider
+  | 'evidence_store_error'   // 兜底：服务侧未知 reason 统一映射到此
+  ;
+
+// Adapter 映射规则（不直接透传服务侧字符串）：
+// EchoMem 'rate_limited' → 'timeout'
+// EchoMem 'internal_error' → 'evidence_store_error'
+// EchoMem 'model_unavailable' → 'evidence_store_error'
+// LegacyConv 任何非空 reason → 'evidence_store_error'
+// 未识别的 reason string → 'evidence_store_error'（兜底，永不透传原始字符串）
+
 /** Wire Contract v0 — GetByCanonicalId */
 interface WireGetRequest {
+  version: 'v0';             // 与 SearchRequest 一致，所有 Wire 请求必带版本
   canonicalId: string;       // §4 格式
   identity: IdentityScope;
   origin: RequestOrigin;
@@ -336,7 +352,7 @@ Clowder↔EchoMem 直接对话用 Wire Contract v0。
 | `undefined` | Doc | ⚠️ empty+nudge | Doc | Doc | Doc |
 
 > **⚠️ empty+nudge**：dimension 的 provider universe 不含 Conv 时，scope=threads 返回空结果 +
-> `meta: { degraded: true, degradeReason: 'scope_not_available_in_dimension' }`。
+> `meta: { degraded: true, degradeReason: 'scope_not_available' }`。
 > 不静默路由到 Conv（否则 `dimension=global` 被偷换成 Conv 查询）。
 
 **Conv provider Phase 绑定**
@@ -391,19 +407,25 @@ Clowder↔EchoMem 直接对话用 Wire Contract v0。
 **Grammar（Phase 0 必须固定）**
 
 ```
-canonicalId := domain ":" nativeId
+canonicalId := domain ":" opaqueNativeId
 domain      := "doc" | "conv" | "global"
-nativeId    := segment ("/" segment)*
-segment     := pchar*                   // RFC 3986 pchar，保留字符 percent-encode
+opaqueNativeId := percentEncoded*       // 完整 percent-encode（RFC 3986）
+                                        // 不含结构化 path segment 层
+                                        // `/` `:`  等保留字符一律编码
 ```
+
+> **Opaque nativeId**（Sol 推荐，最简）：nativeId 永远是 opaque string，完整 percent-encode。
+> 不区分 "结构 `/`" 和 "数据 `/`"——同一个 `encodeOpaque()`/`decodeOpaque()` 函数，
+> roundtrip 唯一确定，不需要 domain-specific segment policy。
 
 ```
 示例：
-  doc:F102                   → DocRetrieval（anchor = F102，不含 kind）
+  doc:F102                   → DocRetrieval
   doc:ADR-020                → DocRetrieval
   conv:thread_mp3iz…         → ConversationRetrieval
   conv:msg_abc123            → ConversationRetrieval
-  global:methods/TDD         → GlobalRetrieval
+  global:methods%2FTDD       → GlobalRetrieval（`/` 也编码）
+  doc:has%2Fslash            → DocRetrieval
 ```
 
 > **kind 不编入 canonicalId**：kind 是可变 metadata（evidence_docs.kind 可以改），
@@ -417,7 +439,8 @@ segment     := pchar*                   // RFC 3986 pchar，保留字符 percent
 | `ADR-020` | `doc:ADR-020` | Doc | 同上 |
 | `thread-thread_xxx` | `conv:thread_xxx` | Conv | 去掉 `thread-` 前缀 |
 | `session-xxx` | `doc:session-xxx` | Doc | anchor 原样 |
-| `global:methods/xxx` | `global:methods/xxx` | Global | 保留原始路径 |
+| `global:methods/TDD` | `global:methods%2FTDD` | Global | `/` 也 percent-encode（opaque） |
+| `has/slash` | `doc:has%2Fslash` | Doc | 同上 |
 
 ### 4.3 Conformance vectors（Phase 0 交付物）
 
@@ -426,83 +449,118 @@ segment     := pchar*                   // RFC 3986 pchar，保留字符 percent
 > 必须逐行验证。
 
 ```
-// canonicalize: legacy anchor → canonicalId
-| legacy anchor          | expected canonicalId       |
-|------------------------|---------------------------|
-| "F102"                 | "doc:F102"                |
-| "ADR-020"              | "doc:ADR-020"             |
-| "thread-thread_abc"    | "conv:thread_abc"         |
-| "session-sess_123"     | "doc:session-sess_123"    |
-| "global:methods/TDD"   | "global:methods/TDD"      |
-| "has/slash"            | "doc:has%2Fslash"         |
+// canonicalize: legacy anchor → canonicalId（encodeOpaque 统一编码）
+| legacy anchor          | expected canonicalId          |
+|------------------------|-------------------------------|
+| "F102"                 | "doc:F102"                    |
+| "ADR-020"              | "doc:ADR-020"                 |
+| "thread-thread_abc"    | "conv:thread_abc"             |
+| "session-sess_123"     | "doc:session-sess_123"        |
+| "global:methods/TDD"   | "global:methods%2FTDD"        |
+| "has/slash"            | "doc:has%2Fslash"             |
 
-// resolve: canonicalId → { domain, localId }
-| canonicalId            | expected domain | expected localId  |
-|------------------------|----------------|-------------------|
-| "doc:F102"             | "doc"          | "F102"            |
-| "conv:thread_abc"      | "conv"         | "thread_abc"      |
-| "global:methods/TDD"   | "global"       | "methods/TDD"     |
-| "doc:has%2Fslash"      | "doc"          | "has/slash"       |
+// parse: canonicalId → { domain, nativeId }（decodeOpaque 统一解码）
+| canonicalId               | expected domain | expected nativeId  |
+|---------------------------|----------------|-------------------|
+| "doc:F102"                | "doc"          | "F102"            |
+| "conv:thread_abc"         | "conv"         | "thread_abc"      |
+| "global:methods%2FTDD"    | "global"       | "methods/TDD"     |
+| "doc:has%2Fslash"         | "doc"          | "has/slash"       |
 
-// roundtrip: canonicalize then resolve
-| legacy anchor          | resolve(canonicalize(a)).localId | 说明 |
-|------------------------|---------------------------------|------|
-| "F102"                 | "F102"                          | 恒等 |
-| "thread-thread_abc"    | "thread_abc"                    | prefix stripped, not equal to legacy |
-| "global:methods/TDD"   | "methods/TDD"                   | `global:` prefix stripped |
+// roundtrip: parse(canonicalize(a)).nativeId == strip(a)
+| legacy anchor          | expected nativeId after roundtrip | 说明 |
+|------------------------|-----------------------------------|------|
+| "F102"                 | "F102"                            | 恒等 |
+| "thread-thread_abc"    | "thread_abc"                      | prefix stripped |
+| "global:methods/TDD"   | "methods/TDD"                     | `global:` prefix stripped |
+| "has/slash"            | "has/slash"                       | 恒等（编码/解码 roundtrip） |
 ```
 
-### 4.4 Anchor Namespace Registry
+### 4.4 CanonicalId Codec 与 Route Slot 分离
 
-Layer 2 一等设施。实现完整 `AnchorRouter` 接口：`canonicalize`（legacy→canonical）+
-`resolve`（canonical→provider+localId）+ `owns`（判断归属）。
+> **Sol delta P1-B 修正**：codec 只负责 parse/format，不负责选 provider。
+> 选 provider 是 RetrievalCoordinator 的事——同一 domain 在 Phase 2/3 有
+> primary/fallback/shadow[]，单 `Map<domain, Provider>` 无法表达。
 
-> **domain 类型对齐**：grammar domain = `doc | conv | global`。
-> Registry rule 和 provider map 均使用 grammar domain（`conv`），不是 `conversation`。
+**Layer 1: CanonicalIdCodec（纯编解码，无 provider 依赖）**
 
 ```typescript
-// domain 类型与 grammar 一致
 type CanonicalDomain = 'doc' | 'conv' | 'global';
 
-class AnchorNamespaceRegistry implements AnchorRouter {
-  private providers = new Map<CanonicalDomain, RetrievalProvider>();
+interface ParsedCanonicalId {
+  domain: CanonicalDomain;
+  nativeId: string;           // decode 后的原始 ID
+}
 
+class CanonicalIdCodec {
   private rules: Array<{
     pattern: RegExp;
     domain: CanonicalDomain;
-    stripPrefix: string;  // legacy anchor 去前缀
+    stripPrefix: string;
   }> = [
     { pattern: /^thread-/, domain: 'conv', stripPrefix: 'thread-' },
-    { pattern: /^global:/, domain: 'global', stripPrefix: 'global:' },  // strip `global:` prefix
-    // session-* stays in doc domain (session digests are scanner products)
+    { pattern: /^global:/, domain: 'global', stripPrefix: 'global:' },
     { pattern: /^session-/, domain: 'doc', stripPrefix: '' },
-    // default: doc domain, no prefix strip
     { pattern: /.*/, domain: 'doc', stripPrefix: '' },
   ];
 
-  // legacy anchor → canonicalId
+  /** legacy anchor → canonicalId */
   canonicalize(legacyAnchor: string): string {
     const rule = this.rules.find(r => r.pattern.test(legacyAnchor))!;
     const nativeId = legacyAnchor.replace(rule.stripPrefix, '');
-    return `${rule.domain}:${encodeSegments(nativeId)}`;
+    return `${rule.domain}:${encodeOpaque(nativeId)}`;
   }
 
-  // canonicalId → { provider, localId }
-  resolve(canonicalId: string): { provider: RetrievalProvider; localId: string } | null {
+  /** canonicalId → { domain, nativeId } */
+  parse(canonicalId: string): ParsedCanonicalId | null {
     const colonIdx = canonicalId.indexOf(':');
     if (colonIdx < 0) return null;
     const domain = canonicalId.slice(0, colonIdx) as CanonicalDomain;
-    const localId = decodeSegments(canonicalId.slice(colonIdx + 1));
-    const provider = this.providers.get(domain);
-    return provider ? { provider, localId } : null;
-  }
-
-  // canonicalId 归属判断
-  owns(canonicalId: string): boolean {
-    return this.resolve(canonicalId) !== null;
+    const nativeId = decodeOpaque(canonicalId.slice(colonIdx + 1));
+    return { domain, nativeId };
   }
 }
 ```
+
+**Layer 2: RetrievalCoordinator 使用 RouteSlot 选 provider**
+
+```typescript
+interface RouteSlot {
+  primary: RetrievalProvider;
+  fallback?: RetrievalProvider;        // timeout/unhealthy/contract-error 时接管
+  shadows: RetrievalProvider[];        // 旁路观测，不进 served result
+}
+
+class RetrievalCoordinator {
+  private codec = new CanonicalIdCodec();
+  private routes = new Map<CanonicalDomain, RouteSlot>();
+
+  /** anchor 精确查找 — 按 domain route slot 选 provider */
+  async getByCanonicalId(canonicalId: string): Promise<...> {
+    const parsed = this.codec.parse(canonicalId);
+    if (!parsed) return null;
+
+    const slot = this.routes.get(parsed.domain);
+    if (!slot) return null;
+
+    // 先试 primary；primary anchorLookup=false 时降级到 fallback
+    const provider = slot.primary.capabilities().anchorLookup
+      ? slot.primary
+      : slot.fallback;  // e.g. EchoMem anchorLookup=false → 落 LegacyConv
+
+    if (!provider) return null;
+
+    // provider adapter 负责 nativeId ↔ provider-local ID
+    // (e.g. LegacyConv 补回 `thread-` 前缀)
+    return provider.getByAnchor(parsed.nativeId);
+  }
+}
+```
+
+> **职责边界**：
+> - `CanonicalIdCodec`: 纯函数，无状态，无 provider 依赖。Phase 0 conformance vectors 针对它。
+> - `RetrievalCoordinator`: 持有 `Map<domain, RouteSlot>`，用 codec + route slot + capability 选 provider。
+> - Provider adapter: 负责 nativeId ↔ provider-local ID 转换（e.g. LegacyConv 补回 `thread-` 前缀）。
 
 ### 4.5 Identity Scope（Phase 1 推荐）
 
@@ -633,6 +691,7 @@ EchoAgentMemoryEngineAdapter 保留在 EchoAgent 边缘，把 DocMemory
 
 ```typescript
 interface IngestEvent {
+  version: 'v0';                    // Wire 版本（与 SearchRequest/GetRequest 一致）
   eventId: string;                  // 全局唯一（语义 #3）
   idempotencyKey: string;           // 幂等消费键（语义 #3）
   type: 'message';                  // 普通消息（vs TombstoneEvent.type='tombstone'）
@@ -686,6 +745,7 @@ interface IngestEvent {
 
 ```typescript
 interface TombstoneEvent {
+  version: 'v0';                   // Wire 版本
   eventId: string;
   type: 'tombstone';
   sourceCanonicalIds: string[];    // 被删除的源消息 canonicalId
@@ -743,13 +803,13 @@ EchoMem 侧需要维护 `sourceEvent → derivedMemory` 的映射，
 Phase 0: 协议
   canonicalId grammar + IdentityScope + Wire Contract v0 schema + IngestEvent v0 schema
   → 两侧 conformance test fixture 通过（SearchRequest/Response + IngestEvent + TombstoneEvent）
-  → table-driven canonicalize/resolve conformance vectors 通过
+  → table-driven canonicalize/parse conformance vectors 通过
     │
     ▼
 Phase 1: 薄桥
   projectStore 拆为 DocRetrievalProvider + LegacyConversationProvider
   路由决策表替换 isProjectLocalScope
-  AnchorNamespaceRegistry 上线
+  CanonicalIdCodec + RetrievalCoordinator 上线（§4.4）
   本地 21,946 passage 继续由 LegacyConv 服务
     │
     ▼
