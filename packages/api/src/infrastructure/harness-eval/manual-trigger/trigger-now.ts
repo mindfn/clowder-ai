@@ -94,15 +94,32 @@ export async function handleTriggerNow(
     }
   }
 
-  // KD-17 snapshot-first: for eval:harness-ledger, produce run snapshot
-  // BEFORE building invocation so eval cat sees real guard rejection data.
+  // KD-17 snapshot-first: for eval:harness-ledger, snapshot is REQUIRED.
+  // No snapshot → 503 (fail-closed for manual trigger).
   let precomputedEvidence: string | undefined;
-  if (input.domainId === 'eval:harness-ledger' && deps.guardRejectionLog) {
-    const snapshotResult = await produceHarnessLedgerRunSnapshot({
-      guardRejectionLog: deps.guardRejectionLog,
-      harnessFeedbackRoot: deps.harnessFeedbackRoot,
-    });
-    precomputedEvidence = snapshotResult.summary;
+  if (input.domainId === 'eval:harness-ledger') {
+    if (!deps.guardRejectionLog) {
+      return {
+        status: 503,
+        error: 'harness_ledger_snapshot_unavailable',
+        detail:
+          'KD-17: eval:harness-ledger requires GuardRejectionEventLog provider for snapshot-first invocation. Provider not wired at runtime.',
+      };
+    }
+    try {
+      const snapshotResult = await produceHarnessLedgerRunSnapshot({
+        guardRejectionLog: deps.guardRejectionLog,
+        harnessFeedbackRoot: deps.harnessFeedbackRoot,
+      });
+      precomputedEvidence = snapshotResult.summary;
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      return {
+        status: 503,
+        error: 'harness_ledger_snapshot_failed',
+        detail: `KD-17: snapshot production failed — ${detail}. Eval cat not invoked (no blind verdicts).`,
+      };
+    }
   }
 
   const invocation = buildEvalCatInvocation(

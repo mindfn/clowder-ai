@@ -136,6 +136,37 @@ export function buildPublishPrereqSkippedMessage(domain: EvalDomainRegistryEntry
   ].join('\n');
 }
 
+/**
+ * KD-17 snapshot-first: build the "snapshot unavailable" skip message for
+ * eval:harness-ledger when the scheduled cron cannot produce a guard
+ * rejection snapshot (provider absent or snapshot production failed).
+ *
+ * Same pattern as `buildPublishPrereqSkippedMessage`: human-readable with
+ * a stable header for log scrubbers, domain-local delivery, no cat invocation.
+ */
+export function buildHarnessLedgerSnapshotSkippedMessage(
+  domain: EvalDomainRegistryEntry,
+  reason: 'provider_not_wired' | 'snapshot_error',
+  detail?: string,
+): string {
+  const reasonText =
+    reason === 'provider_not_wired'
+      ? 'GuardRejectionEventLog provider is not wired at runtime (guardRejectionLog absent in config).'
+      : `Snapshot production failed: ${detail ?? 'unknown error'}.`;
+  return [
+    `## Eval Domain: ${domain.domainId} — SKIPPED (harness ledger snapshot unavailable)`,
+    '',
+    `KD-17 snapshot-first invariant: eval cat must not be invoked without`,
+    `pre-computed guard rejection evidence. ${reasonText}`,
+    '',
+    `This is a graceful skip — the cron task itself did not error.`,
+    `The eval cat was NOT invoked (no LLM cost, no blind verdict).`,
+    '',
+    `Next action: ensure GuardRejectionEventLog is wired and Redis is reachable`,
+    `at the next scheduled fire.`,
+  ].join('\n');
+}
+
 export async function evaluatePublishPrereq(
   probe: NonNullable<EvalDomainScheduleOpts['publishPrereqProbe']>,
   domainId: EvalDomainRegistryEntry['domainId'],
@@ -241,20 +272,38 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
           }
         }
 
-        // KD-17 snapshot-first: for eval:harness-ledger, produce run snapshot
-        // BEFORE building invocation so eval cat sees real guard rejection data.
+        // KD-17 snapshot-first: for eval:harness-ledger, snapshot is REQUIRED.
+        // No snapshot → no invocation. "Fail-open" means the cron task itself
+        // doesn't error/retry-storm, NOT that the cat gets invoked blind.
         let precomputedEvidence: string | undefined;
-        if (domain.domainId === 'eval:harness-ledger' && config.guardRejectionLog) {
+        if (domain.domainId === 'eval:harness-ledger') {
+          if (!config.guardRejectionLog) {
+            if (ctx.deliver) {
+              await ctx.deliver({
+                threadId: domain.systemThreadId,
+                content: buildHarnessLedgerSnapshotSkippedMessage(domain, 'provider_not_wired'),
+                userId: 'scheduler',
+              });
+            }
+            return;
+          }
           try {
             const snapshotResult = await produceHarnessLedgerRunSnapshot({
               guardRejectionLog: config.guardRejectionLog,
               harnessFeedbackRoot: config.harnessFeedbackRoot,
             });
             precomputedEvidence = snapshotResult.summary;
-          } catch {
-            // Fail-open for scheduled trigger: snapshot production failure
-            // should not prevent the eval cat from being invoked (it just
-            // won't have pre-computed data and will need to report no-data).
+          } catch (err) {
+            // Fail-open = skip gracefully (no retry storm), NOT invoke cat blind.
+            if (ctx.deliver) {
+              const detail = err instanceof Error ? err.message : String(err);
+              await ctx.deliver({
+                threadId: domain.systemThreadId,
+                content: buildHarnessLedgerSnapshotSkippedMessage(domain, 'snapshot_error', detail),
+                userId: 'scheduler',
+              });
+            }
+            return;
           }
         }
 
