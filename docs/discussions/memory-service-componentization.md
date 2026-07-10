@@ -179,17 +179,17 @@ Clowder AI 的记忆系统（ADR-020 建立）当前紧耦合在宿主进程内�
 | Passage 级索引 | `evidence_passages` + `passage_fts` | **TextBlock**（parentId 模式） | 核心检索 | 按来源切：round-result / 消息流 → ConversationMemory |
 | 文档嵌入 | `evidence_vectors` | TextBlock 基础设施 | 语义搜索 | 各 provider 自有嵌入索引 |
 | Passage 嵌入 | `passage_vectors` | TextBlock 基础设施 | 语义搜索 | 各 provider 自有嵌入索引 |
-| 实体注册表 + 别名 | `entity_registry` + `entity_aliases` | **EntityResolver**（基础设施层） | 搜索增强 | provider-local + 可选共享 normalizer（§11.2） |
-| 关系图 | `edges` | **RelationEdge** | graph_resolve 支持 | 当前 DocMemory；ConversationMemory 后续可自建（§11.2） |
+| 实体注册表 + 别名 | `entity_registry` + `entity_aliases` | **EntityResolver**（基础设施层） | 搜索增强 | provider-local + 可选共享 normalizer（见 [EchoMem 协作方案](echomem-collaboration-design.md) §2.2） |
+| 关系图 | `edges` | **RelationEdge** | graph_resolve 支持 | 当前 DocMemory；ConversationMemory 后续可自建（见 [EchoMem 协作方案](echomem-collaboration-design.md) §5.3） |
 
 ### 留在 Clowder 宿主
 
 | 数据 | 当前表 | 为什么留下 | EchoMem 协作归属（§11） |
 |------|--------|-----------|----------------------|
 | 候选记忆队列 | `markers`（YAML 后端，git-tracked） | 治理流程（捕获 → 审批 → 物化） | 我们 |
-| 认知转变事件 | EventMemory（`event_memory` 表） | Timeline 原语，归 DocMemory（§11.2） | 我们 |
+| 认知转变事件 | EventMemory（`event_memory` 表） | Timeline 原语，归 DocMemory（见 [EchoMem 协作方案](echomem-collaboration-design.md) §5） | 我们 |
 | 召回分析 | `recall_events`, `anchor_recall_metrics`, `global_ctr_baseline` | 宿主侧消费行为，用于 rerank | 我们 |
-| Thread 摘要 | `summary_segments`, `summary_state` | 绑定 thread 生命周期 | 待定（EchoMem Episode 摘要更强，§11.2） |
+| Thread 摘要 | `summary_segments`, `summary_state` | 绑定 thread 生命周期 | 待定（EchoMem Episode 摘要更强，见 [EchoMem 协作方案](echomem-collaboration-design.md) §5） |
 | 任务追踪 | `task_trajectories`, `task_run_ledger` | 调度器领域 | 我们 |
 | 治理表 | `f163_*`, `scheduler_*`, `index_state` | 宿主内部状态 | 我们 |
 
@@ -515,7 +515,7 @@ class MemoryServiceAdapter implements IEvidenceStore, GraphStore {
     });
     return {
       items,
-      meta: { degraded: false },
+      meta: { degraded: false }, // TODO: 从 store 传播实际降级状态，不应硬编码
     };
   }
 
@@ -811,7 +811,7 @@ edge changes    ──► store.edges.link(...)           ──► service POST
 
 ### 迁移说明：`getDb()` 逃逸面治理
 
-当前 `SqliteEvidenceStore.getDb()` 被 **14 个文件** 直接调用，绕过
+当前 `SqliteEvidenceStore.getDb()` 被 **13 个 caller**（14 个文件含定义本身）直接调用，绕过
 `IEvidenceStore` 接口。对于 service-backed store 这些调用全部断开。
 
 #### 完整逃逸面清单
@@ -826,7 +826,7 @@ edge changes    ──► store.edges.link(...)           ──► service POST
 | `f163-admin.ts` | 4 | 直接 | Phase 1 — 管理路由直接读 DB |
 | `f163-audit-routes.ts` | 9 | 直接 | Phase 1 — 审计路由直接读 DB |
 | `evidence.ts` (routes) | 3 | duck-typed | Phase 1 — evidence 路由直接读 DB |
-| `RecentBrowseResolver.ts` | 2 | duck-typed | Phase 1 — `list_recent` 入口（见 §11.6 三入口分析） |
+| `RecentBrowseResolver.ts` | 2 | duck-typed | Phase 1 — `list_recent` 入口（见 [EchoMem 协作方案](echomem-collaboration-design.md) §3 路由决策表） |
 | `index.ts` (main app) | 8 | 直接 | Phase 1 — IndexStateManager、scheduler、启动流程 |
 | `library.ts` (routes) | 5 | duck-typed | Phase 1 — library 管理路由直接读 DB |
 | `route-serial.ts` | 1 | duck-typed | Phase 2 — agent 路由搜索 |
@@ -1360,6 +1360,7 @@ interface StoreHealth {
 }
 
 /** 细粒度能力声明 — 后端按实际能力声明，消费者按需检查 */
+// 注：此接口与 §3 的 StoreCapabilities 是同一类型（单一真相源在 §3）
 interface StoreCapabilities {
   // 原语支持
   textBlock: boolean;
@@ -1373,6 +1374,13 @@ interface StoreCapabilities {
   graphTraversal: boolean;           // traverse() 深度遍历
   // 搜索增强（基础设施层能力）
   entityResolution: boolean;         // search() 自动解析实体别名
+  // 可观测性
+  stats: boolean;                    // 计数统计
+  evidenceTrace: boolean;            // 返回匹配原因 + 分数
+  // 限制
+  maxDocuments?: number;
+  // 嵌入索引延迟
+  embeddingReadyMode?: 'sync' | 'eventual';
 }
 ```
 

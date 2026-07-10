@@ -161,12 +161,12 @@ interface WireSearchRequest {
   options?: {
     mode?: 'lexical' | 'semantic' | 'hybrid';
     limit?: number;
-    threadId?: string;
     dateFrom?: string;      // ISO8601
     dateTo?: string;        // ISO8601
     depth?: 'summary' | 'raw';
     contextWindow?: number;
     explain?: boolean;
+    // threadId 删除：thread 过滤通过 identity.session 传递（单一真相源）
   };
   identity: IdentityScope;
   origin: RequestOrigin;
@@ -175,21 +175,58 @@ interface WireSearchRequest {
 /** Wire Contract v0 — SearchResponse */
 interface WireSearchResponse {
   items: WireSearchItem[];
-  meta: {
-    degraded: boolean;
-    degradeReason?: string;
-    effectiveMode?: string;
-    traceId?: string;
-  };
+  meta: WireResponseMeta;
   capabilities: WireCapabilities;
 }
 
+interface WireResponseMeta {
+  degraded: boolean;
+  degradeReason?: string;
+  effectiveMode?: string;
+  traceId?: string;
+  servedBy?: string;        // 'primary' | 'fallback'（§10.1）
+}
+
+/** Wire Contract v0 — GetByCanonicalId */
+interface WireGetRequest {
+  canonicalId: string;       // §4 格式
+  identity: IdentityScope;
+  origin: RequestOrigin;
+}
+
+interface WireGetResponse {
+  item: WireSearchItem | null;
+  meta: WireResponseMeta;
+}
+
+/** Wire Contract v0 — Health */
+interface WireHealthResponse {
+  healthy: boolean;
+  latencyMs?: number;
+  message?: string;
+}
+
+/** Wire Contract v0 — Capabilities */
+interface WireCapabilitiesResponse {
+  capabilities: WireCapabilities;
+  version: string;            // 'v0'
+  supportedModes: Array<'lexical' | 'semantic' | 'hybrid'>;
+  supportedDepths: Array<'summary' | 'raw'>;
+}
+
+/** Wire Contract v0 — Error envelope */
+interface WireError {
+  code: string;               // 'not_supported' | 'invalid_request' | 'internal' | ...
+  message: string;
+  requestId: string;
+}
+
 interface WireSearchItem {
-  canonicalId: string;        // 全局唯一，可路由（见 §4）
+  canonicalId: string;        // tenant-scoped 唯一（见 §4）
   content: string;
   title?: string;
   summary?: string;
-  kind?: string;
+  kind?: string;              // metadata，不编入 canonicalId
   speaker?: string;
   timestamp?: string;
   score?: number;
@@ -208,12 +245,12 @@ interface IdentityScope {
   tenant: string;             // Clowder instance/project
   user?: string;              // co-creator（按需隔离）
   agent: string;              // 'clowder-team'（Phase 1 team-shared）
-  session?: string;           // thread ID（对话域）
+  session?: string;           // thread ID — 唯一 thread 过滤真相源（不再在 options 里重复）
 }
 
 interface RequestOrigin {
   source: string;             // 'clowder' | 'echomem'
-  requestId: string;          // 幂等追踪
+  requestId: string;          // correlation ID（不是读请求幂等键）
   hopCount: number;           // 防环（>1 拒绝）
 }
 
@@ -223,6 +260,7 @@ interface WireCapabilities {
   entityResolution: boolean;
   graph: boolean;
   browse: boolean;
+  anchorLookup: boolean;      // getByCanonicalId 支持
 }
 ```
 
@@ -232,6 +270,18 @@ interface WireCapabilities {
 **EchoAgent Session Memory Engine 定位**：
 仅保留在 EchoAgent 边缘（EchoAgentAdapter），不进入 Clowder↔EchoMem 核心链路。
 Clowder↔EchoMem 直接对话用 Wire Contract v0。
+
+**已知 EchoMem 能力 Gap**（需与 EchoMem 团队对齐）：
+
+| Wire 操作 | EchoMem develop 现状 | Gap |
+|----------|---------------------|-----|
+| `search` | `RetrievalService.retrieve` 可对接 | ✅ 可映射 |
+| `getByCanonicalId` | `SessionService.get` 存在，但无 exact event lookup | ⚠️ anchorLookup 声明 false，或 EchoMem 需扩展 |
+| `health` | 有 health endpoint | ✅ |
+| `capabilities` | 无 capability probe | ⚠️ 需要 EchoMem 实现或 adapter 静态声明 |
+
+> **Sol P2-1 修正**：EchoMem develop 的 SessionService 只有 open/get，没有 SessionService.search。
+> 实际搜索是 HTTP client → RetrievalService.retrieve。Wire 操作表已修正。
 
 ---
 
@@ -243,34 +293,61 @@ Clowder↔EchoMem 直接对话用 Wire Contract v0。
 
 ### 3.1 Phase 1 路由表（v1）
 
-> **匹配语义**：规则按序匹配，**scope 特定规则优先于 dimension 规则**，第一命中生效。
-> `depth` 不参与路由——它只影响请求返回形状（`summary` 返回摘要，`raw` 返回原文 + passages），
-> 不改变 provider 选择。因此路由表是 **dimension × scope → provider** 的二维表。
+> **路由语义**（Sol P1-1 修正）：**dimension 选定 provider 集合（universe），scope 在集合内过滤**。
+> 不使用 wildcard 叠表——每个 `(dimension, scope)` 组合有唯一确定的 provider 结果。
+> `depth` 不参与路由，只影响返回形状（`summary` 返回摘要，`raw` 返回原文 + passages）。
 
-**Tier 1: scope 特定规则（最高优先级，覆盖任何 dimension）**
+**dimension 定义 provider universe**
 
-| # | scope | Provider calls | 说明 | Phase 绑定 |
-|---|-------|---------------|------|-----------|
-| 1 | `threads` | **ConversationRetrieval** only | 对话消息 | P1-2: LegacyConv; P3+: EchoMem(primary) + LegacyConv(fallback) |
-| 2 | `sessions` | **DocRetrieval** only | session digest 是 scanner 产物 | 全 Phase: Doc |
-| 3 | `docs` | DocRetrieval only | 文档搜索 | 全 Phase: Doc |
-| 4 | `memory` | DocRetrieval only | 记忆搜索 | 全 Phase: Doc |
+| dimension | 可用 providers | Conv 参与 |
+|-----------|---------------|-----------|
+| `project` | Doc + Conv | ✅ project-local 知识含对话 |
+| `global` | Global only | ❌ |
+| `all` | Doc + Conv + Global | ✅ |
+| `library` | CollectionManifest 扇出 | ❌ Conv 不是 collection |
+| `collection` | 指定 collection IDs | ❌ Conv 不是 collection |
+| `undefined` | Doc only | ❌ 保守默认 |
 
-**Tier 2: dimension 规则（scope 未指定或 scope=all 时生效）**
+**scope 在 universe 内过滤**
 
-| # | dimension | Provider calls | 说明 |
-|---|-----------|---------------|------|
-| 5 | `project` | DocRetrieval only | 文档知识 |
-| 6 | `global` | GlobalRetrieval only | 全局知识 |
-| 7 | `all` | Doc + Conv + Global 并发 → RRF 融合 | 全域搜索 |
-| 8 | `library` | 按 CollectionManifest 扇出（不含 Conv） | N-collection 联邦 |
-| 9 | `collection` | 指定 collection IDs | 精确 collection |
+| scope | 在 universe 内保留 | 说明 |
+|-------|-------------------|------|
+| `threads` | 仅 Conv（若 universe 不含 Conv → empty + degraded nudge） | 对话消息 |
+| `sessions` | 仅 Doc（session digest 是 scanner 产物，归 Doc） | session digest |
+| `docs` | Doc + Global（若 universe 含 Global） | 文档搜索 |
+| `memory` | Doc + Global（若 universe 含 Global） | 记忆搜索 |
+| `undefined` / `all` | universe 全部 providers | 不过滤 |
 
-**Fallback: scope 和 dimension 均未指定**
+**完整路由矩阵**（dimension × scope → providers）
 
-| # | 条件 | Provider calls | 说明 |
-|---|------|---------------|------|
-| 10 | `scope=undefined, dimension=undefined` | DocRetrieval only | 保守默认，兼容现有行为 |
+| dimension \ scope | `undefined`/`all` | `threads` | `sessions` | `docs` | `memory` |
+|-------------------|-------------------|-----------|------------|--------|----------|
+| `project` | Doc + Conv | Conv | Doc | Doc | Doc |
+| `global` | Global | ⚠️ empty+nudge | Global | Global | Global |
+| `all` | Doc+Conv+Global → RRF | Conv | Doc | Doc+Global | Doc+Global |
+| `library` | CollManifest 扇出 | ⚠️ empty+nudge | CollManifest 扇出 | CollManifest 扇出 | CollManifest 扇出 |
+| `collection` | 指定 IDs | ⚠️ empty+nudge | 指定 IDs | 指定 IDs | 指定 IDs |
+| `undefined` | Doc | ⚠️ empty+nudge | Doc | Doc | Doc |
+
+> **⚠️ empty+nudge**：dimension 的 provider universe 不含 Conv 时，scope=threads 返回空结果 +
+> `meta: { degraded: true, degradeReason: 'scope_not_available_in_dimension' }`。
+> 不静默路由到 Conv（否则 `dimension=global` 被偷换成 Conv 查询）。
+
+**Conv provider Phase 绑定**
+
+| Phase | Conv 实现 | 说明 |
+|-------|----------|------|
+| Phase 1-2 | LegacyConv (primary) | projectStore 包装的薄桥 |
+| Phase 3+ | EchoMem (primary) + LegacyConv (fallback) | fallback 仅在 timeout/unhealthy/contract-error 触发 |
+
+**Breaking changes vs 现有行为**
+
+| 组合 | 现有行为 | 新行为 | 变更类型 |
+|------|---------|--------|---------|
+| `project + undefined` | projectStore 搜 docs+threads（单 store） | Doc+Conv（两个 provider 并发） | ⚠️ 行为保持，实现变 |
+| `all + docs/memory` | project+global | Doc+Global | ✅ 兼容 |
+| `global + threads` | 不走 isProjectLocalScope，搜 globalStore | empty+nudge | ⚠️ Breaking：显式报告不可用 |
+| `undefined + threads` | 不到这里（dimension 总有值） | empty+nudge | ⚠️ 新增防护 |
 
 > **sessions→Doc 而非 Conv**（Fable × Sol R1 修正）：`scope='sessions'` 在 store 层映射为
 > `kind='session'`（SqliteEvidenceStore.ts:176-177），搜的是 **session digest 文档**——
@@ -278,8 +355,9 @@ Clowder↔EchoMem 直接对话用 Wire Contract v0。
 
 ### 3.2 设计约束
 
-- **路由表是版本化 routing policy**：未来 ownership 迁移（如 session digest 改由 EchoMem 管理）只改这一处真相源
-- **scope 优先于 dimension**：避免 `dimension=project, scope=threads` 这类组合产生矛盾——scope 是更强的意图信号
+- **路由表是版本化 routing policy**：未来 ownership 迁移只改这一处真相源
+- **dimension 先选 universe，scope 再过滤**：不使用 wildcard/tier 叠加——每个 `(dimension, scope)` 组合有唯一确定结果
+- **scope 不兼容 universe 时报告而非偷路由**：`global + threads` → empty+nudge, 不静默切到 Conv
 - **depth 不参与路由**：depth 只影响返回形状（summary vs raw + passages），不改变 provider 选择
 - **Conversation 不走 CollectionManifest 体系**：
   - `CollectionKind` 只有 `project|world|domain|research|global`，无 `conversation`
@@ -295,50 +373,107 @@ Clowder↔EchoMem 直接对话用 Wire Contract v0。
 > 否则 RRF 融合以 `item.anchor` 去重（KnowledgeResolver.ts:250-256），
 > EchoMem 无兼容 anchor → 去重失败 → 同一消息双份进结果。
 
-### 4.1 CanonicalId 格式
+### 4.1 CanonicalId 设计
 
-全局稳定、可路由、可映射 legacy anchor、可携带 source lineage。
+> **Sol P1-3 修正**：canonicalId 必须满足：
+> 1. **tenant-scoped 唯一**：唯一性定义为 `(IdentityScope.tenant, canonicalId)` 元组，
+>    tenant 不编入字符串（避免过长/泄露）
+> 2. **稳定**：基于不可变 source/native ID，不含可变 metadata（kind 变化不改 ID）
+> 3. **可路由**：domain 前缀决定 provider 分发
+> 4. **可编码**：segment 内 `/`、`:`、unicode 需 percent-encoding（RFC 3986）
+
+**Grammar（Phase 0 必须固定）**
 
 ```
-格式（Phase 1）：<domain>:<type>/<id>
+canonicalId := domain ":" nativeId
+domain      := "doc" | "conv" | "global"
+nativeId    := segment ("/" segment)*
+segment     := pchar*                   // RFC 3986 pchar，保留字符 percent-encode
+```
+
+```
 示例：
-  doc:feature/F102           → DocRetrieval
-  doc:decision/ADR-020       → DocRetrieval
-  conv:thread/thread_mp3iz…  → ConversationRetrieval
-  conv:message/msg_abc123    → ConversationRetrieval
-  global:method/TDD          → GlobalRetrieval
+  doc:F102                   → DocRetrieval（anchor = F102，不含 kind）
+  doc:ADR-020                → DocRetrieval
+  conv:thread_mp3iz…         → ConversationRetrieval
+  conv:msg_abc123            → ConversationRetrieval
+  global:methods/TDD         → GlobalRetrieval
 ```
+
+> **kind 不编入 canonicalId**：kind 是可变 metadata（evidence_docs.kind 可以改），
+> 编入 ID 会违反稳定性。kind 作为 WireSearchItem.kind metadata 传递。
 
 ### 4.2 与 Legacy Anchor 映射
 
-| Legacy anchor 模式 | CanonicalId | Provider |
-|--------------------|-------------|----------|
-| `F102` / `ADR-020` | `doc:feature/F102` | Doc |
-| `thread-thread_xxx` | `conv:thread/thread_xxx` | Conv |
-| `session-xxx` | `doc:session/xxx` | Doc |
-| `global:methods/xxx` | `global:method/xxx` | Global |
+| Legacy anchor 模式 | CanonicalId | Provider | 说明 |
+|--------------------|-------------|----------|------|
+| `F102` | `doc:F102` | Doc | anchor 原样保留为 nativeId |
+| `ADR-020` | `doc:ADR-020` | Doc | 同上 |
+| `thread-thread_xxx` | `conv:thread_xxx` | Conv | 去掉 `thread-` 前缀 |
+| `session-xxx` | `doc:session-xxx` | Doc | anchor 原样 |
+| `global:methods/xxx` | `global:methods/xxx` | Global | 保留原始路径 |
 
-### 4.3 Anchor Namespace Registry
+### 4.3 Conformance vectors（Phase 0 交付物）
 
-Layer 2 的一等设施。宿主拿到一个裸 anchor 必须知道问哪个 provider：
+```
+// canonicalize: legacy anchor → canonicalId
+assert canonicalize("F102")                == "doc:F102"
+assert canonicalize("thread-thread_abc")   == "conv:thread_abc"
+assert canonicalize("session-sess_123")    == "doc:session-sess_123"
+assert canonicalize("global:methods/TDD")  == "global:methods/TDD"
+assert canonicalize("has/slash")           == "doc:has%2Fslash"   // percent-encode
+
+// resolve: canonicalId → { domain, nativeId, provider }
+assert resolve("doc:F102")             == { domain: "doc",    nativeId: "F102" }
+assert resolve("conv:thread_abc")      == { domain: "conv",   nativeId: "thread_abc" }
+assert resolve("global:methods/TDD")   == { domain: "global", nativeId: "methods/TDD" }
+
+// roundtrip
+for each legacy anchor a:
+  assert resolve(canonicalize(a)).nativeId ⊇ a   // 可反解
+```
+
+### 4.4 Anchor Namespace Registry
+
+Layer 2 一等设施。实现完整 `AnchorRouter` 接口：`canonicalize`（legacy→canonical）+
+`resolve`（canonical→provider+localId）+ `owns`（判断归属）。
 
 ```typescript
 class AnchorNamespaceRegistry implements AnchorRouter {
   private rules: Array<{
     pattern: RegExp;
     domain: 'doc' | 'conversation' | 'global';
-    toCanonical: (legacyAnchor: string) => string;
+    stripPrefix: string;  // legacy anchor 去前缀
   }> = [
-    { pattern: /^thread-/, domain: 'conversation',
-      toCanonical: a => `conv:thread/${a.replace('thread-', '')}` },
-    { pattern: /^session-/, domain: 'doc',
-      toCanonical: a => `doc:session/${a.replace('session-', '')}` },
-    { pattern: /^global:/, domain: 'global',
-      toCanonical: a => `global:${a.replace('global:', '')}` },
-    // default: doc domain
-    { pattern: /.*/, domain: 'doc',
-      toCanonical: a => `doc:evidence/${a}` },
+    { pattern: /^thread-/, domain: 'conversation', stripPrefix: 'thread-' },
+    { pattern: /^global:/, domain: 'global', stripPrefix: '' },
+    // session-* stays in doc domain (session digests are scanner products)
+    { pattern: /^session-/, domain: 'doc', stripPrefix: '' },
+    // default: doc domain, no prefix strip
+    { pattern: /.*/, domain: 'doc', stripPrefix: '' },
   ];
+
+  // legacy anchor → canonicalId
+  canonicalize(legacyAnchor: string): string {
+    const rule = this.rules.find(r => r.pattern.test(legacyAnchor));
+    const nativeId = legacyAnchor.replace(rule.stripPrefix, '');
+    return `${rule.domain}:${encodeSegments(nativeId)}`;
+  }
+
+  // canonicalId → { provider, localId }
+  resolve(canonicalId: string): { provider: RetrievalProvider; localId: string } | null {
+    const colonIdx = canonicalId.indexOf(':');
+    if (colonIdx < 0) return null;
+    const domain = canonicalId.slice(0, colonIdx) as 'doc' | 'conversation' | 'global';
+    const localId = decodeSegments(canonicalId.slice(colonIdx + 1));
+    const provider = this.providers.get(domain);
+    return provider ? { provider, localId } : null;
+  }
+
+  // canonicalId 归属判断
+  owns(canonicalId: string): boolean {
+    return this.resolve(canonicalId) !== null;
+  }
 }
 ```
 
@@ -415,16 +550,17 @@ class AnchorNamespaceRegistry implements AnchorRouter {
 
 EchoMemAdapter 做 EchoMem native API ↔ Wire Contract 翻译。
 
-| Wire 操作 | EchoMem native 端点 | 说明 |
-|----------|---------------------|------|
-| `search` | `SessionService.search` / `RetrievalService.retrieve` | 对话搜索 |
-| `getByCanonicalId` | `SessionService.getEvent` | anchor 精确查找 |
-| `health` | health endpoint | 健康检查 |
-| `capabilities` | probe / capability negotiation | 能力声明 |
+| Wire 操作 | EchoMem native 端点 | 状态 | 说明 |
+|----------|---------------------|------|------|
+| `search` | HTTP → `RetrievalService.retrieve` | ✅ 可映射 | 对话搜索 |
+| `getByCanonicalId` | `SessionService.get`（无 exact event lookup） | ⚠️ Gap | anchorLookup 初始声明 false |
+| `health` | health endpoint | ✅ | 健康检查 |
+| `capabilities` | 无 capability probe | ⚠️ Gap | adapter 静态声明或 EchoMem 需实现 |
 
 > **不再使用 EchoAgent 的 Session Memory Engine 协议**（Sol P1 修正）。
 > EchoMem develop 分支已有独立 SessionService / RetrievalService，
 > 使用 tenant/user/agent/session 四层身份模型。
+> 注意：SessionService 只有 open/get，不是搜索入口。搜索走 RetrievalService。
 
 ### 6.2 DocMemory 端点（EchoAgent 消费方）
 
@@ -578,8 +714,9 @@ EchoMem 侧需要维护 `sourceEvent → derivedMemory` 的映射，
 
 ```
 Phase 0: 协议
-  canonicalId 格式 + IdentityScope + Wire Contract v0 schema + IngestEvent v0 schema
+  canonicalId grammar + IdentityScope + Wire Contract v0 schema + IngestEvent v0 schema
   → 两侧 conformance test fixture 通过（SearchRequest/Response + IngestEvent + TombstoneEvent）
+  → table-driven canonicalize/resolve conformance vectors 通过
     │
     ▼
 Phase 1: 薄桥
@@ -589,26 +726,53 @@ Phase 1: 薄桥
   本地 21,946 passage 继续由 LegacyConv 服务
     │
     ▼
-Phase 2: Shadow 双跑
-  EchoMem ConversationRetrievalProvider 上线（shadow mode）
-  LegacyConv + EchoMem 双源对比（RRF 融合用 canonicalId 去重 → 不会重复）
-  backfill 存量 passage 到 EchoMem
-  F200 Eval 基线对比
+Phase 2: Durable outbox + Backfill + Shadow 旁路
+  2a. durable outbox 上线（增量消息实时推送到 EchoMem）
+  2b. backfill 存量 passage 到 EchoMem（IndexBuilder 改推 + cursor 断点续传）
+  2c. EchoMem ConversationRetrievalProvider 上线（shadow mode = 旁路观测）
+      shadow 不进入 served result / 消费遥测 / RRF 融合
+      → 旁路比较：same query → LegacyConv result vs EchoMem result → diff 报告
+      → F200 Eval 基线对比（仅离线评测，不影响在线排序）
     │
     ▼
-Phase 3: Ownership 切换
-  threads scope 路由切到 EchoMem（LegacyConv 降为 fallback）
-  ingestion outbox 上线（增量消息实时推送）
-  验收门槛通过 → LegacyConv 下线
+Phase 3: Read primary 切换
+  路由表 Conv slot: primary=EchoMem, fallback=LegacyConv
+  fallback 触发条件：timeout / unhealthy / contract-error（零命中不触发 fallback）
+  meta 标明 degraded + servedBy=fallback
+  验收门槛通过 → 进入 rollback window（定期 N 天）
+    │
+    ▼
+Phase 4: Rollback window 到期
+  明确决定后才清理 LegacyConv（降为 dormant，不是"下线"）
+  dormant = 不主动写入/更新，但数据保留可回退
 ```
 
-### 10.1 回退成本
+> **Sol P1-2 修正**：
+> 1. Shadow 必须旁路比较，不能进入 served result——即便 canonicalId 相同不重复显示，
+>    现有 RRF 会累加同 anchor 分数，改变用户可见排序并污染 F200。
+> 2. Outbox 移到 Phase 2（不是 Phase 3）——否则 shadow 期间新增消息不进 EchoMem，
+>    F200 对比必然拿 stale dataset。
+> 3. LegacyConv 生命周期是 "primary → fallback → dormant"，不是 "primary → 下线"。
+>    Dormant 意味着数据保留但不再主动更新，可随时回退到 fallback 角色。
+
+### 10.1 路由 policy 角色
+
+| 角色 | 语义 | 触发条件 |
+|------|------|---------|
+| `primary` | 正常服务路径 | 默认 |
+| `fallback` | primary timeout/unhealthy/contract-error 时接管 | **零命中不触发 fallback**（空结果是合法返回） |
+| `shadow[]` | 旁路观测，不进入 served result | 始终执行，结果只用于 diff 报告 |
+
+> fallback 返回时 meta 必须标明 `degraded: true, servedBy: 'fallback'`。
+
+### 10.2 回退成本
 
 | 场景 | 回退行为 | 成本 |
 |------|---------|------|
-| EchoMem 不可达 | health()=false → Conv provider degraded → 对话搜索走 LegacyConv fallback | **零改动** |
-| 决定不用 EchoMem | 路由表 threads→LegacyConv | **1 行改动** |
-| EchoMem 数据不可靠 | shadow 对比失败 → 不进 Phase 3 | 设计保护 |
+| EchoMem 不可达 | health()=false → Conv provider degraded → 对话搜索走 LegacyConv fallback | **零改动**（自动） |
+| 决定不用 EchoMem | 路由表 Conv slot: primary=LegacyConv, shadow=[] | **1 行配置改动** |
+| EchoMem 数据不可靠 | Phase 2 shadow diff 不达标 → 不进 Phase 3 | 设计保护 |
+| Phase 3 后发现问题 | rollback window 内切回 LegacyConv=primary | dormant 数据可用 |
 
 ---
 
@@ -670,7 +834,7 @@ Phase 3: Ownership 切换
 
 ## 附录：踩坑教训
 
-> **Fable × Sol 收敛 → public-lessons**
+> **Fable × Sol 收敛 — 候选教训（待正式沉淀到 docs/public-lessons.md）**
 
 1. **Host-specific adapter ≠ neutral protocol**：EchoAgent 的 Session Memory Engine 是 EchoAgent 对 EchoMem 的适配器，不是 EchoMem 对所有宿主的协议。把边缘适配器提升为核心协议 = 绑定到一个特定宿主的实现细节。
 2. **两个正交抽象轴不能共用一个 Provider 名称**：storage backend（怎么存）和 domain provider（搜什么 + 怎么路由）是正交的。混用导致 `scope=threads` 硬路由到 project store 而 EchoMem 永远查不到。
