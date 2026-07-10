@@ -1,6 +1,6 @@
 ---
 title: "记忆服务组件化 — 三原语模型"
-participants: [opus, codex, lang]
+participants: [opus, codex, fable, sol, lang]
 status: proposed
 created: 2026-06-25
 doc_kind: decision
@@ -811,7 +811,7 @@ edge changes    ──► store.edges.link(...)           ──► service POST
 
 ### 迁移说明：`getDb()` 逃逸面治理
 
-当前 `SqliteEvidenceStore.getDb()` 被 **13 个文件** 直接调用，绕过
+当前 `SqliteEvidenceStore.getDb()` 被 **14 个文件** 直接调用，绕过
 `IEvidenceStore` 接口。对于 service-backed store 这些调用全部断开。
 
 #### 完整逃逸面清单
@@ -828,10 +828,11 @@ edge changes    ──► store.edges.link(...)           ──► service POST
 | `evidence.ts` (routes) | 3 | duck-typed | Phase 1 — evidence 路由直接读 DB |
 | `RecentBrowseResolver.ts` | 2 | duck-typed | Phase 1 — `list_recent` 入口（见 §11.6 三入口分析） |
 | `index.ts` (main app) | 8 | 直接 | Phase 1 — IndexStateManager、scheduler、启动流程 |
+| `library.ts` (routes) | 5 | duck-typed | Phase 1 — library 管理路由直接读 DB |
 | `route-serial.ts` | 1 | duck-typed | Phase 2 — agent 路由搜索 |
 | `route-parallel.ts` | 1 | duck-typed | Phase 2 — agent 路由搜索 |
 
-> **§5 原文只提到 IndexBuilder 两处**。实际逃逸面远大于此。
+> **§5 原文只提到 IndexBuilder 两处**。实际逃逸面远大于此（Sol 补充 library.ts 5 处后共 14 文件）。
 > 特别注意：**Phase 2 灰度计划**（§7 第 11 步"一个非核心 collection 使用 service backend"）
 > 第一步就会撞上 `CollectionIndexBuilder.ts:56` 的 `store.getDb()` —
 > 外部 collection 的重建路径在 service-backed store 上直接断。
@@ -875,13 +876,14 @@ edge changes    ──► store.edges.link(...)           ──► service POST
 ### Phase 1：Backend SPI 骨架（零行为变更）
 
 1. 提取 `MemoryBackendProvider` 接口 + `MemoryBackendRegistry`
-2. **`getDb()` 逃逸面治理**（见 §5 完整清单，13 个文件）：
+2. **`getDb()` 逃逸面治理**（见 §5 完整清单，14 个文件）：
    - 2a. `IndexBuilder` 的直接 SQLite 写入 → `TextBlockStore.put()`
    - 2b. `factory.ts` 的 VectorStore/PassageVectorStore 初始化 → 抽到 provider 内部
    - 2c. `GlobalIndexBuilder` / `bootstrap-collection-bridge` → 通过 provider 接口
    - 2d. routes 层（`f163-admin`、`f163-audit-routes`、`evidence.ts`）→ 通过服务接口查询
-   - 2e. `RecentBrowseResolver` duck-typed getDb → 新增 `recency` 查询到 `TextBlockStore`（见 §11.6.2）
-   - 2f. `index.ts` 启动流程（IndexStateManager、scheduler 等 8 处）→ 通过 provider 初始化钩子
+   - 2e. `RecentBrowseResolver` duck-typed getDb → 新增 `recency` 查询到 `TextBlockStore`（见 [EchoMem 协作方案](echomem-collaboration-design.md) §3 路由决策表）
+   - 2f. `library.ts` 5 处 duck-typed getDb → 通过服务接口查询
+   - 2g. `index.ts` 启动流程（IndexStateManager、scheduler 等 8 处）→ 通过 provider 初始化钩子
 3. 将现有 `SqliteEvidenceStore` 包装为 `SqliteBackendProvider`
    （实现 `MemoryStore` 三原语接口：TextBlockStore + RelationEdgeStore + TimelineStore）
 4. `EntityRegistry` 包装为 `EntityResolver` 基础设施注入
@@ -935,7 +937,7 @@ edge changes    ──► store.edges.link(...)           ──► service POST
 > 基于我们的接口规范来增强。这是一个取长补短的过程，不是单向接入。
 >
 > **2026-06-30 更新**：基于本节 review 发现和 EchoAgent 代码分析，
-> 正式的 EchoMem 协作设计方案已收敛到 **§11**。
+> 正式的 EchoMem 协作设计方案已拆分为独立文档——见 [EchoMem 协作方案](echomem-collaboration-design.md)。
 
 ### 9.1 我们做对了什么
 
@@ -1053,6 +1055,11 @@ EchoMem 团队可以逐步实现能力：
 > 也不是单一 MemoryItem（太扁平），
 > 而是 **TextBlock / RelationEdge / Timeline** 三种数据原语
 > + **EntityResolver** 基础设施层增强。
+>
+> **定位澄清**（四轮 review 收敛）：三原语是**存储服务的 SPI**——面向存储后端实现者
+> （SQLite / 通用 Memory Service / 第三方 backend），不是跨团队协作协议。
+> 跨领域协作（如与 EchoMem）需要领域接口（Domain Provider Ports）+
+> 语言中立协议（Wire Contract），详见 [EchoMem 协作方案](echomem-collaboration-design.md)。
 >
 > **参考输入**：
 > - EchoMem 三面记忆模型（Atomic Truth + Episode + Association Graph）
@@ -1632,683 +1639,30 @@ Memory-System-Eval-Harness 的 MemoryPlugin Protocol 定义了 9 个必需方法
 
 ---
 
-## 11. EchoMem 协作方案
 
-> **Status**: design-draft（2026-06-30）
-> **设计原则**：按擅长领域分工，保证回退成本低，不确定性用接口隔离
-> **前序讨论**：EchoAgent 代码分析 + co-creator 分工方向确认（session #1）
+## 11. EchoMem 协作方案 → 独立文档
 
-### 11.1 对称架构
-
-两个记忆系统各管擅长的领域。协议包（`@clowder-ai/memory-protocol`）发布完整的三原语模型（TextBlock / RelationEdge / Timeline），每个 provider 通过 `StoreCapabilities`（§10.6）声明自己实现了哪些原语。
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Clowder AI 宿主                              │
-│                                                                     │
-│  KnowledgeResolver ─── 扇出到 N 个 MemoryProvider                   │
-│       │                    │                  │                      │
-│       ▼                    ▼                  ▼                      │
-│  DocMemory             ConversationMemory   GlobalMemory            │
-│  Provider (我们)       Provider (EchoMem)   Provider (我们)         │
-│  ┌─────────────┐      ┌─────────────────┐  ┌─────────────┐        │
-│  │ TextBlock ✅ │      │ TextBlock    ✅  │  │ TextBlock ✅ │        │
-│  │ RelEdge  ✅ │      │ RelEdge  ❌(P1) │  │ RelEdge  ✅ │        │
-│  │ Timeline ✅ │      │ Timeline ❌(P1) │  │ Timeline ❌ │        │
-│  │ Entity local │      │ Entity   local  │  │ Entity local │        │
-│  └──────┬──────┘      └───────┬─────────┘  └──────┬──────┘        │
-│         │                     │                     │               │
-│    本地 SQLite           EchoMem HTTP          本地 SQLite          │
-│    (scanner 产物)        (对话事件流)           (global knowledge)   │
-│                                                                     │
-│  ──── 宿主独有（不属于 provider） ────                               │
-│  治理层（markers、recall_events、scheduler）                         │
-│  可选共享 entity alias normalizer（跨 provider query expansion）    │
-└─────────────────────────────────────────────────────────────────────┘
-
-  ── 反向接入（§11.5.4） ──
-  EchoAgentMemoryEngineAdapter 把 DocMemory 包装为
-  EchoAgent memory_query dialect，让 EchoAgent 也能搜索文档知识
-```
-
-**关键设计选择**：
-
-- **协议包发布三原语**（P1-1 codex review）：TextBlock 是 Phase 1 唯一必需原语，RelationEdge / Timeline 是 optional。ConversationMemory Phase 1 声明 `textBlock=true`，后续可逐步实现 RelationEdge（EchoMem 的 SPO 三元组）和 Timeline（EchoMem 的 EpisodeEvent）
-- **每个 provider 实现标准 MemoryStore**（§10.6）：不定义额外的 ConversationMemoryProvider 接口。KnowledgeResolver 通过 MemoryServiceAdapter（§4.2）统一适配，按 capabilities 降级
-- **双向适配**（P2-1 codex review）：Clowder 通过 EchoMemAdapter 消费 ConversationMemory；EchoAgent 通过 EchoAgentMemoryEngineAdapter 消费 DocMemory
-- **EntityResolver provider-local**（P2-2 codex review）：每个 provider 各自维护实体解析，宿主层可选提供共享 alias normalizer 做跨 provider query expansion
-- 降级策略复用 §6（EchoMem 不可达 → collection 标记 error → 对话搜索为空 + degraded=true）
-
-### 11.2 职责分工
-
-> **所有权按数据来源切，不按当前 SQLite kind 切**（P1-2 codex review）。
-> `kind` 只作为路由/过滤 hint，不作为 ownership rule。
-> 理由：`kind=thread` 是 Clowder IndexBuilder 的编译产物标签，不是稳定的组件边界。
-> 按来源切避免双写 / 重复召回 / 迁移时 source-of-truth 不清。
-
-| 记忆类型 | 负责方 | 数据来源（ownership 依据） |
-|---------|--------|-------------------------|
-| **文档知识**（feature/plan/decision/lesson/...） | DocMemory（我们） | repo scanner（`CatCafeScanner.discover()`）产物 |
-| **对话消息**（raw messages、passage） | ConversationMemory（EchoMem） | conversation event stream / round-result 回调 |
-| **对话摘要**（episode summary） | ConversationMemory（EchoMem，Phase 2） | EchoMem Episode 模型产物；当前暂留宿主 |
-| **认知转变事件**（EventMemory） | DocMemory（我们） | Clowder 治理框架（F227），绑定 magic word / 猫刹车 |
-| **实体解析** | provider-local | 每个 provider 各自维护。宿主可选提供共享 alias normalizer 做跨 provider query expansion |
-| **关系图**（edge） | 当前 DocMemory；ConversationMemory 后续可自建 | DocMemory edges 来自 scanner；EchoMem 的 SPO 三元组可映射为 RelationEdge |
-
-**分流规则**（按来源，不按 kind）：
-
-```
-数据来自 repo scanner / doc frontmatter  →  DocMemory（我们）
-数据来自 round-result / 消息流 / 对话回调  →  ConversationMemory（EchoMem）
-
-实际路由 hint（当前 SQLite 中的观察值，不是 ownership rule）：
-  evidence_docs.kind ∈ {feature,plan,decision,lesson,...}  →  scanner 产物
-  evidence_docs.kind === 'thread'                          →  对话事件流产物
-  evidence_passages.doc_anchor = thread-*                  →  对话消息
-```
-
-### 11.3 已有数据映射（实测数据）
-
-> 以下数据来自 Clowder AI 实例的 `evidence.sqlite`（2026-06-30 快照）。
-
-#### 11.3.1 evidence_docs — 按数据来源归属
-
-| kind | 数量 | 状态分布 | 数据来源 | 映射到 |
-|------|------|---------|---------|--------|
-| `feature` | 236 | active:221, done:13, in-progress:1, spec:1 | scanner 产物 | **DocMemory** |
-| `plan` | 38 | active:37, draft:1 | scanner 产物 | **DocMemory** |
-| `decision` | 10 | active:6, accepted:3, drifted:1 | scanner 产物 | **DocMemory** |
-| `thread` | 7 | active:7 | IndexBuilder 编译对话 | **ConversationMemory** |
-| `session` | 0 | — | scanner 产物 | DocMemory（session digest） |
-| `lesson` | 0 | — | scanner 产物 | DocMemory |
-| `discussion` | 0 | — | scanner 产物 | DocMemory |
-| `research` | 0 | — | scanner 产物 | DocMemory |
-| `pack-knowledge` | 0 | — | scanner 产物 | DocMemory |
-
-**合计**：284 来自 scanner（→ DocMemory）+ 7 来自 IndexBuilder 对话编译（→ ConversationMemory）= 291 总文档。
-
-**归属依据**：`kind` 是路由 hint，真正的 ownership 看数据来源。scanner 产物归 DocMemory；对话事件流产物归 ConversationMemory。当前 `kind === 'thread'` 的文档恰好全部来自 IndexBuilder 对话编译，但这是观测结论，不是 ownership rule。
-
-#### 11.3.2 evidence_passages — 100% 对话消息
-
-| 指标 | 值 |
-|------|-----|
-| 总 passage 数 | 21,946 |
-| 去重 doc_anchor 数 | 193（对应 193 个对话 thread） |
-| doc_anchor 模式 | 100% `thread-*`（全部是对话消息） |
-| 有对应 evidence_docs（kind=thread）的 | 5 个 |
-| 孤儿 anchor（无对应 evidence_docs） | 188 个 |
-
-**关键发现**：
-
-1. 当前所有 passage 都是对话消息（doc_anchor 全部是 `thread-*`）。evidence_passages 表的全部内容语义上属于 ConversationMemory。
-2. 存在 188 个孤儿 anchor — passage 已索引但没有对应的 evidence_docs 父文档。
-
-> **孤儿根因是"删时不级联"，不是"写时缺建"**（Fable review P1-B 修正）：
+> **四轮 review（codex / Fable / Sol + Fable×Sol 收敛）后，§11 已拆分为独立文档。**
 >
-> - `IndexBuilder.ts:529-542` cleanup 阶段：删除所有不在 `threadListFn` 返回集里的
->   evidence_docs anchor（thread 关闭/消失 → thread doc 被清理）
-> - `SqliteEvidenceStore.ts:1365` `deleteByAnchor()`：只 `DELETE FROM evidence_docs`，
->   **不级联删 evidence_passages**（全 codebase 无 `DELETE FROM evidence_passages`）
-> - `schema.ts` V3 建表：`evidence_passages.doc_anchor` 无 FOREIGN KEY
->   （只有 `UNIQUE(doc_anchor, passage_id)`），数据库层面不阻止孤儿
-> - → thread doc 被 cleanup 删除，其下 passage 永久残留
+> 详见 **[EchoMem 协作方案 — 三层架构设计](echomem-collaboration-design.md)**。
 >
-> **这暴露了更深的治理问题**：历史 thread 的对话记忆保留策略当前是矛盾态
-> （doc 层不保留 → 被 cleanup；passage 层永久保留 → 无清理代码路径）。
-> 这个问题应先在我们的治理层回答，再谈移交 EchoMem——
-> 否则是把自己没想清楚的生命周期问题打包给外部团队。
+> 拆分理由：本 ADR（§1-§10）聚焦**存储 SPI 设计**（三原语模型 + 通用记忆服务），
+> 目标读者是存储后端实现者。EchoMem 协作是**跨领域协作设计**——需要领域 Provider Ports
+> + 语言中立 Wire Contract + 路由决策表 + canonicalId + 可靠 ingestion + 删除 lineage，
+> 这些概念正交于存储 SPI，不宜继续挤在同一文档。
 >
-> **对 OQ4 方案的影响**：原方案"EchoMem 接管后补建 parent doc"不稳定——
-> 补建的 doc 下一轮 `IndexBuilder.rebuild()` cleanup 会再次删掉
-> （thread 仍不在 `threadListFn` 返回集里）。正确方案：
-> (a) 在 cleanup 前检查 passage 存在性，有 passage 的 anchor 不删；或
-> (b) cascade 删除（doc 删时同步清理 passage）；或
-> (c) EchoMem 接管后，这些 passage 迁入外部存储，本地 cleanup 无感。
-
-**Top 10 passage 分布（按 thread）**：
-
-| doc_anchor | passage 数 |
-|-----------|-----------|
-| thread-thread_mp3izqz3nq803u8j | 1,981 |
-| thread-thread_mov68j3gfl66by8h | 1,805 |
-| thread-thread_mo9hwskktgfztmtj | 1,555 |
-| thread-thread_mol3tf5ih5p55okv | 1,373 |
-| thread-thread_mo5twg5j2twxce8i | 1,253 |
-| thread-thread_mn8uac0wu8nkqlnr | 1,124 |
-| thread-thread_moicgl47en8m98do | 782 |
-| thread-thread_mnq503nxkemogmj7 | 653 |
-| thread-thread_mozt583w6hduzctq | 521 |
-| thread-thread_mn6ukrbswl5x0j1n | 459 |
-
-#### 11.3.3 edges — 100% 文档知识关系
-
-| relation | 数量 | 说明 |
-|----------|------|------|
-| `feature_ref` | 1,288 | 文档间 feature 引用 |
-| `related_to` | 719 | 语义相关 |
-| `related` | 309 | 一般关联 |
-| `doc_link` | 113 | 文档链接 |
-| `wikilink` | 8 | wiki 风格链接 |
-| **合计** | **2,437** | **全部是 doc-to-doc 关系** |
-
-所有 edge 都连接文档知识（非对话），归 DocMemory。
-EchoMem 若需对话内关系图（如 SPO 三元组提取），在 ConversationMemory 内部自建。
-
-#### 11.3.4 完整映射总览图
-
-```
-                    ┌─────────────────────────────────────────┐
-                    │         evidence.sqlite 数据分布         │
-                    │           (2026-06-30 快照)              │
-                    └─────────────────────────────────────────┘
-
-  DocMemory（来源：scanner）           ConversationMemory（来源：对话事件流）
-  ═══════════════════════             ══════════════════════════════════
-  evidence_docs:                      evidence_docs:
-    feature    236  (scanner)           thread     7  ← passage 父文档
-    plan        38  (scanner)           (+ 188 个孤儿 anchor：parent doc
-    decision    10  (scanner)            被 cleanup 删除，见 §11.3.2)
-    session/lesson/...  0
-                                      evidence_passages:
-  edges:                                21,946 条对话消息（round-result）
-    2,437 条 doc-to-doc 关系             193 个 thread，100% thread-*
-    (scanner frontmatter/wikilink)
-                                      passage_fts + passage_vectors:
-  evidence_fts + evidence_vectors:      对话消息索引（provider-local）
-    文档索引（provider-local）
-
-  ──── 宿主独有 ────                  ──── Phase 2 讨论 ────
-  EventMemory (Timeline)              summary_segments → EchoMem Episode
-  markers（治理流程）                  summary_state
-  recall_events（消费追踪）
-  anchor_recall_metrics（rerank）
-
-  ──── EntityResolver ────
-  各 provider 维护自己的实体解析
-  宿主可选共享 alias normalizer（跨 provider query expansion）
-```
-
-### 11.4 Provider Profile：标准 MemoryStore + Capabilities
-
-> **P1-1 codex review 修正**：不定义单独的 ConversationMemoryProvider 接口。
-> 所有 provider（DocMemory / ConversationMemory / GlobalMemory）实现标准
-> `MemoryStore`（§10.6），通过 `StoreCapabilities` 声明自己实现了哪些原语。
-> 宿主通过 `MemoryServiceAdapter`（§4.2）统一适配，按 capabilities 降级。
-
-#### DocMemory Profile
-
-```typescript
-// DocMemory：scanner 产物存储
-// 来源：CatCafeScanner.discover() + IndexBuilder 编译
-capabilities: {
-  textBlock: true,          // feature/plan/decision/... 文档索引
-  relationEdge: true,       // doc-to-doc 关系图
-  timeline: true,           // EventMemory（认知转变事件）
-  lexicalSearch: true,
-  semanticSearch: true,     // 取决于 EmbeddingProvider
-  hybridSearch: true,
-  graphTraversal: true,
-  entityResolution: true,   // provider-local EntityResolver
-}
-```
-
-#### ConversationMemory Profile（Phase 1）
-
-```typescript
-// ConversationMemory：对话事件流存储
-// 来源：round-result 回调 / raw messages / episode summaries
-// Phase 1 只实现 TextBlock；后续可实现 RelationEdge（SPO）和 Timeline（Episode）
-capabilities: {
-  textBlock: true,          // 对话消息 passage + thread 摘要
-  relationEdge: false,      // Phase 2: EchoMem 的 SPO → RelationEdge
-  timeline: false,          // Phase 2: EchoMem 的 EpisodeEvent → Timeline
-  lexicalSearch: true,
-  semanticSearch: true,
-  hybridSearch: true,
-  graphTraversal: false,
-  entityResolution: false,  // Phase 2: provider-local 实体解析
-}
-```
-
-#### 为什么不定义单独接口
-
-- 协议包只有一套接口（`MemoryStore`，§10.6），避免 ConversationMemory 后续加 RelationEdge / Timeline 时变成第二套协议
-- `KnowledgeResolver` 已经按 capabilities 降级（capability=false → 该原语操作返回空 / 抛 NotSupportedError）
-- EchoMem develop 分支已有 `AtomicMemory`（SPO）、`EpisodeEvent`、`GraphEdge` — 这些映射到 `RelationEdge` 和 `Timeline` 是自然的（§10.9），只是 Phase 1 暂不实现
-
-### 11.5 协议适配：EchoAgent Session Memory Engine → 三原语
-
-EchoAgent 已有的 Session Memory Engine 协议（`protocolVersion: 2026-05-25`）
-使用**单 endpoint + mode 分流**（`session-memory-engine.service.ts`），
-与我们 §3.3 的 RESTful 端点风格不同。需要适配层桥接。
-
-#### 11.5.1 Mode 到原语映射
-
-| EchoAgent mode | 方向 | Phase 1 对应操作 | Phase 2+ 扩展 |
-|----------------|------|----------------|--------------|
-| `probe` | EchoMem → Clowder | `health()` + `capabilities()` | — |
-| `transform` | EchoMem → 宿主 | `TextBlockStore.search()` | + `RelationEdgeStore.neighbors()` |
-| `result` | 宿主 → EchoMem | `TextBlockStore.put()` | + `RelationEdgeStore.link()` + `TimelineStore.append()` |
-| `memory_query` (help) | 宿主 → EchoMem | `StoreCapabilities` | — |
-| `memory_query` (query) | 宿主 → EchoMem | `TextBlockStore.search()` | + `RelationEdgeStore.traverse()` |
-
-#### 11.5.2 协议差异适配
-
-| 差异点 | EchoAgent 协议 | 我们的三原语模型 | 适配方式 |
-|--------|---------------|----------------|---------|
-| 端点风格 | 单 endpoint + mode 字段 | RESTful 多端点 | EchoMemAdapter 内部按 mode 分发 |
-| 协议版本 | `protocolVersion: '2026-05-25'` | `X-API-Version: v0` | 版本互通表，启动时协商 |
-| 命名空间 | `session.sessionId` | `X-Memory-Namespace` | sessionId 映射为 namespace 子域 |
-| 认证 | 无（本地信任） | Bearer token | Phase 1 复用本地信任 |
-
-#### 11.5.3 EchoMemAdapter 示意
-
-```typescript
-/**
- * EchoMemAdapter — 桥接 EchoAgent Session Memory Engine 协议与
- * 标准 MemoryStore 接口（§10.6）。
- *
- * Phase 1 只实现 TextBlockStore（搜索面），probe mode 实现健康检查。
- * 写入不经过此 adapter（EchoMem 通过 result mode 自主收集）。
- * 后续 Phase 2 可实现 RelationEdgeStore / TimelineStore。
- *
- * 宿主通过 MemoryServiceAdapter（§4.2）把 MemoryStore 包装为
- * IEvidenceStore，KnowledgeResolver 无感知。
- */
-class EchoMemAdapter implements MemoryStore {
-  // Phase 1: 只实现 blocks
-  readonly blocks: EchoMemTextBlockAdapter;
-  readonly edges = NOT_SUPPORTED;    // Phase 2
-  readonly timelines = NOT_SUPPORTED; // Phase 2
-  constructor(
-    private endpoint: string,
-    private namespace: string,
-  ) {}
-
-  async search(
-    query: string,
-    options?: ConversationSearchOptions,
-  ): Promise<EvidenceItem[]> {
-    const result = await this.post({
-      mode: 'memory_query',
-      action: 'query',
-      protocolVersion: '2026-05-26',
-      source: 'clowder',
-      session: { sessionId: this.namespace },
-      query: {
-        text: query,
-        limit: options?.limit ?? 10,
-        mode: options?.mode ?? 'hybrid',
-        threadId: options?.threadId,
-        dateFrom: options?.dateFrom,
-        dateTo: options?.dateTo,
-        depth: options?.depth,
-        contextWindow: options?.contextWindow,
-      },
-    });
-    return this.toEvidenceItems(result.data, options?.depth);
-  }
-
-  async health(): Promise<boolean> {
-    try {
-      const result = await this.post({
-        mode: 'probe',
-        protocolVersion: '2026-05-25',
-        source: 'clowder',
-        session: { sessionId: this.namespace },
-      });
-      return result?.ok === true;
-    } catch {
-      return false;
-    }
-  }
-
-  async initialize(): Promise<void> {
-    // 验证 endpoint 可达 + 协议版本兼容
-    const ok = await this.health();
-    if (!ok) throw new Error('EchoMem endpoint unreachable');
-  }
-
-  async getByAnchor(anchor: string): Promise<EvidenceItem | null> {
-    // thread-${threadId} → 查询该 thread 的摘要
-    const threadId = anchor.replace('thread-', '');
-    const items = await this.search('', { threadId, limit: 1, depth: 'summary' });
-    return items[0] ?? null;
-  }
-
-  /**
-   * EchoMem 返回格式 → EvidenceItem 转换。
-   * 需要 EchoMem 侧在 memory_query response 中返回结构化结果：
-   *   { items: [{ id, content, speaker, threadId, createdAt, ... }] }
-   */
-  private toEvidenceItems(data: unknown, depth?: string): EvidenceItem[] {
-    // 转换逻辑：EchoMem 结果 → EvidenceItem
-    // id → anchor (thread-${threadId})
-    // content → summary
-    // items[].messages → passages[]（depth=raw 时）
-    // ...
-  }
-}
-```
-
-#### 11.5.4 反向适配：DocMemory → EchoAgent（P2-1）
-
-> EchoAgent 的 `memory_query_via_engine` 工具把 query/result schema
-> 完全透传给插件（`data: unknown`），平台只做最小校验。
-> 因此 DocMemory 接入 EchoAgent 不是"EchoAgent 实现 KnowledgeResolver 就行"，
-> 而是需要一个 `EchoAgentMemoryEngineAdapter`。
-
-```typescript
-/**
- * EchoAgentMemoryEngineAdapter — 把 Clowder DocMemory 包装为
- * EchoAgent memory_query dialect。
- *
- * 部署在 EchoAgent 侧作为 memory engine 插件，
- * 让 EchoAgent 的 AI agent 在对话中能搜索 Clowder 的文档知识。
- *
- * 生命周期：
- *   probe  → 返回 DocMemory 的 capabilities
- *   transform → 用 DocMemory 搜索相关文档，注入对话上下文
- *   result → 可选：接收对话结果用于更新知识关联
- *   memory_query → 把 EchoAgent query payload 翻译为 TextSearchOptions
- */
-class EchoAgentMemoryEngineAdapter {
-  constructor(
-    private docMemoryEndpoint: string,  // Clowder 记忆服务 §3.3 endpoint
-    private namespace: string,
-  ) {}
-
-  /** EchoAgent query payload → Clowder TextSearchOptions */
-  async handleMemoryQuery(payload: {
-    action: 'help' | 'query';
-    query?: Record<string, unknown>;
-  }): Promise<{ ok: true; result: unknown }> {
-    if (payload.action === 'help') {
-      return { ok: true, result: { capabilities: '...' } };
-    }
-    // 翻译 EchoAgent 的 query dialect → POST /blocks/search
-    const searchOpts = this.translateQuery(payload.query);
-    const results = await this.post(
-      `${this.docMemoryEndpoint}/blocks/search`,
-      { query: searchOpts.query, options: searchOpts },
-    );
-    // 包装成 EchoAgent 期望的 result 格式
-    return { ok: true, result: results };
-  }
-}
-```
-
-**部署模式**：EchoAgentMemoryEngineAdapter 作为一个独立 HTTP 服务，
-注册为 EchoAgent session 的 custom memory engine endpoint。
-EchoAgent 通过现有 `memory_query` mode 透传查询，adapter 翻译后调用 Clowder 记忆服务。
-
-#### 11.5.5 Ingestion 通道：Clowder → EchoMem（前置设计缺口）
-
-> **Fable review P1-A**：§11.5.3 说"写入不经过 adapter（EchoMem 通过 result mode 自主收集）"，
-> 但 `result` mode 是 EchoAgent session round 生命周期回调
-> （`session-memory-engine.service.ts:450/:481`）。**Clowder 不是 EchoAgent，没有 session round** ——
-> 当前没有任何机制把 Clowder 的 thread 消息灌进 EchoMem。
-> 没有 ingestion，EchoMem collection 搜出来永远是空的。
-> **这是 §11 成立的前提条件。**
-
-##### 可选方案（需与 EchoMem 团队对齐）
-
-| 方案 | 触发方 | payload | 增量/全量 | 侵入性 |
-|------|--------|---------|----------|--------|
-| **A. 消息事件钩子** | Clowder 消息处理管线 | 每条消息实时推送到 EchoMem `result` mode endpoint | 增量 | 中 — 需要在消息处理管线加 hook |
-| **B. IndexBuilder 改推** | `IndexBuilder.rebuild()` 完成后 | 批量推送 passage 到 EchoMem | 全量+增量 | 低 — 在现有 rebuild 流程末尾加推送步骤 |
-| **C. EchoMem 主动拉取** | EchoMem 定时轮询 | 通过 §3.3 `POST /blocks/search` 拉取新消息 | 增量 | 低 — 无 Clowder 侧改动，但实时性差 |
-| **D. 共享存储** | 无 | EchoMem 直接读 Clowder SQLite（只读） | 实时 | **高风险** — 违反边界隔离原则 |
-
-##### 前置问题（必须先回答）
-
-1. **EchoMem 是否愿意接非 EchoAgent 事件源？** — `result` mode 的 payload schema 假设 EchoAgent round 结构（input/output/metadata），Clowder thread 消息不满足此 schema
-2. **存量迁移**：21,946 条现存 passage 如何批量灌入 EchoMem？需要一次性迁移工具
-3. **增量保序**：消息推送是否需要保证 thread 内有序？跨 thread 呢？
-4. **Clowder thread 消息 → EchoMem round-result 的 schema 适配**：需要定义翻译层（或 EchoMem 接受自由格式 payload）
-
-> **建议**：方案 A（消息事件钩子）或 B（IndexBuilder 改推）最自然。
-> 但这是与 EchoMem 团队对齐的**第一议题** — 他们是否愿意接非 EchoAgent 事件源
-> 决定了整个 §11 的可行性。加入 §11.11 开放问题表。
-
-### 11.6 三入口 Provider 分流设计
-
-猫猫面对三个记忆检索入口（§1 检索层）。每个入口的 Provider 路由方式不同：
-
-#### 11.6.1 search_evidence → KnowledgeResolver 扇出
-
-SearchOptions 字段按以下规则分发到两个 Provider：
-
-| SearchOptions 字段 | DocMemoryProvider | ConversationMemoryProvider | 说明 |
-|-------------------|------------------|--------------------------|------|
-| `mode` | ✅ 透传 | ✅ 透传 | 搜索模式（lexical/semantic/hybrid） |
-| `limit` | ✅ 透传 | ✅ 透传 | 各 provider 独立 limit |
-| `kind` | ✅ 过滤 | ❌ 忽略（固定 thread） | ConversationMemory 只有 thread kind |
-| `status` | ✅ 过滤 | ❌ 忽略 | 对话消息无 doc status 概念 |
-| `keywords` | ✅ 过滤 | ❌ 忽略 | 对话消息无 keywords 标注 |
-| `scope` | 宿主路由 | 宿主路由 | KnowledgeResolver 消费，不下发到 provider |
-| `depth` | `'block'` 默认 | `'raw'` → passage 级 | Doc 返回摘要；对话返回消息级 |
-| `dateFrom` / `dateTo` | ✅ 透传 | ✅ 透传 | 时间范围过滤 |
-| `contextWindow` | ❌ 文档无上下文窗口 | ✅ 返回前后 N 条消息 | 只在 passage 级有意义 |
-| `threadId` | ❌ 忽略 | ✅ `parentId: thread-${threadId}` | ConversationMemory 按 thread 过滤 |
-| `dimension` | 宿主路由 | 宿主路由 | KnowledgeResolver 消费 |
-| `collections` | 宿主路由 | 宿主路由 | KnowledgeResolver 消费 |
-| `explain` | ✅ 透传 | ✅ 透传 | 两侧都支持匹配原因 |
-| `intent` | 宿主路由 | 宿主路由 | KnowledgeResolver 消费 |
-| `provenanceTier` | ✅ 过滤 | ❌ 忽略 | 对话消息无 provenance tier |
-| `worldId` / `sceneId` | ✅ → extra | ❌ 忽略 | 文档专属维度 |
-| `includeBackstop` | ✅ → extra | ❌ 忽略 | 文档压缩专属（F163） |
-
-#### 11.6.2 list_recent → RecentBrowseResolver 分流
-
-**当前问题**（Fable review P1-C）：`RecentBrowseResolver` 使用 duck-typed
-`(store as StoreWithDb).getDb?.()` 直接读 SQLite（`:60/:109/:168`）。
-service-backed store 没有 `getDb()` → **被静默跳过，无 degraded 提示**。
-EchoMem 接管对话后，`scope=threads`（恰好是对话数据主场）在 `list_recent` 里会缺数据。
-
-**设计方案**：
-
-```
-list_recent(scope=threads)
-  │
-  ├─ Phase 1（当前）：
-  │    RecentBrowseResolver 走 getDb() → SQLite 直读
-  │    service-backed store 静默跳过（已有行为）
-  │    → 降级安全，但 EchoMem 数据不可见
-  │
-  └─ Phase 2（需要新增）：
-       TextBlockStore 新增 recency 查询语义：
-         POST /blocks/list { orderBy: 'updatedAt', direction: 'desc', limit, kind?, ... }
-       RecentBrowseResolver 对 service-backed store 走 HTTP 接口
-       → EchoMem 的最近对话可见
-```
-
-服务契约 §3.3 需要补充 `POST /blocks/list` 端点（带 `orderBy` 排序参数），
-或在 `TextSearchOptions` 中增加 `orderBy?: 'relevance' | 'recency'` 字段。
-
-#### 11.6.3 graph_resolve → GraphStore 分流
-
-**当前状态**：edges 100% doc-to-doc（2,437 条），全部归 DocMemory。
-`GraphStore` 当前直接绑定在 project store 上，不经过 provider 路由。
-
-**分流规则**：
-
-| 场景 | 路由 | 说明 |
-|------|------|------|
-| 起点 anchor 是 doc（非 `thread-*`） | DocMemory GraphStore | 当前行为不变 |
-| 起点 anchor 是 `thread-*` | Phase 1: 本地 GraphStore（无 thread edge） | Phase 2: ConversationMemory 若实现 RelationEdge |
-| 跨 provider 关系（doc ↔ thread） | Phase 3: 宿主层 merge | 需要跨 provider edge 聚合机制 |
-
-**Phase 1 不阻塞**：当前没有 thread 相关 edge，graph_resolve 不会查到
-ConversationMemory 里的东西。EchoMem Phase 2 实现 RelationEdge（SPO）后，
-需要 GraphStore 支持 provider 路由。
-
-### 11.7 两侧集成方式
-
-#### Clowder 侧（消费方）
-
-1. **CollectionManifest 注册**（§4.3 扩展）：
-
-```json
-{
-  "id": "conversation-echomem",
-  "label": "EchoMem Conversation Memory",
-  "sensitivity": "internal",
-  "backend": {
-    "providerId": "echomem",
-    "config": {
-      "endpoint": "http://localhost:8080/api/memory-engine",
-      "namespace": "project:cat-cafe"
-    },
-    "mode": "readOnly"
-  }
-}
-```
-
-2. **MemoryBackendRegistry 注册**（§4.4 扩展）：
-
-```typescript
-registry.register('echomem', new EchoMemBackendProvider());
-```
-
-3. **KnowledgeResolver 自动扇出**：无需改动。EchoMem collection 与其他 collection 一视同仁。搜索时 Resolver 自动将 query 发到 EchoMemAdapter。
-
-#### EchoMem 侧（提供方）
-
-1. **memory_query mode 增强**：支持 Clowder 搜索语义（mode/limit/threadId/dateFrom/dateTo/depth/contextWindow/explain）。当前 `memory_query` 的 query payload 是自由格式，需要对齐字段。
-
-2. **result mode 自主收集**：保持现有协议不变 — 通过 `result` mode 接收每轮对话结果，自主提取和索引对话记忆。这是 EchoMem 的写入路径。
-
-3. **probe mode 能力声明**：返回体中添加 `capabilities` 字段，对应 `StoreCapabilities` 子集：
-
-```json
-{
-  "ok": true,
-  "engine": { "name": "echomem", "version": "0.1.0" },
-  "capabilities": {
-    "textBlock": true,
-    "lexicalSearch": true,
-    "semanticSearch": true,
-    "hybridSearch": true,
-    "entityResolution": false,
-    "relationEdge": false,
-    "timeline": false,
-    "graphTraversal": false
-  }
-}
-```
-
-4. **EntityResolver（provider-local）**：EchoMem 维护自己的实体解析（从对话中提取人名、概念等）。Clowder 宿主可选提供一个轻量的共享 alias normalizer，用于跨 provider query expansion（如用户搜 "砚砚" 时两侧都能扩展到 "缅因猫"），但不要求所有 provider 共享同一个实体库（避免跨租户 / 跨 session 边界混淆）。
-
-### 11.8 回退策略
-
-| 场景 | 回退行为 | 成本 |
-|------|---------|------|
-| EchoMem 不可达 | `health()=false` → KnowledgeResolver 标记 error → 对话搜索为空 + degraded=true | **零代码改动**（§6 降级） |
-| EchoMem 格式不兼容 | EchoMemAdapter 做格式兼容；无法兼容 → 抛错 → 降级 | adapter 修正 |
-| 决定不用 EchoMem | 删除 CollectionManifest 中 `conversation-echomem` 条目 | **1 行配置改动** |
-| EchoMem 暂时不可用 | 对话搜索全部走本地 SQLite（现有 thread-* passage 仍在） | **零改动** |
-
-**回退成本评估**：
-
-- **配置层回退**（推荐）：CollectionManifest 删除一个条目 → 1 行改动
-- **代码层回退**：EchoMemBackendProvider 从 registry 移除 → 1 行改动
-- **数据层回退**：无需数据迁移 — EchoMem 是独立存储，Clowder 本地 SQLite 保留全部数据副本
-
-> 这是 co-creator 强调的"不确定性用接口隔离"的具体体现：
-> EchoMem 是一个可选的外部 collection，不是核心依赖。
-> 不用 EchoMem 时，Clowder 回到纯本地模式，功能完全不受影响。
-
-### 11.9 隐私与部署边界（硬约束）
-
-> **Fable review P2-E**：对话消息是全系统最敏感数据。
-> 写路径把全量对话交给外部团队存储——部署边界、访问控制、
-> private thread 范围必须是显式硬约束，不能靠示例暗示。
-
-**部署约束**：
-
-| 约束 | 要求 | 来源 |
-|------|------|------|
-| **部署位置** | EchoMem 必须 localhost / 同机部署。对话数据不出本机网络 | 铁律 #1（Data Storage Sanctuary）+ W5 |
-| **传输加密** | localhost 可免 TLS；跨网络部署（未来）必须 mTLS | 安全基线 |
-| **private thread** | `sensitivity=private` 的 thread 消息**不推送到 EchoMem** | ingestion hook 过滤 |
-| **访问控制** | EchoMem endpoint 仅接受 Clowder 宿主连接（IP 白名单 / Unix socket / Bearer token） | 最小权限 |
-| **数据保留** | EchoMem 侧对话数据保留策略须不低于 Clowder 本地（当前无 TTL） | 铁律 #5（用户数据持久化） |
-| **删除传播** | 用户请求删除对话 → Clowder 须同步通知 EchoMem 删除对应数据 | GDPR / 数据主权 |
-
-> §11.7 示例中 `"endpoint": "http://localhost:8080/api/memory-engine"` 的
-> `localhost` 不是随意选择——**localhost 部署是 Phase 1 硬约束**。
-
-### 11.10 验收基线
-
-> **Fable review P2-G**：P5（可验证才算完成）——
-> "按擅长分工"是假设，需要可验证的判据。
-
-**验收方案**：挂载 **F200 Memory Recall Eval**，先固化本地 passage 搜索的
-对话召回基线，EchoMem 接入后同题对比。
-
-| 指标 | 基线来源 | 门槛 |
-|------|---------|------|
-| 对话召回率（recall@10） | 当前 passage_fts + passage_vectors 搜索 | 不劣于基线（≥95%） |
-| 搜索延迟 P95 | 当前 KnowledgeResolver 单 store 延迟 | ≤ 2× 本地延迟 |
-| 降级正确性 | EchoMem 不可达 → `degraded=true` + 对话结果为空 | 100% |
-| list_recent 完整性 | `scope=threads` 返回最近 N 个 thread | 不劣于本地（Phase 2） |
-
-**实施步骤**：
-
-1. Phase 1 前：用 F200 Eval 在本地 SQLite passage 搜索上跑基线测试集
-2. EchoMem 接入后：同一测试集在 EchoMem collection 上跑，对比召回率
-3. 验收门槛未达 → 回退到本地（§11.8 回退成本 = 1 行配置改动）
-
-### 11.11 开放问题
-
-| # | 问题 | 当前立场 |
-|---|------|---------|
-| 1 | EchoMem 的 `memory_query` response 格式如何与 EvidenceItem 对齐？ | 需要 EchoMem 侧定义结构化返回（当前 `data` 是 unknown） |
-| 2 | 共享 alias normalizer 的 scope 如何划定？ | provider-local 实体是默认；共享 normalizer 只做 query expansion，不强制同步全量实体库。跨租户 / 跨 session 边界需要隔离 |
-| 3 | Thread 摘要（summary_segments）何时移交 EchoMem Episode？ | Phase 2 讨论。当前 Clowder 能用，不急 |
-| 4 | 孤儿 anchor 的 passage 治理方案？ | 根因是 cleanup 不级联（§11.3.2），需先在我们治理层解决保留策略矛盾（doc 不保留 vs passage 永久保留），再谈移交 |
-| 5 | 两侧搜索结果的 RRF 融合权重如何调？ | 默认等权。消费 rerank（F200）在融合后由宿主统一做 |
-| 6 | EchoAgentMemoryEngineAdapter 部署架构？ | 倾向独立 HTTP 服务 + 注册为 EchoAgent memory engine endpoint。需要 EchoAgent 侧配合 |
-| 7 | ConversationMemory Phase 2 何时实现 RelationEdge / Timeline？ | 取决于 EchoMem develop 分支稳定性（SPO / EpisodeEvent 成熟度） |
-| 8 | **Ingestion 通道方案选择？**（P1-A） | 方案 A（消息事件钩子）或 B（IndexBuilder 改推）最自然。但 EchoMem 是否愿意接非 EchoAgent 事件源是第一前置问题（见 §11.5.5） |
-| 9 | **EchoAgent session ≠ Clowder thread 语义映射？**（P2-F） | namespace `project:cat-cafe` 塞进 `sessionId` — 一个"session"装 193 个 thread 的无限长多猫对话，EchoMem 的 episode 分段是否语义正确？需 EchoMem 团队确认 |
-| 10 | **MemoryServiceAdapter 遍历统计损失？** | adapter 的 `getRelated` 硬编码 `traversalCount:0 / lastTraversedAt:null`（§4.2）— service-backed collection 丢失 F200 遍历信号。记为已知损失，Phase 3 可通过 service 侧遍历计数弥补 |
-
----
-
-## 附录：关键源码锚点
-
-| 组件 | 文件 | 行号 |
-|------|------|------|
-| `IEvidenceStore` 接口 | `packages/api/src/domains/memory/interfaces.ts` | 340 |
-| `SearchOptions` 查询契约 | `packages/api/src/domains/memory/interfaces.ts` | 231 |
-| `IKnowledgeResolver` 接口 | `packages/api/src/domains/memory/interfaces.ts` | 389 |
-| `createMemoryServices` 工厂 | `packages/api/src/domains/memory/factory.ts` | 128 |
-| `KnowledgeResolver` N-collection 扇出 | `packages/api/src/domains/memory/KnowledgeResolver.ts` | 57 |
-| `CollectionManifest` 类型 | `packages/api/src/domains/memory/collection-types.ts` | 22 |
-| 外部 collection manifest 加载 | `packages/api/src/domains/memory/external-collections.ts` | 8 |
-| SQLite schema（26 版本） | `packages/api/src/domains/memory/schema.ts` | 13 |
-| Callback 路由（绕过 resolver — 待修） | `packages/api/src/routes/callback-memory-routes.ts` | 31 |
-| IM Connector 插件契约（参考模式） | `packages/api/src/infrastructure/connectors/im-connector-plugin.ts` | 110 |
-| IM Connector 加载器（参考模式） | `packages/api/src/infrastructure/connectors/im-connector-loader.ts` | 194 |
-
-### 外部参考锚点
+> 新文档包含三层架构、路由决策表、canonicalId/IdentityScope、Wire Contract v0、
+> 可靠 Ingestion 协议、删除与 Lineage、隐私边界、迁移拓扑、验收基线、
+> 显式否决记录、以及四轮 review 的修正历史。
+
+### 外部代码锚点索引（保留在本 ADR）
 
 | 组件 | 仓库 | 路径 |
 |------|------|------|
-| EchoMem MemRouter pipeline | EchoMem (main) | `echomem/pipeline.py` |
-| EchoMem MemoryEngine 协议 | EchoMem (develop) | `src/echomem/index_engine/engine_plugin/memory_engine.py` |
-| EchoMem RetrievalService | EchoMem (develop) | `src/echomem/req_coordinator/interfaces/retrieval_service.py` |
 | EchoMem SessionService | EchoMem (develop) | `src/echomem/req_coordinator/interfaces/session_service.py` |
+| EchoMem RetrievalService | EchoMem (develop) | `src/echomem/req_coordinator/interfaces/retrieval_service.py` |
+| EchoMem ContextItemRsp | EchoMem (develop) | `src/echomem/memrouter/recall/interfaces/entities/retrieval.py` |
 | EchoMem MCP 工具 | EchoMem (develop) | `src/echomem/entrypoints/mcp/tools.py` |
-| EchoMem RetrievalReq/Rsp | EchoMem (develop) | `src/echomem/memrouter/recall/interfaces/entities/retrieval.py` |
-| 评测平台 MemoryPlugin 协议 | Memory-System-Eval-Harness | `memory/plugins/base.py:47` |
-| 评测平台插件契约 | Memory-System-Eval-Harness | `memory/plugins/contract.py` |
-| 评测平台 EchoMemory 适配器 | Memory-System-Eval-Harness | `memory/plugins/echomemory/plugin.py` |
-| EchoAgent Session Memory Engine 服务 | EchoAgent | `dev/backend/src/modules/session/session-memory-engine.service.ts` |
-| EchoAgent Memory Engine 实体 | EchoAgent | `dev/backend/src/modules/session/entities/session-memory-engine.entity.ts` |
+| EchoAgent Session Memory Engine | EchoAgent | `dev/backend/src/modules/session/session-memory-engine.service.ts` |
 | EchoAgent Memory Query Tool | EchoAgent | `dev/backend/src/modules/session/tools/builtins/memory-query-via-engine.tool.ts` |
-| EchoAgent Memory Engine 设计文档 | EchoAgent | `design/backend/session-custom-memory-engine-round-result-design.md` |
-| EchoAgent Memory Query 设计文档 | EchoAgent | `design/backend/session-memory-engine-query-tool-design.md` |
+| 评测平台 MemoryPlugin 协议 | Memory-System-Eval-Harness | `memory/plugins/base.py:47` |
