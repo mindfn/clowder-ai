@@ -29,6 +29,22 @@ class FakeGuardRejectionEventLog {
     if (opts.catId) result = result.filter((e) => e.catId === opts.catId);
     return result.slice(0, opts.limit ?? 200);
   }
+
+  // Strict variant — same logic, used by adapter (fail-closed eval path)
+  async queryWindowStrict(opts) {
+    return this.queryWindow(opts);
+  }
+}
+
+/** Fake that throws on any query — simulates Redis outage for fail-closed test. */
+class ThrowingGuardRejectionEventLog {
+  async queryWindow() {
+    throw new Error('REDIS_CONNECTION_REFUSED');
+  }
+
+  async queryWindowStrict() {
+    throw new Error('REDIS_CONNECTION_REFUSED');
+  }
 }
 
 // ── Test helpers ──
@@ -212,13 +228,27 @@ describe('harness-ledger-generator-adapter', () => {
     assert.equal(snapshot.byGuard.a2a_block_pingpong, 1);
     assert.equal(snapshot.components[0].confidence, 'medium');
 
-    // Check attribution has findings (not noFindingRecord)
+    // Check attribution has schema-compliant findings (not noFindingRecord)
     const attr = JSON.parse(readFileSync(join(result.bundleDir, 'attribution.json'), 'utf8'));
     assert.ok(!attr.noFindingRecord, 'should NOT have noFindingRecord when events exist');
     assert.equal(attr.findings.length, 2); // 2 distinct guards
-    const holdBallFinding = attr.findings.find((f) => f.guardId === 'hold_ball_rate_limit');
-    assert.equal(holdBallFinding.eventCount, 2);
-    assert.ok(holdBallFinding.kinds.includes('http_rate_limit'));
+
+    // Verify attributionFindingSchema compliance (id, frictionSignal, attribution, proposedAction)
+    const holdBallFinding = attr.findings.find((f) => f.id === 'f257-guard-hold_ball_rate_limit');
+    assert.ok(holdBallFinding, 'finding for hold_ball_rate_limit exists');
+    assert.equal(holdBallFinding.frictionSignal.severity, 'low'); // 2 events < 5
+    assert.equal(holdBallFinding.frictionSignal.confidence, 0.7);
+    assert.equal(holdBallFinding.frictionSignal.type, 'http_rate_limit');
+    assert.equal(holdBallFinding.attribution.primaryLayer, 'guard-rejection-log');
+    assert.ok(holdBallFinding.attribution.evidence.length >= 1);
+    assert.equal(holdBallFinding.attribution.evidence[0].anchor, 'guard-rejection-log/http_rate_limit');
+    assert.equal(holdBallFinding.proposedAction[0].target, 'hold_ball_rate_limit');
+    assert.ok(holdBallFinding.proposedAction[0].rationale.includes('2'));
+
+    const pingpongFinding = attr.findings.find((f) => f.id === 'f257-guard-a2a_block_pingpong');
+    assert.ok(pingpongFinding, 'finding for a2a_block_pingpong exists');
+    assert.equal(pingpongFinding.frictionSignal.type, 'route_decision_block');
+    assert.equal(pingpongFinding.attribution.evidence[0].anchor, 'guard-rejection-log/route_decision_block');
 
     // Check verdict markdown
     const md = readFileSync(result.verdictPath, 'utf8');
@@ -354,7 +384,110 @@ describe('harness-ledger-generator-adapter', () => {
     const snapshot = JSON.parse(readFileSync(join(result.bundleDir, 'snapshot.json'), 'utf8'));
     assert.equal(snapshot.window.startMs, start);
     assert.equal(snapshot.window.endMs, end);
-    assert.equal(snapshot.window.durationDays, 7);
+    assert.equal(snapshot.window.durationHours, 168); // 7 days × 24h
+
+    // Cleanup
+    rmSync(tmpDir, { recursive: true });
+  });
+
+  // ── P1 regression: Redis fail-closed (queryWindowStrict) ──
+
+  test('ThrowingRedis → adapter rejects instead of writing false zero-event verdict', async () => {
+    const log = new ThrowingGuardRejectionEventLog();
+    const generator = createHarnessLedgerGeneratorAdapter(log);
+    const tmpDir = makeTmpDir();
+
+    await assert.rejects(
+      () => generator(makePacket(), makeSourceRefs(), makeDeps(tmpDir)),
+      (err) => {
+        assert.ok(err.message.includes('REDIS_CONNECTION_REFUSED'));
+        return true;
+      },
+    );
+
+    // Must NOT have written any verdict or bundle (fail-closed)
+    assert.ok(!existsSync(join(tmpDir, 'verdicts')), 'no verdict dir should exist on Redis error');
+
+    // Cleanup
+    rmSync(tmpDir, { recursive: true });
+  });
+
+  // ── Resolver round-trip: bundles pass resolveA2aEvidenceBundle validation ──
+
+  test('zero-events bundle passes resolveA2aEvidenceBundle round-trip', async () => {
+    const { resolveA2aEvidenceBundle } = await import(
+      '../dist/infrastructure/harness-eval/a2a/eval-a2a-artifact-resolver.js'
+    );
+    const log = new FakeGuardRejectionEventLog([]);
+    const generator = createHarnessLedgerGeneratorAdapter(log);
+    const tmpDir = makeTmpDir();
+    const packet = makePacket({ id: 'roundtrip-zero' });
+
+    const result = await generator(packet, makeSourceRefs(), makeDeps(tmpDir));
+
+    // resolveA2aEvidenceBundle validates snapshot/attribution/provenance schemas
+    const resolved = resolveA2aEvidenceBundle({
+      verdictId: packet.id,
+      bundleDir: result.bundleDir,
+    });
+
+    assert.equal(resolved.verdictId, packet.id);
+    assert.ok(resolved.snapshot.featureId === 'F257');
+    assert.equal(resolved.attributionReport.findings.length, 0);
+    assert.ok(resolved.attributionReport.noFindingRecord);
+    assert.equal(resolved.provenance.generator.name, 'harness-ledger-generator-adapter');
+
+    // Cleanup
+    rmSync(tmpDir, { recursive: true });
+  });
+
+  test('mixed-events bundle passes resolveA2aEvidenceBundle round-trip', async () => {
+    const { resolveA2aEvidenceBundle } = await import(
+      '../dist/infrastructure/harness-eval/a2a/eval-a2a-artifact-resolver.js'
+    );
+    const now = Date.now();
+    const events = [
+      makeEvent({ timestamp: now - 5000 }),
+      makeEvent({ timestamp: now - 4000 }),
+      makeBlockEvent({ timestamp: now - 3000 }),
+    ];
+    const log = new FakeGuardRejectionEventLog(events);
+    const generator = createHarnessLedgerGeneratorAdapter(log);
+    const tmpDir = makeTmpDir();
+    const packet = makePacket({ id: 'roundtrip-mixed' });
+
+    const result = await generator(
+      packet,
+      makeSourceRefs({ windowStartMs: now - 10000, windowEndMs: now }),
+      makeDeps(tmpDir),
+    );
+
+    // resolveA2aEvidenceBundle validates ALL schemas + cross-references:
+    // - bundleSnapshotSchema (window.durationHours, components)
+    // - bundleAttributionSchema (findings with attributionFindingSchema)
+    // - bundleProvenanceSchema (sha256 digest)
+    // - assertAttributionAnchors (evidence anchors match snapshot metrics)
+    const resolved = resolveA2aEvidenceBundle({
+      verdictId: packet.id,
+      bundleDir: result.bundleDir,
+    });
+
+    assert.equal(resolved.verdictId, packet.id);
+    // Note: totalEvents/byKind/byGuard are adapter-extra fields not in
+    // bundleSnapshotSchema — Zod strips them. Schema-validated fields:
+    assert.equal(resolved.snapshot.featureId, 'F257');
+    assert.ok(resolved.snapshot.window.durationHours >= 0);
+    assert.ok(resolved.snapshot.components.length >= 1);
+    assert.equal(resolved.attributionReport.findings.length, 2);
+    assert.ok(!resolved.attributionReport.noFindingRecord);
+
+    // Verify findings survived schema + anchor validation
+    const finding = resolved.attributionReport.findings[0];
+    assert.ok(finding.id.startsWith('f257-guard-'));
+    assert.ok(['low', 'medium', 'high'].includes(finding.frictionSignal.severity));
+    assert.equal(finding.attribution.primaryLayer, 'guard-rejection-log');
+    assert.ok(finding.attribution.evidence.length >= 1);
+    assert.ok(finding.proposedAction.length >= 1);
 
     // Cleanup
     rmSync(tmpDir, { recursive: true });

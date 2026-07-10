@@ -31,5 +31,7 @@ sla:
   reevalWithinHours: 168
 # Phase A Line B: producers wired (hold_ball 429 + block_pingpong emits).
 # Eval engine wiring: generator adapter → publish_verdict pipeline green.
-# Enabled after end-to-end chain verified (PR #23 merged + eval engine wiring).
-enabled: true
+# Kept disabled until eval cat has data access to guard rejection events
+# (pre-injection snapshot or query tool). Without data access, weekly trigger
+# would produce evidence-free verdicts. See codex review on PR #24.
+enabled: false

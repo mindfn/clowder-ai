@@ -11,10 +11,11 @@
  *   4. Write verdict markdown + bundle artifacts
  *   5. Return paths
  *
- * The adapter is fail-closed: if the event log query fails (non-Redis error),
- * the generator throws and the publish flow returns 500 to the eval cat.
- * The event log itself is fail-open (GuardRejectionEventLog returns [] on
- * Redis errors), so zero-event verdicts are a valid outcome (keep_observe).
+ * The adapter is fail-closed: uses queryWindowStrict() which propagates
+ * Redis errors (unlike the business-facing fail-open queryWindow()).
+ * Redis outage → generator throws → publish returns 500 to eval cat →
+ * no false "zero events" verdict is written. Genuine zero events are
+ * a valid outcome (keep_observe with noFindingRecord).
  */
 
 import { createHash } from 'node:crypto';
@@ -43,8 +44,11 @@ export function createHarnessLedgerGeneratorAdapter(guardRejectionLog: GuardReje
       throw new Error('invalid_window: windowEndMs must be greater than windowStartMs');
     }
 
-    // Step 3: resolve data from GuardRejectionEventLog
-    const events = await guardRejectionLog.queryWindow({
+    // Step 3: resolve data from GuardRejectionEventLog (strict = fail-closed).
+    // P1 fix (codex review 04a8c368b): queryWindow is fail-open (returns []
+    // on Redis error), which would produce false "zero events" verdicts.
+    // queryWindowStrict propagates Redis errors → generator throws → 500.
+    const events = await guardRejectionLog.queryWindowStrict({
       since: selector.windowStartMs,
       until: selector.windowEndMs,
       ...(selector.guardId ? { guardId: selector.guardId } : {}),
@@ -53,6 +57,9 @@ export function createHarnessLedgerGeneratorAdapter(guardRejectionLog: GuardReje
     const generatedAt = new Date().toISOString();
     const evalSnapshotId = `harness-ledger-snapshot-${packet.id}`;
     const windowMs = selector.windowEndMs - selector.windowStartMs;
+    // P1 fix (codex review 04a8c368b): bundleSnapshotSchema enforces
+    // durationHours (not durationDays) — align with QC/friction adapters.
+    const windowHours = Math.round(windowMs / (3600 * 1000));
     const windowDays = Math.round(windowMs / (24 * 3600 * 1000));
 
     // Aggregate by kind
@@ -82,7 +89,7 @@ export function createHarnessLedgerGeneratorAdapter(guardRejectionLog: GuardReje
       window: {
         startMs: selector.windowStartMs,
         endMs: selector.windowEndMs,
-        durationDays: windowDays,
+        durationHours: windowHours,
       },
       ...(selector.guardId ? { guardIdFilter: selector.guardId } : {}),
       totalEvents: events.length,
@@ -105,6 +112,10 @@ export function createHarnessLedgerGeneratorAdapter(guardRejectionLog: GuardReje
     writeFileSync(join(bundleDir, 'snapshot.json'), snapshotJson);
 
     // --- Bundle: attribution.json ---
+    // P1 fix (codex review): findings must conform to attributionFindingSchema
+    // (eval-a2a-artifact-resolver.ts L76-98). Each finding needs id, frictionSignal,
+    // attribution (with evidence anchored to snapshot components), proposedAction.
+    // assertAttributionAnchors validates evidence anchors match snapshot metric keys.
     const hasEvents = events.length > 0;
     const attribution = {
       verdictId: packet.id,
@@ -112,11 +123,36 @@ export function createHarnessLedgerGeneratorAdapter(guardRejectionLog: GuardReje
       evalSnapshotId,
       generatedAt,
       findings: hasEvents
-        ? Object.entries(byGuard).map(([guardId, count]) => ({
-            guardId,
-            eventCount: count,
-            kinds: [...new Set(events.filter((e) => e.guardId === guardId).map((e) => e.kind))],
-          }))
+        ? Object.entries(byGuard).map(([guardId, count]) => {
+            const guardEvents = events.filter((e) => e.guardId === guardId);
+            const kinds = [...new Set(guardEvents.map((e) => e.kind))];
+            const severity: 'low' | 'medium' | 'high' = count >= 20 ? 'high' : count >= 5 ? 'medium' : 'low';
+            return {
+              id: `f257-guard-${guardId}`,
+              frictionSignal: {
+                type: kinds.join('+'),
+                severity,
+                confidence: 0.7,
+              },
+              attribution: {
+                primaryLayer: 'guard-rejection-log',
+                // Evidence anchors: guard-rejection-log/<kind> links to
+                // snapshot.components[0].activationCounts[kind].
+                evidence: kinds.map((kind) => ({
+                  type: 'activation-count',
+                  anchor: `guard-rejection-log/${kind}`,
+                  excerpt: `${guardEvents.filter((e) => e.kind === kind).length} ${kind} rejection(s) by guard ${guardId}`,
+                })),
+              },
+              proposedAction: [
+                {
+                  action: 'review',
+                  target: guardId,
+                  rationale: `${count} guard rejection(s) in window — review for operational pattern`,
+                },
+              ],
+            };
+          })
         : [],
       ...(hasEvents
         ? {}
