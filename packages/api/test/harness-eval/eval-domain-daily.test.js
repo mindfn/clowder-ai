@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { describe, it, mock } from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, describe, it, mock } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   createEvalDomainDailySpec,
@@ -244,6 +247,151 @@ describe('eval-domain-daily task spec', () => {
   });
 });
 
+describe('KD-17 snapshot-first error paths (eval:harness-ledger)', () => {
+  // Fake domain signal matching eval:harness-ledger config.
+  const harnessLedgerDomain = {
+    domainId: 'eval:harness-ledger',
+    displayName: 'Harness Ledger Eval',
+    systemThreadId: 'thread_eval_harness_ledger',
+    evalCat: { catId: 'gpt52', handle: '@gpt52', model: 'gpt-5.4' },
+    frequency: 'weekly',
+    sourceAdapter: 'f257-prompt-segments',
+    sourceRefsKind: 'prompt-segments',
+    threadPolicy: {
+      role: 'working-home',
+      stateSot: 'registry',
+      allowedContent: ['longitudinal-analysis', 'verdict-discussion', 'handoff-drafts'],
+    },
+    legacyScheduledTaskIds: [],
+    handoffTargetResolver: { featureId: 'F257', ownerCatId: 'opus-47', threadLookup: 'feature-thread' },
+    sla: { acknowledgeHours: 48, reevalWithinHours: 168 },
+    enabled: true, // pretend enabled for testing execute path
+  };
+
+  it('scheduled: skips invocation when guardRejectionLog provider is absent', async () => {
+    // No guardRejectionLog in config → deliver SKIPPED message + return (no cat invoke).
+    const spec = createEvalDomainWeeklySpec({ harnessFeedbackRoot: repoHarnessFeedbackRoot });
+
+    const deliverMock = mock.fn(async () => 'msg_skip');
+    const triggerMock = mock.fn();
+    const ctx = {
+      assignedCatId: null,
+      deliver: deliverMock,
+      invokeTrigger: { trigger: triggerMock },
+    };
+
+    await spec.run.execute(harnessLedgerDomain, 'eval:harness-ledger', ctx);
+
+    // deliver was called once with SKIPPED message (not eval invocation)
+    assert.equal(deliverMock.mock.callCount(), 1);
+    const content = deliverMock.mock.calls[0].arguments[0].content;
+    assert.ok(
+      content.includes('SKIPPED (harness ledger snapshot unavailable)'),
+      `should contain SKIPPED header, got: ${content.slice(0, 100)}`,
+    );
+    assert.ok(
+      content.includes('provider_not_wired') || content.includes('not wired'),
+      'should mention provider not wired',
+    );
+    assert.equal(deliverMock.mock.calls[0].arguments[0].threadId, 'thread_eval_harness_ledger');
+
+    // invokeTrigger must NOT be called (no cat invocation)
+    assert.equal(triggerMock.mock.callCount(), 0, 'eval cat must NOT be invoked without snapshot');
+  });
+
+  it('scheduled: skips invocation when snapshot production throws (Redis error)', async () => {
+    // guardRejectionLog exists but queryWindowStrict throws → deliver SKIPPED message + return.
+    const throwingLog = {
+      queryWindowStrict: async () => {
+        throw new Error('READONLY: Redis failover in progress');
+      },
+      queryWindow: async () => [],
+    };
+
+    const spec = createEvalDomainWeeklySpec({
+      harnessFeedbackRoot: repoHarnessFeedbackRoot,
+      guardRejectionLog: throwingLog,
+    });
+
+    const deliverMock = mock.fn(async () => 'msg_skip_err');
+    const triggerMock = mock.fn();
+    const ctx = {
+      assignedCatId: null,
+      deliver: deliverMock,
+      invokeTrigger: { trigger: triggerMock },
+    };
+
+    await spec.run.execute(harnessLedgerDomain, 'eval:harness-ledger', ctx);
+
+    assert.equal(deliverMock.mock.callCount(), 1);
+    const content = deliverMock.mock.calls[0].arguments[0].content;
+    assert.ok(content.includes('SKIPPED (harness ledger snapshot unavailable)'), 'should contain SKIPPED header');
+    assert.ok(content.includes('Redis failover'), 'should contain error detail');
+
+    assert.equal(triggerMock.mock.callCount(), 0, 'eval cat must NOT be invoked on snapshot error');
+  });
+
+  it('scheduled: delivers invocation with evidence when snapshot succeeds', async () => {
+    // guardRejectionLog produces data → eval cat invoked with precomputedEvidence.
+    // Use a temp dir so snapshot files don't pollute the repo.
+    const tmpRoot = mkdtempSync(join(tmpdir(), 'kd17-success-'));
+    const successLog = {
+      queryWindowStrict: async () => [
+        { eventId: 'e1', kind: 'hold_ball_429', guardId: 'guard-1', timestamp: Date.now(), rawPayload: {} },
+      ],
+      queryWindow: async () => [],
+    };
+
+    const spec = createEvalDomainWeeklySpec({
+      harnessFeedbackRoot: tmpRoot,
+      guardRejectionLog: successLog,
+    });
+
+    const deliverMock = mock.fn(async () => 'msg_success');
+    const triggerMock = mock.fn();
+    const ctx = {
+      assignedCatId: null,
+      deliver: deliverMock,
+      invokeTrigger: { trigger: triggerMock },
+    };
+
+    await spec.run.execute(harnessLedgerDomain, 'eval:harness-ledger', ctx);
+
+    assert.equal(deliverMock.mock.callCount(), 1);
+    const content = deliverMock.mock.calls[0].arguments[0].content;
+    // Must NOT contain SKIPPED
+    assert.ok(!content.includes('SKIPPED'), 'successful path should not contain SKIPPED');
+    // Must contain evidence (snapshot summary)
+    assert.ok(content.includes('Pre-computed Guard Rejection Snapshot'), 'should contain pre-computed evidence');
+    assert.ok(content.includes('evalRunId'), 'should contain evalRunId reference');
+
+    // KD-17 last-hop: delivered content must include exact sourceRefs JSON
+    // with windowStartMs, windowEndMs, and evalRunId as copyable values.
+    // Eval cat copies this block verbatim — no ISO→epoch conversion needed.
+    assert.ok(content.includes('"windowStartMs"'), 'should contain exact windowStartMs field');
+    assert.ok(content.includes('"windowEndMs"'), 'should contain exact windowEndMs field');
+    assert.ok(content.includes('"kind": "prompt-segments"'), 'should contain kind in sourceRefs JSON');
+
+    // Extract the sourceRefs JSON from the fenced code block and verify
+    // it would pass the generator's exact-window check against the stored snapshot.
+    const allJsonBlocks = [...content.matchAll(/```json\s*\n([\s\S]*?)\n\s*```/g)];
+    const sourceRefsBlock = allJsonBlocks.find((m) => m[1].includes('"prompt-segments"'));
+    assert.ok(sourceRefsBlock, 'should have a fenced JSON block with sourceRefs');
+    const sourceRefs = JSON.parse(sourceRefsBlock[1]);
+    assert.equal(sourceRefs.kind, 'prompt-segments');
+    assert.equal(typeof sourceRefs.windowStartMs, 'number', 'windowStartMs must be a number');
+    assert.equal(typeof sourceRefs.windowEndMs, 'number', 'windowEndMs must be a number');
+    assert.ok(sourceRefs.windowEndMs > sourceRefs.windowStartMs, 'window must be valid');
+    assert.ok(/^hlr-\d+-[a-f0-9]{8}$/.test(sourceRefs.evalRunId), 'evalRunId must match safe format');
+
+    // invokeTrigger must be called (cat invoked)
+    assert.equal(triggerMock.mock.callCount(), 1, 'eval cat must be invoked with evidence');
+
+    // Cleanup temp snapshot files
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+});
+
 describe('eval-domain-weekly task spec (AC-E19, AC-E20)', () => {
   it('returns a valid TaskSpec_P1 with weekly cron and correct id', () => {
     const spec = createEvalDomainWeeklySpec({ harnessFeedbackRoot: repoHarnessFeedbackRoot });
@@ -260,7 +408,7 @@ describe('eval-domain-weekly task spec (AC-E19, AC-E20)', () => {
     assert.equal(spec.display.category, 'system');
   });
 
-  it('weekly gate includes enabled weekly domains (capability-wakeup + sop), excludes daily', async () => {
+  it('weekly gate includes enabled weekly domains (capability-wakeup + sop + harness-ledger), excludes daily', async () => {
     const spec = createEvalDomainWeeklySpec({ harnessFeedbackRoot: repoHarnessFeedbackRoot });
 
     const result = await spec.admission.gate();
@@ -273,6 +421,11 @@ describe('eval-domain-weekly task spec (AC-E19, AC-E20)', () => {
     );
     // Re-enabled 2026-06-10 by feat/f192-sop-wiring: all 3 wiring conditions met.
     assert.ok(domainIds.includes('eval:sop'), 'eval:sop (re-enabled) must appear in weekly gate');
+    // KD-17 snapshot-first: eval:harness-ledger re-enabled after data access resolved.
+    assert.ok(
+      domainIds.includes('eval:harness-ledger'),
+      'eval:harness-ledger (weekly + re-enabled after KD-17) must appear in weekly gate',
+    );
     assert.ok(!domainIds.includes('eval:a2a'), 'eval:a2a (daily) must NOT appear in weekly gate');
     assert.ok(!domainIds.includes('eval:memory'), 'eval:memory (daily) must NOT appear in weekly gate');
     assert.ok(!domainIds.includes('eval:task-outcome'), 'eval:task-outcome (daily) must NOT appear in weekly gate');

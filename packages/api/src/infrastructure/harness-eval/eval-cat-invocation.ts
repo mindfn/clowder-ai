@@ -10,6 +10,12 @@ export interface EvalCatInvocationInput {
   trendRefs: string[];
   verdictRefs: string[];
   legacyCleanup: LegacyCleanupStatus;
+  /**
+   * KD-17 snapshot-first: pre-computed evidence summary for domains that
+   * produce a run snapshot before eval cat invocation (e.g. eval:harness-ledger).
+   * Injected into the invocation context so the eval cat sees real data.
+   */
+  precomputedEvidence?: string;
 }
 
 export interface EvalCatInvocationPacket {
@@ -26,6 +32,8 @@ export interface EvalCatInvocationPacket {
     legacyCleanup: LegacyCleanupStatus;
     sla: EvalDomainRegistryEntry['sla'];
   };
+  /** KD-17: pre-computed evidence summary (injected as extra content, not in context JSON). */
+  precomputedEvidence?: string;
 }
 
 const DOMAIN_INSTRUCTIONS: Partial<Record<string, string>> = {
@@ -297,21 +305,16 @@ The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits 
 `;
 
 const PUBLISH_VERDICT_INSTRUCTIONS_HARNESS_LEDGER = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
-You must also supply \`sourceRefs\` (NOT part of packet, separate input field) as a replayable prompt-segments selector:
-\`\`\`json
-{
-  "kind": "prompt-segments",
-  "windowStartMs": 1759276800000,
-  "windowEndMs": 1759363200000
-}
-\`\`\`
+You must also supply \`sourceRefs\` (NOT part of packet, separate input field) as a replayable prompt-segments selector.
+
+**Copy the exact sourceRefs JSON from the "Pre-computed Guard Rejection Snapshot" section in your invocation message.** The snapshot section includes a fenced JSON block with the exact \`kind\`, \`windowStartMs\`, \`windowEndMs\`, and \`evalRunId\` values. Copy them verbatim — do NOT convert, round, or re-derive any values.
 
 Fields:
 - \`kind\` — REQUIRED literal \`"prompt-segments"\`
-- \`windowStartMs\` / \`windowEndMs\` — REQUIRED finite ms epoch; \`windowEndMs\` must be > \`windowStartMs\` (the window over which guard rejection events — http_rate_limit, route_decision_block — are queried)
-- \`guardId\` — OPTIONAL string; restrict to a specific guard id (e.g. \`"hold_ball_rate_limit"\`, \`"a2a_block_pingpong"\`)
+- \`windowStartMs\` / \`windowEndMs\` — REQUIRED exact epoch-ms values from the snapshot section. The generator verifies these match the stored snapshot's window exactly — any difference (even 1ms) is rejected.
+- \`evalRunId\` — REQUIRED string from the snapshot section. The generator reads the stored snapshot by this ID (single-read, fail-closed on missing). Must match format \`hlr-<timestamp>-<hex8>\`.
 
-Tool resolves the selector by querying the GuardRejectionEventLog ZSET over the specified window and bundling the event snapshot. Tool will NOT fabricate evidence.
+**Snapshot-first (KD-17)**: Your invocation message includes a pre-computed guard rejection snapshot with event counts, guard distributions, and the complete sourceRefs. Use this data for your verdict analysis — it IS the evidence. The generator reuses the same stored snapshot at publish time (no re-query). Decision and artifact share one data source.
 
 The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
 
@@ -384,5 +387,6 @@ export function buildEvalCatInvocation(
       legacyCleanup: input.legacyCleanup,
       sla: domain.sla,
     },
+    ...(input.precomputedEvidence ? { precomputedEvidence: input.precomputedEvidence } : {}),
   };
 }
