@@ -5,9 +5,16 @@
  */
 
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { describe, test } from 'node:test';
 
 const { buildFromPipeline } = await import('../dist/domains/prompt-hooks/trace-bridge.js');
+
+/** Replicate HookPipeline.assemblePatches exactly for test assertions. */
+function expectedAssembledHash(contents) {
+  const combined = contents.join('\n\n');
+  return createHash('sha256').update(combined).digest('hex').slice(0, 16);
+}
 
 // ── Test data factories ──
 
@@ -148,7 +155,7 @@ describe('trace-bridge buildFromPipeline', () => {
     assert.equal(sessionDelivery2.channel, 'pack-only');
   });
 
-  test('sessionContentHash is combined hash of all patches, not first', () => {
+  test('sessionContentHash matches HookPipeline.assemblePatches semantics', () => {
     // P1 regression: multi-hook stage must hash ALL assembled content
     const session = makePipelineResult([
       { id: 'D1', status: 'fired', hash: 'hash-d1', tokens: 50, content: 'alpha' },
@@ -157,14 +164,27 @@ describe('trace-bridge buildFromPipeline', () => {
     const result = buildFromPipeline(session, null, META);
 
     assert.ok(result);
-    // Hash should NOT be just 'hash-d1' (first hook's hash)
-    assert.notEqual(result.detail.sessionContentHash, 'hash-d1');
-    assert.notEqual(result.detail.sessionContentHash, 'hash-d2');
-    // Should be a 16-char hex string (sha256 truncated)
-    assert.ok(typeof result.detail.sessionContentHash === 'string');
-    assert.equal(result.detail.sessionContentHash.length, 16);
-    assert.match(result.detail.sessionContentHash, /^[0-9a-f]{16}$/);
+    // Must match assemblePatches: original order, '\n\n' separator
+    const expected = expectedAssembledHash(['alpha', 'beta']);
+    assert.equal(result.detail.sessionContentHash, expected);
     assert.equal(result.detail.turnContentHash, null);
+  });
+
+  test('P2 regression: D2→D10 hash uses manifest order not lexicographic', () => {
+    // Terra's exact repro: D2 before D10 in manifest order.
+    // Lexicographic sort would put D10 before D2 (wrong).
+    const session = makePipelineResult([
+      { id: 'D2', status: 'fired', tokens: 10, content: 'first' },
+      { id: 'D10', status: 'fired', tokens: 10, content: 'second' },
+    ]);
+    const result = buildFromPipeline(session, null, META);
+
+    assert.ok(result);
+    // Must be hash("first\n\nsecond"), NOT hash("secondfirst") or hash("second\n\nfirst")
+    const correctHash = expectedAssembledHash(['first', 'second']);
+    const wrongLexHash = expectedAssembledHash(['second', 'first']);
+    assert.equal(result.detail.sessionContentHash, correctHash);
+    assert.notEqual(result.detail.sessionContentHash, wrongLexHash);
   });
 
   test('fired events carry version in ObservedSegment', () => {

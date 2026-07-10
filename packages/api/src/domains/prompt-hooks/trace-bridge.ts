@@ -174,16 +174,18 @@ function sumChars(result: PipelineResult | null): number {
 }
 
 /**
- * Hash all assembled patch content for a stage.
+ * Hash assembled patch content matching HookPipeline.assemblePatches semantics:
+ * patches in original order (manifest order), joined with '\n\n'.
  *
- * P1 fix (codex review 629795f29): previous `firstFiredHash` used only the first
- * fired hook's hash, producing false aggregate hashes for multi-hook stages.
- * Now hashes the concatenation of all patch content (ordered by hookId for stability).
+ * P1 fix (codex review 629795f29): firstFiredHash used only first hook's hash.
+ * P2 fix (codex re-review 84ea1785d): hookId sort + empty join diverged from
+ * actual assembly order/separator — hash must match what the model receives.
  */
 function assembledContentHash(result: PipelineResult | null): string | null {
   if (!result || result.patches.length === 0) return null;
-  const sorted = [...result.patches].sort((a, b) => a.hookId.localeCompare(b.hookId));
-  const combined = sorted.map((p) => p.content).join('');
+  // Patches are already in manifest order from HookPipeline.executeStage.
+  // Replicate HookPipeline.assemblePatches join semantics exactly.
+  const combined = result.patches.map((p) => p.content).join('\n\n');
   return createHash('sha256').update(combined).digest('hex').slice(0, 16);
 }
 
