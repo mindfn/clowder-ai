@@ -20,6 +20,11 @@ import type { GuardRejectionEventLog } from '../GuardRejectionEventLog.js';
 import { produceHarnessLedgerRunSnapshot } from '../harness-ledger-snapshot-provider.js';
 import { ensureEvalDomainThreads } from '../hub/eval-hub-thread-ensure.js';
 import { inventoryLegacyTasks, type LegacyScheduledTaskLike } from '../legacy-task-cleanup.js';
+import {
+  buildEvidencePrereqSkippedMessage,
+  type EvidencePrereqProbe,
+  evaluateEvidencePrereq,
+} from './eval-domain-evidence-gate.js';
 import { getEvalCatOverride } from './eval-domain-override.js';
 import { type EvalDomainRegistryEntry, parseEvalDomainRegistryFile } from './eval-domain-registry.js';
 
@@ -46,6 +51,15 @@ export interface EvalDomainScheduleOpts {
    * → legacy default (all known-wireable domains get publish instructions in invocation).
    */
   wiredPublishDomains?: ReadonlySet<EvalDomainRegistryEntry['domainId']>;
+  /**
+   * Pre-invocation evidence-source prerequisite probe.
+   *
+   * This runs before publishPrereqProbe because evidence production is upstream
+   * of verdict publishing. If the source adapter cannot produce fresh evidence,
+   * the scheduler posts a skip notice to the domain thread and does not invoke
+   * the eval cat.
+   */
+  evidencePrereqProbe?: EvidencePrereqProbe;
   /**
    * Direction B (clowder-ai#923 fix): pre-invocation prerequisite probe.
    *
@@ -230,6 +244,20 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
             ],
             config.defaultUserId,
           );
+        }
+
+        if (config.evidencePrereqProbe) {
+          const evidencePrereq = await evaluateEvidencePrereq(config.evidencePrereqProbe, domain);
+          if (!evidencePrereq.ok) {
+            if (ctx.deliver) {
+              await ctx.deliver({
+                threadId: domain.systemThreadId,
+                content: buildEvidencePrereqSkippedMessage(domain, evidencePrereq.reason),
+                userId: 'scheduler',
+              });
+            }
+            return;
+          }
         }
 
         // Direction B (clowder-ai#923 fix): publish-prereq gate.
