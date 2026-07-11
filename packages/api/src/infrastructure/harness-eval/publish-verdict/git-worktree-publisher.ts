@@ -143,7 +143,12 @@ export function createGitWorktreePublisher(deps: GitWorktreePublisherDeps): GitP
         // commit"; `-f` forces inclusion (no-op for non-ignored paths). Without -f, `git add`
         // exits non-zero with "paths are ignored" and the whole publish fails.
         await exec('git', ['-C', worktreePath, 'add', '-f', '--', ...relativePaths], { timeout: 30_000 });
-        await exec('git', ['-C', worktreePath, 'commit', '-m', commitMessage], { timeout: 30_000 });
+        // --no-verify: the isolated worktree has no node_modules, so the
+        // pre-commit hook's Biome Guard (`pnpm exec biome check`) fails with
+        // ENOENT. These files are machine-generated verdict artifacts (YAML/JSON
+        // evidence), not developer code — Biome linting is irrelevant. The hook
+        // itself documents `--no-verify` as a valid escape (shared-rules.md §20).
+        await exec('git', ['-C', worktreePath, 'commit', '--no-verify', '-m', commitMessage], { timeout: 30_000 });
 
         // 5. Push branch to origin
         await exec('git', ['-C', worktreePath, 'push', '-u', 'origin', opts.branchName], { timeout: 120_000 });
