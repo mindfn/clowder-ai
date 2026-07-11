@@ -74,12 +74,16 @@ describe('parseOwnerRepoFromGitRemoteUrl', () => {
 });
 
 describe('createGitWorktreePublisher — --no-verify regression', () => {
-  it('commit succeeds when pre-commit hook would reject (no node_modules)', async () => {
+  it('commit succeeds when pre-commit hook would reject (no node_modules)', async (t) => {
     // Regression: the isolated worktree has no node_modules. Without --no-verify,
     // `git commit` fires the pre-commit hook (Biome Guard), which fails with
     // ENOENT on `pnpm exec biome check`. This test installs a pre-commit hook
     // that always exits 1, proving the publisher bypasses it.
     const { repoRoot, remoteRoot } = createRepoWithOrigin();
+    t.after(() => {
+      rmSync(repoRoot, { recursive: true, force: true });
+      rmSync(remoteRoot, { recursive: true, force: true });
+    });
 
     // Install a pre-commit hook that always fails
     const hooksDir = join(repoRoot, '.githooks');
@@ -145,10 +149,6 @@ describe('createGitWorktreePublisher — --no-verify regression', () => {
       // branch not found
     }
     assert.ok(remoteRefExists, 'branch must exist on bare remote — proves commit + push succeeded before gh failed');
-
-    // Cleanup temp repos
-    rmSync(repoRoot, { recursive: true, force: true });
-    rmSync(remoteRoot, { recursive: true, force: true });
   });
 });
 
