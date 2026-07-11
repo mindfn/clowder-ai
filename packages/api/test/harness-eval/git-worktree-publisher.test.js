@@ -95,13 +95,17 @@ describe('createGitWorktreePublisher — --no-verify regression', () => {
 
     const branchName = 'verdict/auto/eval-a2a/no-verify-regression';
 
-    try {
-      const { createGitWorktreePublisher } = await import(
-        `../../dist/infrastructure/harness-eval/publish-verdict/git-worktree-publisher.js?t=${Date.now()}-noverify`
-      );
-      const publisher = createGitWorktreePublisher({ repoRoot });
+    const { createGitWorktreePublisher } = await import(
+      `../../dist/infrastructure/harness-eval/publish-verdict/git-worktree-publisher.js?t=${Date.now()}-noverify`
+    );
+    const publisher = createGitWorktreePublisher({ repoRoot });
 
-      const result = await publisher.publishOnIsolatedWorktree({
+    // assert.rejects: proves the publisher REJECTS (gh pr create fails on
+    // bare remote), and the rejection is NOT from the pre-commit hook.
+    // Unlike try/catch + assert.fail, this cannot accidentally swallow a
+    // false-positive success path.
+    await assert.rejects(
+      publisher.publishOnIsolatedWorktree({
         branchName,
         sourceBase: 'origin/main',
         stage: async (wtPath) => {
@@ -116,31 +120,35 @@ describe('createGitWorktreePublisher — --no-verify regression', () => {
             labels: [],
           };
         },
-      });
+      }),
+      (err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        assert.ok(
+          !msg.includes('would fail without --no-verify'),
+          `pre-commit hook must be bypassed by --no-verify, but fired: ${msg}`,
+        );
+        return true;
+      },
+    );
 
-      // If we got here without throwing, --no-verify worked. The push will
-      // succeed (bare remote), but gh pr create will fail (no GitHub). That's
-      // expected — the test proves the COMMIT step doesn't fail on the hook.
-      assert.fail('expected gh pr create to fail on bare remote (no GitHub)');
-    } catch (err) {
-      // Expected: the commit SUCCEEDS (--no-verify bypasses the failing hook),
-      // then push SUCCEEDS (bare remote), then `gh pr create` fails because
-      // the bare remote is not GitHub. The error message should NOT contain
-      // "pre-commit" or "biome" — those would mean the hook fired.
-      const msg = err instanceof Error ? err.message : String(err);
-      assert.ok(
-        !msg.includes('would fail without --no-verify'),
-        `pre-commit hook must be bypassed by --no-verify, but fired: ${msg}`,
-      );
-      // The publisher's finally block correctly deletes the branch when
-      // prOpened=false (gh pr create failed on bare remote). That's expected
-      // cleanup behavior — branch existence is not what we're testing here.
-      // The key assertion above (hook message absent) proves the commit step
-      // succeeded with --no-verify before gh failed.
-    } finally {
-      rmSync(repoRoot, { recursive: true, force: true });
-      rmSync(remoteRoot, { recursive: true, force: true });
+    // Positive proof: branch exists on the bare remote → commit + push
+    // both succeeded before gh pr create failed. The publisher's finally
+    // block deletes the LOCAL branch, but the remote ref survives (gh pr
+    // list fails on a bare remote → safeToDelete stays false).
+    let remoteRefExists = false;
+    try {
+      execFileSync('git', ['-C', remoteRoot, 'rev-parse', '--verify', `refs/heads/${branchName}`], {
+        stdio: 'ignore',
+      });
+      remoteRefExists = true;
+    } catch {
+      // branch not found
     }
+    assert.ok(remoteRefExists, 'branch must exist on bare remote — proves commit + push succeeded before gh failed');
+
+    // Cleanup temp repos
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(remoteRoot, { recursive: true, force: true });
   });
 });
 
