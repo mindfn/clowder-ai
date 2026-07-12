@@ -1,0 +1,15 @@
+{
+  "verdictId": "2026-07-12-eval-friction-c2-hold-ball-state-mismatch-singleton",
+  "rawInputs": [
+    {
+      "path": "docs/harness-feedback/bundles/2026-07-12-eval-friction-c2-hold-ball-state-mismatch-singleton/raw/rollup-report.json",
+      "sha256": "bebe0e3849f9f5be77713d72b9fbde0ce8064b0315131681e3a38c43145fc439"
+    }
+  ],
+  "generatedAt": "2026-07-12T03:03:31.762Z",
+  "generator": {
+    "name": "eval-friction-live-verdict",
+    "version": "1"
+  },
+  "sanitizeRulesVersion": "f245-friction-rollup-v1"
+}
