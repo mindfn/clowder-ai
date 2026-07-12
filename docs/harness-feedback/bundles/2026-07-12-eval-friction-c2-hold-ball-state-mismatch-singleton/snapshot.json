@@ -1,0 +1,26 @@
+{
+  "verdictId": "2026-07-12-eval-friction-c2-hold-ball-state-mismatch-singleton",
+  "evalSnapshotId": "eval-F245-2026-07-12",
+  "featureId": "F245",
+  "generatedAt": "2026-07-12T03:03:31.762Z",
+  "window": {
+    "startMs": 1783566000000,
+    "endMs": 1783825200000,
+    "durationHours": 72
+  },
+  "components": [
+    {
+      "id": "friction-rollup",
+      "name": "friction rollup (Top-N + sensorForm)",
+      "confidence": "medium",
+      "activationCounts": {},
+      "frictionCounts": {
+        "cluster_count": 1,
+        "top_cluster_count": 1,
+        "tail_cluster_count": 0,
+        "tail_signal_count": 0,
+        "cluster_99b38d3aded5": 1
+      }
+    }
+  ]
+}
