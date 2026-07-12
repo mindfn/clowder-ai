@@ -1888,6 +1888,22 @@ async function main(): Promise<void> {
     checkReadiness,
     groundingSampleStore: getGroundingSampleStore(),
   });
+  // F167 evidence producer: defined here (after getGroundingSampleStore + telemetryHandle,
+  // both available at this point) so evalHubRoutes can receive it directly at registration
+  // time — no late-bound provider needed. Cron path (evalScheduleOpts) reuses same closure.
+  const { produceEvalA2aEvidence } = await import('./infrastructure/harness-eval/a2a/eval-a2a-evidence-producer.js');
+  const liveHarnessFeedbackRoot = resolve(repoRoot, 'docs', 'harness-feedback');
+  const evalA2aEvidenceProducer = async (domainId: string) => {
+    if (domainId !== 'eval:a2a') return null;
+    return produceEvalA2aEvidence({
+      harnessFeedbackRoot: liveHarnessFeedbackRoot,
+      traceStore: telemetryHandle.traceStore,
+      getMetricsText: telemetryHandle.getMetricsText ?? undefined,
+      metricsSnapshotStore: telemetryHandle.metricsSnapshotStore ?? undefined,
+      groundingSampleStore: getGroundingSampleStore(),
+    });
+  };
+
   // F192 Phase E-hub: harness eval verdict lifecycle surface.
   // F192 OQ-21: late-bound holder for ConnectorInvokeTrigger — eval-hub routes
   // register before invokeTrigger is created (line ~2600). Manual trigger route
@@ -2030,6 +2046,8 @@ async function main(): Promise<void> {
     agentKeyRegistry,
     taskOutcomeDbPath,
     eventMemoryDbPath: memoryServices.eventMemoryDbPath,
+    // F167: evidence producer for manual trigger route (materializes live YAML sourceRefs).
+    evidenceProducer: evalA2aEvidenceProducer,
   });
   // AC-G13: Cancel burst detector (in-memory, per-process)
   const { buildProposalRejectSignal } = await import(
@@ -4410,6 +4428,7 @@ async function main(): Promise<void> {
     redis: redisClient ?? undefined,
     wiredPublishDomains,
     publishPrereqProbe,
+    evidenceProducer: evalA2aEvidenceProducer,
   };
   taskRunnerV2.register(createEvalDomainDailySpec(evalScheduleOpts));
   taskRunnerV2.register(createEvalDomainWeeklySpec(evalScheduleOpts));

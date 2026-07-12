@@ -108,6 +108,40 @@ export async function handleTriggerNow(
     },
   );
 
+  // F167 evidence producer: materialize fresh YAML sourceRefs before invoking
+  // the eval cat, same as the scheduled cron path. Non-fatal if not wired or throws.
+  let evidenceRefs: { snapshotName: string; attributionName: string } | null = null;
+  if (deps.evidenceProducer) {
+    try {
+      evidenceRefs = await deps.evidenceProducer(input.domainId);
+    } catch {
+      // Non-fatal: proceed without evidence
+    }
+  }
+
+  const evidenceSection = evidenceRefs
+    ? [
+        '',
+        '## Evidence Files (pre-materialized sourceRefs)',
+        '',
+        'Pass these basenames as `sourceRefs` when calling `cat_cafe_publish_verdict`:',
+        '```json',
+        JSON.stringify(
+          { snapshotName: evidenceRefs.snapshotName, attributionName: evidenceRefs.attributionName },
+          null,
+          2,
+        ),
+        '```',
+      ].join('\n')
+    : [
+        '',
+        '## Evidence Files',
+        '',
+        '⚠️ No live sourceRefs available (OTel disabled or evidence producer returned null). ' +
+          'Skip this eval run — eval:a2a `publish_verdict` requires valid sourceRefs and will be ' +
+          'rejected (400 `missing_evidence_refs`) without them.',
+      ].join('\n');
+
   const content = [
     `## Eval Domain: ${invocation.domainId} (manual trigger by ${input.userId})`,
     '',
@@ -116,6 +150,7 @@ export async function handleTriggerNow(
     '```json',
     JSON.stringify(invocation.context, null, 2),
     '```',
+    evidenceSection,
   ].join('\n');
 
   const stored = await deps.messageStore.append({

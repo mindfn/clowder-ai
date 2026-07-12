@@ -242,6 +242,97 @@ describe('eval-domain-daily task spec', () => {
     assert.ok(domainIds.includes('eval:memory'), 'eval:memory (daily) must appear');
     assert.ok(domainIds.includes('eval:task-outcome'), 'eval:task-outcome (daily) must appear');
   });
+
+  it('execute injects evidence sourceRefs section when evidenceProducer returns artifact names (F167)', async () => {
+    const evidenceProducer = mock.fn(async (domainId) => {
+      if (domainId !== 'eval:a2a') return null;
+      return { snapshotName: 'eval-F167-2026-07-09.yaml', attributionName: 'eval-F167-2026-07-09-attribution.yaml' };
+    });
+
+    const spec = createEvalDomainDailySpec({
+      harnessFeedbackRoot: repoHarnessFeedbackRoot,
+      evidenceProducer,
+    });
+
+    const gateResult = await spec.admission.gate();
+    assert.equal(gateResult.run, true);
+    const a2aItem = gateResult.workItems.find((w) => w.subjectKey === 'eval:a2a');
+    assert.ok(a2aItem);
+
+    const deliverMock = mock.fn(async () => 'msg_evidence_ok');
+    const ctx = { assignedCatId: null, deliver: deliverMock };
+
+    await spec.run.execute(a2aItem.signal, a2aItem.subjectKey, ctx);
+
+    assert.equal(evidenceProducer.mock.callCount(), 1, 'evidenceProducer must be called once');
+    assert.equal(evidenceProducer.mock.calls[0].arguments[0], 'eval:a2a', 'must receive correct domainId');
+
+    assert.equal(deliverMock.mock.callCount(), 1);
+    const content = deliverMock.mock.calls[0].arguments[0].content;
+    assert.ok(
+      content.includes('## Evidence Files (pre-materialized sourceRefs)'),
+      'content must include the evidence header when artifacts are produced',
+    );
+    assert.ok(content.includes('eval-F167-2026-07-09.yaml'), 'content must include the snapshotName basename');
+    assert.ok(
+      content.includes('eval-F167-2026-07-09-attribution.yaml'),
+      'content must include the attributionName basename',
+    );
+    assert.ok(!content.includes('⚠️'), 'content must NOT include the fallback warning when evidence is produced');
+  });
+
+  it('execute injects fallback warning when evidenceProducer returns null (OTel disabled)', async () => {
+    const evidenceProducer = mock.fn(async () => null);
+
+    const spec = createEvalDomainDailySpec({
+      harnessFeedbackRoot: repoHarnessFeedbackRoot,
+      evidenceProducer,
+    });
+
+    const gateResult = await spec.admission.gate();
+    const a2aItem = gateResult.workItems.find((w) => w.subjectKey === 'eval:a2a');
+    assert.ok(a2aItem);
+
+    const deliverMock = mock.fn(async () => 'msg_no_evidence');
+    const ctx = { assignedCatId: null, deliver: deliverMock };
+
+    await spec.run.execute(a2aItem.signal, a2aItem.subjectKey, ctx);
+
+    assert.equal(deliverMock.mock.callCount(), 1);
+    const content = deliverMock.mock.calls[0].arguments[0].content;
+    assert.ok(
+      content.includes('⚠️ No live sourceRefs available'),
+      'content must include the fallback warning when evidenceProducer returns null',
+    );
+  });
+
+  it('execute injects fallback warning and proceeds when evidenceProducer throws (non-fatal)', async () => {
+    const evidenceProducer = mock.fn(async () => {
+      throw new Error('telemetry unavailable');
+    });
+
+    const spec = createEvalDomainDailySpec({
+      harnessFeedbackRoot: repoHarnessFeedbackRoot,
+      evidenceProducer,
+    });
+
+    const gateResult = await spec.admission.gate();
+    const a2aItem = gateResult.workItems.find((w) => w.subjectKey === 'eval:a2a');
+    assert.ok(a2aItem);
+
+    const deliverMock = mock.fn(async () => 'msg_producer_threw');
+    const ctx = { assignedCatId: null, deliver: deliverMock };
+
+    // Must NOT throw — the evidence error is swallowed and eval cat is still invoked
+    await assert.doesNotReject(() => spec.run.execute(a2aItem.signal, a2aItem.subjectKey, ctx));
+
+    assert.equal(deliverMock.mock.callCount(), 1, 'deliver still called even when evidenceProducer throws');
+    const content = deliverMock.mock.calls[0].arguments[0].content;
+    assert.ok(
+      content.includes('⚠️ No live sourceRefs available'),
+      'content must include the fallback warning when evidenceProducer throws',
+    );
+  });
 });
 
 describe('eval-domain-weekly task spec (AC-E19, AC-E20)', () => {
