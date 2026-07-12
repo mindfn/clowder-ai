@@ -3,22 +3,16 @@
 /**
  * F252 Phase E — Replay Message List
  *
- * Renders bridged replay events using Hub-native components.
- * operator iron rule: "100% 看起来就是你们平时的样子" — we reuse
- * MessageBubble, ThinkingContent, CliOutputBlock, CatAvatar,
- * and CollapsibleMarkdown directly.
+ * Renders bridged replay events through the same ChatMessage component used by
+ * the live thread timeline. This keeps member bubble styling, tokens, headers,
+ * thinking blocks, and CLI output behavior on one implementation path.
  */
 
-import { type CSSProperties, memo, useEffect, useRef } from 'react';
-import { CatAvatar } from '@/components/CatAvatar';
-import { CollapsibleMarkdown } from '@/components/CollapsibleMarkdown';
-import { CliOutputBlock } from '@/components/cli-output/CliOutputBlock';
-import { MessageBubble } from '@/components/MessageBubble';
-import { ThinkingContent } from '@/components/ThinkingContent';
+import { memo, useEffect, useRef } from 'react';
+import { ChatMessage } from '@/components/ChatMessage';
 import { useCatData } from '@/hooks/useCatData';
-import { hexToOklch } from '@/lib/color-utils';
 import type { ReplayChatMessage } from '@/lib/story-player/replay-chat-bridge';
-import type { CliEvent, CliStatus } from '@/stores/chat-types';
+import type { ChatMessage as ChatMessageType, ToolEvent } from '@/stores/chat-types';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -40,109 +34,59 @@ interface ReplayMessageListProps {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers — bridge ReplayChatMessage fields to Hub component props
+// Helpers — bridge ReplayChatMessage fields to ChatMessage props
 // ---------------------------------------------------------------------------
 
-/** Map tool events to CliEvent[] for CliOutputBlock */
-function toCliEvents(toolEvents: NonNullable<ReplayChatMessage['toolEvents']>): CliEvent[] {
-  const result: CliEvent[] = [];
-  for (const te of toolEvents) {
-    // Tool use event
+function toChatToolEvents(msg: ReplayChatMessage): ToolEvent[] | undefined {
+  if (!msg.toolEvents?.length) return undefined;
+  const result: ToolEvent[] = [];
+  for (const te of msg.toolEvents) {
     result.push({
       id: `${te.id}_use`,
-      kind: 'tool_use',
-      timestamp: Date.now(), // display-only, not used for ordering
+      type: 'tool_use',
       label: te.name,
       detail: te.input,
+      timestamp: msg.timestamp,
     });
-    // Tool result event (if present)
-    // CliOutputBlock reads `detail` from tool_result events (not `content`)
-    // and pairs by kind='tool_result' positional index — 'error' kind breaks pairing
     if (te.output != null) {
       result.push({
         id: `${te.id}_result`,
-        kind: 'tool_result',
-        timestamp: Date.now(),
+        type: 'tool_result',
+        label: te.status === 'error' ? 'Error' : 'Result',
         detail: te.output,
+        timestamp: msg.timestamp,
       });
     }
   }
-  return result;
+  return result.length > 0 ? result : undefined;
 }
 
-/** Derive CliStatus from tool events */
-function toCliStatus(toolEvents: NonNullable<ReplayChatMessage['toolEvents']>): CliStatus {
-  if (toolEvents.some((te) => te.status === 'error')) return 'failed';
-  return 'done';
-}
+function toChatMessage(msg: ReplayChatMessage, showThinking: boolean): ChatMessageType | null {
+  const toolEvents = toChatToolEvents(msg);
+  const thinking = showThinking ? msg.thinking : undefined;
+  const hasVisibleContent = msg.content.trim().length > 0 || !!thinking || !!toolEvents?.length;
 
-/** System message avatar — generic icon, no cat */
-function SystemAvatar() {
-  return (
-    <div className="w-8 h-8 rounded-full bg-[var(--console-surface-1,#222)] flex items-center justify-center flex-shrink-0">
-      <svg
-        width="16"
-        height="16"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className="text-[var(--console-text-tertiary,#666)]"
-        aria-hidden="true"
-      >
-        <circle cx="12" cy="12" r="10" />
-        <path d="M12 16v-4" />
-        <path d="M12 8h.01" />
-      </svg>
-    </div>
-  );
-}
-
-/** User avatar — simple person icon */
-function UserAvatar() {
-  return (
-    <div className="w-8 h-8 rounded-full bg-[var(--co-creator-bubble-bg,#2a2d35)] flex items-center justify-center flex-shrink-0">
-      <svg
-        width="16"
-        height="16"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className="text-[var(--co-creator-text,#e0e0e0)]"
-        aria-hidden="true"
-      >
-        <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
-        <circle cx="12" cy="7" r="4" />
-      </svg>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Helper — per-cat persona style for wrapperStyle (F056 token chain)
-// ---------------------------------------------------------------------------
-
-/** Compute --msg-hue/--msg-chroma from a cat's primary color. */
-function catPersonaStyle(primary: string | undefined): CSSProperties {
-  let msgHue = 297; // fallback hue (purple)
-  let msgChroma = 0.1;
-  if (primary) {
-    try {
-      const oklch = hexToOklch(primary);
-      if (Number.isFinite(oklch.h) && Number.isFinite(oklch.c)) {
-        msgHue = oklch.h;
-        msgChroma = oklch.c;
-      }
-    } catch {
-      /* keep fallback values */
-    }
+  if (msg.type === 'assistant' && !hasVisibleContent) {
+    return null;
   }
-  return { '--msg-hue': msgHue, '--msg-chroma': msgChroma } as CSSProperties;
+
+  // User (owner) messages in transcripts carry the *session* catId (which cat
+  // recorded the event), not the speaker. ChatMessage renders user bubbles only
+  // when `type === 'user' && !catId`, so strip catId for user messages to avoid
+  // them falling through to the cat/assistant rendering path.
+  const chatCatId = msg.type === 'user' ? undefined : msg.catId;
+
+  return {
+    id: msg.id,
+    type: msg.type,
+    catId: chatCatId,
+    content: msg.type === 'system' ? msg.content || '── system ──' : msg.content,
+    timestamp: msg.timestamp,
+    isStreaming: false,
+    toolEvents,
+    thinking,
+    variant: toolEvents && msg.toolEvents?.some((te) => te.status === 'error') ? 'error' : undefined,
+  };
 }
 
 function messageScrollSignature(msg: ReplayChatMessage): string {
@@ -173,83 +117,10 @@ const ReplayMessage = memo(function ReplayMessage({
   displayMode?: 'cinematic' | 'faithful';
 }) {
   const { getCatById } = useCatData();
-  // cinematic: hide thinking blocks for immersive replay (mirrors ReplayEventBubble behavior)
-  // faithful: show full thinking content (complete transcript view)
   const showThinking = displayMode === 'faithful';
-
-  // ── System messages ──
-  if (msg.type === 'system') {
-    return (
-      <div className="flex justify-center my-2">
-        <span className="text-xs text-[var(--console-text-tertiary,#888)] bg-[var(--console-surface-1,#1a1a2e)] px-3 py-1 rounded-full">
-          {msg.content || '── system ──'}
-        </span>
-      </div>
-    );
-  }
-
-  // ── User messages ──
-  if (msg.type === 'user') {
-    return (
-      <MessageBubble
-        messageId={msg.id}
-        avatar={<UserAvatar />}
-        align="right"
-        bubbleClassName="bg-[var(--co-creator-bubble-bg,#2a2d35)]"
-      >
-        <CollapsibleMarkdown content={msg.content} className="text-[var(--co-creator-text,#e0e0e0)]" />
-      </MessageBubble>
-    );
-  }
-
-  // ── Assistant messages (text / tool calls / thinking) ──
-  const avatar = msg.catId ? <CatAvatar catId={msg.catId} size={32} /> : <SystemAvatar />;
-
-  // F056: Derive per-cat --msg-hue/--msg-chroma from catId so .cat-persona-derived
-  // resolves the correct bubble/surface/inset tokens (matching Hub's ChatMessage behavior).
-  const catData = msg.catId ? getCatById(msg.catId) : undefined;
-  const personaStyle = catPersonaStyle(catData?.color?.primary);
-
-  // cat-persona-derived + personaStyle provides --cat-msg-{bubble,surface,inset,...} CSS vars
-  // for ThinkingContent/CliOutputBlock, and per-cat bubble color for the message wrapper.
-  const personaWrapper = 'cat-persona-derived';
-
-  // Thinking-only message — hidden in cinematic mode (same as ReplayEventBubble)
-  if (msg.thinking && !msg.content && !msg.toolEvents?.length) {
-    if (!showThinking) return null;
-    return (
-      <MessageBubble
-        messageId={msg.id}
-        avatar={avatar}
-        wrapperClassName={personaWrapper}
-        wrapperStyle={personaStyle}
-        bubbleClassName="bg-[var(--cat-msg-bg,#1e1e2e)]"
-      >
-        <ThinkingContent content={msg.thinking} defaultExpanded={false} />
-      </MessageBubble>
-    );
-  }
-
-  // Assistant turn: text, thinking, and tool blocks can coexist in one real chat bubble.
-  return (
-    <MessageBubble
-      messageId={msg.id}
-      avatar={avatar}
-      wrapperClassName={personaWrapper}
-      wrapperStyle={personaStyle}
-      bubbleClassName="bg-[var(--cat-msg-bg,#1e1e2e)]"
-    >
-      {showThinking && msg.thinking && <ThinkingContent content={msg.thinking} defaultExpanded={false} />}
-      {msg.content && <CollapsibleMarkdown content={msg.content} className="text-[var(--cat-msg-text,#e0e0e0)]" />}
-      {msg.toolEvents?.length ? (
-        <CliOutputBlock
-          events={toCliEvents(msg.toolEvents)}
-          status={toCliStatus(msg.toolEvents)}
-          defaultExpanded={false}
-        />
-      ) : null}
-    </MessageBubble>
-  );
+  const chatMessage = toChatMessage(msg, showThinking);
+  if (!chatMessage) return null;
+  return <ChatMessage message={chatMessage} getCatById={getCatById} />;
 });
 
 // ---------------------------------------------------------------------------
