@@ -1,0 +1,11 @@
+{
+  "verdictId": "2026-07-12-harness-ledger-baseline-c1",
+  "featureId": "F257",
+  "evalSnapshotId": "harness-ledger-snapshot-2026-07-12-harness-ledger-baseline-c1",
+  "generatedAt": "2026-07-12T03:01:52.594Z",
+  "findings": [],
+  "noFindingRecord": {
+    "reason": "No guard rejection events recorded in this window",
+    "evidence": "Zero events in 7-day window [1783220400508, 1783825200508)."
+  }
+}

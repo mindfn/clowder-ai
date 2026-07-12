@@ -1,0 +1,18 @@
+{
+  "verdictId": "2026-07-12-harness-ledger-baseline-c1",
+  "rawInputs": [
+    {
+      "path": "bundles/2026-07-12-harness-ledger-baseline-c1/snapshot.json",
+      "sha256": "a137b5bbfdb028791c913fabce106df7b677bd84738e7ca98c45d0e6dfd2def3"
+    }
+  ],
+  "generatedAt": "2026-07-12T03:01:52.594Z",
+  "generator": {
+    "name": "harness-ledger-generator-adapter",
+    "version": "2.0.0"
+  },
+  "sanitizeRulesVersion": "1.0.0",
+  "producedBy": {
+    "runId": "hlr-1783825200508-4fbd792f"
+  }
+}
