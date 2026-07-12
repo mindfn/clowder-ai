@@ -1,0 +1,32 @@
+{
+  "verdictId": "2026-07-12-eval-anchor-first-low-sample-window-2",
+  "selector": {
+    "kind": "anchor-telemetry-snapshot",
+    "windowStartMs": 1783739500000,
+    "windowEndMs": 1783825900000
+  },
+  "rollup": {
+    "perTool": {},
+    "orphanDrills": 0,
+    "adoption": {
+      "explicitAnchorCalls": 0,
+      "explicitFullCalls": 1,
+      "defaultAnchorCalls": 0,
+      "defaultFullCalls": 0,
+      "legacyEquivalentAnchorCalls": 0,
+      "legacyEquivalentFullCalls": 0,
+      "unknownModeCalls": 0,
+      "uniqueCatsExplicitAnchor": 0
+    },
+    "track1Snapshot": {
+      "returnedByTool": {
+        "thread-context": 1
+      },
+      "returnedCharsByTool": {
+        "thread-context": 8550
+      },
+      "drillByTool": {},
+      "drillCharsByTool": {}
+    }
+  }
+}

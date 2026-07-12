@@ -1,0 +1,18 @@
+{
+  "verdictId": "2026-07-12-eval-anchor-first-low-sample-window-2",
+  "featureId": "F236",
+  "evalSnapshotId": "eval-F236-2026-07-12",
+  "generatedAt": "2026-07-12T03:06:29.062Z",
+  "findings": [],
+  "sunsetAssessment": {
+    "toolCount": 0,
+    "toolsWithAnchorTax": 0,
+    "toolsNetNegative": 0,
+    "toolsHighOpenRate": 0,
+    "lowSampleToolCount": 0
+  },
+  "noFindingRecord": {
+    "reason": "no_preview_events",
+    "evidence": "No anchor-first preview events in the rollup window."
+  }
+}

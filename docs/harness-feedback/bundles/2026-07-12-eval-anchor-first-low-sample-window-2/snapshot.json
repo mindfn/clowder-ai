@@ -1,0 +1,30 @@
+{
+  "verdictId": "2026-07-12-eval-anchor-first-low-sample-window-2",
+  "evalSnapshotId": "eval-F236-2026-07-12",
+  "featureId": "F236",
+  "generatedAt": "2026-07-12T03:06:29.062Z",
+  "window": {
+    "startMs": 1783739500000,
+    "endMs": 1783825900000,
+    "durationHours": 24
+  },
+  "components": [
+    {
+      "id": "anchor-telemetry-rollup",
+      "name": "anchor-first preview/drill open-rate rollup",
+      "confidence": "low",
+      "activationCounts": {
+        "orphan_drills": 0,
+        "adoption_explicit_anchor_calls": 0,
+        "adoption_explicit_full_calls": 1,
+        "adoption_default_anchor_calls": 0,
+        "adoption_default_full_calls": 0,
+        "adoption_legacy_equivalent_anchor_calls": 0,
+        "adoption_legacy_equivalent_full_calls": 0,
+        "adoption_unique_cats_explicit_anchor": 0,
+        "adoption_unknown_mode_calls": 0
+      },
+      "frictionCounts": {}
+    }
+  ]
+}
