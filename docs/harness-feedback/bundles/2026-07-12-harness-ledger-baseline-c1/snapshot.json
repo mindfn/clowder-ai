@@ -1,0 +1,25 @@
+{
+  "verdictId": "2026-07-12-harness-ledger-baseline-c1",
+  "evalSnapshotId": "harness-ledger-snapshot-2026-07-12-harness-ledger-baseline-c1",
+  "featureId": "F257",
+  "generatedAt": "2026-07-12T03:01:52.594Z",
+  "window": {
+    "startMs": 1783220400508,
+    "endMs": 1783825200508,
+    "durationHours": 168
+  },
+  "totalEvents": 0,
+  "byKind": {},
+  "byGuard": {},
+  "components": [
+    {
+      "componentId": "guard-rejection-log",
+      "componentName": "Guard Rejection Event Log",
+      "activationCounts": {
+        "total_events": 0
+      },
+      "frictionCounts": {},
+      "confidence": "no-data"
+    }
+  ]
+}
