@@ -74,6 +74,8 @@ export interface RouteStrategyDeps {
   ballCustody?: import('../../../../ball-custody/BallCustodyIngest.js').IBallCustodyIngest;
   /** F237 Phase 2 (AC-P2-8): Injection trace store for pipeline observability. optional, fail-open */
   injectionTraceStore?: import('../../../../prompt-hooks/InjectionTraceStore.js').InjectionTraceStore;
+  /** F257 Phase A (Line B): Guard rejection event log — fail-open observation layer */
+  guardRejectionLog?: import('../../../../../infrastructure/harness-eval/GuardRejectionEventLog.js').GuardRejectionEventLog;
 }
 
 /** Mutable context for tracking persistence failures across the generator boundary.

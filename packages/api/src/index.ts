@@ -1600,6 +1600,30 @@ async function main(): Promise<void> {
   const { InjectionTraceStore: _ITSEarly } = await import('./domains/prompt-hooks/InjectionTraceStore.js');
   const injectionTraceStore = redis ? new _ITSEarly(redis) : undefined;
 
+  // F257 Phase A (Line B): GuardRejectionEventLog — guard rejection observation layer.
+  // Fail-open: observation never blocks business. Used by emit points (hold_ball 429,
+  // A2A block_pingpong) and consumed by eval:harness-ledger domain.
+  let guardRejectionLog:
+    | import('./infrastructure/harness-eval/GuardRejectionEventLog.js').GuardRejectionEventLog
+    | undefined;
+  if (redis) {
+    const { GuardRejectionEventLog } = await import('./infrastructure/harness-eval/GuardRejectionEventLog.js');
+    guardRejectionLog = new GuardRejectionEventLog(redis);
+  }
+
+  // F237 PR3: HookOverrideStore — per-workspace runtime override layer.
+  // Wire into PipelinePromptBuilder singleton so refreshOverrideSnapshot()
+  // can load overrides before synchronous pipeline execution.
+  // ManifestLookup is a lazy closure over getCachedRegistry — the registry
+  // may not exist at bootstrap time (lazy-init on first pipeline call),
+  // but will always be available when write methods are actually invoked.
+  if (redis) {
+    const { HookOverrideStore } = await import('./domains/prompt-hooks/HookOverrideStore.js');
+    const { setOverrideStore, getCachedRegistry } = await import('./domains/prompt-hooks/PipelinePromptBuilder.js');
+    const manifestLookup = (hookId: string) => getCachedRegistry()?.getHook(hookId)?.manifest;
+    setOverrideStore(new HookOverrideStore(redis, manifestLookup));
+  }
+
   // Shared AgentRouter — used by messagesRoutes and invocationsRoutes
   router = new AgentRouter({
     agentRegistry,
@@ -1641,6 +1665,7 @@ async function main(): Promise<void> {
     ...(freshnessReinvokeCheck ? { freshnessReinvokeCheck } : {}),
     ...(freshnessStateStore ? { freshnessStateStore } : {}),
     ...(injectionTraceStore ? { injectionTraceStore } : {}),
+    ...(guardRejectionLog ? { guardRejectionLog } : {}),
   });
 
   // F39: Message queue delivery
@@ -1940,6 +1965,15 @@ async function main(): Promise<void> {
     'eval:task-outcome': createTaskOutcomeGeneratorAdapter(),
     'eval:qc': createQcGeneratorAdapter(),
   };
+  // F257 eval engine wiring: harness-ledger generator adapter (KD-17 snapshot-first).
+  // Generator reads stored run snapshot — no direct GuardRejectionEventLog dependency.
+  // Still gated on guardRejectionLog existence: snapshot provider needs it at trigger time.
+  if (guardRejectionLog) {
+    const { createHarnessLedgerGeneratorAdapter } = await import(
+      './infrastructure/harness-eval/publish-verdict/harness-ledger-generator-adapter.js'
+    );
+    verdictGenerators['eval:harness-ledger'] = createHarnessLedgerGeneratorAdapter();
+  }
   if (toolEventLog && skillLoadEventLog) {
     const { createCapabilityWakeupGeneratorAdapter } = await import(
       './infrastructure/harness-eval/publish-verdict/capability-wakeup-generator-adapter.js'
@@ -2030,6 +2064,8 @@ async function main(): Promise<void> {
     agentKeyRegistry,
     taskOutcomeDbPath,
     eventMemoryDbPath: memoryServices.eventMemoryDbPath,
+    // KD-17: GuardRejectionEventLog for eval:harness-ledger snapshot-first manual trigger.
+    guardRejectionLog,
   });
   // AC-G13: Cancel burst detector (in-memory, per-process)
   const { buildProposalRejectSignal } = await import(
@@ -2556,6 +2592,7 @@ async function main(): Promise<void> {
       threadStore,
       taskStore,
       ...(ballCustodyIngest ? { ballCustody: ballCustodyIngest } : {}),
+      ...(guardRejectionLog ? { guardRejectionLog } : {}),
       onHoldBallCancelFeedback: (input) => {
         void import('./domains/cats/services/frustration/FrustrationDetector.js')
           .then(({ evaluate }) =>
@@ -4364,6 +4401,11 @@ async function main(): Promise<void> {
   // F253 Phase C: eval:qc provider is unconditionally wired (pure ctor, zero-baseline
   // metrics, no runtime deps). Phase C bootstrap → keep_observe verdicts.
   wiredPublishDomains.add('eval:qc');
+  // F257 eval engine wiring: harness-ledger domain gated on guardRejectionLog (Redis).
+  // Must match verdictGenerators entry above — split-brain ⇒ scheduled fire 501.
+  if (guardRejectionLog) {
+    wiredPublishDomains.add('eval:harness-ledger');
+  }
   if (toolEventLog && skillLoadEventLog) {
     wiredPublishDomains.add('eval:capability-wakeup');
   }
@@ -4410,6 +4452,9 @@ async function main(): Promise<void> {
     redis: redisClient ?? undefined,
     wiredPublishDomains,
     publishPrereqProbe,
+    // KD-17 snapshot-first: pass guardRejectionLog so scheduled eval:harness-ledger
+    // trigger can produce run snapshot before eval cat invocation.
+    guardRejectionLog,
   };
   taskRunnerV2.register(createEvalDomainDailySpec(evalScheduleOpts));
   taskRunnerV2.register(createEvalDomainWeeklySpec(evalScheduleOpts));

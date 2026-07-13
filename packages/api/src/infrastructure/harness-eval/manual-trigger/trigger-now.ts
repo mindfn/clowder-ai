@@ -1,6 +1,7 @@
 import { getEvalCatOverride } from '../domain/eval-domain-override.js';
 import type { EvalDomainId } from '../domain/eval-domain-registry.js';
 import { buildEvalCatInvocation } from '../eval-cat-invocation.js';
+import { produceHarnessLedgerRunSnapshot } from '../harness-ledger-snapshot-provider.js';
 import { loadDomains } from '../hub/eval-hub-read-model.js';
 import { ensureEvalDomainThreads } from '../hub/eval-hub-thread-ensure.js';
 import type { HandlerError, ManualTriggerDeps } from './types.js';
@@ -93,12 +94,41 @@ export async function handleTriggerNow(
     }
   }
 
+  // KD-17 snapshot-first: for eval:harness-ledger, snapshot is REQUIRED.
+  // No snapshot → 503 (fail-closed for manual trigger).
+  let precomputedEvidence: string | undefined;
+  if (input.domainId === 'eval:harness-ledger') {
+    if (!deps.guardRejectionLog) {
+      return {
+        status: 503,
+        error: 'harness_ledger_snapshot_unavailable',
+        detail:
+          'KD-17: eval:harness-ledger requires GuardRejectionEventLog provider for snapshot-first invocation. Provider not wired at runtime.',
+      };
+    }
+    try {
+      const snapshotResult = await produceHarnessLedgerRunSnapshot({
+        guardRejectionLog: deps.guardRejectionLog,
+        harnessFeedbackRoot: deps.harnessFeedbackRoot,
+      });
+      precomputedEvidence = snapshotResult.summary;
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      return {
+        status: 503,
+        error: 'harness_ledger_snapshot_failed',
+        detail: `KD-17: snapshot production failed — ${detail}. Eval cat not invoked (no blind verdicts).`,
+      };
+    }
+  }
+
   const invocation = buildEvalCatInvocation(
     {
       domain: effectiveDomain,
       trendRefs: [],
       verdictRefs: [],
       legacyCleanup: { status: 'not_checked' },
+      precomputedEvidence,
     },
     // cloud R5 P2 (PR-2): gate publish instructions on actual runtime support so
     // cats don't waste a run producing a packet they can't publish (501 from
@@ -108,7 +138,7 @@ export async function handleTriggerNow(
     },
   );
 
-  const content = [
+  const contentParts = [
     `## Eval Domain: ${invocation.domainId} (manual trigger by ${input.userId})`,
     '',
     invocation.instructions,
@@ -116,7 +146,12 @@ export async function handleTriggerNow(
     '```json',
     JSON.stringify(invocation.context, null, 2),
     '```',
-  ].join('\n');
+  ];
+  // KD-17: inject pre-computed evidence after context JSON
+  if (invocation.precomputedEvidence) {
+    contentParts.push('', invocation.precomputedEvidence);
+  }
+  const content = contentParts.join('\n');
 
   const stored = await deps.messageStore.append({
     userId: 'scheduler',

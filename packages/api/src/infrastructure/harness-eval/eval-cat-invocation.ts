@@ -10,6 +10,12 @@ export interface EvalCatInvocationInput {
   trendRefs: string[];
   verdictRefs: string[];
   legacyCleanup: LegacyCleanupStatus;
+  /**
+   * KD-17 snapshot-first: pre-computed evidence summary for domains that
+   * produce a run snapshot before eval cat invocation (e.g. eval:harness-ledger).
+   * Injected into the invocation context so the eval cat sees real data.
+   */
+  precomputedEvidence?: string;
 }
 
 export interface EvalCatInvocationPacket {
@@ -26,6 +32,8 @@ export interface EvalCatInvocationPacket {
     legacyCleanup: LegacyCleanupStatus;
     sla: EvalDomainRegistryEntry['sla'];
   };
+  /** KD-17: pre-computed evidence summary (injected as extra content, not in context JSON). */
+  precomputedEvidence?: string;
 }
 
 const DOMAIN_INSTRUCTIONS: Partial<Record<string, string>> = {
@@ -43,6 +51,8 @@ const DOMAIN_INSTRUCTIONS: Partial<Record<string, string>> = {
     'Enter the eval:friction domain thread. Review the periodic cross-channel friction rollup report (clusters aggregated from paw-feel markers, tool-call cancels, user feedback, and eval-domain metrics). For each Top-N cluster, weigh its sensor forms (provided in the report), channel diversity (cross-channel recurrence = stronger signal), count, severity, and member evidence refs. The report does NOT pre-assign root cause — YOU assign the 7-class root cause as your own verdict-layer attribution judgment (harness_misfit / tool_gap / environment_drift / vision_gap / translation_gap / execution_gap / taste_gap); do not fabricate attribution — if the evidence is thin, lower your confidence or say so. Phase D contract: `actionableCandidates` are the only clusters eligible for a repair-thread exit, and each may carry a prefilled `followupDraft` you can reuse when you decide a propose_thread is warranted. `referenceOnly` clusters are link-only context (currently eval-domain friction): list / cite them, but do NOT open a second repair thread for them. Produce a verdict handoff packet (fix/build/keep_observe/delete_sunset). Cluster counts + sensor forms are evidence, not the packet verdict. Do not over-fold the long tail — a low-count cluster on a high-severity channel can still warrant a fix verdict.',
   'eval:qc':
     'Enter the eval:qc domain thread. Analyze the weekly QC pipeline metrics rollup: finding yield (average actionable findings per review), false positive rate (findings rejected by author / total), reviewer delta (formal reviewer new findings vs fresh-context pre-review coverage), and post-merge bug rate (hotfixes within 14-day window per merged PR). Phase C bootstrap provides zero-baseline data — produce a keep_observe verdict noting the zero-data state. As live telemetry sources are wired (future phases), compare week-over-week trends and produce fix/build/keep_observe/delete_sunset verdicts based on whether the QC loop is improving review quality.',
+  'eval:harness-ledger':
+    'Enter the eval:harness-ledger domain thread. Analyze the prompt-segments guard rejection event log: review guard rejection events (http_rate_limit, route_decision_block) within the query window, identify patterns in rejection frequency and guard activation, compare window-over-window trends, and produce a verdict handoff packet when evidence supports fix/build/keep_observe/delete_sunset. Guard rejection events carry threadId + catId + guardId correlation at window confidence level. Focus on whether guards are firing at expected rates (healthy) or show anomalies (too frequent = possible misconfiguration, too rare = possible bypass). Event counts and guard distributions are evidence, not the packet verdict.',
   'eval:anchor-first':
     'Enter the eval:anchor-first domain thread. Analyze the anchor-first preview↔drill open-rate telemetry rollup: per-tool preview response counts, previewed items, drilled unique items, open-rate (drilledUniqueItems / previewedItems), charsSaved (originalChars - returnedChars), drillChars, and double-sided netBenefit (charsSaved - drillChars). Each rollup covers the LATEST 24h in-memory snapshot (event buffer has 24h retention; the weekly firing frequency is how often the eval cat runs, NOT the data window). Compare per-tool stats across the 4 preview tools (pending-mentions, thread-context, list-tasks, get-message) and 2 drill tools (get-message, list-tasks). Also review Adoption Detail / activationCounts adoption_* fields: explicitAnchorCalls, explicitFullCalls, defaultAnchorCalls, defaultFullCalls, legacyEquivalentAnchorCalls, and uniqueCatsExplicitAnchor answer whether cats are actively choosing anchor or only hitting defaults / old equivalent controls. orphanDrills indicates drills whose itemId matched no preview in the window (stale drill pointers, drills outside window, items surfaced before the event log started, or drills that arrived before any preview of that item — temporal causality enforced). Track-1 aggregate snapshot is cross-referenced for volume sanity checks. SUNSET SIGNAL CRITERIA (AC-E3, 双信号 — both required for delete_sunset): The attribution bundle includes pre-computed sunsetSignals per tool and a sunsetAssessment summary. Signal 1 (anchor tax): sunsetSignals.anchorTax=true when openRateByItem > 80% AND netBenefit < 0 — cats drill almost everything, anchor saves nothing; frictionSignal.severity is escalated to high, proposedAction is fix (not sunset — generator cannot confirm Signal 2 blindness; only eval cat escalates to delete_sunset after cross-referencing task-outcome). Signal 2 (blindness — MORE dangerous, token account INVISIBLE): reference-read the latest eval:task-outcome verdict/trend — if task-outcome quality (corrected_success / needs_investigation rates) worsened after anchor deployment and correlates with anchor tool usage, this is the insidious signal that preview is causing judgment errors. F236 does NOT write to eval:task-outcome; cross-reference only. VERDICT MAPPING: Both signals (tax + blindness evidence) → delete_sunset with governance.cvoAcceptRequired=true; ownerAsk.requestedAction MUST specify WHICH tool(s) to sunset. Signal 1 only (tax, no blindness evidence) → fix (investigate whether preview quality can improve to reduce drill rate). Signal 2 only (blindness, no clear tax) → fix (urgent: preview may be causing judgment errors, investigate). Neither signal + healthy data → keep_observe (log as Phase C expansion data basis). Insufficient data (low confidence / few preview events) → keep_observe with note on sample size. For delete_sunset verdicts: specify per-tool sunset in ownerAsk (e.g. "sunset anchor on thread-context, keep anchor on pending-mentions").',
 };
@@ -294,6 +304,23 @@ The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits 
 **DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
 `;
 
+const PUBLISH_VERDICT_INSTRUCTIONS_HARNESS_LEDGER = `${PUBLISH_VERDICT_PACKET_INSTRUCTIONS}
+You must also supply \`sourceRefs\` (NOT part of packet, separate input field) as a replayable prompt-segments selector.
+
+**Copy the exact sourceRefs JSON from the "Pre-computed Guard Rejection Snapshot" section in your invocation message.** The snapshot section includes a fenced JSON block with the exact \`kind\`, \`windowStartMs\`, \`windowEndMs\`, and \`evalRunId\` values. Copy them verbatim — do NOT convert, round, or re-derive any values.
+
+Fields:
+- \`kind\` — REQUIRED literal \`"prompt-segments"\`
+- \`windowStartMs\` / \`windowEndMs\` — REQUIRED exact epoch-ms values from the snapshot section. The generator verifies these match the stored snapshot's window exactly — any difference (even 1ms) is rejected.
+- \`evalRunId\` — REQUIRED string from the snapshot section. The generator reads the stored snapshot by this ID (single-read, fail-closed on missing). Must match format \`hlr-<timestamp>-<hex8>\`.
+
+**Snapshot-first (KD-17)**: Your invocation message includes a pre-computed guard rejection snapshot with event counts, guard distributions, and the complete sourceRefs. Use this data for your verdict analysis — it IS the evidence. The generator reuses the same stored snapshot at publish time (no re-query). Decision and artifact share one data source.
+
+The MCP tool creates branch \`verdict/auto/{domainSlug}/{verdictId}\` + commits + opens PR. Returns commit SHA + PR URL.
+
+**DO NOT** run \`git add\`, \`git commit\`, \`git push\`, or write verdict files directly. Use the MCP tool.
+`;
+
 const PUBLISH_VERDICT_INSTRUCTIONS_BY_DOMAIN: Partial<Record<string, string>> = {
   'eval:a2a': PUBLISH_VERDICT_INSTRUCTIONS_A2A,
   'eval:capability-wakeup': PUBLISH_VERDICT_INSTRUCTIONS_CAPABILITY_WAKEUP,
@@ -303,6 +330,7 @@ const PUBLISH_VERDICT_INSTRUCTIONS_BY_DOMAIN: Partial<Record<string, string>> = 
   'eval:friction': PUBLISH_VERDICT_INSTRUCTIONS_FRICTION,
   'eval:anchor-first': PUBLISH_VERDICT_INSTRUCTIONS_ANCHOR_FIRST,
   'eval:qc': PUBLISH_VERDICT_INSTRUCTIONS_QC,
+  'eval:harness-ledger': PUBLISH_VERDICT_INSTRUCTIONS_HARNESS_LEDGER,
 };
 
 /**
@@ -359,5 +387,6 @@ export function buildEvalCatInvocation(
       legacyCleanup: input.legacyCleanup,
       sla: domain.sla,
     },
+    ...(input.precomputedEvidence ? { precomputedEvidence: input.precomputedEvidence } : {}),
   };
 }

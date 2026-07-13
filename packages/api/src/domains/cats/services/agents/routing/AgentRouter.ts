@@ -597,6 +597,8 @@ export interface AgentRouterOptions {
   freshnessStateStore?: import('../../freshness/FreshnessInvocationStateStore.js').FreshnessInvocationStateStore;
   /** F237 Phase 2 (AC-P2-8): Injection trace store for pipeline observability */
   injectionTraceStore?: import('../../../../prompt-hooks/InjectionTraceStore.js').InjectionTraceStore;
+  /** F257 Phase A (Line B): Guard rejection event log — fail-open observation layer */
+  guardRejectionLog?: import('../../../../../infrastructure/harness-eval/GuardRejectionEventLog.js').GuardRejectionEventLog;
 }
 
 /**
@@ -669,6 +671,8 @@ export class AgentRouter {
   private freshnessStateStore?: import('../../freshness/FreshnessInvocationStateStore.js').FreshnessInvocationStateStore;
   /** F237 Phase 2 (AC-P2-8) */
   private injectionTraceStore?: import('../../../../prompt-hooks/InjectionTraceStore.js').InjectionTraceStore;
+  /** F257 Phase A (Line B): Guard rejection event log */
+  private guardRejectionLog?: import('../../../../../infrastructure/harness-eval/GuardRejectionEventLog.js').GuardRejectionEventLog;
   private speechMentionRe: RegExp;
 
   /**
@@ -779,6 +783,7 @@ export class AgentRouter {
     this.freshnessReinvokeCheck = options.freshnessReinvokeCheck;
     this.freshnessStateStore = options.freshnessStateStore;
     this.injectionTraceStore = options.injectionTraceStore;
+    this.guardRejectionLog = options.guardRejectionLog;
   }
 
   refreshFromRegistry(agentRegistry: AgentRegistry): void {
@@ -1392,6 +1397,7 @@ export class AgentRouter {
       ...(this.pendingRequestStore ? { pendingRequestStore: this.pendingRequestStore } : {}),
       ...(this.ballCustody ? { ballCustody: this.ballCustody } : {}),
       ...(this.injectionTraceStore ? { injectionTraceStore: this.injectionTraceStore } : {}),
+      ...(this.guardRejectionLog ? { guardRejectionLog: this.guardRejectionLog } : {}),
     };
   }
 

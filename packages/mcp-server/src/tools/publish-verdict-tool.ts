@@ -263,6 +263,31 @@ const anchorTelemetrySourceRefsShape = z
   })
   .describe('eval:anchor-first sourceRefs — replayable anchor telemetry rollup window selector.');
 
+/**
+ * F257 Phase A Line B — prompt-segments sourceRefs. Replayable guard rejection
+ * event window selector: provider resolves to GuardRejectionEventLog query.
+ *
+ * KEEP IN SYNC: packages/api/.../publish-verdict/types.ts PromptSegmentsSourceSelector
+ * + packages/api/.../publish-verdict/validation.ts validatePromptSegmentsSelector.
+ */
+const promptSegmentsSourceRefsShape = z
+  .object({
+    kind: z.literal('prompt-segments'),
+    windowStartMs: z.number().finite().describe('Inclusive epoch ms window start for guard rejection events.'),
+    windowEndMs: z
+      .number()
+      .finite()
+      .describe('Exclusive epoch ms window end for guard rejection events. Must be > windowStartMs.'),
+    evalRunId: z
+      .string()
+      .min(1)
+      .regex(/^hlr-\d+-[a-f0-9]{8}$/, 'evalRunId must match generator format: hlr-<timestamp>-<hex8>')
+      .describe(
+        'KD-17 snapshot-first: run ID from the pre-computed snapshot. Copy the exact evalRunId from your invocation message. Generator reads the stored snapshot by this ID (fail-closed on missing).',
+      ),
+  })
+  .describe('eval:harness-ledger sourceRefs — replayable prompt-segments guard rejection window selector.');
+
 const sourceRefsShape = z
   .union([
     a2aSourceRefsShape,
@@ -272,9 +297,10 @@ const sourceRefsShape = z
     sopSourceRefsShape,
     frictionRollupSourceRefsShape,
     anchorTelemetrySourceRefsShape,
+    promptSegmentsSourceRefsShape,
   ])
   .describe(
-    'Discriminated union by `kind` field. a2a kind is default (backward compat); capability-wakeup-trial-window kind wired in PR-2; memory-recall-snapshot kind wired in F192 memory wire-up; task-outcome-snapshot kind wired in task-outcome PR; sop-trace-eval kind wired in F192 sop-wiring; friction-rollup-snapshot kind wired in F245 PR1b; anchor-telemetry-snapshot kind wired in F236 Track-2.',
+    'Discriminated union by `kind` field. a2a kind is default (backward compat); capability-wakeup-trial-window kind wired in PR-2; memory-recall-snapshot kind wired in F192 memory wire-up; task-outcome-snapshot kind wired in task-outcome PR; sop-trace-eval kind wired in F192 sop-wiring; friction-rollup-snapshot kind wired in F245 PR1b; anchor-telemetry-snapshot kind wired in F236 Track-2; prompt-segments kind wired in F257 Phase A Line B.',
   );
 
 export const publishVerdictInputSchema = {
@@ -346,6 +372,12 @@ type PublishVerdictToolInput = {
         kind: 'anchor-telemetry-snapshot';
         windowStartMs: number;
         windowEndMs: number;
+      }
+    | {
+        kind: 'prompt-segments';
+        windowStartMs: number;
+        windowEndMs: number;
+        evalRunId: string;
       };
   agentKeyCatId?: string | undefined;
 };

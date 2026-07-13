@@ -73,6 +73,85 @@ describe('parseOwnerRepoFromGitRemoteUrl', () => {
   });
 });
 
+describe('createGitWorktreePublisher — --no-verify regression', () => {
+  it('commit succeeds when pre-commit hook would reject (no node_modules)', async (t) => {
+    // Regression: the isolated worktree has no node_modules. Without --no-verify,
+    // `git commit` fires the pre-commit hook (Biome Guard), which fails with
+    // ENOENT on `pnpm exec biome check`. This test installs a pre-commit hook
+    // that always exits 1, proving the publisher bypasses it.
+    const { repoRoot, remoteRoot } = createRepoWithOrigin();
+    t.after(() => {
+      rmSync(repoRoot, { recursive: true, force: true });
+      rmSync(remoteRoot, { recursive: true, force: true });
+    });
+
+    // Install a pre-commit hook that always fails
+    const hooksDir = join(repoRoot, '.githooks');
+    fs.mkdirSync(hooksDir, { recursive: true });
+    writeFileSync(
+      join(hooksDir, 'pre-commit'),
+      '#!/bin/bash\necho "HOOK: would fail without --no-verify" >&2\nexit 1\n',
+      {
+        mode: 0o755,
+      },
+    );
+    execFileSync('git', ['config', 'core.hooksPath', '.githooks'], { cwd: repoRoot, stdio: 'ignore' });
+
+    const branchName = 'verdict/auto/eval-a2a/no-verify-regression';
+
+    const { createGitWorktreePublisher } = await import(
+      `../../dist/infrastructure/harness-eval/publish-verdict/git-worktree-publisher.js?t=${Date.now()}-noverify`
+    );
+    const publisher = createGitWorktreePublisher({ repoRoot });
+
+    // assert.rejects: proves the publisher REJECTS (gh pr create fails on
+    // bare remote), and the rejection is NOT from the pre-commit hook.
+    // Unlike try/catch + assert.fail, this cannot accidentally swallow a
+    // false-positive success path.
+    await assert.rejects(
+      publisher.publishOnIsolatedWorktree({
+        branchName,
+        sourceBase: 'origin/main',
+        stage: async (wtPath) => {
+          const artifactPath = join(wtPath, 'docs', 'harness-feedback', 'verdicts', 'test-verdict.yaml');
+          fs.mkdirSync(join(wtPath, 'docs', 'harness-feedback', 'verdicts'), { recursive: true });
+          writeFileSync(artifactPath, 'verdict: keep_observe\n');
+          return {
+            paths: [artifactPath],
+            commitMessage: 'verdict: test --no-verify regression',
+            prTitle: 'test: --no-verify regression',
+            prBody: 'Automated test',
+            labels: [],
+          };
+        },
+      }),
+      (err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        assert.ok(
+          !msg.includes('would fail without --no-verify'),
+          `pre-commit hook must be bypassed by --no-verify, but fired: ${msg}`,
+        );
+        return true;
+      },
+    );
+
+    // Positive proof: branch exists on the bare remote → commit + push
+    // both succeeded before gh pr create failed. The publisher's finally
+    // block deletes the LOCAL branch, but the remote ref survives (gh pr
+    // list fails on a bare remote → safeToDelete stays false).
+    let remoteRefExists = false;
+    try {
+      execFileSync('git', ['-C', remoteRoot, 'rev-parse', '--verify', `refs/heads/${branchName}`], {
+        stdio: 'ignore',
+      });
+      remoteRefExists = true;
+    } catch {
+      // branch not found
+    }
+    assert.ok(remoteRefExists, 'branch must exist on bare remote — proves commit + push succeeded before gh failed');
+  });
+});
+
 describe('createGitWorktreePublisher', () => {
   it('cleans up a partially-created local branch when worktree add fails before stage', async (t) => {
     const { repoRoot, remoteRoot } = createRepoWithOrigin();

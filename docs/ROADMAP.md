@@ -5,7 +5,7 @@ doc_kind: note
 created: 2026-02-26
 ---
 
-# Clowder AI Feature Roadmap
+# Cat Café Feature Roadmap
 
 > 维护者：三猫 | 最后更新：2026-06-26（F252 Story Player done）
 >
@@ -22,7 +22,7 @@ created: 2026-02-26
 | F051 | 猫粮看板 v2 — Quota Board (glanceable + scheduling) | in-progress | Ragdoll | internal | [F051](features/F051-real-quota-dashboard.md) |
 | F054 | HCI 预热基础设施 — Social Media MCP + 内容管线 | spec | Ragdoll (Opus 4.6, Leader) | internal | [F054](features/F054-hci-preheat-infra.md) |
 | F055 | A2A MCP Structured Routing — targetCats 结构化路由 | spec | Ragdoll | internal | [F055](features/F055-a2a-mcp-structured-routing.md) |
-| F056 | Clowder AI 设计语言 — 猫猫化不是猫化 | doing | 三猫 | internal | [F056](features/F056-cat-cafe-design-language.md) |
+| F056 | Cat Café 设计语言 — 猫猫化不是猫化 | doing | 三猫 | internal | [F056](features/F056-cat-cafe-design-language.md) |
 | F067 | Cold-start Verifier — 无历史污染的交付物验证 | spec | Ragdoll | internal | [F067](features/F067-cold-start-verifier.md) |
 | F069 | Thread Read State — 未读 Badge 后端真相源 | spec | Ragdoll | internal | [F069](features/F069-thread-read-state.md) |
 | F077 | Multi-User Secure Collaboration — GitHub OAuth + Thread ACL + Session | spec | Ragdoll | internal | [F077](features/F077-multi-user-secure-collab.md) |
@@ -37,11 +37,11 @@ created: 2026-02-26
 | F109 | Message Actions 修复与增强 — 软删除/Branch/编辑/通知 | in-progress | Ragdoll | internal | [F109](features/F109-message-actions-overhaul.md) |
 | F110 | 训练营愿景引导增强 — operator 需求挖掘 + SOP 显式加载 | spec | Ragdoll | internal | [F110](features/F110-bootcamp-vision-elicitation.md) |
 | F119 | 谁是卧底 — 坏猫战术推理游戏 #2 | spec | Ragdoll | internal | [F119](features/F119-who-is-spy-game.md) |
-| F124 | Apple Ecosystem × Clowder AI 语音交互系统 — iOS/watchOS/AirPods | spec | Ragdoll | internal | [F124](features/F124-apple-ecosystem-voice-interaction.md) |
-| F126 | 四肢控制面 — Clowder AI Limb Control Plane | in-progress | Ragdoll | internal | [F126](features/F126-limb-control-plane.md) |
+| F124 | Apple Ecosystem × Cat Café 语音交互系统 — iOS/watchOS/AirPods | spec | Ragdoll | internal | [F124](features/F124-apple-ecosystem-voice-interaction.md) |
+| F126 | 四肢控制面 — Cat Café Limb Control Plane | in-progress | Ragdoll | internal | [F126](features/F126-limb-control-plane.md) |
 | F128 | Cat-Proposed Thread Creation — 猫猫提议创建 Thread | in-progress | 三猫 | community [#82](https://github.com/zts212653/clowder-ai/issues/82) [#85](https://github.com/zts212653/clowder-ai/pull/85) | [F128](features/F128-cat-create-thread.md) |
 | F129 | Pack System — Multi-Agent 共创世界的 Mod 生态 | in-progress | Ragdoll | internal | [F129](features/F129-pack-system-multi-agent-mod.md) |
-| F138 | Clowder AI Video Studio — AI 视频制作管线 | spec | 金渐层 | internal | [F138](features/F138-video-studio.md) |
+| F138 | Cat Café Video Studio — AI 视频制作管线 | spec | 金渐层 | internal | [F138](features/F138-video-studio.md) |
 | F143 | Hostable Agent Runtime — 统一宿主抽象 | spec | Ragdoll | internal | [F143](features/F143-hostable-agent-runtime.md) |
 | F147 | i18n — Hub 界面中英文切换 | idea | 待定 | internal | — |
 | F152 | Expedition Memory — 外部项目记忆冷启动 + 经验回流 | in-progress | Ragdoll | internal | [F152](features/F152-expedition-memory.md) |
@@ -76,7 +76,7 @@ created: 2026-02-26
 | F231 | 启动胶囊 — per-user 画像注入与 L0 分层（猫醒来第一眼看到主人：profile capsule + relationship primer + breed/instance/user/relationship 四层，养成护城河机制本体）| in-progress | Ragdoll Fable-5 | internal (operator 2026-06-11 "我同意立项的") | [F231](features/F231-user-profile-capsule.md) |
 | F232 | Thread Artifacts Panel — Thread 产物视图（点开 thread 就看到它产生的所有产物：图/文件/代码PR/语音聚合 + 类型筛选 + 搜索 + 跳回原消息；A thread 内抽屉先行，B 全局产物中心未来扩展）| spec | Ragdoll Opus-4.8 | internal (operator 2026-06-11 "我觉得ok了 你立项") | [F232](features/F232-thread-artifacts-panel.md) |
 | F233 | Ball Custody Observability — 球权保管链可观测（值班简报：operator 收件箱+死球/睡美人/虚空告警，异常优先；feat 轨迹下钻；安乐死通道；A 简报 MVP / B 心跳+探针回执 / C 安乐死+轨迹）| in-progress（A✅ B✅ 2026-06-18 · C pending operator signoff）| Ragdoll Fable-5（spec）→ opus 家族（实现） | internal (operator 2026-06-12 "走起！喵"+"① 立项") | [F233](features/F233-ball-custody-observability.md) |
-| F237 | Prompt Injection Visibility — 系统 prompt 注入可见性（Phase 1 生命周期查看器+模板提取+3 段编辑器 PR#859 done；Phase 2 hook pipeline migration + trace bridging in-progress；Phase 2-D override store deferred to PR 3）| in-progress (Phase 1 ✅ Phase 2 🚧) | Ragdoll Opus 4.6 | internal (operator 2026-06-02) | [F237](features/F237-prompt-injection-visibility.md) |
+| F237 | Prompt Injection Visibility — 系统 prompt 注入可见性（Phase 1 生命周期查看器+模板提取+3 段编辑器 PR#859 done；Phase 2 hook pipeline migration + trace bridging merged #1075；Phase 2-D override store merged fork-internal mindfn#22 2026-07-10）| in-progress (Phase 1 ✅ Phase 2 🚧) | Ragdoll Opus 4.6 | internal (operator 2026-06-02) | [F237](features/F237-prompt-injection-visibility.md) |
 | F241 | Agent Provider Plugin / Hostable Provider Runtime — 外部 agent runtime 以 plugin 声明式接入（新增 agentProvider 资源类型，provider 实现移出 core；不再改 ClientId union + index.ts switch）；Phase A host transport registry（F143/F161 lineage）/ B F202 agentProvider manifest / C clowder-code reference；安全边界全 host-owned（token/MCP/sandbox），F129 继承；core 安全 + merge-gate maintainer 守 | spec | community 彭潇(bouillipx) + Ragdoll家族 maintainer | community [#941](https://github.com/zts212653/clowder-ai/issues/941) | [F241](features/F241-agent-provider-plugin.md) |
 | F242 | Code Graph Layer Spike — 内生「约定层关联图」（Phase A/B spike 已落 main：convention-graph package + discovery skill + deer-flow skeleton；operator 2026-06-18 撤回 full close：仍缺猫猫认知路径 / 可用入口 / 更新或重建索引行为；进入 Phase C productization gate） | in-progress (spike done) | Maine Coon (gpt-5.5) + opus-48 design | internal | [F242](features/F242-code-graph-layer-spike.md) |
 | F243 | Docs Discovery Profile — OKF-inspired metadata + generated index（让 docs/features 从平铺文件堆变成可渐进探索的知识入口；4 Phase: stratified spike + profile draft + eval rubric → contract + lint + generator → rollout + checked-in index.md + sync gate → eval report + decisions/research 扩展 go/no-go；operator 2026-06-17 signoff；Maine Coon (gpt-5.5) co-design + R1 reviewer；F236 姊妹哲学 anchor-and-drill 调用侧 vs 文档侧；schema self-contained 供未来 consumer（F186 等是潜在候选但不绑定）；防"小猫代偿决策"反模式：抽查不可代 gate） | in-progress (B-0 merged 2026-06-30, PR #2693) | Ragdoll (Ragdoll Opus-4.7) | internal (operator 2026-06-17) | [F243](features/F243-docs-discovery-profile.md) |

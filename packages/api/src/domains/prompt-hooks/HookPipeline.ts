@@ -98,10 +98,17 @@ export class HookPipeline {
   }
 
   /**
-   * Render content for a fired hook: CONTENT passthrough → template → fallback.
-   * Returns null if no template found (caller emits template_missing trace).
+   * Render content for a fired hook:
+   *   1. Content override from HookOverrideStore (PR3) — highest priority
+   *   2. CONTENT var passthrough from resolver
+   *   3. Template rendering → fallback template
+   * Returns null if no content source found (caller emits template_missing trace).
    */
   private renderContent(hook: RegisteredHook, templateId: string, vars: Record<string, string>): string | null {
+    // PR3: content override takes precedence over all other sources
+    const contentOverride = this.registry.getContentOverride(hook.manifest.id);
+    if (contentOverride !== undefined) return contentOverride;
+
     // Resolver-produced content passthrough: when the resolver provides a CONTENT
     // var, it signals that the final rendered content is already assembled
     // (e.g., S6 breed-specific workflow triggers, S13 pre-rendered MCP tools
@@ -115,8 +122,8 @@ export class HookPipeline {
    * Execute all hooks for a stage in manifest order.
    * Each hook: enabled check → resolve → render → patch + trace.
    *
-   * Uses manifest baseline for enabled/version. Runtime overrides
-   * (HookOverrideStore) will be added in a separate PR.
+   * Checks registry.isEnabled() which resolves override snapshot → manifest baseline.
+   * Content overrides from HookOverrideStore take precedence over template rendering.
    */
   executeStage(stage: HookStage, input: AssemblerInput): PipelineResult {
     const hooks = this.registry.getStageHooks(stage);
@@ -127,14 +134,14 @@ export class HookPipeline {
       const hookId = hook.manifest.id;
       const ts = Date.now();
 
-      // 1. Enabled check — manifest baseline
-      if (!hook.manifest.enabled) {
+      // 1. Enabled check — override snapshot → manifest baseline (PR3)
+      if (!this.registry.isEnabled(hookId)) {
         events.push({
           hookId,
           stage,
           timestamp: ts,
           status: 'disabled',
-          disabledBy: 'manifest',
+          disabledBy: this.registry.getDisabledBySource(hookId),
         } as TraceEventDisabled);
         continue;
       }
@@ -170,14 +177,14 @@ export class HookPipeline {
         continue;
       }
 
-      // 4. Produce patch + trace (manifest version)
+      // 4. Produce patch + trace (override version → manifest version)
       patches.push({ hookId, content, order: hook.manifest.order });
       events.push({
         hookId,
         stage,
         timestamp: ts,
         status: 'fired',
-        version: hook.manifest.version,
+        version: this.registry.getActiveVersion(hookId),
         contentHash: hashContent(content),
         tokenEstimate: estimateTokens(content),
       } as TraceEventFired);
