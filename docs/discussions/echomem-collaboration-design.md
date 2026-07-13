@@ -117,8 +117,19 @@ interface RetrievalProvider {
 // 类型守卫 isAnchorLookupCapable() 与 capabilities().anchorLookup 联动，
 // 避免布尔值和可调用方法靠隐含约定同步。
 interface AnchorLookupCapable {
-  /** nativeId → item（null = 合法未命中，不触发 fallback） */
-  getByAnchor(nativeId: string): Promise<WireGetResponse | null>;
+  /** nativeId → host item（null = 合法未命中）。返回宿主类型，不是 Wire DTO */
+  getByAnchor(nativeId: string): Promise<AnchorLookupItem | null>;
+}
+
+/** 宿主侧 anchor lookup 结果（Layer 2 类型，Wire DTO 仅存在于 EchoMemAdapter 内部） */
+interface AnchorLookupItem {
+  canonicalId: string;
+  content: string;
+  title?: string;
+  kind?: string;
+  speaker?: string;
+  timestamp?: string;
+  provenance: { type: 'scanner' | 'conversation' | 'derived'; sourceUri?: string };
 }
 
 function isAnchorLookupCapable(p: RetrievalProvider): p is RetrievalProvider & AnchorLookupCapable {
@@ -127,7 +138,7 @@ function isAnchorLookupCapable(p: RetrievalProvider): p is RetrievalProvider & A
 
 /** 读侧：anchor 路由 — 由 CanonicalIdCodec + RetrievalCoordinator 组合实现（§4.4） */
 // CanonicalIdCodec.parse(canonicalId): { domain, nativeId } — 纯编解码，无 provider 依赖
-// RetrievalCoordinator.getByCanonicalId(): 用 codec + RouteSlot + 类型守卫选 provider
+// RetrievalCoordinator.getByCanonicalId(): 返回 AnchorLookupExecution（typed result，不压成 null）
 
 /** 读侧：最近浏览（optional） */
 interface BrowseProvider {
@@ -196,51 +207,74 @@ interface WireSearchResponse {
   // 能力快照仅由 capabilities endpoint / 握手返回
 }
 
+/** Wire 侧 response meta（EchoMem 返回的，只含服务侧观测） */
 interface WireResponseMeta {
   degraded: boolean;
   degradeReason?: WireDegradeReason;
   effectiveMode?: WireSearchMode;
   traceId?: string;
-  servedBy?: 'primary' | 'fallback';
+  // 注意：servedBy 和 scope routing 信息不在 Wire meta 中——
+  // 它们是宿主 coordinator 的路由决策产物，不由 EchoMem 承担
 }
 
-/** Wire 封闭联合 — 降级原因 */
+/** Wire 封闭联合 — EchoMem 服务侧降级原因（不含路由/scope 决策） */
 type WireDegradeReason =
   | 'timeout'                // 服务超时
   | 'unhealthy'              // health() = false
   | 'contract_error'         // 返回不符合 Wire schema
-  | 'scope_not_available'    // 该 scope 在此 dimension 无可用 provider
   | 'evidence_store_error'   // 兜底：服务侧未知 reason 统一映射到此
   ;
+// scope_not_available 已删除——这是 coordinator 路由决策，不是 EchoMem 服务状态
 
 type WireSearchMode = 'lexical' | 'semantic' | 'hybrid';
 
-/** Wire→Host 降级元数据适配（不能直接 `meta: response.meta` 透传）
+/** 宿主侧 execution meta（coordinator 产出的，含路由决策信息） */
+// 真相源：interfaces.ts SearchExecutionMeta + SearchDegradeReason
+interface CoordinatorExecutionMeta {
+  degraded: boolean;
+  degradeReason?: SearchDegradeReason;  // 宿主封闭联合（见下方）
+  effectiveMode?: 'lexical' | 'semantic' | 'hybrid';
+  // servedBy 作为 coordinator 内部 observability 字段，不进入 SearchExecutionMeta
+}
+
+// 宿主实际联合（来自 interfaces.ts:268-272）：
+type SearchDegradeReason =
+  | 'passage_embedding_unavailable'
+  | 'passage_vector_search_error'
+  | 'evidence_store_error'
+  | 'raw_lexical_only';
+
+/** Wire→Host meta 转换（adapter 必须调用，不能 `meta: response.meta` 直赋）
  *
- * Wire 和宿主的 degradeReason 是不同联合：
- * - Wire: WireDegradeReason（上述 5 值）
- * - 宿主 SearchResponse.meta: degradeReason?: string（parent ADR §3）
+ * 两套独立映射：
+ * 1. EchoMem service → Wire：在 EchoMemAdapter 内部
+ * 2. Wire → Host：在 RetrievalCoordinator 的 adapter 出口
  *
- * 适配器必须显式映射，不直接赋值。
+ * 路由级降级（scope 不可用、fallback 接管）由 coordinator 自行生成，
+ * 不经过 Wire——因为 EchoMem 不知道也不该知道宿主的 scope/dimension 路由。
  */
 
-// Wire → Host adapter 映射规则：
-// wire 'timeout'             → host 'evidence_store_error'（宿主无细粒度超时）
-// wire 'unhealthy'           → host 'evidence_store_error'
-// wire 'contract_error'      → host 'evidence_store_error'
-// wire 'scope_not_available' → host 'scope_not_available_in_dimension'（路由表 nudge）
-// wire 'evidence_store_error'→ host 'evidence_store_error'
-// wire effectiveMode         → host effectiveMode（同一联合，可直接赋值）
-// wire servedBy              → host 不透传（宿主 SearchResponse.meta 无此字段）
-//
-// EchoMem service → Wire adapter 映射：
+function wireMetaToHost(wire: WireResponseMeta): CoordinatorExecutionMeta {
+  return {
+    degraded: wire.degraded,
+    // Wire 所有 reason → host 'evidence_store_error'（唯一匹配的宿主值）
+    degradeReason: wire.degraded ? 'evidence_store_error' : undefined,
+    effectiveMode: wire.effectiveMode,   // 同一联合，可直接赋值
+  };
+}
+
+// EchoMem service → Wire adapter 映射（在 EchoMemAdapter 内部）：
 // EchoMem 'rate_limited'       → wire 'timeout'
 // EchoMem 'internal_error'     → wire 'evidence_store_error'
 // EchoMem 'model_unavailable'  → wire 'evidence_store_error'
 // 未识别的 reason string       → wire 'evidence_store_error'（永不透传原始字符串）
 //
-// **scope 决策**：parent ADR §5 `meta: response.meta` 直赋在此设计落地时
-// 必须改为显式 adapter 调用——scope 限定在 EchoMem adapter，不改宿主类型。
+// Coordinator 自行生成的路由降级（不经 Wire）：
+// scope 不可用  → host { degraded: true, degradeReason: 'evidence_store_error' }
+// fallback 接管 → host { degraded: true, degradeReason: 'evidence_store_error' }
+//   + coordinator 内部 observability 记录 servedBy='fallback'（不进 SearchExecutionMeta）
+//
+// **parent ADR §5 `meta: response.meta` 直赋落地时改为 `wireMetaToHost(response.meta)`**
 
 /** Wire Contract v0 — GetByCanonicalId */
 interface WireGetRequest {
@@ -398,8 +432,9 @@ Clowder↔EchoMem 直接对话用 Wire Contract v0。
 | `undefined` | Doc | ⚠️ empty+nudge | Doc | Doc | Doc |
 
 > **⚠️ empty+nudge**：dimension 的 provider universe 不含 Conv 时，scope=threads 返回空结果 +
-> `meta: { degraded: true, degradeReason: 'scope_not_available' }`。
-> 不静默路由到 Conv（否则 `dimension=global` 被偷换成 Conv 查询）。
+> `meta: { degraded: true, degradeReason: 'evidence_store_error' }`。
+> 这是 **coordinator 自行生成**的路由降级（不经 Wire），不静默路由到 Conv。
+> 使用宿主 `SearchDegradeReason` 现有值（`evidence_store_error`），不引入不存在的联合成员。
 
 **Conv provider Phase 绑定**
 
@@ -455,11 +490,17 @@ Clowder↔EchoMem 直接对话用 Wire Contract v0。
 ```
 canonicalId    := domain ":" opaqueNativeId
 domain         := "doc" | "conv" | "global"
-opaqueNativeId := percentEncoded+       // 非空，完整 percent-encode（RFC 3986）
-                                        // 不含结构化 path segment 层
-                                        // `/` `:`  等保留字符一律编码
+opaqueNativeId := (unreserved | pct-encoded)+     // 非空
+unreserved     := ALPHA | DIGIT | "-" | "_" | "." | "~"
+pct-encoded    := "%" HEXDIG HEXDIG               // 大写十六进制（%2F 不是 %2f）
 ```
 
+> **Canonical encoding（唯一形式）**：
+> - unreserved chars 保持原样（不 over-encode）
+> - 其他所有字符 percent-encode（大写 hex）
+> - 这保证**每个 nativeId 恰好有唯一的 encoded 形式**
+> - `parse()` 用 roundtrip 验证 `encodeOpaque(decode(s)) === s` 拒绝非规范形式
+>
 > **Opaque nativeId**（Sol 推荐，最简）：nativeId 永远是 opaque string，完整 percent-encode。
 > 不区分 "结构 `/`" 和 "数据 `/`"——同一个 `encodeOpaque()`/`decodeOpaque()` 函数，
 > roundtrip 唯一确定，不需要 domain-specific segment policy。
@@ -495,17 +536,19 @@ opaqueNativeId := percentEncoded+       // 非空，完整 percent-encode（RFC 
 > 必须逐行验证。
 
 ```
-// canonicalize: legacy anchor → canonicalId（encodeOpaque 统一编码）
-| legacy anchor          | expected canonicalId          |
-|------------------------|-------------------------------|
-| "F102"                 | "doc:F102"                    |
-| "ADR-020"              | "doc:ADR-020"                 |
-| "thread-thread_abc"    | "conv:thread_abc"             |
-| "session-sess_123"     | "doc:session-sess_123"        |
-| "global:methods/TDD"   | "global:methods%2FTDD"        |
-| "has/slash"            | "doc:has%2Fslash"             |
+// canonicalize: legacy anchor → canonicalId | null
+| legacy anchor          | expected                        |
+|------------------------|---------------------------------|
+| "F102"                 | "doc:F102"                      |
+| "ADR-020"              | "doc:ADR-020"                   |
+| "thread-thread_abc"    | "conv:thread_abc"               |
+| "session-sess_123"     | "doc:session-sess_123"          |
+| "global:methods/TDD"   | "global:methods%2FTDD"          |
+| "has/slash"            | "doc:has%2Fslash"               |
+| ""                     | null                            | ← 空 nativeId（doc 规则匹配但 strip 后为空）
+| "thread-"              | null                            | ← strip `thread-` 后为空
 
-// parse: canonicalId → { domain, nativeId }（decodeOpaque 统一解码）
+// parse: canonicalId → { domain, nativeId } | null（含规范性检查）
 | canonicalId               | expected domain | expected nativeId  |
 |---------------------------|----------------|-------------------|
 | "doc:F102"                | "doc"          | "F102"            |
@@ -530,6 +573,10 @@ opaqueNativeId := percentEncoded+       // 非空，完整 percent-encode（RFC 
 | ":F102"                   | null     | 空 domain（不在 allowlist） |
 | "doc:has%ZZslash"         | null     | 畸形 percent-encoding |
 | ""                        | null     | 空字符串 |
+| "doc:has/slash"           | null     | 非规范：`/` 应为 `%2F`（raw reserved） |
+| "doc:has%2fslash"         | null     | 非规范：`%2f` 应为 `%2F`（小写 hex） |
+| "doc:%46"                 | null     | 非规范：over-encode unreserved `F` |
+| "doc:%46102"              | null     | 非规范：`F` 是 unreserved，不应编码 |
 ```
 
 ### 4.4 CanonicalId Codec 与 Route Slot 分离
@@ -561,28 +608,31 @@ class CanonicalIdCodec {
     { pattern: /.*/, domain: 'doc', stripPrefix: '' },
   ];
 
-  /** legacy anchor → canonicalId */
-  canonicalize(legacyAnchor: string): string {
+  /** legacy anchor → canonicalId（拒绝空 nativeId） */
+  canonicalize(legacyAnchor: string): string | null {
     const rule = this.rules.find(r => r.pattern.test(legacyAnchor))!;
     const nativeId = legacyAnchor.replace(rule.stripPrefix, '');
+    if (nativeId.length === 0) return null;            // e.g. canonicalize("thread-") → null
     return `${rule.domain}:${encodeOpaque(nativeId)}`;
   }
 
   private static VALID_DOMAINS = new Set<CanonicalDomain>(['doc', 'conv', 'global']);
 
   /** canonicalId → { domain, nativeId } | null
-   *  非法输入统一返回 null（调用方转为 WireError { code: 'invalid_request' }）：
+   *
+   *  非法输入统一返回 null：
    *  - 无 `:` 分隔符
    *  - 未知 domain
    *  - 空 nativeId
    *  - 畸形 percent-encoding（decode 异常）
+   *  - 非规范编码（roundtrip check 失败 — 同一 nativeId 必须只有唯一 encoded 形式）
    */
   parse(canonicalId: string): ParsedCanonicalId | null {
     const colonIdx = canonicalId.indexOf(':');
     if (colonIdx < 0) return null;                              // 无分隔符
 
     const domainStr = canonicalId.slice(0, colonIdx);
-    if (!CanonicalIdCodec.VALID_DOMAINS.has(domainStr as CanonicalDomain)) return null;  // 未知 domain
+    if (!CanonicalIdCodec.VALID_DOMAINS.has(domainStr as CanonicalDomain)) return null;
 
     const encoded = canonicalId.slice(colonIdx + 1);
     if (encoded.length === 0) return null;                      // 空 nativeId
@@ -594,9 +644,19 @@ class CanonicalIdCodec {
       return null;
     }
 
+    // 规范性检查：decode 后重新 encode 必须与原始 encoded 一致
+    // 拒绝 doc:has/slash（应为 doc:has%2Fslash）、doc:%46（应为 doc:F）等非规范形式
+    if (encodeOpaque(nativeId) !== encoded) return null;
+
     return { domain: domainStr as CanonicalDomain, nativeId };
   }
 }
+
+// encodeOpaque / decodeOpaque 规范：
+// - unreserved chars (A-Z a-z 0-9 - _ . ~) 保持原样
+// - 其他所有字符（含 / : % 空格等）percent-encode
+// - percent-encode 使用大写十六进制（%2F 不是 %2f）
+// 这保证 encodeOpaque(decodeOpaque(s)) === s 当且仅当 s 是规范形式
 ```
 
 **Layer 2: RetrievalCoordinator 使用 RouteSlot 选 provider**
@@ -604,63 +664,94 @@ class CanonicalIdCodec {
 ```typescript
 interface RouteSlot {
   primary: RetrievalProvider;
-  fallback?: RetrievalProvider;        // timeout/unhealthy/contract-error 时接管
+  fallback?: RetrievalProvider;        // ProviderFailure 时接管
   shadows: RetrievalProvider[];        // 旁路观测，不进 served result
 }
+
+/** provider 可 fallback 的错误分类（catch-all 不算——只有这三类触发 fallback） */
+class ProviderFailure extends Error {
+  constructor(
+    readonly kind: 'timeout' | 'unhealthy' | 'contract_error',
+    message: string,
+  ) { super(message); }
+}
+
+/** Exact lookup 的 typed result — 调用方可区分每种状态 */
+type AnchorLookupExecution =
+  | { status: 'found';       item: AnchorLookupItem; meta: CoordinatorExecutionMeta }
+  | { status: 'not_found';   meta: CoordinatorExecutionMeta }
+  | { status: 'invalid_id' }                          // 非法 canonicalId
+  | { status: 'unavailable'; meta: CoordinatorExecutionMeta };  // 所有 provider 故障
 
 class RetrievalCoordinator {
   private codec = new CanonicalIdCodec();
   private routes = new Map<CanonicalDomain, RouteSlot>();
 
-  /** anchor 精确查找 — 按 domain route slot + 类型守卫选 provider */
-  async getByCanonicalId(canonicalId: string): Promise<WireGetResponse | null> {
+  /** anchor 精确查找 — 返回 typed result，调用方按 status 分支 */
+  async getByCanonicalId(canonicalId: string): Promise<AnchorLookupExecution> {
     const parsed = this.codec.parse(canonicalId);
-    if (!parsed) return null;           // 非法 canonicalId → null（调用方转 invalid_request）
+    if (!parsed) return { status: 'invalid_id' };
 
     const slot = this.routes.get(parsed.domain);
-    if (!slot) return null;
+    if (!slot) return { status: 'invalid_id' };          // 未知 domain = 无效 ID
 
-    // 1. 选 capable provider（类型守卫，不靠布尔值隐含约定）
+    // 选 capable provider（类型守卫）
     const primary = isAnchorLookupCapable(slot.primary) ? slot.primary : null;
     const fallback = slot.fallback && isAnchorLookupCapable(slot.fallback)
       ? slot.fallback : null;
 
-    // 2. primary 不具备 anchor lookup → 直接用 fallback（不是 error fallback）
-    if (!primary && !fallback) return null;
+    if (!primary && !fallback) {
+      return { status: 'unavailable', meta: { degraded: true, degradeReason: 'evidence_store_error' } };
+    }
 
-    // 3. 先试 primary；timeout/unhealthy/contract-error → fallback
+    // primary 不具备 anchor lookup → fallback 作为该操作的 designated handler（不是降级）
+    if (!primary && fallback) {
+      return this.tryLookup(fallback, parsed.nativeId, { degraded: false });
+    }
+
+    // 先试 primary
     if (primary) {
-      try {
-        if (!(await slot.primary.health())) throw new Error('unhealthy');
-        const result = await primary.getByAnchor(parsed.nativeId);
-        // null = 合法未命中，不触发 fallback
-        return result;
-      } catch (err) {
-        // timeout / unhealthy / contract-error → 降级到 fallback
-        if (!fallback) return null;
-        // fall through to fallback
+      const result = await this.tryLookup(primary, parsed.nativeId, { degraded: false });
+      if (result.status !== 'unavailable') return result;
+      // primary 故障 → 尝试 fallback（降级）
+      if (fallback) {
+        return this.tryLookup(fallback, parsed.nativeId, {
+          degraded: true, degradeReason: 'evidence_store_error',
+        });
       }
     }
 
-    // 4. fallback（fallback 失败不再级联）
-    if (fallback) {
-      try {
-        return await fallback.getByAnchor(parsed.nativeId);
-      } catch {
-        return null;
-      }
-    }
+    return { status: 'unavailable', meta: { degraded: true, degradeReason: 'evidence_store_error' } };
+  }
 
-    return null;
+  /** 单 provider 调用 — 只有 ProviderFailure 触发 unavailable */
+  private async tryLookup(
+    provider: RetrievalProvider & AnchorLookupCapable,
+    nativeId: string,
+    baseMeta: Partial<CoordinatorExecutionMeta>,
+  ): Promise<AnchorLookupExecution> {
+    try {
+      const item = await provider.getByAnchor(nativeId);
+      const meta: CoordinatorExecutionMeta = { degraded: false, ...baseMeta };
+      return item
+        ? { status: 'found', item, meta }
+        : { status: 'not_found', meta };                // null = 合法未命中
+    } catch (err) {
+      if (err instanceof ProviderFailure) {
+        return { status: 'unavailable', meta: { degraded: true, degradeReason: 'evidence_store_error' } };
+      }
+      throw err;  // 非 ProviderFailure 的异常不被吞（编程错误，应上报）
+    }
   }
 }
 ```
 
 > **职责边界**：
 > - `CanonicalIdCodec`: 纯函数，无状态，无 provider 依赖。Phase 0 conformance vectors 针对它。
-> - `RetrievalCoordinator`: 持有 `Map<domain, RouteSlot>`，用 codec + route slot + `isAnchorLookupCapable` 类型守卫选 provider。
-> - Provider adapter: 负责 nativeId ↔ provider-local ID 转换（e.g. LegacyConv 补回 `thread-` 前缀）。
-> - **Exact lookup 与 search 的 fallback 语义一致**：timeout/unhealthy/contract-error 触发 fallback；null（合法未命中）不触发。
+> - `RetrievalCoordinator`: 持有 `Map<domain, RouteSlot>`，用 codec + route slot + `isAnchorLookupCapable` 类型守卫选 provider。返回 `AnchorLookupExecution`，调用方按 `status` 分支处理。
+> - Provider adapter: 负责 nativeId ↔ provider-local ID 转换（e.g. LegacyConv 补回 `thread-` 前缀）。Wire DTO 仅在 EchoMemAdapter 内部，不穿透到 coordinator。
+> - **Fallback 语义**：只有 `ProviderFailure`（timeout/unhealthy/contract_error）触发 fallback。`null`（合法未命中）不触发。非 ProviderFailure 异常不被 catch-all 吞掉。
+> - **Primary 不支持 anchor lookup 但 fallback 支持**：fallback 作为该操作的 designated handler，`degraded: false`——这是 operation-specific routing，不是降级。
 
 ### 4.5 Identity Scope（Phase 1 推荐）
 
@@ -925,7 +1016,8 @@ Phase 2: Durable outbox + Backfill + Shadow 旁路
 Phase 3: Read primary 切换
   路由表 Conv slot: primary=EchoMem, fallback=LegacyConv
   fallback 触发条件：timeout / unhealthy / contract-error（零命中不触发 fallback）
-  meta 标明 degraded + servedBy=fallback
+  fallback 返回时 meta: { degraded: true, degradeReason: 'evidence_store_error' }
+  coordinator 内部 observability 记录 servedBy（不进入 SearchExecutionMeta）
   验收门槛通过 → 进入 rollback window（定期 N 天）
     │
     ▼
@@ -950,7 +1042,9 @@ Phase 4: Rollback window 到期
 | `fallback` | primary timeout/unhealthy/contract-error 时接管 | **零命中不触发 fallback**（空结果是合法返回） |
 | `shadow[]` | 旁路观测，不进入 served result | 始终执行，结果只用于 diff 报告 |
 
-> fallback 返回时 meta 必须标明 `degraded: true, servedBy: 'fallback'`。
+> fallback 返回时 host meta 标明 `degraded: true, degradeReason: 'evidence_store_error'`。
+> `servedBy` 作为 coordinator 内部 observability 字段，不进入 `SearchExecutionMeta`
+> （宿主 `SearchExecutionMeta` 无 `servedBy` 字段 — interfaces.ts:274-278）。
 
 ### 10.2 回退成本
 

@@ -322,7 +322,7 @@ interface SearchResponse {
   meta: {
     effectiveMode: 'lexical' | 'semantic' | 'hybrid';
     degraded: boolean;
-    degradeReason?: string;
+    degradeReason?: SearchDegradeReason;  // 宿主封闭联合（interfaces.ts:268-272）
     totalCandidates?: number;
     traceId?: string;
   };
@@ -515,7 +515,8 @@ class MemoryServiceAdapter implements IEvidenceStore, GraphStore {
     });
     return {
       items,
-      meta: response.meta,  // 从 store SearchResponse.meta 传播降级状态
+      meta: response.meta,  // Storage SPI → Host: 类型兼容（SearchResponse.meta 是宿主类型）
+      // 注意：EchoMem Wire → Host 时不能直赋——须调用 wireMetaToHost()（见 EchoMem 协作设计 §2.3）
     };
   }
 
