@@ -2067,6 +2067,36 @@ async function main(): Promise<void> {
     // KD-17: GuardRejectionEventLog for eval:harness-ledger snapshot-first manual trigger.
     guardRejectionLog,
   });
+
+  // F257 sub-item 2: wire threshold escalation hook into GuardRejectionEventLog.
+  // Every event append checks guard accumulation; >= 3 events in 7 days for the
+  // same guard triggers an immediate eval:harness-ledger via handleTriggerNow.
+  // triggerEval uses invokeTriggerHolder (late-bound) — during early boot (before
+  // invokeTrigger construction ~line 3936), handleTriggerNow returns 503 which
+  // the fire-and-forget hook silently swallows (fail-open).
+  if (guardRejectionLog && redis) {
+    const { createThresholdEscalationHook } = await import(
+      './infrastructure/harness-eval/guard-threshold-escalation.js'
+    );
+    const { handleTriggerNow } = await import('./infrastructure/harness-eval/manual-trigger/trigger-now.js');
+    const escalationTriggerDeps: import('./infrastructure/harness-eval/manual-trigger/types.js').ManualTriggerDeps = {
+      harnessFeedbackRoot: resolve(repoRoot, 'docs', 'harness-feedback'),
+      invokeTriggerProvider: invokeTriggerHolder,
+      messageStore,
+      threadStore,
+      redis,
+      guardRejectionLog,
+    };
+    guardRejectionLog.setPostAppendHook(
+      createThresholdEscalationHook({
+        redis,
+        guardRejectionLog,
+        triggerEval: (input) => handleTriggerNow(escalationTriggerDeps, input),
+      }),
+    );
+    app.log.info('[api] F257: threshold escalation hook wired into GuardRejectionEventLog');
+  }
+
   // AC-G13: Cancel burst detector (in-memory, per-process)
   const { buildProposalRejectSignal } = await import(
     './infrastructure/harness-eval/task-outcome/task-outcome-signal-builder.js'

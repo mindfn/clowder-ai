@@ -93,8 +93,27 @@ const DEFAULT_QUERY_LIMIT = 200;
 // Event Log
 // ---------------------------------------------------------------------------
 
+/**
+ * Post-append hook signature for threshold-driven escalation (F257 sub-item 2).
+ * Fires after every successful ZADD. Implementations must be fail-open
+ * (the hook is already wrapped in try/catch internally).
+ */
+export type PostAppendHook = (event: GuardRejectionEvent) => void;
+
 export class GuardRejectionEventLog {
+  private postAppendHook?: PostAppendHook;
+
   constructor(private readonly redis: RedisClient) {}
+
+  /**
+   * Register a post-append hook (F257 sub-item 2: threshold escalation).
+   * Called after every successful event append — use for threshold checks
+   * that should react to event accumulation without waiting for weekly cron.
+   * The hook is wrapped in try/catch (fail-open).
+   */
+  setPostAppendHook(hook: PostAppendHook): void {
+    this.postAppendHook = hook;
+  }
 
   /**
    * Append a guard rejection event to the global ZSET.
@@ -112,6 +131,15 @@ export class GuardRejectionEventLog {
       // Prune stale events (fail-open: errors here don't matter)
       const cutoff = event.timestamp - RETENTION_MS;
       await this.redis.zremrangebyscore(EVENTS_ZSET, 0, cutoff);
+      // F257 sub-item 2: fire post-append hook for threshold escalation.
+      // Fail-open — hook errors never block the business call.
+      if (this.postAppendHook) {
+        try {
+          this.postAppendHook(event);
+        } catch {
+          /* fail-open */
+        }
+      }
     } catch {
       // Fail-open: observation layer never blocks business
     }
