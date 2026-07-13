@@ -39,11 +39,19 @@ co-creator 指出两个根本前提错误后重写：
 |------|--------|-----------|
 | **入库** | 书入库，图书馆分类上架 | `upsert()` / `IndexBuilder.rebuild()` |
 | **找书** | 按关键词、分类找 | `KnowledgeResolver.resolve(query, options)` |
-| **取书** | 拿到书翻看内容 | `getByAnchor()` + drill-down（文档 grep 原文 / 对话直接返回 passages） |
+| **取书** | 拿到书翻看内容 | `getByAnchor()` + drill-down — **两种模式**见下 |
 | **下架** | 过期/失效的书下架 | `status: invalidated/archived` + `supersededBy` |
 | **内部管理** | 图书馆自己处理 | 索引重建、向量嵌入、去重、矛盾检测、消费加权排序 |
 
+**取书的两种模式**（`depth` 参数控制）：
+- **文档类**：索引命中 → LLM 用 drill-down 工具 grep 原文件取全文（索引是摘要，原文在 repo）
+- **对话类**：内容就在 passages 里，直接返回（对话消息本身就是内容，不需要回源）
+
 上层不需要知道书架怎么组织、用的什么数据库、索引怎么建。**这就是组件化的目标**。
+
+> **核心原则：索引可重建**。真相源始终是 docs/*.md + thread 消息历史（Parent ADR 最早的正确决策）。
+> 记忆服务是编译索引，不是真相源。索引丢了 → `IndexBuilder.rebuild()` 重建，等同于缓存失效。
+> 这意味着入库的可靠性要求是**缓存重建级**（同步写 + 失败重建），不是消息队列级（at-least-once / exactly-once）。
 
 ---
 
@@ -216,7 +224,35 @@ constructor(deps: {
 
 ---
 
-## 5. 后端替换模式
+## 5. 能力缺口（组件化前或过程中必须解决）
+
+### 5.1 Sunset 能力缺失
+
+co-creator 的能力清单里有"无效的记忆逐渐 sunset"。现有机制（status lifecycle / supersededBy / F163 contradicts）覆盖了**文档类**的下架，但**对话类的 sunset 是断的**：
+
+**症状**：188 个孤儿 passage（doc 被 cleanup 删除，passage 永久堆积）
+
+**根因**：`deleteByAnchor()` 只删 `evidence_docs`，不级联删 `evidence_passages`（全 codebase 无 `DELETE FROM evidence_passages`）。更深层：thread 记忆保留策略矛盾——doc 层有清理机制，passage 层没有。
+
+**按图书馆模型**：下架是图书馆的内部职责，上层不该知道细节，但**两个书架都必须实现下架能力**。
+
+| 书架 | 现有 sunset | 缺口 |
+|------|-----------|------|
+| DocProvider | status lifecycle + supersededBy + F163 | ✅ 基本完整 |
+| ConversationProvider | 无 | ❌ 需要：passage 级联删除 + thread 记忆保留策略 |
+
+组件化后，ConversationProvider 的 `IEvidenceStore` 实现必须保证 `deleteByAnchor()` 级联清理关联 passages。
+
+### 5.2 媒体扩展点
+
+co-creator 提到记忆数据可以有"文本、图之类的"。当前 `EvidenceItem` 是纯文本（title + summary + passages.content）。组件化不需要立刻实现多媒体，但 Provider 接口应预留扩展位：
+
+- `EvidenceItem` 的 `passages` 条目可加 `mediaType?: string` + `mediaRef?: string`
+- 具体实现延后到有实际需求时
+
+---
+
+## 6. 后端替换模式（按需）
 
 当需要把 ConversationProvider 从 SQLite 换成 EchoMem 时：
 
@@ -241,7 +277,7 @@ constructor(deps: {
 
 ---
 
-## 6. 实施计划
+## 7. 实施计划
 
 ### Phase 1: 拆分 projectStore（零行为变更）
 
@@ -251,10 +287,11 @@ constructor(deps: {
 
 **交付物**：现有测试全部通过，搜索结果 diff = 0
 
-### Phase 2: 治理（可选，与 Phase 1 并行或之后）
+### Phase 2: Sunset 治理（与 Phase 1 并行或之后）
 
-1. 修复孤儿 passage 问题（`deleteByAnchor` 加级联删除）
-2. 明确 thread 记忆保留策略（保留多久 / 怎么 sunset）
+1. `deleteByAnchor()` 加级联删除 passages（修复 188 孤儿根因）
+2. ConversationProvider 实现 sunset 策略（thread 记忆保留多久 / 怎么清理）
+3. 两个 Provider 的 sunset 行为写入 `IEvidenceStore` 契约（deleteByAnchor 必须级联）
 
 ### Phase 3: 后端替换（按需）
 
@@ -263,9 +300,17 @@ constructor(deps: {
 2. 数据迁移
 3. 配置切换
 
+### 验收
+
+| 阶段 | 验收条件 |
+|------|---------|
+| Phase 1 | 搜索结果 diff = 0（拆分前后行为完全一致） |
+| Phase 2 | 孤儿 passage = 0；deleteByAnchor 级联测试通过 |
+| Phase 3 | F200 Memory Recall Eval：换后端后召回率 ≥ 0.95 × 基线 |
+
 ---
 
-## 7. 与 Parent ADR 的关系
+## 8. 与 Parent ADR 的关系
 
 Parent ADR（memory-service-componentization.md）定义了三原语模型（TextBlock / RelationEdge / Timeline）和完整的服务 SPI。那是面向**独立记忆服务**的设计——假设记忆组件是一个独立进程。
 
@@ -277,15 +322,30 @@ Parent ADR（memory-service-componentization.md）定义了三原语模型（Tex
 
 ---
 
-## 8. 显式否决记录
+## 9. 显式否决记录
+
+### 从前一版继承的否决（与 SaaS/客户端无关，仍然成立）
 
 | # | 否决方向 | 理由 |
 |---|---------|------|
-| 1 | 同时跑两个后端 + shadow 对比 | 客户端应用不需要渐进式切换，直接替换 |
-| 2 | 隐私过滤层（egress filter / thread sensitivity） | 用户自己的 Mac 上的数据，不存在隐私边界 |
-| 3 | 跨语言 Wire Contract | 进程内调用，不需要跨语言协议 |
-| 4 | 新增 RetrievalProvider 抽象层 | `IEvidenceStore` 已经是正确的接口 |
-| 5 | CanonicalId 翻译层 | 单后端不需要 ID 翻译 |
+| 1 | Conversation 伪装成 external collection | CollectionManifest 必填字段（root/scannerLevel/indexPolicy）对对话无意义 |
+| 2 | 三原语 MemoryStore 直接充当跨团队协议 | MemoryStore 是存储 SPI，跨团队需要域接口 |
+| 3 | scope=sessions 路由到 ConversationProvider | `sessions` 在 store 层映射为 `kind=session`（scanner 产物），归 Doc |
+
+### 本轮新增否决
+
+| # | 否决方向 | 理由 |
+|---|---------|------|
+| 4 | 同时跑两个后端 + shadow 对比 | 客户端应用不需要渐进式切换，停机迁移是正常模式 |
+| 5 | 隐私过滤层（egress filter / thread sensitivity） | 客户端应用，用户数据在用户机器上，不存在"出境"概念 |
+| 6 | 新增 RetrievalProvider / RouteSlot 抽象层 | `IEvidenceStore` 已经是正确的 Provider 接口 |
+| 7 | 消息队列级可靠性（outbox / at-least-once / exactly-once） | 索引可重建（缓存语义），hook + 定期 rebuild 补漏是合法方案 |
+
+### 从前一版降级的决策（内核保留，结论调整）
+
+| # | 原否决 | 调整 |
+|---|--------|------|
+| 8 | "先 shadow 后补 ID" 被否决 | 改写：shadow 没了，但"统一 ID 映射先于数据迁移"仍是迁移前置条件 |
 
 ---
 
@@ -301,6 +361,19 @@ Parent ADR（memory-service-componentization.md）定义了三原语模型（Tex
 | RRF 融合 | `KnowledgeResolver.ts:249-270` | 多源结果融合排序 |
 | 孤儿根因 | `SqliteEvidenceStore.ts:1362-1367` | `deleteByAnchor` 不级联 |
 | scope→kind 映射 | `SqliteEvidenceStore.ts:176-177` | `sessions → kind=session` |
+
+## 附录：scope × dimension 路由矩阵（测试基准）
+
+> 降级为附录（Fable 建议）：不是协议交付物，是实现的测试基准。写 coordinator 单测时照抄。
+
+| scope | 路由到 | 关键说明 |
+|-------|--------|---------|
+| `threads` | ConversationProvider | 对话消息 |
+| `sessions` | DocProvider | session digest 是 scanner 产物（`kind=session`），归 Doc（source-based ownership） |
+| `docs` / `memory` | DocProvider（+ globalStore） | 文档知识 |
+| `undefined` / `all` | 两个 Provider 都查 → RRF 融合 | 全域搜索 |
+
+> scope 与 provider universe 不匹配时（如 `global + threads`）：返回空结果 + `degraded: true`，**不偷路由**。
 
 ## 附录：被替换的前一版
 
