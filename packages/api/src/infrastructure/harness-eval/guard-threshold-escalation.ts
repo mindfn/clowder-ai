@@ -72,6 +72,25 @@ export interface GuardThresholdEscalationDeps {
 }
 
 // ---------------------------------------------------------------------------
+// Claim lifecycle helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Attempt to release escalation claim so the next event can retry.
+ * Returns `true` only when DEL succeeds. On DEL failure, the 7-day TTL
+ * backstop auto-expires the claim — bounded degradation, not permanent.
+ */
+async function releaseClaim(redis: RedisClient, dedupKey: string, guardId: string): Promise<boolean> {
+  try {
+    await redis.del(dedupKey);
+    return true;
+  } catch (err) {
+    console.warn(`[F257] escalation claim DEL failed for guard=${guardId}, 7d TTL backstop active`, err);
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Core function
 // ---------------------------------------------------------------------------
 
@@ -116,27 +135,20 @@ export async function checkGuardThreshold(
   }
 
   // Step 3: trigger eval:harness-ledger via the manual trigger path.
-  const triggerResult = await deps.triggerEval({
-    domainId: 'eval:harness-ledger',
-    userId: `threshold-escalation:${guardId}`,
-  });
-
-  // Step 4: verify trigger actually dispatched (dispatched/enqueued).
-  // handleTriggerNow returns 503 objects (invokeTrigger not ready, queue full,
-  // snapshot error) as resolved values, NOT throws — the hook's .catch() never
-  // fires for these. If we keep the 7d claim after a failed trigger, subsequent
-  // events NX-fail and the guard's first reaction is silently lost.
-  // Only keep claim when eval cat was actually invoked.
-  const dispatched = 'ok' in triggerResult && triggerResult.ok === true && 'invocationTriggered' in triggerResult;
-
-  if (!dispatched) {
-    // Release claim so the next event can retry.
-    // DEL failure = original 7d TTL backstop (fail-open, not ideal but bounded).
-    try {
-      await deps.redis.del(dedupKey);
-    } catch {
-      /* fail-open: original TTL is backstop */
-    }
+  // Invariant: ALL paths that don't confirm dispatch attempt to release claim.
+  // handleTriggerNow can fail two ways:
+  //   a) resolved 503/skipped (non-throw) — checked in Step 4
+  //   b) reject/throw (transport error, Redis inside handler, messageStore.append)
+  // Both must release the claim to prevent 7-day silent suppression.
+  let triggerResult: TriggerEvalResult | undefined;
+  try {
+    triggerResult = await deps.triggerEval({
+      domainId: 'eval:harness-ledger',
+      userId: `threshold-escalation:${guardId}`,
+    });
+  } catch {
+    // triggerEval rejected — release claim so next event can retry.
+    const released = await releaseClaim(deps.redis, dedupKey, guardId);
     return {
       checked: true,
       guardId,
@@ -144,7 +156,24 @@ export async function checkGuardThreshold(
       thresholdMet: true,
       alreadyEscalated: false,
       escalated: false,
-      claimReleased: true,
+      claimReleased: released,
+    };
+  }
+
+  // Step 4: verify trigger actually dispatched (dispatched/enqueued).
+  // Only { ok: true, invocationTriggered: true } confirms eval cat was invoked.
+  const dispatched = 'ok' in triggerResult && triggerResult.ok === true && 'invocationTriggered' in triggerResult;
+
+  if (!dispatched) {
+    const released = await releaseClaim(deps.redis, dedupKey, guardId);
+    return {
+      checked: true,
+      guardId,
+      count,
+      thresholdMet: true,
+      alreadyEscalated: false,
+      escalated: false,
+      claimReleased: released,
       triggerResult,
     };
   }

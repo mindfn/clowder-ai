@@ -315,6 +315,89 @@ describe('F257 sub-item 2: guard threshold escalation', () => {
     assert.equal(result.claimReleased, undefined, 'claim should NOT be released on success');
     assert.ok(redis._store.has('guard-rejection:escalated:guard-ok'), 'dedup key retained');
   });
+
+  // ---- Round 4 regression: triggerEval reject + DEL reject paths ----
+
+  it('releases claim when triggerEval rejects (throw) → next event retries successfully', async () => {
+    const redis = createFakeRedis();
+    const log = createFakeLog(3);
+    const callCount = { n: 0 };
+    const triggerEval = mock.fn(async () => {
+      callCount.n++;
+      if (callCount.n === 1) {
+        throw new Error('messageStore.append ECONNRESET');
+      }
+      return triggerSuccess();
+    });
+
+    // First call: triggerEval throws → catch releases claim via DEL
+    const first = await checkGuardThreshold(makeEvent('guard-throw'), {
+      redis,
+      guardRejectionLog: log,
+      triggerEval,
+    });
+    assert.equal(first.thresholdMet, true);
+    assert.equal(first.escalated, false, 'reject path must NOT report escalated');
+    assert.equal(first.claimReleased, true, 'claim released after triggerEval reject');
+    assert.equal(first.triggerResult, undefined, 'no triggerResult on reject path');
+    assert.equal(
+      redis._store.has('guard-rejection:escalated:guard-throw'),
+      false,
+      'dedup key deleted — next event can retry',
+    );
+
+    // Second call: fresh claim succeeds → eval cat invoked
+    const second = await checkGuardThreshold(makeEvent('guard-throw'), {
+      redis,
+      guardRejectionLog: log,
+      triggerEval,
+    });
+    assert.equal(second.escalated, true, 'retry succeeds after claim release');
+    assert.equal(triggerEval.mock.callCount(), 2, 'triggerEval called twice (reject + success)');
+  });
+
+  it('reports claimReleased=false when redis.del rejects (7d TTL backstop)', async () => {
+    const redis = createFakeRedis();
+    const log = createFakeLog(3);
+    // triggerEval returns 503 (resolved, not throw) to enter non-dispatch path
+    const triggerEval = mock.fn(async () => ({
+      status: 503,
+      error: 'invokeTrigger not ready',
+    }));
+
+    // Sabotage redis.del to reject
+    const originalDel = redis.del;
+    redis.del = async () => {
+      throw new Error("READONLY You can't write against a read only replica");
+    };
+
+    // Capture console.warn
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args);
+
+    try {
+      const result = await checkGuardThreshold(makeEvent('guard-del-fail'), {
+        redis,
+        guardRejectionLog: log,
+        triggerEval,
+      });
+
+      assert.equal(result.thresholdMet, true);
+      assert.equal(result.escalated, false);
+      assert.equal(result.claimReleased, false, 'must NOT report true when DEL failed');
+
+      // Key survives — 7d TTL backstop is active
+      assert.ok(redis._store.has('guard-rejection:escalated:guard-del-fail'), 'dedup key still exists (TTL backstop)');
+
+      // console.warn was called with F257 prefix
+      assert.ok(warnings.length >= 1, 'console.warn should fire on DEL failure');
+      assert.ok(warnings[0][0].includes('[F257]'), 'warning should include [F257] prefix');
+    } finally {
+      console.warn = originalWarn;
+      redis.del = originalDel;
+    }
+  });
 });
 
 describe('createThresholdEscalationHook', () => {
