@@ -1156,11 +1156,12 @@ Phase 4: Rollback window 到期
 
 ## 附录：踩坑教训
 
-> **Fable × Sol 收敛 — 候选教训（待正式沉淀到 docs/public-lessons.md）**
+> **Fable × Sol 收敛教训（→ public-lessons.md LL-090..093，待 develop_base 正式入库）**
 
-1. **Host-specific adapter ≠ neutral protocol**：EchoAgent 的 Session Memory Engine 是 EchoAgent 对 EchoMem 的适配器，不是 EchoMem 对所有宿主的协议。把边缘适配器提升为核心协议 = 绑定到一个特定宿主的实现细节。
-2. **两个正交抽象轴不能共用一个 Provider 名称**：storage backend（怎么存）和 domain provider（搜什么 + 怎么路由）是正交的。混用导致 `scope=threads` 硬路由到 project store 而 EchoMem 永远查不到。
-3. **协议 canonicalId 是双源窗口的硬前置**：任何融合/去重都依赖 ID 对齐。先跑后补 = 污染数据 + 回滚成本指数增长。
+1. **LL-090: Host-specific adapter ≠ neutral protocol**：EchoAgent 的 Session Memory Engine 是 EchoAgent 对 EchoMem 的适配器，不是 EchoMem 对所有宿主的协议。把边缘适配器提升为核心协议 = 绑定到一个特定宿主的实现细节。
+2. **LL-091: 两个正交抽象轴不能共用一个 Provider 名称**：storage backend（怎么存）和 domain provider（搜什么 + 怎么路由）是正交的。混用导致 `scope=threads` 硬路由到 project store 而 EchoMem 永远查不到。
+3. **LL-092: 协议 canonicalId 是双源窗口的硬前置**：任何融合/去重都依赖 ID 对齐。先跑后补 = 污染数据 + 回滚成本指数增长。
+4. **LL-093: 设计 adapter 先 Read 两侧实际类型定义，不从文档描述推导**：从文档描述推导类型映射（可能过时或抽象化）会产生纸面正确但边界失败的 adapter。delta #4 根因：SearchDegradeReason 从文档推断为 string，实际源码是 4 值联合。
 
 ---
 
