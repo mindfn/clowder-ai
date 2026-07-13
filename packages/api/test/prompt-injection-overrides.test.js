@@ -31,6 +31,10 @@ function createFakeStore() {
       overrides.set(hookId, { hookId, enabled: false, enabledSource: opts?.source });
     },
     async rollback(hookId, actorId, opts) {
+      if (hookId === 'no-such-hook') {
+        // Mirrors real store contract: rollback resolves manifest fail-closed (terra P2)
+        throw new OverrideGateError(hookId, 'rollback', 'unknown-hook', 'not-found');
+      }
       calls.push({ method: 'rollback', hookId, actorId, opts });
       overrides.delete(hookId);
     },
@@ -106,6 +110,46 @@ describe('prompt-injection-overrides routes (F257 approval executor)', () => {
     await app.close();
   });
 
+  it('400 on non-string reason — untrusted input must not 500 (terra P2)', async () => {
+    const { app, store } = await buildApp();
+    for (const reason of [{ bad: 'not-string' }, ['array'], 123]) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/prompt-hooks/d21-决策树/override',
+        payload: { action: 'disable', reason },
+      });
+      assert.equal(res.statusCode, 400, `reason=${JSON.stringify(reason)} must map to 400`);
+      assert.match(res.json().error, /reason/);
+    }
+    assert.equal(store.calls.length, 0);
+    await app.close();
+  });
+
+  it('400 on non-record body and non-string action', async () => {
+    const { app, store } = await buildApp();
+    const stringBody = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-hooks/d21-决策树/override',
+      headers: { 'content-type': 'application/json' },
+      payload: '"just-a-string"',
+    });
+    assert.equal(stringBody.statusCode, 400);
+    const arrayBody = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-hooks/d21-决策树/override',
+      payload: [1, 2, 3],
+    });
+    assert.equal(arrayBody.statusCode, 400);
+    const numericAction = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-hooks/d21-决策树/override',
+      payload: { action: 123, reason: 'x' },
+    });
+    assert.equal(numericAction.statusCode, 400);
+    assert.equal(store.calls.length, 0);
+    await app.close();
+  });
+
   it('disable happy path: store called with operator source + actor + reason, override echoed', async () => {
     const { app, store } = await buildApp();
     const res = await app.inject({
@@ -160,6 +204,19 @@ describe('prompt-injection-overrides routes (F257 approval executor)', () => {
     });
     assert.equal(missing.statusCode, 404);
     assert.equal(missing.json().gate, 'unknown-hook');
+    await app.close();
+  });
+
+  it('unknown-hook rollback → 404 with no store write (terra P2: audit stream protection)', async () => {
+    const { app, store } = await buildApp();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/prompt-hooks/no-such-hook/override',
+      payload: { action: 'rollback', reason: 'cleanup attempt' },
+    });
+    assert.equal(res.statusCode, 404);
+    assert.equal(res.json().gate, 'unknown-hook');
+    assert.equal(store.calls.length, 0, 'rollback must not be recorded for unknown hook');
     await app.close();
   });
 

@@ -185,6 +185,9 @@ export class HookOverrideStore {
     actorId: string,
     opts?: { source?: HookOverrideSource; workspaceId?: string; reason?: string },
   ): Promise<void> {
+    // Fail-closed: same unknown-hook invariant as rollback (audit-sweep sibling —
+    // orphaned overrides would otherwise be mutated + evented past the gate).
+    this.resolveManifest(hookId);
     const ws = opts?.workspaceId ?? this.defaultWorkspaceId;
     const source = opts?.source ?? 'operator';
     const existing = await this.getOverride(hookId, ws);
@@ -205,6 +208,12 @@ export class HookOverrideStore {
     actorId: string,
     opts?: { source?: HookOverrideSource; workspaceId?: string; reason?: string },
   ): Promise<void> {
+    // Fail-closed (terra P2, F257): unknown hooks must not touch overrides or
+    // write audit events — the event stream is the permanent governance ledger.
+    // Deliberate tradeoff: orphaned overrides (hook removed by a package
+    // upgrade) are NOT clearable via this path; that needs a dedicated
+    // migration channel, not arbitrary-string writes into the audit stream.
+    this.resolveManifest(hookId);
     const ws = opts?.workspaceId ?? this.defaultWorkspaceId;
     const source = opts?.source ?? 'operator';
     await this.redis.hdel(OVERRIDE_HASH(ws), hookId);

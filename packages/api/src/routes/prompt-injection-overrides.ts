@@ -34,6 +34,58 @@ function requireSession(request: FastifyRequest, reply: FastifyReply): string | 
   return userId;
 }
 
+/** Session + connector-write network/owner gates for the mutating surface. */
+function requireWriteAuth(request: FastifyRequest, reply: FastifyReply): string | null {
+  const userId = requireSession(request, reply);
+  if (!userId) return null;
+  const networkError = requireConnectorWriteNetworkGuard(request);
+  if (networkError) {
+    reply.status(networkError.status).send({ error: networkError.error });
+    return null;
+  }
+  const ownerError = requireConnectorWriteOwner(userId);
+  if (ownerError) {
+    reply.status(ownerError.status).send({ error: ownerError.error });
+    return null;
+  }
+  return userId;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Dispatch an approved action to the store — gates live in the store, not here. */
+async function executeOverrideAction(
+  store: HookOverrideStore,
+  action: OverrideAction,
+  hookId: string,
+  userId: string,
+  reason: string,
+): Promise<void> {
+  const actionOpts = { source: 'operator' as const, reason };
+  if (action === 'enable') return store.enable(hookId, userId, actionOpts);
+  if (action === 'disable') return store.disable(hookId, userId, actionOpts);
+  return store.rollback(hookId, userId, actionOpts);
+}
+
+/**
+ * Parse the untrusted request body. Non-record bodies and non-string fields
+ * map to 400, never 500 (terra P2: this is an operator-facing trust boundary).
+ */
+function parseOverrideBody(raw: unknown): { action: OverrideAction; reason: string } | { error: string } {
+  const body = isRecord(raw) ? raw : {};
+  const action = body.action;
+  if (typeof action !== 'string' || !(ACTIONS as readonly string[]).includes(action)) {
+    return { error: `action must be one of: ${ACTIONS.join(' | ')}` };
+  }
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+  if (!reason) {
+    return { error: 'reason is required (audit trail)' };
+  }
+  return { action: action as OverrideAction, reason };
+}
+
 export const promptInjectionOverrideRoutes: FastifyPluginAsync<PromptInjectionOverrideRoutesOptions> = async (
   app,
   opts,
@@ -52,43 +104,23 @@ export const promptInjectionOverrideRoutes: FastifyPluginAsync<PromptInjectionOv
   // Write surface: execute an approved action. reason is REQUIRED — every
   // operator action must carry a why (audit trail feeds the lifeline view).
   app.post('/api/prompt-hooks/:hookId/override', async (request, reply) => {
-    const userId = requireSession(request, reply);
+    const userId = requireWriteAuth(request, reply);
     if (!userId) return;
-
-    const networkError = requireConnectorWriteNetworkGuard(request);
-    if (networkError) {
-      return reply.status(networkError.status).send({ error: networkError.error });
-    }
-    const ownerError = requireConnectorWriteOwner(userId);
-    if (ownerError) {
-      return reply.status(ownerError.status).send({ error: ownerError.error });
-    }
     if (!opts.overrideStore) {
       return reply.status(503).send({ error: 'override store unavailable (redis off)' });
     }
 
     const { hookId } = request.params as { hookId: string };
-    const body = (request.body ?? {}) as { action?: string; reason?: string };
-    if (!body.action || !ACTIONS.includes(body.action as OverrideAction)) {
-      return reply.status(400).send({ error: `action must be one of: ${ACTIONS.join(' | ')}` });
-    }
-    const reason = body.reason?.trim();
-    if (!reason) {
-      return reply.status(400).send({ error: 'reason is required (audit trail)' });
+    const parsed = parseOverrideBody(request.body);
+    if ('error' in parsed) {
+      return reply.status(400).send({ error: parsed.error });
     }
 
     const store = opts.overrideStore;
-    const action = body.action as OverrideAction;
     try {
-      if (action === 'enable') {
-        await store.enable(hookId, userId, { source: 'operator', reason });
-      } else if (action === 'disable') {
-        await store.disable(hookId, userId, { source: 'operator', reason });
-      } else {
-        await store.rollback(hookId, userId, { source: 'operator', reason });
-      }
+      await executeOverrideAction(store, parsed.action, hookId, userId, parsed.reason);
       const override = await store.getOverride(hookId);
-      return reply.send({ ok: true, hookId, action, override });
+      return reply.send({ ok: true, hookId, action: parsed.action, override });
     } catch (err) {
       if (err instanceof OverrideGateError) {
         // unknown-hook = addressing error (404); policy gates = manifest conflict (409).
