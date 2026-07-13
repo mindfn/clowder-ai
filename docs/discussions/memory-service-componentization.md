@@ -185,17 +185,17 @@ Clowder AI 的记忆系统（ADR-020 建立）当前紧耦合在宿主进程内�
 | Passage 级索引 | `evidence_passages` + `passage_fts` | **TextBlock**（parentId 模式） | 核心检索 | 按来源切：round-result / 消息流 → ConversationMemory |
 | 文档嵌入 | `evidence_vectors` | TextBlock 基础设施 | 语义搜索 | 各 provider 自有嵌入索引 |
 | Passage 嵌入 | `passage_vectors` | TextBlock 基础设施 | 语义搜索 | 各 provider 自有嵌入索引 |
-| 实体注册表 + 别名 | `entity_registry` + `entity_aliases` | **EntityResolver**（基础设施层） | 搜索增强 | provider-local + 可选共享 normalizer（见 [EchoMem 协作方案](echomem-collaboration-design.md) §2.2） |
-| 关系图 | `edges` | **RelationEdge** | graph_resolve 支持 | 当前 DocMemory；ConversationMemory 后续可自建（见 [EchoMem 协作方案](echomem-collaboration-design.md) §5.3） |
+| 实体注册表 + 别名 | `entity_registry` + `entity_aliases` | **EntityResolver**（基础设施层） | 搜索增强 | provider-local + 可选共享 normalizer（见 [EchoMem 协作方案](memory-component-abstraction.md) §2.2） |
+| 关系图 | `edges` | **RelationEdge** | graph_resolve 支持 | 当前 DocMemory；ConversationMemory 后续可自建（见 [EchoMem 协作方案](memory-component-abstraction.md) §5.3） |
 
 ### 留在 Clowder 宿主
 
 | 数据 | 当前表 | 为什么留下 | EchoMem 协作归属（§11） |
 |------|--------|-----------|----------------------|
 | 候选记忆队列 | `markers`（YAML 后端，git-tracked） | 治理流程（捕获 → 审批 → 物化） | 我们 |
-| 认知转变事件 | EventMemory（`event_memory` 表） | Timeline 原语，归 DocMemory（见 [EchoMem 协作方案](echomem-collaboration-design.md) §5） | 我们 |
+| 认知转变事件 | EventMemory（`event_memory` 表） | Timeline 原语，归 DocMemory（见 [EchoMem 协作方案](memory-component-abstraction.md) §5） | 我们 |
 | 召回分析 | `recall_events`, `anchor_recall_metrics`, `global_ctr_baseline` | 宿主侧消费行为，用于 rerank | 我们 |
-| Thread 摘要 | `summary_segments`, `summary_state` | 绑定 thread 生命周期 | 待定（EchoMem Episode 摘要更强，见 [EchoMem 协作方案](echomem-collaboration-design.md) §5） |
+| Thread 摘要 | `summary_segments`, `summary_state` | 绑定 thread 生命周期 | 待定（EchoMem Episode 摘要更强，见 [EchoMem 协作方案](memory-component-abstraction.md) §5） |
 | 任务追踪 | `task_trajectories`, `task_run_ledger` | 调度器领域 | 我们 |
 | 治理表 | `f163_*`, `scheduler_*`, `index_state` | 宿主内部状态 | 我们 |
 
@@ -835,7 +835,7 @@ edge changes    ──► store.edges.link(...)           ──► service POST
 | `f163-admin.ts` | 4 | 直接 | Phase 1 — 管理路由直接读 DB |
 | `f163-audit-routes.ts` | 9 | 直接 | Phase 1 — 审计路由直接读 DB |
 | `evidence.ts` (routes) | 3 | duck-typed | Phase 1 — evidence 路由直接读 DB |
-| `RecentBrowseResolver.ts` | 2 | duck-typed | Phase 1 — `list_recent` 入口（见 [EchoMem 协作方案](echomem-collaboration-design.md) §3 路由决策表） |
+| `RecentBrowseResolver.ts` | 2 | duck-typed | Phase 1 — `list_recent` 入口（见 [EchoMem 协作方案](memory-component-abstraction.md) §3 路由决策表） |
 | `index.ts` (main app) | 8 | 直接 | Phase 1 — IndexStateManager、scheduler、启动流程 |
 | `library.ts` (routes) | 5 | duck-typed | Phase 1 — library 管理路由直接读 DB |
 | `route-serial.ts` | 1 | duck-typed | Phase 2 — agent 路由搜索 |
@@ -890,7 +890,7 @@ edge changes    ──► store.edges.link(...)           ──► service POST
    - 2b. `factory.ts` 的 VectorStore/PassageVectorStore 初始化 → 抽到 provider 内部
    - 2c. `GlobalIndexBuilder` / `bootstrap-collection-bridge` → 通过 provider 接口
    - 2d. routes 层（`f163-admin`、`f163-audit-routes`、`evidence.ts`）→ 通过服务接口查询
-   - 2e. `RecentBrowseResolver` duck-typed getDb → 新增 `recency` 查询到 `TextBlockStore`（见 [EchoMem 协作方案](echomem-collaboration-design.md) §3 路由决策表）
+   - 2e. `RecentBrowseResolver` duck-typed getDb → 新增 `recency` 查询到 `TextBlockStore`（见 [EchoMem 协作方案](memory-component-abstraction.md) §3 路由决策表）
    - 2f. `library.ts` 5 处 duck-typed getDb → 通过服务接口查询
    - 2g. `index.ts` 启动流程（IndexStateManager、scheduler 等 8 处）→ 通过 provider 初始化钩子
 3. 将现有 `SqliteEvidenceStore` 包装为 `SqliteBackendProvider`
@@ -946,7 +946,7 @@ edge changes    ──► store.edges.link(...)           ──► service POST
 > 基于我们的接口规范来增强。这是一个取长补短的过程，不是单向接入。
 >
 > **2026-06-30 更新**：基于本节 review 发现和 EchoAgent 代码分析，
-> 正式的 EchoMem 协作设计方案已拆分为独立文档——见 [EchoMem 协作方案](echomem-collaboration-design.md)。
+> 正式的 EchoMem 协作设计方案已拆分为独立文档——见 [EchoMem 协作方案](memory-component-abstraction.md)。
 
 ### 9.1 我们做对了什么
 
@@ -1068,7 +1068,7 @@ EchoMem 团队可以逐步实现能力：
 > **定位澄清**（四轮 review 收敛）：三原语是**存储服务的 SPI**——面向存储后端实现者
 > （SQLite / 通用 Memory Service / 第三方 backend），不是跨团队协作协议。
 > 跨领域协作（如与 EchoMem）需要领域接口（Domain Provider Ports）+
-> 语言中立协议（Wire Contract），详见 [EchoMem 协作方案](echomem-collaboration-design.md)。
+> 语言中立协议（Wire Contract），详见 [EchoMem 协作方案](memory-component-abstraction.md)。
 >
 > **参考输入**：
 > - EchoMem 三面记忆模型（Atomic Truth + Episode + Association Graph）
@@ -1661,7 +1661,7 @@ Memory-System-Eval-Harness 的 MemoryPlugin Protocol 定义了 9 个必需方法
 
 > **四轮 review（codex / Fable / Sol + Fable×Sol 收敛）后，§11 已拆分为独立文档。**
 >
-> 详见 **[EchoMem 协作方案 — 三层架构设计](echomem-collaboration-design.md)**。
+> 详见 **[EchoMem 协作方案 — 三层架构设计](memory-component-abstraction.md)**。
 >
 > 拆分理由：本 ADR（§1-§10）聚焦**存储 SPI 设计**（三原语模型 + 通用记忆服务），
 > 目标读者是存储后端实现者。EchoMem 协作是**跨领域协作设计**——需要领域 Provider Ports
