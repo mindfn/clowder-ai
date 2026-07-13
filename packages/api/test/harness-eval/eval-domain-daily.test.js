@@ -392,6 +392,100 @@ describe('KD-17 snapshot-first error paths (eval:harness-ledger)', () => {
   });
 });
 
+describe('F257 sub-item 1: zero events → skip invocation (eval:harness-ledger)', () => {
+  const harnessLedgerDomain = {
+    domainId: 'eval:harness-ledger',
+    displayName: 'Harness Ledger Eval',
+    systemThreadId: 'thread_eval_harness_ledger',
+    evalCat: { catId: 'gpt52', handle: '@gpt52', model: 'gpt-5.4' },
+    frequency: 'weekly',
+    sourceAdapter: 'f257-prompt-segments',
+    sourceRefsKind: 'prompt-segments',
+    threadPolicy: {
+      role: 'working-home',
+      stateSot: 'registry',
+      allowedContent: ['longitudinal-analysis', 'verdict-discussion', 'handoff-drafts'],
+    },
+    legacyScheduledTaskIds: [],
+    handoffTargetResolver: { featureId: 'F257', ownerCatId: 'opus-47', threadLookup: 'feature-thread' },
+    sla: { acknowledgeHours: 48, reevalWithinHours: 168 },
+    enabled: true,
+  };
+
+  it('scheduled: skips invocation when snapshot has zero events (LLM cost = 0)', async () => {
+    // guardRejectionLog returns empty array → totalEvents = 0 → skip.
+    const tmpRoot = mkdtempSync(join(tmpdir(), 'kd17-zero-'));
+    const emptyLog = {
+      queryWindowStrict: async () => [],
+      queryWindow: async () => [],
+    };
+
+    const spec = createEvalDomainWeeklySpec({
+      harnessFeedbackRoot: tmpRoot,
+      guardRejectionLog: emptyLog,
+    });
+
+    const deliverMock = mock.fn(async () => 'msg_zero');
+    const triggerMock = mock.fn();
+    const ctx = {
+      assignedCatId: null,
+      deliver: deliverMock,
+      invokeTrigger: { trigger: triggerMock },
+    };
+
+    await spec.run.execute(harnessLedgerDomain, 'eval:harness-ledger', ctx);
+
+    // deliver was called once with SKIPPED (zero events) message
+    assert.equal(deliverMock.mock.callCount(), 1);
+    const content = deliverMock.mock.calls[0].arguments[0].content;
+    assert.ok(
+      content.includes('SKIPPED (zero events in window)'),
+      `should contain zero-events SKIPPED header, got: ${content.slice(0, 120)}`,
+    );
+    assert.ok(content.includes('evalRunId'), 'should mention evalRunId for audit trail');
+    assert.ok(content.includes('LLM cost = 0'), 'should mention cost savings');
+    assert.equal(deliverMock.mock.calls[0].arguments[0].threadId, 'thread_eval_harness_ledger');
+
+    // invokeTrigger must NOT be called (no cat invocation — nothing to evaluate)
+    assert.equal(triggerMock.mock.callCount(), 0, 'eval cat must NOT be invoked on zero events');
+
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('scheduled: zero-event skip still writes snapshot file (audit trail)', async () => {
+    const tmpRoot = mkdtempSync(join(tmpdir(), 'kd17-zero-snap-'));
+    const emptyLog = {
+      queryWindowStrict: async () => [],
+      queryWindow: async () => [],
+    };
+
+    const spec = createEvalDomainWeeklySpec({
+      harnessFeedbackRoot: tmpRoot,
+      guardRejectionLog: emptyLog,
+    });
+
+    const deliverMock = mock.fn(async () => 'msg_zero_snap');
+    const ctx = {
+      assignedCatId: null,
+      deliver: deliverMock,
+      invokeTrigger: { trigger: mock.fn() },
+    };
+
+    await spec.run.execute(harnessLedgerDomain, 'eval:harness-ledger', ctx);
+
+    // Snapshot should still exist on disk (audit trail even for empty windows)
+    const { readdirSync, readFileSync } = await import('node:fs');
+    const snapshotsDir = join(tmpRoot, 'run-snapshots');
+    const files = readdirSync(snapshotsDir);
+    assert.equal(files.length, 1, 'exactly one snapshot file should exist');
+    const snapshot = JSON.parse(readFileSync(join(snapshotsDir, files[0]), 'utf8'));
+    assert.equal(snapshot.totalEvents, 0, 'snapshot should record zero events');
+    assert.ok(/^hlr-\d+-[a-f0-9]{8}$/.test(snapshot.evalRunId), 'evalRunId format');
+
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+});
+
 describe('eval-domain-weekly task spec (AC-E19, AC-E20)', () => {
   it('returns a valid TaskSpec_P1 with weekly cron and correct id', () => {
     const spec = createEvalDomainWeeklySpec({ harnessFeedbackRoot: repoHarnessFeedbackRoot });

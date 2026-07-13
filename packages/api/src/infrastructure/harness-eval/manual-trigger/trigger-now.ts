@@ -26,6 +26,21 @@ export interface TriggerNowSuccess {
 }
 
 /**
+ * F257 sub-item 1: Zero-event skip result.
+ * Snapshot produced successfully but contains zero guard rejection events
+ * in the observation window. Eval cat NOT invoked (LLM cost = 0).
+ * This is a valid state, not an error.
+ */
+export interface TriggerNowSkipped {
+  ok: true;
+  domainId: string;
+  skipped: true;
+  reason: 'zero_events_in_window';
+  evalRunId: string;
+  windowSummary: string;
+}
+
+/**
  * F192 OQ-21: Manual eval trigger — true wake via late-bound invokeTrigger.
  *
  * Replaces abandoned PR #2091 (4.6's approach taught eval cats `git push origin
@@ -39,7 +54,7 @@ export interface TriggerNowSuccess {
 export async function handleTriggerNow(
   deps: ManualTriggerDeps,
   input: TriggerNowInput,
-): Promise<TriggerNowSuccess | HandlerError> {
+): Promise<TriggerNowSuccess | TriggerNowSkipped | HandlerError> {
   const domains = loadDomains(deps.harnessFeedbackRoot);
   const domain = domains.get(input.domainId as Parameters<typeof domains.get>[0]);
   if (!domain) {
@@ -112,6 +127,19 @@ export async function handleTriggerNow(
         harnessFeedbackRoot: deps.harnessFeedbackRoot,
       });
       precomputedEvidence = snapshotResult.summary;
+
+      // F257 sub-item 1: Zero events → skip (valid state, no data to evaluate).
+      // Snapshot OK but empty window — eval cat has nothing to attribute.
+      if (snapshotResult.snapshot.totalEvents === 0) {
+        return {
+          ok: true as const,
+          domainId: input.domainId,
+          skipped: true as const,
+          reason: 'zero_events_in_window' as const,
+          evalRunId: snapshotResult.evalRunId,
+          windowSummary: `${snapshotResult.snapshot.window.durationHours}h window, 0 events`,
+        };
+      }
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       return {

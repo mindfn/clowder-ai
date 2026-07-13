@@ -25,6 +25,12 @@ import {
   type EvidencePrereqProbe,
   evaluateEvidencePrereq,
 } from './eval-domain-evidence-gate.js';
+import {
+  buildHarnessLedgerSnapshotSkippedMessage,
+  buildHarnessLedgerZeroEventsMessage,
+  buildPublishPrereqSkippedMessage,
+  evaluatePublishPrereq,
+} from './eval-domain-messages.js';
 import { getEvalCatOverride } from './eval-domain-override.js';
 import { type EvalDomainRegistryEntry, parseEvalDomainRegistryFile } from './eval-domain-registry.js';
 
@@ -123,77 +129,14 @@ interface EvalDomainSpecConfig extends EvalDomainScheduleOpts {
   triggerReasonPrefix: string;
 }
 
-/**
- * Direction B (clowder-ai#923): build the "publish prereq missing" status message that
- * gets posted to the domain's OWN system thread when the cron skips cat invocation.
- *
- * The message is intentionally human-readable + has a stable header (`SKIPPED (publish
- * prereq missing)`) so future eval-domain readers / log scrubbers can recognize and
- * count these skips. It also points at the actionable next step (sync the runtime that
- * hosts this cron, or pin the cron to a runtime that has the prereq).
- */
-export function buildPublishPrereqSkippedMessage(domain: EvalDomainRegistryEntry): string {
-  return [
-    `## Eval Domain: ${domain.domainId} — SKIPPED (publish prereq missing)`,
-    '',
-    'The scheduled eval was skipped because the runtime hosting this cron does not',
-    'export the verdict-publish prerequisites required to run this eval domain end-to-end',
-    '(e.g. the `isA2aSourceRefs` validator exported by `publish-verdict/validation.js`).',
-    '',
-    'Why this matters: invoking the eval cat without the prerequisites would let it hit',
-    'an infra blocker at publish time, and (per its prompt) cross-post that blocker into',
-    'a feature thread — exactly the leak [clowder-ai#923] reported. The fail-closed skip',
-    'keeps the failure contained in this eval domain thread.',
-    '',
-    'Next action: ensure the runtime that hosts the eval cron has the publish-verdict',
-    'fix landed, or pin the cron to a runtime that does (Direction A/C per the issue).',
-  ].join('\n');
-}
-
-/**
- * KD-17 snapshot-first: build the "snapshot unavailable" skip message for
- * eval:harness-ledger when the scheduled cron cannot produce a guard
- * rejection snapshot (provider absent or snapshot production failed).
- *
- * Same pattern as `buildPublishPrereqSkippedMessage`: human-readable with
- * a stable header for log scrubbers, domain-local delivery, no cat invocation.
- */
-export function buildHarnessLedgerSnapshotSkippedMessage(
-  domain: EvalDomainRegistryEntry,
-  reason: 'provider_not_wired' | 'snapshot_error',
-  detail?: string,
-): string {
-  const reasonText =
-    reason === 'provider_not_wired'
-      ? 'GuardRejectionEventLog provider is not wired at runtime (guardRejectionLog absent in config).'
-      : `Snapshot production failed: ${detail ?? 'unknown error'}.`;
-  return [
-    `## Eval Domain: ${domain.domainId} — SKIPPED (harness ledger snapshot unavailable)`,
-    '',
-    `KD-17 snapshot-first invariant: eval cat must not be invoked without`,
-    `pre-computed guard rejection evidence. ${reasonText}`,
-    '',
-    `This is a graceful skip — the cron task itself did not error.`,
-    `The eval cat was NOT invoked (no LLM cost, no blind verdict).`,
-    '',
-    `Next action: ensure GuardRejectionEventLog is wired and Redis is reachable`,
-    `at the next scheduled fire.`,
-  ].join('\n');
-}
-
-export async function evaluatePublishPrereq(
-  probe: NonNullable<EvalDomainScheduleOpts['publishPrereqProbe']>,
-  domainId: EvalDomainRegistryEntry['domainId'],
-): Promise<boolean> {
-  // Fail-closed on throw: a probe that fails to introspect the runtime is treated as
-  // "prereq missing" — better to skip a recoverable eval than to invoke the cat into a
-  // potential cross-post leak.
-  try {
-    return await Promise.resolve(probe(domainId));
-  } catch {
-    return false;
-  }
-}
+// Re-export message builders + evaluatePublishPrereq from extracted module.
+// eval-domain-nday.ts and tests import these via eval-domain-daily.
+export {
+  buildHarnessLedgerSnapshotSkippedMessage,
+  buildHarnessLedgerZeroEventsMessage,
+  buildPublishPrereqSkippedMessage,
+  evaluatePublishPrereq,
+} from './eval-domain-messages.js';
 
 function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDomainRegistryEntry> {
   return {
@@ -321,6 +264,19 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
               harnessFeedbackRoot: config.harnessFeedbackRoot,
             });
             precomputedEvidence = snapshotResult.summary;
+
+            // F257 sub-item 1: Zero events → skip invocation (LLM cost = 0).
+            // Snapshot produced OK but observation window is empty — nothing to attribute.
+            if (snapshotResult.snapshot.totalEvents === 0) {
+              if (ctx.deliver) {
+                await ctx.deliver({
+                  threadId: domain.systemThreadId,
+                  content: buildHarnessLedgerZeroEventsMessage(domain, snapshotResult.evalRunId),
+                  userId: 'scheduler',
+                });
+              }
+              return;
+            }
           } catch (err) {
             // Fail-open = skip gracefully (no retry storm), NOT invoke cat blind.
             if (ctx.deliver) {

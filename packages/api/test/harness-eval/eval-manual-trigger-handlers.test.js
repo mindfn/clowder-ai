@@ -238,6 +238,72 @@ describe('Eval Manual Trigger Handlers (F192 OQ-21)', () => {
   });
 
   // ==========================================================================
+  // F257 sub-item 1: zero events → skip invocation (eval:harness-ledger)
+  // ==========================================================================
+  describe('handleTriggerNow F257 zero-event skip', () => {
+    it('returns TriggerNowSkipped when snapshot has zero events (not an error)', async () => {
+      const emptyLog = {
+        queryWindowStrict: async () => [],
+        queryWindow: async () => [],
+      };
+      const triggerCalls = [];
+      const result = await handleTriggerNow(
+        {
+          harnessFeedbackRoot: root,
+          invokeTriggerProvider: {
+            get: () => ({
+              trigger: (...args) => {
+                triggerCalls.push(args);
+                return 'dispatched';
+              },
+            }),
+          },
+          messageStore: { append: async () => ({ id: 'msg-zero' }) },
+          guardRejectionLog: emptyLog,
+        },
+        { domainId: 'eval:harness-ledger', userId: 'test-user' },
+      );
+
+      // Must return ok + skipped (not an error, not a success with invocation)
+      assert.ok(!('error' in result), `expected skip, got error: ${JSON.stringify(result)}`);
+      assert.equal(result.ok, true);
+      assert.equal(result.skipped, true);
+      assert.equal(result.reason, 'zero_events_in_window');
+      assert.ok(result.evalRunId, 'should include evalRunId for audit trail');
+      assert.ok(/^hlr-\d+-[a-f0-9]{8}$/.test(result.evalRunId), 'evalRunId format');
+      assert.ok(result.windowSummary.includes('0 events'), 'windowSummary should mention 0 events');
+
+      // Eval cat must NOT be triggered (nothing to evaluate)
+      assert.equal(triggerCalls.length, 0, 'invokeTrigger must NOT be called on zero events');
+    });
+
+    it('still invokes eval cat when snapshot has events (>0)', async () => {
+      // Sanity check: non-zero events should proceed normally
+      const successLog = {
+        queryWindowStrict: async () => [
+          { eventId: 'e1', kind: 'hold_ball_429', guardId: 'guard-1', timestamp: Date.now() },
+        ],
+        queryWindow: async () => [],
+      };
+      const result = await handleTriggerNow(
+        {
+          harnessFeedbackRoot: root,
+          invokeTriggerProvider: { get: () => ({ trigger: () => 'dispatched' }) },
+          messageStore: { append: async () => ({ id: 'msg-with-events' }) },
+          guardRejectionLog: successLog,
+        },
+        { domainId: 'eval:harness-ledger', userId: 'test-user' },
+      );
+
+      // Should NOT be skipped
+      assert.ok(!('error' in result), `expected success, got: ${JSON.stringify(result)}`);
+      assert.equal(result.ok, true);
+      assert.ok(!('skipped' in result), 'should NOT be skipped when events exist');
+      assert.equal(result.invocationTriggered, true);
+    });
+  });
+
+  // ==========================================================================
   // handleGenerateNow — domain validation order + security + eval:a2a only
   // ==========================================================================
   describe('handleGenerateNow', () => {
