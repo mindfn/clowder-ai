@@ -1,7 +1,8 @@
 ---
 title: "记忆服务组件化 — 三原语模型"
 participants: [opus, codex, fable, sol, lang]
-status: proposed
+status: superseded
+superseded_by: memory-component-abstraction.md
 created: 2026-06-25
 doc_kind: decision
 decision_id: ADR-candidate
@@ -11,7 +12,12 @@ topics: [memory, architecture, service-contract, componentization, adr]
 
 # ADR: 记忆服务组件化 — 三原语模型
 
-> **Status**: proposed（待 maintainer review）
+> ⚠️ **SUPERSEDED** — 本文档已被 [记忆能力抽象 — MemoryComponent 契约](memory-component-abstraction.md) 取代。
+> 三原语 SPI 降为可选 transport 附录参考。Shadow、DocMemory/ConversationMemory、Provider/Wire 等架构概念已被否决。
+> **新的记忆组件化真相源**：[memory-component-abstraction.md](memory-component-abstraction.md)
+
+> ~~**Status**: proposed（待 maintainer review）~~
+> **Status**: superseded（2026-07-13，三方共识：Sol + Fable + opus）
 > **Deciders**: operator + Ragdoll(opus) + Maine Coon(codex)
 > **Date**: 2026-06-25
 > **Issue**: [#1047](https://github.com/zts212653/clowder-ai/issues/1047)

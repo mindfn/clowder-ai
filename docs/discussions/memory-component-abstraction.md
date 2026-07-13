@@ -15,7 +15,7 @@ related: ["memory-service-componentization.md"]
 
 > **Status**: design-draft（2026-07-13，基于方向纠正重写）
 > **Issue**: [#1047](https://github.com/zts212653/clowder-ai/issues/1047)
-> **Parent ADR**: [记忆服务组件化 — 三原语模型](memory-service-componentization.md)
+> **前身文档**: [记忆服务组件化 — 三原语模型](memory-service-componentization.md)（已标 `superseded`，三原语 SPI 降为可选 transport 附录）
 > **设计前提**：Clowder AI 是客户端应用（跑在用户 Mac 上），不是多租户 SaaS
 > **设计目标**：按能力做抽象，使记忆后端可替换，不是同时对接多个后端
 
@@ -184,10 +184,10 @@ interface MemoryComponent {
   remember(input: MemoryInput): Promise<MemoryRecord>;
   recall(query: MemoryQuery): Promise<MemorySearchResult>;
   read(key: MemoryKey): Promise<MemoryRecord | null>;
-  related(key: MemoryKey, options?: RelationOptions): Promise<RelatedMemory[]>;
+  related(target: MemoryKey | { query: string }, options?: RelationOptions): Promise<RelationResult>;
 
   // ── 系统层（系统事件触发）──
-  invalidate(key: MemoryKey, reason: InvalidationReason): Promise<void>;
+  transition(command: LifecycleCommand): Promise<void>;
   recordFeedback(event: MemoryFeedback): Promise<void>;
   maintain(): Promise<MaintenanceReport>;
 
@@ -196,31 +196,45 @@ interface MemoryComponent {
 }
 ```
 
-上层应用直接使用前四项；`invalidate` / `recordFeedback` 来自系统事件；`maintain` 由组件内部调度。
+上层应用直接使用前四项；`transition` / `recordFeedback` 来自系统事件；`maintain` 由组件内部调度。
+
+**`related()` 扩展说明**：真实 graph 入口（`GraphQueryResolver.resolve`）是 query-based，不只是 key-based——从模糊字符串解析到 anchor 是能力的前半段（fuzzy matching + candidates），key-based 遍历是后半段。`target` 支持 `MemoryKey`（精确遍历）和 `{ query: string }`（模糊解析），返回 3-state 判别联合。
+
+**`invalidate()` → `transition()`**：原 `invalidate(key, reason)` 同时承担 dormant、superseded、invalidated 和硬删除，语义过载。改为 `transition(command: LifecycleCommand)` 判别联合，显式区分可逆状态转换和不可逆硬删除。
 
 **MemoryQuery 判别联合**（覆盖现有三入口）：
 
 ```typescript
+// ── 馆选择（一对一映射 SearchDimension 五值，Fable 定案）──
+type NamespaceSelector = 'project' | 'global' | 'all' | 'library' | { collections: string[] };
+// project  — 本项目馆
+// global   — 全局馆
+// all      — 所有馆 → RRF 融合（默认）
+// library  — 全部 routable collections 扇出
+// { collections } — 指定 collection IDs
+
+// ── 馆内内容类型过滤（收紧为枚举）──
+type ScopeFilter = 'docs' | 'threads' | 'sessions' | 'memory' | 'all';
+
 type MemoryQuery =
   | {
       mode: 'relevance';
       // ── 必填 ──
-      text: string;                          // ← SearchOptions 无显式字段名（query 参数）
-      // ── 馆选择（namespace 路由）──
-      namespace?: string;                    // ← dimension → 'project'|'global'|'all'|collection-id
-      collections?: string[];                // ← dimension=collection 时的 collection IDs
+      text: string;                          // ← SearchOptions query 参数
+      // ── 馆选择 ──
+      namespace?: NamespaceSelector;         // ← dimension（默认 'all'）
       // ── 馆内过滤 ──
-      scope?: string;                        // ← 'docs'|'threads'|'sessions'|'memory'|'all'
+      scope?: ScopeFilter;                   // ← content-type filter
       kind?: EvidenceKind[];                 // ← kind（升级为数组——多 kind OR 过滤）
       status?: EvidenceStatus[];             // ← 业务状态过滤（done/active/archived…）——见 §4.3 两维度区分
-      searchMode?: 'fts' | 'vector' | 'hybrid'; // ← mode（lexical→fts 重命名，避免与 MemoryQuery.mode 歧义）
-      limit?: number;
+      searchMode?: 'lexical' | 'semantic' | 'hybrid'; // ← mode（保留语义命名，不泄露实现技术）
+      limit?: number;                        // 默认 10
       depth?: 'summary' | 'raw';             // ← 结果详细度（summary=摘要 / raw=全 passage）
       dateFrom?: string;                     // ← ISO8601 下界
       dateTo?: string;                       // ← ISO8601 上界
       keywords?: string[];                   // ← 预提取关键词 AND 过滤
       threadId?: string;                     // ← F148 限定 thread scope
-      contextWindow?: number;                // ← 每个命中周围 passage 数
+      contextWindow?: number;                // ← 每个命中周围 passage 数（默认 0）
       provenanceTier?: ProvenanceTier[];     // ← F152 来源可信度过滤（升级为数组）
       explain?: boolean;                     // ← F200 可解释性字段（返回 rankingFactors）
       intent?: 'topk' | 'coverage';         // ← F200 搜索意图（topk=默认 / coverage=穷举多 scope）
@@ -231,20 +245,19 @@ type MemoryQuery =
   | {
       mode: 'recent';
       // ── 时间范围 ──
-      since?: string;                        // ← ListRecentOptions.since — "7d"|"24h"|ISO8601
+      since?: string;                        // ← "7d"|"24h"|ISO8601（默认 "7d"）
       // ── 共享过滤 ──
-      namespace?: string;
-      collections?: string[];
-      scope?: string;                        // ← 'docs'|'threads'|'memory'|'all'|'trajectories'
+      namespace?: NamespaceSelector;         // 默认 'all'
+      scope?: ScopeFilter | 'trajectories';  // trajectories 仅 recent 模式有效
       kind?: EvidenceKind[];
-      limit?: number;
+      limit?: number;                        // 默认 20
       verified?: boolean;                    // ← 仅返回已验证条目
     };
 ```
 
 - `mode: 'relevance'` → 映射 `search_evidence`（现有 `KnowledgeResolver.resolve`）
 - `mode: 'recent'` → 映射 `list_recent`（现有 `RecentBrowseResolver`）
-- `related()` 独立方法 → 映射 `graph_resolve`（key-based 图遍历，语义不同于 query-based 搜索）
+- `related()` 独立方法 → 映射 `graph_resolve`（支持 key-based 精确遍历 + query-based 模糊解析，返回 3-state 判别联合）
 
 `scope` 是馆内内容类型过滤（threads/docs/sessions/all），`namespace` 是选哪些馆（project/global/collection-id/all）——两个独立小表替代原来的 30 格矩阵。现有 `search_evidence` 的对外参数不变，组件内部翻译 scope → filter、dimension → namespace。
 
@@ -257,14 +270,14 @@ type MemoryQuery =
 | 3 | `keywords` | `keywords` | 直接映射 |
 | 4 | `limit` | `limit` | 直接映射 |
 | 5 | `scope` | `scope` | 直接映射（content-type filter） |
-| 6 | `mode` | `searchMode` | **重命名**避免与 `MemoryQuery.mode` 歧义；`lexical` → `fts` |
+| 6 | `mode` | `searchMode` | **重命名**避免与 `MemoryQuery.mode` 歧义；保留语义命名 `lexical/semantic/hybrid`（不泄露 fts/vector 实现） |
 | 7 | `depth` | `depth` | 直接映射（控制结果详细度） |
 | 8 | `dateFrom` | `dateFrom` | 直接映射（ISO8601） |
 | 9 | `dateTo` | `dateTo` | 直接映射（ISO8601） |
 | 10 | `contextWindow` | `contextWindow` | 直接映射（周围 passage 数） |
 | 11 | `threadId` | `threadId` | 直接映射（F148 thread scope） |
-| 12 | `dimension` | `namespace` | **翻译**：`dimension` 值 → `namespace` 标识符（`project`/`global`/`all`/collection-id） |
-| 13 | `collections` | `collections` | 直接映射（dimension=collection 时） |
+| 12 | `dimension` | `namespace` | **翻译**：`SearchDimension` 五值 → `NamespaceSelector` 判别联合（含 `library` = 全 routable collections 扇出） |
+| 13 | `collections` | `namespace.collections` | `dimension=collection` + `collections` → `namespace: { collections: [...] }` |
 | 14 | `provenanceTier` | `provenanceTier` | 升级为数组（多 tier OR 过滤） |
 | 15 | `includeBackstop` | `includeBackstop` | 直接映射（F163） |
 | 16 | `worldId` | `worldId` | 直接映射（F093） |
@@ -280,7 +293,7 @@ type MemoryQuery =
 | `limit` | `limit` | 直接映射 |
 | `scope` | `scope` | 直接映射 |
 | `kinds` | `kind` | 统一字段名为 `kind`（数组） |
-| `callerCollections` | `collections` | 统一字段名；server-derived ACL 翻译为 namespace+collections |
+| `callerCollections` | `namespace` | **注意**：`callerCollections` 是 server-derived ACL（server 解析 HTTP query 产生，不从 MCP client 传入），翻译为 `NamespaceSelector` 时组件内部做 ACL 过滤，不直接暴露为客户端选择器 |
 | `verified` | `verified` | 直接映射 |
 
 ### 4.3 数据模型
@@ -324,20 +337,21 @@ type LifecycleState = 'active' | 'dormant' | 'superseded' | 'invalidated';
 // ── 入库输入 ──
 
 interface MemoryInput {
-  key?: MemoryKey;                 // 提供 key → 幂等 upsert；不提供 → 组件生成
+  key: MemoryKey;                  // 必填——replay-safe 幂等 upsert 的基础
   content: MemoryContent;
   kind: EvidenceKind;
-  sourceRef: SourceRef;            // "索引可重建"的基础——知道从哪重建
+  sourceRef: SourceRef;            // "索引可重建"的基础——知道从哪重建（revision 必填）
   provenance: { tier: ProvenanceTier; source: string }; // authoritative / derived / soft_clue
   relations?: Array<{ target: MemoryKey; type: string }>;
   metadata?: Record<string, unknown>;
 }
-// remember() 行为语义（现有 IndexBuilder 幂等跳过机制的契约化）：
+// ⚡ replay-safe identity 规则（Sol P1-5 定案）：
+//   key 必填（不允许缺省）——源派生记录的 key 由宿主生成（anchor 即 id）
 //   同 key + 同 revision → no-op（已有相同版本，跳过）
 //   同 key + 异 revision → 覆盖内容 + 刷新 updatedAt
-//   无 key             → 组件生成 key + 创建新记录
 // SourceRef.revision 映射现有 sourceHash（computeThreadSourceHash 等），
 // Phase 1 零行为变更——这是把已有行为写进契约
+// 备选规则（若有无 key 场景）：(namespace, source, sourceId) 确定性生成 key
 
 // ── 记忆记录（读出）──
 
@@ -355,13 +369,21 @@ interface MemoryRecord {
 
 // ── 消费反馈（F200 事件链：recall → consumed → abandoned）──
 
-type MemoryFeedback =
+// 所有 variant 共享关联键（Sol P1-6——跨 transport/乱序到达后可靠归因）
+interface FeedbackCorrelation {
+  recallId: string;                // 关联到同一次检索（强制）
+  invocationId?: string;           // 关联到同一次 agent invocation
+  timestamp: string;               // ISO8601
+  resultSetId?: string;            // F200 HW-4: bundle ID
+  attributionClarity?: 'clean' | 'ambiguous'; // F200 HW-4 根因③
+}
+
+type MemoryFeedback = FeedbackCorrelation & (
   | { event: 'recalled';           // 检索返回了一组候选
       keys: MemoryKey[];           // 候选 keys
       query: string;               // 检索 query
       toolName: string;            // search_evidence / graph_resolve / list_recent
-      ranks: number[];             // 每个 key 的排名位置（0-indexed）
-      resultSetId?: string; }      // F200 HW-4: bundle ID
+      ranks: number[]; }           // 每个 key 的排名位置（0-indexed）
   | { event: 'consumed';           // 候选被下游工具实际读取
       key: MemoryKey;
       method: string;              // Read / Grep / graph_resolve / drill-down
@@ -370,7 +392,8 @@ type MemoryFeedback =
   | { event: 'abandoned';          // 检索有结果但全部未消费
       query: string;
       toolName: string;
-      resultCount: number; };
+      resultCount: number; }
+);
 // recordFeedback() 收集这些事件 → 组件内部的消费加权排序（consumption-prior）闭环：
 // 被频繁 consumed 的记忆 → recall() 排名提升；被 abandoned 的 → 排名不变（不惩罚）
 
@@ -387,6 +410,56 @@ interface MemorySearchResult {
 }
 // 附录 scope/namespace 不匹配承诺（"返回空结果 + degraded: true，不偷路由"）
 // 安放在 meta.degraded 字段上
+
+// ── 生命周期命令（transition 输入）──
+
+type LifecycleCommand =
+  | { action: 'dormant'; key: MemoryKey; reason: string }      // 可逆——真相源暂时缺失/零消费候选
+  | { action: 'supersede'; key: MemoryKey; supersededBy: MemoryKey } // 可逆——被新版本取代
+  | { action: 'invalidate'; key: MemoryKey; contradicts?: MemoryKey[] } // 可逆——F163 矛盾检测
+  | { action: 'reactivate'; key: MemoryKey }                   // 可逆——从 dormant/invalidated 恢复
+  | { action: 'delete'; key: MemoryKey; reason: 'user_explicit' | 'source_deleted' };
+    // ⚠️ 不可逆——仅用户明确删除或真相源确认删除事件。cascade 删除关联 passages
+    // 铁律 #5（用户状态默认持久化）要求 delete 的 reason 必须是上述两值之一
+
+// ── 关系查询（related 参数和返回值）──
+
+interface RelationOptions {
+  depth?: number;                  // 遍历深度（默认 1）
+  relations?: string[];            // 关系类型过滤（feature_ref/related_to/doc_link...）
+  namespace?: NamespaceSelector;   // 限定搜索范围（尊重 ACL）
+}
+
+// 3-state 判别联合（映射真实 GraphQueryResolution）
+type RelationResult =
+  | { status: 'graph';             // 精确命中——返回子图拓扑
+      resolvedAnchor: string;
+      graph: { nodes: GraphNode[]; edges: GraphEdge[]; depth: number; truncated?: boolean };
+    }
+  | { status: 'candidates';        // 模糊命中——返回候选列表
+      candidates: Array<{ key: MemoryKey; title: string; kind: string; matchReason: string }>;
+    }
+  | { status: 'no_match';          // 无匹配
+      message: string;
+      examples: string[];           // 示例查询建议
+    };
+
+// ── 维护报告 ──
+
+interface MaintenanceReport {
+  sunsetActions: { dormant: number; deleted: number; reactivated: number };
+  compaction: { passagesMerged: number; orphansClassified: number };
+  vectorHealth: { staleEmbeddings: number; reindexed: number };
+  timestamp: string;
+}
+
+// ── 健康检查 ──
+
+interface MemoryHealth {
+  status: 'healthy' | 'degraded' | 'unavailable';
+  stores: Record<string, { available: boolean; docCount: number; lastUpdated?: string }>;
+  degradeReasons?: string[];
+}
 ```
 
 ### 4.4 现有代码如何映射
@@ -396,8 +469,8 @@ interface MemorySearchResult {
 | `remember` | IndexBuilder 的写入部分 (docs) + session compiler (conv) | 入库路径按内容类型不同——实现细节。IndexBuilder 的源扫描部分归宿主，写入走 `remember()`，依赖稳定 `MemoryKey/SourceRef` 做 replay-safe 幂等 upsert |
 | `recall` | KnowledgeResolver.resolve() + RRF fusion + 消费加权 | 联邦搜索（跨 namespace RRF）是组件内部能力 |
 | `read` | IEvidenceStore.getByAnchor() + drill-down | doc=grep 原文 / conv=passages 直返（实现细节） |
-| `related` | GraphResolver + edges（2,437 条） + resolveEntityAliases | 覆盖 graph_resolve 入口（Fable 补充） |
-| `invalidate` | deleteByAnchor() + status/supersededBy | ⚠️ 部分实现——级联删除缺失（§5.1） |
+| `related` | GraphQueryResolver.resolve(query) + GraphResolver.buildSubgraph(anchor) | 覆盖 graph_resolve 入口：精确遍历 + 模糊解析 → 3-state RelationResult |
+| `transition` | deleteByAnchor() + status/supersededBy | ⚠️ 部分实现——LifecycleCommand union 中仅 delete/supersede 有现有代码对应 |
 | `recordFeedback` | F200 consumption tracking | 已有，但作为 store 副作用，不是显式能力 |
 | `maintain` | 无统一实现 | ⚠️ 需新建 SunsetManager：sunset 执行 + compaction + 向量重建 |
 | `health` | IEvidenceStore.health() | ✅ 已有 |
@@ -412,7 +485,7 @@ interface MemorySearchResult {
 | 2 | 存储（SqliteEvidenceStore.upsert/get） | `remember()` + `read()` | ✅ |
 | 3 | 扫描入库（IndexBuilder.rebuild） | 源扫描归宿主 → 逐条 `remember()`；`remember()` 做 replay-safe 幂等 upsert。对话类增量入库：宿主消息事件→`remember()`（与周期扫描均合法——"索引可重建"兜底） | ✅ 分离更清晰，瓦解 getDb 逃逸 12 处调用的大头 |
 | 4 | 向量嵌入（EmbeddingService） | `remember()` 内部触发 | ✅ 组件内部实现 |
-| 5 | 关系图（GraphResolver + edges） | `related()` | ✅ 新增方法 |
+| 5 | 关系图（GraphResolver + edges） | `related()` | ✅ key-based 遍历 + query-based 模糊解析（3-state RelationResult） |
 | 6 | 实体识别（resolveEntityAliases） | `recall()` 内部增强——搜索增强，随 recall 透明生效 | ✅ 内部能力，不出现在契约方法上 |
 | 7 | 标记物化（MarkerQueue → MaterializationService） | **宿主侧治理流程**——MarkerQueue→MaterializationService 产出 .md 写入真相源，组件通过后续 rebuild 以 `remember()` 入库其产物。物化不穿透 MemoryComponent 边界 | ✅ 归属显式化 |
 | 8 | 浏览最近（RecentBrowseResolver） | `recall()` + filter/sort 模式 | ✅ |
@@ -507,7 +580,7 @@ EchoMem 实现全部 MemoryComponent 契约 → 整体替换 LocalMemoryComponen
 
 ```
 步骤 1: 实现 EchoMemComponent implements MemoryComponent
-         - remember/recall/read/related/invalidate/maintain/health 全部实现
+         - remember/recall/read/related/transition/recordFeedback/maintain/health 全部实现
          - 入库管道、生命周期管理、联邦搜索、搜索语义 全部自治
 
 步骤 2: 数据迁移（停机迁移——客户端应用重启即可）
@@ -543,7 +616,7 @@ MemoryComponent (LocalMemoryComponent)
 
 ### Phase 1: 形式化 MemoryComponent 接口（零行为变更）
 
-1. 定义 `MemoryComponent` 接口（remember/recall/read/related/invalidate/recordFeedback/maintain/health）+ `MemoryQuery` 判别联合
+1. 定义 `MemoryComponent` 接口（remember/recall/read/related/transition/recordFeedback/maintain/health）+ `MemoryQuery` / `LifecycleCommand` / `RelationResult` 判别联合
 2. 实现 `LocalMemoryComponent`：组合现有 KnowledgeResolver（含 federation）+ SqliteEvidenceStore + (NEW) SunsetManager。**IndexBuilder 的源扫描部分留在组件外**，通过 `remember()` 写入
 3. 上层 MCP 工具（search_evidence / list_recent / graph_resolve）改为调用 MemoryComponent
 4. 行为兼容测试：重构前后，相同调用产出相同结果
@@ -554,7 +627,7 @@ MemoryComponent (LocalMemoryComponent)
 
 1. 实现 SunsetManager：统一 lifecycle 执行器，按 §5.1 信号→状态映射表接线
 2. 188 孤儿 passages 分类处理：按删除原因分为 dormant（真相源暂时缺失）或 hard delete（明确删除事件），不整批清空
-3. `invalidate()` 实现可逆状态转换（active → dormant/superseded/invalidated），仅用户明确删除时 hard delete + cascade
+3. `transition()` 实现 LifecycleCommand 联合：可逆状态转换（dormant/supersede/invalidate/reactivate）+ 不可逆硬删除（仅 user_explicit/source_deleted）
 4. `maintain()` 定期执行：dormant 候选审查（零消费检测）、过期 dormant 清理建议（进 review queue）
 
 ### Phase 3: 后端替换（按需）
@@ -574,18 +647,17 @@ MemoryComponent (LocalMemoryComponent)
 
 ---
 
-## 8. 与 Parent ADR 的关系
+## 8. 与前身文档的关系
 
-Parent ADR（memory-service-componentization.md）定义了三原语模型（TextBlock / RelationEdge / Timeline）和完整的服务 SPI。那是面向**独立记忆服务**的设计。
+前身文档（memory-service-componentization.md，1679 行）已标 `superseded`。它定义了三原语模型（TextBlock / RelationEdge / Timeline）和完整的服务 SPI。那是面向**独立记忆服务**的设计，包含 shadow、DocMemory/ConversationMemory、Provider/Wire 等已被本文档否决的架构概念。
 
-本文档定义 `MemoryComponent` 作为唯一的逻辑契约。"客户端应用"不等于"一定在进程内"——EchoMem 可能是本机独立 Python 进程。正确处理是：
+**本文档是记忆组件化的唯一决策真相源**（三方共识：Sol + Fable + opus）。处置：
 
 - `MemoryComponent` 是**唯一逻辑契约**
 - 进程内调用或 HTTP/socket 是该契约的**可选 transport adapter**，不是独立架构层
-- Parent ADR 的三原语 SPI 是一种 transport 实现方案（远程进程间通信），不恢复旧版 Wire 架构
+- 前身文档的三原语 SPI 可作为一种 transport 实现方案的附录参考，但不拥有架构决策权
 - Storage SPI（IEvidenceStore）是具体实现内部细节，不是应用契约
-
-> **真相源同步义务**：Parent ADR 仍保留 shadow、DocMemory/ConversationMemory、旧 Provider/Wire 叙述。两个文档的冲突须在 Parent ADR 中同步修正——组件化 = MemoryComponent 唯一契约，不是 DocProvider + ConversationProvider 拼接。
+- 前身文档中仍有效的通用教训（LL-090..093）已独立沉淀，不依赖该文档的架构叙述
 
 ---
 
