@@ -193,9 +193,9 @@ Clowder AI 的记忆系统（ADR-020 建立）当前紧耦合在宿主进程内�
 | 数据 | 当前表 | 为什么留下 | EchoMem 协作归属（§11） |
 |------|--------|-----------|----------------------|
 | 候选记忆队列 | `markers`（YAML 后端，git-tracked） | 治理流程（捕获 → 审批 → 物化） | 我们 |
-| 认知转变事件 | EventMemory（`event_memory` 表） | Timeline 原语，归 DocMemory（见 [EchoMem 协作方案](memory-component-abstraction.md) §5） | 我们 |
+| 认知转变事件 | EventMemory（`event_memory` 表） | Timeline 原语，归 DocMemory（见 [记忆能力抽象](memory-component-abstraction.md)） | 我们 |
 | 召回分析 | `recall_events`, `anchor_recall_metrics`, `global_ctr_baseline` | 宿主侧消费行为，用于 rerank | 我们 |
-| Thread 摘要 | `summary_segments`, `summary_state` | 绑定 thread 生命周期 | 待定（EchoMem Episode 摘要更强，见 [EchoMem 协作方案](memory-component-abstraction.md) §5） |
+| Thread 摘要 | `summary_segments`, `summary_state` | 绑定 thread 生命周期 | 待定（EchoMem Episode 摘要更强，见 [记忆能力抽象](memory-component-abstraction.md)） |
 | 任务追踪 | `task_trajectories`, `task_run_ledger` | 调度器领域 | 我们 |
 | 治理表 | `f163_*`, `scheduler_*`, `index_state` | 宿主内部状态 | 我们 |
 
@@ -835,7 +835,7 @@ edge changes    ──► store.edges.link(...)           ──► service POST
 | `f163-admin.ts` | 4 | 直接 | Phase 1 — 管理路由直接读 DB |
 | `f163-audit-routes.ts` | 9 | 直接 | Phase 1 — 审计路由直接读 DB |
 | `evidence.ts` (routes) | 3 | duck-typed | Phase 1 — evidence 路由直接读 DB |
-| `RecentBrowseResolver.ts` | 2 | duck-typed | Phase 1 — `list_recent` 入口（见 [EchoMem 协作方案](memory-component-abstraction.md) §3 路由决策表） |
+| `RecentBrowseResolver.ts` | 2 | duck-typed | Phase 1 — `list_recent` 入口（见 [记忆能力抽象](memory-component-abstraction.md)（路由决策表已由单组件契约取代）） |
 | `index.ts` (main app) | 8 | 直接 | Phase 1 — IndexStateManager、scheduler、启动流程 |
 | `library.ts` (routes) | 5 | duck-typed | Phase 1 — library 管理路由直接读 DB |
 | `route-serial.ts` | 1 | duck-typed | Phase 2 — agent 路由搜索 |
@@ -890,7 +890,7 @@ edge changes    ──► store.edges.link(...)           ──► service POST
    - 2b. `factory.ts` 的 VectorStore/PassageVectorStore 初始化 → 抽到 provider 内部
    - 2c. `GlobalIndexBuilder` / `bootstrap-collection-bridge` → 通过 provider 接口
    - 2d. routes 层（`f163-admin`、`f163-audit-routes`、`evidence.ts`）→ 通过服务接口查询
-   - 2e. `RecentBrowseResolver` duck-typed getDb → 新增 `recency` 查询到 `TextBlockStore`（见 [EchoMem 协作方案](memory-component-abstraction.md) §3 路由决策表）
+   - 2e. `RecentBrowseResolver` duck-typed getDb → 新增 `recency` 查询到 `TextBlockStore`（见 [记忆能力抽象](memory-component-abstraction.md)（路由决策表已由单组件契约取代））
    - 2f. `library.ts` 5 处 duck-typed getDb → 通过服务接口查询
    - 2g. `index.ts` 启动流程（IndexStateManager、scheduler 等 8 处）→ 通过 provider 初始化钩子
 3. 将现有 `SqliteEvidenceStore` 包装为 `SqliteBackendProvider`
