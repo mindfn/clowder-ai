@@ -122,6 +122,59 @@ describe('ThreadSidebar locate button (Select Open Session)', () => {
     expect(collapseBtn).not.toBeNull();
   });
 
+  it('switches from Recent to System tab when active thread is a system thread absent from Recent', async () => {
+    // Regression: Locate must derive unfiltered tab membership via buildSidebarTabContent
+    // and switch to the tab that actually contains the active thread before scrolling.
+    // System threads are excluded from Recent, so Locate must select the System tab.
+    Object.assign(mockStore, { currentThreadId: 'system' });
+    await harness.render();
+    scrollIntoView.mockClear();
+
+    // Confirm we start on Recent tab and the system thread is not rendered there
+    const recentTab = harness.container.querySelector('[data-testid="sidebar-tab-recent"]');
+    expect(recentTab?.getAttribute('aria-selected')).toBe('true');
+    expect(harness.container.querySelector('[data-thread-id="system"]')).toBeNull();
+
+    // Intercept rAF: scrollToActiveThread uses 2 nested requestAnimationFrame calls
+    // for both the tab switch retry and the filter-clear defer paths.
+    const rafQueue: FrameRequestCallback[] = [];
+    const origRAF = window.requestAnimationFrame;
+    window.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+      rafQueue.push(cb);
+      return rafQueue.length;
+    }) as typeof window.requestAnimationFrame;
+
+    try {
+      const locateBtn = harness.container.querySelector('[data-testid="select-open-session-btn"]') as HTMLButtonElement;
+      expect(locateBtn).not.toBeNull();
+
+      await act(async () => {
+        locateBtn.click();
+      });
+      await harness.flush();
+
+      // Drain rAF queue — scrollAndHighlight retries after setActiveTab via 2× rAF
+      while (rafQueue.length > 0) {
+        const cb = rafQueue.shift();
+        if (!cb) break;
+        await act(async () => {
+          cb(0);
+        });
+        await harness.flush();
+      }
+
+      // System tab should now be active
+      const systemTab = harness.container.querySelector('[data-testid="sidebar-tab-system"]');
+      expect(systemTab?.getAttribute('aria-selected')).toBe('true');
+
+      // The system thread should be rendered and scrolled into view
+      expect(harness.container.querySelector('[data-thread-id="system"]')).not.toBeNull();
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'smooth' });
+    } finally {
+      window.requestAnimationFrame = origRAF;
+    }
+  });
+
   it('expands collapsed project group and scrolls to active thread on locate click', async () => {
     await harness.render();
     await clickTab(harness.container, 'project', harness.flush);

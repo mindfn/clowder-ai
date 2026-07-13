@@ -810,18 +810,25 @@ export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
       toggleGroup(ownerKey);
     }
 
+    // Derive the tab that actually contains the active thread by checking
+    // unfiltered membership across all tabs (avoids hardcoding 'recent').
+    const findTabForThread = (): SidebarTabId => {
+      const tabOrder: SidebarTabId[] = ['recent', 'system', 'project', 'pinned', 'favorites'];
+      for (const tabId of tabOrder) {
+        const bucket = buildSidebarTabContent(tabId, threads, pinnedProjects, unreadIds);
+        if (bucket.threads.some((t) => t.id === currentThreadId)) return tabId;
+      }
+      return 'recent';
+    };
+
     // Helper: scroll to the active thread and apply a brief highlight ring.
     // If the thread isn't in the current tab's DOM, switch to the tab that
-    // contains it (system threads → 'system', others → 'recent') before retrying.
+    // actually contains it before retrying.
     const scrollAndHighlight = (retried = false) => {
       const el = scrollContainerRef.current?.querySelector<HTMLElement>(`[data-thread-id="${currentThreadId}"]`);
       if (!el) {
         if (!retried) {
-          const thread = threads.find((t) => t.id === currentThreadId);
-          const isSystem = thread
-            ? thread.id === 'default' || !!thread.systemKind || !!thread.connectorHubState
-            : currentThreadId === 'default';
-          const targetTab = isSystem ? 'system' : 'recent';
+          const targetTab = findTabForThread();
           if (activeTab !== targetTab) {
             setActiveTab(targetTab);
           }
@@ -844,7 +851,18 @@ export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
     } else {
       scrollAndHighlight();
     }
-  }, [currentThreadId, threads, projectThreadGroups, isCollapsed, toggleGroup, searchQuery, labelFilter, activeTab]);
+  }, [
+    currentThreadId,
+    threads,
+    projectThreadGroups,
+    isCollapsed,
+    toggleGroup,
+    searchQuery,
+    labelFilter,
+    activeTab,
+    pinnedProjects,
+    unreadIds,
+  ]);
 
   const renderThreadItem = useCallback(
     (thread: Thread, indented = false) => (
@@ -893,22 +911,26 @@ export function ThreadSidebar({ onClose, className }: ThreadSidebarProps) {
         <div className="px-3 pt-3 pb-2 flex items-center justify-between">
           <span className="text-sm font-semibold text-cafe-black">对话</span>
           <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={handleOrganizeWithCat}
-              className="p-1.5 rounded-lg text-cafe-muted hover:bg-[var(--console-hover-bg)] hover:text-conn-amber-text transition-colors"
-              title="猫猫帮你分类"
-            >
-              <SparkleIcon />
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowOrganizer(true)}
-              className="p-1.5 rounded-lg text-cafe-muted hover:bg-[var(--console-hover-bg)] hover:text-cafe-secondary transition-colors"
-              title="手动批量分类"
-            >
-              <GridIcon />
-            </button>
+            {uncategorizedCount > 0 && (
+              <button
+                type="button"
+                onClick={handleOrganizeWithCat}
+                className="p-1.5 rounded-lg text-cafe-muted hover:bg-[var(--console-hover-bg)] hover:text-conn-amber-text transition-colors"
+                title={`猫猫帮你分类 (${uncategorizedCount} 未分类)`}
+              >
+                <SparkleIcon />
+              </button>
+            )}
+            {uncategorizedCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowOrganizer(true)}
+                className="p-1.5 rounded-lg text-cafe-muted hover:bg-[var(--console-hover-bg)] hover:text-cafe-secondary transition-colors"
+                title={`手动批量分类 (${uncategorizedCount} 未分类)`}
+              >
+                <GridIcon />
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setShowBootcampList(true)}

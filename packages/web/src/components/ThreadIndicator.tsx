@@ -31,6 +31,15 @@ export function ThreadIndicator({ threadId }: { threadId: string }) {
   const [isSaving, setIsSaving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const ime = useIMEGuard();
+  // Generation counter: prevents in-flight PATCH from polluting a different thread's state
+  const editGenRef = useRef(0);
+
+  // Reset edit state when switching threads — prevents accidental cross-thread rename
+  useEffect(() => {
+    editGenRef.current += 1;
+    setIsEditing(false);
+    setIsSaving(false);
+  }, [threadId]);
 
   // Sync draft when title changes externally
   useEffect(() => {
@@ -51,6 +60,7 @@ export function ThreadIndicator({ threadId }: { threadId: string }) {
       setIsEditing(false);
       return;
     }
+    const gen = editGenRef.current;
     setIsSaving(true);
     try {
       const res = await apiFetch(`/api/threads/${threadId}`, {
@@ -65,8 +75,12 @@ export function ThreadIndicator({ threadId }: { threadId: string }) {
     } catch {
       // Silently ignore — title stays unchanged
     } finally {
-      setIsSaving(false);
-      setIsEditing(false);
+      // Only touch state if we're still on the same thread — prevents
+      // a stale PATCH callback from closing a newly-opened edit on thread B
+      if (editGenRef.current === gen) {
+        setIsSaving(false);
+        setIsEditing(false);
+      }
     }
   }, [draftTitle, title, threadId, updateThreadTitle]);
 

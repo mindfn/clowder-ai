@@ -192,4 +192,94 @@ describe('ThreadIndicator inline title editing', () => {
     expect(mockApiFetch).not.toHaveBeenCalled();
     expect(editInput()).not.toBeNull(); // still in edit mode
   });
+
+  it('cancels edit without PATCH when threadId changes (cross-thread rename guard)', async () => {
+    // Regression: editing thread A, then switching to thread B must cancel A's draft
+    // without sending a PATCH — the useEffect([threadId]) guard sets isEditing = false.
+    await render();
+    await enterEditMode();
+    setInputValue(editInput()!, '改了但没保存');
+    expect(editInput()).not.toBeNull(); // still editing
+
+    // Simulate switching to a different thread by re-rendering with a new threadId
+    const threadB = {
+      id: 'thread_abc',
+      title: '另一个对话',
+      projectPath: '/projects/other',
+      createdBy: 'user1',
+      participants: ['user1'],
+      lastActiveAt: Date.now(),
+      createdAt: Date.now(),
+      pinned: false,
+      favorited: false,
+      preferredCats: [] as string[],
+    };
+    mockStore.threads = [...TEST_THREADS, threadB];
+    await act(async () => {
+      root?.render(React.createElement(ThreadIndicator, { threadId: 'thread_abc' }));
+    });
+
+    // Edit mode must be cancelled — no input visible, no PATCH sent
+    expect(editInput()).toBeNull();
+    expect(mockApiFetch).not.toHaveBeenCalled();
+    // The displayed title is thread B's, not the draft from thread A
+    expect(titleSpan()?.textContent).toBe('另一个对话');
+  });
+
+  it('in-flight PATCH for thread A does not close edit on thread B (generation guard)', async () => {
+    // Regression: blur triggers submitRename(A) → PATCH in flight → switch to B →
+    // user double-clicks to edit B → A's finally must NOT setIsEditing(false) on B.
+    let resolvePatch!: (v: { ok: boolean; json: () => Promise<{ title: string }> }) => void;
+    mockApiFetch.mockReturnValue(
+      new Promise((r) => {
+        resolvePatch = r;
+      }),
+    );
+
+    await render();
+    await enterEditMode();
+    setInputValue(editInput()!, '新标题A');
+
+    // Trigger blur → submitRename fires, PATCH starts (unresolved)
+    await act(async () => {
+      editInput()?.blur();
+    });
+    // PATCH is in flight — isSaving should be true, but we're about to switch threads
+
+    // Switch to thread B
+    const threadB = {
+      id: 'thread_abc',
+      title: '对话B',
+      projectPath: '/projects/other',
+      createdBy: 'user1',
+      participants: ['user1'],
+      lastActiveAt: Date.now(),
+      createdAt: Date.now(),
+      pinned: false,
+      favorited: false,
+      preferredCats: [] as string[],
+    };
+    mockStore.threads = [...TEST_THREADS, threadB];
+    await act(async () => {
+      root?.render(React.createElement(ThreadIndicator, { threadId: 'thread_abc' }));
+    });
+
+    // isSaving must be reset by the threadId change (generation bump)
+    expect(editInput()).toBeNull(); // not editing yet
+
+    // User double-clicks to edit thread B
+    await act(async () => {
+      titleSpan()?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    });
+    expect(editInput()).not.toBeNull(); // B's edit is open
+
+    // Now resolve thread A's PATCH — its finally block must NOT close B's edit
+    await act(async () => {
+      resolvePatch({ ok: true, json: () => Promise.resolve({ title: '新标题A' }) });
+      await flushSubmitRename();
+    });
+
+    // B's edit must still be open
+    expect(editInput()).not.toBeNull();
+  });
 });

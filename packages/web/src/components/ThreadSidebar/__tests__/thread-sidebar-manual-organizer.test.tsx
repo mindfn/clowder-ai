@@ -81,7 +81,9 @@ describe('ThreadSidebar manual organizer', () => {
   });
 
   function findManualOrganizeButton(container: HTMLElement) {
-    return Array.from(container.querySelectorAll('button')).find((b) => b.getAttribute('title') === '手动批量分类');
+    return Array.from(container.querySelectorAll('button')).find((b) =>
+      b.getAttribute('title')?.startsWith('手动批量分类'),
+    );
   }
 
   it('has searchable thread rows and inline label management', async () => {
@@ -170,5 +172,24 @@ describe('ThreadSidebar manual organizer', () => {
     });
     await harness.flush();
     expect(deleteLabelMock).toHaveBeenCalledWith('lbl-a');
+  });
+
+  it('hides organize buttons when all threads are categorized', async () => {
+    // Regression: organize buttons must only render when uncategorizedCount > 0
+    mockStore.threads = [
+      makeThread('labeled-1', ['lbl-a'], '/project/alpha'),
+      makeThread('labeled-2', ['lbl-b'], '/project/beta'),
+    ];
+
+    await harness.render();
+
+    const manualBtn = findManualOrganizeButton(harness.container);
+    expect(manualBtn).toBeFalsy();
+
+    // Auto-organize (sparkle) button should also be hidden
+    const autoBtn = Array.from(harness.container.querySelectorAll('button')).find((b) =>
+      b.getAttribute('title')?.startsWith('猫猫帮你分类'),
+    );
+    expect(autoBtn).toBeFalsy();
   });
 });

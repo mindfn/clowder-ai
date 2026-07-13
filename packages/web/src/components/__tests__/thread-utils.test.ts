@@ -606,4 +606,41 @@ describe('sidebar tab selectors', () => {
     // Within /proj/a: unread-old before read-new, despite read-new being newer
     expect(content.projectGroups?.[0].threads.map((t) => t.id)).toEqual(['unread-old', 'read-new']);
   });
+
+  // Regression: Locate button must switch to the correct tab when the active thread
+  // is absent from the current tab. The sidebar's findTabForThread() scans all tabs
+  // via buildSidebarTabContent to find membership. This test verifies the underlying
+  // tab membership: a system thread is NOT in 'recent' but IS in 'system'.
+  it('locates a system thread in system tab, not recent (findTabForThread regression)', () => {
+    const threads = [
+      makeThread({ id: 'default', title: '大厅', lastActiveAt: NOW }),
+      makeThread({
+        id: 'eval-thread',
+        title: 'Eval Runner',
+        systemKind: 'eval_domain',
+        lastActiveAt: NOW - 1_000,
+      }),
+      makeThread({ id: 'normal', title: 'Normal Thread', projectPath: '/proj/a', lastActiveAt: NOW }),
+    ];
+
+    // Simulate findTabForThread scan order: recent → system → project → pinned → favorites
+    const tabOrder: SidebarTabId[] = ['recent', 'system', 'project', 'pinned', 'favorites'];
+    const targetId = 'eval-thread';
+
+    let foundTab: SidebarTabId = 'recent';
+    for (const tabId of tabOrder) {
+      const bucket = buildSidebarTabContent(tabId, threads, new Set());
+      if (bucket.threads.some((t) => t.id === targetId)) {
+        foundTab = tabId;
+        break;
+      }
+    }
+
+    // The system thread must be found in 'system', not 'recent'
+    expect(foundTab).toBe('system');
+
+    // Double-check: it's genuinely absent from 'recent' tab
+    const recentBucket = buildSidebarTabContent('recent', threads, new Set());
+    expect(recentBucket.threads.some((t) => t.id === targetId)).toBe(false);
+  });
 });
