@@ -202,11 +202,43 @@ interface MemoryComponent {
 
 ```typescript
 type MemoryQuery =
-  | { mode: 'relevance'; text: string; scope?: string; namespace?: string;
-      searchMode?: 'fts' | 'vector' | 'hybrid'; limit?: number;
-      kind?: EvidenceKind[]; dateFrom?: string; dateTo?: string; }
-  | { mode: 'recent'; limit?: number; namespace?: string;
-      kind?: EvidenceKind[]; };
+  | {
+      mode: 'relevance';
+      // ── 必填 ──
+      text: string;                          // ← SearchOptions 无显式字段名（query 参数）
+      // ── 馆选择（namespace 路由）──
+      namespace?: string;                    // ← dimension → 'project'|'global'|'all'|collection-id
+      collections?: string[];                // ← dimension=collection 时的 collection IDs
+      // ── 馆内过滤 ──
+      scope?: string;                        // ← 'docs'|'threads'|'sessions'|'memory'|'all'
+      kind?: EvidenceKind[];                 // ← kind（升级为数组——多 kind OR 过滤）
+      searchMode?: 'fts' | 'vector' | 'hybrid'; // ← mode（lexical→fts 重命名，避免与 MemoryQuery.mode 歧义）
+      limit?: number;
+      depth?: 'summary' | 'raw';             // ← 结果详细度（summary=摘要 / raw=全 passage）
+      dateFrom?: string;                     // ← ISO8601 下界
+      dateTo?: string;                       // ← ISO8601 上界
+      keywords?: string[];                   // ← 预提取关键词 AND 过滤
+      threadId?: string;                     // ← F148 限定 thread scope
+      contextWindow?: number;                // ← 每个命中周围 passage 数
+      provenanceTier?: ProvenanceTier[];     // ← F152 来源可信度过滤（升级为数组）
+      explain?: boolean;                     // ← F200 可解释性字段（返回 rankingFactors）
+      intent?: 'topk' | 'coverage';         // ← F200 搜索意图（topk=默认 / coverage=穷举多 scope）
+      includeBackstop?: boolean;             // ← F163 drill-down backstop docs
+      worldId?: string;                      // ← F093 世界观过滤
+      sceneId?: string;                      // ← F093 场景过滤
+    }
+  | {
+      mode: 'recent';
+      // ── 时间范围 ──
+      since?: string;                        // ← ListRecentOptions.since — "7d"|"24h"|ISO8601
+      // ── 共享过滤 ──
+      namespace?: string;
+      collections?: string[];
+      scope?: string;                        // ← 'docs'|'threads'|'memory'|'all'|'trajectories'
+      kind?: EvidenceKind[];
+      limit?: number;
+      verified?: boolean;                    // ← 仅返回已验证条目
+    };
 ```
 
 - `mode: 'relevance'` → 映射 `search_evidence`（现有 `KnowledgeResolver.resolve`）
@@ -215,9 +247,46 @@ type MemoryQuery =
 
 `scope` 是馆内内容类型过滤（threads/docs/sessions/all），`namespace` 是选哪些馆（project/global/collection-id/all）——两个独立小表替代原来的 30 格矩阵。现有 `search_evidence` 的对外参数不变，组件内部翻译 scope → filter、dimension → namespace。
 
+**SearchOptions 19 字段 → MemoryQuery 完整映射**：
+
+| # | SearchOptions 字段 | MemoryQuery 字段 | 映射说明 |
+|---|-------------------|-----------------|---------|
+| 1 | `kind` | `kind` | 升级为数组（多 kind OR 过滤） |
+| 2 | `status` | — | **组件内部**：翻译为 LifecycleState 过滤。默认只返回 active；非 active 记录用 `read(key)` 按 key 直取 |
+| 3 | `keywords` | `keywords` | 直接映射 |
+| 4 | `limit` | `limit` | 直接映射 |
+| 5 | `scope` | `scope` | 直接映射（content-type filter） |
+| 6 | `mode` | `searchMode` | **重命名**避免与 `MemoryQuery.mode` 歧义；`lexical` → `fts` |
+| 7 | `depth` | `depth` | 直接映射（控制结果详细度） |
+| 8 | `dateFrom` | `dateFrom` | 直接映射（ISO8601） |
+| 9 | `dateTo` | `dateTo` | 直接映射（ISO8601） |
+| 10 | `contextWindow` | `contextWindow` | 直接映射（周围 passage 数） |
+| 11 | `threadId` | `threadId` | 直接映射（F148 thread scope） |
+| 12 | `dimension` | `namespace` | **翻译**：`dimension` 值 → `namespace` 标识符（`project`/`global`/`all`/collection-id） |
+| 13 | `collections` | `collections` | 直接映射（dimension=collection 时） |
+| 14 | `provenanceTier` | `provenanceTier` | 升级为数组（多 tier OR 过滤） |
+| 15 | `includeBackstop` | `includeBackstop` | 直接映射（F163） |
+| 16 | `worldId` | `worldId` | 直接映射（F093） |
+| 17 | `sceneId` | `sceneId` | 直接映射（F093） |
+| 18 | `explain` | `explain` | 直接映射（F200 可解释性） |
+| 19 | `intent` | `intent` | 直接映射（F200 搜索意图） |
+
+**ListRecentOptions → MemoryQuery `recent` 模式映射**：
+
+| ListRecentOptions 字段 | MemoryQuery 字段 | 映射说明 |
+|-----------------------|-----------------|---------|
+| `since` | `since` | 直接映射（"7d"/"24h"/ISO8601） |
+| `limit` | `limit` | 直接映射 |
+| `scope` | `scope` | 直接映射 |
+| `kinds` | `kind` | 统一字段名为 `kind`（数组） |
+| `callerCollections` | `collections` | 统一字段名；server-derived ACL 翻译为 namespace+collections |
+| `verified` | `verified` | 直接映射 |
+
 ### 4.3 数据模型
 
 ```typescript
+// ── 标识与引用 ──
+
 // 记忆的唯一标识——现有 anchor 直接作为 id
 // namespace = 馆标识（project / global / collection-id），组件内部用于 federation 路由
 type MemoryKey = { namespace: string; id: string };
@@ -225,15 +294,69 @@ type MemoryKey = { namespace: string; id: string };
 // 真相源引用（"索引可重建"的基础——知道从哪重建）
 type SourceRef = { source: string; sourceId: string; revision?: string };
 
+// ── 内容 ──
+
 // 记忆内容——文本或资源引用（预留媒体扩展）
 type MemoryContent =
   | { type: 'text'; text: string; mimeType?: string }
   | { type: 'resource'; uri: string; mimeType: string; indexText?: string };
 
+// ── 生命周期 ──
+
 // 生命周期状态——默认持久化，sunset 是可逆检索过滤
 type LifecycleState = 'active' | 'dormant' | 'superseded' | 'invalidated';
-// 默认搜索只返回 active；旧记忆仍可 read/export
-// 硬删除只响应用户或真相源删除事件（符合铁律"用户状态默认持久化"）
+// active     — 正常可检索
+// dormant    — 真相源暂时缺失或长期零消费候选；数据保留可 read()，默认不出现在 recall()
+// superseded — 被新版本取代（supersededBy 指向新 key）；数据保留
+// invalidated — F163 矛盾检测标记无效；数据保留
+// 硬删除（DELETE）不是状态——是操作，仅响应用户明确删除或 source-delete 事件
+
+// ── 入库输入 ──
+
+interface MemoryInput {
+  key?: MemoryKey;                 // 提供 key → 幂等 upsert；不提供 → 组件生成
+  content: MemoryContent;
+  kind: EvidenceKind;
+  sourceRef: SourceRef;            // "索引可重建"的基础——知道从哪重建
+  provenance: { tier: ProvenanceTier; source: string }; // authoritative / derived / soft_clue
+  relations?: Array<{ target: MemoryKey; type: string }>;
+  metadata?: Record<string, unknown>;
+}
+
+// ── 记忆记录（读出）──
+
+interface MemoryRecord {
+  key: MemoryKey;
+  content: MemoryContent;
+  kind: EvidenceKind;
+  lifecycle: LifecycleState;
+  provenance: { tier: ProvenanceTier; source: string };
+  sourceRef?: SourceRef;
+  createdAt: string;               // ISO8601
+  updatedAt: string;               // ISO8601
+  supersededBy?: MemoryKey;        // lifecycle=superseded 时指向新版本
+}
+
+// ── 消费反馈（F200 事件链：recall → consumed → abandoned）──
+
+type MemoryFeedback =
+  | { event: 'recalled';           // 检索返回了一组候选
+      keys: MemoryKey[];           // 候选 keys
+      query: string;               // 检索 query
+      toolName: string;            // search_evidence / graph_resolve / list_recent
+      ranks: number[];             // 每个 key 的排名位置（0-indexed）
+      resultSetId?: string; }      // F200 HW-4: bundle ID
+  | { event: 'consumed';           // 候选被下游工具实际读取
+      key: MemoryKey;
+      method: string;              // Read / Grep / graph_resolve / drill-down
+      rank: number;                // 该 key 在原 recall 中的排名
+      distance?: number; }         // 距 recall 调用的工具步数
+  | { event: 'abandoned';          // 检索有结果但全部未消费
+      query: string;
+      toolName: string;
+      resultCount: number; };
+// recordFeedback() 收集这些事件 → 组件内部的消费加权排序（consumption-prior）闭环：
+// 被频繁 consumed 的记忆 → recall() 排名提升；被 abandoned 的 → 排名不变（不惩罚）
 ```
 
 ### 4.4 现有代码如何映射
@@ -261,7 +384,7 @@ type LifecycleState = 'active' | 'dormant' | 'superseded' | 'invalidated';
 | 4 | 向量嵌入（EmbeddingService） | `remember()` 内部触发 | ✅ 组件内部实现 |
 | 5 | 关系图（GraphResolver + edges） | `related()` | ✅ 新增方法 |
 | 6 | 实体识别（resolveEntityAliases） | `recall()` 内部增强——搜索增强，随 recall 透明生效 | ✅ 内部能力，不出现在契约方法上 |
-| 7 | 标记物化（MarkerQueue → MaterializationService） | 宿主侧治理流程（产出 .md 写入真相源），组件只 `remember()` 其产物 | ✅ 归属显式化 |
+| 7 | 标记物化（MarkerQueue → MaterializationService） | **宿主侧治理流程**——MarkerQueue→MaterializationService 产出 .md 写入真相源，组件通过后续 rebuild 以 `remember()` 入库其产物。物化不穿透 MemoryComponent 边界 | ✅ 归属显式化 |
 | 8 | 浏览最近（RecentBrowseResolver） | `recall()` + filter/sort 模式 | ✅ |
 | 9 | 消费加权（F200） | `recordFeedback()` → `recall()` 排序 | ✅ |
 | 10 | 矛盾检测（F163 contradicts） | `maintain()` 内部逻辑 | ✅ |
@@ -326,6 +449,17 @@ co-creator 的能力清单里有"无效的记忆逐渐 sunset"。现有机制（
 > **关键区分（Sol 精化）**：第三行（暂时缺失）和第五行（明确删除）必须分开。"父 doc 不在了"不等于"用户要求删除"——孤儿 passage 是用户对话数据，级联硬删违反**铁律 #5（用户状态默认持久化，TTL/删除只能用户 opt-in）**。188 个孤儿应先按删除原因分类，dormant 而非清空。
 >
 > 现有文档类 lifecycle 也不能写"基本完整"——有字段和 review 信号，但没有统一执行器（SunsetManager 不存在）。**这张表让孤儿问题从 bug 变成 `maintain()` 的第一个验收用例。**
+
+**188 孤儿 passages 分类程序**（`maintain()` 第一个验收用例）：
+
+1. **扫描**：检测所有 `evidence_passages` 中 `doc_anchor` 无对应 `evidence_docs` 的记录（当前 188 个 orphan anchor，去重后 188 thread-id）
+2. **逐 anchor 判定删除原因**：
+   - a. transcript JSONL / Redis 仍存该 thread 消息 → **dormant**（真相源存在，可 rebuild `remember()` 重入库）
+   - b. 真相源确认已被用户**明确删除**（有 delete 事件记录） → **hard delete + cascade**（passages 同步删除）
+   - c. 无法确定（找不到 thread 也找不到删除事件） → **dormant**（保守默认——铁律 #5）
+3. **执行状态转换**：dormant 记录保留数据，可 `read()` 按 key 直取，默认不出现在 `recall()` 结果中
+4. **记录到 MaintenanceReport**：分类统计（N dormant / M deleted / K uncertain→dormant）供 review queue 审查
+5. **后续 rebuild 周期**：dormant 中真相源恢复的 → 自动 `active`；长期 dormant 无消费的 → 进 F200 零消费 review queue
 
 ### 5.2 媒体扩展点
 
@@ -405,7 +539,7 @@ MemoryComponent (LocalMemoryComponent)
 | 阶段 | 验收条件 |
 |------|---------|
 | Phase 1 | 搜索结果 diff = 0（重构前后行为完全一致）；上层工具无感知 |
-| Phase 2 | 188 孤儿分类完成（dormant/delete）；信号→状态映射全部接线；`maintain()` 审查 queue 可用 |
+| Phase 2 | 188 孤儿按 §5.1 分类程序完成（dormant/delete/uncertain→dormant）；信号→状态映射全部接线；`maintain()` 返回 MaintenanceReport 含分类统计 |
 | Phase 3 | F200 Memory Recall Eval：换后端后召回率 ≥ 0.95 × 基线 |
 
 ---
