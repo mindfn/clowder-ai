@@ -29,6 +29,11 @@ function createFakeRedis() {
       store.set(key, value);
       return 'OK';
     },
+    del: async (key) => {
+      const existed = store.has(key);
+      store.delete(key);
+      return existed ? 1 : 0;
+    },
     expire: async () => 1,
     _store: store,
   };
@@ -59,6 +64,19 @@ function makeEvent(guardId = 'hold_ball_rate_limit', timestamp = Date.now()) {
   };
 }
 
+/** TriggerNowSuccess mock — claim is kept only for this shape. */
+function triggerSuccess(domainId = 'eval:harness-ledger') {
+  return {
+    ok: true,
+    domainId,
+    threadId: 't1',
+    messageId: 'm1',
+    evalCatId: 'c1',
+    invocationTriggered: true,
+    triggerOutcome: 'dispatched',
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -85,7 +103,7 @@ describe('F257 sub-item 2: guard threshold escalation', () => {
   it('escalates when count >= threshold (first time)', async () => {
     const redis = createFakeRedis();
     const log = createFakeLog(3); // exactly at threshold
-    const triggerEval = mock.fn(async () => ({ ok: true, domainId: 'eval:harness-ledger' }));
+    const triggerEval = mock.fn(async () => triggerSuccess());
 
     const result = await checkGuardThreshold(makeEvent('guard-x'), { redis, guardRejectionLog: log, triggerEval });
 
@@ -105,7 +123,7 @@ describe('F257 sub-item 2: guard threshold escalation', () => {
   it('does NOT re-escalate same guard (dedup key exists)', async () => {
     const redis = createFakeRedis();
     const log = createFakeLog(5); // above threshold
-    const triggerEval = mock.fn(async () => ({ ok: true }));
+    const triggerEval = mock.fn(async () => triggerSuccess());
 
     // First call: escalates
     const event = makeEvent('guard-y');
@@ -125,7 +143,7 @@ describe('F257 sub-item 2: guard threshold escalation', () => {
   it('dedup key is set in Redis with correct prefix', async () => {
     const redis = createFakeRedis();
     const log = createFakeLog(3);
-    const triggerEval = mock.fn(async () => ({ ok: true }));
+    const triggerEval = mock.fn(async () => triggerSuccess());
 
     await checkGuardThreshold(makeEvent('guard-z'), { redis, guardRejectionLog: log, triggerEval });
 
@@ -142,7 +160,7 @@ describe('F257 sub-item 2: guard threshold escalation', () => {
   it('different guards escalate independently', async () => {
     const redis = createFakeRedis();
     const log = createFakeLog(4);
-    const triggerEval = mock.fn(async () => ({ ok: true }));
+    const triggerEval = mock.fn(async () => triggerSuccess());
 
     const r1 = await checkGuardThreshold(makeEvent('guard-a'), { redis, guardRejectionLog: log, triggerEval });
     const r2 = await checkGuardThreshold(makeEvent('guard-b'), { redis, guardRejectionLog: log, triggerEval });
@@ -172,7 +190,7 @@ describe('F257 sub-item 2: guard threshold escalation', () => {
   it('concurrent threshold checks only trigger once (atomic SET NX)', async () => {
     const redis = createFakeRedis();
     const log = createFakeLog(4); // above threshold
-    const triggerEval = mock.fn(async () => ({ ok: true }));
+    const triggerEval = mock.fn(async () => triggerSuccess());
 
     const event = makeEvent('guard-race');
     // Simulate two concurrent checks — both see threshold met,
@@ -199,7 +217,7 @@ describe('F257 sub-item 2: guard threshold escalation', () => {
       setCalls.push({ key, args });
       return originalSet(key, value, ...args);
     };
-    const triggerEval = mock.fn(async () => ({ ok: true }));
+    const triggerEval = mock.fn(async () => triggerSuccess());
 
     await checkGuardThreshold(makeEvent('guard-ttl'), { redis, guardRejectionLog: log, triggerEval });
 
@@ -209,6 +227,94 @@ describe('F257 sub-item 2: guard threshold escalation', () => {
     assert.ok(dedupSet.args.includes('NX'), 'should include NX for atomic claim');
     assert.ok(dedupSet.args.includes(604800), 'TTL should be 7 days in seconds');
   });
+
+  it('releases claim when triggerEval returns 503 invokeTrigger not ready', async () => {
+    const redis = createFakeRedis();
+    const log = createFakeLog(3);
+    const callCount = { n: 0 };
+    // First call: simulate early-boot 503 (resolved, not thrown).
+    // Second call: simulate ready trigger (dispatched).
+    const triggerEval = mock.fn(async () => {
+      callCount.n++;
+      if (callCount.n === 1) {
+        return { status: 503, error: 'invokeTrigger not ready' };
+      }
+      return {
+        ok: true,
+        domainId: 'eval:harness-ledger',
+        threadId: 't1',
+        messageId: 'm1',
+        evalCatId: 'c1',
+        invocationTriggered: true,
+        triggerOutcome: 'dispatched',
+      };
+    });
+
+    // First threshold check: claim + trigger 503 → claim released
+    const first = await checkGuardThreshold(makeEvent('guard-503'), { redis, guardRejectionLog: log, triggerEval });
+    assert.equal(first.thresholdMet, true);
+    assert.equal(first.escalated, false, 'should NOT report escalated on 503');
+    assert.equal(first.claimReleased, true, 'claim should be released');
+    assert.equal(redis._store.has('guard-rejection:escalated:guard-503'), false, 'dedup key should be deleted');
+
+    // Second threshold check: claim succeeds (key was released) → trigger dispatched
+    const second = await checkGuardThreshold(makeEvent('guard-503'), { redis, guardRejectionLog: log, triggerEval });
+    assert.equal(second.escalated, true, 'should escalate on retry');
+    assert.equal(second.claimReleased, undefined, 'no claim release on success');
+    assert.equal(triggerEval.mock.callCount(), 2, 'triggerEval called twice (503 + success)');
+  });
+
+  it('releases claim when triggerEval returns queue full', async () => {
+    const redis = createFakeRedis();
+    const log = createFakeLog(5);
+    const triggerEval = mock.fn(async () => ({
+      status: 503,
+      error: 'invocation_queue_full',
+      detail: 'queue at capacity',
+    }));
+
+    const result = await checkGuardThreshold(makeEvent('guard-full'), { redis, guardRejectionLog: log, triggerEval });
+    assert.equal(result.thresholdMet, true);
+    assert.equal(result.escalated, false, 'should NOT report escalated on queue full');
+    assert.equal(result.claimReleased, true);
+    assert.equal(redis._store.has('guard-rejection:escalated:guard-full'), false, 'claim released');
+  });
+
+  it('releases claim when triggerEval returns TriggerNowSkipped (zero events)', async () => {
+    const redis = createFakeRedis();
+    const log = createFakeLog(3);
+    const triggerEval = mock.fn(async () => ({
+      ok: true,
+      domainId: 'eval:harness-ledger',
+      skipped: true,
+      reason: 'zero_events_in_window',
+      evalRunId: 'hlr-123-abcd1234',
+      windowSummary: '168h window, 0 events',
+    }));
+
+    const result = await checkGuardThreshold(makeEvent('guard-skip'), { redis, guardRejectionLog: log, triggerEval });
+    assert.equal(result.escalated, false, 'skipped is not escalated');
+    assert.equal(result.claimReleased, true, 'claim released on skip');
+  });
+
+  it('keeps claim when triggerEval returns dispatched success', async () => {
+    const redis = createFakeRedis();
+    const log = createFakeLog(3);
+    const triggerEval = mock.fn(async () => ({
+      ok: true,
+      domainId: 'eval:harness-ledger',
+      threadId: 't1',
+      messageId: 'm1',
+      evalCatId: 'c1',
+      invocationTriggered: true,
+      triggerOutcome: 'dispatched',
+    }));
+
+    const result = await checkGuardThreshold(makeEvent('guard-ok'), { redis, guardRejectionLog: log, triggerEval });
+    assert.equal(result.escalated, true);
+    assert.equal(result.claimReleased, undefined, 'claim should NOT be released on success');
+    assert.ok(redis._store.has('guard-rejection:escalated:guard-ok'), 'dedup key retained');
+  });
 });
 
 describe('createThresholdEscalationHook', () => {
@@ -216,7 +322,7 @@ describe('createThresholdEscalationHook', () => {
     const hook = createThresholdEscalationHook({
       redis: createFakeRedis(),
       guardRejectionLog: createFakeLog(0),
-      triggerEval: async () => ({}),
+      triggerEval: async () => ({ status: 503, error: 'test' }),
     });
 
     assert.equal(typeof hook, 'function');
@@ -247,6 +353,11 @@ describe('F257 bootstrap integration: append → threshold escalation', async ()
         if (hasNX && store.has(key)) return null;
         store.set(key, value);
         return 'OK';
+      },
+      del: async (key) => {
+        const existed = store.has(key);
+        store.delete(key);
+        return existed ? 1 : 0;
       },
       expire: async () => 1,
       // Sorted set (event log)
@@ -283,7 +394,15 @@ describe('F257 bootstrap integration: append → threshold escalation', async ()
   it('real append fires hook → triggerEval called at threshold', async () => {
     const redis = createFullFakeRedis();
     const log = new GuardRejectionEventLog(redis);
-    const triggerEval = mock.fn(async () => ({ ok: true, domainId: 'eval:harness-ledger' }));
+    const triggerEval = mock.fn(async () => ({
+      ok: true,
+      domainId: 'eval:harness-ledger',
+      threadId: 't1',
+      messageId: 'm1',
+      evalCatId: 'c1',
+      invocationTriggered: true,
+      triggerOutcome: 'dispatched',
+    }));
 
     // Wire hook — mirrors index.ts bootstrap pattern
     const hook = createThresholdEscalationHook({ redis, guardRejectionLog: log, triggerEval });
@@ -312,7 +431,15 @@ describe('F257 bootstrap integration: append → threshold escalation', async ()
   it('real append: 4th event does NOT re-trigger (dedup)', async () => {
     const redis = createFullFakeRedis();
     const log = new GuardRejectionEventLog(redis);
-    const triggerEval = mock.fn(async () => ({ ok: true }));
+    const triggerEval = mock.fn(async () => ({
+      ok: true,
+      domainId: 'eval:harness-ledger',
+      threadId: 't1',
+      messageId: 'm1',
+      evalCatId: 'c1',
+      invocationTriggered: true,
+      triggerOutcome: 'dispatched',
+    }));
 
     const hook = createThresholdEscalationHook({ redis, guardRejectionLog: log, triggerEval });
     log.setPostAppendHook(hook);

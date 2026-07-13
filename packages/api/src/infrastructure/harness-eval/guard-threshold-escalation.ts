@@ -18,7 +18,11 @@
 
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { GuardRejectionEvent, GuardRejectionEventLog } from './GuardRejectionEventLog.js';
-import type { TriggerNowInput } from './manual-trigger/trigger-now.js';
+import type { TriggerNowInput, TriggerNowSkipped, TriggerNowSuccess } from './manual-trigger/trigger-now.js';
+import type { HandlerError } from './manual-trigger/types.js';
+
+/** Narrowed result type matching handleTriggerNow's return union. */
+export type TriggerEvalResult = TriggerNowSuccess | TriggerNowSkipped | HandlerError;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -47,7 +51,9 @@ export interface EscalationCheckResult {
   thresholdMet: boolean;
   alreadyEscalated: boolean;
   escalated: boolean;
-  triggerResult?: unknown;
+  /** Claim won but trigger failed → claim released so next event can retry. */
+  claimReleased?: boolean;
+  triggerResult?: TriggerEvalResult;
 }
 
 // ---------------------------------------------------------------------------
@@ -59,9 +65,10 @@ export interface GuardThresholdEscalationDeps {
   guardRejectionLog: GuardRejectionEventLog;
   /**
    * Trigger function — typically a partial application of handleTriggerNow
-   * with all deps pre-bound. Returns the raw result for observability.
+   * with all deps pre-bound. Returns narrowed result so we can distinguish
+   * success (keep 7d claim) from failure (release claim for retry).
    */
-  triggerEval: (input: TriggerNowInput) => Promise<unknown>;
+  triggerEval: (input: TriggerNowInput) => Promise<TriggerEvalResult>;
 }
 
 // ---------------------------------------------------------------------------
@@ -113,6 +120,34 @@ export async function checkGuardThreshold(
     domainId: 'eval:harness-ledger',
     userId: `threshold-escalation:${guardId}`,
   });
+
+  // Step 4: verify trigger actually dispatched (dispatched/enqueued).
+  // handleTriggerNow returns 503 objects (invokeTrigger not ready, queue full,
+  // snapshot error) as resolved values, NOT throws — the hook's .catch() never
+  // fires for these. If we keep the 7d claim after a failed trigger, subsequent
+  // events NX-fail and the guard's first reaction is silently lost.
+  // Only keep claim when eval cat was actually invoked.
+  const dispatched = 'ok' in triggerResult && triggerResult.ok === true && 'invocationTriggered' in triggerResult;
+
+  if (!dispatched) {
+    // Release claim so the next event can retry.
+    // DEL failure = original 7d TTL backstop (fail-open, not ideal but bounded).
+    try {
+      await deps.redis.del(dedupKey);
+    } catch {
+      /* fail-open: original TTL is backstop */
+    }
+    return {
+      checked: true,
+      guardId,
+      count,
+      thresholdMet: true,
+      alreadyEscalated: false,
+      escalated: false,
+      claimReleased: true,
+      triggerResult,
+    };
+  }
 
   return {
     checked: true,
