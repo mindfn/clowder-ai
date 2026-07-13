@@ -206,15 +206,12 @@ interface MemoryComponent {
 
 ```typescript
 // ── 馆选择（一对一映射 SearchDimension 五值，Fable 定案）──
-// 'all'     = legacy project+global 融合（现有 dimension='all' 行为，不含 collections）
-// 'library' = 全部 routable collections 扇出（现有 dimension='library'）
-// { collections } = 指定 collection IDs（现有 dimension='collection'）
+// 'project'       — 本项目馆
+// 'global'        — 全局馆
+// 'all'           — legacy project + global 融合（默认；现有 dimension='all' 行为，不含 collections）
+// 'library'       — 全部 routable collections 扇出（现有 dimension='library'）
+// { collections } — 指定 collection IDs（现有 dimension='collection'）
 type NamespaceSelector = 'project' | 'global' | 'all' | 'library' | { collections: string[] };
-// project  — 本项目馆
-// global   — 全局馆
-// all      — 所有馆 → RRF 融合（默认）
-// library  — 全部 routable collections 扇出
-// { collections } — 指定 collection IDs
 
 // ── 馆内内容类型过滤（收紧为枚举）──
 type ScopeFilter = 'docs' | 'threads' | 'sessions' | 'memory' | 'all';
