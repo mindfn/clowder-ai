@@ -660,6 +660,16 @@ operator experience："简直了你和Maine Coon是没头脑（Maine Coon听不�
 | 纠正轮次 | 2（"少了痛点解决"误读为去解 EMF → "你理解错了！不是让你解决这个 case"才拉回 meta） |
 | 元心智哪条没执行 | Q3 坐标变换——没把"痛点"从 case 坐标系（EMF 技术）变换到 meta 坐标系（泛化能力 + harness），锚定在最显眼的技术名词上 |
 
+### Case E7: 把本地初版 review 通过误判为进入 PR merge gate（2026-07-13）
+
+| 维度 | 内容 |
+|------|------|
+| 我以为 | F001 功能分支经过多轮 peer review 并 APPROVE 后，应进入 merge-gate；仓库缺少总门禁，因此需要 operator 决定是否授权 PR 例外。 |
+| 实际要求 | 项目仍在本地 init / 首版构建阶段；review 通过只说明实现可供体验，下一步是隔离的本地产品验收。首版尚未验收前不需要 PR、remote review 或合入流程。 |
+| 偏差根因 | **生命周期阶段锚定偏差**：机械套用“review → merge-gate”SOP，未先核对项目成熟度与 operator 当前目标，把代码质量状态错误等同于产品交付阶段。 |
+| 纠正轮次 | 1 次；operator 指出“首个版本都没做好”，随后撤销 PR/门禁例外议题并将下一棒改为本地验收环境。 |
+| 元心智哪条没执行 | Q1 角色/任务确认与 Q3 坐标变换：没有先问“当前是在做首版体验，还是在准备集成发布”，也没有把 peer APPROVE 转换成该项目实际所处阶段的下一步。 |
+
 ## Review Gate
 
 - Phase 0: **多猫协作审视**（所有猫参与各自 prompt 审视）+ 现有 system-prompt-builder 测试全绿
