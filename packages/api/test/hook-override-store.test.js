@@ -336,6 +336,52 @@ describe('HookOverrideStore', () => {
       );
     });
 
+    test('rollback rejects unknown hookId (fail-closed) — no audit event written (terra P2)', async () => {
+      await assert.rejects(
+        () => store.rollback('UNKNOWN', 'opus'),
+        (err) => {
+          assert.equal(err.name, 'OverrideGateError');
+          assert.equal(err.gate, 'unknown-hook');
+          assert.equal(err.hookId, 'UNKNOWN');
+          return true;
+        },
+      );
+      const events = await store.listEvents();
+      assert.equal(events.length, 0, 'permanent audit stream must stay clean for unknown hooks');
+    });
+
+    test('clearContentOverride rejects unknown hookId (fail-closed) — sibling of rollback gate', async () => {
+      await assert.rejects(
+        () => store.clearContentOverride('UNKNOWN', 'opus'),
+        (err) => {
+          assert.equal(err.name, 'OverrideGateError');
+          assert.equal(err.gate, 'unknown-hook');
+          return true;
+        },
+      );
+      const events = await store.listEvents();
+      assert.equal(events.length, 0);
+    });
+
+    test('rollback on orphaned override (hook removed from registry) fails closed — override survives, no event', async () => {
+      // Phase 1: hook exists → operator disables it (override + event written)
+      await store.disable('S2', 'opus', { reason: 'pre-upgrade disable' });
+      // Phase 2: package upgrade removes the hook from the registry
+      const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+      const orphanStore = new mod.HookOverrideStore(redis, buildLookup(S1)); // S2 gone
+      await assert.rejects(
+        () => orphanStore.rollback('S2', 'opus'),
+        (err) => err.gate === 'unknown-hook',
+      );
+      // Deliberate fail-closed tradeoff (terra review): orphaned overrides are NOT
+      // clearable via this operator path — needs a dedicated migration channel,
+      // not an arbitrary-string write into the permanent audit stream.
+      const survivor = await orphanStore.getOverride('S2');
+      assert.notEqual(survivor, null, 'orphaned override left untouched');
+      const events = await orphanStore.listEvents();
+      assert.equal(events.length, 1, 'only the original disable event exists — no rollback event');
+    });
+
     test('cannot disable non-disableable S1 by passing D5 manifest identity — gate uses internal lookup', async () => {
       // This is the exact codex P1 repro scenario:
       // Before the fix, caller could pass D5's manifest (disableable:true) with hookId='S1'

@@ -1617,11 +1617,15 @@ async function main(): Promise<void> {
   // ManifestLookup is a lazy closure over getCachedRegistry — the registry
   // may not exist at bootstrap time (lazy-init on first pipeline call),
   // but will always be available when write methods are actually invoked.
+  // F257 approval executor: capture the instance so the operator-gated
+  // override routes share the SAME store (single write path, one event stream).
+  let hookOverrideStore: import('./domains/prompt-hooks/HookOverrideStore.js').HookOverrideStore | undefined;
   if (redis) {
     const { HookOverrideStore } = await import('./domains/prompt-hooks/HookOverrideStore.js');
     const { setOverrideStore, getCachedRegistry } = await import('./domains/prompt-hooks/PipelinePromptBuilder.js');
     const manifestLookup = (hookId: string) => getCachedRegistry()?.getHook(hookId)?.manifest;
-    setOverrideStore(new HookOverrideStore(redis, manifestLookup));
+    hookOverrideStore = new HookOverrideStore(redis, manifestLookup);
+    setOverrideStore(hookOverrideStore);
   }
 
   // Shared AgentRouter — used by messagesRoutes and invocationsRoutes
@@ -2067,6 +2071,12 @@ async function main(): Promise<void> {
     // KD-17: GuardRejectionEventLog for eval:harness-ledger snapshot-first manual trigger.
     guardRejectionLog,
   });
+
+  // F257 approval executor (KD-14 first leg): operator-gated override management.
+  {
+    const { promptInjectionOverrideRoutes } = await import('./routes/prompt-injection-overrides.js');
+    await app.register(promptInjectionOverrideRoutes, { overrideStore: hookOverrideStore });
+  }
 
   // F257 sub-item 2: wire threshold escalation hook into GuardRejectionEventLog.
   // Every event append checks guard accumulation; >= 3 events in 7 days for the
