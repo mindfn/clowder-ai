@@ -11,12 +11,21 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Fake Redis that stores data in a Map (good enough for dedup key tests). */
+/**
+ * Fake Redis that stores data in a Map.
+ * Supports atomic SET NX EX (P1-B: codebase prior art in RedisProposalStore).
+ */
 function createFakeRedis() {
   const store = new Map();
   return {
     get: async (key) => store.get(key) ?? null,
-    set: async (key, value) => {
+    /**
+     * Supports: set(key, value) and set(key, value, 'EX', ttl, 'NX').
+     * NX = set-if-not-exists → returns 'OK' on claim, null if key exists.
+     */
+    set: async (key, value, ...args) => {
+      const hasNX = args.includes('NX');
+      if (hasNX && store.has(key)) return null;
       store.set(key, value);
       return 'OK';
     },
@@ -157,7 +166,48 @@ describe('F257 sub-item 2: guard threshold escalation', () => {
     assert.equal(guardId, 'guard-q');
     const expectedWindowMs = ESCALATION_WINDOW_DAYS * 24 * 3600 * 1000;
     assert.equal(since, now - expectedWindowMs, 'since should be event.timestamp - 7 days');
-    assert.equal(until, now, 'until should be event.timestamp');
+    assert.equal(until, now + 1, 'until should be event.timestamp + 1 (half-open interval includes self)');
+  });
+
+  it('concurrent threshold checks only trigger once (atomic SET NX)', async () => {
+    const redis = createFakeRedis();
+    const log = createFakeLog(4); // above threshold
+    const triggerEval = mock.fn(async () => ({ ok: true }));
+
+    const event = makeEvent('guard-race');
+    // Simulate two concurrent checks — both see threshold met,
+    // but only one wins the atomic SET NX claim.
+    const [r1, r2] = await Promise.all([
+      checkGuardThreshold(event, { redis, guardRejectionLog: log, triggerEval }),
+      checkGuardThreshold(event, { redis, guardRejectionLog: log, triggerEval }),
+    ]);
+
+    const escalated = [r1, r2].filter((r) => r.escalated);
+    const deduped = [r1, r2].filter((r) => r.alreadyEscalated);
+    assert.equal(escalated.length, 1, 'exactly one should win the claim');
+    assert.equal(deduped.length, 1, 'exactly one should be deduped');
+    assert.equal(triggerEval.mock.callCount(), 1, 'triggerEval called exactly once');
+  });
+
+  it('atomic claim sets TTL via SET EX (no separate expire call)', async () => {
+    const redis = createFakeRedis();
+    const log = createFakeLog(3);
+    // Track the set call args to verify EX and NX are passed
+    const setCalls = [];
+    const originalSet = redis.set.bind(redis);
+    redis.set = async (key, value, ...args) => {
+      setCalls.push({ key, args });
+      return originalSet(key, value, ...args);
+    };
+    const triggerEval = mock.fn(async () => ({ ok: true }));
+
+    await checkGuardThreshold(makeEvent('guard-ttl'), { redis, guardRejectionLog: log, triggerEval });
+
+    const dedupSet = setCalls.find((c) => c.key.startsWith('guard-rejection:escalated:'));
+    assert.ok(dedupSet, 'should SET dedup key');
+    assert.ok(dedupSet.args.includes('EX'), 'should include EX for TTL');
+    assert.ok(dedupSet.args.includes('NX'), 'should include NX for atomic claim');
+    assert.ok(dedupSet.args.includes(604800), 'TTL should be 7 days in seconds');
   });
 });
 
@@ -172,5 +222,107 @@ describe('createThresholdEscalationHook', () => {
     assert.equal(typeof hook, 'function');
     // Calling it should not throw (fire-and-forget)
     assert.doesNotThrow(() => hook(makeEvent()));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bootstrap integration test: real GuardRejectionEventLog + hook wiring
+// ---------------------------------------------------------------------------
+
+describe('F257 bootstrap integration: append → threshold escalation', async () => {
+  const { GuardRejectionEventLog } = await import('../../dist/infrastructure/harness-eval/GuardRejectionEventLog.js');
+
+  /**
+   * Combined FakeRedis that supports both ZSET ops (for GuardRejectionEventLog)
+   * and key-value ops with SET NX EX (for threshold escalation dedup).
+   */
+  function createFullFakeRedis() {
+    const store = new Map();
+    const sorted = new Map();
+    return {
+      // Key-value (dedup)
+      get: async (key) => store.get(key) ?? null,
+      set: async (key, value, ...args) => {
+        const hasNX = args.includes('NX');
+        if (hasNX && store.has(key)) return null;
+        store.set(key, value);
+        return 'OK';
+      },
+      expire: async () => 1,
+      // Sorted set (event log)
+      zadd: async (key, score, member) => {
+        const s = sorted.get(key) ?? new Map();
+        s.set(member, score);
+        sorted.set(key, s);
+        return 1;
+      },
+      zrangebyscore: async (key, min, max) => {
+        const s = sorted.get(key);
+        if (!s) return [];
+        return [...s.entries()]
+          .filter(([, sc]) => sc >= min && sc <= max)
+          .sort((a, b) => a[1] - b[1])
+          .map(([m]) => m);
+      },
+      zremrangebyscore: async (key, min, max) => {
+        const s = sorted.get(key);
+        if (!s) return 0;
+        let removed = 0;
+        for (const [member, score] of s) {
+          if (score >= min && score <= max) {
+            s.delete(member);
+            removed++;
+          }
+        }
+        return removed;
+      },
+      _store: store,
+    };
+  }
+
+  it('real append fires hook → triggerEval called at threshold', async () => {
+    const redis = createFullFakeRedis();
+    const log = new GuardRejectionEventLog(redis);
+    const triggerEval = mock.fn(async () => ({ ok: true, domainId: 'eval:harness-ledger' }));
+
+    // Wire hook — mirrors index.ts bootstrap pattern
+    const hook = createThresholdEscalationHook({ redis, guardRejectionLog: log, triggerEval });
+    log.setPostAppendHook(hook);
+
+    const now = 1700000000000;
+
+    // Append 2 events (below threshold) — no trigger
+    await log.append(makeEvent('guard-boot', now));
+    await log.append(makeEvent('guard-boot', now + 1));
+    // Give fire-and-forget hooks time to settle
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(triggerEval.mock.callCount(), 0, 'below threshold: no trigger');
+
+    // Append 3rd event (reaches threshold) — triggers
+    await log.append(makeEvent('guard-boot', now + 2));
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(triggerEval.mock.callCount(), 1, 'at threshold: trigger fires');
+
+    // Verify trigger input
+    const input = triggerEval.mock.calls[0].arguments[0];
+    assert.equal(input.domainId, 'eval:harness-ledger');
+    assert.ok(input.userId.includes('guard-boot'));
+  });
+
+  it('real append: 4th event does NOT re-trigger (dedup)', async () => {
+    const redis = createFullFakeRedis();
+    const log = new GuardRejectionEventLog(redis);
+    const triggerEval = mock.fn(async () => ({ ok: true }));
+
+    const hook = createThresholdEscalationHook({ redis, guardRejectionLog: log, triggerEval });
+    log.setPostAppendHook(hook);
+
+    const now = 1700000000000;
+    // Append 4 events — 3rd triggers, 4th deduped
+    for (let i = 0; i < 4; i++) {
+      await log.append(makeEvent('guard-dedup', now + i));
+    }
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(triggerEval.mock.callCount(), 1, 'dedup: only one trigger despite 4 events');
   });
 });

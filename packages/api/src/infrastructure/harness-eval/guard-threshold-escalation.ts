@@ -87,23 +87,28 @@ export async function checkGuardThreshold(
   const since = event.timestamp - windowMs;
 
   // Step 1: count events for this guard in the window.
-  const count = await deps.guardRejectionLog.countByGuard(guardId, since, event.timestamp);
+  // +1 because countByGuard→queryWindow uses half-open [since, until) interval
+  // (upperBound = until - 1). Without +1 the just-appended event at event.timestamp
+  // is excluded and the threshold fires one event late (4 instead of 3).
+  const count = await deps.guardRejectionLog.countByGuard(guardId, since, event.timestamp + 1);
   if (count < ESCALATION_THRESHOLD) {
     return { checked: true, guardId, count, thresholdMet: false, alreadyEscalated: false, escalated: false };
   }
 
-  // Step 2: dedup — check if we already escalated for this guard recently.
+  // Step 2: atomic claim via SET NX EX — only one concurrent caller wins.
+  // Pattern: ApiInstanceLease / RedisDeliveryDedup / RedisProposalStore (codebase prior art).
+  // NX = set-if-not-exists; EX = TTL in seconds (matches ESCALATION_WINDOW_DAYS).
+  // Atomicity eliminates the GET→SET→EXPIRE race where two fire-and-forget
+  // appends both read empty and both trigger.
   const dedupKey = `${DEDUP_KEY_PREFIX}${guardId}`;
-  const existing = await deps.redis.get(dedupKey);
-  if (existing) {
+  const claimValue = JSON.stringify({ escalatedAt: event.timestamp, count, triggeredBy: event.eventId });
+  const claimed = await deps.redis.set(dedupKey, claimValue, 'EX', DEDUP_TTL_SECONDS, 'NX');
+  if (claimed !== 'OK') {
+    // Another concurrent caller already claimed — dedup.
     return { checked: true, guardId, count, thresholdMet: true, alreadyEscalated: true, escalated: false };
   }
 
-  // Step 3: set dedup key BEFORE triggering (prevent concurrent double-trigger).
-  await deps.redis.set(dedupKey, JSON.stringify({ escalatedAt: event.timestamp, count, triggeredBy: event.eventId }));
-  await deps.redis.expire(dedupKey, DEDUP_TTL_SECONDS);
-
-  // Step 4: trigger eval:harness-ledger via the manual trigger path.
+  // Step 3: trigger eval:harness-ledger via the manual trigger path.
   const triggerResult = await deps.triggerEval({
     domainId: 'eval:harness-ledger',
     userId: `threshold-escalation:${guardId}`,
