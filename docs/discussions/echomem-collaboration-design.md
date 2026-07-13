@@ -217,25 +217,38 @@ interface WireResponseMeta {
   // 它们是宿主 coordinator 的路由决策产物，不由 EchoMem 承担
 }
 
-/** Wire 封闭联合 — EchoMem 服务侧降级原因（不含路由/scope 决策） */
+/** Wire 封闭联合 — EchoMem 成功响应中的降级原因（仅服务侧语义降级） */
 type WireDegradeReason =
-  | 'timeout'                // 服务超时
-  | 'unhealthy'              // health() = false
-  | 'contract_error'         // 返回不符合 Wire schema
-  | 'evidence_store_error'   // 兜底：服务侧未知 reason 统一映射到此
+  | 'mode_fallback'           // 请求 semantic 但服务降级到 lexical
+  | 'partial_results'         // 服务返回部分结果（如只搜了部分分片）
+  | 'evidence_store_error'    // 服务侧内部存储错误但仍有部分结果
   ;
-// scope_not_available 已删除——这是 coordinator 路由决策，不是 EchoMem 服务状态
+// timeout/unhealthy/contract_error 不在 Wire meta 中——
+// 这些情况下没有可信 response，属于 ProviderFailure（transport/adapter 层）
 
 type WireSearchMode = 'lexical' | 'semantic' | 'hybrid';
 
-/** 宿主侧 execution meta（coordinator 产出的，含路由决策信息） */
-// 真相源：interfaces.ts SearchExecutionMeta + SearchDegradeReason
-interface CoordinatorExecutionMeta {
-  degraded: boolean;
-  degradeReason?: SearchDegradeReason;  // 宿主封闭联合（见下方）
-  effectiveMode?: 'lexical' | 'semantic' | 'hybrid';
-  // servedBy 作为 coordinator 内部 observability 字段，不进入 SearchExecutionMeta
-}
+/**
+ * 三条独立的 meta 映射边界（不能互相穿透）：
+ *
+ * ┌─────────────────┐   storeMetaToHost()   ┌───────────────────────┐
+ * │ Storage SPI meta │ ────────────────────→ │ SearchExecutionMeta   │
+ * │ (string reasons) │                       │ (host closed union)   │
+ * └─────────────────┘                        └───────────────────────┘
+ *
+ * ┌─────────────────┐   wireMetaToHost()     ┌───────────────────────┐
+ * │ WireResponseMeta│ ────────────────────→  │ SearchExecutionMeta   │
+ * │ (Wire reasons)  │                        │ (host closed union)   │
+ * └─────────────────┘                        └───────────────────────┘
+ *
+ * ┌─────────────────┐                        ┌───────────────────────┐
+ * │ ProviderFailure │ ──(coordinator)──────→ │ SearchExecutionMeta   │
+ * │ (transport/hlth)│   degraded=true        │ evidence_store_error  │
+ * └─────────────────┘                        └───────────────────────┘
+ *
+ * Storage SPI 保持 `degradeReason?: string`（不依赖宿主联合类型——SPI 可独立发布）。
+ * 宿主 coordinator 通过 storeMetaToHost() 映射到 SearchDegradeReason。
+ */
 
 // 宿主实际联合（来自 interfaces.ts:268-272）：
 type SearchDegradeReason =
@@ -244,37 +257,33 @@ type SearchDegradeReason =
   | 'evidence_store_error'
   | 'raw_lexical_only';
 
-/** Wire→Host meta 转换（adapter 必须调用，不能 `meta: response.meta` 直赋）
- *
- * 两套独立映射：
- * 1. EchoMem service → Wire：在 EchoMemAdapter 内部
- * 2. Wire → Host：在 RetrievalCoordinator 的 adapter 出口
- *
- * 路由级降级（scope 不可用、fallback 接管）由 coordinator 自行生成，
- * 不经过 Wire——因为 EchoMem 不知道也不该知道宿主的 scope/dimension 路由。
- */
+// 1. Storage SPI → Host（在 projectStore adapter 中）
+function storeMetaToHost(storeMeta: { degraded: boolean; degradeReason?: string; effectiveMode?: string }): SearchExecutionMeta {
+  return {
+    degraded: storeMeta.degraded,
+    degradeReason: mapStoreDegradeReason(storeMeta.degradeReason),
+    effectiveMode: storeMeta.effectiveMode as SearchExecutionMeta['effectiveMode'],
+  };
+}
+// mapStoreDegradeReason: 已知 SPI reason → host union，未知 → 'evidence_store_error'
 
-function wireMetaToHost(wire: WireResponseMeta): CoordinatorExecutionMeta {
+// 2. Wire success → Host（在 EchoMemAdapter 中）
+function wireMetaToHost(wire: WireResponseMeta): SearchExecutionMeta {
   return {
     degraded: wire.degraded,
-    // Wire 所有 reason → host 'evidence_store_error'（唯一匹配的宿主值）
     degradeReason: wire.degraded ? 'evidence_store_error' : undefined,
     effectiveMode: wire.effectiveMode,   // 同一联合，可直接赋值
   };
 }
 
+// 3. ProviderFailure → Host（在 coordinator 中）
+// timeout / unhealthy / contract_error → { degraded: true, degradeReason: 'evidence_store_error' }
+// 这些故障没有 Wire response，由 coordinator 直接生成 host meta
+
 // EchoMem service → Wire adapter 映射（在 EchoMemAdapter 内部）：
-// EchoMem 'rate_limited'       → wire 'timeout'
-// EchoMem 'internal_error'     → wire 'evidence_store_error'
-// EchoMem 'model_unavailable'  → wire 'evidence_store_error'
-// 未识别的 reason string       → wire 'evidence_store_error'（永不透传原始字符串）
-//
-// Coordinator 自行生成的路由降级（不经 Wire）：
-// scope 不可用  → host { degraded: true, degradeReason: 'evidence_store_error' }
-// fallback 接管 → host { degraded: true, degradeReason: 'evidence_store_error' }
-//   + coordinator 内部 observability 记录 servedBy='fallback'（不进 SearchExecutionMeta）
-//
-// **parent ADR §5 `meta: response.meta` 直赋落地时改为 `wireMetaToHost(response.meta)`**
+// EchoMem 'rate_limited'       → ProviderFailure('timeout')（无可信 response）
+// EchoMem 'internal_error'     → wire { degraded: true, degradeReason: 'evidence_store_error' }
+// EchoMem 'model_unavailable'  → wire { degraded: true, degradeReason: 'mode_fallback' }
 
 /** Wire Contract v0 — GetByCanonicalId */
 interface WireGetRequest {
@@ -318,10 +327,10 @@ type WireErrorCode =
   | 'unsupported_version'     // 版本不兼容
   | 'not_supported'           // 请求的 filter/mode 不被支持
   | 'invalid_request'         // 请求格式错误（含非法 canonicalId）
-  | 'not_found'               // getByCanonicalId 查无
   | 'rate_limited'            // 限流
   | 'internal'                // 服务内部错误
   ;
+// not_found 已删除——未命中统一用 WireGetResponse.item=null 表达（单一真相源）
 
 interface WireSearchItem {
   canonicalId: string;        // tenant-scoped 唯一（见 §4）
@@ -492,7 +501,12 @@ canonicalId    := domain ":" opaqueNativeId
 domain         := "doc" | "conv" | "global"
 opaqueNativeId := (unreserved | pct-encoded)+     // 非空
 unreserved     := ALPHA | DIGIT | "-" | "_" | "." | "~"
-pct-encoded    := "%" HEXDIG HEXDIG               // 大写十六进制（%2F 不是 %2f）
+pct-encoded    := "%" UPHEXDIG UPHEXDIG           // 大写十六进制（%2F，不是 %2f）
+UPHEXDIG       := DIGIT | "A" | "B" | "C" | "D" | "E" | "F"  // 只允许大写
+
+// 编码基于 UTF-8 字节：非 unreserved 字符先编码为 UTF-8 bytes，
+// 每个 byte 独立 percent-encode。跨语言（TS/Python）实现必须对齐 UTF-8。
+// 示例："文" → UTF-8 bytes E6 96 87 → "%E6%96%87"
 ```
 
 > **Canonical encoding（唯一形式）**：
@@ -506,13 +520,14 @@ pct-encoded    := "%" HEXDIG HEXDIG               // 大写十六进制（%2F �
 > roundtrip 唯一确定，不需要 domain-specific segment policy。
 
 ```
-示例：
-  doc:F102                   → DocRetrieval
+示例（所有示例均为规范编码形式）：
+  doc:F102                   → DocRetrieval（unreserved 原样）
   doc:ADR-020                → DocRetrieval
-  conv:thread_mp3iz…         → ConversationRetrieval
+  conv:thread_mp3iz4k        → ConversationRetrieval（ASCII unreserved 原样）
   conv:msg_abc123            → ConversationRetrieval
-  global:methods%2FTDD       → GlobalRetrieval（`/` 也编码）
+  global:methods%2FTDD       → GlobalRetrieval（`/` percent-encode）
   doc:has%2Fslash            → DocRetrieval
+  doc:%E6%96%87%E6%A1%A3     → DocRetrieval（"文档" UTF-8 编码）
 ```
 
 > **kind 不编入 canonicalId**：kind 是可变 metadata（evidence_docs.kind 可以改），
@@ -528,6 +543,7 @@ pct-encoded    := "%" HEXDIG HEXDIG               // 大写十六进制（%2F �
 | `session-xxx` | `doc:session-xxx` | Doc | anchor 原样 |
 | `global:methods/TDD` | `global:methods%2FTDD` | Global | `/` 也 percent-encode（opaque） |
 | `has/slash` | `doc:has%2Fslash` | Doc | 同上 |
+| `文档` | `doc:%E6%96%87%E6%A1%A3` | Doc | Unicode → UTF-8 bytes → percent-encode |
 
 ### 4.3 Conformance vectors（Phase 0 交付物）
 
@@ -577,6 +593,19 @@ pct-encoded    := "%" HEXDIG HEXDIG               // 大写十六进制（%2F �
 | "doc:has%2fslash"         | null     | 非规范：`%2f` 应为 `%2F`（小写 hex） |
 | "doc:%46"                 | null     | 非规范：over-encode unreserved `F` |
 | "doc:%46102"              | null     | 非规范：`F` 是 unreserved，不应编码 |
+| "doc:文档"                | null     | 非规范：raw Unicode 应 percent-encode |
+
+// Unicode 编码 vectors（UTF-8 bytes — 跨语言对齐）
+| legacy anchor          | expected canonicalId                              |
+|------------------------|---------------------------------------------------|
+| "文档"                 | "doc:%E6%96%87%E6%A1%A3"                          |
+| "thread-会话_001"      | "conv:%E4%BC%9A%E8%AF%9D_001"                     |
+
+// parse Unicode:
+| canonicalId                          | domain | nativeId    |
+|--------------------------------------|--------|-------------|
+| "doc:%E6%96%87%E6%A1%A3"            | "doc"  | "文档"      |
+| "conv:%E4%BC%9A%E8%AF%9D_001"       | "conv" | "会话_001"  |
 ```
 
 ### 4.4 CanonicalId Codec 与 Route Slot 分离
@@ -693,7 +722,10 @@ class RetrievalCoordinator {
     if (!parsed) return { status: 'invalid_id' };
 
     const slot = this.routes.get(parsed.domain);
-    if (!slot) return { status: 'invalid_id' };          // 未知 domain = 无效 ID
+    if (!slot) {
+      // domain 已通过 codec 验证合法，但未注册 RouteSlot → 不是非法 ID，是不可用
+      return { status: 'unavailable', meta: { degraded: true, degradeReason: 'evidence_store_error' } };
+    }
 
     // 选 capable provider（类型守卫）
     const primary = isAnchorLookupCapable(slot.primary) ? slot.primary : null;

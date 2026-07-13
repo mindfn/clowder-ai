@@ -322,7 +322,8 @@ interface SearchResponse {
   meta: {
     effectiveMode: 'lexical' | 'semantic' | 'hybrid';
     degraded: boolean;
-    degradeReason?: SearchDegradeReason;  // 宿主封闭联合（interfaces.ts:268-272）
+    degradeReason?: string;               // SPI 用 string（不依赖宿主联合——SPI 可独立发布）
+    // 宿主 coordinator 通过 storeMetaToHost() 映射到 SearchDegradeReason（见 EchoMem 协作设计 §2.3）
     totalCandidates?: number;
     traceId?: string;
   };
@@ -515,8 +516,9 @@ class MemoryServiceAdapter implements IEvidenceStore, GraphStore {
     });
     return {
       items,
-      meta: response.meta,  // Storage SPI → Host: 类型兼容（SearchResponse.meta 是宿主类型）
-      // 注意：EchoMem Wire → Host 时不能直赋——须调用 wireMetaToHost()（见 EchoMem 协作设计 §2.3）
+      meta: storeMetaToHost(response.meta),  // Storage SPI → Host: 通过转换函数映射
+      // Storage SPI 用 string reason，宿主用 SearchDegradeReason 封闭联合
+      // EchoMem Wire → Host 用 wireMetaToHost()（见 EchoMem 协作设计 §2.3）
     };
   }
 
