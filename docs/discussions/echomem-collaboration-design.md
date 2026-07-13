@@ -1,1190 +1,313 @@
 ---
-title: "EchoMem 协作方案 — 三层架构设计"
+title: "记忆能力抽象 — 组件化方案"
 participants: [opus, fable, sol, codex, lang]
 status: design-draft
 created: 2026-06-30
-updated: 2026-07-10
+updated: 2026-07-13
 doc_kind: decision
-decision_id: ADR-candidate-echomem
+decision_id: ADR-candidate-memory-abstraction
 feature_ids: [F102]
-topics: [memory, echomem, collaboration, protocol, architecture]
+topics: [memory, componentization, abstraction, provider]
 related: ["memory-service-componentization.md"]
 ---
 
-# EchoMem 协作方案 — 三层架构设计
+# 记忆能力抽象 — 组件化方案
 
-> **Status**: design-draft（2026-07-10，四轮 review 后重构）
-> **Deciders**: operator + Ragdoll(opus/fable) + Maine Coon(codex/sol)
+> **Status**: design-draft（2026-07-13，基于方向纠正重写）
 > **Issue**: [#1047](https://github.com/zts212653/clowder-ai/issues/1047)
 > **Parent ADR**: [记忆服务组件化 — 三原语模型](memory-service-componentization.md)
-> **设计原则**：按擅长领域分工，不确定性用接口隔离，回退成本低
-> **前序讨论**：EchoAgent 代码分析 + co-creator 分工方向确认（session #1）
+> **设计前提**：Clowder AI 是客户端应用（跑在用户 Mac 上），不是多租户 SaaS
+> **设计目标**：按能力做抽象，使记忆后端可替换，不是同时对接多个后端
 
-## Review 历史
+## 变更历史
 
-| 轮 | Reviewer | 关键修正 |
-|----|----------|---------|
-| 1 | codex | 三原语保留 / source-based ownership / 双向 adapter / EntityResolver local |
-| 2 | Fable | ingestion 空白 / 孤儿根因 / 三入口 / getDb 逃逸面 / 隐私边界 / 验收判据 |
-| 3 | Sol | 三层混用 / scope 硬路由 / CollectionManifest 不兼容 / 删除无 lineage |
-| 4 | Fable × Sol 收敛 | sessions→Doc / canonicalId 硬前置 / wire owner / egress filter / 删除权威唯一 |
+本文前身是 "EchoMem 协作方案 — 三层架构设计"（1190 行，7 轮 review）。
+co-creator 指出两个根本前提错误后重写：
 
----
+1. **我们是客户端应用**：用户拥有全部数据，不存在多租户隐私边界。之前设计的 egress filter / thread sensitivity / agentId 分区等全部是 SaaS 思维。
+2. **组件化 = 按能力抽象**：目标是让后端可替换（今天 SQLite，明天可以换 EchoMem），不是同时跑两个后端做 shadow 对比。
 
-## 1. 背景
-
-Clowder AI 的记忆系统（[ADR: 三原语模型](memory-service-componentization.md)）需要与 EchoMem
-团队的对话记忆服务协作。核心分工：
-
-- **DocMemory（我们）**：文档知识记忆 — feature/decision/plan/lesson 等从 repo 扫描出来的结构化知识
-- **ConversationMemory（EchoMem）**：对话消息记忆 — thread 消息、episode 摘要、对话内关系
-- **EventMemory / Timeline（我们）**：认知转变事件 — 不给 EchoMem
-
-> **所有权按数据来源切，不按 SQLite `kind` 字段切**。
-> scanner 产物 → DocMemory；对话事件流产物 → ConversationMemory。
+之前版本的 git 历史保留在本分支（`59281f6ab`..`f2bed3d62`）。
 
 ---
 
-## 2. 三层架构
+## 1. 图书馆比喻
 
-> **Fable × Sol 收敛结论**：原方案把存储 SPI、领域检索 Provider、跨团队协议混成一层。
-> 这导致 scope=threads 硬路由绕过 EchoMem、CollectionManifest 注册不上、
-> EchoAgent 边缘适配器被当成核心协议等系统性问题。重构为三层。
+记忆系统 = 图书馆。上层应用（LLM / 猫猫）只需要知道：
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  Layer 3: Wire Contract（跨团队协议）                                │
-│  ─────────────────────────────────────                              │
-│  OpenAPI/JSON Schema 为真相源 → 生成 TS/Python bindings             │
-│  Owner: Clowder（v0 canonical schema）                              │
-│  SearchRequest/Execution + CapabilityDescriptor + IdentityScope    │
-│  + canonicalId + degrade meta + origin/requestId/hopCount          │
-│                                                                     │
-│  EchoMemAdapter: native ↔ neutral 翻译                             │
-│  EchoAgentAdapter: 边缘适配器（仅 EchoAgent 侧，不进核心链路）      │
-├─────────────────────────────────────────────────────────────────────┤
-│  Layer 2: Domain Provider Ports（宿主领域接口）                      │
-│  ─────────────────────────────────────────                          │
-│  读侧：                                                             │
-│    RetrievalProvider.search(request): RetrievalExecution            │
-│    CanonicalIdCodec.parse(canonicalId): { domain, nativeId }        │
-│    RetrievalCoordinator: domain → RouteSlot (primary/fallback/shadow[]) │
-│    BrowseProvider.listRecent(request)          [optional]           │
-│    GraphProvider.getRelated/traverse(request)  [optional]           │
-│  写侧（独立端口）：                                                  │
-│    ConversationIngestSink.append(events)                            │
-│                                                                     │
-│  RetrievalCoordinator：                                             │
-│    routing table (dimension × scope × depth → provider calls)      │
-│    RRF 融合 + 脱敏 + degrade meta                                  │
-│    替换 isProjectLocalScope 特判                                    │
-├─────────────────────────────────────────────────────────────────────┤
-│  Layer 1: Storage SPI（存储原语）                                    │
-│  ───────────────────────────────                                    │
-│  TextBlock / RelationEdge / Timeline                                │
-│  只描述可重建索引的 CRUD/查询                                        │
-│  实现：SQLite（本地）/ 通用 Memory Service（远程）                   │
-│  详见 parent ADR §10                                                │
-└─────────────────────────────────────────────────────────────────────┘
-```
+| 能力 | 图书馆 | 我们的系统 |
+|------|--------|-----------|
+| **入库** | 书入库，图书馆分类上架 | `upsert()` / `IndexBuilder.rebuild()` |
+| **找书** | 按关键词、分类找 | `KnowledgeResolver.resolve(query, options)` |
+| **取书** | 拿到书翻看内容 | `getByAnchor()` + drill-down（文档 grep 原文 / 对话直接返回 passages） |
+| **下架** | 过期/失效的书下架 | `status: invalidated/archived` + `supersededBy` |
+| **内部管理** | 图书馆自己处理 | 索引重建、向量嵌入、去重、矛盾检测、消费加权排序 |
 
-### 2.1 Layer 1: Storage SPI
-
-见 [parent ADR §10](memory-service-componentization.md#10-通用记忆服务数据类型原语设计)。
-三原语（TextBlock / RelationEdge / Timeline）+ MemoryStore + StoreCapabilities。
-
-**重新定位**：三原语是存储服务的 SPI，不是跨团队协议。
-`@clowder-ai/memory-protocol` 包（如果发布）面向的是**存储后端实现者**，
-不是 EchoMem 这样的领域协作方。
-
-### 2.2 Layer 2: Domain Provider Ports
-
-宿主侧领域接口。每个 provider 声明 capability，RetrievalCoordinator 按路由表分发。
-
-```typescript
-type CanonicalDomain = 'doc' | 'conv' | 'global';
-
-/** 读侧：检索（所有 provider 必须实现） */
-interface RetrievalProvider {
-  readonly domain: CanonicalDomain;    // 统一使用 grammar domain
-  search(request: SearchRequest): Promise<RetrievalExecution>;
-  capabilities(): ProviderCapabilities;
-  health(): Promise<boolean>;
-}
-
-/** 读侧：anchor 精确查找（capability-specific port） */
-// 不是 RetrievalProvider 的必需方法——不是所有 provider 都支持精确查找。
-// 类型守卫 isAnchorLookupCapable() 与 capabilities().anchorLookup 联动，
-// 避免布尔值和可调用方法靠隐含约定同步。
-interface AnchorLookupCapable {
-  /** nativeId → host item（null = 合法未命中）。返回宿主类型，不是 Wire DTO */
-  getByAnchor(nativeId: string): Promise<AnchorLookupItem | null>;
-}
-
-/** 宿主侧 anchor lookup 结果（Layer 2 类型，Wire DTO 仅存在于 EchoMemAdapter 内部） */
-interface AnchorLookupItem {
-  canonicalId: string;
-  content: string;
-  title?: string;
-  kind?: string;
-  speaker?: string;
-  timestamp?: string;
-  provenance: { type: 'scanner' | 'conversation' | 'derived'; sourceUri?: string };
-}
-
-function isAnchorLookupCapable(p: RetrievalProvider): p is RetrievalProvider & AnchorLookupCapable {
-  return p.capabilities().anchorLookup && 'getByAnchor' in p;
-}
-
-/** 读侧：anchor 路由 — 由 CanonicalIdCodec + RetrievalCoordinator 组合实现（§4.4） */
-// CanonicalIdCodec.parse(canonicalId): { domain, nativeId } — 纯编解码，无 provider 依赖
-// RetrievalCoordinator.getByCanonicalId(): 返回 AnchorLookupExecution（typed result，不压成 null）
-
-/** 读侧：最近浏览（optional） */
-interface BrowseProvider {
-  listRecent(request: BrowseRequest): Promise<BrowseExecution>;
-}
-
-/** 读侧：图遍历（optional） */
-interface GraphProvider {
-  getRelated(anchor: string, options?: GraphOptions): Promise<RelatedResult>;
-  traverse(start: string, depth: number): Promise<TraversalResult>;
-}
-
-/** 写侧：对话 ingestion（独立端口） */
-interface ConversationIngestSink {
-  append(events: IngestEvent[]): Promise<IngestAck>;
-}
-
-interface ProviderCapabilities {
-  search: boolean;
-  browse: boolean;
-  graph: boolean;
-  anchorLookup: boolean;      // true ⟺ provider implements AnchorLookupCapable
-  entityResolution: boolean;
-  semanticSearch: boolean;
-}
-```
-
-**为什么不复用 IEvidenceStore**：
-- `IEvidenceStore` 混合了读写（`upsert` + `search`），而 ConversationMemory 的写侧语义（durable outbox）
-  与文档 upsert 完全不同
-- `getDb()` 逃逸面（13 个 caller）证明 IEvidenceStore 的抽象边界已经被实现细节穿透
-- collection 的 `sensitivity` 是 per-collection 静态标签，而对话隐私是 per-thread/per-message 的
-
-**迁移期薄桥**：projectStore 包装为 DocRetrievalProvider + LegacyConversationProvider，
-后者持有本地 passage 数据直到 EchoMem ownership 切换完成。
-
-### 2.3 Layer 3: Wire Contract
-
-跨团队协议。语言中立，OpenAPI/JSON Schema 为真相源，生成 TS + Python bindings。
-
-```typescript
-/** Wire Contract v0 — SearchRequest */
-interface WireSearchRequest {
-  version: 'v0';              // 请求必带版本（单一真相源，不用 header）
-  query: string;
-  options?: {
-    mode?: 'lexical' | 'semantic' | 'hybrid';
-    limit?: number;
-    dateFrom?: string;      // ISO8601
-    dateTo?: string;        // ISO8601
-    depth?: 'summary' | 'raw';
-    contextWindow?: number;
-    explain?: boolean;
-    // threadId 删除：thread 过滤通过 identity.session 传递（单一真相源）
-  };
-  identity: IdentityScope;
-  origin: RequestOrigin;
-}
-// 版本不兼容 → WireError { code: 'unsupported_version' }
-
-/** Wire Contract v0 — SearchResponse */
-interface WireSearchResponse {
-  items: WireSearchItem[];
-  meta: WireResponseMeta;
-  // capabilities 不在每个 response 中附带（避免两个能力真相源漂移）
-  // 能力快照仅由 capabilities endpoint / 握手返回
-}
-
-/** Wire 侧 response meta（EchoMem 返回的，只含服务侧观测） */
-interface WireResponseMeta {
-  degraded: boolean;
-  degradeReason?: WireDegradeReason;
-  effectiveMode?: WireSearchMode;
-  traceId?: string;
-  // 注意：servedBy 和 scope routing 信息不在 Wire meta 中——
-  // 它们是宿主 coordinator 的路由决策产物，不由 EchoMem 承担
-}
-
-/** Wire 封闭联合 — EchoMem 成功响应中的降级原因（仅服务侧语义降级） */
-type WireDegradeReason =
-  | 'mode_fallback'           // 请求 semantic 但服务降级到 lexical
-  | 'partial_results'         // 服务返回部分结果（如只搜了部分分片）
-  | 'evidence_store_error'    // 服务侧内部存储错误但仍有部分结果
-  ;
-// timeout/unhealthy/contract_error 不在 Wire meta 中——
-// 这些情况下没有可信 response，属于 ProviderFailure（transport/adapter 层）
-
-type WireSearchMode = 'lexical' | 'semantic' | 'hybrid';
-
-/**
- * 三条独立的 meta 映射边界（不能互相穿透）：
- *
- * ┌─────────────────┐   storeMetaToHost()   ┌───────────────────────┐
- * │ Storage SPI meta │ ────────────────────→ │ SearchExecutionMeta   │
- * │ (string reasons) │                       │ (host closed union)   │
- * └─────────────────┘                        └───────────────────────┘
- *
- * ┌─────────────────┐   wireMetaToHost()     ┌───────────────────────┐
- * │ WireResponseMeta│ ────────────────────→  │ SearchExecutionMeta   │
- * │ (Wire reasons)  │                        │ (host closed union)   │
- * └─────────────────┘                        └───────────────────────┘
- *
- * ┌─────────────────┐                        ┌───────────────────────┐
- * │ ProviderFailure │ ──(coordinator)──────→ │ SearchExecutionMeta   │
- * │ (transport/hlth)│   degraded=true        │ evidence_store_error  │
- * └─────────────────┘                        └───────────────────────┘
- *
- * Storage SPI 保持 `degradeReason?: string`（不依赖宿主联合类型——SPI 可独立发布）。
- * 宿主 coordinator 通过 storeMetaToHost() 映射到 SearchDegradeReason。
- */
-
-// 宿主实际联合（来自 interfaces.ts:268-272）：
-type SearchDegradeReason =
-  | 'passage_embedding_unavailable'
-  | 'passage_vector_search_error'
-  | 'evidence_store_error'
-  | 'raw_lexical_only';
-
-// 1. Storage SPI → Host（在 projectStore adapter 中）
-function storeMetaToHost(storeMeta: { degraded: boolean; degradeReason?: string; effectiveMode?: string }): SearchExecutionMeta {
-  return {
-    degraded: storeMeta.degraded,
-    degradeReason: mapStoreDegradeReason(storeMeta.degradeReason),
-    effectiveMode: storeMeta.effectiveMode as SearchExecutionMeta['effectiveMode'],
-  };
-}
-// mapStoreDegradeReason: 已知 SPI reason → host union，未知 → 'evidence_store_error'
-
-// 2. Wire success → Host（在 EchoMemAdapter 中）
-function wireMetaToHost(wire: WireResponseMeta): SearchExecutionMeta {
-  return {
-    degraded: wire.degraded,
-    degradeReason: wire.degraded ? 'evidence_store_error' : undefined,
-    effectiveMode: wire.effectiveMode,   // 同一联合，可直接赋值
-  };
-}
-
-// 3. ProviderFailure → Host（在 coordinator 中）
-// timeout / unhealthy / contract_error → { degraded: true, degradeReason: 'evidence_store_error' }
-// 这些故障没有 Wire response，由 coordinator 直接生成 host meta
-
-// EchoMem service → Wire adapter 映射（在 EchoMemAdapter 内部）：
-// EchoMem 'rate_limited'       → ProviderFailure('timeout')（无可信 response）
-// EchoMem 'internal_error'     → wire { degraded: true, degradeReason: 'evidence_store_error' }
-// EchoMem 'model_unavailable'  → wire { degraded: true, degradeReason: 'mode_fallback' }
-
-/** Wire Contract v0 — GetByCanonicalId */
-interface WireGetRequest {
-  version: 'v0';             // 与 SearchRequest 一致，所有 Wire 请求必带版本
-  canonicalId: string;       // §4 格式
-  identity: IdentityScope;
-  origin: RequestOrigin;
-}
-
-interface WireGetResponse {
-  item: WireSearchItem | null;
-  meta: WireResponseMeta;
-}
-
-/** Wire Contract v0 — Health */
-interface WireHealthResponse {
-  healthy: boolean;
-  latencyMs?: number;
-  message?: string;
-}
-
-/** Wire Contract v0 — Capabilities（唯一能力真相源，握手 / 按需获取） */
-interface WireCapabilitiesResponse {
-  capabilities: WireCapabilities;
-  version: 'v0';              // 字面量（与请求 version 匹配）
-  supportedModes: WireSearchMode[];
-  supportedDepths: Array<'summary' | 'raw'>;
-  supportedFilters: Array<'dateRange' | 'contextWindow' | 'explain' | 'sessionScope'>;
-  // 请求中的 filter 不在 supportedFilters 中 → WireError { code: 'not_supported' }
-  // 不允许静默忽略不支持的 filter
-}
-
-/** Wire Contract v0 — Error envelope */
-interface WireError {
-  code: WireErrorCode;
-  message: string;
-  requestId: string;
-}
-
-type WireErrorCode =
-  | 'unsupported_version'     // 版本不兼容
-  | 'not_supported'           // 请求的 filter/mode 不被支持
-  | 'invalid_request'         // 请求格式错误（含非法 canonicalId）
-  | 'rate_limited'            // 限流
-  | 'internal'                // 服务内部错误
-  ;
-// not_found 已删除——未命中统一用 WireGetResponse.item=null 表达（单一真相源）
-
-interface WireSearchItem {
-  canonicalId: string;        // tenant-scoped 唯一（见 §4）
-  content: string;
-  title?: string;
-  summary?: string;
-  kind?: string;              // metadata，不编入 canonicalId
-  speaker?: string;
-  timestamp?: string;
-  score?: number;
-  provenance: WireProvenance;
-  passages?: WirePassage[];   // depth=raw 时
-}
-
-interface WireProvenance {
-  type: 'scanner' | 'conversation' | 'derived';
-  sourceUri?: string;
-  sourceRevision?: string;    // 用于 lineage 追踪
-  confidence?: number;
-}
-
-interface IdentityScope {
-  tenant: string;             // Clowder instance/project
-  user?: string;              // co-creator（按需隔离）
-  agent: string;              // 'clowder-team'（Phase 1 team-shared）
-  session?: string;           // thread ID — 唯一 thread 过滤真相源（不再在 options 里重复）
-}
-
-interface RequestOrigin {
-  source: 'clowder' | 'echomem';
-  requestId: string;          // correlation ID（不是读请求幂等键）
-  hopCount: number;           // 防环（>1 拒绝）
-}
-
-interface WireCapabilities {
-  textSearch: boolean;
-  semanticSearch: boolean;
-  entityResolution: boolean;
-  graph: boolean;
-  browse: boolean;
-  anchorLookup: boolean;      // getByCanonicalId 支持
-}
-```
-
-**协议 Owner**：Clowder v0 canonical schema。EchoMem native API 是首个 adapter target。
-若未来共同治理，必须显式迁移到共同 repo + 版本流程，不能靠口头稳定承诺。
-
-**EchoAgent Session Memory Engine 定位**：
-仅保留在 EchoAgent 边缘（EchoAgentAdapter），不进入 Clowder↔EchoMem 核心链路。
-Clowder↔EchoMem 直接对话用 Wire Contract v0。
-
-**已知 EchoMem 能力 Gap**（需与 EchoMem 团队对齐）：
-
-| Wire 操作 | EchoMem develop 现状 | Gap |
-|----------|---------------------|-----|
-| `search` | `RetrievalService.retrieve` 可对接 | ✅ 可映射 |
-| `getByCanonicalId` | `SessionService.get` 存在，但无 exact event lookup | ⚠️ anchorLookup 声明 false，或 EchoMem 需扩展 |
-| `health` | 有 health endpoint | ✅ |
-| `capabilities` | 无 capability probe | ⚠️ 需要 EchoMem 实现或 adapter 静态声明 |
-
-> **Sol P2-1 修正**：EchoMem develop 的 SessionService 只有 open/get，没有 SessionService.search。
-> 实际搜索是 HTTP client → RetrievalService.retrieve。Wire 操作表已修正。
+上层不需要知道书架怎么组织、用的什么数据库、索引怎么建。**这就是组件化的目标**。
 
 ---
 
-## 3. 路由决策表
+## 2. 现有架构（从代码提取）
 
-> **收敛结论**：用单一版本化路由表替换 `isProjectLocalScope` 特判。
-> 不在 IEvidenceStore 上叠加特殊分支，而让 RetrievalCoordinator
-> 持有按 domain 注册的 provider。
+```
+上层应用（search_evidence / list_recent / graph_resolve）
+    │
+    ▼
+IKnowledgeResolver ← 图书馆前台
+    │  resolve(query, options) → KnowledgeResult
+    │  - FTS + 向量 + 混合三种搜索
+    │  - RRF 融合多源结果
+    │  - scope/dimension/depth 过滤
+    │
+    ├── projectStore: IEvidenceStore ← 项目书架（SQLite）
+    │   包含：文档类 + 对话类（混在一起）
+    │
+    ├── globalStore: IEvidenceStore ← 全局书架（SQLite）
+    │   包含：跨项目知识
+    │
+    └── LibraryCatalog → N 个 Collection stores
+        包含：外部知识库
+```
 
-### 3.1 Phase 1 路由表（v1）
+**问题**：文档类和对话类混在同一个 `projectStore` 里。想单独替换对话类的后端（比如换成 EchoMem）→ 没法拆，因为它们共享同一个 `SqliteEvidenceStore` 实例。
 
-> **路由语义**（Sol P1-1 修正）：**dimension 选定 provider 集合（universe），scope 在集合内过滤**。
-> 不使用 wildcard 叠表——每个 `(dimension, scope)` 组合有唯一确定的 provider 结果。
-> `depth` 不参与路由，只影响返回形状（`summary` 返回摘要，`raw` 返回原文 + passages）。
+### 2.1 现有能力清单
 
-> **Coordinator defaulting**：`dimension=undefined` 在 coordinator 入口处默认为 `all`。
-> 路由表中 `undefined` 行是 defaulting 未生效时的防御性兜底，正常流量不可达。
-
-> **scope 的双重角色**：对 project/global/all/undefined dimension，scope 充当 **provider 类型过滤器**（从 universe 中选取匹配的 provider）；
-> 对 library/collection dimension，providers 已由 manifest/IDs 确定，scope 退化为 **store 内部 kind 过滤器**（如 `sessions → kind=session`）。
-
-**dimension 定义 provider universe**
-
-| dimension | 可用 providers | Conv 参与 |
-|-----------|---------------|-----------|
-| `project` | Doc + Conv | ✅ project-local 知识含对话 |
-| `global` | Global only | ❌ |
-| `all` | Doc + Conv + Global | ✅ |
-| `library` | CollectionManifest 扇出 | ❌ Conv 不是 collection |
-| `collection` | 指定 collection IDs | ❌ Conv 不是 collection |
-| `undefined` | Doc only（coordinator defaulting `undefined→all` 后正常不可达；防御性兜底） | ❌ |
-
-**scope 在 universe 内过滤**
-
-| scope | 在 universe 内保留 | 说明 |
-|-------|-------------------|------|
-| `threads` | 仅 Conv（若 universe 不含 Conv → empty + degraded nudge） | 对话消息 |
-| `sessions` | 仅 Doc（session digest 是 scanner 产物，归 Doc） | session digest |
-| `docs` | Doc + Global（若 universe 含 Global） | 文档搜索 |
-| `memory` | Doc + Global（若 universe 含 Global） | 记忆搜索 |
-| `undefined` / `all` | universe 全部 providers | 不过滤 |
-
-**完整路由矩阵**（dimension × scope → providers）
-
-| dimension \ scope | `undefined`/`all` | `threads` | `sessions` | `docs` | `memory` |
-|-------------------|-------------------|-----------|------------|--------|----------|
-| `project` | Doc + Conv | Conv | Doc | Doc | Doc |
-| `global` | Global | ⚠️ empty+nudge | ⚠️ empty+nudge | Global | Global |
-| `all` | Doc+Conv+Global → RRF | Conv | Doc | Doc+Global | Doc+Global |
-| `library` | CollManifest 扇出 | ⚠️ empty+nudge | CollManifest 扇出 | CollManifest 扇出 | CollManifest 扇出 |
-| `collection` | 指定 IDs | ⚠️ empty+nudge | 指定 IDs | 指定 IDs | 指定 IDs |
-| `undefined` | Doc | ⚠️ empty+nudge | Doc | Doc | Doc |
-
-> **⚠️ empty+nudge**：scope 指定的 provider 类型不在 dimension universe 中时（threads→Conv 不在 / sessions→Doc 不在），返回空结果 +
-> `meta: { degraded: true, degradeReason: 'evidence_store_error' }`。
-> 这是 **coordinator 自行生成**的路由降级（不经 Wire），不静默路由到 Conv。
-> 使用宿主 `SearchDegradeReason` 现有值（`evidence_store_error`），不引入不存在的联合成员。
-
-**Conv provider Phase 绑定**
-
-| Phase | Conv 实现 | 说明 |
-|-------|----------|------|
-| Phase 1-2 | LegacyConv (primary) | projectStore 包装的薄桥 |
-| Phase 3+ | EchoMem (primary) + LegacyConv (fallback) | fallback 仅在 timeout/unhealthy/contract-error 触发 |
-
-**Breaking changes vs 现有行为**
-
-| 组合 | 现有行为 | 新行为 | 变更类型 |
-|------|---------|--------|---------|
-| `project + undefined` | projectStore 搜 docs+threads（单 store） | Doc+Conv（两个 provider 并发） | ⚠️ 行为保持，实现变 |
-| `all + docs/memory` | project+global | Doc+Global | ✅ 兼容 |
-| `global + threads` | 不走 isProjectLocalScope，搜 globalStore | empty+nudge | ⚠️ Breaking：显式报告不可用 |
-| `global + sessions` | globalStore 搜 kind=session（实际无 session digest） | empty+nudge | ⚠️ Breaking：sessions 归 Doc，Global 无 Doc |
-| `undefined + threads` | 不到这里（dimension 总有值） | empty+nudge | ⚠️ 新增防护 |
-
-> **sessions→Doc 而非 Conv**（Fable × Sol R1 修正）：`scope='sessions'` 在 store 层映射为
-> `kind='session'`（SqliteEvidenceStore.ts:176-177），搜的是 **session digest 文档**——
-> 这是 scanner/编译产物，按 source-based ownership 归 Doc domain。
-
-### 3.2 设计约束
-
-- **路由表是版本化 routing policy**：未来 ownership 迁移只改这一处真相源
-- **dimension 先选 universe，scope 再过滤**：不使用 wildcard/tier 叠加——每个 `(dimension, scope)` 组合有唯一确定结果
-- **scope 不兼容 universe 时报告而非偷路由**：`global + threads` → empty+nudge, 不静默切到 Conv
-- **depth 不参与路由**：depth 只影响返回形状（summary vs raw + passages），不改变 provider 选择
-- **Conversation 不走 CollectionManifest 体系**：
-  - `CollectionKind` 只有 `project|world|domain|research|global`，无 `conversation`
-  - collection `sensitivity` 是 per-collection 静态标签；对话隐私是 per-thread/per-message 的
-  - EchoMem 不是 external collection，是 domain provider
-- **EchoMem 不参与 `dimension=library/collection` 扇出**：它有独立的路由入口
+| 能力 | 接口 | 实现 | 说明 |
+|------|------|------|------|
+| 搜索 | `IKnowledgeResolver.resolve()` | `KnowledgeResolver` | 跨 store 联邦搜索 + RRF 融合 |
+| 存储 | `IEvidenceStore.upsert/search/getByAnchor/deleteByAnchor` | `SqliteEvidenceStore` | 单 SQLite 文件 |
+| 扫描入库 | `IIndexBuilder.rebuild/incrementalUpdate` | `IndexBuilder` | 扫描 repo → 文档 + passages |
+| 向量嵌入 | `IEmbeddingService` | `EmbeddingService` | passage 向量化 |
+| 关系图 | `GraphResolver` + `Edge` | `SqliteEvidenceStore` | 文档间关系 |
+| 实体识别 | `EntityRecord` + `resolveEntityAliases` | `SqliteEvidenceStore` | 别名解析增强搜索 |
+| 标记物化 | `IMarkerQueue` → `IMaterializationService` | `MarkerQueue` | 读者笔记 → 正式文档 |
+| 浏览最近 | `RecentBrowseResolver` | `RecentBrowseResolver` | 最近 N 条 |
+| 消费加权 | F200 consumption-weighted ranking | `SqliteEvidenceStore` | 常被翻的书排前面 |
+| 矛盾检测 | F163 `contradicts[]` + `invalidAt` | `f163-review-queue` | 发现内容冲突 → 标记 |
+| 质量分层 | `provenance: authoritative/derived/soft_clue` | scanner | 来源可信度 |
 
 ---
 
-## 4. CanonicalId 与 Identity Scope
+## 3. 已有数据（实测快照 2026-06-30）
 
-> **Fable 最强反例确认**：canonicalId 未对齐前禁止开启双源窗口（shadow 双跑）——
-> 否则 RRF 融合以 `item.anchor` 去重（KnowledgeResolver.ts:250-256），
-> EchoMem 无兼容 anchor → 去重失败 → 同一消息双份进结果。
+### 3.1 evidence_docs（291 条）
 
-### 4.1 CanonicalId 设计
+| kind | 数量 | 数据来源 | 类别 |
+|------|------|---------|------|
+| `feature` | 236 | scanner 扫描 repo | 文档类 |
+| `plan` | 38 | scanner 扫描 repo | 文档类 |
+| `decision` | 10 | scanner 扫描 repo | 文档类 |
+| `thread` | 7 | IndexBuilder 编译对话 | 对话类 |
+| `session` | 0 | scanner（session digest） | 文档类 |
+| `lesson` | 0 | scanner | 文档类 |
+| `discussion` | 0 | scanner | 文档类 |
+| `research` | 0 | scanner | 文档类 |
+| `pack-knowledge` | 0 | scanner | 文档类 |
 
-> **Sol P1-3 修正**：canonicalId 必须满足：
-> 1. **tenant-scoped 唯一**：唯一性定义为 `(IdentityScope.tenant, canonicalId)` 元组，
->    tenant 不编入字符串（避免过长/泄露）
-> 2. **稳定**：基于不可变 source/native ID，不含可变 metadata（kind 变化不改 ID）
-> 3. **可路由**：domain 前缀决定 provider 分发
-> 4. **可编码**：segment 内 `/`、`:`、unicode 需 percent-encoding（RFC 3986）
+**284 文档类 + 7 对话类。**
 
-**Grammar（Phase 0 必须固定）**
+### 3.2 evidence_passages（21,946 条）
 
-```
-canonicalId    := domain ":" opaqueNativeId
-domain         := "doc" | "conv" | "global"
-opaqueNativeId := (unreserved | pct-encoded)+     // 非空
-unreserved     := ALPHA | DIGIT | "-" | "_" | "." | "~"
-pct-encoded    := "%" UPHEXDIG UPHEXDIG           // 大写十六进制（%2F，不是 %2f）
-UPHEXDIG       := DIGIT | "A" | "B" | "C" | "D" | "E" | "F"  // 只允许大写
+- doc_anchor 模式：100% `thread-*`（全部是对话消息）
+- 去重 doc_anchor：193 个对话 thread
+- 有对应 evidence_docs 的：5 个
+- 孤儿 anchor（doc 已删但 passage 保留）：188 个
 
-// 编码基于 UTF-8 字节：非 unreserved 字符先编码为 UTF-8 bytes，
-// 每个 byte 独立 percent-encode。跨语言（TS/Python）实现必须对齐 UTF-8。
-// 示例："文" → UTF-8 bytes E6 96 87 → "%E6%96%87"
-```
+> **孤儿根因**：`deleteByAnchor()` 只删 `evidence_docs`，不级联删 `evidence_passages`。
+> 这是治理问题（历史 thread 记忆保留策略矛盾），需要在组件化前或过程中解决。
 
-> **Canonical encoding（唯一形式）**：
-> - unreserved chars 保持原样（不 over-encode）
-> - 其他所有字符 percent-encode（大写 hex）
-> - 这保证**每个 nativeId 恰好有唯一的 encoded 形式**
-> - `parse()` 用 roundtrip 验证 `encodeOpaque(decode(s)) === s` 拒绝非规范形式
->
-> **Opaque nativeId**（Sol 推荐，最简）：nativeId 永远是 opaque string，完整 percent-encode。
-> 不区分 "结构 `/`" 和 "数据 `/`"——同一个 `encodeOpaque()`/`decodeOpaque()` 函数，
-> roundtrip 唯一确定，不需要 domain-specific segment policy。
+### 3.3 edges（2,437 条）
 
-```
-示例（所有示例均为规范编码形式）：
-  doc:F102                   → DocRetrieval（unreserved 原样）
-  doc:ADR-020                → DocRetrieval
-  conv:thread_mp3iz4k        → ConversationRetrieval（ASCII unreserved 原样）
-  conv:msg_abc123            → ConversationRetrieval
-  global:methods%2FTDD       → GlobalRetrieval（`/` percent-encode）
-  doc:has%2Fslash            → DocRetrieval
-  doc:%E6%96%87%E6%A1%A3     → DocRetrieval（"文档" UTF-8 编码）
-```
+100% 文档间关系（`feature_ref` 1288 / `related_to` 719 / `related` 309 / `doc_link` 113 / `wikilink` 8）。
 
-> **kind 不编入 canonicalId**：kind 是可变 metadata（evidence_docs.kind 可以改），
-> 编入 ID 会违反稳定性。kind 作为 WireSearchItem.kind metadata 传递。
+### 3.4 数据结论
 
-### 4.2 与 Legacy Anchor 映射
-
-| Legacy anchor 模式 | CanonicalId | Provider | 说明 |
-|--------------------|-------------|----------|------|
-| `F102` | `doc:F102` | Doc | anchor 原样保留为 nativeId |
-| `ADR-020` | `doc:ADR-020` | Doc | 同上 |
-| `thread-thread_xxx` | `conv:thread_xxx` | Conv | 去掉 `thread-` 前缀 |
-| `session-xxx` | `doc:session-xxx` | Doc | anchor 原样 |
-| `global:methods/TDD` | `global:methods%2FTDD` | Global | `/` 也 percent-encode（opaque） |
-| `has/slash` | `doc:has%2Fslash` | Doc | 同上 |
-| `文档` | `doc:%E6%96%87%E6%A1%A3` | Doc | Unicode → UTF-8 bytes → percent-encode |
-
-### 4.3 Conformance vectors（Phase 0 交付物）
-
-> table-driven：每行写 legacy anchor、expected canonicalId、expected resolve 输出。
-> 不使用模糊断言——strip prefix 意味着 roundtrip 不恒等（`thread-thread_abc` → `thread_abc`），
-> 必须逐行验证。
-
-```
-// canonicalize: legacy anchor → canonicalId | null
-| legacy anchor          | expected                        |
-|------------------------|---------------------------------|
-| "F102"                 | "doc:F102"                      |
-| "ADR-020"              | "doc:ADR-020"                   |
-| "thread-thread_abc"    | "conv:thread_abc"               |
-| "session-sess_123"     | "doc:session-sess_123"          |
-| "global:methods/TDD"   | "global:methods%2FTDD"          |
-| "has/slash"            | "doc:has%2Fslash"               |
-| ""                     | null                            | ← 空 nativeId（doc 规则匹配但 strip 后为空）
-| "thread-"              | null                            | ← strip `thread-` 后为空
-
-// parse: canonicalId → { domain, nativeId } | null（含规范性检查）
-| canonicalId               | expected domain | expected nativeId  |
-|---------------------------|----------------|-------------------|
-| "doc:F102"                | "doc"          | "F102"            |
-| "conv:thread_abc"         | "conv"         | "thread_abc"      |
-| "global:methods%2FTDD"    | "global"       | "methods/TDD"     |
-| "doc:has%2Fslash"         | "doc"          | "has/slash"       |
-
-// roundtrip: parse(canonicalize(a)).nativeId == strip(a)
-| legacy anchor          | expected nativeId after roundtrip | 说明 |
-|------------------------|-----------------------------------|------|
-| "F102"                 | "F102"                            | 恒等 |
-| "thread-thread_abc"    | "thread_abc"                      | prefix stripped |
-| "global:methods/TDD"   | "methods/TDD"                     | `global:` prefix stripped |
-| "has/slash"            | "has/slash"                       | 恒等（编码/解码 roundtrip） |
-
-// negative vectors: parse() 对非法输入返回 null
-| canonicalId               | expected | 原因 |
-|---------------------------|----------|------|
-| "F102"                    | null     | 无 `:` 分隔符 |
-| "unknown:F102"            | null     | 未知 domain |
-| "doc:"                    | null     | 空 nativeId |
-| ":F102"                   | null     | 空 domain（不在 allowlist） |
-| "doc:has%ZZslash"         | null     | 畸形 percent-encoding |
-| ""                        | null     | 空字符串 |
-| "doc:has/slash"           | null     | 非规范：`/` 应为 `%2F`（raw reserved） |
-| "doc:has%2fslash"         | null     | 非规范：`%2f` 应为 `%2F`（小写 hex） |
-| "doc:%46"                 | null     | 非规范：over-encode unreserved `F` |
-| "doc:%46102"              | null     | 非规范：`F` 是 unreserved，不应编码 |
-| "doc:文档"                | null     | 非规范：raw Unicode 应 percent-encode |
-
-// Unicode 编码 vectors（UTF-8 bytes — 跨语言对齐）
-| legacy anchor          | expected canonicalId                              |
-|------------------------|---------------------------------------------------|
-| "文档"                 | "doc:%E6%96%87%E6%A1%A3"                          |
-| "thread-会话_001"      | "conv:%E4%BC%9A%E8%AF%9D_001"                     |
-
-// parse Unicode:
-| canonicalId                          | domain | nativeId    |
-|--------------------------------------|--------|-------------|
-| "doc:%E6%96%87%E6%A1%A3"            | "doc"  | "文档"      |
-| "conv:%E4%BC%9A%E8%AF%9D_001"       | "conv" | "会话_001"  |
-```
-
-### 4.4 CanonicalId Codec 与 Route Slot 分离
-
-> **Sol delta P1-B 修正**：codec 只负责 parse/format，不负责选 provider。
-> 选 provider 是 RetrievalCoordinator 的事——同一 domain 在 Phase 2/3 有
-> primary/fallback/shadow[]，单 `Map<domain, Provider>` 无法表达。
-
-**Layer 1: CanonicalIdCodec（纯编解码，无 provider 依赖）**
-
-```typescript
-// CanonicalDomain 定义见 §2.2（同一类型，自包含引用）
-type CanonicalDomain = 'doc' | 'conv' | 'global';
-
-interface ParsedCanonicalId {
-  domain: CanonicalDomain;
-  nativeId: string;           // decode 后的原始 ID
-}
-
-class CanonicalIdCodec {
-  private rules: Array<{
-    pattern: RegExp;
-    domain: CanonicalDomain;
-    stripPrefix: string;
-  }> = [
-    { pattern: /^thread-/, domain: 'conv', stripPrefix: 'thread-' },
-    { pattern: /^global:/, domain: 'global', stripPrefix: 'global:' },
-    { pattern: /^session-/, domain: 'doc', stripPrefix: '' },
-    { pattern: /.*/, domain: 'doc', stripPrefix: '' },
-  ];
-
-  /** legacy anchor → canonicalId（拒绝空 nativeId） */
-  canonicalize(legacyAnchor: string): string | null {
-    const rule = this.rules.find(r => r.pattern.test(legacyAnchor))!;
-    const nativeId = legacyAnchor.replace(rule.stripPrefix, '');
-    if (nativeId.length === 0) return null;            // e.g. canonicalize("thread-") → null
-    return `${rule.domain}:${encodeOpaque(nativeId)}`;
-  }
-
-  private static VALID_DOMAINS = new Set<CanonicalDomain>(['doc', 'conv', 'global']);
-
-  /** canonicalId → { domain, nativeId } | null
-   *
-   *  非法输入统一返回 null：
-   *  - 无 `:` 分隔符
-   *  - 未知 domain
-   *  - 空 nativeId
-   *  - 畸形 percent-encoding（decode 异常）
-   *  - 非规范编码（roundtrip check 失败 — 同一 nativeId 必须只有唯一 encoded 形式）
-   */
-  parse(canonicalId: string): ParsedCanonicalId | null {
-    const colonIdx = canonicalId.indexOf(':');
-    if (colonIdx < 0) return null;                              // 无分隔符
-
-    const domainStr = canonicalId.slice(0, colonIdx);
-    if (!CanonicalIdCodec.VALID_DOMAINS.has(domainStr as CanonicalDomain)) return null;
-
-    const encoded = canonicalId.slice(colonIdx + 1);
-    if (encoded.length === 0) return null;                      // 空 nativeId
-
-    let nativeId: string;
-    try {
-      nativeId = decodeOpaque(encoded);                         // 畸形 % → 异常
-    } catch {
-      return null;
-    }
-
-    // 规范性检查：decode 后重新 encode 必须与原始 encoded 一致
-    // 拒绝 doc:has/slash（应为 doc:has%2Fslash）、doc:%46（应为 doc:F）等非规范形式
-    if (encodeOpaque(nativeId) !== encoded) return null;
-
-    return { domain: domainStr as CanonicalDomain, nativeId };
-  }
-}
-
-// encodeOpaque / decodeOpaque 规范：
-// - unreserved chars (A-Z a-z 0-9 - _ . ~) 保持原样
-// - 其他所有字符（含 / : % 空格等）percent-encode
-// - percent-encode 使用大写十六进制（%2F 不是 %2f）
-// 这保证 encodeOpaque(decodeOpaque(s)) === s 当且仅当 s 是规范形式
-```
-
-**Layer 2: RetrievalCoordinator 使用 RouteSlot 选 provider**
-
-```typescript
-interface RouteSlot {
-  primary: RetrievalProvider;
-  fallback?: RetrievalProvider;        // ProviderFailure 时接管
-  shadows: RetrievalProvider[];        // 旁路观测，不进 served result
-}
-
-/** provider 可 fallback 的错误分类（catch-all 不算——只有这三类触发 fallback） */
-class ProviderFailure extends Error {
-  constructor(
-    readonly kind: 'timeout' | 'unhealthy' | 'contract_error',
-    message: string,
-  ) { super(message); }
-}
-
-/** Exact lookup 的 typed result — 调用方可区分每种状态 */
-type AnchorLookupExecution =
-  | { status: 'found';       item: AnchorLookupItem; meta: CoordinatorExecutionMeta }
-  | { status: 'not_found';   meta: CoordinatorExecutionMeta }
-  | { status: 'invalid_id' }                          // 非法 canonicalId
-  | { status: 'unavailable'; meta: CoordinatorExecutionMeta };  // 所有 provider 故障
-
-class RetrievalCoordinator {
-  private codec = new CanonicalIdCodec();
-  private routes = new Map<CanonicalDomain, RouteSlot>();
-
-  /** anchor 精确查找 — 返回 typed result，调用方按 status 分支 */
-  async getByCanonicalId(canonicalId: string): Promise<AnchorLookupExecution> {
-    const parsed = this.codec.parse(canonicalId);
-    if (!parsed) return { status: 'invalid_id' };
-
-    const slot = this.routes.get(parsed.domain);
-    if (!slot) {
-      // domain 已通过 codec 验证合法，但未注册 RouteSlot → 不是非法 ID，是不可用
-      return { status: 'unavailable', meta: { degraded: true, degradeReason: 'evidence_store_error' } };
-    }
-
-    // 选 capable provider（类型守卫）
-    const primary = isAnchorLookupCapable(slot.primary) ? slot.primary : null;
-    const fallback = slot.fallback && isAnchorLookupCapable(slot.fallback)
-      ? slot.fallback : null;
-
-    if (!primary && !fallback) {
-      return { status: 'unavailable', meta: { degraded: true, degradeReason: 'evidence_store_error' } };
-    }
-
-    // primary 不具备 anchor lookup → fallback 作为该操作的 designated handler（不是降级）
-    if (!primary && fallback) {
-      return this.tryLookup(fallback, parsed.nativeId, { degraded: false });
-    }
-
-    // 先试 primary
-    if (primary) {
-      const result = await this.tryLookup(primary, parsed.nativeId, { degraded: false });
-      if (result.status !== 'unavailable') return result;
-      // primary 故障 → 尝试 fallback（降级）
-      if (fallback) {
-        return this.tryLookup(fallback, parsed.nativeId, {
-          degraded: true, degradeReason: 'evidence_store_error',
-        });
-      }
-    }
-
-    return { status: 'unavailable', meta: { degraded: true, degradeReason: 'evidence_store_error' } };
-  }
-
-  /** 单 provider 调用 — 只有 ProviderFailure 触发 unavailable */
-  private async tryLookup(
-    provider: RetrievalProvider & AnchorLookupCapable,
-    nativeId: string,
-    baseMeta: Partial<CoordinatorExecutionMeta>,
-  ): Promise<AnchorLookupExecution> {
-    try {
-      const item = await provider.getByAnchor(nativeId);
-      const meta: CoordinatorExecutionMeta = { degraded: false, ...baseMeta };
-      return item
-        ? { status: 'found', item, meta }
-        : { status: 'not_found', meta };                // null = 合法未命中
-    } catch (err) {
-      if (err instanceof ProviderFailure) {
-        return { status: 'unavailable', meta: { degraded: true, degradeReason: 'evidence_store_error' } };
-      }
-      throw err;  // 非 ProviderFailure 的异常不被吞（编程错误，应上报）
-    }
-  }
-}
-```
-
-> **职责边界**：
-> - `CanonicalIdCodec`: 纯函数，无状态，无 provider 依赖。Phase 0 conformance vectors 针对它。
-> - `RetrievalCoordinator`: 持有 `Map<domain, RouteSlot>`，用 codec + route slot + `isAnchorLookupCapable` 类型守卫选 provider。返回 `AnchorLookupExecution`，调用方按 `status` 分支处理。
-> - Provider adapter: 负责 nativeId ↔ provider-local ID 转换（e.g. LegacyConv 补回 `thread-` 前缀）。Wire DTO 仅在 EchoMemAdapter 内部，不穿透到 coordinator。
-> - **Fallback 语义**：只有 `ProviderFailure`（timeout/unhealthy/contract_error）触发 fallback。`null`（合法未命中）不触发。非 ProviderFailure 异常不被 catch-all 吞掉。
-> - **Primary 不支持 anchor lookup 但 fallback 支持**：fallback 作为该操作的 designated handler，`degraded: false`——这是 operation-specific routing，不是降级。
-
-### 4.5 Identity Scope（Phase 1 推荐）
-
-> **Fable × Sol 收敛 + operator 待确认**：Phase 1 推荐 team-shared。
-
-| 字段 | Phase 1 值 | 说明 |
-|------|-----------|------|
-| `tenant` | Clowder instance ID / project slug | 实例级隔离 |
-| `user` | co-creator ID（可选） | 按需隔离 |
-| `agent` | `'clowder-team'` | **team-shared**：同一 thread 共享记忆，猫作为 speaker metadata |
-| `session` | thread ID | 对话域按 thread 分 |
-
-个体长期画像（per-cat namespace）另设，不在 Phase 1 范围。
-
----
-
-## 5. 已有数据映射（实测数据）
-
-> 以下数据来自 Clowder AI 实例的 `evidence.sqlite`（2026-06-30 快照）。
-
-### 5.1 evidence_docs — 按数据来源归属
-
-| kind | 数量 | 状态分布 | 数据来源 | 映射到 |
-|------|------|---------|---------|--------|
-| `feature` | 236 | active:221, done:13, in-progress:1, spec:1 | scanner 产物 | **DocMemory** |
-| `plan` | 38 | active:37, draft:1 | scanner 产物 | **DocMemory** |
-| `decision` | 10 | active:6, accepted:3, drifted:1 | scanner 产物 | **DocMemory** |
-| `thread` | 7 | active:7 | IndexBuilder 编译对话 | **ConversationMemory** |
-| `session` | 0 | — | scanner 产物 | DocMemory（session digest） |
-| `lesson` | 0 | — | scanner 产物 | DocMemory |
-| `discussion` | 0 | — | scanner 产物 | DocMemory |
-| `research` | 0 | — | scanner 产物 | DocMemory |
-| `pack-knowledge` | 0 | — | scanner 产物 | DocMemory |
-
-**合计**：284 来自 scanner（→ DocMemory）+ 7 来自 IndexBuilder 对话编译（→ ConversationMemory）= 291 总文档。
-
-### 5.2 evidence_passages — 100% 对话消息
-
-| 指标 | 值 |
-|------|-----|
-| 总 passage 数 | 21,946 |
-| 去重 doc_anchor 数 | 193（对应 193 个对话 thread） |
-| doc_anchor 模式 | 100% `thread-*`（全部是对话消息） |
-| 有对应 evidence_docs（kind=thread）的 | 5 个 |
-| 孤儿 anchor（无对应 evidence_docs） | 188 个 |
-
-> **孤儿根因是"删时不级联"**（Fable P1-B）：
-> `deleteByAnchor()` 只删 `evidence_docs`，不级联删 `evidence_passages`
-> （全 codebase 无 `DELETE FROM evidence_passages`）。
-> 暴露更深的治理问题：历史 thread 记忆保留策略矛盾
-> （doc 不保留 → 被 cleanup；passage 永久保留 → 无清理路径）。
-> **必须先在我们治理层回答，再谈移交 EchoMem。**
-
-### 5.3 edges — 100% 文档知识关系
-
-| relation | 数量 |
-|----------|------|
-| `feature_ref` | 1,288 |
-| `related_to` | 719 |
-| `related` | 309 |
-| `doc_link` | 113 |
-| `wikilink` | 8 |
-| **合计** | **2,437**（全部 doc-to-doc） |
-
-所有 edge 归 DocMemory。ConversationMemory 若需对话内关系（SPO），在内部自建。
-
----
-
-## 6. Wire Contract v0 详细设计
-
-### 6.1 EchoMem 端点（Clowder 消费方）
-
-EchoMemAdapter 做 EchoMem native API ↔ Wire Contract 翻译。
-
-| Wire 操作 | EchoMem native 端点 | 状态 | 说明 |
-|----------|---------------------|------|------|
-| `search` | HTTP → `RetrievalService.retrieve` | ✅ 可映射 | 对话搜索 |
-| `getByCanonicalId` | `SessionService.get`（无 exact event lookup） | ⚠️ Gap | anchorLookup 初始声明 false |
-| `health` | health endpoint | ✅ | 健康检查 |
-| `capabilities` | 无 capability probe | ⚠️ Gap | adapter 静态声明或 EchoMem 需实现 |
-
-> **不再使用 EchoAgent 的 Session Memory Engine 协议**（Sol P1 修正）。
-> EchoMem develop 分支已有独立 SessionService / RetrievalService，
-> 使用 tenant/user/agent/session 四层身份模型。
-> 注意：SessionService 只有 open/get，不是搜索入口。搜索走 RetrievalService。
-
-### 6.2 DocMemory 端点（EchoAgent 消费方）
-
-EchoAgentMemoryEngineAdapter 保留在 EchoAgent 边缘，把 DocMemory
-包装为 EchoAgent memory_query dialect。
-
-> 这是边缘适配器，不是核心协议。Clowder↔EchoMem 核心链路用 Wire Contract v0。
-
-### 6.3 防环与对称性
-
-- 只保留**能力对称**：两侧互供 domain-pure endpoint
-- **禁止 aggregate-to-aggregate**：Clowder 不调 EchoMem 的聚合端点，EchoMem 不调 Clowder 的聚合端点
-- 每个请求带 `origin: { source, requestId, hopCount }`
-- `hopCount > 1` → 拒绝（防环）
-
----
-
-## 7. 可靠 Ingestion 协议
-
-> **P1-A 前置设计缺口**（Fable P1-A + Sol P1 + 收敛锁定）：
-> EchoAgent 的 `result` mode 是 session round 回调，Clowder 不是 EchoAgent，
-> 没有 session round。当前没有任何机制把 Clowder 的 thread 消息灌进 EchoMem。
-
-### 7.1 可验证语义（conformance-testable）
-
-| # | 语义要求 | 说明 |
-|---|---------|------|
-| 1 | **Durable outbox** | 消息先写入本地 outbox，再异步投递 EchoMem。进程崩溃不丢事件 |
-| 2 | **At-least-once delivery** | outbox 重试直到 ack。EchoMem 幂等消费 |
-| 3 | **eventId + idempotencyKey** | 全局唯一事件 ID + 幂等键 |
-| 4 | **sourceRevision** | 数据版本号，用于 lineage 追踪和 backfill |
-| 5 | **Identity scope** | tenant / user / agent / session(thread) / message |
-| 6 | **Thread 内有序** | 同一 thread 的消息保证有序投递。跨 thread 不要求 |
-| 7 | **Backfill checkpoint/cursor** | 存量迁移支持断点续传 |
-| 8 | **Ack / partial failure / retry ownership** | 部分失败重试由 Clowder outbox 负责，不由 EchoMem 主动拉取 |
-| 9 | **Egress privacy filter** | 被标记为 private 的 thread / secret-scan 命中的消息**永不进入 outbox**。过滤在宿主侧，决策可审计。**前置依赖**：thread 隐私标记机制 + 消息级 secret-scan 均为需新建（见 §9） |
-| 10 | **Tombstone 投递** | 删除事件作为特殊 event 进入 outbox，而非直接 DELETE 调用 |
-
-### 7.2 IngestEvent v0 Schema
-
-> **Fable P1-3**：TombstoneEvent（§8.2）有完整 interface，普通 IngestEvent 没有——
-> 不对称导致 Phase 0 出口条件"conformance test fixture 通过"无法执行。
-
-```typescript
-interface IngestEvent {
-  version: 'v0';                    // Wire 版本（与 SearchRequest/GetRequest 一致）
-  eventId: string;                  // 全局唯一（语义 #3）
-  idempotencyKey: string;           // 幂等消费键（语义 #3）
-  type: 'message';                  // 普通消息（vs TombstoneEvent.type='tombstone'）
-  sourceRevision: string;           // 数据版本号（语义 #4，用于 backfill cursor + lineage）
-  scope: IdentityScope;             // tenant/user/agent/session（语义 #5）
-  canonicalId: string;              // 全局稳定 ID（§4）
-  content: string;                  // 消息正文
-  speaker: string;                  // 发言者（猫 ID / co-creator / system）
-  timestamp: string;                // ISO8601（语义 #6 thread 内有序）
-  position: number;                 // thread 内序号（语义 #6）
-  metadata?: Record<string, unknown>; // 扩展字段（featureIds, toolCalls 等）
-}
-```
-
-### 7.3 可选方案
-
-| 方案 | 触发方 | 侵入性 | 推荐 |
-|------|--------|--------|------|
-| **A. 消息事件钩子 + outbox** | Clowder 消息处理管线 | 中 | ✅ **增量首选** |
-| **B. IndexBuilder 改推** | rebuild 完成后批量推送 | 低 | ✅ **存量 backfill 首选** |
-| C. EchoMem 主动拉取 | 定时轮询 | 低 | 实时性差 |
-| D. 共享存储 | 直接读 SQLite | **高风险** | ❌ 违反隔离 |
-
-> **最终方案 = A + B 组合**：A 负责增量消息实时推送（Phase 2a+），B 负责存量 passage backfill（Phase 2b）。
-> 两者不是单选，而是覆盖不同阶段的互补机制。
-
-### 7.4 前置问题
-
-1. EchoMem 是否接受非 EchoAgent 事件源？（`result` mode payload schema 假设 round 结构）
-2. 21,946 条存量 passage 如何 backfill？需要一次性迁移工具 + cursor
-3. Clowder thread 消息 → EchoMem 的 schema 适配需要定义翻译层
-
----
-
-## 8. 删除与 Lineage
-
-> **Sol P1 + Fable 收敛加固**：EchoMem 从消息派生 atom / episode / graph，
-> 删除源消息后派生记忆的清理无法靠 `Provenance {type, uri}` 判断。
-
-### 8.1 删除权威唯一
-
-**EchoMem 永不自主删除 / 过期 Clowder 数据**。只响应 tombstone。
-
-| 权威 | 行为 |
-|------|------|
-| Clowder（唯一删除发起方） | 发送 tombstone event → outbox → EchoMem |
-| EchoMem | 响应 tombstone：删除源消息 + 标记/删除派生记忆 |
-| EchoMem 自主行为 | 允许不改变可检索逻辑状态的缓存/索引 compaction；不得自主 TTL/删除 |
-
-### 8.2 Lineage 要求
-
-```typescript
-interface TombstoneEvent {
-  version: 'v0';                   // Wire 版本
-  eventId: string;
-  type: 'tombstone';
-  sourceCanonicalIds: string[];    // 被删除的源消息 canonicalId
-  sourceRevision: string;          // 用于定位派生记忆
-  scope: IdentityScope;
-  reason: 'user_request' | 'thread_closed' | 'privacy_redaction';
-  timestamp: string;
-}
-```
-
-EchoMem 侧需要维护 `sourceEvent → derivedMemory` 的映射，
-接收 tombstone 后级联处理派生 atom / episode / graph。
-
-> retention 决策（历史 thread 记忆保多久）留在 Clowder 治理层。
-> 孤儿 passage 问题（§5.2）是同一个未解决的治理空洞。
-
----
-
-## 9. 隐私与部署边界（硬约束）
-
-| 约束 | 要求 | 来源 |
+| 数据 | 归属 | 理由 |
 |------|------|------|
-| **部署位置** | EchoMem 必须 localhost / 同机部署。对话数据不出本机网络 | 铁律 #1 + W5 |
-| **传输加密** | localhost 免 TLS；跨网络（未来）必须 mTLS | 安全基线 |
-| **private thread** | 被标记为 private 的 thread 不推送到 EchoMem（§7.1 #9） | egress filter |
-| **访问控制** | EchoMem endpoint 仅接受 Clowder 宿主连接（bind 127.0.0.1 + bearer token，参考 parent ADR §3.5） | 最小权限 |
-| **数据保留** | EchoMem 侧保留策略不低于 Clowder 本地（当前无 TTL） | 铁律 #5 |
-| **删除传播** | 用户删除对话 → Clowder 发 tombstone → EchoMem 级联删除（§8） | GDPR / 数据主权 |
-
-### 9.1 前置依赖：隐私标记机制（需新建）
-
-> **⚠️ 实然 vs 应然**（Fable P1-2 修正）：以下隐私过滤能力在当前系统中**均不存在**——
-> ThreadSnapshot 没有 sensitivity 字段（仅 id/title/participants/threadMemory/lastActiveAt/featureIds），
-> 消息级 secret-scan 仅存在于 marker 物化管道（`secretScanFingerprint`），不覆盖 outbox 场景。
-> 今天的本地 passage 索引是无过滤全量索引。
-
-| 需新建机制 | 说明 | 阻塞阶段 |
-|-----------|------|---------|
-| **Thread 隐私标记** | ThreadSnapshot 新增 `sensitivity: 'shared' \| 'private'` 字段 | Phase 2（outbox/backfill 上线前） |
-| **消息级 secret-scan** | outbox 入口前扫描消息内容，命中 secret pattern → 拦截 | Phase 2（outbox/backfill 上线前） |
-| **隐私标记默认值** | **价值决策**（见 §13 OQ#11）：默认 private（保守，EchoMem 初期只拿显式共享的 thread）vs 默认 shared（激进，全量进） | Phase 2 前 operator 拍板 |
-
-> **"过滤在前、分区在后"论证链修正**：egress privacy filter（过滤层）是**待建机制**，
-> 不能作为已有保障来论证 agentId 分区（分区层）的安全性。
-> 两层都是设计目标，非既有防线。Decision Packet（§13 OQ#8 + OQ#11）必须如实声明。
+| kind ∈ {feature, plan, decision, lesson, session, discussion, research, pack-knowledge} | DocProvider | scanner 产物，LLM 取书时 grep 原文件 |
+| kind = thread + 全部 passages | ConversationProvider | 对话编译产物，内容直接在 passages 里 |
+| 全部 edges | DocProvider | 文档间引用关系 |
+| entities | 共享基础设施 | 两类都需要实体解析增强搜索 |
 
 ---
 
-## 10. 迁移拓扑
-
-> **拓扑序锁死**（Fable 最强反例 + Sol 确认）：
-> canonicalId 未对齐前禁止开启双源窗口。
+## 4. 目标架构
 
 ```
-Phase 0: 协议
-  canonicalId grammar + IdentityScope + Wire Contract v0 schema + IngestEvent v0 schema
-  → 两侧 conformance test fixture 通过（SearchRequest/Response + IngestEvent + TombstoneEvent）
-  → table-driven canonicalize/parse conformance vectors 通过
+IKnowledgeResolver（前台不变）
     │
-    ▼
-Phase 1: 薄桥
-  projectStore 拆为 DocRetrievalProvider + LegacyConversationProvider
-  路由决策表替换 isProjectLocalScope
-  CanonicalIdCodec + RetrievalCoordinator 上线（§4.4）
-  本地 21,946 passage 继续由 LegacyConv 服务
+    ├── DocProvider: IEvidenceStore
+    │   - 后端：SqliteEvidenceStore（不变）
+    │   - 入库：IndexBuilder 扫描 repo
+    │   - 数据：284 docs + 2,437 edges + entities
+    │   - 取书：drill-down → grep 原文件
     │
-    ▼
-Phase 2: Durable outbox + Backfill + Shadow 旁路
-  前置：egress privacy filter（§9.1）+ OQ#11 默认值必须在 2a/2b 启动前落定
-  2a. durable outbox 上线（增量消息实时推送到 EchoMem）
-  2b. backfill 存量 passage 到 EchoMem（IndexBuilder 改推 + cursor 断点续传）
-  2c. EchoMem ConversationRetrievalProvider 上线（shadow mode = 旁路观测）
-      shadow 不进入 served result / 消费遥测 / RRF 融合
-      → 旁路比较：same query → LegacyConv result vs EchoMem result → diff 报告
-      → F200 Eval 基线对比（仅离线评测，不影响在线排序）
-    │
-    ▼
-Phase 3: Read primary 切换
-  路由表 Conv slot: primary=EchoMem, fallback=LegacyConv
-  fallback 触发条件：timeout / unhealthy / contract-error（零命中不触发 fallback）
-  fallback 返回时 meta: { degraded: true, degradeReason: 'evidence_store_error' }
-  coordinator 内部 observability 记录 servedBy（不进入 SearchExecutionMeta）
-  验收门槛通过 → 进入 rollback window（定期 N 天）
-    │
-    ▼
-Phase 4: Rollback window 到期
-  明确决定后才清理 LegacyConv（降为 dormant，不是"下线"）
-  dormant = 不主动写入/更新，但数据保留可回退
+    └── ConversationProvider: IEvidenceStore
+        - 后端：今天 SqliteEvidenceStore，明天可换
+        - 入库：session compiler / 消息事件
+        - 数据：7 thread docs + 21,946 passages
+        - 取书：passages 直接返回
 ```
 
-> **Sol P1-2 修正**：
-> 1. Shadow 必须旁路比较，不能进入 served result——即便 canonicalId 相同不重复显示，
->    现有 RRF 会累加同 anchor 分数，改变用户可见排序并污染 F200。
-> 2. Outbox 移到 Phase 2（不是 Phase 3）——否则 shadow 期间新增消息不进 EchoMem，
->    F200 对比必然拿 stale dataset。
-> 3. LegacyConv 生命周期是 "primary → fallback → dormant"，不是 "primary → 下线"。
->    Dormant 意味着数据保留但不再主动更新，可随时回退到 fallback 角色。
+### 4.1 路由规则（从现有代码提取）
 
-### 10.1 路由 policy 角色
+`KnowledgeResolver` 已有的路由逻辑（`isProjectLocalScope()`，L240-242）：
 
-| 角色 | 语义 | 触发条件 |
-|------|------|---------|
-| `primary` | 正常服务路径 | 默认 |
-| `fallback` | primary timeout/unhealthy/contract-error 时接管 | **零命中不触发 fallback**（空结果是合法返回） |
-| `shadow[]` | 旁路观测，不进入 served result | 始终执行，结果只用于 diff 报告 |
+```typescript
+// 已有代码——几乎就是我们需要的拆分点
+function isProjectLocalScope(options?: SearchOptions): boolean {
+  return options?.scope === 'threads' || options?.scope === 'sessions';
+}
+```
 
-> fallback 返回时 host meta 标明 `degraded: true, degradeReason: 'evidence_store_error'`。
-> `servedBy` 作为 coordinator 内部 observability 字段，不进入 `SearchExecutionMeta`
-> （宿主 `SearchExecutionMeta` 无 `servedBy` 字段 — interfaces.ts:274-278）。
+组件化后：
 
-### 10.2 回退成本
+| scope | 路由到 | 说明 |
+|-------|--------|------|
+| `threads` | ConversationProvider | 对话消息搜索 |
+| `sessions` | DocProvider | session digest 是 scanner 产物（`kind=session`），归 Doc |
+| `docs` / `memory` | DocProvider（+ globalStore if dimension allows） | 文档知识搜索 |
+| `undefined` / `all` | 两个 Provider 都查 → RRF 融合 | 全域搜索 |
 
-| 场景 | 回退行为 | 成本 |
-|------|---------|------|
-| EchoMem 不可达 | health()=false → Conv provider degraded → 对话搜索走 LegacyConv fallback | **零改动**（自动） |
-| 决定不用 EchoMem | 路由表 Conv slot: primary=LegacyConv, shadow=[] | **1 行配置改动** |
-| EchoMem 数据不可靠 | Phase 2 shadow diff 不达标 → 不进 Phase 3 | 设计保护 |
-| Phase 3 后发现问题 | rollback window 内切回 LegacyConv=primary | dormant 数据可用 |
+**这不是新设计——是把已有的 `isProjectLocalScope` 判断从硬编码变成 provider 注册。**
+
+### 4.2 Provider 接口
+
+不需要新接口——**`IEvidenceStore` 已经是正确的 Provider 接口**：
+
+```typescript
+// 已有接口，不需要改
+interface IEvidenceStore {
+  search(query: string, options?: SearchOptions): Promise<EvidenceItem[]>;
+  searchWithMeta?(query: string, options?: SearchOptions): Promise<EvidenceSearchExecution>;
+  upsert(items: EvidenceItem[]): Promise<void>;
+  deleteByAnchor(anchor: string): Promise<void>;
+  getByAnchor(anchor: string): Promise<EvidenceItem | null>;
+  health(): Promise<boolean>;
+  initialize(): Promise<void>;
+}
+```
+
+组件化的改动在 `KnowledgeResolver`，不在接口：
+
+```typescript
+// 改动前
+constructor(deps: { projectStore: IEvidenceStore; globalStore?: IEvidenceStore; ... })
+
+// 改动后
+constructor(deps: {
+  docStore: IEvidenceStore;         // 文档类（原 projectStore 的 doc 部分）
+  conversationStore: IEvidenceStore; // 对话类（原 projectStore 的 thread/passage 部分）
+  globalStore?: IEvidenceStore;
+  ...
+})
+```
+
+### 4.3 为什么不需要新抽象层
+
+| 之前设计的 | 为什么不需要 |
+|-----------|------------|
+| `RetrievalProvider`（Layer 2 域接口） | `IEvidenceStore` 已经是正确的接口，加一层只增加复杂度 |
+| `Wire Contract`（Layer 3 协议） | 本地应用不需要跨语言协议；如果未来用 EchoMem，那时再加 adapter |
+| `RouteSlot`（primary/fallback/shadow） | 不同时跑两个后端，一个 provider 直接注册即可 |
+| `CanonicalId`（跨后端统一 ID） | 单后端不需要 ID 翻译；换后端时做一次性数据迁移 |
+| `ProviderFailure`（分类错误） | `IEvidenceStore.health()` 已经够用 |
 
 ---
 
-## 11. 验收基线
+## 5. 后端替换模式
 
-**验收方案**：挂载 **F200 Memory Recall Eval**。
+当需要把 ConversationProvider 从 SQLite 换成 EchoMem 时：
 
-| 指标 | 基线来源 | 门槛 |
-|------|---------|------|
-| 对话召回率（recall@10） | 当前 passage_fts + passage_vectors | ≥ 0.95 × LegacyConv 基线值（相对门槛，非绝对 95%） |
-| 搜索延迟 P95 | 当前 KnowledgeResolver 单 store | ≤ 2× 本地延迟 |
-| 降级正确性 | EchoMem 不可达 → degraded=true | 100% |
-| list_recent 完整性 | scope=threads 返回最近 N 个 thread | 不劣于本地（Phase 2+） |
-| 去重正确性 | shadow 双跑期间无重复结果 | diff 报告的 canonicalId 对齐率 100% |
+```
+步骤 1: 实现 EchoMemStore implements IEvidenceStore
+         - search() → 调 EchoMem HTTP API 搜索
+         - upsert() → 调 EchoMem API 写入
+         - getByAnchor() → 调 EchoMem API 取
+         - health() → 调 EchoMem health endpoint
+
+步骤 2: 数据迁移
+         - 从 SQLite 导出 thread docs + passages
+         - 批量写入 EchoMem
+         - 验证：相同 query 结果一致
+
+步骤 3: 切换配置
+         - KnowledgeResolver 的 conversationStore 指向 EchoMemStore
+         - 完成
+```
+
+**没有 shadow 双跑、没有 fallback、没有渐进式切换。** 这是一个客户端应用——用户自己决定什么时候切换后端，切换后旧后端就不再使用。
 
 ---
 
-## 12. 显式否决记录
+## 6. 实施计划
 
-> **收敛三方（codex/Fable/Sol）明确否决的方向**（不是 OQ，是已关闭的决策）。
+### Phase 1: 拆分 projectStore（零行为变更）
+
+1. `SqliteEvidenceStore` 加 kind 过滤：`docStore` 只返回 doc 类 kind，`conversationStore` 只返回 thread kind
+2. `KnowledgeResolver` 构造函数改为 `docStore + conversationStore`，路由逻辑用 scope 判断
+3. 行为兼容测试：拆分前后，相同 query 产出相同结果
+
+**交付物**：现有测试全部通过，搜索结果 diff = 0
+
+### Phase 2: 治理（可选，与 Phase 1 并行或之后）
+
+1. 修复孤儿 passage 问题（`deleteByAnchor` 加级联删除）
+2. 明确 thread 记忆保留策略（保留多久 / 怎么 sunset）
+
+### Phase 3: 后端替换（按需）
+
+如果决定用 EchoMem 或其他外部记忆服务：
+1. 实现 adapter（implements `IEvidenceStore`）
+2. 数据迁移
+3. 配置切换
+
+---
+
+## 7. 与 Parent ADR 的关系
+
+Parent ADR（memory-service-componentization.md）定义了三原语模型（TextBlock / RelationEdge / Timeline）和完整的服务 SPI。那是面向**独立记忆服务**的设计——假设记忆组件是一个独立进程。
+
+本文档是面向**客户端组件化**的设计——假设记忆组件还是在进程内，但后端可替换。两个设计互补：
+
+- 如果未来需要把记忆拆成独立服务 → 用 Parent ADR 的三原语 SPI
+- 如果只需要替换存储后端 → 用本文档的 Provider 拆分
+- 两者可以结合：先按本文档拆分 Provider，再按 Parent ADR 把 Provider 提升为独立服务
+
+---
+
+## 8. 显式否决记录
 
 | # | 否决方向 | 理由 |
 |---|---------|------|
-| 1 | Conversation 伪装成 external collection + 新增 `conversation` kind | collection sensitivity 是 per-collection 静态标签，对话隐私是 per-thread/per-message；CollectionManifest 必填字段（root/scannerLevel/indexPolicy/reviewPolicy）对 EchoMem 无意义 |
-| 2 | 三原语 MemoryStore 直接充当跨团队协议 | MemoryStore 是存储 SPI 面向后端实现者；跨领域协作需要领域接口（Layer 2）+ 语言中立协议（Layer 3） |
-| 3 | EchoAgent Session Memory Engine 充当 Clowder↔EchoMem 核心协议 | Session Memory Engine 是 EchoAgent 边缘适配器（单 endpoint + mode 分流），不是中立跨宿主协议；EchoMem develop 已有独立 SessionService/RetrievalService |
-| 4 | Aggregate-to-aggregate 双向调用 | 递归/重复风险；两侧只暴露 domain-pure endpoint + origin/hopCount 防环 |
-| 5 | Hook-only（无 durable outbox）的 ingestion | 进程崩溃丢事件；无法保证 at-least-once delivery |
-| 6 | 先 shadow 双跑、后补 canonicalId | RRF 以 anchor 去重，EchoMem 无兼容 anchor → 去重失败 → 重复结果污染 F200 |
-| 7 | EchoMem native API 作为 wire truth（无共同治理 repo） | 协议 owner = 兼容义务承担者；外部团队"承诺稳定"不是可执行约束 |
-| 8 | scope=threads/sessions 静态路由到 ConversationProvider | `sessions` 在 store 层映射为 `kind=session`（scanner 产物），归 Doc domain |
-| 9 | 在 egress privacy filter 建成前执行 backfill 或开启数据出宿主路径 | outbox/backfill 推送数据到 EchoMem 前必须有 egress privacy filter（§9.1）；无过滤 = 隐私泄露风险 |
-
----
-
-## 13. 开放问题
-
-### 技术 OQ（不阻塞文档修正）
-
-| # | 问题 | 当前立场 |
-|---|------|---------|
-| 1 | ~~canonicalId 具体语法~~ | **已关闭**：§4.1 已固定 Phase 0 grammar（`domain ":" nativeId`，RFC 3986 encoding）+ conformance vectors。剩余：编码库选择（手写 vs URI 库） |
-| 2 | routing table 完整矩阵 | 由 §3.1 列出，reviewer 复核 dimension/scope/depth 覆盖 |
-| 3 | EchoMem `memory_query` response 格式对齐 | Wire Contract v0 定义结构化返回；EchoMemAdapter 翻译 |
-| 4 | 孤儿 passage 治理方案 | 根因是 cleanup 不级联（§5.2）；治理策略先在宿主层回答 |
-| 5 | 两侧 RRF 融合权重 | 默认等权，消费 rerank（F200）在融合后由宿主统一做 |
-| 6 | list_recent recency 查询 | TextBlockStore 需新增 `orderBy` 语义或 BrowseProvider 独立实现 |
-| 7 | adapter traversal stats 损失 | service-backed collection 丢失 F200 遍历信号，记为已知损失 |
-
-### 价值 OQ（需 operator 确认，Decision Packet）
-
-| # | 问题 | 推荐 | 替代 |
-|---|------|------|------|
-| 8 | EchoMem `agentId` 分区 | **team-shared**（同一 thread 共享记忆，猫作为 speaker）。注：与 OQ#11 是同一问题的两层——*什么进 EchoMem（过滤）× 进去后谁可见（分区）*，合成一个 Decision Packet | per-cat（隔离强但跨猫召回不一致，迁移成本高） |
-| 9 | EchoMem 是否愿意接非 EchoAgent 事件源 | 与 EchoMem 团队对齐的第一议题 | — |
-| 10 | 历史 thread 记忆保留策略 | 先在宿主治理层回答 | — |
-| 11 | **Thread 隐私标记默认值** | **默认 private**（保守：EchoMem 初期只拿显式标记为 shared 的 thread，最小暴露面） | 默认 shared（激进：全量进 EchoMem，用 per-thread opt-out） |
-
----
-
-## 附录：踩坑教训
-
-> **Fable × Sol 收敛教训（→ public-lessons.md LL-090..093，待 develop_base 正式入库）**
-
-1. **LL-090: Host-specific adapter ≠ neutral protocol**：EchoAgent 的 Session Memory Engine 是 EchoAgent 对 EchoMem 的适配器，不是 EchoMem 对所有宿主的协议。把边缘适配器提升为核心协议 = 绑定到一个特定宿主的实现细节。
-2. **LL-091: 两个正交抽象轴不能共用一个 Provider 名称**：storage backend（怎么存）和 domain provider（搜什么 + 怎么路由）是正交的。混用导致 `scope=threads` 硬路由到 project store 而 EchoMem 永远查不到。
-3. **LL-092: 协议 canonicalId 是双源窗口的硬前置**：任何融合/去重都依赖 ID 对齐。先跑后补 = 污染数据 + 回滚成本指数增长。
-4. **LL-093: 设计 adapter 先 Read 两侧实际类型定义，不从文档描述推导**：从文档描述推导类型映射（可能过时或抽象化）会产生纸面正确但边界失败的 adapter。delta #4 根因：SearchDegradeReason 从文档推断为 string，实际源码是 4 值联合。
+| 1 | 同时跑两个后端 + shadow 对比 | 客户端应用不需要渐进式切换，直接替换 |
+| 2 | 隐私过滤层（egress filter / thread sensitivity） | 用户自己的 Mac 上的数据，不存在隐私边界 |
+| 3 | 跨语言 Wire Contract | 进程内调用，不需要跨语言协议 |
+| 4 | 新增 RetrievalProvider 抽象层 | `IEvidenceStore` 已经是正确的接口 |
+| 5 | CanonicalId 翻译层 | 单后端不需要 ID 翻译 |
 
 ---
 
 ## 附录：关键源码锚点
 
-| 组件 | 文件 | 行号 |
+| 组件 | 文件 | 说明 |
 |------|------|------|
-| `isProjectLocalScope` 硬路由 | `KnowledgeResolver.ts` | 240-242, 154-156 |
-| `CollectionKind` 无 conversation | `collection-types.ts` | 4 |
-| `CollectionManifest` 必填字段 | `collection-types.ts` | 22-42 |
-| `deleteByAnchor` 不级联 passage | `SqliteEvidenceStore.ts` | 1362-1367 |
-| `RecentBrowseResolver` duck-typed getDb | `RecentBrowseResolver.ts` | 60, 109, 168 |
-| `library.ts` duck-typed getDb | `library.ts` | 45, 90, 115, 243, 271, 572 |
-| RRF 融合以 anchor 去重 | `KnowledgeResolver.ts` | 250-256 |
-| EchoAgent Session Memory Engine | `session-memory-engine.service.ts` | 450, 481 |
-| `scope='sessions'` → `kind='session'` | `SqliteEvidenceStore.ts` | 176-177 |
+| 搜索路由 | `KnowledgeResolver.ts:240-242` | `isProjectLocalScope()` — 就是 provider 拆分点 |
+| 存储接口 | `interfaces.ts:340-352` | `IEvidenceStore` — 即 Provider 接口 |
+| 搜索选项 | `interfaces.ts:231-266` | `SearchOptions` — scope/dimension/depth |
+| 数据类型 | `interfaces.ts:33-43` | `EVIDENCE_KINDS` — 9 种 kind |
+| 向量嵌入 | `interfaces.ts:398+` | `EmbedConfig` |
+| RRF 融合 | `KnowledgeResolver.ts:249-270` | 多源结果融合排序 |
+| 孤儿根因 | `SqliteEvidenceStore.ts:1362-1367` | `deleteByAnchor` 不级联 |
+| scope→kind 映射 | `SqliteEvidenceStore.ts:176-177` | `sessions → kind=session` |
 
-### 外部参考锚点
+## 附录：被替换的前一版
 
-| 组件 | 仓库 | 路径 |
-|------|------|------|
-| EchoMem SessionService | EchoMem (develop) | `src/echomem/req_coordinator/interfaces/session_service.py` |
-| EchoMem RetrievalService | EchoMem (develop) | `src/echomem/req_coordinator/interfaces/retrieval_service.py` |
-| EchoMem ContextItemRsp | EchoMem (develop) | `src/echomem/memrouter/recall/interfaces/entities/retrieval.py` |
-| EchoAgent Session Memory Engine | EchoAgent | `dev/backend/src/modules/session/session-memory-engine.service.ts` |
-| EchoAgent Memory Query Tool | EchoAgent | `dev/backend/src/modules/session/tools/builtins/memory-query-via-engine.tool.ts` |
+前一版 "EchoMem 协作方案 — 三层架构设计"（1190 行，commit `f2bed3d62`）基于两个错误前提设计：
+
+1. 把 Clowder AI 当 SaaS 服务（设计了隐私过滤、多租户分区）
+2. 把组件化当多后端同时运行（设计了 shadow 双跑、fallback routing、渐进式迁移）
+
+经过 co-creator 方向纠正后，以正确前提（客户端应用 + 按能力抽象）重写为本版。
+前一版的 review 过程（codex/Fable/Sol 7 轮）中沉淀的教训（LL-090..093）仍然有效——它们是关于协议设计的通用教训，不依赖 SaaS 假设。
