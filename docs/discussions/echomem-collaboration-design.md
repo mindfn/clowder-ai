@@ -146,28 +146,35 @@ IKnowledgeResolver ← 图书馆前台
 
 ### 4.1 统一的记忆组件（MemoryComponent）
 
-图书馆只有一个前台——上层应用面对一个完整的记忆组件，不需要知道内部有几个书架：
+图书馆只有一个前台。**一个 MemoryComponent 实例 = 一个馆**（project 馆、global 馆、每个 collection 各一个馆）。联邦搜索（跨馆 RRF 融合）在组件之上：
 
 ```
-上层应用（search_evidence / list_recent / graph_resolve / IndexBuilder / session events）
+上层应用（search_evidence / list_recent / graph_resolve）
     │
     ▼
-MemoryComponent ← 唯一的记忆能力契约
-    │ remember — 入库
-    │ recall   — 检索
-    │ read     — 取书（inline content 或 resource reference）
-    │ invalidate — 下架（可逆——标记为 dormant/superseded/invalidated）
-    │ maintain — 内部管理（sunset / rebuild / 清理）
-    │ health   — 健康检查
+Federation Layer（跨馆 RRF 融合）← 现有 KnowledgeResolver 的跨 store 部分
     │
-    ├── 当前实现：LocalMemoryComponent
-    │   由 KnowledgeResolver + IndexBuilder + SqliteEvidenceStore + (NEW) SunsetManager 组合
-    │   内部仍有 doc/conv 路由（isProjectLocalScope）——但这是实现细节，不是应用契约
+    ├── project 馆: MemoryComponent        ← 实例边界 = 替换边界 = 联邦单元
+    │   │ remember — 入库
+    │   │ recall   — 检索
+    │   │ read     — 取书（inline content 或 resource reference）
+    │   │ related  — 关系图查询（"这本书引用了谁/被谁引用"）
+    │   │ invalidate — 下架（可逆）
+    │   │ maintain — 内部管理（sunset 执行 / compaction / 向量重建）
+    │   │ health
+    │   │
+    │   └── 当前实现：LocalMemoryComponent
+    │       由 SqliteEvidenceStore + (NEW) SunsetManager 组合
+    │       内部有 doc/conv 路由——实现细节，不是应用契约
     │
-    └── 未来替换：实现完整 MemoryComponent 接口的任何组件
+    ├── global 馆: MemoryComponent
+    │
+    └── collection_N 馆: MemoryComponent（LibraryCatalog entry）
 ```
 
-文档 vs 对话是**内容类型和入库来源**，不是上层选择不同后端的路由轴。
+**两个正交轴（Sol 的关键洞察）**：federation（哪些馆——宿主的事）× content type（馆内书籍分类——组件的事）。之前所有复杂度爆炸（RouteSlot、domain grammar、30 格矩阵、"Conv 不是 collection" 的反复辩论）根源都是把 conv 错当成一个新馆——它不是馆，是书的类型。
+
+**rebuild 与 maintain 的分离**：rebuild = 宿主重放全量 ingest（扫描真相源 → 逐条 `remember()`），是宿主发起的操作；`maintain()` = 组件内部索引健康（compaction / 向量重建 / sunset 执行），是组件自治的操作。当前 IndexBuilder 混合了这两个语义（既做扫描又直写 SQL），正是 `getDb` 逃逸 13 处的根因——组件化后扫描归宿主，写入走 `remember()`。
 
 ### 4.2 能力契约
 
@@ -177,6 +184,7 @@ interface MemoryComponent {
   remember(input: MemoryInput): Promise<MemoryRecord>;
   recall(query: MemoryQuery): Promise<MemorySearchResult>;
   read(key: MemoryKey): Promise<MemoryRecord | null>;
+  related(key: MemoryKey, options?: RelationOptions): Promise<RelatedMemory[]>;
 
   // ── 系统层（系统事件触发）──
   invalidate(key: MemoryKey, reason: InvalidationReason): Promise<void>;
@@ -188,12 +196,13 @@ interface MemoryComponent {
 }
 ```
 
-上层应用只直接使用前三项；`invalidate` / `recordFeedback` 来自系统事件；`maintain` 由组件内部调度或外部触发。
+上层应用直接使用前四项（`related` 覆盖 `graph_resolve` 三入口之一，2,437 edges 在用——Fable 补充）；`invalidate` / `recordFeedback` 来自系统事件；`maintain` 由组件内部调度。
 
 ### 4.3 数据模型
 
 ```typescript
 // 记忆的唯一标识——无路由含义，现有 anchor 直接作为 id
+// namespace 降为实例配置或组件内部分区用途（不参与跨馆路由）
 type MemoryKey = { namespace: string; id: string };
 
 // 真相源引用（"索引可重建"的基础——知道从哪重建）
@@ -214,13 +223,34 @@ type LifecycleState = 'active' | 'dormant' | 'superseded' | 'invalidated';
 
 | MemoryComponent 方法 | 现有实现 | 说明 |
 |---------------------|---------|------|
-| `remember` | IndexBuilder.rebuild (docs) + session compiler (conv) | 入库路径按内容类型不同——实现细节 |
-| `recall` | KnowledgeResolver.resolve() + RRF fusion + 消费加权 | 已有的联邦搜索，应用已经面对单一接口 |
+| `remember` | IndexBuilder（docs 扫描入库）+ session compiler（conv） | 入库路径按内容类型不同——实现细节。**注意**：当前 IndexBuilder 混合扫描和直写，组件化后扫描归宿主、写入走 remember() |
+| `recall` | KnowledgeResolver.resolve() + RRF fusion + 消费加权 | 已有联邦搜索。注意：跨馆 RRF 归 Federation Layer，单馆内搜索归组件 |
 | `read` | IEvidenceStore.getByAnchor() + drill-down | doc=grep 原文 / conv=passages 直返（实现细节） |
+| `related` | GraphResolver + edges（2,437 条） + resolveEntityAliases | 覆盖 graph_resolve 入口（Fable 补充） |
 | `invalidate` | deleteByAnchor() + status/supersededBy | ⚠️ 部分实现——级联删除缺失（§5.1） |
 | `recordFeedback` | F200 consumption tracking | 已有，但作为 store 副作用，不是显式能力 |
-| `maintain` | IndexBuilder.rebuild() | ⚠️ 只有索引重建，缺 sunset 自动执行 |
+| `maintain` | 无统一实现 | ⚠️ 需新建 SunsetManager：sunset 执行 + compaction + 向量重建 |
 | `health` | IEvidenceStore.health() | ✅ 已有 |
+
+### 4.4b 现有 13 项能力 → MemoryComponent 穷举映射
+
+> **Fable review 验收标准**：新契约必须映射全部 13 项现有能力。映射不上 = 契约有洞或能力该废。
+
+| # | 现有能力（§2.1） | 映射到 | 覆盖度 |
+|---|-----------------|--------|--------|
+| 1 | 搜索（KnowledgeResolver.resolve） | `recall()` | ✅ 单馆内搜索 |
+| 2 | 存储（SqliteEvidenceStore.upsert/get） | `remember()` + `read()` | ✅ |
+| 3 | 扫描入库（IndexBuilder.rebuild） | 宿主逐条调 `remember()`（扫描归宿主，写入归组件） | ✅ 分离更清晰 |
+| 4 | 向量嵌入（EmbeddingService） | `remember()` 内部触发 | ✅ 组件内部实现 |
+| 5 | 关系图（GraphResolver + edges） | `related()` | ✅ 新增方法 |
+| 6 | 实体识别（resolveEntityAliases） | `recall()` 内部增强 | ✅ 组件内部实现 |
+| 7 | 标记物化（MarkerQueue → MaterializationService） | `remember()` 的一种 input 来源 | ✅ |
+| 8 | 浏览最近（RecentBrowseResolver） | `recall()` + filter/sort 模式 | ✅ |
+| 9 | 消费加权（F200） | `recordFeedback()` → `recall()` 排序 | ✅ |
+| 10 | 矛盾检测（F163 contradicts） | `maintain()` 内部逻辑 | ✅ |
+| 11 | 质量分层（provenance: authoritative/derived/soft_clue） | `remember()` input metadata | ✅ |
+| 12 | Drill-down（depth 参数控制取全文） | `read()` 返回 inline/resource union | ✅ |
+| 13 | 联邦搜索（跨 store RRF 融合） | **Federation Layer**（组件之上，正交能力） | ✅ 不在组件内 |
 
 ### 4.5 为什么是 MemoryComponent 而不是 IEvidenceStore
 
@@ -263,14 +293,22 @@ co-creator 的能力清单里有"无效的记忆逐渐 sunset"。现有机制（
 | 文档类 | status lifecycle + supersededBy + F163 | ✅ 基本完整 |
 | 对话类 | 无 | ❌ 需要：passage 级联删除 + thread 记忆保留策略 |
 
-组件化后，`MemoryComponent.maintain()` 必须覆盖对话类记忆的 sunset：`deleteByAnchor` 级联清理 passages + thread 记忆保留策略。这是 `maintain()` 的核心实现内容之一。
+组件化后，`MemoryComponent.maintain()` 必须覆盖对话类记忆的 sunset。这是 `maintain()` 的核心实现内容之一。
+
+**Sunset 信号→状态映射表**（Fable 补充——让 188 孤儿 passages 成为新契约的第一个验收用例）：
+
+| 现有信号 | 状态转换 | 说明 |
+|---------|---------|------|
+| `supersededBy` 写入 | active → superseded | ✅ 已有 |
+| F163 `contradicts[]` + `invalidAt` | active → invalidated | ✅ 已有 |
+| 真相源删除（thread 删除 / 文件删除） | active → dormant（保留数据，默认不搜） | ❌ **当前硬删 doc + 漏删 passage**——孤儿根因 |
+| F200 长期零消费（阈值待定） | active → dormant 候选（进 review queue，不自动） | ❌ 需实现 |
+
+> 188 孤儿 passages 正是第三行信号没有接线的直接后果。doc 被 cleanup 硬删（过激）、passage 永久堆积（缺失），两边都错。正确答案是中间的 dormant：数据保留可 `read()`，默认不出现在 `recall()` 结果里。**这张表让孤儿问题从 bug 变成 `maintain()` 的第一个验收用例。**
 
 ### 5.2 媒体扩展点
 
-co-creator 提到记忆数据可以有"文本、图之类的"。当前 `EvidenceItem` 是纯文本（title + summary + passages.content）。组件化不需要立刻实现多媒体，但 Provider 接口应预留扩展位：
-
-- `EvidenceItem` 的 `passages` 条目可加 `mediaType?: string` + `mediaRef?: string`
-- 具体实现延后到有实际需求时
+co-creator 提到记忆数据可以有"文本、图之类的"。当前 `EvidenceItem` 是纯文本。§4.3 的 `MemoryContent` union（`text | resource`）已预留扩展位——图片等资源用 URI/blob reference + 可检索文本投影（`indexText`），核心接口不存二进制。具体实现延后到有实际需求时。
 
 ---
 
