@@ -1,5 +1,5 @@
 ---
-title: "记忆能力抽象 — 组件化方案"
+title: "记忆能力抽象 — MemoryComponent 契约"
 participants: [opus, fable, sol, codex, lang]
 status: design-draft
 created: 2026-06-30
@@ -7,11 +7,11 @@ updated: 2026-07-13
 doc_kind: decision
 decision_id: ADR-candidate-memory-abstraction
 feature_ids: [F102]
-topics: [memory, componentization, abstraction, provider]
+topics: [memory, componentization, abstraction, MemoryComponent]
 related: ["memory-service-componentization.md"]
 ---
 
-# 记忆能力抽象 — 组件化方案
+# 记忆能力抽象 — MemoryComponent 契约
 
 > **Status**: design-draft（2026-07-13，基于方向纠正重写）
 > **Issue**: [#1047](https://github.com/zts212653/clowder-ai/issues/1047)
@@ -77,7 +77,7 @@ IKnowledgeResolver ← 图书馆前台
         包含：外部知识库
 ```
 
-**问题**：文档类和对话类混在同一个 `projectStore` 里。想单独替换对话类的后端（比如换成 EchoMem）→ 没法拆，因为它们共享同一个 `SqliteEvidenceStore` 实例。
+**问题**：当前记忆能力散落在多个类中（KnowledgeResolver 做搜索、IndexBuilder 做入库且直写 SQL、deleteByAnchor 不级联 passage），没有统一的能力契约。想替换整个记忆后端 → 不知道替换边界在哪，因为完整能力由 4+ 个类拼接而成，且 IndexBuilder 有 16 处 `getDb` 逃逸绕过了 `IEvidenceStore` 接口。
 
 ### 2.1 现有能力清单
 
@@ -146,35 +146,35 @@ IKnowledgeResolver ← 图书馆前台
 
 ### 4.1 统一的记忆组件（MemoryComponent）
 
-图书馆只有一个前台。**一个 MemoryComponent 实例 = 一个馆**（project 馆、global 馆、每个 collection 各一个馆）。联邦搜索（跨馆 RRF 融合）在组件之上：
+**一个 Clowder runtime 暴露一个 MemoryComponent 实例**。project / global / collections 是组件内部的 namespaces，federation（跨 namespace RRF 融合）是组件的内部能力，不暴露给宿主：
 
 ```
 上层应用（search_evidence / list_recent / graph_resolve）
     │
     ▼
-Federation Layer（跨馆 RRF 融合）← 现有 KnowledgeResolver 的跨 store 部分
+MemoryComponent ← 唯一的记忆能力契约（一 runtime 一实例）
+    │ remember — 入库
+    │ recall   — 检索（relevance 语义搜索 / recent 最近浏览）
+    │ read     — 取书（inline content 或 resource reference）
+    │ related  — 关系图查询（"这本书引用了谁/被谁引用"）
+    │ invalidate — 下架（可逆——dormant/superseded/invalidated）
+    │ maintain — 内部管理（sunset 执行 / compaction / 向量重建 / federation 健康）
+    │ health
     │
-    ├── project 馆: MemoryComponent        ← 实例边界 = 替换边界 = 联邦单元
-    │   │ remember — 入库
-    │   │ recall   — 检索
-    │   │ read     — 取书（inline content 或 resource reference）
-    │   │ related  — 关系图查询（"这本书引用了谁/被谁引用"）
-    │   │ invalidate — 下架（可逆）
-    │   │ maintain — 内部管理（sunset 执行 / compaction / 向量重建）
-    │   │ health
-    │   │
-    │   └── 当前实现：LocalMemoryComponent
-    │       由 SqliteEvidenceStore + (NEW) SunsetManager 组合
-    │       内部有 doc/conv 路由——实现细节，不是应用契约
-    │
-    ├── global 馆: MemoryComponent
-    │
-    └── collection_N 馆: MemoryComponent（LibraryCatalog entry）
+    └── 当前实现：LocalMemoryComponent
+        内部 namespaces: project / global / collection_1..N
+        跨 namespace RRF 融合——组件内部能力
+        SqliteEvidenceStore + (NEW) SunsetManager + EmbeddingService
+        doc/conv 内容类型路由——实现细节
+        源扫描（IndexBuilder scanner 部分）——组件外部，重放到 remember()
 ```
 
-**两个正交轴（Sol 的关键洞察）**：federation（哪些馆——宿主的事）× content type（馆内书籍分类——组件的事）。之前所有复杂度爆炸（RouteSlot、domain grammar、30 格矩阵、"Conv 不是 collection" 的反复辩论）根源都是把 conv 错当成一个新馆——它不是馆，是书的类型。
+**实例边界（Sol 定案，Fable 同意）**：federation 属于"完整记忆管理能力"（F186 原话："你们查询可以 recall 本 project 以外的知识"），归组件内部。若 per-namespace 替换（project 用 EchoMem、global 用 SQLite），宿主就要做跨实例融合/去重/降级——正是已删掉的 coordinator 借尸还魂。
 
-**rebuild 与 maintain 的分离**：rebuild = 宿主重放全量 ingest（扫描真相源 → 逐条 `remember()`），是宿主发起的操作；`maintain()` = 组件内部索引健康（compaction / 向量重建 / sunset 执行），是组件自治的操作。当前 IndexBuilder 混合了这两个语义（既做扫描又直写 SQL），正是 `getDb` 逃逸 13 处的根因——组件化后扫描归宿主，写入走 `remember()`。
+**rebuild 与 maintain 的分离**：
+- **rebuild** = 宿主重放全量 ingest（扫描真相源 → 逐条 `remember()`），宿主发起
+- **maintain()** = 组件内部索引健康（compaction / 向量重建 / sunset 执行），组件自治
+- 当前 IndexBuilder 混合了这两个语义（既做源扫描又直写 SQL），正是 `getDb` 逃逸 16 处的根因——这个拆分不是新增工作，是把已知的抽象穿透修正掉
 
 ### 4.2 能力契约
 
@@ -196,13 +196,30 @@ interface MemoryComponent {
 }
 ```
 
-上层应用直接使用前四项（`related` 覆盖 `graph_resolve` 三入口之一，2,437 edges 在用——Fable 补充）；`invalidate` / `recordFeedback` 来自系统事件；`maintain` 由组件内部调度。
+上层应用直接使用前四项；`invalidate` / `recordFeedback` 来自系统事件；`maintain` 由组件内部调度。
+
+**MemoryQuery 判别联合**（覆盖现有三入口）：
+
+```typescript
+type MemoryQuery =
+  | { mode: 'relevance'; text: string; scope?: string; namespace?: string;
+      searchMode?: 'fts' | 'vector' | 'hybrid'; limit?: number;
+      kind?: EvidenceKind[]; dateFrom?: string; dateTo?: string; }
+  | { mode: 'recent'; limit?: number; namespace?: string;
+      kind?: EvidenceKind[]; };
+```
+
+- `mode: 'relevance'` → 映射 `search_evidence`（现有 `KnowledgeResolver.resolve`）
+- `mode: 'recent'` → 映射 `list_recent`（现有 `RecentBrowseResolver`）
+- `related()` 独立方法 → 映射 `graph_resolve`（key-based 图遍历，语义不同于 query-based 搜索）
+
+`scope` 是馆内内容类型过滤（threads/docs/sessions/all），`namespace` 是选哪些馆（project/global/collection-id/all）——两个独立小表替代原来的 30 格矩阵。现有 `search_evidence` 的对外参数不变，组件内部翻译 scope → filter、dimension → namespace。
 
 ### 4.3 数据模型
 
 ```typescript
-// 记忆的唯一标识——无路由含义，现有 anchor 直接作为 id
-// namespace 降为实例配置或组件内部分区用途（不参与跨馆路由）
+// 记忆的唯一标识——现有 anchor 直接作为 id
+// namespace = 馆标识（project / global / collection-id），组件内部用于 federation 路由
 type MemoryKey = { namespace: string; id: string };
 
 // 真相源引用（"索引可重建"的基础——知道从哪重建）
@@ -223,8 +240,8 @@ type LifecycleState = 'active' | 'dormant' | 'superseded' | 'invalidated';
 
 | MemoryComponent 方法 | 现有实现 | 说明 |
 |---------------------|---------|------|
-| `remember` | IndexBuilder（docs 扫描入库）+ session compiler（conv） | 入库路径按内容类型不同——实现细节。**注意**：当前 IndexBuilder 混合扫描和直写，组件化后扫描归宿主、写入走 remember() |
-| `recall` | KnowledgeResolver.resolve() + RRF fusion + 消费加权 | 已有联邦搜索。注意：跨馆 RRF 归 Federation Layer，单馆内搜索归组件 |
+| `remember` | IndexBuilder 的写入部分 (docs) + session compiler (conv) | 入库路径按内容类型不同——实现细节。IndexBuilder 的源扫描部分归宿主，写入走 `remember()`，依赖稳定 `MemoryKey/SourceRef` 做 replay-safe 幂等 upsert |
+| `recall` | KnowledgeResolver.resolve() + RRF fusion + 消费加权 | 联邦搜索（跨 namespace RRF）是组件内部能力 |
 | `read` | IEvidenceStore.getByAnchor() + drill-down | doc=grep 原文 / conv=passages 直返（实现细节） |
 | `related` | GraphResolver + edges（2,437 条） + resolveEntityAliases | 覆盖 graph_resolve 入口（Fable 补充） |
 | `invalidate` | deleteByAnchor() + status/supersededBy | ⚠️ 部分实现——级联删除缺失（§5.1） |
@@ -240,17 +257,17 @@ type LifecycleState = 'active' | 'dormant' | 'superseded' | 'invalidated';
 |---|-----------------|--------|--------|
 | 1 | 搜索（KnowledgeResolver.resolve） | `recall()` | ✅ 单馆内搜索 |
 | 2 | 存储（SqliteEvidenceStore.upsert/get） | `remember()` + `read()` | ✅ |
-| 3 | 扫描入库（IndexBuilder.rebuild） | 宿主逐条调 `remember()`（扫描归宿主，写入归组件） | ✅ 分离更清晰 |
+| 3 | 扫描入库（IndexBuilder.rebuild） | 源扫描归宿主 → 逐条 `remember()`；`remember()` 做 replay-safe 幂等 upsert | ✅ 分离更清晰，瓦解 getDb 逃逸大头 |
 | 4 | 向量嵌入（EmbeddingService） | `remember()` 内部触发 | ✅ 组件内部实现 |
 | 5 | 关系图（GraphResolver + edges） | `related()` | ✅ 新增方法 |
-| 6 | 实体识别（resolveEntityAliases） | `recall()` 内部增强 | ✅ 组件内部实现 |
-| 7 | 标记物化（MarkerQueue → MaterializationService） | `remember()` 的一种 input 来源 | ✅ |
+| 6 | 实体识别（resolveEntityAliases） | `recall()` 内部增强——搜索增强，随 recall 透明生效 | ✅ 内部能力，不出现在契约方法上 |
+| 7 | 标记物化（MarkerQueue → MaterializationService） | 宿主侧治理流程（产出 .md 写入真相源），组件只 `remember()` 其产物 | ✅ 归属显式化 |
 | 8 | 浏览最近（RecentBrowseResolver） | `recall()` + filter/sort 模式 | ✅ |
 | 9 | 消费加权（F200） | `recordFeedback()` → `recall()` 排序 | ✅ |
 | 10 | 矛盾检测（F163 contradicts） | `maintain()` 内部逻辑 | ✅ |
-| 11 | 质量分层（provenance: authoritative/derived/soft_clue） | `remember()` input metadata | ✅ |
+| 11 | 质量分层（provenance: authoritative/derived/soft_clue） | `remember()` 的 `MemoryInput` metadata + `recall()` 的 filter 参数 | ✅ 两处覆盖 |
 | 12 | Drill-down（depth 参数控制取全文） | `read()` 返回 inline/resource union | ✅ |
-| 13 | 联邦搜索（跨 store RRF 融合） | **Federation Layer**（组件之上，正交能力） | ✅ 不在组件内 |
+| 13 | 联邦搜索（跨 store RRF 融合） | `recall()` 内部跨 namespace RRF 融合 | ✅ 组件内部能力 |
 
 ### 4.5 为什么是 MemoryComponent 而不是 IEvidenceStore
 
@@ -268,11 +285,12 @@ type LifecycleState = 'active' | 'dormant' | 'superseded' | 'invalidated';
 |-----------|------|------|
 | `DocProvider + ConversationProvider` | **删除**（本轮新增否决） | 宿主不应按内容类型路由到不同 provider |
 | `RetrievalProvider`（Layer 2 域接口） | 删除 | MemoryComponent 已是正确的能力层 |
-| `Wire Contract`（Layer 3 协议） | 删除 | 客户端应用不需要跨语言协议 |
+| `Wire Contract`（Layer 3 独立架构层） | **降级为 transport adapter** | "客户端应用"≠"一定进程内"；EchoMem 可能是独立进程。HTTP/socket 是 MemoryComponent 的可选 transport，不是独立架构层 |
 | `RouteSlot`（primary/fallback/shadow） | 删除 | 不同时跑两个后端 |
 | `CanonicalId` domain grammar（`doc:/conv:`） | **简化为 MemoryKey** | 无路由含义，现有 anchor 直接作为 id |
 | `ProviderFailure`（分类错误） | 删除 | `health()` 已够用 |
-| `isProjectLocalScope` scope 路由 | **保留为内部实现** | LocalMemoryComponent 内部仍需按 scope 分流搜索 |
+| `isProjectLocalScope` scope 路由 | **保留为内部 scope→filter 翻译** | 组件内部按 scope 过滤内容类型，一行代码 |
+| Federation Layer（外部跨馆） | **收回组件内部** | federation 属于完整记忆管理能力（Sol 定案），per-namespace 替换 = coordinator 借尸还魂 |
 
 ---
 
@@ -290,21 +308,24 @@ co-creator 的能力清单里有"无效的记忆逐渐 sunset"。现有机制（
 
 | 内容类型 | 现有 sunset | 缺口 |
 |---------|-----------|------|
-| 文档类 | status lifecycle + supersededBy + F163 | ✅ 基本完整 |
+| 文档类 | status lifecycle + supersededBy + F163 | ⚠️ 有字段和信号，无统一执行器 |
 | 对话类 | 无 | ❌ 需要：passage 级联删除 + thread 记忆保留策略 |
 
 组件化后，`MemoryComponent.maintain()` 必须覆盖对话类记忆的 sunset。这是 `maintain()` 的核心实现内容之一。
 
-**Sunset 信号→状态映射表**（Fable 补充——让 188 孤儿 passages 成为新契约的第一个验收用例）：
+**Sunset 信号→状态映射表**（Fable + Sol 联合定稿——188 孤儿 passages 是新契约的第一个验收用例）：
 
-| 现有信号 | 状态转换 | 说明 |
-|---------|---------|------|
+| 信号 | 状态转换 | 说明 |
+|------|---------|------|
 | `supersededBy` 写入 | active → superseded | ✅ 已有 |
 | F163 `contradicts[]` + `invalidAt` | active → invalidated | ✅ 已有 |
-| 真相源删除（thread 删除 / 文件删除） | active → dormant（保留数据，默认不搜） | ❌ **当前硬删 doc + 漏删 passage**——孤儿根因 |
-| F200 长期零消费（阈值待定） | active → dormant 候选（进 review queue，不自动） | ❌ 需实现 |
+| 扫描发现真相源**暂时缺失** | active → dormant（保留数据可 read，默认不搜） | ❌ **当前硬删 doc + 漏删 passage**——孤儿根因 |
+| F200 长期零消费（阈值待定） | active → dormant 候选（进 review queue，不自动下架） | ❌ 需实现 |
+| 用户**明确删除** / 明确 source-delete 事件 | hard delete + cascade | 仅此情况才硬删 |
 
-> 188 孤儿 passages 正是第三行信号没有接线的直接后果。doc 被 cleanup 硬删（过激）、passage 永久堆积（缺失），两边都错。正确答案是中间的 dormant：数据保留可 `read()`，默认不出现在 `recall()` 结果里。**这张表让孤儿问题从 bug 变成 `maintain()` 的第一个验收用例。**
+> **关键区分（Sol 精化）**：第三行（暂时缺失）和第五行（明确删除）必须分开。"父 doc 不在了"不等于"用户要求删除"——孤儿 passage 是用户对话数据，级联硬删违反**铁律 #5（用户状态默认持久化，TTL/删除只能用户 opt-in）**。188 个孤儿应先按删除原因分类，dormant 而非清空。
+>
+> 现有文档类 lifecycle 也不能写"基本完整"——有字段和 review 信号，但没有统一执行器（SunsetManager 不存在）。**这张表让孤儿问题从 bug 变成 `maintain()` 的第一个验收用例。**
 
 ### 5.2 媒体扩展点
 
@@ -322,8 +343,8 @@ EchoMem 实现全部 MemoryComponent 契约 → 整体替换 LocalMemoryComponen
 
 ```
 步骤 1: 实现 EchoMemComponent implements MemoryComponent
-         - remember/recall/read/invalidate/maintain/health 全部实现
-         - 入库管道、生命周期管理、搜索语义 全部自治
+         - remember/recall/read/related/invalidate/maintain/health 全部实现
+         - 入库管道、生命周期管理、联邦搜索、搜索语义 全部自治
 
 步骤 2: 数据迁移（停机迁移——客户端应用重启即可）
          - 从 SQLite 导出全部数据（docs + passages + edges）
@@ -333,9 +354,9 @@ EchoMem 实现全部 MemoryComponent 契约 → 整体替换 LocalMemoryComponen
 步骤 3: 切换配置 → 完成
 ```
 
-### 6.2 内部子模块
+### 6.2 内部子模块（future/non-goal for this round）
 
-EchoMem 只处理部分能力（如对话记忆）→ 作为 LocalMemoryComponent 的内部 adapter，宿主不知道它的存在：
+EchoMem 只处理部分能力（如对话记忆）→ 作为 LocalMemoryComponent 的内部 adapter，宿主不知道它的存在。**本轮不设计内部 backend SPI**——需要时再加 `LibraryBackend` 接口：
 
 ```
 MemoryComponent (LocalMemoryComponent)
@@ -358,18 +379,19 @@ MemoryComponent (LocalMemoryComponent)
 
 ### Phase 1: 形式化 MemoryComponent 接口（零行为变更）
 
-1. 定义 `MemoryComponent` 接口（remember/recall/read/invalidate/recordFeedback/maintain/health）
-2. 实现 `LocalMemoryComponent`：组合现有 KnowledgeResolver + IndexBuilder + SqliteEvidenceStore
+1. 定义 `MemoryComponent` 接口（remember/recall/read/related/invalidate/recordFeedback/maintain/health）+ `MemoryQuery` 判别联合
+2. 实现 `LocalMemoryComponent`：组合现有 KnowledgeResolver（含 federation）+ SqliteEvidenceStore + (NEW) SunsetManager。**IndexBuilder 的源扫描部分留在组件外**，通过 `remember()` 写入
 3. 上层 MCP 工具（search_evidence / list_recent / graph_resolve）改为调用 MemoryComponent
 4. 行为兼容测试：重构前后，相同调用产出相同结果
 
-**交付物**：现有测试全部通过，搜索结果 diff = 0，上层无感知
+**交付物**：现有测试全部通过，搜索结果 diff = 0，上层无感知。IndexBuilder 的 `getDb` 逃逸显著减少
 
 ### Phase 2: Sunset 治理（与 Phase 1 并行或之后）
 
-1. `deleteByAnchor()` 加级联删除 passages（修复 188 孤儿根因）
-2. ConversationProvider 实现 sunset 策略（thread 记忆保留多久 / 怎么清理）
-3. 两个 Provider 的 sunset 行为写入 `IEvidenceStore` 契约（deleteByAnchor 必须级联）
+1. 实现 SunsetManager：统一 lifecycle 执行器，按 §5.1 信号→状态映射表接线
+2. 188 孤儿 passages 分类处理：按删除原因分为 dormant（真相源暂时缺失）或 hard delete（明确删除事件），不整批清空
+3. `invalidate()` 实现可逆状态转换（active → dormant/superseded/invalidated），仅用户明确删除时 hard delete + cascade
+4. `maintain()` 定期执行：dormant 候选审查（零消费检测）、过期 dormant 清理建议（进 review queue）
 
 ### Phase 3: 后端替换（按需）
 
@@ -383,20 +405,23 @@ MemoryComponent (LocalMemoryComponent)
 | 阶段 | 验收条件 |
 |------|---------|
 | Phase 1 | 搜索结果 diff = 0（重构前后行为完全一致）；上层工具无感知 |
-| Phase 2 | 孤儿 passage = 0；deleteByAnchor 级联测试通过 |
+| Phase 2 | 188 孤儿分类完成（dormant/delete）；信号→状态映射全部接线；`maintain()` 审查 queue 可用 |
 | Phase 3 | F200 Memory Recall Eval：换后端后召回率 ≥ 0.95 × 基线 |
 
 ---
 
 ## 8. 与 Parent ADR 的关系
 
-Parent ADR（memory-service-componentization.md）定义了三原语模型（TextBlock / RelationEdge / Timeline）和完整的服务 SPI。那是面向**独立记忆服务**的设计——假设记忆组件是一个独立进程。
+Parent ADR（memory-service-componentization.md）定义了三原语模型（TextBlock / RelationEdge / Timeline）和完整的服务 SPI。那是面向**独立记忆服务**的设计。
 
-本文档是面向**客户端组件化**的设计——假设记忆组件还是在进程内，但后端可替换。两个设计互补：
+本文档定义 `MemoryComponent` 作为唯一的逻辑契约。"客户端应用"不等于"一定在进程内"——EchoMem 可能是本机独立 Python 进程。正确处理是：
 
-- 如果未来需要把记忆拆成独立服务 → Parent ADR 的 SPI 是 MemoryComponent 的远程传输镜像
-- 如果只需要替换存储后端 → 用本文档的 MemoryComponent 接口
-- Storage SPI（IEvidenceStore）是具体实现内部细节，不是应用契约，也不是跨团队协议
+- `MemoryComponent` 是**唯一逻辑契约**
+- 进程内调用或 HTTP/socket 是该契约的**可选 transport adapter**，不是独立架构层
+- Parent ADR 的三原语 SPI 是一种 transport 实现方案（远程进程间通信），不恢复旧版 Wire 架构
+- Storage SPI（IEvidenceStore）是具体实现内部细节，不是应用契约
+
+> **真相源同步义务**：Parent ADR 仍保留 shadow、DocMemory/ConversationMemory、旧 Provider/Wire 叙述。两个文档的冲突须在 Parent ADR 中同步修正——组件化 = MemoryComponent 唯一契约，不是 DocProvider + ConversationProvider 拼接。
 
 ---
 
@@ -418,7 +443,9 @@ Parent ADR（memory-service-componentization.md）定义了三原语模型（Tex
 | 5 | 隐私过滤层（egress filter / thread sensitivity） | 客户端应用，用户数据在用户机器上，不存在"出境"概念 |
 | 6 | 新增 RetrievalProvider / RouteSlot 抽象层 | MemoryComponent 已是正确的能力层 |
 | 7 | 消息队列级可靠性（outbox / at-least-once / exactly-once） | 索引可重建（缓存语义），hook + 定期 rebuild 补漏是合法方案 |
-| 9 | 宿主按内容类型路由到 DocProvider + ConversationProvider | 让宿主用 doc/conv 路由把两个半组件拼成一个"完整组件"——破坏可替换性。正确做法：宿主只看到一个 MemoryComponent，内容类型区分是组件内部实现（Sol pushback，本轮接受） |
+| 9 | 宿主按内容类型路由到 DocProvider + ConversationProvider | 让宿主用 doc/conv 路由把两个半组件拼成一个"完整组件"——破坏可替换性（Sol pushback） |
+| 10 | 宿主持有多个 MemoryComponent 实例做 per-namespace 替换 | Federation 是完整记忆管理能力的一部分，归组件内部。per-namespace 替换 = coordinator 借尸还魂（Sol 定案，Fable 撤回"一实例一馆"后同意） |
+| 11 | 级联硬删 188 孤儿 passages 作为 sunset 默认修复 | 违反铁律 #5（用户状态默认持久化）。"父 doc 不在"是索引状态不是用户删除意图。正确做法：dormant（Fable + Sol 联合） |
 
 ### 从前一版降级的决策（内核保留，结论调整）
 
@@ -432,8 +459,8 @@ Parent ADR（memory-service-componentization.md）定义了三原语模型（Tex
 
 | 组件 | 文件 | 说明 |
 |------|------|------|
-| 搜索路由 | `KnowledgeResolver.ts:240-242` | `isProjectLocalScope()` — 就是 provider 拆分点 |
-| 存储接口 | `interfaces.ts:340-352` | `IEvidenceStore` — 即 Provider 接口 |
+| 搜索路由 | `KnowledgeResolver.ts:240-242` | `isProjectLocalScope()` — 组件内部 scope→filter 翻译 |
+| 存储接口 | `interfaces.ts:340-352` | `IEvidenceStore` — 组件内部存储 SPI（非应用契约） |
 | 搜索选项 | `interfaces.ts:231-266` | `SearchOptions` — scope/dimension/depth |
 | 数据类型 | `interfaces.ts:33-43` | `EVIDENCE_KINDS` — 9 种 kind |
 | 向量嵌入 | `interfaces.ts:398+` | `EmbedConfig` |
@@ -441,18 +468,29 @@ Parent ADR（memory-service-componentization.md）定义了三原语模型（Tex
 | 孤儿根因 | `SqliteEvidenceStore.ts:1362-1367` | `deleteByAnchor` 不级联 |
 | scope→kind 映射 | `SqliteEvidenceStore.ts:176-177` | `sessions → kind=session` |
 
-## 附录：scope 内部路由矩阵（LocalMemoryComponent 实现参考）
+## 附录：scope 与 namespace 映射（LocalMemoryComponent 实现参考）
 
-> 降级为附录：这是 LocalMemoryComponent 的**内部实现**参考，不是 MemoryComponent 应用契约。应用只传 `MemoryQuery`，路由由组件内部处理。
+> 两个独立的内部过滤维度（替代原来的 30 格矩阵），不是 MemoryComponent 应用契约。
 
-| scope | 内部路由到 | 关键说明 |
-|-------|----------|---------|
-| `threads` | 对话类 store | 对话消息搜索 |
-| `sessions` | 文档类 store | session digest 是 scanner 产物（`kind=session`），source-based ownership |
-| `docs` / `memory` | 文档类 store（+ globalStore） | 文档知识 |
-| `undefined` / `all` | 两类 store 都查 → RRF 融合 | 全域搜索 |
+**scope（馆内内容类型过滤）**：
 
-> scope 与 store universe 不匹配时：返回空结果 + `degraded: true`，**不偷路由**。
+| scope 值 | 过滤为 kind | 说明 |
+|----------|-----------|------|
+| `threads` | kind=thread + passages | 对话消息 |
+| `sessions` | kind=session | scanner 产物（source-based ownership） |
+| `docs` / `memory` | kind ∈ {feature,plan,decision,...} | 文档知识 |
+| `undefined` / `all` | 不过滤 | 全内容类型 |
+
+**namespace（选哪些馆）**：
+
+| namespace 值 | 搜索范围 |
+|-------------|---------|
+| `project` | 本项目馆 |
+| `global` | 全局馆 |
+| collection-id | 指定外部知识库 |
+| `undefined` / `all` | 所有馆 → RRF 融合 |
+
+> scope 与 namespace 不匹配时：返回空结果 + `degraded: true`，**不偷路由**。
 
 ## 附录：被替换的前一版
 
