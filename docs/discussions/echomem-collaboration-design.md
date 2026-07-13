@@ -408,6 +408,12 @@ Clowder↔EchoMem 直接对话用 Wire Contract v0。
 > 不使用 wildcard 叠表——每个 `(dimension, scope)` 组合有唯一确定的 provider 结果。
 > `depth` 不参与路由，只影响返回形状（`summary` 返回摘要，`raw` 返回原文 + passages）。
 
+> **Coordinator defaulting**：`dimension=undefined` 在 coordinator 入口处默认为 `all`。
+> 路由表中 `undefined` 行是 defaulting 未生效时的防御性兜底，正常流量不可达。
+
+> **scope 的双重角色**：对 project/global/all/undefined dimension，scope 充当 **provider 类型过滤器**（从 universe 中选取匹配的 provider）；
+> 对 library/collection dimension，providers 已由 manifest/IDs 确定，scope 退化为 **store 内部 kind 过滤器**（如 `sessions → kind=session`）。
+
 **dimension 定义 provider universe**
 
 | dimension | 可用 providers | Conv 参与 |
@@ -417,7 +423,7 @@ Clowder↔EchoMem 直接对话用 Wire Contract v0。
 | `all` | Doc + Conv + Global | ✅ |
 | `library` | CollectionManifest 扇出 | ❌ Conv 不是 collection |
 | `collection` | 指定 collection IDs | ❌ Conv 不是 collection |
-| `undefined` | Doc only | ❌ 保守默认 |
+| `undefined` | Doc only（coordinator defaulting `undefined→all` 后正常不可达；防御性兜底） | ❌ |
 
 **scope 在 universe 内过滤**
 
@@ -434,13 +440,13 @@ Clowder↔EchoMem 直接对话用 Wire Contract v0。
 | dimension \ scope | `undefined`/`all` | `threads` | `sessions` | `docs` | `memory` |
 |-------------------|-------------------|-----------|------------|--------|----------|
 | `project` | Doc + Conv | Conv | Doc | Doc | Doc |
-| `global` | Global | ⚠️ empty+nudge | Global | Global | Global |
+| `global` | Global | ⚠️ empty+nudge | ⚠️ empty+nudge | Global | Global |
 | `all` | Doc+Conv+Global → RRF | Conv | Doc | Doc+Global | Doc+Global |
 | `library` | CollManifest 扇出 | ⚠️ empty+nudge | CollManifest 扇出 | CollManifest 扇出 | CollManifest 扇出 |
 | `collection` | 指定 IDs | ⚠️ empty+nudge | 指定 IDs | 指定 IDs | 指定 IDs |
 | `undefined` | Doc | ⚠️ empty+nudge | Doc | Doc | Doc |
 
-> **⚠️ empty+nudge**：dimension 的 provider universe 不含 Conv 时，scope=threads 返回空结果 +
+> **⚠️ empty+nudge**：scope 指定的 provider 类型不在 dimension universe 中时（threads→Conv 不在 / sessions→Doc 不在），返回空结果 +
 > `meta: { degraded: true, degradeReason: 'evidence_store_error' }`。
 > 这是 **coordinator 自行生成**的路由降级（不经 Wire），不静默路由到 Conv。
 > 使用宿主 `SearchDegradeReason` 现有值（`evidence_store_error`），不引入不存在的联合成员。
@@ -459,6 +465,7 @@ Clowder↔EchoMem 直接对话用 Wire Contract v0。
 | `project + undefined` | projectStore 搜 docs+threads（单 store） | Doc+Conv（两个 provider 并发） | ⚠️ 行为保持，实现变 |
 | `all + docs/memory` | project+global | Doc+Global | ✅ 兼容 |
 | `global + threads` | 不走 isProjectLocalScope，搜 globalStore | empty+nudge | ⚠️ Breaking：显式报告不可用 |
+| `global + sessions` | globalStore 搜 kind=session（实际无 session digest） | empty+nudge | ⚠️ Breaking：sessions 归 Doc，Global 无 Doc |
 | `undefined + threads` | 不到这里（dimension 总有值） | empty+nudge | ⚠️ 新增防护 |
 
 > **sessions→Doc 而非 Conv**（Fable × Sol R1 修正）：`scope='sessions'` 在 store 层映射为
@@ -938,7 +945,7 @@ interface IngestEvent {
 | C. EchoMem 主动拉取 | 定时轮询 | 低 | 实时性差 |
 | D. 共享存储 | 直接读 SQLite | **高风险** | ❌ 违反隔离 |
 
-> **最终方案 = A + B 组合**：A 负责增量消息实时推送（Phase 3+），B 负责存量 passage backfill（Phase 2）。
+> **最终方案 = A + B 组合**：A 负责增量消息实时推送（Phase 2a+），B 负责存量 passage backfill（Phase 2b）。
 > 两者不是单选，而是覆盖不同阶段的互补机制。
 
 ### 7.4 前置问题
@@ -1007,9 +1014,9 @@ EchoMem 侧需要维护 `sourceEvent → derivedMemory` 的映射，
 
 | 需新建机制 | 说明 | 阻塞阶段 |
 |-----------|------|---------|
-| **Thread 隐私标记** | ThreadSnapshot 新增 `sensitivity: 'shared' \| 'private'` 字段 | Phase 3（outbox 上线前） |
-| **消息级 secret-scan** | outbox 入口前扫描消息内容，命中 secret pattern → 拦截 | Phase 3 |
-| **隐私标记默认值** | **价值决策**（见 §13 OQ#11）：默认 private（保守，EchoMem 初期只拿显式共享的 thread）vs 默认 shared（激进，全量进） | Phase 3 前 operator 拍板 |
+| **Thread 隐私标记** | ThreadSnapshot 新增 `sensitivity: 'shared' \| 'private'` 字段 | Phase 2（outbox/backfill 上线前） |
+| **消息级 secret-scan** | outbox 入口前扫描消息内容，命中 secret pattern → 拦截 | Phase 2（outbox/backfill 上线前） |
+| **隐私标记默认值** | **价值决策**（见 §13 OQ#11）：默认 private（保守，EchoMem 初期只拿显式共享的 thread）vs 默认 shared（激进，全量进） | Phase 2 前 operator 拍板 |
 
 > **"过滤在前、分区在后"论证链修正**：egress privacy filter（过滤层）是**待建机制**，
 > 不能作为已有保障来论证 agentId 分区（分区层）的安全性。
@@ -1037,6 +1044,7 @@ Phase 1: 薄桥
     │
     ▼
 Phase 2: Durable outbox + Backfill + Shadow 旁路
+  前置：egress privacy filter（§9.1）+ OQ#11 默认值必须在 2a/2b 启动前落定
   2a. durable outbox 上线（增量消息实时推送到 EchoMem）
   2b. backfill 存量 passage 到 EchoMem（IndexBuilder 改推 + cursor 断点续传）
   2c. EchoMem ConversationRetrievalProvider 上线（shadow mode = 旁路观测）
@@ -1099,7 +1107,7 @@ Phase 4: Rollback window 到期
 | 搜索延迟 P95 | 当前 KnowledgeResolver 单 store | ≤ 2× 本地延迟 |
 | 降级正确性 | EchoMem 不可达 → degraded=true | 100% |
 | list_recent 完整性 | scope=threads 返回最近 N 个 thread | 不劣于本地（Phase 2+） |
-| 去重正确性 | shadow 双跑期间无重复结果 | canonicalId 对齐 = 100% |
+| 去重正确性 | shadow 双跑期间无重复结果 | diff 报告的 canonicalId 对齐率 100% |
 
 ---
 
@@ -1117,6 +1125,7 @@ Phase 4: Rollback window 到期
 | 6 | 先 shadow 双跑、后补 canonicalId | RRF 以 anchor 去重，EchoMem 无兼容 anchor → 去重失败 → 重复结果污染 F200 |
 | 7 | EchoMem native API 作为 wire truth（无共同治理 repo） | 协议 owner = 兼容义务承担者；外部团队"承诺稳定"不是可执行约束 |
 | 8 | scope=threads/sessions 静态路由到 ConversationProvider | `sessions` 在 store 层映射为 `kind=session`（scanner 产物），归 Doc domain |
+| 9 | 在 egress privacy filter 建成前执行 backfill 或开启数据出宿主路径 | outbox/backfill 推送数据到 EchoMem 前必须有 egress privacy filter（§9.1）；无过滤 = 隐私泄露风险 |
 
 ---
 
