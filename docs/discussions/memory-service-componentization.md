@@ -185,8 +185,8 @@ Clowder AI 的记忆系统（ADR-020 建立）当前紧耦合在宿主进程内�
 | Passage 级索引 | `evidence_passages` + `passage_fts` | **TextBlock**（parentId 模式） | 核心检索 | 按来源切：round-result / 消息流 → ConversationMemory |
 | 文档嵌入 | `evidence_vectors` | TextBlock 基础设施 | 语义搜索 | 各 provider 自有嵌入索引 |
 | Passage 嵌入 | `passage_vectors` | TextBlock 基础设施 | 语义搜索 | 各 provider 自有嵌入索引 |
-| 实体注册表 + 别名 | `entity_registry` + `entity_aliases` | **EntityResolver**（基础设施层） | 搜索增强 | provider-local + 可选共享 normalizer（见 [EchoMem 协作方案](memory-component-abstraction.md) §2.2） |
-| 关系图 | `edges` | **RelationEdge** | graph_resolve 支持 | 当前 DocMemory；ConversationMemory 后续可自建（见 [EchoMem 协作方案](memory-component-abstraction.md) §5.3） |
+| 实体注册表 + 别名 | `entity_registry` + `entity_aliases` | **EntityResolver**（基础设施层） | 搜索增强 | ~~provider-local + 可选共享 normalizer~~ 已被单组件契约取代（见 [记忆能力抽象](memory-component-abstraction.md)，实体解析为组件内部能力） |
+| 关系图 | `edges` | **RelationEdge** | graph_resolve 支持 | ~~当前 DocMemory；ConversationMemory 后续可自建~~ 已被单组件契约取代（见 [记忆能力抽象](memory-component-abstraction.md)，`related()` 统一承接） |
 
 ### 留在 Clowder 宿主
 

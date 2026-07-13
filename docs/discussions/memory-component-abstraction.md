@@ -49,7 +49,7 @@ co-creator 指出两个根本前提错误后重写：
 
 上层不需要知道书架怎么组织、用的什么数据库、索引怎么建。**这就是组件化的目标**。
 
-> **核心原则：索引可重建**。真相源始终是 docs/*.md + thread 消息历史（Parent ADR 最早的正确决策）。
+> **核心原则：索引可重建**。真相源始终是 docs/*.md + thread 消息历史（前身 ADR（已 superseded）最早的正确决策，本文继承）。
 > 记忆服务是编译索引，不是真相源。索引丢了 → `IndexBuilder.rebuild()` 重建，等同于缓存失效。
 > 这意味着入库的可靠性要求是**缓存重建级**（同步写 + 失败重建），不是消息队列级（at-least-once / exactly-once）。
 
@@ -157,14 +157,14 @@ MemoryComponent ← 唯一的记忆能力契约（一 runtime 一实例）
     │ recall   — 检索（relevance 语义搜索 / recent 最近浏览）
     │ read     — 取书（inline content 或 resource reference）
     │ related  — 关系图查询（"这本书引用了谁/被谁引用"）
-    │ invalidate — 下架（可逆——dormant/superseded/invalidated）
+    │ transition — 生命周期转换（可逆 dormant/supersede/invalidate + 不可逆 hard delete）
     │ maintain — 内部管理（sunset 执行 / compaction / 向量重建 / federation 健康）
     │ health
     │
     └── 当前实现：LocalMemoryComponent
         内部 namespaces: project / global / collection_1..N
         跨 namespace RRF 融合——组件内部能力
-        SqliteEvidenceStore + (NEW) SunsetManager + EmbeddingService
+        SqliteEvidenceStore + EmbeddingService（SunsetManager 为 Phase 2 交付）
         doc/conv 内容类型路由——实现细节
         源扫描（IndexBuilder scanner 部分）——组件外部，重放到 remember()
 ```
@@ -206,6 +206,9 @@ interface MemoryComponent {
 
 ```typescript
 // ── 馆选择（一对一映射 SearchDimension 五值，Fable 定案）──
+// 'all'     = legacy project+global 融合（现有 dimension='all' 行为，不含 collections）
+// 'library' = 全部 routable collections 扇出（现有 dimension='library'）
+// { collections } = 指定 collection IDs（现有 dimension='collection'）
 type NamespaceSelector = 'project' | 'global' | 'all' | 'library' | { collections: string[] };
 // project  — 本项目馆
 // global   — 全局馆
@@ -259,7 +262,7 @@ type MemoryQuery =
 - `mode: 'recent'` → 映射 `list_recent`（现有 `RecentBrowseResolver`）
 - `related()` 独立方法 → 映射 `graph_resolve`（支持 key-based 精确遍历 + query-based 模糊解析，返回 3-state 判别联合）
 
-`scope` 是馆内内容类型过滤（threads/docs/sessions/all），`namespace` 是选哪些馆（project/global/collection-id/all）——两个独立小表替代原来的 30 格矩阵。现有 `search_evidence` 的对外参数不变，组件内部翻译 scope → filter、dimension → namespace。
+`scope` 是馆内内容类型过滤（threads/docs/sessions/all），`namespace` 是选哪些馆（NamespaceSelector 五值）——两个独立小表替代原来的 30 格矩阵。现有 `search_evidence` 的对外参数不变，组件内部翻译 scope → filter、dimension → namespace。
 
 **SearchOptions 19 字段 → MemoryQuery 完整映射**：
 
@@ -293,7 +296,7 @@ type MemoryQuery =
 | `limit` | `limit` | 直接映射 |
 | `scope` | `scope` | 直接映射 |
 | `kinds` | `kind` | 统一字段名为 `kind`（数组） |
-| `callerCollections` | `namespace` | **注意**：`callerCollections` 是 server-derived ACL（server 解析 HTTP query 产生，不从 MCP client 传入），翻译为 `NamespaceSelector` 时组件内部做 ACL 过滤，不直接暴露为客户端选择器 |
+| `callerCollections` | `AccessContext.authorizedCollections` | **不翻译为 NamespaceSelector**（Sol P1）：这是 server-derived ACL，与客户端选择器严格分离。adapter 注入 `AccessContext`（§4.3），组件内部执行 selector ∩ ACL 过滤 |
 | `verified` | `verified` | 直接映射 |
 
 ### 4.3 数据模型
@@ -305,8 +308,20 @@ type MemoryQuery =
 // namespace = 馆标识（project / global / collection-id），组件内部用于 federation 路由
 type MemoryKey = { namespace: string; id: string };
 
+// ── 授权上下文（Sol P1 定案：ACL 与 namespace selection 严格分离）──
+// callerCollections 是 server-derived authorization（route 层解析产生），
+// NamespaceSelector 是调用方选择的搜索范围（客户端可控）。
+// 二者不共用类型：AccessContext 由 adapter/server 注入（不是应用契约方法参数），
+// 组件内部执行 有效范围 = selector ∩ authorizedCollections。
+// 混用会重新制造"客户端 collections 自授私有 collection 可见性"的漏洞。
+interface AccessContext {
+  authorizedCollections?: string[]; // undefined = 无限制（本地单用户默认）
+}
+
 // 真相源引用（"索引可重建"的基础——知道从哪重建）
-type SourceRef = { source: string; sourceId: string; revision?: string };
+// revision 必填（Sol P1 定案）——replay-safe 幂等判定的基础，映射现有 sourceHash；
+// 手动记忆（无外部真相源）：source='manual'，revision = content hash
+type SourceRef = { source: string; sourceId: string; revision: string };
 
 // ── 内容 ──
 
@@ -340,6 +355,7 @@ interface MemoryInput {
   key: MemoryKey;                  // 必填——replay-safe 幂等 upsert 的基础
   content: MemoryContent;
   kind: EvidenceKind;
+  status?: EvidenceStatus;         // 业务状态（默认 'active'）——源派生记录由 scanner 提供
   sourceRef: SourceRef;            // "索引可重建"的基础——知道从哪重建（revision 必填）
   provenance: { tier: ProvenanceTier; source: string }; // authoritative / derived / soft_clue
   relations?: Array<{ target: MemoryKey; type: string }>;
@@ -359,12 +375,14 @@ interface MemoryRecord {
   key: MemoryKey;
   content: MemoryContent;
   kind: EvidenceKind;
+  status: EvidenceStatus;          // 业务状态（必填——EvidenceItem.status 必填，round-trip 忠实）
   lifecycle: LifecycleState;
   provenance: { tier: ProvenanceTier; source: string };
-  sourceRef?: SourceRef;
+  sourceRef: SourceRef;            // 必填——input 必填则 record 不得降级为可选（round-trip 无损）
   createdAt: string;               // ISO8601
   updatedAt: string;               // ISO8601
   supersededBy?: MemoryKey;        // lifecycle=superseded 时指向新版本
+  metadata?: Record<string, unknown>; // input.metadata 原样返回——transport round-trip 不丢扩展字段
 }
 
 // ── 消费反馈（F200 事件链：recall → consumed → abandoned）──
@@ -403,8 +421,8 @@ interface MemorySearchResult {
   items: MemoryRecord[];
   meta: {
     degraded: boolean;                  // scope/namespace 不匹配等降级情况
-    degradeReason?: string;             // 降级原因（沿用 SearchDegradeReason 语义）
-    effectiveMode?: string;             // 实际使用的搜索模式（vector 不可用时降级为 fts）
+    degradeReason?: SearchDegradeReason; // 闭集联合（interfaces.ts:268-272），不用裸 string
+    effectiveMode?: 'lexical' | 'semantic' | 'hybrid'; // 实际搜索模式（semantic 不可用时降级为 lexical）
     totalCount?: number;                // 命中总数（limit 截断前）
   };
 }
@@ -491,7 +509,7 @@ interface MemoryHealth {
 | 8 | 浏览最近（RecentBrowseResolver） | `recall()` + filter/sort 模式 | ✅ |
 | 9 | 消费加权（F200） | `recordFeedback()` → `recall()` 排序 | ✅ |
 | 10 | 矛盾检测（F163 contradicts） | `maintain()` 内部逻辑 | ✅ |
-| 11 | 质量分层（provenance: authoritative/derived/soft_clue） | `remember()` 的 `MemoryInput` metadata + `recall()` 的 filter 参数 | ✅ 两处覆盖 |
+| 11 | 质量分层（provenance: authoritative/derived/soft_clue） | `MemoryInput.provenance`（一等字段，非 metadata）+ `recall()` 的 `provenanceTier` filter | ✅ 两处覆盖 |
 | 12 | Drill-down（depth 参数控制取全文） | `read()` 返回 inline/resource union | ✅ |
 | 13 | 联邦搜索（跨 store RRF 融合） | `recall()` 内部跨 namespace RRF 融合 | ✅ 组件内部能力 |
 
@@ -617,7 +635,7 @@ MemoryComponent (LocalMemoryComponent)
 ### Phase 1: 形式化 MemoryComponent 接口（零行为变更）
 
 1. 定义 `MemoryComponent` 接口（remember/recall/read/related/transition/recordFeedback/maintain/health）+ `MemoryQuery` / `LifecycleCommand` / `RelationResult` 判别联合
-2. 实现 `LocalMemoryComponent`：组合现有 KnowledgeResolver（含 federation）+ SqliteEvidenceStore + (NEW) SunsetManager。**IndexBuilder 的源扫描部分留在组件外**，通过 `remember()` 写入
+2. 实现 `LocalMemoryComponent`：组合现有 KnowledgeResolver（含 federation）+ SqliteEvidenceStore（SunsetManager 是 Phase 2 交付物，Phase 1 不组合）。**IndexBuilder 的源扫描部分留在组件外**，通过 `remember()` 写入
 3. 上层 MCP 工具（search_evidence / list_recent / graph_resolve）改为调用 MemoryComponent
 4. 行为兼容测试：重构前后，相同调用产出相同结果
 
@@ -717,14 +735,18 @@ MemoryComponent (LocalMemoryComponent)
 | `docs` / `memory` | kind ∈ {feature,plan,decision,...} | 文档知识 |
 | `undefined` / `all` | 不过滤 | 全内容类型 |
 
-**namespace（选哪些馆）**：
+**namespace（NamespaceSelector 五值，选哪些馆）**：
 
-| namespace 值 | 搜索范围 |
-|-------------|---------|
-| `project` | 本项目馆 |
-| `global` | 全局馆 |
-| collection-id | 指定外部知识库 |
-| `undefined` / `all` | 所有馆 → RRF 融合 |
+| NamespaceSelector 值 | 搜索范围 |
+|---------------------|---------|
+| `'project'` | 本项目馆 |
+| `'global'` | 全局馆 |
+| `'all'` | project + global 融合（**legacy 行为**，不含 collections——对应现有 `dimension='all'`） |
+| `'library'` | 全部 routable collections 扇出（对应现有 `dimension='library'`） |
+| `{ collections: [id...] }` | 指定外部知识库（对应现有 `dimension='collection'`） |
+| `undefined` | 默认 = `'all'`（沿用现有 resolver defaulting，零行为变更） |
+
+> 有效搜索范围 = selector ∩ `AccessContext.authorizedCollections`（§4.3——ACL 由 adapter 注入，不进 selector）。
 
 > scope 与 namespace 不匹配时：返回空结果 + `degraded: true`，**不偷路由**。
 
