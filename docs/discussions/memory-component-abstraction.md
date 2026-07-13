@@ -40,7 +40,7 @@ co-creator 指出两个根本前提错误后重写：
 | **入库** | 书入库，图书馆分类上架 | `upsert()` / `IndexBuilder.rebuild()` |
 | **找书** | 按关键词、分类找 | `KnowledgeResolver.resolve(query, options)` |
 | **取书** | 拿到书翻看内容 | `getByAnchor()` + drill-down — **两种模式**见下 |
-| **下架** | 过期/失效的书下架 | `status: invalidated/archived` + `supersededBy` |
+| **下架** | 过期/失效的书下架 | `LifecycleState` 转换（dormant/superseded/invalidated） + `supersededBy` |
 | **内部管理** | 图书馆自己处理 | 索引重建、向量嵌入、去重、矛盾检测、消费加权排序 |
 
 **取书的两种模式**（`depth` 参数控制）：
@@ -77,7 +77,7 @@ IKnowledgeResolver ← 图书馆前台
         包含：外部知识库
 ```
 
-**问题**：当前记忆能力散落在多个类中（KnowledgeResolver 做搜索、IndexBuilder 做入库且直写 SQL、deleteByAnchor 不级联 passage），没有统一的能力契约。想替换整个记忆后端 → 不知道替换边界在哪，因为完整能力由 4+ 个类拼接而成，且 IndexBuilder 有 16 处 `getDb` 逃逸绕过了 `IEvidenceStore` 接口。
+**问题**：当前记忆能力散落在多个类中（KnowledgeResolver 做搜索、IndexBuilder 做入库且直写 SQL、deleteByAnchor 不级联 passage），没有统一的能力契约。想替换整个记忆后端 → 不知道替换边界在哪，因为完整能力由 4+ 个类拼接而成，且 IndexBuilder 有 12 处 `getDb` 直接调用点逃逸绕过了 `IEvidenceStore` 接口。
 
 ### 2.1 现有能力清单
 
@@ -174,7 +174,7 @@ MemoryComponent ← 唯一的记忆能力契约（一 runtime 一实例）
 **rebuild 与 maintain 的分离**：
 - **rebuild** = 宿主重放全量 ingest（扫描真相源 → 逐条 `remember()`），宿主发起
 - **maintain()** = 组件内部索引健康（compaction / 向量重建 / sunset 执行），组件自治
-- 当前 IndexBuilder 混合了这两个语义（既做源扫描又直写 SQL），正是 `getDb` 逃逸 16 处的根因——这个拆分不是新增工作，是把已知的抽象穿透修正掉
+- 当前 IndexBuilder 混合了这两个语义（既做源扫描又直写 SQL），正是 `getDb` 逃逸 12 处的根因——这个拆分不是新增工作，是把已知的抽象穿透修正掉
 
 ### 4.2 能力契约
 
@@ -212,6 +212,7 @@ type MemoryQuery =
       // ── 馆内过滤 ──
       scope?: string;                        // ← 'docs'|'threads'|'sessions'|'memory'|'all'
       kind?: EvidenceKind[];                 // ← kind（升级为数组——多 kind OR 过滤）
+      status?: EvidenceStatus[];             // ← 业务状态过滤（done/active/archived…）——见 §4.3 两维度区分
       searchMode?: 'fts' | 'vector' | 'hybrid'; // ← mode（lexical→fts 重命名，避免与 MemoryQuery.mode 歧义）
       limit?: number;
       depth?: 'summary' | 'raw';             // ← 结果详细度（summary=摘要 / raw=全 passage）
@@ -252,7 +253,7 @@ type MemoryQuery =
 | # | SearchOptions 字段 | MemoryQuery 字段 | 映射说明 |
 |---|-------------------|-----------------|---------|
 | 1 | `kind` | `kind` | 升级为数组（多 kind OR 过滤） |
-| 2 | `status` | — | **组件内部**：翻译为 LifecycleState 过滤。默认只返回 active；非 active 记录用 `read(key)` 按 key 直取 |
+| 2 | `status` | `status` | **业务状态过滤**（EvidenceStatus: done/active/archived…）——与 LifecycleState（检索生命周期）正交，见 §4.3 两维度区分 |
 | 3 | `keywords` | `keywords` | 直接映射 |
 | 4 | `limit` | `limit` | 直接映射 |
 | 5 | `scope` | `scope` | 直接映射（content-type filter） |
@@ -311,6 +312,15 @@ type LifecycleState = 'active' | 'dormant' | 'superseded' | 'invalidated';
 // invalidated — F163 矛盾检测标记无效；数据保留
 // 硬删除（DELETE）不是状态——是操作，仅响应用户明确删除或 source-delete 事件
 
+// ── 两维度区分：EvidenceStatus × LifecycleState ──
+// EvidenceStatus = 'active'|'done'|'archived'|'review'|'invalidated'
+//   → 内容的业务状态（feature 开发中/完成/归档…），上层查询可过滤
+// LifecycleState = 'active'|'dormant'|'superseded'|'invalidated'
+//   → 记忆的检索生命周期（是否可被搜索到），组件内部管理
+// 两者正交：一个 done 的 feature doc 仍是 active 记忆；
+//           一个 active 的 thread doc 可能是 dormant 记忆（真相源暂时缺失）
+// recall() 默认只返回 LifecycleState=active 的记忆，但 EvidenceStatus 可自由过滤
+
 // ── 入库输入 ──
 
 interface MemoryInput {
@@ -322,6 +332,12 @@ interface MemoryInput {
   relations?: Array<{ target: MemoryKey; type: string }>;
   metadata?: Record<string, unknown>;
 }
+// remember() 行为语义（现有 IndexBuilder 幂等跳过机制的契约化）：
+//   同 key + 同 revision → no-op（已有相同版本，跳过）
+//   同 key + 异 revision → 覆盖内容 + 刷新 updatedAt
+//   无 key             → 组件生成 key + 创建新记录
+// SourceRef.revision 映射现有 sourceHash（computeThreadSourceHash 等），
+// Phase 1 零行为变更——这是把已有行为写进契约
 
 // ── 记忆记录（读出）──
 
@@ -357,6 +373,20 @@ type MemoryFeedback =
       resultCount: number; };
 // recordFeedback() 收集这些事件 → 组件内部的消费加权排序（consumption-prior）闭环：
 // 被频繁 consumed 的记忆 → recall() 排名提升；被 abandoned 的 → 排名不变（不惩罚）
+
+// ── 检索结果（recall 返回值）──
+
+interface MemorySearchResult {
+  items: MemoryRecord[];
+  meta: {
+    degraded: boolean;                  // scope/namespace 不匹配等降级情况
+    degradeReason?: string;             // 降级原因（沿用 SearchDegradeReason 语义）
+    effectiveMode?: string;             // 实际使用的搜索模式（vector 不可用时降级为 fts）
+    totalCount?: number;                // 命中总数（limit 截断前）
+  };
+}
+// 附录 scope/namespace 不匹配承诺（"返回空结果 + degraded: true，不偷路由"）
+// 安放在 meta.degraded 字段上
 ```
 
 ### 4.4 现有代码如何映射
@@ -378,9 +408,9 @@ type MemoryFeedback =
 
 | # | 现有能力（§2.1） | 映射到 | 覆盖度 |
 |---|-----------------|--------|--------|
-| 1 | 搜索（KnowledgeResolver.resolve） | `recall()` | ✅ 单馆内搜索 |
+| 1 | 搜索（KnowledgeResolver.resolve） | `recall()` | ✅ 含跨 namespace federation（同 #13） |
 | 2 | 存储（SqliteEvidenceStore.upsert/get） | `remember()` + `read()` | ✅ |
-| 3 | 扫描入库（IndexBuilder.rebuild） | 源扫描归宿主 → 逐条 `remember()`；`remember()` 做 replay-safe 幂等 upsert | ✅ 分离更清晰，瓦解 getDb 逃逸大头 |
+| 3 | 扫描入库（IndexBuilder.rebuild） | 源扫描归宿主 → 逐条 `remember()`；`remember()` 做 replay-safe 幂等 upsert。对话类增量入库：宿主消息事件→`remember()`（与周期扫描均合法——"索引可重建"兜底） | ✅ 分离更清晰，瓦解 getDb 逃逸 12 处调用的大头 |
 | 4 | 向量嵌入（EmbeddingService） | `remember()` 内部触发 | ✅ 组件内部实现 |
 | 5 | 关系图（GraphResolver + edges） | `related()` | ✅ 新增方法 |
 | 6 | 实体识别（resolveEntityAliases） | `recall()` 内部增强——搜索增强，随 recall 透明生效 | ✅ 内部能力，不出现在契约方法上 |
@@ -432,7 +462,7 @@ co-creator 的能力清单里有"无效的记忆逐渐 sunset"。现有机制（
 | 内容类型 | 现有 sunset | 缺口 |
 |---------|-----------|------|
 | 文档类 | status lifecycle + supersededBy + F163 | ⚠️ 有字段和信号，无统一执行器 |
-| 对话类 | 无 | ❌ 需要：passage 级联删除 + thread 记忆保留策略 |
+| 对话类 | 无 | ❌ 需要：父子 lifecycle 一致性（doc 转 dormant 时 passage 跟随） + thread 记忆保留策略 |
 
 组件化后，`MemoryComponent.maintain()` 必须覆盖对话类记忆的 sunset。这是 `maintain()` 的核心实现内容之一。
 
