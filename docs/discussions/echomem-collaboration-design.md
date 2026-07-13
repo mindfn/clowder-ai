@@ -131,96 +131,118 @@ IKnowledgeResolver ← 图书馆前台
 
 ### 3.4 数据结论
 
-| 数据 | 归属 | 理由 |
-|------|------|------|
-| kind ∈ {feature, plan, decision, lesson, session, discussion, research, pack-knowledge} | DocProvider | scanner 产物，LLM 取书时 grep 原文件 |
-| kind = thread + 全部 passages | ConversationProvider | 对话编译产物，内容直接在 passages 里 |
-| 全部 edges | DocProvider | 文档间引用关系 |
+| 数据 | 内容类型 | 说明 |
+|------|---------|------|
+| kind ∈ {feature, plan, decision, lesson, session, discussion, research, pack-knowledge} | 文档类 | scanner 产物，LLM 取书时 grep 原文件 |
+| kind = thread + 全部 passages | 对话类 | 对话编译产物，内容直接在 passages 里 |
+| 全部 edges | 文档间关系 | 文档间引用关系 |
 | entities | 共享基础设施 | 两类都需要实体解析增强搜索 |
+
+文档/对话是**内容类型和入库来源**，不是上层选择不同后端的路由轴——MemoryComponent 内部自行处理这个区分。
 
 ---
 
 ## 4. 目标架构
 
+### 4.1 统一的记忆组件（MemoryComponent）
+
+图书馆只有一个前台——上层应用面对一个完整的记忆组件，不需要知道内部有几个书架：
+
 ```
-IKnowledgeResolver（前台不变）
+上层应用（search_evidence / list_recent / graph_resolve / IndexBuilder / session events）
     │
-    ├── DocProvider: IEvidenceStore
-    │   - 后端：SqliteEvidenceStore（不变）
-    │   - 入库：IndexBuilder 扫描 repo
-    │   - 数据：284 docs + 2,437 edges + entities
-    │   - 取书：drill-down → grep 原文件
+    ▼
+MemoryComponent ← 唯一的记忆能力契约
+    │ remember — 入库
+    │ recall   — 检索
+    │ read     — 取书（inline content 或 resource reference）
+    │ invalidate — 下架（可逆——标记为 dormant/superseded/invalidated）
+    │ maintain — 内部管理（sunset / rebuild / 清理）
+    │ health   — 健康检查
     │
-    └── ConversationProvider: IEvidenceStore
-        - 后端：今天 SqliteEvidenceStore，明天可换
-        - 入库：session compiler / 消息事件
-        - 数据：7 thread docs + 21,946 passages
-        - 取书：passages 直接返回
+    ├── 当前实现：LocalMemoryComponent
+    │   由 KnowledgeResolver + IndexBuilder + SqliteEvidenceStore + (NEW) SunsetManager 组合
+    │   内部仍有 doc/conv 路由（isProjectLocalScope）——但这是实现细节，不是应用契约
+    │
+    └── 未来替换：实现完整 MemoryComponent 接口的任何组件
 ```
 
-### 4.1 路由规则（从现有代码提取）
+文档 vs 对话是**内容类型和入库来源**，不是上层选择不同后端的路由轴。
 
-`KnowledgeResolver` 已有的路由逻辑（`isProjectLocalScope()`，L240-242）：
+### 4.2 能力契约
 
 ```typescript
-// 已有代码——几乎就是我们需要的拆分点
-function isProjectLocalScope(options?: SearchOptions): boolean {
-  return options?.scope === 'threads' || options?.scope === 'sessions';
+interface MemoryComponent {
+  // ── 应用层（上层直接使用）──
+  remember(input: MemoryInput): Promise<MemoryRecord>;
+  recall(query: MemoryQuery): Promise<MemorySearchResult>;
+  read(key: MemoryKey): Promise<MemoryRecord | null>;
+
+  // ── 系统层（系统事件触发）──
+  invalidate(key: MemoryKey, reason: InvalidationReason): Promise<void>;
+  recordFeedback(event: MemoryFeedback): Promise<void>;
+  maintain(): Promise<MaintenanceReport>;
+
+  // ── 运维层 ──
+  health(): Promise<MemoryHealth>;
 }
 ```
 
-组件化后：
+上层应用只直接使用前三项；`invalidate` / `recordFeedback` 来自系统事件；`maintain` 由组件内部调度或外部触发。
 
-| scope | 路由到 | 说明 |
-|-------|--------|------|
-| `threads` | ConversationProvider | 对话消息搜索 |
-| `sessions` | DocProvider | session digest 是 scanner 产物（`kind=session`），归 Doc |
-| `docs` / `memory` | DocProvider（+ globalStore if dimension allows） | 文档知识搜索 |
-| `undefined` / `all` | 两个 Provider 都查 → RRF 融合 | 全域搜索 |
-
-**这不是新设计——是把已有的 `isProjectLocalScope` 判断从硬编码变成 provider 注册。**
-
-### 4.2 Provider 接口
-
-不需要新接口——**`IEvidenceStore` 已经是正确的 Provider 接口**：
+### 4.3 数据模型
 
 ```typescript
-// 已有接口，不需要改
-interface IEvidenceStore {
-  search(query: string, options?: SearchOptions): Promise<EvidenceItem[]>;
-  searchWithMeta?(query: string, options?: SearchOptions): Promise<EvidenceSearchExecution>;
-  upsert(items: EvidenceItem[]): Promise<void>;
-  deleteByAnchor(anchor: string): Promise<void>;
-  getByAnchor(anchor: string): Promise<EvidenceItem | null>;
-  health(): Promise<boolean>;
-  initialize(): Promise<void>;
-}
+// 记忆的唯一标识——无路由含义，现有 anchor 直接作为 id
+type MemoryKey = { namespace: string; id: string };
+
+// 真相源引用（"索引可重建"的基础——知道从哪重建）
+type SourceRef = { source: string; sourceId: string; revision?: string };
+
+// 记忆内容——文本或资源引用（预留媒体扩展）
+type MemoryContent =
+  | { type: 'text'; text: string; mimeType?: string }
+  | { type: 'resource'; uri: string; mimeType: string; indexText?: string };
+
+// 生命周期状态——默认持久化，sunset 是可逆检索过滤
+type LifecycleState = 'active' | 'dormant' | 'superseded' | 'invalidated';
+// 默认搜索只返回 active；旧记忆仍可 read/export
+// 硬删除只响应用户或真相源删除事件（符合铁律"用户状态默认持久化"）
 ```
 
-组件化的改动在 `KnowledgeResolver`，不在接口：
+### 4.4 现有代码如何映射
 
-```typescript
-// 改动前
-constructor(deps: { projectStore: IEvidenceStore; globalStore?: IEvidenceStore; ... })
+| MemoryComponent 方法 | 现有实现 | 说明 |
+|---------------------|---------|------|
+| `remember` | IndexBuilder.rebuild (docs) + session compiler (conv) | 入库路径按内容类型不同——实现细节 |
+| `recall` | KnowledgeResolver.resolve() + RRF fusion + 消费加权 | 已有的联邦搜索，应用已经面对单一接口 |
+| `read` | IEvidenceStore.getByAnchor() + drill-down | doc=grep 原文 / conv=passages 直返（实现细节） |
+| `invalidate` | deleteByAnchor() + status/supersededBy | ⚠️ 部分实现——级联删除缺失（§5.1） |
+| `recordFeedback` | F200 consumption tracking | 已有，但作为 store 副作用，不是显式能力 |
+| `maintain` | IndexBuilder.rebuild() | ⚠️ 只有索引重建，缺 sunset 自动执行 |
+| `health` | IEvidenceStore.health() | ✅ 已有 |
 
-// 改动后
-constructor(deps: {
-  docStore: IEvidenceStore;         // 文档类（原 projectStore 的 doc 部分）
-  conversationStore: IEvidenceStore; // 对话类（原 projectStore 的 thread/passage 部分）
-  globalStore?: IEvidenceStore;
-  ...
-})
-```
+### 4.5 为什么是 MemoryComponent 而不是 IEvidenceStore
 
-### 4.3 为什么不需要新抽象层
+| 层级 | 职责 | 作为替换边界的问题 |
+|------|------|------------------|
+| `IEvidenceStore` | 存储 SPI（search/upsert/delete/get） | 只换书架没换图书管理员——缺入库管道、联邦搜索、生命周期管理 |
+| `KnowledgeResolver` | 联邦搜索 + scope 路由 | 只是部分能力，不含入库/下架/维护 |
+| **`MemoryComponent`** | **完整记忆能力** | **应用契约——"含图书管理员的完整图书馆"** |
 
-| 之前设计的 | 为什么不需要 |
-|-----------|------------|
-| `RetrievalProvider`（Layer 2 域接口） | `IEvidenceStore` 已经是正确的接口，加一层只增加复杂度 |
-| `Wire Contract`（Layer 3 协议） | 本地应用不需要跨语言协议；如果未来用 EchoMem，那时再加 adapter |
-| `RouteSlot`（primary/fallback/shadow） | 不同时跑两个后端，一个 provider 直接注册即可 |
-| `CanonicalId`（跨后端统一 ID） | 单后端不需要 ID 翻译；换后端时做一次性数据迁移 |
-| `ProviderFailure`（分类错误） | `IEvidenceStore.health()` 已经够用 |
+之前版本的错误坐标系：`DocProvider + ConversationProvider`——让宿主用内容类型路由把两个半组件拼成一个"完整组件"。正确坐标系：宿主只看到一个 MemoryComponent，内容类型的区别是组件内部实现。
+
+### 4.6 之前设计中的概念去向
+
+| 之前设计的 | 处置 | 理由 |
+|-----------|------|------|
+| `DocProvider + ConversationProvider` | **删除**（本轮新增否决） | 宿主不应按内容类型路由到不同 provider |
+| `RetrievalProvider`（Layer 2 域接口） | 删除 | MemoryComponent 已是正确的能力层 |
+| `Wire Contract`（Layer 3 协议） | 删除 | 客户端应用不需要跨语言协议 |
+| `RouteSlot`（primary/fallback/shadow） | 删除 | 不同时跑两个后端 |
+| `CanonicalId` domain grammar（`doc:/conv:`） | **简化为 MemoryKey** | 无路由含义，现有 anchor 直接作为 id |
+| `ProviderFailure`（分类错误） | 删除 | `health()` 已够用 |
+| `isProjectLocalScope` scope 路由 | **保留为内部实现** | LocalMemoryComponent 内部仍需按 scope 分流搜索 |
 
 ---
 
@@ -236,12 +258,12 @@ co-creator 的能力清单里有"无效的记忆逐渐 sunset"。现有机制（
 
 **按图书馆模型**：下架是图书馆的内部职责，上层不该知道细节，但**两个书架都必须实现下架能力**。
 
-| 书架 | 现有 sunset | 缺口 |
-|------|-----------|------|
-| DocProvider | status lifecycle + supersededBy + F163 | ✅ 基本完整 |
-| ConversationProvider | 无 | ❌ 需要：passage 级联删除 + thread 记忆保留策略 |
+| 内容类型 | 现有 sunset | 缺口 |
+|---------|-----------|------|
+| 文档类 | status lifecycle + supersededBy + F163 | ✅ 基本完整 |
+| 对话类 | 无 | ❌ 需要：passage 级联删除 + thread 记忆保留策略 |
 
-组件化后，ConversationProvider 的 `IEvidenceStore` 实现必须保证 `deleteByAnchor()` 级联清理关联 passages。
+组件化后，`MemoryComponent.maintain()` 必须覆盖对话类记忆的 sunset：`deleteByAnchor` 级联清理 passages + thread 记忆保留策略。这是 `maintain()` 的核心实现内容之一。
 
 ### 5.2 媒体扩展点
 
@@ -254,38 +276,56 @@ co-creator 提到记忆数据可以有"文本、图之类的"。当前 `Evidence
 
 ## 6. 后端替换模式（按需）
 
-当需要把 ConversationProvider 从 SQLite 换成 EchoMem 时：
+MemoryComponent 的替换有两种诚实定位（以 EchoMem 为例）：
+
+### 6.1 完整组件替换
+
+EchoMem 实现全部 MemoryComponent 契约 → 整体替换 LocalMemoryComponent：
 
 ```
-步骤 1: 实现 EchoMemStore implements IEvidenceStore
-         - search() → 调 EchoMem HTTP API 搜索
-         - upsert() → 调 EchoMem API 写入
-         - getByAnchor() → 调 EchoMem API 取
-         - health() → 调 EchoMem health endpoint
+步骤 1: 实现 EchoMemComponent implements MemoryComponent
+         - remember/recall/read/invalidate/maintain/health 全部实现
+         - 入库管道、生命周期管理、搜索语义 全部自治
 
-步骤 2: 数据迁移
-         - 从 SQLite 导出 thread docs + passages
-         - 批量写入 EchoMem
+步骤 2: 数据迁移（停机迁移——客户端应用重启即可）
+         - 从 SQLite 导出全部数据（docs + passages + edges）
+         - 批量导入新后端
          - 验证：相同 query 结果一致
 
-步骤 3: 切换配置
-         - KnowledgeResolver 的 conversationStore 指向 EchoMemStore
-         - 完成
+步骤 3: 切换配置 → 完成
 ```
 
-**没有 shadow 双跑、没有 fallback、没有渐进式切换。** 这是一个客户端应用——用户自己决定什么时候切换后端，切换后旧后端就不再使用。
+### 6.2 内部子模块
+
+EchoMem 只处理部分能力（如对话记忆）→ 作为 LocalMemoryComponent 的内部 adapter，宿主不知道它的存在：
+
+```
+MemoryComponent (LocalMemoryComponent)
+    ├── 文档类：仍用 SqliteEvidenceStore + IndexBuilder
+    ├── 对话类：内部委托给 EchoMem adapter
+    └── 路由/融合/生命周期：LocalMemoryComponent 自行管理
+```
+
+这等价于图书馆把期刊管理外包——读者不知道，只看到一个图书馆前台。
+
+### 6.3 不纳入 Abstract 1047
+
+如果 EchoMem 的能力与我们的 MemoryComponent 不匹配 → 不硬塞，作为独立工具使用。
+
+**共同原则**：没有 shadow 双跑、没有 fallback、没有渐进式切换。客户端应用——停机迁移是正常模式。
 
 ---
 
 ## 7. 实施计划
 
-### Phase 1: 拆分 projectStore（零行为变更）
+### Phase 1: 形式化 MemoryComponent 接口（零行为变更）
 
-1. `SqliteEvidenceStore` 加 kind 过滤：`docStore` 只返回 doc 类 kind，`conversationStore` 只返回 thread kind
-2. `KnowledgeResolver` 构造函数改为 `docStore + conversationStore`，路由逻辑用 scope 判断
-3. 行为兼容测试：拆分前后，相同 query 产出相同结果
+1. 定义 `MemoryComponent` 接口（remember/recall/read/invalidate/recordFeedback/maintain/health）
+2. 实现 `LocalMemoryComponent`：组合现有 KnowledgeResolver + IndexBuilder + SqliteEvidenceStore
+3. 上层 MCP 工具（search_evidence / list_recent / graph_resolve）改为调用 MemoryComponent
+4. 行为兼容测试：重构前后，相同调用产出相同结果
 
-**交付物**：现有测试全部通过，搜索结果 diff = 0
+**交付物**：现有测试全部通过，搜索结果 diff = 0，上层无感知
 
 ### Phase 2: Sunset 治理（与 Phase 1 并行或之后）
 
@@ -295,16 +335,16 @@ co-creator 提到记忆数据可以有"文本、图之类的"。当前 `Evidence
 
 ### Phase 3: 后端替换（按需）
 
-如果决定用 EchoMem 或其他外部记忆服务：
-1. 实现 adapter（implements `IEvidenceStore`）
-2. 数据迁移
-3. 配置切换
+如果决定用 EchoMem 或其他外部记忆服务（见 §6 两种模式）：
+1. 选择替换模式：完整组件（§6.1）或内部子模块（§6.2）
+2. 实现对应接口（MemoryComponent 或内部 adapter）
+3. 数据迁移 + 配置切换
 
 ### 验收
 
 | 阶段 | 验收条件 |
 |------|---------|
-| Phase 1 | 搜索结果 diff = 0（拆分前后行为完全一致） |
+| Phase 1 | 搜索结果 diff = 0（重构前后行为完全一致）；上层工具无感知 |
 | Phase 2 | 孤儿 passage = 0；deleteByAnchor 级联测试通过 |
 | Phase 3 | F200 Memory Recall Eval：换后端后召回率 ≥ 0.95 × 基线 |
 
@@ -316,9 +356,9 @@ Parent ADR（memory-service-componentization.md）定义了三原语模型（Tex
 
 本文档是面向**客户端组件化**的设计——假设记忆组件还是在进程内，但后端可替换。两个设计互补：
 
-- 如果未来需要把记忆拆成独立服务 → 用 Parent ADR 的三原语 SPI
-- 如果只需要替换存储后端 → 用本文档的 Provider 拆分
-- 两者可以结合：先按本文档拆分 Provider，再按 Parent ADR 把 Provider 提升为独立服务
+- 如果未来需要把记忆拆成独立服务 → Parent ADR 的 SPI 是 MemoryComponent 的远程传输镜像
+- 如果只需要替换存储后端 → 用本文档的 MemoryComponent 接口
+- Storage SPI（IEvidenceStore）是具体实现内部细节，不是应用契约，也不是跨团队协议
 
 ---
 
@@ -338,8 +378,9 @@ Parent ADR（memory-service-componentization.md）定义了三原语模型（Tex
 |---|---------|------|
 | 4 | 同时跑两个后端 + shadow 对比 | 客户端应用不需要渐进式切换，停机迁移是正常模式 |
 | 5 | 隐私过滤层（egress filter / thread sensitivity） | 客户端应用，用户数据在用户机器上，不存在"出境"概念 |
-| 6 | 新增 RetrievalProvider / RouteSlot 抽象层 | `IEvidenceStore` 已经是正确的 Provider 接口 |
+| 6 | 新增 RetrievalProvider / RouteSlot 抽象层 | MemoryComponent 已是正确的能力层 |
 | 7 | 消息队列级可靠性（outbox / at-least-once / exactly-once） | 索引可重建（缓存语义），hook + 定期 rebuild 补漏是合法方案 |
+| 9 | 宿主按内容类型路由到 DocProvider + ConversationProvider | 让宿主用 doc/conv 路由把两个半组件拼成一个"完整组件"——破坏可替换性。正确做法：宿主只看到一个 MemoryComponent，内容类型区分是组件内部实现（Sol pushback，本轮接受） |
 
 ### 从前一版降级的决策（内核保留，结论调整）
 
@@ -362,18 +403,18 @@ Parent ADR（memory-service-componentization.md）定义了三原语模型（Tex
 | 孤儿根因 | `SqliteEvidenceStore.ts:1362-1367` | `deleteByAnchor` 不级联 |
 | scope→kind 映射 | `SqliteEvidenceStore.ts:176-177` | `sessions → kind=session` |
 
-## 附录：scope × dimension 路由矩阵（测试基准）
+## 附录：scope 内部路由矩阵（LocalMemoryComponent 实现参考）
 
-> 降级为附录（Fable 建议）：不是协议交付物，是实现的测试基准。写 coordinator 单测时照抄。
+> 降级为附录：这是 LocalMemoryComponent 的**内部实现**参考，不是 MemoryComponent 应用契约。应用只传 `MemoryQuery`，路由由组件内部处理。
 
-| scope | 路由到 | 关键说明 |
-|-------|--------|---------|
-| `threads` | ConversationProvider | 对话消息 |
-| `sessions` | DocProvider | session digest 是 scanner 产物（`kind=session`），归 Doc（source-based ownership） |
-| `docs` / `memory` | DocProvider（+ globalStore） | 文档知识 |
-| `undefined` / `all` | 两个 Provider 都查 → RRF 融合 | 全域搜索 |
+| scope | 内部路由到 | 关键说明 |
+|-------|----------|---------|
+| `threads` | 对话类 store | 对话消息搜索 |
+| `sessions` | 文档类 store | session digest 是 scanner 产物（`kind=session`），source-based ownership |
+| `docs` / `memory` | 文档类 store（+ globalStore） | 文档知识 |
+| `undefined` / `all` | 两类 store 都查 → RRF 融合 | 全域搜索 |
 
-> scope 与 provider universe 不匹配时（如 `global + threads`）：返回空结果 + `degraded: true`，**不偷路由**。
+> scope 与 store universe 不匹配时：返回空结果 + `degraded: true`，**不偷路由**。
 
 ## 附录：被替换的前一版
 
