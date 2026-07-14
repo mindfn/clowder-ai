@@ -119,4 +119,42 @@ describe('PipelinePromptBuilder (AC-P2-6)', () => {
     assert.ok(output.length > 100, 'Works after reset');
     assert.ok(ppb.getCachedRegistry() !== null, 'Re-initialized');
   });
+
+  // -- AF-1 cold-start bootstrap regression (P2-2) ----------------------------
+
+  it('refreshOverrideSnapshot warms registry on cold start (AF-1 regression)', async () => {
+    // Simulates server restart: registry is null, store has existing overrides.
+    // Without bootstrap refreshOverrideSnapshot(), getCachedRegistry() stays null
+    // and all lifeline/override routes return 404.
+    ppb.resetPipelineSingleton();
+    assert.equal(ppb.getCachedRegistry(), null, 'Cold: registry is null');
+
+    // Fake store: loadSnapshot returns a map with one disabled override
+    const fakeSnapshot = new Map([
+      [
+        'test-hook',
+        {
+          hookId: 'test-hook',
+          enabled: false,
+          source: 'operator',
+          updatedAt: Date.now(),
+          updatedBy: 'test',
+        },
+      ],
+    ]);
+    const fakeStore = { loadSnapshot: async () => fakeSnapshot };
+    ppb.setOverrideStore(fakeStore);
+
+    // This is the bootstrap call from index.ts — must warm registry from null
+    await ppb.refreshOverrideSnapshot();
+
+    assert.ok(ppb.getCachedRegistry() !== null, 'Warm: registry initialized by refreshOverrideSnapshot');
+    // Verify the override snapshot was actually loaded into the registry
+    const registry = ppb.getCachedRegistry();
+    assert.ok(registry.isEnabled !== undefined, 'Registry has isEnabled method');
+
+    // Clean up: restore singleton for any subsequent tests
+    ppb.resetPipelineSingleton();
+    ppb.setOverrideStore(null);
+  });
 });

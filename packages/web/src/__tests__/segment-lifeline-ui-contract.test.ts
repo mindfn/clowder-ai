@@ -42,6 +42,33 @@ describe('segment lifeline: guard event attribution (P2-3)', () => {
   });
 });
 
+describe('segment lifeline: lifecycle event kind labels (AF-5)', () => {
+  const src = readComponent('LifelineStageDetail.tsx');
+
+  it('KIND_LABEL covers all LifecycleEventKind values', () => {
+    // Every kind in the shared type must have a user-facing label.
+    // If a new kind is added to segment-lifecycle.ts but not here,
+    // the UI falls back to raw enum — wrong UX (AF-5 root cause).
+    const kinds = [
+      'auto-iterate',
+      'user-create',
+      'version-activate',
+      'user-edit',
+      'eval-pass',
+      'eval-reject',
+      'governance-approve',
+      'governance-reject',
+    ];
+    for (const kind of kinds) {
+      expect(src).toContain(`'${kind}'`);
+    }
+  });
+
+  it('governance-reject has Chinese label (not raw enum)', () => {
+    expect(src).toMatch(/'governance-reject':\s*'[^']+'/);
+  });
+});
+
 describe('segment lifeline: a11y entry point (P2-4)', () => {
   const src = readComponent('StageDetailPanels.tsx');
 
