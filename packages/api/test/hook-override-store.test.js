@@ -94,6 +94,22 @@ class FakeRedis {
     }
     return entries.map(([member]) => member);
   }
+
+  /** R7: SETNX — set if not exists (atomic in production Redis). */
+  async setnx(key, value) {
+    if (this.kv.has(key)) return 0;
+    this.kv.set(key, value);
+    return 1;
+  }
+
+  /** R7: INCR — atomic increment (returns new value). */
+  async incr(key) {
+    const val = this.kv.get(key);
+    const num = val ? Number.parseInt(val, 10) : 0;
+    const next = num + 1;
+    this.kv.set(key, String(next));
+    return next;
+  }
 }
 
 // ── Test manifest factories ──
@@ -706,9 +722,10 @@ describe('End-to-end: HookOverrideStore → HookRegistry → HookPipeline', () =
     assert.equal(result.patches.length, 1);
     assert.equal(result.patches[0].content, 'Overridden by operator');
 
-    // Version in trace should be content version from override
+    // R7: Version in trace is now activeEpochVersion (stable monotonic ID),
+    // not contentVersion (mutable edit counter). First override = manifest(1)+1 = 2.
     const firedEvent = result.events.find((e) => e.status === 'fired');
-    assert.equal(firedEvent.version, 1); // contentVersion = 1
+    assert.equal(firedEvent.version, 2); // activeEpochVersion = 2
 
     rmSync(dir, { recursive: true, force: true });
   });
@@ -1373,5 +1390,232 @@ describe('HookRegistry defense-in-depth — limited-edit + provenance (sol round
     );
 
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('Same-ms event ordering (R5 P1-1)', () => {
+  test('event IDs sort by seq, not action name', async () => {
+    const s1 = makeManifest('S1-order');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const orderStore = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    const frozenMs = 1700000000000;
+    const origNow = Date.now;
+    Date.now = () => frozenMs;
+    try {
+      await orderStore.setContentOverride(s1.id, 'v1', 'operator', 'u1');
+      await orderStore.rollback(s1.id, 'u1');
+      await orderStore.setContentOverride(s1.id, 'v2', 'operator', 'u1');
+    } finally {
+      Date.now = origNow;
+    }
+
+    const events = await orderStore.listEvents({ limit: 100 });
+    const actions = events.map((e) => e.action);
+    assert.equal(actions[0], 'content-set', 'first: content-set (v1)');
+    assert.equal(actions[1], 'rollback', 'second: rollback');
+    assert.equal(actions[2], 'content-set', 'third: content-set (v2)');
+  });
+});
+
+describe('P1-3 R6: epochVersion-based version management', () => {
+  test('snapshots keyed by epochVersion (manifest.version+N), activateVersion restores by epochVersion', async () => {
+    const s1 = makeManifest('S1-ver');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    // manifest.version=1, so first override epochVersion=2, second=3
+    await store.setContentOverride(s1.id, 'content-A', 'u1');
+    await store.setContentOverride(s1.id, 'content-B', 'u1');
+
+    const beforeActivate = await store.getOverride(s1.id);
+    assert.equal(beforeActivate.contentVersion, 2);
+    assert.equal(beforeActivate.contentOverride, 'content-B');
+
+    // Activate epochVersion=2 (first override) — content should restore to A
+    await store.activateVersion(s1.id, 2, 'u1');
+
+    const afterActivate = await store.getOverride(s1.id);
+    assert.equal(afterActivate.contentOverride, 'content-A', 'content should be first override');
+    // contentVersion stays at 2 (edit counter, not identity)
+    assert.equal(afterActivate.contentVersion, 2, 'contentVersion is edit count, not reset');
+  });
+
+  test('epochVersion is monotonic: activate→set creates new epochVersion, no collision', async () => {
+    const s1 = makeManifest('S1-mono');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    await store.setContentOverride(s1.id, 'A', 'u1'); // epochVersion=2
+    await store.setContentOverride(s1.id, 'B', 'u1'); // epochVersion=3
+    await store.activateVersion(s1.id, 2, 'u1'); // restore A
+    await store.setContentOverride(s1.id, 'C', 'u1'); // epochVersion=4 (NOT 3!)
+
+    const versions = await store.listVersions(s1.id);
+    assert.equal(versions.length, 3, 'should have 3 snapshots (2,3,4)');
+    assert.equal(versions[0].version, 2);
+    assert.ok(versions[0].contentPreview.includes('A'));
+    assert.equal(versions[1].version, 3);
+    assert.ok(versions[1].contentPreview.includes('B'), 'B must NOT be overwritten by C');
+    assert.equal(versions[2].version, 4);
+    assert.ok(versions[2].contentPreview.includes('C'));
+  });
+
+  test('version-activate event carries epochVersion, not contentVersion', async () => {
+    const s1 = makeManifest('S1-evt');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    await store.setContentOverride(s1.id, 'v1-content', 'u1');
+    await store.setContentOverride(s1.id, 'v2-content', 'u1');
+    await store.activateVersion(s1.id, 2, 'u1', { reason: 'reverting' });
+
+    const events = await store.listEvents({ limit: 100 });
+    const activateEvent = events.find((e) => e.action === 'version-activate');
+    assert.ok(activateEvent, 'version-activate event should exist');
+    assert.equal(activateEvent.epochVersion, 2, 'event should carry epochVersion');
+    assert.equal(activateEvent.contentVersion, undefined, 'contentVersion should NOT be on activate events');
+    assert.equal(activateEvent.reason, 'reverting');
+  });
+
+  test('content-set events carry epochVersion', async () => {
+    const s1 = makeManifest('S1-cs-epoch');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    await store.setContentOverride(s1.id, 'hello', 'u1');
+    const events = await store.listEvents({ limit: 100 });
+    assert.equal(events[0].epochVersion, 2, 'first override epochVersion = manifest.version + 1');
+    assert.equal(events[0].contentVersion, 1, 'contentVersion is edit count (1)');
+  });
+
+  test('activateVersion throws for nonexistent epochVersion', async () => {
+    const s1 = makeManifest('S1-nosnap');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    await assert.rejects(() => store.activateVersion(s1.id, 99, 'u1'), /No content snapshot/);
+  });
+
+  test('listVersions returns all epochVersion snapshots in order', async () => {
+    const s1 = makeManifest('S1-list');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    await store.setContentOverride(s1.id, 'alpha', 'u1');
+    await store.setContentOverride(s1.id, 'beta', 'u1');
+
+    const versions = await store.listVersions(s1.id);
+    assert.equal(versions.length, 2);
+    assert.equal(versions[0].version, 2, 'first epochVersion = manifest+1 = 2');
+    assert.ok(versions[0].contentPreview.includes('alpha'));
+    assert.equal(versions[1].version, 3, 'second epochVersion = 3');
+  });
+
+  // ── R7 regression: activeEpochVersion propagation ──
+
+  test('setContentOverride sets activeEpochVersion on the override (R7)', async () => {
+    const s1 = makeManifest('S1-aev-set');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    await store.setContentOverride(s1.id, 'v2 content', 'u1');
+    const override = await store.getOverride(s1.id);
+    assert.equal(override.activeEpochVersion, 2, 'activeEpochVersion = epochVersion from setContentOverride');
+
+    await store.setContentOverride(s1.id, 'v3 content', 'u1');
+    const override2 = await store.getOverride(s1.id);
+    assert.equal(override2.activeEpochVersion, 3, 'activeEpochVersion advances with each setContentOverride');
+  });
+
+  test('activateVersion sets activeEpochVersion on the override (R7)', async () => {
+    const s1 = makeManifest('S1-aev-activate');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    await store.setContentOverride(s1.id, 'v2 content', 'u1');
+    await store.setContentOverride(s1.id, 'v3 content', 'u1');
+    const before = await store.getOverride(s1.id);
+    assert.equal(before.activeEpochVersion, 3, 'should be at epoch 3');
+
+    // Activate v2 — activeEpochVersion should switch to 2
+    await store.activateVersion(s1.id, 2, 'u1', { reason: 'rollback to v2' });
+    const after = await store.getOverride(s1.id);
+    assert.equal(after.activeEpochVersion, 2, 'activateVersion should set activeEpochVersion to target');
+  });
+
+  test('clearContentOverride removes activeEpochVersion (R7)', async () => {
+    const s1 = makeManifest('S1-aev-clear');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    await store.setContentOverride(s1.id, 'v2 content', 'u1');
+    const before = await store.getOverride(s1.id);
+    assert.equal(before.activeEpochVersion, 2, 'has activeEpochVersion before clear');
+
+    await store.clearContentOverride(s1.id, 'u1');
+    const after = await store.getOverride(s1.id);
+    assert.equal(after.activeEpochVersion, undefined, 'activeEpochVersion removed after clear');
+  });
+
+  test('rollback removes activeEpochVersion (R7)', async () => {
+    const s1 = makeManifest('S1-aev-rollback');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    await store.setContentOverride(s1.id, 'v2 content', 'u1');
+    await store.rollback(s1.id, 'u1');
+    const after = await store.getOverride(s1.id);
+    assert.equal(after, null, 'rollback deletes entire override');
+  });
+
+  test('concurrent setContentOverride gets distinct epochVersions — no collision (R7)', async () => {
+    const s1 = makeManifest('S1-concurrent');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    // Fire two setContentOverride concurrently — both use SETNX+INCR so
+    // they should get distinct epoch versions and not overwrite snapshots.
+    await Promise.all([
+      store.setContentOverride(s1.id, 'concurrent-A', 'u1'),
+      store.setContentOverride(s1.id, 'concurrent-B', 'u2'),
+    ]);
+
+    const versions = await store.listVersions(s1.id);
+    assert.equal(versions.length, 2, 'both concurrent writes created distinct snapshots');
+
+    const epochVersions = versions.map((v) => v.version);
+    assert.notEqual(epochVersions[0], epochVersions[1], 'epochVersions must differ');
+
+    // Both contents should be preserved (no overwrite)
+    const contents = versions.map((v) => v.contentPreview);
+    assert.ok(
+      contents.includes('concurrent-A') && contents.includes('concurrent-B'),
+      'both snapshot contents must be preserved',
+    );
   });
 });

@@ -139,15 +139,15 @@ export async function produceSegmentJudgments(
   let seq = 1;
   const datePrefix = snapshot.producedAt.slice(0, 10).replace(/-/g, '');
 
-  for (const [segmentId, stats] of segmentStats.entries()) {
+  for (const [, stats] of segmentStats.entries()) {
     // Correlate: find guard events whose timestamp is within ±120s
     // of any trace where this segment was fired
     const correlated = correlateGuardEvents(stats.firedTimestamps, guardEventIndex);
 
     const judgment = produceVerdict({
       judgmentId: `sj-${datePrefix}-${String(seq).padStart(3, '0')}`,
-      segmentId,
-      segmentVersion: stats.latestVersion,
+      segmentId: stats.segmentId,
+      segmentVersion: stats.version,
       window: { startMs, endMs },
       injectionCount: stats.firedCount,
       violationCount: correlated.count,
@@ -168,14 +168,20 @@ export async function produceSegmentJudgments(
 // ---------------------------------------------------------------------------
 
 interface SegmentStats {
+  segmentId: string;
   firedCount: number;
   /** Timestamps of traces where this segment was fired (for correlation). */
   firedTimestamps: Array<{ threadId: string; catId: string; timestamp: number }>;
-  latestVersion: number | null;
+  version: number | null;
 }
 
 /** IDs that represent v0 fallback data, not per-hook segments. */
 const SKIP_SEGMENT_IDS = new Set(['per-turn-aggregate', 'session-init-pack-only']);
+
+/** Composite key for per-version grouping (R7). */
+function segmentVersionKey(segmentId: string, version: number | null): string {
+  return version != null ? `${segmentId}::${version}` : segmentId;
+}
 
 function isFired(seg: { status: string; pipelineStatus?: string }): boolean {
   return seg.status === 'observed' && (seg.pipelineStatus === 'fired' || !seg.pipelineStatus);
@@ -188,10 +194,14 @@ function aggregateSegmentStats(traces: InjectionTraceSummary[]): Map<string, Seg
     for (const seg of trace.segments) {
       if (SKIP_SEGMENT_IDS.has(seg.segmentId)) continue;
 
-      let entry = stats.get(seg.segmentId);
+      // R7: group by (segmentId, version) composite key so traces from
+      // different versions produce independent judgments instead of one
+      // mixed-metric judgment. Traces without version fall back to bare segmentId.
+      const key = segmentVersionKey(seg.segmentId, seg.version ?? null);
+      let entry = stats.get(key);
       if (!entry) {
-        entry = { firedCount: 0, firedTimestamps: [], latestVersion: null };
-        stats.set(seg.segmentId, entry);
+        entry = { segmentId: seg.segmentId, firedCount: 0, firedTimestamps: [], version: seg.version ?? null };
+        stats.set(key, entry);
       }
 
       if (isFired(seg)) {
@@ -202,8 +212,6 @@ function aggregateSegmentStats(traces: InjectionTraceSummary[]): Map<string, Seg
           timestamp: trace.timestamp,
         });
       }
-
-      if (seg.version != null) entry.latestVersion = seg.version;
     }
   }
 

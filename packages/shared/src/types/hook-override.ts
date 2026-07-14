@@ -26,6 +26,12 @@ export interface HookOverride {
   contentOverride?: string;
   /** Override content version (incremented on each content change). */
   contentVersion?: number;
+  /**
+   * Active epoch version — stable monotonic ID (R7 fix).
+   * Propagated to trace pipeline for per-version eval grouping.
+   * Set by setContentOverride/activateVersion, cleared by rollback/clear.
+   */
+  activeEpochVersion?: number;
   /** Who set contentOverride (field-level provenance, sol P1 fix). */
   contentSource?: HookOverrideSource;
   /**
@@ -46,7 +52,7 @@ export interface HookOverride {
 // ---------------------------------------------------------------------------
 
 /** Possible override actions, recorded as change events. */
-export type OverrideAction = 'enable' | 'disable' | 'content-set' | 'content-clear' | 'rollback';
+export type OverrideAction = 'enable' | 'disable' | 'content-set' | 'content-clear' | 'rollback' | 'version-activate';
 
 /** Immutable record of an override change. TTL=0 (permanent, Iron Law 5). */
 export interface OverrideChangeEvent {
@@ -59,6 +65,14 @@ export interface OverrideChangeEvent {
   actorId: string;
   /** Why this change was made (audit trail). */
   reason?: string;
+  /** Content version at time of event (content-set only). Absent on legacy events. */
+  contentVersion?: number;
+  /**
+   * Stable epoch version ID (P1-3 R6 fix). Monotonic, never resets.
+   * Maps 1:1 to chain VersionEpoch.version. Used for snapshot keys
+   * and version-activate target resolution. Absent on pre-R6 events.
+   */
+  epochVersion?: number;
 }
 
 // ---------------------------------------------------------------------------

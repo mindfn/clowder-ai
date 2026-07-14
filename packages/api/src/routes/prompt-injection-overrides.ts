@@ -86,6 +86,40 @@ function parseOverrideBody(raw: unknown): { action: OverrideAction; reason: stri
   return { action: action as OverrideAction, reason };
 }
 
+function parseActivateBody(raw: unknown): { epochVersion: number; reason: string } | { error: string } {
+  const body = isRecord(raw) ? raw : {};
+  const epochVersion = typeof body.epochVersion === 'number' ? body.epochVersion : null;
+  if (epochVersion === null || !Number.isFinite(epochVersion) || epochVersion < 1) {
+    return { error: 'epochVersion (positive integer) is required' };
+  }
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+  if (!reason) return { error: 'reason is required (audit trail)' };
+  return { epochVersion, reason };
+}
+
+function parseContentBody(raw: unknown): { content: string; reason: string } | { error: string } {
+  const body = isRecord(raw) ? raw : {};
+  const content = typeof body.content === 'string' ? body.content : null;
+  if (!content) return { error: 'content (string) is required' };
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+  if (!reason) return { error: 'reason is required (audit trail)' };
+  return { content, reason };
+}
+
+/** Map store errors to HTTP status codes. Returns null if not a known gate error. */
+function mapGateError(err: unknown, reply: FastifyReply): boolean {
+  if (err instanceof OverrideGateError) {
+    const status = err.gate === 'unknown-hook' ? 404 : 409;
+    reply.status(status).send({ error: err.message, gate: err.gate, hookId: err.hookId });
+    return true;
+  }
+  if (err instanceof Error && err.message.includes('No content snapshot')) {
+    reply.status(404).send({ error: err.message });
+    return true;
+  }
+  return false;
+}
+
 export const promptInjectionOverrideRoutes: FastifyPluginAsync<PromptInjectionOverrideRoutesOptions> = async (
   app,
   opts,
@@ -122,12 +156,62 @@ export const promptInjectionOverrideRoutes: FastifyPluginAsync<PromptInjectionOv
       const override = await store.getOverride(hookId);
       return reply.send({ ok: true, hookId, action: parsed.action, override });
     } catch (err) {
-      if (err instanceof OverrideGateError) {
-        // unknown-hook = addressing error (404); policy gates = manifest conflict (409).
-        const status = err.gate === 'unknown-hook' ? 404 : 409;
-        return reply.status(status).send({ error: err.message, gate: err.gate, hookId: err.hookId });
-      }
-      throw err;
+      if (!mapGateError(err, reply)) throw err;
+    }
+  });
+
+  // ── P1-3: Version management routes ──────────────────────────
+
+  // List all version snapshots for a hook (epochVersion-keyed).
+  app.get('/api/prompt-hooks/:hookId/versions', async (request, reply) => {
+    const userId = requireSession(request, reply);
+    if (!userId) return;
+    if (!opts.overrideStore) {
+      return reply.status(503).send({ error: 'override store unavailable (redis off)' });
+    }
+    const { hookId } = request.params as { hookId: string };
+    const versions = await opts.overrideStore.listVersions(hookId);
+    return reply.send({ hookId, versions });
+  });
+
+  // Activate a specific version by epochVersion.
+  app.post('/api/prompt-hooks/:hookId/versions/activate', async (request, reply) => {
+    const userId = requireWriteAuth(request, reply);
+    if (!userId) return;
+    if (!opts.overrideStore) {
+      return reply.status(503).send({ error: 'override store unavailable (redis off)' });
+    }
+    const { hookId } = request.params as { hookId: string };
+    const parsed = parseActivateBody(request.body);
+    if ('error' in parsed) return reply.status(400).send({ error: parsed.error });
+
+    try {
+      await opts.overrideStore.activateVersion(hookId, parsed.epochVersion, userId, { reason: parsed.reason });
+      const override = await opts.overrideStore.getOverride(hookId);
+      return reply.send({ ok: true, hookId, epochVersion: parsed.epochVersion, override });
+    } catch (err) {
+      if (!mapGateError(err, reply)) throw err;
+    }
+  });
+
+  // Create a new version (content override). Creates epochVersion snapshot.
+  app.post('/api/prompt-hooks/:hookId/versions', async (request, reply) => {
+    const userId = requireWriteAuth(request, reply);
+    if (!userId) return;
+    if (!opts.overrideStore) {
+      return reply.status(503).send({ error: 'override store unavailable (redis off)' });
+    }
+    const { hookId } = request.params as { hookId: string };
+    const parsed = parseContentBody(request.body);
+    if ('error' in parsed) return reply.status(400).send({ error: parsed.error });
+
+    try {
+      await opts.overrideStore.setContentOverride(hookId, parsed.content, userId, { reason: parsed.reason });
+      const versions = await opts.overrideStore.listVersions(hookId);
+      const override = await opts.overrideStore.getOverride(hookId);
+      return reply.send({ ok: true, hookId, override, versions });
+    } catch (err) {
+      if (!mapGateError(err, reply)) throw err;
     }
   });
 };

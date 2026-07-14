@@ -21,7 +21,10 @@ function readComponent(name: string): string {
 }
 
 describe('segment lifeline: guard event attribution (P2-3)', () => {
-  const src = readComponent('SegmentLifelineModal.tsx');
+  // Guard event rendering (attribution hint, GuardEvent interface) moved to
+  // LifelineStageDetail.tsx in Phase D chain refactor. SegmentLifelineModal
+  // is now the outer shell; LifelineStageDetail renders stage-specific panels.
+  const src = readComponent('LifelineStageDetail.tsx');
 
   it('GuardEvent interface includes attribution field', () => {
     // The interface must declare the attribution field from the API

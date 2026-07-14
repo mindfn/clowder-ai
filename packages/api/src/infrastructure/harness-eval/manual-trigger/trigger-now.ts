@@ -138,6 +138,8 @@ export async function handleTriggerNow(
         );
         if (judgments.length > 0) {
           precomputedEvidence += `\n\n${formatJudgmentsForEvidence(judgments)}`;
+          // F257 Phase D: persist latest judgments for lifeline API consumption
+          await deps.judgmentCache?.updateBatch(judgments);
         }
       }
 
