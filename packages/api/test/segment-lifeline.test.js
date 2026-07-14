@@ -87,6 +87,18 @@ class FakeRedis {
     const s = this.sets.get(key);
     return s ? [...s] : [];
   }
+
+  // SCAN — minimal impl for backfill testing (returns all matches in one batch).
+  // No keyPrefix simulation: FakeRedis stores keys without prefix, matching
+  // the backfill code's `prefix = redis.options?.keyPrefix ?? ''` → '' path.
+  async scan(_cursor, ...args) {
+    const matchIdx = args.indexOf('MATCH');
+    const pattern = matchIdx >= 0 ? args[matchIdx + 1] : '*';
+    const escaped = pattern.replace(/[-/\\^$+?.()|[\]{}]/g, '\\$&');
+    const regex = new RegExp(`^${escaped.replace(/\*/g, '.*')}$`);
+    const allKeys = new Set([...this.kv.keys(), ...this.sorted.keys()]);
+    return ['0', [...allKeys].filter((k) => regex.test(k))];
+  }
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -150,6 +162,42 @@ describe('InjectionTraceStore.listTracedThreadIds', () => {
 
     const threadIds = await store.listTracedThreadIds();
     assert.deepEqual(threadIds, []);
+  });
+
+  test('backfills registry from pre-existing index keys when SET is empty', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const store = new InjectionTraceStore(redis);
+
+    // Simulate pre-existing data: index sorted sets exist (from old persist()
+    // calls before registry SET was added) but registry SET is empty.
+    await redis.zadd('injection-trace-index:thread-old-A', 1000, 'turn-1');
+    await redis.zadd('injection-trace-index:thread-old-B', 2000, 'turn-2');
+    assert.equal((await redis.smembers('injection-trace-thread-registry')).length, 0);
+
+    // listTracedThreadIds triggers lazy backfill via SCAN
+    const threadIds = await store.listTracedThreadIds();
+    assert.ok(threadIds.includes('thread-old-A'), 'should discover thread-old-A');
+    assert.ok(threadIds.includes('thread-old-B'), 'should discover thread-old-B');
+    assert.equal(threadIds.length, 2);
+  });
+
+  test('skips backfill when registry already populated', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const store = new InjectionTraceStore(redis);
+
+    // persist() populates both index and registry
+    const s = makeSummary('thread-A', 'turn-1', 1000, 'opus', [makeSegment('S-identity')]);
+    await store.persist(s, makeDetail('thread-A', 'turn-1'));
+
+    // Pre-existing index key NOT in registry (old data) — but since registry
+    // is already non-empty, backfill skips and this thread stays invisible.
+    await redis.zadd('injection-trace-index:thread-orphan', 500, 'turn-0');
+
+    const threadIds = await store.listTracedThreadIds();
+    assert.ok(threadIds.includes('thread-A'), 'registry entry from persist()');
+    assert.ok(!threadIds.includes('thread-orphan'), 'backfill skipped — orphan not discovered');
   });
 });
 

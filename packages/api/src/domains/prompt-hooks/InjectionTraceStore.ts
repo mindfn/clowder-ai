@@ -34,6 +34,7 @@ const DEFAULT_DETAIL_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 export class InjectionTraceStore {
   private readonly detailTtl: number;
+  private backfillPromise: Promise<void> | null = null;
 
   constructor(
     private readonly redis: RedisClient,
@@ -122,15 +123,55 @@ export class InjectionTraceStore {
   }
 
   /**
+   * F257 Phase D: One-time backfill of the thread registry SET from pre-existing
+   * index keys. Handles the cold-start gap: traces persisted before the registry
+   * SET was added have index sorted sets but no SADD entry.
+   *
+   * Uses prefix-aware SCAN (ioredis keyPrefix does NOT apply to SCAN MATCH,
+   * so we manually prepend the prefix). Idempotent: skips if registry already
+   * populated. Called lazily on first listTracedThreadIds() — runs once per
+   * process lifetime.
+   */
+  private async backfillRegistry(): Promise<void> {
+    const existing = await this.redis.smembers(THREAD_REGISTRY_KEY);
+    if (existing.length > 0) return;
+
+    const prefix = this.redis.options?.keyPrefix ?? '';
+    const pattern = `${prefix}${INDEX_PREFIX}*`;
+    const prefixLen = prefix.length + INDEX_PREFIX.length;
+    const discovered = new Set<string>();
+
+    let cursor = '0';
+    do {
+      // Type assertion: ioredis scan overloads cause circular inference in do-while
+      const result = (await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200)) as [string, string[]];
+      cursor = result[0];
+      for (const key of result[1]) {
+        const threadId = key.slice(prefixLen);
+        if (threadId) discovered.add(threadId);
+      }
+    } while (cursor !== '0');
+
+    if (discovered.size > 0) {
+      await this.redis.sadd(THREAD_REGISTRY_KEY, ...discovered);
+    }
+  }
+
+  /**
    * F257 Phase D: Discover all thread IDs that have injection trace data.
    * Used by the segment lifeline endpoint to scan across all threads.
    *
-   * Uses a Redis SET (SMEMBERS) instead of SCAN because ioredis keyPrefix
-   * (default 'cat-cafe:') does NOT apply to SCAN MATCH patterns, causing
-   * zero matches in production. SADD/SMEMBERS respect keyPrefix correctly.
-   * The registry SET is populated on every persist() call.
+   * Primary: Redis SET (SMEMBERS) populated by persist() SADD calls.
+   * Fallback: one-time backfill via prefix-aware SCAN for pre-existing data.
+   * SADD/SMEMBERS respect ioredis keyPrefix; SCAN MATCH does not.
    */
   async listTracedThreadIds(): Promise<string[]> {
+    if (!this.backfillPromise) {
+      this.backfillPromise = this.backfillRegistry().catch(() => {
+        this.backfillPromise = null; // Allow retry on transient failure
+      });
+    }
+    await this.backfillPromise;
     return this.redis.smembers(THREAD_REGISTRY_KEY);
   }
 
