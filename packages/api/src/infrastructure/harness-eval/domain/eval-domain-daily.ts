@@ -20,6 +20,7 @@ import type { GuardRejectionEventLog } from '../GuardRejectionEventLog.js';
 import { produceHarnessLedgerRunSnapshot } from '../harness-ledger-snapshot-provider.js';
 import { ensureEvalDomainThreads } from '../hub/eval-hub-thread-ensure.js';
 import { inventoryLegacyTasks, type LegacyScheduledTaskLike } from '../legacy-task-cleanup.js';
+import { formatJudgmentsForEvidence, produceJudgmentsFromSnapshot } from '../manual-trigger/trigger-now-judgments.js';
 import {
   buildEvidencePrereqSkippedMessage,
   type EvidencePrereqProbe,
@@ -49,6 +50,8 @@ export interface EvalDomainScheduleOpts {
    * scheduled eval skips snapshot injection.
    */
   guardRejectionLog?: GuardRejectionEventLog;
+  /** F257 judgment engine: InjectionTraceStore for per-segment verdict production. */
+  traceStore?: import('../../../domains/prompt-hooks/InjectionTraceStore.js').InjectionTraceStore;
   /**
    * cloud R6 P2 (PR-2): runtime-wired publish-verdict domain set. Bootstrap (index.ts)
    * passes `new Set(Object.keys(verdictGenerators))` here so the scheduled daily/weekly
@@ -264,6 +267,18 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
               harnessFeedbackRoot: config.harnessFeedbackRoot,
             });
             precomputedEvidence = snapshotResult.summary;
+
+            // F257: Produce per-segment judgments (deterministic, no LLM).
+            if (config.traceStore) {
+              const judgments = await produceJudgmentsFromSnapshot(
+                config.traceStore,
+                snapshotResult,
+                effectiveDomain.evalCat.catId,
+              );
+              if (judgments.length > 0) {
+                precomputedEvidence += `\n\n${formatJudgmentsForEvidence(judgments)}`;
+              }
+            }
 
             // F257 sub-item 1: Zero events → skip invocation (LLM cost = 0).
             // Snapshot produced OK but observation window is empty — nothing to attribute.

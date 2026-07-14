@@ -76,6 +76,8 @@ export interface EvalHubRoutesOptions {
   agentKeyRegistry?: AgentKeyAuthRegistry;
   /** KD-17: GuardRejectionEventLog for eval:harness-ledger snapshot-first manual trigger. */
   guardRejectionLog?: GuardRejectionEventLog;
+  /** F257: InjectionTraceStore for per-segment judgment engine (manual trigger path). */
+  traceStore?: import('../domains/prompt-hooks/InjectionTraceStore.js').InjectionTraceStore;
 }
 
 function requireSession(request: FastifyRequest, reply: FastifyReply): string | null {
@@ -230,6 +232,8 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
         wiredPublishDomains: new Set(Object.keys(opts.verdictGenerators ?? {})),
         // KD-17: pass guardRejectionLog for eval:harness-ledger snapshot-first.
         guardRejectionLog: opts.guardRejectionLog,
+        // F257: pass traceStore for per-segment judgment engine.
+        traceStore: opts.traceStore,
       },
       { domainId, userId },
     );

@@ -51,6 +51,15 @@ class FakeRedis {
     return entries.slice(start, stop + 1).map(([member]) => member);
   }
 
+  async zrangebyscore(key, min, max) {
+    const set = this.sorted.get(key);
+    if (!set) return [];
+    return [...set.entries()]
+      .filter(([, score]) => score >= min && score <= max)
+      .sort((a, b) => a[1] - b[1])
+      .map(([member]) => member);
+  }
+
   async zrem(key, member) {
     const set = this.sorted.get(key);
     if (!set) return 0;
@@ -274,6 +283,174 @@ describe('InjectionTraceStore', () => {
     assert.equal(await store.getDetail('th1', 't1'), null);
     const { total } = await store.listTurnIds('th1');
     assert.equal(total, 0);
+  });
+
+  test('queryWindow returns summaries within time range', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const store = new InjectionTraceStore(redis);
+
+    const base = {
+      sessionId: 's1',
+      threadId: 'th1',
+      catId: 'ragdoll',
+      segments: [
+        {
+          segmentId: 'S1',
+          stage: 'session-init',
+          status: 'observed',
+          contentHash: 'a',
+          charCount: 10,
+          tokenEstimate: 3,
+        },
+      ],
+      delivery: [],
+      totalCharCount: 10,
+      totalTokenEstimate: 3,
+      totalSegmentsObserved: 1,
+      totalSegmentsAbsent: 0,
+      durationMs: 0,
+    };
+    const baseDetail = {
+      threadId: 'th1',
+      catId: 'ragdoll',
+      sessionContentHash: 'a',
+      turnContentHash: null,
+      sessionCharCount: 10,
+      sessionTokenEstimate: 3,
+      turnCharCount: 0,
+      turnTokenEstimate: 0,
+      segments: base.segments,
+    };
+
+    // Three turns: ts=1000 (before), ts=2000 (in window), ts=3000 (in window), ts=5000 (after)
+    await store.persist(
+      { ...base, turnId: 'before', timestamp: 1000 },
+      { ...baseDetail, turnId: 'before', timestamp: 1000 },
+    );
+    await store.persist(
+      { ...base, turnId: 'in-1', timestamp: 2000 },
+      { ...baseDetail, turnId: 'in-1', timestamp: 2000 },
+    );
+    await store.persist(
+      { ...base, turnId: 'in-2', timestamp: 3000 },
+      { ...baseDetail, turnId: 'in-2', timestamp: 3000 },
+    );
+    await store.persist(
+      { ...base, turnId: 'after', timestamp: 5000 },
+      { ...baseDetail, turnId: 'after', timestamp: 5000 },
+    );
+
+    // Query window [1500, 4000] — should include in-1 (2000) and in-2 (3000), exclude before (1000) and after (5000)
+    const results = await store.queryWindow('th1', 1500, 4000);
+    assert.equal(results.length, 2);
+    assert.equal(results[0].turnId, 'in-1');
+    assert.equal(results[1].turnId, 'in-2');
+  });
+
+  test('queryWindow returns empty for no matches', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const store = new InjectionTraceStore(redis);
+
+    const base = {
+      sessionId: 's1',
+      threadId: 'th1',
+      catId: 'ragdoll',
+      segments: [],
+      delivery: [],
+      totalCharCount: 0,
+      totalTokenEstimate: 0,
+      totalSegmentsObserved: 0,
+      totalSegmentsAbsent: 0,
+      durationMs: 0,
+    };
+    const baseDetail = {
+      threadId: 'th1',
+      catId: 'ragdoll',
+      sessionContentHash: null,
+      turnContentHash: null,
+      sessionCharCount: 0,
+      sessionTokenEstimate: 0,
+      turnCharCount: 0,
+      turnTokenEstimate: 0,
+      segments: [],
+    };
+
+    await store.persist({ ...base, turnId: 't1', timestamp: 1000 }, { ...baseDetail, turnId: 't1', timestamp: 1000 });
+
+    // Window entirely before or after existing data
+    const before = await store.queryWindow('th1', 0, 500);
+    assert.equal(before.length, 0);
+    const after = await store.queryWindow('th1', 2000, 3000);
+    assert.equal(after.length, 0);
+  });
+
+  test('queryWindow boundary: start-inclusive, end-exclusive [start, end)', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const store = new InjectionTraceStore(redis);
+
+    const base = {
+      sessionId: 's1',
+      threadId: 'th1',
+      catId: 'ragdoll',
+      segments: [],
+      delivery: [],
+      totalCharCount: 0,
+      totalTokenEstimate: 0,
+      totalSegmentsObserved: 0,
+      totalSegmentsAbsent: 0,
+      durationMs: 0,
+    };
+    const baseDetail = {
+      threadId: 'th1',
+      catId: 'ragdoll',
+      sessionContentHash: null,
+      turnContentHash: null,
+      sessionCharCount: 0,
+      sessionTokenEstimate: 0,
+      turnCharCount: 0,
+      turnTokenEstimate: 0,
+      segments: [],
+    };
+
+    await store.persist(
+      { ...base, turnId: 'at-start', timestamp: 1000 },
+      { ...baseDetail, turnId: 'at-start', timestamp: 1000 },
+    );
+    await store.persist(
+      { ...base, turnId: 'at-end', timestamp: 2000 },
+      { ...baseDetail, turnId: 'at-end', timestamp: 2000 },
+    );
+
+    // [1000, 2000): includes start boundary (1000), excludes end boundary (2000)
+    // Matches GuardRejectionEventLog.queryWindow contract.
+    const results = await store.queryWindow('th1', 1000, 2000);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].turnId, 'at-start');
+
+    // Start-inclusive: exact start boundary included
+    const startExact = await store.queryWindow('th1', 1000, 1001);
+    assert.equal(startExact.length, 1);
+    assert.equal(startExact[0].turnId, 'at-start');
+
+    // End-exclusive: [1000, 1000) is empty range
+    const emptyRange = await store.queryWindow('th1', 1000, 1000);
+    assert.equal(emptyRange.length, 0);
+
+    // End-inclusive requires end+1: [1000, 2001) includes both
+    const bothInclusive = await store.queryWindow('th1', 1000, 2001);
+    assert.equal(bothInclusive.length, 2);
+  });
+
+  test('queryWindow returns empty for unknown threadId', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const store = new InjectionTraceStore(redis);
+
+    const results = await store.queryWindow('nonexistent', 0, 999999);
+    assert.equal(results.length, 0);
   });
 
   test('getSummary returns null for missing key', async () => {
