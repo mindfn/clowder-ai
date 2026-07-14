@@ -19,6 +19,7 @@ import {
 } from './lifecycle-stages';
 import { SettingsBadge, SettingsText } from './primitives';
 import { SegmentEditorModal } from './SegmentEditorModal';
+import { SegmentLifelineModal } from './SegmentLifelineModal';
 
 // ── Types (shared with InjectionManifestContent) ─────────────
 
@@ -224,6 +225,7 @@ function SubStageGroup({ subStage, segments }: { subStage: SubStage; segments: M
 function SegmentRow({ segment: s }: { segment: ManifestSegment }) {
   const [editorOpen, setEditorOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
+  const [lifelineOpen, setLifelineOpen] = useState(false);
   const tags = resolveSegmentTags(s.safetyTier, s.governanceTier, s.allowLocalOverride);
   // Hooks are viewable only when source points to a file (not a directory)
   const isViewable = s.sourceType === 'template' || (s.sourceType === 'hook' && !!s.source && !s.source.endsWith('/'));
@@ -262,7 +264,18 @@ function SegmentRow({ segment: s }: { segment: ManifestSegment }) {
                 已知问题
               </SettingsBadge>
             )}
-            <span className="ml-auto text-xs opacity-50">
+            <span className="ml-auto flex items-center gap-2 text-xs opacity-50">
+              {/* biome-ignore lint/a11y/useKeyWithClickEvents: supplementary action */}
+              <span
+                className="cursor-pointer hover:opacity-80"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setLifelineOpen(true);
+                }}
+                title="查看生命线"
+              >
+                📊
+              </span>
               {isViewable ? (s.allowLocalOverride ? '编辑' : '查看') : infoOpen ? '收起' : '详情'}
             </span>
           </div>
@@ -300,6 +313,9 @@ function SegmentRow({ segment: s }: { segment: ManifestSegment }) {
           allowLocalOverride={s.allowLocalOverride}
           onClose={() => setEditorOpen(false)}
         />
+      )}
+      {lifelineOpen && (
+        <SegmentLifelineModal segmentId={s.id} segmentName={s.name} onClose={() => setLifelineOpen(false)} />
       )}
     </div>
   );

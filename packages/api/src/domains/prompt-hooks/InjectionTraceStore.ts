@@ -112,6 +112,25 @@ export class InjectionTraceStore {
     return summaries;
   }
 
+  /**
+   * F257 Phase D: Discover all thread IDs that have injection trace data.
+   * Used by the segment lifeline endpoint to scan across all threads.
+   * Uses SCAN (cursor-based) to avoid blocking Redis on large keyspaces.
+   */
+  async listTracedThreadIds(): Promise<string[]> {
+    const pattern = `${INDEX_PREFIX}*`;
+    const threadIds: string[] = [];
+    let cursor = '0';
+    do {
+      const [nextCursor, keys] = await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+      cursor = nextCursor;
+      for (const key of keys) {
+        threadIds.push(key.slice(INDEX_PREFIX.length));
+      }
+    } while (cursor !== '0');
+    return threadIds;
+  }
+
   async deleteTurn(threadId: string, turnId: string): Promise<void> {
     await this.redis.del(summaryKey(threadId, turnId));
     await this.redis.del(detailKey(threadId, turnId));
