@@ -16,6 +16,8 @@ export type ManifestLookup = (hookId: string) => HookManifest | undefined;
 const OVERRIDE_HASH = (ws: string) => `hook-override:${ws}`;
 /** P1-3: per-version content snapshot. HASH {epochVersion → content}. */
 const VERSION_SNAPSHOT = (ws: string, hookId: string) => `hook-override-versions:${ws}:${hookId}`;
+/** R7: atomic epoch counter for race-safe epochVersion assignment. */
+const EPOCH_COUNTER = (ws: string, hookId: string) => `hook-override-epoch-seq:${ws}:${hookId}`;
 
 /** Thrown when an override operation violates manifest safety constraints. */
 export class OverrideGateError extends Error {
@@ -134,6 +136,7 @@ export class HookOverrideStore {
       hookId,
       contentOverride: content,
       contentVersion: (existing?.contentVersion ?? 0) + 1,
+      activeEpochVersion: epochVersion,
       contentSource: source,
       source,
       updatedAt: Date.now(),
@@ -164,7 +167,7 @@ export class HookOverrideStore {
     const source = opts?.source ?? 'operator';
     const existing = await this.getOverride(hookId, ws);
     if (!existing) return;
-    const { contentOverride: _, contentVersion: __, contentSource: _cs, ...rest } = existing;
+    const { contentOverride: _, contentVersion: __, contentSource: _cs, activeEpochVersion: _aev, ...rest } = existing;
     const override: HookOverride = {
       ...rest,
       source,
@@ -214,6 +217,7 @@ export class HookOverrideStore {
       hookId,
       contentOverride: content,
       contentVersion: existing?.contentVersion ?? 1,
+      activeEpochVersion: epochVersion,
       contentSource: source,
       source,
       updatedAt: Date.now(),
@@ -295,10 +299,21 @@ export class HookOverrideStore {
 
   // -- Internal helpers -----------------------------------------------------
 
-  /** Compute next monotonic epochVersion (I3). */
+  /**
+   * Compute next monotonic epochVersion (I3, R7 atomicity fix).
+   *
+   * Uses SETNX + INCR for atomic counter: two concurrent setContentOverride()
+   * calls will always get distinct epoch versions. SETNX initializes the counter
+   * from max(manifestVersion, max_snapshot_key) on first use; INCR is atomic.
+   */
   private async nextEpochVersion(ws: string, hookId: string, manifestVersion: number): Promise<number> {
+    const counterKey = EPOCH_COUNTER(ws, hookId);
+    // Initialize counter from snapshot state if it doesn't exist yet (SETNX = atomic)
     const all = await this.redis.hgetall(VERSION_SNAPSHOT(ws, hookId));
-    if (!all || Object.keys(all).length === 0) return manifestVersion + 1;
-    return Math.max(manifestVersion, ...Object.keys(all).map(Number)) + 1;
+    const maxSnapshot = all ? Math.max(0, ...Object.keys(all).map(Number)) : 0;
+    const initial = Math.max(manifestVersion, maxSnapshot);
+    await this.redis.setnx(counterKey, String(initial));
+    // INCR: atomic increment, returns new value — safe under concurrency
+    return await this.redis.incr(counterKey);
   }
 }

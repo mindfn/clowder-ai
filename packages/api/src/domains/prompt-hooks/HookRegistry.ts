@@ -189,6 +189,10 @@ export class HookRegistry {
     // readonly / limited-edit + contentSource provenance checks.
     if (this.getContentOverride(hookId) !== undefined) {
       const override = this.overrideSnapshot?.get(hookId);
+      // R7: prefer activeEpochVersion (stable monotonic ID) over contentVersion
+      // (mutable edit counter). activeEpochVersion is set by setContentOverride
+      // and activateVersion, cleared by rollback/clear.
+      if (override?.activeEpochVersion !== undefined) return override.activeEpochVersion;
       if (override?.contentVersion !== undefined) return override.contentVersion;
     }
     const hook = this.hooks.get(hookId);

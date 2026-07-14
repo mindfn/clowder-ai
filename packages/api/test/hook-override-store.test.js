@@ -94,6 +94,22 @@ class FakeRedis {
     }
     return entries.map(([member]) => member);
   }
+
+  /** R7: SETNX — set if not exists (atomic in production Redis). */
+  async setnx(key, value) {
+    if (this.kv.has(key)) return 0;
+    this.kv.set(key, value);
+    return 1;
+  }
+
+  /** R7: INCR — atomic increment (returns new value). */
+  async incr(key) {
+    const val = this.kv.get(key);
+    const num = val ? Number.parseInt(val, 10) : 0;
+    const next = num + 1;
+    this.kv.set(key, String(next));
+    return next;
+  }
 }
 
 // ── Test manifest factories ──
@@ -706,9 +722,10 @@ describe('End-to-end: HookOverrideStore → HookRegistry → HookPipeline', () =
     assert.equal(result.patches.length, 1);
     assert.equal(result.patches[0].content, 'Overridden by operator');
 
-    // Version in trace should be content version from override
+    // R7: Version in trace is now activeEpochVersion (stable monotonic ID),
+    // not contentVersion (mutable edit counter). First override = manifest(1)+1 = 2.
     const firedEvent = result.events.find((e) => e.status === 'fired');
-    assert.equal(firedEvent.version, 1); // contentVersion = 1
+    assert.equal(firedEvent.version, 2); // activeEpochVersion = 2
 
     rmSync(dir, { recursive: true, force: true });
   });
@@ -1507,5 +1524,98 @@ describe('P1-3 R6: epochVersion-based version management', () => {
     assert.equal(versions[0].version, 2, 'first epochVersion = manifest+1 = 2');
     assert.ok(versions[0].contentPreview.includes('alpha'));
     assert.equal(versions[1].version, 3, 'second epochVersion = 3');
+  });
+
+  // ── R7 regression: activeEpochVersion propagation ──
+
+  test('setContentOverride sets activeEpochVersion on the override (R7)', async () => {
+    const s1 = makeManifest('S1-aev-set');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    await store.setContentOverride(s1.id, 'v2 content', 'u1');
+    const override = await store.getOverride(s1.id);
+    assert.equal(override.activeEpochVersion, 2, 'activeEpochVersion = epochVersion from setContentOverride');
+
+    await store.setContentOverride(s1.id, 'v3 content', 'u1');
+    const override2 = await store.getOverride(s1.id);
+    assert.equal(override2.activeEpochVersion, 3, 'activeEpochVersion advances with each setContentOverride');
+  });
+
+  test('activateVersion sets activeEpochVersion on the override (R7)', async () => {
+    const s1 = makeManifest('S1-aev-activate');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    await store.setContentOverride(s1.id, 'v2 content', 'u1');
+    await store.setContentOverride(s1.id, 'v3 content', 'u1');
+    const before = await store.getOverride(s1.id);
+    assert.equal(before.activeEpochVersion, 3, 'should be at epoch 3');
+
+    // Activate v2 — activeEpochVersion should switch to 2
+    await store.activateVersion(s1.id, 2, 'u1', { reason: 'rollback to v2' });
+    const after = await store.getOverride(s1.id);
+    assert.equal(after.activeEpochVersion, 2, 'activateVersion should set activeEpochVersion to target');
+  });
+
+  test('clearContentOverride removes activeEpochVersion (R7)', async () => {
+    const s1 = makeManifest('S1-aev-clear');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    await store.setContentOverride(s1.id, 'v2 content', 'u1');
+    const before = await store.getOverride(s1.id);
+    assert.equal(before.activeEpochVersion, 2, 'has activeEpochVersion before clear');
+
+    await store.clearContentOverride(s1.id, 'u1');
+    const after = await store.getOverride(s1.id);
+    assert.equal(after.activeEpochVersion, undefined, 'activeEpochVersion removed after clear');
+  });
+
+  test('rollback removes activeEpochVersion (R7)', async () => {
+    const s1 = makeManifest('S1-aev-rollback');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    await store.setContentOverride(s1.id, 'v2 content', 'u1');
+    await store.rollback(s1.id, 'u1');
+    const after = await store.getOverride(s1.id);
+    assert.equal(after, null, 'rollback deletes entire override');
+  });
+
+  test('concurrent setContentOverride gets distinct epochVersions — no collision (R7)', async () => {
+    const s1 = makeManifest('S1-concurrent');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    // Fire two setContentOverride concurrently — both use SETNX+INCR so
+    // they should get distinct epoch versions and not overwrite snapshots.
+    await Promise.all([
+      store.setContentOverride(s1.id, 'concurrent-A', 'u1'),
+      store.setContentOverride(s1.id, 'concurrent-B', 'u2'),
+    ]);
+
+    const versions = await store.listVersions(s1.id);
+    assert.equal(versions.length, 2, 'both concurrent writes created distinct snapshots');
+
+    const epochVersions = versions.map((v) => v.version);
+    assert.notEqual(epochVersions[0], epochVersions[1], 'epochVersions must differ');
+
+    // Both contents should be preserved (no overwrite)
+    const contents = versions.map((v) => v.contentPreview);
+    assert.ok(
+      contents.includes('concurrent-A') && contents.includes('concurrent-B'),
+      'both snapshot contents must be preserved',
+    );
   });
 });

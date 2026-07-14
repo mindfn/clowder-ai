@@ -26,6 +26,12 @@ export interface HookOverride {
   contentOverride?: string;
   /** Override content version (incremented on each content change). */
   contentVersion?: number;
+  /**
+   * Active epoch version — stable monotonic ID (R7 fix).
+   * Propagated to trace pipeline for per-version eval grouping.
+   * Set by setContentOverride/activateVersion, cleared by rollback/clear.
+   */
+  activeEpochVersion?: number;
   /** Who set contentOverride (field-level provenance, sol P1 fix). */
   contentSource?: HookOverrideSource;
   /**
