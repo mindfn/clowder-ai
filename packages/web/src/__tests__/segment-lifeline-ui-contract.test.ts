@@ -43,29 +43,31 @@ describe('segment lifeline: guard event attribution (P2-3)', () => {
 });
 
 describe('segment lifeline: lifecycle event kind labels (AF-5)', () => {
-  const src = readComponent('LifelineStageDetail.tsx');
+  const uiSrc = readComponent('LifelineStageDetail.tsx');
 
-  it('KIND_LABEL covers all LifecycleEventKind values', () => {
-    // Every kind in the shared type must have a user-facing label.
-    // If a new kind is added to segment-lifecycle.ts but not here,
-    // the UI falls back to raw enum — wrong UX (AF-5 root cause).
-    const kinds = [
-      'auto-iterate',
-      'user-create',
-      'version-activate',
-      'user-edit',
-      'eval-pass',
-      'eval-reject',
-      'governance-approve',
-      'governance-reject',
-    ];
+  // Extract LifecycleEventKind union members from the SHARED type source —
+  // not a hand-copied list. If a new kind is added to segment-lifecycle.ts
+  // but not to KIND_LABEL, this test fails. (AF-5 root cause: hand-copy drifts.)
+  const sharedTypeSrc = readFileSync(
+    path.resolve(__dirname, '..', '..', '..', 'shared', 'src', 'types', 'segment-lifecycle.ts'),
+    'utf-8',
+  );
+  // Match all single-quoted string literals in the LifecycleEventKind union
+  const kindMatches = sharedTypeSrc.match(/export type LifecycleEventKind[\s\S]*?;/);
+  const kinds = kindMatches ? [...kindMatches[0].matchAll(/'([^']+)'/g)].map((m) => m[1]) : [];
+
+  it('shared type has LifecycleEventKind members (test sanity)', () => {
+    expect(kinds.length).toBeGreaterThanOrEqual(8);
+  });
+
+  it('KIND_LABEL covers every LifecycleEventKind from shared types', () => {
     for (const kind of kinds) {
-      expect(src).toContain(`'${kind}'`);
+      expect(uiSrc).toContain(`'${kind}'`);
     }
   });
 
   it('governance-reject has Chinese label (not raw enum)', () => {
-    expect(src).toMatch(/'governance-reject':\s*'[^']+'/);
+    expect(uiSrc).toMatch(/'governance-reject':\s*'[^']+'/);
   });
 });
 

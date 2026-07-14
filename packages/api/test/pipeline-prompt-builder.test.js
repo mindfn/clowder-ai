@@ -157,4 +157,20 @@ describe('PipelinePromptBuilder (AC-P2-6)', () => {
     ppb.resetPipelineSingleton();
     ppb.setOverrideStore(null);
   });
+
+  // Source-contract: index.ts bootstrap must call refreshOverrideSnapshot()
+  // after setOverrideStore(). Without this, the helper test above passes but
+  // the actual server cold-starts with null registry. (R12 P2-2: "调用点 + helper 行为" 闭环)
+  it('index.ts bootstrap calls refreshOverrideSnapshot after setOverrideStore (AF-1 source contract)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const indexSrc = readFileSync(resolve(import.meta.dirname, '../src/index.ts'), 'utf-8');
+
+    // setOverrideStore must appear before refreshOverrideSnapshot in the source
+    const setStoreIdx = indexSrc.indexOf('setOverrideStore(hookOverrideStore)');
+    const refreshIdx = indexSrc.indexOf('await refreshOverrideSnapshot()');
+    assert.ok(setStoreIdx > 0, 'index.ts contains setOverrideStore(hookOverrideStore)');
+    assert.ok(refreshIdx > 0, 'index.ts contains await refreshOverrideSnapshot()');
+    assert.ok(refreshIdx > setStoreIdx, 'refreshOverrideSnapshot() comes after setOverrideStore()');
+  });
 });
