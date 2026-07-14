@@ -13,11 +13,8 @@
  */
 
 import type {
-  EvalStageSummary,
-  GovernanceStageSummary,
   LifecycleEvent,
   OverrideChangeEvent,
-  TracingStageSummary,
   VersionEpoch,
   VersionEpochStatus,
   VersionOrigin,
@@ -64,7 +61,7 @@ export interface ChainBuilderInput {
  * 5. Derive each epoch's status from available data
  */
 export function buildVersionChain(input: ChainBuilderInput): VersionEpoch[] {
-  const { manifestVersion, overrideEvents, observations, currentContentVersion } = input;
+  const { manifestVersion, overrideEvents, observations } = input;
 
   // Merge judgment sources: judgmentHistory (P1-2) takes precedence, cachedJudgment for compat
   const allJudgments: CachedJudgment[] = input.judgmentHistory ?? (input.cachedJudgment ? [input.cachedJudgment] : []);
@@ -124,31 +121,31 @@ function buildEpochsAndTimeline(
 ): { epochs: VersionEpoch[]; timeline: ActivationPoint[] } {
   const epochs: VersionEpoch[] = [createEpoch(manifestVersion, 'manifest', 0)];
   const timeline: ActivationPoint[] = [{ timestamp: 0, epochIndex: 0 }];
+  // R9: track active epoch (not last-created). content-set/activate/rollback/clear update it.
+  let activeIdx = 0;
 
   for (const event of events) {
-    const latestEpoch = epochs[epochs.length - 1];
+    const active = epochs[activeIdx];
 
     if (event.action === 'content-set') {
-      // R8: use event.epochVersion as truth source (stable monotonic ID).
-      // Fallback to incremental for pre-R6 events without epochVersion.
-      const newVersion = event.epochVersion ?? latestEpoch.version + 1;
+      const newVersion = event.epochVersion ?? epochs[epochs.length - 1].version + 1; // monotonic fallback
       const origin: VersionOrigin = event.source === 'operator' ? 'user-create' : 'auto-iterate';
 
-      latestEpoch.events.push({
+      active.events.push({
         eventId: event.eventId,
         kind: origin === 'user-create' ? 'user-create' : 'auto-iterate',
         timestamp: event.timestamp,
         actorId: event.actorId,
-        detail: `v${latestEpoch.version} → v${newVersion}`,
+        detail: `v${active.version} → v${newVersion}`,
       });
 
       const newEpoch = createEpoch(newVersion, origin, event.timestamp);
       const newIndex = epochs.length;
       epochs.push(newEpoch);
+      activeIdx = newIndex;
       timeline.push({ timestamp: event.timestamp, epochIndex: newIndex });
     } else if (event.action === 'rollback' || event.action === 'content-clear') {
-      // Both rollback and content-clear reactivate manifest baseline
-      latestEpoch.events.push({
+      active.events.push({
         eventId: event.eventId,
         kind: 'version-activate',
         timestamp: event.timestamp,
@@ -158,27 +155,27 @@ function buildEpochsAndTimeline(
             ? `rolled back to v${manifestVersion}`
             : `content cleared, reverted to v${manifestVersion}`,
       });
+      activeIdx = 0;
       timeline.push({ timestamp: event.timestamp, epochIndex: 0 });
     } else if (event.action === 'version-activate') {
-      // P1-3 R6 fix: use epochVersion (stable ID) to find target epoch.
-      // Falls back to contentVersion for pre-R6 events (backward compat).
       const targetVersion = event.epochVersion ?? event.contentVersion;
       if (targetVersion != null) {
         const targetIdx = epochs.findIndex((e) => e.version === targetVersion);
         if (targetIdx >= 0) {
-          latestEpoch.events.push({
+          active.events.push({
             eventId: event.eventId,
             kind: 'version-activate',
             timestamp: event.timestamp,
             actorId: event.actorId,
             detail: `activated v${targetVersion}`,
           });
+          activeIdx = targetIdx;
           timeline.push({ timestamp: event.timestamp, epochIndex: targetIdx });
         }
       }
     } else if (event.action === 'enable' || event.action === 'disable') {
       const kind = event.action === 'enable' ? 'governance-approve' : 'eval-reject';
-      latestEpoch.events.push({
+      active.events.push({
         eventId: event.eventId,
         kind: kind as LifecycleEvent['kind'],
         timestamp: event.timestamp,

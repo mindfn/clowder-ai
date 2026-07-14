@@ -809,6 +809,100 @@ describe('buildVersionChain', () => {
     assert.equal(chain[2].isActive, false, 'v2 not active');
   });
 
+  // ── R9: events attach to ACTIVE epoch, not last-created ─────
+  //
+  // State transition table (lifecycle state machine):
+  //   State: { epochs[], activeIdx }
+  //   content-set:      event → epochs[activeIdx], create new, activeIdx = new
+  //   version-activate: event → epochs[activeIdx], activeIdx = target
+  //   rollback:         event → epochs[activeIdx], activeIdx = 0
+  //   content-clear:    event → epochs[activeIdx], activeIdx = 0
+  //   enable/disable:   event → epochs[activeIdx], no active change
+
+  test('R9: disable after activate(v2) goes to v2, not v3 (Red→Green)', async () => {
+    // v1 → content-set(v2) → content-set(v3) → activate(v2) → disable
+    // disable should be on v2 (active), NOT v3 (last created)
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000, epochVersion: 2 }),
+        makeEvent({ action: 'content-set', timestamp: 2000, epochVersion: 3 }),
+        makeEvent({ action: 'version-activate', timestamp: 3000, epochVersion: 2 }),
+        makeEvent({ action: 'disable', timestamp: 4000 }),
+      ],
+      observations: [],
+      judgmentHistory: [],
+      currentContentVersion: 1,
+    });
+
+    assert.equal(chain.length, 3);
+    const v2 = chain.find((e) => e.version === 2);
+    const v3 = chain.find((e) => e.version === 3);
+    // activate event should be on v3 (was active when activate happened)
+    const v3Events = v3.events.map((e) => e.kind);
+    assert.ok(v3Events.includes('version-activate'), 'activate event on v3 (was active)');
+    // disable event should be on v2 (active after activate)
+    const v2Events = v2.events.map((e) => e.kind);
+    assert.ok(v2Events.includes('eval-reject'), 'disable event on v2 (now active)');
+    // v2 should be active
+    assert.equal(v2.isActive, true);
+  });
+
+  test('R9: content-set after activate(v2) branches from v2 (Red→Green)', async () => {
+    // v1 → content-set(v2) → content-set(v3) → activate(v2) → content-set(v4)
+    // The v4 creation event should be on v2 ("v2 → v4"), not v3
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000, epochVersion: 2 }),
+        makeEvent({ action: 'content-set', timestamp: 2000, epochVersion: 3 }),
+        makeEvent({ action: 'version-activate', timestamp: 3000, epochVersion: 2 }),
+        makeEvent({ action: 'content-set', timestamp: 4000, epochVersion: 4 }),
+      ],
+      observations: [],
+      judgmentHistory: [],
+      currentContentVersion: 1,
+    });
+
+    assert.equal(chain.length, 4);
+    const v2 = chain.find((e) => e.version === 2);
+    // v2 should have the "v2 → v4" creation event (it was active when content-set happened)
+    const v2Details = v2.events.map((e) => e.detail);
+    assert.ok(
+      v2Details.some((d) => d.includes('v2') && d.includes('v4')),
+      'v2 has "v2 → v4" event',
+    );
+    // v4 should be active (last content-set)
+    const v4 = chain.find((e) => e.version === 4);
+    assert.equal(v4.isActive, true, 'v4 is active');
+  });
+
+  test('R9: rollback event goes to active epoch, not last-created (Red→Green)', async () => {
+    // v1 → content-set(v2) → content-set(v3) → activate(v2) → rollback
+    // rollback event should be on v2 (active), not v3 (last created)
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000, epochVersion: 2 }),
+        makeEvent({ action: 'content-set', timestamp: 2000, epochVersion: 3 }),
+        makeEvent({ action: 'version-activate', timestamp: 3000, epochVersion: 2 }),
+        makeEvent({ action: 'rollback', timestamp: 4000 }),
+      ],
+      observations: [],
+      judgmentHistory: [],
+      currentContentVersion: 1,
+    });
+
+    const v2 = chain.find((e) => e.version === 2);
+    const v2Events = v2.events.map((e) => e.detail);
+    assert.ok(
+      v2Events.some((d) => d.includes('rolled back')),
+      'rollback event on v2 (was active)',
+    );
+    // After rollback, manifest is active
+    assert.equal(chain[0].isActive, true, 'v1 (manifest) active after rollback');
+  });
+
   test('rollback redistributes judgments: post-rollback eval goes to manifest', async () => {
     // v1 → content-set@1000 (v2) → rollback@2000 → eval@2500 → content-set@3000 (v3)
     const chain = buildVersionChain({
