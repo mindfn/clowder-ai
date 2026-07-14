@@ -12,6 +12,19 @@ import type { RedisClient } from '@cat-cafe/shared/utils';
 const SUMMARY_PREFIX = 'injection-trace-summary:';
 const DETAIL_PREFIX = 'injection-trace-detail:';
 const INDEX_PREFIX = 'injection-trace-index:';
+/**
+ * F257 Phase D: Registry of thread IDs with trace data.
+ * Uses a Redis SET (SADD/SMEMBERS) instead of SCAN because ioredis keyPrefix
+ * does NOT apply to SCAN MATCH patterns — SADD/SMEMBERS respect keyPrefix.
+ * Populated on every persist() call; read by listTracedThreadIds().
+ */
+const THREAD_REGISTRY_KEY = 'injection-trace-thread-registry';
+/**
+ * Durable marker: set to '1' after the one-time backfill SCAN succeeds.
+ * Decoupled from registry contents — new persist() SADDs don't prevent
+ * legacy threads from being discovered (terra review P1, 2026-07-14).
+ */
+const BACKFILL_DONE_KEY = 'injection-trace-backfill-done';
 
 function summaryKey(threadId: string, turnId: string): string {
   return `${SUMMARY_PREFIX}${threadId}:${turnId}`;
@@ -27,6 +40,7 @@ const DEFAULT_DETAIL_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 export class InjectionTraceStore {
   private readonly detailTtl: number;
+  private backfillPromise: Promise<void> | null = null;
 
   constructor(
     private readonly redis: RedisClient,
@@ -42,6 +56,8 @@ export class InjectionTraceStore {
     await this.redis.set(sKey, JSON.stringify(summary));
     await this.redis.set(dKey, JSON.stringify(detail), 'EX', this.detailTtl);
     await this.redis.zadd(iKey, summary.timestamp, summary.turnId);
+    // F257 Phase D: register thread in discovery SET (SADD respects keyPrefix; SCAN does not).
+    await this.redis.sadd(THREAD_REGISTRY_KEY, summary.threadId);
   }
 
   async getSummary(threadId: string, turnId: string): Promise<InjectionTraceSummary | null> {
@@ -110,6 +126,66 @@ export class InjectionTraceStore {
       if (summary) summaries.push(summary);
     }
     return summaries;
+  }
+
+  /**
+   * F257 Phase D: One-time backfill of the thread registry SET from pre-existing
+   * index keys. Handles the cold-start gap: traces persisted before the registry
+   * SET was added have index sorted sets but no SADD entry.
+   *
+   * Uses prefix-aware SCAN (ioredis keyPrefix does NOT apply to SCAN MATCH,
+   * so we manually prepend the prefix). Controlled by a durable marker key
+   * (BACKFILL_DONE_KEY) — NOT by registry emptiness, because new persist()
+   * calls SADD new threads before backfill runs, making "registry non-empty"
+   * an unreliable signal (terra P1, 2026-07-14).
+   *
+   * Called lazily on first listTracedThreadIds() — runs once per process lifetime.
+   * Marker is set only after success; failure allows retry.
+   */
+  private async backfillRegistry(): Promise<void> {
+    const done = await this.redis.get(BACKFILL_DONE_KEY);
+    if (done) return;
+
+    const prefix = this.redis.options?.keyPrefix ?? '';
+    const pattern = `${prefix}${INDEX_PREFIX}*`;
+    const prefixLen = prefix.length + INDEX_PREFIX.length;
+    const discovered = new Set<string>();
+
+    let cursor = '0';
+    do {
+      // Type assertion: ioredis scan overloads cause circular inference in do-while
+      const result = (await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 200)) as [string, string[]];
+      cursor = result[0];
+      for (const key of result[1]) {
+        const threadId = key.slice(prefixLen);
+        if (threadId) discovered.add(threadId);
+      }
+    } while (cursor !== '0');
+
+    if (discovered.size > 0) {
+      await this.redis.sadd(THREAD_REGISTRY_KEY, ...discovered);
+    }
+    // Mark backfill as complete — only after successful SCAN.
+    // No TTL: marker persists forever (backfill is a one-time migration).
+    await this.redis.set(BACKFILL_DONE_KEY, '1');
+  }
+
+  /**
+   * F257 Phase D: Discover all thread IDs that have injection trace data.
+   * Used by the segment lifeline endpoint to scan across all threads.
+   *
+   * Primary: Redis SET (SMEMBERS) populated by persist() SADD calls.
+   * Fallback: one-time backfill via prefix-aware SCAN for pre-existing data.
+   * SADD/SMEMBERS respect ioredis keyPrefix; SCAN MATCH does not.
+   */
+  async listTracedThreadIds(): Promise<string[]> {
+    if (!this.backfillPromise) {
+      this.backfillPromise = this.backfillRegistry().catch(() => {
+        this.backfillPromise = null; // Allow retry on transient failure
+      });
+    }
+    await this.backfillPromise;
+    return this.redis.smembers(THREAD_REGISTRY_KEY);
   }
 
   async deleteTurn(threadId: string, turnId: string): Promise<void> {

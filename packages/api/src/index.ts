@@ -2080,6 +2080,16 @@ async function main(): Promise<void> {
     await app.register(promptInjectionOverrideRoutes, { overrideStore: hookOverrideStore });
   }
 
+  // F257 Phase D: Segment lifeline endpoint — read-model join for Console lifeline modal.
+  {
+    const { segmentLifelineRoutes } = await import('./routes/segment-lifeline.js');
+    await app.register(segmentLifelineRoutes, {
+      traceStore: injectionTraceStore,
+      guardRejectionLog,
+      overrideStore: hookOverrideStore,
+    });
+  }
+
   // F257 sub-item 2: wire threshold escalation hook into GuardRejectionEventLog.
   // Every event append checks guard accumulation; >= 3 events in 7 days for the
   // same guard triggers an immediate eval:harness-ledger via handleTriggerNow.

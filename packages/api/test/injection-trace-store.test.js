@@ -65,6 +65,26 @@ class FakeRedis {
     if (!set) return 0;
     return set.delete(member) ? 1 : 0;
   }
+
+  // F257 Phase D: SADD/SMEMBERS for thread registry (persist() now calls sadd).
+  async sadd(key, ...members) {
+    const s = this.sets ?? (this.sets = new Map());
+    const existing = s.get(key) ?? new Set();
+    let added = 0;
+    for (const m of members) {
+      if (!existing.has(m)) {
+        existing.add(m);
+        added++;
+      }
+    }
+    s.set(key, existing);
+    return added;
+  }
+
+  async smembers(key) {
+    const s = this.sets?.get(key);
+    return s ? [...s] : [];
+  }
 }
 
 // ── InjectionTraceStore tests ──
