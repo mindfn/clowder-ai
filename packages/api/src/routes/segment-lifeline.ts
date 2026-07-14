@@ -104,7 +104,7 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
     const response = {
       segmentId,
       segmentName,
-      activeVersion: overrideState?.contentVersion ?? manifestVersion,
+      activeVersion: chain.find((e) => e.isActive)?.version ?? manifestVersion,
       chain,
       currentStatus: deriveCurrentStatus(chain),
       window: { startMs: windowStart, endMs: windowEnd },

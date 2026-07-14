@@ -188,12 +188,10 @@ function attachObservations(epochs: VersionEpoch[], observations: SegmentObserva
 }
 
 function findEpochForObservation(epochs: VersionEpoch[], obs: SegmentObservationInput): VersionEpoch | undefined {
-  // Match by version number if available
-  if (obs.version != null) {
-    const match = epochs.find((e) => e.version === obs.version);
-    if (match) return match;
-  }
-  // Fallback: find the epoch whose time range contains this observation
+  // Timestamp-based matching only — version numbers are unreliable because
+  // contentVersion (1-based from HookRegistry) and epoch version (auto-incremented
+  // from manifest baseline) use different namespaces and collide at value 1.
+  // Same approach as attachJudgment() and markActiveEpoch().
   for (let i = epochs.length - 1; i >= 0; i--) {
     if (obs.timestamp >= epochs[i].startedAt) return epochs[i];
   }

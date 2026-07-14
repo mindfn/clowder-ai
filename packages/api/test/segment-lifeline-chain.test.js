@@ -194,6 +194,43 @@ describe('buildVersionChain', () => {
     assert.equal(chain[1].tracing?.observationCount, 2, 'v2 should have 2 observations');
   });
 
+  test('observations with explicit contentVersion use timestamp, not version-number match (R2 P1-1)', async () => {
+    // Scenario: first content-set creates epoch v2 (chain auto-increments from manifest v1=1).
+    // HookRegistry records contentVersion=1 in traces.
+    // Old bug: findEpochForObservation matched version=1 → manifest epoch v1 (WRONG).
+    // Fix: timestamp-based matching → obs at t=1200 (after v2 created at t=1000) → epoch v2.
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [makeEvent({ action: 'content-set', timestamp: 1000 })],
+      observations: [
+        { timestamp: 500, version: 1 }, // before v2 — contentVersion=1, should go to v1 by timestamp
+        { timestamp: 1200, version: 1 }, // after v2 — contentVersion=1, MUST go to v2 by timestamp (not v1!)
+        { timestamp: 1500, version: 2 }, // after v2 — contentVersion=2 from second implicit trace
+      ],
+      cachedJudgment: null,
+      currentContentVersion: 1,
+    });
+
+    assert.equal(chain[0].tracing?.observationCount, 1, 'v1 epoch should have 1 observation (t=500)');
+    assert.equal(chain[1].tracing?.observationCount, 2, 'v2 epoch should have 2 observations (t=1200 + t=1500)');
+  });
+
+  test('activeVersion in chain derives from isActive epoch, not raw contentVersion', async () => {
+    // First content-set: chain epoch v2, contentVersion=1. They must not be confused.
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [makeEvent({ action: 'content-set', timestamp: 1000 })],
+      observations: [],
+      cachedJudgment: null,
+      currentContentVersion: 1,
+    });
+
+    const activeEpoch = chain.find((e) => e.isActive);
+    assert.ok(activeEpoch, 'should have an active epoch');
+    assert.equal(activeEpoch.version, 2, 'active epoch should be v2 (not contentVersion=1)');
+    assert.equal(activeEpoch.origin, 'user-create', 'active epoch should be user-created override');
+  });
+
   // ── Status derivation ────────────────────────────────────────
 
   test('epoch with observations derives tracing status', async () => {
