@@ -100,20 +100,10 @@ interface ActivationPoint {
 }
 
 /**
- * Build epochs AND activation timeline in one pass through override events.
- *
- * Why single-pass (R4 P1-1): separate construction required timestamp-based
- * findIndex lookup to correlate events → epochs. This broke on same-ms
- * content-set events (findIndex always returned first match). Merging the
- * reducer means epochIndex is known at creation time — no lookup needed.
- *
- * Activation state machine:
- *   - t=0: manifest (epoch 0) active
- *   - content-set@T: new override epoch active from T
- *   - rollback@T: manifest (epoch 0) reactivated from T
- *   - content-clear@T: manifest (epoch 0) reactivated from T
- *   - version-activate@T: target version epoch reactivated from T (P1-3)
- *   - enable/disable: no activation change
+ * Single-pass event reducer: epochs + activation timeline (R4 P1-1).
+ * Merged to avoid timestamp-based findIndex (broke on same-ms events).
+ * State machine: content-set/activate → new active; rollback/clear → epoch 0;
+ * enable/disable → no activation change. R9: tracks activeIdx, not last-created.
  */
 function buildEpochsAndTimeline(
   manifestVersion: number,
@@ -174,10 +164,18 @@ function buildEpochsAndTimeline(
         }
       }
     } else if (event.action === 'enable' || event.action === 'disable') {
-      const kind = event.action === 'enable' ? 'governance-approve' : 'eval-reject';
+      // AF-5: distinguish operator governance vs auto-eval actions by event.source
+      const kind: LifecycleEvent['kind'] =
+        event.source === 'operator'
+          ? event.action === 'enable'
+            ? 'governance-approve'
+            : 'governance-reject'
+          : event.action === 'enable'
+            ? 'eval-pass'
+            : 'eval-reject';
       active.events.push({
         eventId: event.eventId,
-        kind: kind as LifecycleEvent['kind'],
+        kind,
         timestamp: event.timestamp,
         actorId: event.actorId,
         detail: event.action === 'enable' ? 'enabled' : 'disabled',

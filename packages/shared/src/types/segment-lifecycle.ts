@@ -23,6 +23,7 @@
  * - eval-pass:        eval judgment: keep / alive
  * - eval-reject:      eval judgment: needs attention
  * - governance-approve: governance decision to approve
+ * - governance-reject:  operator-initiated disable (AF-5: distinct from eval-reject)
  */
 export type LifecycleEventKind =
   | 'auto-iterate'
@@ -31,7 +32,8 @@ export type LifecycleEventKind =
   | 'user-edit'
   | 'eval-pass'
   | 'eval-reject'
-  | 'governance-approve';
+  | 'governance-approve'
+  | 'governance-reject';
 
 /** A single event on the lifecycle chain. */
 export interface LifecycleEvent {
