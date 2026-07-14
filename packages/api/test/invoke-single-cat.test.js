@@ -6934,10 +6934,12 @@ describe('invokeSingleCat audit events (P1 fix)', () => {
       'service should be invoked',
     );
     assert.equal(optionsSeen[0]?.livenessProbe?.stallAutoKill, true, 'cat invocations still opt into stall cleanup');
+    // #1145: Aligned to CLI_TIMEOUT_MS (30 min) — probe can't distinguish "waiting for API"
+    // from "truly stuck", so stall auto-kill should not fire before the CLI hard timeout.
     assert.equal(
       optionsSeen[0]?.livenessProbe?.stallWarningMs,
-      7 * 60_000,
-      'stall auto-kill must leave async sampling and deferred-kill margin before the 10m stale-processing window',
+      30 * 60_000,
+      'stall auto-kill threshold must equal CLI_TIMEOUT_MS (30 min) — no early false kills',
     );
   });
 
