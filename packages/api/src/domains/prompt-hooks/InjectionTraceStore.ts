@@ -12,6 +12,13 @@ import type { RedisClient } from '@cat-cafe/shared/utils';
 const SUMMARY_PREFIX = 'injection-trace-summary:';
 const DETAIL_PREFIX = 'injection-trace-detail:';
 const INDEX_PREFIX = 'injection-trace-index:';
+/**
+ * F257 Phase D: Registry of thread IDs with trace data.
+ * Uses a Redis SET (SADD/SMEMBERS) instead of SCAN because ioredis keyPrefix
+ * does NOT apply to SCAN MATCH patterns — SADD/SMEMBERS respect keyPrefix.
+ * Populated on every persist() call; read by listTracedThreadIds().
+ */
+const THREAD_REGISTRY_KEY = 'injection-trace-thread-registry';
 
 function summaryKey(threadId: string, turnId: string): string {
   return `${SUMMARY_PREFIX}${threadId}:${turnId}`;
@@ -42,6 +49,8 @@ export class InjectionTraceStore {
     await this.redis.set(sKey, JSON.stringify(summary));
     await this.redis.set(dKey, JSON.stringify(detail), 'EX', this.detailTtl);
     await this.redis.zadd(iKey, summary.timestamp, summary.turnId);
+    // F257 Phase D: register thread in discovery SET (SADD respects keyPrefix; SCAN does not).
+    await this.redis.sadd(THREAD_REGISTRY_KEY, summary.threadId);
   }
 
   async getSummary(threadId: string, turnId: string): Promise<InjectionTraceSummary | null> {
@@ -115,20 +124,14 @@ export class InjectionTraceStore {
   /**
    * F257 Phase D: Discover all thread IDs that have injection trace data.
    * Used by the segment lifeline endpoint to scan across all threads.
-   * Uses SCAN (cursor-based) to avoid blocking Redis on large keyspaces.
+   *
+   * Uses a Redis SET (SMEMBERS) instead of SCAN because ioredis keyPrefix
+   * (default 'cat-cafe:') does NOT apply to SCAN MATCH patterns, causing
+   * zero matches in production. SADD/SMEMBERS respect keyPrefix correctly.
+   * The registry SET is populated on every persist() call.
    */
   async listTracedThreadIds(): Promise<string[]> {
-    const pattern = `${INDEX_PREFIX}*`;
-    const threadIds: string[] = [];
-    let cursor = '0';
-    do {
-      const [nextCursor, keys] = await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
-      cursor = nextCursor;
-      for (const key of keys) {
-        threadIds.push(key.slice(INDEX_PREFIX.length));
-      }
-    } while (cursor !== '0');
-    return threadIds;
+    return this.redis.smembers(THREAD_REGISTRY_KEY);
   }
 
   async deleteTurn(threadId: string, turnId: string): Promise<void> {

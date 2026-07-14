@@ -8,12 +8,13 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-// ── FakeRedis with sorted set + scan support ──
+// ── FakeRedis with sorted set + SET (SADD/SMEMBERS) support ──
 
 class FakeRedis {
   constructor() {
     this.kv = new Map();
     this.sorted = new Map();
+    this.sets = new Map(); // key → Set<member> for SADD/SMEMBERS
     this.ttls = new Map();
   }
 
@@ -67,14 +68,24 @@ class FakeRedis {
     return set.delete(member) ? 1 : 0;
   }
 
-  async scan(cursor, ...args) {
-    // Simple SCAN impl: return all keys matching pattern on first call
-    const matchIdx = args.indexOf('MATCH');
-    const pattern = matchIdx >= 0 ? args[matchIdx + 1] : '*';
-    const regex = new RegExp(`^${pattern.replace(/\*/g, '.*')}$`);
-    const allKeys = [...this.kv.keys(), ...this.sorted.keys()];
-    const matched = [...new Set(allKeys)].filter((k) => regex.test(k));
-    return ['0', matched];
+  // Redis SET commands (SADD/SMEMBERS) — used by thread registry.
+  // Unlike SCAN MATCH, these respect ioredis keyPrefix in production.
+  async sadd(key, ...members) {
+    const s = this.sets.get(key) ?? new Set();
+    let added = 0;
+    for (const m of members) {
+      if (!s.has(m)) {
+        s.add(m);
+        added++;
+      }
+    }
+    this.sets.set(key, s);
+    return added;
+  }
+
+  async smembers(key) {
+    const s = this.sets.get(key);
+    return s ? [...s] : [];
   }
 }
 
