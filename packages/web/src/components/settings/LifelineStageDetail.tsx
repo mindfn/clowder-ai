@@ -44,6 +44,8 @@ interface GuardEvent {
   catId: string;
   timestamp: number;
   guardId: string;
+  /** Attribution hint: guard events are window-correlated, not causally linked. */
+  attribution?: 'window-correlated';
 }
 
 interface LifelineStageDetailProps {
@@ -82,8 +84,6 @@ export function LifelineStageDetail({
   );
 }
 
-// ── Version detail ─────────────────────────────────────────────
-
 function VersionDetail({ epoch }: { epoch: VersionEpoch }) {
   const originLabel =
     { manifest: '基线', 'auto-iterate': '自动迭代', 'user-create': '用户创建' }[epoch.origin] ?? epoch.origin;
@@ -121,8 +121,6 @@ function VersionDetail({ epoch }: { epoch: VersionEpoch }) {
     </>
   );
 }
-
-// ── Tracing detail ─────────────────────────────────────────────
 
 function TracingDetail({ epoch, observations }: { epoch: VersionEpoch; observations: Observation[] }) {
   const versionObs = observations.filter((o) => o.version === epoch.version || o.version == null);
@@ -163,8 +161,6 @@ function TracingDetail({ epoch, observations }: { epoch: VersionEpoch; observati
   );
 }
 
-// ── Eval detail ────────────────────────────────────────────────
-
 function EvalDetail({ epoch }: { epoch: VersionEpoch }) {
   const evalData = epoch.eval;
 
@@ -202,8 +198,6 @@ function EvalDetail({ epoch }: { epoch: VersionEpoch }) {
     </>
   );
 }
-
-// ── Governance detail ──────────────────────────────────────────
 
 function GovernanceDetail({
   epoch,
@@ -253,6 +247,11 @@ function GovernanceDetail({
           <SettingsText as="h4" variant="xs" tone="muted" className="mb-2 font-semibold">
             守卫事件 ({guardEvents.length})
           </SettingsText>
+          {guardEvents[0]?.attribution === 'window-correlated' && (
+            <SettingsText as="p" variant="xs" tone="muted" className="mb-2 italic">
+              时间窗口关联，非因果归因
+            </SettingsText>
+          )}
           <div className="max-h-[160px] space-y-1 overflow-y-auto">
             {guardEvents.map((ev) => (
               <Row key={ev.eventId} ts={ev.timestamp}>

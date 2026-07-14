@@ -26,6 +26,8 @@ export interface CachedJudgment {
   correlationConfidence: string;
   evaluatedAt: number;
   runId: string;
+  /** Version of the segment when judgment was produced. Used for epoch attribution. */
+  segmentVersion: number | null;
 }
 
 export class SegmentJudgmentCache {
@@ -48,6 +50,7 @@ export class SegmentJudgmentCache {
         correlationConfidence: j.evidence.correlationConfidence,
         evaluatedAt: j.window.endMs,
         runId: j.producedBy.runId,
+        segmentVersion: j.segmentVersion,
       };
       pipeline.hset(CACHE_KEY, j.segmentId, JSON.stringify(cached));
     }

@@ -177,7 +177,7 @@ export class HookOverrideStore {
       updatedBy: actorId,
     };
     await this.redis.hset(OVERRIDE_HASH(ws), hookId, JSON.stringify(override));
-    await this.recordEvent(ws, hookId, 'content-set', source, actorId, opts?.reason);
+    await this.recordEvent(ws, hookId, 'content-set', source, actorId, opts?.reason, override.contentVersion);
   }
 
   async clearContentOverride(
@@ -345,6 +345,7 @@ export class HookOverrideStore {
     source: HookOverrideSource,
     actorId: string,
     reason?: string,
+    contentVersion?: number,
   ): Promise<void> {
     const timestamp = Date.now();
     // Monotonic seq suffix prevents collision on same-ms same-hook writes (P2 fix)
@@ -359,6 +360,7 @@ export class HookOverrideStore {
       timestamp,
       actorId,
       ...(reason ? { reason } : {}),
+      ...(contentVersion != null ? { contentVersion } : {}),
     };
     // TTL=0: audit events are permanent (Iron Law 5, sol P1-2 fix)
     await this.redis.set(EVENT_KEY(workspaceId, eventId), JSON.stringify(event));

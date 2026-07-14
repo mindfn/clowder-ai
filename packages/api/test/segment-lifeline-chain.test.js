@@ -1,0 +1,295 @@
+/**
+ * F257 Phase D — buildVersionChain() unit tests.
+ *
+ * Red tests for review findings:
+ *   P1-1: activeVersion computation wrong (contentVersion=1 maps to manifest v1)
+ *   P1-2: eval judgment unconditionally attached to latest epoch
+ *   P2-3: no direct tests existed
+ *
+ * Scenarios from reviewer (terra/codex):
+ *   1. Create and activate V2 (first content override)
+ *   2. V2 exists but V1 still active (after rollback)
+ *   3. Rollback then re-create (V3)
+ *   4. Old eval NOT attributed to new version
+ *   5. segmentVersion preserved in judgment attachment
+ */
+
+import assert from 'node:assert/strict';
+import { describe, test } from 'node:test';
+
+// Helper: create a minimal OverrideChangeEvent for tests
+function makeEvent(partial) {
+  return {
+    eventId: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    hookId: 'S1',
+    workspaceId: 'default',
+    source: 'operator',
+    timestamp: 0,
+    actorId: 'user1',
+    ...partial,
+  };
+}
+
+describe('buildVersionChain', () => {
+  /** @type {typeof import('../dist/routes/segment-lifeline-chain.js').buildVersionChain} */
+  let buildVersionChain;
+
+  test('setup: import chain builder', async () => {
+    const mod = await import('../dist/routes/segment-lifeline-chain.js');
+    buildVersionChain = mod.buildVersionChain;
+    assert.ok(buildVersionChain, 'buildVersionChain exported');
+  });
+
+  // ── Baseline ─────────────────────────────────────────────────
+
+  test('manifest-only segment produces single v1 epoch', async () => {
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [],
+      observations: [],
+      cachedJudgment: null,
+      currentContentVersion: null,
+    });
+
+    assert.equal(chain.length, 1);
+    assert.equal(chain[0].version, 1);
+    assert.equal(chain[0].origin, 'manifest');
+    assert.equal(chain[0].isActive, true);
+    assert.equal(chain[0].status, 'idle');
+  });
+
+  // ── P1-1 scenario 1: Create and activate V2 ─────────────────
+
+  test('first content-set creates v2 epoch and marks it active', async () => {
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [makeEvent({ action: 'content-set', timestamp: 1000 })],
+      observations: [],
+      cachedJudgment: null,
+      currentContentVersion: 1,
+    });
+
+    assert.equal(chain.length, 2, 'should have 2 epochs');
+    // V1 = manifest baseline, NOT active
+    assert.equal(chain[0].version, 1);
+    assert.equal(chain[0].isActive, false, 'v1 should NOT be active when content override exists');
+    // V2 = first override, IS active
+    assert.equal(chain[1].version, 2);
+    assert.equal(chain[1].isActive, true, 'v2 should be active when contentVersion=1');
+  });
+
+  // ── P1-1 scenario 2: V2 exists but V1 still active ──────────
+
+  test('v2 exists but v1 is active after rollback', async () => {
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000 }),
+        makeEvent({ action: 'rollback', timestamp: 2000 }),
+      ],
+      observations: [],
+      cachedJudgment: null,
+      currentContentVersion: null, // rolled back → contentVersion cleared
+    });
+
+    assert.equal(chain.length, 2, 'rollback does not remove epoch');
+    assert.equal(chain[0].version, 1);
+    assert.equal(chain[0].isActive, true, 'v1 should be active after rollback');
+    assert.equal(chain[1].version, 2);
+    assert.equal(chain[1].isActive, false, 'v2 should NOT be active after rollback');
+  });
+
+  // ── P1-1 scenario 3: Rollback then re-create ────────────────
+
+  test('rollback then new content-set → v3 active, not v2', async () => {
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000 }),
+        makeEvent({ action: 'rollback', timestamp: 2000 }),
+        makeEvent({ action: 'content-set', timestamp: 3000 }),
+      ],
+      observations: [],
+      cachedJudgment: null,
+      currentContentVersion: 1, // contentVersion restarted after rollback+re-create
+    });
+
+    assert.equal(chain.length, 3, 'should have 3 epochs');
+    assert.equal(chain[0].version, 1);
+    assert.equal(chain[0].isActive, false);
+    assert.equal(chain[1].version, 2);
+    assert.equal(chain[1].isActive, false, 'v2 (old override) should NOT be active');
+    assert.equal(chain[2].version, 3);
+    assert.equal(chain[2].isActive, true, 'v3 (latest override) should be active');
+  });
+
+  // ── P1-2 scenario 4: Old eval NOT on new version ────────────
+
+  test('eval judgment at t=500 is NOT attached to v2 created at t=1000', async () => {
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [makeEvent({ action: 'content-set', timestamp: 1000 })],
+      observations: [],
+      cachedJudgment: {
+        segmentId: 'S1',
+        verdict: 'alive',
+        injectionCount: 10,
+        violationCount: 0,
+        correlationConfidence: 'window',
+        evaluatedAt: 500, // BEFORE v2 was created at t=1000
+        runId: 'run1',
+        segmentVersion: 1,
+      },
+      currentContentVersion: 1,
+    });
+
+    // Eval ran at t=500 when only v1 existed → should be on v1
+    assert.ok(chain[0].eval, 'v1 should have eval data');
+    assert.equal(chain[0].eval.verdict, 'alive');
+    // V2 should NOT have eval data (it didn't exist when eval ran)
+    assert.equal(chain[1].eval, null, 'v2 should NOT have eval (created after eval ran)');
+  });
+
+  test('eval judgment at t=1500 IS attached to v2 created at t=1000', async () => {
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [makeEvent({ action: 'content-set', timestamp: 1000 })],
+      observations: [],
+      cachedJudgment: {
+        segmentId: 'S1',
+        verdict: 'dormant',
+        injectionCount: 5,
+        violationCount: 3,
+        correlationConfidence: 'window',
+        evaluatedAt: 1500, // AFTER v2 was created at t=1000
+        runId: 'run2',
+        segmentVersion: 1,
+      },
+      currentContentVersion: 1,
+    });
+
+    // Eval ran at t=1500 when v2 was current → should be on v2
+    assert.equal(chain[0].eval, null, 'v1 should NOT have eval');
+    assert.ok(chain[1].eval, 'v2 should have eval data');
+    assert.equal(chain[1].eval.verdict, 'dormant');
+  });
+
+  // ── Observation attachment ───────────────────────────────────
+
+  test('observations are attached to correct epoch by timestamp', async () => {
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [makeEvent({ action: 'content-set', timestamp: 1000 })],
+      observations: [
+        { timestamp: 500, version: null }, // before v2
+        { timestamp: 800, version: null }, // before v2
+        { timestamp: 1200, version: null }, // after v2
+        { timestamp: 1500, version: null }, // after v2
+      ],
+      cachedJudgment: null,
+      currentContentVersion: 1,
+    });
+
+    assert.equal(chain[0].tracing?.observationCount, 2, 'v1 should have 2 observations');
+    assert.equal(chain[1].tracing?.observationCount, 2, 'v2 should have 2 observations');
+  });
+
+  // ── Status derivation ────────────────────────────────────────
+
+  test('epoch with observations derives tracing status', async () => {
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [],
+      observations: [{ timestamp: 1000, version: null }],
+      cachedJudgment: null,
+      currentContentVersion: null,
+    });
+
+    assert.equal(chain[0].status, 'tracing');
+  });
+
+  test('alive verdict derives governance-pending status (eval triggers governance)', async () => {
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [],
+      observations: [],
+      cachedJudgment: {
+        segmentId: 'S1',
+        verdict: 'alive',
+        injectionCount: 10,
+        violationCount: 0,
+        correlationConfidence: 'window',
+        evaluatedAt: 500,
+        runId: 'run1',
+        segmentVersion: null,
+      },
+      currentContentVersion: null,
+    });
+
+    // alive verdict → governance=pending takes priority → governance-pending status
+    assert.equal(chain[0].status, 'governance-pending');
+  });
+
+  test('retire-candidate verdict derives eval-reject status (no governance)', async () => {
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [],
+      observations: [],
+      cachedJudgment: {
+        segmentId: 'S1',
+        verdict: 'retire-candidate',
+        injectionCount: 10,
+        violationCount: 8,
+        correlationConfidence: 'window',
+        evaluatedAt: 500,
+        runId: 'run1',
+        segmentVersion: null,
+      },
+      currentContentVersion: null,
+    });
+
+    assert.equal(chain[0].status, 'eval-reject');
+  });
+
+  // ── Governance events ────────────────────────────────────────
+
+  test('enable/disable events become governance events on epoch', async () => {
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'disable', timestamp: 1000 }),
+        makeEvent({ action: 'enable', timestamp: 2000 }),
+      ],
+      observations: [],
+      cachedJudgment: null,
+      currentContentVersion: null,
+    });
+
+    assert.equal(chain[0].events.length, 2);
+    assert.equal(chain[0].events[0].kind, 'eval-reject');
+    assert.equal(chain[0].events[1].kind, 'governance-approve');
+  });
+
+  // ── Multiple content versions ────────────────────────────────
+
+  test('two content-set events create v1, v2, v3 with v3 active', async () => {
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000 }),
+        makeEvent({ action: 'content-set', timestamp: 2000 }),
+      ],
+      observations: [],
+      cachedJudgment: null,
+      currentContentVersion: 2,
+    });
+
+    assert.equal(chain.length, 3);
+    assert.equal(chain[0].version, 1);
+    assert.equal(chain[0].isActive, false);
+    assert.equal(chain[1].version, 2);
+    assert.equal(chain[1].isActive, false);
+    assert.equal(chain[2].version, 3);
+    assert.equal(chain[2].isActive, true, 'v3 (latest content-set) should be active');
+  });
+});

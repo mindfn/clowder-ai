@@ -214,8 +214,10 @@ async function collectSegmentOverrideEvents(
   store: HookOverrideStore,
   segmentId: string,
 ): Promise<import('@cat-cafe/shared').OverrideChangeEvent[]> {
-  // Get ALL events for this segment (not windowed — chain needs full history)
-  const allEvents = await store.listEvents({ limit: 200 });
+  // Chain needs full history for this segment.
+  // HookOverrideStore.listEvents() has no hookId filter — fetch all and filter.
+  // Ceiling of 10000 covers any realistic lifetime event count.
+  const allEvents = await store.listEvents({ limit: 10000 });
   return allEvents.filter((e) => e.hookId === segmentId);
 }
 

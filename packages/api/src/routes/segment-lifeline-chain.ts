@@ -63,7 +63,6 @@ export interface ChainBuilderInput {
  */
 export function buildVersionChain(input: ChainBuilderInput): VersionEpoch[] {
   const { manifestVersion, overrideEvents, observations, cachedJudgment, currentContentVersion } = input;
-  const activeVersion = currentContentVersion ?? manifestVersion;
 
   // Build version transition timeline from override events
   const epochs = buildEpochsFromEvents(manifestVersion, overrideEvents);
@@ -71,15 +70,15 @@ export function buildVersionChain(input: ChainBuilderInput): VersionEpoch[] {
   // Attach observations to epochs
   attachObservations(epochs, observations);
 
-  // Attach eval judgment to the most recent epoch
+  // Attach eval judgment to the epoch that was current when eval ran
   if (cachedJudgment) {
     attachJudgment(epochs, cachedJudgment);
   }
 
-  // Mark active version
-  for (const epoch of epochs) {
-    epoch.isActive = epoch.version === activeVersion;
-  }
+  // Mark active version — state-based, not number-based.
+  // If there's a current content override (contentVersion != null), the most
+  // recently created override epoch is active. Otherwise manifest baseline.
+  markActiveEpoch(epochs, currentContentVersion);
 
   // Derive status for each epoch
   for (const epoch of epochs) {
@@ -203,13 +202,56 @@ function findEpochForObservation(epochs: VersionEpoch[], obs: SegmentObservation
 }
 
 // ---------------------------------------------------------------------------
+// Active epoch marking
+// ---------------------------------------------------------------------------
+
+/**
+ * Mark the active epoch based on current override state.
+ *
+ * State-based approach (not number-matching) — avoids version collision
+ * between manifestVersion and contentVersion (both can be 1).
+ *
+ * Rules:
+ *   - contentVersion != null → latest content-set epoch is active
+ *   - contentVersion == null → manifest baseline is active
+ */
+function markActiveEpoch(epochs: VersionEpoch[], currentContentVersion: number | null): void {
+  if (currentContentVersion != null) {
+    // Find the most recently created override epoch (latest content-set)
+    for (let i = epochs.length - 1; i >= 0; i--) {
+      if (epochs[i].origin !== 'manifest') {
+        epochs[i].isActive = true;
+        return;
+      }
+    }
+  }
+  // No active override (or no override epoch found) → manifest baseline
+  if (epochs.length > 0) {
+    epochs[0].isActive = true;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Judgment attachment
 // ---------------------------------------------------------------------------
 
+/**
+ * Attach cached judgment to the epoch that was current when eval ran.
+ *
+ * Uses evaluatedAt timestamp to find the correct epoch, not version number
+ * (version number is ambiguous: contentVersion=1 and manifestVersion=1 collide).
+ */
 function attachJudgment(epochs: VersionEpoch[], judgment: CachedJudgment): void {
-  // Attach to the latest epoch (judgment is always for current state)
-  const latest = epochs[epochs.length - 1];
-  if (!latest) return;
+  if (epochs.length === 0) return;
+
+  // Find the epoch that was current at evaluation time:
+  // the latest epoch whose startedAt <= evaluatedAt
+  let target = epochs[0];
+  for (const epoch of epochs) {
+    if (epoch.startedAt <= judgment.evaluatedAt) {
+      target = epoch;
+    }
+  }
 
   const evalSummary: EvalStageSummary = {
     verdict: judgment.verdict,
@@ -217,11 +259,11 @@ function attachJudgment(epochs: VersionEpoch[], judgment: CachedJudgment): void 
     violationCount: judgment.violationCount,
     evaluatedAt: judgment.evaluatedAt,
   };
-  latest.eval = evalSummary;
+  target.eval = evalSummary;
 
   // If verdict is alive/dormant → governance is pending
   if (judgment.verdict === 'alive' || judgment.verdict === 'dormant') {
-    latest.governance = { decision: 'pending', decidedAt: null, actorId: null };
+    target.governance = { decision: 'pending', decidedAt: null, actorId: null };
   }
 }
 

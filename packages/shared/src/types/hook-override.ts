@@ -59,6 +59,8 @@ export interface OverrideChangeEvent {
   actorId: string;
   /** Why this change was made (audit trail). */
   reason?: string;
+  /** Content version at time of event (content-set only). Absent on legacy events. */
+  contentVersion?: number;
 }
 
 // ---------------------------------------------------------------------------
