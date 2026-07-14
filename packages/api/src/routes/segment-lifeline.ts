@@ -19,6 +19,7 @@ export interface SegmentLifelineRoutesOptions {
 }
 
 const DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const MAX_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days cap
 const MAX_OBSERVATIONS = 100;
 
 function requireSession(request: FastifyRequest, reply: FastifyReply): string | null {
@@ -28,6 +29,14 @@ function requireSession(request: FastifyRequest, reply: FastifyReply): string | 
     return null;
   }
   return userId;
+}
+
+/** Parse and validate windowMs query param. Returns null on invalid input. */
+function parseWindowMs(raw: string | undefined): number | null {
+  if (raw === undefined) return DEFAULT_WINDOW_MS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.min(n, MAX_WINDOW_MS);
 }
 
 export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOptions> = async (app, opts) => {
@@ -41,7 +50,10 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
 
     const { segmentId } = request.params as { segmentId: string };
     const query = request.query as { windowMs?: string };
-    const windowMs = Number(query.windowMs) || DEFAULT_WINDOW_MS;
+    const windowMs = parseWindowMs(query.windowMs);
+    if (windowMs === null) {
+      return reply.status(400).send({ error: 'windowMs must be a finite positive number' });
+    }
     const now = Date.now();
     const windowStart = now - windowMs;
     const windowEnd = now;
@@ -49,9 +61,11 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
     // 1. Discover all threads with trace data, query each for this window
     const observations = await collectObservations(opts.traceStore, segmentId, windowStart, windowEnd);
 
-    // 2. Guard rejection events in the same window
+    // 2. Guard rejection events — filtered to threads with observations for this segment
+    // (P2-2 fix: unfiltered query caused cross-thread event leakage — terra review)
+    const observationThreadIds = new Set(observations.map((o) => o.threadId));
     const guardEvents = opts.guardRejectionLog
-      ? await collectGuardEvents(opts.guardRejectionLog, windowStart, windowEnd)
+      ? await collectGuardEvents(opts.guardRejectionLog, windowStart, windowEnd, observationThreadIds)
       : [];
 
     // 3. Override state and history
@@ -125,6 +139,7 @@ async function collectGuardEvents(
   log: GuardRejectionEventLog,
   startMs: number,
   endMs: number,
+  relevantThreadIds: Set<string>,
 ): Promise<
   Array<{
     eventId: string;
@@ -133,17 +148,21 @@ async function collectGuardEvents(
     catId: string;
     timestamp: number;
     guardId: string;
+    attribution: 'window-correlated';
   }>
 > {
   const events = await log.queryWindow({ since: startMs, until: endMs, limit: 50 });
-  return events.map((e) => ({
-    eventId: e.eventId,
-    kind: e.kind,
-    threadId: e.threadId,
-    catId: e.catId,
-    timestamp: e.timestamp,
-    guardId: e.guardId,
-  }));
+  return events
+    .filter((e) => relevantThreadIds.has(e.threadId))
+    .map((e) => ({
+      eventId: e.eventId,
+      kind: e.kind,
+      threadId: e.threadId,
+      catId: e.catId,
+      timestamp: e.timestamp,
+      guardId: e.guardId,
+      attribution: 'window-correlated' as const,
+    }));
 }
 
 async function collectOverrideData(

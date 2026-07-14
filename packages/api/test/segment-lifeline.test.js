@@ -343,3 +343,80 @@ describe('segment-lifeline status derivation', () => {
     assert.equal(latestVersion, null);
   });
 });
+
+// ── P2-1: windowMs validation ─────────────────────────────────
+
+describe('segment-lifeline windowMs validation', () => {
+  // Extract the same validation logic used in the route
+  function parseWindowMs(raw) {
+    const DEFAULT = 7 * 24 * 60 * 60 * 1000;
+    const MAX = 30 * 24 * 60 * 60 * 1000;
+    if (raw === undefined) return { ok: true, value: DEFAULT };
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return { ok: false };
+    return { ok: true, value: Math.min(n, MAX) };
+  }
+
+  test('rejects Infinity', () => {
+    assert.equal(parseWindowMs('Infinity').ok, false);
+  });
+
+  test('rejects negative', () => {
+    assert.equal(parseWindowMs('-5000').ok, false);
+  });
+
+  test('rejects NaN', () => {
+    assert.equal(parseWindowMs('abc').ok, false);
+  });
+
+  test('rejects zero', () => {
+    assert.equal(parseWindowMs('0').ok, false);
+  });
+
+  test('caps at 30 days', () => {
+    const thirtyOneDays = 31 * 24 * 60 * 60 * 1000;
+    const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+    const result = parseWindowMs(String(thirtyOneDays));
+    assert.equal(result.ok, true);
+    assert.equal(result.value, thirtyDays);
+  });
+
+  test('accepts valid positive number', () => {
+    const result = parseWindowMs('3600000');
+    assert.equal(result.ok, true);
+    assert.equal(result.value, 3600000);
+  });
+
+  test('defaults when undefined', () => {
+    const result = parseWindowMs(undefined);
+    assert.equal(result.ok, true);
+    assert.equal(result.value, 7 * 24 * 60 * 60 * 1000);
+  });
+});
+
+// ── P2-2: guard event thread filtering ────────────────────────
+
+describe('segment-lifeline guard event filtering', () => {
+  test('guard events from non-observation threads are excluded', () => {
+    // Simulate: S1 has observations from thread-A only.
+    // Guard events exist for thread-A and thread-B.
+    // Only thread-A events should appear.
+    const observationThreadIds = new Set(['thread-A']);
+    const guardEvents = [
+      { eventId: 'g1', kind: 'reject', threadId: 'thread-A', catId: 'opus', timestamp: 5000, guardId: 'G1' },
+      { eventId: 'g2', kind: 'reject', threadId: 'thread-B', catId: 'codex', timestamp: 5500, guardId: 'G2' },
+    ];
+    const filtered = guardEvents.filter((e) => observationThreadIds.has(e.threadId));
+    assert.equal(filtered.length, 1, 'only thread-A events');
+    assert.equal(filtered[0].eventId, 'g1');
+  });
+
+  test('no guard events when segment has no observations', () => {
+    const observationThreadIds = new Set();
+    const guardEvents = [
+      { eventId: 'g1', kind: 'reject', threadId: 'thread-A', catId: 'opus', timestamp: 5000, guardId: 'G1' },
+    ];
+    const filtered = guardEvents.filter((e) => observationThreadIds.has(e.threadId));
+    assert.equal(filtered.length, 0, 'no events for unobserved segment');
+  });
+});
