@@ -231,6 +231,91 @@ describe('buildVersionChain', () => {
     assert.equal(activeEpoch.origin, 'user-create', 'active epoch should be user-created override');
   });
 
+  // ── Rollback activation timeline (R3 P1-1) ──────────────────
+
+  test('rollback → trace after rollback goes to v1, not v2 (R3 P1-1)', async () => {
+    // Terra reproduction: content-set@1000 → rollback@2000 → trace@2100
+    // Old bug: startedAt-based matching put trace@2100 on v2 (2100 >= 1000).
+    // Fix: activation timeline tracks rollback → v1 active from t=2000.
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000 }),
+        makeEvent({ action: 'rollback', timestamp: 2000 }),
+      ],
+      observations: [
+        { timestamp: 500, version: null }, // v1 active (before content-set)
+        { timestamp: 1500, version: null }, // v2 active (between content-set and rollback)
+        { timestamp: 2100, version: 1 }, // v1 active (after rollback) — MUST go to v1!
+        { timestamp: 3000, version: null }, // v1 active (after rollback)
+      ],
+      cachedJudgment: null,
+      currentContentVersion: null, // rollback clears content version
+    });
+
+    assert.equal(chain.length, 2, 'should have v1 + v2 epochs');
+    assert.equal(chain[0].tracing?.observationCount, 3, 'v1 should have 3 obs (t=500, t=2100, t=3000)');
+    assert.equal(chain[1].tracing?.observationCount, 1, 'v2 should have 1 obs (t=1500 only)');
+    assert.equal(chain[0].isActive, true, 'v1 should be active after rollback');
+    assert.equal(chain[1].isActive, false, 'v2 should NOT be active after rollback');
+  });
+
+  test('rollback → eval after rollback goes to v1, not v2 (R3 P1-1)', async () => {
+    // Eval runs at t=2500, after rollback at t=2000.
+    // Must attach to v1 (active after rollback), not v2.
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000 }),
+        makeEvent({ action: 'rollback', timestamp: 2000 }),
+      ],
+      observations: [],
+      cachedJudgment: {
+        segmentId: 'S1',
+        verdict: 'alive',
+        injectionCount: 8,
+        violationCount: 0,
+        correlationConfidence: 'window',
+        evaluatedAt: 2500, // after rollback
+        runId: 'run-post-rollback',
+        segmentVersion: null,
+      },
+      currentContentVersion: null,
+    });
+
+    assert.ok(chain[0].eval, 'v1 should have eval (eval ran while v1 active after rollback)');
+    assert.equal(chain[0].eval.verdict, 'alive');
+    assert.equal(chain[1].eval, null, 'v2 should NOT have eval');
+  });
+
+  test('content-set → rollback → content-set: activation timeline tracks re-creation', async () => {
+    // v1 → v2@1000 → rollback@2000 → v3@3000
+    // trace@2500 (between rollback and v3) → v1
+    // trace@3500 (after v3) → v3
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000 }),
+        makeEvent({ action: 'rollback', timestamp: 2000 }),
+        makeEvent({ action: 'content-set', timestamp: 3000 }),
+      ],
+      observations: [
+        { timestamp: 500, version: null }, // v1
+        { timestamp: 1500, version: null }, // v2
+        { timestamp: 2500, version: null }, // v1 (after rollback)
+        { timestamp: 3500, version: null }, // v3
+      ],
+      cachedJudgment: null,
+      currentContentVersion: 2,
+    });
+
+    assert.equal(chain.length, 3, 'should have v1, v2, v3');
+    assert.equal(chain[0].tracing?.observationCount, 2, 'v1: t=500 + t=2500');
+    assert.equal(chain[1].tracing?.observationCount, 1, 'v2: t=1500');
+    assert.equal(chain[2].tracing?.observationCount, 1, 'v3: t=3500');
+    assert.equal(chain[2].isActive, true, 'v3 should be active');
+  });
+
   // ── Status derivation ────────────────────────────────────────
 
   test('epoch with observations derives tracing status', async () => {

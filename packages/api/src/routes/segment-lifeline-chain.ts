@@ -67,12 +67,17 @@ export function buildVersionChain(input: ChainBuilderInput): VersionEpoch[] {
   // Build version transition timeline from override events
   const epochs = buildEpochsFromEvents(manifestVersion, overrideEvents);
 
-  // Attach observations to epochs
-  attachObservations(epochs, observations);
+  // Build activation timeline — a step function mapping time → active epoch.
+  // Handles rollback: content-set activates new epoch, rollback reactivates manifest.
+  // This replaces naive startedAt-based matching which fails after rollback (R3 P1-1).
+  const timeline = buildActivationTimeline(epochs, overrideEvents);
 
-  // Attach eval judgment to the epoch that was current when eval ran
+  // Attach observations using activation timeline
+  attachObservations(epochs, observations, timeline);
+
+  // Attach eval judgment using activation timeline
   if (cachedJudgment) {
-    attachJudgment(epochs, cachedJudgment);
+    attachJudgment(epochs, cachedJudgment, timeline);
   }
 
   // Mark active version — state-based, not number-based.
@@ -162,16 +167,67 @@ function createEpoch(version: number, origin: VersionOrigin, startedAt: number):
 }
 
 // ---------------------------------------------------------------------------
+// Activation timeline (R3 fix — replaces naive startedAt matching)
+// ---------------------------------------------------------------------------
+
+/** A point in the activation timeline: from this timestamp, epochIndex is active. */
+interface ActivationPoint {
+  timestamp: number;
+  epochIndex: number;
+}
+
+/**
+ * Build activation timeline from override events.
+ *
+ * State machine:
+ *   - t=0: manifest (epoch 0) active
+ *   - content-set@T: new override epoch active from T
+ *   - rollback@T: manifest (epoch 0) reactivated from T
+ *   - enable/disable: no activation change
+ *
+ * Returns a sorted array of activation transitions (step function).
+ */
+function buildActivationTimeline(epochs: VersionEpoch[], events: OverrideChangeEvent[]): ActivationPoint[] {
+  const timeline: ActivationPoint[] = [{ timestamp: 0, epochIndex: 0 }];
+
+  for (const event of events) {
+    if (event.action === 'content-set') {
+      const idx = epochs.findIndex((e, i) => i > 0 && e.startedAt === event.timestamp);
+      timeline.push({ timestamp: event.timestamp, epochIndex: idx !== -1 ? idx : epochs.length - 1 });
+    } else if (event.action === 'rollback') {
+      timeline.push({ timestamp: event.timestamp, epochIndex: 0 });
+    }
+  }
+
+  return timeline;
+}
+
+/** Resolve which epoch was active at a given timestamp using the activation timeline. */
+function resolveActiveEpochAt(timeline: ActivationPoint[], timestamp: number, epochs: VersionEpoch[]): VersionEpoch {
+  let idx = 0;
+  for (const point of timeline) {
+    if (point.timestamp <= timestamp) {
+      idx = point.epochIndex;
+    } else {
+      break;
+    }
+  }
+  return epochs[idx] ?? epochs[0];
+}
+
+// ---------------------------------------------------------------------------
 // Observation attachment
 // ---------------------------------------------------------------------------
 
-function attachObservations(epochs: VersionEpoch[], observations: SegmentObservationInput[]): void {
+function attachObservations(
+  epochs: VersionEpoch[],
+  observations: SegmentObservationInput[],
+  timeline: ActivationPoint[],
+): void {
   if (observations.length === 0) return;
 
   for (const obs of observations) {
-    // Find the matching epoch by version, fallback to latest
-    const epoch = findEpochForObservation(epochs, obs);
-    if (!epoch) continue;
+    const epoch = resolveActiveEpochAt(timeline, obs.timestamp, epochs);
 
     if (!epoch.tracing) {
       epoch.tracing = { observationCount: 0, firstAt: null, lastAt: null };
@@ -185,18 +241,6 @@ function attachObservations(epochs: VersionEpoch[], observations: SegmentObserva
       epoch.tracing.lastAt = obs.timestamp;
     }
   }
-}
-
-function findEpochForObservation(epochs: VersionEpoch[], obs: SegmentObservationInput): VersionEpoch | undefined {
-  // Timestamp-based matching only — version numbers are unreliable because
-  // contentVersion (1-based from HookRegistry) and epoch version (auto-incremented
-  // from manifest baseline) use different namespaces and collide at value 1.
-  // Same approach as attachJudgment() and markActiveEpoch().
-  for (let i = epochs.length - 1; i >= 0; i--) {
-    if (obs.timestamp >= epochs[i].startedAt) return epochs[i];
-  }
-  // Ultimate fallback: first epoch
-  return epochs[0];
 }
 
 // ---------------------------------------------------------------------------
@@ -234,22 +278,15 @@ function markActiveEpoch(epochs: VersionEpoch[], currentContentVersion: number |
 // ---------------------------------------------------------------------------
 
 /**
- * Attach cached judgment to the epoch that was current when eval ran.
+ * Attach cached judgment to the epoch that was active when eval ran.
  *
- * Uses evaluatedAt timestamp to find the correct epoch, not version number
- * (version number is ambiguous: contentVersion=1 and manifestVersion=1 collide).
+ * Uses activation timeline (not startedAt or version number) to handle rollback:
+ * after rollback, manifest is active again, so eval@T>rollback goes to manifest.
  */
-function attachJudgment(epochs: VersionEpoch[], judgment: CachedJudgment): void {
+function attachJudgment(epochs: VersionEpoch[], judgment: CachedJudgment, timeline: ActivationPoint[]): void {
   if (epochs.length === 0) return;
 
-  // Find the epoch that was current at evaluation time:
-  // the latest epoch whose startedAt <= evaluatedAt
-  let target = epochs[0];
-  for (const epoch of epochs) {
-    if (epoch.startedAt <= judgment.evaluatedAt) {
-      target = epoch;
-    }
-  }
+  const target = resolveActiveEpochAt(timeline, judgment.evaluatedAt, epochs);
 
   const evalSummary: EvalStageSummary = {
     verdict: judgment.verdict,
