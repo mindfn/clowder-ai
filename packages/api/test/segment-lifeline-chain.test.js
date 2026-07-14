@@ -617,14 +617,14 @@ describe('buildVersionChain', () => {
 
   // ── P1-3: version-activate event in chain ────────────────────
 
-  test('version-activate switches active epoch back to earlier version', async () => {
-    // v1 → content-set@1000 (v2) → content-set@2000 (v3) → version-activate v2 @3000
+  test('version-activate switches active epoch back to earlier version (epochVersion)', async () => {
+    // v1 → content-set@1000 (v2) → content-set@2000 (v3) → version-activate epochVersion=2 @3000
     const chain = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),
         makeEvent({ action: 'content-set', timestamp: 2000 }),
-        makeEvent({ action: 'version-activate', timestamp: 3000, contentVersion: 2 }),
+        makeEvent({ action: 'version-activate', timestamp: 3000, epochVersion: 2 }),
       ],
       observations: [],
       judgmentHistory: [],
@@ -637,13 +637,13 @@ describe('buildVersionChain', () => {
     assert.equal(chain[2].isActive, false, 'v3 not active');
   });
 
-  test('observation after version-activate goes to activated epoch', async () => {
-    // v1 → content-set@1000 (v2) → version-activate v1 @2000 → observation@2500
+  test('observation after version-activate goes to activated epoch (epochVersion)', async () => {
+    // v1 → content-set@1000 (v2) → version-activate epochVersion=1 @2000 → observation@2500
     const chain = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),
-        makeEvent({ action: 'version-activate', timestamp: 2000, contentVersion: 1 }),
+        makeEvent({ action: 'version-activate', timestamp: 2000, epochVersion: 1 }),
       ],
       observations: [{ timestamp: 2500, version: null }],
       judgmentHistory: [],
@@ -655,6 +655,48 @@ describe('buildVersionChain', () => {
     assert.ok(chain[0].tracing, 'v1 should have tracing data');
     assert.equal(chain[0].tracing.observationCount, 1);
     assert.equal(chain[1].tracing, null, 'v2 should have no tracing');
+  });
+
+  test('epochVersion takes precedence over contentVersion in version-activate (R6 regression guard)', async () => {
+    // R6 bug: contentVersion=1 collides with manifest epoch.version=1
+    // epochVersion=2 correctly targets the first override epoch
+    // This test uses BOTH fields — epochVersion must win
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000 }),
+        makeEvent({ action: 'content-set', timestamp: 2000 }),
+        // contentVersion=1 would match manifest (WRONG), epochVersion=2 matches first override (RIGHT)
+        makeEvent({ action: 'version-activate', timestamp: 3000, contentVersion: 1, epochVersion: 2 }),
+      ],
+      observations: [],
+      judgmentHistory: [],
+      currentContentVersion: 1,
+    });
+
+    assert.equal(chain.length, 3);
+    assert.equal(chain[0].isActive, false, 'v1 (manifest) should NOT be active — contentVersion=1 must not win');
+    assert.equal(chain[1].isActive, true, 'v2 (first override) should be active via epochVersion=2');
+    assert.equal(chain[2].isActive, false, 'v3 not active');
+  });
+
+  test('backward compat: contentVersion used when epochVersion absent (pre-R6 events)', async () => {
+    // Pre-R6 events only have contentVersion. Chain builder falls back.
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000 }),
+        // No epochVersion — uses contentVersion=2 which matches epoch.version=2
+        makeEvent({ action: 'version-activate', timestamp: 2000, contentVersion: 2 }),
+      ],
+      observations: [],
+      judgmentHistory: [],
+      currentContentVersion: 2,
+    });
+
+    assert.equal(chain.length, 2);
+    assert.equal(chain[0].isActive, false, 'v1 not active');
+    assert.equal(chain[1].isActive, true, 'v2 active via contentVersion fallback');
   });
 
   test('rollback redistributes judgments: post-rollback eval goes to manifest', async () => {

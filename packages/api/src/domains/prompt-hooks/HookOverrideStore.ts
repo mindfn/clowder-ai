@@ -1,56 +1,21 @@
 /**
- * HookOverrideStore — F237 PR3
+ * HookOverrideStore — Redis-backed per-workspace override layer for prompt hooks.
+ * Enforces safetyTier/disableable gating via internal manifest lookup (codex P1, PR #22).
  *
- * Redis-backed per-workspace override layer for prompt hook management.
- * Provides enable/disable, content override, rollback, and change event tracking.
- * Enforces safetyTier/disableable gating by internally resolving the manifest
- * from a registry lookup — callers never pass manifests, preventing gate bypass
- * via mismatched hookId/manifest pairs (codex P1 finding, PR #22).
- *
- * Storage layout:
- *   HASH  hook-override:{workspaceId}        — { hookId → JSON(HookOverride) }
- *   ZSET  hook-override-events:{workspaceId} — { eventId → timestamp }
- *   KEY   hook-override-event:{ws}:{eventId} — JSON(OverrideChangeEvent), TTL=0 (permanent)
+ * Storage: HASH hook-override:{ws}, ZSET events, KEY event detail (TTL=0).
+ * Event recording + reconciliation extracted to hook-override-event-recorder.ts.
  */
 
-import type {
-  HookManifest,
-  HookOverride,
-  HookOverrideSource,
-  OverrideAction,
-  OverrideChangeEvent,
-} from '@cat-cafe/shared';
+import type { HookManifest, HookOverride, HookOverrideSource, OverrideChangeEvent } from '@cat-cafe/shared';
 import type { RedisClient } from '@cat-cafe/shared/utils';
-
-// ---------------------------------------------------------------------------
-// Manifest lookup (injected at construction — decoupled from HookRegistry)
-// ---------------------------------------------------------------------------
+import { HookOverrideEventRecorder, reconcileOverride } from './hook-override-event-recorder.js';
 
 /** Resolves a HookManifest by hookId. Returns undefined for unknown hooks. */
 export type ManifestLookup = (hookId: string) => HookManifest | undefined;
 
-// ---------------------------------------------------------------------------
-// Redis key helpers
-// ---------------------------------------------------------------------------
-
 const OVERRIDE_HASH = (ws: string) => `hook-override:${ws}`;
-const EVENT_ZSET = (ws: string) => `hook-override-events:${ws}`;
-const EVENT_KEY = (ws: string, id: string) => `hook-override-event:${ws}:${id}`;
-/** P1-3: per-version content snapshot. HASH {version → content}. */
+/** P1-3: per-version content snapshot. HASH {epochVersion → content}. */
 const VERSION_SNAPSHOT = (ws: string, hookId: string) => `hook-override-versions:${ws}:${hookId}`;
-
-/**
- * Audit events persist permanently (TTL=0, Iron Law 5: user-visible state
- * must be durable). Override changes are low-frequency operator actions;
- * unbounded growth is not a practical concern.
- *
- * sol review P1-2: previous 30-day TTL violated TTL=0 iron law and destroyed
- * the only record containing change reasons while the override itself survived.
- */
-
-// ---------------------------------------------------------------------------
-// Gate error
-// ---------------------------------------------------------------------------
 
 /** Thrown when an override operation violates manifest safety constraints. */
 export class OverrideGateError extends Error {
@@ -65,26 +30,19 @@ export class OverrideGateError extends Error {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Store
-// ---------------------------------------------------------------------------
-
 export class HookOverrideStore {
-  /** Monotonic counter for event ID uniqueness within a process. */
-  private eventSeq = 0;
+  private readonly events: HookOverrideEventRecorder;
 
   constructor(
     private readonly redis: RedisClient,
     private readonly manifestLookup: ManifestLookup,
     private readonly defaultWorkspaceId = 'default',
-  ) {}
+  ) {
+    this.events = new HookOverrideEventRecorder(redis);
+  }
 
   // -- Manifest resolution (fail-closed) ------------------------------------
 
-  /**
-   * Resolve the canonical manifest for a hookId from the registry.
-   * Fail-closed: unknown hookId → OverrideGateError (cannot override unknown hooks).
-   */
   private resolveManifest(hookId: string): HookManifest {
     const manifest = this.manifestLookup(hookId);
     if (!manifest) {
@@ -92,8 +50,6 @@ export class HookOverrideStore {
     }
     return manifest;
   }
-
-  // -- Gate enforcement (uses internal lookup, never caller-provided) --------
 
   private assertDisableable(hookId: string): void {
     const manifest = this.resolveManifest(hookId);
@@ -119,7 +75,7 @@ export class HookOverrideStore {
     actorId: string,
     opts?: { source?: HookOverrideSource; workspaceId?: string; reason?: string },
   ): Promise<void> {
-    this.resolveManifest(hookId); // validate hookId is known (fail-closed)
+    this.resolveManifest(hookId);
     const ws = opts?.workspaceId ?? this.defaultWorkspaceId;
     const source = opts?.source ?? 'operator';
     const existing = await this.getOverride(hookId, ws);
@@ -133,7 +89,7 @@ export class HookOverrideStore {
       updatedBy: actorId,
     };
     await this.redis.hset(OVERRIDE_HASH(ws), hookId, JSON.stringify(override));
-    await this.recordEvent(ws, hookId, 'enable', source, actorId, opts?.reason);
+    await this.events.record(ws, hookId, 'enable', source, actorId, opts?.reason);
   }
 
   async disable(
@@ -155,7 +111,7 @@ export class HookOverrideStore {
       updatedBy: actorId,
     };
     await this.redis.hset(OVERRIDE_HASH(ws), hookId, JSON.stringify(override));
-    await this.recordEvent(ws, hookId, 'disable', source, actorId, opts?.reason);
+    await this.events.record(ws, hookId, 'disable', source, actorId, opts?.reason);
   }
 
   async setContentOverride(
@@ -168,6 +124,11 @@ export class HookOverrideStore {
     this.assertContentEditable(hookId, source);
     const ws = opts?.workspaceId ?? this.defaultWorkspaceId;
     const existing = await this.getOverride(hookId, ws);
+
+    // epochVersion: monotonic, never resets (I1, I3). max(manifest, max_snapshot_key) + 1.
+    const manifest = this.resolveManifest(hookId);
+    const epochVersion = await this.nextEpochVersion(ws, hookId, manifest.version);
+
     const override: HookOverride = {
       ...(existing ?? {}),
       hookId,
@@ -179,9 +140,18 @@ export class HookOverrideStore {
       updatedBy: actorId,
     };
     await this.redis.hset(OVERRIDE_HASH(ws), hookId, JSON.stringify(override));
-    // P1-3: snapshot version content for later activateVersion()
-    await this.redis.hset(VERSION_SNAPSHOT(ws, hookId), String(override.contentVersion), content);
-    await this.recordEvent(ws, hookId, 'content-set', source, actorId, opts?.reason, override.contentVersion);
+    // Snapshot keyed by epochVersion (not contentVersion) — append-only (I4)
+    await this.redis.hset(VERSION_SNAPSHOT(ws, hookId), String(epochVersion), content);
+    await this.events.record(
+      ws,
+      hookId,
+      'content-set',
+      source,
+      actorId,
+      opts?.reason,
+      override.contentVersion,
+      epochVersion,
+    );
   }
 
   async clearContentOverride(
@@ -189,8 +159,6 @@ export class HookOverrideStore {
     actorId: string,
     opts?: { source?: HookOverrideSource; workspaceId?: string; reason?: string },
   ): Promise<void> {
-    // Fail-closed: same unknown-hook invariant as rollback (audit-sweep sibling —
-    // orphaned overrides would otherwise be mutated + evented past the gate).
     this.resolveManifest(hookId);
     const ws = opts?.workspaceId ?? this.defaultWorkspaceId;
     const source = opts?.source ?? 'operator';
@@ -204,7 +172,7 @@ export class HookOverrideStore {
       updatedBy: actorId,
     };
     await this.redis.hset(OVERRIDE_HASH(ws), hookId, JSON.stringify(override));
-    await this.recordEvent(ws, hookId, 'content-clear', source, actorId, opts?.reason);
+    await this.events.record(ws, hookId, 'content-clear', source, actorId, opts?.reason);
   }
 
   async rollback(
@@ -212,28 +180,20 @@ export class HookOverrideStore {
     actorId: string,
     opts?: { source?: HookOverrideSource; workspaceId?: string; reason?: string },
   ): Promise<void> {
-    // Fail-closed (terra P2, F257): unknown hooks must not touch overrides or
-    // write audit events — the event stream is the permanent governance ledger.
-    // Deliberate tradeoff: orphaned overrides (hook removed by a package
-    // upgrade) are NOT clearable via this path; that needs a dedicated
-    // migration channel, not arbitrary-string writes into the audit stream.
+    // Fail-closed: unknown hooks must not write audit events (terra P2, F257).
     this.resolveManifest(hookId);
     const ws = opts?.workspaceId ?? this.defaultWorkspaceId;
     const source = opts?.source ?? 'operator';
     await this.redis.hdel(OVERRIDE_HASH(ws), hookId);
-    await this.recordEvent(ws, hookId, 'rollback', source, actorId, opts?.reason);
+    await this.events.record(ws, hookId, 'rollback', source, actorId, opts?.reason);
   }
 
   // -- P1-3: Version management -------------------------------------------
 
-  /**
-   * Activate a previously created version by restoring its content snapshot.
-   * Records a version-activate event with contentVersion = target version.
-   * Fails if the target version has no stored snapshot.
-   */
+  /** Activate a version by epochVersion (stable monotonic ID, not contentVersion). */
   async activateVersion(
     hookId: string,
-    targetVersion: number,
+    epochVersion: number,
     actorId: string,
     opts?: { source?: HookOverrideSource; workspaceId?: string; reason?: string },
   ): Promise<void> {
@@ -242,29 +202,28 @@ export class HookOverrideStore {
     this.assertContentEditable(hookId, source);
     const ws = opts?.workspaceId ?? this.defaultWorkspaceId;
 
-    // Read content snapshot for target version
-    const content = await this.redis.hget(VERSION_SNAPSHOT(ws, hookId), String(targetVersion));
+    const content = await this.redis.hget(VERSION_SNAPSHOT(ws, hookId), String(epochVersion));
     if (content === null) {
-      throw new Error(`No content snapshot for hook '${hookId}' version ${targetVersion}`);
+      throw new Error(`No content snapshot for hook '${hookId}' epochVersion ${epochVersion}`);
     }
 
-    // Restore the content override to the target version
+    // Restore content; do NOT reset contentVersion (edit counter, not identity)
     const existing = await this.getOverride(hookId, ws);
     const override: HookOverride = {
       ...(existing ?? {}),
       hookId,
       contentOverride: content,
-      contentVersion: targetVersion,
+      contentVersion: existing?.contentVersion ?? 1,
       contentSource: source,
       source,
       updatedAt: Date.now(),
       updatedBy: actorId,
     };
     await this.redis.hset(OVERRIDE_HASH(ws), hookId, JSON.stringify(override));
-    await this.recordEvent(ws, hookId, 'version-activate', source, actorId, opts?.reason, targetVersion);
+    await this.events.record(ws, hookId, 'version-activate', source, actorId, opts?.reason, undefined, epochVersion);
   }
 
-  /** List all stored version snapshots for a hook (P1-3). */
+  /** List all stored version snapshots for a hook. */
   async listVersions(
     hookId: string,
     workspaceId?: string,
@@ -307,20 +266,15 @@ export class HookOverrideStore {
   }
 
   /**
-   * Load all overrides as a sync Map for pipeline hot-path resolution.
-   *
-   * Reconciles each override against the **current** manifest (sol P1-1 fix):
-   * if a package upgrade tightens a hook from editable→readonly or
-   * disableable→non-disableable, stale overrides that violate the new
-   * constraints are sanitized (offending fields stripped) rather than
-   * served as-is. This prevents historical overrides from bypassing
-   * manifest security tightening.
+   * Load overrides as a sync Map for pipeline hot-path resolution.
+   * Reconciles against current manifest (sol P1-1): tightened constraints
+   * strip stale override fields.
    */
   async loadSnapshot(workspaceId?: string): Promise<ReadonlyMap<string, HookOverride>> {
     const overrides = await this.listOverrides(workspaceId);
     const result = new Map<string, HookOverride>();
     for (const override of overrides) {
-      const reconciled = this.reconcileOverride(override);
+      const reconciled = reconcileOverride(override, this.manifestLookup);
       if (reconciled) {
         result.set(reconciled.hookId, reconciled);
       }
@@ -328,49 +282,7 @@ export class HookOverrideStore {
     return result;
   }
 
-  /**
-   * Reconcile a single override against current manifest constraints.
-   * Returns the sanitized override, or null if the hookId is no longer
-   * in the registry (hook removed in a package upgrade → override orphaned).
-   */
-  private reconcileOverride(override: HookOverride): HookOverride | null {
-    const manifest = this.manifestLookup(override.hookId);
-    if (!manifest) {
-      // Hook removed from registry — orphaned override, drop from snapshot
-      return null;
-    }
-
-    let sanitized = override;
-
-    // If hook was tightened to non-disableable but override has enabled:false,
-    // strip the disable — manifest now says this hook cannot be disabled
-    if (sanitized.enabled === false && !manifest.disableable) {
-      const { enabled: _, ...rest } = sanitized;
-      sanitized = rest as HookOverride;
-    }
-
-    // If hook was tightened to readonly, strip all content overrides
-    if (sanitized.contentOverride !== undefined && manifest.safetyTier === 'readonly') {
-      const { contentOverride: _, contentVersion: __, contentSource: _cs, ...rest } = sanitized;
-      sanitized = rest as HookOverride;
-    }
-
-    // If hook was tightened to limited-edit, only operator content survives.
-    // Use contentSource (field-level provenance) — NOT source, which can be
-    // corrupted by unrelated enable/disable operations (sol P1 root cause).
-    if (
-      sanitized.contentOverride !== undefined &&
-      manifest.safetyTier === 'limited-edit' &&
-      sanitized.contentSource !== 'operator'
-    ) {
-      const { contentOverride: _, contentVersion: __, contentSource: _cs, ...rest } = sanitized;
-      sanitized = rest as HookOverride;
-    }
-
-    return sanitized;
-  }
-
-  // -- Event stream (ZSET time-indexed) -------------------------------------
+  // -- Event stream ---------------------------------------------------------
 
   async listEvents(opts?: {
     workspaceId?: string;
@@ -378,55 +290,15 @@ export class HookOverrideStore {
     since?: number;
     until?: number;
   }): Promise<OverrideChangeEvent[]> {
-    const ws = opts?.workspaceId ?? this.defaultWorkspaceId;
-    const since = opts?.since ?? 0;
-    const until = opts?.until ?? '+inf';
-    const limit = opts?.limit ?? 50;
-    const eventIds = await this.redis.zrangebyscore(EVENT_ZSET(ws), since, until, 'LIMIT', 0, limit);
-    const events: OverrideChangeEvent[] = [];
-    for (const id of eventIds) {
-      const raw = await this.redis.get(EVENT_KEY(ws, id));
-      if (!raw) continue;
-      try {
-        events.push(JSON.parse(raw) as OverrideChangeEvent);
-      } catch {
-        /* skip */
-      }
-    }
-    return events;
+    return this.events.list(opts?.workspaceId ?? this.defaultWorkspaceId, opts);
   }
 
   // -- Internal helpers -----------------------------------------------------
 
-  private async recordEvent(
-    workspaceId: string,
-    hookId: string,
-    action: OverrideAction,
-    source: HookOverrideSource,
-    actorId: string,
-    reason?: string,
-    contentVersion?: number,
-  ): Promise<void> {
-    const timestamp = Date.now();
-    // Monotonic seq determines ZSET member ordering for same-score (same-ms) events.
-    // Zero-padded seq BEFORE action ensures lexicographic order = insertion order.
-    // Old format was `${ts}-${hookId}-${action}-${seq}` — action position broke
-    // ordering because 'content-set' < 'rollback' lexicographically (R5 P1-1 fix).
-    const seq = this.eventSeq++;
-    const eventId = `${timestamp}-${String(seq).padStart(6, '0')}-${hookId}-${action}`;
-    const event: OverrideChangeEvent = {
-      eventId,
-      hookId,
-      workspaceId,
-      action,
-      source,
-      timestamp,
-      actorId,
-      ...(reason ? { reason } : {}),
-      ...(contentVersion != null ? { contentVersion } : {}),
-    };
-    // TTL=0: audit events are permanent (Iron Law 5, sol P1-2 fix)
-    await this.redis.set(EVENT_KEY(workspaceId, eventId), JSON.stringify(event));
-    await this.redis.zadd(EVENT_ZSET(workspaceId), timestamp, eventId);
+  /** Compute next monotonic epochVersion (I3). */
+  private async nextEpochVersion(ws: string, hookId: string, manifestVersion: number): Promise<number> {
+    const all = await this.redis.hgetall(VERSION_SNAPSHOT(ws, hookId));
+    if (!all || Object.keys(all).length === 0) return manifestVersion + 1;
+    return Math.max(manifestVersion, ...Object.keys(all).map(Number)) + 1;
   }
 }

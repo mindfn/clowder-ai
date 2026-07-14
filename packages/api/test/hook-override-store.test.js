@@ -1403,32 +1403,54 @@ describe('Same-ms event ordering (R5 P1-1)', () => {
   });
 });
 
-describe('P1-3: Version management (activateVersion + listVersions)', () => {
-  test('setContentOverride creates version snapshot, activateVersion restores it', async () => {
+describe('P1-3 R6: epochVersion-based version management', () => {
+  test('snapshots keyed by epochVersion (manifest.version+N), activateVersion restores by epochVersion', async () => {
     const s1 = makeManifest('S1-ver');
     const fakeRedis = new FakeRedis();
     const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
     const lookup = (id) => (id === s1.id ? s1 : undefined);
     const store = new mod.HookOverrideStore(fakeRedis, lookup);
 
-    // Create v1 and v2 content overrides
-    await store.setContentOverride(s1.id, 'content-for-v1', 'u1');
-    await store.setContentOverride(s1.id, 'content-for-v2', 'u1');
+    // manifest.version=1, so first override epochVersion=2, second=3
+    await store.setContentOverride(s1.id, 'content-A', 'u1');
+    await store.setContentOverride(s1.id, 'content-B', 'u1');
 
-    // Current state should be v2
     const beforeActivate = await store.getOverride(s1.id);
     assert.equal(beforeActivate.contentVersion, 2);
-    assert.equal(beforeActivate.contentOverride, 'content-for-v2');
+    assert.equal(beforeActivate.contentOverride, 'content-B');
 
-    // Activate v1 — should restore v1 content
-    await store.activateVersion(s1.id, 1, 'u1');
+    // Activate epochVersion=2 (first override) — content should restore to A
+    await store.activateVersion(s1.id, 2, 'u1');
 
     const afterActivate = await store.getOverride(s1.id);
-    assert.equal(afterActivate.contentVersion, 1, 'contentVersion should be 1 after activation');
-    assert.equal(afterActivate.contentOverride, 'content-for-v1', 'content should be v1 content');
+    assert.equal(afterActivate.contentOverride, 'content-A', 'content should be first override');
+    // contentVersion stays at 2 (edit counter, not identity)
+    assert.equal(afterActivate.contentVersion, 2, 'contentVersion is edit count, not reset');
   });
 
-  test('activateVersion records version-activate event with contentVersion', async () => {
+  test('epochVersion is monotonic: activate→set creates new epochVersion, no collision', async () => {
+    const s1 = makeManifest('S1-mono');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    await store.setContentOverride(s1.id, 'A', 'u1'); // epochVersion=2
+    await store.setContentOverride(s1.id, 'B', 'u1'); // epochVersion=3
+    await store.activateVersion(s1.id, 2, 'u1'); // restore A
+    await store.setContentOverride(s1.id, 'C', 'u1'); // epochVersion=4 (NOT 3!)
+
+    const versions = await store.listVersions(s1.id);
+    assert.equal(versions.length, 3, 'should have 3 snapshots (2,3,4)');
+    assert.equal(versions[0].version, 2);
+    assert.ok(versions[0].contentPreview.includes('A'));
+    assert.equal(versions[1].version, 3);
+    assert.ok(versions[1].contentPreview.includes('B'), 'B must NOT be overwritten by C');
+    assert.equal(versions[2].version, 4);
+    assert.ok(versions[2].contentPreview.includes('C'));
+  });
+
+  test('version-activate event carries epochVersion, not contentVersion', async () => {
     const s1 = makeManifest('S1-evt');
     const fakeRedis = new FakeRedis();
     const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
@@ -1437,16 +1459,30 @@ describe('P1-3: Version management (activateVersion + listVersions)', () => {
 
     await store.setContentOverride(s1.id, 'v1-content', 'u1');
     await store.setContentOverride(s1.id, 'v2-content', 'u1');
-    await store.activateVersion(s1.id, 1, 'u1', { reason: 'reverting to v1' });
+    await store.activateVersion(s1.id, 2, 'u1', { reason: 'reverting' });
 
     const events = await store.listEvents({ limit: 100 });
     const activateEvent = events.find((e) => e.action === 'version-activate');
     assert.ok(activateEvent, 'version-activate event should exist');
-    assert.equal(activateEvent.contentVersion, 1, 'event should carry target version');
-    assert.equal(activateEvent.reason, 'reverting to v1');
+    assert.equal(activateEvent.epochVersion, 2, 'event should carry epochVersion');
+    assert.equal(activateEvent.contentVersion, undefined, 'contentVersion should NOT be on activate events');
+    assert.equal(activateEvent.reason, 'reverting');
   });
 
-  test('activateVersion throws for nonexistent version', async () => {
+  test('content-set events carry epochVersion', async () => {
+    const s1 = makeManifest('S1-cs-epoch');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    await store.setContentOverride(s1.id, 'hello', 'u1');
+    const events = await store.listEvents({ limit: 100 });
+    assert.equal(events[0].epochVersion, 2, 'first override epochVersion = manifest.version + 1');
+    assert.equal(events[0].contentVersion, 1, 'contentVersion is edit count (1)');
+  });
+
+  test('activateVersion throws for nonexistent epochVersion', async () => {
     const s1 = makeManifest('S1-nosnap');
     const fakeRedis = new FakeRedis();
     const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
@@ -1456,7 +1492,7 @@ describe('P1-3: Version management (activateVersion + listVersions)', () => {
     await assert.rejects(() => store.activateVersion(s1.id, 99, 'u1'), /No content snapshot/);
   });
 
-  test('listVersions returns all version snapshots in order', async () => {
+  test('listVersions returns all epochVersion snapshots in order', async () => {
     const s1 = makeManifest('S1-list');
     const fakeRedis = new FakeRedis();
     const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
@@ -1465,13 +1501,11 @@ describe('P1-3: Version management (activateVersion + listVersions)', () => {
 
     await store.setContentOverride(s1.id, 'alpha', 'u1');
     await store.setContentOverride(s1.id, 'beta', 'u1');
-    await store.setContentOverride(s1.id, 'gamma', 'u1');
 
     const versions = await store.listVersions(s1.id);
-    assert.equal(versions.length, 3);
-    assert.equal(versions[0].version, 1);
+    assert.equal(versions.length, 2);
+    assert.equal(versions[0].version, 2, 'first epochVersion = manifest+1 = 2');
     assert.ok(versions[0].contentPreview.includes('alpha'));
-    assert.equal(versions[1].version, 2);
-    assert.equal(versions[2].version, 3);
+    assert.equal(versions[1].version, 3, 'second epochVersion = 3');
   });
 });

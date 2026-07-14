@@ -61,6 +61,12 @@ export interface OverrideChangeEvent {
   reason?: string;
   /** Content version at time of event (content-set only). Absent on legacy events. */
   contentVersion?: number;
+  /**
+   * Stable epoch version ID (P1-3 R6 fix). Monotonic, never resets.
+   * Maps 1:1 to chain VersionEpoch.version. Used for snapshot keys
+   * and version-activate target resolution. Absent on pre-R6 events.
+   */
+  epochVersion?: number;
 }
 
 // ---------------------------------------------------------------------------

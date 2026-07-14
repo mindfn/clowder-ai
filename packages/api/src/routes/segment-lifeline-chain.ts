@@ -158,8 +158,9 @@ function buildEpochsAndTimeline(
       });
       timeline.push({ timestamp: event.timestamp, epochIndex: 0 });
     } else if (event.action === 'version-activate') {
-      // P1-3: explicit version switch — find target epoch by version number
-      const targetVersion = event.contentVersion;
+      // P1-3 R6 fix: use epochVersion (stable ID) to find target epoch.
+      // Falls back to contentVersion for pre-R6 events (backward compat).
+      const targetVersion = event.epochVersion ?? event.contentVersion;
       if (targetVersion != null) {
         const targetIdx = epochs.findIndex((e) => e.version === targetVersion);
         if (targetIdx >= 0) {
