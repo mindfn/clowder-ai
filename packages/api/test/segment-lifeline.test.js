@@ -182,22 +182,40 @@ describe('InjectionTraceStore.listTracedThreadIds', () => {
     assert.equal(threadIds.length, 2);
   });
 
-  test('skips backfill when registry already populated', async () => {
+  test('backfills legacy threads even when new threads already in registry', async () => {
     const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
     const redis = new FakeRedis();
     const store = new InjectionTraceStore(redis);
 
-    // persist() populates both index and registry
-    const s = makeSummary('thread-A', 'turn-1', 1000, 'opus', [makeSegment('S-identity')]);
-    await store.persist(s, makeDetail('thread-A', 'turn-1'));
+    // Scenario: deploy Phase D → persist() fires before Console opens →
+    // registry has 1 new thread but legacy index keys are not yet in SET.
+    // (terra P1: old code skipped backfill here because registry was non-empty)
+    const s = makeSummary('thread-new', 'turn-1', 1000, 'opus', [makeSegment('S-identity')]);
+    await store.persist(s, makeDetail('thread-new', 'turn-1'));
 
-    // Pre-existing index key NOT in registry (old data) — but since registry
-    // is already non-empty, backfill skips and this thread stays invisible.
-    await redis.zadd('injection-trace-index:thread-orphan', 500, 'turn-0');
+    // Pre-existing index key NOT in registry (old data before Phase D)
+    await redis.zadd('injection-trace-index:thread-legacy', 500, 'turn-0');
 
     const threadIds = await store.listTracedThreadIds();
-    assert.ok(threadIds.includes('thread-A'), 'registry entry from persist()');
-    assert.ok(!threadIds.includes('thread-orphan'), 'backfill skipped — orphan not discovered');
+    assert.ok(threadIds.includes('thread-new'), 'new thread from persist()');
+    assert.ok(threadIds.includes('thread-legacy'), 'legacy thread discovered via backfill');
+  });
+
+  test('skips backfill when marker is set (already completed)', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const store = new InjectionTraceStore(redis);
+
+    // Simulate: backfill already ran in a previous process (marker set)
+    await redis.set('injection-trace-backfill-done', '1');
+
+    // Legacy index key exists but backfill won't run
+    await redis.zadd('injection-trace-index:thread-missed', 500, 'turn-0');
+
+    const threadIds = await store.listTracedThreadIds();
+    // Backfill skipped (marker present) — only registry entries visible
+    assert.ok(!threadIds.includes('thread-missed'), 'backfill skipped due to marker');
+    assert.equal(threadIds.length, 0);
   });
 });
 

@@ -19,6 +19,12 @@ const INDEX_PREFIX = 'injection-trace-index:';
  * Populated on every persist() call; read by listTracedThreadIds().
  */
 const THREAD_REGISTRY_KEY = 'injection-trace-thread-registry';
+/**
+ * Durable marker: set to '1' after the one-time backfill SCAN succeeds.
+ * Decoupled from registry contents — new persist() SADDs don't prevent
+ * legacy threads from being discovered (terra review P1, 2026-07-14).
+ */
+const BACKFILL_DONE_KEY = 'injection-trace-backfill-done';
 
 function summaryKey(threadId: string, turnId: string): string {
   return `${SUMMARY_PREFIX}${threadId}:${turnId}`;
@@ -128,13 +134,17 @@ export class InjectionTraceStore {
    * SET was added have index sorted sets but no SADD entry.
    *
    * Uses prefix-aware SCAN (ioredis keyPrefix does NOT apply to SCAN MATCH,
-   * so we manually prepend the prefix). Idempotent: skips if registry already
-   * populated. Called lazily on first listTracedThreadIds() — runs once per
-   * process lifetime.
+   * so we manually prepend the prefix). Controlled by a durable marker key
+   * (BACKFILL_DONE_KEY) — NOT by registry emptiness, because new persist()
+   * calls SADD new threads before backfill runs, making "registry non-empty"
+   * an unreliable signal (terra P1, 2026-07-14).
+   *
+   * Called lazily on first listTracedThreadIds() — runs once per process lifetime.
+   * Marker is set only after success; failure allows retry.
    */
   private async backfillRegistry(): Promise<void> {
-    const existing = await this.redis.smembers(THREAD_REGISTRY_KEY);
-    if (existing.length > 0) return;
+    const done = await this.redis.get(BACKFILL_DONE_KEY);
+    if (done) return;
 
     const prefix = this.redis.options?.keyPrefix ?? '';
     const pattern = `${prefix}${INDEX_PREFIX}*`;
@@ -155,6 +165,9 @@ export class InjectionTraceStore {
     if (discovered.size > 0) {
       await this.redis.sadd(THREAD_REGISTRY_KEY, ...discovered);
     }
+    // Mark backfill as complete — only after successful SCAN.
+    // No TTL: marker persists forever (backfill is a one-time migration).
+    await this.redis.set(BACKFILL_DONE_KEY, '1');
   }
 
   /**
