@@ -64,13 +64,9 @@ export interface ChainBuilderInput {
 export function buildVersionChain(input: ChainBuilderInput): VersionEpoch[] {
   const { manifestVersion, overrideEvents, observations, cachedJudgment, currentContentVersion } = input;
 
-  // Build version transition timeline from override events
-  const epochs = buildEpochsFromEvents(manifestVersion, overrideEvents);
-
-  // Build activation timeline — a step function mapping time → active epoch.
-  // Handles rollback: content-set activates new epoch, rollback reactivates manifest.
-  // This replaces naive startedAt-based matching which fails after rollback (R3 P1-1).
-  const timeline = buildActivationTimeline(epochs, overrideEvents);
+  // Single-pass event reducer: builds epochs AND activation timeline together.
+  // This avoids timestamp-based lookups that break on same-ms events (R4 P1-1).
+  const { epochs, timeline } = buildEpochsAndTimeline(manifestVersion, overrideEvents);
 
   // Attach observations using activation timeline
   attachObservations(epochs, observations, timeline);
@@ -94,28 +90,44 @@ export function buildVersionChain(input: ChainBuilderInput): VersionEpoch[] {
 }
 
 // ---------------------------------------------------------------------------
-// Epoch construction from override events
+// Single-pass event reducer: epochs + activation timeline (R4 fix)
 // ---------------------------------------------------------------------------
 
-function buildEpochsFromEvents(manifestVersion: number, events: OverrideChangeEvent[]): VersionEpoch[] {
-  const epochs: VersionEpoch[] = [];
+/** A point in the activation timeline: from this timestamp, epochIndex is active. */
+interface ActivationPoint {
+  timestamp: number;
+  epochIndex: number;
+}
 
-  // Always start with the manifest baseline epoch
-  const baseEpoch = createEpoch(manifestVersion, 'manifest', 0);
-  epochs.push(baseEpoch);
+/**
+ * Build epochs AND activation timeline in one pass through override events.
+ *
+ * Why single-pass (R4 P1-1): separate construction required timestamp-based
+ * findIndex lookup to correlate events → epochs. This broke on same-ms
+ * content-set events (findIndex always returned first match). Merging the
+ * reducer means epochIndex is known at creation time — no lookup needed.
+ *
+ * Activation state machine:
+ *   - t=0: manifest (epoch 0) active
+ *   - content-set@T: new override epoch active from T
+ *   - rollback@T: manifest (epoch 0) reactivated from T
+ *   - content-clear@T: manifest (epoch 0) reactivated from T
+ *   - enable/disable: no activation change
+ */
+function buildEpochsAndTimeline(
+  manifestVersion: number,
+  events: OverrideChangeEvent[],
+): { epochs: VersionEpoch[]; timeline: ActivationPoint[] } {
+  const epochs: VersionEpoch[] = [createEpoch(manifestVersion, 'manifest', 0)];
+  const timeline: ActivationPoint[] = [{ timestamp: 0, epochIndex: 0 }];
 
-  // Walk events chronologically
   for (const event of events) {
     const latestEpoch = epochs[epochs.length - 1];
 
     if (event.action === 'content-set') {
-      // content-set with a new version → new epoch
-      // The contentVersion in the event isn't directly available,
-      // but each content-set increments the version.
       const newVersion = latestEpoch.version + 1;
       const origin: VersionOrigin = event.source === 'operator' ? 'user-create' : 'auto-iterate';
 
-      // Record the edit event on the current epoch
       latestEpoch.events.push({
         eventId: event.eventId,
         kind: origin === 'user-create' ? 'user-create' : 'auto-iterate',
@@ -124,20 +136,24 @@ function buildEpochsFromEvents(manifestVersion: number, events: OverrideChangeEv
         detail: `v${latestEpoch.version} → v${newVersion}`,
       });
 
-      // Start a new epoch
       const newEpoch = createEpoch(newVersion, origin, event.timestamp);
+      const newIndex = epochs.length;
       epochs.push(newEpoch);
-    } else if (event.action === 'rollback') {
-      // Rollback to manifest baseline — version-activate event
+      timeline.push({ timestamp: event.timestamp, epochIndex: newIndex });
+    } else if (event.action === 'rollback' || event.action === 'content-clear') {
+      // Both rollback and content-clear reactivate manifest baseline
       latestEpoch.events.push({
         eventId: event.eventId,
         kind: 'version-activate',
         timestamp: event.timestamp,
         actorId: event.actorId,
-        detail: `rolled back to v${manifestVersion}`,
+        detail:
+          event.action === 'rollback'
+            ? `rolled back to v${manifestVersion}`
+            : `content cleared, reverted to v${manifestVersion}`,
       });
+      timeline.push({ timestamp: event.timestamp, epochIndex: 0 });
     } else if (event.action === 'enable' || event.action === 'disable') {
-      // Enable/disable → governance-related event
       const kind = event.action === 'enable' ? 'governance-approve' : 'eval-reject';
       latestEpoch.events.push({
         eventId: event.eventId,
@@ -149,7 +165,7 @@ function buildEpochsFromEvents(manifestVersion: number, events: OverrideChangeEv
     }
   }
 
-  return epochs;
+  return { epochs, timeline };
 }
 
 function createEpoch(version: number, origin: VersionOrigin, startedAt: number): VersionEpoch {
@@ -164,42 +180,6 @@ function createEpoch(version: number, origin: VersionOrigin, startedAt: number):
     governance: null,
     events: [],
   };
-}
-
-// ---------------------------------------------------------------------------
-// Activation timeline (R3 fix — replaces naive startedAt matching)
-// ---------------------------------------------------------------------------
-
-/** A point in the activation timeline: from this timestamp, epochIndex is active. */
-interface ActivationPoint {
-  timestamp: number;
-  epochIndex: number;
-}
-
-/**
- * Build activation timeline from override events.
- *
- * State machine:
- *   - t=0: manifest (epoch 0) active
- *   - content-set@T: new override epoch active from T
- *   - rollback@T: manifest (epoch 0) reactivated from T
- *   - enable/disable: no activation change
- *
- * Returns a sorted array of activation transitions (step function).
- */
-function buildActivationTimeline(epochs: VersionEpoch[], events: OverrideChangeEvent[]): ActivationPoint[] {
-  const timeline: ActivationPoint[] = [{ timestamp: 0, epochIndex: 0 }];
-
-  for (const event of events) {
-    if (event.action === 'content-set') {
-      const idx = epochs.findIndex((e, i) => i > 0 && e.startedAt === event.timestamp);
-      timeline.push({ timestamp: event.timestamp, epochIndex: idx !== -1 ? idx : epochs.length - 1 });
-    } else if (event.action === 'rollback') {
-      timeline.push({ timestamp: event.timestamp, epochIndex: 0 });
-    }
-  }
-
-  return timeline;
 }
 
 /** Resolve which epoch was active at a given timestamp using the activation timeline. */

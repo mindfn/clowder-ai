@@ -316,6 +316,81 @@ describe('buildVersionChain', () => {
     assert.equal(chain[2].isActive, true, 'v3 should be active');
   });
 
+  // ── content-clear + same-ms edge cases (R4 P1-1) ────────────
+
+  test('content-clear reactivates manifest, trace goes to v1 (R4 P1-1)', async () => {
+    // content-clear removes content override like rollback but is a distinct action.
+    // Old bug: timeline only handled rollback, not content-clear.
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000 }),
+        makeEvent({ action: 'content-clear', timestamp: 2000 }),
+      ],
+      observations: [
+        { timestamp: 1500, version: null }, // v2 active
+        { timestamp: 2500, version: null }, // v1 active (after content-clear)
+      ],
+      cachedJudgment: null,
+      currentContentVersion: null,
+    });
+
+    assert.equal(chain[0].tracing?.observationCount, 1, 'v1 should have 1 obs (t=2500, after content-clear)');
+    assert.equal(chain[1].tracing?.observationCount, 1, 'v2 should have 1 obs (t=1500)');
+    assert.equal(chain[0].isActive, true, 'v1 should be active after content-clear');
+  });
+
+  test('content-clear: eval after clear goes to manifest (R4 P1-1)', async () => {
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000 }),
+        makeEvent({ action: 'content-clear', timestamp: 2000 }),
+      ],
+      observations: [],
+      cachedJudgment: {
+        segmentId: 'S1',
+        verdict: 'alive',
+        injectionCount: 5,
+        violationCount: 0,
+        correlationConfidence: 'window',
+        evaluatedAt: 2500,
+        runId: 'run-post-clear',
+        segmentVersion: null,
+      },
+      currentContentVersion: null,
+    });
+
+    assert.ok(chain[0].eval, 'v1 should have eval (after content-clear)');
+    assert.equal(chain[1].eval, null, 'v2 should NOT have eval');
+  });
+
+  test('same-ms content-set events: each creates distinct epoch with correct activation (R4 P1-1)', async () => {
+    // Two content-set at t=1000: v2 and v3.
+    // Old bug: findIndex(startedAt===1000) always matched v2 for both.
+    // Fix: single-pass reducer directly assigns epochIndex at creation.
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000 }),
+        makeEvent({ action: 'content-set', timestamp: 1000 }),
+      ],
+      observations: [
+        { timestamp: 500, version: null }, // v1
+        { timestamp: 1200, version: null }, // v3 (latest of same-ms pair)
+      ],
+      cachedJudgment: null,
+      currentContentVersion: 2,
+    });
+
+    assert.equal(chain.length, 3, 'should have v1, v2, v3');
+    assert.equal(chain[0].tracing?.observationCount, 1, 'v1: t=500');
+    // v2 activated at t=1000 but immediately superseded by v3 at t=1000
+    assert.equal(chain[1].tracing, null, 'v2: no observations (immediately superseded)');
+    assert.equal(chain[2].tracing?.observationCount, 1, 'v3: t=1200 (latest same-ms activation)');
+    assert.equal(chain[2].isActive, true, 'v3 should be active');
+  });
+
   // ── Status derivation ────────────────────────────────────────
 
   test('epoch with observations derives tracing status', async () => {
