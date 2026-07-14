@@ -129,7 +129,9 @@ function buildEpochsAndTimeline(
     const latestEpoch = epochs[epochs.length - 1];
 
     if (event.action === 'content-set') {
-      const newVersion = latestEpoch.version + 1;
+      // R8: use event.epochVersion as truth source (stable monotonic ID).
+      // Fallback to incremental for pre-R6 events without epochVersion.
+      const newVersion = event.epochVersion ?? latestEpoch.version + 1;
       const origin: VersionOrigin = event.source === 'operator' ? 'user-create' : 'auto-iterate';
 
       latestEpoch.events.push({
@@ -269,20 +271,23 @@ function markActiveFromTimeline(epochs: VersionEpoch[], timeline: ActivationPoin
 // ---------------------------------------------------------------------------
 
 /**
- * Attach judgment history to epochs (P1-2: per-version eval).
- *
- * Each judgment is distributed to the epoch that was active at evaluatedAt
- * via the activation timeline. When multiple judgments map to the same epoch,
- * the latest (highest evaluatedAt) wins — consistent with "latest eval is
- * the current truth for that version".
- *
- * Governance derivation applies to the winning judgment per epoch.
+ * Attach judgment history to epochs (R8: version-aware attribution).
+ * segmentVersion (R7+) → direct epoch match; null → activation timeline fallback.
+ * Latest-wins per epoch. Governance derivation on the winning judgment.
  */
 function attachJudgments(epochs: VersionEpoch[], judgments: CachedJudgment[], timeline: ActivationPoint[]): void {
   if (epochs.length === 0 || judgments.length === 0) return;
 
   for (const judgment of judgments) {
-    const target = resolveActiveEpochAt(timeline, judgment.evaluatedAt, epochs);
+    // R8: prefer direct version match (epochVersion is the truth source).
+    // Only fall back to activation timeline for legacy judgments without version.
+    let target: VersionEpoch | undefined;
+    if (judgment.segmentVersion != null) {
+      target = epochs.find((e) => e.version === judgment.segmentVersion);
+    }
+    if (!target) {
+      target = resolveActiveEpochAt(timeline, judgment.evaluatedAt, epochs);
+    }
     const existing = target.eval;
 
     // Latest-wins: only overwrite if this judgment is newer

@@ -163,7 +163,9 @@ describe('buildVersionChain', () => {
         correlationConfidence: 'window',
         evaluatedAt: 1500, // AFTER v2 was created at t=1000
         runId: 'run2',
-        segmentVersion: 1,
+        // R8: segmentVersion=2 matches epoch v2 (pipeline stamps activeEpochVersion).
+        // Pre-R8 this was 1, but R8 version-aware attribution would send it to v1.
+        segmentVersion: 2,
       },
       currentContentVersion: 1,
     });
@@ -697,6 +699,114 @@ describe('buildVersionChain', () => {
     assert.equal(chain.length, 2);
     assert.equal(chain[0].isActive, false, 'v1 not active');
     assert.equal(chain[1].isActive, true, 'v2 active via contentVersion fallback');
+  });
+
+  // ── R8: epochVersion as truth source in chain builder ──────
+
+  test('R8 P1-1: judgment with segmentVersion goes to matching epoch, not timeline (Red→Green)', async () => {
+    // Two content-set events create v2 and v3 epochs.
+    // Two judgments in the SAME eval window (same evaluatedAt) but different segmentVersion.
+    // Without the fix, both fall to the same timeline-resolved epoch (v3, the last active).
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000, epochVersion: 2 }),
+        makeEvent({ action: 'content-set', timestamp: 2000, epochVersion: 3 }),
+      ],
+      observations: [],
+      judgmentHistory: [
+        {
+          segmentId: 'S1',
+          verdict: 'alive',
+          injectionCount: 5,
+          violationCount: 0,
+          correlationConfidence: 'window',
+          evaluatedAt: 5000,
+          runId: 'r1',
+          segmentVersion: 2,
+        },
+        {
+          segmentId: 'S1',
+          verdict: 'unmeasurable',
+          injectionCount: 0,
+          violationCount: 0,
+          correlationConfidence: 'window',
+          evaluatedAt: 5000,
+          runId: 'r1',
+          segmentVersion: 3,
+        },
+      ],
+      currentContentVersion: 2,
+    });
+
+    assert.equal(chain.length, 3, 'manifest + 2 overrides');
+    const v2 = chain.find((e) => e.version === 2);
+    const v3 = chain.find((e) => e.version === 3);
+    assert.ok(v2, 'v2 epoch must exist');
+    assert.ok(v3, 'v3 epoch must exist');
+    assert.ok(v2.eval, 'v2 should have eval');
+    assert.equal(v2.eval.verdict, 'alive', 'v2 gets its own verdict (alive)');
+    assert.ok(v3.eval, 'v3 should have eval');
+    assert.equal(v3.eval.verdict, 'unmeasurable', 'v3 gets its own verdict (unmeasurable)');
+  });
+
+  test('R8 P1-2: epochs use epochVersion from events, not incremental (Red→Green)', async () => {
+    // Events arrive out of order: epochVersion 3 first, then 2
+    // (concurrent write: B got epoch=3, wrote first; A got epoch=2, wrote second)
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000, epochVersion: 3 }),
+        makeEvent({ action: 'content-set', timestamp: 2000, epochVersion: 2 }),
+      ],
+      observations: [],
+      judgmentHistory: [],
+      currentContentVersion: 1,
+    });
+
+    assert.equal(chain.length, 3);
+    assert.equal(chain[0].version, 1, 'manifest epoch');
+    assert.equal(chain[1].version, 3, 'first event epoch uses epochVersion=3');
+    assert.equal(chain[2].version, 2, 'second event epoch uses epochVersion=2');
+    // Last event's epoch should be active (A wrote last)
+    assert.equal(chain[2].isActive, true, 'v2 is active (last write)');
+    assert.equal(chain[1].isActive, false, 'v3 is NOT active');
+  });
+
+  test('R8 backward compat: events without epochVersion use incremental fallback', async () => {
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000 }),
+        makeEvent({ action: 'content-set', timestamp: 2000 }),
+      ],
+      observations: [],
+      judgmentHistory: [],
+      currentContentVersion: 2,
+    });
+
+    assert.equal(chain[1].version, 2, 'fallback: manifest(1) + 1');
+    assert.equal(chain[2].version, 3, 'fallback: 2 + 1');
+  });
+
+  test('R8 version-activate finds epoch by real epochVersion (not incremental)', async () => {
+    // Out-of-order epochs: v3 created first, then v2
+    // version-activate targets v3 — must find it correctly
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000, epochVersion: 3 }),
+        makeEvent({ action: 'content-set', timestamp: 2000, epochVersion: 2 }),
+        makeEvent({ action: 'version-activate', timestamp: 3000, epochVersion: 3 }),
+      ],
+      observations: [],
+      judgmentHistory: [],
+      currentContentVersion: 1,
+    });
+
+    assert.equal(chain.length, 3);
+    assert.equal(chain[1].isActive, true, 'v3 (epoch index 1) reactivated');
+    assert.equal(chain[2].isActive, false, 'v2 not active');
   });
 
   test('rollback redistributes judgments: post-rollback eval goes to manifest', async () => {
