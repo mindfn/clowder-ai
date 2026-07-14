@@ -391,6 +391,31 @@ describe('buildVersionChain', () => {
     assert.equal(chain[2].isActive, true, 'v3 should be active');
   });
 
+  test('same-ms rollback→content-set: events in correct order → trace goes to v2 (R5 P1-1)', async () => {
+    // Simulates real ZSET output AFTER event ID format fix:
+    // rollback (seq=0) sorts before content-set (seq=1) at same timestamp.
+    // Physical order: content-set (create v2) → rollback → content-set (create v3)
+    // After rollback+content-set at t=2000, v3 is active, trace@2500 → v3.
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000 }),
+        makeEvent({ action: 'rollback', timestamp: 2000 }),
+        makeEvent({ action: 'content-set', timestamp: 2000 }), // same ms, seq after rollback
+      ],
+      observations: [{ timestamp: 2500, version: null }],
+      cachedJudgment: null,
+      currentContentVersion: 2,
+    });
+
+    assert.equal(chain.length, 3, 'v1 + v2 + v3');
+    // v3 was created at t=2000 (after rollback at t=2000), v3 is latest active
+    assert.equal(chain[2].isActive, true, 'v3 should be active');
+    assert.equal(chain[2].tracing?.observationCount, 1, 'trace@2500 should go to v3 (active after rollback+create)');
+    assert.equal(chain[0].tracing, null, 'v1 should have no observations');
+    assert.equal(chain[1].tracing, null, 'v2 should have no observations');
+  });
+
   // ── Status derivation ────────────────────────────────────────
 
   test('epoch with observations derives tracing status', async () => {

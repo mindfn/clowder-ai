@@ -1375,3 +1375,30 @@ describe('HookRegistry defense-in-depth — limited-edit + provenance (sol round
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe('Same-ms event ordering (R5 P1-1)', () => {
+  test('event IDs sort by seq, not action name', async () => {
+    const s1 = makeManifest('S1-order');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const orderStore = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    const frozenMs = 1700000000000;
+    const origNow = Date.now;
+    Date.now = () => frozenMs;
+    try {
+      await orderStore.setContentOverride(s1.id, 'v1', 'operator', 'u1');
+      await orderStore.rollback(s1.id, 'u1');
+      await orderStore.setContentOverride(s1.id, 'v2', 'operator', 'u1');
+    } finally {
+      Date.now = origNow;
+    }
+
+    const events = await orderStore.listEvents({ limit: 100 });
+    const actions = events.map((e) => e.action);
+    assert.equal(actions[0], 'content-set', 'first: content-set (v1)');
+    assert.equal(actions[1], 'rollback', 'second: rollback');
+    assert.equal(actions[2], 'content-set', 'third: content-set (v2)');
+  });
+});

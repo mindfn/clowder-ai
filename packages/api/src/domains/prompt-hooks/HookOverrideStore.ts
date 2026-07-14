@@ -348,9 +348,12 @@ export class HookOverrideStore {
     contentVersion?: number,
   ): Promise<void> {
     const timestamp = Date.now();
-    // Monotonic seq suffix prevents collision on same-ms same-hook writes (P2 fix)
+    // Monotonic seq determines ZSET member ordering for same-score (same-ms) events.
+    // Zero-padded seq BEFORE action ensures lexicographic order = insertion order.
+    // Old format was `${ts}-${hookId}-${action}-${seq}` — action position broke
+    // ordering because 'content-set' < 'rollback' lexicographically (R5 P1-1 fix).
     const seq = this.eventSeq++;
-    const eventId = `${timestamp}-${hookId}-${action}-${seq}`;
+    const eventId = `${timestamp}-${String(seq).padStart(6, '0')}-${hookId}-${action}`;
     const event: OverrideChangeEvent = {
       eventId,
       hookId,
