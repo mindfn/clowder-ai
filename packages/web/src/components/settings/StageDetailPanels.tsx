@@ -265,17 +265,18 @@ function SegmentRow({ segment: s }: { segment: ManifestSegment }) {
               </SettingsBadge>
             )}
             <span className="ml-auto flex items-center gap-2 text-xs opacity-50">
-              {/* biome-ignore lint/a11y/useKeyWithClickEvents: supplementary action */}
-              <span
-                className="cursor-pointer hover:opacity-80"
+              <button
+                type="button"
+                className="cursor-pointer border-none bg-transparent p-0 hover:opacity-80"
                 onClick={(e) => {
                   e.stopPropagation();
                   setLifelineOpen(true);
                 }}
+                aria-label={`查看 ${s.id} 生命线`}
                 title="查看生命线"
               >
                 📊
-              </span>
+              </button>
               {isViewable ? (s.allowLocalOverride ? '编辑' : '查看') : infoOpen ? '收起' : '详情'}
             </span>
           </div>

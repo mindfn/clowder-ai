@@ -34,6 +34,7 @@ interface GuardEvent {
   catId: string;
   timestamp: number;
   guardId: string;
+  attribution?: 'window-correlated';
 }
 
 interface OverrideEvent {
@@ -204,7 +205,10 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
               </LifelineSection>
 
               {data.guardEvents.length > 0 && (
-                <LifelineSection title={`守卫事件 (${data.guardEvents.length})`}>
+                <LifelineSection title={`窗口关联守卫事件 (${data.guardEvents.length})`}>
+                  <SettingsText as="p" variant="xs" tone="muted" className="mb-2">
+                    按 threadId + catId + ±120s 窗口匹配，非因果归因
+                  </SettingsText>
                   <div className="space-y-1">
                     {data.guardEvents.map((ev) => (
                       <GuardEventRow key={ev.eventId} event={ev} />
