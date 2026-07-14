@@ -52,6 +52,8 @@ export interface EvalDomainScheduleOpts {
   guardRejectionLog?: GuardRejectionEventLog;
   /** F257 judgment engine: InjectionTraceStore for per-segment verdict production. */
   traceStore?: import('../../../domains/prompt-hooks/InjectionTraceStore.js').InjectionTraceStore;
+  /** F257 Phase D: SegmentJudgmentCache for persisting latest judgments for lifeline API. */
+  judgmentCache?: import('../../../domains/prompt-hooks/SegmentJudgmentCache.js').SegmentJudgmentCache;
   /**
    * cloud R6 P2 (PR-2): runtime-wired publish-verdict domain set. Bootstrap (index.ts)
    * passes `new Set(Object.keys(verdictGenerators))` here so the scheduled daily/weekly
@@ -277,6 +279,8 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
               );
               if (judgments.length > 0) {
                 precomputedEvidence += `\n\n${formatJudgmentsForEvidence(judgments)}`;
+                // F257 Phase D: persist latest judgments for lifeline API consumption
+                await config.judgmentCache?.updateBatch(judgments);
               }
             }
 

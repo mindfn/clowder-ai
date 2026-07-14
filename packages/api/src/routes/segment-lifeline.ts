@@ -2,20 +2,28 @@
  * F257 Phase D — Segment lifeline endpoint.
  *
  * Read-model join: InjectionTraceStore + GuardRejectionEventLog + HookOverrideStore
- * → structured lifeline response consumed by the Console segment lifeline modal.
+ * + SegmentJudgmentCache → version lifecycle chain response.
  *
  * Zero new data collection — pure join of existing stores.
  * Auth: session-only (read surface, no mutation).
  */
+import type { SegmentLifecycleResponse } from '@cat-cafe/shared';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStore.js';
 import type { InjectionTraceStore } from '../domains/prompt-hooks/InjectionTraceStore.js';
+import type { SegmentJudgmentCache } from '../domains/prompt-hooks/SegmentJudgmentCache.js';
 import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
+import { buildVersionChain, deriveCurrentStatus, type SegmentObservationInput } from './segment-lifeline-chain.js';
 
 export interface SegmentLifelineRoutesOptions {
   traceStore?: InjectionTraceStore;
   guardRejectionLog?: GuardRejectionEventLog;
   overrideStore?: HookOverrideStore;
+  judgmentCache?: SegmentJudgmentCache;
+  /** Resolve manifest version for a segmentId. Returns 1 if unknown. */
+  resolveManifestVersion?: (segmentId: string) => number;
+  /** Resolve segment name from manifest. Returns segmentId if unknown. */
+  resolveSegmentName?: (segmentId: string) => string;
 }
 
 const DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -58,34 +66,57 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
     const windowStart = now - windowMs;
     const windowEnd = now;
 
-    // 1. Discover all threads with trace data, query each for this window
-    const observations = await collectObservations(opts.traceStore, segmentId, windowStart, windowEnd);
+    // 1. Collect raw observations
+    const { observations, observationInputs } = await collectObservations(
+      opts.traceStore,
+      segmentId,
+      windowStart,
+      windowEnd,
+    );
 
-    // 2. Guard rejection events — filtered by judgment-engine three-key contract:
-    // threadId + catId + ±120s proximity to an observation (terra P2-2 R2)
+    // 2. Collect override events for this segment
+    const overrideEvents = opts.overrideStore ? await collectSegmentOverrideEvents(opts.overrideStore, segmentId) : [];
+
+    // 3. Get current override state for contentVersion
+    const overrideState = opts.overrideStore ? await getOverrideState(opts.overrideStore, segmentId) : null;
+
+    // 4. Get cached judgment
+    const cachedJudgment = opts.judgmentCache ? await opts.judgmentCache.get(segmentId) : null;
+
+    // 5. Resolve manifest version
+    const manifestVersion = opts.resolveManifestVersion?.(segmentId) ?? 1;
+    const segmentName = opts.resolveSegmentName?.(segmentId) ?? segmentId;
+
+    // 6. Build version lifecycle chain
+    const chain = buildVersionChain({
+      manifestVersion,
+      overrideEvents,
+      observations: observationInputs,
+      cachedJudgment,
+      currentContentVersion: overrideState?.contentVersion ?? null,
+    });
+
+    // 7. Guard events — still collected for detail view
     const guardEvents = opts.guardRejectionLog
       ? await collectGuardEvents(opts.guardRejectionLog, windowStart, windowEnd, observations)
       : [];
 
-    // 3. Override state and history
-    const { overrideState, overrideHistory } = opts.overrideStore
-      ? await collectOverrideData(opts.overrideStore, segmentId, windowStart, windowEnd)
-      : { overrideState: null, overrideHistory: [] };
-
-    // 4. Derive status
-    const latestVersion = deriveLatestVersion(observations);
-    const status = observations.length > 0 ? 'tracing' : 'idle';
-
-    return reply.send({
+    const response = {
       segmentId,
-      status,
-      currentVersion: latestVersion,
+      segmentName,
+      activeVersion: overrideState?.contentVersion ?? manifestVersion,
+      chain,
+      currentStatus: deriveCurrentStatus(chain),
       window: { startMs: windowStart, endMs: windowEnd },
+      // Retained for backward compat + detail views
       observations,
       guardEvents,
-      overrideState,
-      overrideHistory,
-    });
+      overrideState: overrideState
+        ? { hookId: segmentId, enabled: overrideState.enabled, contentVersion: overrideState.contentVersion }
+        : null,
+    } satisfies SegmentLifecycleResponse & Record<string, unknown>;
+
+    return reply.send(response);
   });
 };
 
@@ -106,9 +137,10 @@ async function collectObservations(
   segmentId: string,
   startMs: number,
   endMs: number,
-): Promise<SegmentObservation[]> {
+): Promise<{ observations: SegmentObservation[]; observationInputs: SegmentObservationInput[] }> {
   const threadIds = await store.listTracedThreadIds();
   const observations: SegmentObservation[] = [];
+  const observationInputs: SegmentObservationInput[] = [];
 
   for (const threadId of threadIds) {
     if (observations.length >= MAX_OBSERVATIONS) break;
@@ -125,16 +157,19 @@ async function collectObservations(
         version: seg.version ?? null,
         charCount: seg.charCount,
       });
+      observationInputs.push({
+        timestamp: summary.timestamp,
+        version: seg.version ?? null,
+      });
       if (observations.length >= MAX_OBSERVATIONS) break;
     }
   }
 
-  // Sort by timestamp descending (most recent first)
   observations.sort((a, b) => b.timestamp - a.timestamp);
-  return observations;
+  return { observations, observationInputs };
 }
 
-/** ±120s proximity window for guard event attribution (matches judgment engine v1 contract). */
+/** ±120s proximity window for guard event attribution. */
 const GUARD_PROXIMITY_MS = 120_000;
 
 async function collectGuardEvents(
@@ -175,48 +210,24 @@ async function collectGuardEvents(
     }));
 }
 
-async function collectOverrideData(
+async function collectSegmentOverrideEvents(
   store: HookOverrideStore,
   segmentId: string,
-  startMs: number,
-  endMs: number,
-): Promise<{
-  overrideState: { hookId: string; enabled: boolean } | null;
-  overrideHistory: Array<{
-    eventId: string;
-    hookId: string;
-    action: string;
-    source: string;
-    timestamp: number;
-    actorId: string;
-    reason: string;
-  }>;
-}> {
-  // Current override state — the hookId is the segmentId for hook-backed segments
-  const overrides = await store.listOverrides();
-  const match = overrides.find((o) => o.hookId === segmentId);
-  const overrideState = match ? { hookId: match.hookId, enabled: match.enabled !== false } : null;
-
-  // Override change events for this segment
-  const allEvents = await store.listEvents({ since: startMs, until: endMs, limit: 50 });
-  const segmentEvents = allEvents
-    .filter((e) => e.hookId === segmentId)
-    .map((e) => ({
-      eventId: e.eventId,
-      hookId: e.hookId,
-      action: e.action,
-      source: e.source,
-      timestamp: e.timestamp,
-      actorId: e.actorId,
-      reason: e.reason ?? '',
-    }));
-
-  return { overrideState, overrideHistory: segmentEvents };
+): Promise<import('@cat-cafe/shared').OverrideChangeEvent[]> {
+  // Get ALL events for this segment (not windowed — chain needs full history)
+  const allEvents = await store.listEvents({ limit: 200 });
+  return allEvents.filter((e) => e.hookId === segmentId);
 }
 
-function deriveLatestVersion(observations: SegmentObservation[]): number | null {
-  for (const obs of observations) {
-    if (obs.version != null) return obs.version;
-  }
-  return null;
+async function getOverrideState(
+  store: HookOverrideStore,
+  segmentId: string,
+): Promise<{ enabled: boolean; contentVersion: number | null } | null> {
+  const overrides = await store.listOverrides();
+  const match = overrides.find((o) => o.hookId === segmentId);
+  if (!match) return null;
+  return {
+    enabled: match.enabled !== false,
+    contentVersion: match.contentVersion ?? null,
+  };
 }

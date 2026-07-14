@@ -64,6 +64,12 @@ export interface ManualTriggerDeps {
    * Optional — when absent, eval cat gets snapshot evidence only (no judgments).
    */
   traceStore?: InjectionTraceStore;
+  /**
+   * F257 Phase D: SegmentJudgmentCache for persisting latest judgment results.
+   * When provided, judgment results are cached after production for lifeline API.
+   * Optional — when absent, judgments are only included in eval evidence text.
+   */
+  judgmentCache?: import('../../../domains/prompt-hooks/SegmentJudgmentCache.js').SegmentJudgmentCache;
 }
 
 export interface HandlerError {

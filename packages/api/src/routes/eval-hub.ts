@@ -78,6 +78,8 @@ export interface EvalHubRoutesOptions {
   guardRejectionLog?: GuardRejectionEventLog;
   /** F257: InjectionTraceStore for per-segment judgment engine (manual trigger path). */
   traceStore?: import('../domains/prompt-hooks/InjectionTraceStore.js').InjectionTraceStore;
+  /** F257 Phase D: SegmentJudgmentCache for persisting latest judgments for lifeline API. */
+  judgmentCache?: import('../domains/prompt-hooks/SegmentJudgmentCache.js').SegmentJudgmentCache;
 }
 
 function requireSession(request: FastifyRequest, reply: FastifyReply): string | null {
@@ -234,6 +236,8 @@ export const evalHubRoutes: FastifyPluginAsync<EvalHubRoutesOptions> = async (ap
         guardRejectionLog: opts.guardRejectionLog,
         // F257: pass traceStore for per-segment judgment engine.
         traceStore: opts.traceStore,
+        // F257 Phase D: pass judgmentCache for persisting latest judgments.
+        judgmentCache: opts.judgmentCache,
       },
       { domainId, userId },
     );
