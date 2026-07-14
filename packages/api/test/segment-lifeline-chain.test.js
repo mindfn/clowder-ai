@@ -477,12 +477,12 @@ describe('buildVersionChain', () => {
 
   // ── Governance events ────────────────────────────────────────
 
-  test('enable/disable events become governance events on epoch', async () => {
+  test('operator enable/disable events map to governance kinds (AF-5)', async () => {
     const chain = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
-        makeEvent({ action: 'disable', timestamp: 1000 }),
-        makeEvent({ action: 'enable', timestamp: 2000 }),
+        makeEvent({ action: 'disable', source: 'operator', timestamp: 1000 }),
+        makeEvent({ action: 'enable', source: 'operator', timestamp: 2000 }),
       ],
       observations: [],
       cachedJudgment: null,
@@ -490,8 +490,25 @@ describe('buildVersionChain', () => {
     });
 
     assert.equal(chain[0].events.length, 2);
-    assert.equal(chain[0].events[0].kind, 'eval-reject');
-    assert.equal(chain[0].events[1].kind, 'governance-approve');
+    assert.equal(chain[0].events[0].kind, 'governance-reject', 'operator disable = governance-reject');
+    assert.equal(chain[0].events[1].kind, 'governance-approve', 'operator enable = governance-approve');
+  });
+
+  test('auto-eval enable/disable events map to eval kinds (AF-5)', async () => {
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'disable', source: 'auto-eval', timestamp: 1000 }),
+        makeEvent({ action: 'enable', source: 'auto-eval', timestamp: 2000 }),
+      ],
+      observations: [],
+      cachedJudgment: null,
+      currentContentVersion: null,
+    });
+
+    assert.equal(chain[0].events.length, 2);
+    assert.equal(chain[0].events[0].kind, 'eval-reject', 'auto-eval disable = eval-reject');
+    assert.equal(chain[0].events[1].kind, 'eval-pass', 'auto-eval enable = eval-pass');
   });
 
   // ── Multiple content versions ────────────────────────────────
@@ -843,7 +860,7 @@ describe('buildVersionChain', () => {
     assert.ok(v3Events.includes('version-activate'), 'activate event on v3 (was active)');
     // disable event should be on v2 (active after activate)
     const v2Events = v2.events.map((e) => e.kind);
-    assert.ok(v2Events.includes('eval-reject'), 'disable event on v2 (now active)');
+    assert.ok(v2Events.includes('governance-reject'), 'disable event on v2 (now active)');
     // v2 should be active
     assert.equal(v2.isActive, true);
   });

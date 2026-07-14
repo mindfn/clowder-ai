@@ -1624,10 +1624,16 @@ async function main(): Promise<void> {
   let segmentJudgmentCache: import('./domains/prompt-hooks/SegmentJudgmentCache.js').SegmentJudgmentCache | undefined;
   if (redis) {
     const { HookOverrideStore } = await import('./domains/prompt-hooks/HookOverrideStore.js');
-    const { setOverrideStore, getCachedRegistry } = await import('./domains/prompt-hooks/PipelinePromptBuilder.js');
+    const { setOverrideStore, getCachedRegistry, refreshOverrideSnapshot } = await import(
+      './domains/prompt-hooks/PipelinePromptBuilder.js'
+    );
     const manifestLookup = (hookId: string) => getCachedRegistry()?.getHook(hookId)?.manifest;
     hookOverrideStore = new HookOverrideStore(redis, manifestLookup);
     setOverrideStore(hookOverrideStore);
+    // AF-1: pre-warm registry + override snapshot at bootstrap so cold-start
+    // requests don't hit null getCachedRegistry(). refreshOverrideSnapshot()
+    // triggers getPipeline() internally if registry is uninitialized.
+    await refreshOverrideSnapshot();
     // F257 Phase D: judgment cache shares the same Redis client.
     const { SegmentJudgmentCache } = await import('./domains/prompt-hooks/SegmentJudgmentCache.js');
     segmentJudgmentCache = new SegmentJudgmentCache(redis);

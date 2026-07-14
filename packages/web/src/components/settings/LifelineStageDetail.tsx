@@ -304,6 +304,7 @@ const KIND_LABEL: Record<string, string> = {
   'eval-pass': '评估通过',
   'eval-reject': '评估未通过',
   'governance-approve': '治理通过',
+  'governance-reject': '治理禁用',
 };
 function EventRow({
   event,
