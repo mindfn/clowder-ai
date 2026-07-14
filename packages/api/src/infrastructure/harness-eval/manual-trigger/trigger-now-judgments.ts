@@ -18,6 +18,7 @@ import { produceSegmentJudgments, type SegmentJudgment } from '../segment-judgme
 export async function produceJudgmentsFromSnapshot(
   traceStore: InjectionTraceStore,
   snapshotResult: ProduceSnapshotResult,
+  evalCat: string,
 ): Promise<SegmentJudgment[]> {
   // Extract unique threadIds from raw events
   const threadIdSet = new Set<string>();
@@ -32,7 +33,7 @@ export async function produceJudgmentsFromSnapshot(
     { traceStore },
     {
       snapshot: snapshotResult.snapshot,
-      evalCat: 'judgment-engine', // Overwritten by eval invocation
+      evalCat,
       threadIds,
       rawGuardEvents: snapshotResult.rawEvents,
     },

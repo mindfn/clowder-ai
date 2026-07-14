@@ -92,15 +92,18 @@ export class InjectionTraceStore {
   /**
    * F257: Time-windowed query for judgment engine consumption.
    *
-   * Returns summaries within [startMs, endMs] for a given thread.
+   * Returns summaries within [startMs, endMs) for a given thread.
+   * End-exclusive to match GuardRejectionEventLog.queryWindow boundary contract
+   * and prevent double-counting in adjacent eval windows.
+   *
    * The judgment engine uses this to compute per-segment injectionCount:
    *   queryWindow(threadId, windowStart, windowEnd) → filter segments by segmentId → count fired.
-   *
-   * Matches GuardRejectionEventLog.queryWindow pattern (judgment schema §1 correlation contract).
    */
   async queryWindow(threadId: string, startMs: number, endMs: number): Promise<InjectionTraceSummary[]> {
     const iKey = indexKey(threadId);
-    const turnIds = await this.redis.zrangebyscore(iKey, startMs, endMs);
+    // End-exclusive: ZRANGEBYSCORE is inclusive, so subtract 1ms to implement [start, end).
+    // Matches GuardRejectionEventLog.queryWindow (line 177: `const upperBound = until - 1`).
+    const turnIds = await this.redis.zrangebyscore(iKey, startMs, endMs - 1);
     const summaries: InjectionTraceSummary[] = [];
     for (const turnId of turnIds) {
       const summary = await this.getSummary(threadId, turnId);

@@ -227,7 +227,7 @@ describe('F257 Segment Judgment Engine', () => {
   });
 
   describe('guard event correlation', () => {
-    test('correlates events within ±120s of fired trace timestamp', async () => {
+    test('correlates events within ±120s of fired trace timestamp (three-key match)', async () => {
       const traceTs = T0;
       const store = new FakeTraceStore({
         'thread-1': [
@@ -246,13 +246,28 @@ describe('F257 Segment Judgment Engine', () => {
           snapshot: makeSnapshot({
             startMs: WINDOW_START,
             endMs: WINDOW_END,
-            sampleAnchors: [
-              { eventId: 'ev-1', kind: 'identity-mismatch', guardId: 'identity-guard', timestamp: traceTs + 60_000 },
-              { eventId: 'ev-2', kind: 'safety-violation', guardId: 'safety-guard', timestamp: traceTs + 200_000 },
-            ],
           }),
           evalCat: 'ragdoll',
           threadIds: ['thread-1'],
+          // v1 three-key correlation: rawGuardEvents carry threadId + catId.
+          // ev-1: same thread + same cat + within ±120s → matches.
+          // ev-2: same thread + same cat but outside ±120s → no match.
+          rawGuardEvents: [
+            {
+              eventId: 'ev-1',
+              guardId: 'identity-guard',
+              threadId: 'thread-1',
+              catId: 'cat-a',
+              timestamp: traceTs + 60_000,
+            },
+            {
+              eventId: 'ev-2',
+              guardId: 'safety-guard',
+              threadId: 'thread-1',
+              catId: 'cat-a',
+              timestamp: traceTs + 200_000,
+            },
+          ],
         },
       );
 
@@ -261,7 +276,7 @@ describe('F257 Segment Judgment Engine', () => {
       assert.equal(result[0].verdict, 'alive');
     });
 
-    test('no correlation when guard event outside window', async () => {
+    test('no correlation when guard event outside ±120s window', async () => {
       const store = new FakeTraceStore({
         'thread-1': [
           makeTrace({
@@ -279,10 +294,13 @@ describe('F257 Segment Judgment Engine', () => {
           snapshot: makeSnapshot({
             startMs: WINDOW_START,
             endMs: WINDOW_END,
-            sampleAnchors: [{ eventId: 'ev-far', kind: 'x', guardId: 'g', timestamp: T0 + 300_000 }],
           }),
           evalCat: 'ragdoll',
           threadIds: ['thread-1'],
+          // Same thread + same cat but 300s away → outside ±120s window.
+          rawGuardEvents: [
+            { eventId: 'ev-far', guardId: 'g', threadId: 'thread-1', catId: 'cat-a', timestamp: T0 + 300_000 },
+          ],
         },
       );
 
@@ -517,6 +535,166 @@ describe('F257 Segment Judgment Engine', () => {
       assert.equal(result.length, 1);
       assert.equal(result[0].segmentId, 'S-shared-hook');
       assert.equal(result[0].evidence.injectionCount.value, 2);
+    });
+  });
+
+  describe('v1 three-key correlation (terra review P1-2)', () => {
+    test('same-tuple matches: same threadId + same catId + within ±120s', async () => {
+      const store = new FakeTraceStore({
+        'thread-1': [
+          makeTrace({
+            threadId: 'thread-1',
+            catId: 'cat-a',
+            timestamp: T0,
+            segments: [makeSeg({ segmentId: 'S-hook' })],
+          }),
+        ],
+      });
+
+      const result = await produceSegmentJudgments(
+        { traceStore: store },
+        {
+          snapshot: makeSnapshot({ startMs: WINDOW_START, endMs: WINDOW_END }),
+          evalCat: 'ragdoll',
+          threadIds: ['thread-1'],
+          rawGuardEvents: [
+            { eventId: 'ev-match', guardId: 'g', threadId: 'thread-1', catId: 'cat-a', timestamp: T0 + 50_000 },
+          ],
+        },
+      );
+
+      assert.equal(result[0].evidence.violationCount.value, 1);
+      assert.deepStrictEqual(result[0].evidence.eventRefs, ['ev-match']);
+    });
+
+    test('different threadId within ±120s does NOT match', async () => {
+      const store = new FakeTraceStore({
+        'thread-1': [
+          makeTrace({
+            threadId: 'thread-1',
+            catId: 'cat-a',
+            timestamp: T0,
+            segments: [makeSeg({ segmentId: 'S-hook' })],
+          }),
+        ],
+      });
+
+      const result = await produceSegmentJudgments(
+        { traceStore: store },
+        {
+          snapshot: makeSnapshot({ startMs: WINDOW_START, endMs: WINDOW_END }),
+          evalCat: 'ragdoll',
+          threadIds: ['thread-1'],
+          rawGuardEvents: [
+            // Same catId + within ±120s, but different threadId → no match
+            {
+              eventId: 'ev-cross-thread',
+              guardId: 'g',
+              threadId: 'thread-OTHER',
+              catId: 'cat-a',
+              timestamp: T0 + 10_000,
+            },
+          ],
+        },
+      );
+
+      assert.equal(result[0].evidence.violationCount.value, 0);
+      assert.deepStrictEqual(result[0].evidence.eventRefs, []);
+    });
+
+    test('different catId within ±120s does NOT match', async () => {
+      const store = new FakeTraceStore({
+        'thread-1': [
+          makeTrace({
+            threadId: 'thread-1',
+            catId: 'cat-a',
+            timestamp: T0,
+            segments: [makeSeg({ segmentId: 'S-hook' })],
+          }),
+        ],
+      });
+
+      const result = await produceSegmentJudgments(
+        { traceStore: store },
+        {
+          snapshot: makeSnapshot({ startMs: WINDOW_START, endMs: WINDOW_END }),
+          evalCat: 'ragdoll',
+          threadIds: ['thread-1'],
+          rawGuardEvents: [
+            // Same threadId + within ±120s, but different catId → no match
+            {
+              eventId: 'ev-cross-cat',
+              guardId: 'g',
+              threadId: 'thread-1',
+              catId: 'cat-DIFFERENT',
+              timestamp: T0 + 10_000,
+            },
+          ],
+        },
+      );
+
+      assert.equal(result[0].evidence.violationCount.value, 0);
+      assert.deepStrictEqual(result[0].evidence.eventRefs, []);
+    });
+
+    test('sampleAnchors without rawGuardEvents yields 0 violations (no false attribution)', async () => {
+      const store = new FakeTraceStore({
+        'thread-1': [
+          makeTrace({
+            threadId: 'thread-1',
+            catId: 'cat-a',
+            timestamp: T0,
+            segments: [makeSeg({ segmentId: 'S-hook' })],
+          }),
+        ],
+      });
+
+      // sampleAnchors present in snapshot but no rawGuardEvents passed →
+      // engine must return 0 violations (sampleAnchors lack threadId/catId).
+      const result = await produceSegmentJudgments(
+        { traceStore: store },
+        {
+          snapshot: makeSnapshot({
+            startMs: WINDOW_START,
+            endMs: WINDOW_END,
+            sampleAnchors: [{ eventId: 'anchor-1', kind: 'x', guardId: 'g', timestamp: T0 + 10_000 }],
+          }),
+          evalCat: 'ragdoll',
+          threadIds: ['thread-1'],
+          // rawGuardEvents intentionally omitted
+        },
+      );
+
+      assert.equal(result[0].evidence.violationCount.value, 0);
+      assert.deepStrictEqual(result[0].evidence.eventRefs, []);
+    });
+  });
+
+  describe('evalCat provenance (terra review P2-2)', () => {
+    test('producedBy.evalCat reflects the effective eval cat, not a default', async () => {
+      const store = new FakeTraceStore({
+        'thread-1': [
+          makeTrace({
+            threadId: 'thread-1',
+            catId: 'cat-a',
+            timestamp: T0,
+            segments: [makeSeg({ segmentId: 'S-hook' })],
+          }),
+        ],
+      });
+
+      // Simulate override scenario: evalCat is 'maine-coon-override' (not the domain default)
+      const result = await produceSegmentJudgments(
+        { traceStore: store },
+        {
+          snapshot: makeSnapshot({ startMs: WINDOW_START, endMs: WINDOW_END }),
+          evalCat: 'maine-coon-override',
+          threadIds: ['thread-1'],
+        },
+      );
+
+      assert.equal(result[0].producedBy.evalCat, 'maine-coon-override');
+      assert.equal(result[0].producedBy.domainId, 'eval:harness-ledger');
     });
   });
 });

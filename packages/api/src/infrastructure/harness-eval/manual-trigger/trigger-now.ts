@@ -131,7 +131,11 @@ export async function handleTriggerNow(
 
       // F257: Produce per-segment judgments (deterministic, no LLM).
       if (deps.traceStore) {
-        const judgments = await produceJudgmentsFromSnapshot(deps.traceStore, snapshotResult);
+        const judgments = await produceJudgmentsFromSnapshot(
+          deps.traceStore,
+          snapshotResult,
+          effectiveDomain.evalCat.catId,
+        );
         if (judgments.length > 0) {
           precomputedEvidence += `\n\n${formatJudgmentsForEvidence(judgments)}`;
         }

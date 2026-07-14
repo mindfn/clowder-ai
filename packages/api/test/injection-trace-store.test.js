@@ -386,7 +386,7 @@ describe('InjectionTraceStore', () => {
     assert.equal(after.length, 0);
   });
 
-  test('queryWindow includes exact boundary timestamps', async () => {
+  test('queryWindow boundary: start-inclusive, end-exclusive [start, end)', async () => {
     const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
     const redis = new FakeRedis();
     const store = new InjectionTraceStore(redis);
@@ -416,14 +416,32 @@ describe('InjectionTraceStore', () => {
     };
 
     await store.persist(
-      { ...base, turnId: 'exact', timestamp: 1000 },
-      { ...baseDetail, turnId: 'exact', timestamp: 1000 },
+      { ...base, turnId: 'at-start', timestamp: 1000 },
+      { ...baseDetail, turnId: 'at-start', timestamp: 1000 },
+    );
+    await store.persist(
+      { ...base, turnId: 'at-end', timestamp: 2000 },
+      { ...baseDetail, turnId: 'at-end', timestamp: 2000 },
     );
 
-    // Exact match on both boundaries
-    const results = await store.queryWindow('th1', 1000, 1000);
+    // [1000, 2000): includes start boundary (1000), excludes end boundary (2000)
+    // Matches GuardRejectionEventLog.queryWindow contract.
+    const results = await store.queryWindow('th1', 1000, 2000);
     assert.equal(results.length, 1);
-    assert.equal(results[0].turnId, 'exact');
+    assert.equal(results[0].turnId, 'at-start');
+
+    // Start-inclusive: exact start boundary included
+    const startExact = await store.queryWindow('th1', 1000, 1001);
+    assert.equal(startExact.length, 1);
+    assert.equal(startExact[0].turnId, 'at-start');
+
+    // End-exclusive: [1000, 1000) is empty range
+    const emptyRange = await store.queryWindow('th1', 1000, 1000);
+    assert.equal(emptyRange.length, 0);
+
+    // End-inclusive requires end+1: [1000, 2001) includes both
+    const bothInclusive = await store.queryWindow('th1', 1000, 2001);
+    assert.equal(bothInclusive.length, 2);
   });
 
   test('queryWindow returns empty for unknown threadId', async () => {

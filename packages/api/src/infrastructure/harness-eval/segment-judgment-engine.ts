@@ -132,7 +132,7 @@ export async function produceSegmentJudgments(
   const segmentStats = aggregateSegmentStats(allTraces);
 
   // 3. Build guard event index for correlation
-  const guardEventIndex = buildGuardEventIndex(snapshot, input.rawGuardEvents);
+  const guardEventIndex = buildGuardEventIndex(input.rawGuardEvents);
 
   // 4. For each segment, correlate and produce judgment
   const judgments: SegmentJudgment[] = [];
@@ -222,24 +222,19 @@ interface GuardEventEntry {
   timestamp: number;
 }
 
-function buildGuardEventIndex(snapshot: HarnessLedgerRunSnapshot, rawEvents?: RawGuardEvent[]): GuardEventEntry[] {
-  // Prefer raw events when available (full threadId/catId for precise correlation).
-  // Fall back to snapshot.sampleAnchors (limited to first 5, no threadId/catId).
-  if (rawEvents && rawEvents.length > 0) {
-    return rawEvents.map((e) => ({
-      eventId: e.eventId,
-      guardId: e.guardId,
-      threadId: e.threadId,
-      catId: e.catId,
-      timestamp: e.timestamp,
-    }));
-  }
-  return snapshot.sampleAnchors.map((a) => ({
-    eventId: a.eventId,
-    guardId: a.guardId,
-    threadId: '',
-    catId: '',
-    timestamp: a.timestamp,
+function buildGuardEventIndex(rawEvents?: RawGuardEvent[]): GuardEventEntry[] {
+  // Raw events carry full threadId/catId for v1 three-key correlation.
+  // sampleAnchors lack threadId/catId and CANNOT satisfy the frozen v1 join
+  // contract (threadId + catId + ±120s). Returning them with empty strings
+  // would produce false attribution across threads/cats. When raw events are
+  // absent, return empty → violationCount = 0 with explicit evidence gap.
+  if (!rawEvents || rawEvents.length === 0) return [];
+  return rawEvents.map((e) => ({
+    eventId: e.eventId,
+    guardId: e.guardId,
+    threadId: e.threadId,
+    catId: e.catId,
+    timestamp: e.timestamp,
   }));
 }
 
@@ -256,15 +251,20 @@ function correlateGuardEvents(
     return { count: 0, eventRefs: [] };
   }
 
-  // v1 window correlation: guard event timestamp within ±CORRELATION_WINDOW_MS
-  // of any fired trace timestamp. threadId/catId matching deferred to v2 (exact).
+  // v1 three-key correlation (frozen schema §1):
+  //   join = threadId + catId + [timestamp ± CORRELATION_WINDOW_MS]
+  // All three must match. Guard events without threadId/catId never enter
+  // the index (buildGuardEventIndex drops sampleAnchors).
   const matchedEventIds = new Set<string>();
 
   for (const guard of guardEvents) {
     for (const fired of firedTimestamps) {
-      if (Math.abs(guard.timestamp - fired.timestamp) <= CORRELATION_WINDOW_MS) {
+      const sameThread = guard.threadId === fired.threadId;
+      const sameCat = guard.catId === fired.catId;
+      const withinWindow = Math.abs(guard.timestamp - fired.timestamp) <= CORRELATION_WINDOW_MS;
+      if (sameThread && sameCat && withinWindow) {
         matchedEventIds.add(guard.eventId);
-        break; // One match is enough for this event
+        break;
       }
     }
   }

@@ -270,7 +270,11 @@ function createEvalDomainSpec(config: EvalDomainSpecConfig): TaskSpec_P1<EvalDom
 
             // F257: Produce per-segment judgments (deterministic, no LLM).
             if (config.traceStore) {
-              const judgments = await produceJudgmentsFromSnapshot(config.traceStore, snapshotResult);
+              const judgments = await produceJudgmentsFromSnapshot(
+                config.traceStore,
+                snapshotResult,
+                effectiveDomain.evalCat.catId,
+              );
               if (judgments.length > 0) {
                 precomputedEvidence += `\n\n${formatJudgmentsForEvidence(judgments)}`;
               }

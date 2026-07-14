@@ -2070,6 +2070,8 @@ async function main(): Promise<void> {
     eventMemoryDbPath: memoryServices.eventMemoryDbPath,
     // KD-17: GuardRejectionEventLog for eval:harness-ledger snapshot-first manual trigger.
     guardRejectionLog,
+    // F257: InjectionTraceStore for per-segment judgment engine (manual trigger path).
+    traceStore: injectionTraceStore,
   });
 
   // F257 approval executor (KD-14 first leg): operator-gated override management.
@@ -2096,6 +2098,7 @@ async function main(): Promise<void> {
       threadStore,
       redis,
       guardRejectionLog,
+      traceStore: injectionTraceStore,
     };
     guardRejectionLog.setPostAppendHook(
       createThresholdEscalationHook({
@@ -4502,6 +4505,8 @@ async function main(): Promise<void> {
     // trigger can produce run snapshot before eval cat invocation.
     guardRejectionLog,
     evidencePrereqProbe,
+    // F257: InjectionTraceStore for per-segment judgment engine consumption.
+    traceStore: injectionTraceStore,
   };
   taskRunnerV2.register(createEvalDomainDailySpec(evalScheduleOpts));
   taskRunnerV2.register(createEvalDomainWeeklySpec(evalScheduleOpts));
