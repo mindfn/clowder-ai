@@ -514,4 +514,194 @@ describe('buildVersionChain', () => {
     assert.equal(chain[2].version, 3);
     assert.equal(chain[2].isActive, true, 'v3 (latest content-set) should be active');
   });
+
+  // ── P1-2: per-version eval history ──────────────────────────
+
+  test('multiple judgments distributed across epochs by activation timeline', async () => {
+    // v1 (manifest) → content-set@1000 (v2) → content-set@2000 (v3)
+    // judgment1 at t=500 → v1, judgment2 at t=1500 → v2, judgment3 at t=2500 → v3
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000 }),
+        makeEvent({ action: 'content-set', timestamp: 2000 }),
+      ],
+      observations: [],
+      judgmentHistory: [
+        {
+          segmentId: 'S1',
+          verdict: 'alive',
+          injectionCount: 10,
+          violationCount: 0,
+          correlationConfidence: 'window',
+          evaluatedAt: 500,
+          runId: 'run1',
+          segmentVersion: 1,
+        },
+        {
+          segmentId: 'S1',
+          verdict: 'dormant',
+          injectionCount: 5,
+          violationCount: 3,
+          correlationConfidence: 'window',
+          evaluatedAt: 1500,
+          runId: 'run2',
+          segmentVersion: null,
+        },
+        {
+          segmentId: 'S1',
+          verdict: 'retire-candidate',
+          injectionCount: 0,
+          violationCount: 7,
+          correlationConfidence: 'strong',
+          evaluatedAt: 2500,
+          runId: 'run3',
+          segmentVersion: null,
+        },
+      ],
+      currentContentVersion: 2,
+    });
+
+    assert.equal(chain.length, 3);
+    // v1 got judgment1 (alive at t=500)
+    assert.ok(chain[0].eval, 'v1 should have eval');
+    assert.equal(chain[0].eval.verdict, 'alive');
+    assert.equal(chain[0].eval.evaluatedAt, 500);
+    // v2 got judgment2 (dormant at t=1500)
+    assert.ok(chain[1].eval, 'v2 should have eval');
+    assert.equal(chain[1].eval.verdict, 'dormant');
+    assert.equal(chain[1].eval.evaluatedAt, 1500);
+    // v3 got judgment3 (retire-candidate at t=2500)
+    assert.ok(chain[2].eval, 'v3 should have eval');
+    assert.equal(chain[2].eval.verdict, 'retire-candidate');
+    assert.equal(chain[2].eval.evaluatedAt, 2500);
+  });
+
+  test('latest judgment wins when multiple map to same epoch', async () => {
+    // Two evals during v1 lifetime (no override events)
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [],
+      observations: [],
+      judgmentHistory: [
+        {
+          segmentId: 'S1',
+          verdict: 'dormant',
+          injectionCount: 3,
+          violationCount: 2,
+          correlationConfidence: 'window',
+          evaluatedAt: 500,
+          runId: 'run1',
+          segmentVersion: 1,
+        },
+        {
+          segmentId: 'S1',
+          verdict: 'alive',
+          injectionCount: 10,
+          violationCount: 0,
+          correlationConfidence: 'strong',
+          evaluatedAt: 1000,
+          runId: 'run2',
+          segmentVersion: 1,
+        },
+      ],
+      currentContentVersion: null,
+    });
+
+    assert.equal(chain.length, 1);
+    // Latest judgment (alive at t=1000) wins
+    assert.ok(chain[0].eval, 'v1 should have eval');
+    assert.equal(chain[0].eval.verdict, 'alive');
+    assert.equal(chain[0].eval.evaluatedAt, 1000);
+  });
+
+  // ── P1-3: version-activate event in chain ────────────────────
+
+  test('version-activate switches active epoch back to earlier version', async () => {
+    // v1 → content-set@1000 (v2) → content-set@2000 (v3) → version-activate v2 @3000
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000 }),
+        makeEvent({ action: 'content-set', timestamp: 2000 }),
+        makeEvent({ action: 'version-activate', timestamp: 3000, contentVersion: 2 }),
+      ],
+      observations: [],
+      judgmentHistory: [],
+      currentContentVersion: 2,
+    });
+
+    assert.equal(chain.length, 3);
+    assert.equal(chain[0].isActive, false, 'v1 not active');
+    assert.equal(chain[1].isActive, true, 'v2 should be active after version-activate');
+    assert.equal(chain[2].isActive, false, 'v3 not active');
+  });
+
+  test('observation after version-activate goes to activated epoch', async () => {
+    // v1 → content-set@1000 (v2) → version-activate v1 @2000 → observation@2500
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000 }),
+        makeEvent({ action: 'version-activate', timestamp: 2000, contentVersion: 1 }),
+      ],
+      observations: [{ timestamp: 2500, version: null }],
+      judgmentHistory: [],
+      currentContentVersion: 1,
+    });
+
+    assert.equal(chain.length, 2);
+    // Observation at t=2500 should go to v1 (activated at t=2000)
+    assert.ok(chain[0].tracing, 'v1 should have tracing data');
+    assert.equal(chain[0].tracing.observationCount, 1);
+    assert.equal(chain[1].tracing, null, 'v2 should have no tracing');
+  });
+
+  test('rollback redistributes judgments: post-rollback eval goes to manifest', async () => {
+    // v1 → content-set@1000 (v2) → rollback@2000 → eval@2500 → content-set@3000 (v3)
+    const chain = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 1000 }),
+        makeEvent({ action: 'rollback', timestamp: 2000 }),
+        makeEvent({ action: 'content-set', timestamp: 3000 }),
+      ],
+      observations: [],
+      judgmentHistory: [
+        {
+          segmentId: 'S1',
+          verdict: 'dormant',
+          injectionCount: 5,
+          violationCount: 3,
+          correlationConfidence: 'window',
+          evaluatedAt: 1500,
+          runId: 'run1',
+          segmentVersion: null,
+        },
+        {
+          segmentId: 'S1',
+          verdict: 'alive',
+          injectionCount: 12,
+          violationCount: 0,
+          correlationConfidence: 'strong',
+          evaluatedAt: 2500,
+          runId: 'run2',
+          segmentVersion: null,
+        },
+      ],
+      currentContentVersion: 2,
+    });
+
+    assert.equal(chain.length, 3);
+    // v1: eval@2500 (post-rollback, manifest active)
+    assert.ok(chain[0].eval, 'v1 should have eval (post-rollback)');
+    assert.equal(chain[0].eval.verdict, 'alive');
+    assert.equal(chain[0].eval.evaluatedAt, 2500);
+    // v2: eval@1500 (during v2 active period)
+    assert.ok(chain[1].eval, 'v2 should have eval');
+    assert.equal(chain[1].eval.verdict, 'dormant');
+    assert.equal(chain[1].eval.evaluatedAt, 1500);
+    // v3: no eval yet
+    assert.equal(chain[2].eval, null, 'v3 has no eval yet');
+  });
 });

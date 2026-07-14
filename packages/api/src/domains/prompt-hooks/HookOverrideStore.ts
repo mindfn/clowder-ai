@@ -36,6 +36,8 @@ export type ManifestLookup = (hookId: string) => HookManifest | undefined;
 const OVERRIDE_HASH = (ws: string) => `hook-override:${ws}`;
 const EVENT_ZSET = (ws: string) => `hook-override-events:${ws}`;
 const EVENT_KEY = (ws: string, id: string) => `hook-override-event:${ws}:${id}`;
+/** P1-3: per-version content snapshot. HASH {version → content}. */
+const VERSION_SNAPSHOT = (ws: string, hookId: string) => `hook-override-versions:${ws}:${hookId}`;
 
 /**
  * Audit events persist permanently (TTL=0, Iron Law 5: user-visible state
@@ -177,6 +179,8 @@ export class HookOverrideStore {
       updatedBy: actorId,
     };
     await this.redis.hset(OVERRIDE_HASH(ws), hookId, JSON.stringify(override));
+    // P1-3: snapshot version content for later activateVersion()
+    await this.redis.hset(VERSION_SNAPSHOT(ws, hookId), String(override.contentVersion), content);
     await this.recordEvent(ws, hookId, 'content-set', source, actorId, opts?.reason, override.contentVersion);
   }
 
@@ -218,6 +222,62 @@ export class HookOverrideStore {
     const source = opts?.source ?? 'operator';
     await this.redis.hdel(OVERRIDE_HASH(ws), hookId);
     await this.recordEvent(ws, hookId, 'rollback', source, actorId, opts?.reason);
+  }
+
+  // -- P1-3: Version management -------------------------------------------
+
+  /**
+   * Activate a previously created version by restoring its content snapshot.
+   * Records a version-activate event with contentVersion = target version.
+   * Fails if the target version has no stored snapshot.
+   */
+  async activateVersion(
+    hookId: string,
+    targetVersion: number,
+    actorId: string,
+    opts?: { source?: HookOverrideSource; workspaceId?: string; reason?: string },
+  ): Promise<void> {
+    this.resolveManifest(hookId);
+    const source = opts?.source ?? 'operator';
+    this.assertContentEditable(hookId, source);
+    const ws = opts?.workspaceId ?? this.defaultWorkspaceId;
+
+    // Read content snapshot for target version
+    const content = await this.redis.hget(VERSION_SNAPSHOT(ws, hookId), String(targetVersion));
+    if (content === null) {
+      throw new Error(`No content snapshot for hook '${hookId}' version ${targetVersion}`);
+    }
+
+    // Restore the content override to the target version
+    const existing = await this.getOverride(hookId, ws);
+    const override: HookOverride = {
+      ...(existing ?? {}),
+      hookId,
+      contentOverride: content,
+      contentVersion: targetVersion,
+      contentSource: source,
+      source,
+      updatedAt: Date.now(),
+      updatedBy: actorId,
+    };
+    await this.redis.hset(OVERRIDE_HASH(ws), hookId, JSON.stringify(override));
+    await this.recordEvent(ws, hookId, 'version-activate', source, actorId, opts?.reason, targetVersion);
+  }
+
+  /** List all stored version snapshots for a hook (P1-3). */
+  async listVersions(
+    hookId: string,
+    workspaceId?: string,
+  ): Promise<Array<{ version: number; contentPreview: string }>> {
+    const ws = workspaceId ?? this.defaultWorkspaceId;
+    const all = await this.redis.hgetall(VERSION_SNAPSHOT(ws, hookId));
+    if (!all) return [];
+    return Object.entries(all)
+      .map(([v, content]) => ({
+        version: Number(v),
+        contentPreview: content.length > 120 ? `${content.slice(0, 120)}…` : content,
+      }))
+      .sort((a, b) => a.version - b.version);
   }
 
   // -- Read operations ------------------------------------------------------

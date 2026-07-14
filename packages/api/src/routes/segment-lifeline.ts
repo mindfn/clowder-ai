@@ -80,8 +80,8 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
     // 3. Get current override state for contentVersion
     const overrideState = opts.overrideStore ? await getOverrideState(opts.overrideStore, segmentId) : null;
 
-    // 4. Get cached judgment
-    const cachedJudgment = opts.judgmentCache ? await opts.judgmentCache.get(segmentId) : null;
+    // 4. Get judgment history (P1-2: per-version eval)
+    const judgmentHistory = opts.judgmentCache ? await opts.judgmentCache.getHistory(segmentId) : [];
 
     // 5. Resolve manifest version
     const manifestVersion = opts.resolveManifestVersion?.(segmentId) ?? 1;
@@ -92,7 +92,7 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
       manifestVersion,
       overrideEvents,
       observations: observationInputs,
-      cachedJudgment,
+      judgmentHistory,
       currentContentVersion: overrideState?.contentVersion ?? null,
     });
 

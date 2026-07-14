@@ -40,8 +40,10 @@ export interface ChainBuilderInput {
   overrideEvents: OverrideChangeEvent[];
   /** Observations (timestamp + version) within the query window. */
   observations: SegmentObservationInput[];
-  /** Cached eval judgment (latest), if any. */
-  cachedJudgment: CachedJudgment | null;
+  /** Eval judgment history (all judgments, oldest first). P1-2: per-version eval. */
+  judgmentHistory?: CachedJudgment[];
+  /** Single judgment — backward compat. Use judgmentHistory for multi-eval. */
+  cachedJudgment?: CachedJudgment | null;
   /** Current content version from override state. */
   currentContentVersion: number | null;
 }
@@ -62,7 +64,10 @@ export interface ChainBuilderInput {
  * 5. Derive each epoch's status from available data
  */
 export function buildVersionChain(input: ChainBuilderInput): VersionEpoch[] {
-  const { manifestVersion, overrideEvents, observations, cachedJudgment, currentContentVersion } = input;
+  const { manifestVersion, overrideEvents, observations, currentContentVersion } = input;
+
+  // Merge judgment sources: judgmentHistory (P1-2) takes precedence, cachedJudgment for compat
+  const allJudgments: CachedJudgment[] = input.judgmentHistory ?? (input.cachedJudgment ? [input.cachedJudgment] : []);
 
   // Single-pass event reducer: builds epochs AND activation timeline together.
   // This avoids timestamp-based lookups that break on same-ms events (R4 P1-1).
@@ -71,15 +76,13 @@ export function buildVersionChain(input: ChainBuilderInput): VersionEpoch[] {
   // Attach observations using activation timeline
   attachObservations(epochs, observations, timeline);
 
-  // Attach eval judgment using activation timeline
-  if (cachedJudgment) {
-    attachJudgment(epochs, cachedJudgment, timeline);
-  }
+  // Attach eval judgments — each distributed to its active epoch (P1-2)
+  attachJudgments(epochs, allJudgments, timeline);
 
-  // Mark active version — state-based, not number-based.
-  // If there's a current content override (contentVersion != null), the most
-  // recently created override epoch is active. Otherwise manifest baseline.
-  markActiveEpoch(epochs, currentContentVersion);
+  // Mark active version from activation timeline (P1-3).
+  // Timeline's last entry = currently active epoch. Handles version-activate,
+  // rollback, content-clear — all encoded as timeline transitions.
+  markActiveFromTimeline(epochs, timeline);
 
   // Derive status for each epoch
   for (const epoch of epochs) {
@@ -112,6 +115,7 @@ interface ActivationPoint {
  *   - content-set@T: new override epoch active from T
  *   - rollback@T: manifest (epoch 0) reactivated from T
  *   - content-clear@T: manifest (epoch 0) reactivated from T
+ *   - version-activate@T: target version epoch reactivated from T (P1-3)
  *   - enable/disable: no activation change
  */
 function buildEpochsAndTimeline(
@@ -153,6 +157,22 @@ function buildEpochsAndTimeline(
             : `content cleared, reverted to v${manifestVersion}`,
       });
       timeline.push({ timestamp: event.timestamp, epochIndex: 0 });
+    } else if (event.action === 'version-activate') {
+      // P1-3: explicit version switch — find target epoch by version number
+      const targetVersion = event.contentVersion;
+      if (targetVersion != null) {
+        const targetIdx = epochs.findIndex((e) => e.version === targetVersion);
+        if (targetIdx >= 0) {
+          latestEpoch.events.push({
+            eventId: event.eventId,
+            kind: 'version-activate',
+            timestamp: event.timestamp,
+            actorId: event.actorId,
+            detail: `activated v${targetVersion}`,
+          });
+          timeline.push({ timestamp: event.timestamp, epochIndex: targetIdx });
+        }
+      }
     } else if (event.action === 'enable' || event.action === 'disable') {
       const kind = event.action === 'enable' ? 'governance-approve' : 'eval-reject';
       latestEpoch.events.push({
@@ -228,28 +248,18 @@ function attachObservations(
 // ---------------------------------------------------------------------------
 
 /**
- * Mark the active epoch based on current override state.
+ * Mark the active epoch from the activation timeline (P1-3).
  *
- * State-based approach (not number-matching) — avoids version collision
- * between manifestVersion and contentVersion (both can be 1).
- *
- * Rules:
- *   - contentVersion != null → latest content-set epoch is active
- *   - contentVersion == null → manifest baseline is active
+ * The last entry in the timeline determines which epoch is currently active.
+ * This naturally handles all activation transitions: content-set, rollback,
+ * content-clear, and version-activate — all encoded as timeline entries.
  */
-function markActiveEpoch(epochs: VersionEpoch[], currentContentVersion: number | null): void {
-  if (currentContentVersion != null) {
-    // Find the most recently created override epoch (latest content-set)
-    for (let i = epochs.length - 1; i >= 0; i--) {
-      if (epochs[i].origin !== 'manifest') {
-        epochs[i].isActive = true;
-        return;
-      }
-    }
-  }
-  // No active override (or no override epoch found) → manifest baseline
-  if (epochs.length > 0) {
-    epochs[0].isActive = true;
+function markActiveFromTimeline(epochs: VersionEpoch[], timeline: ActivationPoint[]): void {
+  if (epochs.length === 0 || timeline.length === 0) return;
+  const lastPoint = timeline[timeline.length - 1];
+  const activeIdx = lastPoint.epochIndex;
+  if (activeIdx >= 0 && activeIdx < epochs.length) {
+    epochs[activeIdx].isActive = true;
   }
 }
 
@@ -258,27 +268,41 @@ function markActiveEpoch(epochs: VersionEpoch[], currentContentVersion: number |
 // ---------------------------------------------------------------------------
 
 /**
- * Attach cached judgment to the epoch that was active when eval ran.
+ * Attach judgment history to epochs (P1-2: per-version eval).
  *
- * Uses activation timeline (not startedAt or version number) to handle rollback:
- * after rollback, manifest is active again, so eval@T>rollback goes to manifest.
+ * Each judgment is distributed to the epoch that was active at evaluatedAt
+ * via the activation timeline. When multiple judgments map to the same epoch,
+ * the latest (highest evaluatedAt) wins — consistent with "latest eval is
+ * the current truth for that version".
+ *
+ * Governance derivation applies to the winning judgment per epoch.
  */
-function attachJudgment(epochs: VersionEpoch[], judgment: CachedJudgment, timeline: ActivationPoint[]): void {
-  if (epochs.length === 0) return;
+function attachJudgments(epochs: VersionEpoch[], judgments: CachedJudgment[], timeline: ActivationPoint[]): void {
+  if (epochs.length === 0 || judgments.length === 0) return;
 
-  const target = resolveActiveEpochAt(timeline, judgment.evaluatedAt, epochs);
+  for (const judgment of judgments) {
+    const target = resolveActiveEpochAt(timeline, judgment.evaluatedAt, epochs);
+    const existing = target.eval;
 
-  const evalSummary: EvalStageSummary = {
-    verdict: judgment.verdict,
-    injectionCount: judgment.injectionCount,
-    violationCount: judgment.violationCount,
-    evaluatedAt: judgment.evaluatedAt,
-  };
-  target.eval = evalSummary;
+    // Latest-wins: only overwrite if this judgment is newer
+    if (existing && existing.evaluatedAt !== null && existing.evaluatedAt >= judgment.evaluatedAt) {
+      continue;
+    }
 
-  // If verdict is alive/dormant → governance is pending
-  if (judgment.verdict === 'alive' || judgment.verdict === 'dormant') {
-    target.governance = { decision: 'pending', decidedAt: null, actorId: null };
+    target.eval = {
+      verdict: judgment.verdict,
+      injectionCount: judgment.injectionCount,
+      violationCount: judgment.violationCount,
+      evaluatedAt: judgment.evaluatedAt,
+    };
+
+    // Governance derivation from the winning judgment
+    if (judgment.verdict === 'alive' || judgment.verdict === 'dormant') {
+      target.governance = { decision: 'pending', decidedAt: null, actorId: null };
+    } else {
+      // Clear governance if newer judgment doesn't warrant it
+      target.governance = null;
+    }
   }
 }
 

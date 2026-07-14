@@ -46,7 +46,7 @@ export interface HookOverride {
 // ---------------------------------------------------------------------------
 
 /** Possible override actions, recorded as change events. */
-export type OverrideAction = 'enable' | 'disable' | 'content-set' | 'content-clear' | 'rollback';
+export type OverrideAction = 'enable' | 'disable' | 'content-set' | 'content-clear' | 'rollback' | 'version-activate';
 
 /** Immutable record of an override change. TTL=0 (permanent, Iron Law 5). */
 export interface OverrideChangeEvent {

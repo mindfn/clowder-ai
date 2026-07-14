@@ -1402,3 +1402,76 @@ describe('Same-ms event ordering (R5 P1-1)', () => {
     assert.equal(actions[2], 'content-set', 'third: content-set (v2)');
   });
 });
+
+describe('P1-3: Version management (activateVersion + listVersions)', () => {
+  test('setContentOverride creates version snapshot, activateVersion restores it', async () => {
+    const s1 = makeManifest('S1-ver');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    // Create v1 and v2 content overrides
+    await store.setContentOverride(s1.id, 'content-for-v1', 'u1');
+    await store.setContentOverride(s1.id, 'content-for-v2', 'u1');
+
+    // Current state should be v2
+    const beforeActivate = await store.getOverride(s1.id);
+    assert.equal(beforeActivate.contentVersion, 2);
+    assert.equal(beforeActivate.contentOverride, 'content-for-v2');
+
+    // Activate v1 — should restore v1 content
+    await store.activateVersion(s1.id, 1, 'u1');
+
+    const afterActivate = await store.getOverride(s1.id);
+    assert.equal(afterActivate.contentVersion, 1, 'contentVersion should be 1 after activation');
+    assert.equal(afterActivate.contentOverride, 'content-for-v1', 'content should be v1 content');
+  });
+
+  test('activateVersion records version-activate event with contentVersion', async () => {
+    const s1 = makeManifest('S1-evt');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    await store.setContentOverride(s1.id, 'v1-content', 'u1');
+    await store.setContentOverride(s1.id, 'v2-content', 'u1');
+    await store.activateVersion(s1.id, 1, 'u1', { reason: 'reverting to v1' });
+
+    const events = await store.listEvents({ limit: 100 });
+    const activateEvent = events.find((e) => e.action === 'version-activate');
+    assert.ok(activateEvent, 'version-activate event should exist');
+    assert.equal(activateEvent.contentVersion, 1, 'event should carry target version');
+    assert.equal(activateEvent.reason, 'reverting to v1');
+  });
+
+  test('activateVersion throws for nonexistent version', async () => {
+    const s1 = makeManifest('S1-nosnap');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    await assert.rejects(() => store.activateVersion(s1.id, 99, 'u1'), /No content snapshot/);
+  });
+
+  test('listVersions returns all version snapshots in order', async () => {
+    const s1 = makeManifest('S1-list');
+    const fakeRedis = new FakeRedis();
+    const mod = await import('../dist/domains/prompt-hooks/HookOverrideStore.js');
+    const lookup = (id) => (id === s1.id ? s1 : undefined);
+    const store = new mod.HookOverrideStore(fakeRedis, lookup);
+
+    await store.setContentOverride(s1.id, 'alpha', 'u1');
+    await store.setContentOverride(s1.id, 'beta', 'u1');
+    await store.setContentOverride(s1.id, 'gamma', 'u1');
+
+    const versions = await store.listVersions(s1.id);
+    assert.equal(versions.length, 3);
+    assert.equal(versions[0].version, 1);
+    assert.ok(versions[0].contentPreview.includes('alpha'));
+    assert.equal(versions[1].version, 2);
+    assert.equal(versions[2].version, 3);
+  });
+});

@@ -16,6 +16,8 @@ import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { SegmentJudgment, SegmentVerdict } from '../../infrastructure/harness-eval/segment-judgment-engine.js';
 
 const CACHE_KEY = 'segment-judgment-latest';
+/** Per-segment ZSET storing all judgment history, scored by evaluatedAt. P1-2. */
+const HISTORY_KEY = (segmentId: string) => `segment-judgment-history:${segmentId}`;
 
 /** Subset of SegmentJudgment stored in the cache — only what the lifeline needs. */
 export interface CachedJudgment {
@@ -53,6 +55,8 @@ export class SegmentJudgmentCache {
         segmentVersion: j.segmentVersion,
       };
       pipeline.hset(CACHE_KEY, j.segmentId, JSON.stringify(cached));
+      // P1-2: append to per-segment history ZSET (scored by evaluatedAt, permanent)
+      pipeline.zadd(HISTORY_KEY(j.segmentId), cached.evaluatedAt, JSON.stringify(cached));
     }
     await pipeline.exec();
   }
@@ -89,6 +93,24 @@ export class SegmentJudgmentCache {
         results.set(segmentIds[i], JSON.parse(raw) as CachedJudgment);
       } catch {
         // skip malformed entries
+      }
+    }
+    return results;
+  }
+
+  /**
+   * Read full judgment history for a segment (P1-2: per-version eval).
+   * Returns all judgments ordered by evaluatedAt (oldest first).
+   * Limit defaults to 100 — more than enough for any realistic lifetime.
+   */
+  async getHistory(segmentId: string, limit = 100): Promise<CachedJudgment[]> {
+    const raws = await this.redis.zrangebyscore(HISTORY_KEY(segmentId), 0, '+inf', 'LIMIT', 0, limit);
+    const results: CachedJudgment[] = [];
+    for (const raw of raws) {
+      try {
+        results.push(JSON.parse(raw) as CachedJudgment);
+      } catch {
+        /* skip malformed */
       }
     }
     return results;
