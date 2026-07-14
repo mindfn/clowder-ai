@@ -394,29 +394,56 @@ describe('segment-lifeline windowMs validation', () => {
   });
 });
 
-// ── P2-2: guard event thread filtering ────────────────────────
+// ── P2-2: guard event three-key filtering (threadId + catId + ±120s) ──
 
 describe('segment-lifeline guard event filtering', () => {
-  test('guard events from non-observation threads are excluded', () => {
-    // Simulate: S1 has observations from thread-A only.
-    // Guard events exist for thread-A and thread-B.
-    // Only thread-A events should appear.
-    const observationThreadIds = new Set(['thread-A']);
-    const guardEvents = [
-      { eventId: 'g1', kind: 'reject', threadId: 'thread-A', catId: 'opus', timestamp: 5000, guardId: 'G1' },
-      { eventId: 'g2', kind: 'reject', threadId: 'thread-B', catId: 'codex', timestamp: 5500, guardId: 'G2' },
-    ];
-    const filtered = guardEvents.filter((e) => observationThreadIds.has(e.threadId));
-    assert.equal(filtered.length, 1, 'only thread-A events');
-    assert.equal(filtered[0].eventId, 'g1');
+  const PROXIMITY_MS = 120_000;
+
+  // Helper: match logic mirrors collectGuardEvents in segment-lifeline.ts
+  function filterGuardEvents(events, observations) {
+    return events.filter((e) =>
+      observations.some(
+        (obs) =>
+          obs.threadId === e.threadId && obs.catId === e.catId && Math.abs(obs.timestamp - e.timestamp) <= PROXIMITY_MS,
+      ),
+    );
+  }
+
+  test('same thread+cat within ±120s passes', () => {
+    const obs = [{ threadId: 'thread-A', catId: 'opus', timestamp: 5000 }];
+    const events = [{ eventId: 'g1', threadId: 'thread-A', catId: 'opus', timestamp: 5100 }];
+    assert.equal(filterGuardEvents(events, obs).length, 1);
+  });
+
+  test('same thread, different cat excluded', () => {
+    const obs = [{ threadId: 'thread-A', catId: 'opus', timestamp: 5000 }];
+    const events = [{ eventId: 'g1', threadId: 'thread-A', catId: 'codex', timestamp: 5000 }];
+    assert.equal(filterGuardEvents(events, obs).length, 0, 'different catId');
+  });
+
+  test('same thread+cat but outside ±120s excluded', () => {
+    const obs = [{ threadId: 'thread-A', catId: 'opus', timestamp: 5000 }];
+    const events = [{ eventId: 'g1', threadId: 'thread-A', catId: 'opus', timestamp: 5000 + PROXIMITY_MS + 1 }];
+    assert.equal(filterGuardEvents(events, obs).length, 0, 'outside window');
+  });
+
+  test('different thread excluded even if cat+time match', () => {
+    const obs = [{ threadId: 'thread-A', catId: 'opus', timestamp: 5000 }];
+    const events = [{ eventId: 'g1', threadId: 'thread-B', catId: 'opus', timestamp: 5000 }];
+    assert.equal(filterGuardEvents(events, obs).length, 0, 'different thread');
   });
 
   test('no guard events when segment has no observations', () => {
-    const observationThreadIds = new Set();
-    const guardEvents = [
-      { eventId: 'g1', kind: 'reject', threadId: 'thread-A', catId: 'opus', timestamp: 5000, guardId: 'G1' },
+    const events = [{ eventId: 'g1', threadId: 'thread-A', catId: 'opus', timestamp: 5000 }];
+    assert.equal(filterGuardEvents(events, []).length, 0);
+  });
+
+  test('boundary: exactly ±120s passes', () => {
+    const obs = [{ threadId: 'thread-A', catId: 'opus', timestamp: 5000 }];
+    const events = [
+      { eventId: 'g1', threadId: 'thread-A', catId: 'opus', timestamp: 5000 + PROXIMITY_MS },
+      { eventId: 'g2', threadId: 'thread-A', catId: 'opus', timestamp: 5000 - PROXIMITY_MS },
     ];
-    const filtered = guardEvents.filter((e) => observationThreadIds.has(e.threadId));
-    assert.equal(filtered.length, 0, 'no events for unobserved segment');
+    assert.equal(filterGuardEvents(events, obs).length, 2, 'boundary inclusive');
   });
 });

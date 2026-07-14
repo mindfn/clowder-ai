@@ -61,11 +61,10 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
     // 1. Discover all threads with trace data, query each for this window
     const observations = await collectObservations(opts.traceStore, segmentId, windowStart, windowEnd);
 
-    // 2. Guard rejection events — filtered to threads with observations for this segment
-    // (P2-2 fix: unfiltered query caused cross-thread event leakage — terra review)
-    const observationThreadIds = new Set(observations.map((o) => o.threadId));
+    // 2. Guard rejection events — filtered by judgment-engine three-key contract:
+    // threadId + catId + ±120s proximity to an observation (terra P2-2 R2)
     const guardEvents = opts.guardRejectionLog
-      ? await collectGuardEvents(opts.guardRejectionLog, windowStart, windowEnd, observationThreadIds)
+      ? await collectGuardEvents(opts.guardRejectionLog, windowStart, windowEnd, observations)
       : [];
 
     // 3. Override state and history
@@ -135,11 +134,14 @@ async function collectObservations(
   return observations;
 }
 
+/** ±120s proximity window for guard event attribution (matches judgment engine v1 contract). */
+const GUARD_PROXIMITY_MS = 120_000;
+
 async function collectGuardEvents(
   log: GuardRejectionEventLog,
   startMs: number,
   endMs: number,
-  relevantThreadIds: Set<string>,
+  observations: SegmentObservation[],
 ): Promise<
   Array<{
     eventId: string;
@@ -151,9 +153,17 @@ async function collectGuardEvents(
     attribution: 'window-correlated';
   }>
 > {
+  if (observations.length === 0) return [];
   const events = await log.queryWindow({ since: startMs, until: endMs, limit: 50 });
   return events
-    .filter((e) => relevantThreadIds.has(e.threadId))
+    .filter((e) =>
+      observations.some(
+        (obs) =>
+          obs.threadId === e.threadId &&
+          obs.catId === e.catId &&
+          Math.abs(obs.timestamp - e.timestamp) <= GUARD_PROXIMITY_MS,
+      ),
+    )
     .map((e) => ({
       eventId: e.eventId,
       kind: e.kind,
