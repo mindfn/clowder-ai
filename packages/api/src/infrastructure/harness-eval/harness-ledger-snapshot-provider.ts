@@ -61,6 +61,12 @@ export interface ProduceSnapshotResult {
   snapshot: HarnessLedgerRunSnapshot;
   /** Human-readable summary for eval invocation injection. */
   summary: string;
+  /**
+   * Raw guard events from queryWindowStrict (full threadId/catId).
+   * Exposed for judgment engine per-event correlation (±120s window join).
+   * Not persisted in the snapshot file — transient in-process only.
+   */
+  rawEvents: Array<{ eventId: string; guardId: string; threadId: string; catId: string; timestamp: number }>;
 }
 
 const DEFAULT_WINDOW_MS = 7 * 24 * 3600 * 1000;
@@ -149,5 +155,14 @@ export async function produceHarnessLedgerRunSnapshot(deps: ProduceSnapshotDeps)
     '```',
   ].join('\n');
 
-  return { evalRunId, storagePath, snapshot, summary };
+  // Expose raw events for judgment engine (per-event correlation, not persisted).
+  const rawEvents = events.map((e) => ({
+    eventId: e.eventId,
+    guardId: e.guardId,
+    threadId: e.threadId,
+    catId: e.catId,
+    timestamp: e.timestamp,
+  }));
+
+  return { evalRunId, storagePath, snapshot, summary, rawEvents };
 }

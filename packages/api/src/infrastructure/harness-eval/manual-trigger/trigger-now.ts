@@ -4,6 +4,7 @@ import { buildEvalCatInvocation } from '../eval-cat-invocation.js';
 import { produceHarnessLedgerRunSnapshot } from '../harness-ledger-snapshot-provider.js';
 import { loadDomains } from '../hub/eval-hub-read-model.js';
 import { ensureEvalDomainThreads } from '../hub/eval-hub-thread-ensure.js';
+import { formatJudgmentsForEvidence, produceJudgmentsFromSnapshot } from './trigger-now-judgments.js';
 import type { HandlerError, ManualTriggerDeps } from './types.js';
 
 export interface TriggerNowInput {
@@ -127,6 +128,14 @@ export async function handleTriggerNow(
         harnessFeedbackRoot: deps.harnessFeedbackRoot,
       });
       precomputedEvidence = snapshotResult.summary;
+
+      // F257: Produce per-segment judgments (deterministic, no LLM).
+      if (deps.traceStore) {
+        const judgments = await produceJudgmentsFromSnapshot(deps.traceStore, snapshotResult);
+        if (judgments.length > 0) {
+          precomputedEvidence += `\n\n${formatJudgmentsForEvidence(judgments)}`;
+        }
+      }
 
       // F257 sub-item 1: Zero events → skip (valid state, no data to evaluate).
       // Snapshot OK but empty window — eval cat has nothing to attribute.
