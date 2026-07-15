@@ -1,21 +1,12 @@
 'use client';
 
-/**
- * F257 Phase D — Stage detail panel for lifeline.
- *
- * Shows stage-specific data when a badge is clicked in the chain view:
- *   - version: version info, origin, events
- *   - tracing: observation list with expandable rows
- *   - eval: judgment results or "pending" placeholder
- *   - governance: override history and current state
- */
+/** F257 Phase D — Stage detail panel for lifeline (version/tracing/eval/governance). */
 
 import { useState } from 'react';
 import { EvalStagePanel } from './EvalStagePanel';
 import type { SelectedStage } from './LifelineChainView';
 import { SettingsBadge, SettingsText } from './primitives';
-
-// ── Types (matching API response) ──────────────────────────────
+import { ActivateVersionButton, RollbackButton, ToggleOverrideButton } from './VersionActions';
 
 interface VersionEpoch {
   version: number;
@@ -56,6 +47,10 @@ interface LifelineStageDetailProps {
   observations: Observation[];
   guardEvents: GuardEvent[];
   overrideState: { hookId: string; enabled: boolean } | null;
+  /** Hook ID for version operations (same as segmentId). */
+  hookId: string;
+  /** Refresh lifeline data after a mutation. */
+  onRefresh: () => void;
 }
 
 const formatTs = (ms: number) => new Date(ms).toLocaleString();
@@ -70,13 +65,15 @@ export function LifelineStageDetail({
   observations,
   guardEvents,
   overrideState,
+  hookId,
+  onRefresh,
 }: LifelineStageDetailProps) {
   const epoch = chain.find((e) => e.version === selected.version);
   if (!epoch) return null;
 
   return (
     <div className="rounded-2xl p-4" style={{ backgroundColor: 'var(--console-panel-bg)' }}>
-      {selected.stage === 'version' && <VersionDetail epoch={epoch} />}
+      {selected.stage === 'version' && <VersionDetail epoch={epoch} hookId={hookId} onRefresh={onRefresh} />}
       {selected.stage === 'tracing' && <TracingDetail epoch={epoch} observations={observations} />}
       {selected.stage === 'eval' && (
         <EvalStagePanel
@@ -87,13 +84,19 @@ export function LifelineStageDetail({
         />
       )}
       {selected.stage === 'governance' && (
-        <GovernanceDetail epoch={epoch} guardEvents={guardEvents} overrideState={overrideState} />
+        <GovernanceDetail
+          epoch={epoch}
+          guardEvents={guardEvents}
+          overrideState={overrideState}
+          hookId={hookId}
+          onRefresh={onRefresh}
+        />
       )}
     </div>
   );
 }
 
-function VersionDetail({ epoch }: { epoch: VersionEpoch }) {
+function VersionDetail({ epoch, hookId, onRefresh }: { epoch: VersionEpoch; hookId: string; onRefresh: () => void }) {
   const originLabel =
     { manifest: '基线', 'auto-iterate': '自动迭代', 'user-create': '用户创建' }[epoch.origin] ?? epoch.origin;
 
@@ -114,6 +117,12 @@ function VersionDetail({ epoch }: { epoch: VersionEpoch }) {
           </SettingsBadge>
         </InfoRow>
       </div>
+
+      {!epoch.isActive && (
+        <div className="mt-3">
+          <ActivateVersionButton hookId={hookId} epochVersion={epoch.version} onRefresh={onRefresh} />
+        </div>
+      )}
 
       {epoch.events.length > 0 && (
         <div className="mt-4">
@@ -174,10 +183,14 @@ function GovernanceDetail({
   epoch,
   guardEvents,
   overrideState,
+  hookId,
+  onRefresh,
 }: {
   epoch: VersionEpoch;
   guardEvents: GuardEvent[];
   overrideState: { hookId: string; enabled: boolean } | null;
+  hookId: string;
+  onRefresh: () => void;
 }) {
   return (
     <>
@@ -212,6 +225,13 @@ function GovernanceDetail({
           </SettingsText>
         </div>
       )}
+
+      <div className="mt-4 flex gap-2">
+        {overrideState && (
+          <ToggleOverrideButton hookId={hookId} currentlyEnabled={overrideState.enabled} onRefresh={onRefresh} />
+        )}
+        <RollbackButton hookId={hookId} onRefresh={onRefresh} />
+      </div>
 
       {guardEvents.length > 0 && (
         <div className="mt-4">

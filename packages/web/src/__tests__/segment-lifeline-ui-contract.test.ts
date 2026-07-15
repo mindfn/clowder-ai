@@ -100,6 +100,37 @@ describe('segment lifeline: eval pending metrics panel (AC补遗)', () => {
   });
 });
 
+describe('segment lifeline: version operation buttons (①)', () => {
+  const detailSrc = readComponent('LifelineStageDetail.tsx');
+  const actionsSrc = readComponent('VersionActions.tsx');
+
+  it('LifelineStageDetail imports action button components', () => {
+    expect(detailSrc).toContain('ActivateVersionButton');
+    expect(detailSrc).toContain('ToggleOverrideButton');
+    expect(detailSrc).toContain('RollbackButton');
+  });
+
+  it('VersionActions calls prompt-hooks API endpoints', () => {
+    expect(actionsSrc).toContain('/api/prompt-hooks/');
+    expect(actionsSrc).toContain('/versions/activate');
+    expect(actionsSrc).toContain('/override');
+  });
+
+  it('VersionActions requires reason for audit trail', () => {
+    expect(actionsSrc).toContain('审计追踪');
+    expect(actionsSrc).toContain('reason');
+  });
+
+  it('destructive actions have confirmation', () => {
+    expect(actionsSrc).toContain('window.confirm');
+  });
+
+  it('LifelineStageDetail accepts hookId and onRefresh props', () => {
+    expect(detailSrc).toContain('hookId: string');
+    expect(detailSrc).toContain('onRefresh: () => void');
+  });
+});
+
 describe('segment lifeline: tracing row drill-down (②)', () => {
   const src = readComponent('LifelineStageDetail.tsx');
 

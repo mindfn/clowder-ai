@@ -177,6 +177,8 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
                   observations={data.observations}
                   guardEvents={data.guardEvents}
                   overrideState={data.overrideState}
+                  hookId={segmentId}
+                  onRefresh={fetchData}
                 />
               )}
             </>
