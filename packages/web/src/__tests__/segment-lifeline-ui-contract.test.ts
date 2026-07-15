@@ -71,6 +71,35 @@ describe('segment lifeline: lifecycle event kind labels (AF-5)', () => {
   });
 });
 
+describe('segment lifeline: eval pending metrics panel (AC补遗)', () => {
+  const evalSrc = readComponent('EvalStagePanel.tsx');
+
+  it('EvalStagePanel shows observation count in pending state', () => {
+    expect(evalSrc).toContain('观测次数');
+  });
+
+  it('EvalStagePanel shows guard event count in pending state', () => {
+    expect(evalSrc).toContain('违规事件');
+  });
+
+  it('EvalStagePanel shows trigger progress toward threshold', () => {
+    expect(evalSrc).toContain('触发进度');
+    expect(evalSrc).toContain('EVAL_TRIGGER_THRESHOLD');
+  });
+
+  it('EvalStagePanel shows eval method (fired-count)', () => {
+    expect(evalSrc).toContain('fired-count');
+  });
+
+  it('EvalStagePanel explains zero-violation state', () => {
+    expect(evalSrc).toContain('零违规事件');
+  });
+
+  it('EvalStagePanel has progress bar for trigger threshold', () => {
+    expect(evalSrc).toContain('progressPct');
+  });
+});
+
 describe('segment lifeline: a11y entry point (P2-4)', () => {
   const src = readComponent('StageDetailPanels.tsx');
 

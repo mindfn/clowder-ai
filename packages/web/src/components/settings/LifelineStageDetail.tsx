@@ -10,6 +10,7 @@
  *   - governance: override history and current state
  */
 
+import { EvalStagePanel } from './EvalStagePanel';
 import type { SelectedStage } from './LifelineChainView';
 import { SettingsBadge, SettingsText } from './primitives';
 
@@ -76,7 +77,14 @@ export function LifelineStageDetail({
     <div className="rounded-2xl p-4" style={{ backgroundColor: 'var(--console-panel-bg)' }}>
       {selected.stage === 'version' && <VersionDetail epoch={epoch} />}
       {selected.stage === 'tracing' && <TracingDetail epoch={epoch} observations={observations} />}
-      {selected.stage === 'eval' && <EvalDetail epoch={epoch} />}
+      {selected.stage === 'eval' && (
+        <EvalStagePanel
+          version={epoch.version}
+          eval={epoch.eval}
+          tracing={epoch.tracing}
+          guardEventCount={guardEvents.length}
+        />
+      )}
       {selected.stage === 'governance' && (
         <GovernanceDetail epoch={epoch} guardEvents={guardEvents} overrideState={overrideState} />
       )}
@@ -134,7 +142,7 @@ function TracingDetail({ epoch, observations }: { epoch: VersionEpoch; observati
         )}
       </SettingsText>
 
-      {epoch.tracing && epoch.tracing.firstAt && epoch.tracing.lastAt && (
+      {epoch.tracing?.firstAt && epoch.tracing.lastAt && (
         <div className="mb-3 space-y-1">
           <InfoRow label="首次观测">{formatRel(epoch.tracing.firstAt)}</InfoRow>
           <InfoRow label="最近观测">{formatRel(epoch.tracing.lastAt)}</InfoRow>
@@ -156,44 +164,6 @@ function TracingDetail({ epoch, observations }: { epoch: VersionEpoch; observati
         <SettingsText as="p" variant="xs" tone="muted" className="italic">
           该版本无观测数据
         </SettingsText>
-      )}
-    </>
-  );
-}
-
-function EvalDetail({ epoch }: { epoch: VersionEpoch }) {
-  const evalData = epoch.eval;
-
-  return (
-    <>
-      <SettingsText as="h3" variant="sm" tone="default" className="mb-3 font-semibold">
-        v{epoch.version} — Eval
-      </SettingsText>
-
-      {evalData && evalData.verdict ? (
-        <div className="space-y-2">
-          <InfoRow label="判定">
-            <SettingsBadge
-              tone={evalData.verdict === 'alive' ? 'emerald' : evalData.verdict === 'dormant' ? 'red' : 'amber'}
-              size="xxs"
-            >
-              {evalData.verdict}
-            </SettingsBadge>
-          </InfoRow>
-          <InfoRow label="注入次数">{evalData.injectionCount}</InfoRow>
-          <InfoRow label="违规次数">{evalData.violationCount}</InfoRow>
-          {evalData.injectionCount > 0 && (
-            <InfoRow label="违规率">{((evalData.violationCount / evalData.injectionCount) * 100).toFixed(1)}%</InfoRow>
-          )}
-          {evalData.evaluatedAt && <InfoRow label="评估时间">{formatTs(evalData.evaluatedAt)}</InfoRow>}
-        </div>
-      ) : (
-        <div className="flex flex-col items-center gap-2 py-6 opacity-40">
-          <span className="text-2xl">📊</span>
-          <SettingsText as="p" variant="xs" tone="muted">
-            尚未评估 — 等待足够的观测数据
-          </SettingsText>
-        </div>
       )}
     </>
   );
