@@ -2,6 +2,7 @@
 
 /** F257 Phase D — Stage detail panel for lifeline (version/tracing/eval/governance). */
 
+import type { GuardMetric } from '@cat-cafe/shared';
 import { useState } from 'react';
 import { CreateVersionForm } from './CreateVersionForm';
 import { EvalStagePanel } from './EvalStagePanel';
@@ -49,7 +50,7 @@ interface LifelineStageDetailProps {
   observations: Observation[];
   guardEvents: GuardEvent[];
   /** Per-epoch guard metrics from API (activation-timeline attributed, R15). */
-  epochGuardMetrics: Record<number, Array<{ guardId: string; count: number }>>;
+  epochGuardMetrics: Record<number, GuardMetric[]>;
   overrideState: { hookId: string; enabled: boolean } | null;
   /** Hook ID for version operations (same as segmentId). */
   hookId: string;

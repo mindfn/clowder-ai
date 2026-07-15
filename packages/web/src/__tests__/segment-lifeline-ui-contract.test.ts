@@ -165,6 +165,38 @@ describe('segment lifeline: shared type contract — epochGuardMetrics (R16 P2-1
   });
 });
 
+describe('segment lifeline: GuardMetric consumption uses shared import (R17 P2-1)', () => {
+  const evalSrc = readComponent('EvalStagePanel.tsx');
+  const detailSrc = readComponent('LifelineStageDetail.tsx');
+  const modalSrc = readComponent('SegmentLifelineModal.tsx');
+
+  it('EvalStagePanel imports GuardMetric from @cat-cafe/shared', () => {
+    expect(evalSrc).toMatch(/import\s+type\s*\{[^}]*GuardMetric[^}]*\}\s*from\s*'@cat-cafe\/shared'/);
+  });
+
+  it('EvalStagePanel does NOT define local GuardMetric interface', () => {
+    expect(evalSrc).not.toMatch(/interface\s+GuardMetric\s*\{/);
+  });
+
+  it('LifelineStageDetail imports GuardMetric from @cat-cafe/shared', () => {
+    expect(detailSrc).toMatch(/import\s+type\s*\{[^}]*GuardMetric[^}]*\}\s*from\s*'@cat-cafe\/shared'/);
+  });
+
+  it('LifelineStageDetail uses GuardMetric[] not inline mirror', () => {
+    expect(detailSrc).toContain('GuardMetric[]');
+    expect(detailSrc).not.toMatch(/epochGuardMetrics:\s*Record<number,\s*Array<\{/);
+  });
+
+  it('SegmentLifelineModal imports GuardMetric from @cat-cafe/shared', () => {
+    expect(modalSrc).toMatch(/import\s+type\s*\{[^}]*GuardMetric[^}]*\}\s*from\s*'@cat-cafe\/shared'/);
+  });
+
+  it('SegmentLifelineModal uses GuardMetric[] not inline mirror', () => {
+    expect(modalSrc).toContain('GuardMetric[]');
+    expect(modalSrc).not.toMatch(/epochGuardMetrics:\s*Record<number,\s*Array<\{/);
+  });
+});
+
 describe('segment lifeline: eval per-guard metrics (R14 P1-1, R15 P1)', () => {
   const evalSrc = readComponent('EvalStagePanel.tsx');
   const detailSrc = readComponent('LifelineStageDetail.tsx');

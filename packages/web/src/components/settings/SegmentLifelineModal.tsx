@@ -10,6 +10,7 @@
  * Wider view (960px) to accommodate the horizontal chain visualization.
  */
 
+import type { GuardMetric } from '@cat-cafe/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { apiFetch } from '@/utils/api-client';
@@ -60,7 +61,7 @@ interface LifelineResponse {
   observations: Observation[];
   guardEvents: GuardEvent[];
   overrideState: { hookId: string; enabled: boolean } | null;
-  epochGuardMetrics: Record<number, Array<{ guardId: string; count: number }>>;
+  epochGuardMetrics: Record<number, GuardMetric[]>;
 }
 
 // ── Status badge map ──────────────────────────────────────────

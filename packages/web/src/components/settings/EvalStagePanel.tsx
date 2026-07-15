@@ -10,6 +10,7 @@
  * Extracted from LifelineStageDetail to stay within 350-line limit.
  */
 
+import type { GuardMetric } from '@cat-cafe/shared';
 import { SettingsBadge, SettingsText } from './primitives';
 
 // ── Types ────────────────────────────────────────────────────────
@@ -25,11 +26,6 @@ interface TracingStageSummary {
   observationCount: number;
   firstAt: number | null;
   lastAt: number | null;
-}
-
-interface GuardMetric {
-  guardId: string;
-  count: number;
 }
 
 export interface EvalDetailProps {
