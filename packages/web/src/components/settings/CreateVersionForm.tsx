@@ -27,11 +27,7 @@ export function CreateVersionForm({ hookId, onRefresh }: CreateVersionFormProps)
 
   if (!open) {
     return (
-      <button
-        type="button"
-        className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700"
-        onClick={() => setOpen(true)}
-      >
+      <button type="button" className="console-button-primary text-xs" onClick={() => setOpen(true)}>
         创建新版本
       </button>
     );
@@ -85,7 +81,7 @@ export function CreateVersionForm({ hookId, onRefresh }: CreateVersionFormProps)
           </label>
           <textarea
             id="cv-content"
-            className="w-full rounded-lg border border-[var(--console-border)] bg-[var(--console-elevated-bg)] p-2 text-xs text-cafe focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="w-full rounded-lg border border-[var(--console-border)] bg-[var(--console-elevated-bg)] p-2 text-xs text-cafe focus:outline-none focus:ring-1 focus:ring-[var(--cafe-accent)]"
             rows={4}
             value={content}
             onChange={(e) => setContent(e.target.value)}
@@ -100,7 +96,7 @@ export function CreateVersionForm({ hookId, onRefresh }: CreateVersionFormProps)
           <input
             id="cv-reason"
             type="text"
-            className="w-full rounded-lg border border-[var(--console-border)] bg-[var(--console-elevated-bg)] p-2 text-xs text-cafe focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="w-full rounded-lg border border-[var(--console-border)] bg-[var(--console-elevated-bg)] p-2 text-xs text-cafe focus:outline-none focus:ring-1 focus:ring-[var(--cafe-accent)]"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder="修改原因..."
@@ -111,18 +107,13 @@ export function CreateVersionForm({ hookId, onRefresh }: CreateVersionFormProps)
       <div className="mt-2 flex gap-2">
         <button
           type="button"
-          className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+          className="console-button-primary text-xs disabled:opacity-50"
           disabled={busy || !content.trim() || !reason.trim()}
           onClick={handleSubmit}
         >
           {busy ? '创建中...' : '确认创建'}
         </button>
-        <button
-          type="button"
-          className="rounded-lg bg-slate-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-700"
-          disabled={busy}
-          onClick={handleCancel}
-        >
+        <button type="button" className="console-button-secondary text-xs" disabled={busy} onClick={handleCancel}>
           取消
         </button>
       </div>

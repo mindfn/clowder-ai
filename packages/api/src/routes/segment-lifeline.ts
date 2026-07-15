@@ -123,7 +123,7 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
         ? { hookId: segmentId, enabled: overrideState.enabled, contentVersion: overrideState.contentVersion }
         : null,
       epochGuardMetrics,
-    } satisfies SegmentLifecycleResponse & Record<string, unknown>;
+    } satisfies SegmentLifecycleResponse & Record<string, unknown>; // Record escape: observations/guardEvents/overrideState not yet in shared type
 
     return reply.send(response);
   });

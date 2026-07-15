@@ -148,6 +148,23 @@ describe('segment lifeline: tracing row drill-down (②)', () => {
   });
 });
 
+describe('segment lifeline: shared type contract — epochGuardMetrics (R16 P2-1)', () => {
+  const sharedSrc = readFileSync(
+    path.resolve(__dirname, '..', '..', '..', 'shared', 'src', 'types', 'segment-lifecycle.ts'),
+    'utf-8',
+  );
+
+  it('SegmentLifecycleResponse includes epochGuardMetrics field', () => {
+    expect(sharedSrc).toMatch(/epochGuardMetrics:\s*Record<number,\s*GuardMetric\[\]>/);
+  });
+
+  it('GuardMetric interface is defined with guardId and count', () => {
+    expect(sharedSrc).toMatch(/export interface GuardMetric/);
+    expect(sharedSrc).toContain('guardId: string');
+    expect(sharedSrc).toContain('count: number');
+  });
+});
+
 describe('segment lifeline: eval per-guard metrics (R14 P1-1, R15 P1)', () => {
   const evalSrc = readComponent('EvalStagePanel.tsx');
   const detailSrc = readComponent('LifelineStageDetail.tsx');

@@ -756,6 +756,7 @@ export { isValidRichBlock, normalizeRichBlock } from './rich.js';
 export type {
   EvalStageSummary,
   GovernanceStageSummary,
+  GuardMetric,
   LifecycleEvent,
   LifecycleEventKind,
   SegmentLifecycleResponse,

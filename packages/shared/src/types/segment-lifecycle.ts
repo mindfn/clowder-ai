@@ -115,6 +115,12 @@ export interface VersionEpoch {
 // API response
 // ---------------------------------------------------------------------------
 
+/** Per-guard event count attributed to an epoch via activation timeline. */
+export interface GuardMetric {
+  guardId: string;
+  count: number;
+}
+
 /** Full lifecycle response for GET /api/segment-lifeline/:segmentId. */
 export interface SegmentLifecycleResponse {
   segmentId: string;
@@ -124,4 +130,6 @@ export interface SegmentLifecycleResponse {
   /** Backward-compat status summary. */
   currentStatus: 'idle' | 'tracing' | 'evaluated';
   window: { startMs: number; endMs: number };
+  /** Guard events attributed to each epoch via activation timeline (R16). */
+  epochGuardMetrics: Record<number, GuardMetric[]>;
 }

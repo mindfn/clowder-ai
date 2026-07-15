@@ -7,6 +7,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
+import Fastify from 'fastify';
 
 // ── FakeRedis with sorted set + SET (SADD/SMEMBERS) support ──
 
@@ -445,5 +446,77 @@ describe('segment-lifeline guard event filtering', () => {
       { eventId: 'g2', threadId: 'thread-A', catId: 'opus', timestamp: 5000 - PROXIMITY_MS },
     ];
     assert.equal(filterGuardEvents(events, obs).length, 2, 'boundary inclusive');
+  });
+});
+
+// ── R16 route-level regression: epochGuardMetrics in JSON response ──
+
+describe('segment-lifeline route: epochGuardMetrics in response (R16 P2-1)', () => {
+  const SESSION_HEADERS = { 'x-test-session-user': 'test-user' };
+
+  async function buildLifelineApp(traceStore, opts = {}) {
+    const { segmentLifelineRoutes } = await import('../dist/routes/segment-lifeline.js');
+    const app = Fastify({ logger: false });
+    app.addHook('preHandler', async (request) => {
+      const sessionUser = request.headers['x-test-session-user'];
+      if (typeof sessionUser === 'string' && sessionUser.trim()) {
+        request.sessionUserId = sessionUser.trim();
+      }
+    });
+    await app.register(segmentLifelineRoutes, { traceStore, ...opts });
+    await app.ready();
+    return app;
+  }
+
+  test('response JSON contains epochGuardMetrics keyed by version', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const store = new InjectionTraceStore(redis);
+
+    // Seed an observation so the chain has tracing data
+    const now = Date.now();
+    const s = makeSummary('thread-X', 'turn-1', now - 1000, 'opus', [makeSegment('S-test')]);
+    await store.persist(s, makeDetail('thread-X', 'turn-1'));
+
+    const app = await buildLifelineApp(store);
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/segment-lifeline/S-test',
+      headers: SESSION_HEADERS,
+    });
+
+    assert.equal(res.statusCode, 200, `expected 200, got ${res.statusCode}: ${res.body}`);
+    const body = JSON.parse(res.body);
+
+    // Core contract: epochGuardMetrics must be present and keyed by version number
+    assert.ok('epochGuardMetrics' in body, 'response must include epochGuardMetrics');
+    assert.equal(typeof body.epochGuardMetrics, 'object', 'epochGuardMetrics is an object');
+
+    // v1 (manifest baseline) must have an entry (empty array since no guard events)
+    assert.ok('1' in body.epochGuardMetrics, 'epochGuardMetrics has v1 key');
+    assert.ok(Array.isArray(body.epochGuardMetrics['1']), 'v1 value is an array');
+
+    // Verify other shared-contract fields are present
+    assert.equal(body.segmentId, 'S-test');
+    assert.ok('chain' in body);
+    assert.ok('activeVersion' in body);
+    assert.ok('currentStatus' in body);
+    assert.ok('window' in body);
+
+    await app.close();
+  });
+
+  test('returns 401 without session', async () => {
+    const { InjectionTraceStore } = await import('../dist/domains/prompt-hooks/InjectionTraceStore.js');
+    const redis = new FakeRedis();
+    const store = new InjectionTraceStore(redis);
+
+    const app = await buildLifelineApp(store);
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/segment-lifeline/S-test',
+    });
+    assert.equal(res.statusCode, 401);
+    await app.close();
   });
 });
