@@ -1,0 +1,36 @@
+{
+  "verdictId": "2026-07-15-eval-friction-c3-private-memory-bypasses-harness-ledger",
+  "featureId": "F245",
+  "evalSnapshotId": "eval-F245-2026-07-15",
+  "generatedAt": "2026-07-15T03:12:20.858Z",
+  "findings": [
+    {
+      "id": "FR-2026-07-15-73f7cc381631",
+      "relatedFeature": "F245",
+      "frictionSignal": {
+        "type": "friction.cluster_73f7cc381631",
+        "severity": "medium",
+        "confidence": 0.7,
+        "detectedAt": "2026-07-15T03:12:20.858Z"
+      },
+      "attribution": {
+        "primaryLayer": "needs_investigation",
+        "evidence": [
+          {
+            "type": "counter",
+            "anchor": "friction-rollup/cluster_73f7cc381631",
+            "excerpt": "cluster 'text_frustration: 不对 没用' count=1 severity=medium sensorForms=[reason]"
+          }
+        ]
+      },
+      "proposedAction": [
+        {
+          "action": "triage-top-friction-cluster",
+          "target": "F245/friction-rollup",
+          "rationale": "Highest-ranked friction cluster in the window — eval cat assigns the 7-class root cause in the verdict before handoff."
+        }
+      ],
+      "status": "open"
+    }
+  ]
+}
