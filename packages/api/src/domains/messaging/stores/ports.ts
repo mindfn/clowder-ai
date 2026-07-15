@@ -1,0 +1,121 @@
+/**
+ * Plugin Messaging — store ports (K-1 / F258)
+ *
+ * Small persistence seams behind the messaging domain services.
+ * Two implementations each: memory (dev, process-lifetime — consistent with
+ * MessageStore semantics) and Redis (production, plugmsg:* namespace).
+ * Lifecycle owners: §4 of the implementation plan — services own state
+ * machines; stores only persist. No bypass APIs (no generic list/delete).
+ */
+
+import type { HandleScope, MessageOutputEvent } from '../contract/types.js';
+
+// ── Ledger (owner: MessagingLedger, §4a) ──
+
+export type LedgerClaimResult =
+  | { readonly status: 'new' }
+  | { readonly status: 'inflight' }
+  | { readonly status: 'settled'; readonly receipt: unknown };
+
+export interface LedgerStore {
+  /** Atomic: unclaimed → inflight (returns new); inflight → inflight; settled → settled+receipt. */
+  claim(key: string, claimTtlMs: number): Promise<LedgerClaimResult>;
+  /** inflight → settled (first receipt sticks; idempotent). */
+  settle(key: string, receipt: unknown, retentionMs: number): Promise<void>;
+  /** inflight → unclaimed (failure path; no-op when settled). */
+  release(key: string): Promise<void>;
+}
+
+// ── Handles (owner: HandleService, §4c) ──
+
+export interface HandleRecord {
+  readonly handleId: string;
+  readonly kind: 'thread_handle' | 'connector_binding';
+  readonly pluginInstanceId: string;
+  readonly threadId: string;
+  /** Thread owner bound at issuance — used as StoredMessage.userId. */
+  readonly userId: string;
+  readonly scope: HandleScope;
+  readonly connectorBinding?: { readonly connectorId: string; readonly externalChatId: string };
+  readonly issuedAt: number;
+  readonly revokedAt?: number;
+}
+
+export interface HandleStore {
+  put(record: HandleRecord): Promise<void>;
+  get(handleId: string): Promise<HandleRecord | null>;
+  /** active → revoked (idempotent). Returns false when the handle does not exist. */
+  revoke(handleId: string, revokedAt: number): Promise<boolean>;
+}
+
+// ── Event log + per-thread sequence (owner: EventStreamService, §4b) ──
+
+export interface EventLogAppendResult {
+  readonly sequence: number;
+  /** True when the deterministic eventKey was already present (crash-retry dedupe, D-3). */
+  readonly deduped: boolean;
+}
+
+export interface EventLogStore {
+  /**
+   * Atomically: dedupe by eventKey within the retained window → assign next
+   * per-thread sequence → append → trim to retentionCount (INV-3 monotonic).
+   * The event JSON is produced by build(sequence) so the stored record carries
+   * its own sequence.
+   */
+  append(
+    threadId: string,
+    eventKey: string,
+    build: (sequence: number) => MessageOutputEvent,
+    retentionCount: number,
+  ): Promise<EventLogAppendResult>;
+  /** Events with sequence > afterSequence, ascending, at most limit. */
+  readAfter(threadId: string, afterSequence: number, limit: number): Promise<MessageOutputEvent[]>;
+  /** Smallest retained sequence (retention floor projection); null when log is empty. */
+  minSequence(threadId: string): Promise<number | null>;
+  /** Highest assigned sequence (counter value); 0 when no event was ever assigned. */
+  headSequence(threadId: string): Promise<number>;
+}
+
+// ── Subscriptions + durable ack cursor (owner: EventStreamService, §4b) ──
+
+export interface SubscriptionRecord {
+  readonly subscriptionId: string;
+  readonly pluginInstanceId: string;
+  readonly handleId: string;
+  readonly threadId: string;
+  /** Durable ack cursor: last acked sequence. */
+  readonly ackedSequence: number;
+  /** Highest sequence handed out by read() — bounds valid ack tokens. */
+  readonly lastDeliveredSequence: number;
+  readonly revokedAt?: number;
+}
+
+export interface CursorStore {
+  put(record: SubscriptionRecord): Promise<void>;
+  get(pluginInstanceId: string, subscriptionId: string): Promise<SubscriptionRecord | null>;
+  /** Subscribe idempotency: existing live subscription for (instance, handle). */
+  findByHandle(pluginInstanceId: string, handleId: string): Promise<SubscriptionRecord | null>;
+  /** Monotonic max advance of ackedSequence. */
+  advanceAck(pluginInstanceId: string, subscriptionId: string, sequence: number): Promise<void>;
+  /** Monotonic max advance of lastDeliveredSequence. */
+  advanceDelivered(pluginInstanceId: string, subscriptionId: string, sequence: number): Promise<void>;
+  /** Handle revocation cascade (§4c): revoke every subscription bound to the handle. */
+  revokeByHandle(handleId: string, revokedAt: number): Promise<number>;
+}
+
+// ── Append lock (owner: AppendService, §4d) ──
+
+export interface AppendLock {
+  /** Best-effort per-message mutex with TTL. True when acquired. */
+  acquire(messageId: string, ttlMs: number): Promise<boolean>;
+  release(messageId: string): Promise<void>;
+}
+
+export interface MessagingStores {
+  readonly ledger: LedgerStore;
+  readonly handles: HandleStore;
+  readonly events: EventLogStore;
+  readonly cursors: CursorStore;
+  readonly appendLock: AppendLock;
+}
