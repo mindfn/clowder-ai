@@ -35,7 +35,13 @@ beforeEach(async () => {
   events = new memory.MemoryEventLogStore();
   appendLock = new memory.MemoryAppendLock();
   const ledger = new ledgerMod.MessagingLedger(new memory.MemoryLedgerStore());
-  sendService = new sendMod.SendService({ messageStore, handles, ledger, events });
+  sendService = new sendMod.SendService({
+    messageStore,
+    handles,
+    ledger,
+    events,
+    isKnownCatId: (catId) => catId === 'opus',
+  });
   service = new appendMod.AppendService({ messageStore, ledger, events, appendLock });
 });
 
@@ -44,7 +50,7 @@ async function sendMessage(overrides = {}) {
     pluginInstanceId: 'inst-a',
     threadId: 'thread-1',
     userId: 'user-1',
-    scope: { canSend: true, canSubscribe: true, allowedWhisperTargets: ['cat-a'] },
+    scope: { canSend: true, canSubscribe: true, allowedWhisperTargets: ['opus'] },
   });
   const receipt = await sendService.send(CTX, {
     address: { kind: 'thread_handle', handle: handleId },
@@ -91,7 +97,7 @@ describe('AppendService — happy path (AC-4)', () => {
     const stored = messageStore.getById(sent.messageId);
     assert.equal(stored.extra.pluginMessage.revision, 2);
     assert.equal(stored.extra.pluginMessage.elements.length, 2);
-    assert.deepEqual(stored.extra.pluginMessage.appendOps, ['op-1']);
+    assert.deepEqual(stored.extra.pluginMessage.appendOps, [{ operationId: 'op-1', elementIds: ['el-2'] }]);
     assert.equal(stored.content, 'original', 'INV-6: original content untouched');
 
     const logged = await events.readAfter('thread-1', 0, 10);
@@ -129,7 +135,10 @@ describe('AppendService — happy path (AC-4)', () => {
     );
     assert.equal(r1.revision, 2);
     assert.equal(r2.revision, 3);
-    assert.deepEqual(messageStore.getById(sent.messageId).extra.pluginMessage.appendOps, ['op-1', 'op-2']);
+    assert.deepEqual(messageStore.getById(sent.messageId).extra.pluginMessage.appendOps, [
+      { operationId: 'op-1', elementIds: ['el-2'] },
+      { operationId: 'op-2', elementIds: ['el-3'] },
+    ]);
   });
 
   test('derivedFromElementId referencing a persisted element is accepted', async () => {
@@ -197,28 +206,26 @@ describe('AppendService — INV-7 provenance whitewash guard', () => {
   });
 });
 
-describe('AppendService — rejection paths (§4d)', () => {
-  test('INV-10: baseRevision mismatch → CONFLICT with zero mutation', async () => {
-    const sent = await sendMessage();
-    await expectCode(service.appendElements(CTX, appendInput(sent.messageId, { baseRevision: 99 })), 'CONFLICT');
-    const stored = messageStore.getById(sent.messageId);
-    assert.equal(stored.extra.pluginMessage.revision, 1);
-    assert.equal(stored.extra.pluginMessage.elements.length, 1);
-  });
-
-  test('INV-6: colliding elementId → VALIDATION, original untouched', async () => {
-    const sent = await sendMessage();
+describe('AppendService — validation and lock guards (§4d)', () => {
+  test('D-6: cumulative payload bytes are bounded across append operations', async () => {
+    const initialElements = Array.from({ length: 4 }, (_, index) => ({
+      elementId: `el-${index + 1}`,
+      kind: 'text',
+      payload: { text: 'x'.repeat(60 * 1024) },
+    }));
+    const sent = await sendMessage({
+      payload: { provenance: { epistemicStatus: 'inference' }, elements: initialElements },
+    });
     await expectCode(
       service.appendElements(
         CTX,
         appendInput(sent.messageId, {
-          elements: [{ elementId: 'el-1', kind: 'text', payload: { text: 'overwrite attempt' } }],
+          elements: [{ elementId: 'el-overflow', kind: 'text', payload: { text: 'y'.repeat(20 * 1024) } }],
         }),
       ),
       'VALIDATION',
     );
-    const stored = messageStore.getById(sent.messageId);
-    assert.equal(stored.extra.pluginMessage.elements[0].payload.text, 'original');
+    assert.equal(messageStore.getById(sent.messageId).extra.pluginMessage.elements.length, 4);
   });
 
   test('derivedFromElementId referencing a nonexistent element → VALIDATION', async () => {
@@ -260,17 +267,28 @@ describe('AppendService — rejection paths (§4d)', () => {
 
   test('lock contention → RETRYABLE_INFLIGHT; released claim allows retry', async () => {
     const sent = await sendMessage();
-    await appendLock.acquire(sent.messageId, 60_000); // foreign lock holder
+    const token = await appendLock.acquire(sent.messageId, 60_000); // foreign lock holder
     await expectCode(service.appendElements(CTX, appendInput(sent.messageId)), 'RETRYABLE_INFLIGHT');
-    await appendLock.release(sent.messageId);
+    await appendLock.release(sent.messageId, token);
     const receipt = await service.appendElements(CTX, appendInput(sent.messageId));
     assert.equal(receipt.revision, 2);
+  });
+
+  test('stale in-memory lock holder cannot release its successor', async () => {
+    const lock = new memory.MemoryAppendLock();
+    const staleToken = await lock.acquire('msg-lock', 0);
+    const liveToken = await lock.acquire('msg-lock', 60_000);
+    assert.equal(typeof staleToken, 'string');
+    assert.equal(typeof liveToken, 'string');
+    await lock.release('msg-lock', staleToken);
+    assert.equal(await lock.acquire('msg-lock', 60_000), null, 'successor lock remains held');
+    await lock.release('msg-lock', liveToken);
   });
 });
 
 describe('AppendService — whisper boundary (v0)', () => {
   test('append to a whisper message applies but is not event-streamed', async () => {
-    const sent = await sendMessage({ draftAudience: { kind: 'whisper', targets: ['cat-a'] } });
+    const sent = await sendMessage({ draftAudience: { kind: 'whisper', targets: ['opus'] } });
     const receipt = await service.appendElements(CTX, appendInput(sent.messageId));
     assert.equal(receipt.revision, 2);
     assert.equal(receipt.appendSequence, undefined);

@@ -12,18 +12,16 @@
  *   frequency, idempotent, first-revocation timestamp sticks.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { RedisClient } from '@cat-cafe/shared/utils';
 import type { MessageOutputEvent, MessageOutputEventInput } from '../contract/types.js';
 import type {
-  AppendLock,
-  CursorStore,
   EventLogAppendResult,
   EventLogStore,
   HandleRecord,
   HandleStore,
   LedgerClaimResult,
   LedgerStore,
-  SubscriptionRecord,
 } from './ports.js';
 import { MessagingKeys } from './redis-keys.js';
 
@@ -38,14 +36,20 @@ return false
 
 const LEDGER_SETTLE_LUA = `
 local v = redis.call('GET', KEYS[1])
-if v and string.find(v, '"status":"settled"', 1, true) then return 0 end
-redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+if not v then return -1 end
+local decoded = cjson.decode(v)
+if decoded.status == 'settled' then return 0 end
+if decoded.status ~= 'inflight' or decoded.claimToken ~= ARGV[1] then return -1 end
+redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
 return 1
 `;
 
 const LEDGER_RELEASE_LUA = `
 local v = redis.call('GET', KEYS[1])
-if v and string.find(v, '"status":"inflight"', 1, true) then redis.call('DEL', KEYS[1]) end
+if v then
+  local decoded = cjson.decode(v)
+  if decoded.status == 'inflight' and decoded.claimToken == ARGV[1] then redis.call('DEL', KEYS[1]) end
+end
 return 0
 `;
 
@@ -57,31 +61,33 @@ export class RedisLedgerStore implements LedgerStore {
   }
 
   async claim(key: string, claimTtlMs: number): Promise<LedgerClaimResult> {
+    const claimToken = randomUUID();
     const existing = (await this.redis.eval(
       LEDGER_CLAIM_LUA,
       1,
       MessagingKeys.ledger(key),
-      JSON.stringify({ status: 'inflight' }),
+      JSON.stringify({ status: 'inflight', claimToken }),
       String(claimTtlMs),
     )) as string | null;
-    if (existing === null || existing === undefined) return { status: 'new' };
+    if (existing === null || existing === undefined) return { status: 'new', claimToken };
     const parsed = JSON.parse(existing) as { status: string; receipt?: unknown };
     if (parsed.status === 'settled') return { status: 'settled', receipt: parsed.receipt };
     return { status: 'inflight' };
   }
 
-  async settle(key: string, receipt: unknown, retentionMs: number): Promise<void> {
+  async settle(key: string, claimToken: string, receipt: unknown, retentionMs: number): Promise<void> {
     await this.redis.eval(
       LEDGER_SETTLE_LUA,
       1,
       MessagingKeys.ledger(key),
+      claimToken,
       JSON.stringify({ status: 'settled', receipt }),
       String(retentionMs),
     );
   }
 
-  async release(key: string): Promise<void> {
-    await this.redis.eval(LEDGER_RELEASE_LUA, 1, MessagingKeys.ledger(key));
+  async release(key: string, claimToken: string): Promise<void> {
+    await this.redis.eval(LEDGER_RELEASE_LUA, 1, MessagingKeys.ledger(key), claimToken);
   }
 }
 
@@ -203,126 +209,5 @@ export class RedisEventLogStore implements EventLogStore {
   }
 }
 
-// ── Subscriptions + cursors ──
-
-const CURSOR_ADVANCE_LUA = `
-local cur = tonumber(redis.call('HGET', KEYS[1], ARGV[1]) or '-1')
-local nxt = tonumber(ARGV[2])
-if nxt > cur then redis.call('HSET', KEYS[1], ARGV[1], nxt) end
-return 0
-`;
-
-export class RedisCursorStore implements CursorStore {
-  private readonly redis: RedisClient;
-
-  constructor(redis: RedisClient) {
-    this.redis = redis;
-  }
-
-  async put(record: SubscriptionRecord): Promise<void> {
-    const { pluginInstanceId, subscriptionId, handleId } = record;
-    await this.redis.set(MessagingKeys.subscription(pluginInstanceId, subscriptionId), JSON.stringify(record));
-    await this.redis.set(MessagingKeys.subscriptionByHandle(pluginInstanceId, handleId), subscriptionId);
-    await this.redis.sadd(
-      MessagingKeys.subscriptionsOfHandle(handleId),
-      `${encodeURIComponent(pluginInstanceId)}|${encodeURIComponent(subscriptionId)}`,
-    );
-  }
-
-  async get(pluginInstanceId: string, subscriptionId: string): Promise<SubscriptionRecord | null> {
-    const raw = await this.redis.get(MessagingKeys.subscription(pluginInstanceId, subscriptionId));
-    if (!raw) return null;
-    const record = JSON.parse(raw) as SubscriptionRecord;
-    const cursors = await this.redis.hgetall(MessagingKeys.subscriptionCursor(pluginInstanceId, subscriptionId));
-    return {
-      ...record,
-      ackedSequence: cursors.acked !== undefined ? Number(cursors.acked) : record.ackedSequence,
-      lastDeliveredSequence: cursors.delivered !== undefined ? Number(cursors.delivered) : record.lastDeliveredSequence,
-    };
-  }
-
-  async findByHandle(pluginInstanceId: string, handleId: string): Promise<SubscriptionRecord | null> {
-    const subscriptionId = await this.redis.get(MessagingKeys.subscriptionByHandle(pluginInstanceId, handleId));
-    if (!subscriptionId) return null;
-    const record = await this.get(pluginInstanceId, subscriptionId);
-    if (!record || record.revokedAt !== undefined) return null;
-    return record;
-  }
-
-  private async advance(
-    pluginInstanceId: string,
-    subscriptionId: string,
-    field: 'acked' | 'delivered',
-    sequence: number,
-  ): Promise<void> {
-    await this.redis.eval(
-      CURSOR_ADVANCE_LUA,
-      1,
-      MessagingKeys.subscriptionCursor(pluginInstanceId, subscriptionId),
-      field,
-      String(sequence),
-    );
-  }
-
-  async advanceAck(pluginInstanceId: string, subscriptionId: string, sequence: number): Promise<void> {
-    await this.advance(pluginInstanceId, subscriptionId, 'acked', sequence);
-  }
-
-  async advanceDelivered(pluginInstanceId: string, subscriptionId: string, sequence: number): Promise<void> {
-    await this.advance(pluginInstanceId, subscriptionId, 'delivered', sequence);
-  }
-
-  async revokeByHandle(handleId: string, revokedAt: number): Promise<number> {
-    const members = await this.redis.smembers(MessagingKeys.subscriptionsOfHandle(handleId));
-    let count = 0;
-    for (const member of members) {
-      const sep = member.indexOf('|');
-      if (sep < 0) continue;
-      const instanceId = decodeURIComponent(member.slice(0, sep));
-      const subscriptionId = decodeURIComponent(member.slice(sep + 1));
-      const raw = await this.redis.get(MessagingKeys.subscription(instanceId, subscriptionId));
-      if (!raw) continue;
-      const record = JSON.parse(raw) as SubscriptionRecord;
-      if (record.revokedAt !== undefined) continue;
-      await this.redis.set(
-        MessagingKeys.subscription(instanceId, subscriptionId),
-        JSON.stringify({ ...record, revokedAt }),
-      );
-      count += 1;
-    }
-    return count;
-  }
-}
-
-// ── Append lock ──
-
-const LOCK_RELEASE_LUA = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then redis.call('DEL', KEYS[1]) end
-return 0
-`;
-
-export class RedisAppendLock implements AppendLock {
-  private readonly redis: RedisClient;
-  private readonly tokens = new Map<string, string>();
-  private tokenSeq = 0;
-
-  constructor(redis: RedisClient) {
-    this.redis = redis;
-  }
-
-  async acquire(messageId: string, ttlMs: number): Promise<boolean> {
-    this.tokenSeq += 1;
-    const token = `${process.pid}-${this.tokenSeq}-${Math.random().toString(36).slice(2)}`;
-    const result = await this.redis.set(MessagingKeys.appendLock(messageId), token, 'PX', ttlMs, 'NX');
-    if (result !== 'OK') return false;
-    this.tokens.set(messageId, token);
-    return true;
-  }
-
-  async release(messageId: string): Promise<void> {
-    const token = this.tokens.get(messageId);
-    if (token === undefined) return;
-    this.tokens.delete(messageId);
-    await this.redis.eval(LOCK_RELEASE_LUA, 1, MessagingKeys.appendLock(messageId), token);
-  }
-}
+export { RedisAppendLock } from './redis-append-lock.js';
+export { RedisCursorStore } from './redis-cursor.js';

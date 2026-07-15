@@ -4,8 +4,9 @@
  * Cursor scope = (pluginInstanceId × subscription); ack cursors are durable.
  * Delivery = at-least-once for unacked events (INV-4); consumers dedupe by
  * eventId. The ack token is subscription-local and opaque (INV-5) — v0
- * opacity is contractual, enforcement is server-side subscription matching,
- * not cryptography (F258 non-goal).
+ * opacity is contractual, enforcement is server-side subscription matching
+ * plus the delivered watermark (the guard, not the token, is load-bearing;
+ * cryptographic tokens are a F258 non-goal until K-2's untrusted transport).
  *
  * Stale (INV-9): cursor behind the retention floor → read returns
  * { stale: true } with zero events; snapshot() catches up from the message
@@ -13,12 +14,19 @@
  * delivered events stay valid across trims — they can cure staleness, never
  * cause silent skips (events ≤ acked sequence were delivered pre-trim).
  *
+ * Subscribe idempotency: the (instance, handle) slot is won atomically via
+ * CursorStore.createOrGet — concurrent subscribes converge on one
+ * live cursor. After the claim the handle is re-checked so a revocation
+ * cascade racing the subscribe cannot leave a live orphan (fail-closed with
+ * HandleService.revoke's cascade-first ordering).
+ *
  * v0 subscription binds ONE thread handle (D-2): cross-thread cursor misuse
  * is impossible by construction.
  */
 
 import { randomUUID } from 'node:crypto';
 import type { IMessageStore } from '../cats/services/stores/ports/MessageStore.js';
+import { isInternalNonQuotableParent } from '../cats/services/stores/visibility.js';
 import type { PluginCallContext, ReadResult, SnapshotResult, SubscribeResult } from './contract/types.js';
 import { MessagingError } from './contract/types.js';
 import { projectEnvelope } from './envelope.js';
@@ -34,7 +42,6 @@ export interface EventStreamDeps {
   readonly cursors: CursorStore;
   readonly handles: HandleService;
   readonly messageStore: IMessageStore;
-  readonly retentionCount?: number;
 }
 
 interface AckTokenPayload {
@@ -67,6 +74,27 @@ function decodeAckToken(token: string): AckTokenPayload {
   return parsed as unknown as AckTokenPayload;
 }
 
+/**
+ * Snapshot visibility (fail-closed): only public user/cat/plugin content may
+ * leave the host. Whisper, system/briefing plumbing, scheduler hidden
+ * triggers, and A2A routing markers are host-internal — projecting them would
+ * fabricate user_intent provenance for host machinery (C-1 provenance
+ * mapping).
+ */
+function isSnapshotVisible(msg: {
+  visibility?: string;
+  userId: string;
+  origin?: string;
+  extra?: { systemKind?: string; scheduler?: { hiddenTrigger?: boolean } };
+}): boolean {
+  if (msg.visibility === 'whisper') return false;
+  if (isInternalNonQuotableParent(msg as Parameters<typeof isInternalNonQuotableParent>[0])) return false;
+  if (msg.extra?.systemKind !== undefined) return false;
+  if (msg.extra?.scheduler?.hiddenTrigger) return false;
+  if (msg.userId === 'scheduler') return false;
+  return true;
+}
+
 export class EventStreamService {
   private readonly deps: EventStreamDeps;
 
@@ -78,6 +106,7 @@ export class EventStreamService {
     const handle = await this.deps.handles.resolveForSubscribe(ctx.pluginInstanceId, handleId);
     const existing = await this.deps.cursors.findByHandle(ctx.pluginInstanceId, handleId);
     if (existing) return { subscriptionId: existing.subscriptionId };
+
     const head = await this.deps.events.headSequence(handle.threadId);
     const record: SubscriptionRecord = {
       subscriptionId: `sub_${randomUUID()}`,
@@ -87,8 +116,19 @@ export class EventStreamService {
       ackedSequence: head,
       lastDeliveredSequence: head,
     };
-    await this.deps.cursors.put(record);
-    return { subscriptionId: record.subscriptionId };
+    const winner = await this.deps.cursors.createOrGet(record);
+
+    // Close the subscribe-vs-revocation race: if the handle was revoked while
+    // we were writing, revoke what we just created instead of leaking a live
+    // subscription on a dead handle.
+    try {
+      await this.deps.handles.resolveForSubscribe(ctx.pluginInstanceId, handleId);
+    } catch (err) {
+      await this.deps.cursors.revokeByHandle(handleId, Date.now());
+      throw err;
+    }
+
+    return { subscriptionId: winner.subscriptionId };
   }
 
   /** Common gate: existence (instance-scoped lookup) → liveness. */
@@ -98,17 +138,28 @@ export class EventStreamService {
     if (sub.revokedAt !== undefined) {
       throw new MessagingError('PERMISSION', 'subscription revoked (handle revocation cascade)');
     }
+    // The cascade is an optimization, not the authority. Re-checking the
+    // handle closes crash/race windows between HandleStore.revoke and cursor
+    // fan-out, so a dead handle can never retain a readable subscription.
+    await this.deps.handles.resolveForSubscribe(ctx.pluginInstanceId, sub.handleId);
     return sub;
   }
 
   async read(ctx: PluginCallContext, subscriptionId: string, options: { limit?: number }): Promise<ReadResult> {
+    if (options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 1)) {
+      throw new MessagingError('VALIDATION', 'limit must be a positive integer when present');
+    }
     const sub = await this.requireLiveSubscription(ctx, subscriptionId);
+    const limit = Math.min(options.limit ?? DEFAULT_READ_LIMIT, MAX_READ_LIMIT);
+    // Read first, then inspect the retention floor. If a concurrent append
+    // trims between the two calls, the newer floor makes us return stale. The
+    // inverse order can observe an old floor followed by a trimmed page and
+    // silently skip the removed events.
+    const events = await this.deps.events.readAfter(sub.threadId, sub.ackedSequence, limit);
     const floor = await this.deps.events.minSequence(sub.threadId);
     if (floor !== null && sub.ackedSequence < floor - 1) {
       return { events: [], ackToken: null, stale: true }; // INV-9: surface, never skip
     }
-    const limit = Math.max(1, Math.min(options.limit ?? DEFAULT_READ_LIMIT, MAX_READ_LIMIT));
-    const events = await this.deps.events.readAfter(sub.threadId, sub.ackedSequence, limit);
     if (events.length === 0) return { events: [], ackToken: null, stale: false };
     const last = events[events.length - 1];
     const lastSequence = last ? last.sequence : sub.ackedSequence;
@@ -129,18 +180,21 @@ export class EventStreamService {
   }
 
   /**
-   * Catch-up path (INV-9): project the recent message window to envelopes and
-   * reset the cursor to the current head. Whisper/deleted messages never leave
-   * the host (fail-closed visibility); window size documents the same
-   * retention philosophy as the event log.
+   * Catch-up path (INV-9): project the recent public message window to
+   * envelopes and reset the cursor to the current head. Window size documents
+   * the same retention philosophy as the event log.
    */
   async snapshot(ctx: PluginCallContext, subscriptionId: string): Promise<SnapshotResult> {
     const sub = await this.requireLiveSubscription(ctx, subscriptionId);
+    // Fence first: persist happens before event append, so every event at or
+    // below this head already has a message visible to the subsequent read.
+    // Reading both in parallel can omit a concurrently persisted message yet
+    // still advance the cursor past its just-appended event.
     const head = await this.deps.events.headSequence(sub.threadId);
     const messages = await this.deps.messageStore.getByThread(sub.threadId, SNAPSHOT_MESSAGE_LIMIT);
     const envelopes = [];
     for (const msg of messages) {
-      if (msg.visibility === 'whisper') continue;
+      if (!isSnapshotVisible(msg)) continue;
       const envelope = projectEnvelope(msg);
       if (envelope) envelopes.push(envelope);
     }

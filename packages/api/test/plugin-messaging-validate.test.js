@@ -142,6 +142,47 @@ describe('validateDraft — fail-closed', () => {
     );
   });
 
+  test('draft derivation must reference an earlier element in the same message', () => {
+    const payload = {
+      provenance: { epistemicStatus: 'inference' },
+      elements: [
+        { elementId: 'source', kind: 'text', payload: { text: 'source' } },
+        {
+          elementId: 'derived',
+          kind: 'text',
+          payload: { text: 'derived' },
+          derivedFromElementId: 'source',
+        },
+      ],
+    };
+    assert.equal(validate.validateDraft(validDraft({ payload })).payload.elements.length, 2);
+
+    expectValidationError(
+      () =>
+        validate.validateDraft(
+          validDraft({
+            payload: {
+              ...payload,
+              elements: [payload.elements[1], payload.elements[0]],
+            },
+          }),
+        ),
+      'derivedFromElementId',
+    );
+    expectValidationError(
+      () =>
+        validate.validateDraft(
+          validDraft({
+            payload: {
+              ...payload,
+              elements: [{ ...payload.elements[1], derivedFromElementId: 'missing' }],
+            },
+          }),
+        ),
+      'derivedFromElementId',
+    );
+  });
+
   test('rejects unknown element kind', () => {
     expectValidationError(
       () =>

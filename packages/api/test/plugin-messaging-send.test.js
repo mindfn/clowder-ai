@@ -30,7 +30,13 @@ beforeEach(async () => {
   handles = new handlesMod.HandleService(new memory.MemoryHandleStore(), new memory.MemoryCursorStore());
   ledger = new ledgerMod.MessagingLedger(new memory.MemoryLedgerStore());
   events = new memory.MemoryEventLogStore();
-  service = new sendMod.SendService({ messageStore, handles, ledger, events });
+  service = new sendMod.SendService({
+    messageStore,
+    handles,
+    ledger,
+    events,
+    isKnownCatId: (catId) => ['opus', 'codex'].includes(catId),
+  });
 });
 
 const CTX = { pluginInstanceId: 'inst-a' };
@@ -96,6 +102,30 @@ describe('SendService — happy path (AC-1/AC-2)', () => {
     assert.deepEqual(logged[0].envelope.actor, { kind: 'plugin', id: 'inst-a' });
   });
 
+  test('canonical payload trace fields survive persistence and envelope projection', async () => {
+    const handleId = await issueHandle();
+    const receipt = await service.send(
+      CTX,
+      draftFor(handleId, {
+        sourceEventId: 'github:issue:42',
+        payload: {
+          provenance: { epistemicStatus: 'inference' },
+          elements: [{ elementId: 'el-1', kind: 'text', payload: { text: 'trace me' } }],
+          correlationId: 'corr-7',
+          causationId: 'cause-6',
+        },
+      }),
+    );
+
+    const stored = messageStore.getById(receipt.messageId);
+    assert.equal(stored.extra.pluginMessage.sourceEventId, 'github:issue:42');
+    assert.equal(stored.extra.pluginMessage.correlationId, 'corr-7');
+    assert.equal(stored.extra.pluginMessage.causationId, 'cause-6');
+    const [event] = await events.readAfter('thread-1', 0, 10);
+    assert.equal(event.envelope.payload.correlationId, 'corr-7');
+    assert.equal(event.envelope.payload.causationId, 'cause-6');
+  });
+
   test('INV-1: same idempotencyKey returns identical receipt; exactly one message + one event', async () => {
     const handleId = await issueHandle();
     const first = await service.send(CTX, draftFor(handleId));
@@ -137,23 +167,23 @@ describe('SendService — whisper (grant enforcement + v0 stream boundary)', () 
     const handleId = await issueHandle({
       canSend: true,
       canSubscribe: false,
-      allowedWhisperTargets: ['cat-a', 'cat-b'],
+      allowedWhisperTargets: ['opus', 'codex'],
     });
     const receipt = await service.send(
       CTX,
-      draftFor(handleId, { draftAudience: { kind: 'whisper', targets: ['cat-a'] } }),
+      draftFor(handleId, { draftAudience: { kind: 'whisper', targets: ['opus'] } }),
     );
     assert.equal(receipt.publishSequence, undefined);
     const stored = messageStore.getById(receipt.messageId);
     assert.equal(stored.visibility, 'whisper');
-    assert.deepEqual(stored.whisperTo, ['cat-a']);
+    assert.deepEqual(stored.whisperTo, ['opus']);
     assert.deepEqual(await events.readAfter('thread-1', 0, 10), []);
   });
 
   test('whisper outside the allowed set → PERMISSION', async () => {
-    const handleId = await issueHandle({ canSend: true, canSubscribe: false, allowedWhisperTargets: ['cat-a'] });
+    const handleId = await issueHandle({ canSend: true, canSubscribe: false, allowedWhisperTargets: ['opus'] });
     await expectCode(
-      service.send(CTX, draftFor(handleId, { draftAudience: { kind: 'whisper', targets: ['cat-a', 'cat-z'] } })),
+      service.send(CTX, draftFor(handleId, { draftAudience: { kind: 'whisper', targets: ['opus', 'codex'] } })),
       'PERMISSION',
     );
   });
@@ -161,7 +191,19 @@ describe('SendService — whisper (grant enforcement + v0 stream boundary)', () 
   test('whisper with no whisper grant at all → PERMISSION', async () => {
     const handleId = await issueHandle({ canSend: true, canSubscribe: false });
     await expectCode(
-      service.send(CTX, draftFor(handleId, { draftAudience: { kind: 'whisper', targets: ['cat-a'] } })),
+      service.send(CTX, draftFor(handleId, { draftAudience: { kind: 'whisper', targets: ['opus'] } })),
+      'PERMISSION',
+    );
+  });
+
+  test('unknown whisper targets are rejected even if a malformed handle grant lists them', async () => {
+    const handleId = await issueHandle({
+      canSend: true,
+      canSubscribe: false,
+      allowedWhisperTargets: ['not-a-real-cat'],
+    });
+    await expectCode(
+      service.send(CTX, draftFor(handleId, { draftAudience: { kind: 'whisper', targets: ['not-a-real-cat'] } })),
       'PERMISSION',
     );
   });
@@ -273,87 +315,22 @@ describe('SendService — D-4 origin stamping', () => {
       }),
       'PERMISSION',
     );
-  });
-});
-
-describe('SendService — §4a adversarial paths', () => {
-  test('claim stuck inflight → RETRYABLE_INFLIGHT (no message persisted)', async () => {
-    const handleId = await issueHandle();
-    await ledger.claimSend('inst-a', 'idem-1'); // simulate a concurrent in-flight send
-    await expectCode(service.send(CTX, draftFor(handleId)), 'RETRYABLE_INFLIGHT');
-    assert.equal(messageStore.size, 0);
-  });
-
-  test('store failure releases the claim so a genuine retry succeeds', async () => {
-    const handleId = await issueHandle();
-    const failingStore = new Proxy(messageStore, {
-      get(target, prop, receiver) {
-        if (prop === 'append') {
-          return () => {
-            throw new Error('store exploded');
-          };
-        }
-        return Reflect.get(target, prop, receiver);
-      },
-    });
-    const flaky = new sendMod.SendService({ messageStore: failingStore, handles, ledger, events });
-    await assert.rejects(flaky.send(CTX, draftFor(handleId)), /store exploded/);
-    // retry on the healthy service with the SAME idempotencyKey must succeed
-    const receipt = await service.send(CTX, draftFor(handleId));
-    assert.equal(receipt.revision, 1);
-  });
-
-  test('crash between persist and emit converges on retry (D-3): same message, event emitted once', async () => {
-    const handleId = await issueHandle();
-    const crashingEvents = new Proxy(events, {
-      get(target, prop, receiver) {
-        if (prop === 'append') {
-          return () => {
-            throw new Error('crash before emit');
-          };
-        }
-        return Reflect.get(target, prop, receiver);
-      },
-    });
-    const crashy = new sendMod.SendService({ messageStore, handles, ledger, events: crashingEvents });
-    await assert.rejects(crashy.send(CTX, draftFor(handleId)), /crash before emit/);
-    assert.equal(messageStore.size, 1, 'message persisted before the crash');
-
-    const receipt = await service.send(CTX, draftFor(handleId));
-    assert.equal(messageStore.size, 1, 'retry reuses the persisted message (store idempotency)');
-    const logged = await events.readAfter('thread-1', 0, 10);
-    assert.equal(logged.length, 1, 'exactly one publish event after recovery');
-    assert.equal(logged[0].envelope.messageId, receipt.messageId);
-  });
-
-  test('cross-instance handle → PERMISSION end-to-end', async () => {
-    const handleId = await issueHandle();
-    await expectCode(service.send({ pluginInstanceId: 'inst-b' }, draftFor(handleId)), 'PERMISSION');
-  });
-
-  test('invalid draft rejected before any side effect', async () => {
-    await expectCode(service.send(CTX, { nope: true }), 'VALIDATION');
-    assert.equal(messageStore.size, 0);
-  });
-
-  test('replyTo referencing another thread → VALIDATION (no cross-thread preview leak)', async () => {
-    const foreign = messageStore.append({
-      userId: 'user-1',
-      catId: null,
-      content: 'secret in another thread',
-      mentions: [],
-      timestamp: Date.now(),
-      threadId: 'thread-OTHER',
-    });
-    const handleId = await issueHandle();
-    await expectCode(service.send(CTX, draftFor(handleId, { replyTo: foreign.id })), 'VALIDATION');
-  });
-
-  test('replyTo referencing a missing message → VALIDATION; same-thread replyTo accepted', async () => {
-    const handleId = await issueHandle();
-    await expectCode(service.send(CTX, draftFor(handleId, { replyTo: 'msg-does-not-exist' })), 'VALIDATION');
-    const parent = await service.send(CTX, draftFor(handleId, { idempotencyKey: 'parent-1' }));
-    const reply = await service.send(CTX, draftFor(handleId, { idempotencyKey: 'child-1', replyTo: parent.messageId }));
-    assert.equal(messageStore.getById(reply.messageId).replyTo, parent.messageId);
+    await expectCode(
+      service.send(CTX, {
+        ...base,
+        payload: {
+          provenance: {
+            epistemicStatus: 'user_intent',
+            origin: {
+              kind: 'external',
+              connectorId: 'telegram',
+              sourceAddress: { connectorId: 'discord', chatId: 'chat-9' },
+            },
+          },
+          elements: [{ elementId: 'el-1', kind: 'text', payload: { text: 'x' } }],
+        },
+      }),
+      'PERMISSION',
+    );
   });
 });

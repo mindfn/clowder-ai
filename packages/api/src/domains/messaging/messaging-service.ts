@@ -60,7 +60,6 @@ export class MessagingService {
       cursors: stores.cursors,
       handles: this.handles,
       messageStore: deps.messageStore,
-      ...(deps.retentionCount !== undefined ? { retentionCount: deps.retentionCount } : {}),
     });
   }
 

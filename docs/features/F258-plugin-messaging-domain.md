@@ -1,3 +1,12 @@
+---
+feature_ids: [F258]
+related_features: [F088, F202, F240]
+topics: [plugin, messaging, envelope, event-stream, idempotency]
+doc_kind: spec
+created: 2026-07-14
+tips_exempt: K-1 establishes the kernel contract; the user-facing broker and configuration surface belong to K-2
+---
+
 # F258: Plugin Messaging Domain（K-1 messaging 域收敛）
 
 > F 号 tentative——若与并行分配冲突，maintainer review 时可重命名。
@@ -10,6 +19,20 @@
 ## 一句话
 
 内核提供 plugin-facing messaging 域：一个内容模型（MessagePayload），一个发送入口（`messaging.send(draft)`），两类可靠事件（`message.publish` / `message.elements.append`），幂等结算 ledger 与 durable ack cursor。
+
+## User Journey
+
+**Scope unit:** 一个 plugin instance 通过一个宿主签发的 ThreadHandle 操作一个 thread；每个订阅只绑定这个 handle，不跨 thread 共用 sequence。
+
+**Primary journey（plugin developer）:**
+
+1. 宿主给插件签发带发送/订阅权限的 ThreadHandle；插件不接触裸 threadId。
+2. 插件用一个 `messaging.send(draft)` 发送文本、媒体引用或 rich block，并拿到可安全重试的同一 receipt。
+3. 插件订阅该 handle，按 sequence 读取 output events；处理成功后 ack，未 ack 的事件可重投。
+4. cursor 落后 retention 窗口时，插件收到明确 stale 状态，先取 snapshot，再从返回的 resume sequence 恢复实时读取。
+5. 插件用 `messaging.appendElements` 给自己已发送的消息原子增补元素；重复 operationId 不重复追加，provenance 不会被增补洗白。
+
+**Failure journey:** handle 被撤销、跨实例复用、越权 whisper、跨 thread reply、revision 冲突或非法 provenance 均 fail-closed，并返回稳定错误码；不会退化成裸 threadId 或静默跳过事件。
 
 ## 范围（§3.1 五件套）
 
@@ -41,9 +64,9 @@ packages/api/src/domains/messaging/
 **K-2 接缝**：本 PR 不在组合根实例化 domain——`createMessagingDomain({ messageStore, redis })` 就是 K-2 Host Broker 的装配点（roadmap 五步回边：K-1 merge → K-2 消费）。端到端行为由域测试全链覆盖（facade e2e：issue→send→subscribe→read→ack→append→snapshot）。
 
 **关键设计决定**：
-- **D-1** envelope = `StoredMessage` 纯投影；插件消息持久化在现有 `IMessageStore`（`extra.pluginMessage` additive 扩展），Hub UI 免费获得展示。
+- **D-1** envelope = `StoredMessage` 纯投影；插件消息通过现有 `IMessageStore` 暴露为逻辑 `extra.pluginMessage` additive 扩展，Redis 内与宿主 `extra` 分字段持久化，避免双方并发更新互相覆盖；Hub UI 免费获得展示。
 - **D-2** v0 subscription 绑定单 ThreadHandle；多 thread = 多 subscription——"不得以单一 sequence 跨 thread 推游标"由构造保证。
-- **D-3** persist → emit → settle 顺序；事件 emit 以确定性 eventKey 去重（crash-retry 不双发）。
+- **D-3** persist → emit → settle 顺序；事件 emit 以确定性 eventKey 在 retention 窗口内去重。窗口外 crash-retry 可能以同一 eventId 再投递，语义是 at-least-once，消费者继续凭 eventId 幂等；不声称永久 exactly-once。append 的持久 `appendOps` 同时作为小型 outbox：锁租约接管者在写入新 revision 前按 revision 顺序补齐已落库的前驱事件，避免进程停顿造成 revision 事件乱序。
 - **D-4** provenance.origin 宿主校验绑定：thread_handle 发送 origin 必为 self plugin；connector_binding 发送 origin.external 必须与 binding 记录一致；`host` origin 任何 draft 不可声明。
 - **whisper 边界（fail-closed）**：v0 事件流与 snapshot 只投递 public 消息；whisper 是 send-only 能力（targets ⊆ handle grant 允许集）。消费者可观察到 sequence 跳号（受限事件），单调性不受影响。
 - **mentions**：v0 插件消息不解析/不触发 @ 路由（唤醒能力归 K-3a wake route）。
@@ -59,3 +82,75 @@ epistemic 值集 `observation|user_intent|inference`；element kinds v0 `text|me
 ## Ownership map delta（建议）
 
 新增 cell `plugin-messaging`（K-1 起草，maintainer 定夺）：plugin-facing messaging 契约面。现有 transport cell（F088）继续持有 connector 出入站与平台降级。
+
+## Quality Gate Report（review-ready）
+
+**检查时间:** 2026-07-15（Asia/Shanghai）
+
+**工作树:** feature checkout（branch `feat/k1-messaging-domain`）
+
+**基线:** `upstream/main@01bf27faf`
+
+**状态边界:** K-1 实现与本地验收已到 review-ready；正式 reviewer 放行前不宣称 shape-approved。C-1 发布 v0.1、精确 version+digest pin 与 conformance 绿是尚待满足的外部门禁，不计作本轮实现 AC。
+
+### 愿景与五件套验收
+
+| # | 原始需求 / AC | 状态 | 实现锚点 | 验证锚点 |
+|---|---|---|---|---|
+| 1 | 三类发送收敛为 `messaging.send(draft)`，同 key receipt 恒等 | ✅ | `send-service.ts`, `messaging-service.ts` | `plugin-messaging-send.test.js`, facade e2e |
+| 2 | canonical envelope + 宿主签发 handle/binding，无裸 threadId 通道 | ✅ | `envelope.ts`, `handles.ts`, `contract/validate.ts` | envelope/handles/validate suites |
+| 3 | per-thread 单调事件流 + durable ack + stale/snapshot | ✅ | `event-stream.ts`, memory/Redis event+cursor stores | event-log/event-stream/Redis suites |
+| 4 | 原子 `appendElements` + revision/CAS + provenance 不洗白 | ✅ | `append-service.ts`, `MessageStore` CAS | append suite（含 lease takeover 乱序回归） |
+| 5 | send/append 实例域幂等 ledger | ✅ | `ledger.ts`, memory/Redis ledger stores | ledger + Redis suites |
+
+交付完整性：K-1 是可被 K-2 扩展消费的完整 domain slice；没有需要推倒重写的占位实现。Host Broker 装配面保持为 `createMessagingDomain(...)`。
+
+### Fresh-context findings（均已当轮关闭）
+
+1. trace 字段在持久化/投影中丢失。
+2. retention trim 与 `read()` 竞态可静默跳事件。
+3. snapshot 的 head/message 并行读取可越过未纳入快照的消息。
+4. append 锁租约过期时旧写者可覆盖后继 revision；改为 revision CAS。
+5. ledger 无 owner token 时旧 claimant 可释放/结算后继 claim。
+6. Redis `pluginMessage` 白名单解析会丢字段且浅校验；统一严格 fail-closed parser。
+7. append crash replay 在事件被 trim 后可能用重试输入改写相同 eventId 的 `baseRevision`；持久化原始值。
+8. append 写入后、事件发射前锁租约接管会造成 revision 事件乱序；以持久 `appendOps` outbox repair 修复。RED 稳定复现 `op-2/rev3 → op-1/rev2`，GREEN 为正确顺序。
+
+诊断记录：`docs/bug-report/redis-plugin-message-array-collapse/bug-report.md`、`docs/bug-report/append-event-order-after-lock-expiry/bug-report.md`。
+
+### Dogfood-Your-Slice
+
+Scope verdict: ✅ 必做（plugin developer 可感知的 kernel contract）
+
+真实路径：issue handle → subscribe → send → read → ack → append → read → snapshot → send replay → append replay → Hub content。
+
+结果：11 步全部通过，使用仓库官方 isolated Redis runner；临时 dogfood 脚本已删除，未残留测试工件。
+
+发现并修复：Redis 独立字段回读、replyTo 同 thread/存在性校验，以及上述 fresh-context 竞态。
+
+### 验证证据
+
+| 命令 / 检查 | 结果 |
+|---|---|
+| K-1 非 Redis 定向套件 | 130/130 pass ✅ |
+| 官方 isolated Redis 定向套件 | 17/17 pass ✅（runner 分配非保留随机端口，DB 15） |
+| append lease-takeover RED → GREEN | RED 1 个精确失败；GREEN 21/21 ✅ |
+| `pnpm check` | exit 0 ✅（最终提交前重跑） |
+| `pnpm lint` | exit 0 ✅；仅存量 web warnings（最终提交前重跑） |
+| `pnpm -r --if-present run build` | exit 0 ✅（最终提交前重跑） |
+| `git diff --check` | exit 0 ✅ |
+| `pnpm test` | exit 1：upstream 镜像的 fork-only 脚本/文档/capability 等已知基线失败；接管前 branch/base failing-set 对照全等，最终运行未出现 K-1 failure |
+| `pnpm --filter @cat-cafe/api test:redis` | exit 1：该命令在 isolated Redis 下运行完整 API 套件，仍命中同组 upstream/fork 基线失败；K-1 Redis 定向 17/17 独立全绿 |
+
+### 机械门禁与 reviewer focus
+
+- `.pen` 匹配：无；UI diff：无；设计稿对照不适用。
+- 根目录媒体/设计工件（工作树 + 已提交差异）：无。
+- PR：尚未创建；`gh pr list --head feat/k1-messaging-domain` 返回空数组。
+- patch counter：12 个已提交增量中只有 1 个独立 fix；fresh-context 新发现属于不同 failure mode，同一问题未达到 3 次返工硬闸。
+- `check-hotfix-pattern.mjs`、`check-fallback-layers.mjs` 与 `check:architecture-ownership` 在 upstream 公开 checkout 不存在；已手工等效检查：无 hotfix 语义、无同文件新增三层 fallback。
+- 350 行硬限：超限测试已按独立场景拆分；K-1 source/test 单文件最大 341 行 ✅。
+- Architecture cell：建议新增 `plugin-messaging`；ownership map 尚未更新，留给 reviewer/maintainer 判定（warning-only）。
+- 编号冲突：本 upstream 镜像的 F258 是 K-1；fork `develop_base` 已有同号 Desktop In-App Update。未擅自改号，需 maintainer 在上游 review 时裁定。
+
+[砚砚/GPT-5.6 Sol🐾]

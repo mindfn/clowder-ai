@@ -169,6 +169,14 @@ export function validateDraft(input: unknown): MessageDraft {
   if (!isRecord(input)) fail('draft must be an object');
   if (!isRecord(input.payload)) fail('draft.payload is required');
   const audience = validateDraftAudience(input.draftAudience);
+  const elements = validateElements(input.payload.elements, 'payload');
+  const persistedElementIds = new Set<string>();
+  for (const element of elements) {
+    if (element.derivedFromElementId !== undefined && !persistedElementIds.has(element.derivedFromElementId)) {
+      fail(`derivedFromElementId "${element.derivedFromElementId}" must reference an earlier element in the draft`);
+    }
+    persistedElementIds.add(element.elementId);
+  }
   return {
     address: validateAddress(input.address),
     idempotencyKey: requireString(input.idempotencyKey, 'idempotencyKey', MESSAGING_BOUNDS.maxIdempotencyKeyLength),
@@ -179,7 +187,7 @@ export function validateDraft(input: unknown): MessageDraft {
     ...(input.replyTo !== undefined ? { replyTo: requireString(input.replyTo, 'replyTo', 256) } : {}),
     payload: {
       provenance: validateDraftProvenance(input.payload.provenance),
-      elements: validateElements(input.payload.elements, 'payload'),
+      elements,
       ...(input.payload.correlationId !== undefined
         ? { correlationId: requireString(input.payload.correlationId, 'correlationId', 256) }
         : {}),

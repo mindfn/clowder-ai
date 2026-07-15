@@ -32,15 +32,16 @@ describe('MemoryLedgerStore state machine (§4a)', () => {
   test('claim on unclaimed key returns new; second claim while inflight returns inflight', async () => {
     const store = new memory.MemoryLedgerStore();
     const first = await store.claim('k1', CLAIM_TTL);
-    assert.deepEqual(first, { status: 'new' });
+    assert.equal(first.status, 'new');
+    assert.equal(typeof first.claimToken, 'string');
     const second = await store.claim('k1', CLAIM_TTL);
     assert.deepEqual(second, { status: 'inflight' });
   });
 
   test('settle transitions to settled; later claims return the same receipt (INV-1)', async () => {
     const store = new memory.MemoryLedgerStore();
-    await store.claim('k1', CLAIM_TTL);
-    await store.settle('k1', { messageId: 'm-1', revision: 1 }, RETENTION);
+    const claim = await store.claim('k1', CLAIM_TTL);
+    await store.settle('k1', claim.claimToken, { messageId: 'm-1', revision: 1 }, RETENTION);
     const again = await store.claim('k1', CLAIM_TTL);
     assert.equal(again.status, 'settled');
     assert.deepEqual(again.receipt, { messageId: 'm-1', revision: 1 });
@@ -48,9 +49,9 @@ describe('MemoryLedgerStore state machine (§4a)', () => {
 
   test('settle is idempotent (keeps first receipt)', async () => {
     const store = new memory.MemoryLedgerStore();
-    await store.claim('k1', CLAIM_TTL);
-    await store.settle('k1', { messageId: 'first' }, RETENTION);
-    await store.settle('k1', { messageId: 'second' }, RETENTION);
+    const initial = await store.claim('k1', CLAIM_TTL);
+    await store.settle('k1', initial.claimToken, { messageId: 'first' }, RETENTION);
+    await store.settle('k1', initial.claimToken, { messageId: 'second' }, RETENTION);
     const claim = await store.claim('k1', CLAIM_TTL);
     assert.equal(claim.status, 'settled');
     assert.deepEqual(claim.receipt, { messageId: 'first' });
@@ -58,17 +59,17 @@ describe('MemoryLedgerStore state machine (§4a)', () => {
 
   test('release returns key to unclaimed so retry can re-execute (fail path)', async () => {
     const store = new memory.MemoryLedgerStore();
-    await store.claim('k1', CLAIM_TTL);
-    await store.release('k1');
+    const claim = await store.claim('k1', CLAIM_TTL);
+    await store.release('k1', claim.claimToken);
     const retry = await store.claim('k1', CLAIM_TTL);
-    assert.deepEqual(retry, { status: 'new' });
+    assert.equal(retry.status, 'new');
   });
 
   test('release after settle does not erase the settlement (settled is sticky)', async () => {
     const store = new memory.MemoryLedgerStore();
-    await store.claim('k1', CLAIM_TTL);
-    await store.settle('k1', { messageId: 'm-1' }, RETENTION);
-    await store.release('k1');
+    const initial = await store.claim('k1', CLAIM_TTL);
+    await store.settle('k1', initial.claimToken, { messageId: 'm-1' }, RETENTION);
+    await store.release('k1', initial.claimToken);
     const claim = await store.claim('k1', CLAIM_TTL);
     assert.equal(claim.status, 'settled');
   });
@@ -79,23 +80,42 @@ describe('MemoryLedgerStore state machine (§4a)', () => {
     now += CLAIM_TTL - 1;
     assert.equal((await store.claim('k1', CLAIM_TTL)).status, 'inflight');
     now += 2;
-    assert.deepEqual(await store.claim('k1', CLAIM_TTL), { status: 'new' });
+    assert.equal((await store.claim('k1', CLAIM_TTL)).status, 'new');
+  });
+
+  test('expired claimant cannot release or settle a successor claim', async () => {
+    const store = new memory.MemoryLedgerStore();
+    const stale = await store.claim('k1', CLAIM_TTL);
+    now += CLAIM_TTL + 1;
+    const successor = await store.claim('k1', CLAIM_TTL);
+
+    await store.release('k1', stale.claimToken);
+    assert.equal((await store.claim('k1', CLAIM_TTL)).status, 'inflight');
+    await store.settle('k1', stale.claimToken, { messageId: 'stale' }, RETENTION);
+    assert.equal((await store.claim('k1', CLAIM_TTL)).status, 'inflight');
+    await store.settle('k1', successor.claimToken, { messageId: 'winner' }, RETENTION);
+    assert.deepEqual((await store.claim('k1', CLAIM_TTL)).receipt, { messageId: 'winner' });
   });
 
   test('settled entry expires after retention TTL (documented at-least-once boundary)', async () => {
     const store = new memory.MemoryLedgerStore();
-    await store.claim('k1', CLAIM_TTL);
-    await store.settle('k1', { messageId: 'm-1' }, RETENTION);
+    const claim = await store.claim('k1', CLAIM_TTL);
+    await store.settle('k1', claim.claimToken, { messageId: 'm-1' }, RETENTION);
     now += RETENTION + 1;
-    assert.deepEqual(await store.claim('k1', CLAIM_TTL), { status: 'new' });
+    assert.equal((await store.claim('k1', CLAIM_TTL)).status, 'new');
   });
 });
 
 describe('MessagingLedger key scoping (AC-5)', () => {
   test('same idempotencyKey under different instances settles independently', async () => {
     const ledger = new ledgerMod.MessagingLedger(new memory.MemoryLedgerStore());
-    assert.equal((await ledger.claimSend('inst-a', 'idem-1')).status, 'new');
-    await ledger.settleSend('inst-a', 'idem-1', { messageId: 'm-a', threadId: 't', revision: 1 });
+    const claim = await ledger.claimSend('inst-a', 'idem-1');
+    assert.equal(claim.status, 'new');
+    await ledger.settleSend('inst-a', 'idem-1', claim.claimToken, {
+      messageId: 'm-a',
+      threadId: 't',
+      revision: 1,
+    });
     const other = await ledger.claimSend('inst-b', 'idem-1');
     assert.equal(other.status, 'new');
   });
@@ -109,8 +129,13 @@ describe('MessagingLedger key scoping (AC-5)', () => {
 
   test('append key scoped by (instance, messageId, operationId) — INV-12 anchor', async () => {
     const ledger = new ledgerMod.MessagingLedger(new memory.MemoryLedgerStore());
-    assert.equal((await ledger.claimAppend('inst-a', 'msg-1', 'op-1')).status, 'new');
-    await ledger.settleAppend('inst-a', 'msg-1', 'op-1', { messageId: 'msg-1', revision: 2, appliedElementIds: [] });
+    const claim = await ledger.claimAppend('inst-a', 'msg-1', 'op-1');
+    assert.equal(claim.status, 'new');
+    await ledger.settleAppend('inst-a', 'msg-1', 'op-1', claim.claimToken, {
+      messageId: 'msg-1',
+      revision: 2,
+      appliedElementIds: [],
+    });
     assert.equal((await ledger.claimAppend('inst-a', 'msg-1', 'op-1')).status, 'settled');
     assert.equal((await ledger.claimAppend('inst-a', 'msg-1', 'op-2')).status, 'new');
     assert.equal((await ledger.claimAppend('inst-a', 'msg-2', 'op-1')).status, 'new');
@@ -126,8 +151,8 @@ describe('MessagingLedger key scoping (AC-5)', () => {
 
   test('release on failure allows a genuine retry to proceed', async () => {
     const ledger = new ledgerMod.MessagingLedger(new memory.MemoryLedgerStore());
-    await ledger.claimSend('inst-a', 'idem-1');
-    await ledger.releaseSend('inst-a', 'idem-1');
+    const claim = await ledger.claimSend('inst-a', 'idem-1');
+    await ledger.releaseSend('inst-a', 'idem-1', claim.claimToken);
     assert.equal((await ledger.claimSend('inst-a', 'idem-1')).status, 'new');
   });
 });

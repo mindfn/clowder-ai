@@ -22,6 +22,7 @@ describe('Plugin messaging Redis stores', { skip: redisIsolationSkipReason(REDIS
   let RedisEventLogStore;
   let RedisCursorStore;
   let RedisAppendLock;
+  let RedisMessageStore;
 
   let seq = 0;
   const nextId = (prefix) => `${prefix}-${Date.now()}-${(seq += 1)}`;
@@ -31,6 +32,7 @@ describe('Plugin messaging Redis stores', { skip: redisIsolationSkipReason(REDIS
     ({ RedisLedgerStore, RedisHandleStore, RedisEventLogStore, RedisCursorStore, RedisAppendLock } = await import(
       '../dist/domains/messaging/stores/redis.js'
     ));
+    ({ RedisMessageStore } = await import('../dist/domains/cats/services/stores/redis/RedisMessageStore.js'));
     const { createRedisClient } = await import('@cat-cafe/shared/utils');
     redis = createRedisClient({ url: REDIS_URL, keyPrefix: TEST_KEY_PREFIX });
     await redis.ping();
@@ -64,9 +66,10 @@ describe('Plugin messaging Redis stores', { skip: redisIsolationSkipReason(REDIS
     it('unclaimed → new; concurrent → inflight; settle → settled with same receipt', async () => {
       const store = new RedisLedgerStore(redis);
       const key = nextId('ledger');
-      assert.deepEqual(await store.claim(key, 60_000), { status: 'new' });
+      const claim = await store.claim(key, 60_000);
+      assert.equal(claim.status, 'new');
       assert.deepEqual(await store.claim(key, 60_000), { status: 'inflight' });
-      await store.settle(key, { messageId: 'm-1', revision: 1 }, 60_000);
+      await store.settle(key, claim.claimToken, { messageId: 'm-1', revision: 1 }, 60_000);
       const settled = await store.claim(key, 60_000);
       assert.equal(settled.status, 'settled');
       assert.deepEqual(settled.receipt, { messageId: 'm-1', revision: 1 });
@@ -75,20 +78,21 @@ describe('Plugin messaging Redis stores', { skip: redisIsolationSkipReason(REDIS
     it('settle keeps the first receipt (sticky)', async () => {
       const store = new RedisLedgerStore(redis);
       const key = nextId('ledger');
-      await store.claim(key, 60_000);
-      await store.settle(key, { messageId: 'first' }, 60_000);
-      await store.settle(key, { messageId: 'second' }, 60_000);
+      const claim = await store.claim(key, 60_000);
+      await store.settle(key, claim.claimToken, { messageId: 'first' }, 60_000);
+      await store.settle(key, claim.claimToken, { messageId: 'second' }, 60_000);
       assert.deepEqual((await store.claim(key, 60_000)).receipt, { messageId: 'first' });
     });
 
     it('release returns inflight to unclaimed but never erases settled', async () => {
       const store = new RedisLedgerStore(redis);
       const key = nextId('ledger');
-      await store.claim(key, 60_000);
-      await store.release(key);
-      assert.deepEqual(await store.claim(key, 60_000), { status: 'new' });
-      await store.settle(key, { messageId: 'm' }, 60_000);
-      await store.release(key);
+      const initial = await store.claim(key, 60_000);
+      await store.release(key, initial.claimToken);
+      const retry = await store.claim(key, 60_000);
+      assert.equal(retry.status, 'new');
+      await store.settle(key, retry.claimToken, { messageId: 'm' }, 60_000);
+      await store.release(key, retry.claimToken);
       assert.equal((await store.claim(key, 60_000)).status, 'settled');
     });
 
@@ -97,7 +101,21 @@ describe('Plugin messaging Redis stores', { skip: redisIsolationSkipReason(REDIS
       const key = nextId('ledger');
       await store.claim(key, 80);
       await sleep(140);
-      assert.deepEqual(await store.claim(key, 60_000), { status: 'new' });
+      assert.equal((await store.claim(key, 60_000)).status, 'new');
+    });
+
+    it('expired claimant cannot release or settle a successor claim', async () => {
+      const store = new RedisLedgerStore(redis);
+      const key = nextId('ledger');
+      const stale = await store.claim(key, 80);
+      await sleep(140);
+      const successor = await store.claim(key, 60_000);
+      await store.release(key, stale.claimToken);
+      assert.equal((await store.claim(key, 60_000)).status, 'inflight');
+      await store.settle(key, stale.claimToken, { messageId: 'stale' }, 60_000);
+      assert.equal((await store.claim(key, 60_000)).status, 'inflight');
+      await store.settle(key, successor.claimToken, { messageId: 'winner' }, 60_000);
+      assert.deepEqual((await store.claim(key, 60_000)).receipt, { messageId: 'winner' });
     });
   });
 
@@ -198,6 +216,8 @@ describe('Plugin messaging Redis stores', { skip: redisIsolationSkipReason(REDIS
       assert.equal(found.subscriptionId, subscriptionId);
       assert.equal(await store.findByHandle('inst-b', handleId), null);
 
+      await store.advanceAck('inst-a', subscriptionId, 0); // must not regress below subscribe watermark
+      assert.equal((await store.get('inst-a', subscriptionId)).ackedSequence, 5);
       await store.advanceAck('inst-a', subscriptionId, 9);
       await store.advanceAck('inst-a', subscriptionId, 7); // regress attempt
       await store.advanceDelivered('inst-a', subscriptionId, 12);
@@ -210,29 +230,112 @@ describe('Plugin messaging Redis stores', { skip: redisIsolationSkipReason(REDIS
       assert.ok((await store.get('inst-a', subscriptionId)).revokedAt);
       assert.equal(await store.findByHandle('inst-a', handleId), null, 'live lookup excludes revoked');
     });
+
+    it('parallel createOrGet calls atomically converge on one subscription', async () => {
+      const store = new RedisCursorStore(redis);
+      const handleId = nextId('th_parallel');
+      const records = Array.from({ length: 12 }, (_, index) => ({
+        subscriptionId: nextId(`sub-${index}`),
+        pluginInstanceId: 'inst-a',
+        handleId,
+        threadId: 'thread-1',
+        ackedSequence: 7,
+        lastDeliveredSequence: 7,
+      }));
+      const winners = await Promise.all(records.map((record) => store.createOrGet(record)));
+      assert.equal(new Set(winners.map((record) => record.subscriptionId)).size, 1);
+      assert.equal((await store.findByHandle('inst-a', handleId)).subscriptionId, winners[0].subscriptionId);
+    });
   });
 
   describe('RedisAppendLock (§4d)', () => {
     it('acquire/contend/release/TTL-expiry', async () => {
       const lock = new RedisAppendLock(redis);
       const messageId = nextId('msg');
-      assert.equal(await lock.acquire(messageId, 60_000), true);
-      assert.equal(await lock.acquire(messageId, 60_000), false);
-      await lock.release(messageId);
-      assert.equal(await lock.acquire(messageId, 80), true);
+      const firstToken = await lock.acquire(messageId, 60_000);
+      assert.equal(typeof firstToken, 'string');
+      assert.equal(await lock.acquire(messageId, 60_000), null);
+      await lock.release(messageId, firstToken);
+      assert.equal(typeof (await lock.acquire(messageId, 80)), 'string');
       await sleep(140);
-      assert.equal(await lock.acquire(messageId, 60_000), true, 'expired lock is acquirable');
+      assert.equal(typeof (await lock.acquire(messageId, 60_000)), 'string', 'expired lock is acquirable');
     });
 
     it('release only frees own token (stale holder cannot release the new lock)', async () => {
       const lockA = new RedisAppendLock(redis);
       const lockB = new RedisAppendLock(redis);
       const messageId = nextId('msg');
-      assert.equal(await lockA.acquire(messageId, 60), true);
+      const staleToken = await lockA.acquire(messageId, 60);
+      assert.equal(typeof staleToken, 'string');
       await sleep(120); // A's lock expired
-      assert.equal(await lockB.acquire(messageId, 60_000), true);
-      await lockA.release(messageId); // stale release must not free B's lock
-      assert.equal(await lockA.acquire(messageId, 60_000), false, "B's lock survives A's stale release");
+      const liveToken = await lockB.acquire(messageId, 60_000);
+      assert.equal(typeof liveToken, 'string');
+      await lockA.release(messageId, staleToken); // stale release must not free B's lock
+      assert.equal(await lockA.acquire(messageId, 60_000), null, "B's lock survives A's stale release");
+      await lockB.release(messageId, liveToken);
+    });
+  });
+
+  describe('RedisMessageStore plugin payload isolation', () => {
+    it('concurrent host and plugin updates preserve payload arrays and host metadata', async () => {
+      const store = new RedisMessageStore(redis);
+      const message = await store.append({
+        userId: nextId('user'),
+        catId: null,
+        content: 'plugin message',
+        mentions: [],
+        timestamp: Date.now(),
+        threadId: nextId('thread'),
+        extra: {
+          rich: { v: 1, blocks: [] },
+          pluginMessage: {
+            instanceId: 'inst-a',
+            revision: 1,
+            provenance: { origin: { kind: 'plugin', instanceId: 'inst-a' }, epistemicStatus: 'inference' },
+            elements: [{ elementId: 'el-1', kind: 'text', payload: { text: 'x' } }],
+            appendOps: [],
+          },
+        },
+      });
+      const pluginMessage = { ...message.extra.pluginMessage, revision: 2 };
+      await Promise.all([
+        store.updateExtra(message.id, { isExplicitPost: true }),
+        store.updatePluginMessage(message.id, pluginMessage, 1),
+      ]);
+      const loaded = await store.getById(message.id);
+      assert.equal(loaded.extra.isExplicitPost, true);
+      assert.deepEqual(loaded.extra.pluginMessage, pluginMessage);
+      assert.deepEqual(loaded.extra.rich, { v: 1, blocks: [] });
+
+      const [rawHostExtra, rawPluginMessage] = await redis.hmget(`msg:${message.id}`, 'extra', 'pluginMessage');
+      assert.equal(JSON.parse(rawHostExtra).pluginMessage, undefined, 'host extra does not duplicate plugin payload');
+      assert.deepEqual(JSON.parse(rawPluginMessage), pluginMessage, 'independent field preserves empty arrays');
+    });
+
+    it('hard delete wipes the independent plugin payload', async () => {
+      const store = new RedisMessageStore(redis);
+      const message = await store.append({
+        userId: nextId('user'),
+        catId: null,
+        content: 'sensitive plugin message',
+        mentions: [],
+        timestamp: Date.now(),
+        threadId: nextId('thread'),
+        extra: {
+          pluginMessage: {
+            instanceId: 'inst-a',
+            revision: 1,
+            provenance: { origin: { kind: 'plugin', instanceId: 'inst-a' }, epistemicStatus: 'inference' },
+            elements: [{ elementId: 'el-1', kind: 'text', payload: { text: 'secret' } }],
+            appendOps: [],
+          },
+        },
+      });
+
+      const tombstone = await store.hardDelete(message.id, 'user-1');
+      assert.equal(tombstone._tombstone, true);
+      assert.equal(tombstone.extra, undefined);
+      assert.equal(await redis.hget(`msg:${message.id}`, 'pluginMessage'), '');
     });
   });
 });

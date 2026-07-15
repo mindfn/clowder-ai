@@ -7,6 +7,7 @@
  * inside one synchronous block atomic.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { MessageOutputEvent, MessageOutputEventInput } from '../contract/types.js';
 import type {
   AppendLock,
@@ -21,7 +22,7 @@ import type {
 } from './ports.js';
 
 type LedgerEntry =
-  | { readonly status: 'inflight'; readonly expiresAt: number }
+  | { readonly status: 'inflight'; readonly claimToken: string; readonly expiresAt: number }
   | { readonly status: 'settled'; readonly receipt: unknown; readonly expiresAt: number };
 
 export class MemoryLedgerStore implements LedgerStore {
@@ -34,20 +35,23 @@ export class MemoryLedgerStore implements LedgerStore {
       if (entry.status === 'settled') return { status: 'settled', receipt: entry.receipt };
       return { status: 'inflight' };
     }
-    this.entries.set(key, { status: 'inflight', expiresAt: now + claimTtlMs });
-    return { status: 'new' };
+    const claimToken = randomUUID();
+    this.entries.set(key, { status: 'inflight', claimToken, expiresAt: now + claimTtlMs });
+    return { status: 'new', claimToken };
   }
 
-  async settle(key: string, receipt: unknown, retentionMs: number): Promise<void> {
+  async settle(key: string, claimToken: string, receipt: unknown, retentionMs: number): Promise<void> {
     const now = Date.now();
     const entry = this.entries.get(key);
     if (entry && entry.status === 'settled' && entry.expiresAt > now) return; // first receipt sticks
+    if (!entry || entry.status !== 'inflight' || entry.expiresAt <= now || entry.claimToken !== claimToken) return;
     this.entries.set(key, { status: 'settled', receipt, expiresAt: now + retentionMs });
   }
 
-  async release(key: string): Promise<void> {
+  async release(key: string, claimToken: string): Promise<void> {
     const entry = this.entries.get(key);
     if (!entry || entry.status === 'settled') return; // settled is sticky
+    if (entry.claimToken !== claimToken) return;
     this.entries.delete(key);
   }
 }
@@ -131,13 +135,22 @@ export class MemoryEventLogStore implements EventLogStore {
 
 export class MemoryCursorStore implements CursorStore {
   private readonly subs = new Map<string, SubscriptionRecord>();
+  private readonly subscriptionByHandle = new Map<string, string>();
 
   private static key(pluginInstanceId: string, subscriptionId: string): string {
     return `${encodeURIComponent(pluginInstanceId)}:${encodeURIComponent(subscriptionId)}`;
   }
 
+  private static handleKey(pluginInstanceId: string, handleId: string): string {
+    return `${encodeURIComponent(pluginInstanceId)}:${encodeURIComponent(handleId)}`;
+  }
+
   async put(record: SubscriptionRecord): Promise<void> {
     this.subs.set(MemoryCursorStore.key(record.pluginInstanceId, record.subscriptionId), record);
+    this.subscriptionByHandle.set(
+      MemoryCursorStore.handleKey(record.pluginInstanceId, record.handleId),
+      record.subscriptionId,
+    );
   }
 
   async get(pluginInstanceId: string, subscriptionId: string): Promise<SubscriptionRecord | null> {
@@ -145,12 +158,23 @@ export class MemoryCursorStore implements CursorStore {
   }
 
   async findByHandle(pluginInstanceId: string, handleId: string): Promise<SubscriptionRecord | null> {
-    for (const record of this.subs.values()) {
-      if (record.pluginInstanceId === pluginInstanceId && record.handleId === handleId && !record.revokedAt) {
-        return record;
-      }
+    const subscriptionId = this.subscriptionByHandle.get(MemoryCursorStore.handleKey(pluginInstanceId, handleId));
+    if (!subscriptionId) return null;
+    const record = this.subs.get(MemoryCursorStore.key(pluginInstanceId, subscriptionId));
+    return record && record.revokedAt === undefined ? record : null;
+  }
+
+  async createOrGet(record: SubscriptionRecord): Promise<SubscriptionRecord> {
+    // Deliberately no await: this check+write block is atomic in one JS turn.
+    const handleKey = MemoryCursorStore.handleKey(record.pluginInstanceId, record.handleId);
+    const existingId = this.subscriptionByHandle.get(handleKey);
+    if (existingId) {
+      const existing = this.subs.get(MemoryCursorStore.key(record.pluginInstanceId, existingId));
+      if (existing && existing.revokedAt === undefined) return existing;
     }
-    return null;
+    this.subs.set(MemoryCursorStore.key(record.pluginInstanceId, record.subscriptionId), record);
+    this.subscriptionByHandle.set(handleKey, record.subscriptionId);
+    return record;
   }
 
   async advanceAck(pluginInstanceId: string, subscriptionId: string, sequence: number): Promise<void> {
@@ -184,17 +208,18 @@ export class MemoryCursorStore implements CursorStore {
 }
 
 export class MemoryAppendLock implements AppendLock {
-  private readonly locks = new Map<string, number>();
+  private readonly locks = new Map<string, { token: string; expiresAt: number }>();
 
-  async acquire(messageId: string, ttlMs: number): Promise<boolean> {
+  async acquire(messageId: string, ttlMs: number): Promise<string | null> {
     const now = Date.now();
-    const expiry = this.locks.get(messageId);
-    if (expiry !== undefined && expiry > now) return false;
-    this.locks.set(messageId, now + ttlMs);
-    return true;
+    const current = this.locks.get(messageId);
+    if (current !== undefined && current.expiresAt > now) return null;
+    const token = randomUUID();
+    this.locks.set(messageId, { token, expiresAt: now + ttlMs });
+    return token;
   }
 
-  async release(messageId: string): Promise<void> {
-    this.locks.delete(messageId);
+  async release(messageId: string, token: string): Promise<void> {
+    if (this.locks.get(messageId)?.token === token) this.locks.delete(messageId);
   }
 }

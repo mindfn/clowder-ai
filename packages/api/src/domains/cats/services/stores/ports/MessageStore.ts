@@ -124,7 +124,10 @@ export interface StoredMessage {
       revision: number;
       provenance: Record<string, unknown>;
       elements: ReadonlyArray<Record<string, unknown>>;
-      appendOps: readonly string[];
+      sourceEventId?: string;
+      correlationId?: string;
+      causationId?: string;
+      appendOps: ReadonlyArray<{ operationId: string; elementIds: readonly string[]; baseRevision?: number }>;
     };
   };
   /** CatIds mentioned in this message */
@@ -158,6 +161,12 @@ export interface StoredMessage {
   _tombstone?: true;
 }
 
+/** Canonical F258 payload stored independently from host-owned extra metadata. */
+export type StoredPluginMessage = NonNullable<NonNullable<StoredMessage['extra']>['pluginMessage']>;
+
+/** Host-owned metadata patch. Plugin payload revisions use updatePluginMessage(). */
+export type HostMessageExtra = Omit<NonNullable<StoredMessage['extra']>, 'pluginMessage'>;
+
 /**
  * Input for appending a message. threadId is optional (defaults to 'default').
  */
@@ -181,7 +190,7 @@ export interface StreamMetadataAugmentInput {
   thinking?: string;
   replyTo?: string;
   mentionsUser?: boolean;
-  extra?: NonNullable<StoredMessage['extra']>;
+  extra?: HostMessageExtra;
 }
 
 function richBlockDedupeKey(block: unknown, index: number): string {
@@ -315,9 +324,12 @@ export interface IMessageStore {
   /** F35: Reveal whispers in a thread sent by userId (set revealedAt). Returns count revealed. */
   revealWhispers(threadId: string, userId: string): number | Promise<number>;
   /** F096: Update message extra data (for interactive block state persistence). Returns null if not found. */
-  updateExtra(
+  updateExtra(id: string, extra: HostMessageExtra): StoredMessage | null | Promise<StoredMessage | null>;
+  /** F258: replace only the canonical plugin payload, independently of host extra metadata. */
+  updatePluginMessage(
     id: string,
-    extra: NonNullable<StoredMessage['extra']>,
+    pluginMessage: StoredPluginMessage,
+    expectedRevision: number,
   ): StoredMessage | null | Promise<StoredMessage | null>;
   /** #1462: augment callback-persisted messages with metadata collected only on the stream path. */
   augmentStreamMetadata(
@@ -725,10 +737,18 @@ export class MessageStore {
   /**
    * F096: Update message extra data (for interactive block state persistence).
    */
-  updateExtra(id: string, extra: NonNullable<StoredMessage['extra']>): StoredMessage | null {
+  updateExtra(id: string, extra: HostMessageExtra): StoredMessage | null {
     const msg = this.messages.find((m) => m.id === id);
     if (!msg) return null;
-    msg.extra = extra;
+    msg.extra = { ...msg.extra, ...extra };
+    return msg;
+  }
+
+  updatePluginMessage(id: string, pluginMessage: StoredPluginMessage, expectedRevision: number): StoredMessage | null {
+    const msg = this.messages.find((m) => m.id === id);
+    if (!msg) return null;
+    if (msg.extra?.pluginMessage?.revision !== expectedRevision) return null;
+    msg.extra = { ...msg.extra, pluginMessage };
     return msg;
   }
 

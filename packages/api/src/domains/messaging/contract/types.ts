@@ -257,4 +257,7 @@ export const MESSAGING_BOUNDS = {
   maxWhisperTargets: 16,
   maxIdempotencyKeyLength: 200,
   maxElementIdLength: 128,
+  /** Cumulative caps across appends — a message can never grow unboundedly (fail-closed). */
+  maxElementsPerMessage: 128,
+  maxAppendOpsPerMessage: 64,
 } as const;

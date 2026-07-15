@@ -20,7 +20,7 @@ export const LEDGER_CLAIM_TTL_MS = 60_000;
 export const LEDGER_RETENTION_MS = 7 * 24 * 3600 * 1000;
 
 export type TypedClaim<R> =
-  | { readonly status: 'new' }
+  | { readonly status: 'new'; readonly claimToken: string }
   | { readonly status: 'inflight' }
   | { readonly status: 'settled'; readonly receipt: R };
 
@@ -54,12 +54,17 @@ export class MessagingLedger {
     )) as TypedClaim<SendReceipt>;
   }
 
-  async settleSend(instanceId: string, idempotencyKey: string, receipt: SendReceipt): Promise<void> {
-    await this.store.settle(MessagingLedger.sendKey(instanceId, idempotencyKey), receipt, this.retentionMs);
+  async settleSend(
+    instanceId: string,
+    idempotencyKey: string,
+    claimToken: string,
+    receipt: SendReceipt,
+  ): Promise<void> {
+    await this.store.settle(MessagingLedger.sendKey(instanceId, idempotencyKey), claimToken, receipt, this.retentionMs);
   }
 
-  async releaseSend(instanceId: string, idempotencyKey: string): Promise<void> {
-    await this.store.release(MessagingLedger.sendKey(instanceId, idempotencyKey));
+  async releaseSend(instanceId: string, idempotencyKey: string, claimToken: string): Promise<void> {
+    await this.store.release(MessagingLedger.sendKey(instanceId, idempotencyKey), claimToken);
   }
 
   async claimAppend(instanceId: string, messageId: string, operationId: string): Promise<TypedClaim<AppendReceipt>> {
@@ -73,12 +78,18 @@ export class MessagingLedger {
     instanceId: string,
     messageId: string,
     operationId: string,
+    claimToken: string,
     receipt: AppendReceipt,
   ): Promise<void> {
-    await this.store.settle(MessagingLedger.appendKey(instanceId, messageId, operationId), receipt, this.retentionMs);
+    await this.store.settle(
+      MessagingLedger.appendKey(instanceId, messageId, operationId),
+      claimToken,
+      receipt,
+      this.retentionMs,
+    );
   }
 
-  async releaseAppend(instanceId: string, messageId: string, operationId: string): Promise<void> {
-    await this.store.release(MessagingLedger.appendKey(instanceId, messageId, operationId));
+  async releaseAppend(instanceId: string, messageId: string, operationId: string, claimToken: string): Promise<void> {
+    await this.store.release(MessagingLedger.appendKey(instanceId, messageId, operationId), claimToken);
   }
 }

@@ -10,10 +10,19 @@
 
 import type { HandleScope, MessageOutputEvent, MessageOutputEventInput } from '../contract/types.js';
 
+/** Single source for the per-thread event log trim depth (send/append/facade all import this). */
+export const DEFAULT_EVENT_RETENTION = 500;
+
+/** Fail-closed floor: a retention below 1 would trim a just-appended event (self-destructing log). */
+export function clampRetention(retentionCount: number | undefined): number {
+  if (retentionCount === undefined || !Number.isFinite(retentionCount)) return DEFAULT_EVENT_RETENTION;
+  return Math.max(1, Math.trunc(retentionCount));
+}
+
 // ── Ledger (owner: MessagingLedger, §4a) ──
 
 export type LedgerClaimResult =
-  | { readonly status: 'new' }
+  | { readonly status: 'new'; readonly claimToken: string }
   | { readonly status: 'inflight' }
   | { readonly status: 'settled'; readonly receipt: unknown };
 
@@ -21,9 +30,9 @@ export interface LedgerStore {
   /** Atomic: unclaimed → inflight (returns new); inflight → inflight; settled → settled+receipt. */
   claim(key: string, claimTtlMs: number): Promise<LedgerClaimResult>;
   /** inflight → settled (first receipt sticks; idempotent). */
-  settle(key: string, receipt: unknown, retentionMs: number): Promise<void>;
+  settle(key: string, claimToken: string, receipt: unknown, retentionMs: number): Promise<void>;
   /** inflight → unclaimed (failure path; no-op when settled). */
-  release(key: string): Promise<void>;
+  release(key: string, claimToken: string): Promise<void>;
 }
 
 // ── Handles (owner: HandleService, §4c) ──
@@ -100,6 +109,11 @@ export interface CursorStore {
   advanceAck(pluginInstanceId: string, subscriptionId: string, sequence: number): Promise<void>;
   /** Monotonic max advance of lastDeliveredSequence. */
   advanceDelivered(pluginInstanceId: string, subscriptionId: string, sequence: number): Promise<void>;
+  /**
+   * Atomically create a subscription and its (instance, handle) index, or
+   * return the existing live record. No partially-indexed record is exposed.
+   */
+  createOrGet(record: SubscriptionRecord): Promise<SubscriptionRecord>;
   /** Handle revocation cascade (§4c): revoke every subscription bound to the handle. */
   revokeByHandle(handleId: string, revokedAt: number): Promise<number>;
 }
@@ -107,9 +121,14 @@ export interface CursorStore {
 // ── Append lock (owner: AppendService, §4d) ──
 
 export interface AppendLock {
-  /** Best-effort per-message mutex with TTL. True when acquired. */
-  acquire(messageId: string, ttlMs: number): Promise<boolean>;
-  release(messageId: string): Promise<void>;
+  /**
+   * Best-effort per-message mutex with TTL. Returns an owner token when
+   * acquired, null when contended. release() frees the lock ONLY when the
+   * token still owns it — a stale holder (TTL takeover) can never free a
+   * successor's lock (same guarantee in memory and Redis impls).
+   */
+  acquire(messageId: string, ttlMs: number): Promise<string | null>;
+  release(messageId: string, token: string): Promise<void>;
 }
 
 export interface MessagingStores {

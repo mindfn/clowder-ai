@@ -30,7 +30,7 @@ function pluginStoredMessage(overrides = {}) {
           { elementId: 'el-1', kind: 'text', payload: { text: 'hello world' } },
           { elementId: 'el-2', kind: 'text', payload: { text: 'appended' }, derivedFromElementId: 'el-1' },
         ],
-        appendOps: ['op-1'],
+        appendOps: [{ operationId: 'op-1', elementIds: ['el-2'] }],
       },
     },
     ...overrides,
@@ -106,5 +106,17 @@ describe('projectEnvelope — host-relayed messages (snapshot support)', () => {
       pluginStoredMessage({ extra: { pluginMessage: { instanceId: 42, revision: 'x', elements: 'nope' } } }),
     );
     assert.equal(env, null);
+  });
+
+  test('structurally malformed provenance, elements, and append records fail closed', () => {
+    const base = pluginStoredMessage().extra.pluginMessage;
+    const malformed = [
+      { ...base, provenance: {} },
+      { ...base, elements: [{ elementId: 42, kind: 'text', payload: { text: 'x' } }] },
+      { ...base, appendOps: [{ operationId: 'op-1', elementIds: [42] }] },
+    ];
+    for (const pluginMessage of malformed) {
+      assert.equal(envelope.projectEnvelope(pluginStoredMessage({ extra: { pluginMessage } })), null);
+    }
   });
 });

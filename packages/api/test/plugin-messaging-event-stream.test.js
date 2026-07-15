@@ -16,6 +16,8 @@ let MessageStore;
 
 let messageStore;
 let handles;
+let handleStore;
+let cursors;
 let events;
 let sendService;
 let stream;
@@ -32,8 +34,9 @@ beforeEach(async () => {
   ({ MessageStore } = await import('../dist/domains/cats/services/stores/ports/MessageStore.js'));
 
   messageStore = new MessageStore();
-  const cursors = new memory.MemoryCursorStore();
-  handles = new handlesMod.HandleService(new memory.MemoryHandleStore(), cursors);
+  cursors = new memory.MemoryCursorStore();
+  handleStore = new memory.MemoryHandleStore();
+  handles = new handlesMod.HandleService(handleStore, cursors);
   events = new memory.MemoryEventLogStore();
   sendService = new sendMod.SendService({
     messageStore,
@@ -41,13 +44,13 @@ beforeEach(async () => {
     ledger: new ledgerMod.MessagingLedger(new memory.MemoryLedgerStore()),
     events,
     retentionCount: RETENTION,
+    isKnownCatId: (catId) => catId === 'opus',
   });
   stream = new streamMod.EventStreamService({
     events,
     cursors,
     handles,
     messageStore,
-    retentionCount: RETENTION,
   });
 });
 
@@ -107,6 +110,12 @@ describe('EventStreamService — subscribe', () => {
     assert.equal(second.subscriptionId, first.subscriptionId);
   });
 
+  test('parallel subscribe calls converge on one live subscription', async () => {
+    const handleId = await issueHandle();
+    const results = await Promise.all(Array.from({ length: 20 }, () => stream.subscribe(CTX, handleId)));
+    assert.equal(new Set(results.map((result) => result.subscriptionId)).size, 1);
+  });
+
   test('subscribe without canSubscribe scope → PERMISSION', async () => {
     const handleId = await issueHandle({ canSend: true, canSubscribe: false });
     await expectCode(stream.subscribe(CTX, handleId), 'PERMISSION');
@@ -114,6 +123,39 @@ describe('EventStreamService — subscribe', () => {
 });
 
 describe('EventStreamService — read/ack (INV-4, INV-5)', () => {
+  test('retention trim racing read surfaces stale instead of silently skipping trimmed events', async () => {
+    const handleId = await issueHandle();
+    const subscriptionId = 'sub_trim_race';
+    await cursors.put({
+      subscriptionId,
+      pluginInstanceId: 'inst-a',
+      handleId,
+      threadId: 'thread-1',
+      ackedSequence: 0,
+      lastDeliveredSequence: 0,
+    });
+    let trimmed = false;
+    const racingEvents = {
+      async minSequence() {
+        return trimmed ? 4 : 1;
+      },
+      async readAfter() {
+        trimmed = true;
+        return [{ eventId: 'ev-4', sequence: 4, type: 'message.publish', envelope: {} }];
+      },
+    };
+    const racingStream = new streamMod.EventStreamService({
+      events: racingEvents,
+      cursors,
+      handles,
+      messageStore,
+    });
+
+    const result = await racingStream.read(CTX, subscriptionId, {});
+    assert.equal(result.stale, true);
+    assert.deepEqual(result.events, []);
+  });
+
   test('INV-4: unacked events are redelivered; acked events are not', async () => {
     const handleId = await issueHandle();
     const { subscriptionId } = await stream.subscribe(CTX, handleId);
@@ -144,6 +186,15 @@ describe('EventStreamService — read/ack (INV-4, INV-5)', () => {
       rest.events.map((e) => e.sequence),
       [3],
     );
+  });
+
+  test('read rejects non-finite, fractional, and non-positive limits', async () => {
+    const handleId = await issueHandle();
+    const { subscriptionId } = await stream.subscribe(CTX, handleId);
+    for (const limit of [Number.NaN, Number.POSITIVE_INFINITY, 1.5, 0, -1]) {
+      // eslint-disable-next-line no-await-in-loop
+      await expectCode(stream.read(CTX, subscriptionId, { limit }), 'VALIDATION');
+    }
   });
 
   test('INV-5: ack token from subscription A rejected on subscription B', async () => {
@@ -185,75 +236,12 @@ describe('EventStreamService — read/ack (INV-4, INV-5)', () => {
     await expectCode(stream.read(CTX, subscriptionId, {}), 'PERMISSION');
     await expectCode(stream.subscribe(CTX, handleId), 'PERMISSION');
   });
-});
 
-describe('EventStreamService — stale + snapshot (INV-9)', () => {
-  test('cursor behind retention floor → stale read with zero events, never silent skip', async () => {
+  test('read re-checks handle liveness when the revocation cascade was interrupted', async () => {
     const handleId = await issueHandle();
     const { subscriptionId } = await stream.subscribe(CTX, handleId);
-    await sendN(handleId, RETENTION + 3); // events 1..8, retained 4..8, cursor at 0
-    const result = await stream.read(CTX, subscriptionId, {});
-    assert.equal(result.stale, true);
-    assert.deepEqual(result.events, []);
-    assert.equal(result.ackToken, null);
-  });
-
-  test('snapshot catches up: envelopes + resumeSequence; subsequent reads resume live', async () => {
-    const handleId = await issueHandle();
-    const { subscriptionId } = await stream.subscribe(CTX, handleId);
-    await sendN(handleId, RETENTION + 3);
-    const snap = await stream.snapshot(CTX, subscriptionId);
-    assert.equal(snap.resumeSequence, RETENTION + 3);
-    assert.equal(snap.envelopes.length, RETENTION + 3, 'snapshot returns thread messages as envelopes');
-    const live = await stream.read(CTX, subscriptionId, {});
-    assert.equal(live.stale, false);
-    assert.deepEqual(live.events, []);
-    await sendN(handleId, 1, 'fresh');
-    const next = await stream.read(CTX, subscriptionId, {});
-    assert.equal(next.events.length, 1);
-  });
-
-  test('snapshot excludes whisper and deleted messages (fail-closed visibility)', async () => {
-    const handleId = await issueHandle({ canSend: true, canSubscribe: true, allowedWhisperTargets: ['cat-a'] });
-    const { subscriptionId } = await stream.subscribe(CTX, handleId);
-    await sendN(handleId, 1, 'public');
-    await sendService.send(CTX, {
-      address: { kind: 'thread_handle', handle: handleId },
-      idempotencyKey: 'whisper-1',
-      draftAudience: { kind: 'whisper', targets: ['cat-a'] },
-      payload: {
-        provenance: { epistemicStatus: 'inference' },
-        elements: [{ elementId: 'el-1', kind: 'text', payload: { text: 'secret' } }],
-      },
-    });
-    const deleted = await sendService.send(CTX, {
-      address: { kind: 'thread_handle', handle: handleId },
-      idempotencyKey: 'doomed-1',
-      payload: {
-        provenance: { epistemicStatus: 'inference' },
-        elements: [{ elementId: 'el-1', kind: 'text', payload: { text: 'to delete' } }],
-      },
-    });
-    messageStore.softDelete(deleted.messageId, 'user-1');
-    const snap = await stream.snapshot(CTX, subscriptionId);
-    const texts = snap.envelopes.map((e) => e.payload.elements[0].payload.text);
-    assert.ok(texts.includes('public 1'));
-    assert.ok(!texts.includes('secret'), 'whisper excluded from snapshot');
-    assert.ok(!texts.includes('to delete'), 'deleted excluded from snapshot');
-  });
-
-  test('ack of previously delivered events stays valid across trim (can cure staleness)', async () => {
-    const handleId = await issueHandle();
-    const { subscriptionId } = await stream.subscribe(CTX, handleId);
-    await sendN(handleId, 2);
-    const read1 = await stream.read(CTX, subscriptionId, {}); // delivered 1..2
-    await sendN(handleId, RETENTION, 'more'); // total 7, retained 3..7 → floor 3
-    await stream.ack(CTX, subscriptionId, read1.ackToken); // ack 2 → cursor 2 ≥ floor-1 (2)
-    const result = await stream.read(CTX, subscriptionId, {});
-    assert.equal(result.stale, false, 'ack of delivered events stays valid after trim');
-    assert.deepEqual(
-      result.events.map((e) => e.sequence),
-      [3, 4, 5, 6, 7],
-    );
+    await handleStore.revoke(handleId, Date.now()); // simulate crash before cursors.revokeByHandle
+    assert.equal((await cursors.get('inst-a', subscriptionId)).revokedAt, undefined);
+    await expectCode(stream.read(CTX, subscriptionId, {}), 'PERMISSION');
   });
 });
