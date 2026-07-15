@@ -25,7 +25,8 @@ interface ActionButtonProps {
   label: string;
   tone: 'emerald' | 'red' | 'amber' | 'slate';
   hookId: string;
-  action: () => Promise<Response>;
+  /** Returns null when the user cancels the reason prompt — no HTTP mutation. */
+  action: () => Promise<Response | null>;
   confirmMsg?: string;
   onRefresh: () => void;
 }
@@ -47,6 +48,7 @@ function ActionButton({ label, tone, action, confirmMsg, onRefresh }: ActionButt
     setError(null);
     try {
       const res = await action();
+      if (!res) return; // User cancelled reason prompt — no mutation
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         setError((body as { error?: string }).error ?? `操作失败 (${res.status})`);
@@ -92,7 +94,8 @@ export function ActivateVersionButton({
       hookId={hookId}
       confirmMsg={`确认激活版本 v${epochVersion}？`}
       action={() => {
-        const reason = window.prompt('操作原因（审计追踪）：') ?? '手动激活';
+        const reason = window.prompt('操作原因（审计追踪）：');
+        if (reason == null || reason.trim() === '') return Promise.resolve(null);
         return apiFetch(`/api/prompt-hooks/${encodeURIComponent(hookId)}/versions/activate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -119,7 +122,8 @@ export function ToggleOverrideButton({
       hookId={hookId}
       confirmMsg={currentlyEnabled ? '确认禁用此段？禁用后段内容不再注入。' : undefined}
       action={() => {
-        const reason = window.prompt('操作原因（审计追踪）：') ?? `手动${label}`;
+        const reason = window.prompt('操作原因（审计追踪）：');
+        if (reason == null || reason.trim() === '') return Promise.resolve(null);
         return apiFetch(`/api/prompt-hooks/${encodeURIComponent(hookId)}/override`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -140,7 +144,8 @@ export function RollbackButton({ hookId, onRefresh }: VersionActionsProps) {
       hookId={hookId}
       confirmMsg="确认回滚到基线版本 (v1)？所有自定义内容将失效。"
       action={() => {
-        const reason = window.prompt('操作原因（审计追踪）：') ?? '手动回滚';
+        const reason = window.prompt('操作原因（审计追踪）：');
+        if (reason == null || reason.trim() === '') return Promise.resolve(null);
         return apiFetch(`/api/prompt-hooks/${encodeURIComponent(hookId)}/override`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

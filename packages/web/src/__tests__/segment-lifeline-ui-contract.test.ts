@@ -21,24 +21,20 @@ function readComponent(name: string): string {
 }
 
 describe('segment lifeline: guard event attribution (P2-3)', () => {
-  // Guard event rendering (attribution hint, GuardEvent interface) moved to
-  // LifelineStageDetail.tsx in Phase D chain refactor. SegmentLifelineModal
-  // is now the outer shell; LifelineStageDetail renders stage-specific panels.
-  const src = readComponent('LifelineStageDetail.tsx');
+  // GuardEvent interface is in LifelineStageDetail; rendering moved to GovernanceStagePanel.
+  const detailSrc = readComponent('LifelineStageDetail.tsx');
+  const govSrc = readComponent('GovernanceStagePanel.tsx');
 
   it('GuardEvent interface includes attribution field', () => {
-    // The interface must declare the attribution field from the API
-    expect(src).toMatch(/interface\s+GuardEvent[\s\S]*?attribution\??:\s*['"]window-correlated['"]/);
+    expect(detailSrc).toMatch(/interface\s+GuardEvent[\s\S]*?attribution\??:\s*['"]window-correlated['"]/);
   });
 
   it('section title contains "窗口关联"', () => {
-    // Must not regress to plain "守卫事件" without attribution context
-    expect(src).toContain('窗口关联');
+    expect(govSrc).toContain('窗口关联');
   });
 
   it('section includes "非因果" disclaimer', () => {
-    // The non-causal caveat must be visible to the user
-    expect(src).toContain('非因果');
+    expect(govSrc).toContain('非因果');
   });
 });
 
@@ -106,8 +102,10 @@ describe('segment lifeline: version operation buttons (①)', () => {
 
   it('LifelineStageDetail imports action button components', () => {
     expect(detailSrc).toContain('ActivateVersionButton');
-    expect(detailSrc).toContain('ToggleOverrideButton');
     expect(detailSrc).toContain('RollbackButton');
+    // ToggleOverrideButton moved to GovernanceStagePanel (extraction)
+    const govSrc = readComponent('GovernanceStagePanel.tsx');
+    expect(govSrc).toContain('ToggleOverrideButton');
   });
 
   it('VersionActions calls prompt-hooks API endpoints', () => {
@@ -147,6 +145,84 @@ describe('segment lifeline: tracing row drill-down (②)', () => {
   it('expand indicator shows ▸/▾ chevron', () => {
     expect(src).toContain('▾');
     expect(src).toContain('▸');
+  });
+});
+
+describe('segment lifeline: eval per-guard metrics (R14 P1-1)', () => {
+  const evalSrc = readComponent('EvalStagePanel.tsx');
+  const detailSrc = readComponent('LifelineStageDetail.tsx');
+
+  it('EvalStagePanel uses guardMetrics prop (not global guardEventCount)', () => {
+    expect(evalSrc).toContain('guardMetrics');
+    expect(evalSrc).not.toContain('guardEventCount');
+  });
+
+  it('EvalStagePanel shows per-guard breakdown', () => {
+    expect(evalSrc).toContain('guardId');
+    expect(evalSrc).toContain('Guard 分布');
+  });
+
+  it('EvalStagePanel tracks single-guard max for trigger progress', () => {
+    expect(evalSrc).toContain('maxCount');
+    expect(evalSrc).toContain('单 guard 最高');
+  });
+
+  it('LifelineStageDetail computes per-epoch guard metrics', () => {
+    expect(detailSrc).toContain('computeEpochGuardMetrics');
+    expect(detailSrc).toContain('guardId');
+  });
+
+  it('EvalStagePanel shows "无注入数据" when obsCount is zero', () => {
+    expect(evalSrc).toContain('无注入数据');
+  });
+});
+
+describe('segment lifeline: v1 activate guard (R14 P1-3)', () => {
+  const src = readComponent('LifelineStageDetail.tsx');
+
+  it('ActivateVersionButton only for version > 1', () => {
+    expect(src).toContain('epoch.version > 1');
+    expect(src).toMatch(/!epoch\.isActive && epoch\.version > 1/);
+  });
+
+  it('v1 shows RollbackButton instead of ActivateVersionButton', () => {
+    expect(src).toContain('epoch.version === 1');
+    expect(src).toMatch(/epoch\.version === 1[\s\S]*?RollbackButton/);
+  });
+});
+
+describe('segment lifeline: null overrideState handling (R14 P1-4)', () => {
+  const govSrc = readComponent('GovernanceStagePanel.tsx');
+
+  it('derives effectiveEnabled from null overrideState', () => {
+    expect(govSrc).toContain('overrideState?.enabled ?? true');
+  });
+
+  it('always renders ToggleOverrideButton with derived effectiveEnabled', () => {
+    // ToggleOverrideButton must use effectiveEnabled (not gated by overrideState presence)
+    expect(govSrc).toContain('ToggleOverrideButton');
+    expect(govSrc).toContain('currentlyEnabled={effectiveEnabled}');
+  });
+
+  it('shows default indicator when no override record exists', () => {
+    expect(govSrc).toContain('（默认）');
+  });
+});
+
+describe('segment lifeline: cancel aborts mutation (R14 P2-1)', () => {
+  const src = readComponent('VersionActions.tsx');
+
+  it('null prompt (Cancel) returns null without API call', () => {
+    expect(src).toContain('reason == null');
+    expect(src).toContain('Promise.resolve(null)');
+  });
+
+  it('empty reason also aborts (trim check)', () => {
+    expect(src).toMatch(/reason\.trim\(\)\s*===\s*''/);
+  });
+
+  it('ActionButton handles null return from action (no mutation)', () => {
+    expect(src).toContain('if (!res) return');
   });
 });
 

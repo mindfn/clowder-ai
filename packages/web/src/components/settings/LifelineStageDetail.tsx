@@ -4,9 +4,10 @@
 
 import { useState } from 'react';
 import { EvalStagePanel } from './EvalStagePanel';
+import { GovernanceStagePanel } from './GovernanceStagePanel';
 import type { SelectedStage } from './LifelineChainView';
 import { SettingsBadge, SettingsText } from './primitives';
-import { ActivateVersionButton, RollbackButton, ToggleOverrideButton } from './VersionActions';
+import { ActivateVersionButton, RollbackButton } from './VersionActions';
 
 interface VersionEpoch {
   version: number;
@@ -80,12 +81,13 @@ export function LifelineStageDetail({
           version={epoch.version}
           eval={epoch.eval}
           tracing={epoch.tracing}
-          guardEventCount={guardEvents.length}
+          guardMetrics={computeEpochGuardMetrics(epoch, chain, guardEvents)}
         />
       )}
       {selected.stage === 'governance' && (
-        <GovernanceDetail
-          epoch={epoch}
+        <GovernanceStagePanel
+          version={epoch.version}
+          governance={epoch.governance}
           guardEvents={guardEvents}
           overrideState={overrideState}
           hookId={hookId}
@@ -118,9 +120,14 @@ function VersionDetail({ epoch, hookId, onRefresh }: { epoch: VersionEpoch; hook
         </InfoRow>
       </div>
 
-      {!epoch.isActive && (
+      {!epoch.isActive && epoch.version > 1 && (
         <div className="mt-3">
           <ActivateVersionButton hookId={hookId} epochVersion={epoch.version} onRefresh={onRefresh} />
+        </div>
+      )}
+      {!epoch.isActive && epoch.version === 1 && (
+        <div className="mt-3">
+          <RollbackButton hookId={hookId} onRefresh={onRefresh} />
         </div>
       )}
 
@@ -179,85 +186,18 @@ function TracingDetail({ epoch, observations }: { epoch: VersionEpoch; observati
   );
 }
 
-function GovernanceDetail({
-  epoch,
-  guardEvents,
-  overrideState,
-  hookId,
-  onRefresh,
-}: {
-  epoch: VersionEpoch;
-  guardEvents: GuardEvent[];
-  overrideState: { hookId: string; enabled: boolean } | null;
-  hookId: string;
-  onRefresh: () => void;
-}) {
-  return (
-    <>
-      <SettingsText as="h3" variant="sm" tone="default" className="mb-3 font-semibold">
-        v{epoch.version} — Governance
-      </SettingsText>
-
-      {overrideState && (
-        <div className="mb-3">
-          <InfoRow label="当前状态">
-            <SettingsBadge tone={overrideState.enabled ? 'emerald' : 'red'} size="xxs">
-              {overrideState.enabled ? '已启用' : '已禁用'}
-            </SettingsBadge>
-          </InfoRow>
-        </div>
-      )}
-
-      {epoch.governance?.decision ? (
-        <InfoRow label="决策">
-          <SettingsBadge tone={epoch.governance.decision === 'approved' ? 'emerald' : 'amber'} size="xxs">
-            {epoch.governance.decision}
-          </SettingsBadge>
-          {epoch.governance.decidedAt && (
-            <span className="ml-2 text-xs text-cafe-muted">{formatTs(epoch.governance.decidedAt)}</span>
-          )}
-        </InfoRow>
-      ) : (
-        <div className="flex flex-col items-center gap-2 py-6 opacity-40">
-          <span className="text-2xl">🛡️</span>
-          <SettingsText as="p" variant="xs" tone="muted">
-            等待治理决策
-          </SettingsText>
-        </div>
-      )}
-
-      <div className="mt-4 flex gap-2">
-        {overrideState && (
-          <ToggleOverrideButton hookId={hookId} currentlyEnabled={overrideState.enabled} onRefresh={onRefresh} />
-        )}
-        <RollbackButton hookId={hookId} onRefresh={onRefresh} />
-      </div>
-
-      {guardEvents.length > 0 && (
-        <div className="mt-4">
-          <SettingsText as="h4" variant="xs" tone="muted" className="mb-2 font-semibold">
-            守卫事件 ({guardEvents.length})
-          </SettingsText>
-          {guardEvents[0]?.attribution === 'window-correlated' && (
-            <SettingsText as="p" variant="xs" tone="muted" className="mb-2 italic">
-              时间窗口关联，非因果归因
-            </SettingsText>
-          )}
-          <div className="max-h-[160px] space-y-1 overflow-y-auto">
-            {guardEvents.map((ev) => (
-              <Row key={ev.eventId} ts={ev.timestamp}>
-                <SettingsBadge tone="red" size="xxs">
-                  {ev.kind}
-                </SettingsBadge>
-                <span className="text-cafe-secondary">@{ev.catId}</span>
-                <span className="ml-auto font-mono text-cafe-muted">{ev.guardId}</span>
-              </Row>
-            ))}
-          </div>
-        </div>
-      )}
-    </>
-  );
+/** P1-1: Filter guard events to this epoch's time window and group by guardId. */
+function computeEpochGuardMetrics(
+  epoch: VersionEpoch,
+  chain: VersionEpoch[],
+  guardEvents: GuardEvent[],
+): { guardId: string; count: number }[] {
+  const idx = chain.findIndex((e) => e.version === epoch.version);
+  const end = idx >= 0 && idx < chain.length - 1 ? chain[idx + 1].startedAt : Infinity;
+  const filtered = guardEvents.filter((ge) => ge.timestamp >= epoch.startedAt && ge.timestamp < end);
+  const counts = new Map<string, number>();
+  for (const ge of filtered) counts.set(ge.guardId, (counts.get(ge.guardId) ?? 0) + 1);
+  return [...counts.entries()].map(([guardId, count]) => ({ guardId, count })).sort((a, b) => b.count - a.count);
 }
 
 function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
