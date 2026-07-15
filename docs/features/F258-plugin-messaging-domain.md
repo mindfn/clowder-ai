@@ -67,7 +67,7 @@ packages/api/src/domains/messaging/
 **关键设计决定**：
 - **D-1** envelope = `StoredMessage` 纯投影；插件消息通过现有 `IMessageStore` 暴露为逻辑 `extra.pluginMessage` additive 扩展，Redis 内与宿主 `extra` 分字段持久化，避免双方并发更新互相覆盖；Hub UI 免费获得展示。
 - **D-2** v0 subscription 绑定单 ThreadHandle；多 thread = 多 subscription——"不得以单一 sequence 跨 thread 推游标"由构造保证。
-- **D-3** persist → emit → settle 顺序；事件 emit 以确定性 eventKey 在 retention 窗口内去重。窗口外 crash-retry 可能以同一 eventId 再投递，语义是 at-least-once，消费者继续凭 eventId 幂等；不声称永久 exactly-once。append 的持久 `appendOps` 同时作为小型 outbox：锁租约接管者在写入新 revision 前按 revision 顺序补齐已落库的前驱事件，避免进程停顿造成 revision 事件乱序。snapshot 以 `head-before → 完整 thread scan → head-after` 建稳定 fence，并只纳入 `outputRevision/outputSequence` 已落在 fence 内的 canonical revision；竞态三次仍不稳定则返回 `RETRYABLE_INFLIGHT`，不截断、不返回半快照。
+- **D-3** persist → emit → settle 顺序；事件 emit 以确定性 eventKey 在 retention 窗口内去重。窗口外 crash-retry 可能以同一 eventId 再投递，语义是 at-least-once，消费者继续凭 eventId 幂等；不声称永久 exactly-once。append 的持久 `appendOps` 同时作为小型 outbox：锁租约接管者在写入新 revision 前按 revision 顺序补齐已落库的前驱事件，避免进程停顿造成 revision 事件乱序。snapshot 先以 canonical projection 确定 current-state 可见集合，再以 `head-before → 完整 thread scan → head-after` 建稳定 fence，并只纳入 `outputRevision/outputSequence` 已落在 fence 内的可见 revision；竞态三次仍不稳定则返回 `RETRYABLE_INFLIGHT`，不截断、不返回半快照。删除/tombstone 不属于 current snapshot，历史 event replay 语义保持独立。
 - **D-4** provenance.origin 宿主校验绑定：thread_handle 发送 origin 必为 self plugin；connector_binding 发送 origin.external 必须与 binding 记录一致；`host` origin 任何 draft 不可声明。
 - **D-5** send 成功后持久化 MessageHandle 记录，绑定 plugin instance、message、thread 与原 address handle；append 在 claim ledger 前同时解析 MessageHandle 和仍存活的 parent handle，撤销任一层都 fail-closed。
 - **whisper 边界（fail-closed）**：v0 事件流与 snapshot 只投递 public 消息；whisper 是 send-only 能力（targets ⊆ handle grant 允许集）。消费者可观察到 sequence 跳号（受限事件），单调性不受影响。
@@ -120,6 +120,7 @@ Candidate SHA：`zts212653/clowder-ai-plugins#3@f5faba5`。epistemic 值集 `obs
 9. append 接受裸 `messageId`，可绕过父 handle 撤销；改为宿主签发 MessageHandle + parent handle 双重存活解析。
 10. snapshot 可能纳入 fence 之后才完成输出的消息，且固定 200 条截断会静默漏历史；改为 canonical output watermark + 完整扫描 + 双 head 稳定 fence。
 11. K-1 手写 mirror 相对 C-1 candidate 漂移；closed-object/whisper uniqueItems 已 fail-closed，read 与 envelope element 上限统一为 32。
+12. soft-delete 发生在 publish/append watermark 完成前会让 snapshot 永久 `RETRYABLE_INFLIGHT`；改为先用 canonical projection 派生最终可见集合，只对实际可返回 envelope 检查 output watermark。
 
 诊断记录：`docs/bug-report/redis-plugin-message-array-collapse/bug-report.md`、`docs/bug-report/append-event-order-after-lock-expiry/bug-report.md`。
 
@@ -137,7 +138,7 @@ Scope verdict: ✅ 必做（plugin developer 可感知的 kernel contract）
 
 | 命令 / 检查 | 结果 |
 |---|---|
-| K-1 非 Redis 定向套件 | 138/138 pass ✅ |
+| K-1 非 Redis 定向套件 | 140/140 pass ✅ |
 | 官方 isolated Redis 定向套件 | 17/17 pass ✅（runner 分配非保留随机端口，DB 15） |
 | append lease-takeover RED → GREEN | RED 1 个精确失败；GREEN 21/21 ✅ |
 | `pnpm check` | exit 0 ✅（最终提交前重跑） |

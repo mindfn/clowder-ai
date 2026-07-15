@@ -196,6 +196,8 @@ export class EventStreamService {
       let pendingOutput = false;
       for (const msg of messages) {
         if (!isSnapshotVisible(msg)) continue;
+        const envelope = projectEnvelope(msg);
+        if (!envelope) continue;
         if (msg.extra?.pluginMessage !== undefined) {
           const plugin = readPluginMessageExtra(msg);
           if (
@@ -208,8 +210,7 @@ export class EventStreamService {
             break;
           }
         }
-        const envelope = projectEnvelope(msg);
-        if (envelope) envelopes.push(envelope);
+        envelopes.push(envelope);
       }
       if (pendingOutput) continue;
 
