@@ -1,16 +1,4 @@
-/**
- * F257 Phase D — Version lifecycle chain builder.
- *
- * Pure function: assembles a VersionEpoch[] chain from raw store data.
- * No Redis access — receives pre-fetched data as input.
- *
- * Chain model (co-creator product direction, 2026-07-14):
- *   v1 → tracing → eval → governance(approve) → v2 → tracing → ...
- *
- * The chain is a single continuous line. Governance approve naturally produces
- * the next version. User edits and version activation are events ON the chain,
- * not separate chains.
- */
+/** F257 Phase D — Version lifecycle chain builder. Pure, no Redis. */
 
 import type {
   LifecycleEvent,
@@ -21,9 +9,7 @@ import type {
 } from '@cat-cafe/shared';
 import type { CachedJudgment } from '../domains/prompt-hooks/SegmentJudgmentCache.js';
 
-// ---------------------------------------------------------------------------
 // Input types (pre-fetched data from stores)
-// ---------------------------------------------------------------------------
 
 export interface SegmentObservationInput {
   timestamp: number;
@@ -45,9 +31,7 @@ export interface ChainBuilderInput {
   currentContentVersion: number | null;
 }
 
-// ---------------------------------------------------------------------------
 // Builder
-// ---------------------------------------------------------------------------
 
 /**
  * Build the version lifecycle chain from raw data.
@@ -60,7 +44,7 @@ export interface ChainBuilderInput {
  * 4. Attach cached judgment to the appropriate epoch's eval stage
  * 5. Derive each epoch's status from available data
  */
-export function buildVersionChain(input: ChainBuilderInput): VersionEpoch[] {
+export function buildVersionChain(input: ChainBuilderInput): { chain: VersionEpoch[]; timeline: ActivationPoint[] } {
   const { manifestVersion, overrideEvents, observations } = input;
 
   // Merge judgment sources: judgmentHistory (P1-2) takes precedence, cachedJudgment for compat
@@ -86,7 +70,7 @@ export function buildVersionChain(input: ChainBuilderInput): VersionEpoch[] {
     epoch.status = deriveStatus(epoch);
   }
 
-  return epochs;
+  return { chain: epochs, timeline };
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +78,7 @@ export function buildVersionChain(input: ChainBuilderInput): VersionEpoch[] {
 // ---------------------------------------------------------------------------
 
 /** A point in the activation timeline: from this timestamp, epochIndex is active. */
-interface ActivationPoint {
+export interface ActivationPoint {
   timestamp: number;
   epochIndex: number;
 }
@@ -201,7 +185,11 @@ function createEpoch(version: number, origin: VersionOrigin, startedAt: number):
 }
 
 /** Resolve which epoch was active at a given timestamp using the activation timeline. */
-function resolveActiveEpochAt(timeline: ActivationPoint[], timestamp: number, epochs: VersionEpoch[]): VersionEpoch {
+export function resolveActiveEpochAt(
+  timeline: ActivationPoint[],
+  timestamp: number,
+  epochs: VersionEpoch[],
+): VersionEpoch {
   let idx = 0;
   for (const point of timeline) {
     if (point.timestamp <= timestamp) {
@@ -213,9 +201,27 @@ function resolveActiveEpochAt(timeline: ActivationPoint[], timestamp: number, ep
   return epochs[idx] ?? epochs[0];
 }
 
-// ---------------------------------------------------------------------------
+/** Attribute guard events to epochs using the activation timeline (R15). */
+export function attributeGuardEventsToEpochs(
+  chain: VersionEpoch[],
+  timeline: ActivationPoint[],
+  guardEvents: Array<{ timestamp: number; guardId: string }>,
+): Record<number, Array<{ guardId: string; count: number }>> {
+  const counts = new Map<number, Map<string, number>>();
+  for (const e of chain) counts.set(e.version, new Map());
+  for (const ge of guardEvents) {
+    const epoch = resolveActiveEpochAt(timeline, ge.timestamp, chain);
+    const m = counts.get(epoch.version);
+    if (m) m.set(ge.guardId, (m.get(ge.guardId) ?? 0) + 1);
+  }
+  const result: Record<number, Array<{ guardId: string; count: number }>> = {};
+  for (const [ver, m] of counts) {
+    result[ver] = [...m].map(([guardId, count]) => ({ guardId, count })).sort((a, b) => b.count - a.count);
+  }
+  return result;
+}
+
 // Observation attachment
-// ---------------------------------------------------------------------------
 
 function attachObservations(
   epochs: VersionEpoch[],
@@ -241,9 +247,7 @@ function attachObservations(
   }
 }
 
-// ---------------------------------------------------------------------------
 // Active epoch marking
-// ---------------------------------------------------------------------------
 
 /**
  * Mark the active epoch from the activation timeline (P1-3).

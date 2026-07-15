@@ -33,17 +33,21 @@ function makeEvent(partial) {
 describe('buildVersionChain', () => {
   /** @type {typeof import('../dist/routes/segment-lifeline-chain.js').buildVersionChain} */
   let buildVersionChain;
+  /** @type {typeof import('../dist/routes/segment-lifeline-chain.js').attributeGuardEventsToEpochs} */
+  let attributeGuardEventsToEpochs;
 
   test('setup: import chain builder', async () => {
     const mod = await import('../dist/routes/segment-lifeline-chain.js');
     buildVersionChain = mod.buildVersionChain;
+    attributeGuardEventsToEpochs = mod.attributeGuardEventsToEpochs;
     assert.ok(buildVersionChain, 'buildVersionChain exported');
+    assert.ok(attributeGuardEventsToEpochs, 'attributeGuardEventsToEpochs exported');
   });
 
   // ── Baseline ─────────────────────────────────────────────────
 
   test('manifest-only segment produces single v1 epoch', async () => {
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [],
       observations: [],
@@ -61,7 +65,7 @@ describe('buildVersionChain', () => {
   // ── P1-1 scenario 1: Create and activate V2 ─────────────────
 
   test('first content-set creates v2 epoch and marks it active', async () => {
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [makeEvent({ action: 'content-set', timestamp: 1000 })],
       observations: [],
@@ -81,7 +85,7 @@ describe('buildVersionChain', () => {
   // ── P1-1 scenario 2: V2 exists but V1 still active ──────────
 
   test('v2 exists but v1 is active after rollback', async () => {
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),
@@ -102,7 +106,7 @@ describe('buildVersionChain', () => {
   // ── P1-1 scenario 3: Rollback then re-create ────────────────
 
   test('rollback then new content-set → v3 active, not v2', async () => {
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),
@@ -126,7 +130,7 @@ describe('buildVersionChain', () => {
   // ── P1-2 scenario 4: Old eval NOT on new version ────────────
 
   test('eval judgment at t=500 is NOT attached to v2 created at t=1000', async () => {
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [makeEvent({ action: 'content-set', timestamp: 1000 })],
       observations: [],
@@ -151,7 +155,7 @@ describe('buildVersionChain', () => {
   });
 
   test('eval judgment at t=1500 IS attached to v2 created at t=1000', async () => {
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [makeEvent({ action: 'content-set', timestamp: 1000 })],
       observations: [],
@@ -179,7 +183,7 @@ describe('buildVersionChain', () => {
   // ── Observation attachment ───────────────────────────────────
 
   test('observations are attached to correct epoch by timestamp', async () => {
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [makeEvent({ action: 'content-set', timestamp: 1000 })],
       observations: [
@@ -201,7 +205,7 @@ describe('buildVersionChain', () => {
     // HookRegistry records contentVersion=1 in traces.
     // Old bug: findEpochForObservation matched version=1 → manifest epoch v1 (WRONG).
     // Fix: timestamp-based matching → obs at t=1200 (after v2 created at t=1000) → epoch v2.
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [makeEvent({ action: 'content-set', timestamp: 1000 })],
       observations: [
@@ -219,7 +223,7 @@ describe('buildVersionChain', () => {
 
   test('activeVersion in chain derives from isActive epoch, not raw contentVersion', async () => {
     // First content-set: chain epoch v2, contentVersion=1. They must not be confused.
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [makeEvent({ action: 'content-set', timestamp: 1000 })],
       observations: [],
@@ -239,7 +243,7 @@ describe('buildVersionChain', () => {
     // Terra reproduction: content-set@1000 → rollback@2000 → trace@2100
     // Old bug: startedAt-based matching put trace@2100 on v2 (2100 >= 1000).
     // Fix: activation timeline tracks rollback → v1 active from t=2000.
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),
@@ -265,7 +269,7 @@ describe('buildVersionChain', () => {
   test('rollback → eval after rollback goes to v1, not v2 (R3 P1-1)', async () => {
     // Eval runs at t=2500, after rollback at t=2000.
     // Must attach to v1 (active after rollback), not v2.
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),
@@ -294,7 +298,7 @@ describe('buildVersionChain', () => {
     // v1 → v2@1000 → rollback@2000 → v3@3000
     // trace@2500 (between rollback and v3) → v1
     // trace@3500 (after v3) → v3
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),
@@ -323,7 +327,7 @@ describe('buildVersionChain', () => {
   test('content-clear reactivates manifest, trace goes to v1 (R4 P1-1)', async () => {
     // content-clear removes content override like rollback but is a distinct action.
     // Old bug: timeline only handled rollback, not content-clear.
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),
@@ -343,7 +347,7 @@ describe('buildVersionChain', () => {
   });
 
   test('content-clear: eval after clear goes to manifest (R4 P1-1)', async () => {
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),
@@ -371,7 +375,7 @@ describe('buildVersionChain', () => {
     // Two content-set at t=1000: v2 and v3.
     // Old bug: findIndex(startedAt===1000) always matched v2 for both.
     // Fix: single-pass reducer directly assigns epochIndex at creation.
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),
@@ -398,7 +402,7 @@ describe('buildVersionChain', () => {
     // rollback (seq=0) sorts before content-set (seq=1) at same timestamp.
     // Physical order: content-set (create v2) → rollback → content-set (create v3)
     // After rollback+content-set at t=2000, v3 is active, trace@2500 → v3.
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),
@@ -421,7 +425,7 @@ describe('buildVersionChain', () => {
   // ── Status derivation ────────────────────────────────────────
 
   test('epoch with observations derives tracing status', async () => {
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [],
       observations: [{ timestamp: 1000, version: null }],
@@ -433,7 +437,7 @@ describe('buildVersionChain', () => {
   });
 
   test('alive verdict derives governance-pending status (eval triggers governance)', async () => {
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [],
       observations: [],
@@ -455,7 +459,7 @@ describe('buildVersionChain', () => {
   });
 
   test('retire-candidate verdict derives eval-reject status (no governance)', async () => {
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [],
       observations: [],
@@ -478,7 +482,7 @@ describe('buildVersionChain', () => {
   // ── Governance events ────────────────────────────────────────
 
   test('operator enable/disable events map to governance kinds (AF-5)', async () => {
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'disable', source: 'operator', timestamp: 1000 }),
@@ -495,7 +499,7 @@ describe('buildVersionChain', () => {
   });
 
   test('auto-eval enable/disable events map to eval kinds (AF-5)', async () => {
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'disable', source: 'auto-eval', timestamp: 1000 }),
@@ -514,7 +518,7 @@ describe('buildVersionChain', () => {
   // ── Multiple content versions ────────────────────────────────
 
   test('two content-set events create v1, v2, v3 with v3 active', async () => {
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),
@@ -539,7 +543,7 @@ describe('buildVersionChain', () => {
   test('multiple judgments distributed across epochs by activation timeline', async () => {
     // v1 (manifest) → content-set@1000 (v2) → content-set@2000 (v3)
     // judgment1 at t=500 → v1, judgment2 at t=1500 → v2, judgment3 at t=2500 → v3
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),
@@ -598,7 +602,7 @@ describe('buildVersionChain', () => {
 
   test('latest judgment wins when multiple map to same epoch', async () => {
     // Two evals during v1 lifetime (no override events)
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [],
       observations: [],
@@ -638,7 +642,7 @@ describe('buildVersionChain', () => {
 
   test('version-activate switches active epoch back to earlier version (epochVersion)', async () => {
     // v1 → content-set@1000 (v2) → content-set@2000 (v3) → version-activate epochVersion=2 @3000
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),
@@ -658,7 +662,7 @@ describe('buildVersionChain', () => {
 
   test('observation after version-activate goes to activated epoch (epochVersion)', async () => {
     // v1 → content-set@1000 (v2) → version-activate epochVersion=1 @2000 → observation@2500
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),
@@ -680,7 +684,7 @@ describe('buildVersionChain', () => {
     // R6 bug: contentVersion=1 collides with manifest epoch.version=1
     // epochVersion=2 correctly targets the first override epoch
     // This test uses BOTH fields — epochVersion must win
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),
@@ -701,7 +705,7 @@ describe('buildVersionChain', () => {
 
   test('backward compat: contentVersion used when epochVersion absent (pre-R6 events)', async () => {
     // Pre-R6 events only have contentVersion. Chain builder falls back.
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),
@@ -724,7 +728,7 @@ describe('buildVersionChain', () => {
     // Two content-set events create v2 and v3 epochs.
     // Two judgments in the SAME eval window (same evaluatedAt) but different segmentVersion.
     // Without the fix, both fall to the same timeline-resolved epoch (v3, the last active).
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000, epochVersion: 2 }),
@@ -770,7 +774,7 @@ describe('buildVersionChain', () => {
   test('R8 P1-2: epochs use epochVersion from events, not incremental (Red→Green)', async () => {
     // Events arrive out of order: epochVersion 3 first, then 2
     // (concurrent write: B got epoch=3, wrote first; A got epoch=2, wrote second)
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000, epochVersion: 3 }),
@@ -791,7 +795,7 @@ describe('buildVersionChain', () => {
   });
 
   test('R8 backward compat: events without epochVersion use incremental fallback', async () => {
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),
@@ -809,7 +813,7 @@ describe('buildVersionChain', () => {
   test('R8 version-activate finds epoch by real epochVersion (not incremental)', async () => {
     // Out-of-order epochs: v3 created first, then v2
     // version-activate targets v3 — must find it correctly
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000, epochVersion: 3 }),
@@ -839,7 +843,7 @@ describe('buildVersionChain', () => {
   test('R9: disable after activate(v2) goes to v2, not v3 (Red→Green)', async () => {
     // v1 → content-set(v2) → content-set(v3) → activate(v2) → disable
     // disable should be on v2 (active), NOT v3 (last created)
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000, epochVersion: 2 }),
@@ -868,7 +872,7 @@ describe('buildVersionChain', () => {
   test('R9: content-set after activate(v2) branches from v2 (Red→Green)', async () => {
     // v1 → content-set(v2) → content-set(v3) → activate(v2) → content-set(v4)
     // The v4 creation event should be on v2 ("v2 → v4"), not v3
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000, epochVersion: 2 }),
@@ -897,7 +901,7 @@ describe('buildVersionChain', () => {
   test('R9: rollback event goes to active epoch, not last-created (Red→Green)', async () => {
     // v1 → content-set(v2) → content-set(v3) → activate(v2) → rollback
     // rollback event should be on v2 (active), not v3 (last created)
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000, epochVersion: 2 }),
@@ -920,9 +924,78 @@ describe('buildVersionChain', () => {
     assert.equal(chain[0].isActive, true, 'v1 (manifest) active after rollback');
   });
 
+  // ── R15: guard event attribution via activation timeline ─────
+
+  test('R15: v1→v2→rollback(v1)→activate(v2) guard attribution regression', async () => {
+    // Timeline: t=0 v1 active, t=100 v2 active, t=200 rollback→v1, t=300 activate→v2
+    const { chain, timeline } = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [
+        makeEvent({ action: 'content-set', timestamp: 100, epochVersion: 2 }),
+        makeEvent({ action: 'rollback', timestamp: 200 }),
+        makeEvent({ action: 'version-activate', timestamp: 300, epochVersion: 2 }),
+      ],
+      observations: [],
+      judgmentHistory: [],
+      currentContentVersion: 2,
+    });
+    const metrics = attributeGuardEventsToEpochs(chain, timeline, [
+      { timestamp: 50, guardId: 'g1' }, // v1 active
+      { timestamp: 150, guardId: 'g1' }, // v2 active
+      { timestamp: 250, guardId: 'g1' }, // v1 active (post-rollback)
+      { timestamp: 350, guardId: 'g1' }, // v2 active (re-activated)
+    ]);
+    assert.deepEqual(metrics[1], [{ guardId: 'g1', count: 2 }], 'v1 gets t=50+t=250');
+    assert.deepEqual(metrics[2], [{ guardId: 'g1', count: 2 }], 'v2 gets t=150+t=350');
+  });
+
+  test('R15: per-guard grouping in attributed metrics', async () => {
+    const { chain, timeline } = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [makeEvent({ action: 'content-set', timestamp: 100, epochVersion: 2 })],
+      observations: [],
+      judgmentHistory: [],
+      currentContentVersion: 2,
+    });
+    const metrics = attributeGuardEventsToEpochs(chain, timeline, [
+      { timestamp: 150, guardId: 'g-alpha' },
+      { timestamp: 160, guardId: 'g-beta' },
+      { timestamp: 170, guardId: 'g-alpha' },
+    ]);
+    assert.deepEqual(metrics[1], [], 'v1 has no events');
+    assert.equal(metrics[2].length, 2, 'v2 has 2 guard groups');
+    assert.deepEqual(metrics[2][0], { guardId: 'g-alpha', count: 2 });
+    assert.deepEqual(metrics[2][1], { guardId: 'g-beta', count: 1 });
+  });
+
+  test('R15: empty guard events yields empty arrays per epoch', async () => {
+    const { chain, timeline } = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [],
+      observations: [],
+      judgmentHistory: [],
+      currentContentVersion: null,
+    });
+    const metrics = attributeGuardEventsToEpochs(chain, timeline, []);
+    assert.deepEqual(metrics[1], []);
+  });
+
+  test('R15: buildVersionChain returns { chain, timeline }', async () => {
+    const result = buildVersionChain({
+      manifestVersion: 1,
+      overrideEvents: [],
+      observations: [],
+      currentContentVersion: null,
+    });
+    assert.ok(Array.isArray(result.chain), 'chain is array');
+    assert.ok(Array.isArray(result.timeline), 'timeline is array');
+    assert.equal(result.chain.length, 1);
+    assert.equal(result.timeline.length, 1);
+  });
+
   test('rollback redistributes judgments: post-rollback eval goes to manifest', async () => {
     // v1 → content-set@1000 (v2) → rollback@2000 → eval@2500 → content-set@3000 (v3)
-    const chain = buildVersionChain({
+    const { chain } = buildVersionChain({
       manifestVersion: 1,
       overrideEvents: [
         makeEvent({ action: 'content-set', timestamp: 1000 }),

@@ -1,19 +1,15 @@
 'use client';
 
-/**
- * F257 Phase D — Stage detail panel for lifeline.
- *
- * Shows stage-specific data when a badge is clicked in the chain view:
- *   - version: version info, origin, events
- *   - tracing: observation list with expandable rows
- *   - eval: judgment results or "pending" placeholder
- *   - governance: override history and current state
- */
+/** F257 Phase D — Stage detail panel for lifeline (version/tracing/eval/governance). */
 
+import type { GuardMetric } from '@cat-cafe/shared';
+import { useState } from 'react';
+import { CreateVersionForm } from './CreateVersionForm';
+import { EvalStagePanel } from './EvalStagePanel';
+import { GovernanceStagePanel } from './GovernanceStagePanel';
 import type { SelectedStage } from './LifelineChainView';
 import { SettingsBadge, SettingsText } from './primitives';
-
-// ── Types (matching API response) ──────────────────────────────
+import { ActivateVersionButton, RollbackButton } from './VersionActions';
 
 interface VersionEpoch {
   version: number;
@@ -53,7 +49,13 @@ interface LifelineStageDetailProps {
   chain: VersionEpoch[];
   observations: Observation[];
   guardEvents: GuardEvent[];
+  /** Per-epoch guard metrics from API (activation-timeline attributed, R15). */
+  epochGuardMetrics: Record<number, GuardMetric[]>;
   overrideState: { hookId: string; enabled: boolean } | null;
+  /** Hook ID for version operations (same as segmentId). */
+  hookId: string;
+  /** Refresh lifeline data after a mutation. */
+  onRefresh: () => void;
 }
 
 const formatTs = (ms: number) => new Date(ms).toLocaleString();
@@ -67,24 +69,41 @@ export function LifelineStageDetail({
   chain,
   observations,
   guardEvents,
+  epochGuardMetrics,
   overrideState,
+  hookId,
+  onRefresh,
 }: LifelineStageDetailProps) {
   const epoch = chain.find((e) => e.version === selected.version);
   if (!epoch) return null;
 
   return (
     <div className="rounded-2xl p-4" style={{ backgroundColor: 'var(--console-panel-bg)' }}>
-      {selected.stage === 'version' && <VersionDetail epoch={epoch} />}
+      {selected.stage === 'version' && <VersionDetail epoch={epoch} hookId={hookId} onRefresh={onRefresh} />}
       {selected.stage === 'tracing' && <TracingDetail epoch={epoch} observations={observations} />}
-      {selected.stage === 'eval' && <EvalDetail epoch={epoch} />}
+      {selected.stage === 'eval' && (
+        <EvalStagePanel
+          version={epoch.version}
+          eval={epoch.eval}
+          tracing={epoch.tracing}
+          guardMetrics={epochGuardMetrics[epoch.version] ?? []}
+        />
+      )}
       {selected.stage === 'governance' && (
-        <GovernanceDetail epoch={epoch} guardEvents={guardEvents} overrideState={overrideState} />
+        <GovernanceStagePanel
+          version={epoch.version}
+          governance={epoch.governance}
+          guardEvents={guardEvents}
+          overrideState={overrideState}
+          hookId={hookId}
+          onRefresh={onRefresh}
+        />
       )}
     </div>
   );
 }
 
-function VersionDetail({ epoch }: { epoch: VersionEpoch }) {
+function VersionDetail({ epoch, hookId, onRefresh }: { epoch: VersionEpoch; hookId: string; onRefresh: () => void }) {
   const originLabel =
     { manifest: '基线', 'auto-iterate': '自动迭代', 'user-create': '用户创建' }[epoch.origin] ?? epoch.origin;
 
@@ -105,6 +124,22 @@ function VersionDetail({ epoch }: { epoch: VersionEpoch }) {
           </SettingsBadge>
         </InfoRow>
       </div>
+
+      {epoch.isActive && (
+        <div className="mt-3">
+          <CreateVersionForm hookId={hookId} onRefresh={onRefresh} />
+        </div>
+      )}
+      {!epoch.isActive && epoch.version > 1 && (
+        <div className="mt-3">
+          <ActivateVersionButton hookId={hookId} epochVersion={epoch.version} onRefresh={onRefresh} />
+        </div>
+      )}
+      {!epoch.isActive && epoch.version === 1 && (
+        <div className="mt-3">
+          <RollbackButton hookId={hookId} onRefresh={onRefresh} />
+        </div>
+      )}
 
       {epoch.events.length > 0 && (
         <div className="mt-4">
@@ -134,7 +169,7 @@ function TracingDetail({ epoch, observations }: { epoch: VersionEpoch; observati
         )}
       </SettingsText>
 
-      {epoch.tracing && epoch.tracing.firstAt && epoch.tracing.lastAt && (
+      {epoch.tracing?.firstAt && epoch.tracing.lastAt && (
         <div className="mb-3 space-y-1">
           <InfoRow label="首次观测">{formatRel(epoch.tracing.firstAt)}</InfoRow>
           <InfoRow label="最近观测">{formatRel(epoch.tracing.lastAt)}</InfoRow>
@@ -156,114 +191,6 @@ function TracingDetail({ epoch, observations }: { epoch: VersionEpoch; observati
         <SettingsText as="p" variant="xs" tone="muted" className="italic">
           该版本无观测数据
         </SettingsText>
-      )}
-    </>
-  );
-}
-
-function EvalDetail({ epoch }: { epoch: VersionEpoch }) {
-  const evalData = epoch.eval;
-
-  return (
-    <>
-      <SettingsText as="h3" variant="sm" tone="default" className="mb-3 font-semibold">
-        v{epoch.version} — Eval
-      </SettingsText>
-
-      {evalData && evalData.verdict ? (
-        <div className="space-y-2">
-          <InfoRow label="判定">
-            <SettingsBadge
-              tone={evalData.verdict === 'alive' ? 'emerald' : evalData.verdict === 'dormant' ? 'red' : 'amber'}
-              size="xxs"
-            >
-              {evalData.verdict}
-            </SettingsBadge>
-          </InfoRow>
-          <InfoRow label="注入次数">{evalData.injectionCount}</InfoRow>
-          <InfoRow label="违规次数">{evalData.violationCount}</InfoRow>
-          {evalData.injectionCount > 0 && (
-            <InfoRow label="违规率">{((evalData.violationCount / evalData.injectionCount) * 100).toFixed(1)}%</InfoRow>
-          )}
-          {evalData.evaluatedAt && <InfoRow label="评估时间">{formatTs(evalData.evaluatedAt)}</InfoRow>}
-        </div>
-      ) : (
-        <div className="flex flex-col items-center gap-2 py-6 opacity-40">
-          <span className="text-2xl">📊</span>
-          <SettingsText as="p" variant="xs" tone="muted">
-            尚未评估 — 等待足够的观测数据
-          </SettingsText>
-        </div>
-      )}
-    </>
-  );
-}
-
-function GovernanceDetail({
-  epoch,
-  guardEvents,
-  overrideState,
-}: {
-  epoch: VersionEpoch;
-  guardEvents: GuardEvent[];
-  overrideState: { hookId: string; enabled: boolean } | null;
-}) {
-  return (
-    <>
-      <SettingsText as="h3" variant="sm" tone="default" className="mb-3 font-semibold">
-        v{epoch.version} — Governance
-      </SettingsText>
-
-      {overrideState && (
-        <div className="mb-3">
-          <InfoRow label="当前状态">
-            <SettingsBadge tone={overrideState.enabled ? 'emerald' : 'red'} size="xxs">
-              {overrideState.enabled ? '已启用' : '已禁用'}
-            </SettingsBadge>
-          </InfoRow>
-        </div>
-      )}
-
-      {epoch.governance?.decision ? (
-        <InfoRow label="决策">
-          <SettingsBadge tone={epoch.governance.decision === 'approved' ? 'emerald' : 'amber'} size="xxs">
-            {epoch.governance.decision}
-          </SettingsBadge>
-          {epoch.governance.decidedAt && (
-            <span className="ml-2 text-xs text-cafe-muted">{formatTs(epoch.governance.decidedAt)}</span>
-          )}
-        </InfoRow>
-      ) : (
-        <div className="flex flex-col items-center gap-2 py-6 opacity-40">
-          <span className="text-2xl">🛡️</span>
-          <SettingsText as="p" variant="xs" tone="muted">
-            等待治理决策
-          </SettingsText>
-        </div>
-      )}
-
-      {guardEvents.length > 0 && (
-        <div className="mt-4">
-          <SettingsText as="h4" variant="xs" tone="muted" className="mb-2 font-semibold">
-            守卫事件 ({guardEvents.length})
-          </SettingsText>
-          {guardEvents[0]?.attribution === 'window-correlated' && (
-            <SettingsText as="p" variant="xs" tone="muted" className="mb-2 italic">
-              时间窗口关联，非因果归因
-            </SettingsText>
-          )}
-          <div className="max-h-[160px] space-y-1 overflow-y-auto">
-            {guardEvents.map((ev) => (
-              <Row key={ev.eventId} ts={ev.timestamp}>
-                <SettingsBadge tone="red" size="xxs">
-                  {ev.kind}
-                </SettingsBadge>
-                <span className="text-cafe-secondary">@{ev.catId}</span>
-                <span className="ml-auto font-mono text-cafe-muted">{ev.guardId}</span>
-              </Row>
-            ))}
-          </div>
-        </div>
       )}
     </>
   );
@@ -323,14 +250,32 @@ function EventRow({
 }
 
 function ObservationRow({ obs }: { obs: Observation }) {
+  const [expanded, setExpanded] = useState(false);
   return (
-    <Row ts={obs.timestamp}>
-      <SettingsBadge tone={obs.pipelineStatus === 'fired' ? 'emerald' : 'slate'} size="xxs">
-        {obs.pipelineStatus}
-      </SettingsBadge>
-      <span className="text-cafe-secondary">@{obs.catId}</span>
-      <span className="ml-auto text-cafe-muted">{obs.charCount} chars</span>
-    </Row>
+    <div>
+      <button type="button" className="w-full text-left" onClick={() => setExpanded((e) => !e)}>
+        <Row ts={obs.timestamp}>
+          <SettingsBadge tone={obs.pipelineStatus === 'fired' ? 'emerald' : 'slate'} size="xxs">
+            {obs.pipelineStatus}
+          </SettingsBadge>
+          <span className="text-cafe-secondary">@{obs.catId}</span>
+          <span className="ml-auto text-cafe-muted">
+            {obs.charCount} chars {expanded ? '▾' : '▸'}
+          </span>
+        </Row>
+      </button>
+      {expanded && (
+        <div className="ml-[132px] space-y-0.5 pb-1 text-xs text-cafe-muted">
+          <div>
+            Thread: <span className="font-mono">{obs.threadId}</span>
+          </div>
+          <div>
+            Turn: <span className="font-mono">{obs.turnId}</span>
+          </div>
+          {obs.version != null && <div>Version: v{obs.version}</div>}
+        </div>
+      )}
+    </div>
   );
 }
 
