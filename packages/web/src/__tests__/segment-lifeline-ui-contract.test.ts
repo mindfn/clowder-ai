@@ -100,6 +100,25 @@ describe('segment lifeline: eval pending metrics panel (AC补遗)', () => {
   });
 });
 
+describe('segment lifeline: tracing row drill-down (②)', () => {
+  const src = readComponent('LifelineStageDetail.tsx');
+
+  it('ObservationRow is expandable (has useState toggle)', () => {
+    expect(src).toContain('useState');
+    expect(src).toMatch(/setExpanded/);
+  });
+
+  it('expanded row shows threadId and turnId', () => {
+    expect(src).toContain('obs.threadId');
+    expect(src).toContain('obs.turnId');
+  });
+
+  it('expand indicator shows ▸/▾ chevron', () => {
+    expect(src).toContain('▾');
+    expect(src).toContain('▸');
+  });
+});
+
 describe('segment lifeline: a11y entry point (P2-4)', () => {
   const src = readComponent('StageDetailPanels.tsx');
 

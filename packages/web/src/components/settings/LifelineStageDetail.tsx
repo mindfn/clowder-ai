@@ -10,6 +10,7 @@
  *   - governance: override history and current state
  */
 
+import { useState } from 'react';
 import { EvalStagePanel } from './EvalStagePanel';
 import type { SelectedStage } from './LifelineChainView';
 import { SettingsBadge, SettingsText } from './primitives';
@@ -293,14 +294,32 @@ function EventRow({
 }
 
 function ObservationRow({ obs }: { obs: Observation }) {
+  const [expanded, setExpanded] = useState(false);
   return (
-    <Row ts={obs.timestamp}>
-      <SettingsBadge tone={obs.pipelineStatus === 'fired' ? 'emerald' : 'slate'} size="xxs">
-        {obs.pipelineStatus}
-      </SettingsBadge>
-      <span className="text-cafe-secondary">@{obs.catId}</span>
-      <span className="ml-auto text-cafe-muted">{obs.charCount} chars</span>
-    </Row>
+    <div>
+      <button type="button" className="w-full text-left" onClick={() => setExpanded((e) => !e)}>
+        <Row ts={obs.timestamp}>
+          <SettingsBadge tone={obs.pipelineStatus === 'fired' ? 'emerald' : 'slate'} size="xxs">
+            {obs.pipelineStatus}
+          </SettingsBadge>
+          <span className="text-cafe-secondary">@{obs.catId}</span>
+          <span className="ml-auto text-cafe-muted">
+            {obs.charCount} chars {expanded ? '▾' : '▸'}
+          </span>
+        </Row>
+      </button>
+      {expanded && (
+        <div className="ml-[132px] space-y-0.5 pb-1 text-xs text-cafe-muted">
+          <div>
+            Thread: <span className="font-mono">{obs.threadId}</span>
+          </div>
+          <div>
+            Turn: <span className="font-mono">{obs.turnId}</span>
+          </div>
+          {obs.version != null && <div>Version: v{obs.version}</div>}
+        </div>
+      )}
+    </div>
   );
 }
 
