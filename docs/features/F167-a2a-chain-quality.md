@@ -680,6 +680,16 @@ operator experience："简直了你和Maine Coon是没头脑（Maine Coon听不�
 | 纠正轮次 | 2 次；第一轮改成一键隔离 launcher，第二轮 operator 以“数据隔离???”指出坐标仍错，最终删除 launcher 302 行，只保留标准 `pnpm dev`。 |
 | 元心智哪条没执行 | Q3 坐标变换：没有区分 test acceptance 与 product acceptance；P1 终态也执行错了，终态不是封装更多启动逻辑，而是避免第二套状态模型。 |
 
+### Case E9: 把学习生成任务误读成跳过对话的立即开工（2026-07-15）
+
+| 维度 | 内容 |
+|------|------|
+| 我以为 | 用户提交初始学习意图后，后台生成 Learning Brief 并进入构建准备就是主流程；只要 durable job 最终能产出 ready brief，交互就成立。 |
+| 实际要求 | 主流程是持续对话：agent 先回复并只追问必要信息；确认信息足够后，再明确询问用户是否开始生成图谱与课程。后台 job 只是每轮对话的执行机制，不能让界面表现成阻塞，也不能替用户越过确认。 |
+| 偏差根因 | **执行机制锚定 + 状态机压扁**：关注 job 的 running/awaiting_confirmation 转换，弱化了用户看到的 conversation → readiness → explicit confirmation 三段语义。 |
+| 纠正轮次 | 1 次；operator 指出应先与 agent 对话、由 agent 判断信息充分后再询问是否开工，随后用真实会话验证 assistant message 持久化与确认 CTA。 |
+| 元心智哪条没执行 | Q3 坐标变换：没有从用户面前的对话体验反推 runtime 状态，而是从后台 job 状态推导产品流程。 |
+
 ## Review Gate
 
 - Phase 0: **多猫协作审视**（所有猫参与各自 prompt 审视）+ 现有 system-prompt-builder 测试全绿
