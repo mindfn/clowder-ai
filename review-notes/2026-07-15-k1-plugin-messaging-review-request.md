@@ -2,7 +2,7 @@
 
 Review-Target-ID: `feat-k1-messaging-domain`
 Branch: `feat/k1-messaging-domain`
-Implementation candidate: `72515cf6b`
+Implementation candidate: `06c0bbbbd`
 
 ## What
 
@@ -14,7 +14,7 @@ K-1 introduces the plugin-facing messaging domain as one complete kernel slice:
 - instance-scoped send/append settlement ledgers
 - memory and Redis stores plus a K-2-facing `createMessagingDomain(...)` composition seam
 
-The implementation candidate contains 19 commits and changes 43 files (`+6770/-19`) relative to `upstream/main@01bf27faf`. It does not migrate existing connector call sites or instantiate a broker; those belong to K-2/P-7.
+The implementation candidate contains 21 commits and changes 44 files (`+6943/-19`) relative to `upstream/main@01bf27faf`. It does not migrate existing connector call sites or instantiate a broker; those belong to K-2/P-7.
 
 ## Why
 
@@ -64,7 +64,7 @@ Please check:
 
 ## Fresh-Context and Terra R1 Findings Closed
 
-All eleven are fixed in implementation candidate `72515cf6b`:
+All twelve are fixed in implementation candidate `06c0bbbbd`:
 
 1. Trace fields were lost through persistence/projection.
 2. Retention trim racing `read()` could silently skip events.
@@ -77,8 +77,9 @@ All eleven are fixed in implementation candidate `72515cf6b`:
 9. Append accepted a naked `messageId`, bypassing the original address handle's revocation truth; send now persists a host-issued MessageHandle and append resolves both it and its still-live parent handle before ledger claim.
 10. Snapshot could include an output completed beyond `resumeSequence`, while a fixed 200-message window could silently omit older state; canonical `outputRevision/outputSequence`, a complete thread scan, and a stable two-head fence now fail closed under active races.
 11. The handwritten mirror accepted shapes wider than C-1; closed objects and duplicate whisper targets are rejected, and both read pages and cumulative envelopes are capped at 32.
+12. Soft deletion before a publish/append watermark completed permanently poisoned snapshot retries; snapshot now derives the fenced set from canonical current-state projection before checking output watermarks, while historical events remain untouched.
 
-The R1 repair range is `f2d618932..72515cf6b`. The existing Redis owner-token/CAS, cursor, append-lock, and host-extra isolation mechanisms were retained rather than rewritten.
+The R1 repair range is `f2d618932..72515cf6b`; the R2 deletion-race repair is `06c0bbbbd`. The existing Redis owner-token/CAS, cursor, append-lock, and host-extra isolation mechanisms were retained rather than rewritten.
 
 ## Dogfood-Your-Slice
 
@@ -126,7 +127,8 @@ Please re-review `upstream/main@01bf27faf...HEAD`, with particular focus on Terr
 2. Complete snapshot scanning, stable head fencing, and canonical output watermark behavior.
 3. C-1 `f5faba5` parity: closed inputs, unique whisper targets, 32-event reads, and 32-element envelopes.
 4. Output-watermark behavior when an append-lock lease is taken over after message persistence but before event emission.
-5. No regression in the Redis owner-token/CAS, cursor, append-lock, and host-extra isolation mechanisms already found sound in R1.
+5. Soft-delete during pending publish and pending append: current snapshot must converge empty without mutating historical event replay.
+6. No regression in the Redis owner-token/CAS, cursor, append-lock, and host-extra isolation mechanisms already found sound in R1.
 
 This request is `review-ready`, not `shape-approved`. A reviewer pass is required before the latter signal is sent to the plugins thread.
 
@@ -141,9 +143,9 @@ This request is `review-ready`, not `shape-approved`. A reviewer pass is require
 
 | Check | Result |
 |---|---|
-| K-1 non-Redis targeted suites | 138/138 pass |
+| K-1 non-Redis targeted suites | 140/140 pass |
 | Official isolated Redis targeted suites | 17/17 pass |
-| Terra R1 targeted validation/append/event-stream/snapshot suites | 70/70 pass |
+| Terra review targeted validation/append/event-stream/snapshot suites | 72/72 pass |
 | Append lease-takeover regression | RED reproduced `op-2/rev3 -> op-1/rev2`; output-watermark takeover remains GREEN |
 | Dogfood real path | 11/11 pass |
 | `pnpm check` | exit 0 |
