@@ -33,8 +33,8 @@ import { projectEnvelope, readPluginMessageExtra } from './envelope.js';
 import type { HandleService } from './handles.js';
 import type { CursorStore, EventLogStore, SubscriptionRecord } from './stores/ports.js';
 
-export const DEFAULT_READ_LIMIT = 100;
-export const MAX_READ_LIMIT = 500;
+export const DEFAULT_READ_LIMIT = 32;
+export const MAX_READ_LIMIT = 32;
 export const SNAPSHOT_MAX_ATTEMPTS = 3;
 
 export interface EventStreamDeps {

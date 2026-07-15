@@ -207,6 +207,27 @@ describe('AppendService — INV-7 provenance whitewash guard', () => {
 });
 
 describe('AppendService — validation and lock guards (§4d)', () => {
+  test('C-1 envelope bound: cumulative appends cannot exceed 32 elements', async () => {
+    const initialElements = Array.from({ length: 32 }, (_, index) => ({
+      elementId: `el-${index + 1}`,
+      kind: 'text',
+      payload: { text: `item ${index + 1}` },
+    }));
+    const sent = await sendMessage({
+      payload: { provenance: { epistemicStatus: 'inference' }, elements: initialElements },
+    });
+    await expectCode(
+      service.appendElements(
+        CTX,
+        appendInput(sent.messageId, {
+          elements: [{ elementId: 'el-33', kind: 'text', payload: { text: 'overflow' } }],
+        }),
+      ),
+      'VALIDATION',
+    );
+    assert.equal(messageStore.getById(sent.messageId).extra.pluginMessage.elements.length, 32);
+  });
+
   test('D-6: cumulative payload bytes are bounded across append operations', async () => {
     const initialElements = Array.from({ length: 4 }, (_, index) => ({
       elementId: `el-${index + 1}`,

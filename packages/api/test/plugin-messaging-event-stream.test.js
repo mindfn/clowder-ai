@@ -188,6 +188,40 @@ describe('EventStreamService — read/ack (INV-4, INV-5)', () => {
     );
   });
 
+  test('read never returns more than the C-1 maximum of 32 events', async () => {
+    const handleId = await issueHandle();
+    const subscriptionId = 'sub_contract_read_bound';
+    await cursors.put({
+      subscriptionId,
+      pluginInstanceId: 'inst-a',
+      handleId,
+      threadId: 'thread-1',
+      ackedSequence: 0,
+      lastDeliveredSequence: 0,
+    });
+    const manyEvents = Array.from({ length: 50 }, (_, index) => ({
+      eventId: `ev-${index + 1}`,
+      sequence: index + 1,
+      type: 'message.publish',
+      envelope: {},
+    }));
+    const wideStream = new streamMod.EventStreamService({
+      events: {
+        async readAfter(_threadId, _afterSequence, limit) {
+          return manyEvents.slice(0, limit);
+        },
+        async minSequence() {
+          return 1;
+        },
+      },
+      cursors,
+      handles,
+      messageStore,
+    });
+    const page = await wideStream.read(CTX, subscriptionId, { limit: 500 });
+    assert.equal(page.events.length, 32);
+  });
+
   test('read rejects non-finite, fractional, and non-positive limits', async () => {
     const handleId = await issueHandle();
     const { subscriptionId } = await stream.subscribe(CTX, handleId);

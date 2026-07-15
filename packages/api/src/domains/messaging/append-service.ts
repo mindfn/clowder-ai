@@ -27,13 +27,8 @@
  */
 
 import type { IMessageStore, StoredMessage } from '../cats/services/stores/ports/MessageStore.js';
-import type {
-  AppendElementsInput,
-  AppendReceipt,
-  EpistemicStatus,
-  MessageElement,
-  PluginCallContext,
-} from './contract/types.js';
+import { payloadBytes, sameIdSet, stampAppendedElements } from './append-elements.js';
+import type { AppendElementsInput, AppendReceipt, MessageElement, PluginCallContext } from './contract/types.js';
 import { MESSAGING_BOUNDS, MessagingError } from './contract/types.js';
 import { validateAppendInput } from './contract/validate.js';
 import { type AppendOpRecord, type PluginMessageExtra, readPluginMessageExtra } from './envelope.js';
@@ -57,55 +52,6 @@ interface ReconciledAppendState {
   readonly message: StoredMessage;
   readonly plugin: PluginMessageExtra;
   readonly sequenceByOperation: ReadonlyMap<string, number>;
-}
-
-function statusOf(element: MessageElement, plugin: PluginMessageExtra): EpistemicStatus {
-  return element.epistemicStatus ?? plugin.provenance.epistemicStatus;
-}
-
-/** INV-7: stamp appended elements; reject elevation and underivated non-inference claims. */
-function stampAppendedElements(
-  parsed: AppendElementsInput,
-  plugin: PluginMessageExtra,
-  existingIds: ReadonlySet<string>,
-): MessageElement[] {
-  const stamped: MessageElement[] = [];
-  for (const element of parsed.elements) {
-    if (existingIds.has(element.elementId)) {
-      throw new MessagingError('VALIDATION', `elementId "${element.elementId}" already exists (INV-6: no rewrite)`);
-    }
-    let source: MessageElement | undefined;
-    if (element.derivedFromElementId !== undefined) {
-      source = plugin.elements.find((el) => el.elementId === element.derivedFromElementId);
-      if (!source) {
-        throw new MessagingError(
-          'VALIDATION',
-          `derivedFromElementId "${element.derivedFromElementId}" does not reference a persisted element`,
-        );
-      }
-    }
-    const claimed = element.epistemicStatus ?? 'inference';
-    if (claimed !== 'inference') {
-      if (!source || statusOf(source, plugin) !== claimed) {
-        throw new MessagingError(
-          'PERMISSION',
-          'appended element claims a non-inference status without an equal-status derivation source (INV-7)',
-        );
-      }
-    }
-    stamped.push({ ...element, epistemicStatus: claimed });
-  }
-  return stamped;
-}
-
-function sameIdSet(a: readonly string[], b: readonly string[]): boolean {
-  if (a.length !== b.length) return false;
-  const set = new Set(a);
-  return b.every((id) => set.has(id));
-}
-
-function payloadBytes(elements: readonly MessageElement[]): number {
-  return elements.reduce((total, element) => total + Buffer.byteLength(JSON.stringify(element.payload), 'utf8'), 0);
 }
 
 export class AppendService {
