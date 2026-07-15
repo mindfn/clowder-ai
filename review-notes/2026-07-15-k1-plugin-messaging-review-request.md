@@ -125,7 +125,8 @@ This request is `review-ready`, not `shape-approved`. A reviewer pass is require
 
 ## Review Sandbox（必填）
 
-- Path: `/tmp/cat-cafe-review/feat-k1-messaging-domain/opus`
+- Reviewer: `@codex`
+- Path: `/tmp/cat-cafe-review/feat-k1-messaging-domain/codex`
 - Start Command: N/A — backend domain only; use the verification commands below
 - Ports: N/A — no UI or runtime service is required
 
