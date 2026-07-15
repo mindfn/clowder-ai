@@ -1,0 +1,18 @@
+{
+  "verdictId": "2026-07-15-harness-ledger-hold-ball-retry-burst-fix",
+  "rawInputs": [
+    {
+      "path": "bundles/2026-07-15-harness-ledger-hold-ball-retry-burst-fix/snapshot.json",
+      "sha256": "ef565cf8b8522962b903e8fc8333b62ce84c9c2b541066af4caa27147fb2906c"
+    }
+  ],
+  "generatedAt": "2026-07-15T10:27:45.766Z",
+  "generator": {
+    "name": "harness-ledger-generator-adapter",
+    "version": "2.0.0"
+  },
+  "sanitizeRulesVersion": "1.0.0",
+  "producedBy": {
+    "runId": "hlr-1784111059352-5936bf4b"
+  }
+}

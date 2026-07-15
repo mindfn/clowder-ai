@@ -1,0 +1,33 @@
+{
+  "verdictId": "2026-07-15-harness-ledger-hold-ball-retry-burst-fix",
+  "featureId": "F257",
+  "evalSnapshotId": "harness-ledger-snapshot-2026-07-15-harness-ledger-hold-ball-retry-burst-fix",
+  "generatedAt": "2026-07-15T10:27:45.766Z",
+  "findings": [
+    {
+      "id": "f257-guard-hold_ball_rate_limit",
+      "frictionSignal": {
+        "type": "http_rate_limit",
+        "severity": "low",
+        "confidence": 0.7
+      },
+      "attribution": {
+        "primaryLayer": "guard-rejection-log",
+        "evidence": [
+          {
+            "type": "activation-count",
+            "anchor": "guard-rejection-log/http_rate_limit",
+            "excerpt": "http_rate_limit rejection(s) by guard hold_ball_rate_limit"
+          }
+        ]
+      },
+      "proposedAction": [
+        {
+          "action": "review",
+          "target": "hold_ball_rate_limit",
+          "rationale": "3 guard rejection(s) — review pattern"
+        }
+      ]
+    }
+  ]
+}
