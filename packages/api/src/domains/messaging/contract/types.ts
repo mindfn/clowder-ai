@@ -158,6 +158,11 @@ export interface MessageElementsAppendEvent {
 
 export type MessageOutputEvent = MessagePublishEvent | MessageElementsAppendEvent;
 
+/** Event as submitted to the log — the store assigns `sequence` atomically (INV-3). */
+export type MessageOutputEventInput =
+  | Omit<MessagePublishEvent, 'sequence'>
+  | Omit<MessageElementsAppendEvent, 'sequence'>;
+
 // ── Receipts ──
 
 export interface SendReceipt {

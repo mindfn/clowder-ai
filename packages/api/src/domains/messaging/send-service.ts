@@ -142,7 +142,7 @@ export class SendService {
         const emitted = await this.deps.events.append(
           handle.threadId,
           `publish:${stored.id}:1`,
-          (sequence) => ({ eventId: `ev_pub_${stored.id}_1`, sequence, type: 'message.publish', envelope }),
+          { eventId: `ev_pub_${stored.id}_1`, type: 'message.publish', envelope },
           this.retentionCount,
         );
         publishSequence = emitted.sequence;

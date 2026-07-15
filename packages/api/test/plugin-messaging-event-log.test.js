@@ -17,9 +17,8 @@ beforeEach(async () => {
 const RETENTION = 5;
 
 function publishEvent(threadId, messageId) {
-  return (sequence) => ({
+  return {
     eventId: `ev-${messageId}`,
-    sequence,
     type: 'message.publish',
     envelope: {
       messageId,
@@ -33,7 +32,7 @@ function publishEvent(threadId, messageId) {
         elements: [{ elementId: 'el-1', kind: 'text', payload: { text: 'x' } }],
       },
     },
-  });
+  };
 }
 
 describe('MemoryEventLogStore — sequence assignment (INV-3)', () => {

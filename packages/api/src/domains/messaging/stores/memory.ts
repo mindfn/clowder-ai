@@ -7,7 +7,7 @@
  * inside one synchronous block atomic.
  */
 
-import type { MessageOutputEvent } from '../contract/types.js';
+import type { MessageOutputEvent, MessageOutputEventInput } from '../contract/types.js';
 import type {
   AppendLock,
   CursorStore,
@@ -93,14 +93,14 @@ export class MemoryEventLogStore implements EventLogStore {
   async append(
     threadId: string,
     eventKey: string,
-    build: (sequence: number) => MessageOutputEvent,
+    event: MessageOutputEventInput,
     retentionCount: number,
   ): Promise<EventLogAppendResult> {
     const log = this.logFor(threadId);
     const existing = log.events.find((entry) => entry.key === eventKey);
     if (existing) return { sequence: existing.event.sequence, deduped: true };
     log.head += 1;
-    log.events.push({ key: eventKey, event: build(log.head) });
+    log.events.push({ key: eventKey, event: { ...event, sequence: log.head } as MessageOutputEvent });
     if (log.events.length > retentionCount) {
       log.events.splice(0, log.events.length - retentionCount);
     }

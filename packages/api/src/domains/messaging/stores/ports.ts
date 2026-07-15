@@ -8,7 +8,7 @@
  * machines; stores only persist. No bypass APIs (no generic list/delete).
  */
 
-import type { HandleScope, MessageOutputEvent } from '../contract/types.js';
+import type { HandleScope, MessageOutputEvent, MessageOutputEventInput } from '../contract/types.js';
 
 // ── Ledger (owner: MessagingLedger, §4a) ──
 
@@ -60,13 +60,13 @@ export interface EventLogStore {
   /**
    * Atomically: dedupe by eventKey within the retained window → assign next
    * per-thread sequence → append → trim to retentionCount (INV-3 monotonic).
-   * The event JSON is produced by build(sequence) so the stored record carries
-   * its own sequence.
+   * The submitted event carries no sequence — the store assigns it and the
+   * read path returns events with their assigned sequence.
    */
   append(
     threadId: string,
     eventKey: string,
-    build: (sequence: number) => MessageOutputEvent,
+    event: MessageOutputEventInput,
     retentionCount: number,
   ): Promise<EventLogAppendResult>;
   /** Events with sequence > afterSequence, ascending, at most limit. */

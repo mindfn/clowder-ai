@@ -190,9 +190,8 @@ export class AppendService {
       const emitted = await this.deps.events.append(
         msg.threadId,
         `append:${msg.id}:${parsed.operationId}`,
-        (sequence) => ({
+        {
           eventId: `ev_app_${msg.id}_${parsed.operationId}`,
-          sequence,
           type: 'message.elements.append',
           messageId: msg.id,
           threadId: msg.threadId,
@@ -200,7 +199,7 @@ export class AppendService {
           ...(parsed.baseRevision !== undefined ? { baseRevision: parsed.baseRevision } : {}),
           revision,
           elements,
-        }),
+        },
         this.retentionCount,
       );
       appendSequence = emitted.sequence;
