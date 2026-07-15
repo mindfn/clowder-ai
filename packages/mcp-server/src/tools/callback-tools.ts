@@ -1970,13 +1970,23 @@ export async function handleHoldBall(input: {
       isError: true,
     };
   }
-  const result = await callbackPost('/api/callbacks/hold-ball', {
-    reason: input.reason,
-    nextStep: input.nextStep,
-    ...(hasWakeAfter ? { wakeAfterMs: input.wakeAfterMs } : {}),
-    ...(hasWakeWhen ? { wakeWhen: input.wakeWhen } : {}),
-    ...(input.waitSourceRef ? { waitSourceRef: input.waitSourceRef } : {}),
-  });
+  // F257 fix (verdict PR #39): disable auto-retry for hold_ball.
+  // hold_ball 429 means "MAX_HOLDS_PER_WINDOW (3/h) reached" — retrying in
+  // 1s/2s/4s will never succeed (window is 1 hour). The default retry policy
+  // treated 429 as retryable, causing 3 identical POSTs that each emitted a
+  // GuardRejectionEvent, triggering a false threshold escalation.
+  // Prior art: publish-verdict also passes retryDelaysMs=[] (砚砚 2026-06-17).
+  const result = await callbackPost(
+    '/api/callbacks/hold-ball',
+    {
+      reason: input.reason,
+      nextStep: input.nextStep,
+      ...(hasWakeAfter ? { wakeAfterMs: input.wakeAfterMs } : {}),
+      ...(hasWakeWhen ? { wakeWhen: input.wakeWhen } : {}),
+      ...(input.waitSourceRef ? { waitSourceRef: input.waitSourceRef } : {}),
+    },
+    { retryDelaysMs: [] },
+  );
 
   // F254 B2: Check for unresolved freshness notices after successful hold_ball.
   // If the cat has unacknowledged notices, append a reminder to the result.
