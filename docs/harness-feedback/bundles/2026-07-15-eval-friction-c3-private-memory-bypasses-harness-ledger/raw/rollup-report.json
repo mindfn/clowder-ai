@@ -1,0 +1,92 @@
+{
+  "verdictId": "2026-07-15-eval-friction-c3-private-memory-bypasses-harness-ledger",
+  "selector": {
+    "kind": "friction-rollup-snapshot",
+    "windowStartMs": 1783825200000,
+    "windowEndMs": 1784084400000,
+    "topN": 10,
+    "tokenCap": 4000
+  },
+  "window": {
+    "sinceMs": 1783825200000,
+    "untilMs": 1784084400000
+  },
+  "signalCount": 1,
+  "clusterCount": 1,
+  "degraded": false,
+  "droppedChannels": [],
+  "report": {
+    "window": {
+      "sinceMs": 1783825200000,
+      "untilMs": 1784084400000
+    },
+    "generatedAt": "2026-07-15T03:12:20.858Z",
+    "topClusters": [
+      {
+        "clusterId": "73f7cc381631",
+        "representative": "text_frustration: 不对 没用",
+        "channels": [
+          "user-feedback"
+        ],
+        "count": 1,
+        "members": [
+          {
+            "signalId": "user-feedback:fi_mrk9vejf8x8ppl9x",
+            "rawRef": "fi_mrk9vejf8x8ppl9x",
+            "channel": "user-feedback"
+          }
+        ],
+        "method": "rule",
+        "sensorForms": [
+          "reason"
+        ],
+        "severity": "medium"
+      }
+    ],
+    "actionableCandidates": [
+      {
+        "clusterId": "73f7cc381631",
+        "representative": "text_frustration: 不对 没用",
+        "channels": [
+          "user-feedback"
+        ],
+        "count": 1,
+        "members": [
+          {
+            "signalId": "user-feedback:fi_mrk9vejf8x8ppl9x",
+            "rawRef": "fi_mrk9vejf8x8ppl9x",
+            "channel": "user-feedback"
+          }
+        ],
+        "method": "rule",
+        "sensorForms": [
+          "reason"
+        ],
+        "severity": "medium",
+        "actionability": "actionable_candidate",
+        "followupDraft": {
+          "clusterId": "73f7cc381631",
+          "title": "Investigate friction cluster: text_frustration: 不对 没用",
+          "summary": "text_frustration: 不对 没用",
+          "evidenceRefs": [
+            "fi_mrk9vejf8x8ppl9x"
+          ],
+          "reportingMode": "final-only"
+        },
+        "referenceOnlyEvidenceRefs": []
+      }
+    ],
+    "referenceOnly": [],
+    "tailSummary": {
+      "clusterCount": 0,
+      "signalCount": 0,
+      "byChannel": {}
+    },
+    "degraded": false,
+    "droppedChannels": [],
+    "tokenBudget": {
+      "cap": 4000,
+      "estimated": 294
+    }
+  }
+}

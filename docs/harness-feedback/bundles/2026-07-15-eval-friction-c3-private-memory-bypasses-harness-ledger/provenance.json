@@ -1,0 +1,15 @@
+{
+  "verdictId": "2026-07-15-eval-friction-c3-private-memory-bypasses-harness-ledger",
+  "rawInputs": [
+    {
+      "path": "docs/harness-feedback/bundles/2026-07-15-eval-friction-c3-private-memory-bypasses-harness-ledger/raw/rollup-report.json",
+      "sha256": "daa27513cf1723bf259aae85bea155a7bba7897631f1bce4b934847b552e6cce"
+    }
+  ],
+  "generatedAt": "2026-07-15T03:12:20.858Z",
+  "generator": {
+    "name": "eval-friction-live-verdict",
+    "version": "1"
+  },
+  "sanitizeRulesVersion": "f245-friction-rollup-v1"
+}
