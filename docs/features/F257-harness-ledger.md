@@ -8,7 +8,7 @@ created: 2026-07-06
 
 # F257: Harness Ledger — 锅账体系与自进化闭环
 
-> **Status**: in-progress (#33 eval 事件触发 + #34 审批执行器已合入 develop_base 并过 D21 验收；Design Gate aligned; 2026-07-07 问题先行修正) | **Owner**: Ragdoll (Fable) | **Priority**: P1
+> **Status**: in-progress (#33 eval 事件触发 + #34 审批执行器已合入并过 D21 验收 + #38 LI-001 action liveness 已合入 develop_base；Design Gate aligned; 2026-07-07 问题先行修正) | **Owner**: Ragdoll (Fable) | **Priority**: P1
 
 > 信号 → 归因 → 修补 → 验证 → 淘汰。犯错可以，**同类偏差第二次必须被结构拦截，第三次 = 体系失败**（operator 定义的成功判据，thread_mr6kh7kdoac6852d 启动包）。
 
@@ -245,6 +245,7 @@ created: 2026-07-06
 | 2026-07-09 | **#1075 合入 main（`ebffcd8e5`）**：46 hook.yaml 就位、段口径切换；重验证实逐段 TraceEvent 仍被 drain → 「trace 持久化桥」独立工作项；PR3 归属共识落账（KD-13） |
 | 2026-07-13 | **KD-14 审批执行器第一腿合入 develop_base（PR #34 `273126849`）**：operator-gated override routes（GET lifeline 读面 KD-19 + POST enable/disable/rollback，reason 必填进审计）；terra R1 P2×2（非字符串 body→500 / unknown-hook rollback 污染永久审计流）→ fail-closed 修复（store 边界 resolveManifest；audit 同型 clearContentOverride 一并；orphan override 显式 fail-closed 留迁移通道）→ FINAL PASS @ `2c58a37a9`；fork 等价 gate 18726 tests / 18622 pass，69 fail 逐一证明 pre-existing（21 文件零 import + capabilities-route 裸基线同构对照）；下一步 D21 隔离集成验收（opus 接棒） |
 | 2026-07-13 | **D21 审批执行链隔离集成验收 PASS（opus）**：六项逐检 ✓（三门禁顺序 / 三轴 gate 权威 404-409 / 审计 TTL=0 / fail-closed 契约 / store 单实例接线 / orphan fail-closed 取舍确认）@ `cat-cafe-develop-base` `273126849`，62/62 green——**KD-14 审批执行器第一腿全链闭环**（实现 Fable → review terra → merge #34 → 验收 opus）；序列剩余：trace 持久化桥、判定引擎（opus 双线实现位） |
+| 2026-07-15 | **LI-001 hold-ball action liveness 合入 develop_base（PR #38 `0cdd17f68`）**：`hold_ball` wake invocation 显式携带 `action-or-routing-exit` completion requirement，direct/queued 两路保持同一契约；text-only/empty success 只获一次与 routing guard 共享的 remedial budget，二次违规写可见终态，provider error/abort 与下游 A2A 不误伤。terra 对 exact HEAD `4154e316` 正式 APPROVE（0 P1/P2/P3）；fresh API build + 351/351 定向回归 + Biome 4502 files；fork 未启用 online Codex review，按 operator 指令跳过不存在的 cloud gate。 |
 
 ## In-context Observability（明厨亮灶决策）
 
