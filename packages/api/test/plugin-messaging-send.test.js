@@ -335,4 +335,25 @@ describe('SendService — §4a adversarial paths', () => {
     await expectCode(service.send(CTX, { nope: true }), 'VALIDATION');
     assert.equal(messageStore.size, 0);
   });
+
+  test('replyTo referencing another thread → VALIDATION (no cross-thread preview leak)', async () => {
+    const foreign = messageStore.append({
+      userId: 'user-1',
+      catId: null,
+      content: 'secret in another thread',
+      mentions: [],
+      timestamp: Date.now(),
+      threadId: 'thread-OTHER',
+    });
+    const handleId = await issueHandle();
+    await expectCode(service.send(CTX, draftFor(handleId, { replyTo: foreign.id })), 'VALIDATION');
+  });
+
+  test('replyTo referencing a missing message → VALIDATION; same-thread replyTo accepted', async () => {
+    const handleId = await issueHandle();
+    await expectCode(service.send(CTX, draftFor(handleId, { replyTo: 'msg-does-not-exist' })), 'VALIDATION');
+    const parent = await service.send(CTX, draftFor(handleId, { idempotencyKey: 'parent-1' }));
+    const reply = await service.send(CTX, draftFor(handleId, { idempotencyKey: 'child-1', replyTo: parent.messageId }));
+    assert.equal(messageStore.getById(reply.messageId).replyTo, parent.messageId);
+  });
 });

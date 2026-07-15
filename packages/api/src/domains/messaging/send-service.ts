@@ -101,6 +101,16 @@ export class SendService {
     const provenance = stampProvenance(ctx, draft, handle);
     const audience = deriveAudience(draft, handle);
 
+    if (draft.replyTo !== undefined) {
+      // Fail-closed: replyTo must reference an existing message of the SAME
+      // thread — otherwise hydrateReplyPreview would leak a cross-thread
+      // message preview into this thread via an untrusted plugin draft.
+      const parent = await this.deps.messageStore.getById(draft.replyTo);
+      if (!parent || parent.threadId !== handle.threadId) {
+        throw new MessagingError('VALIDATION', 'replyTo must reference an existing message in the addressed thread');
+      }
+    }
+
     const claim = await this.deps.ledger.claimSend(ctx.pluginInstanceId, draft.idempotencyKey);
     if (claim.status === 'settled') return claim.receipt;
     if (claim.status === 'inflight') {
