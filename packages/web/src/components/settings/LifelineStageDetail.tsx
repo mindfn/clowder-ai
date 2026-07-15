@@ -3,6 +3,7 @@
 /** F257 Phase D — Stage detail panel for lifeline (version/tracing/eval/governance). */
 
 import { useState } from 'react';
+import { CreateVersionForm } from './CreateVersionForm';
 import { EvalStagePanel } from './EvalStagePanel';
 import { GovernanceStagePanel } from './GovernanceStagePanel';
 import type { SelectedStage } from './LifelineChainView';
@@ -47,6 +48,8 @@ interface LifelineStageDetailProps {
   chain: VersionEpoch[];
   observations: Observation[];
   guardEvents: GuardEvent[];
+  /** Per-epoch guard metrics from API (activation-timeline attributed, R15). */
+  epochGuardMetrics: Record<number, Array<{ guardId: string; count: number }>>;
   overrideState: { hookId: string; enabled: boolean } | null;
   /** Hook ID for version operations (same as segmentId). */
   hookId: string;
@@ -65,6 +68,7 @@ export function LifelineStageDetail({
   chain,
   observations,
   guardEvents,
+  epochGuardMetrics,
   overrideState,
   hookId,
   onRefresh,
@@ -81,7 +85,7 @@ export function LifelineStageDetail({
           version={epoch.version}
           eval={epoch.eval}
           tracing={epoch.tracing}
-          guardMetrics={computeEpochGuardMetrics(epoch, chain, guardEvents)}
+          guardMetrics={epochGuardMetrics[epoch.version] ?? []}
         />
       )}
       {selected.stage === 'governance' && (
@@ -120,6 +124,11 @@ function VersionDetail({ epoch, hookId, onRefresh }: { epoch: VersionEpoch; hook
         </InfoRow>
       </div>
 
+      {epoch.isActive && (
+        <div className="mt-3">
+          <CreateVersionForm hookId={hookId} onRefresh={onRefresh} />
+        </div>
+      )}
       {!epoch.isActive && epoch.version > 1 && (
         <div className="mt-3">
           <ActivateVersionButton hookId={hookId} epochVersion={epoch.version} onRefresh={onRefresh} />
@@ -184,20 +193,6 @@ function TracingDetail({ epoch, observations }: { epoch: VersionEpoch; observati
       )}
     </>
   );
-}
-
-/** P1-1: Filter guard events to this epoch's time window and group by guardId. */
-function computeEpochGuardMetrics(
-  epoch: VersionEpoch,
-  chain: VersionEpoch[],
-  guardEvents: GuardEvent[],
-): { guardId: string; count: number }[] {
-  const idx = chain.findIndex((e) => e.version === epoch.version);
-  const end = idx >= 0 && idx < chain.length - 1 ? chain[idx + 1].startedAt : Infinity;
-  const filtered = guardEvents.filter((ge) => ge.timestamp >= epoch.startedAt && ge.timestamp < end);
-  const counts = new Map<string, number>();
-  for (const ge of filtered) counts.set(ge.guardId, (counts.get(ge.guardId) ?? 0) + 1);
-  return [...counts.entries()].map(([guardId, count]) => ({ guardId, count })).sort((a, b) => b.count - a.count);
 }
 
 function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {

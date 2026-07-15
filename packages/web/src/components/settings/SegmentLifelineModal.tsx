@@ -60,6 +60,7 @@ interface LifelineResponse {
   observations: Observation[];
   guardEvents: GuardEvent[];
   overrideState: { hookId: string; enabled: boolean } | null;
+  epochGuardMetrics: Record<number, Array<{ guardId: string; count: number }>>;
 }
 
 // ── Status badge map ──────────────────────────────────────────
@@ -176,6 +177,7 @@ export function SegmentLifelineModal({ segmentId, segmentName, onClose }: Segmen
                   chain={data.chain}
                   observations={data.observations}
                   guardEvents={data.guardEvents}
+                  epochGuardMetrics={data.epochGuardMetrics}
                   overrideState={data.overrideState}
                   hookId={segmentId}
                   onRefresh={fetchData}

@@ -148,9 +148,10 @@ describe('segment lifeline: tracing row drill-down (②)', () => {
   });
 });
 
-describe('segment lifeline: eval per-guard metrics (R14 P1-1)', () => {
+describe('segment lifeline: eval per-guard metrics (R14 P1-1, R15 P1)', () => {
   const evalSrc = readComponent('EvalStagePanel.tsx');
   const detailSrc = readComponent('LifelineStageDetail.tsx');
+  const modalSrc = readComponent('SegmentLifelineModal.tsx');
 
   it('EvalStagePanel uses guardMetrics prop (not global guardEventCount)', () => {
     expect(evalSrc).toContain('guardMetrics');
@@ -167,9 +168,13 @@ describe('segment lifeline: eval per-guard metrics (R14 P1-1)', () => {
     expect(evalSrc).toContain('单 guard 最高');
   });
 
-  it('LifelineStageDetail computes per-epoch guard metrics', () => {
-    expect(detailSrc).toContain('computeEpochGuardMetrics');
-    expect(detailSrc).toContain('guardId');
+  it('R15: LifelineStageDetail uses API-provided epochGuardMetrics (not local computation)', () => {
+    expect(detailSrc).toContain('epochGuardMetrics');
+    expect(detailSrc).not.toContain('computeEpochGuardMetrics');
+  });
+
+  it('R15: SegmentLifelineModal passes epochGuardMetrics from API response', () => {
+    expect(modalSrc).toContain('epochGuardMetrics');
   });
 
   it('EvalStagePanel shows "无注入数据" when obsCount is zero', () => {
@@ -206,6 +211,46 @@ describe('segment lifeline: null overrideState handling (R14 P1-4)', () => {
 
   it('shows default indicator when no override record exists', () => {
     expect(govSrc).toContain('（默认）');
+  });
+});
+
+describe('segment lifeline: create version form (R15 P1)', () => {
+  const formSrc = readComponent('CreateVersionForm.tsx');
+  const detailSrc = readComponent('LifelineStageDetail.tsx');
+
+  it('CreateVersionForm calls POST /versions endpoint', () => {
+    expect(formSrc).toContain('/api/prompt-hooks/');
+    expect(formSrc).toContain('/versions');
+    expect(formSrc).toContain("method: 'POST'");
+  });
+
+  it('CreateVersionForm has content textarea and reason input', () => {
+    expect(formSrc).toContain('textarea');
+    expect(formSrc).toContain('cv-content');
+    expect(formSrc).toContain('cv-reason');
+  });
+
+  it('CreateVersionForm sends content and reason in body', () => {
+    expect(formSrc).toContain('content: content.trim()');
+    expect(formSrc).toContain('reason: reason.trim()');
+  });
+
+  it('CreateVersionForm requires non-empty content and reason', () => {
+    expect(formSrc).toContain('!content.trim() || !reason.trim()');
+  });
+
+  it('LifelineStageDetail shows CreateVersionForm for active epoch', () => {
+    expect(detailSrc).toContain('CreateVersionForm');
+    expect(detailSrc).toContain('epoch.isActive');
+  });
+
+  it('CreateVersionForm has cancel button that resets state', () => {
+    expect(formSrc).toContain('handleCancel');
+    expect(formSrc).toContain('取消');
+  });
+
+  it('CreateVersionForm has audit trail label', () => {
+    expect(formSrc).toContain('审计追踪');
   });
 });
 

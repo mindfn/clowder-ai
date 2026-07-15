@@ -13,7 +13,12 @@ import type { HookOverrideStore } from '../domains/prompt-hooks/HookOverrideStor
 import type { InjectionTraceStore } from '../domains/prompt-hooks/InjectionTraceStore.js';
 import type { SegmentJudgmentCache } from '../domains/prompt-hooks/SegmentJudgmentCache.js';
 import type { GuardRejectionEventLog } from '../infrastructure/harness-eval/GuardRejectionEventLog.js';
-import { buildVersionChain, deriveCurrentStatus, type SegmentObservationInput } from './segment-lifeline-chain.js';
+import {
+  attributeGuardEventsToEpochs,
+  buildVersionChain,
+  deriveCurrentStatus,
+  type SegmentObservationInput,
+} from './segment-lifeline-chain.js';
 
 export interface SegmentLifelineRoutesOptions {
   traceStore?: InjectionTraceStore;
@@ -87,8 +92,8 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
     const manifestVersion = opts.resolveManifestVersion?.(segmentId) ?? 1;
     const segmentName = opts.resolveSegmentName?.(segmentId) ?? segmentId;
 
-    // 6. Build version lifecycle chain
-    const chain = buildVersionChain({
+    // 6. Build version lifecycle chain (R15: returns timeline for guard attribution)
+    const { chain, timeline } = buildVersionChain({
       manifestVersion,
       overrideEvents,
       observations: observationInputs,
@@ -100,6 +105,9 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
     const guardEvents = opts.guardRejectionLog
       ? await collectGuardEvents(opts.guardRejectionLog, windowStart, windowEnd, observations)
       : [];
+
+    // 8. Attribute guard events to epochs using activation timeline (R15 P1)
+    const epochGuardMetrics = attributeGuardEventsToEpochs(chain, timeline, guardEvents);
 
     const response = {
       segmentId,
@@ -114,6 +122,7 @@ export const segmentLifelineRoutes: FastifyPluginAsync<SegmentLifelineRoutesOpti
       overrideState: overrideState
         ? { hookId: segmentId, enabled: overrideState.enabled, contentVersion: overrideState.contentVersion }
         : null,
+      epochGuardMetrics,
     } satisfies SegmentLifecycleResponse & Record<string, unknown>;
 
     return reply.send(response);
