@@ -81,7 +81,7 @@ CAT_CAFE_DISABLE_SHARED_STATE_PREFLIGHT=1 bash ./scripts/with-test-home.sh \
   test/routing-guard-remedial.test.js
 ```
 
-结果：349 tests passed, 0 failed。
+结果：351 tests passed, 0 failed。
 
 ## Open Questions
 
@@ -95,6 +95,34 @@ CAT_CAFE_DISABLE_SHARED_STATE_PREFLIGHT=1 bash ./scripts/with-test-home.sh \
 ### 价值 OQ
 
 无。该实现可由单 commit 回滚，不改变外部契约或生产数据边界。
+
+## Fresh-Context Findings
+
+Agent: `[砚砚/gpt-5.6-terra🐾]`
+
+Scanned SHA: `8f7726167`
+
+Total: 1 finding（P2）
+
+### FC-1 — dismissed as correctness finding; coverage gap accepted
+
+Finding claim: 两个 guard 同时生效时，补救轮若只调用普通工具，action-liveness 分支会使 routing-guard failure 被跳过。
+
+Disposition: correctness claim 驳回。`route-serial.ts` 的终态判断是：
+
+```ts
+if (needsActionLivenessGuard && !hasActionOrRoutingExit(evidence)) {
+  // action-liveness failure
+} else if (needsServerRoutingGuard && !hasValidRoutingExit(evidence)) {
+  // routing failure
+}
+```
+
+普通工具使第一个条件为 false 后，JavaScript 会继续执行 `else if`；由于普通工具不是 routing exit，系统仍会写入 `routing-guard-failure`。
+
+Coverage concern 接受：原测试没有显式锁定该交集。现补两条 characterization tests，分别覆盖首轮 text response 与 empty response；两者均启用双 guard，补救轮仅调用 `cat_cafe_search_evidence`，并断言恰好两次 invoke、存在 `routing-guard-failure`、不存在 `action-liveness-guard-failure`。生产实现未修改。
+
+请正式 reviewer 对 FC-1 标注 `[FC:covered]`、`[FC:new]` 或 `[FC:N/A]`，并独立核验上述控制流与新增测试。
 
 ## Next Action
 
@@ -133,6 +161,7 @@ pnpm --filter @cat-cafe/api run build
 - Tips：plan frontmatter 含 `tips_exempt`，理由为纯服务端自动 guard，无 operator 可操作能力。
 - UI / PEN：无 UI 改动；无匹配 F257/harness/liveness `.pen`。
 - Artifact hygiene：工作树与提交 diff 均无根目录媒体/设计工件。
+- Worktree landing：本轮两处改动只落在目标 worktree；main worktree 有既存、无文件重叠的治理文档改动，本轮未触碰。
 
 ### 验证结果
 
@@ -140,7 +169,7 @@ pnpm --filter @cat-cafe/api run build
 pnpm biome check . --diagnostic-level=error  -> 4502 files clean
 pnpm lint                                     -> exit 0（仅既有 Web warnings）
 pnpm -r --if-present run build                -> exit 0
-七个定向 API suites                           -> 349 passed, 0 failed
+七个定向 API suites                           -> 351 passed, 0 failed
 git diff --check                              -> exit 0
 pnpm check:followup-tails                     -> exit 0
 ```

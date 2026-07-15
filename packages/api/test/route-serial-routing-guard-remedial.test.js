@@ -1035,6 +1035,45 @@ describe('F257 LI-001 — route-serial action liveness guard', () => {
     assert.equal(calls.length, 2, 'overlapping guards must not each launch their own remedial invoke');
   });
 
+  for (const [label, firstTurn] of [
+    ['text response', 'Acknowledged.'],
+    ['empty response', ''],
+  ]) {
+    test(`ordinary tool remedial preserves the routing-guard failure for an initial ${label}`, async () => {
+      const service = createSequenceService(
+        'codex',
+        [
+          firstTurn,
+          [
+            { type: 'tool_use', toolName: 'cat_cafe_search_evidence', toolInput: { q: 'F257 status' } },
+            { type: 'tool_result', content: '{"status":"ok"}' },
+          ],
+        ],
+        { needsGuard: true },
+      );
+
+      const { appended, calls } = await runRoute(
+        service,
+        `thread-action-liveness-routing-intersection-${label.replace(' ', '-')}`,
+        {},
+        {
+          routeOptions: completionRouteOptions,
+        },
+      );
+
+      assert.equal(calls.length, 2, 'the two guards must share one remedial invoke');
+      assert.ok(
+        appended.find((message) => message.source?.connector === 'routing-guard-failure'),
+        'a non-routing tool satisfies action liveness but must not satisfy the stricter routing guard',
+      );
+      assert.equal(
+        appended.find((message) => message.source?.connector === 'action-liveness-guard-failure'),
+        undefined,
+        'the failure notice must identify the remaining routing contract, not action liveness',
+      );
+    });
+  }
+
   test('completion requirement applies only to the hold-ball wake target, not downstream A2A recipients', async () => {
     const codexService = createSequenceService('codex', ['@opus'], { needsGuard: false });
     const opusService = createSequenceService('opus', ['Acknowledged by downstream cat.'], { needsGuard: false });
