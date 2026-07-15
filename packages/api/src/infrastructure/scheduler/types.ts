@@ -1,5 +1,6 @@
 import type { SchedulerLifecycleEvent, SchedulerMessageExtra, SchedulerToastPayload } from '@cat-cafe/shared';
 import type { IBallCustodyIngest } from '../../domains/ball-custody/BallCustodyIngest.js';
+import type { CompletionRequirement } from '../../domains/cats/services/agents/routing/route-helpers.js';
 
 export type { SchedulerLifecycleEvent, SchedulerMessageExtra, SchedulerToastPayload } from '@cat-cafe/shared';
 
@@ -100,6 +101,7 @@ export interface ScheduleTriggerPolicy {
   readonly reason?: string;
   readonly sourceCategory?: string;
   readonly suggestedSkill?: string;
+  readonly completionRequirement?: CompletionRequirement;
 }
 
 export interface ScheduleLifecycleNotice {

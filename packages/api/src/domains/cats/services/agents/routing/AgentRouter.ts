@@ -1597,6 +1597,8 @@ export class AgentRouter {
       /** #949 P2: Whether verdict-without-pass warning fires at route end.
        *  true/undefined = warn (default). false = suppress for connector-sourced flows only. */
       verdictPassWarningEnabled?: boolean;
+      /** F257 LI-001: opt-in completion contract for action-bearing wake invocations. */
+      completionRequirement?: RouteOptions['completionRequirement'];
       /** F254 B3: Freshness re-invoke enqueue for routing layer consumption */
       freshnessReinvokeEnqueue?: RouteOptions['freshnessReinvokeEnqueue'];
     },
@@ -1719,6 +1721,7 @@ export class AgentRouter {
       ...(options?.verdictPassWarningEnabled !== undefined
         ? { verdictPassWarningEnabled: options.verdictPassWarningEnabled }
         : {}),
+      ...(options?.completionRequirement ? { completionRequirement: options.completionRequirement } : {}),
     };
 
     try {

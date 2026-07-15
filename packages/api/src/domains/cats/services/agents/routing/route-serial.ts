@@ -122,7 +122,14 @@ import { formatA2AHandoffContent } from './a2a-handoff-label.js';
 import { extractContextEvalSignals } from './context-eval.js';
 import { validateRoutingSyntax } from './final-routing-slot.js';
 import { buildBriefingMessage } from './format-briefing.js';
-import { buildRemedialPrompt, hasValidRoutingExit, shouldRemediateRouting } from './guards/routing-guard-remedial.js';
+import {
+  buildActionLivenessRemedialPrompt,
+  buildRemedialPrompt,
+  hasActionOrRoutingExit,
+  hasValidRoutingExit,
+  shouldRemediateActionLiveness,
+  shouldRemediateRouting,
+} from './guards/routing-guard-remedial.js';
 import { extractRichFromText, isValidRichBlock } from './rich-block-extract.js';
 import type { RouteOptions, RouteStrategyDeps } from './route-helpers.js';
 import {
@@ -482,6 +489,7 @@ export async function* routeSerial(
     hasQueuedOrActiveAgentForCat,
     deferA2AEnqueue,
     freshnessReinvokeEnqueue,
+    completionRequirement,
   } = options;
   const previousResponses: { catId: CatId; content: string }[] = [];
   const thinkingMode = options.thinkingMode ?? 'play';
@@ -596,8 +604,8 @@ export async function* routeSerial(
   try {
     while (index < worklist.length) {
       const catId = worklist[index]!;
-      let routingGuardAttempted = false;
-      let routingGuardRemediated = false;
+      let guardRemedialAttempted = false;
+      let guardRemediated = false;
       // F-parallel-cancel: per-cat signal — canceling one cat skips ONLY that cat, not the
       // whole worklist. force-reset/cancelAll aborts every cat's controller, so all entries
       // skip = equivalent to stopping. Using the shared primaryController.signal made
@@ -691,6 +699,10 @@ export async function* routeSerial(
       }
       const service = getService(deps.services, catId);
       const needsServerRoutingGuard = service.needsServerRoutingGuard?.() ?? false;
+      // LI-001 belongs to the cat explicitly woken by hold_ball. Downstream A2A cats
+      // are new handoff recipients and remain governed by their own routing contract.
+      const needsActionLivenessGuard = isOriginalTarget && completionRequirement === 'action-or-routing-exit';
+      const needsBufferedGuard = needsServerRoutingGuard || needsActionLivenessGuard;
       const hasNativeL0 = service.injectsL0Natively?.() ?? false;
       // F237 PR3: refresh override snapshot before synchronous pipeline execution.
       // No-ops if no override store is configured (Redis unavailable).
@@ -1071,6 +1083,19 @@ export async function* routeSerial(
       // cliDiagnostics alongside the error text so cold hydration (F5 reload) can
       // restore the folded panel — without this, only the legacy red-pill survives.
       let collectedCliDiagnostics: import('@cat-cafe/shared').CliDiagnostics | undefined;
+      const recordErrorMessage = (message: AgentMessage) => {
+        if (message.type !== 'error') return;
+        hadError = true;
+        // #267: errors before abort are real provider failures; errors after abort are cleanup
+        if (!catSignal?.aborted) hadProviderError = true;
+        if (message.error) {
+          collectedErrorText += `${collectedErrorText ? '\n' : ''}${message.error}`;
+        }
+        const meta = message.metadata as { cliDiagnostics?: import('@cat-cafe/shared').CliDiagnostics } | undefined;
+        if (meta?.cliDiagnostics && !collectedCliDiagnostics) {
+          collectedCliDiagnostics = meta.cliDiagnostics;
+        }
+      };
       const collectedToolEvents: StoredToolEvent[] = [];
       // F148 OQ-2: Collect tool names for context eval signals
       const collectedToolNames: string[] = [];
@@ -1337,7 +1362,7 @@ export async function* routeSerial(
                 // F177-H guard-enabled turns defer first-pass voice text because it may
                 // be replaced by a remedial turn and must not be spoken early.
                 if (voiceMode) {
-                  if (needsServerRoutingGuard) {
+                  if (needsBufferedGuard) {
                     deferredVoiceInvocationId = ownInvocationId!;
                   } else {
                     voiceChunker = createVoiceChunker(ownInvocationId!);
@@ -1365,7 +1390,7 @@ export async function* routeSerial(
               effectiveMsg.content,
               (effectiveMsg as { textMode?: 'append' | 'replace' }).textMode,
             );
-            if (voiceMode && needsServerRoutingGuard) {
+            if (voiceMode && needsBufferedGuard) {
               deferredVoiceTextChunks.push(effectiveMsg.content);
             } else {
               voiceChunker?.feed(effectiveMsg.content);
@@ -1614,22 +1639,7 @@ export async function* routeSerial(
             }
           }
 
-          if (effectiveMsg.type === 'error') {
-            hadError = true;
-            // #267: errors before abort are real provider failures; errors after abort are cleanup
-            if (!catSignal?.aborted) hadProviderError = true;
-            if (effectiveMsg.error) {
-              collectedErrorText += `${collectedErrorText ? '\n' : ''}${effectiveMsg.error}`;
-            }
-            // F212 Phase B (云端 codex P2-8): capture structured cliDiagnostics from
-            // metadata; keep the first one seen (canonical for this invocation).
-            const meta = effectiveMsg.metadata as
-              | { cliDiagnostics?: import('@cat-cafe/shared').CliDiagnostics }
-              | undefined;
-            if (meta?.cliDiagnostics && !collectedCliDiagnostics) {
-              collectedCliDiagnostics = meta.cliDiagnostics;
-            }
-          }
+          recordErrorMessage(effectiveMsg);
           if (effectiveMsg.metadata && !firstMetadata) {
             firstMetadata = effectiveMsg.metadata;
           }
@@ -1638,7 +1648,7 @@ export async function* routeSerial(
           } else {
             const streamEvent = toStreamEvent(effectiveMsg);
             if (!streamEvent) continue;
-            if (needsServerRoutingGuard && streamEvent.type === 'text') {
+            if (needsBufferedGuard && streamEvent.type === 'text') {
               initialTextStreamEvents.push(streamEvent);
             } else {
               yield streamEvent;
@@ -1697,11 +1707,12 @@ export async function* routeSerial(
       // F061: Detect @co-creator mentions in agent response for browser notification
       let mentionsUser = false;
 
-      const appendRoutingGuardFailureNotice = async () => {
+      const appendGuardFailureNotice = async (kind: 'routing' | 'action-liveness') => {
         try {
+          const isActionLiveness = kind === 'action-liveness';
           const failureSource = {
-            connector: 'routing-guard-failure',
-            label: '路由守卫失败',
+            connector: isActionLiveness ? 'action-liveness-guard-failure' : 'routing-guard-failure',
+            label: isActionLiveness ? '动作活性守卫失败' : '路由守卫失败',
             icon: '🏓',
             meta: { presentation: 'system_notice', noticeTone: 'warning' },
           };
@@ -1709,7 +1720,9 @@ export async function* routeSerial(
             userId: 'system',
             catId: null,
             threadId,
-            content: '[路由守卫]: 补救失败，第二次回复仍没有合法的路由出口；已停止自动重试以避免重复调用。',
+            content: isActionLiveness
+              ? '[动作活性守卫]: 补救失败，第二次回复仍没有真实动作或明确路由终态；已停止自动重试以避免重复调用。'
+              : '[路由守卫]: 补救失败，第二次回复仍没有合法的路由出口；已停止自动重试以避免重复调用。',
             mentions: [],
             timestamp: Date.now(),
             source: failureSource,
@@ -1731,10 +1744,11 @@ export async function* routeSerial(
         }
       };
 
-      const runRoutingGuardRemedial = async (
+      const runGuardRemedial = async (
         originalStoredContentBeforeRemedial: string,
         originalRichBlocksBeforeRemedial: RichBlock[],
         originalToolEventsBeforeRemedial: StoredToolEvent[],
+        remedialPrompt: string,
       ): Promise<{
         storedContent: string;
         allRichBlocks: RichBlock[];
@@ -1743,8 +1757,8 @@ export async function* routeSerial(
         hasLocalCoCreatorLineStartMention: boolean;
         streamEvents: AgentMessage[];
       }> => {
-        routingGuardAttempted = true;
-        routingGuardRemediated = true;
+        guardRemedialAttempted = true;
+        guardRemediated = true;
         const originalTextStreamEventsBeforeRemedial = [...initialTextStreamEvents];
         const originalVisibleInvocationIdBeforeRemedial = ownInvocationId;
         const originalDeferredVoiceInvocationIdBeforeRemedial = deferredVoiceInvocationId;
@@ -1780,7 +1794,7 @@ export async function* routeSerial(
         for await (const remedialMsg of invokeSingleCat(deps.invocationDeps, {
           catId,
           service,
-          prompt: buildRemedialPrompt(),
+          prompt: remedialPrompt,
           userId,
           threadId,
           ...(catSignal ? { signal: catSignal } : {}),
@@ -1915,6 +1929,8 @@ export async function* routeSerial(
               }
             }
 
+            recordErrorMessage(effectiveMsg);
+
             if (effectiveMsg.metadata && !firstMetadata) {
               firstMetadata = effectiveMsg.metadata;
             }
@@ -2036,36 +2052,47 @@ export async function* routeSerial(
       };
 
       let noTextBlocksOverride: RichBlock[] | undefined;
+      const noTextGuardEvidence = {
+        lineStartMentions: getRoutingExitLineStartMentions(),
+        toolNames: collectedToolNames,
+        structuredTargetCats: [...structuredTargetCats],
+        hasCoCreatorLineStartMention: hasRoutingExitCoCreatorLineStartMention(''),
+      };
+      const noTextNeedsRoutingRemedial = shouldRemediateRouting({
+        ...noTextGuardEvidence,
+        needsGuard: needsServerRoutingGuard,
+        attempted: guardRemedialAttempted,
+      });
+      const noTextNeedsActionRemedial = shouldRemediateActionLiveness({
+        ...noTextGuardEvidence,
+        completionRequirement: needsActionLivenessGuard ? completionRequirement : undefined,
+        attempted: guardRemedialAttempted,
+        hadError,
+        aborted: catSignal?.aborted ?? false,
+      });
 
-      if (
-        !textContent &&
-        !hadError &&
-        shouldRemediateRouting({
-          needsGuard: needsServerRoutingGuard,
-          attempted: routingGuardAttempted,
-          lineStartMentions: getRoutingExitLineStartMentions(),
-          toolNames: collectedToolNames,
-          structuredTargetCats: [...structuredTargetCats],
-          hasCoCreatorLineStartMention: hasRoutingExitCoCreatorLineStartMention(''),
-        })
-      ) {
-        const result = await runRoutingGuardRemedial(
+      if (!textContent && !hadError && (noTextNeedsRoutingRemedial || noTextNeedsActionRemedial)) {
+        const result = await runGuardRemedial(
           '',
           [...bufferedBlocks, ...streamRichBlocks],
           [...collectedToolEvents],
+          noTextNeedsRoutingRemedial ? buildRemedialPrompt() : buildActionLivenessRemedialPrompt(),
         );
         for (const event of result.streamEvents) yield event;
         await flushDeferredVoice();
         noTextBlocksOverride = result.allRichBlocks;
-        if (
-          !hasValidRoutingExit({
-            lineStartMentions: getRoutingExitLineStartMentions(result.a2aMentions),
-            toolNames: collectedToolNames,
-            structuredTargetCats: [...structuredTargetCats],
-            hasCoCreatorLineStartMention: result.hasCoCreatorLineStartMention,
-          })
-        ) {
-          await appendRoutingGuardFailureNotice();
+        const finalNoTextEvidence = {
+          lineStartMentions: getRoutingExitLineStartMentions(result.a2aMentions),
+          toolNames: collectedToolNames,
+          structuredTargetCats: [...structuredTargetCats],
+          hasCoCreatorLineStartMention: result.hasCoCreatorLineStartMention,
+        };
+        if (!hadError && !catSignal?.aborted) {
+          if (needsActionLivenessGuard && !hasActionOrRoutingExit(finalNoTextEvidence)) {
+            await appendGuardFailureNotice('action-liveness');
+          } else if (needsServerRoutingGuard && !hasValidRoutingExit(finalNoTextEvidence)) {
+            await appendGuardFailureNotice('routing');
+          }
         }
       }
 
@@ -2106,18 +2133,35 @@ export async function* routeSerial(
         let routingExitLineStartMentions = getRoutingExitLineStartMentions(a2aMentions);
         let routingExitHasCoCreatorLineStartMention = hasRoutingExitCoCreatorLineStartMention(storedContent);
         let localCvoHasCoCreatorLineStartMention = hasLocalCoCreatorLineStartMention(storedContent);
-
-        if (
+        const textGuardEvidence = {
+          lineStartMentions: routingExitLineStartMentions,
+          toolNames: collectedToolNames,
+          structuredTargetCats: [...structuredTargetCats],
+          hasCoCreatorLineStartMention: routingExitHasCoCreatorLineStartMention,
+        };
+        const textNeedsRoutingRemedial =
+          !hadError &&
+          !catSignal?.aborted &&
           shouldRemediateRouting({
+            ...textGuardEvidence,
             needsGuard: needsServerRoutingGuard,
-            attempted: routingGuardAttempted,
-            lineStartMentions: routingExitLineStartMentions,
-            toolNames: collectedToolNames,
-            structuredTargetCats: [...structuredTargetCats],
-            hasCoCreatorLineStartMention: routingExitHasCoCreatorLineStartMention,
-          })
-        ) {
-          const result = await runRoutingGuardRemedial(storedContent, allRichBlocks, [...collectedToolEvents]);
+            attempted: guardRemedialAttempted,
+          });
+        const textNeedsActionRemedial = shouldRemediateActionLiveness({
+          ...textGuardEvidence,
+          completionRequirement: needsActionLivenessGuard ? completionRequirement : undefined,
+          attempted: guardRemedialAttempted,
+          hadError,
+          aborted: catSignal?.aborted ?? false,
+        });
+
+        if (textNeedsRoutingRemedial || textNeedsActionRemedial) {
+          const result = await runGuardRemedial(
+            storedContent,
+            allRichBlocks,
+            [...collectedToolEvents],
+            textNeedsRoutingRemedial ? buildRemedialPrompt() : buildActionLivenessRemedialPrompt(),
+          );
           for (const event of result.streamEvents) yield event;
           await flushDeferredVoice();
           storedContent = result.storedContent;
@@ -2127,15 +2171,18 @@ export async function* routeSerial(
           routingExitHasCoCreatorLineStartMention = result.hasCoCreatorLineStartMention;
           localCvoHasCoCreatorLineStartMention = result.hasLocalCoCreatorLineStartMention;
 
-          if (
-            !hasValidRoutingExit({
-              lineStartMentions: routingExitLineStartMentions,
-              toolNames: collectedToolNames,
-              structuredTargetCats: [...structuredTargetCats],
-              hasCoCreatorLineStartMention: routingExitHasCoCreatorLineStartMention,
-            })
-          ) {
-            await appendRoutingGuardFailureNotice();
+          const finalTextEvidence = {
+            lineStartMentions: routingExitLineStartMentions,
+            toolNames: collectedToolNames,
+            structuredTargetCats: [...structuredTargetCats],
+            hasCoCreatorLineStartMention: routingExitHasCoCreatorLineStartMention,
+          };
+          if (!hadError && !catSignal?.aborted) {
+            if (needsActionLivenessGuard && !hasActionOrRoutingExit(finalTextEvidence)) {
+              await appendGuardFailureNotice('action-liveness');
+            } else if (needsServerRoutingGuard && !hasValidRoutingExit(finalTextEvidence)) {
+              await appendGuardFailureNotice('routing');
+            }
           }
         }
         a2aMentions = getLocalRoutingLineStartMentions(a2aMentions);
@@ -2147,7 +2194,7 @@ export async function* routeSerial(
           previousResponses.push({ catId, content: storedContent });
         }
 
-        if (!routingGuardRemediated && initialTextStreamEvents.length > 0) {
+        if (!guardRemediated && initialTextStreamEvents.length > 0) {
           for (const event of initialTextStreamEvents) yield event;
           await flushDeferredVoice();
           initialTextStreamEvents.splice(0, initialTextStreamEvents.length);
@@ -3207,7 +3254,7 @@ export async function* routeSerial(
         // No text content and no error.
         // Persist only when we have non-text payload (tool/thinking/rich).
         // Purely empty turns should not create blank chat bubbles.
-        if (!routingGuardRemediated && initialTextStreamEvents.length > 0) {
+        if (!guardRemediated && initialTextStreamEvents.length > 0) {
           for (const event of initialTextStreamEvents) yield event;
           initialTextStreamEvents.splice(0, initialTextStreamEvents.length);
         }
@@ -3409,7 +3456,7 @@ export async function* routeSerial(
         }
       }
 
-      if (!routingGuardRemediated && initialTextStreamEvents.length > 0) {
+      if (!guardRemediated && initialTextStreamEvents.length > 0) {
         for (const event of initialTextStreamEvents) yield event;
         initialTextStreamEvents.splice(0, initialTextStreamEvents.length);
       }

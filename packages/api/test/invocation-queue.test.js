@@ -94,6 +94,28 @@ describe('InvocationQueue', () => {
     assert.equal(queue.list('t1', 'u1')[0].content, 'first');
   });
 
+  it('F257 LI-001: queued dedupe upgrades but never drops completionRequirement', () => {
+    const first = queue.enqueue(
+      entry({ source: 'connector', idempotencyKey: 'scheduled:same', completionRequirement: undefined }),
+    );
+    assert.equal(first.entry?.completionRequirement, undefined);
+
+    const upgraded = queue.enqueue(
+      entry({
+        source: 'connector',
+        idempotencyKey: 'scheduled:same',
+        completionRequirement: 'action-or-routing-exit',
+      }),
+    );
+    assert.equal(upgraded.deduped, true);
+    assert.equal(upgraded.entry?.completionRequirement, 'action-or-routing-exit');
+
+    const replayWithoutPolicy = queue.enqueue(
+      entry({ source: 'connector', idempotencyKey: 'scheduled:same', completionRequirement: undefined }),
+    );
+    assert.equal(replayWithoutPolicy.entry?.completionRequirement, 'action-or-routing-exit');
+  });
+
   // ── F175: no merge — every entry is independent ──
 
   it('same-source same-target entries are independent (F175 no merge)', () => {

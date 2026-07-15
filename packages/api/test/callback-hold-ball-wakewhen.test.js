@@ -274,4 +274,38 @@ describe('F167 Phase P: wakeWhen cancel/replace/delivery tests', () => {
       'fallback task should NOT be removed when wake delivery fails — cat needs the fallback wake',
     );
   });
+
+  test('F257 LI-001: wakeWhen command completion opts invocation into action liveness', async () => {
+    const triggerCalls = [];
+    const deps = makeStubDeps({
+      invokeTrigger: {
+        async trigger(...args) {
+          triggerCalls.push(args);
+        },
+      },
+    });
+    const app = await createApp(deps);
+    const thread = await threadStore.create('user-hb-li001', 'hb-li001');
+    const { invocationId, callbackToken } = await registry.create('user-hb-li001', 'codex', thread.id);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/callbacks/hold-ball',
+      headers: { 'x-invocation-id': invocationId, 'x-callback-token': callbackToken },
+      payload: {
+        reason: 'run quick probe',
+        nextStep: 'inspect quick probe',
+        wakeWhen: { command: 'echo done' },
+      },
+    });
+    assert.equal(response.statusCode, 200);
+
+    const startedAt = Date.now();
+    while (triggerCalls.length === 0 && Date.now() - startedAt < 2_000) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    assert.equal(triggerCalls.length, 1, 'command completion should trigger exactly one wake invocation');
+    assert.equal(triggerCalls[0][6]?.completionRequirement, 'action-or-routing-exit');
+  });
 });

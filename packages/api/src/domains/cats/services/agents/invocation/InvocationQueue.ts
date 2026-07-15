@@ -13,6 +13,7 @@
 import { randomUUID } from 'node:crypto';
 import { createModuleLogger } from '../../../../../infrastructure/logger.js';
 import type { CallerTraceContext } from '../../../../../infrastructure/telemetry/genai-semconv.js';
+import type { CompletionRequirement } from '../routing/route-helpers.js';
 
 export interface QueueEntry {
   id: string;
@@ -49,6 +50,8 @@ export interface QueueEntry {
   callerTraceContext?: CallerTraceContext;
   /** Explicit A2A trigger message for stream reply threading. */
   a2aTriggerMessageId?: string;
+  /** F257 LI-001: invocation completion contract that must survive busy-queue dispatch. */
+  completionRequirement?: CompletionRequirement;
 }
 
 export interface EnqueueResult {
@@ -183,6 +186,9 @@ export class InvocationQueue {
           if (input.sourceCategory && !existing.sourceCategory) {
             existing.sourceCategory = input.sourceCategory;
           }
+          if (input.completionRequirement && !existing.completionRequirement) {
+            existing.completionRequirement = input.completionRequirement;
+          }
         }
         const position = q.findIndex((entry) => entry.id === existing.id);
         return {
@@ -224,6 +230,7 @@ export class InvocationQueue {
       suggestedSkill: input.suggestedSkill,
       callerTraceContext: input.callerTraceContext,
       a2aTriggerMessageId: input.a2aTriggerMessageId,
+      completionRequirement: input.completionRequirement,
       position: undefined,
     };
     q.push(entry);

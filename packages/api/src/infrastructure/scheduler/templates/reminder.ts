@@ -20,6 +20,7 @@ export const reminderTemplate: TaskTemplate = {
     const targetCatId = (p.params.targetCatId as string) || null;
     const triggerUserId = (p.params.triggerUserId as string) || 'default-user';
     const threadId = p.deliveryThreadId;
+    const isHoldBallWake = instanceId.startsWith('hold-ball-');
     // F167 Phase M (codex P1): pre-fire defer activation is hold_ball-specific.
     // Gate on the `hold-ball-` instanceId prefix — callback-hold-ball-routes mints those
     // ids, while public /api/schedule/tasks only mints `dyn-*` (schedule.ts:417), so a
@@ -27,7 +28,7 @@ export const reminderTemplate: TaskTemplate = {
     // Defer tuning (interval/maxDefers) is NOT read from public params — it uses
     // TaskRunnerV2 internal defaults — so a deferIntervalMs:0 + huge maxDefers churn
     // attack via /api/schedule/tasks is structurally impossible.
-    const deferWhileThreadBusy = p.params.deferWhileThreadBusy === true && instanceId.startsWith('hold-ball-');
+    const deferWhileThreadBusy = p.params.deferWhileThreadBusy === true && isHoldBallWake;
     return {
       id: instanceId,
       profile: 'awareness',
@@ -48,7 +49,7 @@ export const reminderTemplate: TaskTemplate = {
           const catId = targetCatId ?? ctx.assignedCatId ?? 'opus';
           const content = `${SCHEDULER_TRIGGER_PREFIX} ${message}`;
 
-          if (instanceId.startsWith('hold-ball-') && p.trigger.type === 'once' && threadId) {
+          if (isHoldBallWake && p.trigger.type === 'once' && threadId) {
             ctx.ballCustody
               ?.record(buildHoldExpiredEvent({ threadId: tid, catId, fireAt: p.trigger.fireAt, at: Date.now() }))
               .catch(() => {});
@@ -68,6 +69,7 @@ export const reminderTemplate: TaskTemplate = {
               void Promise.resolve(
                 ctx.invokeTrigger.trigger(tid, catId, triggerUserId, content, messageId, undefined, {
                   sourceCategory: 'scheduled',
+                  ...(isHoldBallWake ? { completionRequirement: 'action-or-routing-exit' as const } : {}),
                 }),
               ).catch(() => {});
             } catch {
