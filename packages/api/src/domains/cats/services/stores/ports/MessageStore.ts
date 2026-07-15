@@ -115,6 +115,17 @@ export interface StoredMessage {
     tracing?: { traceId: string; spanId: string; parentSpanId?: string };
     systemKind?: 'a2a_routing' | 'context_briefing';
     a2aRouting?: { fromCatId?: string; targetCatId?: string; invocationId?: string };
+    /** F258 (K-1 plugin messaging): canonical plugin payload — the envelope is a pure
+     *  projection of this (single truth source). Strict shape owned by
+     *  domains/messaging/envelope.ts (PluginMessageExtra); kept structural here so the
+     *  cats domain does not depend on the messaging domain. */
+    pluginMessage?: {
+      instanceId: string;
+      revision: number;
+      provenance: Record<string, unknown>;
+      elements: ReadonlyArray<Record<string, unknown>>;
+      appendOps: readonly string[];
+    };
   };
   /** CatIds mentioned in this message */
   mentions: readonly CatId[];
