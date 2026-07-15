@@ -42,7 +42,7 @@ beforeEach(async () => {
     events,
     isKnownCatId: (catId) => catId === 'opus',
   });
-  service = new appendMod.AppendService({ messageStore, ledger, events, appendLock });
+  service = new appendMod.AppendService({ messageStore, handles, ledger, events, appendLock });
 });
 
 async function sendMessage(overrides = {}) {
@@ -66,7 +66,7 @@ async function sendMessage(overrides = {}) {
 
 function appendInput(messageId, overrides = {}) {
   return {
-    messageId,
+    handle: { kind: 'message', token: messageId },
     operationId: 'op-1',
     elements: [{ elementId: 'el-2', kind: 'text', payload: { text: 'appended' } }],
     ...overrides,
@@ -246,7 +246,7 @@ describe('AppendService — validation and lock guards (§4d)', () => {
     await expectCode(service.appendElements({ pluginInstanceId: 'inst-b' }, appendInput(sent.messageId)), 'PERMISSION');
   });
 
-  test('append to a non-plugin message → PERMISSION', async () => {
+  test('a raw non-plugin message id is not an issued message handle', async () => {
     const user = messageStore.append({
       userId: 'user-1',
       catId: null,
@@ -255,7 +255,7 @@ describe('AppendService — validation and lock guards (§4d)', () => {
       timestamp: Date.now(),
       threadId: 'thread-1',
     });
-    await expectCode(service.appendElements(CTX, appendInput(user.id)), 'PERMISSION');
+    await expectCode(service.appendElements(CTX, appendInput(user.id)), 'NOT_FOUND');
   });
 
   test('append to unknown / deleted / tombstoned message → NOT_FOUND', async () => {

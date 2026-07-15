@@ -51,6 +51,7 @@ export class MessagingService {
     this.appendService = new AppendService({
       messageStore: deps.messageStore,
       ledger,
+      handles: this.handles,
       events: stores.events,
       appendLock: stores.appendLock,
       ...(deps.retentionCount !== undefined ? { retentionCount: deps.retentionCount } : {}),

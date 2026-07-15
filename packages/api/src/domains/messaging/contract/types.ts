@@ -182,8 +182,14 @@ export interface AppendReceipt {
 
 // ── AppendElements input ──
 
+/** Host-issued capability reference for one plugin-owned message. */
+export interface MessageHandle {
+  readonly kind: 'message';
+  readonly token: string;
+}
+
 export interface AppendElementsInput {
-  readonly messageId: string;
+  readonly handle: MessageHandle;
   /** Idempotency scope: (pluginInstanceId, messageId, operationId). */
   readonly operationId: string;
   /** Optimistic concurrency: mismatch → CONFLICT, zero mutation (INV-10). */

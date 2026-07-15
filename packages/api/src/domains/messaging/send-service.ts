@@ -33,7 +33,7 @@ import { validateDraft } from './contract/validate.js';
 import { projectEnvelope, renderElementsText } from './envelope.js';
 import type { HandleService } from './handles.js';
 import type { MessagingLedger } from './ledger.js';
-import type { EventLogStore, HandleRecord } from './stores/ports.js';
+import type { AddressHandleRecord, EventLogStore } from './stores/ports.js';
 import { clampRetention } from './stores/ports.js';
 
 export interface SendServiceDeps {
@@ -47,7 +47,7 @@ export interface SendServiceDeps {
 }
 
 /** D-4: validate the declared origin against handle-derived truth; return the stamped provenance. */
-function stampProvenance(ctx: PluginCallContext, draft: MessageDraft, handle: HandleRecord): MessageProvenance {
+function stampProvenance(ctx: PluginCallContext, draft: MessageDraft, handle: AddressHandleRecord): MessageProvenance {
   const declared = draft.payload.provenance.origin;
   if (handle.kind === 'thread_handle') {
     if (declared !== undefined) {
@@ -87,7 +87,7 @@ function stampProvenance(ctx: PluginCallContext, draft: MessageDraft, handle: Ha
 /** Derive canonical audience; whisper targets must sit inside the handle's grant set (§3.1). */
 function deriveAudience(
   draft: MessageDraft,
-  handle: HandleRecord,
+  handle: AddressHandleRecord,
   isKnownCatId: (catId: string) => boolean,
 ): CanonicalAudience {
   const declared = draft.draftAudience;
@@ -179,6 +179,8 @@ export class SendService {
           },
         },
       });
+
+      await this.deps.handles.ensureMessageHandle(handle, stored.id);
 
       let publishSequence: number | undefined;
       if (audience.kind !== 'whisper') {

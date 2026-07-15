@@ -56,6 +56,13 @@ describe('validateDraft — happy path', () => {
     assert.equal(draft.draftAudience?.kind, 'whisper');
   });
 
+  test('rejects duplicate whisper targets (C-1 uniqueItems)', () => {
+    expectValidationError(
+      () => validate.validateDraft(validDraft({ draftAudience: { kind: 'whisper', targets: ['cat-a', 'cat-a'] } })),
+      'duplicate',
+    );
+  });
+
   test('accepts external origin declaration (binding match checked at send)', () => {
     const draft = validate.validateDraft(
       validDraft({
@@ -81,6 +88,42 @@ describe('validateDraft — fail-closed', () => {
   test('rejects non-object input', () => {
     expectValidationError(() => validate.validateDraft(null));
     expectValidationError(() => validate.validateDraft('draft'));
+  });
+
+  test('rejects properties outside C-1 closed input objects', () => {
+    const cases = [
+      validDraft({ injected: true }),
+      validDraft({ address: { kind: 'thread_handle', handle: 'th_abc123', injected: true } }),
+      validDraft({ draftAudience: { kind: 'public', injected: true } }),
+      validDraft({
+        payload: {
+          provenance: { epistemicStatus: 'inference' },
+          elements: [{ elementId: 'el-1', kind: 'text', payload: { text: 'hello' } }],
+          injected: true,
+        },
+      }),
+      validDraft({
+        payload: {
+          provenance: { epistemicStatus: 'inference', injected: true },
+          elements: [{ elementId: 'el-1', kind: 'text', payload: { text: 'hello' } }],
+        },
+      }),
+      validDraft({
+        payload: {
+          provenance: { epistemicStatus: 'inference' },
+          elements: [{ elementId: 'el-1', kind: 'text', payload: { text: 'hello' }, injected: true }],
+        },
+      }),
+      validDraft({
+        payload: {
+          provenance: { epistemicStatus: 'inference' },
+          elements: [{ elementId: 'el-1', kind: 'text', payload: { text: 'hello', injected: true } }],
+        },
+      }),
+    ];
+    for (const input of cases) {
+      expectValidationError(() => validate.validateDraft(input), 'unknown');
+    }
   });
 
   test('rejects missing idempotencyKey', () => {
@@ -278,7 +321,7 @@ describe('validateDraft — fail-closed', () => {
 describe('validateAppendInput', () => {
   function validAppend(overrides = {}) {
     return {
-      messageId: 'msg-1',
+      handle: { kind: 'message', token: 'msg-1' },
       operationId: 'op-1',
       elements: [{ elementId: 'el-2', kind: 'text', payload: { text: 'more' } }],
       ...overrides,
@@ -287,13 +330,32 @@ describe('validateAppendInput', () => {
 
   test('accepts minimal valid append input', () => {
     const input = validate.validateAppendInput(validAppend());
-    assert.equal(input.messageId, 'msg-1');
+    assert.equal(input.handle.token, 'msg-1');
     assert.equal(input.operationId, 'op-1');
   });
 
-  test('rejects missing messageId / operationId', () => {
-    expectValidationError(() => validate.validateAppendInput(validAppend({ messageId: '' })), 'messageId');
+  test('rejects raw messageId, malformed handle, and missing operationId', () => {
+    expectValidationError(
+      () => validate.validateAppendInput({ ...validAppend(), handle: undefined, messageId: 'raw-msg-1' }),
+      'unknown',
+    );
+    expectValidationError(
+      () => validate.validateAppendInput(validAppend({ handle: { kind: 'message', token: '' } })),
+      'handle.token',
+    );
+    expectValidationError(
+      () => validate.validateAppendInput(validAppend({ handle: { kind: 'thread', token: 'msg-1' } })),
+      'handle.kind',
+    );
     expectValidationError(() => validate.validateAppendInput(validAppend({ operationId: undefined })), 'operationId');
+  });
+
+  test('rejects unknown append and message-handle properties', () => {
+    expectValidationError(() => validate.validateAppendInput(validAppend({ injected: true })), 'unknown');
+    expectValidationError(
+      () => validate.validateAppendInput(validAppend({ handle: { kind: 'message', token: 'msg-1', injected: true } })),
+      'unknown',
+    );
   });
 
   test('rejects negative or non-integer baseRevision', () => {

@@ -37,18 +37,29 @@ export interface LedgerStore {
 
 // ── Handles (owner: HandleService, §4c) ──
 
-export interface HandleRecord {
+interface HandleRecordBase {
   readonly handleId: string;
-  readonly kind: 'thread_handle' | 'connector_binding';
   readonly pluginInstanceId: string;
   readonly threadId: string;
   /** Thread owner bound at issuance — used as StoredMessage.userId. */
   readonly userId: string;
   readonly scope: HandleScope;
-  readonly connectorBinding?: { readonly connectorId: string; readonly externalChatId: string };
   readonly issuedAt: number;
   readonly revokedAt?: number;
 }
+
+export interface AddressHandleRecord extends HandleRecordBase {
+  readonly kind: 'thread_handle' | 'connector_binding';
+  readonly connectorBinding?: { readonly connectorId: string; readonly externalChatId: string };
+}
+
+export interface MessageHandleRecord extends HandleRecordBase {
+  readonly kind: 'message_handle';
+  readonly messageId: string;
+  readonly parentHandleId: string;
+}
+
+export type HandleRecord = AddressHandleRecord | MessageHandleRecord;
 
 export interface HandleStore {
   put(record: HandleRecord): Promise<void>;

@@ -16,6 +16,7 @@ import type {
   MessageAddress,
   MessageDraft,
   MessageElement,
+  MessageHandle,
   ProvenanceOrigin,
 } from './types.js';
 import { MESSAGING_BOUNDS, MessagingError } from './types.js';
@@ -30,6 +31,12 @@ function fail(message: string, details?: Readonly<Record<string, unknown>>): nev
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function rejectUnknownKeys(value: Record<string, unknown>, allowed: readonly string[], field: string): void {
+  const allowedSet = new Set(allowed);
+  const unknown = Object.keys(value).filter((key) => !allowedSet.has(key));
+  if (unknown.length > 0) fail(`${field} contains unknown properties: ${unknown.join(', ')}`);
 }
 
 function requireString(value: unknown, field: string, maxLength: number): string {
@@ -49,13 +56,16 @@ function validateOrigin(value: unknown): ProvenanceOrigin {
   if (!isRecord(value)) fail('provenance.origin must be an object when present');
   if (value.kind === 'host') fail('provenance.origin kind "host" cannot be declared by a draft (D-4)');
   if (value.kind === 'plugin') {
+    rejectUnknownKeys(value, ['kind', 'instanceId'], 'provenance.origin');
     return { kind: 'plugin', instanceId: requireString(value.instanceId, 'origin.instanceId', 256) };
   }
   if (value.kind === 'external') {
+    rejectUnknownKeys(value, ['kind', 'connectorId', 'sourceAddress'], 'provenance.origin');
     const connectorId = requireString(value.connectorId, 'origin.connectorId', 256);
     if (value.sourceAddress === undefined) return { kind: 'external', connectorId };
     if (!isRecord(value.sourceAddress)) fail('origin.sourceAddress must be an object when present');
     const sa = value.sourceAddress;
+    rejectUnknownKeys(sa, ['connectorId', 'chatId', 'messageId'], 'origin.sourceAddress');
     return {
       kind: 'external',
       connectorId,
@@ -89,6 +99,11 @@ function validateElements(value: unknown, field: string): MessageElement[] {
   const elements: MessageElement[] = [];
   for (const raw of value) {
     if (!isRecord(raw)) fail(`${field}.elements entries must be objects`);
+    rejectUnknownKeys(
+      raw,
+      ['elementId', 'kind', 'payload', 'epistemicStatus', 'derivedFromElementId'],
+      `${field}.element`,
+    );
     const elementId = requireString(raw.elementId, 'elementId', MESSAGING_BOUNDS.maxElementIdLength);
     if (seen.has(elementId)) fail(`duplicate elementId "${elementId}"`);
     seen.add(elementId);
@@ -100,6 +115,7 @@ function validateElements(value: unknown, field: string): MessageElement[] {
     if (kind === 'text' && typeof raw.payload.text !== 'string') {
       fail('text element payload requires a string "text" field');
     }
+    if (kind === 'text') rejectUnknownKeys(raw.payload, ['text'], 'text element payload');
     const bytes = payloadByteSize(raw.payload, field);
     if (bytes > MESSAGING_BOUNDS.maxElementPayloadBytes) {
       fail(`element payload exceeds ${MESSAGING_BOUNDS.maxElementPayloadBytes} bytes`, { elementId });
@@ -131,6 +147,7 @@ function validateElements(value: unknown, field: string): MessageElement[] {
 
 function validateAddress(value: unknown): MessageAddress {
   if (!isRecord(value)) fail('address must be a host-issued handle object (no bare threadId channel)');
+  rejectUnknownKeys(value, ['kind', 'handle'], 'address');
   if (typeof value.kind !== 'string' || !(ADDRESS_KINDS as readonly string[]).includes(value.kind)) {
     fail(`address.kind must be one of ${ADDRESS_KINDS.join('|')}`);
   }
@@ -143,21 +160,28 @@ function validateAddress(value: unknown): MessageAddress {
 function validateDraftAudience(value: unknown): DraftAudience | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) fail('draftAudience must be an object');
-  if (value.kind === 'public') return { kind: 'public' };
+  if (value.kind === 'public') {
+    rejectUnknownKeys(value, ['kind'], 'draftAudience');
+    return { kind: 'public' };
+  }
   if (value.kind === 'whisper') {
+    rejectUnknownKeys(value, ['kind', 'targets'], 'draftAudience');
     if (!Array.isArray(value.targets) || value.targets.length === 0) {
       fail('whisper audience requires a non-empty targets array');
     }
     if (value.targets.length > MESSAGING_BOUNDS.maxWhisperTargets) {
       fail(`whisper targets exceed max ${MESSAGING_BOUNDS.maxWhisperTargets}`);
     }
-    return { kind: 'whisper', targets: value.targets.map((t) => requireString(t, 'whisper target', 256)) };
+    const targets = value.targets.map((t) => requireString(t, 'whisper target', 256));
+    if (new Set(targets).size !== targets.length) fail('whisper targets contain duplicate values');
+    return { kind: 'whisper', targets };
   }
   return fail('draftAudience.kind must be public|whisper (system is host-only, INV-2)');
 }
 
 function validateDraftProvenance(value: unknown): DraftProvenance {
   if (!isRecord(value)) fail('payload.provenance is required');
+  rejectUnknownKeys(value, ['origin', 'epistemicStatus'], 'payload.provenance');
   return {
     epistemicStatus: validateEpistemicStatus(value.epistemicStatus, 'provenance'),
     ...(value.origin !== undefined ? { origin: validateOrigin(value.origin) } : {}),
@@ -167,7 +191,13 @@ function validateDraftProvenance(value: unknown): DraftProvenance {
 /** Validate an untrusted draft. Throws MessagingError('VALIDATION'); returns the typed draft. */
 export function validateDraft(input: unknown): MessageDraft {
   if (!isRecord(input)) fail('draft must be an object');
+  rejectUnknownKeys(
+    input,
+    ['address', 'draftAudience', 'idempotencyKey', 'sourceEventId', 'replyTo', 'payload'],
+    'draft',
+  );
   if (!isRecord(input.payload)) fail('draft.payload is required');
+  rejectUnknownKeys(input.payload, ['provenance', 'elements', 'correlationId', 'causationId'], 'draft.payload');
   const audience = validateDraftAudience(input.draftAudience);
   const elements = validateElements(input.payload.elements, 'payload');
   const persistedElementIds = new Set<string>();
@@ -198,16 +228,24 @@ export function validateDraft(input: unknown): MessageDraft {
   };
 }
 
+function validateMessageHandle(value: unknown): MessageHandle {
+  if (!isRecord(value)) fail('handle must be a host-issued message handle');
+  rejectUnknownKeys(value, ['kind', 'token'], 'handle');
+  if (value.kind !== 'message') fail('handle.kind must be message');
+  return { kind: 'message', token: requireString(value.token, 'handle.token', 512) };
+}
+
 /** Validate an untrusted appendElements input. Structural only (message-state checks live in AppendService). */
 export function validateAppendInput(input: unknown): AppendElementsInput {
   if (!isRecord(input)) fail('append input must be an object');
+  rejectUnknownKeys(input, ['handle', 'operationId', 'baseRevision', 'elements'], 'append input');
   if (input.baseRevision !== undefined) {
     if (typeof input.baseRevision !== 'number' || !Number.isInteger(input.baseRevision) || input.baseRevision < 1) {
       fail('baseRevision must be a positive integer when present');
     }
   }
   return {
-    messageId: requireString(input.messageId, 'messageId', 256),
+    handle: validateMessageHandle(input.handle),
     operationId: requireString(input.operationId, 'operationId', MESSAGING_BOUNDS.maxIdempotencyKeyLength),
     ...(input.baseRevision !== undefined ? { baseRevision: input.baseRevision as number } : {}),
     elements: validateElements(input.elements, 'append'),

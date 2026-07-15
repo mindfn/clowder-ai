@@ -47,7 +47,7 @@ describe('MessagingService facade — full chain', () => {
     await service.ack(CTX, subscriptionId, read1.ackToken);
 
     const appendReceipt = await service.appendElements(CTX, {
-      messageId: sendReceipt.messageId,
+      handle: { kind: 'message', token: sendReceipt.messageId },
       operationId: 'e2e-op-1',
       baseRevision: 1,
       elements: [{ elementId: 'el-2', kind: 'text', payload: { text: 'appended e2e' }, derivedFromElementId: 'el-1' }],
@@ -89,6 +89,56 @@ describe('MessagingService facade — full chain', () => {
     await assert.rejects(service.read(CTX, subscriptionId, {}), (err) => err.code === 'PERMISSION');
   });
 
+  test('append authority follows both the message handle and its parent address handle', async () => {
+    const parent = await service.issueThreadHandle({
+      pluginInstanceId: 'inst-a',
+      threadId: 'thread-1',
+      userId: 'user-1',
+      scope: { canSend: true, canSubscribe: true },
+    });
+    const first = await service.send(CTX, {
+      address: { kind: 'thread_handle', handle: parent.handleId },
+      idempotencyKey: 'append-parent-revoke',
+      payload: {
+        provenance: { epistemicStatus: 'inference' },
+        elements: [{ elementId: 'el-1', kind: 'text', payload: { text: 'mine' } }],
+      },
+    });
+    await service.revokeHandle(parent.handleId);
+    await assert.rejects(
+      service.appendElements(CTX, {
+        handle: { kind: 'message', token: first.messageId },
+        operationId: 'blocked-by-parent-revoke',
+        elements: [{ elementId: 'el-2', kind: 'text', payload: { text: 'blocked' } }],
+      }),
+      (err) => err.code === 'PERMISSION',
+    );
+
+    const secondParent = await service.issueThreadHandle({
+      pluginInstanceId: 'inst-a',
+      threadId: 'thread-1',
+      userId: 'user-1',
+      scope: { canSend: true, canSubscribe: true },
+    });
+    const second = await service.send(CTX, {
+      address: { kind: 'thread_handle', handle: secondParent.handleId },
+      idempotencyKey: 'append-message-revoke',
+      payload: {
+        provenance: { epistemicStatus: 'inference' },
+        elements: [{ elementId: 'el-1', kind: 'text', payload: { text: 'mine' } }],
+      },
+    });
+    await service.revokeHandle(second.messageId);
+    await assert.rejects(
+      service.appendElements(CTX, {
+        handle: { kind: 'message', token: second.messageId },
+        operationId: 'blocked-by-message-revoke',
+        elements: [{ elementId: 'el-2', kind: 'text', payload: { text: 'blocked' } }],
+      }),
+      (err) => err.code === 'PERMISSION',
+    );
+  });
+
   test('cross-plugin isolation end-to-end: inst-b sees nothing of inst-a', async () => {
     const { handleId } = await service.issueThreadHandle({
       pluginInstanceId: 'inst-a',
@@ -108,7 +158,7 @@ describe('MessagingService facade — full chain', () => {
     await assert.rejects(service.subscribe(foreign, handleId), (err) => err.code === 'PERMISSION');
     await assert.rejects(
       service.appendElements(foreign, {
-        messageId: sent.messageId,
+        handle: { kind: 'message', token: sent.messageId },
         operationId: 'steal-1',
         elements: [{ elementId: 'el-x', kind: 'text', payload: { text: 'not mine' } }],
       }),

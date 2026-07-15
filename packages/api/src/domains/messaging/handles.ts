@@ -11,9 +11,15 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { HandleScope, MessageAddress } from './contract/types.js';
+import type { HandleScope, MessageAddress, MessageHandle } from './contract/types.js';
 import { MessagingError } from './contract/types.js';
-import type { CursorStore, HandleRecord, HandleStore } from './stores/ports.js';
+import type {
+  AddressHandleRecord,
+  CursorStore,
+  HandleRecord,
+  HandleStore,
+  MessageHandleRecord,
+} from './stores/ports.js';
 
 export interface IssueThreadHandleInput {
   readonly pluginInstanceId: string;
@@ -78,7 +84,7 @@ export class HandleService {
     return record;
   }
 
-  async resolveForSend(pluginInstanceId: string, address: MessageAddress): Promise<HandleRecord> {
+  async resolveForSend(pluginInstanceId: string, address: MessageAddress): Promise<AddressHandleRecord> {
     const record = await this.resolveLive(pluginInstanceId, address.handle);
     if (record.kind !== address.kind) {
       throw new MessagingError('VALIDATION', `address kind ${address.kind} does not match handle kind ${record.kind}`);
@@ -86,13 +92,63 @@ export class HandleService {
     if (!record.scope.canSend) {
       throw new MessagingError('PERMISSION', 'handle scope does not grant send');
     }
+    return record as AddressHandleRecord;
+  }
+
+  async resolveForSubscribe(pluginInstanceId: string, handleId: string): Promise<AddressHandleRecord> {
+    const record = await this.resolveLive(pluginInstanceId, handleId);
+    if (record.kind === 'message_handle') {
+      throw new MessagingError('VALIDATION', 'message handles cannot authorize subscriptions');
+    }
+    if (!record.scope.canSubscribe) {
+      throw new MessagingError('PERMISSION', 'handle scope does not grant subscribe');
+    }
     return record;
   }
 
-  async resolveForSubscribe(pluginInstanceId: string, handleId: string): Promise<HandleRecord> {
-    const record = await this.resolveLive(pluginInstanceId, handleId);
-    if (!record.scope.canSubscribe) {
-      throw new MessagingError('PERMISSION', 'handle scope does not grant subscribe');
+  /**
+   * Send mints the message capability before returning its receipt. The token
+   * is the host-generated message id already present in SendReceipt; the
+   * persisted record is the authority and binds it to the original address
+   * handle, caller instance, and thread.
+   */
+  async ensureMessageHandle(parent: AddressHandleRecord, messageId: string): Promise<MessageHandleRecord> {
+    const existing = await this.handles.get(messageId);
+    if (existing) {
+      if (
+        existing.kind !== 'message_handle' ||
+        existing.pluginInstanceId !== parent.pluginInstanceId ||
+        existing.parentHandleId !== parent.handleId ||
+        existing.messageId !== messageId
+      ) {
+        throw new MessagingError('CONFLICT', 'message handle token is already bound to different authority');
+      }
+      return existing;
+    }
+    const record: MessageHandleRecord = {
+      handleId: messageId,
+      kind: 'message_handle',
+      pluginInstanceId: parent.pluginInstanceId,
+      threadId: parent.threadId,
+      userId: parent.userId,
+      scope: parent.scope,
+      messageId,
+      parentHandleId: parent.handleId,
+      issuedAt: Date.now(),
+    };
+    await this.handles.put(record);
+    return record;
+  }
+
+  /** Message capability + its parent address capability must both be live. */
+  async resolveForAppend(pluginInstanceId: string, handle: MessageHandle): Promise<MessageHandleRecord> {
+    const record = await this.resolveLive(pluginInstanceId, handle.token);
+    if (record.kind !== 'message_handle') {
+      throw new MessagingError('VALIDATION', 'handle token is not a message handle');
+    }
+    const parent = await this.resolveLive(pluginInstanceId, record.parentHandleId);
+    if (parent.kind === 'message_handle' || parent.threadId !== record.threadId) {
+      throw new MessagingError('PERMISSION', 'message handle parent authority is invalid');
     }
     return record;
   }

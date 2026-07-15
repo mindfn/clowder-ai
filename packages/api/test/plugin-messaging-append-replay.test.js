@@ -42,7 +42,7 @@ beforeEach(async () => {
     events,
     isKnownCatId: (catId) => catId === 'opus',
   });
-  service = new appendMod.AppendService({ messageStore, ledger, events, appendLock });
+  service = new appendMod.AppendService({ messageStore, handles, ledger, events, appendLock });
 });
 
 async function sendMessage(overrides = {}) {
@@ -66,7 +66,7 @@ async function sendMessage(overrides = {}) {
 
 function appendInput(messageId, overrides = {}) {
   return {
-    messageId,
+    handle: { kind: 'message', token: messageId },
     operationId: 'op-1',
     elements: [{ elementId: 'el-2', kind: 'text', payload: { text: 'appended' } }],
     ...overrides,
@@ -126,7 +126,7 @@ describe('AppendService — rejection paths (§4d)', () => {
         return Reflect.get(target, prop, receiver);
       },
     });
-    const crashy = new appendMod.AppendService({ messageStore, ledger: crashyLedger, events, appendLock });
+    const crashy = new appendMod.AppendService({ messageStore, handles, ledger: crashyLedger, events, appendLock });
     await assert.rejects(crashy.appendElements(CTX, appendInput(sent.messageId)), /crash after append write/);
 
     await expectCode(
@@ -165,6 +165,7 @@ describe('AppendService — rejection paths (§4d)', () => {
     });
     const crashy = new appendMod.AppendService({
       messageStore,
+      handles,
       ledger: crashyLedger,
       events,
       appendLock,
@@ -231,6 +232,7 @@ describe('AppendService — rejection paths (§4d)', () => {
     });
     const racing = new appendMod.AppendService({
       messageStore: racingStore,
+      handles,
       ledger: new ledgerMod.MessagingLedger(new memory.MemoryLedgerStore()),
       events,
       appendLock,
@@ -280,6 +282,7 @@ describe('AppendService — rejection paths (§4d)', () => {
     };
     const racing = new appendMod.AppendService({
       messageStore,
+      handles,
       ledger: new ledgerMod.MessagingLedger(new memory.MemoryLedgerStore()),
       events: gatedEvents,
       appendLock: expiringLock,

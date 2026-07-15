@@ -37,6 +37,7 @@ import type {
 import { MESSAGING_BOUNDS, MessagingError } from './contract/types.js';
 import { validateAppendInput } from './contract/validate.js';
 import { type AppendOpRecord, type PluginMessageExtra, readPluginMessageExtra } from './envelope.js';
+import type { HandleService } from './handles.js';
 import type { MessagingLedger } from './ledger.js';
 import type { AppendLock, EventLogStore } from './stores/ports.js';
 import { clampRetention } from './stores/ports.js';
@@ -46,6 +47,7 @@ export const APPEND_LOCK_TTL_MS = 5_000;
 export interface AppendServiceDeps {
   readonly messageStore: IMessageStore;
   readonly ledger: MessagingLedger;
+  readonly handles: HandleService;
   readonly events: EventLogStore;
   readonly appendLock: AppendLock;
   readonly retentionCount?: number;
@@ -111,46 +113,47 @@ export class AppendService {
 
   async appendElements(ctx: PluginCallContext, input: unknown): Promise<AppendReceipt> {
     const parsed = validateAppendInput(input);
-    const claim = await this.deps.ledger.claimAppend(ctx.pluginInstanceId, parsed.messageId, parsed.operationId);
+    const target = await this.deps.handles.resolveForAppend(ctx.pluginInstanceId, parsed.handle);
+    const messageId = target.messageId;
+    const claim = await this.deps.ledger.claimAppend(ctx.pluginInstanceId, messageId, parsed.operationId);
     if (claim.status === 'settled') return claim.receipt;
     if (claim.status === 'inflight') {
       throw new MessagingError('RETRYABLE_INFLIGHT', 'an append with this operationId is in flight — retry later');
     }
 
     try {
-      const token = await this.deps.appendLock.acquire(parsed.messageId, APPEND_LOCK_TTL_MS);
+      const token = await this.deps.appendLock.acquire(messageId, APPEND_LOCK_TTL_MS);
       if (token === null) {
         throw new MessagingError('RETRYABLE_INFLIGHT', 'message is being appended by another operation — retry later');
       }
       try {
-        const receipt = await this.applyLocked(ctx, parsed);
+        const receipt = await this.applyLocked(ctx, parsed, messageId);
         await this.deps.ledger.settleAppend(
           ctx.pluginInstanceId,
-          parsed.messageId,
+          messageId,
           parsed.operationId,
           claim.claimToken,
           receipt,
         );
         return receipt;
       } finally {
-        await this.deps.appendLock.release(parsed.messageId, token);
+        await this.deps.appendLock.release(messageId, token);
       }
     } catch (err) {
-      await this.deps.ledger.releaseAppend(
-        ctx.pluginInstanceId,
-        parsed.messageId,
-        parsed.operationId,
-        claim.claimToken,
-      );
+      await this.deps.ledger.releaseAppend(ctx.pluginInstanceId, messageId, parsed.operationId, claim.claimToken);
       throw err;
     }
   }
 
   /** Runs inside the per-message lock. */
-  private async applyLocked(ctx: PluginCallContext, parsed: AppendElementsInput): Promise<AppendReceipt> {
-    const msg = await this.deps.messageStore.getById(parsed.messageId);
+  private async applyLocked(
+    ctx: PluginCallContext,
+    parsed: AppendElementsInput,
+    messageId: string,
+  ): Promise<AppendReceipt> {
+    const msg = await this.deps.messageStore.getById(messageId);
     if (!msg || msg.deletedAt !== undefined || msg._tombstone) {
-      throw new MessagingError('NOT_FOUND', `message ${parsed.messageId} not found`);
+      throw new MessagingError('NOT_FOUND', `message ${messageId} not found`);
     }
     const plugin = readPluginMessageExtra(msg);
     if (!plugin) {
@@ -231,11 +234,11 @@ export class AppendService {
       plugin.revision,
     );
     if (!written) {
-      const current = await this.deps.messageStore.getById(parsed.messageId);
+      const current = await this.deps.messageStore.getById(messageId);
       if (current) {
         throw new MessagingError('CONFLICT', 'message revision changed while the append lock lease was held');
       }
-      throw new MessagingError('NOT_FOUND', `message ${parsed.messageId} disappeared during append`);
+      throw new MessagingError('NOT_FOUND', `message ${messageId} disappeared during append`);
     }
 
     return this.buildReceipt(written, parsed, newRevision, stamped, parsed.baseRevision);
