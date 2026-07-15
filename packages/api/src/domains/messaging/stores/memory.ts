@@ -7,8 +7,11 @@
  * inside one synchronous block atomic.
  */
 
+import type { MessageOutputEvent } from '../contract/types.js';
 import type {
   CursorStore,
+  EventLogAppendResult,
+  EventLogStore,
   HandleRecord,
   HandleStore,
   LedgerClaimResult,
@@ -66,6 +69,62 @@ export class MemoryHandleStore implements HandleStore {
       this.records.set(handleId, { ...record, revokedAt });
     }
     return true;
+  }
+}
+
+interface ThreadLog {
+  head: number;
+  events: Array<{ readonly key: string; readonly event: MessageOutputEvent }>;
+}
+
+export class MemoryEventLogStore implements EventLogStore {
+  private readonly threads = new Map<string, ThreadLog>();
+
+  private logFor(threadId: string): ThreadLog {
+    let log = this.threads.get(threadId);
+    if (!log) {
+      log = { head: 0, events: [] };
+      this.threads.set(threadId, log);
+    }
+    return log;
+  }
+
+  async append(
+    threadId: string,
+    eventKey: string,
+    build: (sequence: number) => MessageOutputEvent,
+    retentionCount: number,
+  ): Promise<EventLogAppendResult> {
+    const log = this.logFor(threadId);
+    const existing = log.events.find((entry) => entry.key === eventKey);
+    if (existing) return { sequence: existing.event.sequence, deduped: true };
+    log.head += 1;
+    log.events.push({ key: eventKey, event: build(log.head) });
+    if (log.events.length > retentionCount) {
+      log.events.splice(0, log.events.length - retentionCount);
+    }
+    return { sequence: log.head, deduped: false };
+  }
+
+  async readAfter(threadId: string, afterSequence: number, limit: number): Promise<MessageOutputEvent[]> {
+    const log = this.threads.get(threadId);
+    if (!log) return [];
+    const matches: MessageOutputEvent[] = [];
+    for (const entry of log.events) {
+      if (entry.event.sequence <= afterSequence) continue;
+      matches.push(entry.event);
+      if (matches.length >= limit) break;
+    }
+    return matches;
+  }
+
+  async minSequence(threadId: string): Promise<number | null> {
+    const log = this.threads.get(threadId);
+    return log && log.events.length > 0 ? (log.events[0]?.event.sequence ?? null) : null;
+  }
+
+  async headSequence(threadId: string): Promise<number> {
+    return this.threads.get(threadId)?.head ?? 0;
   }
 }
 
