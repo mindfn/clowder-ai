@@ -38,6 +38,8 @@ packages/api/src/domains/messaging/
 └── stores/                # memory + Redis 双实现（plugmsg:* keys）
 ```
 
+**K-2 接缝**：本 PR 不在组合根实例化 domain——`createMessagingDomain({ messageStore, redis })` 就是 K-2 Host Broker 的装配点（roadmap 五步回边：K-1 merge → K-2 消费）。端到端行为由域测试全链覆盖（facade e2e：issue→send→subscribe→read→ack→append→snapshot）。
+
 **关键设计决定**：
 - **D-1** envelope = `StoredMessage` 纯投影；插件消息持久化在现有 `IMessageStore`（`extra.pluginMessage` additive 扩展），Hub UI 免费获得展示。
 - **D-2** v0 subscription 绑定单 ThreadHandle；多 thread = 多 subscription——"不得以单一 sequence 跨 thread 推游标"由构造保证。
