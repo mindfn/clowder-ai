@@ -9,6 +9,7 @@
 
 import type { MessageOutputEvent } from '../contract/types.js';
 import type {
+  AppendLock,
   CursorStore,
   EventLogAppendResult,
   EventLogStore,
@@ -179,5 +180,21 @@ export class MemoryCursorStore implements CursorStore {
       }
     }
     return count;
+  }
+}
+
+export class MemoryAppendLock implements AppendLock {
+  private readonly locks = new Map<string, number>();
+
+  async acquire(messageId: string, ttlMs: number): Promise<boolean> {
+    const now = Date.now();
+    const expiry = this.locks.get(messageId);
+    if (expiry !== undefined && expiry > now) return false;
+    this.locks.set(messageId, now + ttlMs);
+    return true;
+  }
+
+  async release(messageId: string): Promise<void> {
+    this.locks.delete(messageId);
   }
 }
