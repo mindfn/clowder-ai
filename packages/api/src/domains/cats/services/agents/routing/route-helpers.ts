@@ -89,6 +89,9 @@ export interface PersistenceContext {
   richBlocks?: import('@cat-cafe/shared').RichBlock[];
 }
 
+/** Invocation-level completion contract for wake-ups that must produce concrete progress. */
+export type CompletionRequirement = 'action-or-routing-exit';
+
 /** Common options for both strategies */
 export interface RouteOptions {
   contentBlocks?: readonly MessageContent[] | undefined;
@@ -171,6 +174,8 @@ export interface RouteOptions {
    *  Separate from frustrationAutoIssueEligible because A2A/multi-mention callbacks
    *  suppress frustration issues but still need verdict-pass handoff guards. */
   verdictPassWarningEnabled?: boolean | undefined;
+  /** F257 LI-001: require a real tool action or an explicit routing exit before successful completion. */
+  completionRequirement?: CompletionRequirement | undefined;
   /** F254 B3: Freshness re-invoke enqueue — called when doneMsg.metadata.freshnessReinvoke.shouldReinvoke
    *  is true. Enqueues a new invocation for the same (cat, thread) to address unseen messages. */
   freshnessReinvokeEnqueue?:

@@ -121,6 +121,42 @@ describe('reminderTemplate', () => {
     assert.equal(triggerMock.trigger.mock.calls[0].arguments[1], 'sonnet');
   });
 
+  it('F257 LI-001: hold-ball reminder opts into action-or-routing-exit completion', async () => {
+    const deliverMock = mock.fn(async () => 'msg-hold-wake');
+    const triggerMock = { trigger: mock.fn() };
+    const spec = reminderTemplate.createSpec('hold-ball-1748000000-liveness', {
+      trigger: { type: 'once', fireAt: Date.now() + 60_000 },
+      params: { message: '持球唤醒', targetCatId: 'gpt52' },
+      deliveryThreadId: 'th-hold-liveness',
+    });
+
+    await spec.run.execute('持球唤醒', 'thread-th-hold-liveness', {
+      assignedCatId: null,
+      deliver: deliverMock,
+      invokeTrigger: triggerMock,
+    });
+
+    assert.equal(triggerMock.trigger.mock.calls[0].arguments[6]?.completionRequirement, 'action-or-routing-exit');
+  });
+
+  it('F257 LI-001: ordinary reminder does not opt into action liveness', async () => {
+    const deliverMock = mock.fn(async () => 'msg-normal-reminder');
+    const triggerMock = { trigger: mock.fn() };
+    const spec = reminderTemplate.createSpec('dyn-1748000000-normal', {
+      trigger: { type: 'once', fireAt: Date.now() + 60_000 },
+      params: { message: 'ordinary reminder', targetCatId: 'gpt52' },
+      deliveryThreadId: 'th-normal-reminder',
+    });
+
+    await spec.run.execute('ordinary reminder', 'thread-th-normal-reminder', {
+      assignedCatId: null,
+      deliver: deliverMock,
+      invokeTrigger: triggerMock,
+    });
+
+    assert.equal(triggerMock.trigger.mock.calls[0].arguments[6]?.completionRequirement, undefined);
+  });
+
   it('uses default message when param is empty', async () => {
     const deliverMock = mock.fn(async () => 'msg-3');
     const spec = reminderTemplate.createSpec('rem-6', {

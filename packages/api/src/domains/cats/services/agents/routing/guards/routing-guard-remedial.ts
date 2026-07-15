@@ -12,6 +12,8 @@
  * KD-8 safe：只看"有无机械出口信号"，零意图分类器。
  */
 
+import type { CompletionRequirement } from '../route-helpers.js';
+
 /** Routing-tool substrings that count as a legitimate exit (持球/群发传球). */
 const ROUTING_TOOL_SUBSTRINGS = ['hold_ball', 'multi_mention'] as const;
 
@@ -44,6 +46,29 @@ export function hasValidRoutingExit(input: RoutingExitInput): boolean {
   if (input.hasCoCreatorLineStartMention) return true;
   if (hasRoutingToolCall(input.toolNames)) return true;
   return false;
+}
+
+/** F257 LI-001: any tool action or an existing mechanical routing exit satisfies the wake-up contract. */
+export function hasActionOrRoutingExit(input: RoutingExitInput): boolean {
+  return input.toolNames.length > 0 || hasValidRoutingExit(input);
+}
+
+export interface ActionLivenessInput extends RoutingExitInput {
+  readonly completionRequirement?: CompletionRequirement;
+  /** Shared one-shot budget with the existing routing guard. */
+  readonly attempted: boolean;
+  readonly hadError: boolean;
+  readonly aborted: boolean;
+}
+
+export function shouldRemediateActionLiveness(input: ActionLivenessInput): boolean {
+  return (
+    input.completionRequirement === 'action-or-routing-exit' &&
+    !input.attempted &&
+    !input.hadError &&
+    !input.aborted &&
+    !hasActionOrRoutingExit(input)
+  );
 }
 
 export interface RemediateInput extends RoutingExitInput {
@@ -79,4 +104,16 @@ export const REMEDIAL_PROMPT =
 
 export function buildRemedialPrompt(): string {
   return REMEDIAL_PROMPT;
+}
+
+export const ACTION_LIVENESS_REMEDIAL_PROMPT =
+  '[动作活性守卫] 这次持球唤醒只产生了空响应或纯文本承诺，没有形成可验证动作或明确路由终态。\n' +
+  '现在只做一个具体收尾动作：\n' +
+  '- 条件已满足且能继续 → 立即调用完成下一步所需的工具；\n' +
+  '- 需要另一只猫或co-creator处理 → 用行首 @句柄 / @co-creator 明确传球；\n' +
+  '- 仍需等待无回调外部条件 → 调用 cat_cafe_hold_ball；需要并行分派 → 调用 cat_cafe_multi_mention。\n' +
+  '只回复文字、纯文本确认或承诺稍后处理都不算完成；不要复述刚才的内容。';
+
+export function buildActionLivenessRemedialPrompt(): string {
+  return ACTION_LIVENESS_REMEDIAL_PROMPT;
 }

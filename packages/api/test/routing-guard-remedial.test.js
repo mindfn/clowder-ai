@@ -8,8 +8,11 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
+  buildActionLivenessRemedialPrompt,
   buildRemedialPrompt,
+  hasActionOrRoutingExit,
   hasValidRoutingExit,
+  shouldRemediateActionLiveness,
   shouldRemediateRouting,
 } from '../dist/domains/cats/services/agents/routing/guards/routing-guard-remedial.js';
 
@@ -107,5 +110,46 @@ describe('F177 Phase H — buildRemedialPrompt', () => {
     assert.match(p, /等co-creator[^\n]*不要 hold_ball/);
     // hold_ball option is scoped to 无回调 external conditions (not 等人)
     assert.match(p, /无回调/);
+  });
+});
+
+describe('F257 LI-001 — action liveness completion guard', () => {
+  const completionBase = {
+    ...base,
+    completionRequirement: 'action-or-routing-exit',
+    attempted: false,
+    hadError: false,
+    aborted: false,
+  };
+
+  test('empty or text-only successful completion requires one remedial invoke', () => {
+    assert.equal(shouldRemediateActionLiveness(completionBase), true);
+  });
+
+  test('any real tool call satisfies the action side even when it is not a routing tool', () => {
+    assert.equal(hasActionOrRoutingExit({ ...base, toolNames: ['cat_cafe_search_evidence'] }), true);
+    assert.equal(shouldRemediateActionLiveness({ ...completionBase, toolNames: ['cat_cafe_search_evidence'] }), false);
+  });
+
+  test('each existing mechanical routing exit satisfies the routing side', () => {
+    assert.equal(hasActionOrRoutingExit({ ...base, lineStartMentions: ['opus'] }), true);
+    assert.equal(hasActionOrRoutingExit({ ...base, toolNames: ['cat_cafe_hold_ball'] }), true);
+    assert.equal(hasActionOrRoutingExit({ ...base, structuredTargetCats: ['opus'] }), true);
+    assert.equal(hasActionOrRoutingExit({ ...base, hasCoCreatorLineStartMention: true }), true);
+  });
+
+  test('ordinary invocations, provider errors, aborts, and spent budget never trigger this guard', () => {
+    assert.equal(shouldRemediateActionLiveness({ ...completionBase, completionRequirement: undefined }), false);
+    assert.equal(shouldRemediateActionLiveness({ ...completionBase, hadError: true }), false);
+    assert.equal(shouldRemediateActionLiveness({ ...completionBase, aborted: true }), false);
+    assert.equal(shouldRemediateActionLiveness({ ...completionBase, attempted: true }), false);
+  });
+
+  test('remedial prompt requires a concrete action or explicit route and rejects text-only acknowledgement', () => {
+    const prompt = buildActionLivenessRemedialPrompt();
+    assert.match(prompt, /动作活性守卫/);
+    assert.match(prompt, /工具/);
+    assert.match(prompt, /行首/);
+    assert.match(prompt, /纯文本|只回复文字/);
   });
 });

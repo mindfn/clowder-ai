@@ -3150,4 +3150,24 @@ describe('QueueProcessor', () => {
       });
     }
   });
+
+  it('F257 LI-001: queued execution forwards completionRequirement to routeExecution', async () => {
+    let capturedRequirement;
+    deps.router.routeExecution = mock.fn(
+      async function* (_userId, _content, _threadId, _messageId, _targetCats, _intent, options) {
+        capturedRequirement = options?.completionRequirement;
+        yield { type: 'done', catId: 'opus', isFinal: true, timestamp: Date.now() };
+      },
+    );
+
+    enqueueEntry(deps.queue, {
+      source: 'connector',
+      completionRequirement: 'action-or-routing-exit',
+    });
+    const result = await processor.processNext('t1', 'u1');
+    assert.equal(result.started, true);
+    await waitFor(() => capturedRequirement !== undefined);
+
+    assert.equal(capturedRequirement, 'action-or-routing-exit');
+  });
 });

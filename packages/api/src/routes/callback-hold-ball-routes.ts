@@ -227,7 +227,7 @@ export interface HoldBallRouteDeps {
       message: string,
       messageId: string,
       contentBlocks?: undefined,
-      policy?: { sourceCategory?: string },
+      policy?: { sourceCategory?: string; completionRequirement?: 'action-or-routing-exit' },
     ): void | Promise<unknown>;
   };
   /** F257 Phase A (Line B): Guard rejection event log — fail-open observation layer */
@@ -352,6 +352,7 @@ function launchWakeWhenRunner(opts: {
           void Promise.resolve(
             deps.invokeTrigger.trigger(threadId, catId, userId, triggerContent, messageId, undefined, {
               sourceCategory: 'scheduled',
+              completionRequirement: 'action-or-routing-exit',
             }),
           ).catch(() => {});
         } catch {
